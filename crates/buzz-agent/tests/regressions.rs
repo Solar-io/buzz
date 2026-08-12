@@ -198,6 +198,24 @@ impl Harness {
         }
     }
 
+    /// Like `recv_until`, but auto-approves any `session/request_permission`
+    /// seen while waiting. Tests here exercise tool execution, not the
+    /// permission boundary (that lives in `permission_boundary.rs`), so a
+    /// model-issued tool call must be approved to reach the server.
+    async fn recv_until_approving<F: FnMut(&Value) -> bool>(&mut self, mut pred: F) -> Value {
+        loop {
+            let v = self.recv().await;
+            if v.get("method") == Some(&json!("session/request_permission")) {
+                let resp = approve_permission(&v);
+                self.write(resp).await;
+                continue;
+            }
+            if pred(&v) {
+                return v;
+            }
+        }
+    }
+
     async fn shutdown(mut self) {
         drop(self.stdin);
         let _ = tokio::time::timeout(Duration::from_secs(2), self.child.wait()).await;
@@ -267,6 +285,23 @@ fn openai_tool_call(id: &str, name: &str, args: Value) -> Value {
             },
             "finish_reason": "tool_calls",
         }],
+    })
+}
+
+/// Select the offered option whose `kind == "allow_once"` and return the
+/// `session/request_permission` response. Mirrors buzz-acp's answering side,
+/// which selects by `kind`, never by a hardcoded `optionId`. Centralizing this
+/// means a future option-id rename can't silently turn allow into a denial.
+fn approve_permission(request: &Value) -> Value {
+    let option_id = request["params"]["options"]
+        .as_array()
+        .and_then(|opts| opts.iter().find(|o| o["kind"] == "allow_once"))
+        .and_then(|o| o["optionId"].as_str())
+        .expect("request must offer an allow_once option");
+    json!({
+        "jsonrpc": "2.0",
+        "id": request["id"],
+        "result": { "outcome": { "outcome": "selected", "optionId": option_id } },
     })
 }
 
@@ -676,13 +711,7 @@ async fn per_turn_tool_call_cap_enforced() {
     loop {
         let v = h.recv().await;
         if v.get("method") == Some(&json!("session/request_permission")) {
-            let id = v["id"].clone();
-            h.write(json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": { "outcome": { "outcome": "selected", "optionId": "allow" } },
-            }))
-            .await;
+            h.write(approve_permission(&v)).await;
             continue;
         }
         if v.get("method") == Some(&json!("session/update"))
@@ -858,7 +887,7 @@ async fn hook_stop_blocks_premature_end() {
             json!({"sessionId": sid, "prompt": [{"type":"text","text":"go"}]}),
         )
         .await;
-    let r = h.recv_until(|v| v["id"] == json!(p)).await;
+    let r = h.recv_until_approving(|v| v["id"] == json!(p)).await;
     assert!(r.get("result").is_some(), "errored: {r}");
     assert_eq!(r["result"]["stopReason"], "end_turn");
 
@@ -936,7 +965,7 @@ async fn hook_stop_budget_exhausted() {
             json!({"sessionId": sid, "prompt": [{"type":"text","text":"go"}]}),
         )
         .await;
-    let r = h.recv_until(|v| v["id"] == json!(p)).await;
+    let r = h.recv_until_approving(|v| v["id"] == json!(p)).await;
     assert!(r.get("result").is_some(), "errored: {r}");
     assert_eq!(r["result"]["stopReason"], "end_turn");
 
@@ -1517,7 +1546,7 @@ async fn stale_usage_plus_history_growth_triggers_handoff() {
             json!({"sessionId": sid, "prompt": [{"type":"text","text":"go"}]}),
         )
         .await;
-    let _ = h.recv_until(|v| v["id"] == json!(p)).await;
+    let _ = h.recv_until_approving(|v| v["id"] == json!(p)).await;
     // req1 (tool_call) + summarize (handoff) + req2 (done) = 3. Without the
     // growth estimate we'd see only 2 (stale 8500 < 9000, no handoff).
     let captured = llm.captured.lock().await.len();
@@ -1788,7 +1817,7 @@ async fn cancel_sends_notifications_cancelled_to_any_mcp_server() {
         .await;
 
     // Wait for tool call to be in-progress.
-    h.recv_until(|v| {
+    h.recv_until_approving(|v| {
         v.get("params")
             .and_then(|p| p.get("update"))
             .and_then(|u| u.get("status"))
@@ -1903,13 +1932,7 @@ async fn prompt_to_completion(h: &mut Harness, sid: &str) -> Value {
     loop {
         let v = h.recv().await;
         if v.get("method") == Some(&json!("session/request_permission")) {
-            let id = v["id"].clone();
-            h.write(json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": { "outcome": { "outcome": "selected", "optionId": "allow" } },
-            }))
-            .await;
+            h.write(approve_permission(&v)).await;
             continue;
         }
         if v["id"] == json!(p) {
@@ -2664,7 +2687,9 @@ async fn max_tokens_recovery_can_proceed_to_tool_call() {
             json!({"sessionId": sid, "prompt": [{"type":"text","text":"go"}]}),
         )
         .await;
-    let reply = h.recv_until(|v| v["id"] == json!(prompt_id)).await;
+    let reply = h
+        .recv_until_approving(|v| v["id"] == json!(prompt_id))
+        .await;
     assert_eq!(reply["result"]["stopReason"], "end_turn", "{reply}");
     let requests = llm.captured.lock().await;
     assert_eq!(requests.len(), 3);
@@ -3642,13 +3667,7 @@ async fn handoff_cap_binds_within_a_single_turn() {
         }
 
         if v.get("method") == Some(&json!("session/request_permission")) {
-            let id = v["id"].clone();
-            h.write(json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": { "outcome": { "outcome": "selected", "optionId": "allow" } },
-            }))
-            .await;
+            h.write(approve_permission(&v)).await;
             continue;
         }
         if v["id"] == json!(p2) {
@@ -3795,13 +3814,7 @@ async fn failed_summarize_burns_handoff_attempt_budget() {
     loop {
         let v = h.recv().await;
         if v.get("method") == Some(&json!("session/request_permission")) {
-            let id = v["id"].clone();
-            h.write(json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": { "outcome": { "outcome": "selected", "optionId": "allow" } },
-            }))
-            .await;
+            h.write(approve_permission(&v)).await;
             continue;
         }
         if v["id"] == json!(p2) {

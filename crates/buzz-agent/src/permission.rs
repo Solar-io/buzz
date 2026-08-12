@@ -1,0 +1,633 @@
+//! `session/request_permission` broker.
+//!
+//! buzz-agent asks the client to authorize every LLM-issued MCP tool call
+//! *before* executing it; the client applies `BUZZ_ACP_PERMISSION_POLICY` and
+//! answers. The agent never reads the policy — it always asks, matching the
+//! layering of every other ACP harness. This module owns the whole request
+//! correlation lifecycle so the rest of the agent only sees a single
+//! `Allowed`/`Denied`/`Cancelled` decision.
+//!
+//! ## Invariants
+//!
+//! - **Process-wide admission.** The broker owns a global [`Semaphore`]
+//!   (`BUZZ_AGENT_MAX_PENDING_PERMISSIONS`) acquired *before* any correlation
+//!   entry is inserted. The per-turn `execute_parallel` semaphore is fresh per
+//!   turn and sessions are unbounded by default, so only this global cap bounds
+//!   simultaneously outstanding asks process-wide.
+//! - **Abort-safe cleanup.** A successful admission returns a
+//!   [`PendingPermission`] lease that owns the admission permit and the
+//!   correlation id. Its `Drop` synchronously removes the still-pending entry
+//!   and releases the slot, covering task abort/panic that bypasses the normal
+//!   `run_prompt` tail.
+//! - **Claim-before-wake / at-most-once.** [`PermissionBroker::deliver`] removes
+//!   the entry *before* waking the waiter, so each id resolves at most once and
+//!   a later lease `Drop` is a harmless no-op.
+//! - **Unknown/late ids ignored.** A response whose id is not a live entry is
+//!   logged and dropped.
+//! - **Single absolute deadline.** Admission wait and response wait share one
+//!   absolute deadline computed at gate entry, so a saturated call cannot live
+//!   for two full timeout windows.
+//! - **Cancellation races inside the wait.** The waiter selects on the turn's
+//!   cancel receiver directly; resolution never depends on the outer abort
+//!   drain.
+
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use serde_json::Value;
+use tokio::sync::{oneshot, watch, OwnedSemaphorePermit, Semaphore};
+use tokio::time::Instant;
+
+use crate::types::ToolCall;
+use crate::wire::{self, WireSender, ALLOW_OPTION_ID};
+
+/// Model-visible tool error when a call is not authorized. Rides the normal
+/// tool-failure path so the turn continues, matching every other tool error.
+pub const PERMISSION_DENIED_MSG: &str = "permission denied: the tool call was not authorized";
+
+/// Model-visible tool error when the client never answers within the deadline.
+pub const PERMISSION_TIMEOUT_MSG: &str =
+    "permission request timed out: the tool call was not authorized";
+
+/// Outcome of asking the client to authorize one tool call.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PermissionDecision {
+    /// The client selected the offered allow option — execute the tool.
+    Allowed,
+    /// Every non-authorizing shape (reject, cancelled outcome, JSON-RPC error,
+    /// malformed response, unknown outcome, wrong/unknown optionId, timeout,
+    /// wire-channel closure). Fails closed with the given model-visible reason;
+    /// the turn continues.
+    Denied(&'static str),
+    /// The turn was cancelled while admitting or waiting. No tool runs and the
+    /// caller propagates cancellation exactly as the existing cancel path does.
+    Cancelled,
+}
+
+/// Broker owned by `App` for the connection lifetime.
+pub struct PermissionBroker {
+    /// Global admission cap. Acquired before any entry is inserted.
+    sem: Arc<Semaphore>,
+    /// Live correlation entries: outbound request id -> response sender.
+    pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>>,
+    /// Monotonic id allocator. Never reused within a process lifetime, so a
+    /// late response for a removed id can never collide with a fresh request.
+    next_id: AtomicU64,
+    /// Absolute deadline budget shared by admission + response wait.
+    timeout: Duration,
+}
+
+impl PermissionBroker {
+    /// `max_pending` is validated `>= 1` by config; `timeout` is injectable so
+    /// broker unit tests exercise the timeout/abort paths without a 330s wait.
+    pub fn new(max_pending: usize, timeout: Duration) -> Self {
+        Self {
+            sem: Arc::new(Semaphore::new(max_pending.max(1))),
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            next_id: AtomicU64::new(0),
+            timeout,
+        }
+    }
+
+    /// Number of live (unresolved, un-dropped) correlation entries. Test-only
+    /// observability for the drop-guard and delivery invariants.
+    #[cfg(test)]
+    pub fn pending_count(&self) -> usize {
+        self.pending.lock().unwrap().len()
+    }
+
+    /// Free admission slots. Test-only, so a test can prove a terminal path
+    /// (delivery, timeout, cancel, drop) actually released the capacity it
+    /// held rather than leaking it.
+    #[cfg(test)]
+    pub fn available_permits(&self) -> usize {
+        self.sem.available_permits()
+    }
+
+    /// Deliver a client response to its waiter. Claims (removes) the entry
+    /// before waking so the id resolves at most once; unknown/late ids are
+    /// logged and ignored. `result` is the JSON-RPC `result` field (or
+    /// `Value::Null` for an error/malformed response — every such shape fails
+    /// the authorization predicate and denies).
+    pub fn deliver(&self, id: &Value, result: Value) {
+        let Some(key) = parse_id(id) else {
+            tracing::debug!(target: "permission", "ignoring response with unrecognized id {id}");
+            return;
+        };
+        // Claim before wake: remove first, then send into the removed sender.
+        let sender = self.pending.lock().unwrap().remove(&key);
+        match sender {
+            Some(tx) => {
+                // The receiver may already be gone (waiter cancelled/timed out
+                // and dropped the lease); a failed send is a harmless no-op.
+                let _ = tx.send(result);
+            }
+            None => {
+                tracing::debug!(target: "permission", "ignoring unknown/late permission id {id}");
+            }
+        }
+    }
+
+    /// Ask the client to authorize `call`, returning the decision.
+    ///
+    /// Sequence: acquire global admission (racing cancel + deadline) → insert
+    /// correlation entry (held by an abort-safe lease) → send the version-aware
+    /// request → wait for the response (racing cancel + deadline). One absolute
+    /// deadline bounds both waits.
+    pub async fn request_permission(
+        &self,
+        wire: &WireSender,
+        version: u32,
+        session_id: &str,
+        call: &ToolCall,
+        cancel: &mut watch::Receiver<bool>,
+    ) -> PermissionDecision {
+        let deadline = Instant::now() + self.timeout;
+
+        // ── Admission ──────────────────────────────────────────────────────
+        // Early cancel check: watch::changed() only fires on NEW writes.
+        if *cancel.borrow() {
+            return PermissionDecision::Cancelled;
+        }
+        let permit = tokio::select! {
+            biased;
+            _ = cancel.changed() => return PermissionDecision::Cancelled,
+            _ = tokio::time::sleep_until(deadline) => {
+                return PermissionDecision::Denied(PERMISSION_TIMEOUT_MSG);
+            }
+            p = Arc::clone(&self.sem).acquire_owned() => match p {
+                Ok(p) => p,
+                // Semaphore is never closed in production; treat as fail-closed.
+                Err(_) => return PermissionDecision::Denied(PERMISSION_DENIED_MSG),
+            },
+        };
+
+        // Insert the correlation entry under the owned permit. The lease's Drop
+        // removes the entry + releases the slot on every exit path below,
+        // including task abort.
+        let mut lease = self.register(permit);
+
+        // ── Send the version-aware request ─────────────────────────────────
+        let params = wire::request_permission_params(
+            version,
+            session_id,
+            &call.provider_id,
+            &call.name,
+            &call.arguments,
+        );
+        wire::send(
+            wire,
+            wire::request_permission(lease.id_value.clone(), params),
+        )
+        .await;
+
+        // ── Response wait ──────────────────────────────────────────────────
+        if *cancel.borrow() {
+            return PermissionDecision::Cancelled;
+        }
+        tokio::select! {
+            biased;
+            _ = cancel.changed() => PermissionDecision::Cancelled,
+            r = &mut lease.rx => match r {
+                Ok(result) => evaluate(&result),
+                // Sender dropped without sending — should not happen (delivery
+                // always sends before drop); fail closed.
+                Err(_) => PermissionDecision::Denied(PERMISSION_DENIED_MSG),
+            },
+            _ = tokio::time::sleep_until(deadline) => {
+                PermissionDecision::Denied(PERMISSION_TIMEOUT_MSG)
+            }
+        }
+        // `lease` drops here: entry removed (no-op if delivered) + slot released.
+    }
+
+    /// Allocate an id, insert its response sender, and return the abort-safe
+    /// lease holding the receiver + owned permit.
+    fn register(&self, permit: OwnedSemaphorePermit) -> PendingPermission {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = oneshot::channel();
+        self.pending.lock().unwrap().insert(id, tx);
+        PendingPermission {
+            id,
+            id_value: Value::String(format!("perm-{id}")),
+            rx,
+            pending: Arc::clone(&self.pending),
+            _permit: permit,
+        }
+    }
+}
+
+/// Abort-safe correlation lease. Owns the admission permit and the correlation
+/// id; its `Drop` synchronously removes the still-pending entry and releases
+/// the slot. Delivery removes the entry first, so a later drop is a no-op.
+struct PendingPermission {
+    id: u64,
+    id_value: Value,
+    rx: oneshot::Receiver<Value>,
+    pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>>,
+    _permit: OwnedSemaphorePermit,
+}
+
+impl Drop for PendingPermission {
+    fn drop(&mut self) {
+        // Synchronous, non-async removal — safe from a Drop and required for
+        // abort/panic paths. No-op if delivery already claimed the entry.
+        self.pending.lock().unwrap().remove(&self.id);
+        // `_permit` drops → global admission slot released.
+    }
+}
+
+/// The authorization predicate, stated once: execute IFF the client selected an
+/// option AND the selected `optionId` equals exactly this request's offered
+/// allow-option id. Every other shape fails closed.
+fn evaluate(result: &Value) -> PermissionDecision {
+    let outcome = &result["outcome"];
+    if outcome["outcome"] == "selected" && outcome["optionId"].as_str() == Some(ALLOW_OPTION_ID) {
+        PermissionDecision::Allowed
+    } else {
+        PermissionDecision::Denied(PERMISSION_DENIED_MSG)
+    }
+}
+
+/// Recover the correlation key from an outbound request id echoed by the
+/// client. Only ids we minted (`perm-<n>`) are ours; anything else is a
+/// foreign/stale id and is ignored.
+fn parse_id(id: &Value) -> Option<u64> {
+    id.as_str()?.strip_prefix("perm-")?.parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tokio::sync::mpsc;
+
+    const LONG: Duration = Duration::from_secs(30);
+    const SHORT: Duration = Duration::from_millis(60);
+
+    fn tool_call() -> ToolCall {
+        ToolCall {
+            provider_id: "fake".into(),
+            name: "fake__shell".into(),
+            arguments: json!({ "command": "ls" }),
+            provider_extra: serde_json::Map::new(),
+        }
+    }
+
+    fn selected(option_id: &str) -> Value {
+        json!({ "outcome": { "outcome": "selected", "optionId": option_id } })
+    }
+
+    /// Pull the next outbound frame off the wire and return its JSON-RPC `id`.
+    /// Reading it also proves the request was registered and sent (delivery
+    /// only happens after `register`).
+    async fn next_request_id(rx: &mut mpsc::Receiver<wire::WireMsg>) -> Value {
+        let wire::WireMsg::Notify(v) = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("a request frame")
+            .expect("wire open");
+        assert_eq!(v["method"], "session/request_permission");
+        v["id"].clone()
+    }
+
+    // ── Authorization predicate (fail-closed) ────────────────────────────────
+
+    #[test]
+    fn test_selected_allow_option_authorizes() {
+        assert_eq!(
+            evaluate(&selected(ALLOW_OPTION_ID)),
+            PermissionDecision::Allowed
+        );
+    }
+
+    #[test]
+    fn test_every_non_allow_shape_denies() {
+        // reject, wrong/unknown option id, unknown outcome, missing fields,
+        // empty object — the full adversarial set the predicate must reject.
+        let denied = [
+            selected("reject_once"),
+            selected("some_unknown_option"),
+            json!({ "outcome": { "outcome": "cancelled" } }),
+            json!({ "outcome": { "outcome": "selected" } }), // no optionId
+            json!({ "outcome": { "outcome": "banana", "optionId": ALLOW_OPTION_ID } }),
+            json!({ "outcome": {} }),
+            json!({}),
+            Value::Null,
+        ];
+        for shape in denied {
+            assert_eq!(
+                evaluate(&shape),
+                PermissionDecision::Denied(PERMISSION_DENIED_MSG),
+                "shape must fail closed: {shape}"
+            );
+        }
+    }
+
+    // ── Id correlation ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_id_accepts_only_minted_ids() {
+        assert_eq!(parse_id(&json!("perm-0")), Some(0));
+        assert_eq!(parse_id(&json!("perm-42")), Some(42));
+        assert_eq!(parse_id(&json!("perm-x")), None);
+        assert_eq!(parse_id(&json!("42")), None); // foreign numeric-string id
+        assert_eq!(parse_id(&json!(42)), None); // foreign numeric id
+        assert_eq!(parse_id(&Value::Null), None);
+    }
+
+    // ── Delivery: exact allow / deny ──────────────────────────────────────────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_deliver_allow_authorizes_and_frees_slot() {
+        let broker = Arc::new(PermissionBroker::new(4, LONG));
+        let (tx, mut rx) = mpsc::channel(8);
+        let (_cancel_tx, mut cancel_rx) = watch::channel(false);
+
+        let b = Arc::clone(&broker);
+        let call = tool_call();
+        let task = tokio::spawn(async move {
+            b.request_permission(&tx, 2, "ses_a", &call, &mut cancel_rx)
+                .await
+        });
+
+        let id = next_request_id(&mut rx).await;
+        assert_eq!(broker.pending_count(), 1);
+        assert_eq!(broker.available_permits(), 3);
+
+        broker.deliver(&id, selected(ALLOW_OPTION_ID));
+        assert_eq!(task.await.unwrap(), PermissionDecision::Allowed);
+        assert_eq!(broker.pending_count(), 0, "entry claimed on delivery");
+        assert_eq!(
+            broker.available_permits(),
+            4,
+            "slot released after decision"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_deliver_reject_denies_and_frees_slot() {
+        let broker = Arc::new(PermissionBroker::new(4, LONG));
+        let (tx, mut rx) = mpsc::channel(8);
+        let (_cancel_tx, mut cancel_rx) = watch::channel(false);
+
+        let b = Arc::clone(&broker);
+        let call = tool_call();
+        let task = tokio::spawn(async move {
+            b.request_permission(&tx, 2, "ses_a", &call, &mut cancel_rx)
+                .await
+        });
+
+        let id = next_request_id(&mut rx).await;
+        broker.deliver(&id, selected("reject_once"));
+        assert_eq!(
+            task.await.unwrap(),
+            PermissionDecision::Denied(PERMISSION_DENIED_MSG)
+        );
+        assert_eq!(broker.pending_count(), 0);
+        assert_eq!(broker.available_permits(), 4);
+    }
+
+    // ── Stale / unknown id ignored ────────────────────────────────────────────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_unknown_id_does_not_unblock_waiter() {
+        let broker = Arc::new(PermissionBroker::new(4, LONG));
+        let (tx, mut rx) = mpsc::channel(8);
+        let (_cancel_tx, mut cancel_rx) = watch::channel(false);
+
+        let b = Arc::clone(&broker);
+        let call = tool_call();
+        let task = tokio::spawn(async move {
+            b.request_permission(&tx, 2, "ses_a", &call, &mut cancel_rx)
+                .await
+        });
+
+        let real_id = next_request_id(&mut rx).await;
+        // A stale/foreign id is dropped; the live entry survives.
+        broker.deliver(&json!("perm-999"), selected(ALLOW_OPTION_ID));
+        broker.deliver(&json!(1), selected(ALLOW_OPTION_ID));
+        broker.deliver(&Value::Null, selected(ALLOW_OPTION_ID));
+        assert_eq!(broker.pending_count(), 1, "waiter still pending");
+
+        // The correct id resolves it exactly once.
+        broker.deliver(&real_id, selected(ALLOW_OPTION_ID));
+        assert_eq!(task.await.unwrap(), PermissionDecision::Allowed);
+        assert_eq!(broker.pending_count(), 0);
+    }
+
+    // ── Timeout ───────────────────────────────────────────────────────────────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_timeout_denies_and_removes_state() {
+        let broker = Arc::new(PermissionBroker::new(4, SHORT));
+        let (tx, _rx) = mpsc::channel(8);
+        let (_cancel_tx, mut cancel_rx) = watch::channel(false);
+        let call = tool_call();
+
+        // No delivery ever arrives: the shared deadline denies.
+        let decision = broker
+            .request_permission(&tx, 2, "ses_a", &call, &mut cancel_rx)
+            .await;
+        assert_eq!(decision, PermissionDecision::Denied(PERMISSION_TIMEOUT_MSG));
+        assert_eq!(
+            broker.pending_count(),
+            0,
+            "timeout removes correlation state"
+        );
+        assert_eq!(broker.available_permits(), 4, "timeout releases the slot");
+    }
+
+    // ── Cancellation while waiting ────────────────────────────────────────────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_cancel_while_waiting_returns_cancelled_and_removes_state() {
+        let broker = Arc::new(PermissionBroker::new(4, LONG));
+        let (tx, mut rx) = mpsc::channel(8);
+        let (cancel_tx, mut cancel_rx) = watch::channel(false);
+
+        let b = Arc::clone(&broker);
+        let call = tool_call();
+        let task = tokio::spawn(async move {
+            b.request_permission(&tx, 2, "ses_a", &call, &mut cancel_rx)
+                .await
+        });
+
+        let _id = next_request_id(&mut rx).await;
+        assert_eq!(broker.pending_count(), 1);
+        cancel_tx.send(true).unwrap();
+        assert_eq!(task.await.unwrap(), PermissionDecision::Cancelled);
+        assert_eq!(broker.pending_count(), 0);
+        assert_eq!(broker.available_permits(), 4);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_precancelled_turn_never_sends_request() {
+        let broker = Arc::new(PermissionBroker::new(4, LONG));
+        let (tx, mut rx) = mpsc::channel(8);
+        let (_cancel_tx, mut cancel_rx) = watch::channel(true); // already cancelled
+        let call = tool_call();
+
+        let decision = broker
+            .request_permission(&tx, 2, "ses_a", &call, &mut cancel_rx)
+            .await;
+        assert_eq!(decision, PermissionDecision::Cancelled);
+        assert_eq!(broker.pending_count(), 0, "no entry inserted");
+        assert_eq!(broker.available_permits(), 4);
+        assert!(rx.try_recv().is_err(), "no request frame emitted");
+    }
+
+    // ── Abort-safe drop guard ─────────────────────────────────────────────────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_abort_while_waiting_leaves_zero_pending_and_reusable_slot() {
+        let broker = Arc::new(PermissionBroker::new(1, LONG));
+        let (tx, mut rx) = mpsc::channel(8);
+        let (_cancel_tx, mut cancel_rx) = watch::channel(false);
+
+        let b = Arc::clone(&broker);
+        let call = tool_call();
+        let task = tokio::spawn(async move {
+            b.request_permission(&tx, 2, "ses_a", &call, &mut cancel_rx)
+                .await
+        });
+
+        // Registered + sent → then hard-abort the task (bypasses every normal
+        // exit path). The lease's Drop must still run.
+        let _id = next_request_id(&mut rx).await;
+        assert_eq!(broker.pending_count(), 1);
+        assert_eq!(broker.available_permits(), 0);
+        task.abort();
+        let _ = task.await;
+        assert_eq!(
+            broker.pending_count(),
+            0,
+            "drop guard removed the entry on abort"
+        );
+        assert_eq!(
+            broker.available_permits(),
+            1,
+            "drop guard released the slot on abort"
+        );
+    }
+
+    // ── Process-wide admission cap across multiple sessions ───────────────────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_admission_cap_bounds_entries_across_sessions() {
+        // Capacity 2, shared by all sessions. Three distinct sessions ask at
+        // once; only two can register/send while the cap is saturated. The
+        // third is admitted only after a slot frees. Frame ids arrive in
+        // nondeterministic order across tasks, so the test never maps a task
+        // handle to a specific id — it proves the bound structurally (frame
+        // count + pending_count) and that every task ultimately resolves.
+        let broker = Arc::new(PermissionBroker::new(2, LONG));
+        let (tx, mut rx) = mpsc::channel(8);
+        let (_c, cancel_rx) = watch::channel(false);
+
+        let spawn_req = |session: &'static str| {
+            let b = Arc::clone(&broker);
+            let tx = tx.clone();
+            let mut cancel = cancel_rx.clone();
+            let call = tool_call();
+            tokio::spawn(async move {
+                b.request_permission(&tx, 2, session, &call, &mut cancel)
+                    .await
+            })
+        };
+
+        let tasks = [spawn_req("ses_a"), spawn_req("ses_b"), spawn_req("ses_c")];
+
+        // Only two frames appear while the cap is 2; the third is blocked in
+        // admission with no entry and no frame.
+        let id1 = next_request_id(&mut rx).await;
+        let id2 = next_request_id(&mut rx).await;
+        assert_eq!(broker.pending_count(), 2);
+        assert_eq!(broker.available_permits(), 0);
+        assert!(
+            tokio::time::timeout(SHORT, rx.recv()).await.is_err(),
+            "third session must not send a request while the cap is saturated"
+        );
+        assert_eq!(
+            broker.pending_count(),
+            2,
+            "cap holds: no third entry inserted"
+        );
+
+        // Free one slot → the third session is admitted and sends its frame.
+        broker.deliver(&id1, selected(ALLOW_OPTION_ID));
+        let id3 = next_request_id(&mut rx).await;
+        assert_eq!(broker.pending_count(), 2, "still bounded after churn");
+
+        // Resolve the two remaining live entries.
+        broker.deliver(&id2, selected(ALLOW_OPTION_ID));
+        broker.deliver(&id3, selected(ALLOW_OPTION_ID));
+
+        // Every session resolved to Allowed — none stranded or timed out.
+        for t in tasks {
+            assert_eq!(t.await.unwrap(), PermissionDecision::Allowed);
+        }
+        assert_eq!(broker.pending_count(), 0);
+        assert_eq!(broker.available_permits(), 2);
+    }
+
+    // ── Admission-phase cancel: fail-closed, zero entries ─────────────────────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_cancel_during_admission_inserts_no_entry() {
+        // Saturate the single slot directly (test-module access to `sem`) so the
+        // request under test blocks in the admission phase, before any insert.
+        let broker = Arc::new(PermissionBroker::new(1, LONG));
+        let held = Arc::clone(&broker.sem).acquire_owned().await.unwrap();
+        assert_eq!(broker.available_permits(), 0);
+
+        let (tx, mut rx) = mpsc::channel(8);
+        let (cancel_tx, mut cancel_rx) = watch::channel(false);
+        let b = Arc::clone(&broker);
+        let call = tool_call();
+        let task = tokio::spawn(async move {
+            b.request_permission(&tx, 2, "ses_a", &call, &mut cancel_rx)
+                .await
+        });
+
+        // It cannot proceed past admission: no entry, no frame.
+        assert!(tokio::time::timeout(SHORT, rx.recv()).await.is_err());
+        assert_eq!(broker.pending_count(), 0, "blocked before insert");
+
+        cancel_tx.send(true).unwrap();
+        assert_eq!(task.await.unwrap(), PermissionDecision::Cancelled);
+        assert_eq!(
+            broker.pending_count(),
+            0,
+            "cancel during admission inserts nothing"
+        );
+        drop(held);
+        assert_eq!(broker.available_permits(), 1);
+    }
+
+    // ── Admission-phase deadline: fail-closed deny, zero entries ──────────────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_deadline_during_admission_denies_with_no_entry() {
+        let broker = Arc::new(PermissionBroker::new(1, SHORT));
+        let held = Arc::clone(&broker.sem).acquire_owned().await.unwrap();
+
+        let (tx, mut rx) = mpsc::channel(8);
+        let (_cancel_tx, mut cancel_rx) = watch::channel(false);
+        let call = tool_call();
+
+        // Slot never frees within the deadline → admission times out.
+        let decision = broker
+            .request_permission(&tx, 2, "ses_a", &call, &mut cancel_rx)
+            .await;
+        assert_eq!(decision, PermissionDecision::Denied(PERMISSION_TIMEOUT_MSG));
+        assert_eq!(
+            broker.pending_count(),
+            0,
+            "no entry inserted on admission timeout"
+        );
+        assert!(rx.try_recv().is_err(), "no request frame emitted");
+        drop(held);
+    }
+}

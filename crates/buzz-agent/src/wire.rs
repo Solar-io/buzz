@@ -27,7 +27,15 @@ pub enum Inbound {
         method: String,
         params: Value,
     },
-    Ignored,
+    /// A bare JSON-RPC response (id present, no method) — the client's answer
+    /// to a request buzz-agent issued. Today the only such request is
+    /// `session/request_permission`. `result` carries the JSON-RPC `result`
+    /// field, or `Null` for an `error`/malformed response; every non-`selected`
+    /// shape fails the broker's authorization predicate and denies.
+    Response {
+        id: Value,
+        result: Value,
+    },
     Invalid {
         id: Value,
         code: i32,
@@ -109,15 +117,93 @@ pub fn classify(msg: &Value) -> Inbound {
             params,
         },
         (Some(m), None) => Inbound::Notification { method: m, params },
-        // Bare responses (id present, no method) are unexpected — buzz-agent
-        // does not issue requests to the client. Ignore silently.
-        (None, Some(_)) => Inbound::Ignored,
+        // Bare responses (id present, no method) answer a request buzz-agent
+        // issued — today only `session/request_permission`. Route the `result`
+        // (or `Null` on an `error`/absent result) to the permission broker,
+        // which matches it to a live correlation id or ignores it if unknown.
+        (None, Some(id)) => Inbound::Response {
+            id,
+            result: msg.get("result").cloned().unwrap_or(Value::Null),
+        },
         (None, None) => Inbound::Invalid {
             id: Value::Null,
             code: INVALID_REQUEST,
             message: "jsonrpc: missing method and id".into(),
         },
     }
+}
+
+/// `optionId`/`kind` of the single allow option offered on every
+/// `session/request_permission`. buzz-acp's answering side selects the option
+/// whose `kind == "allow_once"` (never by hardcoded `optionId`), and the
+/// authorization predicate on this side requires the returned `optionId` to
+/// equal exactly this value. Keeping option id and kind identical means both
+/// sides agree without a separate lookup table.
+pub const ALLOW_OPTION_ID: &str = "allow_once";
+
+/// The two options offered on every permission request: allow-once and
+/// reject-once. First cut ships only these (no session-scoped grant), so every
+/// offered option is already in the desktop card's exact actionable allowlist.
+fn permission_options() -> Value {
+    json!([
+        { "optionId": ALLOW_OPTION_ID, "name": "Allow", "kind": ALLOW_OPTION_ID },
+        { "optionId": "reject_once", "name": "Deny", "kind": "reject_once" },
+    ])
+}
+
+/// Build `session/request_permission` params for the negotiated protocol
+/// version. No hybrid shapes — the request must match exactly what the client
+/// negotiated at `initialize`, or a strict client can reject it before policy
+/// is applied.
+///
+/// - **v2** (what buzz-agent negotiates with current buzz-acp): tool context
+///   lives under `subject: {type: "tool_call", toolCall}` with top-level
+///   `title` and `options`.
+/// - **v1** (still negotiated when a client requests it): the legacy shape with
+///   `toolCall` (carrying `kind`) directly at the params level.
+pub fn request_permission_params(
+    version: u32,
+    session_id: &str,
+    tool_call_id: &str,
+    title: &str,
+    raw_input: &Value,
+) -> Value {
+    if version >= 2 {
+        json!({
+            "sessionId": session_id,
+            "title": title,
+            "subject": {
+                "type": "tool_call",
+                "toolCall": {
+                    "toolCallId": tool_call_id,
+                    "title": title,
+                    "rawInput": raw_input,
+                },
+            },
+            "options": permission_options(),
+        })
+    } else {
+        json!({
+            "sessionId": session_id,
+            "toolCall": {
+                "toolCallId": tool_call_id,
+                "title": title,
+                "kind": "other",
+                "rawInput": raw_input,
+            },
+            "options": permission_options(),
+        })
+    }
+}
+
+/// Build an outbound JSON-RPC request `session/request_permission` frame.
+pub fn request_permission(id: Value, params: Value) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "session/request_permission",
+        "params": params,
+    })
 }
 
 pub fn ok(id: Value, result: Value) -> Value {
@@ -533,5 +619,109 @@ mod tests {
         );
         assert_eq!(payload["accumulatedInputTokens"], serde_json::json!(1000));
         assert_eq!(payload["accumulatedOutputTokens"], serde_json::json!(200));
+    }
+
+    // ── request_permission_params: version-aware wire shape ──────────────────
+
+    /// v2 (what buzz-agent negotiates with current buzz-acp): tool context is
+    /// nested under `subject: {type: "tool_call", toolCall}` with top-level
+    /// `title` and `options`, matching the ACP v2 `RequestPermissionRequest`.
+    #[test]
+    fn request_permission_params_v2_nests_tool_call_under_subject() {
+        let raw = json!({ "command": "ls" });
+        let p = request_permission_params(2, "ses_1", "fake__shell", "fake__shell", &raw);
+
+        assert_eq!(p["sessionId"], "ses_1");
+        assert_eq!(p["title"], "fake__shell");
+        assert_eq!(p["subject"]["type"], "tool_call");
+        assert_eq!(p["subject"]["toolCall"]["toolCallId"], "fake__shell");
+        assert_eq!(p["subject"]["toolCall"]["title"], "fake__shell");
+        assert_eq!(p["subject"]["toolCall"]["rawInput"], raw);
+        // No hybrid: v2 must NOT carry a top-level `toolCall`.
+        assert!(p.get("toolCall").is_none(), "v2 must not use the v1 shape");
+        assert_options(&p["options"]);
+    }
+
+    /// v1 (still negotiated when a client requests it): the legacy shape with
+    /// `toolCall` (carrying `kind`) directly at the params level, no `subject`.
+    #[test]
+    fn request_permission_params_v1_uses_legacy_top_level_tool_call() {
+        let raw = json!({ "command": "ls" });
+        let p = request_permission_params(1, "ses_1", "fake__shell", "fake__shell", &raw);
+
+        assert_eq!(p["sessionId"], "ses_1");
+        assert_eq!(p["toolCall"]["toolCallId"], "fake__shell");
+        assert_eq!(p["toolCall"]["title"], "fake__shell");
+        assert_eq!(p["toolCall"]["kind"], "other");
+        assert_eq!(p["toolCall"]["rawInput"], raw);
+        // No hybrid: v1 must NOT carry the v2 `subject` or top-level `title`.
+        assert!(p.get("subject").is_none(), "v1 must not use the v2 shape");
+        assert!(p.get("title").is_none(), "v1 has no top-level title");
+        assert_options(&p["options"]);
+    }
+
+    /// Both offered options are exactly allow-once and reject-once, with
+    /// `optionId == kind` so buzz-acp's `kind`-based selector and this side's
+    /// `optionId`-based predicate agree without a lookup table.
+    fn assert_options(options: &Value) {
+        let opts = options.as_array().expect("options is an array");
+        assert_eq!(opts.len(), 2, "first cut offers exactly two options");
+        assert_eq!(opts[0]["optionId"], ALLOW_OPTION_ID);
+        assert_eq!(opts[0]["kind"], ALLOW_OPTION_ID);
+        assert_eq!(opts[0]["name"], "Allow");
+        assert_eq!(opts[1]["optionId"], "reject_once");
+        assert_eq!(opts[1]["kind"], "reject_once");
+        assert_eq!(opts[1]["name"], "Deny");
+    }
+
+    /// The outbound frame wraps params in a JSON-RPC request whose id echoes
+    /// back verbatim so the broker can correlate the response.
+    #[test]
+    fn request_permission_frame_is_a_correlatable_jsonrpc_request() {
+        let params = request_permission_params(2, "ses_1", "t", "t", &json!({}));
+        let frame = request_permission(json!("perm-7"), params);
+        assert_eq!(frame["jsonrpc"], "2.0");
+        assert_eq!(frame["id"], "perm-7");
+        assert_eq!(frame["method"], "session/request_permission");
+        assert_eq!(frame["params"]["sessionId"], "ses_1");
+    }
+
+    // ── classify: bare responses route to the broker ─────────────────────────
+
+    /// A bare JSON-RPC response (id, no method) is the client's answer to a
+    /// request buzz-agent issued; it routes to the broker with its `result`.
+    #[test]
+    fn classify_bare_response_routes_to_broker() {
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": "perm-3",
+            "result": { "outcome": { "outcome": "selected", "optionId": ALLOW_OPTION_ID } },
+        });
+        match classify(&msg) {
+            Inbound::Response { id, result } => {
+                assert_eq!(id, json!("perm-3"));
+                assert_eq!(result["outcome"]["outcome"], "selected");
+            }
+            other => panic!("expected Response, got {other:?}"),
+        }
+    }
+
+    /// A JSON-RPC error response (id, `error`, no `result`) still routes to the
+    /// broker but with `result == Null`, which the authorization predicate
+    /// fails closed. buzz-agent never leaves the waiter hanging on an error.
+    #[test]
+    fn classify_error_response_routes_with_null_result() {
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": "perm-3",
+            "error": { "code": -32601, "message": "method not found" },
+        });
+        match classify(&msg) {
+            Inbound::Response { id, result } => {
+                assert_eq!(id, json!("perm-3"));
+                assert_eq!(result, Value::Null, "error/absent result → Null → deny");
+            }
+            other => panic!("expected Response, got {other:?}"),
+        }
     }
 }

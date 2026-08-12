@@ -267,6 +267,23 @@ fn openai_tool_call(id: &str, name: &str, args: Value) -> Value {
     })
 }
 
+/// Select the offered option whose `kind == "allow_once"` and return the
+/// `session/request_permission` response. Mirrors buzz-acp's answering side,
+/// which selects by `kind`, never by a hardcoded `optionId`. Centralizing this
+/// means a future option-id rename can't silently turn allow into a denial.
+fn approve_permission(request: &Value) -> Value {
+    let option_id = request["params"]["options"]
+        .as_array()
+        .and_then(|opts| opts.iter().find(|o| o["kind"] == "allow_once"))
+        .and_then(|o| o["optionId"].as_str())
+        .expect("request must offer an allow_once option");
+    json!({
+        "jsonrpc": "2.0",
+        "id": request["id"],
+        "result": { "outcome": { "outcome": "selected", "optionId": option_id } },
+    })
+}
+
 async fn init_session(h: &mut Harness) -> String {
     h.send(
         "initialize",
@@ -396,12 +413,7 @@ async fn unsupported_image_response_recovers_without_replaying_image() {
     loop {
         let message = h.recv().await;
         if message.get("method") == Some(&json!("session/request_permission")) {
-            h.write(json!({
-                "jsonrpc": "2.0",
-                "id": message["id"],
-                "result": { "outcome": { "outcome": "selected", "optionId": "allow" } },
-            }))
-            .await;
+            h.write(approve_permission(&message)).await;
         } else if message["id"] == json!(prompt_id) {
             assert_eq!(message["result"]["stopReason"], "end_turn");
             break;
