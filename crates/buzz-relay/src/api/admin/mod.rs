@@ -4408,6 +4408,473 @@ mod tests {
         );
     }
 
+    // ── 2b. event-report enforcement targets the stored event author ──────────
+
+    /// Seed an `event`-kind report backed by a real stored event whose author is
+    /// `author`, in a fresh channel the author is a member of. Returns
+    /// `(report_id, channel_id, target_event_id)`. This is the HTTP-matrix shape
+    /// the pass-6 gap never exercised: kick/ban/timeout permitted on `event`
+    /// reports, but the target user comes from the stored event row, not the
+    /// report's `target` column.
+    async fn e2e_event_report_with_author(
+        pool: &sqlx::PgPool,
+        community_id: uuid::Uuid,
+        author: &[u8],
+    ) -> (uuid::Uuid, uuid::Uuid, Vec<u8>) {
+        let target_event_id: Vec<u8> = {
+            let u = uuid::Uuid::new_v4();
+            u.as_bytes()
+                .iter()
+                .chain(u.as_bytes().iter())
+                .copied()
+                .collect()
+        };
+        let channel_id = uuid::Uuid::new_v4();
+        sqlx::query(
+            r#"INSERT INTO channels (id, community_id, name, channel_type, visibility, created_by)
+               VALUES ($1, $2, 'event-report-ch', 'stream', 'open', $3)"#,
+        )
+        .bind(channel_id)
+        .bind(community_id)
+        .bind(author)
+        .execute(pool)
+        .await
+        .expect("create channel");
+        sqlx::query(
+            "INSERT INTO channel_members (community_id, channel_id, pubkey, role) VALUES ($1, $2, $3, 'member')",
+        )
+        .bind(community_id)
+        .bind(channel_id)
+        .bind(author)
+        .execute(pool)
+        .await
+        .expect("add member");
+        // The stored event: its `pubkey` is the author the enforcement must target.
+        sqlx::query(
+            r#"INSERT INTO events (community_id, id, pubkey, created_at, kind, tags, content, sig, received_at, channel_id)
+               VALUES ($1, $2, $3, now(), 9, '[]', 'offending message', $4, now(), $5)"#,
+        )
+        .bind(community_id)
+        .bind(target_event_id.as_slice())
+        .bind(author)
+        .bind(vec![0u8; 64])
+        .bind(channel_id)
+        .execute(pool)
+        .await
+        .expect("insert event");
+        let reporter = vec![0u8; 32];
+        let report_event_id: Vec<u8> = {
+            let u = uuid::Uuid::new_v4();
+            u.as_bytes()
+                .iter()
+                .chain(u.as_bytes().iter())
+                .copied()
+                .collect()
+        };
+        let report_id: uuid::Uuid = sqlx::query_scalar(
+            r#"INSERT INTO moderation_reports
+               (community_id, report_event_id, reporter_pubkey, target_kind, target_event_id,
+                channel_id, report_type)
+               VALUES ($1, $2, $3, 'event', $4, $5, 'harassment') RETURNING id"#,
+        )
+        .bind(community_id)
+        .bind(report_event_id.as_slice())
+        .bind(&reporter)
+        .bind(target_event_id.as_slice())
+        .bind(channel_id)
+        .fetch_one(pool)
+        .await
+        .expect("insert event report");
+        (report_id, channel_id, target_event_id)
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres — HTTP kick on an event report enforces against the stored author"]
+    async fn http_kick_on_event_report_succeeds_against_stored_author() {
+        // Regression for the pass-6 dead path: an `event`-kind report resolved
+        // with `kick` through the FULL HTTP driver (resolve_report_with_enforcement,
+        // not a DB-layer insert) must derive the target user from the stored event
+        // row and genuinely remove them, resolving the report and enqueuing the
+        // system_message + reporter_notice outbox rows.
+        let pool = e2e_pool().await;
+        let (community_id, host) = e2e_community(&pool, "http-kick-event").await;
+        let author = vec![0x41u8; 32];
+        let (report_id, channel_id, _eid) =
+            e2e_event_report_with_author(&pool, community_id, &author).await;
+        let actor = vec![0x42u8; 32];
+
+        let state = state_from_pool(pool.clone()).await;
+        let tenant = e2e_tenant(community_id, &host);
+        let report = state
+            .db
+            .admin_get_report(report_id)
+            .await
+            .expect("load report")
+            .expect("report exists");
+
+        let result = crate::handlers::report_resolution::resolve_report_with_enforcement(
+            &state,
+            &tenant,
+            &report,
+            "kick",
+            None,
+            None,
+            uuid::Uuid::new_v4(),
+            &actor,
+            "operator",
+            "relay_operator",
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "kick on an event report must succeed end-to-end: {result:?}"
+        );
+
+        // Member removed.
+        let removed_at: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+            "SELECT removed_at FROM channel_members WHERE community_id = $1 AND channel_id = $2 AND pubkey = $3",
+        )
+        .bind(community_id)
+        .bind(channel_id)
+        .bind(&author)
+        .fetch_one(&pool)
+        .await
+        .expect("member row");
+        assert!(removed_at.is_some(), "the stored author must be kicked");
+
+        // Report resolved, action succeeded.
+        let detail = state
+            .db
+            .admin_get_report(report_id)
+            .await
+            .expect("reload report")
+            .expect("exists");
+        assert_eq!(detail.report.status, "resolved");
+        let action = detail.active_action.expect("action DTO");
+        assert_eq!(action.status, "succeeded");
+
+        // system_message + reporter_notice outbox rows exist (kick artifacts).
+        let outbox: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM relay_admin_outbox WHERE action_id = $1")
+                .bind(action.id)
+                .fetch_one(&pool)
+                .await
+                .expect("outbox count");
+        assert!(
+            outbox >= 2,
+            "kick must enqueue system_message + notice: got {outbox}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres — HTTP ban on an event report enforces against the stored author"]
+    async fn http_ban_on_event_report_succeeds_against_stored_author() {
+        // ban on an `event` report: the community_bans row must be written for the
+        // stored event's author, not skipped for want of a target pubkey.
+        let pool = e2e_pool().await;
+        let (community_id, host) = e2e_community(&pool, "http-ban-event").await;
+        let author = vec![0x51u8; 32];
+        let (report_id, _channel_id, _eid) =
+            e2e_event_report_with_author(&pool, community_id, &author).await;
+        let actor = vec![0x52u8; 32];
+
+        let state = state_from_pool(pool.clone()).await;
+        let tenant = e2e_tenant(community_id, &host);
+        let report = state
+            .db
+            .admin_get_report(report_id)
+            .await
+            .expect("load report")
+            .expect("report exists");
+
+        let result = crate::handlers::report_resolution::resolve_report_with_enforcement(
+            &state,
+            &tenant,
+            &report,
+            "ban",
+            None,
+            None,
+            uuid::Uuid::new_v4(),
+            &actor,
+            "operator",
+            "relay_operator",
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "ban on an event report must succeed: {result:?}"
+        );
+
+        let banned: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM community_bans WHERE community_id = $1 AND pubkey = $2)",
+        )
+        .bind(community_id)
+        .bind(&author)
+        .fetch_one(&pool)
+        .await
+        .expect("ban existence");
+        assert!(banned, "the stored author must be banned");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres — HTTP kick on a purged event report fails pre-claim without dirtying the report"]
+    async fn http_kick_on_event_report_with_missing_event_rejects_pre_claim() {
+        // Criterion 2: the reported event is absent (purged before resolution).
+        // Person-directed enforcement must reject BEFORE claiming, leaving the
+        // report `open` with no action row to cancel — a clean, deterministic
+        // failure, not a stranded `processing` report.
+        let pool = e2e_pool().await;
+        let (community_id, host) = e2e_community(&pool, "http-kick-missing").await;
+        // An event report whose target event id has no stored row.
+        let missing_event_id: Vec<u8> = {
+            let u = uuid::Uuid::new_v4();
+            u.as_bytes()
+                .iter()
+                .chain(u.as_bytes().iter())
+                .copied()
+                .collect()
+        };
+        let channel_id = uuid::Uuid::new_v4();
+        sqlx::query(
+            r#"INSERT INTO channels (id, community_id, name, channel_type, visibility, created_by)
+               VALUES ($1, $2, 'missing-ev-ch', 'stream', 'open', $3)"#,
+        )
+        .bind(channel_id)
+        .bind(community_id)
+        .bind(vec![0u8; 32])
+        .execute(&pool)
+        .await
+        .expect("create channel");
+        let report_event_id: Vec<u8> = {
+            let u = uuid::Uuid::new_v4();
+            u.as_bytes()
+                .iter()
+                .chain(u.as_bytes().iter())
+                .copied()
+                .collect()
+        };
+        let report_id: uuid::Uuid = sqlx::query_scalar(
+            r#"INSERT INTO moderation_reports
+               (community_id, report_event_id, reporter_pubkey, target_kind, target_event_id,
+                channel_id, report_type)
+               VALUES ($1, $2, $3, 'event', $4, $5, 'harassment') RETURNING id"#,
+        )
+        .bind(community_id)
+        .bind(report_event_id.as_slice())
+        .bind(vec![0u8; 32])
+        .bind(missing_event_id.as_slice())
+        .bind(channel_id)
+        .fetch_one(&pool)
+        .await
+        .expect("insert report");
+        let actor = vec![0x62u8; 32];
+
+        let state = state_from_pool(pool.clone()).await;
+        let tenant = e2e_tenant(community_id, &host);
+        let report = state
+            .db
+            .admin_get_report(report_id)
+            .await
+            .expect("load report")
+            .expect("report exists");
+
+        let result = crate::handlers::report_resolution::resolve_report_with_enforcement(
+            &state,
+            &tenant,
+            &report,
+            "kick",
+            None,
+            None,
+            uuid::Uuid::new_v4(),
+            &actor,
+            "operator",
+            "relay_operator",
+        )
+        .await;
+        assert!(
+            matches!(
+                result,
+                Err(crate::handlers::report_resolution::ResolutionError::InvalidAction(_))
+            ),
+            "missing event author must reject pre-claim as InvalidAction: {result:?}"
+        );
+
+        // The report must be untouched: still open, no action row claimed.
+        let detail = state
+            .db
+            .admin_get_report(report_id)
+            .await
+            .expect("reload report")
+            .expect("exists");
+        assert_eq!(
+            detail.report.status, "open",
+            "report must stay open (never claimed)"
+        );
+        let action_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM relay_admin_actions WHERE report_id = $1")
+                .bind(report_id)
+                .fetch_one(&pool)
+                .await
+                .expect("action count");
+        assert_eq!(
+            action_count, 0,
+            "no action row may exist for a pre-claim rejection"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres — stranded kick re-drive converges after mid-flight event purge"]
+    async fn worker_redrive_of_event_kick_converges_after_event_purged_mid_flight() {
+        // Criterion 3 + Paul's mid-flight edge: a kick on an event report claims,
+        // commits its mutation+marker, then the event row is HARD-purged before a
+        // stranded re-drive. The worker re-derives from the (now author-less)
+        // report row; because the target is not persisted, the pubkey re-derives
+        // to None. The action is already past `mutation_committed`, so the driver
+        // skips the mutation and finalizes: action → succeeded, report → resolved.
+        // The kick already landed (member removed at commit time); only the
+        // system_message artifact (which needs the target pubkey) is dropped —
+        // the action does NOT strand permanently.
+        let pool = e2e_pool().await;
+        let (community_id, _host) = e2e_community(&pool, "worker-midflight-purge").await;
+        let author = vec![0x71u8; 32];
+        let (report_id, channel_id, target_event_id) =
+            e2e_event_report_with_author(&pool, community_id, &author).await;
+        let actor = vec![0x72u8; 32];
+        let cid = buzz_core::CommunityId::from_uuid(community_id);
+
+        // Claim + enforcing + lease + kick mutation & marker (author derived from
+        // the still-present event row).
+        let state = state_from_pool(pool.clone()).await;
+        let report = state
+            .db
+            .admin_get_report(report_id)
+            .await
+            .expect("load report")
+            .expect("exists");
+        let (target_pubkey, _eid) =
+            crate::handlers::report_resolution::derive_enforcement_target(&report).expect("derive");
+        assert_eq!(
+            target_pubkey.as_deref(),
+            Some(author.as_slice()),
+            "author derived while event present"
+        );
+
+        let action_id = match buzz_db::relay_admin_actions::claim_report(
+            &pool,
+            cid,
+            report_id,
+            uuid::Uuid::new_v4(),
+            &actor,
+            "operator",
+            "kick",
+            None,
+            None,
+            "resolve:kick",
+            "relay_operator",
+            target_pubkey.as_deref(),
+            None,
+            Some(channel_id),
+        )
+        .await
+        .expect("claim")
+        {
+            buzz_db::relay_admin_actions::ClaimResult::Claimed(a) => a.id,
+            other => panic!("expected Claimed, got {other:?}"),
+        };
+        let _ = buzz_db::relay_admin_actions::begin_enforcing(&pool, action_id)
+            .await
+            .expect("begin_enforcing");
+        let lease_until = chrono::Utc::now() + chrono::Duration::seconds(60);
+        let lease_token =
+            match buzz_db::relay_admin_actions::acquire_action_lease(&pool, action_id, lease_until)
+                .await
+                .expect("acquire lease")
+            {
+                buzz_db::relay_admin_actions::LeaseResult::Acquired(t) => t,
+                other => panic!("expected Acquired, got {other:?}"),
+            };
+        let committed = buzz_db::relay_admin_actions::execute_kick_with_marker(
+            &pool,
+            action_id,
+            lease_token,
+            cid,
+            channel_id,
+            author.as_slice(),
+            &actor,
+        )
+        .await
+        .expect("kick");
+        assert!(
+            matches!(
+                committed,
+                buzz_db::relay_admin_actions::KickWithMarkerResult::Removed
+            ),
+            "kick must commit its mutation + marker before the crash"
+        );
+
+        // Mid-flight disappearance: HARD-purge the stored event (community purge),
+        // then expire the lease so the recovery worker can re-claim.
+        sqlx::query("DELETE FROM events WHERE community_id = $1 AND id = $2")
+            .bind(community_id)
+            .bind(target_event_id.as_slice())
+            .execute(&pool)
+            .await
+            .expect("purge event");
+        sqlx::query(
+            "UPDATE relay_admin_actions SET action_lease_expires_at = $2, action_lease_token = NULL WHERE id = $1",
+        )
+        .bind(action_id)
+        .bind(chrono::Utc::now() - chrono::Duration::seconds(300))
+        .execute(&pool)
+        .await
+        .expect("expire lease");
+
+        // Re-derive now yields no author — the exact divergence Paul flagged.
+        let report_after = state
+            .db
+            .admin_get_report(report_id)
+            .await
+            .expect("reload report")
+            .expect("exists");
+        let (target_after, _e) =
+            crate::handlers::report_resolution::derive_enforcement_target(&report_after)
+                .expect("derive after purge");
+        assert_eq!(target_after, None, "author unresolvable after purge");
+
+        // Re-drive through the REAL recovery worker entry point.
+        let batch = buzz_db::relay_admin_actions::claim_stranded_action_batch(
+            &pool,
+            "e2e-midflight-worker",
+            chrono::Utc::now() + chrono::Duration::seconds(120),
+            1000,
+        )
+        .await
+        .expect("claim_stranded_action_batch");
+        let claim = batch
+            .into_iter()
+            .find(|c| c.record.id == action_id)
+            .expect("stranded action must appear in batch");
+        crate::handlers::admin_action_worker::recover_one(&state, claim).await;
+
+        // Convergence: action succeeded (marker was already committed), report
+        // resolved. No permanent strand despite the vanished target.
+        let final_rec = buzz_db::relay_admin_actions::get_action(&pool, action_id)
+            .await
+            .expect("get_action")
+            .expect("exists");
+        assert_eq!(
+            final_rec.state, "succeeded",
+            "post-marker re-drive must finalize even with the event purged, not strand"
+        );
+        let detail = state
+            .db
+            .admin_get_report(report_id)
+            .await
+            .expect("reload report")
+            .expect("exists");
+        assert_eq!(detail.report.status, "resolved");
+    }
+
     // ── 3. delivery failure: report resolved but delivery retryable ───────────
 
     #[tokio::test]

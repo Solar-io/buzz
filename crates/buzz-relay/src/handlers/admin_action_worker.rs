@@ -115,13 +115,10 @@ pub(crate) async fn recover_one(state: &Arc<AppState>, claim: StrandedActionClai
     };
 
     let (target_pubkey_opt, target_event_id_opt) =
-        match crate::handlers::report_resolution::decode_report_target_pub(
-            &report.report.target_kind,
-            &report.report.target,
-        ) {
+        match crate::handlers::report_resolution::derive_enforcement_target_pub(&report) {
             Ok(pair) => pair,
             Err(e) => {
-                warn!(action_id = %action_id, "Action recovery: target decode failed: {e:?}");
+                warn!(action_id = %action_id, "Action recovery: target derive failed: {e:?}");
                 return;
             }
         };

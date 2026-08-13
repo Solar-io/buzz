@@ -260,8 +260,23 @@ pub async fn resolve_report_with_enforcement(
     let report_id = report.report.id;
     let channel_id = report.report.channel_id;
 
-    let (target_pubkey_opt, target_event_id_opt) =
-        decode_report_target(&report.report.target_kind, &report.report.target)?;
+    let (target_pubkey_opt, target_event_id_opt) = derive_enforcement_target(report)?;
+
+    // Pre-claim guard: person-directed enforcement on an `event` report needs a
+    // resolvable target user. A report row never stores the reported event's
+    // author (the reporter `p` tag is validation-shape only), so it is derived
+    // from the stored event row. When that row is missing — the event was purged
+    // (or never accepted) before its author could be determined — reject BEFORE
+    // claiming, so the report is never dirtied: it stays `open` with no failed
+    // action to cancel-and-reopen. `delete` needs only the event id and is exempt
+    // (a purged event is an idempotent no-op delete). A soft-deleted event still
+    // carries a real author, so this rejects only a wholly absent event row.
+    if matches!(action, "kick" | "ban" | "timeout") && target_pubkey_opt.is_none() {
+        return Err(ResolutionError::InvalidAction(format!(
+            "action `{action}` requires a resolvable target user, but the reported event is missing \
+             or was deleted before its author could be determined"
+        )));
+    }
 
     let audit_action = enforcement_audit_action(action);
 
@@ -721,14 +736,55 @@ async fn run_atomic_mutation(
 /// Decode the report target hex into binary (public for the action recovery worker).
 pub type TargetPair = (Option<Vec<u8>>, Option<Vec<u8>>);
 
-/// Decode a report target's `target_kind` + hex string into a `(pubkey_bytes, event_id_bytes)` pair.
+/// Derive the enforcement target from a full report detail.
 ///
-/// Exposed for use by the action recovery worker and tests.
-pub fn decode_report_target_pub(
-    target_kind: &str,
-    target_hex: &str,
+/// This is the single source of truth for "who/what does enforcement act on",
+/// shared by the HTTP driver ([`resolve_report_with_enforcement`]) and the action
+/// recovery worker (via [`derive_enforcement_target_pub`]). Because both paths
+/// derive from the same immutable report row + stored event row — and the action
+/// record persists no target columns of its own — a stranded action always
+/// re-derives against the **same** target it originally claimed.
+///
+/// Beyond [`decode_report_target`]'s `(kind, hex)` decode it overlays the reported
+/// event's **author** onto `event`-kind reports. The report row never stores that
+/// author (the reporter-supplied `p` tag is validation-shape only, never
+/// inserted — see `handlers/report.rs`), so person-directed enforcement
+/// (`ban`/`timeout`/`kick`) on an event report would otherwise have no target
+/// pubkey. The author is server-owned truth read from the stored event row
+/// (`message.author_pubkey`), never the reporter's claim.
+///
+/// A soft-deleted event (`deleted_at` set) still has a real author, so its author
+/// is still surfaced here — the offense does not vanish with the message. When the
+/// event row is entirely absent (purged, or never accepted) `message` is `None`
+/// and the pubkey stays `None`; callers decide the failure semantics.
+pub fn derive_enforcement_target(
+    report: &AdminReportDetail,
 ) -> Result<TargetPair, ResolutionError> {
-    decode_report_target(target_kind, target_hex)
+    let (target_pubkey, target_event_id) =
+        decode_report_target(&report.report.target_kind, &report.report.target)?;
+
+    if report.report.target_kind == "event" {
+        let author = report
+            .message
+            .as_ref()
+            .map(|m| hex::decode(&m.author_pubkey))
+            .transpose()
+            .map_err(|_| {
+                ResolutionError::Internal("invalid stored event author hex".to_string())
+            })?;
+        return Ok((author, target_event_id));
+    }
+
+    Ok((target_pubkey, target_event_id))
+}
+
+/// Re-derive the enforcement target from a persisted report detail (used by the
+/// action recovery worker on re-drive). Identical derivation to the HTTP claim
+/// path, so a stranded action converges against the same target it claimed.
+pub fn derive_enforcement_target_pub(
+    report: &AdminReportDetail,
+) -> Result<TargetPair, ResolutionError> {
+    derive_enforcement_target(report)
 }
 
 /// Re-drive an enforcement action from a persisted record (used by the action
@@ -789,5 +845,122 @@ fn decode_report_target(
         other => Err(ResolutionError::Internal(format!(
             "unknown target_kind: {other}"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use buzz_db::admin_moderation::{AdminReport, AdminReportedMessage};
+
+    fn report(target_kind: &str, target: &str) -> AdminReport {
+        AdminReport {
+            id: Uuid::nil(),
+            community_id: Uuid::nil(),
+            community_host: "e2e.example".to_string(),
+            report_event_id: "0".repeat(64),
+            reporter_pubkey: "0".repeat(64),
+            target_kind: target_kind.to_string(),
+            target: target.to_string(),
+            channel_id: None,
+            report_type: "spam".to_string(),
+            note: None,
+            status: "open".to_string(),
+            resolved_by: None,
+            resolved_at: None,
+            action_id: None,
+            created_at: Utc::now(),
+        }
+    }
+
+    fn message(author_hex: &str) -> AdminReportedMessage {
+        AdminReportedMessage {
+            author_pubkey: author_hex.to_string(),
+            content: "reported".to_string(),
+            created_at: Utc::now(),
+            deleted_at: None,
+        }
+    }
+
+    fn detail(report: AdminReport, message: Option<AdminReportedMessage>) -> AdminReportDetail {
+        AdminReportDetail {
+            report,
+            message,
+            active_action: None,
+        }
+    }
+
+    #[test]
+    fn event_report_overlays_stored_author_as_target_pubkey() {
+        // The report row carries only the event id; the enforcement target
+        // pubkey is the stored event's author, not the report's `target` hex.
+        let event_hex = "ab".repeat(32);
+        let author_hex = "cd".repeat(32);
+        let d = detail(report("event", &event_hex), Some(message(&author_hex)));
+
+        let (pubkey, event_id) = derive_enforcement_target(&d).expect("derive");
+        assert_eq!(
+            pubkey,
+            Some(hex::decode(&author_hex).unwrap()),
+            "event target pubkey must be the stored author, enabling kick/ban/timeout"
+        );
+        assert_eq!(event_id, Some(hex::decode(&event_hex).unwrap()));
+    }
+
+    #[test]
+    fn event_report_with_soft_deleted_author_still_resolves_target() {
+        // A soft-deleted event still has a real author: enforcement against that
+        // author remains valid — the offense doesn't vanish with the message.
+        let event_hex = "11".repeat(32);
+        let author_hex = "22".repeat(32);
+        let mut msg = message(&author_hex);
+        msg.deleted_at = Some(Utc::now());
+        let d = detail(report("event", &event_hex), Some(msg));
+
+        let (pubkey, _event_id) = derive_enforcement_target(&d).expect("derive");
+        assert_eq!(pubkey, Some(hex::decode(&author_hex).unwrap()));
+    }
+
+    #[test]
+    fn event_report_with_missing_event_row_yields_no_target_pubkey() {
+        // Event purged (or never accepted): no stored row → no author. The pair
+        // keeps the event id (delete stays valid) but leaves the pubkey None, so
+        // the person-directed pre-claim guard rejects deterministically.
+        let event_hex = "33".repeat(32);
+        let d = detail(report("event", &event_hex), None);
+
+        let (pubkey, event_id) = derive_enforcement_target(&d).expect("derive");
+        assert_eq!(
+            pubkey, None,
+            "missing event row must not fabricate a target"
+        );
+        assert_eq!(event_id, Some(hex::decode(&event_hex).unwrap()));
+    }
+
+    #[test]
+    fn pubkey_report_target_is_unchanged_by_derivation() {
+        // A pubkey report carries the target user directly; no event row exists,
+        // so derivation must pass the decoded pubkey through untouched.
+        let pubkey_hex = "44".repeat(32);
+        let d = detail(report("pubkey", &pubkey_hex), None);
+
+        let (pubkey, event_id) = derive_enforcement_target(&d).expect("derive");
+        assert_eq!(pubkey, Some(hex::decode(&pubkey_hex).unwrap()));
+        assert_eq!(event_id, None);
+    }
+
+    #[test]
+    fn worker_and_http_derivations_are_identical() {
+        // Convergence guarantee: the recovery worker's derivation must equal the
+        // HTTP claim's for the same report row, since neither persists the target.
+        let event_hex = "55".repeat(32);
+        let author_hex = "66".repeat(32);
+        let d = detail(report("event", &event_hex), Some(message(&author_hex)));
+
+        assert_eq!(
+            derive_enforcement_target(&d).unwrap(),
+            derive_enforcement_target_pub(&d).unwrap(),
+            "worker re-derive must match the HTTP claim derivation exactly"
+        );
     }
 }
