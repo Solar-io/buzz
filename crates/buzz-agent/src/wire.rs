@@ -353,7 +353,18 @@ pub fn session_update_with_goose_meta(sid: &str, update: Value, goose_meta: Valu
 }
 
 pub async fn send(wire: &WireSender, msg: Value) {
-    let _ = wire.send(WireMsg::Notify(msg)).await;
+    let _ = send_checked(wire, msg).await;
+}
+
+/// Enqueue a frame, reporting whether the writer accepted it. Unlike mpsc's
+/// non-blocking `try_send`, this awaits channel capacity; it fails only when
+/// the writer task has dropped its receiver, which happens exactly when the
+/// writer has exited because stdout is closed/broken. A frame that fails here
+/// will never be written, so callers that correlate a response — the
+/// permission broker — must fail closed immediately rather than wait out a
+/// deadline for a reply that can never arrive.
+pub async fn send_checked(wire: &WireSender, msg: Value) -> Result<(), ()> {
+    wire.send(WireMsg::Notify(msg)).await.map_err(|_| ())
 }
 
 pub async fn read_bounded_line<R: AsyncBufRead + Unpin>(
@@ -723,5 +734,26 @@ mod tests {
             }
             other => panic!("expected Response, got {other:?}"),
         }
+    }
+
+    // ── send_checked: observable wire closure ────────────────────────────────
+
+    /// `send_checked` reports `Ok` while the writer's receiver is alive and
+    /// `Err` once it is gone (writer task exited on closed/broken stdout). This
+    /// is the contract the permission broker relies on to fail an undeliverable
+    /// ask closed immediately instead of waiting out its deadline for a reply
+    /// that can never be written.
+    #[tokio::test]
+    async fn send_checked_reports_closure_when_writer_gone() {
+        let (tx, rx) = mpsc::channel::<WireMsg>(4);
+        assert!(
+            send_checked(&tx, json!({ "ok": 1 })).await.is_ok(),
+            "send succeeds while the writer receiver is alive"
+        );
+        drop(rx); // writer exited → receiver dropped
+        assert!(
+            send_checked(&tx, json!({ "ok": 2 })).await.is_err(),
+            "send reports failure once the writer is gone"
+        );
     }
 }

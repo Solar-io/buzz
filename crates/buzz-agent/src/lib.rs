@@ -207,21 +207,40 @@ async fn async_main() {
         models_cache: tokio::sync::OnceCell::new(),
     });
     let (wire_tx, wire_rx) = mpsc::channel::<WireMsg>(64);
-    let writer = tokio::spawn(wire::writer_task(wire_rx));
-    if let Err(e) = read_loop(
-        BufReader::new(tokio::io::stdin()),
-        app.clone(),
-        wire_tx,
-        max_line,
-    )
-    .await
-    {
-        tracing::error!("io: reader: {e}");
+    let mut writer = tokio::spawn(wire::writer_task(wire_rx));
+    // Whichever ends first drives shutdown. The reader ending is the normal
+    // path (stdin EOF/error). The writer ending while the reader still runs
+    // means stdout is closed/broken: no reply can ever be written, so we must
+    // stop reading and cancel every session rather than leave the process
+    // reading input while outstanding permission asks wait out their full
+    // deadline for a response that can never arrive.
+    tokio::select! {
+        r = read_loop(
+            BufReader::new(tokio::io::stdin()),
+            app.clone(),
+            wire_tx,
+            max_line,
+        ) => {
+            if let Err(e) = r {
+                tracing::error!("io: reader: {e}");
+            }
+            cancel_all_sessions(&app).await;
+            let _ = writer.await;
+        }
+        _ = &mut writer => {
+            tracing::error!("io: writer exited (stdout closed); shutting down connection");
+            cancel_all_sessions(&app).await;
+        }
     }
+}
+
+/// Signal every live session to cancel. Run on connection teardown so in-flight
+/// prompts — including any waiting on a `session/request_permission` response —
+/// resolve promptly instead of waiting out their deadline.
+async fn cancel_all_sessions(app: &Arc<App>) {
     for session in app.sessions.lock().await.values() {
         let _ = session.cancel_tx.send(true);
     }
-    let _ = writer.await;
 }
 
 async fn read_loop<R: tokio::io::AsyncBufRead + Unpin>(

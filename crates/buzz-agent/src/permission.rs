@@ -24,6 +24,11 @@
 //!   a later lease `Drop` is a harmless no-op.
 //! - **Unknown/late ids ignored.** A response whose id is not a live entry is
 //!   logged and dropped.
+//! - **Undeliverable asks are terminal.** If the output wire is closed when the
+//!   request is enqueued, [`PermissionBroker::request_permission`] fails closed
+//!   immediately (dropping the lease removes the entry and releases the permit)
+//!   rather than leaving a resident waiter to time out — a closed wire can never
+//!   carry the reply.
 //! - **Single absolute deadline.** Admission wait and response wait share one
 //!   absolute deadline computed at gate entry, so a saturated call cannot live
 //!   for two full timeout windows.
@@ -51,6 +56,12 @@ pub const PERMISSION_DENIED_MSG: &str = "permission denied: the tool call was no
 pub const PERMISSION_TIMEOUT_MSG: &str =
     "permission request timed out: the tool call was not authorized";
 
+/// Model-visible tool error when the permission request cannot be delivered
+/// because the output wire is closed. Terminal and immediate — no waiter is
+/// left resident, since a closed wire can never carry a reply.
+pub const PERMISSION_WIRE_CLOSED_MSG: &str =
+    "permission request undeliverable: the tool call was not authorized";
+
 /// Outcome of asking the client to authorize one tool call.
 #[derive(Debug, PartialEq, Eq)]
 pub enum PermissionDecision {
@@ -77,7 +88,19 @@ pub struct PermissionBroker {
     next_id: AtomicU64,
     /// Absolute deadline budget shared by admission + response wait.
     timeout: Duration,
+    /// Test-only: invoked by the waiter the instant it observes a delivered
+    /// response, with `true` iff the entry was already claimed (removed) from
+    /// `pending` before the wake. Makes claim-before-wake ordering
+    /// mutation-sensitive — a wake-before-claim mutant reports `false`, which a
+    /// purely behavioral test cannot detect (the waiter reads the oneshot once
+    /// either way).
+    #[cfg(test)]
+    wake_observer: Mutex<Option<WakeObserver>>,
 }
+
+/// Test-only wake-boundary observer; see [`PermissionBroker::wake_observer`].
+#[cfg(test)]
+type WakeObserver = Arc<dyn Fn(bool) + Send + Sync>;
 
 impl PermissionBroker {
     /// `max_pending` is validated `>= 1` by config; `timeout` is injectable so
@@ -88,6 +111,31 @@ impl PermissionBroker {
             pending: Arc::new(Mutex::new(HashMap::new())),
             next_id: AtomicU64::new(0),
             timeout,
+            #[cfg(test)]
+            wake_observer: Mutex::new(None),
+        }
+    }
+
+    /// Test-only: register a callback the waiter fires the instant it observes a
+    /// delivered response, with `true` iff the correlation entry was already
+    /// claimed (removed) before the wake. Used to prove claim-before-wake
+    /// ordering in a way a wake-before-claim mutant cannot satisfy.
+    #[cfg(test)]
+    pub fn set_wake_observer(&self, observer: WakeObserver) {
+        *self.wake_observer.lock().unwrap() = Some(observer);
+    }
+
+    /// Test-only: fire the wake observer (if any) with the claimed-before-wake
+    /// status of `id`. Called synchronously by the waiter the moment it receives
+    /// its response, so the observed `pending` state is exactly the state at the
+    /// wake — deterministic in production (removal happens-before the send) and
+    /// violated by a wake-before-claim mutant.
+    #[cfg(test)]
+    fn observe_wake(&self, id: u64) {
+        let claimed = !self.pending.lock().unwrap().contains_key(&id);
+        let observer = self.wake_observer.lock().unwrap().clone();
+        if let Some(observer) = observer {
+            observer(claimed);
         }
     }
 
@@ -177,21 +225,39 @@ impl PermissionBroker {
             &call.name,
             &call.arguments,
         );
-        wire::send(
+        if wire::send_checked(
             wire,
             wire::request_permission(lease.id_value.clone(), params),
         )
-        .await;
+        .await
+        .is_err()
+        {
+            // The output wire is closed: this ask will never be written and no
+            // reply can ever arrive. Fail closed now — dropping `lease` here
+            // removes the entry and releases the permit synchronously — instead
+            // of leaving the entry resident until the deadline expires.
+            return PermissionDecision::Denied(PERMISSION_WIRE_CLOSED_MSG);
+        }
 
         // ── Response wait ──────────────────────────────────────────────────
         if *cancel.borrow() {
             return PermissionDecision::Cancelled;
         }
+        #[cfg(test)]
+        let id = lease.id;
         tokio::select! {
             biased;
             _ = cancel.changed() => PermissionDecision::Cancelled,
             r = &mut lease.rx => match r {
-                Ok(result) => evaluate(&result),
+                Ok(result) => {
+                    // The waiter observes delivery here. At this instant the
+                    // entry must already be claimed (removed) — delivery removes
+                    // before it sends. The observer is test-only and a no-op in
+                    // production.
+                    #[cfg(test)]
+                    self.observe_wake(id);
+                    evaluate(&result)
+                }
                 // Sender dropped without sending — should not happen (delivery
                 // always sends before drop); fail closed.
                 Err(_) => PermissionDecision::Denied(PERMISSION_DENIED_MSG),
@@ -252,10 +318,14 @@ fn evaluate(result: &Value) -> PermissionDecision {
 }
 
 /// Recover the correlation key from an outbound request id echoed by the
-/// client. Only ids we minted (`perm-<n>`) are ours; anything else is a
-/// foreign/stale id and is ignored.
+/// client. Only ids we minted (`perm-<n>`, canonical decimal) are ours; a
+/// noncanonical alias (`perm-01`, `perm-+0`, `perm-00`) or any other string is
+/// a foreign/stale id and is ignored. Requiring an exact round-trip means only
+/// the string the broker actually minted correlates — no alias is ever live.
 fn parse_id(id: &Value) -> Option<u64> {
-    id.as_str()?.strip_prefix("perm-")?.parse().ok()
+    let s = id.as_str()?;
+    let n: u64 = s.strip_prefix("perm-")?.parse().ok()?;
+    (format!("perm-{n}") == s).then_some(n)
 }
 
 #[cfg(test)]
@@ -335,6 +405,31 @@ mod tests {
         assert_eq!(parse_id(&json!("42")), None); // foreign numeric-string id
         assert_eq!(parse_id(&json!(42)), None); // foreign numeric id
         assert_eq!(parse_id(&Value::Null), None);
+    }
+
+    /// Noncanonical strings that `u64::parse` would otherwise accept as aliases
+    /// of a minted id must NOT correlate. Only the exact string the broker
+    /// minted (`format!("perm-{n}")`) is live; leading zeros, a sign, or
+    /// whitespace make the id foreign and it is ignored. Without the exact
+    /// round-trip check these would resolve live asks under ids the broker
+    /// never issued.
+    #[test]
+    fn test_parse_id_rejects_noncanonical_aliases() {
+        for alias in [
+            "perm-00",    // extra leading zero
+            "perm-01",    // leading zero
+            "perm-+0",    // explicit sign
+            "perm-0x1",   // hex
+            "perm- 1",    // leading space
+            "perm-1 ",    // trailing space
+            "perm-1_000", // digit separator
+        ] {
+            assert_eq!(
+                parse_id(&json!(alias)),
+                None,
+                "alias must be foreign: {alias}"
+            );
+        }
     }
 
     // ── Delivery: exact allow / deny ──────────────────────────────────────────
@@ -439,7 +534,88 @@ mod tests {
         assert_eq!(broker.available_permits(), 4, "timeout releases the slot");
     }
 
-    // ── Cancellation while waiting ────────────────────────────────────────────
+    // ── Undeliverable ask (closed wire) is terminal ───────────────────────────
+
+    /// When the output wire is closed, the ask can never be written and no
+    /// reply can ever arrive. `request_permission` must fail closed
+    /// *immediately* — denying with the wire-closed reason and leaving zero
+    /// pending entries and zero held permits — rather than registering an entry
+    /// that waits out the full deadline. Uses a LONG timeout so a wrong
+    /// implementation that waits the deadline would visibly hang the test far
+    /// past its own assertions.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_closed_wire_denies_immediately_without_leaking_state() {
+        let broker = Arc::new(PermissionBroker::new(4, LONG));
+        // Drop the receiver so every send fails: the writer is gone.
+        let (tx, rx) = mpsc::channel(8);
+        drop(rx);
+        let (_cancel_tx, mut cancel_rx) = watch::channel(false);
+        let call = tool_call();
+
+        // Bound the whole call: correct behavior returns at once; a regression
+        // that waits the deadline blows this timeout instead of hanging LONG.
+        let decision = tokio::time::timeout(
+            Duration::from_secs(2),
+            broker.request_permission(&tx, 2, "ses_a", &call, &mut cancel_rx),
+        )
+        .await
+        .expect("closed wire must deny immediately, not wait the deadline");
+
+        assert_eq!(
+            decision,
+            PermissionDecision::Denied(PERMISSION_WIRE_CLOSED_MSG)
+        );
+        assert_eq!(
+            broker.pending_count(),
+            0,
+            "undeliverable ask leaves no resident entry"
+        );
+        assert_eq!(
+            broker.available_permits(),
+            4,
+            "undeliverable ask releases its admission slot"
+        );
+    }
+
+    // ── Claim-before-wake ordering (mutation-sensitive) ───────────────────────
+
+    /// The waiter must observe the correlation entry already *claimed* (removed
+    /// from `pending`) at the instant it wakes with the delivered response —
+    /// `deliver` removes before it sends. The wake observer fires synchronously
+    /// inside the waiter's response arm, so it captures the exact `pending`
+    /// state at the wake. A wake-before-claim mutant (send first, remove after)
+    /// makes the observed state `false` and fails this assertion; the behavioral
+    /// delivery tests cannot detect that mutant because the waiter reads the
+    /// oneshot exactly once either way.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_waiter_observes_entry_claimed_before_wake() {
+        let broker = Arc::new(PermissionBroker::new(4, LONG));
+        let claimed_at_wake = Arc::new(Mutex::new(None::<bool>));
+        let sink = Arc::clone(&claimed_at_wake);
+        broker.set_wake_observer(Arc::new(move |claimed| {
+            *sink.lock().unwrap() = Some(claimed);
+        }));
+
+        let (tx, mut rx) = mpsc::channel(8);
+        let (_cancel_tx, mut cancel_rx) = watch::channel(false);
+        let b = Arc::clone(&broker);
+        let call = tool_call();
+        let task = tokio::spawn(async move {
+            b.request_permission(&tx, 2, "ses_a", &call, &mut cancel_rx)
+                .await
+        });
+
+        let id = next_request_id(&mut rx).await;
+        broker.deliver(&id, selected(ALLOW_OPTION_ID));
+        assert_eq!(task.await.unwrap(), PermissionDecision::Allowed);
+        assert_eq!(
+            *claimed_at_wake.lock().unwrap(),
+            Some(true),
+            "entry must be claimed (removed) before the waiter is woken"
+        );
+    }
+
+    // ── Cancellation while waiting ───────────────────────────────────────────
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_cancel_while_waiting_returns_cancelled_and_removes_state() {
