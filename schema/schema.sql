@@ -1717,6 +1717,10 @@ CREATE TABLE relay_admin_actions (
     step_marker     TEXT CHECK (step_marker IN ('mutation_committed', 'artifacts_done')),
     -- Error from the last failure, if any.
     error_message   TEXT,
+    -- Per-action exclusive lease (migration 0034): fences concurrent same-request
+    -- retries and lets the recovery worker claim/re-drive stranded actions.
+    action_lease_token      UUID,
+    action_lease_expires_at TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     -- Report-scoped idempotency: one action per (report, request_id).
@@ -1729,6 +1733,10 @@ CREATE INDEX idx_relay_admin_actions_report
     ON relay_admin_actions (report_community_id, report_id);
 CREATE INDEX idx_relay_admin_actions_state
     ON relay_admin_actions (state)
+    WHERE state IN ('pending', 'enforcing');
+-- Recovery worker (migration 0034): find stranded actions by lease expiry.
+CREATE INDEX idx_relay_admin_actions_lease
+    ON relay_admin_actions (action_lease_expires_at)
     WHERE state IN ('pending', 'enforcing');
 
 INSERT INTO _operator_global_tables (table_name, reason) VALUES
@@ -1753,6 +1761,14 @@ CREATE TABLE relay_admin_outbox (
     -- Deduplication key: prevents re-creating an artifact after delivery.
     dedup_key   TEXT UNIQUE,
     error_message TEXT,
+    -- Retryable delivery with backoff (migration 0034): failures reschedule via
+    -- retry_after rather than terminating immediately.
+    attempt_count INT NOT NULL DEFAULT 0,
+    retry_after   TIMESTAMPTZ,
+    -- Per-claim ownership fence (migration 0035): completion/failure updates
+    -- require the token written at claim time, so a stale worker cannot overwrite
+    -- a newer worker's terminal update.
+    outbox_claim_token UUID,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -1760,7 +1776,7 @@ CREATE TABLE relay_admin_outbox (
 CREATE INDEX idx_relay_admin_outbox_action
     ON relay_admin_outbox (action_id);
 CREATE INDEX idx_relay_admin_outbox_pending
-    ON relay_admin_outbox (lease_expires_at)
+    ON relay_admin_outbox (retry_after NULLS FIRST, created_at)
     WHERE state = 'pending';
 
 INSERT INTO _operator_global_tables (table_name, reason) VALUES

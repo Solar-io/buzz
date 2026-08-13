@@ -1833,6 +1833,117 @@ mod tests {
         .expect("read applied migrations")
     }
 
+    /// The desired-state file (`schema/schema.sql`) and the incremental
+    /// migrations are two independent sources of the same schema. When a
+    /// migration mutates the admin tables, `schema.sql` must be hand-updated to
+    /// match — nothing enforces that automatically, and the lease/claim-token
+    /// migrations (0034/0035) once drifted for exactly this reason.
+    ///
+    /// This bootstraps one probe database from `schema.sql` and migrates
+    /// another through 1–35, then asserts the two admin tables have identical
+    /// column definitions (name, type, nullability, default) and identical
+    /// catalog-normalized index definitions. Columns are keyed by name, not
+    /// ordinal, because migrations append via `ALTER TABLE` while `schema.sql`
+    /// declares them inline — positions legitimately differ, shapes must not.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn admin_schema_parity_between_desired_state_and_migrations() {
+        use sqlx::AssertSqlSafe;
+
+        async fn columns(
+            pool: &PgPool,
+            table: &str,
+        ) -> Vec<(String, String, String, Option<String>)> {
+            sqlx::query_as(
+                "SELECT column_name, data_type, is_nullable, column_default \
+                 FROM information_schema.columns \
+                 WHERE table_schema = 'public' AND table_name = $1 \
+                 ORDER BY column_name",
+            )
+            .bind(table)
+            .fetch_all(pool)
+            .await
+            .expect("read column definitions")
+        }
+
+        async fn indexes(pool: &PgPool, table: &str) -> Vec<(String, String)> {
+            sqlx::query_as(
+                "SELECT indexname, indexdef FROM pg_indexes \
+                 WHERE schemaname = 'public' AND tablename = $1 \
+                 ORDER BY indexname",
+            )
+            .bind(table)
+            .fetch_all(pool)
+            .await
+            .expect("read index definitions")
+        }
+
+        let base_url = std::env::var("BUZZ_TEST_DATABASE_URL")
+            .or_else(|_| std::env::var("DATABASE_URL"))
+            .unwrap_or_else(|_| TEST_DB_URL.to_owned());
+        let admin = PgPool::connect(&base_url)
+            .await
+            .expect("connect admin database");
+        let (base_prefix, _) = base_url.rsplit_once('/').expect("database url has a path");
+
+        let desired_db = format!("buzz_admin_desired_{}", uuid::Uuid::new_v4().simple());
+        let migrated_db = format!("buzz_admin_migrated_{}", uuid::Uuid::new_v4().simple());
+        sqlx::query(AssertSqlSafe(format!("CREATE DATABASE {desired_db}")))
+            .execute(&admin)
+            .await
+            .expect("create desired-state probe database");
+        sqlx::query(AssertSqlSafe(format!("CREATE DATABASE {migrated_db}")))
+            .execute(&admin)
+            .await
+            .expect("create migrated probe database");
+
+        let schema_sql = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schema/schema.sql"),
+        )
+        .expect("read schema/schema.sql");
+        let desired = PgPool::connect(&format!("{base_prefix}/{desired_db}"))
+            .await
+            .expect("connect desired-state probe database");
+        sqlx::raw_sql(AssertSqlSafe(schema_sql))
+            .execute(&desired)
+            .await
+            .expect("apply desired-state schema");
+
+        let migrated = PgPool::connect(&format!("{base_prefix}/{migrated_db}"))
+            .await
+            .expect("connect migrated probe database");
+        MIGRATOR
+            .run_to(35, &migrated)
+            .await
+            .expect("apply migrations 1-35");
+
+        for table in ["relay_admin_actions", "relay_admin_outbox"] {
+            assert_eq!(
+                columns(&desired, table).await,
+                columns(&migrated, table).await,
+                "column parity mismatch for {table}: schema.sql desired state has drifted \
+                 from the migrations; update schema/schema.sql to match"
+            );
+            assert_eq!(
+                indexes(&desired, table).await,
+                indexes(&migrated, table).await,
+                "index parity mismatch for {table}: schema.sql desired state has drifted \
+                 from the migrations; update schema/schema.sql to match"
+            );
+        }
+
+        desired.close().await;
+        migrated.close().await;
+        for probe_db in [desired_db, migrated_db] {
+            sqlx::query(AssertSqlSafe(format!(
+                "DROP DATABASE {probe_db} WITH (FORCE)"
+            )))
+            .execute(&admin)
+            .await
+            .expect("drop probe database");
+        }
+    }
+
     #[tokio::test]
     #[ignore = "requires Postgres"]
     async fn pre_0007_ambiguous_nip_rs_data_blocks_without_mutation_and_allows_retry() {
