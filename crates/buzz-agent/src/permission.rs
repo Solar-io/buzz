@@ -225,18 +225,26 @@ impl PermissionBroker {
             &call.name,
             &call.arguments,
         );
-        if wire::send_checked(
-            wire,
-            wire::request_permission(lease.id_value.clone(), params),
-        )
-        .await
-        .is_err()
-        {
-            // The output wire is closed: this ask will never be written and no
-            // reply can ever arrive. Fail closed now — dropping `lease` here
-            // removes the entry and releases the permit synchronously — instead
-            // of leaving the entry resident until the deadline expires.
-            return PermissionDecision::Denied(PERMISSION_WIRE_CLOSED_MSG);
+        // ── Send (deadline- and cancel-governed) ───────────────────────────
+        // Enqueue is the third phase under the single absolute deadline. A
+        // full-but-live channel makes `send_checked` wait for capacity; racing
+        // it against cancel + the deadline means a stalled writer cannot hold
+        // the ask (and its global permit) past the advertised deadline, and
+        // `session/cancel` resolves it promptly. On send error the wire is
+        // closed: fail closed at once — dropping `lease` removes the entry and
+        // releases the permit synchronously.
+        let request = wire::request_permission(lease.id_value.clone(), params);
+        tokio::select! {
+            biased;
+            _ = cancel.changed() => return PermissionDecision::Cancelled,
+            _ = tokio::time::sleep_until(deadline) => {
+                return PermissionDecision::Denied(PERMISSION_TIMEOUT_MSG);
+            }
+            r = wire::send_checked(wire, request) => {
+                if r.is_err() {
+                    return PermissionDecision::Denied(PERMISSION_WIRE_CLOSED_MSG);
+                }
+            }
         }
 
         // ── Response wait ──────────────────────────────────────────────────
@@ -332,6 +340,10 @@ fn parse_id(id: &Value) -> Option<u64> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::io;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+    use tokio::io::AsyncWrite;
     use tokio::sync::mpsc;
 
     const LONG: Duration = Duration::from_secs(30);
@@ -360,6 +372,29 @@ mod tests {
             .expect("wire open");
         assert_eq!(v["method"], "session/request_permission");
         v["id"].clone()
+    }
+
+    /// An `AsyncWrite` that accepts every write but fails on `flush`, modelling
+    /// Tokio's blocking stdout when the pipe has broken: `write_all` reports
+    /// `Ok` (the underlying blocking write is only scheduled) and the real
+    /// error surfaces at `flush`. Used to prove the writer treats flush failure
+    /// as connection-fatal.
+    struct FlushFailSink;
+
+    impl AsyncWrite for FlushFailSink {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Ready(Ok(buf.len()))
+        }
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Err(io::Error::from(io::ErrorKind::BrokenPipe)))
+        }
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
     }
 
     // ── Authorization predicate (fail-closed) ────────────────────────────────
@@ -575,6 +610,141 @@ mod tests {
             4,
             "undeliverable ask releases its admission slot"
         );
+    }
+
+    // ── Writer flush failure is connection-fatal ──────────────────────────────
+
+    /// A blocking stdout can report `Ok` from `write_all` (the underlying
+    /// blocking write is only scheduled) and surface the real error at `flush`.
+    /// The writer must therefore treat flush failure exactly like write failure
+    /// — return, dropping its receiver — so the connection supervisor observes
+    /// writer death and cancels every session (which resolves any waiting ask).
+    /// Modelled here: `write_frames` fed one frame over a sink that accepts the
+    /// write but fails flush must terminate promptly; a cancellation wired to
+    /// that termination (as `async_main`'s writer arm does) then unblocks a
+    /// registered permission waiter, leaving zero pending entries and all
+    /// permits free — not after the injected deadline.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_flush_failure_kills_writer_and_resolves_waiter() {
+        let broker = Arc::new(PermissionBroker::new(4, LONG));
+        // A live output channel; its frames are drained by `write_frames` into
+        // the flush-failing sink, modelling the real writer over a broken pipe.
+        let (wire_tx, wire_rx) = mpsc::channel(8);
+        let (cancel_tx, mut cancel_rx) = watch::channel(false);
+
+        // Supervisor: run the writer over the failing sink; when it returns
+        // (flush error → connection-fatal), propagate cancellation exactly like
+        // `async_main`'s writer-death arm.
+        let writer = tokio::spawn(async move {
+            wire::write_frames(wire_rx, FlushFailSink).await;
+            let _ = cancel_tx.send(true);
+        });
+
+        let b = Arc::clone(&broker);
+        let call = tool_call();
+        let task = tokio::spawn(async move {
+            b.request_permission(&wire_tx, 2, "ses_a", &call, &mut cancel_rx)
+                .await
+        });
+
+        // The ask registers and enqueues its frame; the writer accepts the
+        // write, fails the flush, returns, and the supervisor cancels. The
+        // waiter must resolve via that cancellation, not the LONG deadline.
+        let decision = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("flush failure must cancel the waiter, not wait the deadline")
+            .unwrap();
+
+        writer.await.unwrap();
+        assert_eq!(decision, PermissionDecision::Cancelled);
+        assert_eq!(
+            broker.pending_count(),
+            0,
+            "writer death resolves the waiter and leaves no resident entry"
+        );
+        assert_eq!(
+            broker.available_permits(),
+            4,
+            "writer death releases the held admission slot"
+        );
+    }
+
+    // ── Enqueue backpressure is deadline- and cancel-governed ─────────────────
+
+    /// A full-but-live output channel makes `send_checked` wait for capacity.
+    /// The send phase races the single absolute deadline, so a stalled writer
+    /// cannot hold the ask (and its global permit) past the advertised
+    /// deadline: `request_permission` must return the timeout deny within the
+    /// deadline and leave zero pending entries and zero held permits. Uses a
+    /// SHORT deadline bounded by a longer outer timeout, so a regression that
+    /// waits forever on capacity blows the outer bound. This is a distinct seam
+    /// from the dropped-receiver test: here the receiver is alive but never
+    /// drains.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_full_channel_send_is_bounded_by_the_deadline() {
+        let broker = Arc::new(PermissionBroker::new(4, SHORT));
+        // Capacity-1 channel, prefilled and never drained: the next send blocks
+        // on capacity while the receiver stays alive (writer present, stalled).
+        let (tx, _rx) = mpsc::channel(1);
+        tx.send(wire::WireMsg::Notify(json!({ "fill": 1 })))
+            .await
+            .unwrap();
+        let (_cancel_tx, mut cancel_rx) = watch::channel(false);
+        let call = tool_call();
+
+        let decision = tokio::time::timeout(
+            Duration::from_secs(2),
+            broker.request_permission(&tx, 2, "ses_a", &call, &mut cancel_rx),
+        )
+        .await
+        .expect("a stalled writer must not hold the send past the deadline");
+
+        assert_eq!(
+            decision,
+            PermissionDecision::Denied(PERMISSION_TIMEOUT_MSG),
+            "a full-but-live channel resolves via the deadline, not the wire-closed path"
+        );
+        assert_eq!(
+            broker.pending_count(),
+            0,
+            "a timed-out enqueue leaves no resident entry"
+        );
+        assert_eq!(
+            broker.available_permits(),
+            4,
+            "a timed-out enqueue releases its admission slot"
+        );
+    }
+
+    /// Cancellation must also resolve an ask stuck enqueueing on a stalled
+    /// writer: with a full-but-live channel and a LONG deadline, a
+    /// `session/cancel` returns `Cancelled` promptly rather than waiting the
+    /// deadline out.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_cancel_resolves_a_blocked_enqueue() {
+        let broker = Arc::new(PermissionBroker::new(4, LONG));
+        let (tx, _rx) = mpsc::channel(1);
+        tx.send(wire::WireMsg::Notify(json!({ "fill": 1 })))
+            .await
+            .unwrap();
+        let (cancel_tx, mut cancel_rx) = watch::channel(false);
+        let b = Arc::clone(&broker);
+        let call = tool_call();
+        let task = tokio::spawn(async move {
+            b.request_permission(&tx, 2, "ses_a", &call, &mut cancel_rx)
+                .await
+        });
+
+        // Give the task time to admit + block on the full channel, then cancel.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cancel_tx.send(true).unwrap();
+        let decision = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("cancel must resolve a blocked enqueue promptly")
+            .unwrap();
+        assert_eq!(decision, PermissionDecision::Cancelled);
+        assert_eq!(broker.pending_count(), 0);
+        assert_eq!(broker.available_permits(), 4);
     }
 
     // ── Claim-before-wake ordering (mutation-sensitive) ───────────────────────

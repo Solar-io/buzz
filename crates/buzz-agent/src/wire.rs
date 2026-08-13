@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 
 use crate::types::{ContentBlock, McpServerStdio};
@@ -413,8 +413,25 @@ pub async fn read_bounded_line<R: AsyncBufRead + Unpin>(
     }
 }
 
-pub async fn writer_task(mut rx: mpsc::Receiver<WireMsg>) {
-    let mut stdout = tokio::io::stdout();
+pub async fn writer_task(rx: mpsc::Receiver<WireMsg>) {
+    write_frames(rx, tokio::io::stdout()).await;
+}
+
+/// Drain `rx`, writing each frame to `out` as a newline-terminated JSON line.
+/// Generic over the sink so tests can inject an `AsyncWrite` that fails on
+/// flush; production passes stdout.
+///
+/// Both `write_all` and `flush` failure are connection-fatal: they return,
+/// dropping `rx` so `async_main`'s writer-death arm cancels every session.
+/// Flush must be fatal too — a blocking stdout can report `Ok` from
+/// `write_all` when it only schedules the underlying write and surface the
+/// real error at `flush`, so ignoring flush failure would leave a dead stdout
+/// undetected and strand any correlated ask waiting for a reply that can never
+/// be written.
+pub(crate) async fn write_frames<W: AsyncWrite + Unpin>(
+    mut rx: mpsc::Receiver<WireMsg>,
+    mut out: W,
+) {
     while let Some(msg) = rx.recv().await {
         let WireMsg::Notify(v) = msg;
         let mut s = match serde_json::to_string(&v) {
@@ -425,10 +442,9 @@ pub async fn writer_task(mut rx: mpsc::Receiver<WireMsg>) {
             }
         };
         s.push('\n');
-        if stdout.write_all(s.as_bytes()).await.is_err() {
+        if out.write_all(s.as_bytes()).await.is_err() || out.flush().await.is_err() {
             return;
         }
-        let _ = stdout.flush().await;
     }
 }
 
