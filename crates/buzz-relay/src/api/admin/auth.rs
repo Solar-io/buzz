@@ -182,9 +182,14 @@ pub async fn authorize(
         AdminAuth::Disabled => None,
         AdminAuth::Nip98 => {
             let full_path = format!("{ADMIN_API_PREFIX}{path_and_query}");
-            let pubkey_bytes =
-                authorize_nip98(state, config, headers, &full_path, method, raw_body).await?;
+            let (pubkey_bytes, event_id) =
+                authorize_nip98(config, headers, &full_path, method, raw_body).await?;
+            // Resolve the roster grant BEFORE claiming the replay ID: an
+            // unrostered-but-validly-signing key (e.g. any WARP-admitted laptop)
+            // must not be able to consume replay slots at request rate. Only a
+            // request that clears authorization claims its event ID.
             let principal = resolve_admin_principal(state, pubkey_bytes).await?;
+            claim_nip98_replay(state, &event_id).await?;
             Some(principal)
         }
     };
@@ -327,21 +332,25 @@ fn authorize_bearer(
 }
 
 /// Require exactly one `Authorization: Nostr <base64 event>` header, verify
-/// the NIP-98 event (method, url, payload hash for body-bearing methods),
-/// check the replay guard, and return the authenticated pubkey bytes.
+/// the NIP-98 event (method, url, payload hash for body-bearing methods), and
+/// return the authenticated pubkey bytes and event id.
+///
+/// This performs signature/URL/method/payload verification only — it does NOT
+/// claim the replay ID. The caller resolves the principal (roster check) first
+/// and calls [`claim_nip98_replay`] only after authorization succeeds, so an
+/// unrostered signer can never consume a replay slot.
 ///
 /// For body-bearing methods (`POST`/`PUT`/`PATCH`/`DELETE`), the `payload`
 /// sha256 tag is required. The body bytes are verified against it.
 ///
 /// Uniform 401 on any auth failure — no oracle distinguishing the failure mode.
 async fn authorize_nip98(
-    state: &AppState,
     config: &AdminConfig,
     headers: &HeaderMap,
     path: &str,
     method: &str,
     raw_body: Option<&[u8]>,
-) -> Result<[u8; 32], ApiError> {
+) -> Result<([u8; 32], nostr::EventId), ApiError> {
     let unauth = || ApiError::unauthorized().with_www_authenticate("Nostr");
 
     // 1. Extract exactly one Authorization: Nostr header.
@@ -388,31 +397,38 @@ async fn authorize_nip98(
     let pubkey =
         buzz_auth::verify_nip98_event(&event_json, &url, method, raw_body).map_err(|_| unauth())?;
 
-    // 6. Replay guard — deployment-scoped, consumed only after crypto verification.
-    //    Redis failure fails closed.
-    let event_id = nostr::EventId::from_byte_array(event_id_bytes);
+    Ok((
+        pubkey.to_bytes(),
+        nostr::EventId::from_byte_array(event_id_bytes),
+    ))
+}
+
+/// Atomically claim a verified NIP-98 event ID against the deployment-scoped
+/// replay guard. Called only after [`authorize_nip98`] verified the event and
+/// [`resolve_admin_principal`] confirmed a roster grant, so an unrostered
+/// signer never consumes a slot. Redis failure fails closed.
+async fn claim_nip98_replay(state: &AppState, event_id: &nostr::EventId) -> Result<(), ApiError> {
+    let unauth = || ApiError::unauthorized().with_www_authenticate("Nostr");
     match state
         .nip98_replay
         .try_mark_in_scope(
             ADMIN_REPLAY_SCOPE,
-            &event_id,
+            event_id,
             buzz_auth::DEFAULT_REPLAY_TTL_SECS,
         )
         .await
     {
-        Ok(true) => {}
-        Ok(false) => return Err(unauth()),
+        Ok(true) => Ok(()),
+        Ok(false) => Err(unauth()),
         Err(err) => {
             tracing::warn!(
                 scope = ADMIN_REPLAY_SCOPE,
                 error = %err,
                 "admin NIP-98 replay guard failed; rejecting request fail-closed"
             );
-            return Err(unauth());
+            Err(unauth())
         }
     }
-
-    Ok(pubkey.to_bytes())
 }
 
 /// Extract the credential from an `Authorization: Nostr <base64>` value.

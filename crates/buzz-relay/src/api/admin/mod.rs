@@ -733,7 +733,7 @@ async fn cancel_report(
     )
     .await?;
 
-    let _principal = require_mutation_principal(principal_opt)?;
+    let principal = require_mutation_principal(principal_opt)?;
 
     let body: CancelReportBody = serde_json::from_slice(&body_bytes)
         .map_err(|_| ApiError::bad_request("invalid_body", "invalid JSON body"))?;
@@ -752,7 +752,12 @@ async fn cancel_report(
 
     let cancelled = state
         .db
-        .cancel_admin_action(body.action_id, tenant.community(), report_id)
+        .cancel_admin_action(
+            body.action_id,
+            tenant.community(),
+            report_id,
+            &principal.pubkey,
+        )
         .await?;
 
     if !cancelled {
@@ -1685,6 +1690,12 @@ mod tests {
                 seen: std::sync::Mutex::new(std::collections::HashSet::new()),
             }
         }
+
+        /// Number of distinct event IDs the guard has been asked to claim.
+        /// Zero proves the replay guard was never consulted.
+        fn claim_count(&self) -> usize {
+            self.seen.lock().unwrap().len()
+        }
     }
 
     impl buzz_auth::Nip98ReplayGuard for TrackingReplayGuard {
@@ -1919,6 +1930,43 @@ mod tests {
         .await;
         assert_eq!(first.status(), StatusCode::OK);
         assert_eq!(second.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn nip98_mode_unrostered_signer_does_not_consume_a_replay_slot() {
+        // Regression: the replay ID must be claimed only AFTER principal
+        // resolution succeeds. A validly-signing but unrostered key (any
+        // WARP-admitted laptop) must not be able to allocate replay slots at
+        // request rate. Signer is not in the config roster, so resolution falls
+        // through to the DB lookup and fails (403 with Postgres, 500 without) —
+        // either way the request is rejected and the replay guard is never
+        // consulted, so no slot is consumed.
+        let operator = nostr::Keys::generate();
+        let unrostered = nostr::Keys::generate();
+        let tracking = Arc::new(TrackingReplayGuard::new());
+        let state =
+            nip98_state_with_replay(vec![operator.public_key().to_hex()], tracking.clone()).await;
+        let auth = make_nostr_auth(&unrostered, "/probe");
+        let response = status_for(
+            state,
+            Request::builder()
+                .uri("/probe")
+                .header(header::HOST, "admin.example")
+                .header(header::AUTHORIZATION, auth)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_ne!(
+            response.status(),
+            StatusCode::OK,
+            "unrostered signer must be rejected"
+        );
+        assert_eq!(
+            tracking.claim_count(),
+            0,
+            "replay guard must not be consulted for an unrostered signer"
+        );
     }
 
     #[tokio::test]
@@ -3124,10 +3172,15 @@ mod tests {
             .await
             .expect("commit_mutation_step");
 
-        let cancelled =
-            buzz_db::relay_admin_actions::cancel_action(&pool, action_id, cid, report_id)
-                .await
-                .expect("cancel_action");
+        let cancelled = buzz_db::relay_admin_actions::cancel_action(
+            &pool,
+            action_id,
+            cid,
+            report_id,
+            &[0_u8; 32],
+        )
+        .await
+        .expect("cancel_action");
         assert!(
             !cancelled,
             "cancel after mutation_committed must be rejected"
@@ -3354,24 +3407,36 @@ mod tests {
             .expect("body");
         let json: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
         assert_eq!(json["status"], "open");
-        // The last-look DTO embeds the just-cancelled action with status cancelled.
+        // The last-look DTO embeds the just-cancelled action with status cancelled,
+        // attributed to the signing operator.
         assert_eq!(json["activeAction"]["id"], action_id.to_string());
         assert_eq!(json["activeAction"]["status"], "cancelled");
+        assert_eq!(
+            json["activeAction"]["cancelledBy"],
+            keys.public_key().to_hex(),
+            "cancel must be attributed to the signing principal"
+        );
 
-        // DB evidence: action is cancelled and the report is back to open.
-        let (state_col, report_status): (String, String) = sqlx::query_as(
-            r#"
-            SELECT a.state, r.status
+        // DB evidence: action is cancelled, attributed, and the report is back to open.
+        let (state_col, cancelled_by, report_status): (String, Option<Vec<u8>>, String) =
+            sqlx::query_as(
+                r#"
+            SELECT a.state, a.cancelled_by, r.status
             FROM relay_admin_actions a
             JOIN moderation_reports r ON r.id = a.report_id
             WHERE a.id = $1
             "#,
-        )
-        .bind(action_id)
-        .fetch_one(&pool)
-        .await
-        .expect("read action + report");
+            )
+            .bind(action_id)
+            .fetch_one(&pool)
+            .await
+            .expect("read action + report");
         assert_eq!(state_col, "cancelled");
+        assert_eq!(
+            cancelled_by.map(hex::encode),
+            Some(keys.public_key().to_hex()),
+            "cancelled_by must persist the acting principal"
+        );
         assert_eq!(report_status, "open");
 
         cleanup_admin_host_report(&pool, report_id).await;

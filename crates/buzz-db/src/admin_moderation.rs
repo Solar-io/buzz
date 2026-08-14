@@ -88,6 +88,10 @@ pub struct AdminActionDto {
     pub action: String,
     /// State machine: `"pending"` | `"enforcing"` | `"succeeded"` | `"failed"` | `"cancelled"`.
     pub status: String,
+    /// Principal who cancelled the action (hex pubkey); null unless `status` is
+    /// `"cancelled"`. Attributes the one mutation that would otherwise carry no
+    /// actor trail while `BUZZ_AUDIT_ENABLED=false`.
+    pub cancelled_by: Option<String>,
     /// Operator reason, if provided.
     pub reason: Option<String>,
     /// Absolute timeout expiry for `timeout` actions; null otherwise. Absolute
@@ -114,6 +118,7 @@ impl AdminActionDto {
             actor_role: record.actor_role.clone(),
             action: record.action.clone(),
             status: record.state.clone(),
+            cancelled_by: record.cancelled_by.as_deref().map(hex::encode),
             reason: record.reason.clone(),
             expires_at: record.timeout_until,
             error_message: record.error_message.clone(),
@@ -235,6 +240,7 @@ pub async fn get_report(pool: &PgPool, report_id: Uuid) -> Result<Option<AdminRe
                act.actor_role AS action_actor_role,
                act.action AS action_name,
                act.state AS action_state,
+               act.cancelled_by AS action_cancelled_by,
                act.reason AS action_reason,
                act.timeout_until AS action_timeout_until,
                act.error_message AS action_error_message,
@@ -253,7 +259,7 @@ pub async fn get_report(pool: &PgPool, report_id: Uuid) -> Result<Option<AdminRe
         ) target ON TRUE
         LEFT JOIN LATERAL (
             SELECT a.id, a.request_id, a.actor_pubkey, a.actor_role, a.action,
-                   a.state, a.reason, a.timeout_until, a.error_message,
+                   a.state, a.cancelled_by, a.reason, a.timeout_until, a.error_message,
                    a.created_at, a.updated_at
             FROM relay_admin_actions a
             WHERE a.report_community_id = r.community_id
@@ -305,6 +311,9 @@ fn row_to_action_dto(row: &sqlx::postgres::PgRow) -> Result<Option<AdminActionDt
         actor_role: row.try_get("action_actor_role")?,
         action: row.try_get("action_name")?,
         status: row.try_get("action_state")?,
+        cancelled_by: row
+            .try_get::<Option<Vec<u8>>, _>("action_cancelled_by")?
+            .map(hex::encode),
         reason: row.try_get("action_reason")?,
         expires_at: row.try_get("action_timeout_until")?,
         error_message: row.try_get("action_error_message")?,
@@ -860,6 +869,7 @@ mod tests {
             actor_role: "operator".to_string(),
             action: "ban".to_string(),
             status: "succeeded".to_string(),
+            cancelled_by: None,
             reason: None,
             expires_at: None,
             error_message: None,
@@ -868,7 +878,7 @@ mod tests {
         };
         let value = serde_json::to_value(&dto).expect("serialize dto");
         let obj = value.as_object().expect("dto serializes to an object");
-        for key in ["reason", "expiresAt", "errorMessage"] {
+        for key in ["reason", "expiresAt", "errorMessage", "cancelledBy"] {
             assert_eq!(
                 obj.get(key),
                 Some(&serde_json::Value::Null),

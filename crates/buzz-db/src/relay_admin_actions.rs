@@ -42,6 +42,8 @@ pub struct AdminActionRecord {
     pub state: String,
     /// Durably committed step: `None` = not started, `"mutation_committed"`, `"artifacts_done"`.
     pub step_marker: Option<String>,
+    /// Principal who cancelled this action (32-byte pubkey); `None` until cancelled.
+    pub cancelled_by: Option<Vec<u8>>,
     /// Error from the last failure, if any.
     pub error_message: Option<String>,
     /// Row creation time.
@@ -237,7 +239,7 @@ pub async fn claim_report(
         let existing = sqlx::query(
             r#"
             SELECT id, report_id, report_community_id, request_id, actor_pubkey, actor_role,
-                   action, reason, timeout_until, state, step_marker, error_message,
+                   action, reason, timeout_until, state, step_marker, cancelled_by, error_message,
                    created_at, updated_at
             FROM relay_admin_actions
             WHERE report_community_id = $1 AND report_id = $2 AND request_id = $3
@@ -269,7 +271,7 @@ pub async fn claim_report(
             action, reason, timeout_until, state
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
         RETURNING id, report_id, report_community_id, request_id, actor_pubkey, actor_role,
-                  action, reason, timeout_until, state, step_marker, error_message,
+                  action, reason, timeout_until, state, step_marker, cancelled_by, error_message,
                   created_at, updated_at
         "#,
     )
@@ -981,17 +983,19 @@ pub async fn cancel_action(
     action_id: Uuid,
     community_id: CommunityId,
     report_id: Uuid,
+    cancelled_by: &[u8],
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
 
     // Cancel only a pre-mutation `failed` action that BELONGS to the path
     // report and community. Fencing on report_id + report_community_id is what
     // blocks cross-report cancellation: `/reports/A/cancel {actionId:B}` matches
-    // zero rows because B's report_id is not A.
+    // zero rows because B's report_id is not A. `cancelled_by` attributes the
+    // transition — the one mutation that would otherwise carry no actor trail.
     let updated = sqlx::query(
         r#"
         UPDATE relay_admin_actions
-        SET state = 'cancelled', updated_at = now()
+        SET state = 'cancelled', cancelled_by = $4, updated_at = now()
         WHERE id = $1
           AND report_id = $2
           AND report_community_id = $3
@@ -1002,6 +1006,7 @@ pub async fn cancel_action(
     .bind(action_id)
     .bind(report_id)
     .bind(community_id.as_uuid())
+    .bind(cancelled_by)
     .execute(&mut *tx)
     .await?;
 
@@ -1167,7 +1172,7 @@ pub async fn get_action(pool: &PgPool, action_id: Uuid) -> Result<Option<AdminAc
     let row = sqlx::query(
         r#"
         SELECT id, report_id, report_community_id, request_id, actor_pubkey, actor_role,
-               action, reason, timeout_until, state, step_marker, error_message,
+               action, reason, timeout_until, state, step_marker, cancelled_by, error_message,
                created_at, updated_at
         FROM relay_admin_actions WHERE id = $1
         "#,
@@ -1188,7 +1193,7 @@ pub async fn get_action_by_request(
     let row = sqlx::query(
         r#"
         SELECT id, report_id, report_community_id, request_id, actor_pubkey, actor_role,
-               action, reason, timeout_until, state, step_marker, error_message,
+               action, reason, timeout_until, state, step_marker, cancelled_by, error_message,
                created_at, updated_at
         FROM relay_admin_actions
         WHERE report_community_id = $1 AND report_id = $2 AND request_id = $3
@@ -1446,7 +1451,7 @@ pub async fn claim_stranded_action_batch(
               AND (action_lease_expires_at IS NULL OR action_lease_expires_at < now())
             RETURNING id, report_id, report_community_id, request_id, actor_pubkey,
                       actor_role, action, reason, timeout_until, state, step_marker,
-                      error_message, created_at, updated_at
+                      cancelled_by, error_message, created_at, updated_at
             "#,
         )
         .bind(id)
@@ -1542,6 +1547,7 @@ fn row_to_action(row: sqlx::postgres::PgRow) -> Result<AdminActionRecord> {
         timeout_until: row.try_get("timeout_until")?,
         state: row.try_get("state")?,
         step_marker: row.try_get("step_marker")?,
+        cancelled_by: row.try_get("cancelled_by")?,
         error_message: row.try_get("error_message")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
@@ -1823,6 +1829,7 @@ mod tests {
             action_id,
             CommunityId::from_uuid(community_id),
             report_id,
+            &[0_u8; 32],
         )
         .await
         .expect("cancel_action");

@@ -1715,6 +1715,10 @@ CREATE TABLE relay_admin_actions (
     -- Step marker: the last durably committed mutation step (NULL = none yet).
     -- Values: 'mutation_committed' (core DB mutation done), 'artifacts_done' (tombstone/notice done).
     step_marker     TEXT CHECK (step_marker IN ('mutation_committed', 'artifacts_done')),
+    -- Principal who cancelled a pre-mutation failed action; NULL until cancelled.
+    -- Attributes the cancel transition on the action row itself, mirroring
+    -- moderation_reports.resolved_by for report resolution.
+    cancelled_by    BYTEA CHECK (cancelled_by IS NULL OR length(cancelled_by) = 32),
     -- Error from the last failure, if any.
     error_message   TEXT,
     -- Per-action exclusive lease (migration 0034): fences concurrent same-request

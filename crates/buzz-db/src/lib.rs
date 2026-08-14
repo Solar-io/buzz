@@ -4757,14 +4757,23 @@ impl Db {
         relay_admin_actions::record_failure(&self.pool, action_id, error).await
     }
 
-    /// Cancel a pre-mutation failed action (returns report to 'open').
+    /// Cancel a pre-mutation failed action (returns report to 'open'),
+    /// attributing the cancel to `cancelled_by`.
     pub async fn cancel_admin_action(
         &self,
         action_id: uuid::Uuid,
         community_id: CommunityId,
         report_id: uuid::Uuid,
+        cancelled_by: &[u8],
     ) -> Result<bool> {
-        relay_admin_actions::cancel_action(&self.pool, action_id, community_id, report_id).await
+        relay_admin_actions::cancel_action(
+            &self.pool,
+            action_id,
+            community_id,
+            report_id,
+            cancelled_by,
+        )
+        .await
     }
 
     /// Reopen a terminal report (resolved|dismissed|escalated → open) with a
