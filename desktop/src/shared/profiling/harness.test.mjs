@@ -16,6 +16,7 @@ import {
   DRIFT_THRESHOLD_MS,
   nextStallSample,
 } from "@/shared/profiling/drift.ts";
+import { installInvokeProbe } from "@/shared/profiling/ipc.ts";
 import { ProfileRecorder, RING_CAPACITY } from "@/shared/profiling/recorder.ts";
 
 function fixedClock() {
@@ -89,6 +90,89 @@ describe("classifyInput", () => {
     // queued dropped (negative); latency 120 alone clears the floor.
     const result = classifyInput(9_999_999, 250, 370);
     assert.deepEqual(result, { latency: 120, queued: null });
+  });
+});
+
+describe("installInvokeProbe", () => {
+  it("returns false and stays passive when no invoke bridge exists", () => {
+    assert.equal(
+      installInvokeProbe(undefined, new Map(), () => {}),
+      false,
+    );
+    assert.equal(
+      installInvokeProbe({ invoke: 42 }, new Map(), () => {}),
+      false,
+    );
+  });
+
+  it("records a resolved invoke once without recursing", async () => {
+    const calls = [];
+    const internals = {
+      invoke: (cmd) => Promise.resolve(`ok:${cmd}`),
+    };
+    let t = 0;
+    assert.equal(
+      installInvokeProbe(
+        internals,
+        new Map(),
+        (cmd, dur, ok) => calls.push({ cmd, dur, ok }),
+        () => (t += 5),
+      ),
+      true,
+    );
+    const result = await internals.invoke("ping");
+    assert.equal(result, "ok:ping");
+    assert.deepEqual(calls, [{ cmd: "ping", dur: 5, ok: true }]);
+  });
+
+  it("records a rejected invoke and re-throws without leaking pending", async () => {
+    const calls = [];
+    const pending = new Map();
+    const internals = { invoke: () => Promise.reject(new Error("boom")) };
+    installInvokeProbe(internals, pending, (cmd, _dur, ok) =>
+      calls.push({ cmd, ok }),
+    );
+    await assert.rejects(() => internals.invoke("bad"), /boom/);
+    assert.deepEqual(calls, [{ cmd: "bad", ok: false }]);
+    assert.equal(pending.size, 0);
+  });
+
+  it("preserves an accessor-backed reassignment bridge without stack overflow", async () => {
+    // Reproduces the terminal E2E backend descriptor shape: `invoke` is an
+    // accessor whose getter returns a dispatcher delegating unknown commands to
+    // closure `inner`, and whose setter *reassigns* `inner`. A plain
+    // `internals.invoke = wrapper` would route the dispatcher's fallback back
+    // into the wrapper and overflow the stack on the first non-terminal call.
+    const internals = {};
+    let inner = null;
+    Object.defineProperty(internals, "invoke", {
+      configurable: true,
+      get: () => (cmd, args, opts) => {
+        if (cmd === "terminal_input") return Promise.resolve("term");
+        if (!inner) throw new Error(`no mock bridge for ${cmd}`);
+        return inner(cmd, args, opts);
+      },
+      set: (fn) => {
+        inner = fn;
+      },
+    });
+    // The real mock bridge is trapped through the setter after the harness runs.
+    const realBridge = (cmd) => Promise.resolve(`real:${cmd}`);
+
+    const calls = [];
+    assert.equal(
+      installInvokeProbe(internals, new Map(), (cmd, _dur, ok) =>
+        calls.push({ cmd, ok }),
+      ),
+      true,
+    );
+    // App code trapping the invoke after the harness (as mockIPC does) must not
+    // clobber the probe: the harness redefined `invoke` as a data property.
+    inner = realBridge;
+
+    const result = await internals.invoke("non_terminal");
+    assert.equal(result, "real:non_terminal");
+    assert.deepEqual(calls, [{ cmd: "non_terminal", ok: true }]);
   });
 });
 

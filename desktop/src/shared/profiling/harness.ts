@@ -4,7 +4,9 @@
 // `<app-data>/profiling/session-<ts>.jsonl`. Four probes:
 //   1. main-thread stalls (timer drift, foreground-only) + input latency
 //      (receipt → next paint, with pre-dispatch queue delay split out)
-//   2. Tauri IPC duration/outcome + a >10s pending-invoke watchdog (deadlocks)
+//   2. Tauri IPC duration/outcome + a >10s pending-invoke watchdog (deadlocks).
+//      The invoke bridge is redefined as a data property (see ipc.ts) so an
+//      accessor-backed bridge is preserved without looping into the wrapper.
 //   3. relay REQ→EOSE (history fetch) and publish send→ack round-trips
 //   4. periodic accumulator census (observer store, query cache, DOM nodes)
 //
@@ -23,13 +25,17 @@ import {
   nextStallSample,
 } from "@/shared/profiling/drift";
 import {
+  PENDING_INVOKE_MS,
+  PENDING_SCAN_MS,
+  type PendingInvoke,
+  installInvokeProbe,
+} from "@/shared/profiling/ipc";
+import {
   FLUSH_INTERVAL_MS,
   ProfileRecorder,
 } from "@/shared/profiling/recorder";
 
 const CENSUS_INTERVAL_MS = 120_000;
-const PENDING_INVOKE_MS = 10_000;
-const PENDING_SCAN_MS = 5_000;
 
 // RelayClient methods whose resolution marks a REQ→EOSE round-trip (history
 // fetches resolve when the relay sends EOSE) versus a publish send→ack
@@ -98,33 +104,14 @@ function installIpcProbe(rec: ProfileRecorder): void {
   const internals = (
     window as unknown as { __TAURI_INTERNALS__?: TauriInternals }
   ).__TAURI_INTERNALS__;
-  if (!internals || typeof internals.invoke !== "function") {
+  // Track outstanding invokes so a hung command surfaces via the watchdog.
+  const pending = new Map<number, PendingInvoke>();
+  const installed = installInvokeProbe(internals, pending, (cmd, dur, ok) =>
+    rec.record({ type: "ipc", cmd, dur, ok }),
+  );
+  if (!installed) {
     return;
   }
-  const original = internals.invoke.bind(internals);
-  // Track outstanding invokes so a hung command surfaces via the watchdog.
-  const pending = new Map<number, { cmd: string; startedAt: number }>();
-  let seq = 0;
-
-  internals.invoke = (cmd: string, args?: unknown, opts?: unknown) => {
-    const id = seq++;
-    const startedAt = performance.now();
-    pending.set(id, { cmd, startedAt });
-    const settle = (ok: boolean) => {
-      pending.delete(id);
-      rec.record({ type: "ipc", cmd, dur: performance.now() - startedAt, ok });
-    };
-    return original(cmd, args, opts).then(
-      (value) => {
-        settle(true);
-        return value;
-      },
-      (error) => {
-        settle(false);
-        throw error;
-      },
-    );
-  };
 
   window.setInterval(() => {
     const now = performance.now();
