@@ -59,7 +59,8 @@ export function useObservedUnreadPersistence(
   normalizedRelayUrl: string,
   isReadStateReady: boolean,
   readStateVersion: number,
-  getEffectiveTimestamp: (channelId: string) => number | null,
+  getChannelReadAt: (channelId: string) => number | null,
+  getChannelTimelineReadAt: (channelId: string) => number | null,
   getOwnTimestamp: (contextId: string) => number | null,
   observedUnreadEventsByChannelRef: React.MutableRefObject<
     Map<string, Map<string, ObservedUnreadEvent>>
@@ -133,7 +134,8 @@ export function useObservedUnreadPersistence(
     const changed = pruneObservedUnreadByMarkers(
       observedUnreadEventsByChannelRef.current,
       latestByChannelRef.current,
-      getEffectiveTimestamp,
+      getChannelReadAt,
+      getChannelTimelineReadAt,
       getOwnTimestamp,
     );
     if (changed) {

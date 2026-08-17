@@ -208,7 +208,7 @@ export function makeObservedEvent({
   return {
     id,
     createdAt,
-    rootId: rootId ?? `root-${id}`,
+    rootId: rootId === undefined ? `root-${id}` : rootId,
     highPriority,
     countsTowardBadge,
     countsTowardAppBadge,
@@ -254,6 +254,7 @@ export async function mountHook(props, refs) {
     isReady,
     readStateVersion,
     getTs,
+    getTimelineTs,
     getOwn,
     onPruned,
   }) {
@@ -263,6 +264,7 @@ export async function mountHook(props, refs) {
       isReady,
       readStateVersion,
       getTs,
+      getTimelineTs ?? getTs,
       getOwn,
       refs.eventsRef,
       refs.latestRef,

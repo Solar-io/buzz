@@ -14,9 +14,11 @@ import {
 import {
   addThreadActivityItems,
   channelCatchUpEventKinds,
+} from "./useUnreadChannels.ts";
+import {
   resolveChannelReadMarker,
   resolveObservedUnreadRootId,
-} from "./useUnreadChannels.ts";
+} from "./unreadReadState.ts";
 import {
   isChannelUnreadTriggerKind,
   trackSeenEvent,

@@ -15,7 +15,15 @@ import {
   recordObservedUnreadEvent,
   type ObservedUnreadEvent,
 } from "@/features/channels/unreadChannelCounts";
+import {
+  channelTimelineContextKey,
+  maxReadAt,
+} from "@/features/channels/readState/readStateFormat";
 import { useReadState } from "@/features/channels/readState/useReadState";
+import {
+  resolveChannelReadMarker,
+  resolveObservedUnreadRootId,
+} from "@/features/channels/unreadReadState";
 import { makeRootIdStore } from "@/features/channels/unreadRootIdStore";
 import {
   forcedUnreadStore,
@@ -84,48 +92,6 @@ const authoredStore = makeRootIdStore("buzz-thread-authored.v1");
 const mentionedStore = makeRootIdStore("buzz-thread-mentioned.v1");
 const mutedStore = makeRootIdStore("buzz-thread-muted.v1");
 
-function parseTimestamp(value: string | null | undefined) {
-  if (!value) {
-    return null;
-  }
-
-  const timestamp = Date.parse(value);
-  return Number.isNaN(timestamp) ? null : timestamp;
-}
-
-function toUnixSeconds(isoOrMs: string | null | undefined): number | null {
-  const ms = parseTimestamp(isoOrMs);
-  return ms === null ? null : Math.floor(ms / 1_000);
-}
-
-// Resolve where the read marker should land when a channel is marked read.
-// Folds the caller's timeline position together with the newest event this
-// client has observed live (`observedLatest`), so an explicit "mark read" still
-// covers messages that arrived faster than channel metadata — this fold is
-// load-bearing for the Esc shortcut, sidebar mark-read, and empty-channel open,
-// all of which pass a null/stale caller value. `clearObserved` reports whether
-// the resulting marker covers the observed timestamp, signalling the caller to
-// drop its observed refs so the unread memo sees `latest === undefined` until a
-// genuinely newer event arrives.
-export function resolveChannelReadMarker(
-  callerReadAt: string | null | undefined,
-  observedLatest: number | undefined,
-): { markAt: number | null; clearObserved: boolean } {
-  const callerUnix = toUnixSeconds(callerReadAt);
-  const markAt = Math.max(callerUnix ?? 0, observedLatest ?? 0) || null;
-  return {
-    markAt,
-    clearObserved:
-      markAt !== null &&
-      observedLatest !== undefined &&
-      observedLatest <= markAt,
-  };
-}
-
-export function resolveObservedUnreadRootId(tags: string[][]): string | null {
-  return isBroadcastReply(tags) ? null : getThreadReference(tags).rootId;
-}
-
 export function useUnreadChannels(
   channels: Channel[],
   activeChannel: Channel | null,
@@ -147,7 +113,7 @@ export function useUnreadChannels(
     : "";
 
   const {
-    getEffectiveTimestamp,
+    getEffectiveTimestamp: getContextReadAt,
     isReady: isReadStateReady,
     markContextRead,
     drainSyncedAdvances,
@@ -155,6 +121,14 @@ export function useUnreadChannels(
     readStateVersion,
     getOwnTimestamp,
   } = useReadState(pubkey, relayClient);
+  const getChannelTimelineReadAt = React.useCallback(
+    (channelId: string) =>
+      maxReadAt(
+        getContextReadAt(channelId),
+        getOwnTimestamp(channelTimelineContextKey(channelId)),
+      ),
+    [getContextReadAt, getOwnTimestamp],
+  );
 
   // Per-channel latest observed external trigger timestamp (unix seconds) and
   // per-event metadata. Derived relay evidence, not source-of-truth; the unread
@@ -247,7 +221,8 @@ export function useUnreadChannels(
     normalizedRelayUrl,
     isReadStateReady,
     readStateVersion,
-    getEffectiveTimestamp,
+    getContextReadAt,
+    getChannelTimelineReadAt,
     getOwnTimestamp,
     observedUnreadEventsByChannelRef,
     latestByChannelRef,
@@ -319,7 +294,10 @@ export function useUnreadChannels(
         observedLatest,
       );
       if (markAt === null) return;
-      markContextRead(channelId, markAt);
+      markContextRead(
+        topLevelOnly ? channelTimelineContextKey(channelId) : channelId,
+        markAt,
+      );
       // Delegate destructive observed-ref removal to the fenced owner operation —
       // the parent must not delete from latestByChannelRef or
       // observedUnreadEventsByChannelRef directly on the clear-observed path,
@@ -603,12 +581,13 @@ export function useUnreadChannels(
     void Promise.all(
       toFetch.map(async (channelId): Promise<CatchUpResult> => {
         try {
-          const readAt = getEffectiveTimestamp(channelId);
+          const channelReadAt = getContextReadAt(channelId);
+          const channelTimelineReadAt = getChannelTimelineReadAt(channelId);
           const channel = channels.find((c) => c.id === channelId);
           // NIP-01 `since` is inclusive of `created_at >= since`. The +1
           // makes the relay-side filter strict-newer; the client-side
           // `> readAt` check below is the belt to the suspenders.
-          const sinceParam = readAt === null ? 0 : readAt + 1;
+          const sinceParam = channelReadAt === null ? 0 : channelReadAt + 1;
 
           const events = await relayClient.fetchEvents({
             kinds: [...channelCatchUpEventKinds(channel?.channelType)],
@@ -658,7 +637,15 @@ export function useUnreadChannels(
             ) {
               continue;
             }
-            if (readAt !== null && event.created_at <= readAt) continue;
+            const evtRef = getThreadReference(event.tags);
+            const isThreadedReply =
+              evtRef.parentId !== null && !isBroadcastReply(event.tags);
+            const eventReadAt = isThreadedReply
+              ? channelReadAt
+              : channelTimelineReadAt;
+            if (eventReadAt !== null && event.created_at <= eventReadAt) {
+              continue;
+            }
             const eventChannelId =
               event.tags.find((t) => t[0] === "h")?.[1] ?? null;
             if (
@@ -673,9 +660,6 @@ export function useUnreadChannels(
             ) {
               continue;
             }
-            const evtRef = getThreadReference(event.tags);
-            const isThreadedReply =
-              evtRef.parentId !== null && !isBroadcastReply(event.tags);
             if (event.created_at > maxExternal) {
               maxExternal = event.created_at;
             }
@@ -743,7 +727,7 @@ export function useUnreadChannels(
           didAdvance = true;
         }
         if (maxExternal > 0) {
-          const readAtNow = getEffectiveTimestamp(channelId) ?? 0;
+          const readAtNow = getContextReadAt(channelId) ?? 0;
           if (maxExternal > readAtNow) {
             const current = latestByChannelRef.current.get(channelId) ?? 0;
             if (maxExternal > current) {
@@ -785,7 +769,8 @@ export function useUnreadChannels(
     };
   }, [
     channelIdsKey,
-    getEffectiveTimestamp,
+    getChannelTimelineReadAt,
+    getContextReadAt,
     isReadStateReady,
     normalizedPubkey,
     normalizedRelayUrl,
@@ -829,11 +814,12 @@ export function useUnreadChannels(
         const observedEvents = observedUnreadEventsByChannelRef.current.get(
           channel.id,
         );
-        const channelReadAt = getEffectiveTimestamp(channel.id);
+        const channelReadAt = getContextReadAt(channel.id);
+        const channelTimelineReadAt = getChannelTimelineReadAt(channel.id);
         const readAtForObservedEvent = (event: ObservedUnreadEvent) =>
           observedUnreadEventReadAt(
             event,
-            channelReadAt,
+            event.rootId === null ? channelTimelineReadAt : channelReadAt,
             (rootId) => getOwnTimestamp(`thread:${rootId}`),
             (messageId) => getOwnTimestamp(`msg:${messageId}`),
           );
@@ -892,7 +878,8 @@ export function useUnreadChannels(
     }, [
       activeChannelId,
       channels,
-      getEffectiveTimestamp,
+      getChannelTimelineReadAt,
+      getContextReadAt,
       getOwnTimestamp,
       isReadStateReady,
       latestVersion,
@@ -918,7 +905,7 @@ export function useUnreadChannels(
       delete forcedUnreadRef.current[channelId];
       const unixSeconds =
         latestByChannelRef.current.get(channelId) ??
-        getEffectiveTimestamp(channelId) ??
+        getChannelTimelineReadAt(channelId) ??
         null;
       if (unixSeconds !== null) {
         markContextRead(channelId, unixSeconds);
@@ -933,7 +920,7 @@ export function useUnreadChannels(
     // (Fenced record writes in handleChannelMessage and catch-up remain in the parent.)
     observedPersistence.clearAll();
     bumpLatestVersion();
-  }, [getEffectiveTimestamp, markContextRead, observedPersistence, pubkey]);
+  }, [getChannelTimelineReadAt, markContextRead, observedPersistence, pubkey]);
 
   // Identity-stable snapshots of the membership sets for the notify gate.
   // Re-derived only when membershipVersion bumps (a set actually changed), so
@@ -969,7 +956,7 @@ export function useUnreadChannels(
     // off the same NIP-RS read marker without instantiating a second
     // ReadStateManager. readStateVersion is the invalidation signal callers
     // should include in memo deps.
-    getEffectiveTimestamp,
+    getEffectiveTimestamp: getChannelTimelineReadAt,
     getOwnTimestamp,
     readStateVersion,
     setContextParentResolver,

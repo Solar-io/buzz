@@ -54,12 +54,12 @@ export function useChannelActivityProjection({
       const threadReadAt = getOwnReadAt(`thread:${rootId}`);
       if (!channelId) return threadReadAt;
 
-      const channelReadAt = getChannelReadAt(channelId);
+      const channelReadAt = getOwnReadAt(channelId);
       if (threadReadAt === null) return channelReadAt;
       if (channelReadAt === null) return threadReadAt;
       return Math.max(threadReadAt, channelReadAt);
     },
-    [getChannelReadAt, getOwnReadAt],
+    [getOwnReadAt],
   );
   const markThreadRead = React.useCallback(
     (rootId: string, timestamp: number) =>

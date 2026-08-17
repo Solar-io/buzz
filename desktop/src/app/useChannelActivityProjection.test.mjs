@@ -28,3 +28,18 @@ test("channel activity read state honors a channel marker without a message mark
     300,
   );
 });
+
+test("channel activity read state ignores the passive timeline marker", () => {
+  const markers = new Map([
+    ["general", 100],
+    ["channel-timeline:general", 500],
+  ]);
+
+  assert.equal(
+    resolveChannelActivityFeedItemReadAt(
+      { id: "reply-general", channelId: "general" },
+      (contextId) => markers.get(contextId) ?? null,
+    ),
+    100,
+  );
+});

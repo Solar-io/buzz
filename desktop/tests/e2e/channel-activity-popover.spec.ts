@@ -409,6 +409,25 @@ test.describe("channel activity hover preview", () => {
     await expect(groupedRow).toContainText("2 unread");
   });
 
+  test("keeps older thread activity after opening a channel with newer timeline activity", async ({
+    page,
+  }) => {
+    await seedChannelActivity(page, { includeAgent: false });
+    await emitMockMessage(page, "Newer top-level timeline message", {
+      pubkey: SELF_PUBKEY,
+      createdAt: Math.floor(Date.now() / 1_000) + 180,
+    });
+
+    await expect(page.getByTestId("channel-unread-dot-general")).toBeVisible();
+    await page.getByTestId("channel-general").click();
+    await expect(page.getByTestId("chat-title")).toHaveText("general");
+    await expect(page.getByTestId("channel-unread-dot-general")).toBeVisible();
+
+    await page.getByTestId("channel-general").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Mark as read" }).click();
+    await expect(page.getByTestId("channel-unread-dot-general")).toHaveCount(0);
+  });
+
   test("marks projected thread activity read from the active channel menu", async ({
     page,
   }) => {
@@ -657,9 +676,11 @@ test.describe("channel activity hover preview", () => {
       .filter({ hasText: "Keep this separate timeline message unread." });
     await manualUnreadRow.hover();
     await page.getByTestId(`more-actions-${manualUnreadMessage.id}`).click();
-    await page
-      .getByTestId(`mark-read-toggle-${manualUnreadMessage.id}`)
-      .click();
+    const markUnreadItem = page.getByTestId(
+      `mark-read-toggle-${manualUnreadMessage.id}`,
+    );
+    await expect(markUnreadItem).toHaveText("Mark unread");
+    await markUnreadItem.click();
 
     await page.getByRole("button", { name: "Inbox", exact: true }).click();
     const groupedRootId = "grouped-inbox-root-preserve-manual";

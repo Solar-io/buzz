@@ -22,6 +22,7 @@ import {
   computeChannelUnreadMarker,
   computeThreadUnreadMarker,
 } from "@/features/messages/lib/unreadMarker";
+import { isThreadReply } from "@/features/messages/lib/threading";
 import type { TimelineMessage } from "@/features/messages/types";
 import { isConversationalUnreadKind } from "@/shared/constants/kinds";
 
@@ -392,7 +393,10 @@ export function useChannelUnreadState({
       if (!message) return false;
       const { firstUnreadReplyId } = computeThreadUnreadMarker(
         [message],
-        getMessageReadAt,
+        (id) =>
+          activeChannelId && !isThreadReply(message.tags ?? [])
+            ? getChannelReadAt(activeChannelId)
+            : getMessageReadAt(id),
         currentPubkey,
         isMsgForcedUnread,
       );
@@ -400,6 +404,8 @@ export function useChannelUnreadState({
     },
     [
       messageById,
+      activeChannelId,
+      getChannelReadAt,
       getMessageReadAt,
       currentPubkey,
       isMsgForcedUnread,
