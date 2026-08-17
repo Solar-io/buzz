@@ -18,10 +18,10 @@ import 'unread_badge/is_high_priority_event.dart';
 import 'unread_badge/observed_unread_event.dart';
 import 'unread_badge/should_notify_for_event.dart';
 
+part 'channel_directory.dart';
+
 const _channelTypeOrder = {'stream': 0, 'forum': 1, 'dm': 2};
 const _unreadCatchUpLimit = 1000;
-const _channelDirectoryPageSize = 500;
-const _maxChannelDirectoryPages = 100;
 const _participatedRootIdsPrefix = 'buzz-thread-participation.v1';
 const _authoredRootIdsPrefix = 'buzz-thread-authored.v1';
 
@@ -57,6 +57,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
   String? _memberSnapshotRelayBaseUrl;
   String? _memberSnapshotPubkey;
   Map<String, List<ChannelMember>> _memberSnapshotsByChannelId = const {};
+  List<NostrEvent> _directoryMetas = const [];
 
   /// The member snapshot already returned while loading the channel list.
   ///
@@ -84,6 +85,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
       _memberSnapshotRelayBaseUrl = relayBaseUrl;
       _memberSnapshotPubkey = pubkey;
       _memberSnapshotsByChannelId = const {};
+      _directoryMetas = const [];
     }
     final connected = Completer<void>();
     final sessionState = ref.read(relaySessionProvider);
@@ -128,10 +130,12 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
   Future<List<Channel>> _fetch({
     bool subscribeLive = false,
     bool fetchLastMessage = true,
+    bool fetchDirectory = true,
   }) async {
     final channels = await _fetchChannels(
       subscribeLive: subscribeLive,
       fetchLastMessage: fetchLastMessage,
+      fetchDirectory: fetchDirectory,
     );
     _hasLoaded = true;
     return channels;
@@ -140,6 +144,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
   Future<List<Channel>> _fetchChannels({
     bool subscribeLive = false,
     bool fetchLastMessage = true,
+    bool fetchDirectory = true,
   }) async {
     final myPk = ref.read(myPubkeyProvider);
     if (myPk == null) throw StateError('No signing identity available');
@@ -186,40 +191,13 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     // kind:39000 query by the caller's access, but the client still rejects
     // private channels and DMs below so discovery fails closed if that contract
     // ever regresses. The composite cursor preserves tied-timestamp rows.
-    final directoryMetas = <NostrEvent>[];
-    final seenDirectoryChannelIds = <String>{};
-    int? directoryUntil;
-    String? directoryBeforeId;
-    for (
-      var pageIndex = 0;
-      pageIndex < _maxChannelDirectoryPages;
-      pageIndex++
-    ) {
-      final page = await session.fetchHistory(
-        NostrFilter(
-          kinds: const [39000],
-          limit: _channelDirectoryPageSize,
-          until: directoryUntil,
-          extensions: {'before_id': ?directoryBeforeId},
-        ),
-      );
-      directoryMetas.addAll(page);
-
-      var madeProgress = false;
-      for (final event in page) {
-        final channelId = event.getTagValue('d');
-        if (channelId != null && seenDirectoryChannelIds.add(channelId)) {
-          madeProgress = true;
-        }
-      }
-      if (!madeProgress || page.length < _channelDirectoryPageSize) break;
-
-      final last = page.last;
-      directoryUntil = last.createdAt;
-      directoryBeforeId = last.id;
-      if (pageIndex == _maxChannelDirectoryPages - 1) {
-        throw StateError(
-          'Channel directory exceeded $_maxChannelDirectoryPages pages',
+    if (fetchDirectory) {
+      try {
+        _directoryMetas = await _fetchChannelDirectoryMetas(session);
+      } catch (error) {
+        debugPrint(
+          '[ChannelsNotifier] channel directory refresh failed; retaining '
+          'cached discovery: $error',
         );
       }
     }
@@ -227,7 +205,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     // Merge and dedupe by `d` tag. Kind:39000 is parameterized-replaceable,
     // but stale revisions from before the relay's d_tag backfill can linger.
     final latestMetaPerId = <String, NostrEvent>{};
-    for (final event in [...memberMetas, ...directoryMetas]) {
+    for (final event in [...memberMetas, ..._directoryMetas]) {
       if (event.kind != 39000) continue;
       final id = event.getTagValue('d');
       if (id == null) continue;
@@ -576,8 +554,8 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
   }
 
   /// Subscribe per-channel to live events (requires `#h` tag for relay
-  /// channel-scoped fan-out). Also starts a 60s WS backstop poll to detect
-  /// newly created channels we don't yet have subscriptions for.
+  /// channel-scoped fan-out). Also starts a 60s WS backstop poll to reconcile
+  /// membership changes without repeatedly downloading the global directory.
   Future<void> _subscribeLive(List<Channel> channels) {
     final channelIds = {
       for (final channel in channels)
@@ -919,6 +897,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
       final channels = await _fetch(
         subscribeLive: sessionState.status == SessionStatus.connected,
         fetchLastMessage: false,
+        fetchDirectory: false,
       );
       for (var i = 0; i < channels.length; i++) {
         final prev = prevLastMessage[channels[i].id];

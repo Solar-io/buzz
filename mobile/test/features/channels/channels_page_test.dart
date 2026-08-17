@@ -1420,6 +1420,46 @@ void main() {
     expect(find.text('No open channels available to join.'), findsOneWidget);
   });
 
+  testWidgets('browse action lazily builds a large channel directory', (
+    tester,
+  ) async {
+    final channels = List.generate(
+      500,
+      (index) => Channel(
+        id: 'directory-$index',
+        name: 'channel-${index.toString().padLeft(3, '0')}',
+        channelType: 'stream',
+        visibility: 'open',
+        description: '',
+        createdBy: 'abc',
+        createdAt: DateTime(2025),
+        memberCount: 0,
+      ),
+    );
+    await tester.pumpWidget(
+      buildTestable(
+        disableAnimations: true,
+        overrides: [
+          channelsProvider.overrideWith(() => _FakeNotifier(channels)),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Create or start conversation'));
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const Key('quick-action-browse-channels-card')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('browse-channel-directory-0')),
+      findsAtLeast(1),
+    );
+    expect(find.byKey(const Key('browse-channel-directory-499')), findsNothing);
+  });
+
   testWidgets('create channel sheet lists type and visibility radio options', (
     tester,
   ) async {

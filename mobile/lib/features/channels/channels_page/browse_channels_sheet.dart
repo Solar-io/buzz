@@ -9,6 +9,10 @@ class _BrowseChannelsSheet extends ConsumerWidget {
     final channels = channelsAsync.asData?.value
         .where((channel) => channel.canJoin)
         .toList();
+    channels?.sort(
+      (left, right) =>
+          left.name.toLowerCase().compareTo(right.name.toLowerCase()),
+    );
 
     return SafeArea(
       top: false,
@@ -19,45 +23,64 @@ class _BrowseChannelsSheet extends ConsumerWidget {
           Grid.gutter,
           Grid.xs,
         ),
-        child: ListView(
+        child: CustomScrollView(
           shrinkWrap: true,
-          children: [
-            Text(
-              'Join an open channel to add it to your conversations.',
-              style: context.textTheme.bodyMedium?.copyWith(
-                color: context.colors.onSurfaceVariant,
+          slivers: [
+            SliverToBoxAdapter(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Join an open channel to add it to your conversations.',
+                    style: context.textTheme.bodyMedium?.copyWith(
+                      color: context.colors.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: Grid.xs),
+                ],
               ),
             ),
-            const SizedBox(height: Grid.xs),
             if (channelsAsync.isLoading && channels == null)
-              const Padding(
-                padding: EdgeInsets.all(Grid.sm),
-                child: Center(child: BuzzLoadingIndicator()),
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.all(Grid.sm),
+                  child: Center(child: BuzzLoadingIndicator()),
+                ),
               )
             else if (channelsAsync.hasError && channels == null)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: Grid.sm),
-                child: Text(
-                  'Could not load open channels.',
-                  textAlign: TextAlign.center,
-                  style: context.textTheme.bodyMedium?.copyWith(
-                    color: context.colors.onSurfaceVariant,
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: Grid.sm),
+                  child: Text(
+                    'Could not load open channels.',
+                    textAlign: TextAlign.center,
+                    style: context.textTheme.bodyMedium?.copyWith(
+                      color: context.colors.onSurfaceVariant,
+                    ),
                   ),
                 ),
               )
             else if (channels == null || channels.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: Grid.sm),
-                child: Text(
-                  'No open channels available to join.',
-                  textAlign: TextAlign.center,
-                  style: context.textTheme.bodyMedium?.copyWith(
-                    color: context.colors.onSurfaceVariant,
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: Grid.sm),
+                  child: Text(
+                    'No open channels available to join.',
+                    textAlign: TextAlign.center,
+                    style: context.textTheme.bodyMedium?.copyWith(
+                      color: context.colors.onSurfaceVariant,
+                    ),
                   ),
                 ),
               )
             else
-              _JoinableChannelList(channels: channels, closeAfterJoin: true),
+              SliverList.builder(
+                itemCount: channels.length,
+                itemBuilder: (context, index) => _JoinableChannelTile(
+                  channel: channels[index],
+                  closeAfterJoin: true,
+                ),
+              ),
           ],
         ),
       ),
@@ -67,12 +90,8 @@ class _BrowseChannelsSheet extends ConsumerWidget {
 
 class _JoinableChannelList extends StatelessWidget {
   final List<Channel> channels;
-  final bool closeAfterJoin;
 
-  const _JoinableChannelList({
-    required this.channels,
-    this.closeAfterJoin = false,
-  });
+  const _JoinableChannelList({required this.channels});
 
   @override
   Widget build(BuildContext context) {
@@ -85,10 +104,7 @@ class _JoinableChannelList extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         for (final channel in sortedChannels)
-          _JoinableChannelTile(
-            channel: channel,
-            closeAfterJoin: closeAfterJoin,
-          ),
+          _JoinableChannelTile(channel: channel, closeAfterJoin: false),
       ],
     );
   }

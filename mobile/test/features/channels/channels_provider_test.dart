@@ -120,7 +120,7 @@ void main() {
     expect(session.metadataPageRequestCount, 2);
   });
 
-  test('fails loudly when channel discovery exceeds its page cap', () async {
+  test('directory page-cap failure does not fail channel loading', () async {
     final session = _FakeRelaySession(
       memberships: const [],
       metadataPageBuilder: (pageIndex) => List.generate(
@@ -135,16 +135,77 @@ void main() {
     final container = _buildContainer(session: session);
     addTearDown(container.dispose);
 
-    await expectLater(
-      container.read(channelsProvider.future),
-      throwsA(
-        isA<StateError>().having(
-          (error) => error.message,
-          'message',
-          contains('Channel directory exceeded'),
-        ),
-      ),
+    expect(await container.read(channelsProvider.future), isEmpty);
+    expect(session.metadataPageRequestCount, 100);
+  });
+
+  test(
+    'directory failure retains discovery while membership refreshes',
+    () async {
+      final session = _FakeRelaySession(
+        memberships: [_membership(_channelA, myPk)],
+        metadata: [
+          _meta(id: _channelA, name: 'general'),
+          _meta(id: _channelB, name: 'discoverable'),
+        ],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      expect(
+        (await container.read(
+          channelsProvider.future,
+        )).map((channel) => channel.id),
+        unorderedEquals([_channelA, _channelB]),
+      );
+
+      session.memberships = [
+        _membership(_channelA, myPk),
+        _membership(_channelD, myPk),
+      ];
+      session.metadata = [
+        _meta(id: _channelA, name: 'general'),
+        _meta(id: _channelB, name: 'discoverable'),
+        _meta(id: _channelD, name: 'newly joined'),
+      ];
+      session.directoryFailures = 1;
+
+      await container.read(channelsProvider.notifier).refresh();
+
+      final refreshed = container.read(channelsProvider).requireValue;
+      expect(
+        refreshed.map((channel) => channel.id),
+        unorderedEquals([_channelA, _channelB, _channelD]),
+      );
+      expect(
+        refreshed.firstWhere((channel) => channel.id == _channelD).isMember,
+        isTrue,
+      );
+    },
+  );
+
+  test('reconnect backstop does not refetch the channel directory', () async {
+    final session = _FakeRelaySession(
+      memberships: [_membership(_channelA, myPk)],
+      metadata: [_meta(id: _channelA, name: 'general')],
     );
+    final container = _buildContainer(session: session);
+    addTearDown(container.dispose);
+
+    await container.read(channelsProvider.future);
+    final initialDirectoryRequests = session.metadataPageRequestCount;
+    final initialMembershipRequests = session.membershipRequestCount;
+
+    session.setStatus(SessionStatus.reconnecting);
+    session.setStatus(SessionStatus.connected);
+    await _waitUntil(
+      () => session.membershipRequestCount > initialMembershipRequests,
+    );
+    for (var i = 0; i < 10; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    expect(session.metadataPageRequestCount, initialDirectoryRequests);
   });
 
   test('deduplicates joined channels from directory discovery', () async {
@@ -908,6 +969,8 @@ class _FakeRelaySession extends RelaySessionNotifier {
   final List<NostrEvent> hiddenDmEvents;
   final List<NostrEvent> recentMessages;
   int membershipFailures;
+  int directoryFailures = 0;
+  int membershipRequestCount = 0;
   int metadataPageRequestCount = 0;
 
   final List<NostrFilter> historyFilters = [];
@@ -958,6 +1021,7 @@ class _FakeRelaySession extends RelaySessionNotifier {
   }) async {
     historyFilters.add(filter);
     if (filter.kinds.contains(39002) && filter.tags['#p'] != null) {
+      membershipRequestCount++;
       if (membershipFailures > 0) {
         membershipFailures--;
         throw Exception('membership fetch failed');
@@ -977,6 +1041,10 @@ class _FakeRelaySession extends RelaySessionNotifier {
     if (filter.kinds.contains(39000)) {
       final ids = filter.tags['#d']?.toSet();
       if (ids == null) {
+        if (directoryFailures > 0) {
+          directoryFailures--;
+          throw Exception('directory fetch failed');
+        }
         final requestIndex = metadataPageRequestCount++;
         final maxRequests = maxMetadataPageRequests;
         if (maxRequests != null && requestIndex >= maxRequests) {

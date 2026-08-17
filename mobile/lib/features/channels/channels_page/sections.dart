@@ -494,7 +494,7 @@ class _EmptyState extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: Grid.xs),
-                _JoinableChannelList(channels: channels),
+                _JoinableChannelList(channels: channels.take(3).toList()),
               ],
             ],
           ),
