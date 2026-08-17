@@ -9,9 +9,10 @@ import 'package:buzz/shared/relay/relay.dart';
 
 /// Tests for [ChannelsNotifier] in the pure-Nostr world.
 ///
-/// The provider performs a two-step WS query:
+/// The provider performs a three-step WS query:
 ///   1. kind:39002 memberships tagged `#p:<my-pubkey>`
 ///   2. kind:39000 metadata for those channel ids
+///   3. paginated kind:39000 metadata for discoverable open channels
 /// then layers per-channel live subscriptions on the `#h` tag.
 ///
 /// Tests stub out the relay session by overriding [relaySessionProvider] with
@@ -20,6 +21,150 @@ import 'package:buzz/shared/relay/relay.dart';
 /// events on demand.
 void main() {
   const myPk = 'me';
+
+  test(
+    'discovers open channels for a user with zero channel memberships',
+    () async {
+      final session = _FakeRelaySession(
+        memberships: const [],
+        metadata: [
+          _meta(id: _channelA, name: 'general'),
+          _meta(id: _channelB, name: 'staff', visibility: 'private'),
+          _meta(id: _channelD, name: 'DM', channelType: 'dm'),
+        ],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      final channels = await container.read(channelsProvider.future);
+
+      expect(channels, hasLength(1));
+      expect(channels.single.id, _channelA);
+      expect(channels.single.isMember, isFalse);
+      expect(session.subscribeFilters, isEmpty);
+      expect(
+        session.historyFilters.any(
+          (filter) =>
+              filter.kinds.length == 1 &&
+              filter.kinds.single == 39000 &&
+              !filter.tags.containsKey('#d'),
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test('paginates channel discovery with a composite cursor', () async {
+    final firstPage = List.generate(
+      500,
+      (index) => _meta(
+        id: '${index.toString().padLeft(8, '0')}-0000-4000-8000-000000000000',
+        name: 'channel-$index',
+        createdAt: 10,
+      ),
+    );
+    final finalChannel = _meta(
+      id: '99999999-9999-4999-8999-999999999999',
+      name: 'last-page',
+      createdAt: 9,
+    );
+    final session = _FakeRelaySession(
+      memberships: const [],
+      metadataPages: [
+        firstPage,
+        [finalChannel],
+      ],
+    );
+    final container = _buildContainer(session: session);
+    addTearDown(container.dispose);
+
+    final channels = await container.read(channelsProvider.future);
+
+    expect(channels, hasLength(501));
+    final directoryFilters = session.historyFilters
+        .where(
+          (filter) =>
+              filter.kinds.length == 1 &&
+              filter.kinds.single == 39000 &&
+              !filter.tags.containsKey('#d'),
+        )
+        .toList();
+    expect(directoryFilters, hasLength(2));
+    expect(directoryFilters.first.until, isNull);
+    expect(directoryFilters.first.extensions, isEmpty);
+    expect(directoryFilters.last.until, firstPage.last.createdAt);
+    expect(directoryFilters.last.extensions['before_id'], firstPage.last.id);
+  });
+
+  test('stops channel discovery when the relay repeats a full page', () async {
+    final repeatedPage = List.generate(
+      500,
+      (index) => _meta(
+        id: 'repeated-channel-$index',
+        name: 'repeated-$index',
+        createdAt: 10,
+      ),
+    );
+    final session = _FakeRelaySession(
+      memberships: const [],
+      metadataPages: [repeatedPage],
+      repeatLastMetadataPage: true,
+      maxMetadataPageRequests: 2,
+    );
+    final container = _buildContainer(session: session);
+    addTearDown(container.dispose);
+
+    final channels = await container.read(channelsProvider.future);
+
+    expect(channels, hasLength(500));
+    expect(session.metadataPageRequestCount, 2);
+  });
+
+  test('fails loudly when channel discovery exceeds its page cap', () async {
+    final session = _FakeRelaySession(
+      memberships: const [],
+      metadataPageBuilder: (pageIndex) => List.generate(
+        500,
+        (eventIndex) => _meta(
+          id: 'channel-$pageIndex-$eventIndex',
+          name: 'channel-$pageIndex-$eventIndex',
+          createdAt: 1000 - pageIndex,
+        ),
+      ),
+    );
+    final container = _buildContainer(session: session);
+    addTearDown(container.dispose);
+
+    await expectLater(
+      container.read(channelsProvider.future),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('Channel directory exceeded'),
+        ),
+      ),
+    );
+  });
+
+  test('deduplicates joined channels from directory discovery', () async {
+    final session = _FakeRelaySession(
+      memberships: [_membership(_channelA, myPk)],
+      metadata: [
+        _meta(id: _channelA, name: 'general'),
+        _meta(id: _channelB, name: 'random'),
+      ],
+    );
+    final container = _buildContainer(session: session);
+    addTearDown(container.dispose);
+
+    final channels = await container.read(channelsProvider.future);
+
+    expect(channels.map((channel) => channel.id), [_channelA, _channelB]);
+    expect(channels.first.isMember, isTrue);
+    expect(channels.last.isMember, isFalse);
+    expect(session.subscribeFilters, hasLength(1));
+  });
 
   test(
     'seeds members from the channel-list snapshot during reconnect',
@@ -699,6 +844,7 @@ NostrEvent _meta({
   required String id,
   required String name,
   String channelType = 'stream',
+  String visibility = 'open',
   int createdAt = 1,
   int? ttlSeconds,
   bool archived = false,
@@ -711,7 +857,7 @@ NostrEvent _meta({
     ['d', id],
     ['name', name],
     ['t', channelType],
-    ['public'],
+    [visibility == 'private' ? 'private' : 'public'],
     if (ttlSeconds != null) ['ttl', '$ttlSeconds'],
     if (archived) ['archived', 'true'],
   ],
@@ -743,7 +889,11 @@ Future<void> _waitUntil(bool Function() predicate) async {
 class _FakeRelaySession extends RelaySessionNotifier {
   _FakeRelaySession({
     required this.memberships,
-    required this.metadata,
+    this.metadata = const [],
+    this.metadataPages,
+    this.metadataPageBuilder,
+    this.repeatLastMetadataPage = false,
+    this.maxMetadataPageRequests,
     this.hiddenDmEvents = const [],
     this.recentMessages = const [],
     this.membershipFailures = 0,
@@ -751,9 +901,14 @@ class _FakeRelaySession extends RelaySessionNotifier {
 
   List<NostrEvent> memberships;
   List<NostrEvent> metadata;
+  final List<List<NostrEvent>>? metadataPages;
+  final List<NostrEvent> Function(int pageIndex)? metadataPageBuilder;
+  final bool repeatLastMetadataPage;
+  final int? maxMetadataPageRequests;
   final List<NostrEvent> hiddenDmEvents;
   final List<NostrEvent> recentMessages;
   int membershipFailures;
+  int metadataPageRequestCount = 0;
 
   final List<NostrFilter> historyFilters = [];
   final List<List<NostrFilter>> queryBatches = [];
@@ -820,8 +975,26 @@ class _FakeRelaySession extends RelaySessionNotifier {
       return hiddenDmEvents;
     }
     if (filter.kinds.contains(39000)) {
-      // Metadata query — return all metadata events whose `d` tag matches.
-      final ids = (filter.tags['#d'] ?? const <String>[]).toSet();
+      final ids = filter.tags['#d']?.toSet();
+      if (ids == null) {
+        final requestIndex = metadataPageRequestCount++;
+        final maxRequests = maxMetadataPageRequests;
+        if (maxRequests != null && requestIndex >= maxRequests) {
+          throw StateError('Unexpected directory page request');
+        }
+        final pageBuilder = metadataPageBuilder;
+        if (pageBuilder != null) return List.of(pageBuilder(requestIndex));
+        final pages = metadataPages;
+        if (pages != null) {
+          if (requestIndex < pages.length) return List.of(pages[requestIndex]);
+          if (repeatLastMetadataPage && pages.isNotEmpty) {
+            return List.of(pages.last);
+          }
+          return const [];
+        }
+        return List.of(metadata);
+      }
+      // Member metadata query — return only matching `d` tags.
       return metadata.where((e) => ids.contains(e.getTagValue('d'))).toList();
     }
     return const [];

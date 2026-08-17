@@ -20,15 +20,19 @@ import 'unread_badge/should_notify_for_event.dart';
 
 const _channelTypeOrder = {'stream': 0, 'forum': 1, 'dm': 2};
 const _unreadCatchUpLimit = 1000;
+const _channelDirectoryPageSize = 500;
+const _maxChannelDirectoryPages = 100;
 const _participatedRootIdsPrefix = 'buzz-thread-participation.v1';
 const _authoredRootIdsPrefix = 'buzz-thread-authored.v1';
 
 /// Loads the user's channel list from the relay over WebSocket.
 ///
-/// Two-step query:
+/// Three-step query:
 ///   1. Fetch kind:39002 membership events tagged `#p:<my-pubkey>` to find
 ///      the channel ids I'm a member of.
 ///   2. Fetch the corresponding kind:39000 channel metadata events.
+///   3. Fetch the paginated kind:39000 directory so open channels that the
+///      user has not joined remain discoverable.
 ///
 /// Live updates are layered on top via per-channel subscriptions on the
 /// `#h` tag for any of the visible channel event kinds — incoming events
@@ -164,28 +168,66 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
         until = page.map((e) => e.createdAt).reduce(min) - 1;
       }
     }
-    final channelIds = memberships
+    final memberChannelIds = memberships
         .map((e) => e.getTagValue('d'))
         .whereType<String>()
-        .toSet()
-        .toList();
+        .toSet();
     _cacheMemberSnapshots(memberships, replaceAll: true);
-    if (channelIds.isEmpty) {
-      if (subscribeLive) await _subscribeLive(const []);
-      return const [];
+
+    // Step 2: pull metadata for joined channels. A user with no memberships
+    // must still continue to directory discovery below.
+    final memberMetas = memberChannelIds.isEmpty
+        ? const <NostrEvent>[]
+        : await session.fetchHistory(
+            NostrFilters.channelMetadata(memberChannelIds.toList()),
+          );
+
+    // Step 3: fetch the open-channel directory. The relay filters this global
+    // kind:39000 query by the caller's access, but the client still rejects
+    // private channels and DMs below so discovery fails closed if that contract
+    // ever regresses. The composite cursor preserves tied-timestamp rows.
+    final directoryMetas = <NostrEvent>[];
+    final seenDirectoryChannelIds = <String>{};
+    int? directoryUntil;
+    String? directoryBeforeId;
+    for (
+      var pageIndex = 0;
+      pageIndex < _maxChannelDirectoryPages;
+      pageIndex++
+    ) {
+      final page = await session.fetchHistory(
+        NostrFilter(
+          kinds: const [39000],
+          limit: _channelDirectoryPageSize,
+          until: directoryUntil,
+          extensions: {'before_id': ?directoryBeforeId},
+        ),
+      );
+      directoryMetas.addAll(page);
+
+      var madeProgress = false;
+      for (final event in page) {
+        final channelId = event.getTagValue('d');
+        if (channelId != null && seenDirectoryChannelIds.add(channelId)) {
+          madeProgress = true;
+        }
+      }
+      if (!madeProgress || page.length < _channelDirectoryPageSize) break;
+
+      final last = page.last;
+      directoryUntil = last.createdAt;
+      directoryBeforeId = last.id;
+      if (pageIndex == _maxChannelDirectoryPages - 1) {
+        throw StateError(
+          'Channel directory exceeded $_maxChannelDirectoryPages pages',
+        );
+      }
     }
 
-    // Step 2: pull channel metadata in one batched filter.
-    final metas = await session.fetchHistory(
-      NostrFilters.channelMetadata(channelIds),
-    );
-
-    // Dedupe by `d` tag (channel id) — kind:39000 is parameterized-replaceable,
-    // so logically there's exactly one current event per id, but stale revisions
-    // from before the relay's d_tag backfill can linger. Keep the highest
-    // `created_at` per id so the latest channel_type / name wins.
+    // Merge and dedupe by `d` tag. Kind:39000 is parameterized-replaceable,
+    // but stale revisions from before the relay's d_tag backfill can linger.
     final latestMetaPerId = <String, NostrEvent>{};
-    for (final event in metas) {
+    for (final event in [...memberMetas, ...directoryMetas]) {
       if (event.kind != 39000) continue;
       final id = event.getTagValue('d');
       if (id == null) continue;
@@ -232,11 +274,15 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
 
     final channels = <Channel>[];
     for (final event in dedupedMetas) {
+      final id = event.getTagValue('d');
+      if (id == null) continue;
+      final isMember = memberChannelIds.contains(id);
       final channel = _channelFromMeta(
         event,
-        isMember: true,
+        isMember: isMember,
         displayNames: displayNames,
       );
+      if (!isMember && (channel.isPrivate || channel.isDm)) continue;
       if (channel.isDm && hiddenDmIds.contains(channel.id)) continue;
       // Ephemeral (TTL) channels are surfaced in the list with an
       // `_EphemeralBadge` rendered in `channels_page.dart` — they shouldn't be
@@ -246,13 +292,16 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     }
 
     // Batch-fetch member counts via kind:39002 membership events.
-    final memberEvents = await session.fetchHistory(
-      NostrFilter(
-        kinds: const [39002],
-        tags: {'#d': channelIds},
-        limit: channelIds.length,
-      ),
-    );
+    final memberCountChannelIds = memberChannelIds.toList();
+    final memberEvents = memberCountChannelIds.isEmpty
+        ? const <NostrEvent>[]
+        : await session.fetchHistory(
+            NostrFilter(
+              kinds: const [39002],
+              tags: {'#d': memberCountChannelIds},
+              limit: memberCountChannelIds.length,
+            ),
+          );
     if (memberEvents.isNotEmpty) _cacheMemberSnapshots(memberEvents);
     final memberCounts = <String, int>{};
     for (final event in memberEvents) {
