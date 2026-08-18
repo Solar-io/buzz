@@ -23,6 +23,19 @@ export default defineConfig(async () => ({
   ],
   resolve: {
     alias: {
+      // Temporary profiling harness (never merges): route every
+      // `@tauri-apps/api/core` importer (raw consumers, invokeTauri, and every
+      // bundled Tauri plugin) through a proxy that wraps `invoke`. The proxy
+      // reaches the real module via `@tauri-core-impl` so this alias does not
+      // re-fire. Exact string match — plugin subpaths are unaffected.
+      "@tauri-apps/api/core": path.resolve(
+        __dirname,
+        "./src/shared/profiling/tauriCoreProxy.ts",
+      ),
+      "@tauri-core-impl": path.resolve(
+        __dirname,
+        "./node_modules/@tauri-apps/api/core.js",
+      ),
       "@": "/src",
       "@features-manifest": path.resolve(__dirname, "../preview-features.json"),
       "@model-capabilities-manifest": path.resolve(

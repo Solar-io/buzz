@@ -1,7 +1,9 @@
-// Temporary renderer profiling harness (never merges) — IPC invoke probe.
+// Temporary renderer profiling harness (never merges) — IPC invoke probe core.
 //
-// The interception logic lives here (not harness.ts) so it can be unit-tested
-// without harness.ts's module-load Tauri/store imports, matching drift.ts.
+// Pure, Tauri-free logic so it is unit-testable without harness.ts's
+// module-load Tauri/store imports (matching drift.ts). The module seam that
+// actually wraps `@tauri-apps/api/core`'s `invoke` lives in tauriCoreProxy.ts;
+// this file only decides what to record.
 
 /** A command outstanding >10s is logged with its age — the deadlock detector. */
 export const PENDING_INVOKE_MS = 10_000;
@@ -14,45 +16,73 @@ export type InvokeFn = (
   opts?: unknown,
 ) => Promise<unknown>;
 
-export type IpcInternals = { invoke: InvokeFn };
-
 export type PendingInvoke = { cmd: string; startedAt: number };
 
 /**
- * Wrap `__TAURI_INTERNALS__.invoke` to record each call's duration/outcome,
- * tracking outstanding calls in `pending` for the watchdog. Returns `false`
- * when no invoke bridge is present (the harness stays passive).
- *
- * The wrapper is installed as a **data property** via `Object.defineProperty`,
- * never `internals.invoke = wrapper`. The terminal E2E backend defines `invoke`
- * as an accessor whose getter returns a dispatcher that falls back to a closure
- * variable and whose setter *reassigns that fallback*; a plain assignment would
- * therefore route the bridge's fallback back into this wrapper and overflow the
- * stack on the first non-terminal invoke. Reading the getter once (to bind the
- * current implementation) and redefining `invoke` as a value preserves any
- * accessor- or reassignment-backed bridge without looping into ourselves.
+ * Observes one invoke: `begin(cmd)` marks it outstanding and returns a `settle`
+ * that records duration/outcome and clears it.
  */
-export function installInvokeProbe(
-  internals: IpcInternals | undefined,
+export type InvokeObserver = { begin: (cmd: string) => (ok: boolean) => void };
+
+/**
+ * Build an observer that tracks each call in `pending` (for the watchdog) and
+ * records an `ipc` result on settle.
+ */
+export function createInvokeObserver(
   pending: Map<number, PendingInvoke>,
   record: (cmd: string, dur: number, ok: boolean) => void,
   now: () => number = () => performance.now(),
-): boolean {
-  if (!internals || typeof internals.invoke !== "function") {
-    return false;
-  }
-  const original = internals.invoke.bind(internals);
+): InvokeObserver {
   let seq = 0;
+  return {
+    begin(cmd) {
+      const id = seq++;
+      const startedAt = now();
+      pending.set(id, { cmd, startedAt });
+      return (ok) => {
+        pending.delete(id);
+        record(cmd, now() - startedAt, ok);
+      };
+    },
+  };
+}
 
-  const wrapper: InvokeFn = (cmd, args, opts) => {
-    const id = seq++;
-    const startedAt = now();
-    pending.set(id, { cmd, startedAt });
-    const settle = (ok: boolean) => {
-      pending.delete(id);
-      record(cmd, now() - startedAt, ok);
-    };
-    return original(cmd, args, opts).then(
+// Module-level observer registry. The core proxy wraps `invoke` at module load
+// (before the harness starts), but only reports once the harness registers its
+// observer. Until then the wrapper is a transparent pass-through.
+let activeObserver: InvokeObserver | null = null;
+
+/** Register the observer that live invoke calls report to. */
+export function setInvokeObserver(observer: InvokeObserver | null): void {
+  activeObserver = observer;
+}
+
+/** The currently registered observer, or `null` when the harness is off. */
+export function getInvokeObserver(): InvokeObserver | null {
+  return activeObserver;
+}
+
+/**
+ * Wrap a real `invoke` so each call routes through the current observer (or
+ * passes straight through when none is registered). The wrapper never touches
+ * `window.__TAURI_INTERNALS__`: native Tauri defines `invoke` as a
+ * non-configurable, non-writable value property, so redefining it throws and
+ * would abort the whole harness. Intercepting at the module layer instead keeps
+ * the probe passive against native, terminal-accessor, and mockIPC shapes
+ * alike — the real core module dereferences the window property per call, so a
+ * module wrapper sees every call without owning the property.
+ */
+export function wrapInvoke(
+  real: InvokeFn,
+  getObserver: () => InvokeObserver | null,
+): InvokeFn {
+  return (cmd, args, opts) => {
+    const observer = getObserver();
+    if (!observer) {
+      return real(cmd, args, opts);
+    }
+    const settle = observer.begin(cmd);
+    return real(cmd, args, opts).then(
       (value) => {
         settle(true);
         return value;
@@ -63,11 +93,4 @@ export function installInvokeProbe(
       },
     );
   };
-
-  Object.defineProperty(internals, "invoke", {
-    configurable: true,
-    writable: true,
-    value: wrapper,
-  });
-  return true;
 }

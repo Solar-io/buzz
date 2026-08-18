@@ -16,7 +16,12 @@ import {
   DRIFT_THRESHOLD_MS,
   nextStallSample,
 } from "@/shared/profiling/drift.ts";
-import { installInvokeProbe } from "@/shared/profiling/ipc.ts";
+import {
+  createInvokeObserver,
+  getInvokeObserver,
+  setInvokeObserver,
+  wrapInvoke,
+} from "@/shared/profiling/ipc.ts";
 import { ProfileRecorder, RING_CAPACITY } from "@/shared/profiling/recorder.ts";
 
 function fixedClock() {
@@ -93,86 +98,105 @@ describe("classifyInput", () => {
   });
 });
 
-describe("installInvokeProbe", () => {
-  it("returns false and stays passive when no invoke bridge exists", () => {
-    assert.equal(
-      installInvokeProbe(undefined, new Map(), () => {}),
-      false,
+describe("wrapInvoke / observer registry", () => {
+  it("passes through untouched when no observer is registered", async () => {
+    setInvokeObserver(null);
+    const wrapped = wrapInvoke(
+      (cmd) => Promise.resolve(`ok:${cmd}`),
+      () => getInvokeObserver(),
     );
-    assert.equal(
-      installInvokeProbe({ invoke: 42 }, new Map(), () => {}),
-      false,
-    );
+    assert.equal(await wrapped("ping"), "ok:ping");
   });
 
-  it("records a resolved invoke once without recursing", async () => {
+  it("records a resolved invoke once through the registered observer", async () => {
     const calls = [];
-    const internals = {
-      invoke: (cmd) => Promise.resolve(`ok:${cmd}`),
-    };
+    const pending = new Map();
     let t = 0;
-    assert.equal(
-      installInvokeProbe(
-        internals,
-        new Map(),
+    setInvokeObserver(
+      createInvokeObserver(
+        pending,
         (cmd, dur, ok) => calls.push({ cmd, dur, ok }),
         () => (t += 5),
       ),
-      true,
     );
-    const result = await internals.invoke("ping");
+    const wrapped = wrapInvoke(
+      (cmd) => Promise.resolve(`ok:${cmd}`),
+      () => getInvokeObserver(),
+    );
+    const result = await wrapped("ping");
     assert.equal(result, "ok:ping");
     assert.deepEqual(calls, [{ cmd: "ping", dur: 5, ok: true }]);
+    assert.equal(pending.size, 0);
+    setInvokeObserver(null);
   });
 
   it("records a rejected invoke and re-throws without leaking pending", async () => {
     const calls = [];
     const pending = new Map();
-    const internals = { invoke: () => Promise.reject(new Error("boom")) };
-    installInvokeProbe(internals, pending, (cmd, _dur, ok) =>
-      calls.push({ cmd, ok }),
+    setInvokeObserver(
+      createInvokeObserver(pending, (cmd, _dur, ok) => calls.push({ cmd, ok })),
     );
-    await assert.rejects(() => internals.invoke("bad"), /boom/);
+    const wrapped = wrapInvoke(
+      () => Promise.reject(new Error("boom")),
+      () => getInvokeObserver(),
+    );
+    await assert.rejects(() => wrapped("bad"), /boom/);
     assert.deepEqual(calls, [{ cmd: "bad", ok: false }]);
     assert.equal(pending.size, 0);
+    setInvokeObserver(null);
   });
 
-  it("preserves an accessor-backed reassignment bridge without stack overflow", async () => {
-    // Reproduces the terminal E2E backend descriptor shape: `invoke` is an
-    // accessor whose getter returns a dispatcher delegating unknown commands to
-    // closure `inner`, and whose setter *reassigns* `inner`. A plain
-    // `internals.invoke = wrapper` would route the dispatcher's fallback back
-    // into the wrapper and overflow the stack on the first non-terminal call.
+  it("starts recording only after the observer is registered", async () => {
+    setInvokeObserver(null);
+    const calls = [];
+    const wrapped = wrapInvoke(
+      (cmd) => Promise.resolve(cmd),
+      () => getInvokeObserver(),
+    );
+    // Module proxy wraps at load, before the harness starts: this call is a
+    // transparent pass-through and must not be recorded.
+    await wrapped("before");
+    setInvokeObserver(
+      createInvokeObserver(new Map(), (cmd) => calls.push(cmd)),
+    );
+    await wrapped("after");
+    assert.deepEqual(calls, ["after"]);
+    setInvokeObserver(null);
+  });
+
+  it("never touches a native non-configurable invoke property", async () => {
+    // Native Tauri 2.11.5 defines `window.__TAURI_INTERNALS__.invoke` as a
+    // non-configurable, non-writable value property; any redefine/assign
+    // throws and would abort the harness. The module seam only reads the value
+    // (as the real core module does per call) and wraps that function
+    // reference — it must never write the property back.
     const internals = {};
-    let inner = null;
+    const native = (cmd) => Promise.resolve(`native:${cmd}`);
     Object.defineProperty(internals, "invoke", {
-      configurable: true,
-      get: () => (cmd, args, opts) => {
-        if (cmd === "terminal_input") return Promise.resolve("term");
-        if (!inner) throw new Error(`no mock bridge for ${cmd}`);
-        return inner(cmd, args, opts);
-      },
-      set: (fn) => {
-        inner = fn;
-      },
+      configurable: false,
+      writable: false,
+      enumerable: true,
+      value: native,
     });
-    // The real mock bridge is trapped through the setter after the harness runs.
-    const realBridge = (cmd) => Promise.resolve(`real:${cmd}`);
 
     const calls = [];
-    assert.equal(
-      installInvokeProbe(internals, new Map(), (cmd, _dur, ok) =>
+    setInvokeObserver(
+      createInvokeObserver(new Map(), (cmd, _dur, ok) =>
         calls.push({ cmd, ok }),
       ),
-      true,
     );
-    // App code trapping the invoke after the harness (as mockIPC does) must not
-    // clobber the probe: the harness redefined `invoke` as a data property.
-    inner = realBridge;
+    // The real core module derefs the property per call; the wrapper closes
+    // over the function value, exactly like tauriCoreProxy.ts.
+    const wrapped = wrapInvoke(internals.invoke, () => getInvokeObserver());
+    const result = await wrapped("go");
 
-    const result = await internals.invoke("non_terminal");
-    assert.equal(result, "real:non_terminal");
-    assert.deepEqual(calls, [{ cmd: "non_terminal", ok: true }]);
+    assert.equal(result, "native:go");
+    assert.deepEqual(calls, [{ cmd: "go", ok: true }]);
+    // The forbidden property is untouched and still non-configurable.
+    const descriptor = Object.getOwnPropertyDescriptor(internals, "invoke");
+    assert.equal(descriptor.configurable, false);
+    assert.equal(descriptor.value, native);
+    setInvokeObserver(null);
   });
 });
 

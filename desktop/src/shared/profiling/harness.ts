@@ -5,8 +5,9 @@
 //   1. main-thread stalls (timer drift, foreground-only) + input latency
 //      (receipt → next paint, with pre-dispatch queue delay split out)
 //   2. Tauri IPC duration/outcome + a >10s pending-invoke watchdog (deadlocks).
-//      The invoke bridge is redefined as a data property (see ipc.ts) so an
-//      accessor-backed bridge is preserved without looping into the wrapper.
+//      Intercepted at the `@tauri-apps/api/core` module layer (see
+//      tauriCoreProxy.ts) so it works against native Tauri's non-configurable
+//      invoke property — no window property is ever written.
 //   3. relay REQ→EOSE (history fetch) and publish send→ack round-trips
 //   4. periodic accumulator census (observer store, query cache, DOM nodes)
 //
@@ -28,7 +29,8 @@ import {
   PENDING_INVOKE_MS,
   PENDING_SCAN_MS,
   type PendingInvoke,
-  installInvokeProbe,
+  createInvokeObserver,
+  setInvokeObserver,
 } from "@/shared/profiling/ipc";
 import {
   FLUSH_INTERVAL_MS,
@@ -96,22 +98,16 @@ function installRelayProbe(rec: ProfileRecorder): void {
   }
 }
 
-type TauriInternals = {
-  invoke: (cmd: string, args?: unknown, opts?: unknown) => Promise<unknown>;
-};
-
 function installIpcProbe(rec: ProfileRecorder): void {
-  const internals = (
-    window as unknown as { __TAURI_INTERNALS__?: TauriInternals }
-  ).__TAURI_INTERNALS__;
   // Track outstanding invokes so a hung command surfaces via the watchdog.
   const pending = new Map<number, PendingInvoke>();
-  const installed = installInvokeProbe(internals, pending, (cmd, dur, ok) =>
-    rec.record({ type: "ipc", cmd, dur, ok }),
+  // The core module proxy wraps `invoke` at load; registering the observer
+  // here begins recording. No window property is touched — see ipc.ts.
+  setInvokeObserver(
+    createInvokeObserver(pending, (cmd, dur, ok) =>
+      rec.record({ type: "ipc", cmd, dur, ok }),
+    ),
   );
-  if (!installed) {
-    return;
-  }
 
   window.setInterval(() => {
     const now = performance.now();
@@ -211,7 +207,9 @@ function installCensusProbe(
 
 /**
  * Start the harness once, wiring all four probes and the JSONL sink. Idempotent
- * and non-throwing: profiling must never take down the app it measures.
+ * and non-throwing: profiling must never take down the app it measures. Each
+ * probe is isolated — one failing to install must not abort the others or the
+ * flush wiring.
  */
 export function startProfilingHarness(queryClient: QueryClient): void {
   if (started) {
@@ -219,21 +217,30 @@ export function startProfilingHarness(queryClient: QueryClient): void {
   }
   started = true;
 
-  try {
-    const sid = `session-${Date.now()}`;
-    const rec = new ProfileRecorder(sid, async (lines) => {
-      await invoke("append_profiling_log", { fileStem: sid, lines });
-    });
+  const sid = `session-${Date.now()}`;
+  const rec = new ProfileRecorder(sid, async (lines) => {
+    await invoke("append_profiling_log", { fileStem: sid, lines });
+  });
 
-    installIpcProbe(rec);
-    installRelayProbe(rec);
-    installStallProbe(rec);
-    installInputProbe(rec);
-    installCensusProbe(rec, queryClient);
+  // Install each probe under its own guard so a single failure can't silently
+  // collapse the rest of the capture.
+  safely(() => installIpcProbe(rec));
+  safely(() => installRelayProbe(rec));
+  safely(() => installStallProbe(rec));
+  safely(() => installInputProbe(rec));
+  safely(() => installCensusProbe(rec, queryClient));
 
+  safely(() => {
     window.setInterval(() => void rec.flush(), FLUSH_INTERVAL_MS);
     window.addEventListener("pagehide", () => void rec.flush());
+  });
+}
+
+/** Run harness setup work, swallowing any failure so it can't take down the app. */
+function safely(fn: () => void): void {
+  try {
+    fn();
   } catch {
-    // Never let harness setup break the app being profiled.
+    // A probe that cannot install is skipped; the others still run.
   }
 }
