@@ -23,6 +23,7 @@ import {
   wrapInvoke,
 } from "@/shared/profiling/ipc.ts";
 import { ProfileRecorder, RING_CAPACITY } from "@/shared/profiling/recorder.ts";
+import { resolveTauriCore } from "@/shared/profiling/viteTauriCoreProxy.ts";
 
 function fixedClock() {
   let t = 1000;
@@ -197,6 +198,70 @@ describe("wrapInvoke / observer registry", () => {
     assert.equal(descriptor.configurable, false);
     assert.equal(descriptor.value, native);
     setInvokeObserver(null);
+  });
+});
+
+describe("resolveTauriCore", () => {
+  const PROXY = "/abs/src/shared/profiling/tauriCoreProxy.ts";
+  const REAL = "/abs/node_modules/@tauri-apps/api/core.js";
+
+  it("redirects the bare core specifier to the proxy", () => {
+    // App code and external plugins (`plugin-opener`, …) import this form.
+    assert.equal(
+      resolveTauriCore("@tauri-apps/api/core", "/abs/src/App.tsx", PROXY, REAL),
+      PROXY,
+    );
+  });
+
+  it("redirects a relative ./core.js from inside @tauri-apps/api to the proxy", () => {
+    // The bypass Thufir found: Tauri's own submodules (event/app/window/webview)
+    // reach core via the relative import, which a bare alias never sees.
+    assert.equal(
+      resolveTauriCore(
+        "./core.js",
+        "/abs/node_modules/@tauri-apps/api/event.js",
+        PROXY,
+        REAL,
+      ),
+      PROXY,
+    );
+  });
+
+  it("maps the proxy's escape specifier to the real core, not itself", () => {
+    // The proxy re-exports through @tauri-core-impl; it must reach the real
+    // module so the redirect never loops.
+    assert.equal(
+      resolveTauriCore("@tauri-core-impl", PROXY, PROXY, REAL),
+      REAL,
+    );
+  });
+
+  it("leaves the proxy's other imports untouched", () => {
+    // e.g. the proxy importing the observer registry must not be redirected.
+    assert.equal(
+      resolveTauriCore("@/shared/profiling/ipc", PROXY, PROXY, REAL),
+      null,
+    );
+  });
+
+  it("ignores a relative ./core.js from outside @tauri-apps/api", () => {
+    // A same-named file elsewhere must not be captured.
+    assert.equal(
+      resolveTauriCore(
+        "./core.js",
+        "/abs/src/shared/lib/thing.ts",
+        PROXY,
+        REAL,
+      ),
+      null,
+    );
+  });
+
+  it("ignores unrelated specifiers", () => {
+    assert.equal(
+      resolveTauriCore("react", "/abs/src/App.tsx", PROXY, REAL),
+      null,
+    );
   });
 });
 
