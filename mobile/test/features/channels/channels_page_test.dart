@@ -1420,7 +1420,7 @@ void main() {
     expect(find.text('No open channels available to join.'), findsOneWidget);
   });
 
-  testWidgets('browse action lazily builds a large channel directory', (
+  testWidgets('browse action scrolls and joins an offscreen channel', (
     tester,
   ) async {
     final channels = List.generate(
@@ -1436,11 +1436,15 @@ void main() {
         memberCount: 0,
       ),
     );
+    late _RecordingChannelActions actions;
     await tester.pumpWidget(
       buildTestable(
         disableAnimations: true,
         overrides: [
           channelsProvider.overrideWith(() => _FakeNotifier(channels)),
+          channelActionsProvider.overrideWith(
+            (ref) => actions = _RecordingChannelActions(ref),
+          ),
         ],
       ),
     );
@@ -1458,6 +1462,36 @@ void main() {
       findsAtLeast(1),
     );
     expect(find.byKey(const Key('browse-channel-directory-499')), findsNothing);
+
+    final sheet = find.byType(BottomSheet).last;
+    final scrollable = find
+        .descendant(of: sheet, matching: find.byType(Scrollable))
+        .last;
+    expect(
+      tester.state<ScrollableState>(scrollable).position.maxScrollExtent,
+      greaterThan(0),
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('browse-channel-directory-499')),
+      500,
+      scrollable: scrollable,
+      maxScrolls: 100,
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('browse-channel-directory-499')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('browse-channel-directory-0')), findsNothing);
+
+    await tester.tap(
+      find.byKey(const Key('browse-channel-join-directory-499')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(actions.joinedChannelIds, ['directory-499']);
+    expect(find.byType(BottomSheet), findsNothing);
   });
 
   testWidgets('create channel sheet lists type and visibility radio options', (
@@ -2154,6 +2188,26 @@ class _FakeNotifier extends ChannelsNotifier {
   @override
   Map<String, Map<String, ObservedUnreadEvent>>
   get observedUnreadEventsByChannel => _observedEventsByChannel;
+}
+
+class _RecordingChannelActions extends ChannelActions {
+  _RecordingChannelActions(Ref ref)
+    : super(
+        ref: ref,
+        session: ref.read(relaySessionProvider.notifier),
+        signedEventRelay: SignedEventRelay(
+          session: ref.read(relaySessionProvider.notifier),
+          nsec: null,
+        ),
+        currentPubkey: 'self',
+      );
+
+  final List<String> joinedChannelIds = [];
+
+  @override
+  Future<void> joinChannel(String channelId) async {
+    joinedChannelIds.add(channelId);
+  }
 }
 
 class _FakeChannelSectionsNotifier extends ChannelSectionsNotifier {
