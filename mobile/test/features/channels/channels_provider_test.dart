@@ -43,7 +43,7 @@ void main() {
       expect(channels.single.isMember, isFalse);
       expect(session.subscribeFilters, isEmpty);
       expect(
-        session.historyFilters.any(
+        session.directoryQueryFilters.any(
           (filter) =>
               filter.kinds.length == 1 &&
               filter.kinds.single == 39000 &&
@@ -81,14 +81,7 @@ void main() {
     final channels = await container.read(channelsProvider.future);
 
     expect(channels, hasLength(501));
-    final directoryFilters = session.historyFilters
-        .where(
-          (filter) =>
-              filter.kinds.length == 1 &&
-              filter.kinds.single == 39000 &&
-              !filter.tags.containsKey('#d'),
-        )
-        .toList();
+    final directoryFilters = session.directoryQueryFilters;
     expect(directoryFilters, hasLength(2));
     expect(directoryFilters.first.until, isNull);
     expect(directoryFilters.first.extensions, isEmpty);
@@ -975,6 +968,7 @@ class _FakeRelaySession extends RelaySessionNotifier {
 
   final List<NostrFilter> historyFilters = [];
   final List<List<NostrFilter>> queryBatches = [];
+  final List<NostrFilter> directoryQueryFilters = [];
   final List<NostrFilter> subscribeFilters = [];
   final Map<int, (NostrFilter, void Function(NostrEvent))> _subscriptions = {};
   int _nextSubscriptionKey = 0;
@@ -1041,26 +1035,7 @@ class _FakeRelaySession extends RelaySessionNotifier {
     if (filter.kinds.contains(39000)) {
       final ids = filter.tags['#d']?.toSet();
       if (ids == null) {
-        if (directoryFailures > 0) {
-          directoryFailures--;
-          throw Exception('directory fetch failed');
-        }
-        final requestIndex = metadataPageRequestCount++;
-        final maxRequests = maxMetadataPageRequests;
-        if (maxRequests != null && requestIndex >= maxRequests) {
-          throw StateError('Unexpected directory page request');
-        }
-        final pageBuilder = metadataPageBuilder;
-        if (pageBuilder != null) return List.of(pageBuilder(requestIndex));
-        final pages = metadataPages;
-        if (pages != null) {
-          if (requestIndex < pages.length) return List.of(pages[requestIndex]);
-          if (repeatLastMetadataPage && pages.isNotEmpty) {
-            return List.of(pages.last);
-          }
-          return const [];
-        }
-        return List.of(metadata);
+        throw StateError('Directory queries must use the HTTP query bridge');
       }
       // Member metadata query — return only matching `d` tags.
       return metadata.where((e) => ids.contains(e.getTagValue('d'))).toList();
@@ -1073,6 +1048,32 @@ class _FakeRelaySession extends RelaySessionNotifier {
     List<NostrFilter> filters, {
     Duration timeout = const Duration(seconds: 8),
   }) async {
+    if (filters case [final filter]
+        when filter.kinds.length == 1 &&
+            filter.kinds.single == 39000 &&
+            !filter.tags.containsKey('#d')) {
+      directoryQueryFilters.add(filter);
+      if (directoryFailures > 0) {
+        directoryFailures--;
+        throw Exception('directory fetch failed');
+      }
+      final requestIndex = metadataPageRequestCount++;
+      final maxRequests = maxMetadataPageRequests;
+      if (maxRequests != null && requestIndex >= maxRequests) {
+        throw StateError('Unexpected directory page request');
+      }
+      final pageBuilder = metadataPageBuilder;
+      if (pageBuilder != null) return List.of(pageBuilder(requestIndex));
+      final pages = metadataPages;
+      if (pages != null) {
+        if (requestIndex < pages.length) return List.of(pages[requestIndex]);
+        if (repeatLastMetadataPage && pages.isNotEmpty) {
+          return List.of(pages.last);
+        }
+        return const [];
+      }
+      return List.of(metadata);
+    }
     queryBatches.add(filters);
     return recentMessages.where((event) {
       return filters.any((filter) {

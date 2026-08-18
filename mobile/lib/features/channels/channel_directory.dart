@@ -11,14 +11,14 @@ Future<List<NostrEvent>> _fetchChannelDirectoryMetas(
   int? directoryUntil;
   String? directoryBeforeId;
   for (var pageIndex = 0; pageIndex < _maxChannelDirectoryPages; pageIndex++) {
-    final page = await session.fetchHistory(
+    final page = await session.queryRelay([
       NostrFilter(
         kinds: const [39000],
         limit: _channelDirectoryPageSize,
         until: directoryUntil,
         extensions: {'before_id': ?directoryBeforeId},
       ),
-    );
+    ]);
     directoryMetas.addAll(page);
 
     var madeProgress = false;
