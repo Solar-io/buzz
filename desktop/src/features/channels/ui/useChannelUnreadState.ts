@@ -9,6 +9,7 @@ import {
 } from "@/features/channels/lib/subtreeCreatedAt";
 import { computeThreadReplyUnreadCounts } from "@/features/channels/lib/threadReplyUnreadCounts";
 import { computeThreadBadgeCounts } from "@/features/channels/lib/threadBadgeCounts";
+import { maxReadAt } from "@/features/channels/readState/readStateFormat";
 import {
   useStableArrayShallow,
   useStableMap,
@@ -22,7 +23,6 @@ import {
   computeChannelUnreadMarker,
   computeThreadUnreadMarker,
 } from "@/features/messages/lib/unreadMarker";
-import { isThreadReply } from "@/features/messages/lib/threading";
 import type { TimelineMessage } from "@/features/messages/types";
 import { isConversationalUnreadKind } from "@/shared/constants/kinds";
 
@@ -167,6 +167,27 @@ export function useChannelUnreadState({
   const messageById = React.useMemo(
     () => new Map(timelineMessages.map((message) => [message.id, message])),
     [timelineMessages],
+  );
+  // Per-message read resolver for the ACTIVE channel's badges and predicates.
+  // Folds the browse frontier — max(bare channel, channel-timeline) exposed as
+  // getChannelReadAt(activeChannelId) — over each message's own msg:<id> marker.
+  //
+  // Passive channel-open advances only the channel-timeline context (so the
+  // sidebar keeps preserving unopened thread activity via the bare marker), but
+  // the per-message parent resolver folds only the bare channel context. Without
+  // re-adding the timeline term here, a reply the user already browsed past — one
+  // older than the frontier but never expanded, so it has no msg:<id> marker —
+  // re-lights the collapsed in-panel branch badge. Folding the browse frontier
+  // reads those browsed-past replies while a genuinely newer reply (createdAt >
+  // frontier) still counts, and keeps the root/branch predicates on one frontier
+  // so they cannot disagree.
+  const getActiveMessageReadAt = React.useCallback(
+    (messageId: string) =>
+      maxReadAt(
+        getMessageReadAt(messageId),
+        activeChannelId ? getChannelReadAt(activeChannelId) : null,
+      ),
+    [activeChannelId, getChannelReadAt, getMessageReadAt],
   );
   const threadPanelIndex = React.useMemo(
     () => buildThreadPanelIndex(timelineMessages),
@@ -323,7 +344,7 @@ export function useChannelUnreadState({
             subtreeReplyIds: getReplyDescendantIdsForMessage(openThreadHeadId),
             visibleReplyIds: threadMessages.map((entry) => entry.message.id),
             expandedReplyIds: expandedThreadReplyIds,
-            getReadAt: getMessageReadAt,
+            getReadAt: getActiveMessageReadAt,
             currentPubkey,
             isForcedUnread: isMsgForcedUnread,
           })
@@ -332,7 +353,7 @@ export function useChannelUnreadState({
       openThreadHeadId,
       threadMessages,
       timelineMessages,
-      getMessageReadAt,
+      getActiveMessageReadAt,
       expandedThreadReplyIds,
       getReplyDescendantIdsForMessage,
       currentPubkey,
@@ -353,7 +374,7 @@ export function useChannelUnreadState({
       computeThreadBadgeCounts(
         timelineMessages,
         repliesByRootId,
-        getMessageReadAt,
+        getActiveMessageReadAt,
         (rootId) => !isThreadMuted(rootId),
         currentPubkey,
         isMsgForcedUnread,
@@ -362,7 +383,7 @@ export function useChannelUnreadState({
       currentPubkey,
       timelineMessages,
       repliesByRootId,
-      getMessageReadAt,
+      getActiveMessageReadAt,
       isThreadMuted,
       isMsgForcedUnread,
       readStateVersion,
@@ -393,10 +414,7 @@ export function useChannelUnreadState({
       if (!message) return false;
       const { firstUnreadReplyId } = computeThreadUnreadMarker(
         [message],
-        (id) =>
-          activeChannelId && !isThreadReply(message.tags ?? [])
-            ? getChannelReadAt(activeChannelId)
-            : getMessageReadAt(id),
+        getActiveMessageReadAt,
         currentPubkey,
         isMsgForcedUnread,
       );
@@ -404,9 +422,7 @@ export function useChannelUnreadState({
     },
     [
       messageById,
-      activeChannelId,
-      getChannelReadAt,
-      getMessageReadAt,
+      getActiveMessageReadAt,
       currentPubkey,
       isMsgForcedUnread,
       readStateVersion,
