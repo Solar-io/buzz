@@ -553,6 +553,22 @@ pub struct DbConfig {
     /// than the staleness gate never routes anyway, so a larger budget
     /// would only misrepresent the config.
     pub replica_read_max_age_ms: u64,
+    /// Session `lock_timeout` in milliseconds for writer connections (env
+    /// `BUZZ_DB_LOCK_TIMEOUT_MS`). A statement that waits longer than this
+    /// on any lock errors out instead of parking — the fast-fail that keeps
+    /// one wedged lock holder from queueing the whole fleet behind it.
+    /// `0` disables the timeout (Postgres semantics).
+    pub lock_timeout_ms: u64,
+    /// Session `idle_in_transaction_session_timeout` in milliseconds for
+    /// writer connections (env `BUZZ_DB_IDLE_TXN_TIMEOUT_MS`). Reaps
+    /// sessions that opened a transaction (possibly holding locks) and then
+    /// went idle — e.g. a client wedged mid-boot. `0` disables.
+    pub idle_txn_timeout_ms: u64,
+    /// Session `statement_timeout` in milliseconds for writer connections
+    /// (env `BUZZ_DB_STATEMENT_TIMEOUT_MS`). `0` (the default) disables it:
+    /// startup migrations and backfills legitimately run long statements,
+    /// so this is opt-in for deployers who know their workload.
+    pub statement_timeout_ms: u64,
 }
 
 impl Default for DbConfig {
@@ -570,9 +586,23 @@ impl Default for DbConfig {
             max_lifetime_secs: 1800,
             idle_timeout_secs: 600,
             replica_read_max_age_ms: 0,
+            lock_timeout_ms: DEFAULT_LOCK_TIMEOUT_MS,
+            idle_txn_timeout_ms: DEFAULT_IDLE_TXN_TIMEOUT_MS,
+            statement_timeout_ms: 0,
         }
     }
 }
+
+/// Default writer `lock_timeout` (ms). Five seconds is far above any healthy
+/// lock wait on the relay's hot paths, yet turns a wedged relation-lock
+/// holder from a fleet-wide stall into per-statement errors that surface in
+/// logs and retry naturally.
+pub const DEFAULT_LOCK_TIMEOUT_MS: u64 = 5_000;
+
+/// Default writer `idle_in_transaction_session_timeout` (ms). One minute:
+/// no legitimate relay transaction idles anywhere near this long, and it
+/// bounds how long a wedged client can hold locks from an open transaction.
+pub const DEFAULT_IDLE_TXN_TIMEOUT_MS: u64 = 60_000;
 
 /// Community host-map row returned by [`Db::lookup_community_by_host`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -701,19 +731,37 @@ impl Db {
     /// isolation assertion must remain in this single closure. Registering a
     /// second hook replaces the first and silently disarms the floor trigger.
     async fn connect_pool(config: &DbConfig, url: &str) -> Result<PgPool> {
+        let lock_timeout_ms = config.lock_timeout_ms;
+        let idle_txn_timeout_ms = config.idle_txn_timeout_ms;
+        let statement_timeout_ms = config.statement_timeout_ms;
         let options = PgPoolOptions::new()
             .max_connections(config.max_connections)
             .min_connections(config.min_connections)
             .acquire_timeout(Duration::from_secs(config.acquire_timeout_secs))
             .max_lifetime(Duration::from_secs(config.max_lifetime_secs))
             .idle_timeout(Duration::from_secs(config.idle_timeout_secs))
-            .after_connect(|conn, _meta| {
+            .after_connect(move |conn, _meta| {
                 Box::pin(async move {
                     // `SET` cannot take bind parameters; `set_config` can.
                     sqlx::query("SELECT set_config('buzz.created_at_floor', $1, false)")
                         .bind(replica_fence::CREATED_AT_FLOOR_SECS.to_string())
                         .execute(&mut *conn)
                         .await?;
+                    // Session timeouts (0 = disabled, Postgres semantics).
+                    // These make one wedged lock holder fail its own
+                    // statements instead of parking every other writer
+                    // behind it (see DbConfig docs for each knob). Bare
+                    // integers are milliseconds for all three GUCs.
+                    sqlx::query(
+                        "SELECT set_config('lock_timeout', $1, false), \
+                                set_config('idle_in_transaction_session_timeout', $2, false), \
+                                set_config('statement_timeout', $3, false)",
+                    )
+                    .bind(lock_timeout_ms.to_string())
+                    .bind(idle_txn_timeout_ms.to_string())
+                    .bind(statement_timeout_ms.to_string())
+                    .execute(&mut *conn)
+                    .await?;
                     let isolation: String = sqlx::query_scalar("SHOW transaction_isolation")
                         .fetch_one(&mut *conn)
                         .await?;
@@ -8749,6 +8797,12 @@ mod tests {
         );
         assert!(connect_pool.contains("buzz.created_at_floor"));
         assert!(connect_pool.contains("SHOW transaction_isolation"));
+        assert!(
+            connect_pool.contains("'lock_timeout'")
+                && connect_pool.contains("'idle_in_transaction_session_timeout'")
+                && connect_pool.contains("'statement_timeout'"),
+            "session timeouts must be applied inside the single writer hook"
+        );
         assert!(!connect_pool.contains("arm_floor_guard"));
         assert!(!connect_pool.contains("_arm_floor_guard"));
         assert!(!connect_pool.contains("allow(unused_variables)"));

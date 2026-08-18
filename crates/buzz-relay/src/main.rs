@@ -163,13 +163,23 @@ async fn main() -> anyhow::Result<()> {
         "Prometheus metrics exporter started"
     );
 
+    let default_db = DbConfig::default();
     let db_config = DbConfig {
         database_url: config.database_url.clone(),
         read_database_url: config.read_database_url.clone(),
         replica_read_max_age_ms: config.replica_read_max_age_ms,
         max_connections: config.db_pool_size,
         read_max_connections: config.db_read_pool_size,
-        ..DbConfig::default()
+        lock_timeout_ms: config
+            .db_lock_timeout_ms
+            .unwrap_or(default_db.lock_timeout_ms),
+        idle_txn_timeout_ms: config
+            .db_idle_txn_timeout_ms
+            .unwrap_or(default_db.idle_txn_timeout_ms),
+        statement_timeout_ms: config
+            .db_statement_timeout_ms
+            .unwrap_or(default_db.statement_timeout_ms),
+        ..default_db
     };
     let db = Db::new(&db_config).await.map_err(|e| {
         error!("Failed to connect to Postgres: {e}");

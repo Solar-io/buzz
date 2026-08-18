@@ -99,6 +99,17 @@ pub struct Config {
     /// independently so reader capacity can be tuned against the replica's
     /// headroom without touching the writer pool.
     pub db_read_pool_size: Option<u32>,
+    /// Writer session `lock_timeout` in ms (`BUZZ_DB_LOCK_TIMEOUT_MS`).
+    /// `None` keeps the [`buzz_db::DEFAULT_LOCK_TIMEOUT_MS`] default;
+    /// `Some(0)` disables the timeout.
+    pub db_lock_timeout_ms: Option<u64>,
+    /// Writer session `idle_in_transaction_session_timeout` in ms
+    /// (`BUZZ_DB_IDLE_TXN_TIMEOUT_MS`). `None` keeps the
+    /// [`buzz_db::DEFAULT_IDLE_TXN_TIMEOUT_MS`] default; `Some(0)` disables.
+    pub db_idle_txn_timeout_ms: Option<u64>,
+    /// Writer session `statement_timeout` in ms
+    /// (`BUZZ_DB_STATEMENT_TIMEOUT_MS`). `None`/`Some(0)` disables — opt-in.
+    pub db_statement_timeout_ms: Option<u64>,
     /// Public WebSocket URL of this relay, advertised in NIP-11.
     pub relay_url: String,
     /// Public WebSocket URL of the dedicated device-pairing relay, when configured.
@@ -530,6 +541,22 @@ impl Config {
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
             .filter(|&v| v > 0);
+
+        // Session timeout knobs: absent or unparseable env keeps the buzz-db
+        // default; an explicit `0` disables the timeout (Postgres semantics),
+        // so 0 must pass through rather than be filtered out like the pool
+        // sizes above.
+        let db_lock_timeout_ms = std::env::var("BUZZ_DB_LOCK_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok());
+
+        let db_idle_txn_timeout_ms = std::env::var("BUZZ_DB_IDLE_TXN_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok());
+
+        let db_statement_timeout_ms = std::env::var("BUZZ_DB_STATEMENT_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok());
 
         let relay_url =
             std::env::var("RELAY_URL").unwrap_or_else(|_| "ws://localhost:3000".to_string());
@@ -996,6 +1023,9 @@ impl Config {
             redis_pool_size,
             db_pool_size,
             db_read_pool_size,
+            db_lock_timeout_ms,
+            db_idle_txn_timeout_ms,
+            db_statement_timeout_ms,
             relay_url,
             pairing_relay_url,
             max_connections,
@@ -1291,6 +1321,70 @@ mod tests {
         assert_eq!(overridden, Some(40));
         assert_eq!(zero, None, "zero must fall back to inheriting");
         assert_eq!(junk, None, "unparsable value must fall back to inheriting");
+    }
+
+    #[test]
+    fn db_session_timeout_env_overrides_zero_passthrough_and_invalid_fallback() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let keys = [
+            "BUZZ_DB_LOCK_TIMEOUT_MS",
+            "BUZZ_DB_IDLE_TXN_TIMEOUT_MS",
+            "BUZZ_DB_STATEMENT_TIMEOUT_MS",
+        ];
+        let previous: Vec<_> = keys.iter().map(std::env::var_os).collect();
+        let read = |config: &Config| {
+            (
+                config.db_lock_timeout_ms,
+                config.db_idle_txn_timeout_ms,
+                config.db_statement_timeout_ms,
+            )
+        };
+
+        for key in keys {
+            std::env::remove_var(key);
+        }
+        let unset = read(&Config::from_env().expect("config"));
+
+        std::env::set_var("BUZZ_DB_LOCK_TIMEOUT_MS", "2000");
+        std::env::set_var("BUZZ_DB_IDLE_TXN_TIMEOUT_MS", "30000");
+        std::env::set_var("BUZZ_DB_STATEMENT_TIMEOUT_MS", "10000");
+        let overridden = read(&Config::from_env().expect("config"));
+
+        // `0` means "disable this timeout" and must pass through, unlike
+        // the pool-size knobs where 0 falls back to the default.
+        std::env::set_var("BUZZ_DB_LOCK_TIMEOUT_MS", "0");
+        std::env::set_var("BUZZ_DB_IDLE_TXN_TIMEOUT_MS", "0");
+        std::env::set_var("BUZZ_DB_STATEMENT_TIMEOUT_MS", "0");
+        let zero = read(&Config::from_env().expect("config"));
+
+        std::env::set_var("BUZZ_DB_LOCK_TIMEOUT_MS", "not-a-number");
+        std::env::set_var("BUZZ_DB_IDLE_TXN_TIMEOUT_MS", "not-a-number");
+        std::env::set_var("BUZZ_DB_STATEMENT_TIMEOUT_MS", "not-a-number");
+        let junk = read(&Config::from_env().expect("config"));
+
+        for (key, value) in keys.iter().zip(previous) {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+
+        assert_eq!(
+            unset,
+            (None, None, None),
+            "unset must defer to buzz-db defaults"
+        );
+        assert_eq!(overridden, (Some(2000), Some(30000), Some(10000)));
+        assert_eq!(
+            zero,
+            (Some(0), Some(0), Some(0)),
+            "explicit 0 must pass through to disable the timeout"
+        );
+        assert_eq!(
+            junk,
+            (None, None, None),
+            "unparsable values must defer to buzz-db defaults"
+        );
     }
 
     #[test]
