@@ -1851,22 +1851,9 @@ void main() {
     expect(find.text('archived-stream'), findsNothing);
   });
 
-  testWidgets('shows empty state when no channels', (tester) async {
-    await tester.pumpWidget(
-      buildTestable(
-        overrides: [channelsProvider.overrideWith(() => _FakeNotifier([]))],
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.text('No conversations yet'), findsOneWidget);
-  });
-
-  testWidgets('empty state lets users join a discovered channel', (
-    tester,
-  ) async {
+  testWidgets('empty state does not preview unjoined channels', (tester) async {
     final discoveredChannel = Channel(
-      id: 'recovery-channel',
+      id: 'discovered-channel',
       name: 'community-help',
       channelType: 'stream',
       visibility: 'open',
@@ -1875,23 +1862,11 @@ void main() {
       createdAt: DateTime(2025),
       memberCount: 7,
     );
-    final channelsNotifier = _FakeNotifier([discoveredChannel]);
-    final joinedChannelIds = <String>[];
-
     await tester.pumpWidget(
       buildTestable(
         overrides: [
-          channelsProvider.overrideWith(() => channelsNotifier),
-          channelActionsProvider.overrideWith(
-            (ref) => _FakeChannelActions(
-              ref,
-              onJoinChannel: (channelId) async {
-                joinedChannelIds.add(channelId);
-                channelsNotifier.setChannels([
-                  discoveredChannel.copyWith(isMember: true),
-                ]);
-              },
-            ),
+          channelsProvider.overrideWith(
+            () => _FakeNotifier([discoveredChannel]),
           ),
         ],
       ),
@@ -1900,18 +1875,13 @@ void main() {
 
     expect(find.text('No conversations yet'), findsOneWidget);
     expect(
-      find.byKey(const Key('browse-channel-recovery-channel')),
-      findsOneWidget,
+      find.text('Join an open channel to start a conversation.'),
+      findsNothing,
     );
-
-    await tester.tap(
-      find.byKey(const Key('browse-channel-join-recovery-channel')),
+    expect(
+      find.byKey(const Key('browse-channel-discovered-channel')),
+      findsNothing,
     );
-    await tester.pumpAndSettle();
-
-    expect(joinedChannelIds, ['recovery-channel']);
-    expect(find.text('No conversations yet'), findsNothing);
-    expect(find.text('community-help'), findsOneWidget);
   });
 
   testWidgets('shows error view with retry button', (tester) async {
@@ -2184,28 +2154,6 @@ class _FakeNotifier extends ChannelsNotifier {
   @override
   Map<String, Map<String, ObservedUnreadEvent>>
   get observedUnreadEventsByChannel => _observedEventsByChannel;
-
-  void setChannels(List<Channel> channels) {
-    state = AsyncData(channels);
-  }
-}
-
-class _FakeChannelActions extends ChannelActions {
-  final Future<void> Function(String channelId) onJoinChannel;
-
-  _FakeChannelActions(Ref ref, {required this.onJoinChannel})
-    : super(
-        ref: ref,
-        session: ref.read(relaySessionProvider.notifier),
-        signedEventRelay: SignedEventRelay(
-          session: ref.read(relaySessionProvider.notifier),
-          nsec: null,
-        ),
-        currentPubkey: 'aabb',
-      );
-
-  @override
-  Future<void> joinChannel(String channelId) => onJoinChannel(channelId);
 }
 
 class _FakeChannelSectionsNotifier extends ChannelSectionsNotifier {

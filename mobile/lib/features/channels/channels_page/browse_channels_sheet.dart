@@ -88,28 +88,6 @@ class _BrowseChannelsSheet extends ConsumerWidget {
   }
 }
 
-class _JoinableChannelList extends StatelessWidget {
-  final List<Channel> channels;
-
-  const _JoinableChannelList({required this.channels});
-
-  @override
-  Widget build(BuildContext context) {
-    final sortedChannels = List<Channel>.of(channels)
-      ..sort(
-        (left, right) =>
-            left.name.toLowerCase().compareTo(right.name.toLowerCase()),
-      );
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (final channel in sortedChannels)
-          _JoinableChannelTile(channel: channel, closeAfterJoin: false),
-      ],
-    );
-  }
-}
-
 class _JoinableChannelTile extends HookConsumerWidget {
   final Channel channel;
   final bool closeAfterJoin;
