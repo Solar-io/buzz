@@ -9,8 +9,8 @@ import 'package:buzz/shared/relay/relay.dart';
 
 /// Tests for [ChannelsNotifier] in the pure-Nostr world.
 ///
-/// The provider performs a three-step WS query:
-///   1. kind:39002 memberships tagged `#p:<my-pubkey>`
+/// The provider performs a three-step relay query:
+///   1. paginated kind:39002 memberships tagged `#p:<my-pubkey>`
 ///   2. kind:39000 metadata for those channel ids
 ///   3. paginated kind:39000 metadata for discoverable open channels
 /// then layers per-channel live subscriptions on the `#h` tag.
@@ -82,11 +82,76 @@ void main() {
 
     expect(channels, hasLength(501));
     final directoryFilters = session.directoryQueryFilters;
-    expect(directoryFilters, hasLength(2));
+    expect(directoryFilters, hasLength(3));
     expect(directoryFilters.first.until, isNull);
     expect(directoryFilters.first.extensions, isEmpty);
-    expect(directoryFilters.last.until, firstPage.last.createdAt);
-    expect(directoryFilters.last.extensions['before_id'], firstPage.last.id);
+    expect(directoryFilters[1].until, firstPage.last.createdAt);
+    expect(directoryFilters[1].extensions['before_id'], firstPage.last.id);
+    expect(directoryFilters.last.until, finalChannel.createdAt);
+    expect(directoryFilters.last.extensions['before_id'], finalChannel.id);
+  });
+
+  test(
+    'paginates memberships when the relay caps responses below limit',
+    () async {
+      final firstPage = List.generate(
+        100,
+        (index) => _membership(
+          '${index.toString().padLeft(8, '0')}-0000-4000-8000-000000000000',
+          myPk,
+        ),
+      );
+      final finalChannelId = '99999999-9999-4999-8999-999999999999';
+      final finalMembership = _membership(finalChannelId, myPk);
+      final session = _FakeRelaySession(
+        memberships: const [],
+        membershipPages: [
+          firstPage,
+          [finalMembership],
+        ],
+        metadata: [_meta(id: finalChannelId, name: 'last-membership')],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      final channels = await container.read(channelsProvider.future);
+
+      expect(channels.single.id, finalChannelId);
+      expect(channels.single.isMember, isTrue);
+      expect(session.membershipQueryFilters, hasLength(3));
+      expect(session.membershipQueryFilters.first.until, isNull);
+      expect(session.membershipQueryFilters.first.extensions, isEmpty);
+      expect(session.membershipQueryFilters[1].until, firstPage.last.createdAt);
+      expect(
+        session.membershipQueryFilters[1].extensions['before_id'],
+        firstPage.last.id,
+      );
+      expect(
+        session.membershipQueryFilters.last.extensions['before_id'],
+        finalMembership.id,
+      );
+    },
+  );
+
+  test('stops membership pagination when the relay repeats a page', () async {
+    final repeatedPage = List.generate(
+      500,
+      (index) => _membership(
+        '${index.toString().padLeft(8, '0')}-0000-4000-8000-000000000000',
+        myPk,
+      ),
+    );
+    final session = _FakeRelaySession(
+      memberships: const [],
+      membershipPages: [repeatedPage],
+      repeatLastMembershipPage: true,
+      maxMembershipPageRequests: 2,
+    );
+    final container = _buildContainer(session: session);
+    addTearDown(container.dispose);
+
+    expect(await container.read(channelsProvider.future), isEmpty);
+    expect(session.membershipRequestCount, 2);
   });
 
   test('stops channel discovery when the relay repeats a full page', () async {
@@ -113,24 +178,31 @@ void main() {
     expect(session.metadataPageRequestCount, 2);
   });
 
-  test('directory page-cap failure does not fail channel loading', () async {
-    final session = _FakeRelaySession(
-      memberships: const [],
-      metadataPageBuilder: (pageIndex) => List.generate(
-        500,
-        (eventIndex) => _meta(
-          id: 'channel-$pageIndex-$eventIndex',
-          name: 'channel-$pageIndex-$eventIndex',
-          createdAt: 1000 - pageIndex,
+  test(
+    'directory page-cap failure is distinct from an empty directory',
+    () async {
+      final session = _FakeRelaySession(
+        memberships: const [],
+        metadataPageBuilder: (pageIndex) => List.generate(
+          500,
+          (eventIndex) => _meta(
+            id: 'channel-$pageIndex-$eventIndex',
+            name: 'channel-$pageIndex-$eventIndex',
+            createdAt: 1000 - pageIndex,
+          ),
         ),
-      ),
-    );
-    final container = _buildContainer(session: session);
-    addTearDown(container.dispose);
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
 
-    expect(await container.read(channelsProvider.future), isEmpty);
-    expect(session.metadataPageRequestCount, 100);
-  });
+      expect(await container.read(channelsProvider.future), isEmpty);
+      expect(session.metadataPageRequestCount, 100);
+      expect(
+        container.read(channelDirectoryLoadStatusProvider).status,
+        ChannelDirectoryLoadStatus.error,
+      );
+    },
+  );
 
   test(
     'directory failure retains discovery while membership refreshes',
@@ -174,8 +246,39 @@ void main() {
         refreshed.firstWhere((channel) => channel.id == _channelD).isMember,
         isTrue,
       );
+      expect(
+        container.read(channelDirectoryLoadStatusProvider).status,
+        ChannelDirectoryLoadStatus.error,
+      );
+
+      await container.read(channelsProvider.notifier).retryDirectory();
+
+      expect(
+        container.read(channelDirectoryLoadStatusProvider).status,
+        ChannelDirectoryLoadStatus.loaded,
+      );
     },
   );
+
+  test('directory retry failure retains the current channel list', () async {
+    final session = _FakeRelaySession(
+      memberships: [_membership(_channelA, myPk)],
+      metadata: [_meta(id: _channelA, name: 'general')],
+    );
+    final container = _buildContainer(session: session);
+    addTearDown(container.dispose);
+
+    final initial = await container.read(channelsProvider.future);
+    session.membershipFailures = 1;
+
+    await container.read(channelsProvider.notifier).retryDirectory();
+
+    expect(container.read(channelsProvider).requireValue, initial);
+    expect(
+      container.read(channelDirectoryLoadStatusProvider).status,
+      ChannelDirectoryLoadStatus.error,
+    );
+  });
 
   test('reconnect backstop does not refetch the channel directory', () async {
     final session = _FakeRelaySession(
@@ -842,13 +945,17 @@ void main() {
 
     await container.read(channelsProvider.future);
 
-    // Two history fetches for channel loading, plus one per non-DM channel
-    // for high-priority event backfill.
-    expect(session.historyFilters.length, greaterThanOrEqualTo(2));
-    expect(session.historyFilters[0].kinds, [39002]);
-    expect(session.historyFilters[0].tags['#p'], [myPk]);
-    expect(session.historyFilters[1].kinds, [39000]);
-    expect(session.historyFilters[1].tags['#d'], [_channelA]);
+    expect(session.membershipQueryFilters, isNotEmpty);
+    expect(session.membershipQueryFilters.first.kinds, [39002]);
+    expect(session.membershipQueryFilters.first.tags['#p'], [myPk]);
+    expect(
+      session.historyFilters.any(
+        (filter) =>
+            filter.kinds.contains(39000) &&
+            filter.tags['#d']?.contains(_channelA) == true,
+      ),
+      isTrue,
+    );
 
     // And one live subscription on the resulting channel.
     expect(session.subscribeFilters, hasLength(1));
@@ -938,11 +1045,14 @@ Future<void> _waitUntil(bool Function() predicate) async {
   fail('Timed out waiting for asynchronous provider work');
 }
 
-/// Fake [RelaySessionNotifier] that returns canned events from [fetchHistory]
-/// and records subscribe calls.
+/// Fake [RelaySessionNotifier] that returns canned query results and records
+/// subscriptions.
 class _FakeRelaySession extends RelaySessionNotifier {
   _FakeRelaySession({
     required this.memberships,
+    this.membershipPages,
+    this.repeatLastMembershipPage = false,
+    this.maxMembershipPageRequests,
     this.metadata = const [],
     this.metadataPages,
     this.metadataPageBuilder,
@@ -954,6 +1064,9 @@ class _FakeRelaySession extends RelaySessionNotifier {
   });
 
   List<NostrEvent> memberships;
+  final List<List<NostrEvent>>? membershipPages;
+  final bool repeatLastMembershipPage;
+  final int? maxMembershipPageRequests;
   List<NostrEvent> metadata;
   final List<List<NostrEvent>>? metadataPages;
   final List<NostrEvent> Function(int pageIndex)? metadataPageBuilder;
@@ -969,6 +1082,7 @@ class _FakeRelaySession extends RelaySessionNotifier {
   final List<NostrFilter> historyFilters = [];
   final List<List<NostrFilter>> queryBatches = [];
   final List<NostrFilter> directoryQueryFilters = [];
+  final List<NostrFilter> membershipQueryFilters = [];
   final List<NostrFilter> subscribeFilters = [];
   final Map<int, (NostrFilter, void Function(NostrEvent))> _subscriptions = {};
   int _nextSubscriptionKey = 0;
@@ -1050,6 +1164,38 @@ class _FakeRelaySession extends RelaySessionNotifier {
   }) async {
     if (filters case [final filter]
         when filter.kinds.length == 1 &&
+            filter.kinds.single == 39002 &&
+            filter.tags['#p'] != null) {
+      membershipQueryFilters.add(filter);
+      if (membershipFailures > 0) {
+        membershipFailures--;
+        throw Exception('membership fetch failed');
+      }
+      final requestIndex = membershipRequestCount++;
+      final maxRequests = maxMembershipPageRequests;
+      if (maxRequests != null && requestIndex >= maxRequests) {
+        throw StateError('Unexpected membership page request');
+      }
+      final pages = membershipPages;
+      if (pages != null) {
+        if (requestIndex < pages.length) return List.of(pages[requestIndex]);
+        if (repeatLastMembershipPage && pages.isNotEmpty) {
+          return List.of(pages.last);
+        }
+        return const [];
+      }
+      if (filter.until != null) return const [];
+      final myPk = filter.tags['#p']?.single;
+      return memberships
+          .where(
+            (event) => event.tags.any(
+              (tag) => tag.length >= 2 && tag[0] == 'p' && tag[1] == myPk,
+            ),
+          )
+          .toList();
+    }
+    if (filters case [final filter]
+        when filter.kinds.length == 1 &&
             filter.kinds.single == 39000 &&
             !filter.tags.containsKey('#d')) {
       directoryQueryFilters.add(filter);
@@ -1072,7 +1218,7 @@ class _FakeRelaySession extends RelaySessionNotifier {
         }
         return const [];
       }
-      return List.of(metadata);
+      return filter.until == null ? List.of(metadata) : const [];
     }
     queryBatches.add(filters);
     return recentMessages.where((event) {

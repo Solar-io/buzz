@@ -153,26 +153,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     final session = ref.read(relaySessionProvider.notifier);
 
     // Step 1: find the channels I'm a member of via kind:39002.
-    final memberships = <NostrEvent>[];
-    {
-      int? until;
-      const pageSize = 500;
-      while (true) {
-        final page = await session.fetchHistory(
-          NostrFilter(
-            kinds: const [39002],
-            tags: {
-              '#p': [myPk],
-            },
-            limit: pageSize,
-            until: until,
-          ),
-        );
-        memberships.addAll(page);
-        if (page.length < pageSize) break;
-        until = page.map((e) => e.createdAt).reduce(min) - 1;
-      }
-    }
+    final memberships = await _fetchChannelMemberships(session, myPk);
     final memberChannelIds = memberships
         .map((e) => e.getTagValue('d'))
         .whereType<String>()
@@ -192,12 +173,22 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     // private channels and DMs below so discovery fails closed if that contract
     // ever regresses. The composite cursor preserves tied-timestamp rows.
     if (fetchDirectory) {
+      final directoryScope = channelDirectoryScope(
+        ref.read(relayConfigProvider).baseUrl,
+        myPk,
+      );
+      final directoryStatus = ref.read(
+        channelDirectoryLoadStatusProvider.notifier,
+      );
+      directoryStatus.markLoading(directoryScope);
       try {
         _directoryMetas = await _fetchChannelDirectoryMetas(session);
-      } catch (error) {
+        directoryStatus.markLoaded(directoryScope);
+      } catch (error, stackTrace) {
+        directoryStatus.markError(directoryScope);
         debugPrint(
           '[ChannelsNotifier] channel directory refresh failed; retaining '
-          'cached discovery: $error',
+          'cached discovery: $error\n$stackTrace',
         );
       }
     }
@@ -920,6 +911,50 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     // when the session transitions to connected.
     if (sessionState.status != SessionStatus.connected) return;
     state = await AsyncValue.guard(() => _fetch(subscribeLive: true));
+  }
+
+  /// Loads the directory when Browse channels opens after startup or an error.
+  Future<void> ensureDirectoryLoaded() async {
+    final directoryState = ref.read(channelDirectoryLoadStatusProvider);
+    final scope = channelDirectoryScope(
+      ref.read(relayConfigProvider).baseUrl,
+      ref.read(myPubkeyProvider),
+    );
+    if (directoryState.scope == scope &&
+        (directoryState.status == ChannelDirectoryLoadStatus.loading ||
+            directoryState.status == ChannelDirectoryLoadStatus.loaded)) {
+      return;
+    }
+    await retryDirectory();
+  }
+
+  /// Retries channel discovery while retaining the current channel list.
+  Future<void> retryDirectory() async {
+    final previousChannels = state.value;
+    final directoryStatus = ref.read(
+      channelDirectoryLoadStatusProvider.notifier,
+    );
+    final scope = channelDirectoryScope(
+      ref.read(relayConfigProvider).baseUrl,
+      ref.read(myPubkeyProvider),
+    );
+    final directoryState = ref.read(channelDirectoryLoadStatusProvider);
+    if (directoryState.scope == scope &&
+        directoryState.status == ChannelDirectoryLoadStatus.loading) {
+      return;
+    }
+    if (ref.read(relaySessionProvider).status != SessionStatus.connected) {
+      directoryStatus.markError(scope);
+      return;
+    }
+    try {
+      state = AsyncData(await _fetch(subscribeLive: true));
+    } catch (error, stackTrace) {
+      directoryStatus.markError(scope);
+      state = previousChannels == null
+          ? AsyncError(error, stackTrace)
+          : AsyncData(previousChannels);
+    }
   }
 
   void _clearLiveSubscriptions() {

@@ -1454,6 +1454,57 @@ void main() {
     expect(find.text('No open channels available to join.'), findsOneWidget);
   });
 
+  testWidgets('browse action retries an initial directory request problem', (
+    tester,
+  ) async {
+    final joinable = Channel(
+      id: 'retry-discovery',
+      name: 'community-help',
+      channelType: 'stream',
+      visibility: 'open',
+      description: 'Help from the community',
+      createdBy: 'abc',
+      createdAt: DateTime(2025),
+      memberCount: 0,
+    );
+    late _RetryingDirectoryNotifier notifier;
+    await tester.pumpWidget(
+      buildTestable(
+        disableAnimations: true,
+        overrides: [
+          channelsProvider.overrideWith(
+            () => notifier = _RetryingDirectoryNotifier(
+              initialChannels: testChannels,
+              retriedChannels: [...testChannels, joinable],
+            ),
+          ),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Create or start conversation'));
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const Key('quick-action-browse-channels-card')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Couldn’t load open channels.'), findsOneWidget);
+    expect(find.text('No open channels available to join.'), findsNothing);
+    expect(find.byKey(const Key('browse-channels-retry')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('browse-channels-retry')));
+    await tester.pumpAndSettle();
+
+    expect(notifier.retryCount, 1);
+    expect(find.text('Couldn’t load open channels.'), findsNothing);
+    expect(
+      find.byKey(const Key('browse-channel-retry-discovery')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('browse action scrolls and joins an offscreen channel', (
     tester,
   ) async {
@@ -2211,6 +2262,13 @@ class _FakeNotifier extends ChannelsNotifier {
   Future<List<Channel>> build() async => _channels;
 
   @override
+  Future<void> ensureDirectoryLoaded() async {
+    ref
+        .read(channelDirectoryLoadStatusProvider.notifier)
+        .markLoaded(_activeDirectoryScope(ref));
+  }
+
+  @override
   Map<String, int> get latestObservedByChannel => {
     for (final entry in _observedEventsByChannel.entries)
       if (entry.value.isNotEmpty)
@@ -2223,6 +2281,45 @@ class _FakeNotifier extends ChannelsNotifier {
   Map<String, Map<String, ObservedUnreadEvent>>
   get observedUnreadEventsByChannel => _observedEventsByChannel;
 }
+
+class _RetryingDirectoryNotifier extends ChannelsNotifier {
+  _RetryingDirectoryNotifier({
+    required this.initialChannels,
+    required this.retriedChannels,
+  });
+
+  final List<Channel> initialChannels;
+  final List<Channel> retriedChannels;
+  int retryCount = 0;
+
+  @override
+  Future<List<Channel>> build() async => initialChannels;
+
+  @override
+  Future<void> ensureDirectoryLoaded() async {
+    ref
+        .read(channelDirectoryLoadStatusProvider.notifier)
+        .markError(_activeDirectoryScope(ref));
+  }
+
+  @override
+  Future<void> retryDirectory() async {
+    retryCount++;
+    ref
+        .read(channelDirectoryLoadStatusProvider.notifier)
+        .markLoading(_activeDirectoryScope(ref));
+    await Future<void>.delayed(Duration.zero);
+    state = AsyncData(retriedChannels);
+    ref
+        .read(channelDirectoryLoadStatusProvider.notifier)
+        .markLoaded(_activeDirectoryScope(ref));
+  }
+}
+
+String _activeDirectoryScope(Ref ref) => channelDirectoryScope(
+  ref.read(relayConfigProvider).baseUrl,
+  ref.read(myPubkeyProvider),
+);
 
 class _RecordingChannelActions extends ChannelActions {
   _RecordingChannelActions(Ref ref)

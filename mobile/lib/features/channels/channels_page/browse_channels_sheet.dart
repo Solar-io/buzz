@@ -1,11 +1,19 @@
 part of '../channels_page.dart';
 
-class _BrowseChannelsSheet extends ConsumerWidget {
+class _BrowseChannelsSheet extends HookConsumerWidget {
   const _BrowseChannelsSheet();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final channelsAsync = ref.watch(channelsProvider);
+    final directoryState = ref.watch(channelDirectoryLoadStatusProvider);
+    final activeDirectoryScope = channelDirectoryScope(
+      ref.watch(relayConfigProvider).baseUrl,
+      ref.watch(myPubkeyProvider),
+    );
+    final directoryStatus = directoryState.scope == activeDirectoryScope
+        ? directoryState.status
+        : ChannelDirectoryLoadStatus.idle;
     final channels = channelsAsync.asData?.value
         .where((channel) => channel.canJoin)
         .toList();
@@ -13,6 +21,22 @@ class _BrowseChannelsSheet extends ConsumerWidget {
       (left, right) =>
           left.name.toLowerCase().compareTo(right.name.toLowerCase()),
     );
+
+    useEffect(() {
+      unawaited(
+        Future<void>.microtask(
+          ref.read(channelsProvider.notifier).ensureDirectoryLoaded,
+        ),
+      );
+      return null;
+    }, const []);
+
+    final directoryIsLoading =
+        directoryStatus == ChannelDirectoryLoadStatus.idle ||
+        directoryStatus == ChannelDirectoryLoadStatus.loading;
+    final directoryHasError =
+        directoryStatus == ChannelDirectoryLoadStatus.error ||
+        channelsAsync.hasError;
 
     return SafeArea(
       top: false,
@@ -40,23 +64,36 @@ class _BrowseChannelsSheet extends ConsumerWidget {
                 ],
               ),
             ),
-            if (channelsAsync.isLoading && channels == null)
+            if (directoryIsLoading && (channels == null || channels.isEmpty))
               const SliverToBoxAdapter(
                 child: Padding(
                   padding: EdgeInsets.all(Grid.sm),
                   child: Center(child: BuzzLoadingIndicator()),
                 ),
               )
-            else if (channelsAsync.hasError && channels == null)
+            else if (directoryHasError &&
+                (channels == null || channels.isEmpty))
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: Grid.sm),
-                  child: Text(
-                    'Could not load open channels.',
-                    textAlign: TextAlign.center,
-                    style: context.textTheme.bodyMedium?.copyWith(
-                      color: context.colors.onSurfaceVariant,
-                    ),
+                  child: Column(
+                    children: [
+                      Text(
+                        'Couldn’t load open channels.',
+                        textAlign: TextAlign.center,
+                        style: context.textTheme.bodyMedium?.copyWith(
+                          color: context.colors.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: Grid.xxs),
+                      TextButton(
+                        key: const Key('browse-channels-retry'),
+                        onPressed: () => unawaited(
+                          ref.read(channelsProvider.notifier).retryDirectory(),
+                        ),
+                        child: const Text('Try again'),
+                      ),
+                    ],
                   ),
                 ),
               )
