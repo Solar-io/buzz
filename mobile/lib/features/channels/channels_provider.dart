@@ -27,13 +27,11 @@ const _authoredRootIdsPrefix = 'buzz-thread-authored.v1';
 
 /// Loads the user's channel list from the relay over WebSocket.
 ///
-/// Three-step query:
-///   1. Fetch kind:39002 membership events tagged `#p:<my-pubkey>` to find
-///      the channel ids I'm a member of.
-///   2. Fetch the corresponding kind:39000 channel metadata events.
-///   3. Fetch the paginated kind:39000 directory so open channels that the
-///      user has not joined remain discoverable.
+/// Membership loading resolves kind:39002 events tagged `#p:<my-pubkey>`,
+/// then fetches kind:39000 metadata for those channel ids.
 ///
+/// The paginated kind:39000 directory is fetched separately when Browse
+/// channels opens, so discovery never delays the main Conversations screen.
 /// Live updates are layered on top via per-channel subscriptions on the
 /// `#h` tag for any of the visible channel event kinds — incoming events
 /// bump `lastMessageAt` for that channel.
@@ -130,7 +128,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
   Future<List<Channel>> _fetch({
     bool subscribeLive = false,
     bool fetchLastMessage = true,
-    bool fetchDirectory = true,
+    bool fetchDirectory = false,
   }) async {
     final channels = await _fetchChannels(
       subscribeLive: subscribeLive,
@@ -144,7 +142,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
   Future<List<Channel>> _fetchChannels({
     bool subscribeLive = false,
     bool fetchLastMessage = true,
-    bool fetchDirectory = true,
+    bool fetchDirectory = false,
   }) async {
     final myPk = ref.read(myPubkeyProvider);
     if (myPk == null) throw StateError('No signing identity available');
@@ -948,7 +946,9 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
       return;
     }
     try {
-      state = AsyncData(await _fetch(subscribeLive: true));
+      state = AsyncData(
+        await _fetch(subscribeLive: true, fetchDirectory: true),
+      );
     } catch (error, stackTrace) {
       directoryStatus.markError(scope);
       state = previousChannels == null

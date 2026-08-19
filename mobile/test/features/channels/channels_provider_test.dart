@@ -9,11 +9,11 @@ import 'package:buzz/shared/relay/relay.dart';
 
 /// Tests for [ChannelsNotifier] in the pure-Nostr world.
 ///
-/// The provider performs a three-step relay query:
+/// The provider loads membership-backed channels first:
 ///   1. paginated kind:39002 memberships tagged `#p:<my-pubkey>`
 ///   2. kind:39000 metadata for those channel ids
-///   3. paginated kind:39000 metadata for discoverable open channels
-/// then layers per-channel live subscriptions on the `#h` tag.
+/// then layers per-channel live subscriptions on the `#h` tag. Browse channels
+/// separately triggers paginated kind:39000 open-channel discovery.
 ///
 /// Tests stub out the relay session by overriding [relaySessionProvider] with
 /// a [_FakeRelaySession] that returns canned events from [fetchHistory] and
@@ -36,21 +36,17 @@ void main() {
       final container = _buildContainer(session: session);
       addTearDown(container.dispose);
 
-      final channels = await container.read(channelsProvider.future);
+      expect(await container.read(channelsProvider.future), isEmpty);
+      expect(session.directoryQueryFilters, isEmpty);
+
+      await container.read(channelsProvider.notifier).retryDirectory();
+      final channels = container.read(channelsProvider).requireValue;
 
       expect(channels, hasLength(1));
       expect(channels.single.id, _channelA);
       expect(channels.single.isMember, isFalse);
       expect(session.subscribeFilters, isEmpty);
-      expect(
-        session.directoryQueryFilters.any(
-          (filter) =>
-              filter.kinds.length == 1 &&
-              filter.kinds.single == 39000 &&
-              !filter.tags.containsKey('#d'),
-        ),
-        isTrue,
-      );
+      expect(session.directoryQueryFilters, isNotEmpty);
     },
   );
 
@@ -78,7 +74,9 @@ void main() {
     final container = _buildContainer(session: session);
     addTearDown(container.dispose);
 
-    final channels = await container.read(channelsProvider.future);
+    expect(await container.read(channelsProvider.future), isEmpty);
+    await container.read(channelsProvider.notifier).retryDirectory();
+    final channels = container.read(channelsProvider).requireValue;
 
     expect(channels, hasLength(501));
     final directoryFilters = session.directoryQueryFilters;
@@ -172,7 +170,9 @@ void main() {
     final container = _buildContainer(session: session);
     addTearDown(container.dispose);
 
-    final channels = await container.read(channelsProvider.future);
+    expect(await container.read(channelsProvider.future), isEmpty);
+    await container.read(channelsProvider.notifier).retryDirectory();
+    final channels = container.read(channelsProvider).requireValue;
 
     expect(channels, hasLength(500));
     expect(session.metadataPageRequestCount, 2);
@@ -196,6 +196,7 @@ void main() {
       addTearDown(container.dispose);
 
       expect(await container.read(channelsProvider.future), isEmpty);
+      await container.read(channelsProvider.notifier).retryDirectory();
       expect(session.metadataPageRequestCount, 100);
       expect(
         container.read(channelDirectoryLoadStatusProvider).status,
@@ -221,6 +222,14 @@ void main() {
         (await container.read(
           channelsProvider.future,
         )).map((channel) => channel.id),
+        [_channelA],
+      );
+      await container.read(channelsProvider.notifier).retryDirectory();
+      expect(
+        container
+            .read(channelsProvider)
+            .requireValue
+            .map((channel) => channel.id),
         unorderedEquals([_channelA, _channelB]),
       );
 
@@ -235,7 +244,7 @@ void main() {
       ];
       session.directoryFailures = 1;
 
-      await container.read(channelsProvider.notifier).refresh();
+      await container.read(channelsProvider.notifier).retryDirectory();
 
       final refreshed = container.read(channelsProvider).requireValue;
       expect(
@@ -304,6 +313,33 @@ void main() {
     expect(session.metadataPageRequestCount, initialDirectoryRequests);
   });
 
+  test('membership refresh does not refetch a loaded directory', () async {
+    final session = _FakeRelaySession(
+      memberships: [_membership(_channelA, myPk)],
+      metadata: [
+        _meta(id: _channelA, name: 'general'),
+        _meta(id: _channelB, name: 'discoverable'),
+      ],
+    );
+    final container = _buildContainer(session: session);
+    addTearDown(container.dispose);
+
+    await container.read(channelsProvider.future);
+    await container.read(channelsProvider.notifier).retryDirectory();
+    final directoryRequestCount = session.metadataPageRequestCount;
+
+    await container.read(channelsProvider.notifier).refresh();
+
+    expect(session.metadataPageRequestCount, directoryRequestCount);
+    expect(
+      container
+          .read(channelsProvider)
+          .requireValue
+          .map((channel) => channel.id),
+      unorderedEquals([_channelA, _channelB]),
+    );
+  });
+
   test('deduplicates joined channels from directory discovery', () async {
     final session = _FakeRelaySession(
       memberships: [_membership(_channelA, myPk)],
@@ -315,7 +351,14 @@ void main() {
     final container = _buildContainer(session: session);
     addTearDown(container.dispose);
 
-    final channels = await container.read(channelsProvider.future);
+    expect(
+      (await container.read(
+        channelsProvider.future,
+      )).map((channel) => channel.id),
+      [_channelA],
+    );
+    await container.read(channelsProvider.notifier).retryDirectory();
+    final channels = container.read(channelsProvider).requireValue;
 
     expect(channels.map((channel) => channel.id), [_channelA, _channelB]);
     expect(channels.first.isMember, isTrue);
