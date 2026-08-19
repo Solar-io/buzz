@@ -1,14 +1,18 @@
 //! Private deployment moderation API.
 //!
 //! Read routes are available in all auth modes (token, disabled, nip98).
-//! Mutation and staffing routes require `BUZZ_ADMIN_AUTH=nip98`.
+//! Mutation and staffing routes require an authenticated principal: `nip98`
+//! (per-person) or `token` with a stable relay identity (relay-attributed).
 
 mod auth;
 mod error;
 
 use std::sync::Arc;
 
-use auth::{authorize, require_mutation_principal, require_operator, AdminRole, AdminSource};
+use auth::{
+    admin_role_str, admin_source_str, authorize, require_mutation_principal, require_operator,
+    AdminRole,
+};
 use axum::{
     body::Bytes,
     extract::{Path, Query, State},
@@ -37,7 +41,8 @@ pub(crate) use auth::admin_api_origin;
 ///
 /// Read routes are available in all auth modes.
 /// Mutation routes (/reports/{id}/resolve, /feedback/{id}) and staffing routes
-/// (/operators) require BUZZ_ADMIN_AUTH=nip98.
+/// (/operators) require an authenticated principal — `nip98`, or `token` with
+/// a stable relay identity (relay-attributed Operator).
 pub fn router(state: Arc<crate::state::AppState>) -> Router {
     Router::new()
         .route("/probe", get(probe))
@@ -150,29 +155,31 @@ async fn probe(
 
     let (auth_mode, role, source, can_act, can_staff) = match &state.config.admin {
         Some(config) => match &config.auth {
-            crate::config::AdminAuth::Token(_) => ("token", None, None, false, false),
+            crate::config::AdminAuth::Token(_) => match principal.as_ref() {
+                // Read-write token mode: a stable relay identity grants the
+                // token Operator, attributed to the relay pubkey.
+                Some(p) => (
+                    "token",
+                    Some(admin_role_str(p.role)),
+                    Some(admin_source_str(&p.source)),
+                    true,
+                    p.role == AdminRole::Operator,
+                ),
+                // Read-only token mode: no stable relay identity.
+                None => ("token", None, None, false, false),
+            },
             crate::config::AdminAuth::Disabled => ("disabled", None, None, false, false),
             crate::config::AdminAuth::Nip98 => {
                 // principal is Some in nip98 mode (authorize returns Ok(Some(_)))
                 let p = principal
                     .as_ref()
                     .expect("nip98 mode always resolves principal");
-                let role_str = match p.role {
-                    AdminRole::Operator => "operator",
-                    AdminRole::Moderator => "moderator",
-                };
-                let source_str = match p.source {
-                    AdminSource::Config => "config",
-                    AdminSource::OwnerFallback => "owner_fallback",
-                    AdminSource::Db => "db",
-                };
-                let can_act = true; // both Operator and Moderator can act
                 let can_staff = p.role == AdminRole::Operator;
                 (
                     "nip98",
-                    Some(role_str),
-                    Some(source_str),
-                    can_act,
+                    Some(admin_role_str(p.role)),
+                    Some(admin_source_str(&p.source)),
+                    true, // both Operator and Moderator can act
                     can_staff,
                 )
             }
@@ -475,10 +482,7 @@ async fn resolve_report(
     .map_err(|msg| ApiError::bad_request("invalid_action_for_target", &msg))?;
 
     let actor_pubkey: Vec<u8> = principal.pubkey.to_vec();
-    let actor_role_str = match principal.role {
-        AdminRole::Operator => "operator",
-        AdminRole::Moderator => "moderator",
-    };
+    let actor_role_str = admin_role_str(principal.role);
     let actor_authority = match principal.role {
         AdminRole::Operator => "relay_operator",
         AdminRole::Moderator => "relay_moderator",
@@ -664,10 +668,7 @@ async fn reopen_report(
         .map_err(|_| ApiError::internal())?;
 
     let actor_pubkey: Vec<u8> = principal.pubkey.to_vec();
-    let actor_role_str = match principal.role {
-        AdminRole::Operator => "operator",
-        AdminRole::Moderator => "moderator",
-    };
+    let actor_role_str = admin_role_str(principal.role);
 
     let result = state
         .db
@@ -1187,6 +1188,13 @@ mod tests {
         let mut config = crate::config::Config::from_env().expect("default config loads");
         config.require_relay_membership = false;
         config.redis_url = "redis://127.0.0.1:1".to_string();
+        // Pin read-only token mode deterministically: require_auth_token with
+        // no relay private key means no stable identity, so the token resolves
+        // no principal and mutations 403 regardless of ambient env. (Config
+        // default require_auth_token=false would otherwise enable the dev key.)
+        config.relay_owner_pubkey = None;
+        config.require_auth_token = true;
+        config.relay_private_key = None;
         let mut token = [0u8; 32];
         hex::decode_to_slice(TOKEN, &mut token).expect("test token is hex");
         config.admin = Some(crate::config::AdminConfig {
@@ -1267,6 +1275,60 @@ mod tests {
             media_storage,
         );
         Arc::new(state)
+    }
+
+    /// Read-write token mode: a stable relay identity is present, so the shared
+    /// token resolves an Operator principal attributed to the relay pubkey.
+    /// Returns the state and the relay pubkey bytes so tests can assert audit
+    /// attribution.
+    async fn token_relay_state() -> (Arc<crate::state::AppState>, [u8; 32]) {
+        let relay_keys = nostr::Keys::generate();
+        let relay_bytes = relay_keys.public_key().to_bytes();
+        let mut config = crate::config::Config::from_env().expect("default config loads");
+        config.require_relay_membership = false;
+        config.redis_url = "redis://127.0.0.1:1".to_string();
+        // Stable identity: a configured relay private key enables read-write
+        // token mode. The pubkey the handler attributes to is the relay_keypair
+        // passed into AppState::new below (relay_keys), not this hex string.
+        config.relay_private_key = Some(relay_keys.secret_key().to_secret_hex());
+        let mut token = [0u8; 32];
+        hex::decode_to_slice(TOKEN, &mut token).expect("test token is hex");
+        config.admin = Some(crate::config::AdminConfig {
+            host: "admin.example".to_string(),
+            auth: crate::config::AdminAuth::Token(crate::config::AdminToken::from_bytes(token)),
+            web_dir: None,
+        });
+        let pool = sqlx::PgPool::connect_lazy(&config.database_url).expect("lazy pg pool");
+        let db = buzz_db::Db::from_pool(pool.clone());
+        let redis_pool = deadpool_redis::Config::from_url(&config.redis_url)
+            .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+            .expect("redis pool");
+        let pubsub = Arc::new(
+            buzz_pubsub::PubSubManager::new(&config.redis_url, redis_pool.clone())
+                .await
+                .expect("pubsub manager"),
+        );
+        let audit = buzz_audit::AuditService::new(pool.clone());
+        let auth = buzz_auth::AuthService::new(config.auth.clone());
+        let search = buzz_search::SearchService::new(pool.clone());
+        let workflow_engine = Arc::new(buzz_workflow::WorkflowEngine::new(
+            db.clone(),
+            buzz_workflow::WorkflowConfig::default(),
+        ));
+        let media_storage = buzz_media::MediaStorage::new(&config.media).expect("media storage");
+        let (state, _audit_shutdown) = crate::state::AppState::new(
+            config,
+            db,
+            redis_pool,
+            audit,
+            pubsub,
+            auth,
+            search,
+            workflow_engine,
+            relay_keys,
+            media_storage,
+        );
+        (Arc::new(state), relay_bytes)
     }
 
     const HASH: &str = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
@@ -2108,6 +2170,24 @@ mod tests {
         assert_eq!(probe["canStaff"], false);
     }
 
+    /// Read-write token mode: with a stable relay identity, the probe reports the
+    /// relay-attributed Operator principal with source=relay_token and both caps true.
+    #[tokio::test]
+    async fn probe_in_token_mode_with_relay_identity_returns_operator_role() {
+        let (state, _relay) = token_relay_state().await;
+        let response = status_for(state.clone(), status_request(authorized("/probe"))).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let probe: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(probe["authMode"], "token");
+        assert_eq!(probe["role"], "operator");
+        assert_eq!(probe["source"], "relay_token");
+        assert_eq!(probe["canAct"], true);
+        assert_eq!(probe["canStaff"], true);
+    }
+
     #[tokio::test]
     async fn probe_in_disabled_mode_returns_no_role_and_no_capabilities() {
         let state = disabled_mode_state().await;
@@ -2276,7 +2356,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
-    // ── Phase 2: mutation routes require nip98 ────────────────────────────
+    // ── Phase 2: mutation routes require a resolved principal ─────────────
 
     /// Build a NIP-98 POST body-bearing Authorization header with `payload` sha256.
     fn make_nostr_auth_post(keys: &nostr::Keys, path: &str, body: &[u8]) -> String {
@@ -2360,10 +2440,12 @@ mod tests {
         format!("Nostr {}", BASE64.encode(json.as_bytes()))
     }
 
-    /// POST /reports/{id}/resolve in token mode → 403 (mutations require nip98).
+    /// POST /reports/{id}/resolve in read-only token mode (no stable relay
+    /// identity) → 403. Mutations need a resolved principal, which token mode
+    /// has only when a relay identity is configured.
     #[tokio::test]
     async fn mutation_routes_in_token_mode_return_403() {
-        let state = test_state().await; // token mode
+        let state = test_state().await; // token mode, no stable relay identity
         let id = Uuid::nil();
         let body = r#"{"action":"dismiss"}"#.as_bytes().to_vec();
         let response = status_for(
@@ -2378,16 +2460,18 @@ mod tests {
                 .expect("request"),
         )
         .await;
-        // Token mode: valid token passes auth, but require_mutation_principal
-        // returns 403 because there is no AdminPrincipal in token mode.
+        // Read-only token mode: valid token passes auth, but
+        // require_mutation_principal returns 403 because no stable relay
+        // identity is configured, so there is no AdminPrincipal to attribute
+        // the action to.
         assert_eq!(
             response.status(),
             StatusCode::FORBIDDEN,
-            "mutations must require nip98"
+            "read-only token mode must reject mutations"
         );
     }
 
-    /// PATCH /feedback/{id} in token mode → 403.
+    /// PATCH /feedback/{id} in read-only token mode → 403.
     #[tokio::test]
     async fn feedback_status_patch_in_token_mode_returns_403() {
         let state = test_state().await;
@@ -2408,11 +2492,11 @@ mod tests {
         assert_eq!(
             response.status(),
             StatusCode::FORBIDDEN,
-            "patch must require nip98"
+            "patch must reject read-only token mode"
         );
     }
 
-    /// GET /operators in token mode → 403.
+    /// GET /operators in read-only token mode → 403.
     #[tokio::test]
     async fn list_operators_in_token_mode_returns_403() {
         let state = test_state().await;
@@ -2430,7 +2514,7 @@ mod tests {
         assert_eq!(
             response.status(),
             StatusCode::FORBIDDEN,
-            "operators must require nip98"
+            "operators must reject read-only token mode"
         );
     }
 
@@ -3297,6 +3381,72 @@ mod tests {
         assert_eq!(
             (action.as_str(), state_col.as_str()),
             ("reopen", "succeeded")
+        );
+
+        cleanup_admin_host_report(&pool, report_id).await;
+    }
+
+    /// Read-write token mode acceptance: a Bearer-authenticated dismiss with a
+    /// stable relay identity succeeds (200) and attributes the decision to the
+    /// relay key — the never-NULL actor invariant holds without nip98.
+    #[tokio::test]
+    #[ignore = "requires Postgres — token-mode dismiss drives the DB"]
+    async fn token_mode_with_relay_identity_dismiss_succeeds_attributed_to_relay() {
+        let (state, relay_bytes) = token_relay_state().await;
+        let pool = sqlx::PgPool::connect(
+            &std::env::var("BUZZ_TEST_DATABASE_URL")
+                .unwrap_or_else(|_| "postgres://buzz:buzz_dev@localhost:5432/buzz".to_string()),
+        )
+        .await
+        .expect("connect to test DB");
+        let report_id = seed_admin_host_report(&pool, "open").await;
+
+        let body = r#"{"action":"dismiss"}"#;
+        let path = format!("/reports/{report_id}/resolve");
+        let response = status_for(
+            state,
+            Request::builder()
+                .method("POST")
+                .uri(&path)
+                .header(header::HOST, "admin.example")
+                .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "token mode with relay identity must accept mutations"
+        );
+
+        // DB evidence: report dismissed and attributed to the relay key.
+        let (status, resolved_by): (String, Option<Vec<u8>>) =
+            sqlx::query_as("SELECT status, resolved_by FROM moderation_reports WHERE id = $1")
+                .bind(report_id)
+                .fetch_one(&pool)
+                .await
+                .expect("read report");
+        assert_eq!(status, "dismissed");
+        assert_eq!(
+            resolved_by.as_deref(),
+            Some(relay_bytes.as_slice()),
+            "dismiss must be attributed to the relay key in token mode"
+        );
+
+        let actor: Vec<u8> = sqlx::query_scalar(
+            "SELECT actor_pubkey FROM moderation_actions WHERE community_id = \
+             (SELECT id FROM communities WHERE lower(host) = 'admin.example') \
+             AND action = 'dismiss' ORDER BY created_at DESC LIMIT 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("read audit row");
+        assert_eq!(
+            actor,
+            relay_bytes.to_vec(),
+            "audit row actor must be the relay key"
         );
 
         cleanup_admin_host_report(&pool, report_id).await;

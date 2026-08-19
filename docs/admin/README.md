@@ -71,9 +71,52 @@ returns `401` by design before the token is entered. If you alert on admin-API
 `401`s, exclude these single-probe sequences (one `401` immediately followed by
 authenticated requests from the same session) to avoid false positives.
 
-The shared token authenticates the deployment operator role, not a person. It
-carries no per-operator identity, attribution, or individual revocation —
-rotating it revokes access for everyone at once.
+The shared token authenticates the deployment operator role, not a person.
+
+#### Read-write token mode (stable relay identity)
+
+By default a token-mode deployment is read-only: reads succeed, but mutation
+and staffing routes return `403` because a shared secret authenticates the
+*deployment*, not a person, and every enforcement action must record a
+non-`NULL` actor pubkey.
+
+When the relay has a **stable identity**, the token holder gains full
+**Operator** capabilities — report actions and staffing — attributed to the
+relay's own pubkey (`state.relay_keypair`), the same identity that signs
+moderation notices on the wire. This is the honest actor: a shared token means
+*someone held the deployment secret*, so the audit trail names the deployment,
+not a specific person. It uses no new configuration — the relay identity comes
+from the key the relay already runs under:
+
+```text
+BUZZ_ADMIN_AUTH=token
+BUZZ_ADMIN_TOKEN=<64 hex characters>
+BUZZ_RELAY_PRIVATE_KEY=<64-char hex secret>   # a stable identity enables token mutations
+```
+
+- `token` + stable relay identity → mutations and staffing enabled; audit rows
+  are attributed to the relay pubkey with role `operator` and source
+  `relay_token`. A stable identity is a configured `BUZZ_RELAY_PRIVATE_KEY`, or
+  the deterministic dev key used when `BUZZ_REQUIRE_AUTH_TOKEN=false` (stable
+  across restarts, so it does not orphan audit rows in local development).
+- `token` + no stable identity (`BUZZ_REQUIRE_AUTH_TOKEN=true` with no relay
+  private key) → read-only (mutations `403`), preserving the never-`NULL`-actor
+  invariant.
+
+A malformed `BUZZ_RELAY_PRIVATE_KEY` already fails startup, so token mode never
+reaches a running server with an unusable relay identity — no separate guard is
+needed.
+
+**Recognizing the actor.** Audit rows in token mode carry the relay's pubkey.
+Operators can recognize it as the deployment identity via the relay's NIP-11
+document / `kind:0` profile, which publish the same key.
+
+**Attribution caveat.** A shared token maps to a single actor identity: every
+token-holder action is attributed to the relay key, so per-person attribution
+degrades to per-deployment. This is truthful for a solo self-hoster but wrong
+for a team — multiple people sharing one token are indistinguishable in the
+audit trail. Teams that need per-person attribution and individual revocability
+should use `nip98` mode.
 
 ### NIP-98 mode (`BUZZ_ADMIN_AUTH=nip98`)
 
@@ -320,7 +363,7 @@ Feedback search and filters run over the bounded browser result set; the
 - `GET /api/admin/v1/feedback/:id/attachments/:sha256`
 - `GET /api/admin/v1/operators`
 
-### Action routes (Operator and Moderator, nip98 only)
+### Action routes (Operator and Moderator; nip98, or token with a stable relay identity)
 
 - `POST /api/admin/v1/reports/:id/resolve`
   Body: `{"action": "delete|kick|ban|timeout|dismiss|escalate", "expirationSecs": <number>, "reason": "<string>", "requestId": "<uuid>"}`
@@ -347,7 +390,7 @@ Feedback search and filters run over the bounded browser result set; the
 - `PATCH /api/admin/v1/feedback/:id`
   Body: `{"status": "new|reviewed|archived"}`
 
-### Staffing routes (Operator only, nip98 only)
+### Staffing routes (Operator only; nip98, or token with a stable relay identity)
 
 - `PUT /api/admin/v1/operators/:pubkey`
   Body: `{"role": "operator|moderator"}`
@@ -392,8 +435,11 @@ trace containing feedback ID, community ID, and attachment hash, but no feedback
 body or attachment URL.
 
 The human trust boundary is the chosen auth mode plus the private admin ingress.
-Token mode and disabled mode provide no per-operator identity; anyone admitted
-to the dashboard can read attachments for feedback records they can access. NIP-98
-mode provides per-operator attribution and individual revocability. Per-person
-identity in token or disabled mode requires authenticated operator identity at
-ingress/application level (for example an Okta-injected identity header).
+Disabled mode provides no per-operator identity; anyone admitted to the dashboard
+can read attachments for feedback records they can access. Token mode attributes
+mutations to the relay's own identity when a stable relay key is present, but
+reads and the shared token carry no per-person identity — a shared secret is one
+actor. NIP-98 mode provides per-operator attribution and individual
+revocability. Per-person identity in token or disabled mode requires
+authenticated operator identity at ingress/application level (for example an
+Okta-injected identity header).

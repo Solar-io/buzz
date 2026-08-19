@@ -21,11 +21,21 @@
 //! Config outranks DB: a `relay_operators` DB row for a config-backed
 //! Operator pubkey is ignored; it never demotes a config grant.
 //!
-//! # token / disabled modes (read-only)
+//! # token mode
 //!
-//! `authorize()` succeeds for read requests in these modes but returns
-//! `None` for the principal — mutations and staffing routes must call
-//! [`require_mutation_capability`] which rejects non-nip98 modes uniformly.
+//! A shared bearer token authenticates the *deployment*, not a person. When
+//! the relay has a stable identity (a configured `BUZZ_RELAY_PRIVATE_KEY`, or
+//! the deterministic dev key when `BUZZ_REQUIRE_AUTH_TOKEN=false`),
+//! [`authorize()`] synthesizes an Operator principal attributed to the relay's
+//! own pubkey ([`AdminSource::RelayToken`]) — the same identity that signs
+//! moderation notices — so token-holder mutations write truthful, never-NULL
+//! audit rows against the deployment. Per-person attribution requires nip98.
+//!
+//! # disabled mode (read-only)
+//!
+//! `authorize()` succeeds for read requests but returns `None` for the
+//! principal — mutations and staffing routes call
+//! [`require_mutation_principal`], which 403s on `None`.
 
 use axum::http::{header, HeaderMap};
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -65,9 +75,15 @@ pub enum AdminSource {
     OwnerFallback,
     /// Pubkey found in the `relay_operators` DB table.
     Db,
+    /// Token mode with a stable relay identity: the shared bearer token grants
+    /// Operator attributed to the relay's own pubkey (`state.relay_keypair`) —
+    /// the same identity that signs moderation notices. This attributes to the
+    /// *deployment*, not a person; per-person attribution requires nip98.
+    RelayToken,
 }
 
-/// A resolved deployment-level principal, returned by [`authorize`] in nip98 mode.
+/// A resolved deployment-level principal, returned by [`authorize`] in nip98
+/// mode and in read-write token mode (relay-attributed Operator).
 #[derive(Debug, Clone)]
 pub struct AdminPrincipal {
     /// 32-byte pubkey (binary).
@@ -76,6 +92,24 @@ pub struct AdminPrincipal {
     pub role: AdminRole,
     /// How the grant was established.
     pub source: AdminSource,
+}
+
+/// Canonical wire string for an [`AdminRole`] (probe/DTO/audit).
+pub(crate) fn admin_role_str(role: AdminRole) -> &'static str {
+    match role {
+        AdminRole::Operator => "operator",
+        AdminRole::Moderator => "moderator",
+    }
+}
+
+/// Canonical wire string for an [`AdminSource`] (probe/DTO).
+pub(crate) fn admin_source_str(source: &AdminSource) -> &'static str {
+    match source {
+        AdminSource::Config => "config",
+        AdminSource::OwnerFallback => "owner_fallback",
+        AdminSource::Db => "db",
+        AdminSource::RelayToken => "relay_token",
+    }
 }
 
 pub(crate) fn is_admin_host(state: &AppState, headers: &HeaderMap) -> bool {
@@ -156,8 +190,10 @@ fn method_has_body(method: &str) -> bool {
 /// nip98 mode — the `payload` sha256 tag would be skipped.
 ///
 /// Returns:
-/// - `Ok(Some(principal))` — nip98 mode, authenticated and role resolved.
-/// - `Ok(None)` — token or disabled mode, authentication passed; no principal.
+/// - `Ok(Some(principal))` — nip98 mode (role resolved from roster), or token
+///   mode with a stable relay identity (Operator attributed to the relay key).
+/// - `Ok(None)` — disabled mode; reads pass, mutations 403 via
+///   [`require_mutation_principal`].
 /// - `Err(_)` — authentication or authorization failed.
 pub async fn authorize(
     state: &AppState,
@@ -177,7 +213,10 @@ pub async fn authorize(
     let principal = match &config.auth {
         AdminAuth::Token(token) => {
             authorize_bearer(token, headers)?;
-            None
+            // Read-write token mode: when the relay has a stable identity, the
+            // shared token acts as the relay (full Operator). This attributes
+            // mutations to a truthful, never-NULL actor (the relay pubkey).
+            resolve_token_principal(state)
         }
         AdminAuth::Disabled => None,
         AdminAuth::Nip98 => {
@@ -282,16 +321,44 @@ pub async fn resolve_admin_principal(
     Err(ApiError::forbidden())
 }
 
-/// Require that this request was authenticated via nip98 and return the
-/// principal. Used by mutation and staffing routes that are unavailable in
-/// token/disabled modes.
+/// Resolve the token-mode principal from the relay's own identity.
 ///
-/// Returns the principal or a 403 if not in nip98 mode.
+/// Token mode goes read-write only when the relay has a **stable** identity —
+/// a configured `BUZZ_RELAY_PRIVATE_KEY`, or the deterministic dev key used
+/// when `BUZZ_REQUIRE_AUTH_TOKEN=false` (stable across restarts, so it does not
+/// orphan audit rows). In both cases mutations are attributed to
+/// `state.relay_keypair.public_key()` — the same identity that signs moderation
+/// notices — as Operator. This attributes to the *deployment*, not a person.
+///
+/// Returns `None` (read-only) only in the configuration main.rs rejects at
+/// startup (`require_auth_token` with no private key), which cannot reach a
+/// running server; the check keeps the invariant explicit and local.
+fn resolve_token_principal(state: &AppState) -> Option<AdminPrincipal> {
+    let has_stable_identity =
+        state.config.relay_private_key.is_some() || !state.config.require_auth_token;
+    if !has_stable_identity {
+        return None;
+    }
+    Some(AdminPrincipal {
+        pubkey: state.relay_keypair.public_key().to_bytes(),
+        role: AdminRole::Operator,
+        source: AdminSource::RelayToken,
+    })
+}
+
+/// Require that this request resolved a principal (nip98, or token mode with a
+/// stable relay identity) and return it. Mutation and staffing routes are
+/// unavailable in disabled mode.
+///
+/// Returns the principal or a 403 if none was resolved.
 pub fn require_mutation_principal(
     principal: Option<AdminPrincipal>,
 ) -> Result<AdminPrincipal, ApiError> {
-    principal
-        .ok_or_else(|| ApiError::forbidden_with_message("mutations require BUZZ_ADMIN_AUTH=nip98"))
+    principal.ok_or_else(|| {
+        ApiError::forbidden_with_message(
+            "mutations require BUZZ_ADMIN_AUTH=nip98, or token mode with a relay identity",
+        )
+    })
 }
 
 /// Require that the principal holds Operator role. Used by staffing routes.
