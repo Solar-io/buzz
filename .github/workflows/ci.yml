@@ -744,6 +744,19 @@ jobs:
             --run-ignored ignored-only
         env:
           DATABASE_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/buzz
+      - name: Admin API token-mode read-write tests
+        # The only real HTTP → relay-token principal → mutation → cross-table
+        # attribution coverage: token-mode dismiss attributes to the relay key
+        # with relay_operator authority, and token-mode staffing PUT/DELETE
+        # records the relay key as added_by. #[ignore]d in the default suite —
+        # see api::admin::tests::token_mode_with_relay_identity_*.
+        run: |
+          cargo nextest run \
+            --archive-file target/ci/backend-integration-tests.tar.zst \
+            -E 'package(buzz-relay) and test(/api::admin::tests::token_mode_with_relay_identity/)' \
+            --run-ignored ignored-only
+        env:
+          DATABASE_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/buzz
       - name: Upload relay log
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

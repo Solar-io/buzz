@@ -1333,8 +1333,11 @@ mod tests {
 
     const HASH: &str = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
 
-    /// Every route the admin API mounts. Each must enforce the credential.
-    fn mounted_routes() -> Vec<String> {
+    /// The GET (read) routes the admin API mounts. Each must reject a missing
+    /// or wrong credential before any database access. Mutation and staffing
+    /// routes carry their own focused credential tests (403/401 matrices and the
+    /// token-mode acceptance tests), so this list is deliberately read-only.
+    fn read_routes() -> Vec<String> {
         let id = Uuid::nil();
         vec![
             "/reports".to_string(),
@@ -1366,7 +1369,7 @@ mod tests {
     #[tokio::test]
     async fn every_route_rejects_a_missing_credential_before_database_access() {
         let state = test_state().await;
-        for uri in mounted_routes() {
+        for uri in read_routes() {
             let response = status_for(
                 state.clone(),
                 Request::builder()
@@ -1384,7 +1387,7 @@ mod tests {
     async fn every_route_rejects_a_wrong_credential_before_database_access() {
         let state = test_state().await;
         let wrong = "f".repeat(64);
-        for uri in mounted_routes() {
+        for uri in read_routes() {
             let response = status_for(
                 state.clone(),
                 Request::builder()
@@ -1662,7 +1665,7 @@ mod tests {
     #[tokio::test]
     async fn disabled_mode_allows_unauthenticated_requests_on_the_admin_host() {
         let state = disabled_mode_state().await;
-        for uri in mounted_routes() {
+        for uri in read_routes() {
             let response = status_for(
                 state.clone(),
                 Request::builder()
@@ -3435,11 +3438,16 @@ mod tests {
             "dismiss must be attributed to the relay key in token mode"
         );
 
-        let actor: Vec<u8> = sqlx::query_scalar(
-            "SELECT actor_pubkey FROM moderation_actions WHERE community_id = \
+        // Fence by the seeded report's community + target so a stray row from a
+        // parallel test can never satisfy the assertion. Production writes the
+        // dismiss decision as `dismiss_report` (via `enforcement_audit_action`),
+        // not `dismiss`.
+        let (actor, authority): (Vec<u8>, String) = sqlx::query_as(
+            "SELECT actor_pubkey, actor_authority FROM moderation_actions WHERE community_id = \
              (SELECT id FROM communities WHERE lower(host) = 'admin.example') \
-             AND action = 'dismiss' ORDER BY created_at DESC LIMIT 1",
+             AND action = 'dismiss_report' AND target_pubkey = $1",
         )
+        .bind(vec![1u8; 32])
         .fetch_one(&pool)
         .await
         .expect("read audit row");
@@ -3448,8 +3456,97 @@ mod tests {
             relay_bytes.to_vec(),
             "audit row actor must be the relay key"
         );
+        assert_eq!(
+            authority, "relay_operator",
+            "token-mode dismiss must record relay_operator authority"
+        );
 
         cleanup_admin_host_report(&pool, report_id).await;
+    }
+
+    /// Read-write token mode staffing acceptance: the synthesized relay Operator
+    /// is full-privilege, so a Bearer-authenticated PUT /operators creates a
+    /// roster row attributed to the relay key (`added_by`), and the matching
+    /// DELETE removes it (200). Pins the staffing seam end-to-end.
+    #[tokio::test]
+    #[ignore = "requires Postgres — token-mode staffing drives the DB"]
+    async fn token_mode_with_relay_identity_staffing_put_and_delete_succeed_attributed_to_relay() {
+        let (state, relay_bytes) = token_relay_state().await;
+        let pool = sqlx::PgPool::connect(
+            &std::env::var("BUZZ_TEST_DATABASE_URL")
+                .unwrap_or_else(|_| "postgres://buzz:buzz_dev@localhost:5432/buzz".to_string()),
+        )
+        .await
+        .expect("connect to test DB");
+
+        // A fresh, non-config-backed target the API is allowed to mutate.
+        let target_keys = nostr::Keys::generate();
+        let target_hex = target_keys.public_key().to_hex();
+        let target_bytes = target_keys.public_key().to_bytes().to_vec();
+        sqlx::query("DELETE FROM relay_operators WHERE pubkey = $1")
+            .bind(&target_bytes)
+            .execute(&pool)
+            .await
+            .expect("clear any stale target row");
+
+        let path = format!("/operators/{target_hex}");
+        let body = r#"{"role":"moderator"}"#;
+        let put = status_for(
+            state.clone(),
+            Request::builder()
+                .method("PUT")
+                .uri(&path)
+                .header(header::HOST, "admin.example")
+                .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(
+            put.status(),
+            StatusCode::OK,
+            "token mode with relay identity must accept staffing PUT"
+        );
+
+        // DB evidence: roster row exists and is attributed to the relay key.
+        let (role, added_by): (String, Vec<u8>) =
+            sqlx::query_as("SELECT role, added_by FROM relay_operators WHERE pubkey = $1")
+                .bind(&target_bytes)
+                .fetch_one(&pool)
+                .await
+                .expect("read operator row");
+        assert_eq!(role, "moderator");
+        assert_eq!(
+            added_by,
+            relay_bytes.to_vec(),
+            "staffing must record the relay key as added_by in token mode"
+        );
+
+        let delete = status_for(
+            state,
+            Request::builder()
+                .method("DELETE")
+                .uri(&path)
+                .header(header::HOST, "admin.example")
+                .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(
+            delete.status(),
+            StatusCode::OK,
+            "token mode with relay identity must accept staffing DELETE"
+        );
+
+        let remaining: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM relay_operators WHERE pubkey = $1")
+                .bind(&target_bytes)
+                .fetch_one(&pool)
+                .await
+                .expect("count operator rows");
+        assert_eq!(remaining, 0, "DELETE must remove the roster row");
     }
 
     #[tokio::test]
