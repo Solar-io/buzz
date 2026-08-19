@@ -3404,7 +3404,13 @@ mod tests {
         .expect("connect to test DB");
         let report_id = seed_admin_host_report(&pool, "open").await;
 
-        let body = r#"{"action":"dismiss"}"#;
+        // Unique per-invocation correlation: `reason` flows to the audit row's
+        // `public_reason`, so it uniquely identifies THIS dismiss even on a
+        // reused DB where prior runs left `moderation_actions` rows with the
+        // same community + target. cleanup_admin_host_report deletes the report
+        // but not its audit row, so an unfenced query is order-dependent.
+        let correlation = Uuid::new_v4().to_string();
+        let body = serde_json::json!({ "action": "dismiss", "reason": correlation }).to_string();
         let path = format!("/reports/{report_id}/resolve");
         let response = status_for(
             state,
@@ -3438,16 +3444,15 @@ mod tests {
             "dismiss must be attributed to the relay key in token mode"
         );
 
-        // Fence by the seeded report's community + target so a stray row from a
-        // parallel test can never satisfy the assertion. Production writes the
-        // dismiss decision as `dismiss_report` (via `enforcement_audit_action`),
-        // not `dismiss`.
+        // Fence on the unique correlation so a stray row from another run can
+        // never satisfy the assertion. Production writes the dismiss decision
+        // as `dismiss_report` (via `enforcement_audit_action`), not `dismiss`.
         let (actor, authority): (Vec<u8>, String) = sqlx::query_as(
             "SELECT actor_pubkey, actor_authority FROM moderation_actions WHERE community_id = \
              (SELECT id FROM communities WHERE lower(host) = 'admin.example') \
-             AND action = 'dismiss_report' AND target_pubkey = $1",
+             AND action = 'dismiss_report' AND public_reason = $1",
         )
-        .bind(vec![1u8; 32])
+        .bind(&correlation)
         .fetch_one(&pool)
         .await
         .expect("read audit row");
@@ -3461,6 +3466,13 @@ mod tests {
             "token-mode dismiss must record relay_operator authority"
         );
 
+        // Remove the audit row this test left behind (cleanup_admin_host_report
+        // only deletes the report), keeping the DB hermetic for repeat runs.
+        sqlx::query("DELETE FROM moderation_actions WHERE public_reason = $1")
+            .bind(&correlation)
+            .execute(&pool)
+            .await
+            .expect("delete audit row");
         cleanup_admin_host_report(&pool, report_id).await;
     }
 
