@@ -81,6 +81,8 @@ import { useChannelProfilePanel } from "./useChannelProfilePanel";
 import { useChannelRouteTarget } from "./useChannelRouteTarget";
 import { useChannelOpenReadState } from "./useChannelOpenReadState";
 import { useChannelUnreadState } from "./useChannelUnreadState";
+
+const EMPTY_SET: ReadonlySet<string> = new Set();
 import type { ChannelScreenProps } from "./ChannelScreen.types";
 const EMPTY_RELAY_EVENTS: RelayEvent[] = [];
 export function ChannelScreen({
@@ -115,7 +117,7 @@ export function ChannelScreen({
     recordThreadInteraction,
     isThreadMuted,
     readStateVersion,
-    unreadThreadFeedItems,
+    unreadThreadEventIdsByChannel,
   } = useAppShell();
   const {
     channelManagementOpen,
@@ -428,15 +430,9 @@ export function ChannelScreen({
     respondToLookup,
     relaySelfPubkey,
   });
-  const preservedUnreadMessageIds = React.useMemo(
-    () =>
-      new Set(
-        unreadThreadFeedItems
-          .filter((item) => item.channelId === activeChannelId)
-          .map((item) => item.id),
-      ) as ReadonlySet<string>,
-    [activeChannelId, unreadThreadFeedItems],
-  );
+  const preservedUnreadMessageIds = activeChannelId
+    ? (unreadThreadEventIdsByChannel.get(activeChannelId) ?? EMPTY_SET)
+    : EMPTY_SET;
   const {
     firstUnreadMessageId,
     getFirstReplyIdForMessage,

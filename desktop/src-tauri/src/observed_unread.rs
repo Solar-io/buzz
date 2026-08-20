@@ -130,6 +130,7 @@ pub(crate) struct ChannelProjection {
     count: u64,
     badge_count: u64,
     app_badge_count: u64,
+    unread_thread_event_ids: Vec<String>,
     top_level_unread: bool,
     high_priority_unread: bool,
 }
@@ -358,6 +359,7 @@ fn projections(tx: &Transaction<'_>, scope: &str) -> Result<Vec<ChannelProjectio
                 count: 0,
                 badge_count: 0,
                 app_badge_count: 0,
+                unread_thread_event_ids: Vec::new(),
                 top_level_unread: false,
                 high_priority_unread: false,
             },
@@ -401,6 +403,7 @@ fn projections(tx: &Transaction<'_>, scope: &str) -> Result<Vec<ChannelProjectio
                 count: 0,
                 badge_count: 0,
                 app_badge_count: 0,
+                unread_thread_event_ids: Vec::new(),
                 top_level_unread: false,
                 high_priority_unread: false,
             });
@@ -408,6 +411,9 @@ fn projections(tx: &Transaction<'_>, scope: &str) -> Result<Vec<ChannelProjectio
         entry.count += 1;
         entry.badge_count += u64::from(badge);
         entry.app_badge_count += u64::from(app);
+        if root.is_some() {
+            entry.unread_thread_event_ids.push(id);
+        }
         entry.top_level_unread |= root.is_none();
         entry.high_priority_unread |= high;
     }
@@ -754,7 +760,42 @@ mod tests {
         let projected = projections(&tx, &key).unwrap();
         assert_eq!(projected[0].count, 1);
         assert_eq!(projected[0].badge_count, 1);
+        assert_eq!(projected[0].unread_thread_event_ids, ["reply"]);
         assert!(!projected[0].top_level_unread);
+    }
+
+    #[test]
+    fn projection_exposes_every_unread_thread_event_beyond_activity_preview_limit() {
+        let (_d, mut conn) = db();
+        let tx = conn.transaction().unwrap();
+        let key = scope().key();
+        ensure_scope(&tx, &key).unwrap();
+
+        for index in 0..101 {
+            upsert_event(
+                &tx,
+                &key,
+                &IngestEvent {
+                    channel_id: "ch".into(),
+                    id: format!("reply-{index:03}"),
+                    created_at: 100 + index,
+                    root_id: Some(format!("root-{index:03}")),
+                    high_priority: false,
+                    counts_toward_badge: true,
+                    counts_toward_app_badge: false,
+                },
+            )
+            .unwrap();
+        }
+
+        let projected = projections(&tx, &key).unwrap();
+        assert_eq!(projected[0].unread_thread_event_ids.len(), 101);
+        assert!(projected[0]
+            .unread_thread_event_ids
+            .contains(&"reply-000".to_string()));
+        assert!(projected[0]
+            .unread_thread_event_ids
+            .contains(&"reply-100".to_string()));
     }
     #[test]
     fn latest_anchor_survives_without_a_notify_event_and_seed_is_one_shot() {
@@ -912,13 +953,14 @@ mod tests {
                 count: 2,
                 badge_count: 1,
                 app_badge_count: 1,
+                unread_thread_event_ids: vec!["thread-event".into()],
                 top_level_unread: true,
                 high_priority_unread: false,
             }],
             removed: vec!["old".into()],
         })
         .unwrap();
-        let expected = serde_json::json!({"kind":"delta","scope":{"pubkey":"PK","relayUrl":"wss://relay/"},"generation":"gen","baseRevision":4,"revision":5,"ackedSequence":7,"upserts":[{"channelId":"ch","latest":42,"count":2,"badgeCount":1,"appBadgeCount":1,"topLevelUnread":true,"highPriorityUnread":false}],"removed":["old"]});
+        let expected = serde_json::json!({"kind":"delta","scope":{"pubkey":"PK","relayUrl":"wss://relay/"},"generation":"gen","baseRevision":4,"revision":5,"ackedSequence":7,"upserts":[{"channelId":"ch","latest":42,"count":2,"badgeCount":1,"appBadgeCount":1,"unreadThreadEventIds":["thread-event"],"topLevelUnread":true,"highPriorityUnread":false}],"removed":["old"]});
         assert_eq!(actual, expected);
     }
 }

@@ -66,6 +66,7 @@ import {
 } from "@/features/channels/unreadMembership";
 import { useThreadActivityPersistence } from "@/features/channels/useThreadActivityPersistence";
 import { unreadCatchUp } from "@/shared/api/tauriUnreadCatchUp";
+import { collectUnreadThreadEventIds } from "./unreadThreadEventIds";
 
 type UseUnreadChannelsOptions = UseLiveChannelUpdatesOptions & {
   pubkey?: string;
@@ -789,23 +790,21 @@ export function useUnreadChannels(
           topLevelUnreadChannelIds: new Set<string>(),
           highPriorityUnreadChannelIds: new Set<string>(),
           unreadChannelCounts: new Map<string, number>(),
+          unreadThreadEventIdsByChannel: new Map<string, Set<string>>(),
           unreadChannelNotificationCount: 0,
         };
       }
-
       const unread = new Set<string>();
       const topLevelUnread = new Set<string>();
       const highPriority = new Set<string>();
       const counts = new Map<string, number>();
+      const unreadThreadEventIdsByChannel = new Map<string, Set<string>>();
       let unreadChannelNotificationCount = 0;
-
       for (const channel of channels) {
         const isForcedUnread = Object.hasOwn(
           forcedUnreadRef.current,
           channel.id,
         );
-        if (channel.id === activeChannelId && !isForcedUnread) continue;
-
         const observedEvents = observedUnreadEventsByChannelRef.current.get(
           channel.id,
         );
@@ -822,6 +821,15 @@ export function useUnreadChannels(
         const nativeProjection = observedPersistence.isNative()
           ? observedPersistence.projectionsRef.current.get(channel.id)
           : undefined;
+        const unreadThreadEventIds = collectUnreadThreadEventIds(
+          nativeProjection?.unreadThreadEventIds,
+          observedEvents?.values(),
+          readAtForObservedEvent,
+        );
+        if (unreadThreadEventIds.size > 0)
+          unreadThreadEventIdsByChannel.set(channel.id, unreadThreadEventIds);
+        if (channel.id === activeChannelId && !isForcedUnread) continue;
+
         const unreadCount = observedPersistence.isNative()
           ? (nativeProjection?.count ?? 0)
           : latestByChannelRef.current.get(channel.id) === undefined
@@ -883,6 +891,7 @@ export function useUnreadChannels(
         topLevelUnreadChannelIds: topLevelUnread,
         highPriorityUnreadChannelIds: highPriority,
         unreadChannelCounts: counts,
+        unreadThreadEventIdsByChannel,
         unreadChannelNotificationCount,
       };
     }, [
@@ -904,6 +913,7 @@ export function useUnreadChannels(
     rawUnread.highPriorityUnreadChannelIds,
   );
   const unreadChannelCounts = useStableMap(rawUnread.unreadChannelCounts);
+  const unreadThreadEventIdsByChannel = rawUnread.unreadThreadEventIdsByChannel;
   const unreadChannelNotificationCount =
     rawUnread.unreadChannelNotificationCount;
 
@@ -958,6 +968,7 @@ export function useUnreadChannels(
     unreadChannelIds,
     topLevelUnreadChannelIds,
     unreadChannelCounts,
+    unreadThreadEventIdsByChannel,
     highPriorityUnreadChannelIds,
     unreadChannelNotificationCount,
     markAllChannelsRead,

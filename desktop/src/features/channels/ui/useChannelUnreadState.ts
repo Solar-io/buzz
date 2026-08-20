@@ -180,14 +180,22 @@ export function useChannelUnreadState({
   // re-adding the timeline term here, a reply the user already browsed past — one
   // older than the frontier but never expanded, so it has no msg:<id> marker —
   // re-lights the collapsed in-panel branch badge. Folding the browse frontier
-  // reads those browsed-past replies. The activity projection is the positive
-  // evidence that distinguishes a genuinely preserved notification from a reply
-  // merely browsed past; those message ids keep their bare/message frontier so
+  // reads those browsed-past replies. The observed-unread projection is the
+  // positive evidence for preservation, while the channel-open snapshot keeps
+  // older historical rows from being revived by a projection update that was
+  // still in flight. Matching message ids keep their bare/message frontier so
   // the sidebar dot, timeline badge, and hover action stay coherent.
   const getActiveMessageReadAt = React.useCallback(
     (messageId: string) => {
       const messageReadAt = getMessageReadAt(messageId);
-      if (preservedUnreadMessageIds.has(messageId)) return messageReadAt;
+      const createdAt = createdAtByMessageId.get(messageId);
+      if (
+        preservedUnreadMessageIds.has(messageId) &&
+        createdAt !== undefined &&
+        (openFrontierSeconds === null || createdAt > openFrontierSeconds)
+      ) {
+        return messageReadAt;
+      }
       return maxReadAt(
         messageReadAt,
         activeChannelId ? getChannelReadAt(activeChannelId) : null,
@@ -195,8 +203,10 @@ export function useChannelUnreadState({
     },
     [
       activeChannelId,
+      createdAtByMessageId,
       getChannelReadAt,
       getMessageReadAt,
+      openFrontierSeconds,
       preservedUnreadMessageIds,
     ],
   );

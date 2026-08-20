@@ -848,7 +848,7 @@ test("matrix: a rebuilt store generation is reopened instead of wedging on the o
 // badge lane had no witness: forcing `nativeProjection?.count ?? 0` to a
 // constant 0 left the full 4,919-test suite green. This closes that.
 
-test("native: an ingested event reaches the hook's unread counts, not just the projection", async () => {
+test("native: every unread thread ID reaches the hook beyond the activity preview cap", async () => {
   installFreshStorage();
   const CHANNEL = "channel-badge";
   const scope = { pubkey: "pk-badge", relayUrl: RELAY };
@@ -869,20 +869,24 @@ test("native: an ingested event reaches the hook's unread counts, not just the p
     await first.unmount();
     first = null;
 
-    // A notifying event exists natively when the renderer reopens.
-    store.events.set("evt-badge", {
-      id: "evt-badge",
-      channelId: CHANNEL,
-      createdAt: NOW_S,
-      rootId: null,
-      highPriority: false,
-      countsTowardBadge: true,
-      countsTowardAppBadge: true,
-    });
+    // More notifying replies exist natively than the 100-row activity preview
+    // can expose when the renderer reopens.
+    for (let index = 0; index < 101; index += 1) {
+      const id = `evt-badge-${index}`;
+      store.events.set(id, {
+        id,
+        channelId: CHANNEL,
+        createdAt: NOW_S + index,
+        rootId: `root-${index}`,
+        highPriority: false,
+        countsTowardBadge: true,
+        countsTowardAppBadge: false,
+      });
+    }
     assert.equal(
       store.projections().find((p) => p.channelId === CHANNEL)?.count,
-      1,
-      "precondition: the native projection itself must count the event",
+      101,
+      "precondition: the native projection itself must count every reply",
     );
 
     // Reopen: the open snapshot carries the projection into the renderer.
@@ -897,12 +901,17 @@ test("native: an ingested event reaches the hook's unread counts, not just the p
 
     assert.equal(
       second.result.unreadChannelCounts.get(CHANNEL),
-      1,
+      101,
       "the native badgeCount must reach unreadChannelCounts; asserting projectionsRef alone leaves this lane untested",
     );
     assert.ok(
       second.result.unreadChannelIds.has(CHANNEL),
       "the channel must appear in unreadChannelIds",
+    );
+    assert.equal(
+      second.result.unreadThreadEventIdsByChannel.get(CHANNEL)?.size,
+      101,
+      "inline badges must use the authoritative projection rather than the capped activity preview",
     );
   } finally {
     await first?.unmount();

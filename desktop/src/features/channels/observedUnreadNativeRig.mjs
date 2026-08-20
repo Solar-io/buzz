@@ -111,6 +111,7 @@ class Scope {
           count: 0,
           badgeCount: 0,
           appBadgeCount: 0,
+          unreadThreadEventIds: [],
           topLevelUnread: false,
           highPriorityUnread: false,
         },
@@ -127,6 +128,7 @@ class Scope {
         count: 0,
         badgeCount: 0,
         appBadgeCount: 0,
+        unreadThreadEventIds: [],
         topLevelUnread: false,
         highPriorityUnread: false,
       };
@@ -134,6 +136,7 @@ class Scope {
       entry.count += 1;
       entry.badgeCount += event.countsTowardBadge ? 1 : 0;
       entry.appBadgeCount += event.countsTowardAppBadge ? 1 : 0;
+      if (event.rootId) entry.unreadThreadEventIds.push(event.id);
       entry.topLevelUnread ||= !event.rootId;
       entry.highPriorityUnread ||= event.highPriority;
       byChannel.set(event.channelId, entry);

@@ -2,36 +2,46 @@
 //!
 //! Native unread catch-up consumes notification membership from the observed-
 //! unread SQLite store rather than serializing renderer-owned sets on every
-//! request. Rust performs every channel REQ over the shared authenticated
-//! session, then classifies the complete successful batch in two passes so a
-//! root learned anywhere in pass one is visible everywhere in pass two.
+//! request. It uses the authenticated HTTP bridge's composite keyset cursor so
+//! dense same-second pages cannot lose events, and separates discovery,
+//! top-level, and relevant-thread queries so a stale bare marker never forces
+//! the desktop to download an entire busy channel history.
 
-use std::{collections::HashSet, time::Duration};
+use std::collections::{HashMap, HashSet};
 
 use buzz_core_pkg::kind::{
     KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_HUDDLE_STARTED, KIND_STREAM_MESSAGE,
     KIND_STREAM_MESSAGE_V2,
 };
-use nostr::Event;
+use nostr::{Event, Keys};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
-use tokio::{sync::Semaphore, task::JoinSet};
 
-use crate::{app_state::AppState, native_relay_client::NativeRelayClient};
+use crate::app_state::AppState;
 
 const CATCH_UP_LIMIT: usize = 1_000;
 const ACTIVITY_LIMIT: usize = 100;
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const ROOT_FILTER_CHUNK: usize = 200;
 
-fn next_page_until(page_len: usize, oldest: Option<u64>, previous: Option<u64>) -> Option<u64> {
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PageCursor {
+    created_at: u64,
+    event_id: String,
+}
+
+fn next_page_cursor(
+    page_len: usize,
+    last: Option<PageCursor>,
+    previous: Option<&PageCursor>,
+) -> Result<Option<PageCursor>, String> {
     if page_len < CATCH_UP_LIMIT {
-        return None;
+        return Ok(None);
     }
-    let next = oldest?.saturating_sub(1);
-    if previous.is_some_and(|cursor| next >= cursor) {
-        return None;
+    let next = last.ok_or_else(|| "full unread catch-up page had no cursor event".to_string())?;
+    if previous == Some(&next) {
+        return Err("unread catch-up pagination cursor did not advance".to_string());
     }
-    Some(next)
+    Ok(Some(next))
 }
 
 #[derive(Clone, Deserialize)]
@@ -112,7 +122,6 @@ struct DiscoveredRoots {
 }
 
 struct FetchedChannel {
-    order: usize,
     channel: CatchUpChannel,
     events: Vec<EventView>,
 }
@@ -144,11 +153,183 @@ impl From<Event> for EventView {
     }
 }
 
+fn catch_up_kinds(channel_type: &str) -> &'static [u32] {
+    if channel_type == "dm" {
+        &[
+            KIND_STREAM_MESSAGE,
+            KIND_STREAM_MESSAGE_V2,
+            KIND_FORUM_POST,
+            KIND_FORUM_COMMENT,
+            KIND_HUDDLE_STARTED,
+        ]
+    } else {
+        &[
+            KIND_STREAM_MESSAGE,
+            KIND_STREAM_MESSAGE_V2,
+            KIND_FORUM_POST,
+            KIND_FORUM_COMMENT,
+        ]
+    }
+}
+
+fn base_filter(channel: &CatchUpChannel, since: u64) -> serde_json::Value {
+    serde_json::json!({
+        "kinds": catch_up_kinds(&channel.channel_type),
+        "#h": [channel.id],
+        "since": since,
+        "limit": CATCH_UP_LIMIT,
+    })
+}
+
+fn discovery_filters(
+    channel: &CatchUpChannel,
+    self_pubkey: &str,
+) -> (serde_json::Value, serde_json::Value) {
+    let since = channel.read_at.map_or(0, |value| value.saturating_add(1));
+    let mut authored = base_filter(channel, since);
+    authored["authors"] = serde_json::json!([self_pubkey]);
+    let mut mentioned = base_filter(channel, since);
+    mentioned["#p"] = serde_json::json!([self_pubkey]);
+    (authored, mentioned)
+}
+
+fn top_level_filter(channel: &CatchUpChannel) -> serde_json::Value {
+    let since = channel
+        .timeline_read_at
+        .or(channel.read_at)
+        .map_or(0, |value| value.saturating_add(1));
+    let mut filter = base_filter(channel, since);
+    filter["top_level"] = serde_json::json!(true);
+    filter
+}
+
+fn thread_filter(channel: &CatchUpChannel, roots: &[String]) -> serde_json::Value {
+    let since = channel.read_at.map_or(0, |value| value.saturating_add(1));
+    let mut filter = base_filter(channel, since);
+    filter["#e"] = serde_json::json!(roots);
+    filter
+}
+
+fn apply_page_cursor(filter: &mut serde_json::Value, cursor: &PageCursor) {
+    filter["until"] = serde_json::json!(cursor.created_at);
+    filter["before_id"] = serde_json::json!(cursor.event_id);
+}
+
+async fn fetch_filter_pages(
+    state: &AppState,
+    api_base: &str,
+    keys: &Keys,
+    base: &serde_json::Value,
+) -> Result<Vec<Event>, String> {
+    let mut events = Vec::new();
+    let mut cursor: Option<PageCursor> = None;
+    loop {
+        let mut filter = base.clone();
+        if let Some(current) = &cursor {
+            apply_page_cursor(&mut filter, current);
+        }
+        let page =
+            crate::relay::query_relay_at_with_keys(state, api_base, &[filter], keys, None).await?;
+        let next = next_page_cursor(
+            page.len(),
+            page.last().map(|event| PageCursor {
+                created_at: event.created_at.as_secs(),
+                event_id: event.id.to_hex(),
+            }),
+            cursor.as_ref(),
+        )?;
+        events.extend(page);
+        let Some(next) = next else { break };
+        cursor = Some(next);
+    }
+    Ok(events)
+}
+
+async fn fetch_discovery_events(
+    state: &AppState,
+    api_base: &str,
+    keys: &Keys,
+    channel: &CatchUpChannel,
+    self_pubkey: &str,
+) -> Result<Vec<Event>, String> {
+    let (authored, mentioned) = discovery_filters(channel, self_pubkey);
+    let (authored, mentioned) = tokio::try_join!(
+        fetch_filter_pages(state, api_base, keys, &authored),
+        fetch_filter_pages(state, api_base, keys, &mentioned),
+    )?;
+    let mut seen = HashSet::new();
+    Ok(authored
+        .into_iter()
+        .chain(mentioned)
+        .filter(|event| seen.insert(event.id))
+        .collect())
+}
+
+fn discover_query_membership(
+    events: &[Event],
+    self_pubkey: &str,
+    membership: &mut HashMap<String, HashSet<String>>,
+) {
+    for event in events {
+        let view = EventView::from(event.clone());
+        let reference = thread_reference(&view.tags);
+        if view.pubkey.eq_ignore_ascii_case(self_pubkey) {
+            if let Some(root_id) = reference.root_id {
+                membership
+                    .entry("participated".into())
+                    .or_default()
+                    .insert(root_id);
+            } else {
+                membership
+                    .entry("authored".into())
+                    .or_default()
+                    .insert(view.id);
+            }
+        } else if has_tag_value(&view.tags, "p", self_pubkey) {
+            if let Some(root_id) = reference.root_id {
+                membership
+                    .entry("mentioned".into())
+                    .or_default()
+                    .insert(root_id);
+            }
+        }
+    }
+}
+
+fn relevant_roots(membership: &HashMap<String, HashSet<String>>) -> Vec<String> {
+    let mut roots = HashSet::new();
+    for kind in ["participated", "authored", "mentioned", "followed"] {
+        if let Some(values) = membership.get(kind) {
+            roots.extend(values.iter().cloned());
+        }
+    }
+    let mut roots: Vec<_> = roots.into_iter().collect();
+    roots.sort();
+    roots
+}
+
+async fn fetch_relevant_events(
+    state: &AppState,
+    api_base: &str,
+    keys: &Keys,
+    channel: &CatchUpChannel,
+    roots: &[String],
+) -> Result<Vec<Event>, String> {
+    let top_level = top_level_filter(channel);
+    let mut events = fetch_filter_pages(state, api_base, keys, &top_level).await?;
+    for chunk in roots.chunks(ROOT_FILTER_CHUNK) {
+        let threaded = thread_filter(channel, chunk);
+        events.extend(fetch_filter_pages(state, api_base, keys, &threaded).await?);
+    }
+    let mut seen = HashSet::new();
+    events.retain(|event| seen.insert(event.id));
+    Ok(events)
+}
+
 #[tauri::command]
 pub(crate) async fn unread_catch_up(
     request: UnreadCatchUpRequest,
     state: State<'_, AppState>,
-    relay_client: State<'_, NativeRelayClient>,
     app: AppHandle,
 ) -> Result<UnreadCatchUpResponse, String> {
     let keys = state.signing_keys()?;
@@ -157,91 +338,53 @@ pub(crate) async fn unread_catch_up(
         return Err("unread catch-up identity does not match active scope".to_string());
     }
     let relay_url = crate::relay::relay_ws_url_with_override(&state);
-    // The lease must outlive every task below: when the leased session is
-    // private (a scope switch landed mid-command), dropping the lease shuts
-    // that session down, and a `handle()` clone still held by a running fetch
-    // would then be reading a cancelled socket. The `join_next` drain ends
-    // before this binding does, so that holds today — keep it that way, and in
-    // particular do not move the lease into a task or narrow its scope.
-    let session = relay_client.session(relay_url.clone(), keys).await;
+    let api_base = crate::relay::relay_http_base_url(&relay_url);
+    let membership = crate::observed_unread::load_membership(
+        &app,
+        &crate::observed_unread::ObservedUnreadScope {
+            pubkey: owner.clone(),
+            relay_url: relay_url.clone(),
+        },
+    )?;
 
-    let concurrency = std::sync::Arc::new(Semaphore::new(8));
-    let mut pending = JoinSet::new();
-    // One command replaces N renderer invokes while the shared session still
-    // multiplexes bounded finite REQs on one authenticated socket.
-    for (order, channel) in request.channels.iter().cloned().enumerate() {
-        let permit = concurrency
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|error| error.to_string())?;
-        let session = session.handle();
-        pending.spawn(async move {
-            let _permit = permit;
-            let kinds: &[u32] = if channel.channel_type == "dm" {
-                &[
-                    KIND_STREAM_MESSAGE,
-                    KIND_STREAM_MESSAGE_V2,
-                    KIND_FORUM_POST,
-                    KIND_FORUM_COMMENT,
-                    KIND_HUDDLE_STARTED,
-                ]
-            } else {
-                &[
-                    KIND_STREAM_MESSAGE,
-                    KIND_STREAM_MESSAGE_V2,
-                    KIND_FORUM_POST,
-                    KIND_FORUM_COMMENT,
-                ]
-            };
-            let mut events = Vec::new();
-            let mut until = None;
-            let result = loop {
-                let mut filter = serde_json::json!({
-                    "kinds": kinds,
-                    "#h": [channel.id],
-                    "since": channel.read_at.map_or(0, |value| value.saturating_add(1)),
-                    "limit": CATCH_UP_LIMIT,
-                });
-                if let Some(cursor) = until {
-                    filter["until"] = serde_json::json!(cursor);
-                }
-                match session.fetch_events(filter, REQUEST_TIMEOUT).await {
-                    Ok(page) => {
-                        let page_len = page.len();
-                        let oldest = page.iter().map(|event| event.created_at.as_secs()).min();
-                        events.extend(page);
-                        let Some(next) = next_page_until(page_len, oldest, until) else {
-                            break Ok(events);
-                        };
-                        until = Some(next);
-                    }
-                    Err(error) => break Err(error),
-                }
-            };
-            (order, channel, result)
-        });
-    }
-
-    let mut fetched = Vec::new();
+    // Phase one narrows the deep scan to the current user's own history and
+    // direct mentions. Those rows discover the roots phase two is allowed to
+    // query; unrelated top-level traffic never crosses the bridge.
+    let mut discovery = Vec::new();
     let mut failures = Vec::new();
-    while let Some(joined) = pending.join_next().await {
-        let (order, channel, result) =
-            joined.map_err(|error| format!("unread catch-up task failed: {error}"))?;
-        match result {
-            Ok(events) => fetched.push(FetchedChannel {
-                order,
-                channel,
-                events: events.into_iter().map(EventView::from).collect(),
-            }),
+    for channel in request.channels.iter().cloned() {
+        match fetch_discovery_events(&state, &api_base, &keys, &channel, &owner).await {
+            Ok(events) => discovery.push((channel, events)),
             Err(error) => failures.push(ChannelResult::Error {
                 channel_id: channel.id,
                 error,
             }),
         }
     }
+    let mut query_membership = membership.clone();
+    for (_, events) in &discovery {
+        discover_query_membership(events, &owner, &mut query_membership);
+    }
+    let roots = relevant_roots(&query_membership);
 
-    fetched.sort_by_key(|item| item.order);
+    let mut fetched = Vec::new();
+    for (channel, mut events) in discovery {
+        match fetch_relevant_events(&state, &api_base, &keys, &channel, &roots).await {
+            Ok(relevant) => {
+                events.extend(relevant);
+                let mut seen = HashSet::new();
+                events.retain(|event| seen.insert(event.id));
+                fetched.push(FetchedChannel {
+                    channel,
+                    events: events.into_iter().map(EventView::from).collect(),
+                });
+            }
+            Err(error) => failures.push(ChannelResult::Error {
+                channel_id: channel.id,
+                error,
+            }),
+        }
+    }
 
     let current_keys = state.signing_keys()?;
     if current_keys.public_key().to_hex() != owner
@@ -250,13 +393,6 @@ pub(crate) async fn unread_catch_up(
         return Err("unread catch-up scope changed while fetching".to_string());
     }
 
-    let membership = crate::observed_unread::load_membership(
-        &app,
-        &crate::observed_unread::ObservedUnreadScope {
-            pubkey: owner,
-            relay_url,
-        },
-    )?;
     let mut channels = classify_batch(&request, fetched, &membership);
     channels.extend(failures);
     Ok(UnreadCatchUpResponse { channels })
@@ -323,6 +459,7 @@ fn classify_batch(
                     membership,
                     &participated,
                     &authored,
+                    &mentioned,
                 )
             {
                 continue;
@@ -431,6 +568,7 @@ fn should_notify(
     membership: &std::collections::HashMap<String, HashSet<String>>,
     participated: &HashSet<String>,
     authored: &HashSet<String>,
+    mentioned: &HashSet<String>,
 ) -> bool {
     if has_exact_tag(&event.tags, "broadcast", "1") || has_tag_value(&event.tags, "p", self_pubkey)
     {
@@ -462,6 +600,7 @@ fn should_notify(
             .get("followed")
             .is_some_and(|set| set.contains(&root_id))
         || authored.contains(&root_id)
+        || mentioned.contains(&root_id)
 }
 
 fn has_exact_tag(tags: &[Vec<String>], name: &str, value: &str) -> bool {
@@ -518,7 +657,6 @@ mod tests {
             timeline_read_at: Some(9),
         };
         let fetched = vec![FetchedChannel {
-            order: 0,
             channel,
             events: vec![
                 event(
@@ -567,7 +705,6 @@ mod tests {
             timeline_read_at: Some(10),
         };
         let fetched = vec![FetchedChannel {
-            order: 0,
             channel,
             events: vec![
                 event("boundary", "other", 10, &[&["h", "ch"]]),
@@ -605,16 +742,66 @@ mod tests {
     }
 
     #[test]
-    fn full_pages_advance_the_until_cursor() {
-        assert_eq!(next_page_until(CATCH_UP_LIMIT, Some(500), None), Some(499));
+    fn full_pages_advance_the_composite_cursor_without_skipping_ties() {
+        let first = PageCursor {
+            created_at: 500,
+            event_id: "0001".into(),
+        };
+        let tied = PageCursor {
+            created_at: 500,
+            event_id: "0002".into(),
+        };
         assert_eq!(
-            next_page_until(CATCH_UP_LIMIT, Some(400), Some(499)),
-            Some(399)
+            next_page_cursor(CATCH_UP_LIMIT, Some(first.clone()), None),
+            Ok(Some(first.clone()))
         );
         assert_eq!(
-            next_page_until(CATCH_UP_LIMIT - 1, Some(300), Some(399)),
-            None
+            next_page_cursor(CATCH_UP_LIMIT, Some(tied.clone()), Some(&first)),
+            Ok(Some(tied))
         );
+        assert_eq!(
+            next_page_cursor(CATCH_UP_LIMIT - 1, Some(first.clone()), None),
+            Ok(None)
+        );
+        assert!(next_page_cursor(CATCH_UP_LIMIT, Some(first.clone()), Some(&first)).is_err());
+    }
+
+    #[test]
+    fn split_filters_bound_deep_history_to_user_and_thread_evidence() {
+        let channel = CatchUpChannel {
+            id: "ch".into(),
+            channel_type: "stream".into(),
+            name: "Ch".into(),
+            read_at: Some(10),
+            timeline_read_at: Some(900),
+        };
+        let (authored, mentioned) = discovery_filters(&channel, "self");
+        assert_eq!(authored["since"], 11);
+        assert_eq!(authored["authors"], serde_json::json!(["self"]));
+        assert_eq!(mentioned["#p"], serde_json::json!(["self"]));
+
+        let top_level = top_level_filter(&channel);
+        assert_eq!(top_level["since"], 901);
+        assert_eq!(top_level["top_level"], true);
+
+        let threaded = thread_filter(&channel, &["root".into()]);
+        assert_eq!(threaded["since"], 11);
+        assert_eq!(threaded["#e"], serde_json::json!(["root"]));
+        assert!(threaded.get("top_level").is_none());
+    }
+
+    #[test]
+    fn page_filter_carries_timestamp_and_event_id_tiebreak() {
+        let mut filter = serde_json::json!({"limit": CATCH_UP_LIMIT});
+        apply_page_cursor(
+            &mut filter,
+            &PageCursor {
+                created_at: 500,
+                event_id: "ab".repeat(32),
+            },
+        );
+        assert_eq!(filter["until"], 500);
+        assert_eq!(filter["before_id"], "ab".repeat(32));
     }
 
     #[test]
@@ -644,15 +831,7 @@ mod tests {
             &[&["e", "root", "", "reply"], &["h", "ch"]],
         ));
         let membership = HashMap::from([("participated".into(), HashSet::from(["root".into()]))]);
-        let result = classify_batch(
-            &req,
-            vec![FetchedChannel {
-                order: 0,
-                channel,
-                events,
-            }],
-            &membership,
-        );
+        let result = classify_batch(&req, vec![FetchedChannel { channel, events }], &membership);
         let ChannelResult::Success {
             observed_events, ..
         } = &result[0]
