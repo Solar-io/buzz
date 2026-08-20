@@ -13,6 +13,7 @@ use buzz_core_pkg::kind::{
     KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_HUDDLE_STARTED, KIND_STREAM_MESSAGE,
     KIND_STREAM_MESSAGE_V2,
 };
+use futures_util::{stream, StreamExt};
 use nostr::{Event, Keys};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
@@ -28,6 +29,7 @@ use relevant_threads::fetch_relevant_thread_events;
 const CATCH_UP_LIMIT: usize = 1_000;
 const ACTIVITY_LIMIT: usize = 100;
 const ROOT_FILTER_CHUNK: usize = 200;
+const CHANNEL_FETCH_CONCURRENCY: usize = 8;
 
 fn next_page_cursor(
     page_len: usize,
@@ -349,10 +351,18 @@ pub(crate) async fn unread_catch_up(
     // Phase one narrows the deep scan to the current user's own history and
     // direct mentions. Those rows discover the roots phase two is allowed to
     // query; unrelated top-level traffic never crosses the bridge.
-    let mut discovery = Vec::new();
+    let discovery_results = stream::iter(request.channels.iter().cloned())
+        .map(|channel| async {
+            let result = fetch_discovery_events(&state, &api_base, &keys, &channel, &owner).await;
+            (channel, result)
+        })
+        .buffered(CHANNEL_FETCH_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+    let mut discovery = Vec::with_capacity(discovery_results.len());
     let mut failures = Vec::new();
-    for channel in request.channels.iter().cloned() {
-        match fetch_discovery_events(&state, &api_base, &keys, &channel, &owner).await {
+    for (channel, result) in discovery_results {
+        match result {
             Ok(events) => discovery.push((channel, events)),
             Err(error) => failures.push(ChannelResult::Error {
                 channel_id: channel.id,
@@ -387,9 +397,17 @@ pub(crate) async fn unread_catch_up(
             }
         };
 
-    let mut fetched = Vec::new();
-    for (channel, mut events) in discovery {
-        match fetch_top_level_pages(&state, &api_base, &keys, &channel).await {
+    let top_level_results = stream::iter(discovery)
+        .map(|(channel, events)| async {
+            let result = fetch_top_level_pages(&state, &api_base, &keys, &channel).await;
+            (channel, events, result)
+        })
+        .buffered(CHANNEL_FETCH_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+    let mut fetched = Vec::with_capacity(top_level_results.len());
+    for (channel, mut events, result) in top_level_results {
+        match result {
             Ok(top_level) => {
                 events.extend(top_level);
                 events.extend(
