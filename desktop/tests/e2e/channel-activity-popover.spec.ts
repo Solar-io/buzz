@@ -425,18 +425,20 @@ test.describe("channel activity hover preview", () => {
 
     const timelineBadges = page.getByTestId("thread-unread-badge");
     await expect(timelineBadges).toHaveCount(2);
-    const popover = page.getByTestId("channel-activity-popover-general");
-    await expect(popover).toBeVisible();
+    await page.mouse.move(900, 680);
+    const popover = await openActivityPopover(page);
     await expect(popover.getByTestId(/^channel-activity-item-/)).toHaveCount(2);
     await expect(
       popover.getByRole("button", { name: /Open thread/ }),
     ).toHaveCount(2);
 
-    await popover
+    const openThreadButton = popover
       .getByTestId(/^channel-activity-item-/)
       .filter({ hasText: "direct thread link" })
-      .getByRole("button", { name: /Open thread/ })
-      .click();
+      .getByRole("button", { name: /Open thread/ });
+    await waitForAnimations(page);
+    await openThreadButton.focus();
+    await openThreadButton.press("Enter");
     await expect(page.getByTestId("message-thread-panel")).toBeVisible();
     await page.getByTestId("auxiliary-panel-close").click();
 
