@@ -5,7 +5,7 @@ import * as React from "react";
 
 import { EmojiPicker } from "@/features/custom-emoji/ui/EmojiPicker";
 import { klipyGifAttachment, type KlipyGif } from "@/features/gifs/api";
-import { relaySupportsKlipy, trackKlipyGifShare } from "@/features/gifs/relay";
+import { relayKlipySearchEndpoint } from "@/features/gifs/relay";
 import { KlipyGifPicker } from "@/features/gifs/ui/KlipyGifPicker";
 import { useCommunities } from "@/features/communities/useCommunities";
 import type { MediaUploadController } from "@/features/messages/lib/useMediaUpload";
@@ -46,12 +46,13 @@ export const ComposerEmojiPicker = React.memo(function ComposerEmojiPicker({
   const relayUrl = activeCommunity?.relayUrl ?? "";
   const klipyCapabilityQuery = useQuery({
     enabled: relayUrl.length > 0,
-    queryFn: ({ signal }) => relaySupportsKlipy(relayUrl, signal),
+    queryFn: ({ signal }) => relayKlipySearchEndpoint(relayUrl, signal),
     queryKey: ["relay-capability", relayUrl, "klipy"],
     retry: 1,
     staleTime: 5 * 60 * 1_000,
   });
-  const gifsAvailable = klipyCapabilityQuery.data === true;
+  const gifSearchPath = klipyCapabilityQuery.data ?? "";
+  const gifsAvailable = gifSearchPath.length > 0;
 
   React.useEffect(() => {
     if (!open) setPickerTab("emoji");
@@ -65,8 +66,6 @@ export const ComposerEmojiPicker = React.memo(function ComposerEmojiPicker({
         ...current,
         klipyGifAttachment(gif),
       ]);
-      // Provider analytics must never block the user's attachment flow.
-      void trackKlipyGifShare(relayUrl, gif.slug).catch(() => undefined);
     },
     [gifMediaController.setPendingImeta, onOpenChange, relayUrl],
   );
@@ -167,7 +166,11 @@ export const ComposerEmojiPicker = React.memo(function ComposerEmojiPicker({
               <EmojiPicker autoFocus onSelect={onEmojiSelect} perLine={9} />
             </TabsContent>
             <TabsContent className="m-0" value="gifs">
-              <KlipyGifPicker onSelect={handleGifSelect} relayUrl={relayUrl} />
+              <KlipyGifPicker
+                onSelect={handleGifSelect}
+                relayUrl={relayUrl}
+                searchPath={gifSearchPath}
+              />
             </TabsContent>
           </Tabs>
         ) : (

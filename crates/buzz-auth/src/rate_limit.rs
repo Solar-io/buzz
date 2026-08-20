@@ -60,6 +60,8 @@ pub enum LimitType {
     Messages,
     /// HTTP REST API calls.
     ApiCalls,
+    /// Relay-proxied GIF metadata searches.
+    GifSearches,
     /// All WebSocket events (broader than `Messages`).
     WsEvents,
     /// Concurrent WebSocket connections from a single IP address.
@@ -72,6 +74,7 @@ impl LimitType {
         match self {
             Self::Messages => "msg",
             Self::ApiCalls => "api",
+            Self::GifSearches => "gif",
             Self::WsEvents => "ws",
             Self::IpConnections => "conn",
         }
@@ -270,6 +273,17 @@ mod tests {
             "key {key} should start with {expected_prefix}"
         );
         assert!(key.ends_with(":msg"));
+    }
+
+    #[test]
+    fn gif_searches_have_an_independent_quota_key() {
+        let ctx = fixture_ctx("relay-a.example");
+        let keys = Keys::generate();
+        let gif_key = rate_limit_key(&ctx, &keys.public_key(), &LimitType::GifSearches);
+        let api_key = rate_limit_key(&ctx, &keys.public_key(), &LimitType::ApiCalls);
+
+        assert!(gif_key.ends_with(":gif"));
+        assert_ne!(gif_key, api_key);
     }
 
     #[test]

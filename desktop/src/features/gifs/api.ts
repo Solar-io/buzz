@@ -30,9 +30,6 @@ export type KlipyResponse = {
   data?: {
     data?: KlipyRawGif[];
   };
-  errors?: {
-    message?: string[];
-  };
   result?: boolean;
 };
 
@@ -45,14 +42,28 @@ export type KlipyGif = {
 };
 
 export type RelayGifSearchInfo = {
-  gif_search?: {
+  gif?: {
     provider?: string;
+    search?: string;
   };
+  supported_extensions?: string[];
 };
 
-/** Whether a relay's public NIP-11 document advertises KLIPY proxy support. */
-export function relayInfoSupportsKlipy(info: RelayGifSearchInfo): boolean {
-  return info.gif_search?.provider === "klipy";
+/** The safe relay-relative KLIPY search path advertised by NIP-11, if any. */
+export function relayKlipySearchPath(info: RelayGifSearchInfo): string | null {
+  const path = info.gif?.search;
+  if (
+    info.supported_extensions?.includes("buzz-gif") === true &&
+    info.gif?.provider === "klipy" &&
+    typeof path === "string" &&
+    path.startsWith("/") &&
+    !path.startsWith("//") &&
+    !path.includes("?") &&
+    !path.includes("#")
+  ) {
+    return path;
+  }
+  return null;
 }
 
 function isCompleteAsset(

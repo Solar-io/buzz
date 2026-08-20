@@ -5,7 +5,7 @@ import {
   klipyGifAttachment,
   klipyGifFilename,
   normalizeKlipyGifs,
-  relayInfoSupportsKlipy,
+  relayKlipySearchPath,
 } from "./api.ts";
 
 const GIF_ASSET = {
@@ -50,15 +50,34 @@ test("normalizeKlipyGifs omits ads and malformed file records", () => {
   assert.deepEqual(gifs, []);
 });
 
-test("relayInfoSupportsKlipy requires the explicit relay capability", () => {
+test("relayKlipySearchPath requires the explicit relay capability", () => {
   assert.equal(
-    relayInfoSupportsKlipy({ gif_search: { provider: "klipy" } }),
-    true,
+    relayKlipySearchPath({
+      gif: { provider: "klipy", search: "/gifs/search" },
+      supported_extensions: ["nip-er", "buzz-gif"],
+    }),
+    "/gifs/search",
   );
-  assert.equal(relayInfoSupportsKlipy({}), false);
+  assert.equal(relayKlipySearchPath({}), null);
   assert.equal(
-    relayInfoSupportsKlipy({ gif_search: { provider: "another" } }),
-    false,
+    relayKlipySearchPath({
+      gif: { provider: "another", search: "/gifs/search" },
+      supported_extensions: ["buzz-gif"],
+    }),
+    null,
+  );
+  assert.equal(
+    relayKlipySearchPath({
+      gif: { provider: "klipy", search: "/gifs/search" },
+    }),
+    null,
+  );
+  assert.equal(
+    relayKlipySearchPath({
+      gif: { provider: "klipy", search: "https://attacker.example/search" },
+      supported_extensions: ["buzz-gif"],
+    }),
+    null,
   );
 });
 

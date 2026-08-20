@@ -73,8 +73,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/query", post(api::bridge::query_events))
         .route("/count", post(api::bridge::count_events))
         // Relay-owned third-party GIF metadata proxy (NIP-98 auth).
-        .route("/api/gifs/search", post(api::gifs::search))
-        .route("/api/gifs/share", post(api::gifs::share))
+        .route("/gifs/search", post(api::gifs::search))
         .route(
             "/workflows/{workflow_id}/runs",
             get(api::workflows::workflow_runs),

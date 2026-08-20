@@ -3,7 +3,7 @@ import {
   type KlipyResponse,
   normalizeKlipyGifs,
   type RelayGifSearchInfo,
-  relayInfoSupportsKlipy,
+  relayKlipySearchPath,
 } from "@/features/gifs/api";
 import { relayHttpFromWs } from "@/shared/api/inviteHelpers";
 import { signRelayEvent } from "@/shared/api/tauri";
@@ -77,11 +77,11 @@ async function relayPost<T>(
   return (await response.json()) as T;
 }
 
-/** Whether the selected relay advertises a server-side KLIPY integration. */
-export async function relaySupportsKlipy(
+/** The selected relay's advertised KLIPY search path, when supported. */
+export async function relayKlipySearchEndpoint(
   relayUrl: string,
   signal?: AbortSignal,
-): Promise<boolean> {
+): Promise<string | null> {
   const url = `${relayHttpFromWs(relayUrl).replace(/\/+$/, "")}/info`;
   const response = await fetch(url, {
     headers: { Accept: "application/nostr+json" },
@@ -90,18 +90,19 @@ export async function relaySupportsKlipy(
   if (!response.ok)
     throw new Error(`Could not read relay capabilities (${response.status})`);
   const info = (await response.json()) as RelayGifSearchInfo;
-  return relayInfoSupportsKlipy(info);
+  return relayKlipySearchPath(info);
 }
 
 /** Search KLIPY through the selected relay without exposing its provider key. */
 export async function fetchKlipyGifs(
   relayUrl: string,
+  searchPath: string,
   query: string,
   signal?: AbortSignal,
 ): Promise<KlipyGif[]> {
   const response = await relayPost<KlipyResponse>(
     relayUrl,
-    "/api/gifs/search",
+    searchPath,
     {
       customer_id: customerId(),
       locale: navigator.language || "en-US",
@@ -109,20 +110,8 @@ export async function fetchKlipyGifs(
     },
     signal,
   );
-  const message = response.errors?.message?.filter(Boolean).join(" ");
   if (response.result === false) {
-    throw new Error(message || "KLIPY search failed");
+    throw new Error("GIF search failed");
   }
   return normalizeKlipyGifs(response.data?.data ?? []);
-}
-
-/** Record the provider's share event through the selected relay. */
-export async function trackKlipyGifShare(
-  relayUrl: string,
-  slug: string,
-): Promise<void> {
-  await relayPost<void>(relayUrl, "/api/gifs/share", {
-    customer_id: customerId(),
-    slug,
-  });
 }

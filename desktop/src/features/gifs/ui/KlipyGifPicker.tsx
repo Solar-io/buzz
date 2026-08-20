@@ -10,6 +10,7 @@ import { Skeleton } from "@/shared/ui/skeleton";
 type KlipyGifPickerProps = {
   onSelect: (gif: KlipyGif) => void;
   relayUrl: string;
+  searchPath: string;
 };
 
 const LOADING_SKELETONS = [
@@ -28,6 +29,7 @@ const LOADING_SKELETONS = [
 export const KlipyGifPicker = React.memo(function KlipyGifPicker({
   onSelect,
   relayUrl,
+  searchPath,
 }: KlipyGifPickerProps) {
   const [search, setSearch] = React.useState("");
   const [debouncedSearch, setDebouncedSearch] = React.useState("");
@@ -35,14 +37,16 @@ export const KlipyGifPicker = React.memo(function KlipyGifPicker({
   React.useEffect(() => {
     const timeout = window.setTimeout(
       () => setDebouncedSearch(search.trim()),
-      250,
+      500,
     );
     return () => window.clearTimeout(timeout);
   }, [search]);
 
   const gifsQuery = useQuery({
-    queryFn: ({ signal }) => fetchKlipyGifs(relayUrl, debouncedSearch, signal),
-    queryKey: ["klipy-gifs", relayUrl, debouncedSearch],
+    queryFn: ({ signal }) =>
+      fetchKlipyGifs(relayUrl, searchPath, debouncedSearch, signal),
+    queryKey: ["klipy-gifs", relayUrl, searchPath, debouncedSearch],
+    retry: false,
     staleTime: 5 * 60 * 1_000,
   });
 
