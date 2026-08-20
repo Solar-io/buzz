@@ -15,8 +15,13 @@ fn relevant_thread_filter(channels: &[CatchUpChannel], roots: &[String]) -> serd
     } else {
         "stream"
     };
+    let channel_ids = channels
+        .iter()
+        .map(|channel| channel.id.as_str())
+        .collect::<Vec<_>>();
     serde_json::json!({
         "kinds": catch_up_kinds(channel_type),
+        "#h": channel_ids,
         "#e": roots,
         "since": since,
         "limit": super::CATCH_UP_LIMIT,
@@ -100,7 +105,7 @@ mod tests {
 
         assert_eq!(filter["since"], 11);
         assert_eq!(filter["#e"], serde_json::json!(["root"]));
-        assert!(filter.get("#h").is_none());
+        assert_eq!(filter["#h"], serde_json::json!(["a", "b"]));
         assert!(filter["kinds"].as_array().is_some_and(
             |kinds| kinds.contains(&serde_json::json!(super::super::KIND_HUDDLE_STARTED))
         ));
