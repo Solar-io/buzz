@@ -122,8 +122,9 @@ pub(crate) fn is_admin_host(state: &AppState, headers: &HeaderMap) -> bool {
         .is_some_and(|host| host == config.host)
 }
 
-/// Scheme for an admin authority: `http://` for loopback hosts (localhost,
-/// `[::1]`, 127.x), else `https://` — matching local dev via the Justfile.
+/// Scheme for an admin authority: `http://` for loopback hosts (`localhost`,
+/// any `*.localhost` name, `[::1]`, 127.x), else `https://` — matching local
+/// dev via the Justfile (`admin.localhost:3000` over HTTP).
 ///
 /// Shared by [`canonical_url`] (NIP-98 `u`-tag verification) and
 /// [`admin_api_origin`] (NIP-11 advertisement) so the origin the relay
@@ -139,8 +140,14 @@ fn scheme_for_host(host: &str) -> &'static str {
     } else {
         host.split(':').next().unwrap_or(host)
     };
-    let is_loopback =
-        host_part == "localhost" || host_part == "::1" || host_part.starts_with("127.");
+    // RFC 6761 reserves `localhost` and every name under `.localhost` for
+    // loopback, and the repo's dev default (`just admin`) serves
+    // `admin.localhost:3000` over HTTP — so both forms must map to `http` or
+    // the advertised/verified origin diverges from what dev actually serves.
+    let is_loopback = host_part == "localhost"
+        || host_part.ends_with(".localhost")
+        || host_part == "::1"
+        || host_part.starts_with("127.");
     if is_loopback {
         "http"
     } else {
@@ -210,15 +217,15 @@ pub async fn authorize(
 
     // Credential check first: an unauthenticated caller learns nothing about
     // which Host or Origin the deployment expects.
-    let principal = match &config.auth {
+    let (principal, nip98_event_id) = match &config.auth {
         AdminAuth::Token(token) => {
             authorize_bearer(token, headers)?;
             // Read-write token mode: when the relay has a stable identity, the
             // shared token acts as the relay (full Operator). This attributes
             // mutations to a truthful, never-NULL actor (the relay pubkey).
-            resolve_token_principal(state)
+            (resolve_token_principal(state), None)
         }
-        AdminAuth::Disabled => None,
+        AdminAuth::Disabled => (None, None),
         AdminAuth::Nip98 => {
             let full_path = format!("{ADMIN_API_PREFIX}{path_and_query}");
             let (pubkey_bytes, event_id) =
@@ -228,8 +235,7 @@ pub async fn authorize(
             // must not be able to consume replay slots at request rate. Only a
             // request that clears authorization claims its event ID.
             let principal = resolve_admin_principal(state, pubkey_bytes).await?;
-            claim_nip98_replay(state, &event_id).await?;
-            Some(principal)
+            (Some(principal), Some(event_id))
         }
     };
 
@@ -243,6 +249,14 @@ pub async fn authorize(
     }) {
         return Err(ApiError::forbidden());
     }
+
+    // Claim the NIP-98 replay ID only after Host and Origin validation succeed,
+    // so a request rejected by either check does not burn the event ID — the
+    // caller can retry with the corrected header without a new signature.
+    if let Some(event_id) = nip98_event_id {
+        claim_nip98_replay(state, &event_id).await?;
+    }
+
     Ok(principal)
 }
 
@@ -518,10 +532,11 @@ fn bearer_credential(value: &str) -> Option<&str> {
 }
 
 fn origin_matches_host(origin: &str, host: &str) -> bool {
-    origin
-        .strip_prefix("https://")
-        .or_else(|| origin.strip_prefix("http://"))
-        == Some(host)
+    // Compare against the exact canonical origin: https:// for non-loopback,
+    // http:// for loopback. Accepting either scheme for non-loopback would
+    // allow plaintext origins for production hosts.
+    let expected = format!("{}://{host}", scheme_for_host(host));
+    origin == expected
 }
 
 #[cfg(test)]
@@ -546,6 +561,27 @@ mod tests {
             "admin.example.com"
         ));
         assert!(!origin_matches_host("null", "admin.example.com"));
+        // P3-4: http must be rejected for non-loopback hosts.
+        assert!(!origin_matches_host(
+            "http://admin.example.com",
+            "admin.example.com"
+        ));
+        // https must be rejected for loopback hosts (scheme_for_host returns http).
+        assert!(!origin_matches_host(
+            "https://localhost:3000",
+            "localhost:3000"
+        ));
+        // P3-4: `admin.localhost` is the repo dev default (RFC 6761 loopback,
+        // served over HTTP by `just admin`) — its exact HTTP Origin must match
+        // and the HTTPS form must be rejected.
+        assert!(origin_matches_host(
+            "http://admin.localhost:3000",
+            "admin.localhost:3000"
+        ));
+        assert!(!origin_matches_host(
+            "https://admin.localhost:3000",
+            "admin.localhost:3000"
+        ));
     }
 
     #[test]
@@ -596,6 +632,11 @@ mod tests {
             "http://127.0.0.1:3000/path"
         );
         assert_eq!(canonical_url("127.0.0.1", "/path"), "http://127.0.0.1/path");
+        // `*.localhost` (RFC 6761 loopback, the repo dev default).
+        assert_eq!(
+            canonical_url("admin.localhost:3000", "/api/admin/v1/reports"),
+            "http://admin.localhost:3000/api/admin/v1/reports"
+        );
     }
 
     #[test]
@@ -618,6 +659,12 @@ mod tests {
         // at config parse). Loopback `[::1]` resolves to `http`.
         assert_eq!(admin_api_origin("[::1]"), "http://[::1]");
         assert_eq!(admin_api_origin("[::1]:3000"), "http://[::1]:3000");
+        // `*.localhost` (RFC 6761 loopback, the repo dev default). The NIP-11
+        // advertisement must match the HTTP origin desktop derives.
+        assert_eq!(
+            admin_api_origin("admin.localhost:3000"),
+            "http://admin.localhost:3000"
+        );
     }
 
     /// The advertised origin and the verified `u`-tag URL must parse as valid

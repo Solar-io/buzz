@@ -40,29 +40,37 @@ pub enum ConfigError {
 /// - `Moderator/Db` from the `relay_operators` table otherwise
 /// - `None` → 403 (no fall-through role, ever)
 ///
-/// `token`/`disabled` modes retain exactly the existing read surface; they
-/// expose no role, no capabilities, and no mutation endpoints.
+/// Token mode is read-write when the relay has a stable identity
+/// (`BUZZ_RELAY_PRIVATE_KEY` configured, or dev mode); mutations are attributed
+/// to the relay's own pubkey, and it is read-only otherwise. Disabled mode is
+/// always read-only. NIP-98 mode is read-write per resolved principal.
 #[derive(Debug, Clone)]
 pub enum AdminAuth {
     /// Operator bearer credential required on every request.
     /// Selected by `BUZZ_ADMIN_AUTH=token` (or leaving `BUZZ_ADMIN_AUTH` unset).
-    /// Read-only surface only; mutations require `nip98` mode.
+    /// Read-write when the relay has a stable identity (`BUZZ_RELAY_PRIVATE_KEY`
+    /// configured, or dev mode with `BUZZ_REQUIRE_AUTH_TOKEN=false`); mutations
+    /// are attributed to the relay's own pubkey. Read-only otherwise.
     Token(AdminToken),
     /// Bearer authentication disabled. The operator has explicitly asserted
     /// that the admin API is protected at the network layer (reverse proxy,
     /// VPN, firewall). `Host`/`Origin` checks remain active as defense-in-depth.
     /// Selected by `BUZZ_ADMIN_AUTH=disabled`.
-    /// Read-only surface only; mutations require `nip98` mode.
+    /// Always read-only: `authorize()` resolves no principal for this mode, so
+    /// mutation and staffing routes always 403.
     Disabled,
     /// NIP-98 HTTP Auth. Every request must carry an `Authorization: Nostr`
     /// header containing a signed kind-27235 event. The authenticated pubkey
     /// is resolved to an [`crate::api::admin::auth::AdminPrincipal`] at request
     /// time from config + DB. Selected by `BUZZ_ADMIN_AUTH=nip98`.
-    /// Only mode that exposes mutation and staffing endpoints.
+    /// Read-write per resolved principal; the only mode that attributes
+    /// mutations to a distinct human operator rather than the relay itself.
     Nip98,
 }
 
-/// Deny-by-default read-only deployment-admin configuration.
+/// Deny-by-default deployment-admin configuration. Mutation and staffing routes
+/// require a resolved principal (NIP-98, or token mode with a stable relay
+/// identity); disabled mode is always read-only.
 #[derive(Debug, Clone)]
 pub struct AdminConfig {
     /// Exact admin HTTP authority.
@@ -1083,18 +1091,21 @@ impl Config {
                 }
 
                 // Catch-all authority gate: every accepted host is interpolated
-                // verbatim into the NIP-11 advertisement and NIP-98 `u`-tag URLs,
-                // so it must be exactly an authority — a host with an optional
-                // port and nothing else. Parsing `http://{host}` and requiring
-                // the sentinel to carry only a host rejects any shape that smuggles
-                // a path, query, fragment, or credentials into the value (the
-                // bracket guard above already names the honest bare-IPv6 shape).
+                // into the NIP-11 advertisement and NIP-98 `u`-tag URLs, so it
+                // must be exactly an authority — a host with an optional port and
+                // nothing else. Parsing `http://{host}` and requiring the sentinel
+                // to carry only a host rejects any shape that smuggles a path,
+                // query, fragment, or credentials into the value (the bracket guard
+                // above already names the honest bare-IPv6 shape).
                 // Structural check, not parse-only: `admin.example.com?x=1` parses
                 // as a valid URL but lands `?x=1` in the query, which would corrupt
                 // both the advertised origin and the canonical `u`-tag URL. Mirrors
-                // `parse_operator_api_origin`. Validity gate only — the host is
-                // still stored verbatim, not normalized (the `url` crate normalizes
-                // an empty path to `/`, so a bare authority satisfies `path == "/"`).
+                // `parse_operator_api_origin`. After passing the gate the host is
+                // lowercased (hostnames are case-insensitive per RFC 4343) so a
+                // mixed-case BUZZ_ADMIN_HOST round-trips correctly through desktop
+                // URL parsing, which always lowercases hostnames (the `url` crate
+                // normalizes an empty path to `/`, so a bare authority satisfies
+                // `path == "/"`).
                 let is_bare_authority =
                     url::Url::parse(&format!("http://{host}")).is_ok_and(|url| {
                         url.host().is_some()
@@ -1112,6 +1123,7 @@ impl Config {
                          relay.example.com:8443 or [::1]:3000"
                     )));
                 }
+                let host = host.to_lowercase();
 
                 // Parse BUZZ_ADMIN_AUTH. Accepted values: "token" (default when
                 // unset), "disabled", "nip98". Any other non-empty value is a
@@ -1523,6 +1535,31 @@ mod tests {
             .admin
             .expect("admin surface is configured");
             assert_eq!(admin.host, host);
+        }
+    }
+
+    #[test]
+    fn admin_host_mixed_case_is_normalized_to_lowercase() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        // Hostnames are case-insensitive (RFC 4343). A mixed-case BUZZ_ADMIN_HOST
+        // must be stored lowercase so it round-trips through desktop URL parsing
+        // (url::Url always lowercases hostnames) without a mismatch.
+        for (input, expected) in [
+            ("Admin.Example.com", "admin.example.com"),
+            ("Admin.Example.com:8443", "admin.example.com:8443"),
+            ("LOCALHOST:3000", "localhost:3000"),
+        ] {
+            let admin = config_with_admin_env(&[
+                ("BUZZ_ADMIN_HOST", Some(input)),
+                ("BUZZ_ADMIN_TOKEN", Some(VALID_ADMIN_TOKEN)),
+            ])
+            .unwrap_or_else(|e| panic!("mixed-case host {input:?} must be accepted: {e:?}"))
+            .admin
+            .expect("admin surface is configured");
+            assert_eq!(
+                admin.host, expected,
+                "host {input:?} must be stored as lowercase {expected:?}"
+            );
         }
     }
 

@@ -2034,6 +2034,117 @@ mod tests {
         );
     }
 
+    // P2-1 causal tests: a wrong Host or wrong Origin must not burn the NIP-98 replay ID.
+    // The caller must be able to retry the same event with the corrected header and succeed.
+
+    #[tokio::test]
+    async fn nip98_mode_wrong_host_does_not_consume_replay_slot() {
+        let keys = nostr::Keys::generate();
+        let tracking = Arc::new(TrackingReplayGuard::new());
+        let state =
+            nip98_state_with_replay(vec![keys.public_key().to_hex()], tracking.clone()).await;
+        let auth = make_nostr_auth(&keys, "/probe");
+
+        // First: correct event, wrong Host → 403.
+        let bad = status_for(
+            state.clone(),
+            Request::builder()
+                .uri("/probe")
+                .header(header::HOST, "evil.example")
+                .header(header::AUTHORIZATION, auth.clone())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(
+            bad.status(),
+            StatusCode::FORBIDDEN,
+            "wrong Host must be 403"
+        );
+        assert_eq!(
+            tracking.claim_count(),
+            0,
+            "replay slot must not be consumed on a wrong-Host rejection"
+        );
+
+        // Second: same event, correct Host → 200 (event ID was not burned).
+        let good = status_for(
+            state,
+            Request::builder()
+                .uri("/probe")
+                .header(header::HOST, "admin.example")
+                .header(header::AUTHORIZATION, auth)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(
+            good.status(),
+            StatusCode::OK,
+            "same event with correct Host must succeed after a wrong-Host rejection"
+        );
+        assert_eq!(
+            tracking.claim_count(),
+            1,
+            "replay slot claimed exactly once on the successful retry"
+        );
+    }
+
+    #[tokio::test]
+    async fn nip98_mode_wrong_origin_does_not_consume_replay_slot() {
+        let keys = nostr::Keys::generate();
+        let tracking = Arc::new(TrackingReplayGuard::new());
+        let state =
+            nip98_state_with_replay(vec![keys.public_key().to_hex()], tracking.clone()).await;
+        let auth = make_nostr_auth(&keys, "/probe");
+
+        // First: correct event and Host, wrong Origin → 403.
+        let bad = status_for(
+            state.clone(),
+            Request::builder()
+                .uri("/probe")
+                .header(header::HOST, "admin.example")
+                .header(header::ORIGIN, "https://evil.example")
+                .header(header::AUTHORIZATION, auth.clone())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(
+            bad.status(),
+            StatusCode::FORBIDDEN,
+            "wrong Origin must be 403"
+        );
+        assert_eq!(
+            tracking.claim_count(),
+            0,
+            "replay slot must not be consumed on a wrong-Origin rejection"
+        );
+
+        // Second: same event with correct Origin → 200 (event ID was not burned).
+        let good = status_for(
+            state,
+            Request::builder()
+                .uri("/probe")
+                .header(header::HOST, "admin.example")
+                .header(header::ORIGIN, "https://admin.example")
+                .header(header::AUTHORIZATION, auth)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(
+            good.status(),
+            StatusCode::OK,
+            "same event with correct Origin must succeed after a wrong-Origin rejection"
+        );
+        assert_eq!(
+            tracking.claim_count(),
+            1,
+            "replay slot claimed exactly once on the successful retry"
+        );
+    }
+
     #[tokio::test]
     async fn nip98_mode_valid_credential_on_wrong_host_is_forbidden_not_unauthorized() {
         let keys = nostr::Keys::generate();
@@ -2441,6 +2552,143 @@ mod tests {
             .expect("sign");
         let json = serde_json::to_string(&event).expect("serialize");
         format!("Nostr {}", BASE64.encode(json.as_bytes()))
+    }
+
+    /// Build a NIP-98 `Authorization: Nostr` header from an explicit raw tag
+    /// list, so a test can inject duplicate `u`/`method`/`payload` tags that the
+    /// typed helpers can't express. Signs a real kind-27235 event.
+    fn make_nostr_auth_raw_tags(keys: &nostr::Keys, tags: Vec<nostr::Tag>) -> String {
+        use base64::engine::general_purpose::STANDARD as BASE64;
+        use base64::Engine as _;
+        use nostr::{EventBuilder, Kind};
+
+        let event = EventBuilder::new(Kind::HttpAuth, "")
+            .tags(tags)
+            .sign_with_keys(keys)
+            .expect("sign");
+        let json = serde_json::to_string(&event).expect("serialize");
+        format!("Nostr {}", BASE64.encode(json.as_bytes()))
+    }
+
+    // P2-2 relay-seam tests: a signed event carrying a duplicate security-critical
+    // tag (valid-first/invalid-second AND invalid-first/valid-second) must be
+    // rejected with 401 on the relay admin path, not silently accepted via
+    // `.find()`'s first-match. These exercise the shared verifier through
+    // `authorize()`/`authorize_nip98`, covering the production seam Kalvin's
+    // agents probed live — not just the `buzz-auth` unit layer.
+
+    #[tokio::test]
+    async fn nip98_mode_rejects_duplicate_u_tag() {
+        use nostr::Tag;
+        let keys = nostr::Keys::generate();
+        let valid_url = format!("https://admin.example{ADMIN_API_PREFIX}/probe");
+        let evil_url = "https://evil.example/other".to_string();
+        for (first, second) in [
+            (valid_url.as_str(), evil_url.as_str()),
+            (evil_url.as_str(), valid_url.as_str()),
+        ] {
+            let auth = make_nostr_auth_raw_tags(
+                &keys,
+                vec![
+                    Tag::parse(["u", first]).unwrap(),
+                    Tag::parse(["u", second]).unwrap(),
+                    Tag::parse(["method", "GET"]).unwrap(),
+                ],
+            );
+            let state = nip98_state(vec![keys.public_key().to_hex()]).await;
+            let response = status_for(
+                state,
+                Request::builder()
+                    .uri("/probe")
+                    .header(header::HOST, "admin.example")
+                    .header(header::AUTHORIZATION, auth)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await;
+            assert_eq!(
+                response.status(),
+                StatusCode::UNAUTHORIZED,
+                "duplicate `u` tag ({first}, {second}) must be rejected on the relay path"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn nip98_mode_rejects_duplicate_method_tag() {
+        use nostr::Tag;
+        let keys = nostr::Keys::generate();
+        let url = format!("https://admin.example{ADMIN_API_PREFIX}/probe");
+        for (first, second) in [("GET", "POST"), ("POST", "GET")] {
+            let auth = make_nostr_auth_raw_tags(
+                &keys,
+                vec![
+                    Tag::parse(["u", &url]).unwrap(),
+                    Tag::parse(["method", first]).unwrap(),
+                    Tag::parse(["method", second]).unwrap(),
+                ],
+            );
+            let state = nip98_state(vec![keys.public_key().to_hex()]).await;
+            let response = status_for(
+                state,
+                Request::builder()
+                    .uri("/probe")
+                    .header(header::HOST, "admin.example")
+                    .header(header::AUTHORIZATION, auth)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await;
+            assert_eq!(
+                response.status(),
+                StatusCode::UNAUTHORIZED,
+                "duplicate `method` tag ({first}, {second}) must be rejected on the relay path"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn nip98_mode_rejects_duplicate_payload_tag() {
+        use nostr::Tag;
+        use sha2::{Digest, Sha256};
+        let keys = nostr::Keys::generate();
+        let body = br#"{"action":"dismiss"}"#;
+        let path = format!("/reports/{}/resolve", Uuid::nil());
+        let url = format!("https://admin.example{ADMIN_API_PREFIX}{path}");
+        let valid_hex = hex::encode(Sha256::digest(body));
+        let wrong_hex = "deadbeef".repeat(8);
+        for (first, second) in [
+            (valid_hex.as_str(), wrong_hex.as_str()),
+            (wrong_hex.as_str(), valid_hex.as_str()),
+        ] {
+            let auth = make_nostr_auth_raw_tags(
+                &keys,
+                vec![
+                    Tag::parse(["u", &url]).unwrap(),
+                    Tag::parse(["method", "POST"]).unwrap(),
+                    Tag::parse(["payload", first]).unwrap(),
+                    Tag::parse(["payload", second]).unwrap(),
+                ],
+            );
+            let state = nip98_state(vec![keys.public_key().to_hex()]).await;
+            let response = status_for(
+                state,
+                Request::builder()
+                    .method("POST")
+                    .uri(&path)
+                    .header(header::HOST, "admin.example")
+                    .header(header::AUTHORIZATION, auth)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_vec()))
+                    .expect("request"),
+            )
+            .await;
+            assert_eq!(
+                response.status(),
+                StatusCode::UNAUTHORIZED,
+                "duplicate `payload` tag ({first}, {second}) must be rejected on the relay path"
+            );
+        }
     }
 
     /// POST /reports/{id}/resolve in read-only token mode (no stable relay
