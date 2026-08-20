@@ -28,6 +28,8 @@ import { readAtForPreservedUnreadMessage } from "@/features/channels/unreadThrea
 
 import { useWelcomeInitialUnreadSuppression } from "./useWelcomeInitialUnreadSuppression";
 
+const EMPTY_SET = new Set<string>();
+
 type UseChannelUnreadStateOptions = {
   activeChannelId: string | null;
   timelineMessages: TimelineMessage[];
@@ -95,6 +97,26 @@ export function useChannelUnreadState({
   const openFrontierSeconds = activeChannelId
     ? (openFrontierRef.current.get(activeChannelId) ?? null)
     : null;
+  // IDs already authoritative when this channel first opens are trusted across
+  // later visits even if a newer channel-timeline marker overtakes them. Keep
+  // this session snapshot across channel leave/revisit; IDs that appear later
+  // still use the timestamp guard below, preventing an in-flight projection
+  // refresh from reviving old history while the channel is already open.
+  const preservedUnreadOnFirstOpenRef = React.useRef(
+    new Map<string, ReadonlySet<string>>(),
+  );
+  if (
+    activeChannelId &&
+    !preservedUnreadOnFirstOpenRef.current.has(activeChannelId)
+  ) {
+    preservedUnreadOnFirstOpenRef.current.set(
+      activeChannelId,
+      new Set(preservedUnreadMessageIds),
+    );
+  }
+  const preservedUnreadMessageIdsOnFirstOpen = activeChannelId
+    ? (preservedUnreadOnFirstOpenRef.current.get(activeChannelId) ?? EMPTY_SET)
+    : EMPTY_SET;
   // Channels the user manually marked unread this session. A deliberate
   // mark-unread has no meaningful "new" boundary inside the timeline — the
   // open-time snapshot already covers every message — so the pill and divider
@@ -190,14 +212,20 @@ export function useChannelUnreadState({
       readAtForPreservedUnreadMessage(
         messageId,
         preservedUnreadMessageIds,
+        preservedUnreadMessageIdsOnFirstOpen,
+        createdAtByMessageId.get(messageId),
+        openFrontierSeconds,
         getMessageReadAt(messageId),
         activeChannelId ? getChannelReadAt(activeChannelId) : null,
       ),
     [
       activeChannelId,
+      createdAtByMessageId,
       getChannelReadAt,
       getMessageReadAt,
+      openFrontierSeconds,
       preservedUnreadMessageIds,
+      preservedUnreadMessageIdsOnFirstOpen,
     ],
   );
   const threadPanelIndex = React.useMemo(
