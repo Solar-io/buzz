@@ -423,9 +423,28 @@ test.describe("channel activity hover preview", () => {
     await expect(page.getByTestId("chat-title")).toHaveText("general");
     await expect(page.getByTestId("channel-unread-dot-general")).toBeVisible();
 
+    const timelineBadges = page.getByTestId("thread-unread-badge");
+    await expect(timelineBadges).toHaveCount(2);
+    const popover = page.getByTestId("channel-activity-popover-general");
+    await expect(popover).toBeVisible();
+    await expect(popover.getByTestId(/^channel-activity-item-/)).toHaveCount(2);
+    await expect(
+      popover.getByRole("button", { name: /Open thread/ }),
+    ).toHaveCount(2);
+
+    await popover
+      .getByTestId(/^channel-activity-item-/)
+      .filter({ hasText: "direct thread link" })
+      .getByRole("button", { name: /Open thread/ })
+      .click();
+    await expect(page.getByTestId("message-thread-panel")).toBeVisible();
+    await page.getByTestId("auxiliary-panel-close").click();
+
     await page.getByTestId("channel-general").click({ button: "right" });
     await page.getByRole("menuitem", { name: "Mark as read" }).click();
     await expect(page.getByTestId("channel-unread-dot-general")).toHaveCount(0);
+    await expect(timelineBadges).toHaveCount(0);
+    await expect(popover).toHaveCount(0);
   });
 
   test("marks projected thread activity read from the active channel menu", async ({

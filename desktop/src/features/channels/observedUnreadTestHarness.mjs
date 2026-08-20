@@ -257,6 +257,7 @@ export async function mountHook(props, refs) {
     getTimelineTs,
     getOwn,
     onPruned,
+    membershipSeed,
   }) {
     apiRef.current = useObservedUnreadPersistence(
       pubkey,
@@ -268,7 +269,7 @@ export async function mountHook(props, refs) {
       getOwn,
       refs.eventsRef,
       refs.latestRef,
-      { onPruned: onPruned ?? (() => {}) },
+      { onPruned: onPruned ?? (() => {}), membershipSeed },
     );
     return null;
   }
@@ -313,6 +314,8 @@ export function seedStorage(pubkey, relay, channelId, eventId = "evt-1") {
 export async function mountUnreadChannels({
   pubkey,
   relay = "wss://relay.example.com",
+  channels = [],
+  relayClient,
 }) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -320,13 +323,15 @@ export async function mountUnreadChannels({
 
   let capturedMarkChannelRead = null;
   let capturedMarkAllChannelsRead = null;
+  let capturedResult = null;
 
   function Inner({ pubkey: pk }) {
-    const result = useUnreadChannels([], null, {
+    const result = useUnreadChannels(channels, null, {
       pubkey: pk,
-      relayClient: undefined,
+      relayClient,
       relayUrl: relay,
     });
+    capturedResult = result;
     capturedMarkChannelRead = result.markChannelRead;
     capturedMarkAllChannelsRead = result.markAllChannelsRead;
     return null;
@@ -352,6 +357,9 @@ export async function mountUnreadChannels({
   await render(pubkey);
 
   return {
+    get result() {
+      return capturedResult;
+    },
     get markChannelRead() {
       return capturedMarkChannelRead;
     },

@@ -38,6 +38,7 @@ type UseChannelUnreadStateOptions = {
   openThreadMessages?: MainTimelineEntry[];
   getChannelReadAt: (channelId: string) => number | null;
   getMessageReadAt: (messageId: string) => number | null;
+  preservedUnreadMessageIds: ReadonlySet<string>;
   clearChannelUnreadSource: (
     channelId: string,
     source: ForcedUnreadSource,
@@ -70,6 +71,7 @@ export function useChannelUnreadState({
   openThreadMessages,
   getChannelReadAt,
   getMessageReadAt,
+  preservedUnreadMessageIds,
   clearChannelUnreadSource,
   markChannelUnread,
   markMessageRead,
@@ -178,16 +180,25 @@ export function useChannelUnreadState({
   // re-adding the timeline term here, a reply the user already browsed past — one
   // older than the frontier but never expanded, so it has no msg:<id> marker —
   // re-lights the collapsed in-panel branch badge. Folding the browse frontier
-  // reads those browsed-past replies while a genuinely newer reply (createdAt >
-  // frontier) still counts, and keeps the root/branch predicates on one frontier
-  // so they cannot disagree.
+  // reads those browsed-past replies. The activity projection is the positive
+  // evidence that distinguishes a genuinely preserved notification from a reply
+  // merely browsed past; those message ids keep their bare/message frontier so
+  // the sidebar dot, timeline badge, and hover action stay coherent.
   const getActiveMessageReadAt = React.useCallback(
-    (messageId: string) =>
-      maxReadAt(
-        getMessageReadAt(messageId),
+    (messageId: string) => {
+      const messageReadAt = getMessageReadAt(messageId);
+      if (preservedUnreadMessageIds.has(messageId)) return messageReadAt;
+      return maxReadAt(
+        messageReadAt,
         activeChannelId ? getChannelReadAt(activeChannelId) : null,
-      ),
-    [activeChannelId, getChannelReadAt, getMessageReadAt],
+      );
+    },
+    [
+      activeChannelId,
+      getChannelReadAt,
+      getMessageReadAt,
+      preservedUnreadMessageIds,
+    ],
   );
   const threadPanelIndex = React.useMemo(
     () => buildThreadPanelIndex(timelineMessages),
