@@ -19,15 +19,12 @@ use tauri::{AppHandle, State};
 
 use crate::app_state::AppState;
 
+mod window_page;
+use window_page::{parse_top_level_page, PageCursor};
+
 const CATCH_UP_LIMIT: usize = 1_000;
 const ACTIVITY_LIMIT: usize = 100;
 const ROOT_FILTER_CHUNK: usize = 200;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct PageCursor {
-    created_at: u64,
-    event_id: String,
-}
 
 fn next_page_cursor(
     page_len: usize,
@@ -245,6 +242,30 @@ async fn fetch_filter_pages(
     Ok(events)
 }
 
+async fn fetch_top_level_pages(
+    state: &AppState,
+    api_base: &str,
+    keys: &Keys,
+    channel: &CatchUpChannel,
+) -> Result<Vec<Event>, String> {
+    let base = top_level_filter(channel);
+    let mut events = Vec::new();
+    let mut cursor: Option<PageCursor> = None;
+    loop {
+        let mut filter = base.clone();
+        if let Some(current) = &cursor {
+            apply_page_cursor(&mut filter, current);
+        }
+        let page =
+            crate::relay::query_relay_at_with_keys(state, api_base, &[filter], keys, None).await?;
+        let (mut rows, next) = parse_top_level_page(page, &channel.id, cursor.as_ref())?;
+        events.append(&mut rows);
+        let Some(next) = next else { break };
+        cursor = Some(next);
+    }
+    Ok(events)
+}
+
 async fn fetch_discovery_events(
     state: &AppState,
     api_base: &str,
@@ -315,8 +336,7 @@ async fn fetch_relevant_events(
     channel: &CatchUpChannel,
     roots: &[String],
 ) -> Result<Vec<Event>, String> {
-    let top_level = top_level_filter(channel);
-    let mut events = fetch_filter_pages(state, api_base, keys, &top_level).await?;
+    let mut events = fetch_top_level_pages(state, api_base, keys, channel).await?;
     for chunk in roots.chunks(ROOT_FILTER_CHUNK) {
         let threaded = thread_filter(channel, chunk);
         events.extend(fetch_filter_pages(state, api_base, keys, &threaded).await?);
@@ -338,7 +358,7 @@ pub(crate) async fn unread_catch_up(
         return Err("unread catch-up identity does not match active scope".to_string());
     }
     let relay_url = crate::relay::relay_ws_url_with_override(&state);
-    let api_base = crate::relay::relay_http_base_url(&relay_url);
+    let api_base = crate::relay::relay_api_base_url_with_override(&state);
     let membership = crate::observed_unread::load_membership(
         &app,
         &crate::observed_unread::ObservedUnreadScope {
