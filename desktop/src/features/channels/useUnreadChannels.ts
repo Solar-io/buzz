@@ -38,10 +38,10 @@ import {
 } from "@/features/notifications/lib/shouldNotify";
 import type { RelayClient } from "@/shared/api/relayClientSession";
 import type { Channel, RelayEvent } from "@/shared/api/types";
-import { CHANNEL_MESSAGE_EVENT_KINDS } from "@/shared/constants/kinds";
 import { useStableMap, useStableSet } from "@/shared/hooks/useStableReference";
 import { normalizeRelayUrl } from "@/features/profile/lib/selfProfileStorage";
-import { DM_NOTIFIABLE_EVENT_KINDS } from "./isDmNotifiableKind";
+export { channelCatchUpEventKinds, shouldRecordLiveUnread } from "./liveUnread";
+import { shouldRecordLiveUnread } from "./liveUnread";
 import {
   addThreadActivityItems,
   projectActivityForScope,
@@ -82,14 +82,6 @@ type UseUnreadChannelsOptions = UseLiveChannelUpdatesOptions & {
 // per-channel limit elsewhere in the app.
 const CATCH_UP_LIMIT = 1000;
 const EMPTY_ROOT_IDS: ReadonlySet<string> = new Set();
-
-export function channelCatchUpEventKinds(
-  channelType: Channel["channelType"] | undefined,
-) {
-  return channelType === "dm"
-    ? DM_NOTIFIABLE_EVENT_KINDS
-    : CHANNEL_MESSAGE_EVENT_KINDS;
-}
 
 export function useUnreadChannels(
   channels: Channel[],
@@ -412,17 +404,23 @@ export function useUnreadChannels(
       const isThreadedReply =
         getThreadReference(event.tags).parentId !== null &&
         !isBroadcastReply(event.tags);
-      const didRecordUnreadEvent = recordUnreadEvent(
+      const didRecordUnreadEvent = shouldRecordLiveUnread(
         channelId,
-        makeObservedUnreadEvent({
-          id: event.id,
-          createdAt: event.created_at,
-          rootId: resolveObservedUnreadRootId(event.tags),
-          highPriority: isHighPriority,
-          channelType: channel?.channelType,
-          isThreadedReply,
-        }),
-      );
+        activeChannelId,
+        isThreadedReply,
+      )
+        ? recordUnreadEvent(
+            channelId,
+            makeObservedUnreadEvent({
+              id: event.id,
+              createdAt: event.created_at,
+              rootId: resolveObservedUnreadRootId(event.tags),
+              highPriority: isHighPriority,
+              channelType: channel?.channelType,
+              isThreadedReply,
+            }),
+          )
+        : false;
       // Fence latestByChannelRef on the scope guard — a stale live callback
       // during A→B drift must not write A's timestamp into B's hydrated ref.
       const scopeOk = observedPersistence.isScopeLoaded();
@@ -455,6 +453,7 @@ export function useUnreadChannels(
     },
     [
       callerOnChannelMessage,
+      activeChannelId,
       normalizedPubkey,
       observedPersistence,
       recordMentionedRoot,

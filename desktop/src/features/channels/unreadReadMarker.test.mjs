@@ -14,6 +14,7 @@ import {
 import {
   addThreadActivityItems,
   channelCatchUpEventKinds,
+  shouldRecordLiveUnread,
 } from "./useUnreadChannels.ts";
 import {
   resolveChannelReadMarker,
@@ -130,6 +131,12 @@ test("dmCatchUpFetch_includesOnlyHuddleStartInvite", () => {
   assert.equal(dmKinds.includes(KIND_HUDDLE_STARTED), true);
   assert.equal(dmKinds.includes(KIND_HUDDLE_ENDED), false);
   assert.equal(streamKinds.includes(KIND_HUDDLE_STARTED), false);
+});
+
+test("active channel replies are not retained as future unread evidence", () => {
+  assert.equal(shouldRecordLiveUnread("active", "active", true), false);
+  assert.equal(shouldRecordLiveUnread("inactive", "active", true), true);
+  assert.equal(shouldRecordLiveUnread("active", "active", false), true);
 });
 
 // An explicit caller timeline position must still advance the read marker. This

@@ -23,6 +23,9 @@ use crate::app_state::AppState;
 mod window_page;
 use window_page::{parse_top_level_page, PageCursor};
 
+mod page_fetch;
+use page_fetch::{apply_page_cursor, fetch_filter_pages, query_page};
+
 mod relevant_threads;
 use relevant_threads::fetch_relevant_thread_events;
 
@@ -30,21 +33,6 @@ const CATCH_UP_LIMIT: usize = 1_000;
 const ACTIVITY_LIMIT: usize = 100;
 const ROOT_FILTER_CHUNK: usize = 200;
 const CHANNEL_FETCH_CONCURRENCY: usize = 8;
-
-fn next_page_cursor(
-    page_len: usize,
-    last: Option<PageCursor>,
-    previous: Option<&PageCursor>,
-) -> Result<Option<PageCursor>, String> {
-    if page_len < CATCH_UP_LIMIT {
-        return Ok(None);
-    }
-    let next = last.ok_or_else(|| "full unread catch-up page had no cursor event".to_string())?;
-    if previous == Some(&next) {
-        return Err("unread catch-up pagination cursor did not advance".to_string());
-    }
-    Ok(Some(next))
-}
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -196,48 +184,21 @@ fn discovery_filters(
 }
 
 fn top_level_filter(channel: &CatchUpChannel) -> serde_json::Value {
-    let since = channel
-        .timeline_read_at
-        .or(channel.read_at)
-        .map_or(0, |value| value.saturating_add(1));
+    let since = top_level_since(channel);
     let mut filter = base_filter(channel, since);
     filter["top_level"] = serde_json::json!(true);
     filter
 }
 
-fn apply_page_cursor(filter: &mut serde_json::Value, cursor: &PageCursor) {
-    filter["until"] = serde_json::json!(cursor.created_at);
-    filter["before_id"] = serde_json::json!(cursor.event_id);
+fn top_level_since(channel: &CatchUpChannel) -> u64 {
+    channel
+        .timeline_read_at
+        .or(channel.read_at)
+        .map_or(0, |value| value.saturating_add(1))
 }
 
-async fn fetch_filter_pages(
-    state: &AppState,
-    api_base: &str,
-    keys: &Keys,
-    base: &serde_json::Value,
-) -> Result<Vec<Event>, String> {
-    let mut events = Vec::new();
-    let mut cursor: Option<PageCursor> = None;
-    loop {
-        let mut filter = base.clone();
-        if let Some(current) = &cursor {
-            apply_page_cursor(&mut filter, current);
-        }
-        let page =
-            crate::relay::query_relay_at_with_keys(state, api_base, &[filter], keys, None).await?;
-        let next = next_page_cursor(
-            page.len(),
-            page.last().map(|event| PageCursor {
-                created_at: event.created_at.as_secs(),
-                event_id: event.id.to_hex(),
-            }),
-            cursor.as_ref(),
-        )?;
-        events.extend(page);
-        let Some(next) = next else { break };
-        cursor = Some(next);
-    }
-    Ok(events)
+fn next_top_level_cursor(next: Option<PageCursor>, since: u64) -> Option<PageCursor> {
+    next.filter(|next| next.created_at >= since)
 }
 
 async fn fetch_top_level_pages(
@@ -247,6 +208,7 @@ async fn fetch_top_level_pages(
     channel: &CatchUpChannel,
 ) -> Result<Vec<Event>, String> {
     let base = top_level_filter(channel);
+    let since = top_level_since(channel);
     let mut events = Vec::new();
     let mut cursor: Option<PageCursor> = None;
     loop {
@@ -254,11 +216,16 @@ async fn fetch_top_level_pages(
         if let Some(current) = &cursor {
             apply_page_cursor(&mut filter, current);
         }
-        let page =
-            crate::relay::query_relay_at_with_keys(state, api_base, &[filter], keys, None).await?;
+        let page = query_page(state, api_base, keys, filter).await?;
         let (mut rows, next) = parse_top_level_page(page, &channel.id, cursor.as_ref())?;
+        // The relay's special top-level window path does not apply `since`.
+        // Enforce the frontier locally and stop once its descending cursor has
+        // crossed it, rather than walking the channel's complete history.
+        rows.retain(|event| event.created_at.as_secs() >= since);
         events.append(&mut rows);
-        let Some(next) = next else { break };
+        let Some(next) = next_top_level_cursor(next, since) else {
+            break;
+        };
         cursor = Some(next);
     }
     Ok(events)
@@ -785,31 +752,6 @@ mod tests {
     }
 
     #[test]
-    fn full_pages_advance_the_composite_cursor_without_skipping_ties() {
-        let first = PageCursor {
-            created_at: 500,
-            event_id: "0001".into(),
-        };
-        let tied = PageCursor {
-            created_at: 500,
-            event_id: "0002".into(),
-        };
-        assert_eq!(
-            next_page_cursor(CATCH_UP_LIMIT, Some(first.clone()), None),
-            Ok(Some(first.clone()))
-        );
-        assert_eq!(
-            next_page_cursor(CATCH_UP_LIMIT, Some(tied.clone()), Some(&first)),
-            Ok(Some(tied))
-        );
-        assert_eq!(
-            next_page_cursor(CATCH_UP_LIMIT - 1, Some(first.clone()), None),
-            Ok(None)
-        );
-        assert!(next_page_cursor(CATCH_UP_LIMIT, Some(first.clone()), Some(&first)).is_err());
-    }
-
-    #[test]
     fn split_filters_bound_deep_history_to_user_and_thread_evidence() {
         let channel = CatchUpChannel {
             id: "ch".into(),
@@ -829,17 +771,18 @@ mod tests {
     }
 
     #[test]
-    fn page_filter_carries_timestamp_and_event_id_tiebreak() {
-        let mut filter = serde_json::json!({"limit": CATCH_UP_LIMIT});
-        apply_page_cursor(
-            &mut filter,
-            &PageCursor {
-                created_at: 500,
-                event_id: "ab".repeat(32),
-            },
+    fn top_level_pagination_stops_after_crossing_the_read_frontier() {
+        let cursor = |created_at| PageCursor {
+            created_at,
+            event_id: "ab".repeat(32),
+        };
+
+        assert_eq!(
+            next_top_level_cursor(Some(cursor(901)), 901),
+            Some(cursor(901))
         );
-        assert_eq!(filter["until"], 500);
-        assert_eq!(filter["before_id"], "ab".repeat(32));
+        assert_eq!(next_top_level_cursor(Some(cursor(900)), 901), None);
+        assert_eq!(next_top_level_cursor(None, 901), None);
     }
 
     #[test]

@@ -1,15 +1,21 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
+use futures_util::{stream, StreamExt};
 use nostr::{Event, Keys};
 
-use super::{catch_up_kinds, fetch_filter_pages, AppState, CatchUpChannel, ROOT_FILTER_CHUNK};
+use super::{
+    catch_up_kinds, fetch_filter_pages, AppState, CatchUpChannel, CHANNEL_FETCH_CONCURRENCY,
+    ROOT_FILTER_CHUNK,
+};
 
 fn relevant_thread_filter(channels: &[CatchUpChannel], roots: &[String]) -> serde_json::Value {
-    let since = channels
-        .iter()
-        .map(|channel| channel.read_at.map_or(0, |value| value.saturating_add(1)))
-        .min()
-        .unwrap_or(0);
+    let since = channels.first().map_or(0, relevant_thread_since);
+    debug_assert!(
+        channels
+            .iter()
+            .all(|channel| relevant_thread_since(channel) == since),
+        "relevant-thread filters must contain one read frontier"
+    );
     let channel_type = if channels.iter().any(|channel| channel.channel_type == "dm") {
         "dm"
     } else {
@@ -26,6 +32,21 @@ fn relevant_thread_filter(channels: &[CatchUpChannel], roots: &[String]) -> serd
         "since": since,
         "limit": super::CATCH_UP_LIMIT,
     })
+}
+
+fn relevant_thread_since(channel: &CatchUpChannel) -> u64 {
+    channel.read_at.map_or(0, |value| value.saturating_add(1))
+}
+
+fn channels_by_frontier(channels: &[CatchUpChannel]) -> BTreeMap<u64, Vec<CatchUpChannel>> {
+    let mut groups = BTreeMap::<u64, Vec<CatchUpChannel>>::new();
+    for channel in channels {
+        groups
+            .entry(relevant_thread_since(channel))
+            .or_default()
+            .push(channel.clone());
+    }
+    groups
 }
 
 fn event_channel_id(event: &Event) -> Option<&str> {
@@ -71,10 +92,22 @@ pub(super) async fn fetch_relevant_thread_events(
     if channels.is_empty() || roots.is_empty() {
         return Ok(HashMap::new());
     }
+    let filters = channels_by_frontier(channels)
+        .into_values()
+        .flat_map(|channels| {
+            roots
+                .chunks(ROOT_FILTER_CHUNK)
+                .map(move |roots| relevant_thread_filter(&channels, roots))
+        })
+        .collect::<Vec<_>>();
+    let pages = stream::iter(filters)
+        .map(|filter| async move { fetch_filter_pages(state, api_base, keys, &filter).await })
+        .buffered(CHANNEL_FETCH_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
     let mut events = Vec::new();
-    for chunk in roots.chunks(ROOT_FILTER_CHUNK) {
-        let filter = relevant_thread_filter(channels, chunk);
-        events.extend(fetch_filter_pages(state, api_base, keys, &filter).await?);
+    for page in pages {
+        events.extend(page?);
     }
     let mut seen = HashSet::new();
     events.retain(|event| seen.insert(event.id));
@@ -96,9 +129,9 @@ mod tests {
     }
 
     #[test]
-    fn one_root_filter_covers_all_channels_without_a_channel_cross_product() {
+    fn one_root_filter_covers_channels_with_the_same_frontier() {
         let channels = vec![
-            channel("a", "stream", Some(20)),
+            channel("a", "stream", Some(10)),
             channel("b", "dm", Some(10)),
         ];
         let filter = relevant_thread_filter(&channels, &["root".into()]);
@@ -109,5 +142,36 @@ mod tests {
         assert!(filter["kinds"].as_array().is_some_and(
             |kinds| kinds.contains(&serde_json::json!(super::super::KIND_HUDDLE_STARTED))
         ));
+    }
+
+    #[test]
+    fn channels_with_different_read_frontiers_are_partitioned() {
+        let channels = vec![
+            channel("old", "stream", None),
+            channel("current", "stream", Some(900)),
+            channel("same-current", "dm", Some(900)),
+        ];
+
+        let groups = channels_by_frontier(&channels);
+
+        assert_eq!(groups.keys().copied().collect::<Vec<_>>(), [0, 901]);
+        assert_eq!(
+            groups[&0]
+                .iter()
+                .map(|channel| channel.id.as_str())
+                .collect::<Vec<_>>(),
+            ["old"]
+        );
+        assert_eq!(
+            groups[&901]
+                .iter()
+                .map(|channel| channel.id.as_str())
+                .collect::<Vec<_>>(),
+            ["current", "same-current"]
+        );
+        assert_eq!(
+            relevant_thread_filter(&groups[&901], &["root".into()])["since"],
+            901
+        );
     }
 }
