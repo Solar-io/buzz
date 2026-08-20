@@ -22,6 +22,9 @@ use crate::app_state::AppState;
 mod window_page;
 use window_page::{parse_top_level_page, PageCursor};
 
+mod relevant_threads;
+use relevant_threads::fetch_relevant_thread_events;
+
 const CATCH_UP_LIMIT: usize = 1_000;
 const ACTIVITY_LIMIT: usize = 100;
 const ROOT_FILTER_CHUNK: usize = 200;
@@ -200,13 +203,6 @@ fn top_level_filter(channel: &CatchUpChannel) -> serde_json::Value {
     filter
 }
 
-fn thread_filter(channel: &CatchUpChannel, roots: &[String]) -> serde_json::Value {
-    let since = channel.read_at.map_or(0, |value| value.saturating_add(1));
-    let mut filter = base_filter(channel, since);
-    filter["#e"] = serde_json::json!(roots);
-    filter
-}
-
 fn apply_page_cursor(filter: &mut serde_json::Value, cursor: &PageCursor) {
     filter["until"] = serde_json::json!(cursor.created_at);
     filter["before_id"] = serde_json::json!(cursor.event_id);
@@ -329,23 +325,6 @@ fn relevant_roots(membership: &HashMap<String, HashSet<String>>) -> Vec<String> 
     roots
 }
 
-async fn fetch_relevant_events(
-    state: &AppState,
-    api_base: &str,
-    keys: &Keys,
-    channel: &CatchUpChannel,
-    roots: &[String],
-) -> Result<Vec<Event>, String> {
-    let mut events = fetch_top_level_pages(state, api_base, keys, channel).await?;
-    for chunk in roots.chunks(ROOT_FILTER_CHUNK) {
-        let threaded = thread_filter(channel, chunk);
-        events.extend(fetch_filter_pages(state, api_base, keys, &threaded).await?);
-    }
-    let mut seen = HashSet::new();
-    events.retain(|event| seen.insert(event.id));
-    Ok(events)
-}
-
 #[tauri::command]
 pub(crate) async fn unread_catch_up(
     request: UnreadCatchUpRequest,
@@ -386,12 +365,38 @@ pub(crate) async fn unread_catch_up(
         discover_query_membership(events, &owner, &mut query_membership);
     }
     let roots = relevant_roots(&query_membership);
+    let discovery_channels = discovery
+        .iter()
+        .map(|(channel, _)| channel.clone())
+        .collect::<Vec<_>>();
+    let mut thread_events_by_channel =
+        match fetch_relevant_thread_events(&state, &api_base, &keys, &discovery_channels, &roots)
+            .await
+        {
+            Ok(events) => events,
+            Err(error) => {
+                failures.extend(
+                    discovery
+                        .drain(..)
+                        .map(|(channel, _)| ChannelResult::Error {
+                            channel_id: channel.id,
+                            error: error.clone(),
+                        }),
+                );
+                HashMap::new()
+            }
+        };
 
     let mut fetched = Vec::new();
     for (channel, mut events) in discovery {
-        match fetch_relevant_events(&state, &api_base, &keys, &channel, &roots).await {
-            Ok(relevant) => {
-                events.extend(relevant);
+        match fetch_top_level_pages(&state, &api_base, &keys, &channel).await {
+            Ok(top_level) => {
+                events.extend(top_level);
+                events.extend(
+                    thread_events_by_channel
+                        .remove(&channel.id.to_ascii_lowercase())
+                        .unwrap_or_default(),
+                );
                 let mut seen = HashSet::new();
                 events.retain(|event| seen.insert(event.id));
                 fetched.push(FetchedChannel {
@@ -803,11 +808,6 @@ mod tests {
         let top_level = top_level_filter(&channel);
         assert_eq!(top_level["since"], 901);
         assert_eq!(top_level["top_level"], true);
-
-        let threaded = thread_filter(&channel, &["root".into()]);
-        assert_eq!(threaded["since"], 11);
-        assert_eq!(threaded["#e"], serde_json::json!(["root"]));
-        assert!(threaded.get("top_level").is_none());
     }
 
     #[test]

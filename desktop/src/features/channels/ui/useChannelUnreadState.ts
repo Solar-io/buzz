@@ -9,7 +9,6 @@ import {
 } from "@/features/channels/lib/subtreeCreatedAt";
 import { computeThreadReplyUnreadCounts } from "@/features/channels/lib/threadReplyUnreadCounts";
 import { computeThreadBadgeCounts } from "@/features/channels/lib/threadBadgeCounts";
-import { maxReadAt } from "@/features/channels/readState/readStateFormat";
 import {
   useStableArrayShallow,
   useStableMap,
@@ -25,6 +24,7 @@ import {
 } from "@/features/messages/lib/unreadMarker";
 import type { TimelineMessage } from "@/features/messages/types";
 import { isConversationalUnreadKind } from "@/shared/constants/kinds";
+import { readAtForPreservedUnreadMessage } from "@/features/channels/unreadThreadEventIds";
 
 import { useWelcomeInitialUnreadSuppression } from "./useWelcomeInitialUnreadSuppression";
 
@@ -180,33 +180,23 @@ export function useChannelUnreadState({
   // re-adding the timeline term here, a reply the user already browsed past — one
   // older than the frontier but never expanded, so it has no msg:<id> marker —
   // re-lights the collapsed in-panel branch badge. Folding the browse frontier
-  // reads those browsed-past replies. The observed-unread projection is the
-  // positive evidence for preservation, while the channel-open snapshot keeps
-  // older historical rows from being revived by a projection update that was
-  // still in flight. Matching message ids keep their bare/message frontier so
-  // the sidebar dot, timeline badge, and hover action stay coherent.
+  // reads those browsed-past replies. The observed-unread projection is
+  // authoritative positive evidence for preservation, including replies older
+  // than a later channel-timeline frontier after a revisit. Matching message
+  // ids keep their bare/message frontier so the sidebar dot, timeline badge,
+  // and hover action stay coherent.
   const getActiveMessageReadAt = React.useCallback(
-    (messageId: string) => {
-      const messageReadAt = getMessageReadAt(messageId);
-      const createdAt = createdAtByMessageId.get(messageId);
-      if (
-        preservedUnreadMessageIds.has(messageId) &&
-        createdAt !== undefined &&
-        (openFrontierSeconds === null || createdAt > openFrontierSeconds)
-      ) {
-        return messageReadAt;
-      }
-      return maxReadAt(
-        messageReadAt,
+    (messageId: string) =>
+      readAtForPreservedUnreadMessage(
+        messageId,
+        preservedUnreadMessageIds,
+        getMessageReadAt(messageId),
         activeChannelId ? getChannelReadAt(activeChannelId) : null,
-      );
-    },
+      ),
     [
       activeChannelId,
-      createdAtByMessageId,
       getChannelReadAt,
       getMessageReadAt,
-      openFrontierSeconds,
       preservedUnreadMessageIds,
     ],
   );

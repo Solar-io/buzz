@@ -1,4 +1,5 @@
 import type { ObservedUnreadEvent } from "./unreadChannelCounts";
+import { maxReadAt } from "./readState/readStateFormat";
 
 export function collectUnreadThreadEventIds(
   nativeEventIds: readonly string[] | undefined,
@@ -16,4 +17,15 @@ export function collectUnreadThreadEventIds(
     }
   }
   return ids;
+}
+
+export function readAtForPreservedUnreadMessage(
+  messageId: string,
+  preservedUnreadMessageIds: ReadonlySet<string>,
+  messageReadAt: number | null,
+  channelReadAt: number | null,
+): number | null {
+  return preservedUnreadMessageIds.has(messageId)
+    ? messageReadAt
+    : maxReadAt(messageReadAt, channelReadAt);
 }
