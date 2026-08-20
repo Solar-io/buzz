@@ -604,6 +604,37 @@ pub const DEFAULT_LOCK_TIMEOUT_MS: u64 = 5_000;
 /// bounds how long a wedged client can hold locks from an open transaction.
 pub const DEFAULT_IDLE_TXN_TIMEOUT_MS: u64 = 60_000;
 
+impl DbConfig {
+    /// Overlay the writer session-timeout knobs from the environment:
+    /// `BUZZ_DB_LOCK_TIMEOUT_MS`, `BUZZ_DB_IDLE_TXN_TIMEOUT_MS`,
+    /// `BUZZ_DB_STATEMENT_TIMEOUT_MS`.
+    ///
+    /// This lives in `buzz-db` — not per-binary config — so every writer
+    /// binary (`buzz-relay`, `buzz-admin`, `buzz-deletion`) honors the same
+    /// operator knobs; parsing it in one binary would make the documented
+    /// override silently no-op in the others.
+    ///
+    /// Absent or unparseable values keep the current (default) settings.
+    /// An explicit `0` disables that timeout (Postgres semantics), so zero
+    /// must pass through rather than being filtered like the pool-size env
+    /// knobs.
+    pub fn with_session_timeouts_from_env(mut self) -> Self {
+        fn parse(key: &str) -> Option<u64> {
+            std::env::var(key).ok().and_then(|v| v.parse::<u64>().ok())
+        }
+        if let Some(v) = parse("BUZZ_DB_LOCK_TIMEOUT_MS") {
+            self.lock_timeout_ms = v;
+        }
+        if let Some(v) = parse("BUZZ_DB_IDLE_TXN_TIMEOUT_MS") {
+            self.idle_txn_timeout_ms = v;
+        }
+        if let Some(v) = parse("BUZZ_DB_STATEMENT_TIMEOUT_MS") {
+            self.statement_timeout_ms = v;
+        }
+        self
+    }
+}
+
 /// Community host-map row returned by [`Db::lookup_community_by_host`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommunityRecord {
@@ -748,10 +779,18 @@ impl Db {
                         .execute(&mut *conn)
                         .await?;
                     // Session timeouts (0 = disabled, Postgres semantics).
-                    // These make one wedged lock holder fail its own
-                    // statements instead of parking every other writer
-                    // behind it (see DbConfig docs for each knob). Bare
-                    // integers are milliseconds for all three GUCs.
+                    // Scope is per-knob and worth being precise about:
+                    // `lock_timeout` fails the *waiting* statement fast so a
+                    // wedged holder produces visible errors instead of an
+                    // unbounded queue; it never cancels the holder itself.
+                    // `idle_in_transaction_session_timeout` is what reaps a
+                    // wedged holder, and only while it sits idle inside an
+                    // open transaction. An actively-executing wedged holder
+                    // is bounded only by `statement_timeout` (off by
+                    // default). Bare integers are milliseconds for all three
+                    // GUCs. The migration/schema-destruction path resets
+                    // lock/statement timeouts on its dedicated connection —
+                    // see `with_exclusive_schema_destruction_lock`.
                     sqlx::query(
                         "SELECT set_config('lock_timeout', $1, false), \
                                 set_config('idle_in_transaction_session_timeout', $2, false), \
@@ -8856,6 +8895,176 @@ mod tests {
         .execute(&admin)
         .await
         .expect("drop isolation test database");
+    }
+
+    /// `with_session_timeouts_from_env` must apply present values (including
+    /// an explicit `0` = disable) and keep defaults for absent or junk input.
+    /// Serialized against other env-mutating tests via a process-wide lock.
+    #[test]
+    fn session_timeout_env_overlay_zero_passthrough_and_invalid_fallback() {
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ENV_LOCK.lock().unwrap();
+        let keys = [
+            "BUZZ_DB_LOCK_TIMEOUT_MS",
+            "BUZZ_DB_IDLE_TXN_TIMEOUT_MS",
+            "BUZZ_DB_STATEMENT_TIMEOUT_MS",
+        ];
+        let previous: Vec<_> = keys.iter().map(std::env::var_os).collect();
+        let read = |config: DbConfig| {
+            (
+                config.lock_timeout_ms,
+                config.idle_txn_timeout_ms,
+                config.statement_timeout_ms,
+            )
+        };
+
+        for key in keys {
+            std::env::remove_var(key);
+        }
+        let unset = read(DbConfig::default().with_session_timeouts_from_env());
+
+        std::env::set_var("BUZZ_DB_LOCK_TIMEOUT_MS", "2000");
+        std::env::set_var("BUZZ_DB_IDLE_TXN_TIMEOUT_MS", "30000");
+        std::env::set_var("BUZZ_DB_STATEMENT_TIMEOUT_MS", "10000");
+        let overridden = read(DbConfig::default().with_session_timeouts_from_env());
+
+        for key in keys {
+            std::env::set_var(key, "0");
+        }
+        let zero = read(DbConfig::default().with_session_timeouts_from_env());
+
+        for key in keys {
+            std::env::set_var(key, "not-a-number");
+        }
+        let junk = read(DbConfig::default().with_session_timeouts_from_env());
+
+        for (key, value) in keys.iter().zip(previous) {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+
+        let defaults = (DEFAULT_LOCK_TIMEOUT_MS, DEFAULT_IDLE_TXN_TIMEOUT_MS, 0);
+        assert_eq!(unset, defaults, "unset env must keep the defaults");
+        assert_eq!(overridden, (2000, 30000, 10000));
+        assert_eq!(
+            zero,
+            (0, 0, 0),
+            "explicit 0 must pass through to disable the timeout"
+        );
+        assert_eq!(junk, defaults, "junk env must keep the defaults");
+    }
+
+    /// End-to-end proof that the session-timeout GUCs actually install
+    /// through `Db::new()` and behave under contention:
+    ///
+    /// 1. The three effective GUC values on a pooled connection match the
+    ///    configured `DbConfig` values.
+    /// 2. A statement waiting on a held relation lock fails with SQLSTATE
+    ///    `55P03` (lock_not_available) at the configured `lock_timeout`
+    ///    instead of parking — the incident shape this PR exists for.
+    /// 3. `Db::migrate()` (the advisory-lock path) is exempt: it succeeds
+    ///    even while another session holds the schema-destruction advisory
+    ///    lock longer than `lock_timeout`.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn session_timeouts_install_through_db_new_and_bound_lock_waits() {
+        let admin = PgPool::connect(&admin_url().await)
+            .await
+            .expect("connect admin");
+        let (seed_pool, name) = create_scratch_db(&admin, "session_timeouts").await;
+        seed_pool.close().await;
+
+        let base = admin_url().await;
+        let idx = base.rfind('/').expect("db url has a path segment");
+        let scratch_url = format!("{}/{}", &base[..idx], name);
+        let db = Db::new(&DbConfig {
+            database_url: scratch_url.clone(),
+            max_connections: 2,
+            lock_timeout_ms: 500,
+            idle_txn_timeout_ms: 60_000,
+            statement_timeout_ms: 0,
+            ..DbConfig::default()
+        })
+        .await
+        .expect("connect Db with session timeouts");
+
+        // 1. Effective GUCs, not intent.
+        let (lock, idle, stmt): (String, String, String) = sqlx::query_as(
+            "SELECT current_setting('lock_timeout'), \
+                    current_setting('idle_in_transaction_session_timeout'), \
+                    current_setting('statement_timeout')",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .expect("read effective GUCs");
+        assert_eq!(lock, "500ms", "lock_timeout must install through Db::new");
+        assert_eq!(
+            idle, "1min",
+            "idle txn timeout must install through Db::new"
+        );
+        assert_eq!(stmt, "0", "statement_timeout must stay disabled by default");
+
+        // 2. Contended relation lock fails fast with 55P03.
+        let mut holder = db.pool.acquire().await.expect("holder connection");
+        sqlx::raw_sql("BEGIN; LOCK TABLE events IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *holder)
+            .await
+            .expect("hold relation lock");
+        let waited = std::time::Instant::now();
+        let mut waiter_txn = db.pool.begin().await.expect("waiter transaction");
+        let err = sqlx::query("LOCK TABLE events IN ACCESS SHARE MODE")
+            .execute(&mut *waiter_txn)
+            .await
+            .expect_err("waiter must time out, not park");
+        drop(waiter_txn);
+        let code = match &err {
+            sqlx::Error::Database(db_err) => db_err.code().map(|c| c.to_string()),
+            other => panic!("expected database error, got {other:?}"),
+        };
+        assert_eq!(
+            code.as_deref(),
+            Some("55P03"),
+            "contended lock wait must fail with lock_not_available"
+        );
+        assert!(
+            waited.elapsed() < std::time::Duration::from_secs(5),
+            "waiter must fail at the configured timeout, not park indefinitely"
+        );
+
+        // 3. Migration path is exempt: hold the schema-destruction advisory
+        //    lock on a separate session, then release it after well over the
+        //    500ms lock_timeout. `Db::migrate()` must wait it out and succeed.
+        let mut advisory_holder = PgPool::connect(&scratch_url)
+            .await
+            .expect("advisory holder pool")
+            .acquire()
+            .await
+            .expect("advisory holder conn")
+            .detach();
+        sqlx::query("SELECT pg_advisory_lock($1)")
+            .bind(crate::deletion::SCHEMA_DESTRUCTION_LOCK_KEY)
+            .execute(&mut advisory_holder)
+            .await
+            .expect("hold schema advisory lock");
+        let release = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(1_500)).await;
+            let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+                .bind(crate::deletion::SCHEMA_DESTRUCTION_LOCK_KEY)
+                .execute(&mut advisory_holder)
+                .await;
+            let _ = advisory_holder.close().await;
+        });
+        db.migrate()
+            .await
+            .expect("migrate must wait out the advisory holder, not fail at lock_timeout");
+        release.await.expect("release task");
+
+        // Cleanup: end the holder's transaction before dropping the database.
+        let _ = sqlx::query("ROLLBACK").execute(&mut *holder).await;
+        drop(holder);
+        drop_scratch_db(&admin, db.pool.clone(), &name).await;
     }
 
     /// The armed writer pool (`Db::new`) must enforce the floor end-to-end

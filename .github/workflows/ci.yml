@@ -744,6 +744,19 @@ jobs:
             --run-ignored ignored-only
         env:
           DATABASE_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/buzz
+      - name: Writer session timeout guardrails
+        # Proves the writer-pool session timeouts (lock_timeout /
+        # idle_in_transaction_session_timeout / statement_timeout) install
+        # through Db::new(), bound contended lock waits with SQLSTATE 55P03,
+        # and that Db::migrate()'s schema-destruction advisory lock is exempt
+        # from lock_timeout — see buzz-db tests.
+        run: |
+          cargo nextest run \
+            --archive-file target/ci/backend-integration-tests.tar.zst \
+            -E 'package(buzz-db) and test(session_timeouts_install_through_db_new_and_bound_lock_waits)' \
+            --run-ignored ignored-only
+        env:
+          DATABASE_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/buzz
       - name: Upload relay log
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
