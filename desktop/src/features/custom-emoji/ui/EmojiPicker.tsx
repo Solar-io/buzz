@@ -1,33 +1,9 @@
-import data from "@emoji-mart/data";
 import Picker from "@emoji-mart/react";
-import { init } from "emoji-mart";
 import * as React from "react";
 
 import { buildCustomEmojiCategory } from "@/features/custom-emoji/emojiMartCategory";
 import { useCustomEmoji } from "@/features/custom-emoji/hooks";
-import { useTheme } from "@/shared/theme/ThemeProvider";
-
-// emoji-mart builds its searchable index synchronously inside `init`, which
-// `<Picker>` calls on mount — so the first reaction popover open paid the full
-// ~1.8k-emoji index build and froze the cursor. Warm `init({ data })` once at
-// idle so the index is prebuilt; `init` is a no-op after the first call (its
-// `Data` singleton guards the rebuild), so the Picker's mount-time `init` skips
-// the heavy work. Search still reads the prebuilt index — no first-keystroke
-// hitch. Module-level so it fires regardless of when a picker first mounts.
-let warmStarted = false;
-function warmEmojiIndex() {
-  if (warmStarted) {
-    return;
-  }
-  warmStarted = true;
-  const warm = () => void init({ data });
-  if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-    window.requestIdleCallback(warm, { timeout: 1_500 });
-  } else {
-    globalThis.setTimeout(warm, 250);
-  }
-}
-warmEmojiIndex();
+import { emojiMartData } from "@/features/custom-emoji/ui/emojiMartPrewarm";
 
 /**
  * Reach into the `em-emoji-picker` shadow root and disable spellcheck,
@@ -116,7 +92,6 @@ export const EmojiPicker = React.memo(function EmojiPicker({
   perLine = 8,
 }: EmojiPickerProps) {
   const customEmoji = useCustomEmoji();
-  const { isDark } = useTheme();
   const custom = React.useMemo(
     () => buildCustomEmojiCategory(customEmoji),
     [customEmoji],
@@ -133,7 +108,7 @@ export const EmojiPicker = React.memo(function EmojiPicker({
       <Picker
         autoFocus={autoFocus}
         custom={custom}
-        data={data}
+        data={emojiMartData}
         maxFrequentRows={2}
         onEmojiSelect={(emoji: { native?: string; id?: string }) => {
           // Standard emoji carry a `native` glyph. Custom emoji don't — emit
@@ -148,7 +123,7 @@ export const EmojiPicker = React.memo(function EmojiPicker({
         previewPosition="bottom"
         set="native"
         skinTonePosition="search"
-        theme={isDark ? "dark" : "light"}
+        theme="auto"
       />
     </div>
   );
