@@ -340,6 +340,24 @@ test-unit:
         # `cargo test --workspace`; without this step a manifest edit that
         # diverges Rust from the corpus ships green.
         cargo nextest run -p buzz-agent --lib
+        # Admin API auth-boundary tests (api::admin in buzz-relay): the NIP-98
+        # duplicate-tag rejections, the Host/Origin replay-ordering causal pair,
+        # the admin.localhost origin/advertisement/canonical-URL pins, and the
+        # host-oracle/credential-first checks. These are the regression guard for
+        # the /api/admin/v1 moderation auth surface. Enumerated explicitly because
+        # nothing in CI runs `cargo test --workspace`, `just test-unit` did not
+        # enumerate `buzz-relay --lib`, and Backend Integration selects only the
+        # #[ignore]d Postgres suites — so these non-ignored tests ran in no lane
+        # and a red one could ship green (exactly how a broken admin test slipped
+        # past every gate once). Scoped to api::admin, not the whole buzz-relay
+        # --lib, because api::media has non-ignored tests that require Postgres.
+        # Two api::admin tests are excluded: they exercise a read-route DB
+        # fallthrough and pass without a database only by waiting out the sqlx
+        # acquire timeout (~30s each), so they belong to the Postgres lane, not
+        # the infra-free unit job — their Host/Origin gating is covered here by
+        # disabled_mode_still_requires_the_correct_host / _a_matching_origin.
+        cargo nextest run -p buzz-relay --lib \
+            -E 'test(/^api::admin::/) - test(=api::admin::tests::disabled_mode_allows_unauthenticated_requests_on_the_admin_host) - test(=api::admin::tests::nip98_mode_unrostered_signer_does_not_consume_a_replay_slot)'
     else
         ./scripts/run-tests.sh unit
     fi
