@@ -757,6 +757,22 @@ jobs:
             --run-ignored ignored-only
         env:
           DATABASE_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/buzz
+      - name: Admin API unrostered-signer replay invariant
+        # The only causal proof that a validly-signing but unrostered key cannot
+        # consume NIP-98 replay slots: it asserts principal resolution fails
+        # BEFORE the replay ID is claimed (tracking.claim_count() == 0). This
+        # test is non-ignored, so it runs neither in Backend Integration's
+        # ignored-only selectors nor in the infra-free unit job — the unit job's
+        # api::admin selector excludes it because DB-free it only passes by
+        # waiting out the ~30s sqlx acquire timeout on a read-route fallthrough.
+        # It lives here so a reachable Postgres resolves (and fails) the lookup
+        # fast instead of timing out.
+        run: |
+          cargo nextest run \
+            --archive-file target/ci/backend-integration-tests.tar.zst \
+            -E 'package(buzz-relay) and test(=api::admin::tests::nip98_mode_unrostered_signer_does_not_consume_a_replay_slot)'
+        env:
+          DATABASE_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/buzz
       - name: Upload relay log
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
