@@ -46,6 +46,30 @@ pub struct JoinPolicyConfig {
     pub version: String,
 }
 
+/// Optional KLIPY GIF-search integration owned by the relay operator.
+///
+/// The API key deliberately stays private and its [`Debug`] implementation is
+/// redacted so dumping [`Config`] cannot disclose it.
+#[derive(Clone)]
+pub struct KlipyConfig {
+    api_key: String,
+}
+
+impl KlipyConfig {
+    /// Return the key only to the outbound KLIPY client.
+    pub(crate) fn api_key(&self) -> &str {
+        &self.api_key
+    }
+}
+
+impl std::fmt::Debug for KlipyConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KlipyConfig")
+            .field("api_key", &"[REDACTED]")
+            .finish()
+    }
+}
+
 /// Maximum configured jitter, leaving ten seconds of the hard-drain budget for
 /// WebSocket close-frame delivery after the final delayed cancellation.
 pub const MAX_DRAIN_JITTER_MS: u64 = 20_000;
@@ -217,6 +241,10 @@ pub struct Config {
     ///
     /// Default: `false`. Set via `BUZZ_ALLOW_NIP_OA_AUTH=true`.
     pub allow_nip_oa_auth: bool,
+
+    /// Relay-owned KLIPY integration. Unset means GIF search is not advertised
+    /// and its proxy routes return 404.
+    pub klipy: Option<KlipyConfig>,
 
     /// Media storage configuration (S3/MinIO).
     pub media: buzz_media::MediaConfig,
@@ -628,6 +656,12 @@ impl Config {
             .map(|v| v == "true" || v == "1")
             .unwrap_or(false);
 
+        let klipy = std::env::var("BUZZ_KLIPY_API_KEY")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .map(|api_key| KlipyConfig { api_key });
+
         // Note: intentionally not prefixed with BUZZ_ — this is a relay-identity
         // config that may be shared across multiple services (e.g., ACP agent).
         let relay_owner_pubkey = std::env::var("RELAY_OWNER_PUBKEY")
@@ -1019,6 +1053,7 @@ impl Config {
             relay_operator_api_origin,
             relay_operator_pubkeys,
             allow_nip_oa_auth,
+            klipy,
             media,
             media_max_concurrent_uploads,
             media_max_concurrent_uploads_per_pubkey,
@@ -1048,6 +1083,17 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn klipy_config_debug_redacts_the_api_key() {
+        let config = KlipyConfig {
+            api_key: "private-klipy-key".to_string(),
+        };
+
+        let debug = format!("{config:?}");
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("private-klipy-key"));
+    }
 
     // Mutex to serialize tests that mutate environment variables.
     // Parallel env-var mutation causes `defaults_are_valid` to see the invalid

@@ -2,16 +2,14 @@ import { useQuery } from "@tanstack/react-query";
 import { LoaderCircle, Search } from "lucide-react";
 import * as React from "react";
 
-import {
-  fetchKlipyGifs,
-  isKlipyConfigured,
-  type KlipyGif,
-} from "@/features/gifs/api";
+import type { KlipyGif } from "@/features/gifs/api";
+import { fetchKlipyGifs } from "@/features/gifs/relay";
 import { Input } from "@/shared/ui/input";
 import { Skeleton } from "@/shared/ui/skeleton";
 
 type KlipyGifPickerProps = {
   onSelect: (gif: KlipyGif) => void;
+  relayUrl: string;
 };
 
 const LOADING_SKELETONS = [
@@ -29,6 +27,7 @@ const LOADING_SKELETONS = [
 
 export const KlipyGifPicker = React.memo(function KlipyGifPicker({
   onSelect,
+  relayUrl,
 }: KlipyGifPickerProps) {
   const [search, setSearch] = React.useState("");
   const [debouncedSearch, setDebouncedSearch] = React.useState("");
@@ -41,11 +40,9 @@ export const KlipyGifPicker = React.memo(function KlipyGifPicker({
     return () => window.clearTimeout(timeout);
   }, [search]);
 
-  const configured = isKlipyConfigured();
   const gifsQuery = useQuery({
-    enabled: configured,
-    queryFn: ({ signal }) => fetchKlipyGifs(debouncedSearch, signal),
-    queryKey: ["klipy-gifs", debouncedSearch],
+    queryFn: ({ signal }) => fetchKlipyGifs(relayUrl, debouncedSearch, signal),
+    queryKey: ["klipy-gifs", relayUrl, debouncedSearch],
     staleTime: 5 * 60 * 1_000,
   });
 
@@ -61,7 +58,6 @@ export const KlipyGifPicker = React.memo(function KlipyGifPicker({
             aria-label="Search KLIPY"
             autoFocus
             className="h-9 bg-background/75 pl-8 pr-8 hover:bg-background/85 focus-visible:bg-background focus-visible:ring-ring/40"
-            disabled={!configured}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Search KLIPY"
             type="search"
@@ -77,11 +73,7 @@ export const KlipyGifPicker = React.memo(function KlipyGifPicker({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
-        {!configured ? (
-          <div className="flex h-full items-center justify-center px-8 text-center text-sm text-muted-foreground">
-            GIF search is not configured for this build.
-          </div>
-        ) : gifsQuery.isPending ? (
+        {gifsQuery.isPending ? (
           <div className="grid grid-cols-2 gap-1.5">
             <span className="sr-only">Loading GIFs</span>
             {LOADING_SKELETONS.map((id) => (

@@ -5,6 +5,7 @@ import {
   klipyGifAttachment,
   klipyGifFilename,
   normalizeKlipyGifs,
+  relayInfoSupportsKlipy,
 } from "./api.ts";
 
 const GIF_ASSET = {
@@ -47,6 +48,18 @@ test("normalizeKlipyGifs omits ads and malformed file records", () => {
   ]);
 
   assert.deepEqual(gifs, []);
+});
+
+test("relayInfoSupportsKlipy requires the explicit relay capability", () => {
+  assert.equal(
+    relayInfoSupportsKlipy({ gif_search: { provider: "klipy" } }),
+    true,
+  );
+  assert.equal(relayInfoSupportsKlipy({}), false);
+  assert.equal(
+    relayInfoSupportsKlipy({ gif_search: { provider: "another" } }),
+    false,
+  );
 });
 
 test("klipyGifFilename sanitizes provider slugs", () => {

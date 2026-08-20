@@ -1,8 +1,5 @@
 import type { BlobDescriptor } from "@/shared/api/tauri";
 
-const KLIPY_API_ROOT = "https://api.klipy.com/api/v1";
-const KLIPY_CUSTOMER_ID_STORAGE_KEY = "buzz:klipy-customer-id:v1";
-
 type KlipyAsset = {
   height?: number;
   size?: number;
@@ -29,7 +26,7 @@ type KlipyRawGif = {
   type?: string;
 };
 
-type KlipyResponse = {
+export type KlipyResponse = {
   data?: {
     data?: KlipyRawGif[];
   };
@@ -47,27 +44,15 @@ export type KlipyGif = {
   title: string;
 };
 
-function configuredApiKey(): string {
-  return import.meta.env?.VITE_KLIPY_API_KEY?.trim() ?? "";
-}
+export type RelayGifSearchInfo = {
+  gif_search?: {
+    provider?: string;
+  };
+};
 
-export function isKlipyConfigured(): boolean {
-  return configuredApiKey().length > 0;
-}
-
-function customerId(): string {
-  if (typeof window === "undefined") return "buzz-desktop";
-
-  try {
-    const existing = window.localStorage.getItem(KLIPY_CUSTOMER_ID_STORAGE_KEY);
-    if (existing) return existing;
-
-    const created = globalThis.crypto.randomUUID();
-    window.localStorage.setItem(KLIPY_CUSTOMER_ID_STORAGE_KEY, created);
-    return created;
-  } catch {
-    return "buzz-desktop";
-  }
+/** Whether a relay's public NIP-11 document advertises KLIPY proxy support. */
+export function relayInfoSupportsKlipy(info: RelayGifSearchInfo): boolean {
+  return info.gif_search?.provider === "klipy";
 }
 
 function isCompleteAsset(
@@ -127,41 +112,6 @@ export function normalizeKlipyGifs(items: KlipyRawGif[]): KlipyGif[] {
   return gifs;
 }
 
-function apiUrl(path: string): URL {
-  const apiKey = configuredApiKey();
-  if (!apiKey) {
-    throw new Error("KLIPY is not configured for this build");
-  }
-  return new URL(`${KLIPY_API_ROOT}/${encodeURIComponent(apiKey)}/${path}`);
-}
-
-function responseError(response: KlipyResponse, status: number): Error {
-  const message = response.errors?.message?.filter(Boolean).join(" ");
-  return new Error(message || `KLIPY request failed (${status})`);
-}
-
-export async function fetchKlipyGifs(
-  query: string,
-  signal?: AbortSignal,
-): Promise<KlipyGif[]> {
-  const normalizedQuery = query.trim();
-  const path = normalizedQuery ? "gifs/search" : "gifs/trending";
-  const url = apiUrl(path);
-  url.searchParams.set("page", "1");
-  url.searchParams.set("per_page", "24");
-  url.searchParams.set("customer_id", customerId());
-  url.searchParams.set("locale", navigator.language || "en-US");
-  if (normalizedQuery) url.searchParams.set("q", normalizedQuery);
-
-  const httpResponse = await fetch(url, { signal });
-  const response = (await httpResponse.json()) as KlipyResponse;
-  if (!httpResponse.ok || response.result === false) {
-    throw responseError(response, httpResponse.status);
-  }
-
-  return normalizeKlipyGifs(response.data?.data ?? []);
-}
-
 export function klipyGifFilename(gif: KlipyGif): string {
   const safeSlug = gif.slug
     .toLowerCase()
@@ -186,19 +136,4 @@ export function klipyGifAttachment(gif: KlipyGif): BlobDescriptor {
     uploaded: 0,
     url: gif.original.url,
   };
-}
-
-/** Record the provider's share event after the user chooses a GIF. */
-export async function trackKlipyGifShare(slug: string): Promise<void> {
-  const response = await fetch(
-    apiUrl(`gifs/share/${encodeURIComponent(slug)}`),
-    {
-      body: JSON.stringify({ customer_id: customerId() }),
-      headers: { "content-type": "application/json" },
-      method: "POST",
-    },
-  );
-  if (!response.ok) {
-    throw new Error(`Could not record KLIPY share (${response.status})`);
-  }
 }

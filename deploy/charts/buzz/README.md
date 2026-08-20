@@ -35,6 +35,10 @@ The chart is designed for ArgoCD and Flux. Both render charts with `helm templat
 
 Production deploys MUST use `secrets.existingSecret:`. The Secret is consumed for any keys present and ignored for keys missing — extras are harmless.
 
+To enable relay-proxied KLIPY search, add `BUZZ_KLIPY_API_KEY` to that Secret.
+The key stays in the relay pod; clients discover only the public `gif_search`
+capability in NIP-11 and receive KLIPY-hosted media URLs.
+
 See:
 
 - [`examples/argocd-app.yaml`](examples/argocd-app.yaml) — ArgoCD Application
