@@ -294,6 +294,23 @@ export function useChannelSubscription(channel: Channel | null) {
     await refreshChannelWindowMessages(queryClient, channelId);
   });
 
+  // Drop the freshness of this channel's thread-replies caches so the next
+  // thread open refetches. The 30s `staleTime` keeps a warm cache authoritative
+  // on reopen, but that only stays correct while the channel's live
+  // subscription is feeding it appends. When the channel goes inactive the
+  // subscription is disposed, so replies emitted meanwhile never reach the
+  // cache — reopening within the window would render stale topology and unread
+  // state. Invalidating on (re)subscribe closes that gap exactly as
+  // `refreshNewestWindow` does for the channel window: mirrors "freshness alone
+  // is not a proof that no events landed while we were away." Cached rows still
+  // paint immediately (stale-while-revalidate); the refetch reconciles them.
+  const invalidateThreadReplies = useEffectEvent(() => {
+    if (!channelId) return;
+    void queryClient.invalidateQueries({
+      queryKey: ["thread-replies", channelId],
+    });
+  });
+
   const appendMessage = useEffectEvent((event: RelayEvent) => {
     if (!channelId) return;
     if (event.kind === KIND_CHANNEL_THREAD_SUMMARY) {
@@ -382,6 +399,7 @@ export function useChannelSubscription(channel: Channel | null) {
     let isDisposed = false;
     let cleanup: (() => Promise<void>) | undefined;
     const disposeReconnectListener = relayClient.subscribeToReconnects(() => {
+      invalidateThreadReplies();
       void refreshNewestWindow().catch((error) => {
         if (!isDisposed) {
           console.error(
@@ -410,6 +428,7 @@ export function useChannelSubscription(channel: Channel | null) {
         // between the last page snapshot and subscription establishment. Always
         // refresh after the subscription is active; freshness alone is not a
         // proof that no relay events landed in that interval.
+        invalidateThreadReplies();
         void refreshNewestWindow().catch((error) => {
           if (!isDisposed) {
             console.error(
