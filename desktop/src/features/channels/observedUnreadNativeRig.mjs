@@ -118,6 +118,11 @@ class Scope {
       ]),
     );
     for (const event of this.events.values()) {
+      if (
+        event.rootId &&
+        this.membership.has(`muted_root\u0000${event.rootId}`)
+      )
+        continue;
       let readAt = Math.max(marker(event.channelId), marker(`msg:${event.id}`));
       if (event.rootId)
         readAt = Math.max(readAt, marker(`thread:${event.rootId}`));

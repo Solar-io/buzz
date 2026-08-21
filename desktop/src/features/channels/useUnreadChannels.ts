@@ -806,13 +806,17 @@ export function useUnreadChannels(
         );
         const channelReadAt = getContextReadAt(channel.id);
         const channelTimelineReadAt = getChannelTimelineReadAt(channel.id);
-        const readAtForObservedEvent = (event: ObservedUnreadEvent) =>
-          observedUnreadEventReadAt(
+        const mutedRoots = mutedRootIdsRef.current;
+        const readAtForObservedEvent = (event: ObservedUnreadEvent) => {
+          if (event.rootId !== null && mutedRoots.has(event.rootId))
+            return event.createdAt;
+          return observedUnreadEventReadAt(
             event,
             event.rootId === null ? channelTimelineReadAt : channelReadAt,
             (rootId) => getOwnTimestamp(`thread:${rootId}`),
             (messageId) => getOwnTimestamp(`msg:${messageId}`),
           );
+        };
 
         const nativeProjection = observedPersistence.isNative()
           ? observedPersistence.projectionsRef.current.get(channel.id)

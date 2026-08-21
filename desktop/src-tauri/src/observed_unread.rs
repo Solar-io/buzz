@@ -340,6 +340,14 @@ fn projections(tx: &Transaction<'_>, scope: &str) -> Result<Vec<ChannelProjectio
         .map_err(|e| format!("query unread markers: {e}"))?
         .collect::<Result<_, _>>()
         .map_err(|e| format!("read unread markers: {e}"))?;
+    let mut muted_stmt = tx
+        .prepare("SELECT value FROM unread_membership WHERE scope=?1 AND kind='muted_root'")
+        .map_err(|e| format!("prepare muted unread roots: {e}"))?;
+    let muted_roots = muted_stmt
+        .query_map([scope], |row| row.get::<_, String>(0))
+        .map_err(|e| format!("query muted unread roots: {e}"))?
+        .collect::<Result<HashSet<_>, _>>()
+        .map_err(|e| format!("read muted unread roots: {e}"))?;
     let mut by_channel: HashMap<String, ChannelProjection> = HashMap::new();
     let mut latest_stmt = tx
         .prepare("SELECT channel_id,created_at FROM channel_latest WHERE scope=?1")
@@ -382,6 +390,12 @@ fn projections(tx: &Transaction<'_>, scope: &str) -> Result<Vec<ChannelProjectio
     for row in rows {
         let (id, channel, created, root, high, badge, app) =
             row.map_err(|e| format!("read observed projection: {e}"))?;
+        if root
+            .as_ref()
+            .is_some_and(|root_id| muted_roots.contains(root_id))
+        {
+            continue;
+        }
         let channel_read_at = marker(&markers, &channel);
         let mut read_at = if root.is_none() {
             channel_read_at.max(marker(&markers, &format!("channel-timeline:{channel}")))
@@ -765,13 +779,13 @@ mod tests {
     }
 
     #[test]
-    fn projection_exposes_every_unread_thread_event_beyond_activity_preview_limit() {
+    fn projection_filters_muted_roots_beyond_the_activity_preview_limit() {
         let (_d, mut conn) = db();
         let tx = conn.transaction().unwrap();
         let key = scope().key();
         ensure_scope(&tx, &key).unwrap();
 
-        for index in 0..101 {
+        for index in 0..102 {
             upsert_event(
                 &tx,
                 &key,
@@ -787,15 +801,20 @@ mod tests {
             )
             .unwrap();
         }
+        tx.execute(
+            "INSERT INTO unread_membership(scope,kind,value) VALUES(?1,'muted_root','root-000')",
+            [&key],
+        )
+        .unwrap();
 
         let projected = projections(&tx, &key).unwrap();
         assert_eq!(projected[0].unread_thread_event_ids.len(), 101);
-        assert!(projected[0]
+        assert!(!projected[0]
             .unread_thread_event_ids
             .contains(&"reply-000".to_string()));
         assert!(projected[0]
             .unread_thread_event_ids
-            .contains(&"reply-100".to_string()));
+            .contains(&"reply-101".to_string()));
     }
     #[test]
     fn latest_anchor_survives_without_a_notify_event_and_seed_is_one_shot() {

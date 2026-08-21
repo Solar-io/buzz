@@ -987,3 +987,60 @@ test("native: every unread thread ID reaches the hook beyond the activity previe
     rig.restore();
   }
 });
+
+test("native: muting a thread removes its authoritative unread dot", async () => {
+  installFreshStorage();
+  const CHANNEL = "channel-muted-thread";
+  const EVENT = "event-muted-thread";
+  const ROOT = "root-muted-thread";
+  const PUBKEY = "pk-muted-thread";
+  writeObservedUnreadToStorage(
+    PUBKEY,
+    RELAY,
+    new Map([
+      [
+        CHANNEL,
+        new Map([
+          [
+            EVENT,
+            makeObservedEvent({ id: EVENT, rootId: ROOT, createdAt: NOW_S }),
+          ],
+        ]),
+      ],
+    ]),
+  );
+  let harness;
+  const rig = installNativeRig();
+  try {
+    harness = await mountUnreadChannels({
+      pubkey: PUBKEY,
+      relay: RELAY,
+      channels: [{ id: CHANNEL, channelType: "stream" }],
+      relayClient: makeStubRelayClient(),
+    });
+    await settle();
+
+    assert.ok(harness.result.unreadChannelIds.has(CHANNEL));
+    assert.ok(
+      harness.result.unreadThreadEventIdsByChannel.get(CHANNEL)?.has(EVENT),
+    );
+
+    await act(async () => harness.result.muteThread(ROOT));
+    await settle();
+    await settle();
+
+    assert.equal(harness.result.unreadChannelIds.has(CHANNEL), false);
+    assert.equal(
+      harness.result.unreadThreadEventIdsByChannel.has(CHANNEL),
+      false,
+    );
+    assert.ok(
+      rig
+        .scope({ pubkey: PUBKEY, relayUrl: RELAY })
+        .membership.has(`muted_root\u0000${ROOT}`),
+    );
+  } finally {
+    await harness?.unmount();
+    rig.restore();
+  }
+});
