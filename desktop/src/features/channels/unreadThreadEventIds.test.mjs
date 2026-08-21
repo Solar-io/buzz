@@ -1,7 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { readAtForPreservedUnreadMessage } from "./unreadThreadEventIds.ts";
+import {
+  collectMarkAllUnreadChannelIds,
+  readAtForPreservedUnreadMessage,
+} from "./unreadThreadEventIds.ts";
+
+test("mark-all includes authoritative replies hidden for the active channel", () => {
+  const projection = { unreadThreadEventIds: ["reply"] };
+  assert.deepEqual(
+    [
+      ...collectMarkAllUnreadChannelIds(
+        new Set(["visible"]),
+        new Map([["active", projection]]),
+      ),
+    ],
+    ["visible", "active"],
+  );
+});
 
 test("authoritative unread id present on first open survives a newer revisit frontier", () => {
   const messageId = "reply";

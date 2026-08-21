@@ -66,7 +66,10 @@ import {
 } from "@/features/channels/unreadMembership";
 import { useThreadActivityPersistence } from "@/features/channels/useThreadActivityPersistence";
 import { unreadCatchUp } from "@/shared/api/tauriUnreadCatchUp";
-import { collectUnreadThreadEventIds } from "./unreadThreadEventIds";
+import {
+  collectMarkAllUnreadChannelIds,
+  collectUnreadThreadEventIds,
+} from "./unreadThreadEventIds";
 import { useCatchUpRetry } from "./useCatchUpRetry";
 import {
   advanceCatchUpDiscoveryAt,
@@ -137,25 +140,19 @@ export function useUnreadChannels(
     pubkey ? forcedUnreadStore.read(pubkey) : {},
   );
 
-  // Root event IDs of threads where the current user has replied at least once.
-  // Used to determine if thread replies should trigger unread notifications.
+  // Thread roots where the user participated.
   const participatedRootIdsRef = React.useRef(new Set<string>());
 
-  // Root event IDs of top-level messages authored by the current user.
-  // Used to notify the author when someone replies to their posts.
+  // Top-level roots authored by the user.
   const authoredRootIdsRef = React.useRef(new Set<string>());
 
-  // Root event IDs of threads where an external message @-mentioned the user.
-  // ORed into the badge gate so a mention recipient who never participated,
-  // authored, or followed the thread still gets the thread-unread badge.
+  // Thread roots where an external message mentioned the user.
   const mentionedRootIdsRef = React.useRef(new Set<string>());
 
-  // Root event IDs of threads the user has explicitly muted. Takes precedence
-  // over participation, follow, and authorship for notification suppression.
+  // Explicitly muted thread roots.
   const mutedRootIdsRef = React.useRef(new Set<string>());
 
-  // Stable ref for the caller-supplied muted channel IDs. Updated every render
-  // so the catch-up loop always reads the latest set without being a dep.
+  // Latest caller-supplied muted channel IDs.
   const mutedChannelIdsRef = React.useRef<ReadonlySet<string>>(EMPTY_ROOT_IDS);
   mutedChannelIdsRef.current = mutedChannelIdsOption ?? EMPTY_ROOT_IDS;
 
@@ -664,7 +661,7 @@ export function useUnreadChannels(
           advanceCatchUpDiscoveryAt(
             currentActivityScope,
             result.channelId,
-            getChannelTimelineReadAt(result.channelId),
+            result.discoveryThrough,
           );
           for (const rootId of result.discovered.participated) {
             const before = participatedRootIdsRef.current.size;
@@ -922,7 +919,10 @@ export function useUnreadChannels(
 
   const markAllChannelsRead = React.useCallback(() => {
     const marked = new Map<string, number>();
-    for (const channelId of unreadChannelIdsRef.current) {
+    for (const channelId of collectMarkAllUnreadChannelIds(
+      unreadChannelIdsRef.current,
+      observedPersistence.projectionsRef.current,
+    )) {
       delete forcedUnreadRef.current[channelId];
       const unixSeconds =
         observedPersistence.latestForChannel(channelId) ??

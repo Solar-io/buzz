@@ -23,6 +23,7 @@ export type UnreadCatchUpChannelResult =
       channelId: string;
       observedEvents: ObservedUnreadEvent[];
       maxTrigger: number;
+      discoveryThrough: number;
       activityRows: ThreadActivityItem[];
       discovered: {
         participated: string[];

@@ -72,6 +72,7 @@ enum ChannelResult {
         channel_id: String,
         observed_events: Vec<ObservedUnreadEvent>,
         max_trigger: u64,
+        discovery_through: u64,
         activity_rows: Vec<ActivityRow>,
         discovered: DiscoveredRoots,
     },
@@ -116,6 +117,7 @@ struct DiscoveredRoots {
 struct FetchedChannel {
     channel: CatchUpChannel,
     events: Vec<EventView>,
+    discovery_through: u64,
 }
 
 #[derive(Clone)]
@@ -176,6 +178,7 @@ fn base_filter(channel: &CatchUpChannel, since: u64) -> serde_json::Value {
 fn discovery_filters(
     channel: &CatchUpChannel,
     self_pubkey: &str,
+    discovery_through: u64,
 ) -> (serde_json::Value, serde_json::Value) {
     // Discovery is device-local because membership is device-local. A fresh
     // device must scan old roots once even when synced read markers are newer;
@@ -184,8 +187,10 @@ fn discovery_filters(
         .discovery_at
         .map_or(0, |value| value.saturating_add(1));
     let mut authored = base_filter(channel, since);
+    authored["until"] = serde_json::json!(discovery_through);
     authored["authors"] = serde_json::json!([self_pubkey]);
     let mut mentioned = base_filter(channel, since);
+    mentioned["until"] = serde_json::json!(discovery_through);
     mentioned["#p"] = serde_json::json!([self_pubkey]);
     (authored, mentioned)
 }
@@ -244,18 +249,28 @@ async fn fetch_discovery_events(
     keys: &Keys,
     channel: &CatchUpChannel,
     self_pubkey: &str,
-) -> Result<Vec<Event>, String> {
-    let (authored, mentioned) = discovery_filters(channel, self_pubkey);
+) -> Result<(Vec<Event>, u64), String> {
+    let discovery_through = (chrono::Utc::now().timestamp().max(0) as u64).saturating_sub(1);
+    if channel
+        .discovery_at
+        .is_some_and(|watermark| watermark >= discovery_through)
+    {
+        return Ok((Vec::new(), discovery_through));
+    }
+    let (authored, mentioned) = discovery_filters(channel, self_pubkey, discovery_through);
     let (authored, mentioned) = tokio::try_join!(
         fetch_filter_pages(state, api_base, keys, &authored),
         fetch_filter_pages(state, api_base, keys, &mentioned),
     )?;
     let mut seen = HashSet::new();
-    Ok(authored
-        .into_iter()
-        .chain(mentioned)
-        .filter(|event| seen.insert(event.id))
-        .collect())
+    Ok((
+        authored
+            .into_iter()
+            .chain(mentioned)
+            .filter(|event| seen.insert(event.id))
+            .collect(),
+        discovery_through,
+    ))
 }
 
 fn discover_query_membership(
@@ -337,7 +352,7 @@ pub(crate) async fn unread_catch_up(
     let mut failures = Vec::new();
     for (channel, result) in discovery_results {
         match result {
-            Ok(events) => discovery.push((channel, events)),
+            Ok((events, discovery_through)) => discovery.push((channel, events, discovery_through)),
             Err(error) => failures.push(ChannelResult::Error {
                 channel_id: channel.id,
                 error,
@@ -345,17 +360,17 @@ pub(crate) async fn unread_catch_up(
         }
     }
     let mut query_membership = membership.clone();
-    for (_, events) in &discovery {
+    for (_, events, _) in &discovery {
         discover_query_membership(events, &owner, &mut query_membership);
     }
     let roots = relevant_roots(&query_membership);
     let discovery_channels = discovery
         .iter()
-        .map(|(channel, _)| channel.clone())
+        .map(|(channel, _, _)| channel.clone())
         .collect::<Vec<_>>();
     let mut relevant =
         fetch_relevant_thread_events(&state, &api_base, &keys, &discovery_channels, &roots).await;
-    discovery.retain(|(channel, _)| {
+    discovery.retain(|(channel, _, _)| {
         let Some(error) = relevant
             .errors_by_channel
             .remove(&channel.id.to_ascii_lowercase())
@@ -370,15 +385,20 @@ pub(crate) async fn unread_catch_up(
     });
 
     let top_level_results = stream::iter(discovery)
-        .map(|(channel, events)| async {
-            let result = fetch_top_level_pages(&state, &api_base, &keys, &channel).await;
-            (channel, events, result)
+        .map(|(channel, events, discovery_through)| {
+            let state = &state;
+            let api_base = &api_base;
+            let keys = &keys;
+            async move {
+                let result = fetch_top_level_pages(state, api_base, keys, &channel).await;
+                (channel, events, discovery_through, result)
+            }
         })
         .buffered(CHANNEL_FETCH_CONCURRENCY)
         .collect::<Vec<_>>()
         .await;
     let mut fetched = Vec::with_capacity(top_level_results.len());
-    for (channel, mut events, result) in top_level_results {
+    for (channel, mut events, discovery_through, result) in top_level_results {
         match result {
             Ok(top_level) => {
                 events.extend(top_level);
@@ -393,6 +413,7 @@ pub(crate) async fn unread_catch_up(
                 fetched.push(FetchedChannel {
                     channel,
                     events: events.into_iter().map(EventView::from).collect(),
+                    discovery_through,
                 });
             }
             Err(error) => failures.push(ChannelResult::Error {
@@ -515,6 +536,7 @@ fn classify_batch(
             item.channel.id,
             observed_events,
             max_trigger,
+            item.discovery_through,
             activity_rows,
             discovered,
         ));
@@ -531,12 +553,20 @@ fn classify_batch(
     outputs
         .into_iter()
         .map(
-            |(channel_id, observed_events, max_trigger, mut activity_rows, discovered)| {
+            |(
+                channel_id,
+                observed_events,
+                max_trigger,
+                discovery_through,
+                mut activity_rows,
+                discovered,
+            )| {
                 activity_rows.retain(|row| allowed.contains(&row.id));
                 ChannelResult::Success {
                     channel_id,
                     observed_events,
                     max_trigger,
+                    discovery_through,
                     activity_rows,
                     discovered,
                 }
@@ -689,6 +719,7 @@ mod tests {
                     &[&["e", "root", "", "reply"], &["h", "ch"]],
                 ),
             ],
+            discovery_through: 20,
         }];
         let result = classify_batch(&req, fetched, &HashMap::new());
         let ChannelResult::Success {
@@ -739,6 +770,7 @@ mod tests {
                     &[&["broadcast", "1"], &["h", "ch"]],
                 ),
             ],
+            discovery_through: 20,
         }];
         let result = classify_batch(&req, fetched, &membership);
         let ChannelResult::Success {
@@ -769,10 +801,11 @@ mod tests {
             timeline_read_at: Some(900),
             discovery_at: Some(400),
         };
-        let (authored, mentioned) = discovery_filters(&channel, "self");
+        let (authored, mentioned) = discovery_filters(&channel, "self", 1_000);
         assert_eq!(authored["since"], 401);
         assert_eq!(authored["authors"], serde_json::json!(["self"]));
         assert_eq!(mentioned["since"], 401);
+        assert_eq!(mentioned["until"], 1_000);
         assert_eq!(mentioned["#p"], serde_json::json!(["self"]));
 
         let top_level = top_level_filter(&channel);
@@ -790,7 +823,7 @@ mod tests {
             timeline_read_at: Some(100),
             discovery_at: None,
         };
-        let (authored, mentioned) = discovery_filters(&channel, "self");
+        let (authored, mentioned) = discovery_filters(&channel, "self", 1_000);
         assert_eq!(authored["since"], 0);
         assert_eq!(mentioned["since"], 0);
     }
@@ -838,7 +871,15 @@ mod tests {
             &[&["e", "root", "", "reply"], &["h", "ch"]],
         ));
         let membership = HashMap::from([("participated".into(), HashSet::from(["root".into()]))]);
-        let result = classify_batch(&req, vec![FetchedChannel { channel, events }], &membership);
+        let result = classify_batch(
+            &req,
+            vec![FetchedChannel {
+                channel,
+                events,
+                discovery_through: 2_000,
+            }],
+            &membership,
+        );
         let ChannelResult::Success {
             observed_events, ..
         } = &result[0]
@@ -882,6 +923,7 @@ mod tests {
                     counts_toward_app_badge: false,
                 }],
                 max_trigger: 11,
+                discovery_through: 12,
                 activity_rows: vec![ActivityRow {
                     id: "evt".into(),
                     kind: 9,
@@ -919,6 +961,7 @@ mod tests {
                         "countsTowardAppBadge": false,
                     }],
                     "maxTrigger": 11,
+                    "discoveryThrough": 12,
                     "activityRows": [{
                         "id": "evt",
                         "kind": 9,

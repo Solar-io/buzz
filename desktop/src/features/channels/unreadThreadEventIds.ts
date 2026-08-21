@@ -1,5 +1,17 @@
 import type { ObservedUnreadEvent } from "./unreadChannelCounts";
 import { maxReadAt } from "./readState/readStateFormat";
+import type { ObservedUnreadProjection } from "@/shared/api/tauriObservedUnread";
+
+export function collectMarkAllUnreadChannelIds(
+  visibleUnreadChannelIds: ReadonlySet<string>,
+  nativeProjections: ReadonlyMap<string, ObservedUnreadProjection>,
+): Set<string> {
+  const result = new Set(visibleUnreadChannelIds);
+  for (const [channelId, projection] of nativeProjections) {
+    if (projection.unreadThreadEventIds.length > 0) result.add(channelId);
+  }
+  return result;
+}
 
 export function collectUnreadThreadEventIds(
   nativeEventIds: readonly string[] | undefined,

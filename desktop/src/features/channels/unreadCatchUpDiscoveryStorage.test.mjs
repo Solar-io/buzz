@@ -20,7 +20,7 @@ test("fresh scope has no discovery watermark despite synced read state", () => {
   assert.equal(readCatchUpDiscoveryAt("pk:relay", "channel"), null);
 });
 
-test("successful discovery advances monotonically within its device scope", () => {
+test("a completed scan advances its upper bound monotonically per device scope", () => {
   installStorage();
   advanceCatchUpDiscoveryAt("pk:relay", "channel", 900);
   advanceCatchUpDiscoveryAt("pk:relay", "channel", 100);

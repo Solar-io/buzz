@@ -33,11 +33,20 @@ export function readCatchUpDiscoveryAt(
 export function advanceCatchUpDiscoveryAt(
   scope: string,
   channelId: string,
-  timelineReadAt: number | null,
+  discoveryThrough: number | null | undefined,
 ): void {
-  if (!scope || timelineReadAt === null) return;
+  if (
+    !scope ||
+    typeof discoveryThrough !== "number" ||
+    !Number.isSafeInteger(discoveryThrough) ||
+    discoveryThrough < 0
+  )
+    return;
   const watermarks = read(scope);
-  watermarks[channelId] = Math.max(watermarks[channelId] ?? 0, timelineReadAt);
+  watermarks[channelId] = Math.max(
+    watermarks[channelId] ?? 0,
+    discoveryThrough,
+  );
   try {
     window.localStorage.setItem(key(scope), JSON.stringify(watermarks));
   } catch {

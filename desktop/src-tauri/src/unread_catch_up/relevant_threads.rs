@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use futures_util::{stream, StreamExt};
 use nostr::{Event, Keys};
@@ -9,7 +9,7 @@ use super::{
 };
 
 // Mirrors buzz-relay's aggregate explicit `#h` ceiling. Keep every HTTP
-// bridge request independently admissible when a frontier group is large.
+// bridge request independently admissible when the channel set is large.
 const CHANNEL_FILTER_CHUNK: usize = 128;
 
 pub(super) struct RelevantThreadEvents {
@@ -23,13 +23,11 @@ struct RelevantThreadQuery {
 }
 
 fn relevant_thread_filter(channels: &[CatchUpChannel], roots: &[String]) -> serde_json::Value {
-    let since = channels.first().map_or(0, relevant_thread_since);
-    debug_assert!(
-        channels
-            .iter()
-            .all(|channel| relevant_thread_since(channel) == since),
-        "relevant-thread filters must contain one read frontier"
-    );
+    let since = channels
+        .iter()
+        .map(relevant_thread_since)
+        .min()
+        .unwrap_or(0);
     let channel_type = if channels.iter().any(|channel| channel.channel_type == "dm") {
         "dm"
     } else {
@@ -52,30 +50,17 @@ fn relevant_thread_since(channel: &CatchUpChannel) -> u64 {
     channel.read_at.map_or(0, |value| value.saturating_add(1))
 }
 
-fn channels_by_frontier(channels: &[CatchUpChannel]) -> BTreeMap<u64, Vec<CatchUpChannel>> {
-    let mut groups = BTreeMap::<u64, Vec<CatchUpChannel>>::new();
-    for channel in channels {
-        groups
-            .entry(relevant_thread_since(channel))
-            .or_default()
-            .push(channel.clone());
-    }
-    groups
-}
-
 fn relevant_thread_queries(
     channels: &[CatchUpChannel],
     roots: &[String],
 ) -> Vec<RelevantThreadQuery> {
     let mut queries = Vec::new();
-    for frontier_channels in channels_by_frontier(channels).into_values() {
-        for channel_chunk in frontier_channels.chunks(CHANNEL_FILTER_CHUNK) {
-            for root_chunk in roots.chunks(ROOT_FILTER_CHUNK) {
-                queries.push(RelevantThreadQuery {
-                    channels: channel_chunk.to_vec(),
-                    filter: relevant_thread_filter(channel_chunk, root_chunk),
-                });
-            }
+    for channel_chunk in channels.chunks(CHANNEL_FILTER_CHUNK) {
+        for root_chunk in roots.chunks(ROOT_FILTER_CHUNK) {
+            queries.push(RelevantThreadQuery {
+                channels: channel_chunk.to_vec(),
+                filter: relevant_thread_filter(channel_chunk, root_chunk),
+            });
         }
     }
     queries
@@ -193,33 +178,19 @@ mod tests {
     }
 
     #[test]
-    fn channels_with_different_read_frontiers_are_partitioned() {
+    fn channel_chunk_uses_its_oldest_frontier_and_filters_later_per_channel() {
         let channels = vec![
             channel("old", "stream", None),
             channel("current", "stream", Some(900)),
             channel("same-current", "dm", Some(900)),
         ];
 
-        let groups = channels_by_frontier(&channels);
-
-        assert_eq!(groups.keys().copied().collect::<Vec<_>>(), [0, 901]);
+        let queries = relevant_thread_queries(&channels, &["root".into()]);
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].filter["since"], 0);
         assert_eq!(
-            groups[&0]
-                .iter()
-                .map(|channel| channel.id.as_str())
-                .collect::<Vec<_>>(),
-            ["old"]
-        );
-        assert_eq!(
-            groups[&901]
-                .iter()
-                .map(|channel| channel.id.as_str())
-                .collect::<Vec<_>>(),
-            ["current", "same-current"]
-        );
-        assert_eq!(
-            relevant_thread_filter(&groups[&901], &["root".into()])["since"],
-            901
+            queries[0].filter["#h"],
+            serde_json::json!(["old", "current", "same-current"])
         );
     }
 
@@ -237,5 +208,17 @@ mod tests {
 
         assert_eq!(sizes, [128, 1]);
         assert!(sizes.iter().all(|size| *size <= CHANNEL_FILTER_CHUNK));
+    }
+
+    #[test]
+    fn distinct_frontiers_do_not_multiply_the_root_chunk_fanout() {
+        let channels = (0..100)
+            .map(|index| channel(&format!("channel-{index}"), "stream", Some(index)))
+            .collect::<Vec<_>>();
+        let roots = (0..1_000)
+            .map(|index| format!("root-{index}"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(relevant_thread_queries(&channels, &roots).len(), 5);
     }
 }

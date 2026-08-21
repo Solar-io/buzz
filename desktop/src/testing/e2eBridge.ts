@@ -14040,6 +14040,7 @@ export function maybeInstallE2eTauriMocks() {
             channelId: channel.id,
             observedEvents: [],
             maxTrigger: 0,
+            discoveryThrough: 0,
             activityRows: [],
             discovered: {
               participated: [],
