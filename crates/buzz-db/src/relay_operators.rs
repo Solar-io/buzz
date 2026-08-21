@@ -221,7 +221,7 @@ mod tests {
         ) -> Vec<(String, Option<String>, Option<String>)> {
             sqlx::query_as(
                 "SELECT op, prev_role, new_role FROM relay_operator_audit \
-                 WHERE target_pubkey = $1 ORDER BY created_at ASC, seq ASC",
+                 WHERE target_pubkey = $1 ORDER BY seq ASC",
             )
             .bind(target)
             .fetch_all(pool)
@@ -308,7 +308,7 @@ mod tests {
 
         let rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
             "SELECT op, prev_role, new_role FROM relay_operator_audit \
-             WHERE target_pubkey = $1 ORDER BY created_at ASC, seq ASC",
+             WHERE target_pubkey = $1 ORDER BY seq ASC",
         )
         .bind(&target)
         .fetch_all(&pool)
@@ -328,23 +328,22 @@ mod tests {
         );
     }
 
-    /// Ordered audit reads must reflect the true privilege chain (insertion
-    /// order under the serializing lock), never transaction-start order.
+    /// Ordered audit reads must follow `seq` (insertion order under the
+    /// serializing lock), never `created_at`. A wall clock is not monotonic:
+    /// an NTP step backward between two serialized mutations can hand the later
+    /// mutation a smaller `clock_timestamp()`, so ordering by the timestamp
+    /// would still invert the privilege chain. `seq` is the sole ordering
+    /// authority; the timestamp is informational.
     ///
-    /// `now()` freezes at BEGIN, so a transaction that STARTS early but COMMITS
-    /// late would stamp its audit row with a timestamp preceding an
-    /// already-committed later mutation — letting `ORDER BY created_at` report
-    /// an impossible chain (e.g. revoke before grant). The `clock_timestamp()`
-    /// default plus the `seq` tie-breaker stamp at insertion time instead.
-    ///
-    /// This drives two raw transactions directly against the audit table (the
-    /// atomic `upsert`/`remove` don't expose a mid-transaction pause) so the
-    /// start-vs-insert interleaving is fully deterministic: `revoke_txn` begins
-    /// FIRST but inserts LAST; `grant_txn` begins second but commits first. The
-    /// grant→revoke chain is the true history; a `now()` default would invert it.
+    /// This inserts same-target rows with DELIBERATELY INVERTED `created_at`
+    /// (the grant, inserted first, gets a *future* stamp; the revoke, inserted
+    /// second, gets a *past* stamp) to simulate the backward-clock step. The
+    /// `ORDER BY seq` read must still return grant→revoke — the true insertion
+    /// order. Ordering by `created_at` instead would return the impossible
+    /// revoke→grant, so dropping `seq` from the read fails this assertion.
     #[tokio::test]
-    #[ignore = "requires Postgres — audit order follows insertion time, not txn start"]
-    async fn audit_order_follows_insertion_not_transaction_start() {
+    #[ignore = "requires Postgres — audit order follows seq, not the non-monotonic wall clock"]
+    async fn audit_order_follows_seq_under_backward_clock() {
         let pool = setup_pool().await;
         let actor = vec![5u8; 32];
         let target: Vec<u8> = {
@@ -352,47 +351,36 @@ mod tests {
             id.as_bytes().iter().chain(id.as_bytes()).copied().collect()
         };
 
-        // revoke_txn STARTS FIRST. Pin its transaction timestamp now() with an
-        // explicit statement so a now() default would stamp the revoke earlier
-        // than the grant that actually commits before it.
-        let mut revoke_txn = pool.begin().await.expect("begin revoke txn");
-        sqlx::query("SELECT now()")
-            .execute(&mut *revoke_txn)
-            .await
-            .expect("pin revoke txn start");
-
-        // grant_txn STARTS SECOND, inserts the first mutation, and COMMITS FIRST.
-        let mut grant_txn = pool.begin().await.expect("begin grant txn");
+        // Grant inserted FIRST (lower seq) but stamped in the FUTURE.
         sqlx::query(
             "INSERT INTO relay_operator_audit \
-             (actor_pubkey, target_pubkey, op, prev_role, new_role) \
-             VALUES ($1, $2, 'grant', NULL, 'moderator')",
+             (actor_pubkey, target_pubkey, op, prev_role, new_role, created_at) \
+             VALUES ($1, $2, 'grant', NULL, 'moderator', now() + interval '1 hour')",
         )
         .bind(&actor)
         .bind(&target)
-        .execute(&mut *grant_txn)
+        .execute(&pool)
         .await
         .expect("insert grant audit row");
-        grant_txn.commit().await.expect("commit grant txn");
 
-        // revoke_txn inserts the second mutation and COMMITS SECOND.
+        // Revoke inserted SECOND (higher seq) but stamped in the PAST — the
+        // inversion a backward clock step would produce.
         sqlx::query(
             "INSERT INTO relay_operator_audit \
-             (actor_pubkey, target_pubkey, op, prev_role, new_role) \
-             VALUES ($1, $2, 'revoke', 'moderator', NULL)",
+             (actor_pubkey, target_pubkey, op, prev_role, new_role, created_at) \
+             VALUES ($1, $2, 'revoke', 'moderator', NULL, now() - interval '1 hour')",
         )
         .bind(&actor)
         .bind(&target)
-        .execute(&mut *revoke_txn)
+        .execute(&pool)
         .await
         .expect("insert revoke audit row");
-        revoke_txn.commit().await.expect("commit revoke txn");
 
-        // Ordered read must be grant→revoke (insertion order), not the inverted
-        // revoke→grant a transaction-start timestamp would produce.
+        // ORDER BY seq must return grant→revoke (insertion order); ordering by
+        // created_at would return the impossible revoke→grant.
         let rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
             "SELECT op, prev_role, new_role FROM relay_operator_audit \
-             WHERE target_pubkey = $1 ORDER BY created_at ASC, seq ASC",
+             WHERE target_pubkey = $1 ORDER BY seq ASC",
         )
         .bind(&target)
         .fetch_all(&pool)
@@ -404,7 +392,7 @@ mod tests {
                 ("grant".to_string(), None, Some("moderator".to_string())),
                 ("revoke".to_string(), Some("moderator".to_string()), None),
             ],
-            "ordered read must follow the committed privilege chain, not transaction-start order"
+            "ordered read must follow seq (insertion order), not the non-monotonic wall clock"
         );
     }
 

@@ -28,25 +28,22 @@ CREATE TABLE relay_operator_audit (
     prev_role     TEXT CHECK (prev_role IN ('operator', 'moderator')),
     -- Role after the mutation; NULL for a revoke.
     new_role      TEXT CHECK (new_role IN ('operator', 'moderator')),
-    -- Insertion time, NOT transaction-start time. `now()` freezes at BEGIN, so
-    -- an early-starting-but-late-committing txn would stamp a mutation with a
-    -- timestamp that precedes an already-committed later one, letting
-    -- `ORDER BY created_at` report an impossible privilege chain (e.g. revoke
-    -- before grant). Every same-target mutation writes its audit row while
-    -- holding the serializing lock (advisory lock in `upsert`, row lock via
-    -- `DELETE ... RETURNING` in `remove`) and the competitor cannot proceed
-    -- until commit, so insertion time under the lock is strictly monotonic with
-    -- the true privilege chain.
+    -- Wall-clock occurrence time of the mutation (clock_timestamp(), NOT
+    -- transaction-start now() which freezes at BEGIN). Informational only: a
+    -- wall clock is not monotonic (an NTP step backward can hand a later
+    -- mutation a smaller value), so it does NOT establish mutation order.
     created_at    TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-    -- Structural total-order key. Wall-clock uniqueness is not a contract
-    -- (clock_timestamp() can repeat), so ordered reads break ties on this
-    -- lock-monotonic identity: `ORDER BY (created_at, seq)` is a strict total
-    -- order matching the serialized mutation sequence.
+    -- Structural chronology key and the sole ordering authority. Every
+    -- same-target mutation writes its audit row while holding the serializing
+    -- lock (advisory lock in `upsert`, row lock via `DELETE ... RETURNING` in
+    -- `remove`) and the competitor cannot proceed until commit, so identity
+    -- assignment order equals the true privilege-chain order. Ordered reads use
+    -- `ORDER BY seq` — strictly monotonic regardless of wall-clock movement.
     seq           BIGINT GENERATED ALWAYS AS IDENTITY
 );
 
 CREATE INDEX idx_relay_operator_audit_target
-    ON relay_operator_audit (target_pubkey, created_at, seq);
+    ON relay_operator_audit (target_pubkey, seq);
 
 INSERT INTO _operator_global_tables (table_name, reason) VALUES
     ('relay_operator_audit',

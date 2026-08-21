@@ -4016,7 +4016,7 @@ mod tests {
         // Grant audit row: actor is the authenticated operator, prev NULL.
         let grant: (Vec<u8>, String, Option<String>, Option<String>) = sqlx::query_as(
             "SELECT actor_pubkey, op, prev_role, new_role FROM relay_operator_audit \
-             WHERE target_pubkey = $1 ORDER BY created_at ASC, seq ASC",
+             WHERE target_pubkey = $1 ORDER BY seq ASC",
         )
         .bind(&target_bytes)
         .fetch_one(&pool)

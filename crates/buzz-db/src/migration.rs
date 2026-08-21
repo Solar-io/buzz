@@ -1969,9 +1969,17 @@ mod tests {
         async fn columns(
             pool: &PgPool,
             table: &str,
-        ) -> Vec<(String, String, String, Option<String>)> {
+        ) -> Vec<(
+            String,
+            String,
+            String,
+            Option<String>,
+            String,
+            Option<String>,
+        )> {
             sqlx::query_as(
-                "SELECT column_name, data_type, is_nullable, column_default \
+                "SELECT column_name, data_type, is_nullable, column_default, \
+                 is_identity, identity_generation \
                  FROM information_schema.columns \
                  WHERE table_schema = 'public' AND table_name = $1 \
                  ORDER BY column_name",
