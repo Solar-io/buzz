@@ -32,6 +32,20 @@ pub async fn run_migrations(pool: &PgPool) -> Result<()> {
     .await
 }
 
+#[cfg(test)]
+pub(crate) async fn run_migrations_through(pool: &PgPool, target: i64) -> Result<()> {
+    with_exclusive_schema_destruction_lock(pool, |mut conn| async move {
+        let outcome = async {
+            reject_legacy_nip_rs_cardinality_ambiguity(&mut conn).await?;
+            MIGRATOR.run_to(target, &mut conn).await?;
+            Ok(())
+        }
+        .await;
+        (conn, outcome)
+    })
+    .await
+}
+
 async fn run_migrations_locked(conn: &mut PgConnection) -> Result<()> {
     reject_legacy_nip_rs_cardinality_ambiguity(conn).await?;
     MIGRATOR.run(&mut *conn).await?;
@@ -43,6 +57,7 @@ async fn run_migrations_locked(conn: &mut PgConnection) -> Result<()> {
     // guard, so migration fails closed if any is missing. (The fence probe
     // re-runs this same check at startup on non-migrating relays.)
     crate::replica_fence::verify_floor_guard_catalog(&mut *conn).await?;
+    crate::channel::verify_channel_roster_fence_catalog(&mut *conn).await?;
     Ok(())
 }
 
@@ -665,7 +680,7 @@ mod tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 36);
+        assert_eq!(migrations.len(), 37);
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");
         assert!(migrations[0]
@@ -1077,72 +1092,102 @@ mod tests {
         let deletion_recovery = migrations[29].sql.as_str();
         assert!(deletion_recovery.contains("SET LOCAL lock_timeout = '5s'"));
 
+        // Mixed-version channel-roster fence: old canonical replacement writers
+        // acquire their replacement key before INSERT; this trigger then takes
+        // the membership key and validates the exact active pubkey/role p-tag set.
         assert_eq!(migrations[31].version, 32);
-        let relay_operators = migrations[31].sql.as_str();
-        assert!(
-            relay_operators.contains("CREATE TABLE relay_operators"),
-            "migration 32 must create relay_operators"
-        );
-        assert!(
-            relay_operators.contains("_operator_global_tables"),
-            "migration 32 must register relay_operators in _operator_global_tables"
-        );
-        assert!(
-            relay_operators.contains("actor_authority"),
-            "migration 32 must add actor_authority to moderation_actions"
-        );
-        assert!(
-            relay_operators.contains("processing"),
-            "migration 32 must add processing status to moderation_reports"
+        let roster_fence = migrations[31].sql.as_str();
+        assert!(roster_fence.contains("CREATE TRIGGER trg_events_guard_channel_roster_snapshot"));
+        assert!(roster_fence.contains("NEW.kind <> 39002"));
+        assert!(roster_fence.contains("'buzz_channel_membership:'"));
+        assert!(roster_fence.contains("cm.removed_at IS NULL"));
+        assert!(roster_fence.contains("cm.role::text"));
+        assert!(roster_fence.contains("jsonb_array_length(roster_tag.tag_json) <> 4"));
+        assert!(roster_fence.contains("roster_tag.tag_json->>3"));
+        assert!(roster_fence.contains("snapshot_members IS DISTINCT FROM canonical_members"));
+        assert!(roster_fence.contains("ERRCODE = '23514'"));
+
+        // Fresh desired-state bootstrap must install the identical executable
+        // fence as migration 0032. CI and isolated relay startup use schema.sql
+        // without running migrations, so drift reopens rolling-deploy races.
+        fn extract_roster_fence(sql: &str) -> &str {
+            let fence_start = "CREATE OR REPLACE FUNCTION guard_channel_roster_snapshot()";
+            let fence_end = "    FOR EACH ROW EXECUTE FUNCTION guard_channel_roster_snapshot();";
+            let start = sql.find(fence_start).expect("roster fence function");
+            let relative_end = sql[start..].find(fence_end).expect("roster fence trigger");
+            &sql[start..start + relative_end + fence_end.len()]
+        }
+        assert_eq!(
+            extract_roster_fence(roster_fence),
+            extract_roster_fence(desired_schema)
         );
 
         assert_eq!(migrations[32].version, 33);
-        let relay_admin_actions = migrations[32].sql.as_str();
+        let relay_operators = migrations[32].sql.as_str();
         assert!(
-            relay_admin_actions.contains("CREATE TABLE relay_admin_actions"),
-            "migration 33 must create relay_admin_actions"
+            relay_operators.contains("CREATE TABLE relay_operators"),
+            "migration 33 must create relay_operators"
         );
         assert!(
-            relay_admin_actions.contains("CREATE TABLE relay_admin_outbox"),
-            "migration 33 must create relay_admin_outbox"
+            relay_operators.contains("_operator_global_tables"),
+            "migration 33 must register relay_operators in _operator_global_tables"
         );
         assert!(
-            relay_admin_actions.contains("request_id"),
-            "migration 33 relay_admin_actions must include request_id for idempotency"
+            relay_operators.contains("actor_authority"),
+            "migration 33 must add actor_authority to moderation_actions"
         );
         assert!(
-            relay_admin_actions.contains("step_marker"),
-            "migration 33 relay_admin_actions must include step_marker for crash recovery"
+            relay_operators.contains("processing"),
+            "migration 33 must add processing status to moderation_reports"
         );
 
         assert_eq!(migrations[33].version, 34);
-        let action_lease = migrations[33].sql.as_str();
+        let relay_admin_actions = migrations[33].sql.as_str();
+        assert!(
+            relay_admin_actions.contains("CREATE TABLE relay_admin_actions"),
+            "migration 34 must create relay_admin_actions"
+        );
+        assert!(
+            relay_admin_actions.contains("CREATE TABLE relay_admin_outbox"),
+            "migration 34 must create relay_admin_outbox"
+        );
+        assert!(
+            relay_admin_actions.contains("request_id"),
+            "migration 34 relay_admin_actions must include request_id for idempotency"
+        );
+        assert!(
+            relay_admin_actions.contains("step_marker"),
+            "migration 34 relay_admin_actions must include step_marker for crash recovery"
+        );
+
+        assert_eq!(migrations[34].version, 35);
+        let action_lease = migrations[34].sql.as_str();
         assert!(
             action_lease.contains("action_lease_token"),
-            "migration 34 must add action_lease_token to relay_admin_actions"
+            "migration 35 must add action_lease_token to relay_admin_actions"
         );
         assert!(
             action_lease.contains("action_lease_expires_at"),
-            "migration 34 must add action_lease_expires_at to relay_admin_actions"
+            "migration 35 must add action_lease_expires_at to relay_admin_actions"
         );
         assert!(
             action_lease.contains("attempt_count"),
-            "migration 34 must add attempt_count to relay_admin_outbox"
+            "migration 35 must add attempt_count to relay_admin_outbox"
         );
         assert!(
             action_lease.contains("retry_after"),
-            "migration 34 must add retry_after to relay_admin_outbox"
+            "migration 35 must add retry_after to relay_admin_outbox"
         );
 
-        assert_eq!(migrations[35].version, 36);
-        let operator_audit = migrations[35].sql.as_str();
+        assert_eq!(migrations[36].version, 37);
+        let operator_audit = migrations[36].sql.as_str();
         assert!(
             operator_audit.contains("CREATE TABLE relay_operator_audit"),
-            "migration 36 must create relay_operator_audit"
+            "migration 37 must create relay_operator_audit"
         );
         assert!(
             operator_audit.contains("_operator_global_tables"),
-            "migration 36 must register relay_operator_audit in _operator_global_tables"
+            "migration 37 must register relay_operator_audit in _operator_global_tables"
         );
     }
 
@@ -1332,6 +1377,7 @@ mod tests {
         // Build the needles so this test's own source never matches them.
         let migrate_macro = ["sqlx", "::migrate!"].concat();
         let migrator_run = ["MIGRATOR", ".run("].concat();
+        let migrator_run_to = ["MIGRATOR", ".run_to("].concat();
 
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let this_file = manifest_dir.join("src/migration.rs");
@@ -1358,23 +1404,24 @@ mod tests {
         rust_sources(crates_dir, &mut files);
         for path in &files {
             let source = std::fs::read_to_string(path).expect("read rust source");
-            let (macro_hits, run_hits) = (
+            let (macro_hits, run_hits, run_to_hits) = (
                 count(&source, &migrate_macro),
                 count(&source, &migrator_run),
+                count(&source, &migrator_run_to),
             );
             if *path == this_file {
                 assert_eq!(
-                    (macro_hits, run_hits),
-                    (1, 1),
-                    "migration.rs must embed the migrator once and run it exactly once, \
-                     inside the locked wrapper"
+                    (macro_hits, run_hits, run_to_hits),
+                    (1, 1, 1),
+                    "migration.rs must embed the migrator once, run it once in production, \
+                     and expose exactly one test-only bounded run"
                 );
             } else if *path == push_gateway_exception {
                 continue;
             } else {
                 assert_eq!(
-                    (macro_hits, run_hits),
-                    (0, 0),
+                    (macro_hits, run_hits, run_to_hits),
+                    (0, 0, 0),
                     "{} embeds or runs a SQLx migrator outside the schema/destruction \
                      lock contract; route migration execution through \
                      buzz_db migration::run_migrations",
@@ -1397,13 +1444,23 @@ mod tests {
             .find("async fn with_exclusive_schema_destruction_lock")
             .expect("exclusive lock wrapper");
         let run_site = source.find(&migrator_run).expect("migrator run site");
+        let run_to_site = source
+            .find(&migrator_run_to)
+            .expect("bounded test migrator run site");
         assert!(
             source[entry..locked].contains("with_exclusive_schema_destruction_lock("),
             "run_migrations must delegate through the exclusive schema/destruction lock"
         );
         assert!(
             run_site > locked && run_site < wrapper,
-            "the migrator run site must live inside run_migrations_locked"
+            "the production migrator run site must live inside run_migrations_locked"
+        );
+        assert!(
+            run_to_site > entry
+                && run_to_site < locked
+                && source[entry..run_to_site].contains("#[cfg(test)]")
+                && source[entry..run_to_site].contains("with_exclusive_schema_destruction_lock("),
+            "the bounded migrator run must remain test-only and use the exclusive lock wrapper"
         );
         assert!(
             source[wrapper..].contains("pg_advisory_lock($1)")
@@ -2016,9 +2073,9 @@ mod tests {
             .await
             .expect("connect migrated probe database");
         MIGRATOR
-            .run_to(36, &migrated)
+            .run_to(37, &migrated)
             .await
-            .expect("apply migrations 1-36");
+            .expect("apply migrations 1-37");
 
         for table in [
             "relay_admin_actions",
