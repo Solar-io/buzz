@@ -120,7 +120,8 @@ class Scope {
     for (const event of this.events.values()) {
       if (
         event.rootId &&
-        this.membership.has(`muted_root\u0000${event.rootId}`)
+        this.membership.has(`muted_root\u0000${event.rootId}`) &&
+        !event.highPriority
       )
         continue;
       let readAt = Math.max(marker(event.channelId), marker(`msg:${event.id}`));

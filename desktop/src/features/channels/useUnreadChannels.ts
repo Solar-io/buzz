@@ -774,7 +774,6 @@ export function useUnreadChannels(
     scheduleCatchUpRetry,
   ]);
 
-  // Compute ordinary, top-level, and high-priority projections together.
   const rawUnread =
     // biome-ignore lint/correctness/useExhaustiveDependencies: readStateVersion and latestVersion are intentional invalidation signals
     React.useMemo(() => {
@@ -806,7 +805,11 @@ export function useUnreadChannels(
         const channelTimelineReadAt = getChannelTimelineReadAt(channel.id);
         const mutedRoots = mutedRootIdsRef.current;
         const readAtForObservedEvent = (event: ObservedUnreadEvent) => {
-          if (event.rootId !== null && mutedRoots.has(event.rootId))
+          if (
+            event.rootId !== null &&
+            mutedRoots.has(event.rootId) &&
+            !event.highPriority
+          )
             return event.createdAt;
           return observedUnreadEventReadAt(
             event,
@@ -815,7 +818,6 @@ export function useUnreadChannels(
             (messageId) => getOwnTimestamp(`msg:${messageId}`),
           );
         };
-
         const nativeProjection = observedPersistence.isNative()
           ? observedPersistence.projectionsRef.current.get(channel.id)
           : undefined;

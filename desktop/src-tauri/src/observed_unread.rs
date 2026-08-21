@@ -393,6 +393,7 @@ fn projections(tx: &Transaction<'_>, scope: &str) -> Result<Vec<ChannelProjectio
         if root
             .as_ref()
             .is_some_and(|root_id| muted_roots.contains(root_id))
+            && !high
         {
             continue;
         }
@@ -779,7 +780,7 @@ mod tests {
     }
 
     #[test]
-    fn projection_filters_muted_roots_beyond_the_activity_preview_limit() {
+    fn projection_filters_muted_roots_but_preserves_high_priority_mentions() {
         let (_d, mut conn) = db();
         let tx = conn.transaction().unwrap();
         let key = scope().key();
@@ -793,8 +794,12 @@ mod tests {
                     channel_id: "ch".into(),
                     id: format!("reply-{index:03}"),
                     created_at: 100 + index,
-                    root_id: Some(format!("root-{index:03}")),
-                    high_priority: false,
+                    root_id: Some(if index < 2 {
+                        "root-muted".into()
+                    } else {
+                        format!("root-{index:03}")
+                    }),
+                    high_priority: index == 1,
                     counts_toward_badge: true,
                     counts_toward_app_badge: false,
                 },
@@ -802,7 +807,7 @@ mod tests {
             .unwrap();
         }
         tx.execute(
-            "INSERT INTO unread_membership(scope,kind,value) VALUES(?1,'muted_root','root-000')",
+            "INSERT INTO unread_membership(scope,kind,value) VALUES(?1,'muted_root','root-muted')",
             [&key],
         )
         .unwrap();
@@ -812,6 +817,9 @@ mod tests {
         assert!(!projected[0]
             .unread_thread_event_ids
             .contains(&"reply-000".to_string()));
+        assert!(projected[0]
+            .unread_thread_event_ids
+            .contains(&"reply-001".to_string()));
         assert!(projected[0]
             .unread_thread_event_ids
             .contains(&"reply-101".to_string()));
