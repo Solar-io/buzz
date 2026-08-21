@@ -92,6 +92,11 @@ async fn security_headers(request: axum::extract::Request, next: Next) -> Respon
 struct ReportQuery {
     community_id: Option<Uuid>,
     status: Option<String>,
+    /// Visibility escape hatch. Absent (or any value other than `all`) selects
+    /// the escalated-only backstop default when no explicit `status` is given;
+    /// `scope=all` restores full visibility across every status for
+    /// platform-safety/legal review. Ignored when `status` is set explicitly.
+    scope: Option<String>,
     report_type: Option<String>,
     target_kind: Option<String>,
     before: Option<DateTime<Utc>>,
@@ -217,16 +222,26 @@ async fn reports(
         &["open", "resolved", "dismissed", "escalated"],
         "invalid_status",
     )?;
+    validate(query.scope.as_deref(), &["all"], "invalid_scope")?;
     validate(
         query.target_kind.as_deref(),
         &["event", "pubkey", "blob"],
         "invalid_target_kind",
     )?;
+    // Escalated-by-default backstop (VISION_MODERATION): with no explicit
+    // `status`, the operator queue shows the escalation backstop only. Full
+    // visibility across every status stays available for platform-safety/legal
+    // review via `scope=all`; an explicit `status=` filter is honored as-is.
+    let effective_status = match (query.status.as_deref(), query.scope.as_deref()) {
+        (Some(status), _) => Some(status),
+        (None, Some("all")) => None,
+        (None, _) => Some("escalated"),
+    };
     let items = state
         .db
         .admin_list_reports(
             query.community_id,
-            query.status.as_deref(),
+            effective_status,
             query.report_type.as_deref(),
             query.target_kind.as_deref(),
             query.after,
@@ -3701,12 +3716,22 @@ mod tests {
                 .expect("lookup admin.example community");
         let community_id = match existing {
             Some(id) => id,
-            None => sqlx::query_scalar(
-                "INSERT INTO communities (id, host) VALUES (gen_random_uuid(), 'admin.example') RETURNING id",
-            )
-            .fetch_one(pool)
-            .await
-            .expect("seed admin.example community"),
+            // ON CONFLICT + re-select: parallel seed callers race to insert the
+            // shared admin.example community; the loser's insert is a no-op and
+            // it reads the winner's row rather than hitting the unique index.
+            None => {
+                sqlx::query(
+                    "INSERT INTO communities (id, host) VALUES (gen_random_uuid(), 'admin.example') \
+                     ON CONFLICT DO NOTHING",
+                )
+                .execute(pool)
+                .await
+                .expect("seed admin.example community");
+                sqlx::query_scalar("SELECT id FROM communities WHERE lower(host) = 'admin.example'")
+                    .fetch_one(pool)
+                    .await
+                    .expect("read admin.example community")
+            }
         };
 
         let uid = Uuid::new_v4();
@@ -3734,6 +3759,120 @@ mod tests {
         .await
         .expect("seed report");
         report_id
+    }
+
+    /// Read `GET /reports` (optionally with a query string) in NIP-98 mode and
+    /// return the report ids present in the response body.
+    async fn list_report_ids(
+        state: Arc<crate::state::AppState>,
+        keys: &nostr::Keys,
+        query: &str,
+    ) -> std::collections::HashSet<Uuid> {
+        let path = format!("/reports{query}");
+        let auth = make_nostr_auth(keys, &path);
+        let response = status_for(
+            state,
+            Request::builder()
+                .uri(&path)
+                .header(header::HOST, "admin.example")
+                .header(header::AUTHORIZATION, auth)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK, "GET {path}");
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .expect("read body");
+        let reports: Vec<serde_json::Value> =
+            serde_json::from_slice(&bytes).expect("parse reports");
+        reports
+            .into_iter()
+            .map(|r| {
+                r.get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|s| Uuid::parse_str(s).ok())
+                    .expect("report id")
+            })
+            .collect()
+    }
+
+    /// `GET /reports` with no `status` defaults to the escalated-only backstop:
+    /// an escalated report appears, an open one does not.
+    #[tokio::test]
+    #[ignore = "requires Postgres — report listing defaults to escalated-only"]
+    async fn reports_default_lists_escalated_only() {
+        let keys = nostr::Keys::generate();
+        let state = nip98_state(vec![keys.public_key().to_hex()]).await;
+        let pool = sqlx::PgPool::connect(
+            &std::env::var("BUZZ_TEST_DATABASE_URL")
+                .unwrap_or_else(|_| "postgres://buzz:buzz_dev@localhost:5432/buzz".to_string()),
+        )
+        .await
+        .expect("connect to test DB");
+        let escalated = seed_admin_host_report(&pool, "escalated").await;
+        let open = seed_admin_host_report(&pool, "open").await;
+
+        let ids = list_report_ids(state, &keys, "").await;
+        assert!(
+            ids.contains(&escalated),
+            "escalated report must appear in the default backstop view"
+        );
+        assert!(
+            !ids.contains(&open),
+            "open report must be hidden from the escalated-only default view"
+        );
+    }
+
+    /// `scope=all` restores full visibility for platform-safety/legal review:
+    /// both escalated and open reports appear.
+    #[tokio::test]
+    #[ignore = "requires Postgres — scope=all restores full visibility"]
+    async fn reports_scope_all_lists_every_status() {
+        let keys = nostr::Keys::generate();
+        let state = nip98_state(vec![keys.public_key().to_hex()]).await;
+        let pool = sqlx::PgPool::connect(
+            &std::env::var("BUZZ_TEST_DATABASE_URL")
+                .unwrap_or_else(|_| "postgres://buzz:buzz_dev@localhost:5432/buzz".to_string()),
+        )
+        .await
+        .expect("connect to test DB");
+        let escalated = seed_admin_host_report(&pool, "escalated").await;
+        let open = seed_admin_host_report(&pool, "open").await;
+
+        let ids = list_report_ids(state, &keys, "?scope=all").await;
+        assert!(
+            ids.contains(&escalated) && ids.contains(&open),
+            "scope=all must list reports regardless of status"
+        );
+    }
+
+    /// An explicit `status=` filter is honored unchanged and overrides the
+    /// escalated-only default: `status=open` shows the open report, not the
+    /// escalated one.
+    #[tokio::test]
+    #[ignore = "requires Postgres — explicit status filter overrides the default"]
+    async fn reports_explicit_status_filter_overrides_default() {
+        let keys = nostr::Keys::generate();
+        let state = nip98_state(vec![keys.public_key().to_hex()]).await;
+        let pool = sqlx::PgPool::connect(
+            &std::env::var("BUZZ_TEST_DATABASE_URL")
+                .unwrap_or_else(|_| "postgres://buzz:buzz_dev@localhost:5432/buzz".to_string()),
+        )
+        .await
+        .expect("connect to test DB");
+        let escalated = seed_admin_host_report(&pool, "escalated").await;
+        let open = seed_admin_host_report(&pool, "open").await;
+
+        let ids = list_report_ids(state, &keys, "?status=open").await;
+        assert!(
+            ids.contains(&open),
+            "explicit status=open must return the open report"
+        );
+        assert!(
+            !ids.contains(&escalated),
+            "explicit status=open must not return escalated reports"
+        );
     }
 
     #[tokio::test]

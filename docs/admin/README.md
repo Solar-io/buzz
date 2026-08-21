@@ -399,8 +399,18 @@ Feedback search and filters run over the bounded browser result set; the
   Returns `409` if the target is config-backed.
 
 Report reads accept optional `communityId`, `status`, `reportType`, `targetKind`,
-`after`, `before`, and `limit` parameters. Limits are capped at 200. Feedback is
+`after`, `before`, `scope`, and `limit` parameters. Limits are capped at 200. Feedback is
 a bounded newest-first summary from the existing product-feedback repository.
+
+### Escalation-scoped default
+
+`GET /reports` with no `status` parameter returns only `escalated` reports — the
+escalation backstop the operator queue is meant to hold per `VISION_MODERATION`,
+where the severe class is the platform's to review rather than the community's.
+An explicit `status=<open|resolved|dismissed|escalated>` filter is always honored
+as given. Full visibility across every status stays available for platform-safety
+and legal review via `scope=all`, which lists reports regardless of status;
+`scope` accepts only `all` and is ignored when an explicit `status` is present.
 
 ## Feedback attachment boundary
 

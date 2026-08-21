@@ -789,6 +789,20 @@ jobs:
             --run-ignored ignored-only
         env:
           DATABASE_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/buzz
+      - name: Admin API escalation-scoping tests
+        # Escalation scoping for the moderation queue, all #[ignore]d (they need
+        # Postgres) and selected by no other job:
+        #  - GET /reports defaults to the escalated-only backstop, scope=all
+        #    restores full visibility, explicit status= overrides the default.
+        #  - member reports with category 'illegal' auto-escalate at ingestion
+        #    while every other category still lands 'open'.
+        run: |
+          cargo nextest run \
+            --archive-file target/ci/backend-integration-tests.tar.zst \
+            -E '(package(buzz-relay) and test(=api::admin::tests::reports_default_lists_escalated_only)) or (package(buzz-relay) and test(=api::admin::tests::reports_scope_all_lists_every_status)) or (package(buzz-relay) and test(=api::admin::tests::reports_explicit_status_filter_overrides_default))' \
+            --run-ignored ignored-only
+        env:
+          DATABASE_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/buzz
       - name: Upload relay log
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
