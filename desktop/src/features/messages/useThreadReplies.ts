@@ -134,10 +134,27 @@ export async function backfillThreadAux(
   );
 }
 
-async function loadThreadReplies(
+/**
+ * Dependencies for {@link loadThreadReplies}, injectable so the first-paint
+ * seam (content resolves before aux settles; aux later merges into the same
+ * cache key) is unit-testable while stubbing only the relay boundary. Defaults
+ * hit the live relay.
+ */
+export type LoadThreadRepliesDeps = {
+  fetchPage: typeof getThreadReplies;
+  auxDeps: ThreadAuxFetchDeps;
+};
+
+const defaultLoadThreadRepliesDeps: LoadThreadRepliesDeps = {
+  fetchPage: getThreadReplies,
+  auxDeps: defaultThreadAuxDeps,
+};
+
+export async function loadThreadReplies(
   queryClient: QueryClient,
   channelId: string,
   rootId: string,
+  deps: LoadThreadRepliesDeps = defaultLoadThreadRepliesDeps,
 ): Promise<RelayEvent[]> {
   const queryKey = threadRepliesKey(channelId, rootId);
   const cacheAtStart = queryClient.getQueryData<RelayEvent[]>(queryKey) ?? [];
@@ -145,7 +162,7 @@ async function loadThreadReplies(
   const replies: RelayEvent[] = [];
   let cursor: ThreadCursor | null = null;
   for (let page = 0; page < MAX_THREAD_PAGES; page += 1) {
-    const response = await getThreadReplies(rootId, channelId, {
+    const response = await deps.fetchPage(rootId, channelId, {
       limit: THREAD_PAGE_LIMIT,
       cursor,
     });
@@ -155,7 +172,13 @@ async function loadThreadReplies(
       // path. The aux fetch is a relay round trip, so React Query commits this
       // returned content before `backfillThreadAux`'s merge runs — the merge
       // then folds aux over the committed rows via `setQueryData`.
-      void backfillThreadAux(queryClient, channelId, rootId, replies);
+      void backfillThreadAux(
+        queryClient,
+        channelId,
+        rootId,
+        replies,
+        deps.auxDeps,
+      );
       const current = queryClient.getQueryData<RelayEvent[]>(queryKey) ?? [];
       const receivedInFlight = current.filter(
         (event) => !idsAtStart.has(event.id),

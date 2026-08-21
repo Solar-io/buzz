@@ -6,6 +6,7 @@ import {
   THREAD_REPLIES_STALE_TIME_MS,
   backfillThreadAux,
   collectThreadAuxMessageIds,
+  loadThreadReplies,
 } from "./useThreadReplies.ts";
 import { threadRepliesKey } from "./lib/messageQueryKeys.ts";
 
@@ -123,5 +124,115 @@ test("backfillThreadAux merges over the current cache, not the fetch-time replie
   assert.deepEqual(
     cached.map((event) => event.id).sort(),
     [original.id, liveReply.id, reactionEvent.id].sort(),
+  );
+});
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function singlePage(events) {
+  return async () => ({ events, nextCursor: null });
+}
+
+test("loadThreadReplies resolves with content while aux is still pending", async () => {
+  const content = reply();
+  const client = makeQueryClientStub([]);
+  const auxGate = deferred();
+  let auxStarted = false;
+
+  const result = await loadThreadReplies(client, CHANNEL_ID, ROOT_ID, {
+    fetchPage: singlePage([content]),
+    auxDeps: {
+      fetchStructuralAux: async () => {
+        auxStarted = true;
+        await auxGate.promise;
+        return [];
+      },
+      fetchReactions: async () => {
+        await auxGate.promise;
+        return [];
+      },
+    },
+  });
+
+  // Content is returned before the (still-pending) aux fetch settles: the
+  // headline first-paint guarantee. If line resolution regressed to
+  // `await backfillThreadAux(...)`, this await would hang until auxGate resolves.
+  assert.ok(auxStarted, "aux dispatch should have been fired");
+  assert.deepEqual(
+    result.map((event) => event.id),
+    [content.id],
+  );
+  auxGate.resolve();
+});
+
+test("loadThreadReplies merges aux into the thread cache after content resolves", async () => {
+  const content = reply();
+  const client = makeQueryClientStub([]);
+  const editEvent = { ...reply("3".repeat(64)), kind: 40003 };
+  const auxGate = deferred();
+
+  const result = await loadThreadReplies(client, CHANNEL_ID, ROOT_ID, {
+    fetchPage: singlePage([content]),
+    auxDeps: {
+      fetchStructuralAux: async () => {
+        await auxGate.promise;
+        return [editEvent];
+      },
+      fetchReactions: async () => {
+        await auxGate.promise;
+        return [];
+      },
+    },
+  });
+
+  // At resolve time the cache is untouched by aux (content only).
+  assert.deepEqual(
+    result.map((event) => event.id),
+    [content.id],
+  );
+
+  // Mirror React Query committing the resolved queryFn value before aux lands.
+  client.setQueryData(threadRepliesKey(CHANNEL_ID, ROOT_ID), result);
+  auxGate.resolve();
+  // Let the fire-and-forget merge microtasks settle.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const cached = client.getQueryData(threadRepliesKey(CHANNEL_ID, ROOT_ID));
+  assert.deepEqual(
+    cached.map((event) => event.id).sort(),
+    [content.id, editEvent.id].sort(),
+  );
+});
+
+test("loadThreadReplies still resolves content when aux fetches reject", async () => {
+  const content = reply();
+  const client = makeQueryClientStub([]);
+
+  const result = await loadThreadReplies(client, CHANNEL_ID, ROOT_ID, {
+    fetchPage: singlePage([content]),
+    auxDeps: {
+      fetchStructuralAux: async () => {
+        throw new Error("structural aux down");
+      },
+      fetchReactions: async () => {
+        throw new Error("reactions down");
+      },
+    },
+  });
+
+  // Aux rejection is best-effort: the content query succeeds and never sees
+  // the error (which would collide with the thread-load error surface).
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(
+    result.map((event) => event.id),
+    [content.id],
   );
 });
