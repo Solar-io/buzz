@@ -5,7 +5,7 @@ import * as React from "react";
 
 import { EmojiPicker } from "@/features/custom-emoji/ui/EmojiPicker";
 import { klipyGifAttachment, type KlipyGif } from "@/features/gifs/api";
-import { relayKlipySearchEndpoint } from "@/features/gifs/relay";
+import { relayKlipyEndpoints, reportKlipyShare } from "@/features/gifs/relay";
 import { KlipyGifPicker } from "@/features/gifs/ui/KlipyGifPicker";
 import { useCommunities } from "@/features/communities/useCommunities";
 import type { MediaUploadController } from "@/features/messages/lib/useMediaUpload";
@@ -46,13 +46,14 @@ export const ComposerEmojiPicker = React.memo(function ComposerEmojiPicker({
   const relayUrl = activeCommunity?.relayUrl ?? "";
   const klipyCapabilityQuery = useQuery({
     enabled: relayUrl.length > 0,
-    queryFn: ({ signal }) => relayKlipySearchEndpoint(relayUrl, signal),
+    queryFn: ({ signal }) => relayKlipyEndpoints(relayUrl, signal),
     queryKey: ["relay-capability", relayUrl, "klipy"],
     retry: 1,
     staleTime: 5 * 60 * 1_000,
   });
-  const gifSearchPath = klipyCapabilityQuery.data ?? "";
-  const gifsAvailable = gifSearchPath.length > 0;
+  const gifSearchPath = klipyCapabilityQuery.data?.searchPath ?? "";
+  const gifSharePath = klipyCapabilityQuery.data?.sharePath ?? "";
+  const gifsAvailable = gifSearchPath.length > 0 && gifSharePath.length > 0;
 
   React.useEffect(() => {
     if (!open) setPickerTab("emoji");
@@ -66,8 +67,12 @@ export const ComposerEmojiPicker = React.memo(function ComposerEmojiPicker({
         ...current,
         klipyGifAttachment(gif),
       ]);
+      void reportKlipyShare(relayUrl, gifSharePath, gif.slug).catch(() => {
+        // Sharing the GIF remains successful if best-effort Recents reporting
+        // fails; the authenticated relay endpoint keeps provider details hidden.
+      });
     },
-    [gifMediaController.setPendingImeta, onOpenChange, relayUrl],
+    [gifMediaController.setPendingImeta, gifSharePath, onOpenChange, relayUrl],
   );
 
   return (

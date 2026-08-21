@@ -5,7 +5,7 @@ import {
   klipyGifAttachment,
   klipyGifFilename,
   normalizeKlipyGifs,
-  relayKlipySearchPath,
+  relayKlipyCapability,
 } from "./api.ts";
 
 const GIF_ASSET = {
@@ -50,35 +50,70 @@ test("normalizeKlipyGifs omits ads and malformed file records", () => {
   assert.deepEqual(gifs, []);
 });
 
-test("relayKlipySearchPath requires the explicit relay capability", () => {
-  assert.equal(
-    relayKlipySearchPath({
-      gif: { provider: "klipy", search: "/gifs/search" },
+test("relayKlipyCapability requires safe search and share endpoints", () => {
+  assert.deepEqual(
+    relayKlipyCapability({
+      gif: {
+        provider: "klipy",
+        search: "/gifs/search",
+        share: "/gifs/share",
+      },
       supported_extensions: ["nip-er", "buzz-gif"],
     }),
-    "/gifs/search",
+    { searchPath: "/gifs/search", sharePath: "/gifs/share" },
   );
-  assert.equal(relayKlipySearchPath({}), null);
+  assert.equal(relayKlipyCapability({}), null);
   assert.equal(
-    relayKlipySearchPath({
-      gif: { provider: "another", search: "/gifs/search" },
+    relayKlipyCapability({
+      gif: {
+        provider: "another",
+        search: "/gifs/search",
+        share: "/gifs/share",
+      },
       supported_extensions: ["buzz-gif"],
     }),
     null,
   );
   assert.equal(
-    relayKlipySearchPath({
+    relayKlipyCapability({
       gif: { provider: "klipy", search: "/gifs/search" },
-    }),
-    null,
-  );
-  assert.equal(
-    relayKlipySearchPath({
-      gif: { provider: "klipy", search: "https://attacker.example/search" },
       supported_extensions: ["buzz-gif"],
     }),
     null,
   );
+  for (const path of [
+    "https://attacker.example/search",
+    "//attacker.example/search",
+    "/\\attacker.example/search",
+    "/%5c%5cattacker.example/search",
+    "/gifs/../admin",
+    "/gifs/%2e%2e/admin",
+    "/gifs/search?redirect=https://attacker.example",
+    "/gifs/search#fragment",
+  ]) {
+    assert.equal(
+      relayKlipyCapability({
+        gif: {
+          provider: "klipy",
+          search: path,
+          share: "/gifs/share",
+        },
+        supported_extensions: ["buzz-gif"],
+      }),
+      null,
+    );
+    assert.equal(
+      relayKlipyCapability({
+        gif: {
+          provider: "klipy",
+          search: "/gifs/search",
+          share: path,
+        },
+        supported_extensions: ["buzz-gif"],
+      }),
+      null,
+    );
+  }
 });
 
 test("klipyGifFilename sanitizes provider slugs", () => {

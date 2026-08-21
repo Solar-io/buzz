@@ -68,6 +68,8 @@ pub struct GifDescriptor {
     pub provider: String,
     /// Relay-relative authenticated metadata search endpoint.
     pub search: String,
+    /// Relay-relative authenticated share-reporting endpoint.
+    pub share: String,
 }
 
 /// Protocol and resource limits advertised in the NIP-11 document.
@@ -179,7 +181,8 @@ impl RelayInfo {
             supported_extensions.push("buzz-gif".to_string());
             GifDescriptor {
                 provider: provider.to_string(),
-                search: "/gifs/search".to_string(),
+                search: crate::api::gifs::SEARCH_PATH.to_string(),
+                share: crate::api::gifs::SHARE_PATH.to_string(),
             }
         });
 
@@ -463,6 +466,7 @@ mod tests {
         let json = serde_json::to_value(&info).expect("serialize");
         assert_eq!(json["gif"]["provider"], "klipy");
         assert_eq!(json["gif"]["search"], "/gifs/search");
+        assert_eq!(json["gif"]["share"], "/gifs/share");
         assert!(json["supported_extensions"]
             .as_array()
             .expect("extensions")

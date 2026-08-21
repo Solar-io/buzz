@@ -34,7 +34,7 @@ export type KlipyResponse = {
 };
 
 export type KlipyGif = {
-  id: number;
+  id: number | null;
   original: Required<KlipyAsset>;
   preview: Required<KlipyAsset>;
   slug: string;
@@ -45,23 +45,42 @@ export type RelayGifSearchInfo = {
   gif?: {
     provider?: string;
     search?: string;
+    share?: string;
   };
   supported_extensions?: string[];
 };
 
-/** The safe relay-relative KLIPY search path advertised by NIP-11, if any. */
-export function relayKlipySearchPath(info: RelayGifSearchInfo): string | null {
-  const path = info.gif?.search;
-  if (
-    info.supported_extensions?.includes("buzz-gif") === true &&
-    info.gif?.provider === "klipy" &&
+export type RelayKlipyCapability = {
+  searchPath: string;
+  sharePath: string;
+};
+
+function safeRelayPath(path: unknown): path is string {
+  return (
     typeof path === "string" &&
     path.startsWith("/") &&
     !path.startsWith("//") &&
+    !path.includes("\\") &&
+    !path.includes("%") &&
     !path.includes("?") &&
-    !path.includes("#")
+    !path.includes("#") &&
+    !path.split("/").some((segment) => segment === "." || segment === "..")
+  );
+}
+
+/** The safe relay-relative KLIPY endpoints advertised by NIP-11, if any. */
+export function relayKlipyCapability(
+  info: RelayGifSearchInfo,
+): RelayKlipyCapability | null {
+  const searchPath = info.gif?.search;
+  const sharePath = info.gif?.share;
+  if (
+    info.supported_extensions?.includes("buzz-gif") === true &&
+    info.gif?.provider === "klipy" &&
+    safeRelayPath(searchPath) &&
+    safeRelayPath(sharePath)
   ) {
-    return path;
+    return { searchPath, sharePath };
   }
   return null;
 }
@@ -112,7 +131,7 @@ export function normalizeKlipyGifs(items: KlipyRawGif[]): KlipyGif[] {
     if (!original || !preview) continue;
 
     gifs.push({
-      id: item.id ?? gifs.length,
+      id: item.id ?? null,
       original,
       preview,
       slug: item.slug,
@@ -134,8 +153,9 @@ export function klipyGifFilename(gif: KlipyGif): string {
 
 /**
  * Represent a selected KLIPY GIF as externally hosted media. The empty hash
- * intentionally distinguishes it from bytes uploaded to Buzz media storage;
- * NIP-92 permits URL-only media metadata.
+ * marks it as content-only media: the outgoing builder appends the image URL
+ * to the message body but deliberately omits an imeta tag, since Buzz relays
+ * only accept verified local `/media/` entries in imeta.
  */
 export function klipyGifAttachment(gif: KlipyGif): BlobDescriptor {
   return {

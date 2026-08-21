@@ -110,7 +110,7 @@ export const KlipyGifPicker = React.memo(function KlipyGifPicker({
               <button
                 aria-label={`Choose ${gif.title}`}
                 className="mb-1.5 block w-full break-inside-avoid overflow-hidden rounded-lg bg-muted outline-hidden ring-offset-background transition-[filter,transform] hover:brightness-110 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 active:scale-[0.98]"
-                key={`${gif.id}-${gif.slug}`}
+                key={gif.slug}
                 onClick={() => onSelect(gif)}
                 title={gif.title}
                 type="button"
