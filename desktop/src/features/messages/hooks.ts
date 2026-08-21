@@ -333,8 +333,17 @@ export function useChannelSubscription(channel: Channel | null) {
     if (threadReference?.parentId != null) {
       const rootId = threadReference?.rootId;
       if (rootId) {
-        queryClient.setQueryData<RelayEvent[]>(
-          threadRepliesKey(channelId, rootId),
+        // Update only an already-observed thread key; never build a fresh one.
+        // Under the 30s `staleTime`, a `setQueryData` that creates the key
+        // would mint a "complete/fresh" cache whose only row is this live
+        // reply, so opening a never-loaded thread inside the window would skip
+        // the history fetch and show just this reply. `setQueriesData` writes
+        // through `findAll`, which matches only existing queries — a warm or
+        // in-flight thread appends; an absent thread stays absent and its next
+        // mount fetches the full subtree from the relay (which includes this
+        // reply). Mirrors the aux fan-out below, which is create-safe already.
+        queryClient.setQueriesData<RelayEvent[]>(
+          { queryKey: threadRepliesKey(channelId, rootId), exact: true },
           (current = []) => mergeMessages(current, event),
         );
       }

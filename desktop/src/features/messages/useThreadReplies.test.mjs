@@ -127,6 +127,76 @@ test("backfillThreadAux merges over the current cache, not the fetch-time replie
   );
 });
 
+// Model production's exact-500 paging contract: the bridge returns a non-null
+// cursor for *every* full `THREAD_PAGE_LIMIT` page (it treats a full page as
+// potentially incomplete), and a null cursor only for a short/empty page. So a
+// thread with a multiple of 500 replies costs one extra empty request, and the
+// loader must page until the null cursor, unioning every page without loss or
+// duplication. The E2E bridge returns a cursor only when rows remain, so this
+// exact-500 boundary is not covered there — hence a unit model here.
+function pagedFetcher(pageSizes) {
+  let call = 0;
+  const uid = (page, index) =>
+    `${page}`.padStart(2, "0").repeat(2) + `${index}`.padStart(60, "0");
+  const calls = [];
+  const fetchPage = async (_rootId, _channelId, { limit, cursor }) => {
+    calls.push({ limit, cursor });
+    const size = pageSizes[call];
+    const events = Array.from({ length: size }, (_unused, index) => ({
+      ...reply(uid(call, index)),
+      created_at: 1_700_000_000 + call * 1_000 + index,
+    }));
+    // Production: a full page (== limit) is treated as maybe-incomplete and
+    // returns a cursor; anything short terminates.
+    const isFull = size === limit;
+    call += 1;
+    return {
+      events,
+      nextCursor: isFull ? { createdAt: 1, eventId: uid(call, 0) } : null,
+    };
+  };
+  return { fetchPage, calls };
+}
+
+const noopAuxDeps = {
+  fetchStructuralAux: async () => [],
+  fetchReactions: async () => [],
+};
+
+for (const total of [499, 500, 501]) {
+  test(`loadThreadReplies pages the production exact-500 cursor contract at ${total} replies`, async () => {
+    const client = makeQueryClientStub([]);
+    // 499 → [499] (short page, one request). 500 → [500, 0] (full page returns
+    // a cursor, then an empty terminating page). 501 → [500, 1].
+    const pageSizes =
+      total < THREAD_PAGE_LIMIT
+        ? [total]
+        : [THREAD_PAGE_LIMIT, total - THREAD_PAGE_LIMIT];
+    const { fetchPage, calls } = pagedFetcher(pageSizes);
+
+    const result = await loadThreadReplies(client, CHANNEL_ID, ROOT_ID, {
+      fetchPage,
+      auxDeps: noopAuxDeps,
+    });
+
+    assert.equal(
+      calls.length,
+      pageSizes.length,
+      "must issue exactly one request per page until the null cursor",
+    );
+    assert.ok(
+      calls.every((c) => c.limit === THREAD_PAGE_LIMIT),
+      "every page requests the server-clamped 500 maximum",
+    );
+    assert.equal(result.length, total, "the union spans every paged reply");
+    assert.equal(
+      new Set(result.map((event) => event.id)).size,
+      total,
+      "paged replies union without duplication",
+    );
+  });
+}
+
 function deferred() {
   let resolve;
   let reject;
