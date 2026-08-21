@@ -2743,7 +2743,7 @@ mod tests {
             cid,
             crate::moderation::NewReport {
                 report_event_id: &event_id,
-                reporter_pubkey: &vec![0u8; 32],
+                reporter_pubkey: &[0u8; 32],
                 target: crate::moderation::ReportTarget::Pubkey(vec![7u8; 32]),
                 channel_id: None,
                 report_type: "illegal",
