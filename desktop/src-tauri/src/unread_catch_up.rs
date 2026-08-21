@@ -175,7 +175,13 @@ fn discovery_filters(
     channel: &CatchUpChannel,
     self_pubkey: &str,
 ) -> (serde_json::Value, serde_json::Value) {
-    let since = channel.read_at.map_or(0, |value| value.saturating_add(1));
+    // Membership observed before the timeline frontier is already persisted
+    // in the native store. Using only the bare marker here would repeatedly
+    // rescan a passively viewed channel's entire authored/mentioned history.
+    let since = channel
+        .timeline_read_at
+        .or(channel.read_at)
+        .map_or(0, |value| value.saturating_add(1));
     let mut authored = base_filter(channel, since);
     authored["authors"] = serde_json::json!([self_pubkey]);
     let mut mentioned = base_filter(channel, since);
@@ -751,7 +757,7 @@ mod tests {
     }
 
     #[test]
-    fn split_filters_bound_deep_history_to_user_and_thread_evidence() {
+    fn split_filters_bound_discovery_and_top_level_history_to_timeline_frontier() {
         let channel = CatchUpChannel {
             id: "ch".into(),
             channel_type: "stream".into(),
@@ -760,8 +766,9 @@ mod tests {
             timeline_read_at: Some(900),
         };
         let (authored, mentioned) = discovery_filters(&channel, "self");
-        assert_eq!(authored["since"], 11);
+        assert_eq!(authored["since"], 901);
         assert_eq!(authored["authors"], serde_json::json!(["self"]));
+        assert_eq!(mentioned["since"], 901);
         assert_eq!(mentioned["#p"], serde_json::json!(["self"]));
 
         let top_level = top_level_filter(&channel);
