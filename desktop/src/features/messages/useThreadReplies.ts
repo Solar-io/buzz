@@ -20,7 +20,10 @@ import type { Channel, RelayEvent, ThreadCursor } from "@/shared/api/types";
 
 // The bridge clamps a thread page to BRIDGE_THREAD_MAX_LIMIT (500) and the
 // Tauri command caps it with `.min(500)`, so 500 is the largest page the server
-// will serve — a ≤500-reply thread cold-opens in a single content round trip.
+// will serve. A thread with fewer than 500 replies cold-opens in a single
+// content round trip; a full 500-reply page returns a non-null cursor (the
+// bridge treats every full page as potentially incomplete), so exactly 500
+// costs a second, empty content request.
 export const THREAD_PAGE_LIMIT = 500;
 const MAX_THREAD_PAGES = 500;
 
