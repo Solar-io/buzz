@@ -387,6 +387,34 @@ test.describe("channel activity hover preview", () => {
     ).toHaveCount(0);
   });
 
+  test("does not restore read activity in a later agent-only hover session", async ({
+    page,
+  }) => {
+    await seedChannelActivity(page);
+    let popover = await openActivityPopover(page);
+
+    for (let remaining = 1; remaining >= 0; remaining -= 1) {
+      const row = popover.getByTestId(/^channel-activity-item-/).first();
+      await row.hover();
+      await row.getByRole("button", { name: "Mark as read" }).click();
+      await expect(popover.getByTestId(/^channel-activity-item-/)).toHaveCount(
+        remaining,
+      );
+    }
+    await expect(
+      popover.getByTestId(`channel-activity-agent-${AGENT_PUBKEY}`),
+    ).toBeVisible();
+
+    await page.mouse.move(1100, 100, { steps: 10 });
+    await expect(popover).toBeHidden();
+
+    popover = await openActivityPopover(page);
+    await expect(
+      popover.getByTestId(`channel-activity-agent-${AGENT_PUBKEY}`),
+    ).toBeVisible();
+    await expect(popover.getByTestId(/^channel-activity-item-/)).toHaveCount(0);
+  });
+
   test("groups multiple unread replies against the previewed channel", async ({
     page,
   }) => {

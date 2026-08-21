@@ -356,6 +356,11 @@ export function ChannelActivityPopover({
 
   React.useEffect(() => () => clearHoverTimer(), [clearHoverTimer]);
   React.useEffect(() => {
+    if (open) return;
+    retainedUnreadFeedItemsRef.current = [];
+    retainedActivityItemsRef.current = [];
+  }, [open]);
+  React.useEffect(() => {
     if (contentLossTimerRef.current !== null) {
       clearTimeout(contentLossTimerRef.current);
       contentLossTimerRef.current = null;
