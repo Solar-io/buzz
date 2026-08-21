@@ -1785,3 +1785,27 @@ CREATE INDEX idx_relay_admin_outbox_pending
 
 INSERT INTO _operator_global_tables (table_name, reason) VALUES
     ('relay_admin_outbox', 'deployment-global enforcement artifact delivery queue');
+
+-- ── Relay operator audit (append-only roster mutation trail) ─────────────────
+-- One row per PUT/DELETE /operators/{pubkey} mutation. The roster is the
+-- deployment-wide root of trust and its mutations overwrite/remove in place;
+-- this append-only trail records who granted, elevated, or revoked whom, and
+-- when, so privilege changes are as auditable as the enforcement actions those
+-- principals perform. Written only inside the upsert/delete transactions; no
+-- UPDATE/DELETE path.
+
+CREATE TABLE relay_operator_audit (
+    id            UUID NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+    actor_pubkey  BYTEA NOT NULL CHECK (length(actor_pubkey) = 32),
+    target_pubkey BYTEA NOT NULL CHECK (length(target_pubkey) = 32),
+    op            TEXT NOT NULL CHECK (op IN ('grant', 'revoke')),
+    prev_role     TEXT CHECK (prev_role IN ('operator', 'moderator')),
+    new_role      TEXT CHECK (new_role IN ('operator', 'moderator')),
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_relay_operator_audit_target
+    ON relay_operator_audit (target_pubkey, created_at);
+
+INSERT INTO _operator_global_tables (table_name, reason) VALUES
+    ('relay_operator_audit', 'deployment-global append-only roster mutation audit trail; no community_id intentionally');

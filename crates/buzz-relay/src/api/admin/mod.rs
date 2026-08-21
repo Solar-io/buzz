@@ -421,6 +421,38 @@ struct ResolveReportBody {
     reason: Option<String>,
 }
 
+/// Upper bound on a `timeout` action's `expiration_secs` (365 days). Anything
+/// larger is rejected 4xx rather than clamped: an unbounded future expiry is a
+/// client error, and the cap keeps `Utc::now() + Duration` well clear of the
+/// chrono/`i64` overflow range so the computation can never panic.
+const MAX_TIMEOUT_SECS: u64 = 365 * 24 * 60 * 60;
+
+/// Convert an attacker-controlled `expiration_secs` into a future timeout
+/// instant, rejecting zero, the over-cap range, and any value that would
+/// overflow the timestamp arithmetic. Never panics; never yields a past instant.
+fn compute_timeout_until(secs: u64) -> Result<DateTime<Utc>, ApiError> {
+    if secs == 0 {
+        return Err(ApiError::bad_request(
+            "invalid_expiration",
+            "expirationSecs must be greater than zero",
+        ));
+    }
+    if secs > MAX_TIMEOUT_SECS {
+        return Err(ApiError::bad_request(
+            "invalid_expiration",
+            "expirationSecs exceeds the maximum timeout (365 days)",
+        ));
+    }
+    // secs is now in 1..=MAX_TIMEOUT_SECS, which fits i64 and stays far from the
+    // Duration/DateTime overflow edge, but keep the arithmetic checked so the
+    // guarantee is structural rather than relying on the cap alone.
+    let duration = chrono::Duration::try_seconds(secs as i64)
+        .ok_or_else(|| ApiError::bad_request("invalid_expiration", "invalid expirationSecs"))?;
+    Utc::now()
+        .checked_add_signed(duration)
+        .ok_or_else(|| ApiError::bad_request("invalid_expiration", "invalid expirationSecs"))
+}
+
 /// POST /reports/{id}/resolve
 ///
 /// Requires nip98 auth. Both Operator and Moderator may act.
@@ -467,10 +499,17 @@ async fn resolve_report(
         .await?
         .ok_or_else(ApiError::not_found)?;
 
-    // Compute timeout_until if needed.
-    let timeout_until: Option<DateTime<Utc>> = body
-        .expiration_secs
-        .map(|secs| Utc::now() + chrono::Duration::seconds(secs as i64));
+    // Compute timeout_until if needed. `expiration_secs` is attacker-controlled
+    // (u64 from the request body): a naive `Utc::now() + Duration::seconds(secs
+    // as i64)` panics on large magnitudes (Duration::seconds / the add both
+    // panic near i64::MAX) and a wrapped-negative cast would mint a *past*
+    // expiry that still passes `is_some()`. Bound it explicitly: reject zero,
+    // reject above MAX_TIMEOUT_SECS, and use checked arithmetic so no input can
+    // panic or produce a non-future expiry.
+    let timeout_until: Option<DateTime<Utc>> = match body.expiration_secs {
+        None => None,
+        Some(secs) => Some(compute_timeout_until(secs)?),
+    };
 
     // Validate action/target matrix and derive HTTP terminal status.
     let _derived_status = http_validate_and_derive_status(
@@ -964,11 +1003,17 @@ async fn upsert_operator(
     let principal = require_mutation_principal(principal_opt)?;
     require_operator(&principal)?;
 
-    // Decode target pubkey.
+    // Canonicalize the path param once: validate it decodes to 32 bytes, then
+    // lowercase it. Config-backed pubkeys are lowercased at parse, so the 409
+    // check, the DB write, and the response body must all use the canonical
+    // (lowercase) form — otherwise `PUT /operators/{UPPERCASE}` of a
+    // config-backed key would skip the 409 and write a shadow row for the same
+    // 32 bytes.
     let target_bytes = decode_hex_pubkey(&pubkey_hex)?;
+    let canonical_hex = pubkey_hex.to_ascii_lowercase();
 
     // Reject if config-backed (immutable through the API).
-    if is_config_backed_pubkey(&state.config, &pubkey_hex) {
+    if is_config_backed_pubkey(&state.config, &canonical_hex) {
         return Err(ApiError::conflict(
             "pubkey is backed by config (RELAY_OPERATOR_PUBKEYS or owner fallback) — immutable through the API",
         ));
@@ -990,7 +1035,7 @@ async fn upsert_operator(
         .await?;
 
     Ok(Json(
-        serde_json::json!({"pubkey": pubkey_hex, "role": body.role}),
+        serde_json::json!({"pubkey": canonical_hex, "role": body.role}),
     ))
 }
 
@@ -1018,20 +1063,28 @@ async fn delete_operator(
     let principal = require_mutation_principal(principal_opt)?;
     require_operator(&principal)?;
 
+    // Canonicalize the path param once (validate + lowercase) so the 409 check
+    // and the DB delete use the same form config-backed pubkeys are stored in;
+    // see upsert_operator for the uppercase-bypass this closes.
+    let target_bytes = decode_hex_pubkey(&pubkey_hex)?;
+    let canonical_hex = pubkey_hex.to_ascii_lowercase();
+
     // Reject if config-backed.
-    if is_config_backed_pubkey(&state.config, &pubkey_hex) {
+    if is_config_backed_pubkey(&state.config, &canonical_hex) {
         return Err(ApiError::conflict(
             "pubkey is backed by config (RELAY_OPERATOR_PUBKEYS or owner fallback) — immutable through the API",
         ));
     }
 
-    let target_bytes = decode_hex_pubkey(&pubkey_hex)?;
-    let removed = state.db.remove_relay_operator(&target_bytes).await?;
+    let removed = state
+        .db
+        .remove_relay_operator(&target_bytes, &principal.pubkey)
+        .await?;
     if !removed {
         return Err(ApiError::not_found());
     }
 
-    Ok(Json(serde_json::json!({"deleted": pubkey_hex})))
+    Ok(Json(serde_json::json!({"deleted": canonical_hex})))
 }
 
 // ── Staffing helpers ──────────────────────────────────────────────────────────
@@ -1643,6 +1696,38 @@ mod tests {
         ] {
             assert!(!attachment_url_matches(&url, "community.example", HASH));
         }
+    }
+
+    #[test]
+    fn compute_timeout_until_rejects_overflow_zero_and_cap_without_panic() {
+        // Adversarial magnitudes that panicked the old `Utc::now() +
+        // Duration::seconds(secs as i64)`: must be clean 4xx, never a panic.
+        for secs in [u64::MAX, i64::MAX as u64, i64::MAX as u64 + 1] {
+            let err = compute_timeout_until(secs).expect_err("must reject over-cap magnitude");
+            assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        }
+
+        // Zero is rejected: a zero expiry is not a valid future timeout.
+        assert_eq!(
+            compute_timeout_until(0)
+                .expect_err("zero must be rejected")
+                .status,
+            StatusCode::BAD_REQUEST
+        );
+
+        // Cap boundary: MAX is accepted and strictly in the future; MAX+1 is rejected.
+        let before = Utc::now();
+        let at_cap = compute_timeout_until(MAX_TIMEOUT_SECS).expect("cap boundary is accepted");
+        assert!(at_cap > before, "accepted timeout must be in the future");
+        assert_eq!(
+            compute_timeout_until(MAX_TIMEOUT_SECS + 1)
+                .expect_err("one past the cap must be rejected")
+                .status,
+            StatusCode::BAD_REQUEST
+        );
+
+        // A small, ordinary value produces a future instant.
+        assert!(compute_timeout_until(3600).expect("1h is valid") > before);
     }
 
     #[test]
@@ -2992,6 +3077,80 @@ mod tests {
             response.status(),
             StatusCode::CONFLICT,
             "owner fallback B key must return 409 on upsert"
+        );
+    }
+
+    /// Uppercase hex of a config-backed key must still hit the 409 on PUT: the
+    /// path param is canonicalized (lowercased) before the config check, so an
+    /// uppercase variant cannot skip the guard and write a shadow row.
+    #[tokio::test]
+    async fn upsert_uppercase_config_backed_pubkey_returns_409() {
+        let operator_keys = nostr::Keys::generate();
+        let target_keys = nostr::Keys::generate();
+        let target_hex = target_keys.public_key().to_hex();
+        // Config stores the lowercase form (parser lowercases every entry).
+        let state = nip98_state(vec![
+            operator_keys.public_key().to_hex(),
+            target_hex.clone(),
+        ])
+        .await;
+
+        // Request the UPPERCASE variant of the same 32 bytes.
+        let upper_hex = target_hex.to_ascii_uppercase();
+        let path = format!("/operators/{upper_hex}");
+        let body = r#"{"role":"moderator"}"#.as_bytes();
+        let auth_header = make_nostr_auth_put(&operator_keys, &path, body);
+
+        let response = status_for(
+            state,
+            Request::builder()
+                .method("PUT")
+                .uri(path)
+                .header(header::HOST, "admin.example")
+                .header(header::AUTHORIZATION, auth_header)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_vec()))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::CONFLICT,
+            "uppercase variant of a config-backed key must return 409 on PUT"
+        );
+    }
+
+    /// Uppercase hex of a config-backed key must still hit the 409 on DELETE.
+    #[tokio::test]
+    async fn delete_uppercase_config_backed_pubkey_returns_409() {
+        let operator_keys = nostr::Keys::generate();
+        let target_keys = nostr::Keys::generate();
+        let target_hex = target_keys.public_key().to_hex();
+        let state = nip98_state(vec![
+            operator_keys.public_key().to_hex(),
+            target_hex.clone(),
+        ])
+        .await;
+
+        let upper_hex = target_hex.to_ascii_uppercase();
+        let path = format!("/operators/{upper_hex}");
+        let auth_header = make_nostr_auth_delete(&operator_keys, &path);
+
+        let response = status_for(
+            state,
+            Request::builder()
+                .method("DELETE")
+                .uri(path)
+                .header(header::HOST, "admin.example")
+                .header(header::AUTHORIZATION, auth_header)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::CONFLICT,
+            "uppercase variant of a config-backed key must return 409 on DELETE"
         );
     }
 

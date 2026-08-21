@@ -451,6 +451,7 @@ mod tests {
             "relay_operators",
             "relay_admin_actions",
             "relay_admin_outbox",
+            "relay_operator_audit",
         ] {
             if normalized[insert_pos..].contains(&format!("'{value}'")) {
                 globals.insert(value.to_owned());
@@ -664,7 +665,7 @@ mod tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 35);
+        assert_eq!(migrations.len(), 36);
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");
         assert!(migrations[0]
@@ -1131,6 +1132,17 @@ mod tests {
         assert!(
             action_lease.contains("retry_after"),
             "migration 34 must add retry_after to relay_admin_outbox"
+        );
+
+        assert_eq!(migrations[35].version, 36);
+        let operator_audit = migrations[35].sql.as_str();
+        assert!(
+            operator_audit.contains("CREATE TABLE relay_operator_audit"),
+            "migration 36 must create relay_operator_audit"
+        );
+        assert!(
+            operator_audit.contains("_operator_global_tables"),
+            "migration 36 must register relay_operator_audit in _operator_global_tables"
         );
     }
 
@@ -1877,8 +1889,8 @@ mod tests {
     ///
     /// This bootstraps one probe database from `schema.sql` **through the real
     /// `bin/pgschema apply` binary** — the exact path CI (`ci.yml`) and both
-    /// test-relay launchers take — and migrates another through 1–35, then
-    /// asserts the two admin tables have identical column definitions (name,
+    /// test-relay launchers take — and migrates another through 1–36, then
+    /// asserts the three admin tables have identical column definitions (name,
     /// type, nullability, default) and identical index shapes, including each
     /// key's catalog sort/null options (`pg_index.indoption`). Columns are keyed
     /// by name, not ordinal, because migrations append via `ALTER TABLE` while
@@ -2004,11 +2016,15 @@ mod tests {
             .await
             .expect("connect migrated probe database");
         MIGRATOR
-            .run_to(35, &migrated)
+            .run_to(36, &migrated)
             .await
-            .expect("apply migrations 1-35");
+            .expect("apply migrations 1-36");
 
-        for table in ["relay_admin_actions", "relay_admin_outbox"] {
+        for table in [
+            "relay_admin_actions",
+            "relay_admin_outbox",
+            "relay_operator_audit",
+        ] {
             assert_eq!(
                 columns(&desired, table).await,
                 columns(&migrated, table).await,

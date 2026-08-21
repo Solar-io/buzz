@@ -4506,8 +4506,10 @@ impl Db {
     }
 
     /// Remove a relay operator/moderator row. Returns `true` if deleted.
-    pub async fn remove_relay_operator(&self, pubkey: &[u8]) -> Result<bool> {
-        relay_operators::remove(&self.pool, pubkey).await
+    /// Records the revocation in the append-only audit trail; `actor` is the
+    /// authenticated operator performing the removal.
+    pub async fn remove_relay_operator(&self, pubkey: &[u8], actor: &[u8]) -> Result<bool> {
+        relay_operators::remove(&self.pool, pubkey, actor).await
     }
 
     // ── relay_admin_actions (HTTP enforcement state machine) ──────────────────
