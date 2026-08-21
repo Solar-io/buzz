@@ -609,10 +609,12 @@ impl DbConfig {
     /// `BUZZ_DB_LOCK_TIMEOUT_MS`, `BUZZ_DB_IDLE_TXN_TIMEOUT_MS`,
     /// `BUZZ_DB_STATEMENT_TIMEOUT_MS`.
     ///
-    /// This lives in `buzz-db` — not per-binary config — so every writer
-    /// binary (`buzz-relay`, `buzz-admin`, `buzz-deletion`) honors the same
-    /// operator knobs; parsing it in one binary would make the documented
-    /// override silently no-op in the others.
+    /// This lives in `buzz-db` — not per-binary config — so every
+    /// `buzz-db`-backed writer (`buzz-relay`, `buzz-admin`, `buzz-deletion`,
+    /// and the relay audit pool) honors the same operator knobs; parsing it
+    /// in one binary would make the documented override silently no-op in
+    /// the others. The separately deployed push gateway owns a dedicated
+    /// database and session policy and is outside this configuration's scope.
     ///
     /// Absent or unparseable values keep the current (default) settings.
     /// An explicit `0` disables that timeout (Postgres semantics), so zero
@@ -736,7 +738,7 @@ impl Db {
     /// `buzz.created_at_floor` GUC — this is what makes the replica fence
     /// proof hold for every insert path that goes through this pool.
     pub async fn new(config: &DbConfig) -> Result<Self> {
-        let pool = Self::connect_pool(config, &config.database_url).await?;
+        let pool = Self::connect_writer_pool(config).await?;
         let read_max_connections = config
             .read_max_connections
             .unwrap_or(config.max_connections);
@@ -756,12 +758,15 @@ impl Db {
         })
     }
 
-    /// Connect the writer pool with all session-level safety premises.
+    /// Connect a writer pool with all session-level safety premises.
     ///
     /// SQLx stores one `after_connect` hook, so the floor guard and transaction
     /// isolation assertion must remain in this single closure. Registering a
     /// second hook replaces the first and silently disarms the floor trigger.
-    async fn connect_pool(config: &DbConfig, url: &str) -> Result<PgPool> {
+    /// Additional writer pools, such as the relay audit pool, must use this
+    /// constructor rather than raw [`PgPoolOptions`] so they inherit the same
+    /// timeout, floor-guard, and isolation policy as [`Db::new`].
+    pub async fn connect_writer_pool(config: &DbConfig) -> Result<PgPool> {
         let lock_timeout_ms = config.lock_timeout_ms;
         let idle_txn_timeout_ms = config.idle_txn_timeout_ms;
         let statement_timeout_ms = config.statement_timeout_ms;
@@ -815,7 +820,7 @@ impl Db {
                     Ok(())
                 })
             });
-        Ok(options.connect(url).await?)
+        Ok(options.connect(&config.database_url).await?)
     }
 
     /// Reader acquire timeout — deliberately far below the writer's
@@ -8824,27 +8829,27 @@ mod tests {
     #[test]
     fn writer_pool_safety_hook_is_single_and_composed() {
         let source = include_str!("lib.rs");
-        let connect_pool = source
-            .split("async fn connect_pool")
+        let connect_writer_pool = source
+            .split("async fn connect_writer_pool")
             .nth(1)
             .and_then(|tail| tail.split("const READER_ACQUIRE_TIMEOUT").next())
-            .expect("connect_pool source block");
+            .expect("connect_writer_pool source block");
         assert_eq!(
-            connect_pool.matches(".after_connect(").count(),
+            connect_writer_pool.matches(".after_connect(").count(),
             1,
             "SQLx replaces after_connect hooks; writer safety must use exactly one"
         );
-        assert!(connect_pool.contains("buzz.created_at_floor"));
-        assert!(connect_pool.contains("SHOW transaction_isolation"));
+        assert!(connect_writer_pool.contains("buzz.created_at_floor"));
+        assert!(connect_writer_pool.contains("SHOW transaction_isolation"));
         assert!(
-            connect_pool.contains("'lock_timeout'")
-                && connect_pool.contains("'idle_in_transaction_session_timeout'")
-                && connect_pool.contains("'statement_timeout'"),
+            connect_writer_pool.contains("'lock_timeout'")
+                && connect_writer_pool.contains("'idle_in_transaction_session_timeout'")
+                && connect_writer_pool.contains("'statement_timeout'"),
             "session timeouts must be applied inside the single writer hook"
         );
-        assert!(!connect_pool.contains("arm_floor_guard"));
-        assert!(!connect_pool.contains("_arm_floor_guard"));
-        assert!(!connect_pool.contains("allow(unused_variables)"));
+        assert!(!connect_writer_pool.contains("arm_floor_guard"));
+        assert!(!connect_writer_pool.contains("_arm_floor_guard"));
+        assert!(!connect_writer_pool.contains("allow(unused_variables)"));
 
         let reader_doc = source
             .split("fn connect_read_pool")
@@ -8853,7 +8858,7 @@ mod tests {
             .expect("reader pool documentation");
         assert!(reader_doc.contains("replica sessions are"));
         assert!(reader_doc.contains("read-only"));
-        assert!(!reader_doc.contains("Db::connect_pool"));
+        assert!(!reader_doc.contains("Db::connect_writer_pool"));
     }
 
     #[tokio::test]
