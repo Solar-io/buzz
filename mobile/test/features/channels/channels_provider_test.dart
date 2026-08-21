@@ -289,6 +289,177 @@ void main() {
     );
   });
 
+  test(
+    'community switch discards a stale directory success from the old relay',
+    () async {
+      final session = _FakeRelaySession(
+        memberships: const [],
+        metadata: [_meta(id: _channelA, name: 'community-a-open')],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      expect(await container.read(channelsProvider.future), isEmpty);
+
+      session.pauseNextDirectoryQuery();
+      final staleDirectory = container
+          .read(channelsProvider.notifier)
+          .retryDirectory();
+      await session.nextDirectoryQueryStarted;
+
+      // Switch communities while community A's directory response is paused.
+      session.memberships = [_membership(_channelB, myPk)];
+      session.metadata = [_meta(id: _channelB, name: 'community-b-general')];
+      container
+          .read(relayConfigProvider.notifier)
+          .update(baseUrl: 'https://community-b.example');
+      await container.read(channelsProvider.future);
+
+      session.resumePausedDirectoryQuery();
+      await staleDirectory;
+      await _settle();
+
+      final ids = container
+          .read(channelsProvider)
+          .requireValue
+          .map((channel) => channel.id);
+      expect(ids, isNot(contains(_channelA)));
+      expect(ids, contains(_channelB));
+      expect(
+        container.read(channelDirectoryLoadStatusProvider).scope,
+        isNot(
+          channelDirectoryScope(
+            'https://community-b.example',
+            container.read(myPubkeyProvider),
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
+    'community switch discards a stale directory failure from the old relay',
+    () async {
+      final session = _FakeRelaySession(
+        memberships: const [],
+        metadata: [_meta(id: _channelA, name: 'community-a-open')],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      expect(await container.read(channelsProvider.future), isEmpty);
+
+      session.pauseNextDirectoryQuery();
+      final staleDirectory = container
+          .read(channelsProvider.notifier)
+          .retryDirectory();
+      await session.nextDirectoryQueryStarted;
+
+      session.memberships = [_membership(_channelB, myPk)];
+      session.metadata = [_meta(id: _channelB, name: 'community-b-general')];
+      container
+          .read(relayConfigProvider.notifier)
+          .update(baseUrl: 'https://community-b.example');
+      await container.read(channelsProvider.future);
+
+      // Community A's directory request fails after the switch.
+      session.directoryFailures = 1;
+      session.resumePausedDirectoryQuery();
+      await staleDirectory;
+      await _settle();
+
+      final ids = container
+          .read(channelsProvider)
+          .requireValue
+          .map((channel) => channel.id);
+      expect(ids, contains(_channelB));
+      expect(
+        container.read(channelDirectoryLoadStatusProvider).scope,
+        isNot(
+          channelDirectoryScope(
+            'https://community-b.example',
+            container.read(myPubkeyProvider),
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
+    'identity switch discards a stale directory success from the old identity',
+    () async {
+      final session = _FakeRelaySession(
+        memberships: const [],
+        metadata: [_meta(id: _channelA, name: 'first-identity-open')],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      expect(await container.read(channelsProvider.future), isEmpty);
+
+      session.pauseNextDirectoryQuery();
+      final staleDirectory = container
+          .read(channelsProvider.notifier)
+          .retryDirectory();
+      await session.nextDirectoryQueryStarted;
+
+      // Switch signing identity while the first identity's response is paused.
+      session.memberships = [_membership(_channelB, _otherPk)];
+      session.metadata = [_meta(id: _channelB, name: 'second-identity-joined')];
+      container.read(_testPubkeyProvider.notifier).set(_otherPk);
+      await container.read(channelsProvider.future);
+
+      session.resumePausedDirectoryQuery();
+      await staleDirectory;
+      await _settle();
+
+      final ids = container
+          .read(channelsProvider)
+          .requireValue
+          .map((channel) => channel.id);
+      expect(ids, isNot(contains(_channelA)));
+      expect(ids, contains(_channelB));
+    },
+  );
+
+  test(
+    'identity switch discards a stale directory failure from the old identity',
+    () async {
+      final session = _FakeRelaySession(
+        memberships: const [],
+        metadata: [_meta(id: _channelA, name: 'first-identity-open')],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      expect(await container.read(channelsProvider.future), isEmpty);
+
+      session.pauseNextDirectoryQuery();
+      final staleDirectory = container
+          .read(channelsProvider.notifier)
+          .retryDirectory();
+      await session.nextDirectoryQueryStarted;
+
+      session.memberships = [_membership(_channelB, _otherPk)];
+      session.metadata = [_meta(id: _channelB, name: 'second-identity-joined')];
+      container.read(_testPubkeyProvider.notifier).set(_otherPk);
+      await container.read(channelsProvider.future);
+
+      session.directoryFailures = 1;
+      session.resumePausedDirectoryQuery();
+      await staleDirectory;
+      await _settle();
+
+      expect(
+        container
+            .read(channelsProvider)
+            .requireValue
+            .map((channel) => channel.id),
+        contains(_channelB),
+      );
+    },
+  );
+
   test('reconnect backstop does not refetch the channel directory', () async {
     final session = _FakeRelaySession(
       memberships: [_membership(_channelA, myPk)],
@@ -1008,6 +1179,7 @@ void main() {
 const _channelA = '11111111-1111-4111-8111-111111111111';
 const _channelB = '22222222-2222-4222-8222-222222222222';
 const _channelD = '44444444-4444-4444-8444-444444444444';
+const _otherPk = 'someone-else';
 
 /// Build a kind:39002 membership event tagged with the channel id and member.
 NostrEvent _membership(
@@ -1075,9 +1247,30 @@ ProviderContainer _buildContainer({required _FakeRelaySession session}) {
     overrides: [
       appLifecycleProvider.overrideWith(() => _FakeAppLifecycleNotifier()),
       relaySessionProvider.overrideWith(() => session),
-      myPubkeyProvider.overrideWithValue('me'),
+      // Route the pubkey through a mutable notifier so tests can switch the
+      // signing identity mid-flight the way an account change does at runtime.
+      myPubkeyProvider.overrideWith((ref) => ref.watch(_testPubkeyProvider)),
     ],
   );
+}
+
+/// Mutable stand-in for the signing identity derived from the active community.
+class _TestPubkeyNotifier extends Notifier<String?> {
+  @override
+  String? build() => 'me';
+
+  void set(String? pubkey) => state = pubkey;
+}
+
+final _testPubkeyProvider = NotifierProvider<_TestPubkeyNotifier, String?>(
+  _TestPubkeyNotifier.new,
+);
+
+/// Drains pending microtasks so provider rebuilds and awaited writes land.
+Future<void> _settle() async {
+  for (var i = 0; i < 20; i++) {
+    await Future<void>.delayed(Duration.zero);
+  }
 }
 
 Future<void> _waitUntil(bool Function() predicate) async {
@@ -1131,6 +1324,8 @@ class _FakeRelaySession extends RelaySessionNotifier {
   int _nextSubscriptionKey = 0;
   Completer<void>? _pausedSubscribe;
   Completer<void>? _subscribeStarted;
+  Completer<void>? _pausedDirectory;
+  Completer<void>? _directoryStarted;
   int unsubscribeCount = 0;
   int totalSubscribeCount = 0;
 
@@ -1159,6 +1354,32 @@ class _FakeRelaySession extends RelaySessionNotifier {
   void resumePausedSubscribe() {
     final paused = _pausedSubscribe;
     if (paused == null) throw StateError('No subscription is paused');
+    paused.complete();
+  }
+
+  /// Holds the next directory query open so a community or identity switch can
+  /// be interleaved between the request and its response.
+  void pauseNextDirectoryQuery() {
+    if (_pausedDirectory != null) {
+      throw StateError('A directory query is already paused');
+    }
+    _pausedDirectory = Completer<void>();
+    _directoryStarted = Completer<void>();
+  }
+
+  /// Completes once the paused directory query has been requested.
+  Future<void> get nextDirectoryQueryStarted async {
+    final started = _directoryStarted;
+    if (started == null) {
+      throw StateError('No directory query is pending');
+    }
+    await started.future;
+  }
+
+  /// Releases the paused directory query so its response lands.
+  void resumePausedDirectoryQuery() {
+    final paused = _pausedDirectory;
+    if (paused == null) throw StateError('No directory query is paused');
     paused.complete();
   }
 
@@ -1242,6 +1463,17 @@ class _FakeRelaySession extends RelaySessionNotifier {
             filter.kinds.single == 39000 &&
             !filter.tags.containsKey('#d')) {
       directoryQueryFilters.add(filter);
+      // Snapshot the directory contents at request time so a paused response
+      // reflects the community that issued it, not whichever community is
+      // active when the response is released.
+      final directorySnapshot = List.of(metadata);
+      final paused = _pausedDirectory;
+      if (paused != null) {
+        _directoryStarted!.complete();
+        await paused.future;
+        _pausedDirectory = null;
+        _directoryStarted = null;
+      }
       if (directoryFailures > 0) {
         directoryFailures--;
         throw Exception('directory fetch failed');
@@ -1261,7 +1493,7 @@ class _FakeRelaySession extends RelaySessionNotifier {
         }
         return const [];
       }
-      return filter.until == null ? List.of(metadata) : const [];
+      return filter.until == null ? directorySnapshot : const [];
     }
     queryBatches.add(filters);
     return recentMessages.where((event) {

@@ -57,6 +57,10 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
   Map<String, List<ChannelMember>> _memberSnapshotsByChannelId = const {};
   List<NostrEvent> _directoryMetas = const [];
 
+  /// Fences directory responses to the relay and identity that requested them.
+  late final _ChannelDirectoryLoader _directoryLoader =
+      _ChannelDirectoryLoader.forRef(ref);
+
   /// The member snapshot already returned while loading the channel list.
   ///
   /// Mention autocomplete can use this synchronously while its independent
@@ -84,6 +88,9 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
       _memberSnapshotPubkey = pubkey;
       _memberSnapshotsByChannelId = const {};
       _directoryMetas = const [];
+      // Retire any in-flight directory request: its response describes the
+      // previous relay or identity and must not reach this scope's state.
+      _directoryLoader.retireInFlight();
     }
     final connected = Completer<void>();
     final sessionState = ref.read(relaySessionProvider);
@@ -171,24 +178,8 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     // private channels and DMs below so discovery fails closed if that contract
     // ever regresses. The composite cursor preserves tied-timestamp rows.
     if (fetchDirectory) {
-      final directoryScope = channelDirectoryScope(
-        ref.read(relayConfigProvider).baseUrl,
-        myPk,
-      );
-      final directoryStatus = ref.read(
-        channelDirectoryLoadStatusProvider.notifier,
-      );
-      directoryStatus.markLoading(directoryScope);
-      try {
-        _directoryMetas = await _fetchChannelDirectoryMetas(session);
-        directoryStatus.markLoaded(directoryScope);
-      } catch (error, stackTrace) {
-        directoryStatus.markError(directoryScope);
-        debugPrint(
-          '[ChannelsNotifier] channel directory refresh failed; retaining '
-          'cached discovery: $error\n$stackTrace',
-        );
-      }
+      final metas = await _directoryLoader.load(session);
+      if (metas != null) _directoryMetas = metas;
     }
 
     // Merge and dedupe by `d` tag. Kind:39000 is parameterized-replaceable,
@@ -949,6 +940,11 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
       state = AsyncData(
         await _fetch(subscribeLive: true, fetchDirectory: true),
       );
+    } on _StaleDirectoryRequest {
+      // A community or identity switch retired this request. Its response
+      // describes a scope the user has left, so write neither the channel list
+      // nor the load status; the new scope owns both now.
+      return;
     } catch (error, stackTrace) {
       directoryStatus.markError(scope);
       state = previousChannels == null

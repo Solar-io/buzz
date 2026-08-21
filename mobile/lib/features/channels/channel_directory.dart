@@ -89,6 +89,90 @@ Future<List<NostrEvent>> _fetchChannelDirectoryMetas(
   operation: 'Channel directory',
 );
 
+/// Thrown when a directory request is retired before its response lands.
+///
+/// Callers must treat this as "write nothing": the scope that issued the
+/// request is no longer active, so both its data and its load status belong to
+/// a community the user has left.
+class _StaleDirectoryRequest implements Exception {
+  const _StaleDirectoryRequest();
+
+  @override
+  String toString() =>
+      'Channel directory request retired by a community or identity switch';
+}
+
+/// Loads the open-channel directory fenced to the scope that requested it.
+///
+/// A community or identity switch changes the scope, and a newer request bumps
+/// the generation. Either one retires an in-flight request, so a delayed
+/// response can never populate the current community's state. This is the
+/// tenant boundary described in VISION.md: isolation is the boundary, not a
+/// filter, so a retired response is discarded rather than merged.
+///
+/// Lives in this part file because `channels_provider.dart` sits against the
+/// repository-wide 1000-line file ceiling enforced by `just file-size-check`.
+class _ChannelDirectoryLoader {
+  /// Resolves the relay-and-identity scope that is active right now.
+  final String Function() currentScope;
+
+  /// Owns the externally observable directory load status.
+  final ChannelDirectoryLoadNotifier Function() loadStatus;
+
+  int _generation = 0;
+
+  _ChannelDirectoryLoader({
+    required this.currentScope,
+    required this.loadStatus,
+  });
+
+  /// Binds the fence to a notifier's [Ref] so the provider needs one line.
+  ///
+  /// Both closures read rather than watch: the fence asks what the scope is
+  /// right now, and must not make the notifier depend on it.
+  factory _ChannelDirectoryLoader.forRef(Ref ref) => _ChannelDirectoryLoader(
+    currentScope: () => channelDirectoryScope(
+      ref.read(relayConfigProvider).baseUrl,
+      ref.read(myPubkeyProvider),
+    ),
+    loadStatus: () => ref.read(channelDirectoryLoadStatusProvider.notifier),
+  );
+
+  /// Retires any in-flight request without starting a new one.
+  ///
+  /// Called when the relay or identity changes so a response already on the
+  /// wire cannot be written into the new scope.
+  void retireInFlight() => _generation++;
+
+  /// Fetches the directory, or throws [_StaleDirectoryRequest] if retired.
+  ///
+  /// Returns null when the request failed inside the current scope, which means
+  /// "retain the cached discovery". The fence is re-checked after the await and
+  /// before every write, on both the success and the failure path.
+  Future<List<NostrEvent>?> load(RelaySessionNotifier session) async {
+    final scope = currentScope();
+    final generation = ++_generation;
+    bool isCurrent() => generation == _generation && scope == currentScope();
+
+    loadStatus().markLoading(scope);
+    final List<NostrEvent> metas;
+    try {
+      metas = await _fetchChannelDirectoryMetas(session);
+    } catch (error, stackTrace) {
+      if (!isCurrent()) throw const _StaleDirectoryRequest();
+      loadStatus().markError(scope);
+      debugPrint(
+        '[ChannelsNotifier] channel directory refresh failed; retaining '
+        'cached discovery: $error\n$stackTrace',
+      );
+      return null;
+    }
+    if (!isCurrent()) throw const _StaleDirectoryRequest();
+    loadStatus().markLoaded(scope);
+    return metas;
+  }
+}
+
 Future<List<NostrEvent>> _fetchPaginatedChannelEvents(
   RelaySessionNotifier session, {
   required int kind,
