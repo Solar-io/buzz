@@ -773,6 +773,21 @@ jobs:
             -E 'package(buzz-relay) and test(=api::admin::tests::nip98_mode_unrostered_signer_does_not_consume_a_replay_slot)'
         env:
           DATABASE_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/buzz
+      - name: Admin API roster-audit / timeout / canonicalization security tests
+        # Security-review fixes for the roster admin API, all #[ignore]d in the
+        # default suite (they need Postgres) and selected by no other job:
+        #  - buzz-db relay_operators::tests: audit pre-image trail, per-target
+        #    lock serialization, and audit-failure rollback coupling.
+        #  - buzz-relay api::admin: NIP-98 staffing writes attributed audit rows,
+        #    adversarial expirationSecs rejected at the resolve route, mixed-case
+        #    staffing normalizes to one canonical row.
+        run: |
+          cargo nextest run \
+            --archive-file target/ci/backend-integration-tests.tar.zst \
+            -E '(package(buzz-db) and test(/relay_operators::tests::/)) or (package(buzz-relay) and test(=api::admin::tests::nip98_staffing_put_and_delete_write_attributed_audit_rows)) or (package(buzz-relay) and test(=api::admin::tests::resolve_route_rejects_adversarial_expiration_and_leaves_report_open)) or (package(buzz-relay) and test(=api::admin::tests::mixed_case_non_config_staffing_normalizes_to_one_row))' \
+            --run-ignored ignored-only
+        env:
+          DATABASE_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/buzz
       - name: Upload relay log
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

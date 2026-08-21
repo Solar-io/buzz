@@ -3968,6 +3968,281 @@ mod tests {
         assert_eq!(remaining, 0, "DELETE must remove the roster row");
     }
 
+    /// Audit seam through the real HTTP handlers: an authenticated NIP-98 PUT
+    /// then DELETE of a non-config target must write audit rows attributing the
+    /// AUTHENTICATED operator as actor, with the correct op/pre/new, coupled to
+    /// the roster state. Mutation-deleting either audit INSERT (or moving it out
+    /// of the transaction) breaks these assertions — the coverage the
+    /// #[ignore]d unit test could not give at the request seam.
+    #[tokio::test]
+    #[ignore = "requires Postgres — NIP-98 staffing writes attributed audit rows"]
+    async fn nip98_staffing_put_and_delete_write_attributed_audit_rows() {
+        let operator_keys = nostr::Keys::generate();
+        let operator_bytes = operator_keys.public_key().to_bytes().to_vec();
+        // Only the operator is config-backed (Operator role); the target is a
+        // fresh, mutable, non-config key.
+        let state = nip98_state(vec![operator_keys.public_key().to_hex()]).await;
+        let pool = sqlx::PgPool::connect(
+            &std::env::var("BUZZ_TEST_DATABASE_URL")
+                .unwrap_or_else(|_| "postgres://buzz:buzz_dev@localhost:5432/buzz".to_string()),
+        )
+        .await
+        .expect("connect to test DB");
+
+        let target_keys = nostr::Keys::generate();
+        let target_hex = target_keys.public_key().to_hex();
+        let target_bytes = target_keys.public_key().to_bytes().to_vec();
+
+        // PUT (grant moderator).
+        let path = format!("/operators/{target_hex}");
+        let put_body = r#"{"role":"moderator"}"#.as_bytes();
+        let put = status_for(
+            state.clone(),
+            Request::builder()
+                .method("PUT")
+                .uri(&path)
+                .header(header::HOST, "admin.example")
+                .header(
+                    header::AUTHORIZATION,
+                    make_nostr_auth_put(&operator_keys, &path, put_body),
+                )
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(put_body.to_vec()))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(put.status(), StatusCode::OK, "grant PUT must succeed");
+
+        // Grant audit row: actor is the authenticated operator, prev NULL.
+        let grant: (Vec<u8>, String, Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT actor_pubkey, op, prev_role, new_role FROM relay_operator_audit \
+             WHERE target_pubkey = $1 ORDER BY created_at ASC",
+        )
+        .bind(&target_bytes)
+        .fetch_one(&pool)
+        .await
+        .expect("read grant audit row");
+        assert_eq!(
+            grant.0, operator_bytes,
+            "audit actor must be the authenticated operator"
+        );
+        assert_eq!(
+            (grant.1.as_str(), grant.2.as_deref(), grant.3.as_deref()),
+            ("grant", None, Some("moderator")),
+            "grant audit row op/prev/new"
+        );
+
+        // DELETE (revoke), signed for the same path.
+        let del = status_for(
+            state,
+            Request::builder()
+                .method("DELETE")
+                .uri(&path)
+                .header(header::HOST, "admin.example")
+                .header(
+                    header::AUTHORIZATION,
+                    make_nostr_auth_delete(&operator_keys, &path),
+                )
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(del.status(), StatusCode::OK, "revoke DELETE must succeed");
+
+        // Roster row gone, and a revoke audit row attributed to the operator.
+        let remaining: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM relay_operators WHERE pubkey = $1")
+                .bind(&target_bytes)
+                .fetch_one(&pool)
+                .await
+                .expect("count roster rows");
+        assert_eq!(remaining, 0, "DELETE must remove the roster row");
+
+        let revoke: (Vec<u8>, String, Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT actor_pubkey, op, prev_role, new_role FROM relay_operator_audit \
+             WHERE target_pubkey = $1 AND op = 'revoke'",
+        )
+        .bind(&target_bytes)
+        .fetch_one(&pool)
+        .await
+        .expect("read revoke audit row");
+        assert_eq!(
+            revoke.0, operator_bytes,
+            "revoke audit actor must be the authenticated operator"
+        );
+        assert_eq!(
+            (revoke.1.as_str(), revoke.2.as_deref(), revoke.3.as_deref()),
+            ("revoke", Some("moderator"), None),
+            "revoke audit row op/prev/new"
+        );
+    }
+
+    /// Timeout bound at the HTTP seam: adversarial `expirationSecs` through the
+    /// real POST /reports/{id}/resolve route must return a clean 400 and leave
+    /// the report `open` — never panic, never claim it into `processing`.
+    /// Bypassing `compute_timeout_until` in the handler would regress these.
+    #[tokio::test]
+    #[ignore = "requires Postgres — adversarial expirationSecs rejected at the resolve route"]
+    async fn resolve_route_rejects_adversarial_expiration_and_leaves_report_open() {
+        let keys = nostr::Keys::generate();
+        let state = nip98_state(vec![keys.public_key().to_hex()]).await;
+        let pool = sqlx::PgPool::connect(
+            &std::env::var("BUZZ_TEST_DATABASE_URL")
+                .unwrap_or_else(|_| "postgres://buzz:buzz_dev@localhost:5432/buzz".to_string()),
+        )
+        .await
+        .expect("connect to test DB");
+
+        // 0, over-cap, i64::MAX magnitude, and a value that casts to a negative
+        // i64 (wrapped-past-expiry) — all must reject before any state change.
+        let adversarial: [u64; 4] = [
+            0,
+            MAX_TIMEOUT_SECS + 1,
+            i64::MAX as u64,
+            (i64::MAX as u64) + 1,
+        ];
+        for secs in adversarial {
+            let report_id = seed_admin_host_report(&pool, "open").await;
+            let path = format!("/reports/{report_id}/resolve");
+            let body = serde_json::json!({
+                "action": "timeout",
+                "requestId": Uuid::new_v4(),
+                "expirationSecs": secs,
+            })
+            .to_string();
+            let response = status_for(
+                state.clone(),
+                Request::builder()
+                    .method("POST")
+                    .uri(&path)
+                    .header(header::HOST, "admin.example")
+                    .header(
+                        header::AUTHORIZATION,
+                        make_nostr_auth_post(&keys, &path, body.as_bytes()),
+                    )
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .expect("request"),
+            )
+            .await;
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_REQUEST,
+                "expirationSecs={secs} must be a clean 400"
+            );
+
+            let status: String =
+                sqlx::query_scalar("SELECT status FROM moderation_reports WHERE id = $1")
+                    .bind(report_id)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("read report status");
+            assert_eq!(
+                status, "open",
+                "expirationSecs={secs} must leave the report open"
+            );
+
+            cleanup_admin_host_report(&pool, report_id).await;
+        }
+    }
+
+    /// Canonical persistence at the HTTP seam: a mixed-case NON-config target
+    /// must persist under one canonical (lowercase) identity — lowercase in the
+    /// response body, exactly one binary DB row — and a DELETE through a
+    /// different casing must resolve to that same row.
+    #[tokio::test]
+    #[ignore = "requires Postgres — mixed-case staffing normalizes to one canonical row"]
+    async fn mixed_case_non_config_staffing_normalizes_to_one_row() {
+        let operator_keys = nostr::Keys::generate();
+        let state = nip98_state(vec![operator_keys.public_key().to_hex()]).await;
+        let pool = sqlx::PgPool::connect(
+            &std::env::var("BUZZ_TEST_DATABASE_URL")
+                .unwrap_or_else(|_| "postgres://buzz:buzz_dev@localhost:5432/buzz".to_string()),
+        )
+        .await
+        .expect("connect to test DB");
+
+        let target_keys = nostr::Keys::generate();
+        let lower_hex = target_keys.public_key().to_hex();
+        let target_bytes = target_keys.public_key().to_bytes().to_vec();
+        // Mixed case: upper the first half, keep the rest lower.
+        let mixed_hex = {
+            let (a, b) = lower_hex.split_at(32);
+            format!("{}{}", a.to_ascii_uppercase(), b)
+        };
+
+        // PUT under the mixed-case path.
+        let put_path = format!("/operators/{mixed_hex}");
+        let put_body = r#"{"role":"moderator"}"#.as_bytes();
+        let put = status_for(
+            state.clone(),
+            Request::builder()
+                .method("PUT")
+                .uri(&put_path)
+                .header(header::HOST, "admin.example")
+                .header(
+                    header::AUTHORIZATION,
+                    make_nostr_auth_put(&operator_keys, &put_path, put_body),
+                )
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(put_body.to_vec()))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(put.status(), StatusCode::OK, "mixed-case PUT must succeed");
+        let put_json: serde_json::Value = {
+            let bytes = axum::body::to_bytes(put.into_body(), 4096)
+                .await
+                .expect("body");
+            serde_json::from_slice(&bytes).expect("json")
+        };
+        assert_eq!(
+            put_json["pubkey"], lower_hex,
+            "response body must echo the canonical lowercase pubkey"
+        );
+
+        // Exactly one binary row for the 32 bytes.
+        let rows: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM relay_operators WHERE pubkey = $1")
+                .bind(&target_bytes)
+                .fetch_one(&pool)
+                .await
+                .expect("count roster rows");
+        assert_eq!(
+            rows, 1,
+            "mixed-case PUT must write exactly one canonical row"
+        );
+
+        // DELETE through a DIFFERENT casing (all lowercase) resolves the same row.
+        let del_path = format!("/operators/{lower_hex}");
+        let del = status_for(
+            state,
+            Request::builder()
+                .method("DELETE")
+                .uri(&del_path)
+                .header(header::HOST, "admin.example")
+                .header(
+                    header::AUTHORIZATION,
+                    make_nostr_auth_delete(&operator_keys, &del_path),
+                )
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(
+            del.status(),
+            StatusCode::OK,
+            "DELETE through a different casing must hit the same row"
+        );
+        let remaining: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM relay_operators WHERE pubkey = $1")
+                .bind(&target_bytes)
+                .fetch_one(&pool)
+                .await
+                .expect("count roster rows");
+        assert_eq!(remaining, 0, "the canonical row must be removed");
+    }
+
     #[tokio::test]
     #[ignore = "requires Postgres — reopen of an open report is 409"]
     async fn reopen_route_rejects_non_terminal_report_with_409() {
