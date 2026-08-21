@@ -68,6 +68,10 @@ import { useThreadActivityPersistence } from "@/features/channels/useThreadActiv
 import { unreadCatchUp } from "@/shared/api/tauriUnreadCatchUp";
 import { collectUnreadThreadEventIds } from "./unreadThreadEventIds";
 import { useCatchUpRetry } from "./useCatchUpRetry";
+import {
+  advanceCatchUpDiscoveryAt,
+  readCatchUpDiscoveryAt,
+} from "./unreadCatchUpDiscoveryStorage";
 
 type UseUnreadChannelsOptions = UseLiveChannelUpdatesOptions & {
   pubkey?: string;
@@ -76,11 +80,7 @@ type UseUnreadChannelsOptions = UseLiveChannelUpdatesOptions & {
   mutedChannelIds?: ReadonlySet<string>;
 };
 
-// Per-channel cap on the catch-up REQ. We only consume the *max matching*
-// event per channel, but the relay can return self-authored / non-trigger
-// events that we discard client-side, so we need enough head-room for the
-// filter to find one external trigger message. 1000 matches the live sub's
-// per-channel limit elsewhere in the app.
+// Match the live subscription's per-channel catch-up headroom.
 const CATCH_UP_LIMIT = 1000;
 const EMPTY_ROOT_IDS: ReadonlySet<string> = new Set();
 
@@ -98,8 +98,7 @@ export function useUnreadChannels(
   } = options;
   const activeChannelId = activeChannel?.id ?? null;
   const normalizedPubkey = pubkey?.toLowerCase() ?? null;
-  // Scoped relay key for activity storage; empty string when relay not yet known
-  // so rows from an unknown relay never load into the wrong community.
+  // An empty relay never loads activity into an unknown community.
   const normalizedRelayUrl = relayUrlOption
     ? normalizeRelayUrl(relayUrlOption)
     : "";
@@ -122,9 +121,7 @@ export function useUnreadChannels(
     [getContextReadAt, getOwnTimestamp],
   );
 
-  // Per-channel latest observed external trigger timestamp (unix seconds) and
-  // per-event metadata. Derived relay evidence, not source-of-truth; the unread
-  // memo compares these against NIP-RS markers. Hydrated/reset by the persistence hook.
+  // Derived relay evidence, hydrated/reset by the persistence hook.
   const latestByChannelRef = React.useRef(new Map<string, number>());
   const observedUnreadEventsByChannelRef = React.useRef(
     new Map<string, Map<string, ObservedUnreadEvent>>(),
@@ -178,18 +175,13 @@ export function useUnreadChannels(
     0,
   );
 
-  // Version signal bumped only when the participated/authored/mentioned
-  // root-id sets change, so the gate snapshots (re-derived below) don't
-  // re-allocate on every observed external message the way reusing
-  // latestVersion would.
+  // Changes only when notification membership changes.
   const [membershipVersion, bumpMembershipVersion] = React.useReducer(
     (x: number) => x + 1,
     0,
   );
 
-  // Reset all in-session state when the identity or relay changes. In-memory
-  // caches are cleared; persisted stores are loaded for the new pubkey (so
-  // forced-unread, participation, etc. are correct for the new identity).
+  // Reset in-session state when the identity or relay changes.
   // biome-ignore lint/correctness/useExhaustiveDependencies: pubkey/relayClient are intentional reset signals
   React.useEffect(() => {
     // Load persisted forced-unread map for the new pubkey (do NOT clear the
@@ -647,6 +639,7 @@ export function useUnreadChannels(
           name: channel?.name ?? "",
           readAt: getContextReadAt(channelId),
           timelineReadAt: getChannelTimelineReadAt(channelId),
+          discoveryAt: readCatchUpDiscoveryAt(currentActivityScope, channelId),
         };
       }),
       selfPubkey: normalizedPubkey ?? "",
@@ -668,6 +661,11 @@ export function useUnreadChannels(
             continue;
           }
           clearCatchUpRetryAttempt(result.channelId);
+          advanceCatchUpDiscoveryAt(
+            currentActivityScope,
+            result.channelId,
+            getChannelTimelineReadAt(result.channelId),
+          );
           for (const rootId of result.discovered.participated) {
             const before = participatedRootIdsRef.current.size;
             participatedRootIdsRef.current.add(rootId);

@@ -8,6 +8,7 @@ export type UnreadCatchUpChannel = {
   name: string;
   readAt: number | null;
   timelineReadAt: number | null;
+  discoveryAt: number | null;
 };
 
 export type UnreadCatchUpRequest = {

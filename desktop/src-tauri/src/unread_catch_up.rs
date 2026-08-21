@@ -51,6 +51,8 @@ struct CatchUpChannel {
     name: String,
     read_at: Option<u64>,
     timeline_read_at: Option<u64>,
+    #[serde(default)]
+    discovery_at: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -175,12 +177,11 @@ fn discovery_filters(
     channel: &CatchUpChannel,
     self_pubkey: &str,
 ) -> (serde_json::Value, serde_json::Value) {
-    // Membership observed before the timeline frontier is already persisted
-    // in the native store. Using only the bare marker here would repeatedly
-    // rescan a passively viewed channel's entire authored/mentioned history.
+    // Discovery is device-local because membership is device-local. A fresh
+    // device must scan old roots once even when synced read markers are newer;
+    // subsequent successful catch-up advances this independent watermark.
     let since = channel
-        .timeline_read_at
-        .or(channel.read_at)
+        .discovery_at
         .map_or(0, |value| value.saturating_add(1));
     let mut authored = base_filter(channel, since);
     authored["authors"] = serde_json::json!([self_pubkey]);
@@ -670,6 +671,7 @@ mod tests {
             name: "Ch".into(),
             read_at: Some(9),
             timeline_read_at: Some(9),
+            discovery_at: None,
         };
         let fetched = vec![FetchedChannel {
             channel,
@@ -718,6 +720,7 @@ mod tests {
             name: "Ch".into(),
             read_at: Some(10),
             timeline_read_at: Some(10),
+            discovery_at: None,
         };
         let fetched = vec![FetchedChannel {
             channel,
@@ -757,23 +760,39 @@ mod tests {
     }
 
     #[test]
-    fn split_filters_bound_discovery_and_top_level_history_to_timeline_frontier() {
+    fn discovery_uses_its_device_local_watermark_independently_of_read_frontiers() {
         let channel = CatchUpChannel {
             id: "ch".into(),
             channel_type: "stream".into(),
             name: "Ch".into(),
             read_at: Some(10),
             timeline_read_at: Some(900),
+            discovery_at: Some(400),
         };
         let (authored, mentioned) = discovery_filters(&channel, "self");
-        assert_eq!(authored["since"], 901);
+        assert_eq!(authored["since"], 401);
         assert_eq!(authored["authors"], serde_json::json!(["self"]));
-        assert_eq!(mentioned["since"], 901);
+        assert_eq!(mentioned["since"], 401);
         assert_eq!(mentioned["#p"], serde_json::json!(["self"]));
 
         let top_level = top_level_filter(&channel);
         assert_eq!(top_level["since"], 901);
         assert_eq!(top_level["top_level"], true);
+    }
+
+    #[test]
+    fn fresh_device_discovers_roots_before_synced_read_frontiers() {
+        let channel = CatchUpChannel {
+            id: "ch".into(),
+            channel_type: "stream".into(),
+            name: "Ch".into(),
+            read_at: Some(100),
+            timeline_read_at: Some(100),
+            discovery_at: None,
+        };
+        let (authored, mentioned) = discovery_filters(&channel, "self");
+        assert_eq!(authored["since"], 0);
+        assert_eq!(mentioned["since"], 0);
     }
 
     #[test]
@@ -800,6 +819,7 @@ mod tests {
             name: "Ch".into(),
             read_at: Some(0),
             timeline_read_at: Some(2_000),
+            discovery_at: None,
         };
         let mut events = (0..=CATCH_UP_LIMIT)
             .map(|index| {

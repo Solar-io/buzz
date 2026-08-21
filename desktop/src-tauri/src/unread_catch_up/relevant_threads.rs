@@ -172,6 +172,7 @@ mod tests {
             name: id.into(),
             read_at,
             timeline_read_at: read_at,
+            discovery_at: None,
         }
     }
 
