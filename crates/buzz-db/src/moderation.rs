@@ -174,6 +174,14 @@ pub struct ActionRecord {
 
 /// Insert a new report row. Idempotent on `(community, report_event_id)`:
 /// re-ingesting the same signed report is a no-op returning the existing id.
+///
+/// `illegal` reports auto-escalate: they land `status='escalated'` so the
+/// platform operator backstop sees them without waiting for a community admin
+/// to forward them (the severe class was never the community's to hold). Every
+/// other category lands `open` for community triage. Auto-escalation only sets
+/// the queue status; it emits no moderator decision, so an auto-escalated
+/// report is indistinguishable downstream from an admin-escalated one — reopen
+/// and listing key off `status`, never on how the report reached it.
 pub async fn insert_report(
     pool: &PgPool,
     community: CommunityId,
@@ -185,13 +193,19 @@ pub async fn insert_report(
         ReportTarget::Blob(sha256) => ("blob", None, None, Some(sha256.as_slice())),
     };
 
+    let initial_status = if report.report_type == "illegal" {
+        "escalated"
+    } else {
+        "open"
+    };
+
     let row = sqlx::query(
         r#"
         INSERT INTO moderation_reports (
             community_id, report_event_id, reporter_pubkey, target_kind,
             target_event_id, target_pubkey, target_blob_sha256, channel_id,
-            report_type, note
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            report_type, note, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         ON CONFLICT (community_id, report_event_id) DO UPDATE SET
             report_event_id = EXCLUDED.report_event_id
         RETURNING id
@@ -207,6 +221,7 @@ pub async fn insert_report(
     .bind(report.channel_id)
     .bind(report.report_type)
     .bind(report.note)
+    .bind(initial_status)
     .fetch_one(pool)
     .await?;
 
@@ -678,12 +693,28 @@ mod tests {
         target_event_id: &'a [u8],
         note: Option<&'a str>,
     ) -> NewReport<'a> {
+        new_report_typed(
+            report_event_id,
+            reporter_pubkey,
+            target_event_id,
+            "spam",
+            note,
+        )
+    }
+
+    fn new_report_typed<'a>(
+        report_event_id: &'a [u8],
+        reporter_pubkey: &'a [u8],
+        target_event_id: &'a [u8],
+        report_type: &'a str,
+        note: Option<&'a str>,
+    ) -> NewReport<'a> {
         NewReport {
             report_event_id,
             reporter_pubkey,
             target: ReportTarget::Event(target_event_id.to_vec()),
             channel_id: None,
-            report_type: "spam",
+            report_type,
             note,
         }
     }
@@ -899,5 +930,85 @@ mod tests {
                 .expect("second resolve"),
             "second resolve should return false once the report is closed"
         );
+    }
+
+    /// `illegal` reports are the severe class the vision doc says was never the
+    /// community's to hold: they auto-escalate to the platform backstop at
+    /// ingestion rather than waiting for a community admin to forward them.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn illegal_report_auto_escalates_at_ingest() {
+        let pool = setup_pool().await;
+        let community = make_test_community(&pool).await;
+        let report_event_id = random_32();
+        let reporter = random_32();
+        let target_event_id = random_32();
+
+        let report_id = insert_report(
+            &pool,
+            community,
+            new_report_typed(
+                &report_event_id,
+                &reporter,
+                &target_event_id,
+                "illegal",
+                Some("illegal content"),
+            ),
+        )
+        .await
+        .expect("insert illegal report");
+
+        let row = get_report(&pool, community, report_id)
+            .await
+            .expect("get report")
+            .expect("report exists");
+        assert_eq!(
+            row.status, "escalated",
+            "an illegal report must land escalated"
+        );
+        // Auto-escalation is a queue-status decision, not a moderator action: no
+        // resolver is stamped, so downstream reads cannot infer a human forwarded it.
+        assert!(
+            row.resolved_by.is_none() && row.resolved_at.is_none(),
+            "auto-escalation must not stamp a resolver"
+        );
+    }
+
+    /// Every non-`illegal` category still lands `open` for community triage; the
+    /// auto-escalation branch must not widen to the ordinary report flow.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn non_illegal_report_lands_open_at_ingest() {
+        let pool = setup_pool().await;
+        let community = make_test_community(&pool).await;
+
+        for report_type in ["spam", "nudity", "malware", "profanity", "other"] {
+            let report_event_id = random_32();
+            let reporter = random_32();
+            let target_event_id = random_32();
+
+            let report_id = insert_report(
+                &pool,
+                community,
+                new_report_typed(
+                    &report_event_id,
+                    &reporter,
+                    &target_event_id,
+                    report_type,
+                    None,
+                ),
+            )
+            .await
+            .expect("insert report");
+
+            let row = get_report(&pool, community, report_id)
+                .await
+                .expect("get report")
+                .expect("report exists");
+            assert_eq!(
+                row.status, "open",
+                "a {report_type} report must land open, not escalated"
+            );
+        }
     }
 }

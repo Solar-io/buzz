@@ -412,6 +412,16 @@ as given. Full visibility across every status stays available for platform-safet
 and legal review via `scope=all`, which lists reports regardless of status;
 `scope` accepts only `all` and is ignored when an explicit `status` is present.
 
+Reports whose category is `illegal` bypass community triage entirely: they are
+ingested with `status=escalated` rather than `open`, so the severe class reaches
+the operator backstop without waiting for a community admin to forward it (per
+`VISION_MODERATION`, that class was never the community's to hold). Every other
+category still lands `open`. Auto-escalation only sets the queue status — it
+records no moderator decision and stamps no resolver, so an auto-escalated report
+is indistinguishable downstream from an admin-escalated one: the reopen route
+returns it to `open` on the same terms, keyed only on status, never on how the
+report became escalated.
+
 ## Feedback attachment boundary
 
 Feedback attachment bytes are available only through the feedback-scoped read

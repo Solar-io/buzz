@@ -799,7 +799,7 @@ jobs:
         run: |
           cargo nextest run \
             --archive-file target/ci/backend-integration-tests.tar.zst \
-            -E '(package(buzz-relay) and test(=api::admin::tests::reports_default_lists_escalated_only)) or (package(buzz-relay) and test(=api::admin::tests::reports_scope_all_lists_every_status)) or (package(buzz-relay) and test(=api::admin::tests::reports_explicit_status_filter_overrides_default))' \
+            -E '(package(buzz-relay) and test(=api::admin::tests::reports_default_lists_escalated_only)) or (package(buzz-relay) and test(=api::admin::tests::reports_scope_all_lists_every_status)) or (package(buzz-relay) and test(=api::admin::tests::reports_explicit_status_filter_overrides_default)) or (package(buzz-db) and test(=moderation::tests::illegal_report_auto_escalates_at_ingest)) or (package(buzz-db) and test(=moderation::tests::non_illegal_report_lands_open_at_ingest)) or (package(buzz-db) and test(=relay_admin_actions::tests::auto_escalated_report_reopens_like_an_admin_escalated_one))' \
             --run-ignored ignored-only
         env:
           DATABASE_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/buzz

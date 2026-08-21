@@ -2718,4 +2718,65 @@ mod tests {
             "reopen audit row (state=succeeded) must never be claimed by the recovery worker"
         );
     }
+
+    /// An `illegal` report reaches `escalated` at ingest with no resolver, while
+    /// an admin `escalate` reaches it through a decision that stamps one. The
+    /// reopen path keys only on `status`, so both must reopen identically —
+    /// nothing downstream may special-case how a report became escalated.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn auto_escalated_report_reopens_like_an_admin_escalated_one() {
+        let pool = setup_pool().await;
+        let community_id = make_community(&pool).await;
+        let cid = CommunityId::from_uuid(community_id);
+
+        // Auto-escalated at ingest: illegal category, no resolver stamped.
+        let uid = Uuid::new_v4();
+        let event_id: Vec<u8> = uid
+            .as_bytes()
+            .iter()
+            .chain(uid.as_bytes().iter())
+            .copied()
+            .collect();
+        let auto_id = crate::moderation::insert_report(
+            &pool,
+            cid,
+            crate::moderation::NewReport {
+                report_event_id: &event_id,
+                reporter_pubkey: &vec![0u8; 32],
+                target: crate::moderation::ReportTarget::Pubkey(vec![7u8; 32]),
+                channel_id: None,
+                report_type: "illegal",
+                note: None,
+            },
+        )
+        .await
+        .expect("insert illegal report");
+        assert_eq!(
+            report_status(&pool, community_id, auto_id).await,
+            "escalated",
+            "illegal report must ingest as escalated"
+        );
+
+        let result = reopen_report(
+            &pool,
+            cid,
+            auto_id,
+            Uuid::new_v4(),
+            &actor(),
+            "operator",
+            Some("re-triage auto-escalated"),
+        )
+        .await
+        .expect("reopen_report");
+        assert!(
+            matches!(result, ReopenResult::Reopened),
+            "auto-escalated report must reopen exactly like an admin-escalated one, got {result:?}"
+        );
+        assert_eq!(
+            report_status(&pool, community_id, auto_id).await,
+            "open",
+            "auto-escalated report must return to open after reopen"
+        );
+    }
 }
