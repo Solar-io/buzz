@@ -26,6 +26,7 @@ type UseChannelActivityProjectionOptions = {
   readStateVersion: number;
   threadActivityItems: ThreadActivityItem[];
   mutedRootIds: ReadonlySet<string>;
+  currentPubkey?: string;
 };
 
 export function mergeUnreadThreadChannelIds(
@@ -70,6 +71,7 @@ export function useChannelActivityProjection({
   readStateVersion,
   threadActivityItems,
   mutedRootIds,
+  currentPubkey,
 }: UseChannelActivityProjectionOptions) {
   const getThreadReadAt = React.useCallback(
     (rootId: string, channelId?: string | null) => {
@@ -112,6 +114,7 @@ export function useChannelActivityProjection({
     threadActivityItems,
     mutedRootIds,
     channels,
+    currentPubkey,
   );
   const locallyUnreadFeedItems = React.useMemo(() => {
     if (!feed || unreadFeedItemIds.size === 0) return [];

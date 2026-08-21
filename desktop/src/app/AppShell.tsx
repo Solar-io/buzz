@@ -195,7 +195,6 @@ export function AppShell() {
     communitiesHook.activeCommunity?.relayUrl,
   );
   useAgentsDataRefresh();
-  // Chunk F: auto-restart drifted idle agents (per-agent opt-out, default ON).
   useAutoRestartPolicy();
   // Owner-global observer ingestion: receives + decrypts agent observer
   // frames and keeps derived active-turn liveness in sync app-wide, so no
@@ -427,6 +426,7 @@ export function AppShell() {
     readStateVersion,
     threadActivityItems,
     mutedRootIds,
+    currentPubkey: identityQuery.data?.pubkey,
   });
   const unreadThreadChannelIds = useMergedUnreadThreadChannelIds(
     previewUnreadThreadChannelIds,
