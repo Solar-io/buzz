@@ -33,6 +33,7 @@ const CATCH_UP_LIMIT: usize = 1_000;
 const ACTIVITY_LIMIT: usize = 100;
 const ROOT_FILTER_CHUNK: usize = 200;
 const CHANNEL_FETCH_CONCURRENCY: usize = 8;
+const DISCOVERY_OVERLAP_SECONDS: u64 = 7 * 24 * 60 * 60;
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -185,7 +186,7 @@ fn discovery_filters(
     // subsequent successful catch-up advances this independent watermark.
     let since = channel
         .discovery_at
-        .map_or(0, |value| value.saturating_add(1));
+        .map_or(0, |value| value.saturating_sub(DISCOVERY_OVERLAP_SECONDS));
     let mut authored = base_filter(channel, since);
     authored["until"] = serde_json::json!(discovery_through);
     authored["authors"] = serde_json::json!([self_pubkey]);
@@ -799,13 +800,13 @@ mod tests {
             name: "Ch".into(),
             read_at: Some(10),
             timeline_read_at: Some(900),
-            discovery_at: Some(400),
+            discovery_at: Some(1_000_000),
         };
-        let (authored, mentioned) = discovery_filters(&channel, "self", 1_000);
-        assert_eq!(authored["since"], 401);
+        let (authored, mentioned) = discovery_filters(&channel, "self", 2_000_000);
+        assert_eq!(authored["since"], 395_200);
         assert_eq!(authored["authors"], serde_json::json!(["self"]));
-        assert_eq!(mentioned["since"], 401);
-        assert_eq!(mentioned["until"], 1_000);
+        assert_eq!(mentioned["since"], 395_200);
+        assert_eq!(mentioned["until"], 2_000_000);
         assert_eq!(mentioned["#p"], serde_json::json!(["self"]));
 
         let top_level = top_level_filter(&channel);
