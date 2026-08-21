@@ -28,6 +28,28 @@ type UseChannelActivityProjectionOptions = {
   mutedRootIds: ReadonlySet<string>;
 };
 
+export function mergeUnreadThreadChannelIds(
+  previewChannelIds: ReadonlySet<string>,
+  unreadEventIdsByChannel: ReadonlyMap<string, ReadonlySet<string>>,
+): ReadonlySet<string> {
+  const channelIds = new Set(previewChannelIds);
+  for (const [channelId, eventIds] of unreadEventIdsByChannel) {
+    if (eventIds.size > 0) channelIds.add(channelId);
+  }
+  return channelIds;
+}
+
+export function useMergedUnreadThreadChannelIds(
+  previewChannelIds: ReadonlySet<string>,
+  unreadEventIdsByChannel: ReadonlyMap<string, ReadonlySet<string>>,
+): ReadonlySet<string> {
+  return React.useMemo(
+    () =>
+      mergeUnreadThreadChannelIds(previewChannelIds, unreadEventIdsByChannel),
+    [previewChannelIds, unreadEventIdsByChannel],
+  );
+}
+
 export function resolveChannelActivityFeedItemReadAt(
   item: Pick<FeedItem, "channelId" | "id">,
   getOwnReadAt: ReadTimestamp,

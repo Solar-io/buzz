@@ -22,7 +22,10 @@ import { useSettingsShortcuts } from "@/app/useSettingsShortcuts";
 import { useAppShellKeyboardShortcuts } from "@/app/useAppShellKeyboardShortcuts";
 import { useAppShellDesktopNotifications } from "@/app/useAppShellDesktopNotifications";
 import { useAppShellLifecycleEffects } from "@/app/useAppShellLifecycleEffects";
-import { useChannelActivityProjection } from "@/app/useChannelActivityProjection";
+import {
+  useChannelActivityProjection,
+  useMergedUnreadThreadChannelIds,
+} from "@/app/useChannelActivityProjection";
 import { useTauriWindowDrag } from "@/app/useTauriWindowDrag";
 import { useWebviewZoomShortcuts } from "@/app/useWebviewZoomShortcuts";
 import { useHuddlePresentation } from "@/app/useHuddlePresentation";
@@ -404,7 +407,6 @@ export function AppShell() {
       followedRootIds,
     },
   );
-
   const {
     getThreadReadAt,
     markThreadRead,
@@ -414,7 +416,7 @@ export function AppShell() {
     threadActivityFeedItems,
     locallyUnreadFeedItems,
     unreadThreadFeedItems,
-    unreadThreadChannelIds,
+    unreadThreadChannelIds: previewUnreadThreadChannelIds,
   } = useChannelActivityProjection({
     channels,
     feed: homeFeedQuery.data?.feed,
@@ -426,6 +428,10 @@ export function AppShell() {
     threadActivityItems,
     mutedRootIds,
   });
+  const unreadThreadChannelIds = useMergedUnreadThreadChannelIds(
+    previewUnreadThreadChannelIds,
+    unreadThreadEventIdsByChannel,
+  );
   const markAllChannelsRead = React.useCallback(() => {
     markAllReadSources({
       activeChannelId: activeChannel?.id ?? null,
