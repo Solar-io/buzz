@@ -627,6 +627,74 @@ test("D2: a catch-up maxTrigger with no notifying event still advances native la
   }
 });
 
+test("transient catch-up failure retries autonomously and restores unread", async () => {
+  installFreshStorage();
+  const CHANNEL = "channel-catch-up-retry";
+  const EVENT = makeObservedEvent({
+    id: "event-catch-up-retry",
+    createdAt: NOW_S,
+  });
+  let attempt = 0;
+  let harness;
+  const originalSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (callback, delay, ...args) =>
+    originalSetTimeout(callback, Math.min(delay, 10), ...args);
+  const rig = installNativeRig({
+    catchUpChannels: (request) => {
+      attempt += 1;
+      return request.channels.map((channel) =>
+        attempt === 1
+          ? {
+              status: "error",
+              channelId: channel.id,
+              error: "transient relay failure",
+            }
+          : {
+              status: "success",
+              channelId: channel.id,
+              observedEvents: [EVENT],
+              maxTrigger: EVENT.createdAt,
+              activityRows: [],
+              discovered: { participated: [], authored: [], mentioned: [] },
+            },
+      );
+    },
+  });
+  try {
+    harness = await mountUnreadChannels({
+      pubkey: "pk-catch-up-retry",
+      relay: RELAY,
+      channels: [{ id: CHANNEL, name: "retry", channelType: "stream" }],
+      relayClient: makeStubRelayClient(),
+    });
+    for (let index = 0; index < 20; index += 1) {
+      await settle();
+      if (rig.requests("unread_catch_up").length >= 2) break;
+      await act(async () => {
+        await new Promise((resolve) => originalSetTimeout(resolve, 10));
+      });
+    }
+    await settle();
+
+    assert.equal(
+      rig.requests("unread_catch_up").length,
+      2,
+      "a failed channel must retry without an unrelated rerender",
+    );
+    assert.equal(
+      rig
+        .scope({ pubkey: "pk-catch-up-retry", relayUrl: RELAY })
+        .events.has(EVENT.id),
+      true,
+      "the successful retry must restore the unread event",
+    );
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    await harness?.unmount();
+    rig.restore();
+  }
+});
+
 // ── D3: an empty seed must not wipe accumulated native membership ────────────
 
 test("D3: reopening with an empty membership seed preserves discovered membership", async () => {

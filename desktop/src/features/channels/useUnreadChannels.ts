@@ -67,6 +67,7 @@ import {
 import { useThreadActivityPersistence } from "@/features/channels/useThreadActivityPersistence";
 import { unreadCatchUp } from "@/shared/api/tauriUnreadCatchUp";
 import { collectUnreadThreadEventIds } from "./unreadThreadEventIds";
+import { useCatchUpRetry } from "./useCatchUpRetry";
 
 type UseUnreadChannelsOptions = UseLiveChannelUpdatesOptions & {
   pubkey?: string;
@@ -281,6 +282,11 @@ export function useUnreadChannels(
     threadActivityRef,
   );
   const currentActivityScope = activityPersistence.currentScope;
+  const {
+    retryVersion: catchUpRetryVersion,
+    clearAttempt: clearCatchUpRetryAttempt,
+    schedule: scheduleCatchUpRetry,
+  } = useCatchUpRetry(currentActivityScope, observedPersistence.isScopeLoaded);
 
   // `topLevelOnly`: passive channel-open path (NIP-RS Option 1) — marker lands at newest
   // top-level msg without folding observed replies; leaves refs intact so the dot persists
@@ -603,11 +609,7 @@ export function useUnreadChannels(
     [channels],
   );
 
-  // Catch-up: for each channel we haven't already caught up this session,
-  // ask the relay "are there any external trigger messages newer than the
-  // NIP-RS read marker?" If yes, advance latestByChannelRef so the unread
-  // predicate fires. This is the only way historical unreads survive an
-  // app restart now that we don't persist any client-side "latest" state.
+  // Recover historical unreads that arrived after the NIP-RS marker.
   // biome-ignore lint/correctness/useExhaustiveDependencies: options.followedRootIds intentionally omitted — it's a Set reference that changes identity every render; the catch-up is a one-shot per-channel operation controlled by caughtUpChannelsRef, not reactive to follow changes
   React.useEffect(() => {
     if (!isReadStateReady) return;
@@ -620,27 +622,20 @@ export function useUnreadChannels(
     );
     if (toFetch.length === 0) return;
 
-    // Claim optimistically so re-renders mid-flight don't kick off duplicate
-    // REQs. If the effect is cancelled (cleanup) we release the claims so
-    // the next run retries.
+    // Claim optimistically so rerenders cannot duplicate in-flight requests.
     for (const id of toFetch) {
       caughtUpChannelsRef.current.add(id);
     }
 
     let isCancelled = false;
+    const pendingIds = new Set(toFetch);
 
-    // Snapshot membership sizes so the `.then` can detect whether the catch-up
-    // discovered new participated/authored/mentioned roots (pass 1 mutates the
-    // refs in place). A pure-participation or pure-mention discovery produces no
-    // maxExternal advance, so without this the notify gate would never
-    // invalidate to surface the badge.
+    // Detect membership-only discoveries that do not advance maxExternal.
     const participatedSizeBefore = participatedRootIdsRef.current.size;
     const authoredSizeBefore = authoredRootIdsRef.current.size;
     const mentionedSizeBefore = mentionedRootIdsRef.current.size;
 
-    // E's native observed-unread store owns notification membership, so this
-    // request scales with channels being caught up rather than five 1,000-id
-    // sets. The prior 332 KiB-at-cap payload is retired at this boundary.
+    // Native owns membership, so the request scales with channel count.
     void unreadCatchUp({
       channels: toFetch.map((channelId) => {
         const channel = channels.find(
@@ -659,20 +654,20 @@ export function useUnreadChannels(
     })
       .then(({ channels: results }) => {
         if (isCancelled) return;
-        // The command rejects if relay/pubkey scope changes in flight. Keep the
-        // renderer fence too: it also covers effect cleanup before merge.
         if (!observedPersistence.isScopeLoaded()) return;
 
         let didAdvance = false;
         let didDiscover = false;
         const allThreadReplies: ThreadActivityItem[] = [];
+        const failedIds: string[] = [];
         for (const result of results) {
+          pendingIds.delete(result.channelId);
           if (result.status === "error") {
-            // The error arm carries only this identity; releasing its claim is
-            // what lets a failed channel retry on the next effect run.
             caughtUpChannelsRef.current.delete(result.channelId);
+            failedIds.push(result.channelId);
             continue;
           }
+          clearCatchUpRetryAttempt(result.channelId);
           for (const rootId of result.discovered.participated) {
             const before = participatedRootIdsRef.current.size;
             participatedRootIdsRef.current.add(rootId);
@@ -718,6 +713,12 @@ export function useUnreadChannels(
             }
           }
         }
+        for (const channelId of pendingIds) {
+          caughtUpChannelsRef.current.delete(channelId);
+          failedIds.push(channelId);
+        }
+        pendingIds.clear();
+        scheduleCatchUpRetry(failedIds);
 
         if (normalizedPubkey !== null && didDiscover) {
           participationStore.write(
@@ -750,20 +751,21 @@ export function useUnreadChannels(
       })
       .catch(() => {
         if (isCancelled) return;
-        for (const id of toFetch) caughtUpChannelsRef.current.delete(id);
+        for (const id of pendingIds) caughtUpChannelsRef.current.delete(id);
+        scheduleCatchUpRetry(pendingIds);
+        pendingIds.clear();
       });
 
     return () => {
       isCancelled = true;
-      // Release the claims so the next effect run can retry these channels.
-      // The identity-reset effect replaces the Set entirely, so this is a
-      // no-op in that case (harmless).
-      for (const id of toFetch) {
+      for (const id of pendingIds) {
         caughtUpChannelsRef.current.delete(id);
       }
     };
   }, [
     channelIdsKey,
+    catchUpRetryVersion,
+    clearCatchUpRetryAttempt,
     getChannelTimelineReadAt,
     getContextReadAt,
     isReadStateReady,
@@ -771,15 +773,10 @@ export function useUnreadChannels(
     normalizedRelayUrl,
     recordUnreadEvent,
     relayClient,
+    scheduleCatchUpRetry,
   ]);
 
-  // Unread = inactive channels, plus any channel manually marked unread this
-  // session. A manually marked active channel must remain visible as unread
-  // until the user explicitly marks it read again.
-  // High-priority unread = DMs or channels with a mention/broadcast newer
-  // than the read marker. Forced-unread channels are dot tier only (not
-  // high-priority). Both sets share identical deps and always invalidate
-  // together, so they are computed in a single memo.
+  // Compute ordinary, top-level, and high-priority projections together.
   const rawUnread =
     // biome-ignore lint/correctness/useExhaustiveDependencies: readStateVersion and latestVersion are intentional invalidation signals
     React.useMemo(() => {

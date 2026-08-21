@@ -346,23 +346,21 @@ pub(crate) async fn unread_catch_up(
         .iter()
         .map(|(channel, _)| channel.clone())
         .collect::<Vec<_>>();
-    let mut thread_events_by_channel =
-        match fetch_relevant_thread_events(&state, &api_base, &keys, &discovery_channels, &roots)
-            .await
-        {
-            Ok(events) => events,
-            Err(error) => {
-                failures.extend(
-                    discovery
-                        .drain(..)
-                        .map(|(channel, _)| ChannelResult::Error {
-                            channel_id: channel.id,
-                            error: error.clone(),
-                        }),
-                );
-                HashMap::new()
-            }
+    let mut relevant =
+        fetch_relevant_thread_events(&state, &api_base, &keys, &discovery_channels, &roots).await;
+    discovery.retain(|(channel, _)| {
+        let Some(error) = relevant
+            .errors_by_channel
+            .remove(&channel.id.to_ascii_lowercase())
+        else {
+            return true;
         };
+        failures.push(ChannelResult::Error {
+            channel_id: channel.id.clone(),
+            error,
+        });
+        false
+    });
 
     let top_level_results = stream::iter(discovery)
         .map(|(channel, events)| async {
@@ -378,7 +376,8 @@ pub(crate) async fn unread_catch_up(
             Ok(top_level) => {
                 events.extend(top_level);
                 events.extend(
-                    thread_events_by_channel
+                    relevant
+                        .by_channel
                         .remove(&channel.id.to_ascii_lowercase())
                         .unwrap_or_default(),
                 );

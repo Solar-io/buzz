@@ -8,6 +8,20 @@ use super::{
     ROOT_FILTER_CHUNK,
 };
 
+// Mirrors buzz-relay's aggregate explicit `#h` ceiling. Keep every HTTP
+// bridge request independently admissible when a frontier group is large.
+const CHANNEL_FILTER_CHUNK: usize = 128;
+
+pub(super) struct RelevantThreadEvents {
+    pub(super) by_channel: HashMap<String, Vec<Event>>,
+    pub(super) errors_by_channel: HashMap<String, String>,
+}
+
+struct RelevantThreadQuery {
+    channels: Vec<CatchUpChannel>,
+    filter: serde_json::Value,
+}
+
 fn relevant_thread_filter(channels: &[CatchUpChannel], roots: &[String]) -> serde_json::Value {
     let since = channels.first().map_or(0, relevant_thread_since);
     debug_assert!(
@@ -49,6 +63,24 @@ fn channels_by_frontier(channels: &[CatchUpChannel]) -> BTreeMap<u64, Vec<CatchU
     groups
 }
 
+fn relevant_thread_queries(
+    channels: &[CatchUpChannel],
+    roots: &[String],
+) -> Vec<RelevantThreadQuery> {
+    let mut queries = Vec::new();
+    for frontier_channels in channels_by_frontier(channels).into_values() {
+        for channel_chunk in frontier_channels.chunks(CHANNEL_FILTER_CHUNK) {
+            for root_chunk in roots.chunks(ROOT_FILTER_CHUNK) {
+                queries.push(RelevantThreadQuery {
+                    channels: channel_chunk.to_vec(),
+                    filter: relevant_thread_filter(channel_chunk, root_chunk),
+                });
+            }
+        }
+    }
+    queries
+}
+
 fn event_channel_id(event: &Event) -> Option<&str> {
     event
         .tags
@@ -88,30 +120,45 @@ pub(super) async fn fetch_relevant_thread_events(
     keys: &Keys,
     channels: &[CatchUpChannel],
     roots: &[String],
-) -> Result<HashMap<String, Vec<Event>>, String> {
+) -> RelevantThreadEvents {
     if channels.is_empty() || roots.is_empty() {
-        return Ok(HashMap::new());
+        return RelevantThreadEvents {
+            by_channel: HashMap::new(),
+            errors_by_channel: HashMap::new(),
+        };
     }
-    let filters = channels_by_frontier(channels)
-        .into_values()
-        .flat_map(|channels| {
-            roots
-                .chunks(ROOT_FILTER_CHUNK)
-                .map(move |roots| relevant_thread_filter(&channels, roots))
+    let pages = stream::iter(relevant_thread_queries(channels, roots))
+        .map(|query| async move {
+            let result = fetch_filter_pages(state, api_base, keys, &query.filter).await;
+            (query.channels, result)
         })
-        .collect::<Vec<_>>();
-    let pages = stream::iter(filters)
-        .map(|filter| async move { fetch_filter_pages(state, api_base, keys, &filter).await })
         .buffered(CHANNEL_FETCH_CONCURRENCY)
         .collect::<Vec<_>>()
         .await;
     let mut events = Vec::new();
-    for page in pages {
-        events.extend(page?);
+    let mut errors_by_channel = HashMap::new();
+    for (query_channels, page) in pages {
+        match page {
+            Ok(page) => events.extend(page),
+            Err(error) => {
+                for channel in query_channels {
+                    errors_by_channel
+                        .entry(channel.id.to_ascii_lowercase())
+                        .or_insert_with(|| error.clone());
+                }
+            }
+        }
     }
     let mut seen = HashSet::new();
     events.retain(|event| seen.insert(event.id));
-    Ok(bucket_requested_events(events, channels))
+    let mut by_channel = bucket_requested_events(events, channels);
+    for channel_id in errors_by_channel.keys() {
+        by_channel.remove(channel_id);
+    }
+    RelevantThreadEvents {
+        by_channel,
+        errors_by_channel,
+    }
 }
 
 #[cfg(test)]
@@ -173,5 +220,21 @@ mod tests {
             relevant_thread_filter(&groups[&901], &["root".into()])["since"],
             901
         );
+    }
+
+    #[test]
+    fn same_frontier_channels_respect_the_relay_explicit_channel_limit() {
+        let channels = (0..129)
+            .map(|index| channel(&format!("channel-{index}"), "stream", None))
+            .collect::<Vec<_>>();
+
+        let queries = relevant_thread_queries(&channels, &["root".into()]);
+        let sizes = queries
+            .iter()
+            .map(|query| query.filter["#h"].as_array().map_or(0, Vec::len))
+            .collect::<Vec<_>>();
+
+        assert_eq!(sizes, [128, 1]);
+        assert!(sizes.iter().all(|size| *size <= CHANNEL_FILTER_CHUNK));
     }
 }
