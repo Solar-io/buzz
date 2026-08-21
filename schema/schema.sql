@@ -1880,11 +1880,16 @@ CREATE TABLE relay_operator_audit (
     op            TEXT NOT NULL CHECK (op IN ('grant', 'revoke')),
     prev_role     TEXT CHECK (prev_role IN ('operator', 'moderator')),
     new_role      TEXT CHECK (new_role IN ('operator', 'moderator')),
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    -- Insertion time (clock_timestamp()), NOT transaction-start now(): mutations
+    -- write their audit row under the serializing lock, so insertion time is
+    -- strictly monotonic with the true privilege chain. `seq` is the structural
+    -- tie-breaker for a strict total order; reads use ORDER BY (created_at, seq).
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    seq           BIGINT GENERATED ALWAYS AS IDENTITY
 );
 
 CREATE INDEX idx_relay_operator_audit_target
-    ON relay_operator_audit (target_pubkey, created_at);
+    ON relay_operator_audit (target_pubkey, created_at, seq);
 
 INSERT INTO _operator_global_tables (table_name, reason) VALUES
     ('relay_operator_audit', 'deployment-global append-only roster mutation audit trail; no community_id intentionally');

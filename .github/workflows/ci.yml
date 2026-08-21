@@ -777,14 +777,15 @@ jobs:
         # Security-review fixes for the roster admin API, all #[ignore]d in the
         # default suite (they need Postgres) and selected by no other job:
         #  - buzz-db relay_operators::tests: audit pre-image trail, per-target
-        #    lock serialization, and audit-failure rollback coupling.
+        #    lock serialization, insertion-time audit ordering, and
+        #    audit-failure rollback coupling.
         #  - buzz-relay api::admin: NIP-98 staffing writes attributed audit rows,
         #    adversarial expirationSecs rejected at the resolve route, mixed-case
         #    staffing normalizes to one canonical row.
         run: |
           cargo nextest run \
             --archive-file target/ci/backend-integration-tests.tar.zst \
-            -E '(package(buzz-db) and test(/relay_operators::tests::/)) or (package(buzz-relay) and test(=api::admin::tests::nip98_staffing_put_and_delete_write_attributed_audit_rows)) or (package(buzz-relay) and test(=api::admin::tests::resolve_route_rejects_adversarial_expiration_and_leaves_report_open)) or (package(buzz-relay) and test(=api::admin::tests::mixed_case_non_config_staffing_normalizes_to_one_row))' \
+            -E '(package(buzz-db) and test(=relay_operators::tests::roster_mutations_write_pre_image_audit_rows)) or (package(buzz-db) and test(=relay_operators::tests::concurrent_upserts_serialize_and_record_true_pre_image)) or (package(buzz-db) and test(=relay_operators::tests::audit_order_follows_insertion_not_transaction_start)) or (package(buzz-db) and test(=relay_operators::tests::audit_insert_failure_rolls_back_roster_mutation)) or (package(buzz-relay) and test(=api::admin::tests::nip98_staffing_put_and_delete_write_attributed_audit_rows)) or (package(buzz-relay) and test(=api::admin::tests::resolve_route_rejects_adversarial_expiration_and_leaves_report_open)) or (package(buzz-relay) and test(=api::admin::tests::mixed_case_non_config_staffing_normalizes_to_one_row))' \
             --run-ignored ignored-only
         env:
           DATABASE_URL: postgres://buzz:${{ env.BUZZ_TEST_POSTGRES_PASSWORD }}@localhost:5432/buzz

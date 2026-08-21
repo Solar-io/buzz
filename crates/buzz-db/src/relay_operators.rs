@@ -221,7 +221,7 @@ mod tests {
         ) -> Vec<(String, Option<String>, Option<String>)> {
             sqlx::query_as(
                 "SELECT op, prev_role, new_role FROM relay_operator_audit \
-                 WHERE target_pubkey = $1 ORDER BY created_at ASC",
+                 WHERE target_pubkey = $1 ORDER BY created_at ASC, seq ASC",
             )
             .bind(target)
             .fetch_all(pool)
@@ -308,7 +308,7 @@ mod tests {
 
         let rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
             "SELECT op, prev_role, new_role FROM relay_operator_audit \
-             WHERE target_pubkey = $1 ORDER BY created_at ASC",
+             WHERE target_pubkey = $1 ORDER BY created_at ASC, seq ASC",
         )
         .bind(&target)
         .fetch_all(&pool)
@@ -325,6 +325,86 @@ mod tests {
                 ),
             ],
             "second committed upsert must record the first committed role as its pre-image"
+        );
+    }
+
+    /// Ordered audit reads must reflect the true privilege chain (insertion
+    /// order under the serializing lock), never transaction-start order.
+    ///
+    /// `now()` freezes at BEGIN, so a transaction that STARTS early but COMMITS
+    /// late would stamp its audit row with a timestamp preceding an
+    /// already-committed later mutation — letting `ORDER BY created_at` report
+    /// an impossible chain (e.g. revoke before grant). The `clock_timestamp()`
+    /// default plus the `seq` tie-breaker stamp at insertion time instead.
+    ///
+    /// This drives two raw transactions directly against the audit table (the
+    /// atomic `upsert`/`remove` don't expose a mid-transaction pause) so the
+    /// start-vs-insert interleaving is fully deterministic: `revoke_txn` begins
+    /// FIRST but inserts LAST; `grant_txn` begins second but commits first. The
+    /// grant→revoke chain is the true history; a `now()` default would invert it.
+    #[tokio::test]
+    #[ignore = "requires Postgres — audit order follows insertion time, not txn start"]
+    async fn audit_order_follows_insertion_not_transaction_start() {
+        let pool = setup_pool().await;
+        let actor = vec![5u8; 32];
+        let target: Vec<u8> = {
+            let id = uuid::Uuid::new_v4();
+            id.as_bytes().iter().chain(id.as_bytes()).copied().collect()
+        };
+
+        // revoke_txn STARTS FIRST. Pin its transaction timestamp now() with an
+        // explicit statement so a now() default would stamp the revoke earlier
+        // than the grant that actually commits before it.
+        let mut revoke_txn = pool.begin().await.expect("begin revoke txn");
+        sqlx::query("SELECT now()")
+            .execute(&mut *revoke_txn)
+            .await
+            .expect("pin revoke txn start");
+
+        // grant_txn STARTS SECOND, inserts the first mutation, and COMMITS FIRST.
+        let mut grant_txn = pool.begin().await.expect("begin grant txn");
+        sqlx::query(
+            "INSERT INTO relay_operator_audit \
+             (actor_pubkey, target_pubkey, op, prev_role, new_role) \
+             VALUES ($1, $2, 'grant', NULL, 'moderator')",
+        )
+        .bind(&actor)
+        .bind(&target)
+        .execute(&mut *grant_txn)
+        .await
+        .expect("insert grant audit row");
+        grant_txn.commit().await.expect("commit grant txn");
+
+        // revoke_txn inserts the second mutation and COMMITS SECOND.
+        sqlx::query(
+            "INSERT INTO relay_operator_audit \
+             (actor_pubkey, target_pubkey, op, prev_role, new_role) \
+             VALUES ($1, $2, 'revoke', 'moderator', NULL)",
+        )
+        .bind(&actor)
+        .bind(&target)
+        .execute(&mut *revoke_txn)
+        .await
+        .expect("insert revoke audit row");
+        revoke_txn.commit().await.expect("commit revoke txn");
+
+        // Ordered read must be grant→revoke (insertion order), not the inverted
+        // revoke→grant a transaction-start timestamp would produce.
+        let rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT op, prev_role, new_role FROM relay_operator_audit \
+             WHERE target_pubkey = $1 ORDER BY created_at ASC, seq ASC",
+        )
+        .bind(&target)
+        .fetch_all(&pool)
+        .await
+        .expect("read audit rows");
+        assert_eq!(
+            rows,
+            vec![
+                ("grant".to_string(), None, Some("moderator".to_string())),
+                ("revoke".to_string(), Some("moderator".to_string()), None),
+            ],
+            "ordered read must follow the committed privilege chain, not transaction-start order"
         );
     }
 
