@@ -13,208 +13,15 @@
 //! tests (`src/permission.rs`), which use an injectable deadline and inspect the
 //! private correlation map — neither of which a subprocess can do.
 //!
-//! The `Harness` is copied from `regressions.rs`: each integration test file is
-//! its own binary, so a self-contained harness is the established convention.
+//! The subprocess `Harness`, capturing LLM, and `approve_permission` helper are
+//! shared with the other integration suites via `mod common`.
 
-use std::collections::VecDeque;
-use std::process::Stdio;
-use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::TcpListener;
-use tokio::sync::Mutex;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Capturing LLM
-// ─────────────────────────────────────────────────────────────────────────────
-
-struct CapturingLlm {
-    url: String,
-    #[allow(dead_code)]
-    captured: Arc<Mutex<Vec<Value>>>,
-}
-
-async fn spawn_capturing_llm(responses: Vec<Value>) -> CapturingLlm {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let queue = Arc::new(Mutex::new(VecDeque::from(responses)));
-    let captured: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
-    let cap2 = captured.clone();
-    tokio::spawn(async move {
-        loop {
-            let (mut sock, _) = match listener.accept().await {
-                Ok(p) => p,
-                Err(_) => return,
-            };
-            let queue = queue.clone();
-            let captured = cap2.clone();
-            tokio::spawn(async move {
-                let mut buf = Vec::new();
-                let mut tmp = [0u8; 8192];
-                while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
-                    match sock.read(&mut tmp).await {
-                        Ok(0) | Err(_) => return,
-                        Ok(n) => buf.extend_from_slice(&tmp[..n]),
-                    }
-                    if buf.len() > 4_000_000 {
-                        return;
-                    }
-                }
-                let header_end = buf.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
-                let headers = &buf[..header_end];
-                let mut body_len = 0usize;
-                for line in headers.split(|b| *b == b'\n') {
-                    let line = std::str::from_utf8(line).unwrap_or("");
-                    if let Some(rest) = line.to_ascii_lowercase().strip_prefix("content-length:") {
-                        body_len = rest.trim().trim_end_matches('\r').parse().unwrap_or(0);
-                    }
-                }
-                while buf.len() < header_end + body_len {
-                    match sock.read(&mut tmp).await {
-                        Ok(0) | Err(_) => return,
-                        Ok(n) => buf.extend_from_slice(&tmp[..n]),
-                    }
-                }
-                if let Ok(req) = serde_json::from_slice::<Value>(&buf[header_end..]) {
-                    captured.lock().await.push(req);
-                }
-                let body = queue
-                    .lock()
-                    .await
-                    .pop_front()
-                    .unwrap_or_else(|| json!({ "error": "no canned response" }));
-                let body_s = serde_json::to_string(&body).unwrap();
-                let resp = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body_s.len(),
-                    body_s,
-                );
-                let _ = sock.write_all(resp.as_bytes()).await;
-                let _ = sock.shutdown().await;
-            });
-        }
-    });
-    CapturingLlm { url, captured }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Subprocess harness
-// ─────────────────────────────────────────────────────────────────────────────
-
-struct Harness {
-    child: tokio::process::Child,
-    stdin: tokio::process::ChildStdin,
-    stdout: BufReader<tokio::process::ChildStdout>,
-    stderr: Arc<StdMutex<String>>,
-    next_id: i64,
-}
-
-impl Harness {
-    async fn spawn_with_env(base_url: &str, extra: &[(&str, &str)]) -> Self {
-        let bin = env!("CARGO_BIN_EXE_buzz-agent");
-        let mut cmd = tokio::process::Command::new(bin);
-        cmd.env("BUZZ_AGENT_PROVIDER", "openai")
-            .env("OPENAI_COMPAT_API_KEY", "test")
-            .env("OPENAI_COMPAT_MODEL", "fake-model")
-            .env("OPENAI_COMPAT_BASE_URL", base_url)
-            .env("BUZZ_AGENT_LLM_TIMEOUT_SECS", "5")
-            .env("BUZZ_AGENT_TOOL_TIMEOUT_SECS", "5")
-            .env("BUZZ_AGENT_MAX_ROUNDS", "8")
-            .env("BUZZ_AGENT_MCP_INIT_TIMEOUT_SECS", "2");
-        for (k, v) in extra {
-            cmd.env(k, v);
-        }
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        let mut child = cmd.spawn().expect("spawn buzz-agent");
-        let stdin = child.stdin.take().unwrap();
-        let stdout = BufReader::new(child.stdout.take().unwrap());
-        let stderr = child.stderr.take().unwrap();
-        let stderr_buf = Arc::new(StdMutex::new(String::new()));
-        let stderr_out = Arc::clone(&stderr_buf);
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(stderr);
-            let mut line = String::new();
-            loop {
-                line.clear();
-                let n = match reader.read_line(&mut line).await {
-                    Ok(n) => n,
-                    Err(_) => break,
-                };
-                if n == 0 {
-                    break;
-                }
-                if let Ok(mut out) = stderr_out.lock() {
-                    out.push_str(&line);
-                }
-            }
-        });
-        Self {
-            child,
-            stdin,
-            stdout,
-            stderr: stderr_buf,
-            next_id: 1,
-        }
-    }
-
-    async fn spawn(base_url: &str) -> Self {
-        Self::spawn_with_env(base_url, &[]).await
-    }
-
-    async fn send(&mut self, method: &str, params: Value) -> i64 {
-        let id = self.next_id;
-        self.next_id += 1;
-        self.write(json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }))
-            .await;
-        id
-    }
-
-    async fn notify(&mut self, method: &str, params: Value) {
-        self.write(json!({ "jsonrpc": "2.0", "method": method, "params": params }))
-            .await;
-    }
-
-    async fn write(&mut self, msg: Value) {
-        let mut s = serde_json::to_string(&msg).unwrap();
-        s.push('\n');
-        self.stdin.write_all(s.as_bytes()).await.unwrap();
-        self.stdin.flush().await.unwrap();
-    }
-
-    async fn recv(&mut self) -> Value {
-        let mut line = String::new();
-        let n = tokio::time::timeout(Duration::from_secs(15), self.stdout.read_line(&mut line))
-            .await
-            .expect("recv timeout")
-            .expect("read line");
-        assert!(n > 0, "agent EOF; stderr={}", self.stderr_text());
-        serde_json::from_str(&line).expect("non-JSON line")
-    }
-
-    async fn recv_until<F: FnMut(&Value) -> bool>(&mut self, mut pred: F) -> Value {
-        loop {
-            let v = self.recv().await;
-            if pred(&v) {
-                return v;
-            }
-        }
-    }
-
-    async fn shutdown(mut self) {
-        drop(self.stdin);
-        let _ = tokio::time::timeout(Duration::from_secs(2), self.child.wait()).await;
-        let _ = self.child.start_kill();
-    }
-
-    fn stderr_text(&self) -> String {
-        self.stderr.lock().map(|s| s.clone()).unwrap_or_default()
-    }
-}
+mod common;
+use common::{approve_permission, spawn_capturing_llm, Harness};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LLM response builders
@@ -259,18 +66,6 @@ fn shell_call(id: &str) -> Value {
 // ─────────────────────────────────────────────────────────────────────────────
 // Permission-response builders + drivers
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// Answer a permission request by selecting the offered option whose
-/// `kind == "allow_once"` — mirroring buzz-acp's answering side, never a
-/// hardcoded `optionId`. A future option-id rename can't silently deny.
-fn approve(req: &Value) -> Value {
-    let option_id = req["params"]["options"]
-        .as_array()
-        .and_then(|opts| opts.iter().find(|o| o["kind"] == "allow_once"))
-        .and_then(|o| o["optionId"].as_str())
-        .expect("request must offer an allow_once option");
-    resp_selected(&req["id"], option_id)
-}
 
 /// Bare JSON-RPC response selecting `option_id`.
 fn resp_selected(id: &Value, option_id: &str) -> Value {
@@ -437,7 +232,7 @@ async fn test_allow_reaches_tool_exactly_once_and_not_before_approval() {
             call_log_lines(&log_for_check).is_empty(),
             "tool invoked BEFORE approval"
         );
-        Some(approve(req))
+        Some(approve_permission(req))
     })
     .await;
 
@@ -506,6 +301,22 @@ async fn test_adversarial_outcomes_never_invoke_tool() {
         }),
         ("wrong_option_id", |req| {
             resp_selected(&req["id"], "not_an_offered_option")
+        }),
+        // Structurally malformed *frames* that each still carry a well-formed
+        // `selected`/`allow_once` result — the payload would authorize, so only
+        // the frame-structure check (wire::classify) stands between them and the
+        // tool. These mirror the two broker-seam unit tests
+        // (`src/permission.rs::test_frame_with_{result_and_error,non_string_method}_denies_tool`)
+        // at the live MCP-log seam, proving the frame gate denies end to end.
+        ("result_and_error", |req| {
+            let mut frame = approve_permission(req);
+            frame["error"] = json!({ "code": -32603, "message": "internal" });
+            frame
+        }),
+        ("non_string_method", |req| {
+            let mut frame = approve_permission(req);
+            frame["method"] = json!(7);
+            frame
         }),
     ];
 
@@ -578,7 +389,7 @@ async fn test_stale_id_ignored_then_real_id_authorizes() {
     );
 
     // The real id resolves it exactly once.
-    h.write(approve(&req)).await;
+    h.write(approve_permission(&req)).await;
     let resp = h.recv_until(|v| v["id"] == json!(p)).await;
     assert_eq!(stop_reason(&resp), "end_turn");
     assert_eq!(
@@ -676,7 +487,7 @@ async fn test_crossed_parallel_decisions_authorize_only_matching_call() {
             Some(resp_selected(&req["id"], "reject_once")) // deny the first-asked
         } else {
             allowed_title = perm_title(req);
-            Some(approve(req)) // allow the second-asked
+            Some(approve_permission(req)) // allow the second-asked
         }
     })
     .await;
@@ -809,7 +620,7 @@ async fn test_v2_negotiation_emits_v2_request_shape() {
             params.get("toolCall").is_none(),
             "v2 must not carry the v1 top-level toolCall"
         );
-        Some(approve(req))
+        Some(approve_permission(req))
     })
     .await;
 

@@ -16,6 +16,9 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 
+mod common;
+use common::approve_permission;
+
 async fn spawn_fake_llm(responses: Vec<Value>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -264,23 +267,6 @@ fn openai_tool_call(id: &str, name: &str, args: Value) -> Value {
             },
             "finish_reason": "tool_calls",
         }],
-    })
-}
-
-/// Select the offered option whose `kind == "allow_once"` and return the
-/// `session/request_permission` response. Mirrors buzz-acp's answering side,
-/// which selects by `kind`, never by a hardcoded `optionId`. Centralizing this
-/// means a future option-id rename can't silently turn allow into a denial.
-fn approve_permission(request: &Value) -> Value {
-    let option_id = request["params"]["options"]
-        .as_array()
-        .and_then(|opts| opts.iter().find(|o| o["kind"] == "allow_once"))
-        .and_then(|o| o["optionId"].as_str())
-        .expect("request must offer an allow_once option");
-    json!({
-        "jsonrpc": "2.0",
-        "id": request["id"],
-        "result": { "outcome": { "outcome": "selected", "optionId": option_id } },
     })
 }
 
