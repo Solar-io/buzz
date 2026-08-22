@@ -491,6 +491,21 @@ test("composer Buzz chip labels wrap without orphaning their icons", async ({
   const chip = composerInput.locator('[data-composer-buzz-link=""]');
   const leadingFragment = chip.locator(".inline-chip-leading-fragment");
   await expect(chip).toHaveText("relaytoolsobservabilityconsole-main");
+  const emptyLeadingFragmentHeight = await composerInput.evaluate((element) => {
+    const probe = document.createElement("span");
+    probe.className = "mention-chip wrapping-inline-chip";
+    const leading = document.createElement("span");
+    leading.className =
+      "inline-chip-leading-fragment inline-chip-with-icon inline-chip-icon-repo";
+    const remainder = document.createElement("span");
+    remainder.textContent = " leading-space";
+    probe.append(leading, remainder);
+    element.append(probe);
+    const height = leading.getBoundingClientRect().height;
+    probe.remove();
+    return height;
+  });
+  expect(emptyLeadingFragmentHeight).toBeGreaterThan(0);
   const chipHeightAtWidth = async (width: number) => {
     await composerInput.evaluate((element, nextWidth) => {
       element.style.width = `${nextWidth}px`;
@@ -526,11 +541,12 @@ test("composer Buzz chip labels wrap without orphaning their icons", async ({
           ?.getBoundingClientRect();
         const leadingBounds = leading?.getBoundingClientRect();
         return {
-          chipLineBoxes: new Set(
-            Array.from(chipRange.getClientRects(), (rect) =>
-              Math.round(rect.y),
-            ),
-          ).size,
+          chipWraps:
+            new Set(
+              Array.from(chipRange.getClientRects(), (rect) =>
+                Math.round(rect.y),
+              ),
+            ).size >= 2,
           leadingContained:
             Boolean(composerBounds && leadingBounds) &&
             leadingBounds.right <= composerBounds.right,
@@ -539,19 +555,10 @@ test("composer Buzz chip labels wrap without orphaning their icons", async ({
       }),
     )
     .toMatchObject({
-      chipLineBoxes: expect.any(Number),
+      chipWraps: true,
       leadingContained: true,
       leadingLineBoxes: 1,
     });
-  expect(
-    await chip.evaluate((element) => {
-      const range = document.createRange();
-      range.selectNodeContents(element);
-      return new Set(
-        Array.from(range.getClientRects(), (rect) => Math.round(rect.y)),
-      ).size;
-    }),
-  ).toBeGreaterThanOrEqual(2);
 
   await expect(chip).toHaveAttribute(
     "title",
