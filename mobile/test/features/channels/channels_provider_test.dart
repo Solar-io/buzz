@@ -653,6 +653,76 @@ void main() {
     },
   );
 
+  test('a newer ordinary refresh owns the installed membership list', () async {
+    final session = _FakeRelaySession(
+      memberships: [_membership(_channelA, myPk)],
+      metadata: [_meta(id: _channelA, name: 'joined-a')],
+    );
+    final container = _buildContainer(session: session);
+    addTearDown(container.dispose);
+
+    await container.read(channelsProvider.future);
+
+    session.pauseNextHiddenDmQuery();
+    final olderRefresh = container.read(channelsProvider.notifier).refresh();
+    await session.nextHiddenDmQueryStarted;
+
+    session.memberships = [_membership(_channelB, myPk)];
+    session.metadata = [_meta(id: _channelB, name: 'joined-b')];
+    await container.read(channelsProvider.notifier).refresh();
+
+    session.resumePausedHiddenDmQuery();
+    await olderRefresh;
+    await _settle();
+
+    expect(
+      container
+          .read(channelsProvider)
+          .requireValue
+          .map((channel) => channel.id),
+      [_channelB],
+      reason: 'an older ordinary refresh overwrote the newer membership list',
+    );
+    expect(session.activeChannels, {_channelB});
+  });
+
+  test(
+    'a newer refresh owns the list over an older reconnect backstop',
+    () async {
+      final session = _FakeRelaySession(
+        memberships: [_membership(_channelA, myPk)],
+        metadata: [_meta(id: _channelA, name: 'joined-a')],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      await container.read(channelsProvider.future);
+
+      session.pauseNextHiddenDmQuery();
+      session.setStatus(SessionStatus.reconnecting);
+      session.setStatus(SessionStatus.connected);
+      await session.nextHiddenDmQueryStarted;
+
+      session.memberships = [_membership(_channelB, myPk)];
+      session.metadata = [_meta(id: _channelB, name: 'joined-b')];
+      await container.read(channelsProvider.notifier).refresh();
+
+      session.resumePausedHiddenDmQuery();
+      await _settle();
+
+      expect(
+        container
+            .read(channelsProvider)
+            .requireValue
+            .map((channel) => channel.id),
+        [_channelB],
+        reason:
+            'an older reconnect backstop overwrote the newer membership list',
+      );
+      expect(session.activeChannels, {_channelB});
+    },
+  );
+
   test('community switch discards a parked unread catch-up', () async {
     final session = _FakeRelaySession(
       memberships: const [],

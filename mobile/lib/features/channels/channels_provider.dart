@@ -40,7 +40,6 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
 
   final Map<String, void Function()> _unsubscribersByChannel = {};
   Future<void> _liveSubscriptionQueue = Future.value();
-  List<Channel> _desiredLiveChannels = const [];
   Set<String> _desiredLiveChannelIds = const {};
   int _subscriptionVersion = 0;
   String? _subscriptionRelayBaseUrl;
@@ -58,8 +57,8 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
   List<NostrEvent> _directoryMetas = const [];
 
   /// Fences directory responses to the relay and identity that requested them.
-  late final _ChannelDirectoryLoader _directoryLoader =
-      _ChannelDirectoryLoader.forRef(ref);
+  late final _ChannelRefreshCoordinator _refreshCoordinator =
+      _ChannelRefreshCoordinator.forRef(ref);
 
   /// The member snapshot already returned while loading the channel list.
   ///
@@ -90,7 +89,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
       _directoryMetas = const [];
       // Retire any in-flight directory request: its response describes the
       // previous relay or identity and must not reach this scope's state.
-      _directoryLoader.retireInFlight();
+      _refreshCoordinator.retireInFlight();
     }
     final connected = Completer<void>();
     final sessionState = ref.read(relaySessionProvider);
@@ -157,12 +156,12 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
 
     final session = ref.read(relaySessionProvider.notifier);
 
-    // A directory-triggered refresh is fenced end to end. The fence is captured
-    // before the first await and re-checked after every later one, so a
-    // community or identity switch retires the whole refresh rather than only
-    // its directory query. Refreshes that do not touch discovery keep the
-    // previous unfenced behaviour.
-    final fence = fetchDirectory ? _directoryLoader.beginRefresh() : null;
+    // Acquire request ownership before the first relay await. Every channel-list
+    // path uses this fence so completion order cannot let an older ordinary,
+    // directory, or reconnect refresh replace a newer membership list.
+    final fence = _refreshCoordinator.beginRefresh(
+      fetchesDirectory: fetchDirectory,
+    );
 
     // Step 1: find the channels I'm a member of via kind:39002.
     final memberships = await _fenced(
@@ -190,8 +189,8 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     // kind:39000 query by the caller's access, but the client still rejects
     // private channels and DMs below so discovery fails closed if that contract
     // ever regresses. The composite cursor preserves tied-timestamp rows.
-    if (fence != null) {
-      final metas = await _directoryLoader.load(session, fence);
+    if (fetchDirectory) {
+      final metas = await _refreshCoordinator.loadDirectory(session, fence);
       if (metas != null) _directoryMetas = metas;
     }
 
@@ -338,7 +337,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     // await above is fenced, but the switch can also land in the synchronous
     // gap, so the guard sits immediately before the write rather than only
     // after the await.
-    fence?.ensureCurrent();
+    fence.ensureCurrent();
 
     final prevById = <String, Channel>{
       for (final c in state.value ?? const <Channel>[]) c.id: c,
@@ -353,12 +352,12 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     if (subscribeLive) {
       // Subscriptions are shared relay state, so a retired refresh must not
       // install them even though its channel list is already built.
-      fence?.ensureCurrent();
-      await _fenced(fence, _subscribeLive(channels));
+      fence.ensureCurrent();
+      await _fenced(fence, _subscribeLive(channels, fence));
     }
     // Guard the provider-state write in `retryDirectory` and `build`: the
     // caller assigns whatever this returns, so the last check belongs here.
-    fence?.ensureCurrent();
+    fence.ensureCurrent();
     return channels;
   }
 
@@ -534,24 +533,32 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
   /// Subscribe per-channel to live events (requires `#h` tag for relay
   /// channel-scoped fan-out). Also starts a 60s WS backstop poll to reconcile
   /// membership changes without repeatedly downloading the global directory.
-  Future<void> _subscribeLive(List<Channel> channels) {
+  Future<void> _subscribeLive(
+    List<Channel> channels,
+    _ChannelRefreshFence fence,
+  ) {
     final channelIds = {
       for (final channel in channels)
         if (channel.isMember && !channel.isArchived) channel.id,
     };
     final relayBaseUrl = ref.read(relayConfigProvider).baseUrl;
-    _desiredLiveChannels = channels;
     _desiredLiveChannelIds = channelIds;
     final subscriptionVersion = ++_subscriptionVersion;
 
     final sync = _liveSubscriptionQueue.then(
-      (_) =>
-          _syncLiveSubscriptions(relayBaseUrl, subscriptionVersion, channels),
+      (_) => _syncLiveSubscriptions(
+        relayBaseUrl,
+        subscriptionVersion,
+        channels,
+        fence,
+      ),
     );
     _liveSubscriptionQueue = sync.catchError((Object error, StackTrace stack) {
-      debugPrint(
-        '[ChannelsNotifier] live subscription sync failed: $error\n$stack',
-      );
+      if (error is! _StaleChannelRefresh) {
+        debugPrint(
+          '[ChannelsNotifier] live subscription sync failed: $error\n$stack',
+        );
+      }
     });
     return sync;
   }
@@ -560,17 +567,14 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     String relayBaseUrl,
     int subscriptionVersion,
     List<Channel> channels,
+    _ChannelRefreshFence fence,
   ) async {
+    fence.ensureCurrent();
     if (ref.read(relaySessionProvider).status != SessionStatus.connected) {
       return;
     }
 
     if (subscriptionVersion != _subscriptionVersion) {
-      await _syncLiveSubscriptions(
-        ref.read(relayConfigProvider).baseUrl,
-        _subscriptionVersion,
-        _desiredLiveChannels,
-      );
       return;
     }
 
@@ -609,7 +613,12 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
           ),
           _handleLiveEvent,
         );
-        if (ref.read(relaySessionProvider).status != SessionStatus.connected ||
+        if (!fence.isCurrent) {
+          unsubscribe();
+          throw const _StaleChannelRefresh();
+        }
+        if (subscriptionVersion != _subscriptionVersion ||
+            ref.read(relaySessionProvider).status != SessionStatus.connected ||
             !_desiredLiveChannelIds.contains(channelId) ||
             ref.read(relayConfigProvider).baseUrl != relayBaseUrl ||
             _subscriptionRelayBaseUrl != relayBaseUrl) {
@@ -622,6 +631,8 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
           continue;
         }
         _unsubscribersByChannel[channelId] = unsubscribe;
+      } on _StaleChannelRefresh {
+        rethrow;
       } catch (error) {
         debugPrint(
           '[ChannelsNotifier] live subscription failed for $channelId: $error',
@@ -643,7 +654,8 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
       return;
     }
 
-    unawaited(_catchUpUnreadEvents(channels));
+    fence.ensureCurrent();
+    unawaited(_catchUpUnreadEvents(channels, fence, subscriptionVersion));
 
     _backstopTimer?.cancel();
     _backstopTimer = Timer.periodic(
@@ -661,13 +673,15 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
   /// membership refresh a join performs and the reconnect backstop, so the
   /// token is unconditional rather than tied to discovery. A retired refresh
   /// returns instead of throwing: nothing awaits this future, so a thrown
-  /// [_StaleDirectoryRequest] would only surface as an unhandled error.
+  /// [_StaleChannelRefresh] would only surface as an unhandled error.
   ///
-  /// The generation is captured here rather than passed in because this method
-  /// runs synchronously up to its relay query, so the value it reads is still
-  /// the starting refresh's own.
-  Future<void> _catchUpUnreadEvents(List<Channel> channels) async {
-    final generation = _subscriptionVersion;
+  /// The request fence and subscription generation are passed from the refresh
+  /// that installed [channels], preserving request ownership after detachment.
+  Future<void> _catchUpUnreadEvents(
+    List<Channel> channels,
+    _ChannelRefreshFence fence,
+    int subscriptionGeneration,
+  ) async {
     final myPk = ref.read(myPubkeyProvider);
     if (myPk == null) return;
 
@@ -712,7 +726,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
       // The relay round-trip above is the window Jed's probes park in: a newer
       // refresh, a community switch or an identity switch here means every
       // write below belongs to a channel list the user has left.
-      if (_isCatchUpRetired(generation)) return;
+      if (_isCatchUpRetired(fence, subscriptionGeneration)) return;
 
       for (final event in events) {
         if (event.pubkey.toLowerCase() == myPk.toLowerCase()) {
@@ -886,6 +900,8 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
         }
       }
       state = AsyncData(channels);
+    } on _StaleChannelRefresh {
+      return;
     } catch (error) {
       debugPrint('[ChannelsNotifier] backstop refresh failed: $error');
     }
@@ -899,7 +915,14 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     // cached channel list with [] or an error. Wait for `build()` to re-run
     // when the session transitions to connected.
     if (sessionState.status != SessionStatus.connected) return;
-    state = await AsyncValue.guard(() => _fetch(subscribeLive: true));
+    try {
+      final channels = await _fetch(subscribeLive: true);
+      state = AsyncData(channels);
+    } on _StaleChannelRefresh {
+      return;
+    } catch (error, stackTrace) {
+      state = AsyncError(error, stackTrace);
+    }
   }
 
   /// Loads the directory when Browse channels opens after startup or an error.
@@ -940,7 +963,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
       state = AsyncData(
         await _fetch(subscribeLive: true, fetchDirectory: true),
       );
-    } on _StaleDirectoryRequest {
+    } on _StaleChannelRefresh {
       // A community or identity switch retired this request. Its response
       // describes a scope the user has left, so write neither the channel list
       // nor the load status; the new scope owns both now.
@@ -955,7 +978,6 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
 
   void _clearLiveSubscriptions() {
     _subscriptionVersion++;
-    _desiredLiveChannels = const [];
     _desiredLiveChannelIds = const {};
     for (final unsubscribe in _unsubscribersByChannel.values) {
       unsubscribe();

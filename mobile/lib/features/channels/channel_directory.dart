@@ -44,10 +44,21 @@ class ChannelDirectoryLoadNotifier extends Notifier<ChannelDirectoryLoadState> {
   @override
   ChannelDirectoryLoadState build() => const ChannelDirectoryLoadState.idle();
 
+  /// Whether [scope] currently owns an in-flight directory request.
+  bool isLoading(String scope) =>
+      state.scope == scope &&
+      state.status == ChannelDirectoryLoadStatus.loading;
+
   /// Marks the directory as loading.
   void markLoading(String scope) => state = ChannelDirectoryLoadState(
     scope: scope,
     status: ChannelDirectoryLoadStatus.loading,
+  );
+
+  /// Marks the directory as eligible for a fresh request.
+  void markIdle(String scope) => state = ChannelDirectoryLoadState(
+    scope: scope,
+    status: ChannelDirectoryLoadStatus.idle,
   );
 
   /// Marks the directory as successfully loaded.
@@ -89,74 +100,63 @@ Future<List<NostrEvent>> _fetchChannelDirectoryMetas(
   operation: 'Channel directory',
 );
 
-/// Thrown when a directory request is retired before its response lands.
+/// Thrown when a channel-list request is retired before it settles.
 ///
-/// Callers must treat this as "write nothing": the scope that issued the
-/// request is no longer active, so both its data and its load status belong to
-/// a community the user has left.
-class _StaleDirectoryRequest implements Exception {
-  const _StaleDirectoryRequest();
+/// Callers must treat this as "write nothing": a newer request or scope now
+/// owns the installed list and its related cache, subscription, and load state.
+class _StaleChannelRefresh implements Exception {
+  const _StaleChannelRefresh();
 
   @override
   String toString() =>
-      'Channel directory request retired by a community or identity switch';
+      'Channel refresh retired by a newer request or scope change';
 }
 
-/// Carries one directory-triggered refresh's scope across every later await.
+/// Carries one channel-list refresh's request ownership across every await.
 ///
-/// The loader's own fence only covers the directory query. The refresh that
-/// query feeds keeps crossing awaits for DM profiles, hidden DMs, member
-/// counts, latest messages and live subscription sync, and each one is another
-/// chance for the user to switch community or identity. This token is captured
-/// once at the start of the refresh and re-checked after every await, so a
-/// response that outlived its scope cannot reach shared state.
-class _DirectoryRefreshFence {
+/// This token is captured once at the start of every ordinary, directory, and
+/// reconnect refresh. It is re-checked after each relay await, so an older
+/// request cannot regain ownership by reaching subscription setup last.
+class _ChannelRefreshFence {
   /// Relay-and-identity scope that started the refresh.
   final String scope;
 
-  final _ChannelDirectoryLoader _loader;
+  final _ChannelRefreshCoordinator _coordinator;
   final int _generation;
 
-  _DirectoryRefreshFence(this._loader, this.scope, this._generation);
+  _ChannelRefreshFence(this._coordinator, this.scope, this._generation);
 
   /// Whether the refresh still owns the active scope and generation.
   bool get isCurrent =>
-      _generation == _loader.generation && scope == _loader.currentScope();
+      _generation == _coordinator.generation &&
+      scope == _coordinator.currentScope();
 
-  /// Throws [_StaleDirectoryRequest] once this refresh has been retired.
+  /// Throws [_StaleChannelRefresh] once this refresh has been retired.
   ///
   /// Call after every await and immediately before every write to metadata,
   /// cache, load status, subscriptions or provider state.
   void ensureCurrent() {
-    if (!isCurrent) throw const _StaleDirectoryRequest();
+    if (!isCurrent) throw const _StaleChannelRefresh();
   }
 }
 
 /// Whether a detached unread catch-up has been superseded, so it writes nothing.
 ///
-/// The directory fence above covers only refreshes that fetch the directory, so
-/// it cannot describe the initial load, an ordinary membership refresh (the one
-/// a join performs) or the reconnect backstop. Those refreshes also start a
-/// detached catch-up that can outlive them, so every catch-up captures
-/// [_subscriptionVersion] as its generation instead, and this rejects any
-/// generation that is no longer the current one.
+/// The refresh fence is acquired before the first relay await, which makes this
+/// request-ordered rather than subscription-completion-ordered. The subscription
+/// generation remains a second lifecycle check for disconnect and disposal.
 ///
-/// One monotonic counter covers both hazards. Every channel-list refresh bumps
-/// it in `_subscribeLive`, which retires an older catch-up on the same relay and
-/// identity. A community or identity switch rebuilds the notifier, and the
-/// disposal that rebuild runs bumps it too, so a switch retires the catch-up
-/// without needing a second relay-and-identity comparison. That redundancy was
-/// measured, not assumed: a disconnected-community-switch arm passes with this
-/// check alone and fails when it is removed.
-///
-/// A retired catch-up returns rather than throwing [_StaleDirectoryRequest]:
+/// A retired catch-up returns rather than throwing [_StaleChannelRefresh]:
 /// nothing awaits it, so a throw would only surface as an unhandled error.
 ///
 /// An extension in this part file rather than a method on the notifier because
 /// `channels_provider.dart` sits against the repository-wide 1000-line file
 /// ceiling enforced by `just file-size-check`.
 extension _CatchUpFencing on ChannelsNotifier {
-  bool _isCatchUpRetired(int generation) => generation != _subscriptionVersion;
+  bool _isCatchUpRetired(
+    _ChannelRefreshFence fence,
+    int subscriptionGeneration,
+  ) => !fence.isCurrent || subscriptionGeneration != _subscriptionVersion;
 }
 
 /// Awaits [future], then rejects the result if the refresh was retired.
@@ -168,15 +168,15 @@ extension _CatchUpFencing on ChannelsNotifier {
 /// surface an ordinary exception, and `retryDirectory` would treat it as a
 /// failure of the current scope: it would mark the wrong scope's status and
 /// reinstall the channel list it captured before the switch.
-Future<T> _fenced<T>(_DirectoryRefreshFence? fence, Future<T> future) async {
+Future<T> _fenced<T>(_ChannelRefreshFence fence, Future<T> future) async {
   final T value;
   try {
     value = await future;
   } catch (_) {
-    if (fence != null && !fence.isCurrent) throw const _StaleDirectoryRequest();
+    if (!fence.isCurrent) throw const _StaleChannelRefresh();
     rethrow;
   }
-  fence?.ensureCurrent();
+  fence.ensureCurrent();
   return value;
 }
 
@@ -191,7 +191,7 @@ Future<T> _fenced<T>(_DirectoryRefreshFence? fence, Future<T> future) async {
 /// repository-wide 1000-line file ceiling enforced by `just file-size-check`.
 Future<Map<String, String>> _resolveDmDisplayNames(
   RelaySessionNotifier session,
-  _DirectoryRefreshFence? fence,
+  _ChannelRefreshFence fence,
   Iterable<NostrEvent> dedupedMetas,
   String myPk,
 ) async {
@@ -255,7 +255,7 @@ Map<String, int> _memberCountsByChannelId(Iterable<NostrEvent> memberEvents) {
 ///
 /// Lives in this part file because `channels_provider.dart` sits against the
 /// repository-wide 1000-line file ceiling enforced by `just file-size-check`.
-class _ChannelDirectoryLoader {
+class _ChannelRefreshCoordinator {
   /// Resolves the relay-and-identity scope that is active right now.
   final String Function() currentScope;
 
@@ -267,7 +267,7 @@ class _ChannelDirectoryLoader {
   /// Generation of the most recently issued or retired request.
   int get generation => _generation;
 
-  _ChannelDirectoryLoader({
+  _ChannelRefreshCoordinator({
     required this.currentScope,
     required this.loadStatus,
   });
@@ -276,13 +276,14 @@ class _ChannelDirectoryLoader {
   ///
   /// Both closures read rather than watch: the fence asks what the scope is
   /// right now, and must not make the notifier depend on it.
-  factory _ChannelDirectoryLoader.forRef(Ref ref) => _ChannelDirectoryLoader(
-    currentScope: () => channelDirectoryScope(
-      ref.read(relayConfigProvider).baseUrl,
-      ref.read(myPubkeyProvider),
-    ),
-    loadStatus: () => ref.read(channelDirectoryLoadStatusProvider.notifier),
-  );
+  factory _ChannelRefreshCoordinator.forRef(Ref ref) =>
+      _ChannelRefreshCoordinator(
+        currentScope: () => channelDirectoryScope(
+          ref.read(relayConfigProvider).baseUrl,
+          ref.read(myPubkeyProvider),
+        ),
+        loadStatus: () => ref.read(channelDirectoryLoadStatusProvider.notifier),
+      );
 
   /// Retires any in-flight request without starting a new one.
   ///
@@ -295,10 +296,16 @@ class _ChannelDirectoryLoader {
   /// Used by callers that must carry the scope across later awaits even when
   /// they do not refresh discovery, so a membership-only refresh cannot install
   /// an old scope's list either.
-  _DirectoryRefreshFence beginRefresh() {
+  _ChannelRefreshFence beginRefresh({required bool fetchesDirectory}) {
     final scope = currentScope();
     final generation = ++_generation;
-    return _DirectoryRefreshFence(this, scope, generation);
+    if (!fetchesDirectory) {
+      final status = loadStatus();
+      if (status.isLoading(scope)) {
+        status.markIdle(scope);
+      }
+    }
+    return _ChannelRefreshFence(this, scope, generation);
   }
 
   /// Fetches the directory under [fence], or throws if the fence is retired.
@@ -306,9 +313,9 @@ class _ChannelDirectoryLoader {
   /// Returns null when the request failed inside the current scope, which means
   /// "retain the cached discovery". The fence is re-checked after the await and
   /// before every write, on both the success and the failure path.
-  Future<List<NostrEvent>?> load(
+  Future<List<NostrEvent>?> loadDirectory(
     RelaySessionNotifier session,
-    _DirectoryRefreshFence fence,
+    _ChannelRefreshFence fence,
   ) async {
     loadStatus().markLoading(fence.scope);
     final List<NostrEvent> metas;
