@@ -354,7 +354,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
       // Subscriptions are shared relay state, so a retired refresh must not
       // install them even though its channel list is already built.
       fence?.ensureCurrent();
-      await _fenced(fence, _subscribeLive(channels));
+      await _fenced(fence, _subscribeLive(channels, fence));
     }
     // Guard the provider-state write in `retryDirectory` and `build`: the
     // caller assigns whatever this returns, so the last check belongs here.
@@ -534,7 +534,12 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
   /// Subscribe per-channel to live events (requires `#h` tag for relay
   /// channel-scoped fan-out). Also starts a 60s WS backstop poll to reconcile
   /// membership changes without repeatedly downloading the global directory.
-  Future<void> _subscribeLive(List<Channel> channels) {
+  /// The [fence] rides along so the detached unread catch-up started at the
+  /// end of the sync can still tell whether its scope is current.
+  Future<void> _subscribeLive(
+    List<Channel> channels,
+    _DirectoryRefreshFence? fence,
+  ) {
     final channelIds = {
       for (final channel in channels)
         if (channel.isMember && !channel.isArchived) channel.id,
@@ -545,8 +550,12 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     final subscriptionVersion = ++_subscriptionVersion;
 
     final sync = _liveSubscriptionQueue.then(
-      (_) =>
-          _syncLiveSubscriptions(relayBaseUrl, subscriptionVersion, channels),
+      (_) => _syncLiveSubscriptions(
+        relayBaseUrl,
+        subscriptionVersion,
+        channels,
+        fence,
+      ),
     );
     _liveSubscriptionQueue = sync.catchError((Object error, StackTrace stack) {
       debugPrint(
@@ -560,6 +569,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     String relayBaseUrl,
     int subscriptionVersion,
     List<Channel> channels,
+    _DirectoryRefreshFence? fence,
   ) async {
     if (ref.read(relaySessionProvider).status != SessionStatus.connected) {
       return;
@@ -570,6 +580,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
         ref.read(relayConfigProvider).baseUrl,
         _subscriptionVersion,
         _desiredLiveChannels,
+        fence,
       );
       return;
     }
@@ -643,7 +654,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
       return;
     }
 
-    unawaited(_catchUpUnreadEvents(channels));
+    unawaited(_catchUpUnreadEvents(channels, fence));
 
     _backstopTimer?.cancel();
     _backstopTimer = Timer.periodic(
@@ -652,7 +663,21 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     );
   }
 
-  Future<void> _catchUpUnreadEvents(List<Channel> channels) async {
+  /// Backfills unread badges for the channels this refresh just installed.
+  ///
+  /// Runs detached from the refresh that starts it, so [fence] is what keeps a
+  /// response that outlived its community or identity from writing unread
+  /// state into the scope the user switched to. A retired refresh returns
+  /// instead of throwing: nothing awaits this future, so a thrown
+  /// [_StaleDirectoryRequest] would only surface as an unhandled error.
+  ///
+  /// The relay round-trip is the only await here, so one re-check after it
+  /// covers every write below. Guards before it or after the writes were
+  /// measured unreachable: retirement cannot land in a synchronous gap.
+  Future<void> _catchUpUnreadEvents(
+    List<Channel> channels,
+    _DirectoryRefreshFence? fence,
+  ) async {
     final myPk = ref.read(myPubkeyProvider);
     if (myPk == null) return;
 
@@ -694,6 +719,10 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
         filters,
         operation: 'unread catch-up',
       );
+      // The relay round-trip above is the window Jed's probe parks in: a
+      // community or identity switch here means every write below belongs to a
+      // scope the user has left.
+      if (_isRetired(fence)) return;
 
       for (final event in events) {
         if (event.pubkey.toLowerCase() == myPk.toLowerCase()) {
@@ -825,31 +854,6 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     }
   }
 
-  void _recordUnreadEvent(Channel channel, NostrEvent event, String myPk) {
-    final isThreadedReply =
-        event.threadReference.parentId != null && !_isBroadcastReply(event);
-    final isHighPriority =
-        channel.isDm || isHighPriorityEvent(event.tags, myPk);
-    recordObservedUnreadEvent(
-      _observedUnreadEventsByChannel,
-      channel.id,
-      makeObservedUnreadEvent(
-        id: event.id,
-        createdAt: event.createdAt,
-        rootId: _observedUnreadRootId(event),
-        highPriority: isHighPriority,
-        channelType: channel.channelType,
-        isThreadedReply: isThreadedReply,
-      ),
-      _unreadCatchUpLimit,
-    );
-
-    final current = _latestObservedByChannel[channel.id] ?? 0;
-    if (event.createdAt > current) {
-      _latestObservedByChannel[channel.id] = event.createdAt;
-    }
-  }
-
   void clearObservedUnreadForChannel(String channelId) {
     _latestObservedByChannel.remove(channelId);
     _observedUnreadEventsByChannel.remove(channelId);
@@ -968,26 +972,3 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
 final channelsProvider = AsyncNotifierProvider<ChannelsNotifier, List<Channel>>(
   ChannelsNotifier.new,
 );
-
-String? _observedUnreadRootId(NostrEvent event) =>
-    _isBroadcastReply(event) ? null : event.threadReference.rootId;
-
-bool _isBroadcastReply(NostrEvent event) => event.tags.any(
-  (tag) => tag.length >= 2 && tag[0] == 'broadcast' && tag[1] == '1',
-);
-
-Set<String> _readRootIdSet(String? raw) {
-  if (raw == null || raw.isEmpty) return {};
-  try {
-    final decoded = jsonDecode(raw);
-    if (decoded is! List) return {};
-    return {
-      for (final value in decoded)
-        if (value is String) value,
-    };
-  } catch (_) {
-    return {};
-  }
-}
-
-String _encodeRootIdSet(Set<String> values) => jsonEncode(values.toList());

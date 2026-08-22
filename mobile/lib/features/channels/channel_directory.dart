@@ -132,6 +132,14 @@ class _DirectoryRefreshFence {
   }
 }
 
+/// Whether [fence] has been retired, so its refresh must write nothing.
+///
+/// Used on the detached unread catch-up path, where throwing
+/// [_StaleDirectoryRequest] would only surface as an unhandled error: the
+/// catch-up runs fire-and-forget, so a retired scope simply stops.
+bool _isRetired(_DirectoryRefreshFence? fence) =>
+    fence != null && !fence.isCurrent;
+
 /// Awaits [future], then rejects the result if the refresh was retired.
 ///
 /// One helper keeps every await site on the fenced path identical, so a new
@@ -340,4 +348,64 @@ Future<List<NostrEvent>> _fetchPaginatedChannelEvents(
     }
   }
   return events;
+}
+
+/// Thread-interest and unread helpers shared by [ChannelsNotifier].
+///
+/// Lives in this part file because `channels_provider.dart` sits against the
+/// repository-wide 1000-line file ceiling enforced by `just file-size-check`.
+String? _observedUnreadRootId(NostrEvent event) =>
+    _isBroadcastReply(event) ? null : event.threadReference.rootId;
+
+bool _isBroadcastReply(NostrEvent event) => event.tags.any(
+  (tag) => tag.length >= 2 && tag[0] == 'broadcast' && tag[1] == '1',
+);
+
+Set<String> _readRootIdSet(String? raw) {
+  if (raw == null || raw.isEmpty) return {};
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is! List) return {};
+    return {
+      for (final value in decoded)
+        if (value is String) value,
+    };
+  } catch (_) {
+    return {};
+  }
+}
+
+String _encodeRootIdSet(Set<String> values) => jsonEncode(values.toList());
+
+/// Records one observed unread event for a channel's badge state.
+///
+/// An extension in this part file rather than a method on the notifier because
+/// `channels_provider.dart` sits against the repository-wide 1000-line file
+/// ceiling enforced by `just file-size-check`. Private members stay reachable:
+/// a part shares its parent's library.
+extension _ObservedUnreadRecording on ChannelsNotifier {
+  void _recordUnreadEvent(Channel channel, NostrEvent event, String myPk) {
+    final isThreadedReply =
+        event.threadReference.parentId != null && !_isBroadcastReply(event);
+    final isHighPriority =
+        channel.isDm || isHighPriorityEvent(event.tags, myPk);
+    recordObservedUnreadEvent(
+      _observedUnreadEventsByChannel,
+      channel.id,
+      makeObservedUnreadEvent(
+        id: event.id,
+        createdAt: event.createdAt,
+        rootId: _observedUnreadRootId(event),
+        highPriority: isHighPriority,
+        channelType: channel.channelType,
+        isThreadedReply: isThreadedReply,
+      ),
+      _unreadCatchUpLimit,
+    );
+
+    final current = _latestObservedByChannel[channel.id] ?? 0;
+    if (event.createdAt > current) {
+      _latestObservedByChannel[channel.id] = event.createdAt;
+    }
+  }
 }
