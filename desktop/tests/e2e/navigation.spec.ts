@@ -581,16 +581,18 @@ test("composer Buzz chip labels wrap without orphaning their icons", async ({
     const container = element.parentElement;
     if (container) container.style.width = "220px";
   });
-  const fragmentRects = await sentChip.evaluate((element) =>
-    Array.from(element.getClientRects(), (rect) => ({
+  const fragmentRects = await sentChip.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    return Array.from(range.getClientRects(), (rect) => ({
       bottom: rect.bottom,
       height: rect.height,
       left: rect.left,
       right: rect.right,
       top: rect.top,
       width: rect.width,
-    })).filter((rect) => rect.width > 0 && rect.height > 0),
-  );
+    })).filter((rect) => rect.width > 0 && rect.height > 0);
+  });
   expect(fragmentRects.length).toBeGreaterThanOrEqual(2);
 
   const hoverFragment = async (fragment: (typeof fragmentRects)[number]) => {
@@ -783,7 +785,7 @@ test("message links to visible root messages open the thread panel", async ({
   await expect(randomChannelLink).toHaveCSS("display", "inline");
   await expect(
     randomChannelLink.locator(".inline-chip-leading-fragment"),
-  ).toHaveText("r");
+  ).toHaveText("rando");
   await expect(randomChannelLink).not.toHaveAttribute("title");
   await randomChannelLink.hover();
   const channelTooltip = page.getByRole("tooltip");
