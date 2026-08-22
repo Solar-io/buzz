@@ -384,8 +384,16 @@ function ToolRunTimingText({ ms }: { ms: number | null }) {
  * One step inside an expanded run. Reuses the ordinary tool item rendering so
  * every render class keeps its own presentation; a failed step additionally
  * carries a left rule so the eye lands on it without hunting.
+ *
+ * Memoized on the step's identity, because a run is re-rendered on **every**
+ * append while it streams and on every live-clock tick. Without this, appending
+ * one step to a run of twenty re-runs compact-summary building, diff parsing,
+ * and markdown/image rendering for all twenty unchanged steps — work the
+ * transcript's own `TranscriptItemView` avoids the same way. Transcript items
+ * are replaced rather than mutated, so reference equality on `item` is a sound
+ * test for "this step did not change".
  */
-function ToolRunStepRow({
+const ToolRunStepRow = React.memo(function ToolRunStepRow({
   agentAvatarUrl,
   agentName,
   agentPubkey,
@@ -416,4 +424,4 @@ function ToolRunStepRow({
       />
     </div>
   );
-}
+});

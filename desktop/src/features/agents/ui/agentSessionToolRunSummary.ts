@@ -207,10 +207,22 @@ export type ToolRunAggregate = {
   errorCount: number;
 };
 
-/** Whether a transcript item may join a tool-chain run. */
+/**
+ * Whether a transcript item may join a tool-chain run.
+ *
+ * Eligibility is decided on the step's *recovered* class, not on whatever class
+ * its descriptor happens to carry. `classifyTool` flattens every failed step to
+ * render class `error`, which would otherwise let a failure launder an excluded
+ * class into an eligible one: a failed `stop` hook still carries `groupKey`
+ * `suppressed:stop-hook` but reports as `error`, and admitting that would fold
+ * the ambient safety net into a collapsed card — precisely what the exclusions
+ * above exist to prevent. `toolRunKind` already undoes that flattening for the
+ * headline, so deciding eligibility through it keeps one recovery path rather
+ * than two that can disagree.
+ */
 export function isToolRunEligible(item: TranscriptItem): boolean {
   if (item.type !== "tool") return false;
-  return CHAIN_ELIGIBLE_RENDER_CLASSES[toolRunRenderClass(item)] === true;
+  return CHAIN_ELIGIBLE_RENDER_CLASSES[toolRunKind(item).renderClass] === true;
 }
 
 /** Effective render class for a tool item (descriptor fallback included). */

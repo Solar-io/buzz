@@ -8,6 +8,7 @@ import {
   getDisplayBlockKey,
 } from "./agentSessionTranscriptGrouping.ts";
 import { isObserverEventAfter } from "../observerRelayStore.ts";
+import { classifyTool } from "./agentSessionToolClassifier.ts";
 
 const baseTimestamp = "2026-06-14T22:20:23.000Z";
 
@@ -592,6 +593,62 @@ test("buildTranscriptDisplayBlocks breaks runs on thoughts and permission gates"
   assert.equal(block.segments[3].item.id, "perm-1");
 });
 
+// A failed safety/status row must still break the run. The classifier flattens
+// any failed step to render class `error` while keeping its original groupKey,
+// so eligibility decided on the reported class alone folded a failed stop hook
+// into the surrounding chain. Built through the real classifier, because the
+// bug lived in exactly that flattening — a hand-written descriptor would not
+// reproduce it.
+test("buildTranscriptDisplayBlocks breaks runs on a FAILED suppressed row", () => {
+  const failedStopHook = mkClassifiedTool("stop-1", "stop", { isError: true });
+  assert.equal(failedStopHook.descriptor.renderClass, "error");
+  assert.equal(failedStopHook.descriptor.groupKey, "suppressed:stop-hook");
+
+  const [block] = buildTranscriptDisplayBlocks([
+    mkTool("shell-1", "Ran command", "shell", "shell:command"),
+    mkTool("shell-2", "Ran command", "shell", "shell:command"),
+    failedStopHook,
+    mkTool("shell-3", "Ran command", "shell", "shell:command"),
+    mkTool("shell-4", "Ran command", "shell", "shell:command"),
+  ]);
+
+  assert.equal(block.kind, "turn");
+  assert.deepEqual(
+    block.segments.map((segment) => segment.kind),
+    ["tool-run", "item", "tool-run"],
+  );
+  assert.equal(block.segments[1].item.id, "stop-1");
+  assert.deepEqual(
+    block.segments[0].run.items.map((item) => item.id),
+    ["shell-1", "shell-2"],
+  );
+  assert.deepEqual(
+    block.segments[2].run.items.map((item) => item.id),
+    ["shell-3", "shell-4"],
+  );
+});
+
+test("buildTranscriptDisplayBlocks breaks runs on a FAILED status row", () => {
+  const failedCompact = mkClassifiedTool("compact-1", "postcompact", {
+    isError: true,
+  });
+  assert.equal(failedCompact.descriptor.renderClass, "error");
+  assert.equal(failedCompact.descriptor.groupKey, "status:post-compact");
+
+  const [block] = buildTranscriptDisplayBlocks([
+    mkTool("read-1", "Read file", "file-read", "read_file"),
+    mkTool("read-2", "Read file", "file-read", "read_file"),
+    failedCompact,
+  ]);
+
+  assert.equal(block.kind, "turn");
+  assert.deepEqual(
+    block.segments.map((segment) => segment.kind),
+    ["tool-run", "item"],
+  );
+  assert.equal(block.segments[1].item.id, "compact-1");
+});
+
 test("buildTranscriptDisplayBlocks bundles steer message with steer context behind the prompt segment", () => {
   const steerMessage = {
     id: "steer:chan-1:turn-1",
@@ -689,6 +746,32 @@ function mkTool(id, label, renderClass = "generic", groupKey = label) {
     turnId: "turn-1",
     sessionId: "sess-1",
     channelId: "chan-1",
+  };
+}
+
+/**
+ * A tool item whose descriptor comes from the REAL classifier, so tests that
+ * depend on how it flattens failures (failed steps become render class `error`
+ * while keeping their original groupKey) exercise production behaviour rather
+ * than a fixture's guess at it.
+ */
+function mkClassifiedTool(id, toolName, { args = {}, isError = false } = {}) {
+  const descriptor = classifyTool({
+    title: toolName,
+    toolName,
+    buzzToolName: null,
+    args,
+    result: "",
+    isError,
+  });
+
+  return {
+    ...mkTool(id, toolName, descriptor.renderClass, descriptor.groupKey),
+    args,
+    descriptor,
+    isError,
+    status: isError ? "failed" : "completed",
+    toolName,
   };
 }
 

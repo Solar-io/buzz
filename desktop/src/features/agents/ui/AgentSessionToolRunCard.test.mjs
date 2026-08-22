@@ -394,3 +394,80 @@ test("the default variant gets the full chain card, not the plain row", async ()
   assert.ok(queryByTestId("transcript-tool-run-card"));
   assert.equal(queryByTestId("transcript-tool-run-compact-row"), null);
 });
+
+// ── Streaming cost ───────────────────────────────────────────────────────────
+
+/**
+ * A run is re-rendered on every append while it streams (and on every
+ * live-clock tick). Unchanged steps must not re-render with it: each step's
+ * presenter rebuilds compact tool summaries, parses diffs, and renders
+ * markdown/images, so an unmemoized step row makes a long run cost O(n) of that
+ * work per appended step.
+ *
+ * Counted at the presenter boundary — `TranscriptActivityItem` looks its
+ * presenter up in `ACTIVITY_RENDER_CLASS_PRESENTERS` on every render, so
+ * swapping in a counting presenter observes exactly the work a step row
+ * triggers, without reaching into React internals.
+ */
+async function countStepRenders(initialItems, nextItems) {
+  const { createElement } = await import("react");
+  const { render } = await import("@testing-library/react");
+  const { ACTIVITY_RENDER_CLASS_PRESENTERS } = await import(
+    "./activityRenderClasses/TranscriptActivityItem.tsx"
+  );
+  const { AgentSessionToolRunCard } = await import(
+    "./AgentSessionToolRunCard.tsx"
+  );
+
+  const renders = [];
+  const original = ACTIVITY_RENDER_CLASS_PRESENTERS.shell;
+  ACTIVITY_RENDER_CLASS_PRESENTERS.shell = function CountingPresenter(props) {
+    renders.push(props.item.id);
+    return createElement("div", null, props.item.id);
+  };
+
+  try {
+    const element = (items) =>
+      createElement(AgentSessionToolRunCard, {
+        agentAvatarUrl: null,
+        agentName: "Agent",
+        agentPubkey: "pk",
+        run: { id: "tool-run:a", items, timestamp: items[0].timestamp },
+      });
+
+    const view = render(element(initialItems));
+    renders.length = 0;
+    view.rerender(element(nextItems));
+    return renders;
+  } finally {
+    ACTIVITY_RENDER_CLASS_PRESENTERS.shell = original;
+  }
+}
+
+test("appending a step does not re-render the steps already in the run", async () => {
+  // Five settled steps, then a sixth arrives. The five are the SAME objects
+  // across both renders, as the transcript store replaces items rather than
+  // mutating them.
+  const settled = ["a", "b", "c", "d", "e"].map((id) => step(id));
+  const appended = [
+    ...settled,
+    step("f", { status: "executing", completedAt: null }),
+  ];
+
+  const rendered = await countStepRenders(settled, appended);
+
+  // Only the newly appended step renders; the five unchanged ones are skipped.
+  assert.deepEqual(rendered, ["f"]);
+});
+
+test("a step that actually changed does re-render", async () => {
+  // Guards the memo from being too aggressive: an executing step settling is a
+  // new object for that id, and it must re-render to drop its spinner.
+  const a = step("a");
+  const executing = step("b", { status: "executing", completedAt: null });
+  const settled = step("b");
+
+  const rendered = await countStepRenders([a, executing], [a, settled]);
+
+  assert.deepEqual(rendered, ["b"]);
+});

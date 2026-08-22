@@ -129,6 +129,26 @@ test("isToolRunEligible admits a failed step so it stays in its own run", () => 
   );
 });
 
+// A failure must not launder an excluded class into an eligible one. The
+// classifier flattens every failed step to render class `error` while keeping
+// its original groupKey, so deciding eligibility on the reported class alone
+// pulled failed safety/status rows into chains. Built through the real
+// classifier, because the bug lived in exactly that flattening.
+test("a failed suppressed or status step is still refused", () => {
+  const failedStopHook = classified("s", { isError: true, toolName: "stop" });
+  assert.equal(failedStopHook.descriptor.renderClass, "error");
+  assert.equal(failedStopHook.descriptor.groupKey, "suppressed:stop-hook");
+  assert.equal(isToolRunEligible(failedStopHook), false);
+
+  const failedCompact = classified("c", {
+    isError: true,
+    toolName: "postcompact",
+  });
+  assert.equal(failedCompact.descriptor.renderClass, "error");
+  assert.equal(failedCompact.descriptor.groupKey, "status:post-compact");
+  assert.equal(isToolRunEligible(failedCompact), false);
+});
+
 test("isToolRunEligible refuses non-tool items", () => {
   assert.equal(
     isToolRunEligible({
