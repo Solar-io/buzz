@@ -19,6 +19,13 @@ export type ActivityRowToneScope = "none" | "tool" | "summary";
 type ActivityRowProps = {
   children: React.ReactNode;
   className?: string;
+  /**
+   * Controlled disclosure. Omit both for the default self-managed
+   * `<details>` behaviour; pass both to let the caller drive open state (used
+   * by tool-run cards, which open themselves while a run is live).
+   */
+  onOpenChange?: (open: boolean) => void;
+  open?: boolean;
   openToneScope?: Exclude<ActivityRowToneScope, "none">;
   testId?: string;
   title?: string;
@@ -38,6 +45,8 @@ type ActivityRowContentComponent = React.FC<ActivityRowContentProps> & {
 export function ActivityRow({
   children,
   className,
+  onOpenChange,
+  open,
   openToneScope = "tool",
   testId,
   title,
@@ -68,6 +77,12 @@ export function ActivityRow({
         className,
       )}
       data-testid={testId}
+      onToggle={
+        onOpenChange
+          ? (event) => onOpenChange(event.currentTarget.open)
+          : undefined
+      }
+      open={open}
       title={title}
     >
       <summary
