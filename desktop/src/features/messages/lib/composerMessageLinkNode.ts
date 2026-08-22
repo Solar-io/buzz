@@ -12,8 +12,10 @@ import {
 } from "@/shared/lib/entityLink";
 import {
   inlineChipIconClasses,
+  inlineChipLeadingEnd,
   type InlineChipIconKind,
   MENTION_CHIP_BASE_CLASSES,
+  truncateInlineChipLabel,
   WRAPPING_INLINE_CHIP_CLASSES,
 } from "@/shared/ui/mentionChip";
 import { buildChannelLink, parseChannelLink } from "./channelLink";
@@ -290,11 +292,7 @@ function wrappingComposerChipContent(
   label: string,
   icon: InlineChipIconKind,
 ): { leading: [string, Record<string, string>, string]; remainder: string } {
-  const separatorIndex = label.search(/[-\s]/u);
-  const leadingEnd =
-    separatorIndex < 0
-      ? Array.from(label)[0]?.length
-      : separatorIndex + (label[separatorIndex] === "-" ? 1 : 0);
+  const leadingEnd = inlineChipLeadingEnd(label);
   if (!leadingEnd) {
     return { leading: ["span", {}, label], remainder: "" };
   }
@@ -355,8 +353,9 @@ export const ComposerMessageLinkNode =
         String(node.attrs.channelName ?? ""),
         this.options.resolveChannelName,
       );
+      const visibleLabel = truncateInlineChipLabel(presentation.label);
       const content = wrappingComposerChipContent(
-        presentation.label,
+        visibleLabel,
         presentation.icon,
       );
       return [

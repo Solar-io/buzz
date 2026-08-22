@@ -218,6 +218,39 @@ test("composer node uses the sent-message chip presentation", () => {
   assert.equal(renderedChipLabel(rendered), "general");
 });
 
+test("composer node truncates and preserves grapheme-safe leading fragments", () => {
+  const render = ComposerMessageLinkNode.configure({
+    resolveChannelName: () => undefined,
+  }).config.renderHTML;
+  assert.ok(render);
+
+  const longName = `relay-${"observability".repeat(5)}`;
+  const longRendered = render.call(
+    { options: { resolveChannelName: () => undefined } },
+    {
+      node: { attrs: { channelName: longName, href: HREF } },
+      HTMLAttributes: {},
+    },
+  );
+  assert.equal(renderedChipLabel(longRendered), `${longName.slice(0, 47)}…`);
+
+  for (const label of ["🇺🇸channel", "e\u0301quipe"]) {
+    const rendered = render.call(
+      { options: { resolveChannelName: () => undefined } },
+      {
+        node: { attrs: { channelName: label, href: HREF } },
+        HTMLAttributes: {},
+      },
+    );
+    const firstGrapheme = Array.from(
+      new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(label),
+      ({ segment }) => segment,
+    )[0];
+    assert.equal(rendered[2][2], firstGrapheme);
+    assert.equal(renderedChipLabel(rendered), label);
+  }
+});
+
 test("composer node renders channel and entity chip presentations", () => {
   const render = (href) =>
     globalThis.structuredClone(

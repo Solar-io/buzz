@@ -4,13 +4,34 @@ export const MENTION_CHIP_HOVER_CLASSES = "mention-chip-hover";
 
 const INLINE_CHIP_LABEL_MAX_CHARACTERS = 48;
 
+const inlineChipGraphemeSegmenter =
+  typeof Intl.Segmenter === "function"
+    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+    : null;
+
+function inlineChipGraphemes(label: string): string[] {
+  return inlineChipGraphemeSegmenter
+    ? Array.from(
+        inlineChipGraphemeSegmenter.segment(label),
+        ({ segment }) => segment,
+      )
+    : Array.from(label);
+}
+
 /** Caps a fragmentable chip label without changing its underlying metadata. */
 export function truncateInlineChipLabel(label: string): string {
-  const characters = Array.from(label);
-  if (characters.length <= INLINE_CHIP_LABEL_MAX_CHARACTERS) return label;
-  return `${characters
-    .slice(0, INLINE_CHIP_LABEL_MAX_CHARACTERS - 1)
-    .join("")}…`;
+  const graphemes = inlineChipGraphemes(label);
+  if (graphemes.length <= INLINE_CHIP_LABEL_MAX_CHARACTERS) return label;
+  return `${graphemes.slice(0, INLINE_CHIP_LABEL_MAX_CHARACTERS - 1).join("")}…`;
+}
+
+/** Returns the boundary after the icon-bearing prefix of a wrapping chip. */
+export function inlineChipLeadingEnd(label: string): number {
+  const separatorIndex = label.search(/[-\s]/u);
+  if (separatorIndex >= 0) {
+    return separatorIndex + (label[separatorIndex] === "-" ? 1 : 0);
+  }
+  return inlineChipGraphemes(label)[0]?.length ?? 0;
 }
 
 /** Allows a long chip to fragment into separately decorated line boxes. */
