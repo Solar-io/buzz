@@ -2,6 +2,7 @@ import * as React from "react";
 import { Check, CircleAlert, Loader2 } from "lucide-react";
 
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
+import { useControlledDisclosure } from "@/shared/hooks/useControlledDisclosure";
 import { cn } from "@/shared/lib/cn";
 import { useNow } from "@/shared/lib/useNow";
 import { AnimatedCount } from "@/shared/ui/AnimatedCount";
@@ -43,6 +44,42 @@ type ToolRunStep = TranscriptToolRun["items"][number];
 const LIVE_ELAPSED_TICK_MS = 1000;
 
 /**
+ * A run of consecutive tool steps, in whichever presentation the current
+ * transcript variant calls for.
+ *
+ * This is the ONE place the variant is consulted: variant in, presentation out.
+ * Grouping stays variant-agnostic — a run is a run everywhere — and keeping the
+ * branch here rather than inside the card is what stops a second variant-aware
+ * grouping pipeline from growing back.
+ */
+export function AgentSessionToolRunSegment({
+  agentAvatarUrl,
+  agentName,
+  agentPubkey,
+  profiles,
+  run,
+}: AgentTranscriptIdentityProps & {
+  profiles?: UserProfileLookup;
+  run: TranscriptToolRun;
+}) {
+  const variant = useAgentSessionTranscriptVariant();
+  const Presentation =
+    variant === "compactPreview"
+      ? AgentSessionToolRunCompactRow
+      : AgentSessionToolRunCard;
+
+  return (
+    <Presentation
+      agentAvatarUrl={agentAvatarUrl}
+      agentName={agentName}
+      agentPubkey={agentPubkey}
+      profiles={profiles}
+      run={run}
+    />
+  );
+}
+
+/**
  * One card for one run of consecutive tool steps.
  *
  * The card is the run's single row: it mutates in place as steps stream in
@@ -51,6 +88,10 @@ const LIVE_ELAPSED_TICK_MS = 1000;
  * status glyph and timing; its body is one row per step, each reusing the
  * ordinary tool item rendering so shell blocks, diffs, sent-message previews,
  * and image previews all keep working.
+ *
+ * This is the full-fidelity presentation. The compact activity preview renders
+ * a run as a plain summary row instead; that choice is made once, at the
+ * transcript list boundary, so nothing here is variant-aware.
  */
 export function AgentSessionToolRunCard({
   agentAvatarUrl,
@@ -62,30 +103,21 @@ export function AgentSessionToolRunCard({
   profiles?: UserProfileLookup;
   run: TranscriptToolRun;
 }) {
-  const variant = useAgentSessionTranscriptVariant();
   const timestampsEnabled = useTranscriptTimestampsEnabled();
-  const isCompactPreview = variant === "compactPreview";
   const aggregate = summarizeToolRunStatus(run.items);
   const headline = summarizeToolRunHeadline(run.items, aggregate);
   const stats = useToolRunEditStats(run.items);
-  const { expanded, setExpanded } = useToolRunDisclosure(aggregate.phase);
-
-  // The compact preview is a non-interactive activity thumbnail, so a run reads
-  // there exactly as it did before cards existed: an uncontrolled, collapsed
-  // summary row with no live clock and no per-row timestamp. Everywhere else
-  // the card drives its own disclosure.
-  const disclosure = isCompactPreview
-    ? {}
-    : { onOpenChange: setExpanded, open: expanded };
+  const { onOpenChange, open } = useToolRunDisclosure(aggregate.phase);
 
   return (
     <div data-run-phase={aggregate.phase} data-tool-run-id={run.id}>
       <ActivityRow
         className="flex flex-col gap-0.5"
+        onOpenChange={onOpenChange}
+        open={open}
         openToneScope="summary"
         testId="transcript-tool-run-card"
         title={formatTranscriptTimestampTitle(run.timestamp)}
-        {...disclosure}
       >
         <ToolRunStatusGlyph
           errorCount={aggregate.errorCount}
@@ -97,12 +129,10 @@ export function AgentSessionToolRunCard({
           stats={stats}
           verb={headline.verb}
         />
-        {isCompactPreview ? null : (
-          <ToolRunTiming
-            isRunning={aggregate.phase === "running"}
-            items={run.items}
-          />
-        )}
+        <ToolRunTiming
+          isRunning={aggregate.phase === "running"}
+          items={run.items}
+        />
         <ActivityRowContent className="flex flex-col gap-0.5">
           {run.items.map((item) => (
             <ToolRunStepRow
@@ -116,7 +146,7 @@ export function AgentSessionToolRunCard({
           ))}
         </ActivityRowContent>
       </ActivityRow>
-      {timestampsEnabled && !isCompactPreview ? (
+      {timestampsEnabled ? (
         <div
           className="mt-0.5 flex justify-start"
           data-testid="transcript-row-timestamp"
@@ -129,34 +159,67 @@ export function AgentSessionToolRunCard({
 }
 
 /**
- * Disclosure state for a run card.
+ * A run in the compact activity preview: one plain, collapsed, self-managed
+ * row.
+ *
+ * The preview is a non-interactive thumbnail of what an agent is doing, not a
+ * place to supervise it — so a run reads there exactly as it did before chain
+ * cards existed: the generic `Ran N tool calls` sentence the legacy mixed-burst
+ * fallthrough used, with no aggregate status glyph, no derived verb/object
+ * headline ("Read 2 files"), no live clock, no timing, and no
+ * auto-open/auto-collapse policy. Disclosure is the `<details>` element's own
+ * business, so expanding stays possible and stays entirely the reader's choice.
+ */
+export function AgentSessionToolRunCompactRow({
+  agentAvatarUrl,
+  agentName,
+  agentPubkey,
+  profiles,
+  run,
+}: AgentTranscriptIdentityProps & {
+  profiles?: UserProfileLookup;
+  run: TranscriptToolRun;
+}) {
+  return (
+    <ActivityRow
+      className="flex flex-col gap-0.5"
+      openToneScope="summary"
+      testId="transcript-tool-run-compact-row"
+      title={formatTranscriptTimestampTitle(run.timestamp)}
+    >
+      <ToolRunHeadlineLabel
+        detail={null}
+        object={`${run.items.length} tool calls`}
+        stats={null}
+        verb="Ran"
+      />
+      <ActivityRowContent className="flex flex-col gap-0.5">
+        {run.items.map((item) => (
+          <ToolRunStepRow
+            agentAvatarUrl={agentAvatarUrl}
+            agentName={agentName}
+            agentPubkey={agentPubkey}
+            item={item}
+            key={item.id}
+            profiles={profiles}
+          />
+        ))}
+      </ActivityRowContent>
+    </ActivityRow>
+  );
+}
+
+/**
+ * Disclosure policy for a run card.
  *
  * A live run is open so the reader watches work happen; when it settles the
  * card collapses itself and hands the space back to the conversation — unless
  * the run failed, in which case it stays open (a buried error is a broken
- * feed). Once the reader has touched the card their choice wins over both
- * rules for the rest of the run's life.
+ * feed). `useControlledDisclosure` layers the reader's own toggle over that
+ * policy and guards the `<details>` echo trap.
  */
 function useToolRunDisclosure(phase: ToolRunPhase) {
-  const [userChoice, setUserChoice] = React.useState<boolean | null>(null);
-  const expanded = userChoice ?? phase !== "done";
-
-  // `<details>` fires `toggle` for programmatic `open` changes as well as
-  // clicks. Without this guard the card's own auto-expand would be recorded as
-  // a reader choice and would then pin the card open forever, so a completed
-  // run would never collapse. Only a toggle that DISAGREES with the state we
-  // last rendered can have come from the reader.
-  const renderedRef = React.useRef(expanded);
-  React.useLayoutEffect(() => {
-    renderedRef.current = expanded;
-  }, [expanded]);
-
-  const setExpanded = React.useCallback((open: boolean) => {
-    if (open === renderedRef.current) return;
-    setUserChoice(open);
-  }, []);
-
-  return { expanded, setExpanded };
+  return useControlledDisclosure(phase !== "done");
 }
 
 /**

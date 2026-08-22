@@ -33,7 +33,7 @@ import {
 } from "./agentSessionTranscriptContext";
 import { useTranscriptAnimationEnabled } from "./transcriptAnimationPreference";
 import { useTranscriptTimestampsEnabled } from "./transcriptTimestampPreference";
-import { AgentSessionToolRunCard } from "./AgentSessionToolRunCard";
+import { AgentSessionToolRunSegment } from "./AgentSessionToolRunCard";
 import { TranscriptActivityItem } from "./activityRenderClasses/TranscriptActivityItem";
 import { TranscriptTimestamp } from "./activityRenderClasses/TranscriptTimestamp";
 import type { AgentTranscriptIdentityProps } from "./activityRenderClasses/types";
@@ -453,7 +453,7 @@ function TranscriptTurnSegmentView({
 
   if (segment.kind === "tool-run") {
     return (
-      <AgentSessionToolRunCard
+      <AgentSessionToolRunSegment
         agentAvatarUrl={agentAvatarUrl}
         agentName={agentName}
         agentPubkey={agentPubkey}

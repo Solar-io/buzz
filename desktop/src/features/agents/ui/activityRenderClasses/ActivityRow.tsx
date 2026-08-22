@@ -16,16 +16,21 @@ export type ActivityRowStats = {
 
 export type ActivityRowToneScope = "none" | "tool" | "summary";
 
-type ActivityRowProps = {
+/**
+ * Controlled disclosure, all or nothing. Either the caller drives open state
+ * (used by tool-run cards, which open themselves while a run is live) or the
+ * `<details>` manages itself. A half-controlled row is always a bug — an
+ * `open` with no change handler freezes the row, and a handler with no `open`
+ * never applies what it recorded — so the pair is typed as a union rather than
+ * two independent optional props.
+ */
+type ActivityRowDisclosureProps =
+  | { onOpenChange: (open: boolean) => void; open: boolean }
+  | { onOpenChange?: never; open?: never };
+
+type ActivityRowProps = ActivityRowDisclosureProps & {
   children: React.ReactNode;
   className?: string;
-  /**
-   * Controlled disclosure. Omit both for the default self-managed
-   * `<details>` behaviour; pass both to let the caller drive open state (used
-   * by tool-run cards, which open themselves while a run is live).
-   */
-  onOpenChange?: (open: boolean) => void;
-  open?: boolean;
   openToneScope?: Exclude<ActivityRowToneScope, "none">;
   testId?: string;
   title?: string;

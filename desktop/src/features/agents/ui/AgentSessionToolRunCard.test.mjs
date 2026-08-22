@@ -90,6 +90,40 @@ async function renderCard(items) {
   };
 }
 
+/**
+ * Renders a run through the variant boundary itself (`AgentSessionToolRunSegment`)
+ * under the compact-preview variant, so the test proves which presentation the
+ * boundary actually picks rather than assuming it.
+ */
+async function renderCompactPreviewRun(items) {
+  const { createElement } = await import("react");
+  const { render } = await import("@testing-library/react");
+  const { AgentSessionTranscriptVariantProvider } = await import(
+    "./agentSessionTranscriptContext.ts"
+  );
+  const { AgentSessionToolRunSegment } = await import(
+    "./AgentSessionToolRunCard.tsx"
+  );
+
+  const view = render(
+    createElement(
+      AgentSessionTranscriptVariantProvider,
+      { value: "compactPreview" },
+      createElement(AgentSessionToolRunSegment, {
+        agentAvatarUrl: null,
+        agentName: "Agent",
+        agentPubkey: "pk",
+        run: {
+          id: `tool-run:${items[0].id}`,
+          items,
+          timestamp: items[0].timestamp,
+        },
+      }),
+    ),
+  );
+  return { ...view, row: () => view.container.querySelector("details") };
+}
+
 // ── Disclosure ───────────────────────────────────────────────────────────────
 
 test("a live run is expanded so the reader watches work happen", async () => {
@@ -257,4 +291,106 @@ test("the card carries the run id so streaming steps never remount it", async ()
     container.querySelector("[data-tool-run-id]").dataset.toolRunId,
     "tool-run:a",
   );
+});
+
+// ── Compact preview ──────────────────────────────────────────────────────────
+//
+// The compact activity preview is a passive thumbnail, so a run must read there
+// exactly as it did before chain cards existed: the generic `Ran N tool calls`
+// sentence, plain and self-managed. These tests lock that contract — the chain
+// card's chrome and policy leaking into the preview is a regression.
+
+test("compact preview renders a run as the plain legacy summary row", async () => {
+  const { container, queryByTestId, row } = await renderCompactPreviewRun([
+    step("a"),
+    step("b"),
+  ]);
+
+  // The full chain card is not what the boundary picked.
+  assert.equal(queryByTestId("transcript-tool-run-card"), null);
+  assert.ok(queryByTestId("transcript-tool-run-compact-row"));
+  // Scoped to the run's own summary, because the step rows in the body carry
+  // their own "Ran <command>" labels. The count animates through
+  // AnimatedCount, so the sentence is asserted as text rather than as one node.
+  const summary = container.querySelector("details > summary");
+  // The generic sentence, not a derived verb/object headline ("Ran 2 commands").
+  assert.match(summary.textContent, /^Ran/);
+  assert.match(summary.textContent, /2 tool calls$/);
+  assert.equal(row().open, false);
+});
+
+test("compact preview draws no aggregate status glyph or timing", async () => {
+  const { container, queryByText } = await renderCompactPreviewRun([
+    step("a"),
+    step("b"),
+  ]);
+
+  // The glyphs announce themselves for screen readers, so their absence is
+  // assertable rather than a matter of inspecting class names.
+  assert.equal(queryByText("Done"), null);
+  assert.equal(queryByText("Running"), null);
+  assert.equal(queryByText("1 step failed"), null);
+  // No run-level phase/timing chrome at all.
+  assert.equal(container.querySelector("[data-run-phase]"), null);
+  assert.equal(
+    container.querySelector("[data-testid='transcript-row-timestamp']"),
+    null,
+  );
+});
+
+// No auto-open while live and no auto-collapse on settle: disclosure in the
+// preview is the `<details>` element's own business.
+test("compact preview applies no auto-open or auto-collapse policy", async () => {
+  const live = await renderCompactPreviewRun([
+    step("a"),
+    step("b", { status: "executing", completedAt: null }),
+  ]);
+  assert.equal(live.row().open, false);
+
+  const failed = await renderCompactPreviewRun([
+    step("a"),
+    step("b", { isError: true, status: "failed" }),
+  ]);
+  assert.equal(failed.row().open, false);
+});
+
+test("compact preview still expands to one row per step", async () => {
+  const { container } = await renderCompactPreviewRun([
+    step("a"),
+    step("b"),
+    step("c"),
+  ]);
+  assert.equal(
+    container.querySelectorAll('[data-testid="transcript-tool-run-step"]')
+      .length,
+    3,
+  );
+});
+
+test("the default variant gets the full chain card, not the plain row", async () => {
+  const { createElement } = await import("react");
+  const { render } = await import("@testing-library/react");
+  const { AgentSessionTranscriptVariantProvider } = await import(
+    "./agentSessionTranscriptContext.ts"
+  );
+  const { AgentSessionToolRunSegment } = await import(
+    "./AgentSessionToolRunCard.tsx"
+  );
+
+  const items = [step("a"), step("b")];
+  const { queryByTestId } = render(
+    createElement(
+      AgentSessionTranscriptVariantProvider,
+      { value: "default" },
+      createElement(AgentSessionToolRunSegment, {
+        agentAvatarUrl: null,
+        agentName: "Agent",
+        agentPubkey: "pk",
+        run: { id: "tool-run:a", items, timestamp: items[0].timestamp },
+      }),
+    ),
+  );
+
+  assert.ok(queryByTestId("transcript-tool-run-card"));
+  assert.equal(queryByTestId("transcript-tool-run-compact-row"), null);
 });

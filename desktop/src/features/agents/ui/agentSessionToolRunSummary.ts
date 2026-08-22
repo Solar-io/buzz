@@ -1,8 +1,10 @@
 import type {
+  AgentActivityDescriptor,
   AgentActivityRenderClass,
+  AgentActivityTone,
   TranscriptItem,
 } from "./agentSessionTypes";
-import { classifyToolItem } from "./agentSessionToolClassifier";
+import { classifyTool, classifyToolItem } from "./agentSessionToolClassifier";
 
 type ToolItem = Extract<TranscriptItem, { type: "tool" }>;
 
@@ -51,71 +53,126 @@ const CHAIN_ELIGIBLE_RENDER_CLASSES = {
 export const TOOL_RUN_MINIMUM_STEPS = 2;
 
 /**
- * Coarse buckets used to headline a heterogeneous run. Ordered by salience:
- * writes and outbound speech before reads, matching "failures rise; reads
- * recede". The order doubles as the tie-break when two buckets are equally
- * common.
+ * Per-render-class phrasing floor: the past-tense verb to use when a
+ * descriptor carries no `action`, and the singular noun for the run's object
+ * phrase ("3 files", "2 Buzz relay ops").
+ *
+ * The classifier is the source of truth for *vocabulary* — every descriptor
+ * already carries an `action.verb` derived from the tool and its tone
+ * (`agentSessionToolClassifier`), and that verb is what a run headlines with.
+ * This table only supplies what a per-step descriptor cannot: the collective
+ * noun for a run of N steps, plus a verb floor for items whose descriptor
+ * predates `action`. Exhaustive by construction, so a new render class forces a
+ * decision here instead of silently headlining as generic tool work.
  */
-export type ToolRunBucket =
-  | "edit"
-  | "message"
-  | "relay"
-  | "command"
-  | "plan"
-  | "image"
-  | "tool"
-  | "review";
+const RENDER_CLASS_PHRASE = {
+  "file-read": { countable: true, noun: "file", verb: "Read" },
+  "file-edit": { countable: true, noun: "file", verb: "Edited" },
+  "skill-read": { countable: true, noun: "skill", verb: "Read" },
+  "relay-op": { countable: true, noun: "Buzz relay op", verb: "Ran" },
+  message: { countable: true, noun: "message", verb: "Sent" },
+  image: { countable: true, noun: "image", verb: "Viewed" },
+  shell: { countable: true, noun: "command", verb: "Ran" },
+  plan: { countable: true, noun: "todo", verb: "Updated" },
+  // Not countable: a homogeneous run of unnamed work says what the classifier
+  // called it ("Queried registry ×2") rather than counting anonymous "tool
+  // calls"; the noun is only reached when such work dominates a mixed run.
+  generic: { countable: false, noun: "tool call", verb: "Ran" },
+  // Reached only by a failed step whose original classification could not be
+  // recovered, so it reports honestly rather than guessing.
+  error: { countable: false, noun: "tool call", verb: "Ran" },
+  // Never chain (see CHAIN_ELIGIBLE_RENDER_CLASSES), so these are unreachable
+  // here; they exist to keep the table exhaustive.
+  permission: { countable: false, noun: "step", verb: "Ran" },
+  "raw-rail": { countable: false, noun: "step", verb: "Ran" },
+  suppressed: { countable: false, noun: "step", verb: "Ran" },
+  thought: { countable: false, noun: "step", verb: "Ran" },
+  status: { countable: false, noun: "step", verb: "Ran" },
+} satisfies Record<
+  AgentActivityRenderClass,
+  { countable: boolean; noun: string; verb: string }
+>;
 
-const BUCKET_SALIENCE: ToolRunBucket[] = [
-  "edit",
-  "message",
-  "relay",
-  "command",
-  "plan",
-  "image",
-  "tool",
-  "review",
-];
+/**
+ * Present-participle form of each verb in the classifier's closed past-tense
+ * vocabulary (the same set `splitActivityRowLabel` recognises). A live run
+ * reads as work in progress ("Reviewing files") rather than as an outcome, so
+ * the verb the descriptor supplies is re-tensed here instead of being looked up
+ * in a second vocabulary.
+ */
+const PROGRESSIVE_VERBS: Record<string, string> = {
+  Added: "Adding",
+  Archived: "Archiving",
+  Captured: "Capturing",
+  Checked: "Checking",
+  Compacted: "Compacting",
+  Created: "Creating",
+  Deleted: "Deleting",
+  Edited: "Editing",
+  Ran: "Running",
+  // "Reading files" would read as one open file; "Reviewing" is how the
+  // transcript has always narrated a live sweep of reads.
+  Read: "Reviewing",
+  Removed: "Removing",
+  Searched: "Searching",
+  Sent: "Sending",
+  Unarchived: "Unarchiving",
+  Updated: "Updating",
+  Viewed: "Viewing",
+};
 
-const BUCKET_PHRASES: Record<
-  ToolRunBucket,
-  {
-    active: { verb: string; object: string };
-    past: { verb: string; object: string };
-  }
-> = {
-  edit: {
-    active: { verb: "Editing", object: "files" },
-    past: { verb: "Edited", object: "files" },
-  },
-  message: {
-    active: { verb: "Sending", object: "messages" },
-    past: { verb: "Sent", object: "messages" },
-  },
-  relay: {
-    active: { verb: "Updating", object: "Buzz" },
-    past: { verb: "Ran", object: "Buzz relay ops" },
-  },
-  command: {
-    active: { verb: "Running", object: "commands" },
-    past: { verb: "Ran", object: "commands" },
-  },
-  plan: {
-    active: { verb: "Updating", object: "todos" },
-    past: { verb: "Updated", object: "todos" },
-  },
-  image: {
-    active: { verb: "Viewing", object: "images" },
-    past: { verb: "Viewed", object: "images" },
-  },
-  tool: {
-    active: { verb: "Running", object: "tools" },
-    past: { verb: "Ran", object: "tool calls" },
-  },
-  review: {
-    active: { verb: "Reviewing", object: "files" },
-    past: { verb: "Read", object: "files" },
-  },
+/** Render classes in descending salience: writes and speech before reads. */
+const RENDER_CLASS_SALIENCE = {
+  "file-edit": 0,
+  message: 1,
+  "relay-op": 2,
+  shell: 3,
+  plan: 4,
+  image: 5,
+  generic: 6,
+  error: 7,
+  "file-read": 8,
+  "skill-read": 9,
+  // Ineligible for chaining; ranked last so a recovered odd class never
+  // outranks real work.
+  permission: 10,
+  "raw-rail": 11,
+  suppressed: 12,
+  thought: 13,
+  status: 14,
+} satisfies Record<AgentActivityRenderClass, number>;
+
+/** Tones in descending salience, so admin/write work outranks reads. */
+const TONE_SALIENCE = {
+  admin: 0,
+  write: 1,
+  neutral: 2,
+  read: 3,
+} satisfies Record<AgentActivityTone, number>;
+
+/**
+ * The kind of work a step represents: its render class plus the classifier's
+ * tone. Tone is part of the identity so a mixed run of Buzz relay ops
+ * headlines as reading, writing, or administering rather than flattening every
+ * relay op into one generic phrase.
+ */
+export type ToolRunKind = {
+  renderClass: AgentActivityRenderClass;
+  tone: AgentActivityTone;
+};
+
+/**
+ * Verb floor per tone, used when the steps that define a run's headline do not
+ * agree on one verb (a mixed sweep of relay writes, say). The classifier's own
+ * tone→verb fallback uses the same "Read"/"Updated" split; "Changed" is the
+ * admin equivalent, which only a run needs because a single admin step always
+ * has a specific verb ("Created", "Removed") of its own.
+ */
+const TONE_VERB: Record<AgentActivityTone, string | null> = {
+  admin: "Changed",
+  write: "Updated",
+  read: "Read",
+  neutral: null,
 };
 
 /**
@@ -171,28 +228,48 @@ export function toolRunGroupKey(item: ToolItem): string {
   return descriptor.groupKey ?? toolRunRenderClass(item);
 }
 
-function toolRunBucket(item: ToolItem): ToolRunBucket {
-  switch (toolRunRenderClass(item)) {
-    case "file-edit":
-      return "edit";
-    case "message":
-      return "message";
-    case "relay-op":
-      return "relay";
-    case "shell":
-      return "command";
-    case "plan":
-      return "plan";
-    case "image":
-      return "image";
-    case "file-read":
-    case "skill-read":
-      return "review";
-    default:
-      // Generic tools and failed steps (whose original class is lost when the
-      // classifier reclassifies them to "error") report honestly as tool work.
-      return "tool";
-  }
+/**
+ * The descriptor a run reads a step's *semantics* from.
+ *
+ * `classifyTool` rewrites a failed step to render class `error` with a "…
+ * failed" label. That is right for the step's own row, but it erases what the
+ * step was doing — so a run containing one failed read would headline as
+ * anonymous tool work. When a descriptor arrives already flattened this
+ * re-classifies the step as if it had succeeded, recovering its original class,
+ * tone, and verb. Nothing is hidden by that: the failure is carried by the
+ * aggregate status glyph and by the failing step's own highlighted row.
+ */
+function toolRunDescriptor(item: ToolItem): AgentActivityDescriptor {
+  const descriptor = item.descriptor ?? classifyToolItem(item);
+  if (descriptor.renderClass !== "error") return descriptor;
+
+  const recovered = classifyTool({
+    title: item.title,
+    toolName: item.toolName,
+    buzzToolName: item.buzzToolName,
+    args: item.args,
+    result: item.result,
+    isError: false,
+  });
+  // Some steps are genuinely nothing but a failure (no recoverable tool
+  // identity); those keep reporting as an error rather than being guessed at.
+  return recovered.renderClass === "error" ? descriptor : recovered;
+}
+
+/** Render class plus tone: the kind of work one step represents. */
+export function toolRunKind(item: ToolItem): ToolRunKind {
+  const descriptor = toolRunDescriptor(item);
+  // `item.renderClass` is canonical except when it too was flattened to
+  // "error", in which case the recovered descriptor's class is the honest one.
+  const renderClass =
+    item.renderClass && item.renderClass !== "error"
+      ? item.renderClass
+      : descriptor.renderClass;
+  return { renderClass, tone: descriptor.tone ?? "neutral" };
+}
+
+function sameToolRunKind(left: ToolRunKind, right: ToolRunKind): boolean {
+  return left.renderClass === right.renderClass && left.tone === right.tone;
 }
 
 function isToolStepRunning(item: ToolItem): boolean {
@@ -230,62 +307,111 @@ export function summarizeToolRunStatus(items: ToolItem[]): ToolRunAggregate {
  * has always used; keep them verbatim so a homogeneous run reads no differently
  * than it did before chains existed.
  */
-function homogeneousHeadline(item: ToolItem, count: number): ToolRunHeadline {
-  const descriptor = item.descriptor ?? classifyToolItem(item);
-  const renderClass = toolRunRenderClass(item);
-  const plural = count === 1 ? "" : "s";
+function homogeneousHeadline(items: ToolItem[]): ToolRunHeadline {
+  const count = items.length;
+  const kind = toolRunKind(items[0]);
+  const phrase = RENDER_CLASS_PHRASE[kind.renderClass];
 
-  if (renderClass === "file-edit") {
-    return { verb: "Edited", object: `${count} file${plural}`, detail: null };
-  }
-  if (renderClass === "file-read") {
-    return { verb: "Read", object: `${count} file${plural}`, detail: null };
-  }
-  if (renderClass === "skill-read") {
-    return { verb: "Read", object: `${count} skill${plural}`, detail: null };
-  }
-  if (renderClass === "shell") {
-    return { verb: "Ran", object: `${count} command${plural}`, detail: null };
-  }
-  if (renderClass === "relay-op") {
+  // Work the classifier could only name generically has no honest collective
+  // noun, so it keeps the classifier's own label ("Queried registry ×2")
+  // instead of counting anonymous "tool calls".
+  if (!phrase.countable) {
     return {
-      verb: "Ran",
-      object: `${count} Buzz relay op${plural}`,
+      verb: toolRunDescriptor(items[0]).label,
+      object: `×${count}`,
       detail: null,
     };
   }
-  if (renderClass === "message") {
-    return { verb: "Sent", object: `${count} message${plural}`, detail: null };
-  }
-  if (renderClass === "image") {
-    return { verb: "Viewed", object: `${count} image${plural}`, detail: null };
-  }
-  return { verb: descriptor.label, object: `×${count}`, detail: null };
+
+  return {
+    verb: runVerb(items, kind),
+    object: `${count} ${pluralize(phrase.noun, count)}`,
+    detail: null,
+  };
 }
 
-/** Dominant bucket for a heterogeneous run. */
-export function dominantToolRunBucket(items: ToolItem[]): ToolRunBucket {
-  const counts = new Map<ToolRunBucket, number>();
+function pluralize(noun: string, count: number): string {
+  return count === 1 ? noun : `${noun}s`;
+}
+
+/**
+ * The verb a run headlines with.
+ *
+ * Vocabulary comes from the classifier: each step's descriptor already carries
+ * an `action.verb` chosen from the tool and its tone, so a run of relay reads
+ * says "Read" and a run of relay writes says "Updated" without this module
+ * re-deriving either. When the steps that define the headline disagree on a
+ * verb (a mixed sweep of writes, say) the run falls back to the tone's verb,
+ * and finally to the render class's floor.
+ */
+function runVerb(items: ToolItem[], kind: ToolRunKind): string {
+  const verbs = new Set<string>();
   for (const item of items) {
-    const bucket = toolRunBucket(item);
-    counts.set(bucket, (counts.get(bucket) ?? 0) + 1);
+    if (!sameToolRunKind(toolRunKind(item), kind)) continue;
+    const verb = toolRunDescriptor(item).action?.verb;
+    if (verb) verbs.add(verb);
   }
 
-  let dominant: ToolRunBucket = "tool";
-  let dominantCount = -1;
-  // Walk in salience order so an equally-common write bucket beats a read one.
-  for (const bucket of BUCKET_SALIENCE) {
-    const count = counts.get(bucket) ?? 0;
-    if (count > dominantCount) {
-      dominant = bucket;
-      dominantCount = count;
+  if (verbs.size === 1) {
+    const [only] = verbs;
+    return only;
+  }
+
+  return TONE_VERB[kind.tone] ?? RENDER_CLASS_PHRASE[kind.renderClass].verb;
+}
+
+/**
+ * The kind of work that dominates a run. Ties break toward the more salient
+ * render class, then the more salient tone — so a run that wrote as much as it
+ * read headlines as writing ("failures rise; reads recede").
+ */
+export function dominantToolRunKind(items: ToolItem[]): ToolRunKind {
+  const counts = new Map<string, { count: number; kind: ToolRunKind }>();
+  for (const item of items) {
+    const kind = toolRunKind(item);
+    const key = `${kind.renderClass}:${kind.tone}`;
+    const entry = counts.get(key);
+    if (entry) {
+      entry.count += 1;
+    } else {
+      counts.set(key, { count: 1, kind });
     }
   }
-  return dominant;
+
+  let dominant: { count: number; kind: ToolRunKind } | null = null;
+  for (const entry of counts.values()) {
+    if (dominant === null || outranks(entry, dominant)) {
+      dominant = entry;
+    }
+  }
+
+  return dominant?.kind ?? { renderClass: "generic", tone: "neutral" };
+}
+
+function outranks(
+  candidate: { count: number; kind: ToolRunKind },
+  incumbent: { count: number; kind: ToolRunKind },
+): boolean {
+  if (candidate.count !== incumbent.count) {
+    return candidate.count > incumbent.count;
+  }
+  const candidateClass = RENDER_CLASS_SALIENCE[candidate.kind.renderClass];
+  const incumbentClass = RENDER_CLASS_SALIENCE[incumbent.kind.renderClass];
+  if (candidateClass !== incumbentClass) {
+    return candidateClass < incumbentClass;
+  }
+  return (
+    TONE_SALIENCE[candidate.kind.tone] < TONE_SALIENCE[incumbent.kind.tone]
+  );
 }
 
 /**
  * Headline for a run: verb, object, and an optional trailing clause.
+ *
+ * This is the run's ONE headline derivation — the collapsed header and the
+ * live header are the same sentence in two tenses, and both read their
+ * vocabulary from the classifier's descriptors rather than from a parallel
+ * taxonomy.
  *
  * A live run reads as active and reports how far it has got
  * ("Reviewing files · step 3"). A settled run reads as an outcome: homogeneous
@@ -305,26 +431,28 @@ export function summarizeToolRunHeadline(
   const homogeneous = items.every((item) => toolRunGroupKey(item) === groupKey);
 
   if (aggregate.phase === "running") {
-    const bucket = homogeneous
-      ? toolRunBucket(items[0])
-      : dominantToolRunBucket(items);
-    const phrase = BUCKET_PHRASES[bucket].active;
+    const kind = homogeneous
+      ? toolRunKind(items[0])
+      : dominantToolRunKind(items);
+    const verb = runVerb(items, kind);
     return {
-      verb: phrase.verb,
-      object: phrase.object,
+      verb: PROGRESSIVE_VERBS[verb] ?? verb,
+      // A live run has no final count to report, so it names the kind of work
+      // and lets the detail clause carry progress.
+      object: pluralize(RENDER_CLASS_PHRASE[kind.renderClass].noun, 2),
       detail:
         aggregate.activeStep === null ? null : `step ${aggregate.activeStep}`,
     };
   }
 
   if (homogeneous) {
-    return homogeneousHeadline(items[0], items.length);
+    return homogeneousHeadline(items);
   }
 
-  const phrase = BUCKET_PHRASES[dominantToolRunBucket(items)].past;
+  const kind = dominantToolRunKind(items);
   return {
-    verb: phrase.verb,
-    object: phrase.object,
+    verb: runVerb(items, kind),
+    object: pluralize(RENDER_CLASS_PHRASE[kind.renderClass].noun, 2),
     detail: `${items.length} steps`,
   };
 }
