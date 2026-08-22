@@ -132,13 +132,32 @@ class _DirectoryRefreshFence {
   }
 }
 
-/// Whether [fence] has been retired, so its refresh must write nothing.
+/// Whether a detached unread catch-up has been superseded, so it writes nothing.
 ///
-/// Used on the detached unread catch-up path, where throwing
-/// [_StaleDirectoryRequest] would only surface as an unhandled error: the
-/// catch-up runs fire-and-forget, so a retired scope simply stops.
-bool _isRetired(_DirectoryRefreshFence? fence) =>
-    fence != null && !fence.isCurrent;
+/// The directory fence above covers only refreshes that fetch the directory, so
+/// it cannot describe the initial load, an ordinary membership refresh (the one
+/// a join performs) or the reconnect backstop. Those refreshes also start a
+/// detached catch-up that can outlive them, so every catch-up captures
+/// [_subscriptionVersion] as its generation instead, and this rejects any
+/// generation that is no longer the current one.
+///
+/// One monotonic counter covers both hazards. Every channel-list refresh bumps
+/// it in `_subscribeLive`, which retires an older catch-up on the same relay and
+/// identity. A community or identity switch rebuilds the notifier, and the
+/// disposal that rebuild runs bumps it too, so a switch retires the catch-up
+/// without needing a second relay-and-identity comparison. That redundancy was
+/// measured, not assumed: a disconnected-community-switch arm passes with this
+/// check alone and fails when it is removed.
+///
+/// A retired catch-up returns rather than throwing [_StaleDirectoryRequest]:
+/// nothing awaits it, so a throw would only surface as an unhandled error.
+///
+/// An extension in this part file rather than a method on the notifier because
+/// `channels_provider.dart` sits against the repository-wide 1000-line file
+/// ceiling enforced by `just file-size-check`.
+extension _CatchUpFencing on ChannelsNotifier {
+  bool _isCatchUpRetired(int generation) => generation != _subscriptionVersion;
+}
 
 /// Awaits [future], then rejects the result if the refresh was retired.
 ///

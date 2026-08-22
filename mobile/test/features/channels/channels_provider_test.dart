@@ -873,6 +873,314 @@ void main() {
     );
   });
 
+  test('an ordinary membership refresh retires an older catch-up', () async {
+    final session = _FakeRelaySession(
+      memberships: [_membership(_channelA, myPk)],
+      metadata: [_meta(id: _channelA, name: 'joined-a')],
+    );
+    final container = _buildContainer(session: session);
+    addTearDown(container.dispose);
+
+    await container.read(channelsProvider.future);
+
+    // Same relay, same identity. Only the refresh generation separates the
+    // parked catch-up from the membership list the user is looking at, which
+    // is the window the post-join membership refresh opens.
+    session.recentMessages = const [
+      NostrEvent(
+        id: 'mention-in-a',
+        pubkey: 'alice',
+        createdAt: 50,
+        kind: 9,
+        tags: [
+          ['h', _channelA],
+          ['p', myPk],
+        ],
+        content: 'direct mention in channel A',
+        sig: 'sig',
+      ),
+    ];
+    session.pauseNextUnreadCatchUpQuery();
+    final staleRefresh = container.read(channelsProvider.notifier).refresh();
+    await session.nextUnreadCatchUpQueryStarted;
+
+    session.memberships = [_membership(_channelB, myPk)];
+    session.metadata = [_meta(id: _channelB, name: 'joined-b')];
+    await container.read(channelsProvider.notifier).refresh();
+    await _settle();
+
+    session.resumePausedUnreadCatchUpQuery();
+    await staleRefresh;
+    await _settle();
+
+    final notifier = container.read(channelsProvider.notifier);
+    expect(
+      notifier.latestObservedByChannel,
+      isNot(contains(_channelA)),
+      reason:
+          'a superseded ordinary refresh wrote unread state for a channel the '
+          'user has left: ${notifier.latestObservedByChannel}',
+    );
+    expect(
+      notifier.observedUnreadEventsByChannel,
+      isNot(contains(_channelA)),
+      reason:
+          'a superseded ordinary refresh wrote unread events for a channel the '
+          'user has left: ${notifier.observedUnreadEventsByChannel}',
+    );
+  });
+
+  test('a newer refresh retires a parked backstop catch-up', () async {
+    final session = _FakeRelaySession(
+      memberships: [_membership(_channelA, myPk)],
+      metadata: [_meta(id: _channelA, name: 'joined-a')],
+    );
+    final container = _buildContainer(session: session);
+    addTearDown(container.dispose);
+
+    await container.read(channelsProvider.future);
+
+    session.recentMessages = const [
+      NostrEvent(
+        id: 'mention-in-a',
+        pubkey: 'alice',
+        createdAt: 50,
+        kind: 9,
+        tags: [
+          ['h', _channelA],
+          ['p', myPk],
+        ],
+        content: 'direct mention in channel A',
+        sig: 'sig',
+      ),
+    ];
+    session.pauseNextUnreadCatchUpQuery();
+    // Reconnecting runs the backstop refresh, which never fetches the
+    // directory, so this is the path that carried no lifecycle token at all.
+    session.setStatus(SessionStatus.reconnecting);
+    session.setStatus(SessionStatus.connected);
+    await session.nextUnreadCatchUpQueryStarted;
+
+    session.memberships = [_membership(_channelB, myPk)];
+    session.metadata = [_meta(id: _channelB, name: 'joined-b')];
+    await container.read(channelsProvider.notifier).refresh();
+    await _settle();
+
+    session.resumePausedUnreadCatchUpQuery();
+    await _settle();
+
+    final notifier = container.read(channelsProvider.notifier);
+    expect(
+      notifier.latestObservedByChannel,
+      isNot(contains(_channelA)),
+      reason:
+          'a superseded backstop refresh wrote unread state for a channel the '
+          'user has left: ${notifier.latestObservedByChannel}',
+    );
+    expect(
+      notifier.observedUnreadEventsByChannel,
+      isNot(contains(_channelA)),
+      reason:
+          'a superseded backstop refresh wrote unread events for a channel the '
+          'user has left: ${notifier.observedUnreadEventsByChannel}',
+    );
+  });
+
+  test(
+    'community switch discards a parked catch-up from an ordinary refresh',
+    () async {
+      final session = _FakeRelaySession(
+        memberships: [_membership(_channelA, myPk)],
+        metadata: [_meta(id: _channelA, name: 'community-a-general')],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      await container.read(channelsProvider.future);
+
+      session.recentMessages = const [
+        NostrEvent(
+          id: 'mention-in-a',
+          pubkey: 'alice',
+          createdAt: 50,
+          kind: 9,
+          tags: [
+            ['h', _channelA],
+            ['p', myPk],
+          ],
+          content: 'direct mention in community A',
+          sig: 'sig',
+        ),
+      ];
+      session.pauseNextUnreadCatchUpQuery();
+      final staleRefresh = container.read(channelsProvider.notifier).refresh();
+      await session.nextUnreadCatchUpQueryStarted;
+
+      session.memberships = [_membership(_channelB, myPk)];
+      session.metadata = [_meta(id: _channelB, name: 'community-b-general')];
+      container
+          .read(relayConfigProvider.notifier)
+          .update(baseUrl: 'https://community-b.example');
+      await container.read(channelsProvider.future);
+      await _settle();
+
+      session.resumePausedUnreadCatchUpQuery();
+      await staleRefresh;
+      await _settle();
+
+      final notifier = container.read(channelsProvider.notifier);
+      expect(
+        notifier.latestObservedByChannel,
+        isNot(contains(_channelA)),
+        reason:
+            'community A unread state landed in community B: '
+            '${notifier.latestObservedByChannel}',
+      );
+    },
+  );
+
+  test(
+    'identity switch discards a parked catch-up from an ordinary refresh',
+    () async {
+      final session = _FakeRelaySession(
+        memberships: [_membership(_channelA, myPk)],
+        metadata: [_meta(id: _channelA, name: 'first-identity-general')],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      await container.read(channelsProvider.future);
+
+      session.recentMessages = const [
+        NostrEvent(
+          id: 'mention-in-a',
+          pubkey: 'alice',
+          createdAt: 50,
+          kind: 9,
+          tags: [
+            ['h', _channelA],
+            ['p', myPk],
+          ],
+          content: 'direct mention for the first identity',
+          sig: 'sig',
+        ),
+      ];
+      session.pauseNextUnreadCatchUpQuery();
+      final staleRefresh = container.read(channelsProvider.notifier).refresh();
+      await session.nextUnreadCatchUpQueryStarted;
+
+      session.memberships = [_membership(_channelB, _otherPk)];
+      session.metadata = [_meta(id: _channelB, name: 'second-identity-joined')];
+      container.read(_testPubkeyProvider.notifier).set(_otherPk);
+      await container.read(channelsProvider.future);
+      await _settle();
+
+      session.resumePausedUnreadCatchUpQuery();
+      await staleRefresh;
+      await _settle();
+
+      final notifier = container.read(channelsProvider.notifier);
+      expect(
+        notifier.latestObservedByChannel,
+        isNot(contains(_channelA)),
+        reason:
+            'first identity unread state landed on the second identity: '
+            '${notifier.latestObservedByChannel}',
+      );
+    },
+  );
+
+  test('a disconnected community switch retires a parked catch-up', () async {
+    final session = _FakeRelaySession(
+      memberships: [_membership(_channelA, myPk)],
+      metadata: [_meta(id: _channelA, name: 'community-a-general')],
+    );
+    final container = _buildContainer(session: session);
+    addTearDown(container.dispose);
+
+    await container.read(channelsProvider.future);
+
+    session.recentMessages = const [
+      NostrEvent(
+        id: 'mention-in-a',
+        pubkey: 'alice',
+        createdAt: 50,
+        kind: 9,
+        tags: [
+          ['h', _channelA],
+          ['p', myPk],
+        ],
+        content: 'direct mention in community A',
+        sig: 'sig',
+      ),
+    ];
+    session.pauseNextUnreadCatchUpQuery();
+    final started = session.nextUnreadCatchUpQueryStarted;
+    final staleRefresh = container.read(channelsProvider.notifier).refresh();
+    await started;
+
+    // Switch community while the session is down, so the new scope runs no
+    // refresh of its own. This is the arm that shows the single generation
+    // counter is sufficient: the rebuild's disposal bumps it even though no
+    // new refresh does.
+    session.setStatus(SessionStatus.disconnected);
+    container
+        .read(relayConfigProvider.notifier)
+        .update(baseUrl: 'https://community-b.example');
+    await _settle();
+
+    session.resumePausedUnreadCatchUpQuery();
+    await staleRefresh;
+    await _settle();
+
+    final notifier = container.read(channelsProvider.notifier);
+    expect(
+      notifier.latestObservedByChannel,
+      isNot(contains(_channelA)),
+      reason:
+          'community A unread state survived a disconnected switch: '
+          '${notifier.latestObservedByChannel}',
+    );
+  });
+
+  test('a catch-up that records nothing does not repaint the list', () async {
+    final session = _FakeRelaySession(
+      memberships: [_membership(_channelA, myPk)],
+      metadata: [_meta(id: _channelA, name: 'joined-a')],
+    );
+    final container = _buildContainer(session: session);
+    addTearDown(container.dispose);
+
+    await container.read(channelsProvider.future);
+
+    // No unread events to record, so the catch-up has nothing to publish.
+    // The catch-up is detached, so its query starts inside the refresh: hold
+    // the started future before awaiting the refresh or the one-shot slot is
+    // already claimed and reset by the time we ask for it.
+    session.pauseNextUnreadCatchUpQuery();
+    final started = session.nextUnreadCatchUpQueryStarted;
+    await container.read(channelsProvider.notifier).refresh();
+    await started;
+    await _settle();
+
+    final emissions = <int>[];
+    final subscription = container.listen(
+      channelsProvider,
+      (_, next) => emissions.add(next.requireValue.length),
+      fireImmediately: false,
+    );
+    addTearDown(subscription.close);
+
+    session.resumePausedUnreadCatchUpQuery();
+    await _settle();
+
+    expect(
+      emissions,
+      isEmpty,
+      reason: 'an empty unread catch-up republished provider state: $emissions',
+    );
+  });
+
   test('community switch drops unread state recorded before it', () async {
     final session = _FakeRelaySession(
       memberships: [_membership(_channelA, myPk)],
@@ -1779,7 +2087,7 @@ class _FakeRelaySession extends RelaySessionNotifier {
   final bool repeatLastMetadataPage;
   final int? maxMetadataPageRequests;
   final List<NostrEvent> hiddenDmEvents;
-  final List<NostrEvent> recentMessages;
+  List<NostrEvent> recentMessages;
   int membershipFailures;
   int directoryFailures = 0;
   bool failClaimedMemberCountQuery = false;

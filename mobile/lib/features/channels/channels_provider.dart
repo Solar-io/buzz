@@ -354,7 +354,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
       // Subscriptions are shared relay state, so a retired refresh must not
       // install them even though its channel list is already built.
       fence?.ensureCurrent();
-      await _fenced(fence, _subscribeLive(channels, fence));
+      await _fenced(fence, _subscribeLive(channels));
     }
     // Guard the provider-state write in `retryDirectory` and `build`: the
     // caller assigns whatever this returns, so the last check belongs here.
@@ -534,12 +534,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
   /// Subscribe per-channel to live events (requires `#h` tag for relay
   /// channel-scoped fan-out). Also starts a 60s WS backstop poll to reconcile
   /// membership changes without repeatedly downloading the global directory.
-  /// The [fence] rides along so the detached unread catch-up started at the
-  /// end of the sync can still tell whether its scope is current.
-  Future<void> _subscribeLive(
-    List<Channel> channels,
-    _DirectoryRefreshFence? fence,
-  ) {
+  Future<void> _subscribeLive(List<Channel> channels) {
     final channelIds = {
       for (final channel in channels)
         if (channel.isMember && !channel.isArchived) channel.id,
@@ -550,12 +545,8 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     final subscriptionVersion = ++_subscriptionVersion;
 
     final sync = _liveSubscriptionQueue.then(
-      (_) => _syncLiveSubscriptions(
-        relayBaseUrl,
-        subscriptionVersion,
-        channels,
-        fence,
-      ),
+      (_) =>
+          _syncLiveSubscriptions(relayBaseUrl, subscriptionVersion, channels),
     );
     _liveSubscriptionQueue = sync.catchError((Object error, StackTrace stack) {
       debugPrint(
@@ -569,7 +560,6 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     String relayBaseUrl,
     int subscriptionVersion,
     List<Channel> channels,
-    _DirectoryRefreshFence? fence,
   ) async {
     if (ref.read(relaySessionProvider).status != SessionStatus.connected) {
       return;
@@ -580,7 +570,6 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
         ref.read(relayConfigProvider).baseUrl,
         _subscriptionVersion,
         _desiredLiveChannels,
-        fence,
       );
       return;
     }
@@ -654,7 +643,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
       return;
     }
 
-    unawaited(_catchUpUnreadEvents(channels, fence));
+    unawaited(_catchUpUnreadEvents(channels));
 
     _backstopTimer?.cancel();
     _backstopTimer = Timer.periodic(
@@ -665,19 +654,20 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
 
   /// Backfills unread badges for the channels this refresh just installed.
   ///
-  /// Runs detached from the refresh that starts it, so [fence] is what keeps a
-  /// response that outlived its community or identity from writing unread
-  /// state into the scope the user switched to. A retired refresh returns
-  /// instead of throwing: nothing awaits this future, so a thrown
+  /// Runs detached from the refresh that starts it, so the lifecycle token
+  /// captured below is what keeps a response that outlived its refresh from
+  /// writing unread state into whatever the user is looking at now. Every
+  /// refresh path starts a catch-up, including the initial load, the ordinary
+  /// membership refresh a join performs and the reconnect backstop, so the
+  /// token is unconditional rather than tied to discovery. A retired refresh
+  /// returns instead of throwing: nothing awaits this future, so a thrown
   /// [_StaleDirectoryRequest] would only surface as an unhandled error.
   ///
-  /// The relay round-trip is the only await here, so one re-check after it
-  /// covers every write below. Guards before it or after the writes were
-  /// measured unreachable: retirement cannot land in a synchronous gap.
-  Future<void> _catchUpUnreadEvents(
-    List<Channel> channels,
-    _DirectoryRefreshFence? fence,
-  ) async {
+  /// The generation is captured here rather than passed in because this method
+  /// runs synchronously up to its relay query, so the value it reads is still
+  /// the starting refresh's own.
+  Future<void> _catchUpUnreadEvents(List<Channel> channels) async {
+    final generation = _subscriptionVersion;
     final myPk = ref.read(myPubkeyProvider);
     if (myPk == null) return;
 
@@ -719,10 +709,10 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
         filters,
         operation: 'unread catch-up',
       );
-      // The relay round-trip above is the window Jed's probe parks in: a
-      // community or identity switch here means every write below belongs to a
-      // scope the user has left.
-      if (_isRetired(fence)) return;
+      // The relay round-trip above is the window Jed's probes park in: a newer
+      // refresh, a community switch or an identity switch here means every
+      // write below belongs to a channel list the user has left.
+      if (_isCatchUpRetired(generation)) return;
 
       for (final event in events) {
         if (event.pubkey.toLowerCase() == myPk.toLowerCase()) {
@@ -730,6 +720,7 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
         }
       }
 
+      var recorded = false;
       for (final event in events) {
         final channelId = event.channelId;
         if (channelId == null) continue;
@@ -750,12 +741,19 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
           continue;
         }
         _recordUnreadEvent(channel, event, myPk);
+        recorded = true;
+      }
+      // Republish only when this catch-up actually changed unread state. A
+      // batch that recorded nothing has nothing to show, and a failed or
+      // superseded batch must not repaint another refresh's list: the retired
+      // check above already returned in that case, and no await separates it
+      // from here, so a second check would be dead code.
+      if (recorded) {
+        state = state.whenData((channels) => List<Channel>.of(channels));
       }
     } catch (error) {
       debugPrint('[ChannelsNotifier] unread catch-up failed: $error');
     }
-
-    state = state.whenData((channels) => List<Channel>.of(channels));
   }
 
   void _handleLiveEvent(NostrEvent event) {
