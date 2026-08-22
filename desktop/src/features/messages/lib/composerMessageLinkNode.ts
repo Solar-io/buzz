@@ -294,7 +294,17 @@ function wrappingComposerChipContent(
 ): { leading: [string, Record<string, string>, string]; remainder: string } {
   const leadingEnd = inlineChipLeadingEnd(label);
   if (!leadingEnd) {
-    return { leading: ["span", {}, label], remainder: "" };
+    return {
+      leading: [
+        "span",
+        {
+          "aria-hidden": "true",
+          class: `inline-chip-leading-fragment ${inlineChipIconClasses(icon)}`,
+        },
+        "",
+      ],
+      remainder: label,
+    };
   }
 
   return {

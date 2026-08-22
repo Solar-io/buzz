@@ -74,7 +74,20 @@ function wrappingChipContent(
   if (typeof children !== "string" || children.length === 0) return children;
 
   const leadingEnd = inlineChipLeadingEnd(children);
-  if (!leadingEnd) return children;
+  if (!leadingEnd) {
+    return (
+      <>
+        <span
+          aria-hidden="true"
+          className={cn(
+            "inline-chip-leading-fragment",
+            inlineChipIconClasses(icon),
+          )}
+        />
+        {children}
+      </>
+    );
+  }
 
   return (
     <>

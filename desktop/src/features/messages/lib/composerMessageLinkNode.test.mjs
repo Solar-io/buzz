@@ -234,7 +234,12 @@ test("composer node truncates and preserves grapheme-safe leading fragments", ()
   );
   assert.equal(renderedChipLabel(longRendered), `${longName.slice(0, 47)}…`);
 
-  for (const label of ["🇺🇸channel", "e\u0301quipe"]) {
+  for (const [label, expectedLeading] of [
+    ["🇺🇸channel", "🇺🇸chan"],
+    ["e\u0301quipe", "e\u0301quip"],
+    ["relaytoolsobservabilityconsole-main", "relay"],
+    [" leading-space", ""],
+  ]) {
     const rendered = render.call(
       { options: { resolveChannelName: () => undefined } },
       {
@@ -242,11 +247,8 @@ test("composer node truncates and preserves grapheme-safe leading fragments", ()
         HTMLAttributes: {},
       },
     );
-    const firstGrapheme = Array.from(
-      new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(label),
-      ({ segment }) => segment,
-    )[0];
-    assert.equal(rendered[2][2], firstGrapheme);
+    assert.equal(rendered[2][2], expectedLeading);
+    assert.match(rendered[2][1].class, /inline-chip-with-icon/);
     assert.equal(renderedChipLabel(rendered), label);
   }
 });

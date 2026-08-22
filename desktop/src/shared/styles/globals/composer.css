@@ -265,9 +265,3 @@
   display: inline;
   min-height: 0;
 }
-
-.rich-text-composer .tiptap [data-composer-buzz-link] {
-  display: inline;
-  overflow-wrap: anywhere;
-  white-space: normal;
-}

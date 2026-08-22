@@ -451,7 +451,7 @@ test("composer Buzz chip labels wrap without orphaning their icons", async ({
   await page.addInitScript(() => {
     window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
       {
-        id: "mock-project-relay-tools-observability-console",
+        id: "mock-project-relaytoolsobservabilityconsole-main",
         kind: 30617,
         pubkey:
           "953d3363262e86b770419834c53d2446409db6d918a57f8f339d495d54ab001f",
@@ -459,8 +459,8 @@ test("composer Buzz chip labels wrap without orphaning their icons", async ({
         content:
           "Operator tooling and observability console for relay deployments.",
         tags: [
-          ["d", "relay-tools-observability-console"],
-          ["name", "relay-tools-observability-console"],
+          ["d", "relaytoolsobservabilityconsole-main"],
+          ["name", "relaytoolsobservabilityconsole-main"],
           [
             "description",
             "Operator tooling and observability console for relay deployments.",
@@ -475,7 +475,7 @@ test("composer Buzz chip labels wrap without orphaning their icons", async ({
 
   const composerInput = page.getByTestId("message-input");
   const repoLink =
-    "buzz://repo?owner=953d3363262e86b770419834c53d2446409db6d918a57f8f339d495d54ab001f&d=relay-tools-observability-console";
+    "buzz://repo?owner=953d3363262e86b770419834c53d2446409db6d918a57f8f339d495d54ab001f&d=relaytoolsobservabilityconsole-main";
   await composerInput.evaluate((element, text) => {
     const clipboardData = new DataTransfer();
     clipboardData.setData("text/plain", text);
@@ -490,7 +490,7 @@ test("composer Buzz chip labels wrap without orphaning their icons", async ({
 
   const chip = composerInput.locator('[data-composer-buzz-link=""]');
   const leadingFragment = chip.locator(".inline-chip-leading-fragment");
-  await expect(chip).toHaveText("relay-tools-observability-console");
+  await expect(chip).toHaveText("relaytoolsobservabilityconsole-main");
   const chipHeightAtWidth = async (width: number) => {
     await composerInput.evaluate((element, nextWidth) => {
       element.style.width = `${nextWidth}px`;
@@ -509,38 +509,65 @@ test("composer Buzz chip labels wrap without orphaning their icons", async ({
   };
   const wideHeight = await chipHeightAtWidth(420);
   const mediumHeight = await chipHeightAtWidth(210);
-  const narrowHeight = await chipHeightAtWidth(150);
+  const narrowHeight = await chipHeightAtWidth(90);
   expect(mediumHeight).toBeGreaterThan(wideHeight);
   expect(narrowHeight).toBeGreaterThan(mediumHeight);
   await expect(chip).toHaveCSS("display", "inline");
   await expect(chip).toHaveCSS("overflow-wrap", "anywhere");
-  await expect(leadingFragment).toHaveText("relay-");
+  await expect(leadingFragment).toHaveText("relay");
   await expect
     .poll(() =>
       chip.evaluate((element) => {
         const chipRange = document.createRange();
         chipRange.selectNodeContents(element);
         const leading = element.querySelector(".inline-chip-leading-fragment");
+        const composerBounds = element
+          .closest('[data-testid="message-input"]')
+          ?.getBoundingClientRect();
+        const leadingBounds = leading?.getBoundingClientRect();
         return {
           chipLineBoxes: new Set(
             Array.from(chipRange.getClientRects(), (rect) =>
               Math.round(rect.y),
             ),
           ).size,
+          leadingContained:
+            Boolean(composerBounds && leadingBounds) &&
+            leadingBounds.right <= composerBounds.right,
           leadingLineBoxes: leading?.getClientRects().length ?? 0,
         };
       }),
     )
-    .toEqual({ chipLineBoxes: 4, leadingLineBoxes: 1 });
+    .toMatchObject({
+      chipLineBoxes: expect.any(Number),
+      leadingContained: true,
+      leadingLineBoxes: 1,
+    });
+  expect(
+    await chip.evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      return new Set(
+        Array.from(range.getClientRects(), (rect) => Math.round(rect.y)),
+      ).size;
+    }),
+  ).toBeGreaterThanOrEqual(2);
 
   await expect(chip).toHaveAttribute(
     "title",
-    "Open repository relay-tools-observability-console",
+    "Open repository relaytoolsobservabilityconsole-main",
   );
+  await chipHeightAtWidth(420);
+  await composerInput.press("End");
+  await composerInput.pressSequentially(" after");
+  await expect(composerInput).toContainText(
+    "relaytoolsobservabilityconsole-main after",
+  );
+  await expect(chip).toHaveText("relaytoolsobservabilityconsole-main");
   await page.getByTestId("send-message").click();
 
   const sentChip = page.getByTestId("message-row").last().getByRole("button", {
-    name: "Open repository relay-tools-observability-console",
+    name: "Open repository relaytoolsobservabilityconsole-main",
   });
   await expect(sentChip).toBeVisible();
   await sentChip.evaluate((element) => {
