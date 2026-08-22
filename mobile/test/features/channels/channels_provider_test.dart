@@ -1779,6 +1779,129 @@ void main() {
     expect(ephemeral.ttlSeconds, 86400);
   });
 
+  test(
+    'Huddle-linked one-hour private streams stay out of channel lists',
+    () async {
+      final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      final session = _FakeRelaySession(
+        memberships: [
+          _membership(_channelA, myPk),
+          _membership(_channelB, myPk, ownerPubkey: myPk),
+        ],
+        metadata: [
+          _meta(id: _channelA, name: 'general'),
+          _meta(
+            id: _channelB,
+            name: 'huddle-22222222',
+            ttlSeconds: 3600,
+            visibility: 'private',
+          ),
+        ],
+        huddleStarts: [
+          NostrEvent(
+            id: 'huddle-start',
+            pubkey: myPk,
+            createdAt: now,
+            kind: EventKind.huddleStarted,
+            tags: const [
+              ['h', _channelA],
+            ],
+            content: '{"ephemeral_channel_id":"$_channelB"}',
+            sig: 'sig',
+          ),
+        ],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      final channels = await container.read(channelsProvider.future);
+
+      expect(channels.map((channel) => channel.id), [_channelA]);
+    },
+  );
+
+  test(
+    'Huddle-linked private streams stay hidden when relay overrides the TTL',
+    () async {
+      final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      final session = _FakeRelaySession(
+        memberships: [
+          _membership(_channelA, myPk),
+          _membership(_channelB, myPk, ownerPubkey: myPk),
+        ],
+        metadata: [
+          _meta(id: _channelA, name: 'general'),
+          _meta(
+            id: _channelB,
+            name: 'huddle-22222222',
+            ttlSeconds: 60,
+            visibility: 'private',
+          ),
+        ],
+        huddleStarts: [
+          NostrEvent(
+            id: 'huddle-start',
+            pubkey: myPk,
+            createdAt: now,
+            kind: EventKind.huddleStarted,
+            tags: const [
+              ['h', _channelA],
+            ],
+            content: '{"ephemeral_channel_id":"$_channelB"}',
+            sig: 'sig',
+          ),
+        ],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      final channels = await container.read(channelsProvider.future);
+
+      expect(channels.map((channel) => channel.id), [_channelA]);
+    },
+  );
+
+  test(
+    'forged Huddle links do not hide unrelated one-hour private streams',
+    () async {
+      final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      final session = _FakeRelaySession(
+        memberships: [
+          _membership(_channelA, myPk),
+          _membership(_channelB, myPk, ownerPubkey: 'actual-owner'),
+        ],
+        metadata: [
+          _meta(id: _channelA, name: 'general'),
+          _meta(
+            id: _channelB,
+            name: 'private-hour-stream',
+            ttlSeconds: 3600,
+            visibility: 'private',
+          ),
+        ],
+        huddleStarts: [
+          NostrEvent(
+            id: 'forged-huddle-start',
+            pubkey: myPk,
+            createdAt: now,
+            kind: EventKind.huddleStarted,
+            tags: const [
+              ['h', _channelA],
+            ],
+            content: '{"ephemeral_channel_id":"$_channelB"}',
+            sig: 'sig',
+          ),
+        ],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      final channels = await container.read(channelsProvider.future);
+
+      expect(channels.map((channel) => channel.id), contains(_channelB));
+    },
+  );
+
   test('hidden DMs are filtered from the channel list', () async {
     final session = _FakeRelaySession(
       memberships: [_membership(_channelA, myPk), _membership(_channelB, myPk)],
@@ -2034,6 +2157,7 @@ NostrEvent _membership(
   String channelId,
   String pubkey, {
   String? additionalPubkey,
+  String? ownerPubkey,
 }) => NostrEvent(
   id: 'mem-$channelId',
   pubkey: 'creator',
@@ -2041,7 +2165,8 @@ NostrEvent _membership(
   kind: 39002,
   tags: [
     ['d', channelId],
-    ['p', pubkey],
+    if (ownerPubkey != null) ['p', ownerPubkey, '', 'owner'],
+    if (ownerPubkey == null || ownerPubkey != pubkey) ['p', pubkey],
     if (additionalPubkey != null) ['p', additionalPubkey],
   ],
   content: '',
@@ -2143,6 +2268,7 @@ class _FakeRelaySession extends RelaySessionNotifier {
     this.repeatLastMetadataPage = false,
     this.maxMetadataPageRequests,
     this.hiddenDmEvents = const [],
+    this.huddleStarts = const [],
     this.recentMessages = const [],
     this.membershipFailures = 0,
   });
@@ -2157,6 +2283,7 @@ class _FakeRelaySession extends RelaySessionNotifier {
   final bool repeatLastMetadataPage;
   final int? maxMetadataPageRequests;
   final List<NostrEvent> hiddenDmEvents;
+  final List<NostrEvent> huddleStarts;
   List<NostrEvent> recentMessages;
   int membershipFailures;
   int directoryFailures = 0;
@@ -2336,6 +2463,23 @@ class _FakeRelaySession extends RelaySessionNotifier {
     Duration timeout = const Duration(seconds: 8),
   }) async {
     historyFilters.add(filter);
+    if (filter.kinds.contains(39002) && filter.tags['#d'] != null) {
+      final paused = _pausedMemberCount;
+      if (paused != null) {
+        _claimedMemberCount = paused;
+        _pausedMemberCount = null;
+        _memberCountStarted!.complete();
+        _memberCountStarted = null;
+        await paused.future;
+        if (failClaimedMemberCountQuery) {
+          throw Exception('member-count fetch failed');
+        }
+      }
+      final ids = (filter.tags['#d'] ?? const <String>[]).toSet();
+      return memberships
+          .where((event) => ids.contains(event.getTagValue('d')))
+          .toList();
+    }
     if (filter.kinds.contains(39002) && filter.tags['#p'] != null) {
       membershipRequestCount++;
       if (membershipFailures > 0) {
@@ -2363,21 +2507,8 @@ class _FakeRelaySession extends RelaySessionNotifier {
       }
       return hiddenDmEvents;
     }
-    if (filter.kinds.contains(39002) && filter.tags['#d'] != null) {
-      final paused = _pausedMemberCount;
-      if (paused != null) {
-        _claimedMemberCount = paused;
-        _pausedMemberCount = null;
-        _memberCountStarted!.complete();
-        _memberCountStarted = null;
-        await paused.future;
-        if (failClaimedMemberCountQuery) {
-          throw Exception('member-count fetch failed');
-        }
-      }
-      // Falls through to the shared empty result so the member-count shape
-      // stays exactly as it was before this pause hook existed.
-      return const [];
+    if (filter.kinds.contains(EventKind.huddleStarted)) {
+      return huddleStarts;
     }
     if (filter.kinds.contains(39000)) {
       final ids = filter.tags['#d']?.toSet();
