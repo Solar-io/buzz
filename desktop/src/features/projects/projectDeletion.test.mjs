@@ -17,30 +17,17 @@ const project = {
 };
 
 test("project deletion capability includes direct and agent owners", () => {
-  assert.equal(canDeleteProject(project, AGENT, undefined, new Set()), true);
+  assert.equal(canDeleteProject(project, AGENT, undefined), true);
   assert.equal(
-    canDeleteProject(project, OWNER, undefined, new Set([AGENT])),
-    true,
-  );
-  assert.equal(
-    canDeleteProject(
-      project,
-      OWNER,
-      { [AGENT]: { ownerPubkey: OWNER } },
-      new Set(),
-    ),
+    canDeleteProject(project, OWNER, { [AGENT]: { ownerPubkey: OWNER } }),
     true,
   );
 });
 
 test("project deletion capability rejects unrelated viewers", () => {
+  assert.equal(canDeleteProject(project, OWNER, undefined), false);
   assert.equal(
-    canDeleteProject(
-      project,
-      OTHER,
-      { [AGENT]: { ownerPubkey: OWNER } },
-      new Set(),
-    ),
+    canDeleteProject(project, OTHER, { [AGENT]: { ownerPubkey: OWNER } }),
     false,
   );
 });

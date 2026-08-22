@@ -58,7 +58,10 @@ import {
   projectPullRequestEventsToPullRequests,
 } from "./projectPullRequests.mjs";
 import { fetchProjectsWorkItems } from "./projectWorkItems";
-import { deleteProject } from "./projectDeletion";
+import {
+  projectDeletionMutationOptions,
+  projectsQueryKey,
+} from "./projectDeletionMutation";
 import {
   eventToRepository,
   type Project,
@@ -70,6 +73,8 @@ import {
   fetchProjectEventsExhaustively,
 } from "./projectEnumeration";
 import { projectMatchesRouteId } from "./projectRoutes";
+
+export { projectsQueryKey };
 
 export type {
   Project,
@@ -621,8 +626,6 @@ async function fetchProjectActivitySummaries(
   );
 }
 
-export const projectsQueryKey = ["projects"] as const;
-
 /**
  * Freshness windows for the Projects surface. Every local write path
  * invalidates its keys explicitly (issue/PR mutations, project creation,
@@ -964,13 +967,5 @@ export function useProjectActivitySummariesQuery(projects: Project[]) {
 export function useDeleteProjectMutation() {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: (project: Project) => deleteProject(project),
-    onSuccess: (_data, project) => {
-      queryClient.setQueryData<Project[]>(projectsQueryKey, (current = []) =>
-        current.filter((item) => item.id !== project.id),
-      );
-      void queryClient.invalidateQueries({ queryKey: projectsQueryKey });
-    },
-  });
+  return useMutation(projectDeletionMutationOptions(queryClient));
 }

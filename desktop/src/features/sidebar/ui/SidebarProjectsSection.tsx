@@ -22,7 +22,7 @@ import {
   useProjectsQuery,
 } from "@/features/projects/hooks";
 import { canDeleteProject } from "@/features/projects/projectDeletion";
-import { useProjectDeletionAccess } from "@/features/projects/useProjectDeletionAccess";
+import { useProjectOwnerProfiles } from "@/features/projects/useProjectOwnerProfiles";
 import { projectShareLink } from "@/features/projects/lib/projectShareLinks";
 import {
   addProjectToSidebar,
@@ -124,9 +124,7 @@ export function SidebarProjectsSection() {
 function SidebarProjectsSectionContent() {
   const projectsQuery = useProjectsQuery();
   const identityQuery = useIdentityQuery();
-  const { managedAgentPubkeys, ownerProfiles } = useProjectDeletionAccess(
-    projectsQuery.data ?? [],
-  );
+  const ownerProfiles = useProjectOwnerProfiles(projectsQuery.data ?? []);
   const currentPubkey = identityQuery.data?.pubkey;
   const { goProject, goProjects } = useAppNavigation();
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -314,7 +312,6 @@ function SidebarProjectsSectionContent() {
                   project,
                   currentPubkey,
                   ownerProfiles,
-                  managedAgentPubkeys,
                 );
                 const isActive =
                   routeProjectId != null &&

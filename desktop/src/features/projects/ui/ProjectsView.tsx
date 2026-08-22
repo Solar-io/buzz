@@ -19,7 +19,6 @@ import { useRepositoryActivitySummariesQuery } from "@/features/projects/reposit
 import { useCreateProjectMutation } from "@/features/projects/useCreateProject";
 import { selectProjectRepository } from "@/features/projects/projectModels";
 import { useProjectsRepoSnapshotsQuery } from "@/features/projects/useProjectsRepoSnapshots";
-import { useProjectDeletionAccess } from "@/features/projects/useProjectDeletionAccess";
 import { buildProjectSelectionAgentContext } from "@/features/projects/lib/projectDetailAgentContext";
 import type { ProjectSelectionItem } from "@/features/projects/lib/projectSelection";
 import {
@@ -226,7 +225,6 @@ export function ProjectsView() {
     enabled: projectPubkeys.length > 0,
   });
   const profiles = profilesQuery.data?.profiles;
-  const { managedAgentPubkeys } = useProjectDeletionAccess(projects);
   const deleteProjectMutation = useDeleteProjectMutation();
   const currentPubkey = identityQuery.data?.pubkey;
   const handleViewModeChange = React.useCallback(
@@ -612,7 +610,6 @@ export function ProjectsView() {
       deleteDisabled={deleteProjectMutation.isPending}
       filter={filter}
       localRepoNames={localRepoNames}
-      managedAgentPubkeys={managedAgentPubkeys}
       onDelete={handleDeleteProject}
       onOpen={handleOpenProject}
       onOpenTerminal={handleOpenTerminal}

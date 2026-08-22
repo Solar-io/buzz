@@ -39,7 +39,6 @@ export function ProjectsOverviewProjectItems({
   deleteDisabled,
   filter,
   localRepoNames,
-  managedAgentPubkeys,
   onDelete,
   onOpen,
   onOpenTerminal,
@@ -53,7 +52,6 @@ export function ProjectsOverviewProjectItems({
   deleteDisabled: boolean;
   filter: ProjectsFilter;
   localRepoNames: Set<string>;
-  managedAgentPubkeys: ReadonlySet<string>;
   onDelete: (project: Project) => void;
   onOpen: (project: Project) => void;
   onOpenTerminal: (project: Project) => void;
@@ -78,12 +76,7 @@ export function ProjectsOverviewProjectItems({
       >
         {visibleProjects.map((project) => {
           const summary = summaries?.[project.id];
-          const canDelete = canDeleteProject(
-            project,
-            currentPubkey,
-            profiles,
-            managedAgentPubkeys,
-          );
+          const canDelete = canDeleteProject(project, currentPubkey, profiles);
           return (
             <ProjectGridCard
               canDelete={canDelete}
@@ -110,12 +103,7 @@ export function ProjectsOverviewProjectItems({
     <div data-testid="projects-list-container">
       {visibleProjects.map((project) => {
         const summary = summaries?.[project.id];
-        const canDelete = canDeleteProject(
-          project,
-          currentPubkey,
-          profiles,
-          managedAgentPubkeys,
-        );
+        const canDelete = canDeleteProject(project, currentPubkey, profiles);
         const selectionRangeItems = visibleProjects.map((item) =>
           selectionItemFromProject({
             channelId: item.projectChannelId,

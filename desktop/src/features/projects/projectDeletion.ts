@@ -20,21 +20,19 @@ export type DeleteProjectEventTemplate = {
 
 /**
  * Buzz lets a human owner manage content authored by their NIP-OA agent, just
- * as it does for agent-owned channels. Local managed-agent records are also
- * sufficient capability evidence; the relay remains the final authority.
+ * as it does for agent-owned channels. The profile ownership evidence mirrors
+ * the relay authority used for the owner-signed tombstone.
  */
 export function canDeleteProject(
   project: Pick<Project, "owner">,
   currentPubkey: string | undefined,
   profiles: UserProfileLookup | undefined,
-  managedAgentPubkeys: ReadonlySet<string>,
 ): boolean {
   if (!currentPubkey) return false;
 
   const owner = normalizePubkey(project.owner);
   return (
     owner === normalizePubkey(currentPubkey) ||
-    managedAgentPubkeys.has(owner) ||
     ownsAuthorAgent(profiles?.[owner], currentPubkey)
   );
 }
@@ -102,7 +100,7 @@ export async function deleteProject(
   );
   await publishEvent(
     event,
-    "Timed out deleting project.",
+    "Could not confirm whether the project was deleted. Projects were refreshed.",
     "Failed to delete project.",
   );
 

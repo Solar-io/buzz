@@ -120,3 +120,21 @@ test("deleteProject reports a concurrent replacement that survives", async () =>
     /updated while it was being deleted/,
   );
 });
+
+test("deleteProject reports uncertain outcome when publish acknowledgement is lost", async () => {
+  await assert.rejects(
+    deleteProject(project, {
+      fetchEvents: async () => [event()],
+      signEvent: async (template) =>
+        event({
+          kind: template.kind,
+          created_at: template.createdAt,
+          tags: template.tags,
+        }),
+      publishEvent: async (_event, timeoutMessage) => {
+        throw new Error(timeoutMessage);
+      },
+    }),
+    /Could not confirm whether the project was deleted\. Projects were refreshed\./,
+  );
+});
