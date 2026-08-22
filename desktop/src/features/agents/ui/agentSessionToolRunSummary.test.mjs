@@ -542,6 +542,99 @@ test("a live run re-tenses the classifier's verb", () => {
   );
 });
 
+// The bug this guards: mixed admin relay ops disagree on a verb, so the run
+// falls back to the admin tone's verb ("Changed") — which had no progressive
+// form, leaving a LIVE card reading in the past tense. Built through the real
+// classifier so the tone and the disagreement are production behaviour.
+test("a live run of mixed admin relay ops still reads present-tense", () => {
+  const live = (item) => ({ ...item, status: "executing", completedAt: null });
+
+  const created = buzzCli("a1", "buzz channels create --name x");
+  const deleted = live(buzzCli("a2", "buzz channels delete --channel y"));
+
+  // Precondition: genuinely admin-toned, and the two steps really do disagree
+  // on a verb — otherwise the single agreed verb would be used and the tone
+  // fallback (the thing under test) would never be reached.
+  assert.equal(toolRunKind(created).tone, "admin");
+  assert.equal(toolRunKind(deleted).tone, "admin");
+  assert.notEqual(
+    created.descriptor.action.verb,
+    deleted.descriptor.action.verb,
+  );
+
+  const headline = headlineOf([created, deleted]);
+  assert.equal(headline.verb, "Changing");
+  assert.equal(headline.detail, "step 2");
+  // The regression, stated directly: no live header reads in the past tense.
+  assert.notEqual(headline.verb, "Changed");
+});
+
+// Each tone's fallback verb, exercised through the public headline rather than
+// by reaching for the module-private tables.
+//
+// A run only falls back to its tone's verb when the steps that DEFINE the
+// headline disagree on one — and those are just the steps sharing the dominant
+// render class and tone. So each pair below shares a class and a tone and
+// differs only in verb; a pair that differed in class instead would narrow the
+// dominant kind to a single step, whose verb would trivially agree, and the
+// fallback under test would never be reached.
+test("every tone's fallback verb re-tenses for a live run", () => {
+  const live = (item) => ({ ...item, status: "executing", completedAt: null });
+  const verbOf = (a, b) => {
+    // Precondition for every case: same kind, disagreeing verbs. Asserted so a
+    // fixture that stops reaching the fallback fails loudly instead of passing
+    // for the wrong reason.
+    assert.deepEqual(toolRunKind(a), toolRunKind(b));
+    assert.notEqual(a.descriptor.action.verb, b.descriptor.action.verb);
+    return headlineOf([a, live(b)]).verb;
+  };
+
+  // read: get ("Read") vs search ("Searched") → TONE_VERB.read, re-tensed.
+  assert.equal(
+    verbOf(
+      buzzCli("r1", "buzz messages get --channel abc"),
+      buzzCli("r2", "buzz messages search --query hi"),
+    ),
+    "Reviewing",
+  );
+  // write: canvas set ("Updated") vs reactions add ("Added").
+  assert.equal(
+    verbOf(
+      buzzCli("w1", "buzz canvas set --channel abc --content x"),
+      buzzCli("w2", "buzz reactions add --event e --emoji tada"),
+    ),
+    "Updating",
+  );
+  // admin: create ("Created") vs delete ("Deleted") → "Changed" → "Changing".
+  // This is the case that shipped a past-tense verb on a live card.
+  assert.equal(
+    verbOf(
+      buzzCli("a1", "buzz channels create --name x"),
+      buzzCli("a2", "buzz channels delete --channel y"),
+    ),
+    "Changing",
+  );
+  // neutral has no tone verb at all, so it falls through to the render class's
+  // floor. The classifier gives each neutral-toned class one verb, so a
+  // disagreeing pair has to be built by hand to reach the floor.
+  const imageStep = (id, verb, groupKey) =>
+    tool(id, "image", {
+      descriptor: {
+        renderClass: "image",
+        label: "Viewed image",
+        preview: null,
+        action: { verb, object: null },
+        groupKey,
+      },
+    });
+  const viewed = imageStep("i1", "Viewed", "view_image");
+  assert.equal(toolRunKind(viewed).tone, "neutral");
+  assert.equal(
+    verbOf(viewed, imageStep("i2", "Captured", "screenshot")),
+    "Viewing",
+  );
+});
+
 test("summarizeToolRunHeadline tolerates an empty run", () => {
   assert.deepEqual(headlineOf([]), {
     verb: "Working…",

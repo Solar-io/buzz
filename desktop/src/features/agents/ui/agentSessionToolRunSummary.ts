@@ -90,20 +90,52 @@ const RENDER_CLASS_PHRASE = {
   status: { countable: false, noun: "step", verb: "Ran" },
 } satisfies Record<
   AgentActivityRenderClass,
-  { countable: boolean; noun: string; verb: string }
+  { countable: boolean; noun: string; verb: RunVerb }
 >;
 
 /**
- * Present-participle form of each verb in the classifier's closed past-tense
- * vocabulary (the same set `splitActivityRowLabel` recognises). A live run
- * reads as work in progress ("Reviewing files") rather than as an outcome, so
- * the verb the descriptor supplies is re-tensed here instead of being looked up
- * in a second vocabulary.
+ * Every past-tense verb a run can headline with *of this module's own choosing*:
+ * the classifier's closed vocabulary plus the tone and render-class fallbacks
+ * below. Naming the set is what forces `PROGRESSIVE_VERBS` to stay complete —
+ * `TONE_VERB.admin` ("Changed") once had no progressive form, so a live run of
+ * mixed admin relay ops read "Changed Buzz relay ops · step 2" in the
+ * present tense's place.
  */
-const PROGRESSIVE_VERBS: Record<string, string> = {
+type RunVerb =
+  | "Added"
+  | "Archived"
+  | "Captured"
+  | "Changed"
+  | "Checked"
+  | "Compacted"
+  | "Created"
+  | "Deleted"
+  | "Edited"
+  | "Ran"
+  | "Read"
+  | "Removed"
+  | "Searched"
+  | "Sent"
+  | "Unarchived"
+  | "Updated"
+  | "Viewed";
+
+/**
+ * Present-participle form of every verb in `RunVerb`. A live run reads as work
+ * in progress ("Reviewing files") rather than as an outcome, so the verb is
+ * re-tensed here instead of being looked up in a second vocabulary.
+ *
+ * Exhaustive by construction: adding a verb to `RunVerb` — or a new tone
+ * fallback — fails to compile until its progressive form is decided here, which
+ * is the guard the missing "Changed" entry slipped through.
+ */
+const PROGRESSIVE_VERBS = {
   Added: "Adding",
   Archived: "Archiving",
   Captured: "Capturing",
+  // Reached by a live run of mixed admin relay ops, whose steps disagree on a
+  // verb and so fall back to the admin tone's.
+  Changed: "Changing",
   Checked: "Checking",
   Compacted: "Compacting",
   Created: "Creating",
@@ -119,7 +151,7 @@ const PROGRESSIVE_VERBS: Record<string, string> = {
   Unarchived: "Unarchiving",
   Updated: "Updating",
   Viewed: "Viewing",
-};
+} satisfies Record<RunVerb, string>;
 
 /** Render classes in descending salience: writes and speech before reads. */
 const RENDER_CLASS_SALIENCE = {
@@ -168,7 +200,7 @@ export type ToolRunKind = {
  * admin equivalent, which only a run needs because a single admin step always
  * has a specific verb ("Created", "Removed") of its own.
  */
-const TONE_VERB: Record<AgentActivityTone, string | null> = {
+const TONE_VERB: Record<AgentActivityTone, RunVerb | null> = {
   admin: "Changed",
   write: "Updated",
   read: "Read",
@@ -347,6 +379,18 @@ function pluralize(noun: string, count: number): string {
 }
 
 /**
+ * Present-participle form of a run's verb, for a live header.
+ *
+ * Verbs this module chooses are `RunVerb` and always have an entry. A verb that
+ * came straight from a descriptor is only typed `string` — the classifier could
+ * grow one this table has not seen — so an unknown verb degrades to itself
+ * rather than to something wrong.
+ */
+function progressiveVerb(verb: string): string {
+  return PROGRESSIVE_VERBS[verb as RunVerb] ?? verb;
+}
+
+/**
  * The verb a run headlines with.
  *
  * Vocabulary comes from the classifier: each step's descriptor already carries
@@ -448,7 +492,7 @@ export function summarizeToolRunHeadline(
       : dominantToolRunKind(items);
     const verb = runVerb(items, kind);
     return {
-      verb: PROGRESSIVE_VERBS[verb] ?? verb,
+      verb: progressiveVerb(verb),
       // A live run has no final count to report, so it names the kind of work
       // and lets the detail clause carry progress.
       object: pluralize(RENDER_CLASS_PHRASE[kind.renderClass].noun, 2),
