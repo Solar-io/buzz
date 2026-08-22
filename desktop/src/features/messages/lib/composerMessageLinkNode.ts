@@ -14,6 +14,7 @@ import {
   inlineChipIconClasses,
   type InlineChipIconKind,
   MENTION_CHIP_BASE_CLASSES,
+  WRAPPING_INLINE_CHIP_CLASSES,
 } from "@/shared/ui/mentionChip";
 import { buildChannelLink, parseChannelLink } from "./channelLink";
 import { getMessageLinkLabel } from "./messageLinkLabel";
@@ -285,6 +286,32 @@ function composerLinkPresentation(
   };
 }
 
+function wrappingComposerChipContent(
+  label: string,
+  icon: InlineChipIconKind,
+): { leading: [string, Record<string, string>, string]; remainder: string } {
+  const separatorIndex = label.search(/[-\s]/u);
+  const leadingEnd =
+    separatorIndex < 0
+      ? Array.from(label)[0]?.length
+      : separatorIndex + (label[separatorIndex] === "-" ? 1 : 0);
+  if (!leadingEnd) {
+    return { leading: ["span", {}, label], remainder: "" };
+  }
+
+  return {
+    leading: [
+      "span",
+      {
+        "aria-hidden": "true",
+        class: `inline-chip-leading-fragment ${inlineChipIconClasses(icon)}`,
+      },
+      label.slice(0, leadingEnd),
+    ],
+    remainder: label.slice(leadingEnd),
+  };
+}
+
 export const ComposerMessageLinkNode =
   Node.create<ComposerMessageLinkNodeOptions>({
     name: COMPOSER_MESSAGE_LINK_NODE_NAME,
@@ -328,11 +355,15 @@ export const ComposerMessageLinkNode =
         String(node.attrs.channelName ?? ""),
         this.options.resolveChannelName,
       );
+      const content = wrappingComposerChipContent(
+        presentation.label,
+        presentation.icon,
+      );
       return [
         "span",
         mergeAttributes(HTMLAttributes, {
           "aria-label": presentation.ariaLabel,
-          class: `${MENTION_CHIP_BASE_CLASSES} ${inlineChipIconClasses(presentation.icon)} cursor-text`,
+          class: `${MENTION_CHIP_BASE_CLASSES} ${WRAPPING_INLINE_CHIP_CLASSES} ${inlineChipIconClasses(presentation.icon)} cursor-text`,
           "data-buzz-link": "",
           "data-channel-name": presentation.channelName,
           "data-composer-buzz-link": "",
@@ -340,7 +371,8 @@ export const ComposerMessageLinkNode =
           ...presentation.dataAttributes,
           title: presentation.ariaLabel,
         }),
-        presentation.label,
+        content.leading,
+        content.remainder,
       ];
     },
 

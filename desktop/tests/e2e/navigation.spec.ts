@@ -445,6 +445,54 @@ test("mixed Buzz permalinks render as chips in the composer", async ({
   await expect(composerInput).not.toContainText("buzz://");
 });
 
+test("composer Buzz chip labels wrap without orphaning their icons", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+
+  const composerInput = page.getByTestId("message-input");
+  const repoLink = `buzz://repo?owner=${"a".repeat(64)}&d=buzz-inline-chip-wrapping-fix`;
+  await composerInput.evaluate((element) => {
+    element.style.width = "220px";
+  });
+  await composerInput.evaluate((element, text) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", text);
+    element.dispatchEvent(
+      new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData,
+      }),
+    );
+  }, `A deliberately long lead-in ${repoLink}`);
+
+  const chip = composerInput.locator('[data-composer-buzz-link=""]');
+  const leadingFragment = chip.locator(".inline-chip-leading-fragment");
+  await expect(chip).toHaveText("buzz-inline-chip-wrapping-fix");
+  await expect(chip).toHaveCSS("display", "inline");
+  await expect(chip).toHaveCSS("overflow-wrap", "anywhere");
+  await expect(leadingFragment).toHaveText("buzz-");
+  await expect
+    .poll(() =>
+      chip.evaluate((element) => {
+        const chipRange = document.createRange();
+        chipRange.selectNodeContents(element);
+        const leading = element.querySelector(".inline-chip-leading-fragment");
+        return {
+          chipLineBoxes: new Set(
+            Array.from(chipRange.getClientRects(), (rect) =>
+              Math.round(rect.y),
+            ),
+          ).size,
+          leadingLineBoxes: leading?.getClientRects().length ?? 0,
+        };
+      }),
+    )
+    .toEqual({ chipLineBoxes: 3, leadingLineBoxes: 1 });
+});
+
 test("message links to visible root messages open the thread panel", async ({
   page,
 }) => {
