@@ -157,8 +157,18 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
 
     final session = ref.read(relaySessionProvider.notifier);
 
+    // A directory-triggered refresh is fenced end to end. The fence is captured
+    // before the first await and re-checked after every later one, so a
+    // community or identity switch retires the whole refresh rather than only
+    // its directory query. Refreshes that do not touch discovery keep the
+    // previous unfenced behaviour.
+    final fence = fetchDirectory ? _directoryLoader.beginRefresh() : null;
+
     // Step 1: find the channels I'm a member of via kind:39002.
-    final memberships = await _fetchChannelMemberships(session, myPk);
+    final memberships = await _fenced(
+      fence,
+      _fetchChannelMemberships(session, myPk),
+    );
     final memberChannelIds = memberships
         .map((e) => e.getTagValue('d'))
         .whereType<String>()
@@ -169,16 +179,19 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     // must still continue to directory discovery below.
     final memberMetas = memberChannelIds.isEmpty
         ? const <NostrEvent>[]
-        : await session.fetchHistory(
-            NostrFilters.channelMetadata(memberChannelIds.toList()),
+        : await _fenced(
+            fence,
+            session.fetchHistory(
+              NostrFilters.channelMetadata(memberChannelIds.toList()),
+            ),
           );
 
     // Step 3: fetch the open-channel directory. The relay filters this global
     // kind:39000 query by the caller's access, but the client still rejects
     // private channels and DMs below so discovery fails closed if that contract
     // ever regresses. The composite cursor preserves tied-timestamp rows.
-    if (fetchDirectory) {
-      final metas = await _directoryLoader.load(session);
+    if (fence != null) {
+      final metas = await _directoryLoader.load(session, fence);
       if (metas != null) _directoryMetas = metas;
     }
 
@@ -196,39 +209,17 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     }
     final dedupedMetas = latestMetaPerId.values;
 
-    // Resolve DM participant display names. Relay stores DM channels with
-    // literal name="DM"; pure-Nostr architecture pushes name resolution to
-    // the client, so collect non-self participant pubkeys across all DM
-    // metas and batch-fetch their kind:0 profiles in one round-trip.
-    final dmParticipants = <String>{};
-    final myPkLower = myPk.toLowerCase();
-    for (final event in dedupedMetas) {
-      final data = ChannelData.fromEvent(event);
-      if (data.channelType != 'dm') continue;
-      for (final pk in data.participantPubkeys) {
-        final lower = pk.toLowerCase();
-        if (lower != myPkLower) dmParticipants.add(lower);
-      }
-    }
+    // Resolve DM participant display names. Extracted into the part file so
+    // `channels_provider.dart` stays under the 1000-line ceiling enforced by
+    // `just file-size-check`.
+    final displayNames = await _resolveDmDisplayNames(
+      session,
+      fence,
+      dedupedMetas,
+      myPk,
+    );
 
-    final displayNames = <String, String>{};
-    if (dmParticipants.isNotEmpty) {
-      final profileEvents = await session.fetchHistory(
-        NostrFilters.profilesBatch(dmParticipants.toList()),
-      );
-      for (final event in profileEvents) {
-        if (event.kind != 0) continue;
-        final profile = ProfileData.fromEvent(event);
-        final label = profile.displayName?.trim().isNotEmpty == true
-            ? profile.displayName!.trim()
-            : profile.nip05?.trim().isNotEmpty == true
-            ? profile.nip05!.trim()
-            : shortPubkey(profile.pubkey);
-        displayNames[profile.pubkey.toLowerCase()] = label;
-      }
-    }
-
-    final hiddenDmIds = await _fetchHiddenDmIds(session, myPk);
+    final hiddenDmIds = await _fenced(fence, _fetchHiddenDmIds(session, myPk));
 
     final channels = <Channel>[];
     for (final event in dedupedMetas) {
@@ -253,26 +244,18 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     final memberCountChannelIds = memberChannelIds.toList();
     final memberEvents = memberCountChannelIds.isEmpty
         ? const <NostrEvent>[]
-        : await session.fetchHistory(
-            NostrFilter(
-              kinds: const [39002],
-              tags: {'#d': memberCountChannelIds},
-              limit: memberCountChannelIds.length,
+        : await _fenced(
+            fence,
+            session.fetchHistory(
+              NostrFilter(
+                kinds: const [39002],
+                tags: {'#d': memberCountChannelIds},
+                limit: memberCountChannelIds.length,
+              ),
             ),
           );
     if (memberEvents.isNotEmpty) _cacheMemberSnapshots(memberEvents);
-    final memberCounts = <String, int>{};
-    for (final event in memberEvents) {
-      final chId = event.getTagValue('d');
-      if (chId == null) continue;
-      final pTags = <String>{};
-      for (final tag in event.tags) {
-        if (tag.isNotEmpty && tag[0] == 'p' && tag.length > 1) {
-          pTags.add(tag[1].toLowerCase());
-        }
-      }
-      memberCounts[chId] = pTags.length;
-    }
+    final memberCounts = _memberCountsByChannelId(memberEvents);
     for (var i = 0; i < channels.length; i++) {
       final count = memberCounts[channels[i].id];
       if (count != null) {
@@ -293,7 +276,10 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
       final channelById = {
         for (final channel in activeChannels) channel.id: channel,
       };
-      final events = await _fetchLastMessageEvents(session, activeChannels);
+      final events = await _fenced(
+        fence,
+        _fetchLastMessageEvents(session, activeChannels),
+      );
       final lastMessageMap = <String, int>{};
       final mutedChannelIds = _mutedChannelIds();
       for (final event in events) {
@@ -348,6 +334,12 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     // Scoped narrowly to the archived flip — broader metadata staleness
     // (renames, topic changes, etc.) is a separate, pre-existing concern that
     // already affects this provider for other reasons.
+    // Re-check before the first write that other providers can observe. Every
+    // await above is fenced, but the switch can also land in the synchronous
+    // gap, so the guard sits immediately before the write rather than only
+    // after the await.
+    fence?.ensureCurrent();
+
     final prevById = <String, Channel>{
       for (final c in state.value ?? const <Channel>[]) c.id: c,
     };
@@ -359,8 +351,14 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
     }
 
     if (subscribeLive) {
-      await _subscribeLive(channels);
+      // Subscriptions are shared relay state, so a retired refresh must not
+      // install them even though its channel list is already built.
+      fence?.ensureCurrent();
+      await _fenced(fence, _subscribeLive(channels));
     }
+    // Guard the provider-state write in `retryDirectory` and `build`: the
+    // caller assigns whatever this returns, so the last check belongs here.
+    fence?.ensureCurrent();
     return channels;
   }
 

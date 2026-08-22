@@ -460,6 +460,199 @@ void main() {
     },
   );
 
+  test(
+    'community switch after directory success discards the late refresh',
+    () async {
+      final session = _FakeRelaySession(
+        memberships: const [],
+        metadata: [_meta(id: _channelA, name: 'community-a-open')],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      expect(await container.read(channelsProvider.future), isEmpty);
+
+      // Community A now has a joined channel, so the directory-triggered
+      // refresh reaches the live-subscribe step and parks there. That await is
+      // AFTER the loader's own directory fence, which is the window this arm
+      // covers: directory success, then retirement, then settlement.
+      session.memberships = [_membership(_channelA, myPk)];
+      session.pauseNextSubscribe();
+      final staleRefresh = container
+          .read(channelsProvider.notifier)
+          .retryDirectory();
+      await session.nextSubscribeStarted;
+
+      // Record every list emitted from the switch onward. The live-subscription
+      // queue is serialized, so community B's own subscribe waits behind the
+      // parked one. That makes the observable defect an emission of community
+      // A's channel into the current scope, not just a wrong final state.
+      final emitted = <List<String>>[];
+      container.listen(channelsProvider, (previous, next) {
+        final value = next.value;
+        if (value != null) {
+          emitted.add(value.map((channel) => channel.id).toList());
+        }
+      });
+
+      session.memberships = [_membership(_channelB, myPk)];
+      session.metadata = [_meta(id: _channelB, name: 'community-b-general')];
+      container
+          .read(relayConfigProvider.notifier)
+          .update(baseUrl: 'https://community-b.example');
+
+      session.resumePausedSubscribe();
+      await staleRefresh;
+      await _settle();
+
+      expect(
+        emitted.where((ids) => ids.contains(_channelA)),
+        isEmpty,
+        reason: 'community A channel emitted into community B scope: $emitted',
+      );
+      // The retired refresh must not leave a subscription on the old channel.
+      expect(session.activeChannels, isNot(contains(_channelA)));
+      // Nor may it claim the new scope's directory status as its own.
+      expect(
+        container.read(channelDirectoryLoadStatusProvider).scope,
+        isNot(
+          channelDirectoryScope(
+            'https://community-b.example',
+            container.read(myPubkeyProvider),
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
+    'community switch after directory success discards a late failure',
+    () async {
+      final session = _FakeRelaySession(
+        memberships: const [],
+        metadata: [_meta(id: _channelA, name: 'community-a-open')],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      expect(await container.read(channelsProvider.future), isEmpty);
+
+      // The directory query succeeds, then the refresh parks on the member-count
+      // query and fails there after the switch. A retired failure must not
+      // overwrite the new scope's list or push it into an error state.
+      session.memberships = [_membership(_channelA, myPk)];
+      session.pauseNextMemberCountQuery();
+      final staleRefresh = container
+          .read(channelsProvider.notifier)
+          .retryDirectory();
+      await session.nextMemberCountQueryStarted;
+
+      session.memberships = [_membership(_channelB, myPk)];
+      session.metadata = [_meta(id: _channelB, name: 'community-b-general')];
+      container
+          .read(relayConfigProvider.notifier)
+          .update(baseUrl: 'https://community-b.example');
+      await container.read(channelsProvider.future);
+
+      session.failClaimedMemberCountQuery = true;
+      session.resumePausedMemberCountQuery();
+      await staleRefresh;
+      await _settle();
+
+      final current = container.read(channelsProvider);
+      expect(current.hasError, isFalse);
+      final ids = current.requireValue.map((channel) => channel.id);
+      expect(ids, isNot(contains(_channelA)));
+      expect(ids, contains(_channelB));
+      // A retired failure must not claim the new scope's directory status.
+      expect(
+        container.read(channelDirectoryLoadStatusProvider).scope,
+        isNot(
+          channelDirectoryScope(
+            'https://community-b.example',
+            container.read(myPubkeyProvider),
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
+    'identity switch after directory success discards the late refresh',
+    () async {
+      final session = _FakeRelaySession(
+        memberships: const [],
+        metadata: [_meta(id: _channelA, name: 'first-identity-open')],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      expect(await container.read(channelsProvider.future), isEmpty);
+
+      // Directory success, then the refresh parks on the hidden-DM query while
+      // the signing identity changes and the new identity finishes its rebuild.
+      session.pauseNextHiddenDmQuery();
+      final staleRefresh = container
+          .read(channelsProvider.notifier)
+          .retryDirectory();
+      await session.nextHiddenDmQueryStarted;
+
+      session.memberships = [_membership(_channelB, _otherPk)];
+      session.metadata = [_meta(id: _channelB, name: 'second-identity-joined')];
+      container.read(_testPubkeyProvider.notifier).set(_otherPk);
+      await container.read(channelsProvider.future);
+
+      session.resumePausedHiddenDmQuery();
+      await staleRefresh;
+      await _settle();
+
+      final ids = container
+          .read(channelsProvider)
+          .requireValue
+          .map((channel) => channel.id);
+      expect(ids, isNot(contains(_channelA)));
+      expect(ids, contains(_channelB));
+      expect(session.activeChannels, isNot(contains(_channelA)));
+    },
+  );
+
+  test(
+    'identity switch after directory success discards a late failure',
+    () async {
+      final session = _FakeRelaySession(
+        memberships: const [],
+        metadata: [_meta(id: _channelA, name: 'first-identity-open')],
+      );
+      final container = _buildContainer(session: session);
+      addTearDown(container.dispose);
+
+      expect(await container.read(channelsProvider.future), isEmpty);
+
+      session.memberships = [_membership(_channelA, myPk)];
+      session.pauseNextMemberCountQuery();
+      final staleRefresh = container
+          .read(channelsProvider.notifier)
+          .retryDirectory();
+      await session.nextMemberCountQueryStarted;
+
+      session.memberships = [_membership(_channelB, _otherPk)];
+      session.metadata = [_meta(id: _channelB, name: 'second-identity-joined')];
+      container.read(_testPubkeyProvider.notifier).set(_otherPk);
+      await container.read(channelsProvider.future);
+
+      session.failClaimedMemberCountQuery = true;
+      session.resumePausedMemberCountQuery();
+      await staleRefresh;
+      await _settle();
+
+      final current = container.read(channelsProvider);
+      expect(current.hasError, isFalse);
+      final ids = current.requireValue.map((channel) => channel.id);
+      expect(ids, isNot(contains(_channelA)));
+      expect(ids, contains(_channelB));
+    },
+  );
+
   test('reconnect backstop does not refetch the channel directory', () async {
     final session = _FakeRelaySession(
       memberships: [_membership(_channelA, myPk)],
@@ -1312,6 +1505,7 @@ class _FakeRelaySession extends RelaySessionNotifier {
   final List<NostrEvent> recentMessages;
   int membershipFailures;
   int directoryFailures = 0;
+  bool failClaimedMemberCountQuery = false;
   int membershipRequestCount = 0;
   int metadataPageRequestCount = 0;
 
@@ -1326,6 +1520,12 @@ class _FakeRelaySession extends RelaySessionNotifier {
   Completer<void>? _subscribeStarted;
   Completer<void>? _pausedDirectory;
   Completer<void>? _directoryStarted;
+  Completer<void>? _pausedHiddenDm;
+  Completer<void>? _hiddenDmStarted;
+  Completer<void>? _claimedHiddenDm;
+  Completer<void>? _pausedMemberCount;
+  Completer<void>? _memberCountStarted;
+  Completer<void>? _claimedMemberCount;
   int unsubscribeCount = 0;
   int totalSubscribeCount = 0;
 
@@ -1383,6 +1583,60 @@ class _FakeRelaySession extends RelaySessionNotifier {
     paused.complete();
   }
 
+  /// Holds the next hidden-DM query open, one shot only.
+  ///
+  /// One shot matters: the refresh that follows the switch issues its own
+  /// hidden-DM query, and it must be able to finish while the earlier scope's
+  /// query is still parked. That is the window Jed's second probe describes.
+  void pauseNextHiddenDmQuery() {
+    if (_pausedHiddenDm != null) {
+      throw StateError('A hidden-DM query is already paused');
+    }
+    _pausedHiddenDm = Completer<void>();
+    _hiddenDmStarted = Completer<void>();
+  }
+
+  /// Completes once the parked hidden-DM query has been requested.
+  Future<void> get nextHiddenDmQueryStarted async {
+    final started = _hiddenDmStarted;
+    if (started == null) {
+      throw StateError('No hidden-DM query is pending');
+    }
+    await started.future;
+  }
+
+  /// Releases the parked hidden-DM query so its response lands.
+  void resumePausedHiddenDmQuery() {
+    final paused = _claimedHiddenDm ?? _pausedHiddenDm;
+    if (paused == null) throw StateError('No hidden-DM query is paused');
+    paused.complete();
+  }
+
+  /// Holds the next member-count query open, one shot only.
+  void pauseNextMemberCountQuery() {
+    if (_pausedMemberCount != null) {
+      throw StateError('A member-count query is already paused');
+    }
+    _pausedMemberCount = Completer<void>();
+    _memberCountStarted = Completer<void>();
+  }
+
+  /// Completes once the parked member-count query has been requested.
+  Future<void> get nextMemberCountQueryStarted async {
+    final started = _memberCountStarted;
+    if (started == null) {
+      throw StateError('No member-count query is pending');
+    }
+    await started.future;
+  }
+
+  /// Releases the parked member-count query so its response lands.
+  void resumePausedMemberCountQuery() {
+    final paused = _claimedMemberCount ?? _pausedMemberCount;
+    if (paused == null) throw StateError('No member-count query is paused');
+    paused.complete();
+  }
+
   @override
   SessionState build() => const SessionState(status: SessionStatus.connected);
 
@@ -1408,7 +1662,32 @@ class _FakeRelaySession extends RelaySessionNotifier {
           .toList();
     }
     if (filter.kinds.contains(EventKind.dmVisibility)) {
+      // Claim the parked slot so the switch's own refresh runs unblocked.
+      final paused = _pausedHiddenDm;
+      if (paused != null) {
+        _claimedHiddenDm = paused;
+        _pausedHiddenDm = null;
+        _hiddenDmStarted!.complete();
+        _hiddenDmStarted = null;
+        await paused.future;
+      }
       return hiddenDmEvents;
+    }
+    if (filter.kinds.contains(39002) && filter.tags['#d'] != null) {
+      final paused = _pausedMemberCount;
+      if (paused != null) {
+        _claimedMemberCount = paused;
+        _pausedMemberCount = null;
+        _memberCountStarted!.complete();
+        _memberCountStarted = null;
+        await paused.future;
+        if (failClaimedMemberCountQuery) {
+          throw Exception('member-count fetch failed');
+        }
+      }
+      // Falls through to the shared empty result so the member-count shape
+      // stays exactly as it was before this pause hook existed.
+      return const [];
     }
     if (filter.kinds.contains(39000)) {
       final ids = filter.tags['#d']?.toSet();
