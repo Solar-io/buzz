@@ -44,7 +44,10 @@ import {
 import { buildMessageComposerEditTarget } from "@/features/messages/lib/draftMentionRefs";
 import { formatTimelineMessages } from "@/features/messages/lib/formatTimelineMessages";
 import { DeleteMessageConfirmDialog } from "@/features/messages/ui/DeleteMessageConfirmDialog";
-import { getThreadReference } from "@/features/messages/lib/threading";
+import {
+  getThreadReference,
+  isThreadReply,
+} from "@/features/messages/lib/threading";
 import {
   resolveTimelineLoadingLatch,
   selectTimelineLoadingState,
@@ -474,6 +477,7 @@ export function ChannelScreen({
     handleEditSave,
     handleExpandThreadReplies,
     handleOpenThread,
+    requireThreadEditResolution,
     handleSendMessage,
     handleSendToChannel,
     handleSendThreadReply,
@@ -483,6 +487,8 @@ export function ChannelScreen({
     deleteMessageMutation,
     editMessageMutation,
     editTargetId,
+    editTargetIsThreadReply:
+      editTargetMessage !== null && isThreadReply(editTargetMessage.tags ?? []),
     expandedThreadReplyIds,
     getFirstReplyIdForMessage,
     getReplyDescendantIdsForMessage,
@@ -576,6 +582,7 @@ export function ChannelScreen({
     openAgentSessionPubkey,
     openThreadHeadId: effectiveOpenThreadHeadId,
     profilePanelPubkey,
+    requireThreadEditResolution,
     setChannelManagementOpen,
     setExpandedThreadReplyIds,
     setOpenAgentSessionChannelId,
@@ -589,6 +596,7 @@ export function ChannelScreen({
     useChannelProfilePanel({
       closeAgentSession: handleCloseAgentSession,
       openProfilePanel,
+      requireThreadEditResolution,
       setChannelManagementOpen,
       setExpandedThreadReplyIds,
       setOpenThreadHeadId,
@@ -704,6 +712,7 @@ export function ChannelScreen({
     enabled: !isSinglePanelView,
   });
   const handleManageChannel = React.useCallback(() => {
+    if (!requireThreadEditResolution()) return;
     if (activeChannel?.channelType === "forum") {
       openGlobalChannelManagement();
       return;
@@ -723,6 +732,7 @@ export function ChannelScreen({
     activeChannel?.channelType,
     channelManagementOpen,
     openGlobalChannelManagement,
+    requireThreadEditResolution,
     setChannelManagementOpen,
     setOpenThreadHeadId,
     handleCloseAgentSession,
