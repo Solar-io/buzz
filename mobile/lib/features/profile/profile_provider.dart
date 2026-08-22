@@ -1,16 +1,20 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import '../../shared/profile/user_cache_provider.dart';
+import '../../shared/profile/user_profile.dart';
 import '../../shared/relay/relay.dart';
 import '../../shared/theme/theme.dart';
-import '../../shared/profile/user_profile.dart';
 
 /// The current user's profile (kind:0 metadata) loaded over the relay
 /// WebSocket. Returns null when no nsec is configured or when the user has
 /// not yet published a profile.
 class ProfileNotifier extends AsyncNotifier<UserProfile?> {
+  Map<String, dynamic> _metadata = {};
+
   @override
   Future<UserProfile?> build() {
     ref.watch(relayConfigProvider);
@@ -24,7 +28,18 @@ class ProfileNotifier extends AsyncNotifier<UserProfile?> {
 
     final session = ref.read(relaySessionProvider.notifier);
     final events = await session.fetchHistory(NostrFilters.profile(myPk));
-    if (events.isEmpty) return null;
+    if (events.isEmpty) {
+      _metadata = {};
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(events.first.content);
+      _metadata = decoded is Map<String, dynamic>
+          ? Map<String, dynamic>.from(decoded)
+          : {};
+    } catch (_) {
+      _metadata = {};
+    }
     final data = ProfileData.fromEvent(events.first);
     return UserProfile(
       pubkey: data.pubkey,
@@ -37,6 +52,50 @@ class ProfileNotifier extends AsyncNotifier<UserProfile?> {
 
   Future<void> refresh() async {
     state = await AsyncValue.guard(_fetch);
+  }
+
+  /// Updates the current user's display name while preserving the other
+  /// metadata fields in their latest kind:0 profile event.
+  Future<void> updateDisplayName(String displayName) =>
+      _publishProfilePatch({'display_name': displayName.trim()});
+
+  /// Updates the current user's profile description.
+  Future<void> updateAbout(String about) =>
+      _publishProfilePatch({'about': about.trim()});
+
+  /// Updates the current user's profile photo URL.
+  Future<void> updateAvatarUrl(String avatarUrl) =>
+      _publishProfilePatch({'picture': avatarUrl.trim()});
+
+  Future<void> _publishProfilePatch(Map<String, dynamic> patch) async {
+    final pubkey = ref.read(myPubkeyProvider);
+    if (pubkey == null) {
+      throw StateError('Cannot update profile without a signing identity.');
+    }
+
+    final nextMetadata = {..._metadata, ...patch};
+    final config = ref.read(relayConfigProvider);
+    final relay = SignedEventRelay(
+      session: ref.read(relaySessionProvider.notifier),
+      nsec: config.nsec,
+    );
+    await relay.submit(
+      kind: EventKind.profile,
+      content: jsonEncode(nextMetadata),
+      tags: const [],
+    );
+
+    _metadata = nextMetadata;
+    final profile = UserProfile(
+      pubkey: pubkey,
+      displayName:
+          _metadata['display_name'] as String? ?? _metadata['name'] as String?,
+      avatarUrl: _metadata['picture'] as String?,
+      about: _metadata['about'] as String?,
+      nip05Handle: _metadata['nip05'] as String?,
+    );
+    state = AsyncData(profile);
+    ref.read(userCacheProvider.notifier).put(profile);
   }
 }
 

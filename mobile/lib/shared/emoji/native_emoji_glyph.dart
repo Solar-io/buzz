@@ -9,14 +9,35 @@ import 'package:flutter/material.dart';
 class NativeEmojiGlyph extends StatelessWidget {
   final String emoji;
   final double size;
+  final double? opticalBoxSize;
 
-  const NativeEmojiGlyph({super.key, required this.emoji, required this.size});
+  const NativeEmojiGlyph({
+    super.key,
+    required this.emoji,
+    required this.size,
+    this.opticalBoxSize,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final glyph = Text(emoji, style: TextStyle(fontSize: size));
-    if (defaultTargetPlatform != TargetPlatform.iOS) return glyph;
+    Widget glyph = Text(
+      emoji,
+      maxLines: 1,
+      softWrap: false,
+      style: TextStyle(fontSize: size, height: 1),
+    );
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      glyph = Transform.translate(offset: const Offset(0, -1), child: glyph);
+    }
+    final boxSize = opticalBoxSize;
+    if (boxSize == null) return glyph;
 
-    return Transform.translate(offset: const Offset(0, -1), child: glyph);
+    // Emoji sequences have very different typographic advances. Constrain
+    // them to the same square optical box so wide glyphs scale down around the
+    // same center instead of appearing to lean toward one edge.
+    return SizedBox.square(
+      dimension: boxSize,
+      child: FittedBox(fit: BoxFit.scaleDown, child: glyph),
+    );
   }
 }

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../animated_avatar.dart';
+import '../emoji/native_emoji_glyph.dart';
 import '../relay/relay.dart';
 
 /// A circular avatar that supports both remote URLs and inline image data.
@@ -85,16 +86,16 @@ class _AvatarImageContentState extends State<AvatarImageContent> {
       _EmojiAvatarSource(:final emoji, :final color) => ColoredBox(
         color: color,
         child: LayoutBuilder(
-          builder: (_, constraints) => Center(
-            child: Text(
-              emoji,
-              textScaler: TextScaler.noScaling,
-              style: TextStyle(
-                fontSize: constraints.biggest.shortestSide * 258 / 512,
-                height: 1,
+          builder: (_, constraints) {
+            final glyphSize = constraints.biggest.shortestSide * 258 / 512;
+            return Center(
+              child: NativeEmojiGlyph(
+                emoji: emoji,
+                size: glyphSize,
+                opticalBoxSize: glyphSize,
               ),
-            ),
-          ),
+            );
+          },
         ),
       ),
       _SvgAvatarSource(:final svg) => SvgPicture.string(

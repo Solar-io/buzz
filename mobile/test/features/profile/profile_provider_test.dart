@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:buzz/features/profile/profile_provider.dart';
 import 'package:buzz/shared/profile/user_profile.dart';
 import 'package:buzz/shared/relay/relay.dart';
@@ -6,8 +8,57 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:nostr/nostr.dart' as nostr;
 
 void main() {
+  test('profile updates preserve existing kind:0 metadata', () async {
+    final keys = nostr.Keys.generate();
+    final relaySession = _ProfileRelaySession(
+      NostrEvent(
+        id: 'profile-1',
+        pubkey: keys.public,
+        createdAt: 1,
+        kind: EventKind.profile,
+        tags: const [],
+        content: jsonEncode({
+          'name': 'alice',
+          'display_name': 'Alice',
+          'about': 'Building Buzz',
+          'picture': 'https://relay.example/alice.png',
+          'nip05': 'alice@example.com',
+          'custom': 'preserve-me',
+        }),
+        sig: 'sig',
+      ),
+    );
+    final container = ProviderContainer(
+      overrides: [
+        relayConfigProvider.overrideWith(
+          () => _FixedRelayConfigNotifier(keys.nsec),
+        ),
+        relaySessionProvider.overrideWith(() => relaySession),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(profileProvider.future);
+    await container.read(profileProvider.notifier).updateDisplayName('Alice L');
+
+    expect(relaySession.published, hasLength(1));
+    final content =
+        jsonDecode(relaySession.published.single.content)
+            as Map<String, dynamic>;
+    expect(content['display_name'], 'Alice L');
+    expect(content['about'], 'Building Buzz');
+    expect(content['picture'], 'https://relay.example/alice.png');
+    expect(content['nip05'], 'alice@example.com');
+    expect(content['custom'], 'preserve-me');
+    expect(
+      container.read(profileProvider).requireValue?.displayName,
+      'Alice L',
+    );
+  });
+
   test(
     'manual presence persists until Online restores automatic mode',
     () async {
@@ -60,6 +111,41 @@ void main() {
       expect(prefs.getString('buzz_presence_preference_aabb'), 'auto');
     },
   );
+}
+
+class _FixedRelayConfigNotifier extends RelayConfigNotifier {
+  _FixedRelayConfigNotifier(this.nsec);
+
+  final String nsec;
+
+  @override
+  RelayConfig build() =>
+      RelayConfig(baseUrl: 'https://relay.example', nsec: nsec);
+}
+
+class _ProfileRelaySession extends RelaySessionNotifier {
+  _ProfileRelaySession(this.profile);
+
+  final NostrEvent profile;
+  final List<NostrEvent> published = [];
+
+  @override
+  SessionState build() => const SessionState(status: SessionStatus.connected);
+
+  @override
+  Future<List<NostrEvent>> fetchHistory(
+    NostrFilter filter, {
+    Duration timeout = const Duration(seconds: 8),
+  }) async => [profile];
+
+  @override
+  Future<NostrEvent> publish(
+    NostrEvent event, {
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    published.add(event);
+    return event;
+  }
 }
 
 ProviderContainer _buildContainer(SharedPreferences prefs) => ProviderContainer(
