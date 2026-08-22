@@ -723,6 +723,71 @@ void main() {
     },
   );
 
+  test('a stale request\'s Huddle leg writes no member snapshot', () async {
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final session = _FakeRelaySession(
+      memberships: [_membership(_channelA, myPk)],
+      metadata: [_meta(id: _channelA, name: 'joined-a')],
+      huddleStarts: [
+        NostrEvent(
+          id: 'huddle-start',
+          pubkey: myPk,
+          createdAt: now,
+          kind: EventKind.huddleStarted,
+          tags: const [
+            ['h', _channelA],
+          ],
+          content: '{"ephemeral_channel_id":"$_channelB"}',
+          sig: 'sig',
+        ),
+      ],
+    );
+    final container = _buildContainer(session: session);
+    addTearDown(container.dispose);
+
+    await container.read(channelsProvider.future);
+    final notifier = container.read(channelsProvider.notifier);
+
+    // Park an older refresh on its Huddle-start query. Both of its membership
+    // fetches have already landed, so channel A is the list it is carrying.
+    session.pauseNextHuddleStartQuery();
+    final olderRefresh = notifier.refresh();
+    await session.nextHuddleStartQueryStarted;
+
+    // A newer refresh completes on a disjoint membership set.
+    session.memberships = [
+      _membership(_channelB, myPk, additionalPubkey: _otherPk),
+    ];
+    session.metadata = [_meta(id: _channelB, name: 'joined-b')];
+    await notifier.refresh();
+
+    // Release the older request. Its member-snapshot write sits AFTER the
+    // Huddle leg, so if that leg is unfenced the stale snapshot lands.
+    session.resumePausedHuddleStartQuery();
+    await olderRefresh;
+    await _settle();
+
+    expect(
+      container
+          .read(channelsProvider)
+          .requireValue
+          .map((channel) => channel.id),
+      [_channelB],
+      reason: 'a stale request installed its own channel list',
+    );
+    expect(
+      notifier.cachedMembersForChannel(_channelA),
+      isEmpty,
+      reason:
+          'a stale request wrote a member snapshot past the Huddle leg fence',
+    );
+    expect(
+      notifier.cachedMembersForChannel(_channelB).map((m) => m.pubkey),
+      containsAll([myPk, _otherPk]),
+      reason: 'the newer request\'s member snapshot was clobbered',
+    );
+  });
+
   test('community switch discards a parked unread catch-up', () async {
     final session = _FakeRelaySession(
       memberships: const [],
@@ -2309,6 +2374,9 @@ class _FakeRelaySession extends RelaySessionNotifier {
   Completer<void>? _pausedMemberCount;
   Completer<void>? _memberCountStarted;
   Completer<void>? _claimedMemberCount;
+  Completer<void>? _pausedHuddleStarts;
+  Completer<void>? _huddleStartsStarted;
+  Completer<void>? _claimedHuddleStarts;
   Completer<void>? _pausedUnreadCatchUp;
   Completer<void>? _unreadCatchUpStarted;
   Completer<void>? _claimedUnreadCatchUp;
@@ -2395,6 +2463,37 @@ class _FakeRelaySession extends RelaySessionNotifier {
   void resumePausedHiddenDmQuery() {
     final paused = _claimedHiddenDm ?? _pausedHiddenDm;
     if (paused == null) throw StateError('No hidden-DM query is paused');
+    paused.complete();
+  }
+
+  /// Holds the next Huddle-start query open, one shot only.
+  ///
+  /// Parks the older refresh AFTER both membership fetches have landed, so the
+  /// only guard left between the park and the member-snapshot write is the
+  /// fence on this leg.
+  void pauseNextHuddleStartQuery() {
+    if (_pausedHuddleStarts != null) {
+      throw StateError('A Huddle-start query is already paused');
+    }
+    _pausedHuddleStarts = Completer<void>();
+    _huddleStartsStarted = Completer<void>();
+  }
+
+  /// Completes once the parked Huddle-start query has been requested.
+  Future<void> get nextHuddleStartQueryStarted async {
+    final started = _huddleStartsStarted;
+    if (started == null) {
+      throw StateError('No Huddle-start query is pending');
+    }
+    await started.future;
+  }
+
+  /// Releases the parked Huddle-start query so its response lands.
+  void resumePausedHuddleStartQuery() {
+    final paused = _claimedHuddleStarts ?? _pausedHuddleStarts;
+    if (paused == null) throw StateError('No Huddle-start query is paused');
+    _claimedHuddleStarts = null;
+    _pausedHuddleStarts = null;
     paused.complete();
   }
 
@@ -2508,6 +2607,16 @@ class _FakeRelaySession extends RelaySessionNotifier {
       return hiddenDmEvents;
     }
     if (filter.kinds.contains(EventKind.huddleStarted)) {
+      // Claim the parked slot so the newer refresh's own Huddle query runs
+      // unblocked: one shot, exactly like the hidden-DM and member-count hooks.
+      final paused = _pausedHuddleStarts;
+      if (paused != null) {
+        _claimedHuddleStarts = paused;
+        _pausedHuddleStarts = null;
+        _huddleStartsStarted!.complete();
+        _huddleStartsStarted = null;
+        await paused.future;
+      }
       return huddleStarts;
     }
     if (filter.kinds.contains(39000)) {
