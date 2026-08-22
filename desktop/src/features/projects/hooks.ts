@@ -14,7 +14,6 @@ import {
   listProjectLocalRepositories,
 } from "@/shared/api/projectGit";
 import {
-  KIND_DELETION,
   KIND_GIT_ISSUE,
   KIND_GIT_PATCH,
   KIND_GIT_PR_UPDATE,
@@ -59,6 +58,7 @@ import {
   projectPullRequestEventsToPullRequests,
 } from "./projectPullRequests.mjs";
 import { fetchProjectsWorkItems } from "./projectWorkItems";
+import { deleteProject } from "./projectDeletion";
 import {
   eventToRepository,
   type Project,
@@ -621,25 +621,6 @@ async function fetchProjectActivitySummaries(
   );
 }
 
-async function deleteProject(project: Project): Promise<void> {
-  const identity = await getIdentity();
-  if (identity.pubkey.toLowerCase() !== project.owner.toLowerCase()) {
-    throw new Error("Only the project owner can delete this project.");
-  }
-
-  const event = await signRelayEvent({
-    kind: KIND_DELETION,
-    content: `Delete project ${project.name}`,
-    tags: [["a", project.projectAddress]],
-  });
-
-  await relayClient.publishEvent(
-    event,
-    "Timed out deleting project.",
-    "Failed to delete project.",
-  );
-}
-
 export const projectsQueryKey = ["projects"] as const;
 
 /**
@@ -984,7 +965,7 @@ export function useDeleteProjectMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: deleteProject,
+    mutationFn: (project: Project) => deleteProject(project),
     onSuccess: (_data, project) => {
       queryClient.setQueryData<Project[]>(projectsQueryKey, (current = []) =>
         current.filter((item) => item.id !== project.id),

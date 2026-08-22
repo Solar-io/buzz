@@ -1,4 +1,5 @@
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
+import { canDeleteProject } from "@/features/projects/projectDeletion";
 import type {
   Project,
   ProjectActivitySummary,
@@ -14,7 +15,6 @@ import {
   repositoryShareLink,
 } from "@/features/projects/lib/projectShareLinks";
 import {
-  isProjectOwnedByCurrentUser,
   projectPeople,
   type ProjectsFilter,
   type ProjectsViewMode,
@@ -39,6 +39,7 @@ export function ProjectsOverviewProjectItems({
   deleteDisabled,
   filter,
   localRepoNames,
+  managedAgentPubkeys,
   onDelete,
   onOpen,
   onOpenTerminal,
@@ -52,6 +53,7 @@ export function ProjectsOverviewProjectItems({
   deleteDisabled: boolean;
   filter: ProjectsFilter;
   localRepoNames: Set<string>;
+  managedAgentPubkeys: ReadonlySet<string>;
   onDelete: (project: Project) => void;
   onOpen: (project: Project) => void;
   onOpenTerminal: (project: Project) => void;
@@ -76,9 +78,15 @@ export function ProjectsOverviewProjectItems({
       >
         {visibleProjects.map((project) => {
           const summary = summaries?.[project.id];
+          const canDelete = canDeleteProject(
+            project,
+            currentPubkey,
+            profiles,
+            managedAgentPubkeys,
+          );
           return (
             <ProjectGridCard
-              canDelete={isProjectOwnedByCurrentUser(project, currentPubkey)}
+              canDelete={canDelete}
               deleteDisabled={deleteDisabled}
               hasLocal={hasLocalCheckout(project, localRepoNames)}
               key={project.id}
@@ -102,6 +110,12 @@ export function ProjectsOverviewProjectItems({
     <div data-testid="projects-list-container">
       {visibleProjects.map((project) => {
         const summary = summaries?.[project.id];
+        const canDelete = canDeleteProject(
+          project,
+          currentPubkey,
+          profiles,
+          managedAgentPubkeys,
+        );
         const selectionRangeItems = visibleProjects.map((item) =>
           selectionItemFromProject({
             channelId: item.projectChannelId,
@@ -113,7 +127,7 @@ export function ProjectsOverviewProjectItems({
         );
         return (
           <ProjectListRow
-            canDelete={isProjectOwnedByCurrentUser(project, currentPubkey)}
+            canDelete={canDelete}
             deleteDisabled={deleteDisabled}
             hasLocal={hasLocalCheckout(project, localRepoNames)}
             key={project.id}

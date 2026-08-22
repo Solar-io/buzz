@@ -21,7 +21,8 @@ import {
   useDeleteProjectMutation,
   useProjectsQuery,
 } from "@/features/projects/hooks";
-import { isProjectOwnedByCurrentUser } from "@/features/projects/lib/projectsViewHelpers";
+import { canDeleteProject } from "@/features/projects/projectDeletion";
+import { useProjectDeletionAccess } from "@/features/projects/useProjectDeletionAccess";
 import { projectShareLink } from "@/features/projects/lib/projectShareLinks";
 import {
   addProjectToSidebar,
@@ -123,6 +124,9 @@ export function SidebarProjectsSection() {
 function SidebarProjectsSectionContent() {
   const projectsQuery = useProjectsQuery();
   const identityQuery = useIdentityQuery();
+  const { managedAgentPubkeys, ownerProfiles } = useProjectDeletionAccess(
+    projectsQuery.data ?? [],
+  );
   const currentPubkey = identityQuery.data?.pubkey;
   const { goProject, goProjects } = useAppNavigation();
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -306,6 +310,12 @@ function SidebarProjectsSectionContent() {
           {projects.length > 0 ? (
             <SidebarMenu data-testid="sidebar-projects">
               {projects.map((project) => {
+                const canDelete = canDeleteProject(
+                  project,
+                  currentPubkey,
+                  ownerProfiles,
+                  managedAgentPubkeys,
+                );
                 const isActive =
                   routeProjectId != null &&
                   projectMatchesRouteId(project, routeProjectId);
@@ -318,10 +328,7 @@ function SidebarProjectsSectionContent() {
                 return (
                   <React.Fragment key={project.id}>
                     <SidebarProjectRow
-                      canDelete={isProjectOwnedByCurrentUser(
-                        project,
-                        currentPubkey,
-                      )}
+                      canDelete={canDelete}
                       deleteDisabled={deleteProjectMutation.isPending}
                       isActive={isActive}
                       isExpanded={isExpanded}
