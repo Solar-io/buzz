@@ -31,8 +31,8 @@ class AvatarBackgroundGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) => GridView.builder(
     shrinkWrap: true,
+    primary: false,
     padding: EdgeInsets.zero,
-    physics: const NeverScrollableScrollPhysics(),
     gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
       crossAxisCount: 6,
       crossAxisSpacing: Grid.xxs,
