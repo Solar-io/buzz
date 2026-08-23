@@ -6,6 +6,7 @@ import 'progressive_animated_avatar.dart';
 
 /// A circular avatar that opts into playback for animated profile descriptors.
 class PlayingAvatarImage extends StatelessWidget {
+  /// Creates an avatar that plays animation when the profile URL describes it.
   const PlayingAvatarImage({
     super.key,
     required this.imageUrl,
@@ -14,9 +15,16 @@ class PlayingAvatarImage extends StatelessWidget {
     this.backgroundColor,
   });
 
+  /// The still-image URL or encoded animated-avatar descriptor.
   final String? imageUrl;
+
+  /// The radius of the circular avatar.
   final double radius;
+
+  /// Optional background shown behind still-image content.
   final Color? backgroundColor;
+
+  /// Content shown while media is unavailable or still loading.
   final Widget fallback;
 
   @override

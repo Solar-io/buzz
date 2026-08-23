@@ -13,8 +13,10 @@ const _cropOutputSize = 512;
 
 /// Lets a person pan and zoom a selected image inside the final avatar mask.
 class ProfileAvatarCropPage extends HookWidget {
+  /// Creates a crop page that resolves the selected image asynchronously.
   const ProfileAvatarCropPage({super.key, required this.imageBytes});
 
+  /// The selected image bytes, or null when selection was cancelled.
   final Future<Uint8List?> imageBytes;
 
   @override

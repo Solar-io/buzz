@@ -7,6 +7,7 @@ import '../../shared/theme/theme.dart';
 
 /// A labelled circular option used by the profile avatar editor rails.
 class AvatarEditorOptionButton extends StatelessWidget {
+  /// Creates a selectable avatar-editor rail option.
   const AvatarEditorOptionButton({
     super.key,
     required this.icon,
@@ -16,10 +17,19 @@ class AvatarEditorOptionButton extends StatelessWidget {
     this.labelMaxWidth,
   });
 
+  /// The symbol displayed inside the circular control.
   final IconData icon;
+
+  /// The text displayed beneath the control.
   final String label;
+
+  /// Whether this option represents the active editor section.
   final bool selected;
+
+  /// Called when the option is selected, or null when disabled.
   final VoidCallback? onTap;
+
+  /// Optional width constraint for the label's overflow region.
   final double? labelMaxWidth;
 
   @override

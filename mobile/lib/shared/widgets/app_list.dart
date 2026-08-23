@@ -142,6 +142,8 @@ class AppListRowRaw extends StatelessWidget {
   final Widget? subtitle;
   final Widget? trailing;
   final VoidCallback? onTap;
+
+  /// Vertical inset around the row content.
   final double verticalPadding;
 
   @override

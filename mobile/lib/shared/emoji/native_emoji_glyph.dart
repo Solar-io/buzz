@@ -7,16 +7,22 @@ import 'package:flutter/material.dart';
 /// layout box unchanged and lift only the painted glyph on iOS; Android's
 /// system emoji metrics are already visually centred.
 class NativeEmojiGlyph extends StatelessWidget {
-  final String emoji;
-  final double size;
-  final double? opticalBoxSize;
-
+  /// Creates a system emoji with optional optical bounds.
   const NativeEmojiGlyph({
     super.key,
     required this.emoji,
     required this.size,
     this.opticalBoxSize,
   });
+
+  /// Emoji text rendered by the platform font.
+  final String emoji;
+
+  /// Font size used to paint the emoji.
+  final double size;
+
+  /// Optional square that normalizes the apparent bounds of wide emoji.
+  final double? opticalBoxSize;
 
   @override
   Widget build(BuildContext context) {

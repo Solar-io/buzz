@@ -8,6 +8,7 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 
 /// A native iOS glass menu for selecting an emoji skin tone.
 class IosNativeSkinToneControl extends HookWidget {
+  /// Creates a native skin-tone selection menu.
   const IosNativeSkinToneControl({
     super.key,
     required this.value,
@@ -16,11 +17,19 @@ class IosNativeSkinToneControl extends HookWidget {
     required this.onChanged,
   });
 
+  /// The registered iOS platform-view identifier.
   static const viewType = 'buzz/native_skin_tone_control';
 
+  /// The selected skin-tone index.
   final int value;
+
+  /// Colors displayed for the available tone options.
   final List<Color> colors;
+
+  /// Accessible labels corresponding to [colors].
   final List<String> labels;
+
+  /// Called with the newly selected tone index.
   final ValueChanged<int> onChanged;
 
   @override

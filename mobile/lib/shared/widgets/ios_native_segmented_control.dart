@@ -8,6 +8,7 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 
 /// A platform-native iOS segmented control embedded in Flutter.
 class IosNativeSegmentedControl extends HookWidget {
+  /// Creates a native segmented control for the supplied labels.
   const IosNativeSegmentedControl({
     super.key,
     required this.items,
@@ -16,11 +17,19 @@ class IosNativeSegmentedControl extends HookWidget {
     this.height = 40,
   });
 
+  /// The registered iOS platform-view identifier.
   static const viewType = 'buzz/native_segmented_control';
 
+  /// Labels displayed by the native segments.
   final List<String> items;
+
+  /// The selected segment index.
   final int selectedIndex;
+
+  /// Called with a new index, or null when the control is disabled.
   final ValueChanged<int>? onChanged;
+
+  /// The height of the embedded native control.
   final double height;
 
   @override

@@ -11,6 +11,7 @@ import 'ios_glass_navigation_button.dart';
 
 /// A native iOS glass capsule for a short navigation-bar text action.
 class IosGlassNavigationAction extends HookWidget {
+  /// Creates a native glass navigation action.
   const IosGlassNavigationAction({
     super.key,
     required this.label,
@@ -21,11 +22,22 @@ class IosGlassNavigationAction extends HookWidget {
     this.isBusy = false,
   });
 
+  /// The visible and accessible action label.
   final String label;
+
+  /// Called when the action is pressed, or null when disabled.
   final VoidCallback? onPressed;
+
+  /// The width of the Flutter platform-view region.
   final double width;
+
+  /// The height of the Flutter platform-view region.
   final double height;
+
+  /// Optional foreground tint; defaults to the active theme color.
   final Color? foregroundColor;
+
+  /// Whether the native action should replace its label with progress.
   final bool isBusy;
 
   @override
