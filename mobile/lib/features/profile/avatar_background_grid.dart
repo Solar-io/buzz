@@ -11,6 +11,7 @@ const avatarBackgroundPreviewShift = 136.0;
 
 /// The shared background-color grid used by emoji and animated avatars.
 class AvatarBackgroundGrid extends StatelessWidget {
+  /// Creates a fixed grid of avatar background colors.
   const AvatarBackgroundGrid({
     super.key,
     required this.selectedColor,
@@ -18,8 +19,13 @@ class AvatarBackgroundGrid extends StatelessWidget {
     this.colorKeyPrefix = 'avatar-background-color',
   });
 
+  /// The ARGB value of the currently selected background color.
   final int selectedColor;
+
+  /// Called with the selected ARGB value when the user taps a color.
   final ValueChanged<int> onColorSelected;
+
+  /// Prefix used for each color option's test key.
   final String colorKeyPrefix;
 
   @override
