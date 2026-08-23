@@ -156,8 +156,18 @@ class _DesktopStyleFramingSlider extends HookWidget {
       slider: true,
       label: 'Avatar size',
       value: '${(value * 100).round()}%',
-      onIncrease: () => onChanged((value + 0.05).clamp(_min, _max).toDouble()),
-      onDecrease: () => onChanged((value - 0.05).clamp(_min, _max).toDouble()),
+      increasedValue: value < _max
+          ? '${((value + 0.05).clamp(_min, _max) * 100).round()}%'
+          : null,
+      decreasedValue: value > _min
+          ? '${((value - 0.05).clamp(_min, _max) * 100).round()}%'
+          : null,
+      onIncrease: value < _max
+          ? () => onChanged((value + 0.05).clamp(_min, _max).toDouble())
+          : null,
+      onDecrease: value > _min
+          ? () => onChanged((value - 0.05).clamp(_min, _max).toDouble())
+          : null,
       child: SizedBox(
         key: const ValueKey('animated-avatar-scale'),
         height: 56,
@@ -259,14 +269,19 @@ class _AnimatedFrameControl extends HookWidget {
   Widget build(BuildContext context) {
     final lastSelection = useRef(selectedIndex);
 
-    void selectAt(double dx, double width) {
-      if (frames.isEmpty || width <= 0) return;
-      final progress = (dx / width).clamp(0.0, 1.0);
-      final next = (progress * (frames.length - 1)).round();
+    void selectIndex(int index) {
+      if (frames.isEmpty) return;
+      final next = index.clamp(0, frames.length - 1);
       if (next == lastSelection.value) return;
       lastSelection.value = next;
       unawaited(HapticFeedback.selectionClick());
       onSelected(next);
+    }
+
+    void selectAt(double dx, double width) {
+      if (frames.isEmpty || width <= 0) return;
+      final progress = (dx / width).clamp(0.0, 1.0);
+      selectIndex((progress * (frames.length - 1)).round());
     }
 
     return Column(
@@ -285,6 +300,18 @@ class _AnimatedFrameControl extends HookWidget {
                 slider: true,
                 label: 'Choose still frame',
                 value: '${selectedIndex + 1} of ${frames.length}',
+                increasedValue: selectedIndex < frames.length - 1
+                    ? '${selectedIndex + 2} of ${frames.length}'
+                    : null,
+                decreasedValue: selectedIndex > 0
+                    ? '$selectedIndex of ${frames.length}'
+                    : null,
+                onIncrease: selectedIndex < frames.length - 1
+                    ? () => selectIndex(selectedIndex + 1)
+                    : null,
+                onDecrease: selectedIndex > 0
+                    ? () => selectIndex(selectedIndex - 1)
+                    : null,
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTapDown: (details) =>
