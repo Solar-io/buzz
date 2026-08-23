@@ -44,5 +44,8 @@ void main() {
       ),
       findsOneWidget,
     );
+    for (final text in tester.widgetList<Text>(find.byType(Text))) {
+      expect(text.textScaler, TextScaler.noScaling);
+    }
   });
 }

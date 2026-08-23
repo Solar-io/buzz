@@ -24,6 +24,7 @@ class NativeEmojiGlyph extends StatelessWidget {
       emoji,
       maxLines: 1,
       softWrap: false,
+      textScaler: TextScaler.noScaling,
       style: TextStyle(fontSize: size, height: 1),
     );
     if (defaultTargetPlatform == TargetPlatform.iOS) {
