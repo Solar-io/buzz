@@ -48,6 +48,8 @@ final class NativeProfileTextEditorCoordinator: NSObject,
       )
       return
     }
+    let allowUnchangedSubmission =
+      arguments["allowUnchangedSubmission"] as? Bool ?? false
 
     DispatchQueue.main.async { [weak self] in
       self?.present(
@@ -55,6 +57,7 @@ final class NativeProfileTextEditorCoordinator: NSObject,
         initialValue: initialValue,
         placeholder: placeholder,
         multiline: multiline,
+        allowUnchangedSubmission: allowUnchangedSubmission,
         result: result
       )
     }
@@ -66,6 +69,7 @@ final class NativeProfileTextEditorCoordinator: NSObject,
     initialValue: String,
     placeholder: String,
     multiline: Bool,
+    allowUnchangedSubmission: Bool,
     result: @escaping FlutterResult
   ) {
     guard presentedController == nil else {
@@ -98,6 +102,7 @@ final class NativeProfileTextEditorCoordinator: NSObject,
       initialValue: initialValue,
       placeholder: placeholder,
       multiline: multiline,
+      allowUnchangedSubmission: allowUnchangedSubmission,
       onCancel: { [weak self] in self?.finish(value: nil) },
       onSet: { [weak self] value in self?.finish(value: value) }
     )
@@ -173,6 +178,7 @@ private final class NativeProfileTextEditorViewController:
   private let initialValue: String
   private let placeholder: String
   private let multiline: Bool
+  private let allowUnchangedSubmission: Bool
   private let onCancel: () -> Void
   private let onSet: (String) -> Void
 
@@ -221,12 +227,14 @@ private final class NativeProfileTextEditorViewController:
     initialValue: String,
     placeholder: String,
     multiline: Bool,
+    allowUnchangedSubmission: Bool,
     onCancel: @escaping () -> Void,
     onSet: @escaping (String) -> Void
   ) {
     self.initialValue = initialValue
     self.placeholder = placeholder
     self.multiline = multiline
+    self.allowUnchangedSubmission = allowUnchangedSubmission
     self.onCancel = onCancel
     self.onSet = onSet
     super.init(style: .insetGrouped)
@@ -270,7 +278,8 @@ private final class NativeProfileTextEditorViewController:
   }
 
   private var hasUnsavedChanges: Bool {
-    currentValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    allowUnchangedSubmission
+      || currentValue.trimmingCharacters(in: .whitespacesAndNewlines)
       != initialValue.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 

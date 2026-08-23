@@ -58,6 +58,8 @@ const _maxFileSizeBytes = 100 * 1024 * 1024; // 100MB
 const _mediaPolicyUploadMessage = "We couldn't prepare this image for upload.";
 
 typedef PickGalleryImage = Future<XFile?> Function();
+
+/// Captures one image with the system camera, or returns null when cancelled.
 typedef PickCameraImage = Future<XFile?> Function();
 
 /// Selects multiple gallery images for upload in picker order.
