@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 /// Desktop-compatible colors offered for emoji avatar backgrounds.
 const emojiAvatarColors = <int>[
   0xFFFFF4CC,
@@ -39,4 +41,50 @@ String emojiAvatarDataUrl(String emoji, int colorValue) {
       '<text x="50%" y="56%" dominant-baseline="middle" text-anchor="middle" font-size="258">$escapedEmoji</text>'
       '</svg>';
   return 'data:image/svg+xml,${Uri.encodeComponent(svg)}';
+}
+
+/// The editable values encoded by an inline emoji avatar.
+class EmojiAvatarData {
+  /// Creates decoded emoji avatar values.
+  const EmojiAvatarData({required this.emoji, required this.colorValue});
+
+  /// The system emoji rendered in the avatar.
+  final String emoji;
+
+  /// The ARGB background color.
+  final int colorValue;
+}
+
+/// Decodes an inline emoji-avatar data URL, or returns null for other images.
+EmojiAvatarData? parseEmojiAvatarDataUrl(String? value) {
+  final url = value?.trim();
+  if (url == null || !url.startsWith('data:image/')) return null;
+  try {
+    final data = UriData.parse(url);
+    if (data.mimeType != 'image/svg+xml') return null;
+    return parseEmojiAvatarSvg(utf8.decode(data.contentAsBytes()));
+  } on FormatException {
+    return null;
+  }
+}
+
+/// Decodes the editable values from an emoji-avatar SVG.
+EmojiAvatarData? parseEmojiAvatarSvg(String svg) {
+  final colorValue = RegExp(
+    r'<rect\b[^>]*\sfill="([^"]+)"',
+  ).firstMatch(svg)?[1];
+  final emojiValue = RegExp(r'<text\b[^>]*>(.*?)</text>').firstMatch(svg)?[1];
+  if (colorValue == null || emojiValue == null) return null;
+
+  final hex = colorValue.startsWith('#') ? colorValue.substring(1) : colorValue;
+  if (!RegExp(r'^[0-9a-fA-F]{6}$').hasMatch(hex)) return null;
+  final rgb = int.tryParse(hex, radix: 16);
+  if (rgb == null) return null;
+  return EmojiAvatarData(
+    emoji: emojiValue
+        .replaceAll('&gt;', '>')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&amp;', '&'),
+    colorValue: 0xFF000000 | rgb,
+  );
 }
