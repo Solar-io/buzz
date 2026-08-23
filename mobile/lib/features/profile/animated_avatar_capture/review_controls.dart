@@ -1,5 +1,40 @@
 part of '../animated_avatar_capture.dart';
 
+class _RepositionablePreviewSemantics extends StatelessWidget {
+  const _RepositionablePreviewSemantics({
+    required this.offset,
+    required this.onMove,
+    required this.child,
+  });
+
+  final Offset offset;
+  final ValueChanged<Offset> onMove;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: 'Avatar position',
+    value:
+        '${(offset.dx * 100).round()} horizontal, '
+        '${(offset.dy * 100).round()} vertical',
+    customSemanticsActions: {
+      if (offset.dx > -1)
+        const CustomSemanticsAction(label: 'Move left'): () =>
+            onMove(const Offset(-0.1, 0)),
+      if (offset.dx < 1)
+        const CustomSemanticsAction(label: 'Move right'): () =>
+            onMove(const Offset(0.1, 0)),
+      if (offset.dy > -1)
+        const CustomSemanticsAction(label: 'Move up'): () =>
+            onMove(const Offset(0, -0.1)),
+      if (offset.dy < 1)
+        const CustomSemanticsAction(label: 'Move down'): () =>
+            onMove(const Offset(0, 0.1)),
+    },
+    child: ExcludeSemantics(child: child),
+  );
+}
+
 class _AnimatedReviewNav extends StatelessWidget {
   const _AnimatedReviewNav({
     required this.selected,
