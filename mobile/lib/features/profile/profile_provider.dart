@@ -14,43 +14,60 @@ import '../../shared/theme/theme.dart';
 /// not yet published a profile.
 class ProfileNotifier extends AsyncNotifier<UserProfile?> {
   Map<String, dynamic> _metadata = {};
+  bool _hasHydrated = false;
+  int _lastCreatedAt = 0;
 
   @override
   Future<UserProfile?> build() {
     ref.watch(relayConfigProvider);
     ref.watch(relaySessionProvider);
+    _hasHydrated = false;
     return _fetch();
   }
 
   Future<UserProfile?> _fetch() async {
     final myPk = ref.read(myPubkeyProvider);
-    if (myPk == null) return null;
+    if (myPk == null) {
+      _metadata = {};
+      _lastCreatedAt = 0;
+      _hasHydrated = true;
+      return null;
+    }
 
     final session = ref.read(relaySessionProvider.notifier);
     final events = await session.fetchHistory(NostrFilters.profile(myPk));
     if (events.isEmpty) {
       _metadata = {};
+      _lastCreatedAt = 0;
+      _hasHydrated = true;
       return null;
     }
-    try {
-      final decoded = jsonDecode(events.first.content);
-      _metadata = decoded is Map<String, dynamic>
-          ? Map<String, dynamic>.from(decoded)
-          : {};
-    } catch (_) {
-      _metadata = {};
+    final latest = events.reduce((current, event) {
+      if (event.createdAt != current.createdAt) {
+        return event.createdAt > current.createdAt ? event : current;
+      }
+      return event.id.compareTo(current.id) > 0 ? event : current;
+    });
+    final decoded = jsonDecode(latest.content);
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException('Profile metadata must be a JSON object.');
     }
-    final data = ProfileData.fromEvent(events.first);
-    return UserProfile(
+    _metadata = Map<String, dynamic>.from(decoded);
+    _lastCreatedAt = latest.createdAt;
+    final data = ProfileData.fromEvent(latest);
+    final profile = UserProfile(
       pubkey: data.pubkey,
       displayName: data.displayName,
       avatarUrl: data.avatarUrl,
       about: data.about,
       nip05Handle: data.nip05,
     );
+    _hasHydrated = true;
+    return profile;
   }
 
   Future<void> refresh() async {
+    _hasHydrated = false;
     state = await AsyncValue.guard(_fetch);
   }
 
@@ -68,6 +85,9 @@ class ProfileNotifier extends AsyncNotifier<UserProfile?> {
       _publishProfilePatch({'picture': avatarUrl.trim()});
 
   Future<void> _publishProfilePatch(Map<String, dynamic> patch) async {
+    if (!_hasHydrated || !state.hasValue) {
+      throw StateError('Cannot update profile before metadata is loaded.');
+    }
     final pubkey = ref.read(myPubkeyProvider);
     if (pubkey == null) {
       throw StateError('Cannot update profile without a signing identity.');
@@ -79,13 +99,17 @@ class ProfileNotifier extends AsyncNotifier<UserProfile?> {
       session: ref.read(relaySessionProvider.notifier),
       nsec: config.nsec,
     );
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final createdAt = now > _lastCreatedAt ? now : _lastCreatedAt + 1;
     await relay.submit(
       kind: EventKind.profile,
       content: jsonEncode(nextMetadata),
       tags: const [],
+      createdAt: createdAt,
     );
 
     _metadata = nextMetadata;
+    _lastCreatedAt = createdAt;
     final profile = UserProfile(
       pubkey: pubkey,
       displayName:

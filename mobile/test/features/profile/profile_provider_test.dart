@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:buzz/features/profile/profile_provider.dart';
@@ -57,6 +58,86 @@ void main() {
       container.read(profileProvider).requireValue?.displayName,
       'Alice L',
     );
+  });
+
+  test('profile updates fail closed while hydration is pending', () async {
+    final keys = nostr.Keys.generate();
+    final history = Completer<List<NostrEvent>>();
+    final relaySession = _ControlledProfileRelaySession(
+      fetch: () => history.future,
+    );
+    final container = _profileContainer(keys.nsec, relaySession);
+    addTearDown(container.dispose);
+
+    container.read(profileProvider);
+    await expectLater(
+      container.read(profileProvider.notifier).updateDisplayName('Unsafe'),
+      throwsStateError,
+    );
+    expect(relaySession.published, isEmpty);
+    history.complete(const []);
+  });
+
+  test('profile updates fail closed after hydration errors', () async {
+    final keys = nostr.Keys.generate();
+    final relaySession = _ControlledProfileRelaySession(
+      fetch: () async => throw Exception('relay unavailable'),
+    );
+    final container = _profileContainer(keys.nsec, relaySession);
+    addTearDown(container.dispose);
+
+    container.read(profileProvider);
+    await Future<void>.delayed(Duration.zero);
+    expect(container.read(profileProvider).hasError, isTrue);
+    await expectLater(
+      container.read(profileProvider.notifier).updateAbout('Unsafe'),
+      throwsStateError,
+    );
+    expect(relaySession.published, isEmpty);
+  });
+
+  test('a confirmed empty history can publish a new profile', () async {
+    final keys = nostr.Keys.generate();
+    final relaySession = _ControlledProfileRelaySession(fetch: () async => []);
+    final container = _profileContainer(keys.nsec, relaySession);
+    addTearDown(container.dispose);
+
+    expect(await container.read(profileProvider.future), isNull);
+    await container.read(profileProvider.notifier).updateDisplayName('Alice');
+
+    expect(relaySession.published, hasLength(1));
+    expect(jsonDecode(relaySession.published.single.content), {
+      'display_name': 'Alice',
+    });
+  });
+
+  test('same-second profile replacements use monotonic timestamps', () async {
+    final keys = nostr.Keys.generate();
+    final futureTimestamp = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 60;
+    final relaySession = _ControlledProfileRelaySession(
+      fetch: () async => [
+        NostrEvent(
+          id: 'profile-future',
+          pubkey: keys.public,
+          createdAt: futureTimestamp,
+          kind: EventKind.profile,
+          tags: const [],
+          content: '{}',
+          sig: 'sig',
+        ),
+      ],
+    );
+    final container = _profileContainer(keys.nsec, relaySession);
+    addTearDown(container.dispose);
+
+    await container.read(profileProvider.future);
+    await container.read(profileProvider.notifier).updateDisplayName('Alice');
+    await container.read(profileProvider.notifier).updateAbout('Hello');
+
+    expect(relaySession.published.map((event) => event.createdAt), [
+      futureTimestamp + 1,
+      futureTimestamp + 2,
+    ]);
   });
 
   test(
@@ -137,6 +218,41 @@ class _ProfileRelaySession extends RelaySessionNotifier {
     NostrFilter filter, {
     Duration timeout = const Duration(seconds: 8),
   }) async => [profile];
+
+  @override
+  Future<NostrEvent> publish(
+    NostrEvent event, {
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    published.add(event);
+    return event;
+  }
+}
+
+ProviderContainer _profileContainer(
+  String nsec,
+  RelaySessionNotifier relaySession,
+) => ProviderContainer(
+  overrides: [
+    relayConfigProvider.overrideWith(() => _FixedRelayConfigNotifier(nsec)),
+    relaySessionProvider.overrideWith(() => relaySession),
+  ],
+);
+
+class _ControlledProfileRelaySession extends RelaySessionNotifier {
+  _ControlledProfileRelaySession({required this.fetch});
+
+  final Future<List<NostrEvent>> Function() fetch;
+  final List<NostrEvent> published = [];
+
+  @override
+  SessionState build() => const SessionState(status: SessionStatus.connected);
+
+  @override
+  Future<List<NostrEvent>> fetchHistory(
+    NostrFilter filter, {
+    Duration timeout = const Duration(seconds: 8),
+  }) => fetch();
 
   @override
   Future<NostrEvent> publish(

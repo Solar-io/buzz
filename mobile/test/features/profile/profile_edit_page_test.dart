@@ -4,7 +4,7 @@ import 'dart:math' as math;
 import 'package:buzz/features/profile/profile_edit_page.dart';
 import 'package:buzz/features/profile/avatar_background_grid.dart';
 import 'package:buzz/features/profile/avatar_editor_option_button.dart';
-import 'package:buzz/features/profile/profile_photo_transition.dart';
+import 'package:buzz/shared/widgets/immediate_page_route.dart';
 import 'package:buzz/features/profile/profile_provider.dart';
 import 'package:buzz/shared/emoji/emoji_avatar.dart';
 import 'package:buzz/shared/emoji/native_emoji_glyph.dart';
@@ -98,7 +98,7 @@ void main() {
             builder: (context) => Scaffold(
               body: TextButton(
                 onPressed: () => Navigator.of(context).push(
-                  profilePhotoEditorRoute(
+                  immediatePageRoute<void>(
                     builder: (_) =>
                         const ProfileEditPage(startInPhotoEditor: true),
                   ),
@@ -352,10 +352,104 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(notifier.savedAvatarUrls, isEmpty);
+    expect(uploadService.uploadCount, 0);
     await tester.tap(find.byKey(const ValueKey('avatar-save')));
     await tester.pumpAndSettle();
 
     expect(notifier.savedAvatarUrls, ['https://relay.example/profile.png']);
+    expect(uploadService.uploadCount, 1);
+  });
+
+  testWidgets('keeps a failed avatar draft visible and retries publish', (
+    tester,
+  ) async {
+    final notifier = _FakeProfileNotifier(failedAvatarSaves: 1);
+    final uploadService = _FakeMediaUploadService();
+    addTearDown(uploadService.dispose);
+    await tester.pumpWidget(
+      WidgetHelpers.testable(
+        overrides: [
+          profileProvider.overrideWith(() => notifier),
+          mediaUploadServiceProvider.overrideWithValue(uploadService),
+        ],
+        child: const ProfileEditPage(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Edit Photo'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Photo Library'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('avatar-crop-use-photo')));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 200)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('avatar-save')));
+    await tester.pumpAndSettle();
+    expect(
+      find.text("We couldn't save your profile photo. Try again."),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('profile-avatar-editor-page')),
+      findsOneWidget,
+    );
+    expect(uploadService.uploadCount, 1);
+
+    await tester.tap(find.byKey(const ValueKey('avatar-save')));
+    await tester.pumpAndSettle();
+    expect(notifier.savedAvatarUrls, ['https://relay.example/profile.png']);
+    expect(uploadService.uploadCount, 1);
+  });
+
+  testWidgets('photo modes remain usable on a compact large-type viewport', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 568);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    await tester.pumpWidget(
+      WidgetHelpers.testable(
+        overrides: [profileProvider.overrideWith(_FakeProfileNotifier.new)],
+        child: const MediaQuery(
+          data: MediaQueryData(textScaler: TextScaler.linear(2)),
+          child: ProfileEditPage(startInPhotoEditor: true),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(tester.takeException(), isNull);
+    expect(
+      find.byKey(const ValueKey('avatar-editor-scroll-view')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Emoji'));
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(tester.takeException(), isNull);
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('emoji-editor-background')),
+    );
+    await tester.tap(find.byKey(const ValueKey('emoji-editor-background')));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(tester.takeException(), isNull);
+
+    await tester.drag(
+      find.byKey(const ValueKey('avatar-editor-scroll-view')),
+      const Offset(0, 1000),
+    );
+    await tester.pump();
+    final animatedMode = find.byKey(const ValueKey('avatar-mode-animated'));
+    await tester.tap(animatedMode);
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(tester.takeException(), isNull);
+    expect(
+      find.byKey(const ValueKey('animated-avatar-capture-preview')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('centers every preview while controls fill the page gutters', (
@@ -766,6 +860,39 @@ void main() {
     expect(find.byType(ProgressiveAnimatedAvatar), findsOneWidget);
   });
 
+  testWidgets('shows only the animated-avatar poster with Reduce Motion', (
+    tester,
+  ) async {
+    const avatar =
+        'https://relay.example/poster.png#buzz-anim=https%3A%2F%2Frelay.example%2Fanimation.png';
+    await tester.pumpWidget(
+      WidgetHelpers.testable(
+        overrides: [
+          profileProvider.overrideWith(
+            () => _FakeProfileNotifier(
+              profile: const UserProfile(
+                pubkey: 'aabb',
+                displayName: 'Alice',
+                avatarUrl: avatar,
+              ),
+            ),
+          ),
+        ],
+        child: const MediaQuery(
+          data: MediaQueryData(disableAnimations: true),
+          child: ProfileEditPage(),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(ProgressiveAnimatedAvatar), findsNothing);
+    expect(
+      tester.widget<AvatarImage>(find.byType(AvatarImage)).imageUrl,
+      'https://relay.example/poster.png',
+    );
+  });
+
   testWidgets('keeps emoji actions anchored when search opens the keyboard', (
     tester,
   ) async {
@@ -876,9 +1003,11 @@ class _FakeProfileNotifier extends ProfileNotifier {
       displayName: 'Alice',
       about: 'Building Buzz',
     ),
+    this.failedAvatarSaves = 0,
   });
 
   final UserProfile profile;
+  int failedAvatarSaves;
   final savedDisplayNames = <String>[];
   final savedDescriptions = <String>[];
   final savedAvatarUrls = <String>[];
@@ -918,6 +1047,10 @@ class _FakeProfileNotifier extends ProfileNotifier {
 
   @override
   Future<void> updateAvatarUrl(String avatarUrl) async {
+    if (failedAvatarSaves > 0) {
+      failedAvatarSaves--;
+      throw Exception('profile publish failed');
+    }
     savedAvatarUrls.add(avatarUrl);
   }
 }
@@ -934,6 +1067,7 @@ class _FakeMediaUploadService extends MediaUploadService {
   var _camera = false;
   final bool delayGallery;
   final _gallerySelection = Completer<XFile?>();
+  int uploadCount = 0;
 
   XFile _image() => XFile.fromData(
     image.encodePng(image.Image(width: 8, height: 8)),
@@ -965,13 +1099,16 @@ class _FakeMediaUploadService extends MediaUploadService {
     required String mimeType,
     ValueChanged<double>? onProgress,
     UploadCancellationToken? cancellationToken,
-  }) async => BlobDescriptor(
-    url: _camera
-        ? 'https://relay.example/camera.png'
-        : 'https://relay.example/profile.png',
-    sha256: _camera ? 'camera-hash' : 'hash',
-    size: bytes.length,
-    type: mimeType,
-    uploaded: 1,
-  );
+  }) async {
+    uploadCount++;
+    return BlobDescriptor(
+      url: _camera
+          ? 'https://relay.example/camera.png'
+          : 'https://relay.example/profile.png',
+      sha256: _camera ? 'camera-hash' : 'hash',
+      size: bytes.length,
+      type: mimeType,
+      uploaded: 1,
+    );
+  }
 }

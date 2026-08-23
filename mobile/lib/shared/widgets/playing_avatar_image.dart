@@ -22,9 +22,9 @@ class PlayingAvatarImage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final descriptor = parseAnimatedAvatarUrl(imageUrl);
-    if (descriptor == null) {
+    if (descriptor == null || MediaQuery.disableAnimationsOf(context)) {
       return AvatarImage(
-        imageUrl: imageUrl,
+        imageUrl: descriptor?.posterUrl ?? imageUrl,
         radius: radius,
         backgroundColor: backgroundColor,
         fallback: fallback,

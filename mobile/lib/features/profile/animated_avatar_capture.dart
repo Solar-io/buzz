@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
@@ -12,13 +13,13 @@ import 'package:image/image.dart' as image;
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:path_provider/path_provider.dart';
 
-import '../../shared/animated_avatar.dart';
 import '../../shared/emoji/emoji_avatar.dart';
 import '../../shared/relay/relay.dart';
 import '../../shared/theme/theme.dart';
 import '../../shared/widgets/buzz_loading_indicator.dart';
 import 'avatar_background_grid.dart';
 import 'avatar_editor_option_button.dart';
+import 'profile_avatar_draft.dart';
 
 part 'animated_avatar_capture/review_controls.dart';
 part 'animated_avatar_capture/capture_controls.dart';
@@ -41,7 +42,7 @@ class AnimatedAvatarCapture extends HookConsumerWidget {
   });
 
   final double height;
-  final ValueChanged<Future<String?> Function()?> onPrepareChanged;
+  final ValueChanged<Future<ProfileAvatarDraft?> Function()?> onPrepareChanged;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -65,6 +66,8 @@ class AnimatedAvatarCapture extends HookConsumerWidget {
     final gestureStartScale = useRef(_mobileDefaultPersonScale);
     final error = useState<String?>(null);
     final encodedCache = useRef<_EncodedAvatarCache?>(null);
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final lifecycle = ref.watch(appLifecycleProvider);
 
     final encodeKey = frames.value.isEmpty
         ? null
@@ -94,17 +97,25 @@ class AnimatedAvatarCapture extends HookConsumerWidget {
     }, [encodeKey]);
 
     useEffect(() {
-      if (frames.value.length < 2) return null;
+      if (reduceMotion || frames.value.length < 2) return null;
       final timer = Timer.periodic(_captureFrameInterval, (_) {
         if (activeSection.value == _AnimatedReviewSection.poster) return;
         previewFrameIndex.value =
             (previewFrameIndex.value + 1) % frames.value.length;
       });
       return timer.cancel;
-    }, [frames.value]);
+    }, [frames.value, reduceMotion]);
 
     useEffect(() {
       var disposed = false;
+
+      if (lifecycle != AppLifecycleState.resumed) {
+        isInitializing.value = false;
+        controller.value = null;
+        frames.value = const [];
+        onPrepareChanged(null);
+        return null;
+      }
 
       Future<void> initialize() async {
         try {
@@ -144,9 +155,9 @@ class AnimatedAvatarCapture extends HookConsumerWidget {
         controllerRef.value = null;
         unawaited(active?.dispose() ?? Future<void>.value());
       };
-    }, const []);
+    }, [lifecycle]);
 
-    Future<String?> prepare() async {
+    Future<ProfileAvatarDraft?> prepare() async {
       final key = encodeKey;
       if (key == null) return null;
       isProcessing.value = true;
@@ -158,12 +169,10 @@ class AnimatedAvatarCapture extends HookConsumerWidget {
             : compute(_encodeAvatar, key.toRequest());
         encodedCache.value = _EncodedAvatarCache(key, encoding);
         final result = await encoding;
-        final service = ref.read(mediaUploadServiceProvider);
-        final uploads = await Future.wait([
-          service.uploadBytes(result.animation, mimeType: 'image/png'),
-          service.uploadBytes(result.poster, mimeType: 'image/png'),
-        ]);
-        return buildAnimatedAvatarUrl(uploads[1].url, uploads[0].url);
+        return ProfileAnimatedAvatarDraft(
+          animation: result.animation,
+          poster: result.poster,
+        );
       } catch (_) {
         error.value = "We couldn't create that animation. Try again.";
         return null;
@@ -449,88 +458,111 @@ class AnimatedAvatarCapture extends HookConsumerWidget {
     }
 
     final active = controller.value;
-    return SizedBox(
-      height: height,
-      child: Column(
-        children: [
-          SizedBox.square(
-            key: const ValueKey('animated-avatar-capture-preview'),
-            dimension: 228,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(4),
-                  child: ClipOval(
-                    child: ColoredBox(
-                      color: Colors.black,
-                      child: isPreparingFrames.value
-                          ? Center(
-                              child: BuzzLoadingIndicator(
-                                size: 44,
-                                color: context.colors.onSurface,
-                                semanticLabel: 'Preparing animated avatar',
-                              ),
-                            )
-                          : active != null
-                          ? _AspectCorrectCameraPreview(controller: active)
-                          : Center(
-                              child: isInitializing.value
-                                  ? const BuzzLoadingIndicator(
-                                      color: Colors.white,
-                                      semanticLabel: 'Starting camera',
-                                    )
-                                  : const Icon(
-                                      LucideIcons.cameraOff,
-                                      color: Colors.white,
-                                      size: 32,
-                                    ),
+    final compactCapture = height < 400;
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final statusStyle = context.textTheme.bodyMedium;
+    final errorStyle = context.textTheme.bodySmall;
+    final statusHeight =
+        ((statusStyle?.fontSize ?? 14) *
+                (statusStyle?.height ?? 1.2) *
+                textScale)
+            .floorToDouble();
+    final errorHeight = error.value == null
+        ? 0.0
+        : Grid.xs +
+              (errorStyle?.fontSize ?? 12) *
+                  (errorStyle?.height ?? 1.2) *
+                  textScale *
+                  2;
+    final capturePreviewSize = compactCapture ? 180.0 : 228.0;
+    final recordGap = max(
+      Grid.xs,
+      height - capturePreviewSize - Grid.xs - statusHeight - errorHeight - 64,
+    );
+    Widget captureContent() => Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox.square(
+          key: const ValueKey('animated-avatar-capture-preview'),
+          dimension: capturePreviewSize,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(4),
+                child: ClipOval(
+                  child: ColoredBox(
+                    color: Colors.black,
+                    child: isPreparingFrames.value
+                        ? Center(
+                            child: BuzzLoadingIndicator(
+                              size: 44,
+                              color: context.colors.onSurface,
+                              semanticLabel: 'Preparing animated avatar',
                             ),
-                    ),
+                          )
+                        : active != null
+                        ? _AspectCorrectCameraPreview(controller: active)
+                        : Center(
+                            child: isInitializing.value
+                                ? const BuzzLoadingIndicator(
+                                    color: Colors.white,
+                                    semanticLabel: 'Starting camera',
+                                  )
+                                : const Icon(
+                                    LucideIcons.cameraOff,
+                                    color: Colors.white,
+                                    size: 32,
+                                  ),
+                          ),
                   ),
                 ),
-                if (isRecording.value)
-                  Padding(
-                    // A progress stroke is centred on its circular path. Inset
-                    // it so the outer half is not clipped by the preview stack.
-                    padding: const EdgeInsets.all(2),
-                    child: CircularProgressIndicator(
-                      key: const ValueKey('animated-avatar-recording-ring'),
-                      value: progress.value,
-                      strokeWidth: 4,
-                      strokeCap: StrokeCap.round,
-                      color: context.colors.onSurface,
-                      backgroundColor: context.colors.outlineVariant,
-                    ),
+              ),
+              if (isRecording.value)
+                Padding(
+                  // A progress stroke is centred on its circular path. Inset
+                  // it so the outer half is not clipped by the preview stack.
+                  padding: const EdgeInsets.all(2),
+                  child: CircularProgressIndicator(
+                    key: const ValueKey('animated-avatar-recording-ring'),
+                    value: progress.value,
+                    strokeWidth: 4,
+                    strokeCap: StrokeCap.round,
+                    color: context.colors.onSurface,
+                    backgroundColor: context.colors.outlineVariant,
                   ),
-              ],
-            ),
+                ),
+            ],
           ),
-          const SizedBox(height: Grid.xs),
-          Text(
-            isRecording.value
-                ? 'Recording…'
-                : isPreparingFrames.value
-                ? 'Cutting you out of the background…'
-                : 'Line up your shot.',
-            textAlign: TextAlign.center,
-            style: context.textTheme.bodyMedium?.copyWith(
-              color: context.colors.onSurfaceVariant,
-            ),
+        ),
+        const SizedBox(height: Grid.xs),
+        Text(
+          isRecording.value
+              ? 'Recording…'
+              : isPreparingFrames.value
+              ? 'Cutting you out of the background…'
+              : 'Line up your shot.',
+          textAlign: TextAlign.center,
+          style: context.textTheme.bodyMedium?.copyWith(
+            color: context.colors.onSurfaceVariant,
           ),
-          if (error.value != null) _ErrorText(error.value!),
-          const Spacer(),
-          _AnimatedRecordButton(
-            busy: isRecording.value || isPreparingFrames.value,
-            onPressed: active == null
-                ? null
-                : () {
-                    unawaited(HapticFeedback.mediumImpact());
-                    unawaited(record());
-                  },
-          ),
-        ],
-      ),
+        ),
+        if (error.value != null) _ErrorText(error.value!),
+        SizedBox(height: recordGap),
+        _AnimatedRecordButton(
+          busy: isRecording.value || isPreparingFrames.value,
+          onPressed: active == null
+              ? null
+              : () {
+                  unawaited(HapticFeedback.mediumImpact());
+                  unawaited(record());
+                },
+        ),
+      ],
+    );
+    return SizedBox(
+      height: height,
+      child: SingleChildScrollView(child: captureContent()),
     );
   }
 }
@@ -561,26 +593,31 @@ Future<List<Uint8List>> _removeBackgrounds(List<Uint8List> frames) async {
   try {
     for (var index = 0; index < frames.length; index++) {
       final file = File('${directory.path}/buzz-avatar-frame-$index.png');
-      await file.writeAsBytes(frames[index], flush: false);
-      final mask = await segmenter.processImage(
-        InputImage.fromFilePath(file.path),
-      );
-      await file.delete().catchError((_) => file);
-      if (mask == null) {
-        results.add(frames[index]);
-        continue;
-      }
-      results.add(
-        await compute(
-          _applySegmentationMask,
-          _MaskRequest(
-            frame: frames[index],
-            maskWidth: mask.width,
-            maskHeight: mask.height,
-            confidences: Float32List.fromList(mask.confidences),
+      try {
+        await file.writeAsBytes(frames[index], flush: false);
+        final mask = await segmenter.processImage(
+          InputImage.fromFilePath(file.path),
+        );
+        if (mask == null) {
+          results.add(frames[index]);
+          continue;
+        }
+        results.add(
+          await compute(
+            _applySegmentationMask,
+            _MaskRequest(
+              frame: frames[index],
+              maskWidth: mask.width,
+              maskHeight: mask.height,
+              confidences: Float32List.fromList(mask.confidences),
+            ),
           ),
-        ),
-      );
+        );
+      } finally {
+        if (await file.exists()) {
+          await file.delete().catchError((_) => file);
+        }
+      }
     }
   } finally {
     await segmenter.close();

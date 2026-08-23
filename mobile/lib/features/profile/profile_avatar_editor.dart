@@ -24,6 +24,7 @@ import 'animated_avatar_capture.dart';
 import 'avatar_background_grid.dart';
 import 'avatar_editor_option_button.dart';
 import 'profile_avatar_crop_page.dart';
+import 'profile_avatar_draft.dart';
 
 part 'profile_avatar_editor/emoji_avatar_picker.dart';
 
@@ -53,7 +54,7 @@ class ProfileAvatarEditor extends HookConsumerWidget {
     super.key,
     required this.currentAvatarUrl,
     required this.fallbackInitial,
-    required this.draftAvatarUrl,
+    required this.draft,
     required this.mode,
     required this.transition,
     required this.onModeChanged,
@@ -63,12 +64,13 @@ class ProfileAvatarEditor extends HookConsumerWidget {
 
   final String? currentAvatarUrl;
   final String fallbackInitial;
-  final String? draftAvatarUrl;
+  final ProfileAvatarDraft? draft;
   final ProfileAvatarMode mode;
   final Animation<double> transition;
   final ValueChanged<ProfileAvatarMode> onModeChanged;
-  final ValueChanged<String?> onDraftChanged;
-  final ValueChanged<Future<String?> Function()?> onAnimatedPrepareChanged;
+  final ValueChanged<ProfileAvatarDraft?> onDraftChanged;
+  final ValueChanged<Future<ProfileAvatarDraft?> Function()?>
+  onAnimatedPrepareChanged;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -111,7 +113,9 @@ class ProfileAvatarEditor extends HookConsumerWidget {
     void updateEmojiPreview() {
       emojiPreviewKey.value++;
       onDraftChanged(
-        emojiAvatarDataUrl(selectedEmoji.value, selectedColor.value),
+        ProfileUrlAvatarDraft(
+          emojiAvatarDataUrl(selectedEmoji.value, selectedColor.value),
+        ),
       );
     }
 
@@ -136,11 +140,7 @@ class ProfileAvatarEditor extends HookConsumerWidget {
           ),
         );
         if (cropped == null) return;
-        final upload = await service.uploadBytes(
-          cropped,
-          mimeType: 'image/jpeg',
-        );
-        if (context.mounted) onDraftChanged(upload.url);
+        if (context.mounted) onDraftChanged(ProfileImageAvatarDraft(cropped));
       } catch (_) {
         error.value = "We couldn't prepare that photo. Try again.";
       } finally {
@@ -148,10 +148,19 @@ class ProfileAvatarEditor extends HookConsumerWidget {
       }
     }
 
-    final previewUrl = (draftAvatarUrl?.isNotEmpty ?? false)
-        ? draftAvatarUrl
-        : currentAvatarUrl;
+    final previewUrl = switch (draft) {
+      ProfileUrlAvatarDraft(:final url) => url,
+      _ => currentAvatarUrl,
+    };
     final fixedPreviewContent = switch (mode) {
+      ProfileAvatarMode.image when draft is ProfileImageAvatarDraft =>
+        CircleAvatar(
+          key: const ValueKey('avatar-editor-fixed-preview'),
+          radius: _previewSize / 2,
+          backgroundImage: MemoryImage(
+            (draft as ProfileImageAvatarDraft).bytes,
+          ),
+        ),
       ProfileAvatarMode.image => PlayingAvatarImage(
         key: const ValueKey('avatar-editor-fixed-preview'),
         imageUrl: previewUrl,

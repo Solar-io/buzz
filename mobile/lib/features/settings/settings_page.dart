@@ -13,7 +13,6 @@ import '../../shared/clipboard_utils.dart';
 import '../../shared/community/community_membership_provider.dart';
 import '../../shared/relay/relay.dart';
 import '../pairing/pairing_provider.dart';
-import '../profile/profile_photo_transition.dart';
 import '../../shared/theme/theme.dart';
 import '../../shared/widgets/app_list.dart';
 import '../../shared/widgets/app_list_card.dart';
@@ -21,6 +20,7 @@ import '../../shared/widgets/frosted_app_bar.dart';
 import '../../shared/widgets/frosted_scaffold.dart';
 import '../../shared/widgets/ios_glass_navigation_button.dart';
 import '../../shared/widgets/ios_glass_navigation_action.dart';
+import '../../shared/widgets/immediate_page_route.dart';
 import '../../shared/widgets/modal_presentation.dart';
 import 'accent_picker_page.dart';
 import 'theme_picker_page.dart';
@@ -136,7 +136,7 @@ class SettingsPage extends HookConsumerWidget {
         case _ProfileEditAction.photo:
           await Navigator.of(
             context,
-          ).push(profilePhotoEditorRoute(builder: profileEditPageBuilder));
+          ).push(immediatePageRoute<void>(builder: profileEditPageBuilder));
           break;
       }
     }
