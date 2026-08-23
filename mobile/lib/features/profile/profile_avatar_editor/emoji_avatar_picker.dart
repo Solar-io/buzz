@@ -153,36 +153,17 @@ class _EmojiMode extends HookConsumerWidget {
                                   final entry = visibleEmoji[index];
                                   final isSelected =
                                       entry.native == selectedEmoji;
-                                  return InkWell(
-                                    key: ValueKey(
-                                      'emoji-avatar-${entry.tileId}',
-                                    ),
-                                    borderRadius: BorderRadius.circular(
-                                      Radii.sm,
-                                    ),
-                                    onTap: () {
-                                      unawaited(
-                                        HapticFeedback.selectionClick(),
-                                      );
-                                      onEmojiSelected(entry.native);
-                                    },
-                                    child: DecoratedBox(
-                                      decoration: BoxDecoration(
-                                        color: isSelected
-                                            ? context.colors.primaryContainer
-                                            : Colors.transparent,
-                                        borderRadius: BorderRadius.circular(
-                                          Radii.sm,
-                                        ),
-                                      ),
-                                      child: Center(
-                                        child: NativeEmojiGlyph(
-                                          emoji: entry.native,
-                                          size: 30,
-                                          opticalBoxSize: 30,
-                                        ),
-                                      ),
-                                    ),
+                                  void selectEmoji() {
+                                    unawaited(HapticFeedback.selectionClick());
+                                    onEmojiSelected(entry.native);
+                                  }
+
+                                  return EmojiAvatarTile(
+                                    emoji: entry.native,
+                                    label: entry.name,
+                                    tileId: entry.tileId,
+                                    isSelected: isSelected,
+                                    onTap: selectEmoji,
                                   );
                                 },
                               ),
