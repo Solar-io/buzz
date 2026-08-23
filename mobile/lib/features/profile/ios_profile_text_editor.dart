@@ -17,4 +17,33 @@ class IosProfileTextEditor {
     'placeholder': placeholder,
     'multiline': multiline,
   });
+
+  /// Keeps the native editor's latest value available until it saves or the
+  /// user cancels, so a transient publish failure never discards their text.
+  static Future<void> presentUntilSaved({
+    required String title,
+    required String initialValue,
+    required String placeholder,
+    required bool multiline,
+    required Future<void> Function(String value) onSave,
+    required void Function() onSaveError,
+  }) async {
+    var draft = initialValue;
+    while (true) {
+      final value = await present(
+        title: title,
+        initialValue: draft,
+        placeholder: placeholder,
+        multiline: multiline,
+      );
+      if (value == null) return;
+      try {
+        await onSave(value);
+        return;
+      } catch (_) {
+        draft = value;
+        onSaveError();
+      }
+    }
+  }
 }

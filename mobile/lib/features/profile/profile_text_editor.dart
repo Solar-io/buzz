@@ -48,18 +48,16 @@ Future<void> _showProfileTextEditor({
 }) async {
   if (defaultTargetPlatform == TargetPlatform.iOS) {
     try {
-      final value = await IosProfileTextEditor.present(
+      await IosProfileTextEditor.presentUntilSaved(
         title: title,
         initialValue: initialValue,
         placeholder: hintText,
         multiline: multiline,
+        onSave: onSave,
+        onSaveError: () {
+          if (context.mounted) _showSaveError(context);
+        },
       );
-      if (value == null) return;
-      try {
-        await onSave(value);
-      } catch (_) {
-        if (context.mounted) _showSaveError(context);
-      }
       return;
     } on MissingPluginException {
       // Previews and older builds retain the complete Flutter fallback.
