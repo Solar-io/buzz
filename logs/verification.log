@@ -1,0 +1,6 @@
+[2026-08-23T14:13:08-0500] [Agent Brave -> com.dev.brave-agent (port 9222) + com.dev.brave-agent-mcp (port 9223)] 
+[2026-08-23T14:13:09-0500] [OK] reloaded launchd unit com.dev.brave-agent (verified loaded in gui/501)
+[2026-08-23T14:13:09-0500] [INFO] health_check http://127.0.0.1:9222/json/version -> 000000 (attempt 1/20)
+[2026-08-23T14:13:11-0500] [OK] health_check http://127.0.0.1:9222/json/version -> HTTP/1.1 200
+[2026-08-23T14:13:11-0500] [OK] reloaded launchd unit com.dev.brave-agent-mcp (verified loaded in gui/501)
+[2026-08-23T14:13:13-0500] [OK] Agent Brave up on :9222; MCP endpoint up on :9223 (https://crichton.tailb3d4b8.ts.net:9223/mcp)
