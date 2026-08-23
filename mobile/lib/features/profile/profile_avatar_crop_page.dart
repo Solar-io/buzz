@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:image/image.dart' as image;
@@ -22,6 +23,7 @@ class ProfileAvatarCropPage extends HookWidget {
   @override
   Widget build(BuildContext context) {
     final controller = useTransformationController();
+    final cropScale = useState(1.0);
     final preparedBytes = useState<Uint8List?>(null);
     final loadError = useState(false);
     final dimensionsFuture = useMemoized(
@@ -204,6 +206,37 @@ class ProfileAvatarCropPage extends HookWidget {
                       1,
                     );
                 }
+                void movePhoto(Offset delta) {
+                  unawaited(HapticFeedback.selectionClick());
+                  final matrix = controller.value.clone();
+                  matrix.storage[12] += delta.dx;
+                  matrix.storage[13] += delta.dy;
+                  controller.value = matrix;
+                }
+
+                void zoomPhoto(double factor) {
+                  unawaited(HapticFeedback.selectionClick());
+                  final matrix = controller.value.clone();
+                  final currentScale = matrix.getMaxScaleOnAxis();
+                  final nextScale = (currentScale * factor)
+                      .clamp(1.0, 5.0)
+                      .toDouble();
+                  final appliedFactor = nextScale / currentScale;
+                  final center = Offset(canvasWidth / 2, canvasHeight / 2);
+                  matrix.storage[12] =
+                      center.dx -
+                      (center.dx - matrix.storage[12]) * appliedFactor;
+                  matrix.storage[13] =
+                      center.dy -
+                      (center.dy - matrix.storage[13]) * appliedFactor;
+                  matrix.storage[0] *= appliedFactor;
+                  matrix.storage[5] *= appliedFactor;
+                  matrix.storage[10] *= appliedFactor;
+                  controller.value = matrix;
+                  cropScale.value = nextScale;
+                }
+
+                final currentScale = cropScale.value;
                 final maskBottom = (canvasHeight + cropDiameter) / 2;
                 return Stack(
                   children: [
@@ -214,23 +247,65 @@ class ProfileAvatarCropPage extends HookWidget {
                         fit: StackFit.expand,
                         children: [
                           ClipRect(
-                            child: InteractiveViewer(
-                              key: const ValueKey('avatar-crop-viewer'),
-                              transformationController: controller,
-                              constrained: false,
-                              panEnabled: true,
-                              scaleEnabled: true,
-                              minScale: 1,
-                              maxScale: 5,
-                              boundaryMargin: EdgeInsets.all(
-                                math.max(canvasWidth, canvasHeight),
-                              ),
-                              child: Image.memory(
-                                preparedBytes.value!,
-                                width: displayWidth,
-                                height: displayHeight,
-                                fit: BoxFit.fill,
-                                gaplessPlayback: true,
+                            child: Semantics(
+                              label: 'Photo crop',
+                              value: '${(currentScale * 100).round()}% zoom',
+                              customSemanticsActions: {
+                                const CustomSemanticsAction(
+                                  label: 'Move left',
+                                ): () =>
+                                    movePhoto(const Offset(-24, 0)),
+                                const CustomSemanticsAction(
+                                  label: 'Move right',
+                                ): () =>
+                                    movePhoto(const Offset(24, 0)),
+                                const CustomSemanticsAction(
+                                  label: 'Move up',
+                                ): () =>
+                                    movePhoto(const Offset(0, -24)),
+                                const CustomSemanticsAction(
+                                  label: 'Move down',
+                                ): () =>
+                                    movePhoto(const Offset(0, 24)),
+                                if (currentScale < 5)
+                                  const CustomSemanticsAction(
+                                    label: 'Zoom in',
+                                  ): () =>
+                                      zoomPhoto(1.1),
+                                if (currentScale > 1)
+                                  const CustomSemanticsAction(
+                                    label: 'Zoom out',
+                                  ): () =>
+                                      zoomPhoto(1 / 1.1),
+                              },
+                              child: ExcludeSemantics(
+                                child: InteractiveViewer(
+                                  key: const ValueKey('avatar-crop-viewer'),
+                                  transformationController: controller,
+                                  constrained: false,
+                                  panEnabled: true,
+                                  scaleEnabled: true,
+                                  minScale: 1,
+                                  maxScale: 5,
+                                  onInteractionUpdate: (_) {
+                                    final nextScale = controller.value
+                                        .getMaxScaleOnAxis();
+                                    if ((cropScale.value - nextScale).abs() >
+                                        0.001) {
+                                      cropScale.value = nextScale;
+                                    }
+                                  },
+                                  boundaryMargin: EdgeInsets.all(
+                                    math.max(canvasWidth, canvasHeight),
+                                  ),
+                                  child: Image.memory(
+                                    preparedBytes.value!,
+                                    width: displayWidth,
+                                    height: displayHeight,
+                                    fit: BoxFit.fill,
+                                    gaplessPlayback: true,
+                                  ),
+                                ),
                               ),
                             ),
                           ),
