@@ -22,12 +22,17 @@ class ProfileAvatarCropPage extends HookWidget {
     final controller = useTransformationController();
     final preparedBytes = useState<Uint8List?>(null);
     final loadError = useState(false);
-    final dimensions = useMemoized(
+    final dimensionsFuture = useMemoized(
       () => preparedBytes.value == null
           ? null
-          : _decodeDimensions(preparedBytes.value!),
+          : compute(_decodeDimensions, preparedBytes.value!),
       [preparedBytes.value],
     );
+    final dimensionsSnapshot = useFuture(dimensionsFuture);
+    final dimensionsData = dimensionsSnapshot.data;
+    final dimensions = dimensionsData == null
+        ? null
+        : _ImageDimensions(dimensionsData[0], dimensionsData[1]);
     final initializedForSize = useRef<Size?>(null);
     final cropGeometry = useRef<_CropGeometry?>(null);
     final displaySize = useRef<Size?>(null);
@@ -151,7 +156,7 @@ class ProfileAvatarCropPage extends HookWidget {
           ),
         ],
       ),
-      body: loadError.value
+      body: loadError.value || dimensionsSnapshot.hasError
           ? const Center(
               child: Text(
                 "We couldn't prepare that photo.",
@@ -345,10 +350,10 @@ class _ImageDimensions {
   final int height;
 }
 
-_ImageDimensions _decodeDimensions(Uint8List bytes) {
+List<int> _decodeDimensions(Uint8List bytes) {
   final decoded = image.decodeImage(bytes);
   if (decoded == null) throw const FormatException('Unsupported image');
-  return _ImageDimensions(decoded.width, decoded.height);
+  return [decoded.width, decoded.height];
 }
 
 class _CropRequest {
