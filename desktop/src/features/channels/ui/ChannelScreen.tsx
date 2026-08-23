@@ -653,9 +653,7 @@ export function ChannelScreen({
     setThreadReplyTargetId(null);
     setEditTargetId(null);
   }, [activeChannelId]);
-  const allowMessageLinkNavigation = useMessageLinkNavigationGuard(
-    requireThreadEditResolution,
-  );
+  useMessageLinkNavigationGuard(requireThreadEditResolution);
   const mainTimelineTargetMessageId = useChannelRouteTarget({
     activeChannel,
     activeChannelId,
@@ -851,7 +849,6 @@ export function ChannelScreen({
                 }
               >
                 <GuardedChannelPane
-                  messageLinkNavigationGuard={allowMessageLinkNavigation}
                   activeChannel={activeChannel}
                   activityAgents={channelAgentSessionAgents}
                   agentPubkeys={agentPubkeys}
