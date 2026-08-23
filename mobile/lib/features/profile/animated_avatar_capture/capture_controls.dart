@@ -21,7 +21,7 @@ class _AnimatedRecordButton extends StatelessWidget {
           height: 64,
           child: Material(
             color: context.colors.onSurface,
-            borderRadius: BorderRadius.circular(Radii.card),
+            borderRadius: BorderRadius.circular(Radii.full),
             clipBehavior: Clip.antiAlias,
             child: InkWell(
               key: const ValueKey('animated-avatar-record'),
