@@ -124,7 +124,10 @@ class ProfileAvatarCropPage extends HookWidget {
               key: const ValueKey('avatar-crop-use-photo'),
               label: 'Save',
               loading: isCropping.value,
-              onPressed: isCropping.value || preparedBytes.value == null
+              onPressed:
+                  isCropping.value ||
+                      preparedBytes.value == null ||
+                      dimensions == null
                   ? null
                   : () async {
                       isCropping.value = true;
@@ -137,7 +140,7 @@ class ProfileAvatarCropPage extends HookWidget {
                           _cropAvatar,
                           _CropRequest(
                             bytes: preparedBytes.value!,
-                            sourceWidth: dimensions!.width,
+                            sourceWidth: dimensions.width,
                             sourceHeight: dimensions.height,
                             canvasWidth: geometry.canvasWidth,
                             canvasHeight: geometry.canvasHeight,
