@@ -107,7 +107,8 @@ Future<void> _loadDeepLinkEvents(
 }
 
 /// Fetch channel members and preload their profiles into the user cache.
-Future<void> _preloadMembers(WidgetRef ref, String channelId) async {
+/// Returns whether identity resolution completed successfully.
+Future<bool> _preloadMembers(WidgetRef ref, String channelId) async {
   // Capture references before async gap to avoid using disposed ref.
   final notifier = ref.read(userCacheProvider.notifier);
   try {
@@ -116,8 +117,10 @@ Future<void> _preloadMembers(WidgetRef ref, String channelId) async {
     if (pubkeys.isNotEmpty) {
       await notifier.preload(pubkeys);
     }
+    return true;
   } catch (_) {
-    // Non-fatal — mentions will just fall back to cache from messages.
+    // Identity remains unresolved, so agent-only actions stay hidden.
+    return false;
   }
 }
 
@@ -304,15 +307,20 @@ class ChannelDetailPage extends HookConsumerWidget {
         .toSet()
         .length;
     final isOneToOneDm = resolvedChannel.isDm && participantCount == 2;
-    final isAgentIdentityLoading =
+    final isAgentIdentityUnresolved =
         isOneToOneDm &&
         (agentDirectoryState.isLoading ||
+            agentDirectoryState.hasError ||
             agentOwnersState.isLoading ||
+            agentOwnersState.hasError ||
             channelBotPubkeysState.isLoading ||
-            memberProfilesPreloadState.connectionState != ConnectionState.done);
+            channelBotPubkeysState.hasError ||
+            memberProfilesPreloadState.connectionState !=
+                ConnectionState.done ||
+            memberProfilesPreloadState.data != true);
     final showsHuddleAction =
         showsComposer &&
-        !isAgentIdentityLoading &&
+        !isAgentIdentityUnresolved &&
         !_isOneToOneAgentDm(resolvedChannel, agentPubkeys);
     final messagesNotifier = ref.read(
       channelMessagesProvider(channel.id).notifier,

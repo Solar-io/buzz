@@ -203,6 +203,7 @@ Widget _buildTestable({
   Set<String> knownAgentPubkeys = const {},
   Future<Set<String>> Function()? loadChannelBotPubkeys,
   Future<List<AgentDirectoryEntry>> Function()? loadAgentDirectory,
+  Future<Map<String, String>> Function()? loadAgentOwners,
   _FakeUserCacheNotifier? userCacheNotifier,
   List<ChannelMember> members = const [],
   List<ChannelMember> huddleMembers = const [],
@@ -292,7 +293,9 @@ Widget _buildTestable({
             if (member.isBot) member.pubkey.toLowerCase(),
         },
       ),
-      agentOwnersProvider.overrideWith((ref) async => const <String, String>{}),
+      agentOwnersProvider.overrideWith(
+        (ref) async => loadAgentOwners?.call() ?? const <String, String>{},
+      ),
       agentDirectoryProvider.overrideWith(
         (ref) async => loadAgentDirectory?.call() ?? const [],
       ),
@@ -748,6 +751,66 @@ void main() {
 
       expect(find.byTooltip('Start Huddle'), findsNothing);
       await tester.pump(const Duration(milliseconds: 500));
+    });
+
+    testWidgets('keeps the Huddle action hidden when identity loading fails', (
+      tester,
+    ) async {
+      final dmChannel = Channel(
+        id: _channelId,
+        name: 'Agent DM',
+        channelType: 'dm',
+        visibility: 'private',
+        description: 'Direct message',
+        createdBy: 'self',
+        createdAt: DateTime(2025),
+        memberCount: 2,
+        participants: const ['Self', 'Agent'],
+        participantPubkeys: const ['self', 'agent'],
+        isMember: true,
+      );
+
+      await tester.pumpWidget(
+        _buildTestable(
+          messages: const [],
+          channel: dmChannel,
+          loadAgentOwners: () => Future.error('identity unavailable'),
+          disableRetries: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Start Huddle'), findsNothing);
+    });
+
+    testWidgets('keeps the Huddle action hidden when member preload fails', (
+      tester,
+    ) async {
+      final dmChannel = Channel(
+        id: _channelId,
+        name: 'Agent DM',
+        channelType: 'dm',
+        visibility: 'private',
+        description: 'Direct message',
+        createdBy: 'self',
+        createdAt: DateTime(2025),
+        memberCount: 2,
+        participants: const ['Self', 'Agent'],
+        participantPubkeys: const ['self', 'agent'],
+        isMember: true,
+      );
+
+      await tester.pumpWidget(
+        _buildTestable(
+          messages: const [],
+          channel: dmChannel,
+          loadMembers: () => Future.error('members unavailable'),
+          disableRetries: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Start Huddle'), findsNothing);
     });
 
     testWidgets('keeps the Members action for group DMs', (tester) async {
