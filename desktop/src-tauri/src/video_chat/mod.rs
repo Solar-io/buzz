@@ -26,6 +26,7 @@ use axum::{
 use serde_json::json;
 use std::sync::Arc;
 use std::sync::RwLock;
+use tauri::Manager;
 use tokio::net::TcpListener;
 
 /// Fixed loopback port so the funnel wiring survives app restarts.
@@ -122,6 +123,34 @@ async fn completions(
     }
 }
 
+/// Resolve the bearer token: `BUZZ_VIDEO_CHAT_TOKEN` wins (testing), else a
+/// token persisted in the app config dir so Anam Lab wiring survives app
+/// restarts, else a freshly generated (and persisted) one.
+fn load_or_create_token(app_handle: &tauri::AppHandle) -> Option<String> {
+    if let Ok(env_token) = std::env::var("BUZZ_VIDEO_CHAT_TOKEN") {
+        if !env_token.trim().is_empty() {
+            return Some(env_token.trim().to_string());
+        }
+    }
+    let dir = app_handle.path().app_config_dir().ok()?;
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join("video-chat-token");
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        let trimmed = existing.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    let token = uuid::Uuid::new_v4().simple().to_string();
+    std::fs::write(&path, &token).ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    Some(token)
+}
+
 /// Spawn the loopback server on [`DEFAULT_PORT`] (or `BUZZ_VIDEO_CHAT_PORT`).
 /// Non-fatal: video chat is optional, so a bind failure logs and leaves the
 /// port unset rather than blocking app startup.
@@ -130,7 +159,8 @@ pub async fn spawn(app_handle: tauri::AppHandle) -> Option<u16> {
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(DEFAULT_PORT);
-    let token = uuid::Uuid::new_v4().simple().to_string();
+    let token = load_or_create_token(&app_handle)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
     let state = VideoChatState {
         token: Arc::new(token.clone()),
         app_handle,
