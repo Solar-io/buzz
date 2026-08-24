@@ -4,12 +4,11 @@
 //! through this module publishes as the logged-in user — exactly the
 //! identity position huddles already use. Anam's custom-LLM slot calls the
 //! loopback OpenAI-compatible SSE endpoint exposed here (reached from the
-//! internet through the Tailscale Funnel on 443).
+//! internet through the Tauri Funnel on 443 → [`DEFAULT_PORT`]).
 //!
-//! Status: phase 1 scaffold. `turn.rs` still answers `NotWired` — the
-//! publish-as-user + await-reply relay lands next; until then the
-//! completion route answers 503 so the endpoint can be wired and probed
-//! safely.
+//! The endpoint is configured per DM by the video-chat panel
+//! ([`video_chat_set_target`]); without a target the completion route
+//! answers 400 with an explanatory message.
 
 pub mod sanitize;
 #[cfg(test)]
@@ -26,13 +25,36 @@ use axum::{
 };
 use serde_json::json;
 use std::sync::Arc;
+use std::sync::RwLock;
 use tokio::net::TcpListener;
 
-/// Bearer token guarding the one POST route. Generated at spawn, handed to
-/// the caller (settings UI / funnel wiring); never logged.
+/// Fixed loopback port so the funnel wiring survives app restarts.
+/// Registered as `buzz_video_chat` in infra/port-registry.json.
+pub const DEFAULT_PORT: u16 = 6371;
+
+/// Bearer token guarding the one POST route. Generated at spawn, exposed to
+/// the frontend via [`video_chat_status`]; never logged.
 #[derive(Clone)]
-pub struct VideoChatState {
+struct VideoChatState {
     token: Arc<String>,
+    app_handle: tauri::AppHandle,
+}
+
+/// The DM the currently configured video-chat session relays into.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Target {
+    pub channel_id: String,
+    pub agent_pubkey: String,
+    /// Display name for the panel; presentation only.
+    pub agent_name: Option<String>,
+}
+
+static TARGET: RwLock<Option<Target>> = RwLock::new(None);
+static TOKEN: RwLock<Option<String>> = RwLock::new(None);
+static PORT: RwLock<Option<u16>> = RwLock::new(None);
+
+fn current_target() -> Option<Target> {
+    TARGET.read().ok().and_then(|t| t.clone())
 }
 
 /// GET / and /v1 — OpenAI-style base reachability probes (vendor wiring UIs
@@ -77,26 +99,21 @@ async fn completions(
     headers: HeaderMap,
     body: String,
 ) -> Response {
-    if !authorized(&headers, &state.token) {
+    let token = state.token.as_str();
+    if !authorized(&headers, token) {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({ "error": { "message": "unauthorized" } })),
         )
             .into_response();
     }
-    // Turn relay lands with turn.rs; fail explicitly rather than pretending.
-    match turn::handle_completion(&body).await {
-        Ok(body_stream) => axum::response::Response::builder()
+    match turn::handle_completion(state.app_handle.clone(), &body).await {
+        Ok(stream) => axum::response::Response::builder()
             .status(StatusCode::OK)
             .header("content-type", "text/event-stream; charset=utf-8")
             .header("cache-control", "no-cache")
-            .body(axum::body::Body::from_stream(body_stream))
+            .body(axum::body::Body::from_stream(stream))
             .unwrap(),
-        Err(turn::TurnError::NotWired) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({ "error": { "message": "video chat turn relay not yet wired" } })),
-        )
-            .into_response(),
         Err(turn::TurnError::Bad(msg)) => (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": { "message": msg } })),
@@ -105,12 +122,18 @@ async fn completions(
     }
 }
 
-/// Spawn the loopback server on an ephemeral port. Returns `(port, token)`
-/// for the settings surface and funnel wiring.
-pub async fn spawn() -> Result<(u16, String), String> {
-    let token = uuid::Uuid::new_v4().to_string();
+/// Spawn the loopback server on [`DEFAULT_PORT`] (or `BUZZ_VIDEO_CHAT_PORT`).
+/// Non-fatal: video chat is optional, so a bind failure logs and leaves the
+/// port unset rather than blocking app startup.
+pub async fn spawn(app_handle: tauri::AppHandle) -> Option<u16> {
+    let port = std::env::var("BUZZ_VIDEO_CHAT_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(DEFAULT_PORT);
+    let token = uuid::Uuid::new_v4().simple().to_string();
     let state = VideoChatState {
         token: Arc::new(token.clone()),
+        app_handle,
     };
     let app = Router::new()
         .route("/", get(base_probe))
@@ -120,15 +143,64 @@ pub async fn spawn() -> Result<(u16, String), String> {
         .route("/v1/chat/completions", post(completions))
         .route("/chat/completions", post(completions))
         .with_state(state);
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .map_err(|e| format!("video chat bind failed: {e}"))?;
-    let port = listener
-        .local_addr()
-        .map_err(|e| format!("video chat local_addr failed: {e}"))?
-        .port();
+    let listener = match TcpListener::bind(("127.0.0.1", port)).await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("video_chat: bind on {port} failed ({e}); video chat disabled this run");
+            return None;
+        }
+    };
+    if let Ok(mut slot) = TOKEN.write() {
+        *slot = Some(token);
+    }
+    if let Ok(mut slot) = PORT.write() {
+        *slot = Some(port);
+    }
     tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
-    Ok((port, token))
+    Some(port)
+}
+
+/// Point the video-chat relay at a DM. Called by the panel when a video
+/// session opens; cleared by the frontend when it closes.
+#[tauri::command]
+pub async fn video_chat_set_target(
+    channel_id: String,
+    agent_pubkey: String,
+    agent_name: Option<String>,
+) -> Result<(), String> {
+    let target = Target {
+        channel_id,
+        agent_pubkey,
+        agent_name,
+    };
+    TARGET
+        .write()
+        .map_err(|_| "video chat state poisoned".to_string())?
+        .replace(target);
+    Ok(())
+}
+
+/// Clear the relay target when the panel closes.
+#[tauri::command]
+pub async fn video_chat_clear_target() -> Result<(), String> {
+    if let Ok(mut slot) = TARGET.write() {
+        *slot = None;
+    }
+    Ok(())
+}
+
+/// Report the loopback endpoint + bearer token + configured target for the
+/// panel and funnel wiring. The token is only ever handed to the app's own
+/// frontend, which forwards it to Anam Lab out-of-band (once, by Sam).
+#[tauri::command]
+pub fn video_chat_status() -> serde_json::Value {
+    let port = PORT.read().ok().and_then(|p| *p);
+    json!({
+        "port": port,
+        "active": port.is_some(),
+        "token": TOKEN.read().ok().and_then(|t| t.clone()),
+        "target": current_target(),
+    })
 }
