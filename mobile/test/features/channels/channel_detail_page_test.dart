@@ -673,6 +673,83 @@ void main() {
       expect(find.byTooltip('Start Huddle'), findsNothing);
     });
 
+    testWidgets('rechecks verified owner profiles after reconnect', (
+      tester,
+    ) async {
+      final relaySession = _ReconnectingRelaySession();
+      final reconnectPreloadCompleter = Completer<void>();
+      var memberPreloadCount = 0;
+      var blockMemberPreload = false;
+      final userCache = _FakeUserCacheNotifier(
+        const {},
+        preload: (pubkeys) {
+          if (pubkeys.length == 1) return Future.value();
+          memberPreloadCount++;
+          return blockMemberPreload
+              ? reconnectPreloadCompleter.future
+              : Future.value();
+        },
+      );
+      final dmChannel = Channel(
+        id: _channelId,
+        name: 'Agent DM',
+        channelType: 'dm',
+        visibility: 'private',
+        description: 'Direct message',
+        createdBy: 'self',
+        createdAt: DateTime(2025),
+        memberCount: 2,
+        participants: const ['Self', 'Agent'],
+        participantPubkeys: const ['self', 'agent'],
+        isMember: true,
+      );
+
+      await tester.pumpWidget(
+        _buildTestable(
+          messages: const [],
+          channel: dmChannel,
+          userCacheNotifier: userCache,
+          relaySessionNotifier: relaySession,
+          members: [
+            ChannelMember(
+              pubkey: 'self',
+              role: 'member',
+              joinedAt: DateTime(2025),
+            ),
+            ChannelMember(
+              pubkey: 'agent',
+              role: 'member',
+              joinedAt: DateTime(2025),
+            ),
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Start Huddle'), findsOneWidget);
+      final memberPreloadsBeforeReconnect = memberPreloadCount;
+      blockMemberPreload = true;
+
+      relaySession.connect();
+      await tester.pump();
+
+      expect(memberPreloadCount, greaterThan(memberPreloadsBeforeReconnect));
+      expect(find.byTooltip('Start Huddle'), findsNothing);
+
+      userCache.replace(
+        const UserProfile(
+          pubkey: 'agent',
+          displayName: 'Agent',
+          ownerPubkey: 'owner',
+        ),
+      );
+      reconnectPreloadCompleter.complete();
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Start Huddle'), findsNothing);
+      await tester.pump(const Duration(milliseconds: 500));
+    });
+
     testWidgets('keeps the Members action for group DMs', (tester) async {
       final dmChannel = Channel(
         id: _channelId,

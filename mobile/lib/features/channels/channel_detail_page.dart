@@ -268,7 +268,7 @@ class ChannelDetailPage extends HookConsumerWidget {
         detailsAsync.whenData(baseChannel.mergeDetails).value ?? baseChannel;
     final memberProfilesPreload = useMemoized(
       () => _preloadMembers(ref, resolvedChannel.id),
-      [resolvedChannel.id],
+      [resolvedChannel.id, sessionStatus],
     );
     final memberProfilesPreloadState = useFuture(memberProfilesPreload);
     final showsComposer =

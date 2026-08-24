@@ -193,7 +193,7 @@ class _ChannelBotRoleSubscription extends Notifier<int> {
         NostrFilter(
           kinds: const [39002],
           tags: {
-            '#h': [channelId],
+            '#d': [channelId],
           },
         ).copyWithSince(DateTime.now().millisecondsSinceEpoch ~/ 1000),
         (_) {
