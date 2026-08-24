@@ -15,7 +15,7 @@ Referenced by subject, not SHA — SHAs change on every rebase.
 
 | Series | Commits | What | Why | Upstream plan |
 |---|---|---|---|---|
-| Video chat | 5 commits, `video_chat module scaffold` → `style(desktop): biome format VideoChatPanel` | Tauri Rust module (`desktop/src-tauri/src/video_chat/`: SSE, speech sanitizer, turn relay) + React panel (`desktop/src/features/videoChat/`), wired to the evie-anam-adapter on :6370 | Anam video-chat in agent DMs | Carried — niche to our Anam stack |
+| Video chat | 6 commits, `video_chat module scaffold` → `fix(desktop): show the video-chat trigger in the inline DM header` | Tauri Rust module (`desktop/src-tauri/src/video_chat/`: SSE, speech sanitizer, turn relay on loopback :6371) + React panel (`desktop/src/features/videoChat/`); Tailscale Funnel 443 → app :6371 (standalone adapter retired 2026-08-24) | Anam video-chat in agent DMs | Carried — niche to our Anam stack |
 | Shared instructions | 1 commit, `feat(agents): shared instructions global layer for all agent prompts` | Global instruction layer injected into every agent prompt; touches `crates/buzz-acp/*` + `desktop/src-tauri/src/managed_agents/*` + agents UI | All agents share a base instruction layer | Carried — product-specific behavior |
 
 Dropped 2026-08-24: one auto-commit noise commit and a stray `logs/verification.log`
@@ -35,11 +35,12 @@ Dropped 2026-08-24: one auto-commit noise commit and a stray `logs/verification.
 
 ## Build tags
 
-Every build we install gets an annotated tag: `nest-<upstream-version>-<yyyymmdd>`.
-Current installed build: **`nest-0.5.18-20260824`** (upstream 0.5.18, series on
-upstream `0720f5380`). Since that build, `main` was rebased onto upstream `17af15eff`
-(+2 upstream commits, not yet built/installed) — next build from `main` gets a fresh
-tag. The tag always marks what the installed app contains; `main` is the series head.
+Every build we install gets an annotated tag: `nest-<upstream-version>-<yyyymmdd>`
+(suffixed `-2`, `-3`… for additional same-day builds).
+Current installed build: **`nest-0.5.18-20260824-2`** (upstream 0.5.18, series on
+upstream `17af15eff`, incl. the inline DM-header video-chat trigger fix). Installed
+on crichton and aeryn; `buzz-desktop` sha256 `c569fafa…54cb12` on both. The tag
+always marks what the installed app contains; `main` is the series head.
 
 ## Remotes
 
