@@ -615,6 +615,64 @@ void main() {
       expect(find.byTooltip('Start Huddle'), findsOneWidget);
     });
 
+    testWidgets('keeps Huddle hidden while a verified owner profile loads', (
+      tester,
+    ) async {
+      final profilePreloadCompleter = Completer<void>();
+      final userCache = _FakeUserCacheNotifier(
+        const {},
+        preload: (_) => profilePreloadCompleter.future,
+      );
+      final dmChannel = Channel(
+        id: _channelId,
+        name: 'Agent DM',
+        channelType: 'dm',
+        visibility: 'private',
+        description: 'Direct message',
+        createdBy: 'self',
+        createdAt: DateTime(2025),
+        memberCount: 2,
+        participants: const ['Self', 'Agent'],
+        participantPubkeys: const ['self', 'agent'],
+        isMember: true,
+      );
+
+      await tester.pumpWidget(
+        _buildTestable(
+          messages: const [],
+          channel: dmChannel,
+          userCacheNotifier: userCache,
+          members: [
+            ChannelMember(
+              pubkey: 'self',
+              role: 'member',
+              joinedAt: DateTime(2025),
+            ),
+            ChannelMember(
+              pubkey: 'agent',
+              role: 'member',
+              joinedAt: DateTime(2025),
+            ),
+          ],
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byTooltip('Start Huddle'), findsNothing);
+
+      userCache.replace(
+        const UserProfile(
+          pubkey: 'agent',
+          displayName: 'Agent',
+          ownerPubkey: 'owner',
+        ),
+      );
+      profilePreloadCompleter.complete();
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Start Huddle'), findsNothing);
+    });
+
     testWidgets('keeps the Members action for group DMs', (tester) async {
       final dmChannel = Channel(
         id: _channelId,
@@ -12552,13 +12610,21 @@ class _FakeChannelMutesNotifier extends ChannelMutesNotifier {
 
 class _FakeUserCacheNotifier extends UserCacheNotifier {
   final Map<String, UserProfile> _users;
-  _FakeUserCacheNotifier(this._users);
+  final Future<void> Function(List<String>)? _preload;
+  _FakeUserCacheNotifier(
+    this._users, {
+    Future<void> Function(List<String>)? preload,
+  }) : _preload = preload;
 
   @override
   Map<String, UserProfile> build() => _users;
 
   @override
   UserProfile? get(String pubkey) => _users[pubkey.toLowerCase()];
+
+  @override
+  Future<void> preload(List<String> pubkeys) =>
+      _preload?.call(pubkeys) ?? Future.value();
 
   void replace(UserProfile profile) {
     state = {...state, profile.pubkey.toLowerCase(): profile};

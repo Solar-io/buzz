@@ -13,6 +13,7 @@ import 'user_profile.dart';
 class UserCacheNotifier extends Notifier<Map<String, UserProfile>> {
   final Set<String> _pending = {};
   Timer? _batchTimer;
+  Completer<void>? _batchCompleter;
 
   @override
   Map<String, UserProfile> build() {
@@ -20,6 +21,8 @@ class UserCacheNotifier extends Notifier<Map<String, UserProfile>> {
     ref.onDispose(() {
       _batchTimer?.cancel();
       _batchTimer = null;
+      _batchCompleter?.complete();
+      _batchCompleter = null;
     });
     return {};
   }
@@ -34,14 +37,18 @@ class UserCacheNotifier extends Notifier<Map<String, UserProfile>> {
   }
 
   /// Preload profiles for a list of pubkeys (e.g. channel members).
-  void preload(List<String> pubkeys) {
-    final uncached = pubkeys
+  Future<void> preload(List<String> pubkeys) {
+    final normalized = pubkeys.map((pk) => pk.toLowerCase()).toSet();
+    final alreadyPending = normalized.any(_pending.contains);
+    final uncached = normalized
         .map((pk) => pk.toLowerCase())
         .where((pk) => !state.containsKey(pk) && !_pending.contains(pk))
         .toList();
-    if (uncached.isEmpty) return;
+    if (uncached.isEmpty && !alreadyPending) return Future.value();
     _pending.addAll(uncached);
+    final completer = _batchCompleter ??= Completer<void>();
     _batchTimer ??= Timer(const Duration(milliseconds: 50), _flushPending);
+    return completer.future;
   }
 
   /// Applies a live kind:0 profile event to the cache.
@@ -57,6 +64,7 @@ class UserCacheNotifier extends Notifier<Map<String, UserProfile>> {
   void _scheduleFetch(String pubkey) {
     if (state.containsKey(pubkey) || _pending.contains(pubkey)) return;
     _pending.add(pubkey);
+    _batchCompleter ??= Completer<void>();
     _batchTimer ??= Timer(const Duration(milliseconds: 50), _flushPending);
   }
 
@@ -66,6 +74,8 @@ class UserCacheNotifier extends Notifier<Map<String, UserProfile>> {
 
     final pubkeys = _pending.toList();
     _pending.clear();
+    final completer = _batchCompleter;
+    _batchCompleter = null;
 
     try {
       final session = ref.read(relaySessionProvider.notifier);
@@ -82,6 +92,8 @@ class UserCacheNotifier extends Notifier<Map<String, UserProfile>> {
       state = updated;
     } catch (_) {
       // Silently fail — we'll just show pubkeys.
+    } finally {
+      completer?.complete();
     }
   }
 

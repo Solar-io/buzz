@@ -114,7 +114,7 @@ Future<void> _preloadMembers(WidgetRef ref, String channelId) async {
     final members = await ref.read(channelMembersProvider(channelId).future);
     final pubkeys = members.map((m) => m.pubkey).toList();
     if (pubkeys.isNotEmpty) {
-      notifier.preload(pubkeys);
+      await notifier.preload(pubkeys);
     }
   } catch (_) {
     // Non-fatal — mentions will just fall back to cache from messages.
@@ -266,6 +266,11 @@ class ChannelDetailPage extends HookConsumerWidget {
         channel;
     final resolvedChannel =
         detailsAsync.whenData(baseChannel.mergeDetails).value ?? baseChannel;
+    final memberProfilesPreload = useMemoized(
+      () => _preloadMembers(ref, resolvedChannel.id),
+      [resolvedChannel.id],
+    );
+    final memberProfilesPreloadState = useFuture(memberProfilesPreload);
     final showsComposer =
         !resolvedChannel.isForum &&
         resolvedChannel.isMember &&
@@ -303,7 +308,8 @@ class ChannelDetailPage extends HookConsumerWidget {
         isOneToOneDm &&
         (agentDirectoryState.isLoading ||
             agentOwnersState.isLoading ||
-            channelBotPubkeysState.isLoading);
+            channelBotPubkeysState.isLoading ||
+            memberProfilesPreloadState.connectionState != ConnectionState.done);
     final showsHuddleAction =
         showsComposer &&
         !isAgentIdentityLoading &&
@@ -347,12 +353,6 @@ class ChannelDetailPage extends HookConsumerWidget {
     useEffect(() {
       final session = ref.read(relaySessionProvider.notifier);
       return session.registerVisibleChannel(channel.id);
-    }, [channel.id]);
-
-    // Preload channel member profiles so @mentions resolve correctly.
-    useEffect(() {
-      _preloadMembers(ref, channel.id);
-      return null;
     }, [channel.id]);
 
     useEffect(
