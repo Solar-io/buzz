@@ -15,7 +15,7 @@ Referenced by subject, not SHA — SHAs change on every rebase.
 
 | Series | Commits | What | Why | Upstream plan |
 |---|---|---|---|---|
-| Video chat | 6 commits, `video_chat module scaffold` → `fix(desktop): show the video-chat trigger in the inline DM header` | Tauri Rust module (`desktop/src-tauri/src/video_chat/`: SSE, speech sanitizer, turn relay on loopback :6371) + React panel (`desktop/src/features/videoChat/`); Tailscale Funnel 443 → app :6371 (standalone adapter retired 2026-08-24) | Anam video-chat in agent DMs | Carried — niche to our Anam stack |
+| Video chat | 7 commits, `video_chat module scaffold` → `fix(desktop): personaId wiring + peer-armed video-chat relay` | Tauri Rust module (`desktop/src-tauri/src/video_chat/`: SSE, speech sanitizer, turn relay on loopback :6371) + React panel (`desktop/src/features/videoChat/`); Tailscale Funnel 443 → app :6371 (standalone adapter retired 2026-08-24) | Anam video-chat in agent DMs | Carried — niche to our Anam stack |
 | Shared instructions | 1 commit, `feat(agents): shared instructions global layer for all agent prompts` | Global instruction layer injected into every agent prompt; touches `crates/buzz-acp/*` + `desktop/src-tauri/src/managed_agents/*` + agents UI | All agents share a base instruction layer | Carried — product-specific behavior |
 
 Dropped 2026-08-24: one auto-commit noise commit and a stray `logs/verification.log`
@@ -37,10 +37,17 @@ Dropped 2026-08-24: one auto-commit noise commit and a stray `logs/verification.
 
 Every build we install gets an annotated tag: `nest-<upstream-version>-<yyyymmdd>`
 (suffixed `-2`, `-3`… for additional same-day builds).
-Current installed build: **`nest-0.5.18-20260824-2`** (upstream 0.5.18, series on
-upstream `17af15eff`, incl. the inline DM-header video-chat trigger fix). Installed
-on crichton and aeryn; `buzz-desktop` sha256 `c569fafa…54cb12` on both. The tag
-always marks what the installed app contains; `main` is the series head.
+Current installed build: **`nest-0.5.18-20260824-3`** (upstream 0.5.18, series on
+upstream `17af15eff`, incl. personaId wiring + peer-armed video-chat relay).
+Installed on crichton and aeryn; `buzz-desktop` sha256 `10d7d60e…21b0da` on both.
+The tag always marks what the installed app contains; `main` is the series head.
+
+Per-host ops config (not in the repo): `video-chat-peers.json` in the app config
+dir (`~/Library/Application Support/xyz.block.buzz.app/`) lists peer bridges
+(`[{"url", "token"}]`) that receive video-chat target arming. aeryn carries
+crichton's funnel + token; crichton carries none (only the funnel side receives).
+Crichton's Buzz must be running for video chat armed from aeryn — its app holds
+the funnel.
 
 ## Remotes
 
