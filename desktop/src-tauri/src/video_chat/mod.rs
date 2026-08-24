@@ -57,6 +57,46 @@ static TOKEN: RwLock<Option<String>> = RwLock::new(None);
 static PORT: RwLock<Option<u16>> = RwLock::new(None);
 static LAST_FORWARD: RwLock<Option<String>> = RwLock::new(None);
 
+/// Diagnostic log for the video-chat bridge. stderr is /dev/null for a
+/// GUI-launched app, which blinded the 2026-08-24 investigation into a call
+/// that ran half an hour on Anam's stock brain — every state change now
+/// lands in `<app-config-dir>/video-chat.log` instead. Outcomes and timings
+/// only; transcripts are deliberately never written.
+static LOG_PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+const LOG_MAX_BYTES: u64 = 256 * 1024;
+
+fn init_log(app_handle: &tauri::AppHandle) {
+    if let Some(dir) = app_handle.path().app_config_dir().ok() {
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = LOG_PATH.set(dir.join("video-chat.log"));
+    }
+}
+
+/// Append one timestamped line, rotating to `.old` past the size cap.
+pub fn vlog(msg: &str) {
+    use std::io::Write;
+    let Some(path) = LOG_PATH.get() else {
+        return;
+    };
+    if let Ok(meta) = std::fs::metadata(path) {
+        if meta.len() > LOG_MAX_BYTES {
+            let _ = std::fs::rename(path, path.with_extension("log.old"));
+        }
+    }
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    else {
+        return;
+    };
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let _ = writeln!(file, "{ts} video_chat: {msg}");
+}
+
 fn current_target() -> Option<Target> {
     TARGET.read().ok().and_then(|t| t.clone())
 }
@@ -126,6 +166,7 @@ fn forward_to_peers(app_handle: tauri::AppHandle, body: serde_json::Value) {
         }
         let summary = results.join("; ");
         eprintln!("video_chat: peer forward: {summary}");
+        vlog(&format!("peer forward: {summary}"));
         if let Ok(mut slot) = LAST_FORWARD.write() {
             *slot = Some(summary);
         }
@@ -242,12 +283,19 @@ async fn internal_target(
         }
     };
     match apply_target_payload(&parsed) {
-        Ok(cleared) => Json(json!({
-            "ok": true,
-            "cleared": cleared,
-            "target": current_target(),
-        }))
-        .into_response(),
+        Ok(cleared) => {
+            vlog(if cleared {
+                "internal target: cleared (peer forward)"
+            } else {
+                "internal target: armed (peer forward)"
+            });
+            Json(json!({
+                "ok": true,
+                "cleared": cleared,
+                "target": current_target(),
+            }))
+            .into_response()
+        }
         Err(msg) => (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": { "message": msg } })),
@@ -294,6 +342,7 @@ pub async fn spawn(app_handle: tauri::AppHandle) -> Option<u16> {
         .unwrap_or(DEFAULT_PORT);
     let token = load_or_create_token(&app_handle)
         .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
+    init_log(&app_handle);
     let state = VideoChatState {
         token: Arc::new(token.clone()),
         app_handle,
@@ -311,6 +360,7 @@ pub async fn spawn(app_handle: tauri::AppHandle) -> Option<u16> {
         Ok(l) => l,
         Err(e) => {
             eprintln!("video_chat: bind on {port} failed ({e}); video chat disabled this run");
+            vlog(&format!("bind on {port} FAILED ({e}); video chat disabled this run"));
             return None;
         }
     };
@@ -320,6 +370,14 @@ pub async fn spawn(app_handle: tauri::AppHandle) -> Option<u16> {
     if let Ok(mut slot) = PORT.write() {
         *slot = Some(port);
     }
+    vlog(&format!(
+        "loopback server up on :{port} (target={})",
+        if current_target().is_some() {
+            "armed"
+        } else {
+            "none"
+        }
+    ));
     tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
@@ -346,6 +404,11 @@ pub async fn video_chat_set_target(
         .write()
         .map_err(|_| "video chat state poisoned".to_string())?
         .replace(target.clone());
+    vlog(&format!(
+        "target armed: channel {} → {}",
+        target.channel_id,
+        target.agent_name.as_deref().unwrap_or("agent")
+    ));
     if let Ok(payload) = serde_json::to_value(&target) {
         forward_to_peers(app_handle, payload);
     }
@@ -358,6 +421,7 @@ pub async fn video_chat_clear_target(app_handle: tauri::AppHandle) -> Result<(),
     if let Ok(mut slot) = TARGET.write() {
         *slot = None;
     }
+    vlog("target cleared (panel closed)");
     forward_to_peers(app_handle, json!({ "clear": true }));
     Ok(())
 }

@@ -30,6 +30,26 @@ const KEEPALIVE_INTERVAL_MS: u64 = 4000;
 const SKEW_GRACE_SECS: i64 = 2;
 const FALLBACK_TEXT: &str = "(sorry — I could not reach the agent just then)";
 
+/// What the avatar SPEAKS when a completion arrives with no armed target.
+/// Returned as a normal 200 stream, never a 400: on an error status Anam's
+/// engine silently falls back to the persona's built-in stock brain, which
+/// is how a 2026-08-24 call carried on for half an hour as a stranger with
+/// Evie's face (verified: zero relayed turns in the relay DB for the whole
+/// call window). Speaking the failure keeps the face honest — either the
+/// agent behind the DM answers, or the avatar says why it can't.
+pub const NO_TARGET_SPOKEN: &str =
+    "I can't reach the agent behind this face right now. Close and reopen my video chat panel, then call me again.";
+
+/// SSE frames for the no-target case: role delta, one spoken content delta,
+/// finish. Pure so the wire shape is unit-testable without an app handle.
+pub fn no_target_stream_parts() -> Vec<String> {
+    vec![
+        sse::role_delta(),
+        sse::content_delta(NO_TARGET_SPOKEN),
+        sse::finish_delta(),
+    ]
+}
+
 #[derive(Debug)]
 pub enum TurnError {
     /// Request-shape problems — surfaced as HTTP 400.
@@ -83,22 +103,38 @@ pub async fn handle_completion(
         .map_err(|e| TurnError::Bad(format!("invalid JSON body: {e}")))?;
     let user_text = latest_user_message(&parsed)
         .ok_or_else(|| TurnError::Bad("no user message found".to_string()))?;
-    let target = super::current_target().ok_or_else(|| {
-        TurnError::Bad(
-            "no video-chat target configured — open video chat in an agent DM first".into(),
-        )
-    })?;
+    let Some(target) = super::current_target() else {
+        // Spoken 200, not a silent 400 — see [NO_TARGET_SPOKEN].
+        super::vlog("completion: NO TARGET armed — speaking fallback (stock-brain guard)");
+        let (tx, rx) = mpsc::channel::<Result<Vec<u8>, std::io::Error>>(8);
+        tauri::async_runtime::spawn(async move {
+            for part in no_target_stream_parts() {
+                if tx.send(Ok(part.into_bytes())).await.is_err() {
+                    return; // client went away
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        });
+        return Ok(Box::pin(ReceiverStream::new(rx)));
+    };
+    super::vlog(&format!(
+        "completion: {}-char turn for {}",
+        user_text.len(),
+        target.agent_name.as_deref().unwrap_or("agent")
+    ));
 
     let (tx, rx) = mpsc::channel::<Result<Vec<u8>, std::io::Error>>(64);
     let handle = app_handle.clone();
     tauri::async_runtime::spawn(async move {
         let mut tx = tx;
+        let started = std::time::Instant::now();
         let _ = tx.send(Ok(sse::role_delta().into_bytes())).await;
 
         // Publish the turn as the logged-in user.
         let sent_at = match publish_turn(&handle, &target, &user_text).await {
             Ok(ts) => ts,
             Err(err) => {
+                super::vlog(&format!("completion: publish FAILED ({err})"));
                 eprintln!("video_chat: publish failed: {err}");
                 let _ = tx
                     .send(Ok(sse::content_delta(FALLBACK_TEXT).into_bytes()))
@@ -112,6 +148,11 @@ pub async fn handle_completion(
         let reply = await_reply(&handle, &target, sent_at, &mut tx).await;
         match reply {
             Ok(text) => {
+                super::vlog(&format!(
+                    "completion: reply in {}ms ({} chars)",
+                    started.elapsed().as_millis(),
+                    text.len()
+                ));
                 let spoken = sanitize_for_speech(&text);
                 for chunk in chunk_for_speech(&spoken, 42) {
                     if tx
@@ -125,6 +166,10 @@ pub async fn handle_completion(
                 }
             }
             Err(err) => {
+                super::vlog(&format!(
+                    "completion: reply wait FAILED after {}ms ({err})",
+                    started.elapsed().as_millis()
+                ));
                 eprintln!("video_chat: reply wait failed: {err}");
                 let _ = tx
                     .send(Ok(sse::content_delta(FALLBACK_TEXT).into_bytes()))
@@ -218,7 +263,7 @@ async fn await_reply(
 
 #[cfg(test)]
 mod tests {
-    use super::latest_user_message;
+    use super::{latest_user_message, no_target_stream_parts, NO_TARGET_SPOKEN};
     use serde_json::json;
 
     #[test]
@@ -263,5 +308,35 @@ mod tests {
             ],
         });
         assert!(latest_user_message(&body).is_none());
+    }
+
+    /// A missing target must produce a SPEAKABLE 200 stream — the frames are
+    /// an OpenAI SSE conversation, not an error payload. This pins the
+    /// 2026-08-24 fix: a 400 here is what let Anam swap in its stock brain.
+    #[test]
+    fn no_target_fallback_is_a_spoken_stream_not_an_error() {
+        let parts = no_target_stream_parts();
+        assert_eq!(parts.len(), 3, "role + content + finish");
+        assert!(parts[0].contains("\"role\":\"assistant\""));
+        assert!(
+            parts[1].contains(NO_TARGET_SPOKEN),
+            "content frame must carry the spoken line"
+        );
+        assert!(parts[2].contains("data: [DONE]"));
+        for part in &parts {
+            assert!(
+                !part.contains("\"error\""),
+                "no frame may be shaped like an API error"
+            );
+        }
+    }
+
+    /// The spoken line must tell Sam what to DO — a vague apology sends him
+    /// debugging blind, which is the failure mode this guard exists to end.
+    #[test]
+    fn no_target_spoken_line_names_the_remedy() {
+        let lower = NO_TARGET_SPOKEN.to_lowercase();
+        assert!(lower.contains("panel"), "must mention the video panel");
+        assert!(lower.contains("reopen") || lower.contains("again"));
     }
 }

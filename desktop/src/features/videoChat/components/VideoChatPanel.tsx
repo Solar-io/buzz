@@ -50,14 +50,24 @@ export function VideoChatPanel(props: {
       .catch(() => undefined);
   }, [showSettings]);
 
-  // Point the relay at this DM for the lifetime of the panel.
+  // Point the relay at this DM for the lifetime of the panel — and keep
+  // re-asserting it. The peer forward to the funnel-side install is
+  // fire-and-forget, so an arming that fired while the peer's app was down
+  // (restart ordering) used to be lost forever: every call turn then hit
+  // "no video-chat target" and Anam silently swapped in its stock brain —
+  // the 2026-08-24 stranger-with-her-face call. Re-arming every 20s heals
+  // any missed forward within one interval.
   React.useEffect(() => {
-    void invoke("video_chat_set_target", {
-      channelId,
-      agentPubkey,
-      agentName: agentName ?? null,
-    }).catch((e) => setError(String(e)));
+    const arm = () =>
+      void invoke("video_chat_set_target", {
+        channelId,
+        agentPubkey,
+        agentName: agentName ?? null,
+      }).catch((e) => setError(String(e)));
+    arm();
+    const timer = window.setInterval(arm, 20_000);
     return () => {
+      window.clearInterval(timer);
       void invoke("video_chat_clear_target").catch(() => undefined);
     };
   }, [channelId, agentPubkey, agentName]);
@@ -65,6 +75,14 @@ export function VideoChatPanel(props: {
   const start = React.useCallback(async () => {
     setError(null);
     setState("connecting");
+    // Re-assert the target at the exact moment a call begins — the 20s
+    // interval heals stale arming, but Start is the one instant it must
+    // already be right.
+    await invoke("video_chat_set_target", {
+      channelId,
+      agentPubkey,
+      agentName: agentName ?? null,
+    }).catch(() => undefined);
     try {
       const element = videoRef.current;
       const audio = audioRef.current;
@@ -76,7 +94,7 @@ export function VideoChatPanel(props: {
       setState("error");
       setError(describeAnamError(e));
     }
-  }, [config]);
+  }, [config, channelId, agentPubkey, agentName]);
 
   const stop = React.useCallback(() => {
     void clientRef.current?.stopStreaming?.();
