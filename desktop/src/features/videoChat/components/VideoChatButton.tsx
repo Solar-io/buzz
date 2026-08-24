@@ -21,13 +21,14 @@ export function VideoChatButton(props: {
   return (
     <>
       <Button
-        variant="ghost"
-        size="sm"
+        variant={renderMode === "button" ? "outline" : "ghost"}
+        size={renderMode === "button" ? "icon" : "sm"}
         aria-label="Start video chat"
+        data-testid="video-chat-trigger"
         onClick={() => setOpen(true)}
       >
         <Video className="size-4" />
-        {renderMode === "button" ? "Video" : null}
+        {renderMode === "menu-item" ? "Video" : null}
       </Button>
       {open && (
         <VideoChatPanel

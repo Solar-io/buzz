@@ -107,12 +107,14 @@ export function ChannelMembersBar({
     [channel, currentPubkey, huddleAgentPubkeys],
   );
   // Video chat relays into this DM as the logged-in owner; it needs the agent
-  // participant's pubkey to p-mention (wake) and to label the panel.
+  // participant's pubkey to p-mention (wake) and to label the panel. The
+  // target must be a DM participant — huddleAgentPubkeys alone is the global
+  // managed ∪ relay baseline, so its first entry can name an agent who is
+  // not even in this conversation.
   const videoChatAgentPubkey = React.useMemo(() => {
     if (channel.channelType !== "dm") return null;
-    const first = [...huddleAgentPubkeys][0];
-    return first ?? null;
-  }, [channel.channelType, huddleAgentPubkeys]);
+    return huddleMemberPubkeys[0] ?? null;
+  }, [channel.channelType, huddleMemberPubkeys]);
   const huddleMemberPubkeysPending =
     hasOtherDmParticipant(channel, currentPubkey) &&
     (membersQuery.isPending ||
@@ -228,12 +230,6 @@ export function ChannelMembersBar({
               renderMode="menu-item"
             />
           )}
-          {videoChatAgentPubkey && (
-            <VideoChatButton
-              channelId={channel.id}
-              agentPubkey={videoChatAgentPubkey}
-            />
-          )}
           <DropdownMenuItem
             data-testid="channel-management-trigger"
             onSelect={onManageChannel}
@@ -265,6 +261,18 @@ export function ChannelMembersBar({
         </Tooltip>
 
         {huddleIndicator}
+
+        {videoChatAgentPubkey ? (
+          <Tooltip disableHoverableContent>
+            <TooltipTrigger asChild>
+              <VideoChatButton
+                channelId={channel.id}
+                agentPubkey={videoChatAgentPubkey}
+              />
+            </TooltipTrigger>
+            <TooltipContent>Video chat</TooltipContent>
+          </Tooltip>
+        ) : null}
 
         <Tooltip disableHoverableContent>
           <TooltipTrigger asChild>
