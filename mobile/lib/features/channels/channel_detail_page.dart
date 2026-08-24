@@ -108,12 +108,19 @@ Future<void> _loadDeepLinkEvents(
 
 /// Fetch channel members and preload their profiles into the user cache.
 /// Returns whether identity resolution completed successfully.
-Future<bool> _preloadMembers(WidgetRef ref, String channelId) async {
+Future<bool> _preloadMembers(
+  WidgetRef ref,
+  String channelId,
+  List<String> participantPubkeys,
+) async {
   // Capture references before async gap to avoid using disposed ref.
   final notifier = ref.read(userCacheProvider.notifier);
   try {
     final members = await ref.read(channelMembersProvider(channelId).future);
-    final pubkeys = members.map((m) => m.pubkey).toList();
+    final pubkeys = {
+      ...members.map((member) => member.pubkey),
+      ...participantPubkeys,
+    }.toList();
     if (pubkeys.isNotEmpty) {
       return notifier.preload(pubkeys);
     }
@@ -134,7 +141,7 @@ Future<void Function()> _subscribeToDmIdentityUpdates(
     NostrFilter(
       kinds: const [0, 10100],
       authors: participantPubkeys,
-      limit: 0,
+      limit: 100,
     ).copyWithSince(DateTime.now().millisecondsSinceEpoch ~/ 1000 - 5),
     (event) {
       if (event.kind == 0) {
@@ -299,8 +306,16 @@ class ChannelDetailPage extends HookConsumerWidget {
     final resolvedChannel =
         detailsAsync.whenData(baseChannel.mergeDetails).value ?? baseChannel;
     final memberProfilesPreload = useMemoized(
-      () => _preloadMembers(ref, resolvedChannel.id),
-      [resolvedChannel.id, sessionStatus],
+      () => _preloadMembers(
+        ref,
+        resolvedChannel.id,
+        resolvedChannel.participantPubkeys,
+      ),
+      [
+        resolvedChannel.id,
+        sessionStatus,
+        Object.hashAll(resolvedChannel.participantPubkeys),
+      ],
     );
     final memberProfilesPreloadState = useFuture(memberProfilesPreload);
     final showsComposer =

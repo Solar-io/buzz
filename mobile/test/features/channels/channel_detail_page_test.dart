@@ -619,6 +619,44 @@ void main() {
       expect(find.byTooltip('Start Huddle'), findsOneWidget);
     });
 
+    testWidgets('preloads DM participant profiles without a member snapshot', (
+      tester,
+    ) async {
+      final preloadedPubkeys = <String>[];
+      final userCache = _FakeUserCacheNotifier(
+        const {},
+        preload: (pubkeys) async {
+          preloadedPubkeys.addAll(pubkeys);
+          return true;
+        },
+      );
+      final dmChannel = Channel(
+        id: _channelId,
+        name: 'Human DM',
+        channelType: 'dm',
+        visibility: 'private',
+        description: 'Direct message',
+        createdBy: 'self',
+        createdAt: DateTime(2025),
+        memberCount: 2,
+        participants: const ['Self', 'Alice'],
+        participantPubkeys: const ['self', 'alice'],
+        isMember: true,
+      );
+
+      await tester.pumpWidget(
+        _buildTestable(
+          messages: const [],
+          channel: dmChannel,
+          userCacheNotifier: userCache,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(preloadedPubkeys, containsAll(const ['self', 'alice']));
+      expect(find.byTooltip('Start Huddle'), findsOneWidget);
+    });
+
     testWidgets('keeps Huddle hidden while a verified owner profile loads', (
       tester,
     ) async {
@@ -862,6 +900,7 @@ void main() {
 
       expect(relaySession.identityFilter?.kinds, const [0, 10100]);
       expect(relaySession.identityFilter?.authors, contains('alice'));
+      expect(relaySession.identityFilter?.limit, 100);
       expect(find.byTooltip('Start Huddle'), findsOneWidget);
 
       relaySession.emitAgentProfile(pubkey: 'alice');
