@@ -13,7 +13,7 @@ import 'user_profile.dart';
 class UserCacheNotifier extends Notifier<Map<String, UserProfile>> {
   final Set<String> _pending = {};
   Timer? _batchTimer;
-  Completer<void>? _batchCompleter;
+  Completer<bool>? _batchCompleter;
 
   @override
   Map<String, UserProfile> build() {
@@ -21,7 +21,7 @@ class UserCacheNotifier extends Notifier<Map<String, UserProfile>> {
     ref.onDispose(() {
       _batchTimer?.cancel();
       _batchTimer = null;
-      _batchCompleter?.complete();
+      _batchCompleter?.complete(false);
       _batchCompleter = null;
     });
     return {};
@@ -37,16 +37,17 @@ class UserCacheNotifier extends Notifier<Map<String, UserProfile>> {
   }
 
   /// Preload profiles for a list of pubkeys (e.g. channel members).
-  Future<void> preload(List<String> pubkeys) {
+  /// Returns whether the batch completed successfully.
+  Future<bool> preload(List<String> pubkeys) {
     final normalized = pubkeys.map((pk) => pk.toLowerCase()).toSet();
     final alreadyPending = normalized.any(_pending.contains);
     final uncached = normalized
         .map((pk) => pk.toLowerCase())
         .where((pk) => !state.containsKey(pk) && !_pending.contains(pk))
         .toList();
-    if (uncached.isEmpty && !alreadyPending) return Future.value();
+    if (uncached.isEmpty && !alreadyPending) return Future.value(true);
     _pending.addAll(uncached);
-    final completer = _batchCompleter ??= Completer<void>();
+    final completer = _batchCompleter ??= Completer<bool>();
     _batchTimer ??= Timer(const Duration(milliseconds: 50), _flushPending);
     return completer.future;
   }
@@ -64,7 +65,7 @@ class UserCacheNotifier extends Notifier<Map<String, UserProfile>> {
   void _scheduleFetch(String pubkey) {
     if (state.containsKey(pubkey) || _pending.contains(pubkey)) return;
     _pending.add(pubkey);
-    _batchCompleter ??= Completer<void>();
+    _batchCompleter ??= Completer<bool>();
     _batchTimer ??= Timer(const Duration(milliseconds: 50), _flushPending);
   }
 
@@ -77,6 +78,7 @@ class UserCacheNotifier extends Notifier<Map<String, UserProfile>> {
     final completer = _batchCompleter;
     _batchCompleter = null;
 
+    var succeeded = false;
     try {
       final session = ref.read(relaySessionProvider.notifier);
       final events = await session.fetchHistory(
@@ -90,10 +92,11 @@ class UserCacheNotifier extends Notifier<Map<String, UserProfile>> {
       }
 
       state = updated;
+      succeeded = true;
     } catch (_) {
-      // Silently fail — we'll just show pubkeys.
+      // Silently fail — non-gating callers will just show pubkeys.
     } finally {
-      completer?.complete();
+      completer?.complete(succeeded);
     }
   }
 

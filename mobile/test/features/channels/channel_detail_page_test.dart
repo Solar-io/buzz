@@ -621,7 +621,7 @@ void main() {
     testWidgets('keeps Huddle hidden while a verified owner profile loads', (
       tester,
     ) async {
-      final profilePreloadCompleter = Completer<void>();
+      final profilePreloadCompleter = Completer<bool>();
       final userCache = _FakeUserCacheNotifier(
         const {},
         preload: (_) => profilePreloadCompleter.future,
@@ -670,7 +670,7 @@ void main() {
           ownerPubkey: 'owner',
         ),
       );
-      profilePreloadCompleter.complete();
+      profilePreloadCompleter.complete(true);
       await tester.pumpAndSettle();
 
       expect(find.byTooltip('Start Huddle'), findsNothing);
@@ -680,17 +680,17 @@ void main() {
       tester,
     ) async {
       final relaySession = _ReconnectingRelaySession();
-      final reconnectPreloadCompleter = Completer<void>();
+      final reconnectPreloadCompleter = Completer<bool>();
       var memberPreloadCount = 0;
       var blockMemberPreload = false;
       final userCache = _FakeUserCacheNotifier(
         const {},
         preload: (pubkeys) {
-          if (pubkeys.length == 1) return Future.value();
+          if (pubkeys.length == 1) return Future.value(true);
           memberPreloadCount++;
           return blockMemberPreload
               ? reconnectPreloadCompleter.future
-              : Future.value();
+              : Future.value(true);
         },
       );
       final dmChannel = Channel(
@@ -746,7 +746,7 @@ void main() {
           ownerPubkey: 'owner',
         ),
       );
-      reconnectPreloadCompleter.complete();
+      reconnectPreloadCompleter.complete(true);
       await tester.pumpAndSettle();
 
       expect(find.byTooltip('Start Huddle'), findsNothing);
@@ -12750,10 +12750,10 @@ class _FakeChannelMutesNotifier extends ChannelMutesNotifier {
 
 class _FakeUserCacheNotifier extends UserCacheNotifier {
   final Map<String, UserProfile> _users;
-  final Future<void> Function(List<String>)? _preload;
+  final Future<bool> Function(List<String>)? _preload;
   _FakeUserCacheNotifier(
     this._users, {
-    Future<void> Function(List<String>)? preload,
+    Future<bool> Function(List<String>)? preload,
   }) : _preload = preload;
 
   @override
@@ -12763,8 +12763,8 @@ class _FakeUserCacheNotifier extends UserCacheNotifier {
   UserProfile? get(String pubkey) => _users[pubkey.toLowerCase()];
 
   @override
-  Future<void> preload(List<String> pubkeys) =>
-      _preload?.call(pubkeys) ?? Future.value();
+  Future<bool> preload(List<String> pubkeys) =>
+      _preload?.call(pubkeys) ?? Future.value(true);
 
   void replace(UserProfile profile) {
     state = {...state, profile.pubkey.toLowerCase(): profile};

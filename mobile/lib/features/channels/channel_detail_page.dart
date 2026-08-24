@@ -115,7 +115,7 @@ Future<bool> _preloadMembers(WidgetRef ref, String channelId) async {
     final members = await ref.read(channelMembersProvider(channelId).future);
     final pubkeys = members.map((m) => m.pubkey).toList();
     if (pubkeys.isNotEmpty) {
-      await notifier.preload(pubkeys);
+      return notifier.preload(pubkeys);
     }
     return true;
   } catch (_) {
