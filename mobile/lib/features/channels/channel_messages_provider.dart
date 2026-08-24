@@ -187,6 +187,9 @@ class ChannelMessagesNotifier extends Notifier<AsyncValue<List<NostrEvent>>> {
   );
 
   void _handleLiveEvent(NostrEvent event, {bool authoritative = true}) {
+    // Invalidate the thread query independently of the selected channel-history
+    // path. The websocket fallback does not merge through the window store.
+    _invalidateThreadReplies(event);
     // A live summary can race the initial channel-window query. Buffer it in
     // the window store even before that query installs its first page, rather
     // than treating metadata as an ordinary websocket timeline event.
@@ -232,28 +235,35 @@ class ChannelMessagesNotifier extends Notifier<AsyncValue<List<NostrEvent>>> {
     state = AsyncData(flattened);
   }
 
+  void _invalidateThreadReplies(NostrEvent event) {
+    if (!EventKind.channelTimelineContentKinds.contains(event.kind)) return;
+    final thread = event.threadReference;
+    if (thread.parentId == null) return;
+
+    final rootId = thread.rootId;
+    if (rootId != null) {
+      ref.invalidate(
+        threadRepliesProvider(
+          ThreadRepliesArgs(channelId: channelId, rootId: rootId),
+        ),
+      );
+    }
+    final parentId = thread.parentId;
+    if (parentId != null && parentId != rootId) {
+      ref.invalidate(
+        threadRepliesProvider(
+          ThreadRepliesArgs(channelId: channelId, rootId: parentId),
+        ),
+      );
+    }
+  }
+
   bool _mergeWindowEventIntoStore(NostrEvent event) {
     final isTimelineRow = EventKind.channelTimelineContentKinds.contains(
       event.kind,
     );
     final thread = isTimelineRow ? event.threadReference : null;
     if (thread?.parentId != null) {
-      final rootId = thread?.rootId;
-      if (rootId != null) {
-        ref.invalidate(
-          threadRepliesProvider(
-            ThreadRepliesArgs(channelId: channelId, rootId: rootId),
-          ),
-        );
-      }
-      final parentId = thread?.parentId;
-      if (parentId != null && parentId != rootId) {
-        ref.invalidate(
-          threadRepliesProvider(
-            ThreadRepliesArgs(channelId: channelId, rootId: parentId),
-          ),
-        );
-      }
       // Replies are kept in the store rather than dropped here, matching
       // desktop: the main timeline filters them out at render
       // (`buildMainTimelineEntries`), and their parent's "N replies" row needs

@@ -29,12 +29,18 @@ class _ThreadCursor {
   const _ThreadCursor({required this.createdAt, required this.eventId});
 }
 
-final threadRepliesProvider =
-    FutureProvider.family<List<NostrEvent>, ThreadRepliesArgs>((
-      ref,
-      args,
-    ) async {
-      final session = ref.watch(relaySessionProvider.notifier);
+final threadRepliesProvider = FutureProvider.autoDispose
+    .family<List<NostrEvent>, ThreadRepliesArgs>((ref, args) async {
+      // A reply missed while the socket is stale cannot invalidate this
+      // one-shot query. Refresh mounted threads when the session recovers;
+      // auto-dispose also makes reopening a thread start from relay truth.
+      ref.listen(relaySessionProvider, (previous, next) {
+        if (previous?.status != SessionStatus.connected &&
+            next.status == SessionStatus.connected) {
+          ref.invalidateSelf();
+        }
+      });
+      final session = ref.read(relaySessionProvider.notifier);
       final replies = <NostrEvent>[];
       _ThreadCursor? cursor;
       for (var page = 0; page < 500; page++) {
@@ -99,11 +105,11 @@ final threadLocalRepliesProvider =
 
 /// Relay-backed replies merged with signed local replies that are still
 /// waiting for acknowledgement.
-final threadRepliesWithLocalProvider =
-    Provider.family<AsyncValue<List<NostrEvent>>, ThreadRepliesArgs>((
-      ref,
-      args,
-    ) {
+///
+/// The relay query is route-scoped, while the optimistic local overlay stays
+/// alive until confirmation so it can survive closing and reopening a thread.
+final threadRepliesWithLocalProvider = Provider.autoDispose
+    .family<AsyncValue<List<NostrEvent>>, ThreadRepliesArgs>((ref, args) {
       final relayReplies = ref.watch(threadRepliesProvider(args));
       final localReplies = ref.watch(threadLocalRepliesProvider(args));
       final authoritative = relayReplies.value;

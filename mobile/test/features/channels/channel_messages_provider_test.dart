@@ -436,7 +436,11 @@ void main() {
       await relaySession.subscribed;
       await _pumpEventQueue();
       const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
-      container.read(threadRepliesWithLocalProvider(args));
+      final threadSubscription = container.listen(
+        threadRepliesWithLocalProvider(args),
+        (_, _) {},
+      );
+      addTearDown(threadSubscription.close);
       await _pumpEventQueue();
       final notifier = container.read(
         channelMessagesProvider(_channelId).notifier,
@@ -467,7 +471,6 @@ void main() {
 
       relaySession.emit(reply);
       await container.read(threadRepliesProvider(args).future);
-      container.read(threadRepliesWithLocalProvider(args));
       await _pumpEventQueue();
       expect(
         container
@@ -515,7 +518,11 @@ void main() {
       await relaySession.subscribed;
       await _pumpEventQueue();
       const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
-      container.read(threadRepliesWithLocalProvider(args));
+      final threadSubscription = container.listen(
+        threadRepliesWithLocalProvider(args),
+        (_, _) {},
+      );
+      addTearDown(threadSubscription.close);
       await _pumpEventQueue();
       final notifier = container.read(
         channelMessagesProvider(_channelId).notifier,
@@ -546,6 +553,61 @@ void main() {
             .read(threadRepliesWithLocalProvider(args))
             .value
             ?.map((event) => event.id),
+        ['reply'],
+      );
+    },
+  );
+
+  test(
+    'websocket fallback refetches an open thread when a reply arrives live',
+    () async {
+      final relaySession = _RecordingRelaySessionNotifier(
+        queryResults: [
+          Exception('channel window unavailable'),
+          <NostrEvent>[],
+          [
+            _event(
+              id: 'reply',
+              createdAt: 20,
+              extraTags: const [
+                ['e', 'root', '', 'reply'],
+              ],
+            ),
+          ],
+        ],
+      );
+      final container = _buildContainer(relaySession);
+      addTearDown(container.dispose);
+
+      container.read(channelMessagesProvider(_channelId));
+      await relaySession.subscribed;
+      relaySession.completeHistory([_event(id: 'history', createdAt: 10)]);
+      await _pumpEventQueue();
+      expect(relaySession.operations, ['subscribe', 'query', 'fetch']);
+
+      const args = ThreadRepliesArgs(channelId: _channelId, rootId: 'root');
+      final subscription = container.listen(
+        threadRepliesProvider(args),
+        (_, _) {},
+      );
+      addTearDown(subscription.close);
+      expect(await container.read(threadRepliesProvider(args).future), isEmpty);
+
+      relaySession.emit(
+        _event(
+          id: 'reply',
+          createdAt: 20,
+          extraTags: const [
+            ['e', 'root', '', 'reply'],
+          ],
+        ),
+      );
+      await _pumpEventQueue();
+
+      expect(
+        (await container.read(
+          threadRepliesProvider(args).future,
+        )).map((event) => event.id),
         ['reply'],
       );
     },
