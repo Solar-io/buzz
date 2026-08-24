@@ -147,12 +147,13 @@ int? _channelReadTimestamp({
 }
 
 bool _isOneToOneAgentDm(Channel channel, Set<String> agentPubkeys) {
-  if (!channel.isDm) return false;
   final participants = channel.participantPubkeys
       .map((pubkey) => pubkey.trim().toLowerCase())
       .where((pubkey) => pubkey.isNotEmpty)
       .toSet();
-  return participants.length == 2 && participants.any(agentPubkeys.contains);
+  return channel.isDm &&
+      participants.length == 2 &&
+      participants.any(agentPubkeys.contains);
 }
 
 /// Controls how a hydrated initial thread is added to the navigation stack.
@@ -279,12 +280,34 @@ class ChannelDetailPage extends HookConsumerWidget {
       );
       if (isProfileOwnedAgent) profileOwnedAgentPubkeys.add(normalized);
     }
-    final agentPubkeys = agentPubkeysWithProfileOwners(
-      knownAgentPubkeys: ref.watch(knownAgentPubkeysProvider),
-      profileOwnedAgentPubkeys: profileOwnedAgentPubkeys,
+    final agentDirectoryState = ref.watch(agentDirectoryProvider);
+    final agentOwnersState = ref.watch(agentOwnersProvider);
+    final channelBotPubkeysState = ref.watch(
+      channelBotPubkeysProvider(resolvedChannel.id),
     );
+    final agentPubkeys = agentPubkeysWithChannelBots(
+      knownAgentPubkeys: agentPubkeysWithProfileOwners(
+        knownAgentPubkeys: ref.watch(knownAgentPubkeysProvider),
+        profileOwnedAgentPubkeys: profileOwnedAgentPubkeys,
+      ),
+      channelBotPubkeys:
+          channelBotPubkeysState.asData?.value ?? const <String>{},
+    );
+    final participantCount = resolvedChannel.participantPubkeys
+        .map((pubkey) => pubkey.trim().toLowerCase())
+        .where((pubkey) => pubkey.isNotEmpty)
+        .toSet()
+        .length;
+    final isOneToOneDm = resolvedChannel.isDm && participantCount == 2;
+    final isAgentIdentityLoading =
+        isOneToOneDm &&
+        (agentDirectoryState.isLoading ||
+            agentOwnersState.isLoading ||
+            channelBotPubkeysState.isLoading);
     final showsHuddleAction =
-        showsComposer && !_isOneToOneAgentDm(resolvedChannel, agentPubkeys);
+        showsComposer &&
+        !isAgentIdentityLoading &&
+        !_isOneToOneAgentDm(resolvedChannel, agentPubkeys);
     final messagesNotifier = ref.read(
       channelMessagesProvider(channel.id).notifier,
     );

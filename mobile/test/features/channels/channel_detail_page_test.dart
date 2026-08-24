@@ -201,6 +201,8 @@ Widget _buildTestable({
   List<TypingEntry> typing = const [],
   Map<String, UserProfile> users = const {},
   Set<String> knownAgentPubkeys = const {},
+  Future<Set<String>> Function()? loadChannelBotPubkeys,
+  Future<List<AgentDirectoryEntry>> Function()? loadAgentDirectory,
   _FakeUserCacheNotifier? userCacheNotifier,
   List<ChannelMember> members = const [],
   List<ChannelMember> huddleMembers = const [],
@@ -281,9 +283,9 @@ Widget _buildTestable({
       ),
       if (huddleMembersNotifier != null)
         _mutableHuddleMembersProvider.overrideWith(() => huddleMembersNotifier),
-      channelBotPubkeysProvider(
-        _channelId,
-      ).overrideWith((ref) async => const <String>{}),
+      channelBotPubkeysProvider(_channelId).overrideWith(
+        (ref) async => loadChannelBotPubkeys?.call() ?? const <String>{},
+      ),
       channelBotPubkeysProvider(_huddleChannelId).overrideWith(
         (ref) async => {
           for (final member in huddleMembers)
@@ -291,6 +293,9 @@ Widget _buildTestable({
         },
       ),
       agentOwnersProvider.overrideWith((ref) async => const <String, String>{}),
+      agentDirectoryProvider.overrideWith(
+        (ref) async => loadAgentDirectory?.call() ?? const [],
+      ),
       knownAgentPubkeysProvider.overrideWithValue(knownAgentPubkeys),
       if (directoryUsers != null)
         relayDirectoryUsersProvider.overrideWith((ref) async => directoryUsers),
@@ -540,6 +545,74 @@ void main() {
 
       expect(find.byKey(const ValueKey('channel-huddle-button')), findsNothing);
       expect(find.byTooltip('Start Huddle'), findsNothing);
+    });
+
+    testWidgets('hides the Huddle action for a channel bot DM', (tester) async {
+      final dmChannel = Channel(
+        id: _channelId,
+        name: 'Bot DM',
+        channelType: 'dm',
+        visibility: 'private',
+        description: 'Direct message with a channel bot',
+        createdBy: 'self',
+        createdAt: DateTime(2025),
+        memberCount: 2,
+        participants: const ['Self', 'Bot'],
+        participantPubkeys: const ['self', 'bot'],
+        isMember: true,
+      );
+
+      await tester.pumpWidget(
+        _buildTestable(
+          messages: const [],
+          channel: dmChannel,
+          loadChannelBotPubkeys: () async => const {'bot'},
+          users: const {'bot': UserProfile(pubkey: 'bot', displayName: 'Bot')},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('channel-huddle-button')), findsNothing);
+      expect(find.byTooltip('Start Huddle'), findsNothing);
+    });
+
+    testWidgets('keeps the Huddle action hidden while agent identity loads', (
+      tester,
+    ) async {
+      final directoryCompleter = Completer<List<AgentDirectoryEntry>>();
+      final dmChannel = Channel(
+        id: _channelId,
+        name: 'DM',
+        channelType: 'dm',
+        visibility: 'private',
+        description: 'Direct message',
+        createdBy: 'self',
+        createdAt: DateTime(2025),
+        memberCount: 2,
+        participants: const ['Self', 'Alice'],
+        participantPubkeys: const ['self', 'alice'],
+        isMember: true,
+      );
+
+      await tester.pumpWidget(
+        _buildTestable(
+          messages: const [],
+          channel: dmChannel,
+          loadAgentDirectory: () => directoryCompleter.future,
+          users: const {
+            'alice': UserProfile(pubkey: 'alice', displayName: 'Alice'),
+          },
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('channel-huddle-button')), findsNothing);
+      expect(find.byTooltip('Start Huddle'), findsNothing);
+
+      directoryCompleter.complete(const []);
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Start Huddle'), findsOneWidget);
     });
 
     testWidgets('keeps the Members action for group DMs', (tester) async {
