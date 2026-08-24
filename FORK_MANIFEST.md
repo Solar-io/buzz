@@ -24,7 +24,12 @@ Dropped 2026-08-24: one auto-commit noise commit and a stray `logs/verification.
 ## Unmerged branches
 
 - `claude/cli-upload-sanitizer` — `fix(cli): sanitize image uploads to the relay's
-  metadata-free contract`. Genuine CLI fix, **upstream-able as-is**; PR it when ready.
+  metadata-free contract`. **Superseded by upstream PR
+  [block/buzz#5690](https://github.com/block/buzz/pull/5690)** (avi-xyz, opened 2026-08-12,
+  OPEN, awaiting review): same bug, better architecture — new shared `buzz-image`
+  leaf crate uniting sanitizer and validator instead of our CLI-local port. Do not
+  PR ours; verify theirs (see WORK_LOGS 2026-08-24) and retire this branch once
+  #5690 lands.
 - `claude/agent-a558d15607582d17e` — stale session auto-commit branch (pre-cleanup
   history). Safe to delete.
 
