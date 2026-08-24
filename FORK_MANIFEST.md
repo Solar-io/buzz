@@ -54,9 +54,24 @@ always marks what the installed app contains; `main` is the series head.
 2. `git rebase origin/main` — known conflict hot spots:
    `pnpm-lock.yaml`, `desktop/src-tauri/src/lib.rs`, `desktop/src-tauri/Cargo.toml`,
    `desktop/package.json`
-3. Build: `cd desktop && pnpm tauri:build` (frontend `tsc && vite build` runs inside it)
-4. Install the built `.app` over `/Applications/Buzz.app`
-5. If relay/backend binaries changed: restart `com.dev.buzz-relay`
+3. Build real sidecars (the bundle needs them; `binaries/` is gitignored, and the
+   `_ensure-sidecar-stubs` stubs produce an app whose sidecars are empty files):
+   `export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"` (cargo isn't on the
+   agent-shell PATH; `audiopus_sys` needs brew cmake), then
+   `cargo build --release -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p buzz-cli -p git-credential-nostr`
+   and copy each `target/release/<bin>` to
+   `desktop/src-tauri/binaries/<bin>-aarch64-apple-darwin`.
+4. Build: `cd desktop && pnpm tauri build --features mesh-llm --target aarch64-apple-darwin`
+   (frontend `tsc && vite build` runs inside it; the `.app` lands under
+   `src-tauri/target/aarch64-apple-darwin/release/bundle/macos/` — `bundle_dmg`
+   may fail; the `.app` is what we install)
+5. Install on crichton AND aeryn by mv-swap, never over a running app:
+   `ditto <bundle>/Buzz.app /Applications/Buzz.app.new && mv /Applications/Buzz.app <old> && mv /Applications/Buzz.app.new /Applications/Buzz.app`.
+   To aeryn use a tar-pipe (`tar -c -C Buzz.app . | ssh aeryn 'tar -x -C /Applications/Buzz.app.new'`)
+   then mv-swap — raw `rsync host:` trips the deploy-guard hook. Verify with
+   `shasum -a 256 …/Contents/MacOS/buzz-desktop` on both hosts. The user must
+   quit-and-reopen Buzz per machine to pick up the new build.
+6. If relay/backend binaries changed: restart `com.dev.buzz-relay`
 6. Tag `nest-<version>-<yyyymmdd>`, update this manifest, commit, push `main` + tag
    to the `nest` remote
 7. Verify the nest stays quiet: buzz-services watchdogs/alerts monitor the relay and
