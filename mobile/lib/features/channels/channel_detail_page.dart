@@ -146,6 +146,15 @@ int? _channelReadTimestamp({
   return dateTimeToUnixSeconds(channel.lastMessageAt);
 }
 
+bool _isOneToOneAgentDm(Channel channel, Set<String> agentPubkeys) {
+  if (!channel.isDm) return false;
+  final participants = channel.participantPubkeys
+      .map((pubkey) => pubkey.trim().toLowerCase())
+      .where((pubkey) => pubkey.isNotEmpty)
+      .toSet();
+  return participants.length == 2 && participants.any(agentPubkeys.contains);
+}
+
 /// Controls how a hydrated initial thread is added to the navigation stack.
 enum InitialThreadRouteBehavior {
   /// Keep the channel route beneath the thread.
@@ -260,6 +269,22 @@ class ChannelDetailPage extends HookConsumerWidget {
         !resolvedChannel.isForum &&
         resolvedChannel.isMember &&
         !resolvedChannel.isArchived;
+    final profileOwnedAgentPubkeys = <String>[];
+    for (final participantPubkey in resolvedChannel.participantPubkeys) {
+      final normalized = participantPubkey.trim().toLowerCase();
+      final isProfileOwnedAgent = ref.watch(
+        userCacheProvider.select(
+          (cache) => cache[normalized]?.ownerPubkey != null,
+        ),
+      );
+      if (isProfileOwnedAgent) profileOwnedAgentPubkeys.add(normalized);
+    }
+    final agentPubkeys = agentPubkeysWithProfileOwners(
+      knownAgentPubkeys: ref.watch(knownAgentPubkeysProvider),
+      profileOwnedAgentPubkeys: profileOwnedAgentPubkeys,
+    );
+    final showsHuddleAction =
+        showsComposer && !_isOneToOneAgentDm(resolvedChannel, agentPubkeys);
     final messagesNotifier = ref.read(
       channelMessagesProvider(channel.id).notifier,
     );
@@ -394,7 +419,7 @@ class ChannelDetailPage extends HookConsumerWidget {
         ),
         actions: resolvedChannel.isDm
             ? [
-                if (showsComposer)
+                if (showsHuddleAction)
                   _HuddleButton(
                     channel: resolvedChannel,
                     events: [
