@@ -134,6 +134,12 @@ export function ProjectChannelHome({
     null;
   const workspaceSheetOpen =
     workspaceSheetTab != null && workspaceRepository != null;
+  const previousWorkspaceSheetOpenRef = React.useRef(workspaceSheetOpen);
+  const workspaceSheetVisibilityChanged =
+    previousWorkspaceSheetOpenRef.current !== workspaceSheetOpen;
+  React.useEffect(() => {
+    previousWorkspaceSheetOpenRef.current = workspaceSheetOpen;
+  }, [workspaceSheetOpen]);
   const summaryVisible = summaryOpen && !workspaceSheetOpen;
 
   const openWorkspaceSheet = React.useCallback(
@@ -203,8 +209,8 @@ export function ProjectChannelHome({
   const handleExpandWorkspace = React.useCallback(() => {
     if (!workspaceRepository || !workspaceSheetTab) return;
     void goProject(project.id, {
-      ...workspaceDetail?.navigation,
       repositoryId: workspaceRepository.id,
+      ...workspaceDetail?.navigation,
       tab: projectHomeWorkspaceSheetExpandTab(workspaceSheetTab),
     });
   }, [
@@ -352,6 +358,7 @@ export function ProjectChannelHome({
                   backLabel: workspaceDetail?.backLabel,
                   onBack: workspaceDetail?.onBack,
                 }}
+                idleAuxiliaryOverridesThread={workspaceSheetOpen}
                 idleAuxiliaryTitle={
                   workspaceSheetTab
                     ? projectHomeWorkspaceSheetTitle(workspaceSheetTab)
@@ -389,6 +396,7 @@ export function ProjectChannelHome({
           projects={projects}
         />
         <ProjectContextRail
+          animateWidth={!workspaceSheetVisibilityChanged}
           open={summaryVisible}
           panelWidthPx={summaryWidth.widthPx}
           resizing={summaryWidth.isResizing}
@@ -402,7 +410,6 @@ export function ProjectChannelHome({
               onResetWidth={summaryWidth.onResetWidth}
               onResizeStart={summaryWidth.onResizeStart}
               testId="project-home-summary-column"
-              title="Overview"
               widthPx={summaryWidth.widthPx}
             >
               <ProjectHomeContextPanel

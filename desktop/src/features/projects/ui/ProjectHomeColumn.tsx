@@ -1,12 +1,7 @@
 import type * as React from "react";
 
 import { RightAuxiliaryPane } from "@/features/channels/ui/RightAuxiliaryPane";
-import {
-  AuxiliaryPanelBody,
-  AuxiliaryPanelHeader,
-  AuxiliaryPanelHeaderGroup,
-  AuxiliaryPanelHeaderTitleBlock,
-} from "@/shared/layout/AuxiliaryPanel";
+import { AuxiliaryPanelBody } from "@/shared/layout/AuxiliaryPanel";
 import { cn } from "@/shared/lib/cn";
 
 export function ProjectHomeColumn({
@@ -16,7 +11,6 @@ export function ProjectHomeColumn({
   onResetWidth,
   onResizeStart,
   testId,
-  title,
   widthPx,
 }: {
   bodyClassName?: string;
@@ -25,7 +19,6 @@ export function ProjectHomeColumn({
   onResetWidth: () => void;
   onResizeStart: (event: React.PointerEvent<HTMLButtonElement>) => void;
   testId: string;
-  title: string;
   widthPx: number;
 }) {
   return (
@@ -36,17 +29,11 @@ export function ProjectHomeColumn({
       detached
       onResetWidth={onResetWidth}
       onResizeStart={onResizeStart}
+      showResizeIndicator={false}
       testId={testId}
       widthPx={widthPx}
     >
       <div className="relative z-30 flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-sidebar">
-        <AuxiliaryPanelHeader mode="panel" transparent>
-          <AuxiliaryPanelHeaderGroup>
-            <div className="-ml-1 min-w-0 flex-1">
-              <AuxiliaryPanelHeaderTitleBlock title={title} />
-            </div>
-          </AuxiliaryPanelHeaderGroup>
-        </AuxiliaryPanelHeader>
         <AuxiliaryPanelBody
           className={cn("min-h-0 flex-1 overflow-hidden", bodyClassName)}
           mode="panel"

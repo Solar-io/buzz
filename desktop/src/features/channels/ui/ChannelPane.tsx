@@ -47,6 +47,7 @@ import {
 import { useWelcomeComposerBanner } from "@/features/channels/ui/useWelcomeComposerBanner";
 import {
   mentionsKnownAgent,
+  shouldPrioritizeIdleAuxiliary,
   shouldUseFocusIdleDrawer,
 } from "@/features/channels/ui/ChannelPane.helpers";
 import { HuddleStartingView, HuddleTranscriptIntro } from "@/features/huddle";
@@ -84,6 +85,7 @@ export const ChannelPane = React.memo(function ChannelPane({
   header,
   idleAuxiliaryPanel = null,
   idleAuxiliaryHeaderActions,
+  idleAuxiliaryOverridesThread = false,
   idleAuxiliaryTitle = "",
   hasOlderMessages,
   historyExhausted,
@@ -263,7 +265,6 @@ export const ChannelPane = React.memo(function ChannelPane({
     onEdit(target);
     return true;
   }, [findLastOwnEditable, messages, onEdit]);
-
   const handleEditLastOwnThreadMessage = React.useCallback((): boolean => {
     if (!onEdit) return false;
     const scope: TimelineMessage[] = [];
@@ -284,7 +285,6 @@ export const ChannelPane = React.memo(function ChannelPane({
     currentPubkey,
     relaySelfQuery.data,
   );
-
   const isComposerDisabled =
     !activeChannel?.isMember ||
     activeChannel.archivedAt !== null ||
@@ -294,7 +294,6 @@ export const ChannelPane = React.memo(function ChannelPane({
     isSending;
   const knownAgentPubkeys = React.useMemo(() => {
     const pubkeys = new Set<string>();
-
     for (const pubkey of agentPubkeys ?? []) {
       pubkeys.add(pubkey.toLowerCase());
     }
@@ -304,7 +303,6 @@ export const ChannelPane = React.memo(function ChannelPane({
     for (const agent of activityAgents) {
       pubkeys.add(agent.pubkey.toLowerCase());
     }
-
     return pubkeys;
   }, [activityAgents, agentPubkeys, agentSessionAgents]);
   const handleSendMessage = React.useCallback(
@@ -323,7 +321,6 @@ export const ChannelPane = React.memo(function ChannelPane({
         isActiveWelcomeChannel &&
         (containsWelcomePersonaMention(content) ||
           mentionsKnownAgent(mentionPubkeys, knownAgentPubkeys));
-
       messageTimelineRef.current?.scrollToBottomOnNextUpdate();
       await onSendMessage(
         content,
@@ -333,7 +330,6 @@ export const ChannelPane = React.memo(function ChannelPane({
         threadContext,
         forceRest,
       );
-
       if (
         channelId &&
         channelId !== activeChannelId &&
@@ -342,7 +338,6 @@ export const ChannelPane = React.memo(function ChannelPane({
       ) {
         await goChannel(channelId, { replace: true });
       }
-
       if (shouldCompleteWelcomeBanner) {
         completeWelcomeComposerBanner();
       }
@@ -396,7 +391,6 @@ export const ChannelPane = React.memo(function ChannelPane({
       }),
     [activeChannel, currentPubkey, profiles],
   );
-
   const handleWelcomeAddAgent = React.useCallback(() => {
     onAddAgent?.({
       beforeSend: () =>
@@ -439,7 +433,6 @@ export const ChannelPane = React.memo(function ChannelPane({
     for (const message of threadAllMessages) {
       messagesById.set(message.id, message);
     }
-
     return buildVideoReviewPresentationByMessageId({
       channelId: activeChannel?.id ?? null,
       channelName: activeChannel?.name,
@@ -460,7 +453,6 @@ export const ChannelPane = React.memo(function ChannelPane({
     threadAllMessages,
     threadHeadMessage,
   ]);
-
   const isOverlay = useIsThreadPanelOverlay();
   const useSplitAuxiliaryPane = !isSinglePanelView && !isOverlay;
   const threadViewMode = useThreadViewMode();
@@ -478,6 +470,8 @@ export const ChannelPane = React.memo(function ChannelPane({
       }),
     [agentSessionAgents, openAgentSessionPubkey, profilePanelPubkey, profiles],
   );
+  const hasIdleAuxiliary =
+    Boolean(idleAuxiliaryPanel) && Boolean(onCloseIdleAuxiliaryPanel);
   const useFocusIdleDrawer = shouldUseFocusIdleDrawer({
     channelManagementOpen,
     hasAgentSession: Boolean(activeChannel && selectedAgent),
@@ -487,11 +481,17 @@ export const ChannelPane = React.memo(function ChannelPane({
     hasThreadSurface: Boolean(threadHeadMessage) || shouldShowThreadSkeleton,
     useSplitAuxiliaryPane,
   });
+  const priorityIdleAuxiliary = shouldPrioritizeIdleAuxiliary(
+    idleAuxiliaryOverridesThread,
+    hasIdleAuxiliary,
+  );
   const { channelIsCovered, markExitComplete } = useFocusDrawerPresence(
     useFocusThreadDrawer || useFocusIdleDrawer,
-    useFocusThreadDrawer
-      ? onCloseThread
-      : (onCloseIdleAuxiliaryPanel ?? onCloseThread),
+    priorityIdleAuxiliary
+      ? (onCloseIdleAuxiliaryPanel ?? onCloseThread)
+      : useFocusThreadDrawer
+        ? onCloseThread
+        : (onCloseIdleAuxiliaryPanel ?? onCloseThread),
   );
   const { changeThreadViewMode, layoutScrollTargetId, resolveScrollTarget } =
     useThreadViewModeSwitch({
@@ -551,6 +551,25 @@ export const ChannelPane = React.memo(function ChannelPane({
     ) : (
       wrapAux(panel, "idle-auxiliary-panel")
     );
+  const idleAuxiliarySurface =
+    idleAuxiliaryPanel && onCloseIdleAuxiliaryPanel
+      ? wrapIdlePanel(
+          <IdleAuxiliaryPanel
+            canResetWidth={canResetThreadPanelWidth}
+            headerControls={idleAuxiliaryHeaderActions}
+            isFocusDrawer={useFocusIdleDrawer}
+            isSinglePanelView={isSinglePanelView}
+            onClose={onCloseIdleAuxiliaryPanel}
+            onResetWidth={onResetThreadPanelWidth}
+            onResizeStart={onThreadPanelResizeStart}
+            title={idleAuxiliaryTitle}
+            useSplitAuxiliaryPane={useSplitAuxiliaryPane}
+            widthPx={threadPanelWidthPx}
+          >
+            {idleAuxiliaryPanel}
+          </IdleAuxiliaryPanel>,
+        )
+      : null;
   const threadHeaderLeading = useSplitAuxiliaryPane ? (
     <ThreadViewModeToggle onChange={changeThreadViewMode} />
   ) : undefined;
@@ -577,7 +596,6 @@ export const ChannelPane = React.memo(function ChannelPane({
           data-testid="channel-shared-header-backdrop"
         />
       ) : null}
-
       {!isSinglePanelView ? (
         <section
           aria-label="Channel messages and composer"
@@ -798,16 +816,8 @@ export const ChannelPane = React.memo(function ChannelPane({
           </div>
         </section>
       ) : null}
-
-      {/*
-       * `AnimatePresence` keeps the focus thread drawer mounted through its exit
-       * animation — without it the drawer's own existence condition
-       * (`useFocusThreadDrawer`, which is derived from `threadHeadMessage`) goes
-       * false on the same frame as the close, and there is nothing left to
-       * animate. It can hold the real thread through the exit rather than a
-       * frozen snapshot because the panel is fully prop-driven.
-       */}
-      <AnimatePresence onExitComplete={markExitComplete}>
+      {/* Serialize replacements so focus drawers keep one travel direction. */}
+      <AnimatePresence mode="wait" onExitComplete={markExitComplete}>
         {channelManagementOpen && activeChannel ? (
           <ChannelManagementAuxiliaryPanel
             activeChannel={activeChannel}
@@ -824,6 +834,8 @@ export const ChannelPane = React.memo(function ChannelPane({
             useSplitAuxiliaryPane={useSplitAuxiliaryPane}
             transparentChrome={hasSplitAuxiliaryPane}
           />
+        ) : priorityIdleAuxiliary && idleAuxiliarySurface ? (
+          idleAuxiliarySurface
         ) : threadHeadMessage ? (
           (() => {
             const panel = (
@@ -975,24 +987,9 @@ export const ChannelPane = React.memo(function ChannelPane({
             );
             return wrapAux(panel, "user-profile-panel");
           })()
-        ) : idleAuxiliaryPanel && onCloseIdleAuxiliaryPanel ? (
-          wrapIdlePanel(
-            <IdleAuxiliaryPanel
-              canResetWidth={canResetThreadPanelWidth}
-              headerControls={idleAuxiliaryHeaderActions}
-              isFocusDrawer={useFocusIdleDrawer}
-              isSinglePanelView={isSinglePanelView}
-              onClose={onCloseIdleAuxiliaryPanel}
-              onResetWidth={onResetThreadPanelWidth}
-              onResizeStart={onThreadPanelResizeStart}
-              title={idleAuxiliaryTitle}
-              useSplitAuxiliaryPane={useSplitAuxiliaryPane}
-              widthPx={threadPanelWidthPx}
-            >
-              {idleAuxiliaryPanel}
-            </IdleAuxiliaryPanel>,
-          )
-        ) : null}
+        ) : (
+          idleAuxiliarySurface
+        )}
       </AnimatePresence>
     </div>
   );
