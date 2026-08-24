@@ -69,6 +69,10 @@ export const EMPTY_GLOBAL_CONFIG: GlobalAgentConfig = {
   provider: null,
   model: null,
   preferred_runtime: null,
+  // Belongs to global only — do NOT render an editor for it here:
+  // AgentConfigFields is shared with per-agent/persona editing, which has no
+  // shared-instructions field. The textarea lives in AgentDefaultsEditor.
+  shared_instructions: null,
 };
 
 const BAKED_STRUCTURED_KEYS = new Set([

@@ -153,6 +153,49 @@ fn validate_accepts_valid_provider_and_model() {
     assert!(validate_global_config(&config).is_ok());
 }
 
+// ── validate_global_config: shared_instructions rules ────────────────────────
+
+#[test]
+fn validate_rejects_shared_instructions_with_nul_byte() {
+    let config = GlobalAgentConfig {
+        shared_instructions: Some("be kind\0evil".to_string()),
+        ..Default::default()
+    };
+    let err = validate_global_config(&config).unwrap_err();
+    assert!(
+        err.contains("Shared instructions") && err.contains("NUL"),
+        "expected NUL-byte error for shared_instructions, got: {err}"
+    );
+}
+
+#[test]
+fn validate_rejects_shared_instructions_exceeding_size_cap() {
+    // Cap is 64 KiB — the same budget as a per-agent system prompt.
+    let config = GlobalAgentConfig {
+        shared_instructions: Some("x".repeat(64 * 1024 + 1)),
+        ..Default::default()
+    };
+    let err = validate_global_config(&config).unwrap_err();
+    assert!(
+        err.contains("Shared instructions are too long")
+            && err.contains("max 65536")
+            && err.contains("65537 bytes"),
+        "expected over-cap error naming the 64 KiB limit, got: {err}"
+    );
+}
+
+#[test]
+fn validate_accepts_shared_instructions_at_exactly_cap() {
+    let config = GlobalAgentConfig {
+        shared_instructions: Some("x".repeat(65536)),
+        ..Default::default()
+    };
+    assert!(
+        validate_global_config(&config).is_ok(),
+        "exactly 65536 bytes must be accepted"
+    );
+}
+
 // ── normalize_global_config_fields ───────────────────────────────────────────
 
 #[test]
@@ -227,6 +270,47 @@ fn normalize_none_fields_stay_none() {
     assert!(config.model.is_none());
 }
 
+#[test]
+fn normalize_some_empty_shared_instructions_becomes_none() {
+    let mut config = GlobalAgentConfig {
+        shared_instructions: Some("".to_string()),
+        ..Default::default()
+    };
+    normalize_global_config_fields(&mut config);
+    assert!(
+        config.shared_instructions.is_none(),
+        "Some(\"\") shared_instructions must be normalized to None"
+    );
+}
+
+#[test]
+fn normalize_whitespace_only_shared_instructions_becomes_none() {
+    let mut config = GlobalAgentConfig {
+        shared_instructions: Some("  \t\n ".to_string()),
+        ..Default::default()
+    };
+    normalize_global_config_fields(&mut config);
+    assert!(
+        config.shared_instructions.is_none(),
+        "whitespace-only shared_instructions must be normalized to None"
+    );
+}
+
+#[test]
+fn normalize_valid_shared_instructions_unchanged() {
+    // Like provider/model, normalization only blanks → None; a real value is
+    // stored verbatim (spawn resolves the trimmed form).
+    let mut config = GlobalAgentConfig {
+        shared_instructions: Some("Be kind to humans.".to_string()),
+        ..Default::default()
+    };
+    normalize_global_config_fields(&mut config);
+    assert_eq!(
+        config.shared_instructions.as_deref(),
+        Some("Be kind to humans.")
+    );
+}
+
 // ── strip_empty_env_vars ──────────────────────────────────────────────────────
 
 #[test]
@@ -258,6 +342,7 @@ fn default_config_is_all_none_empty() {
     assert!(config.env_vars.is_empty());
     assert!(config.provider.is_none());
     assert!(config.model.is_none());
+    assert!(config.shared_instructions.is_none());
 }
 
 #[test]
@@ -267,6 +352,7 @@ fn roundtrip_serialization() {
         provider: Some("anthropic".to_string()),
         model: Some("claude-opus-4".to_string()),
         preferred_runtime: Some("claude".to_string()),
+        shared_instructions: Some("Be kind to humans.".to_string()),
     };
     let json = serde_json::to_string(&config).expect("serialize");
     let back: GlobalAgentConfig = serde_json::from_str(&json).expect("deserialize");
@@ -292,6 +378,14 @@ fn default_global_config_serializes_all_fields() {
     assert!(
         json.contains("\"model\""),
         "serialized JSON must always include model; got: {json}"
+    );
+    assert!(
+        json.contains("\"shared_instructions\""),
+        "serialized JSON must always include shared_instructions; got: {json}"
+    );
+    assert!(
+        json.contains("\"shared_instructions\":null"),
+        "unset shared_instructions must serialize as null (unset), not be omitted; got: {json}"
     );
 }
 
@@ -594,6 +688,7 @@ fn populated_global_config_round_trips() {
         provider: Some("anthropic".to_string()),
         model: Some("claude-opus-4-5".to_string()),
         preferred_runtime: None,
+        shared_instructions: Some("Be kind to humans.".to_string()),
     };
     let json = serde_json::to_string(&original).expect("serialization must not fail");
     let decoded: GlobalAgentConfig =

@@ -175,14 +175,15 @@ test.describe("global agent config screenshots", () => {
   });
 
   // Shot 01: AgentDefaultsSettingsCard populated with provider + model +
-  // env var — shows the "Agent defaults" card in the Agents view as it looks
-  // when a user has set global defaults.
+  // env var + shared instructions — shows the "Agent defaults" card in the
+  // Agents view as it looks when a user has set global defaults.
   test("01-global-agent-config-card-populated", async ({ page }) => {
     await installMockBridge(page, {
       globalAgentConfig: {
         provider: "anthropic",
         model: "claude-opus-4-5",
         env_vars: { ANTHROPIC_API_KEY: "sk-ant-placeholder" },
+        shared_instructions: "Reply concisely. Cite file paths when unsure.",
       },
     });
 
@@ -194,6 +195,51 @@ test.describe("global agent config screenshots", () => {
 
     await card.screenshot({
       path: `${SHOTS}/01-global-agent-config-card-populated.png`,
+    });
+  });
+
+  test("shared instructions load, edit, and persist trimmed", async ({
+    page,
+  }) => {
+    await installMockBridge(page, {
+      globalAgentConfig: {
+        provider: "anthropic",
+        model: "claude-opus-4-5",
+        // Satisfy the Anthropic API-key requirement so the config is valid and
+        // the Save button is enabled without touching the harness fields.
+        env_vars: { ANTHROPIC_API_KEY: "sk-ant-placeholder" },
+        shared_instructions: "Existing global guidance.",
+      },
+    });
+
+    await openAiDefaultsSettings(page);
+
+    const card = page.getByTestId("settings-global-agent-config");
+    const field = card.getByTestId("global-shared-instructions");
+    await expect(field).toHaveValue("Existing global guidance.");
+    await expect(
+      card.getByText(/Live — agents pick it up on next restart/),
+    ).toBeVisible();
+
+    await field.fill("  Updated shared guidance.  ");
+    await card
+      .getByRole("button", { name: "Save defaults" })
+      .filter({ visible: true })
+      .click();
+
+    const saved = await page.evaluate(async () =>
+      (
+        window as typeof window & {
+          __BUZZ_E2E_INVOKE_MOCK_COMMAND__?: (
+            command: string,
+            payload: unknown,
+          ) => Promise<unknown>;
+        }
+      ).__BUZZ_E2E_INVOKE_MOCK_COMMAND__?.("get_global_agent_config", null),
+    );
+    // The editor trims on save: surrounding whitespace never reaches storage.
+    expect(saved).toMatchObject({
+      shared_instructions: "Updated shared guidance.",
     });
   });
 

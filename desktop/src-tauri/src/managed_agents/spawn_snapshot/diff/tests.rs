@@ -18,6 +18,7 @@ fn base() -> SpawnConfigSnapshot {
         ]),
         relay_url: "wss://relay.example".into(),
         team_instructions: Some("Team says hello.".into()),
+        shared_instructions: Some("Global says be kind.".into()),
         system_prompt: Some("You are a test agent.".into()),
         model: Some("gpt-5".into()),
         provider: Some("openai".into()),
@@ -59,6 +60,7 @@ fn mutations() -> Vec<Mutation> {
         }),
         ("relay_url", |s| s.relay_url = "wss://other.example".into()),
         ("team_instructions", |s| s.team_instructions = None),
+        ("shared_instructions", |s| s.shared_instructions = None),
         ("system_prompt", |s| s.system_prompt = None),
         ("model", |s| s.model = None),
         ("provider", |s| s.provider = None),
@@ -357,6 +359,7 @@ fn large_text_fields_report_character_counts_only() {
     let mut after = base();
     after.system_prompt = Some("Longer replacement prompt.".into());
     after.team_instructions = None;
+    after.shared_instructions = Some("Global says be prompt-safe.".into());
     let entries = diff(&base(), &after);
     assert_eq!(
         change_at(&entries, "system_prompt"),
@@ -370,6 +373,13 @@ fn large_text_fields_report_character_counts_only() {
         &RestartChange::Text {
             before_chars: Some("Team says hello.".chars().count()),
             after_chars: None,
+        }
+    );
+    assert_eq!(
+        change_at(&entries, "shared_instructions"),
+        &RestartChange::Text {
+            before_chars: Some("Global says be kind.".chars().count()),
+            after_chars: Some("Global says be prompt-safe.".chars().count()),
         }
     );
 }

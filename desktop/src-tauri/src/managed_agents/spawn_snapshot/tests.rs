@@ -750,6 +750,130 @@ fn linked_instance_prompt_model_provider_resolve_from_one_call() {
     );
 }
 
+// ── Global shared instructions ───────────────────────────────────────────────
+
+#[test]
+fn prospective_snapshot_includes_global_shared_instructions() {
+    let rec = record();
+    let global = GlobalAgentConfig {
+        shared_instructions: Some("  be kind to humans  ".to_string()),
+        ..Default::default()
+    };
+    let snap = snapshot(&rec, &[], &[], "wss://ws.example", &global);
+    assert_eq!(
+        snap["shared_instructions"], "be kind to humans",
+        "prospective snapshot must carry the trimmed global shared instructions"
+    );
+}
+
+#[test]
+fn global_shared_instructions_unset_snapshots_null() {
+    let rec = record();
+    let snap = snapshot(&rec, &[], &[], "wss://ws.example", &Default::default());
+    assert!(
+        snap["shared_instructions"].is_null(),
+        "unset global shared instructions must snapshot as null; got: {}",
+        snap["shared_instructions"]
+    );
+}
+
+#[test]
+fn blank_global_shared_instructions_snapshot_like_unset() {
+    // Blank normalizes through `effective_shared_instructions`, so a blank
+    // edit must not badge: what a restart would run is identical to unset.
+    let rec = record();
+    let unset = GlobalAgentConfig::default();
+    let blank = GlobalAgentConfig {
+        shared_instructions: Some("   ".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(
+        snapshot(&rec, &[], &[], "wss://ws.example", &unset),
+        snapshot(&rec, &[], &[], "wss://ws.example", &blank),
+        "blank shared instructions must snapshot identically to unset"
+    );
+}
+
+#[test]
+fn global_shared_instructions_edit_yields_shared_instructions_drift_entry() {
+    // A process stamped under global shared instructions "shared a"; the
+    // global is later edited to "shared b". The tracked pair must light the
+    // badge with exactly one `shared_instructions` entry, redacted as Text
+    // (character counts only, never the prompt body).
+    let rec = record();
+    let global_a = GlobalAgentConfig {
+        shared_instructions: Some("shared a".to_string()),
+        ..Default::default()
+    };
+    let global_b = GlobalAgentConfig {
+        shared_instructions: Some("shared b".to_string()),
+        ..Default::default()
+    };
+    let stamped =
+        prospective_spawn_config_snapshot(&rec, &[], &[], "wss://ws.example", &global_a, false);
+    let current =
+        prospective_spawn_config_snapshot(&rec, &[], &[], "wss://ws.example", &global_b, false);
+    let entries = eligible_restart_diff(
+        false,
+        Some(TrackedSpawnState {
+            stamped: &stamped,
+            current: &current,
+            stamped_availability: None,
+            current_availability: None,
+        }),
+    );
+    assert_eq!(
+        entries.len(),
+        1,
+        "a global shared-instructions edit must badge with exactly one entry; got: {entries:?}"
+    );
+    assert_eq!(
+        entries[0].field, "shared_instructions",
+        "the drift entry must name the global shared instructions field"
+    );
+    assert_eq!(
+        entries[0].change,
+        super::diff::RestartChange::Text {
+            before_chars: Some("shared a".chars().count()),
+            after_chars: Some("shared b".chars().count()),
+        }
+    );
+}
+
+#[test]
+fn unchanged_global_shared_instructions_produces_no_drift_entry() {
+    let rec = record();
+    let stamped = prospective_spawn_config_snapshot(
+        &rec,
+        &[],
+        &[],
+        "wss://ws.example",
+        &Default::default(),
+        false,
+    );
+    let current = prospective_spawn_config_snapshot(
+        &rec,
+        &[],
+        &[],
+        "wss://ws.example",
+        &Default::default(),
+        false,
+    );
+    let entries = eligible_restart_diff(
+        false,
+        Some(TrackedSpawnState {
+            stamped: &stamped,
+            current: &current,
+            stamped_availability: None,
+            current_availability: None,
+        }),
+    );
+    assert!(
+        entries.is_empty(),
+        "an unchanged global must produce no restart diff; got: {entries:?}"
+    );
+}
+
 // ── I2: definition args and env reach the snapshot ───────────────────────────
 //
 // These tests prove that editing a custom harness definition's args or env

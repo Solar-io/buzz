@@ -694,6 +694,17 @@ pub fn spawn_agent_child(
     } else {
         command.env_remove("BUZZ_ACP_TEAM_INSTRUCTIONS");
     }
+    // Global shared instructions: resolved through the SAME helper the
+    // prospective snapshot uses, so the restart badge can never disagree with
+    // the env write. `env_remove` clears any ambient parent value when unset —
+    // like the team key, this is a freely-overridable behavior knob, not a
+    // reserved key, so a deliberate user-env override still wins.
+    let shared_instructions = super::spawn_snapshot::effective_shared_instructions(&global);
+    if let Some(instructions) = &shared_instructions {
+        command.env("BUZZ_ACP_SHARED_INSTRUCTIONS", instructions);
+    } else {
+        command.env_remove("BUZZ_ACP_SHARED_INSTRUCTIONS");
+    }
 
     // Prompt, model, and provider all come from the single `effective_cfg`
     // resolved at the top of this function — the SAME resolve the spawn-config
@@ -857,6 +868,7 @@ pub fn spawn_agent_child(
             descriptor: &descriptor,
             relay_url: &effective_relay_url,
             team_instructions: team_instructions.as_deref(),
+            shared_instructions: shared_instructions.as_deref(),
             system_prompt: effective_prompt.as_deref(),
             model: effective_model.as_deref(),
             provider: effective_provider.as_deref(),

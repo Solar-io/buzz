@@ -603,6 +603,11 @@ pub struct PromptContext {
     /// on `session/new`. Never part of the prompt.
     pub session_title: Option<String>,
     pub team_instructions: Option<String>,
+    /// Desktop-global instructions layered after `[Team Instructions]` and
+    /// before agent memory in the composed system prompt. Resolved from the
+    /// desktop's global agent config at spawn time; applies to every agent
+    /// the desktop launches, regardless of team membership.
+    pub shared_instructions: Option<String>,
     pub heartbeat_prompt: Option<String>,
     /// Base prompt content, or `None` if `--no-base-prompt` was passed.
     ///
@@ -1018,19 +1023,7 @@ async fn create_session_and_apply_model(
     // its own `[Agent Memory — core]` header, and canvas carries its own
     // `[Channel Canvas]` header; both are appended with a blank-line separator.
     let is_goose = agent.agent_name == "goose";
-    let combined_system_prompt = with_canvas(
-        with_huddle_instructions(
-            with_core(
-                with_team(
-                    framed_system_prompt(&ctx.cwd, ctx.base_prompt, ctx.system_prompt.as_deref()),
-                    ctx.team_instructions.as_deref(),
-                ),
-                agent_core,
-            ),
-            channel.huddle_instructions,
-        ),
-        channel.canvas,
-    );
+    let combined_system_prompt = composed_system_prompt(ctx, agent_core, &channel);
 
     let session_title = ctx
         .session_title
@@ -1640,6 +1633,46 @@ fn workspace_section(cwd: &str) -> String {
     format!("[Workspace]\nCurrent working directory: {cwd}")
 }
 
+/// Compose the full new-session system prompt from every standing layer.
+///
+/// Locked order (narrow → broad → per-channel), mirrored by the legacy
+/// user-message path in `StandingContext::sections` so both delivery surfaces
+/// render identical section sets:
+///
+/// ```text
+/// [Base] → [Agent Instructions] → [Team Instructions] → [Shared Instructions]
+///        → [Agent Memory — core] → [Huddle Instructions] → [Channel Canvas]
+/// ```
+///
+/// Extracted as a single seam so the composition-order test exercises the
+/// exact chain `create_session_and_apply_model` ships, not a copy of it.
+fn composed_system_prompt(
+    ctx: &PromptContext,
+    agent_core: Option<&str>,
+    channel: &NewSessionChannelContext<'_>,
+) -> Option<String> {
+    with_canvas(
+        with_huddle_instructions(
+            with_core(
+                with_shared(
+                    with_team(
+                        framed_system_prompt(
+                            &ctx.cwd,
+                            ctx.base_prompt,
+                            ctx.system_prompt.as_deref(),
+                        ),
+                        ctx.team_instructions.as_deref(),
+                    ),
+                    ctx.shared_instructions.as_deref(),
+                ),
+                agent_core,
+            ),
+            channel.huddle_instructions,
+        ),
+        channel.canvas,
+    )
+}
+
 /// Append the team-owned instruction section after `[Agent Instructions]` and before core memory.
 fn with_team(prompt: Option<String>, instructions: Option<&str>) -> Option<String> {
     let instructions = instructions
@@ -1650,6 +1683,28 @@ fn with_team(prompt: Option<String>, instructions: Option<&str>) -> Option<Strin
             Some(format!("{prompt}\n\n[Team Instructions]\n{instructions}"))
         }
         (None, Some(instructions)) => Some(format!("[Team Instructions]\n{instructions}")),
+        (Some(prompt), None) => Some(prompt),
+        (None, None) => None,
+    }
+}
+
+/// Append the desktop-global instruction section after `[Team Instructions]`
+/// and before core memory.
+///
+/// Order is load-bearing: `composed_system_prompt` layers `[Base]` →
+/// `[Agent Instructions]` → `[Team Instructions]` → `[Shared Instructions]` →
+/// `[Agent Memory — core]` → `[Huddle Instructions]` → `[Channel Canvas]`
+/// (narrow → broad → per-channel), and the legacy user-message path
+/// (`StandingContext::sections`) must render the same order.
+fn with_shared(prompt: Option<String>, instructions: Option<&str>) -> Option<String> {
+    let instructions = instructions
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    match (prompt, instructions) {
+        (Some(prompt), Some(instructions)) => {
+            Some(format!("{prompt}\n\n[Shared Instructions]\n{instructions}"))
+        }
+        (None, Some(instructions)) => Some(format!("[Shared Instructions]\n{instructions}")),
         (Some(prompt), None) => Some(prompt),
         (None, None) => None,
     }
@@ -2106,6 +2161,7 @@ pub async fn run_prompt_task(
         base_prompt: ctx.base_prompt,
         system_prompt: ctx.system_prompt.as_deref(),
         team_instructions: ctx.team_instructions.as_deref(),
+        shared_instructions: ctx.shared_instructions.as_deref(),
         agent_core: agent_core.as_deref(),
         huddle_instructions: huddle_instructions.as_deref(),
         agent_canvas: agent_canvas.as_deref(),
@@ -2375,6 +2431,7 @@ pub async fn run_prompt_task(
                 base_prompt: standing.base_prompt,
                 system_prompt: standing.system_prompt,
                 team_instructions: standing.team_instructions,
+                shared_instructions: standing.shared_instructions,
                 agent_canvas: standing.agent_canvas,
                 standing_context_sent,
             },
@@ -4903,6 +4960,7 @@ mod tests {
             base_prompt: Some("be helpful"),
             system_prompt: Some("you are Eva"),
             team_instructions: Some("ship small"),
+            shared_instructions: Some("be kind to humans"),
             agent_core: Some("[Agent Memory — core]\nremember this"),
             huddle_instructions: Some("reply immediately"),
             agent_canvas: Some("[Channel Canvas]\ncanvas content"),
@@ -4919,6 +4977,7 @@ mod tests {
             "[Base]",
             "[Agent Instructions]",
             "[Team Instructions]",
+            "[Shared Instructions]",
             "[Agent Memory — core]",
             "[Huddle Instructions]",
             "[Channel Canvas]",
@@ -5043,6 +5102,76 @@ mod tests {
     #[test]
     fn test_with_core_neither_is_none() {
         assert!(with_core(None, None).is_none());
+    }
+
+    #[test]
+    fn test_composed_system_prompt_orders_shared_after_team_before_core() {
+        // The full spawn composition every new session receives: each present
+        // layer carries its own header, in the locked narrow → broad →
+        // per-channel order. This drives the exact chain
+        // `create_session_and_apply_model` ships (via `composed_system_prompt`),
+        // so dropping a layer from the composition fails here.
+        let mut ctx = make_prompt_context_no_owner();
+        ctx.base_prompt = Some("base text");
+        ctx.system_prompt = Some("persona text".to_string());
+        ctx.team_instructions = Some("ship small".to_string());
+        ctx.shared_instructions = Some("be kind to humans".to_string());
+        let channel = NewSessionChannelContext {
+            huddle_instructions: Some("reply now"),
+            canvas: Some("[Channel Canvas]\ncanvas body"),
+            name: None,
+            id: None,
+            channel_type: None,
+        };
+        let composed =
+            composed_system_prompt(&ctx, Some("[Agent Memory — core]\nremember this"), &channel)
+                .expect("all layers present yields Some");
+        let positions: Vec<usize> = [
+            "[Base]",
+            "[Agent Instructions]",
+            "[Team Instructions]\nship small",
+            "[Shared Instructions]\nbe kind to humans",
+            "[Agent Memory — core]",
+            "[Huddle Instructions]",
+            "[Channel Canvas]",
+        ]
+        .iter()
+        .map(|needle| {
+            composed
+                .find(needle)
+                .unwrap_or_else(|| panic!("missing {needle} in: {composed}"))
+        })
+        .collect();
+        assert!(
+            positions.windows(2).all(|w| w[0] < w[1]),
+            "sections must render narrow → broad → per-channel; got: {composed}"
+        );
+    }
+
+    #[test]
+    fn test_composed_system_prompt_without_shared_leaves_no_header() {
+        // Unset global shared instructions must not render an empty
+        // [Shared Instructions] section or disturb the rest of the order.
+        let mut ctx = make_prompt_context_no_owner();
+        ctx.base_prompt = Some("base text");
+        ctx.system_prompt = Some("persona text".to_string());
+        ctx.team_instructions = Some("ship small".to_string());
+        let channel = NewSessionChannelContext {
+            huddle_instructions: None,
+            canvas: None,
+            name: None,
+            id: None,
+            channel_type: None,
+        };
+        let composed = composed_system_prompt(&ctx, None, &channel).expect("yields Some");
+        assert!(
+            !composed.contains("[Shared Instructions]"),
+            "unset shared instructions must not render a section; got: {composed}"
+        );
+        assert_eq!(
+            composed,
+            "[Base]\nbase text\n\n[Workspace]\nCurrent working directory: .\n\n[Agent Instructions]\npersona text\n\n[Team Instructions]\nship small"
+        );
     }
 
     #[test]
@@ -7927,6 +8056,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             system_prompt: None,
             session_title: None,
             team_instructions: None,
+            shared_instructions: None,
             heartbeat_prompt: None,
             base_prompt: None,
             cwd: ".".to_string(),

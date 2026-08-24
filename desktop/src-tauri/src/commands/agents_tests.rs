@@ -512,6 +512,7 @@ fn deploy_payload_matches_the_shared_full_launch_fixture() {
         &descriptor,
         &[],
         None,
+        None,
         Some("gpt-5"),
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     );

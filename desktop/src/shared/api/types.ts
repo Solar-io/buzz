@@ -1008,6 +1008,14 @@ export type GlobalAgentConfig = {
   model: string | null;
   /** Preferred ACP runtime for agents without a persona-specific runtime. */
   preferred_runtime: string | null;
+  /**
+   * Global instructions layered into every agent's prompt as a
+   * `[Shared Instructions]` section (after team instructions). Live — agents
+   * pick it up on next restart; the restart-required badge fires on edit.
+   * Blank/whitespace-only saves as null (unset). Mirrors the Rust
+   * `GlobalAgentConfig.shared_instructions` field.
+   */
+  shared_instructions: string | null;
 };
 
 /**
