@@ -124,6 +124,35 @@ Future<bool> _preloadMembers(WidgetRef ref, String channelId) async {
   }
 }
 
+Future<void Function()> _subscribeToDmIdentityUpdates(
+  WidgetRef ref,
+  List<String> participantPubkeys, {
+  required VoidCallback onFailure,
+}) async {
+  final session = ref.read(relaySessionProvider.notifier);
+  return session.subscribe(
+    NostrFilter(
+      kinds: const [0, 10100],
+      authors: participantPubkeys,
+      limit: 0,
+    ).copyWithSince(DateTime.now().millisecondsSinceEpoch ~/ 1000 - 5),
+    (event) {
+      if (event.kind == 0) {
+        try {
+          ref.read(userCacheProvider.notifier).cacheProfileEvent(event);
+        } catch (error) {
+          debugPrint('[DmIdentity] invalid live profile: $error');
+          onFailure();
+        }
+      } else if (event.kind == 10100) {
+        ref.invalidate(agentDirectoryProvider);
+        ref.invalidate(agentOwnersProvider);
+      }
+    },
+    onClosed: (_) => onFailure(),
+  );
+}
+
 int? _channelReadTimestamp({
   required Channel channel,
   required AsyncValue<List<NostrEvent>> messagesState,
@@ -307,9 +336,66 @@ class ChannelDetailPage extends HookConsumerWidget {
         .toSet()
         .length;
     final isOneToOneDm = resolvedChannel.isDm && participantCount == 2;
+    final identitySubscriptionPubkeys = isOneToOneDm
+        ? (resolvedChannel.participantPubkeys
+              .map((pubkey) => pubkey.trim().toLowerCase())
+              .where((pubkey) => pubkey.isNotEmpty)
+              .toSet()
+              .toList()
+            ..sort())
+        : const <String>[];
+    final identitySubscriptionKey = Object.hashAll(identitySubscriptionPubkeys);
+    final identitySubscriptionReady = useValueNotifier(false, [
+      sessionStatus,
+      resolvedChannel.id,
+      identitySubscriptionKey,
+    ]);
+    final isIdentitySubscriptionReady = useValueListenable(
+      identitySubscriptionReady,
+    );
+    useEffect(() {
+      if (sessionStatus != SessionStatus.connected ||
+          identitySubscriptionPubkeys.isEmpty) {
+        return null;
+      }
+      var disposed = false;
+      var subscriptionFailed = false;
+      void markFailed() {
+        subscriptionFailed = true;
+        if (!disposed) identitySubscriptionReady.value = false;
+      }
+
+      void Function()? unsubscribe;
+      Future.microtask(() async {
+        try {
+          final cleanup = await _subscribeToDmIdentityUpdates(
+            ref,
+            identitySubscriptionPubkeys,
+            onFailure: markFailed,
+          );
+          if (disposed) {
+            cleanup();
+          } else {
+            unsubscribe = cleanup;
+            if (!subscriptionFailed) identitySubscriptionReady.value = true;
+          }
+        } catch (error) {
+          if (!disposed) {
+            debugPrint('[DmIdentity] live subscription failed: $error');
+            markFailed();
+          }
+        }
+      });
+      return () {
+        disposed = true;
+        unsubscribe?.call();
+      };
+    }, [sessionStatus, resolvedChannel.id, identitySubscriptionKey]);
     final isAgentIdentityUnresolved =
         isOneToOneDm &&
-        (agentDirectoryState.isLoading ||
+        ((sessionStatus == SessionStatus.connected &&
+                !isIdentitySubscriptionReady) ||
+            agentDirectoryState.isLoading ||
             agentDirectoryState.hasError ||
             agentOwnersState.isLoading ||
             agentOwnersState.hasError ||

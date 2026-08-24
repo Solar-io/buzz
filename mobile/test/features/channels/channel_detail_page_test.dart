@@ -200,7 +200,7 @@ Widget _buildTestable({
   required List<NostrEvent> messages,
   List<TypingEntry> typing = const [],
   Map<String, UserProfile> users = const {},
-  Set<String> knownAgentPubkeys = const {},
+  Set<String>? knownAgentPubkeys,
   Future<Set<String>> Function()? loadChannelBotPubkeys,
   Future<List<AgentDirectoryEntry>> Function()? loadAgentDirectory,
   Future<Map<String, String>> Function()? loadAgentOwners,
@@ -299,7 +299,8 @@ Widget _buildTestable({
       agentDirectoryProvider.overrideWith(
         (ref) async => loadAgentDirectory?.call() ?? const [],
       ),
-      knownAgentPubkeysProvider.overrideWithValue(knownAgentPubkeys),
+      if (knownAgentPubkeys != null)
+        knownAgentPubkeysProvider.overrideWithValue(knownAgentPubkeys),
       if (directoryUsers != null)
         relayDirectoryUsersProvider.overrideWith((ref) async => directoryUsers),
       if (createChannelActions != null)
@@ -812,6 +813,110 @@ void main() {
 
       expect(find.byTooltip('Start Huddle'), findsNothing);
     });
+
+    testWidgets('hides Huddle when a participant becomes an agent live', (
+      tester,
+    ) async {
+      final relaySession = _IdentityUpdateRelaySession();
+      final dmChannel = Channel(
+        id: _channelId,
+        name: 'Human DM',
+        channelType: 'dm',
+        visibility: 'private',
+        description: 'Direct message',
+        createdBy: 'self',
+        createdAt: DateTime(2025),
+        memberCount: 2,
+        participants: const ['Self', 'Alice'],
+        participantPubkeys: const ['self', 'alice'],
+        isMember: true,
+      );
+
+      var directoryLoadCount = 0;
+      await tester.pumpWidget(
+        _buildTestable(
+          messages: const [],
+          channel: dmChannel,
+          relaySessionNotifier: relaySession,
+          loadAgentDirectory: () async {
+            directoryLoadCount++;
+            return directoryLoadCount == 1
+                ? const []
+                : const [AgentDirectoryEntry(pubkey: 'alice')];
+          },
+          members: [
+            ChannelMember(
+              pubkey: 'self',
+              role: 'member',
+              joinedAt: DateTime(2025),
+            ),
+            ChannelMember(
+              pubkey: 'alice',
+              role: 'member',
+              joinedAt: DateTime(2025),
+            ),
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(relaySession.identityFilter?.kinds, const [0, 10100]);
+      expect(relaySession.identityFilter?.authors, contains('alice'));
+      expect(find.byTooltip('Start Huddle'), findsOneWidget);
+
+      relaySession.emitAgentProfile(pubkey: 'alice');
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Start Huddle'), findsNothing);
+    });
+
+    testWidgets(
+      'keeps Huddle hidden if the live identity subscription closes',
+      (tester) async {
+        final relaySession = _IdentityUpdateRelaySession();
+        final dmChannel = Channel(
+          id: _channelId,
+          name: 'Human DM',
+          channelType: 'dm',
+          visibility: 'private',
+          description: 'Direct message',
+          createdBy: 'self',
+          createdAt: DateTime(2025),
+          memberCount: 2,
+          participants: const ['Self', 'Alice'],
+          participantPubkeys: const ['self', 'alice'],
+          isMember: true,
+        );
+
+        await tester.pumpWidget(
+          _buildTestable(
+            messages: const [],
+            channel: dmChannel,
+            relaySessionNotifier: relaySession,
+            members: [
+              ChannelMember(
+                pubkey: 'self',
+                role: 'member',
+                joinedAt: DateTime(2025),
+              ),
+              ChannelMember(
+                pubkey: 'alice',
+                role: 'member',
+                joinedAt: DateTime(2025),
+              ),
+            ],
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.byTooltip('Start Huddle'), findsOneWidget);
+
+        relaySession.closeIdentitySubscription();
+        await tester.pump();
+
+        expect(find.byTooltip('Start Huddle'), findsNothing);
+      },
+    );
 
     testWidgets('keeps the Members action for group DMs', (tester) async {
       final dmChannel = Channel(
@@ -12603,6 +12708,58 @@ class _ReconnectingRelaySession extends RelaySessionNotifier {
 
   void connect() {
     state = const SessionState(status: SessionStatus.connected);
+  }
+}
+
+class _IdentityUpdateRelaySession extends RelaySessionNotifier {
+  NostrFilter? identityFilter;
+  void Function(NostrEvent)? _identityListener;
+  void Function(String message)? _identityClosedListener;
+
+  @override
+  SessionState build() => const SessionState(status: SessionStatus.connected);
+
+  @override
+  Future<List<NostrEvent>> fetchHistory(
+    NostrFilter filter, {
+    Duration timeout = const Duration(seconds: 8),
+  }) async => const [];
+
+  @override
+  Future<void Function()> subscribe(
+    NostrFilter filter,
+    void Function(NostrEvent) onEvent, {
+    void Function(String message)? onClosed,
+  }) async {
+    if (filter.kinds.contains(10100)) {
+      identityFilter = filter;
+      _identityListener = onEvent;
+      _identityClosedListener = onClosed;
+    }
+    return () {
+      if (identical(_identityListener, onEvent)) {
+        _identityListener = null;
+        _identityClosedListener = null;
+      }
+    };
+  }
+
+  void emitAgentProfile({required String pubkey}) {
+    _identityListener?.call(
+      NostrEvent(
+        id: 'agent-profile-$pubkey',
+        pubkey: pubkey,
+        createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        kind: 10100,
+        tags: const [],
+        content: '{"name":"Agent"}',
+        sig: 'sig',
+      ),
+    );
+  }
+
+  void closeIdentitySubscription() {
+    _identityClosedListener?.call('unsupported filter');
   }
 }
 
