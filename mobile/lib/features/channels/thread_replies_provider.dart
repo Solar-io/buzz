@@ -116,13 +116,15 @@ final threadRepliesWithLocalProvider = Provider.autoDispose
       if (authoritative != null && localReplies.isNotEmpty) {
         final authoritativeIds = authoritative.map((event) => event.id).toSet();
         if (localReplies.any((event) => authoritativeIds.contains(event.id))) {
+          final localRepliesNotifier = ref.read(
+            threadLocalRepliesProvider(args).notifier,
+          );
+          final pendingMessagesNotifier = ref.read(
+            pendingLocalMessagesProvider(args.channelId).notifier,
+          );
           Future.microtask(() {
-            ref
-                .read(threadLocalRepliesProvider(args).notifier)
-                .confirm(authoritativeIds);
-            ref
-                .read(pendingLocalMessagesProvider(args.channelId).notifier)
-                .confirm(authoritativeIds);
+            localRepliesNotifier.confirm(authoritativeIds);
+            pendingMessagesNotifier.confirm(authoritativeIds);
           });
         }
       }

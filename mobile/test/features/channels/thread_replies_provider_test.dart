@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:buzz/features/channels/pending_local_messages_provider.dart';
 import 'package:buzz/features/channels/thread_replies_provider.dart';
 import 'package:buzz/shared/relay/relay.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -136,6 +137,42 @@ void main() {
     final refreshed = await container.read(threadRepliesProvider(args).future);
     expect(refreshed.map((event) => event.id), ['r1', 'r2']);
   });
+
+  test(
+    'confirmation survives disposing the combined provider before its microtask',
+    () async {
+      final reply = _reply('r1', 1000);
+      final query = Completer<List<NostrEvent>>();
+      final fakeSession = _FakeRelaySession()..nextQueryGate = query;
+      final container = ProviderContainer(
+        overrides: [relaySessionProvider.overrideWith(() => fakeSession)],
+      );
+      addTearDown(container.dispose);
+      container.read(threadLocalRepliesProvider(args).notifier).add(reply);
+      container
+          .read(pendingLocalMessagesProvider(args.channelId).notifier)
+          .add(reply);
+
+      late ProviderSubscription<AsyncValue<List<NostrEvent>>> subscription;
+      subscription = container.listen(threadRepliesWithLocalProvider(args), (
+        _,
+        next,
+      ) {
+        if (next.value?.any((event) => event.id == reply.id) ?? false) {
+          subscription.close();
+        }
+      });
+      query.complete([reply]);
+      await container.pump();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(container.read(threadLocalRepliesProvider(args)), isEmpty);
+      expect(
+        container.read(pendingLocalMessagesProvider(args.channelId)),
+        isEmpty,
+      );
+    },
+  );
 
   test(
     'mounted thread renders a reply missed while disconnected after reconnect',
