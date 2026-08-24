@@ -484,6 +484,12 @@ pub struct CliArgs {
     #[arg(long, env = "BUZZ_ACP_TEAM_INSTRUCTIONS")]
     pub team_instructions: Option<String>,
 
+    /// Desktop-global instructions layered after `[Team Instructions]` and
+    /// before agent memory. Set from the desktop's global agent config; unlike
+    /// team instructions this is not scoped to any team membership.
+    #[arg(long, env = "BUZZ_ACP_SHARED_INSTRUCTIONS")]
+    pub shared_instructions: Option<String>,
+
     /// Publish encrypted ACP observer frames over the relay.
     #[arg(long, env = "BUZZ_ACP_RELAY_OBSERVER", default_value_t = false)]
     pub relay_observer: bool,
@@ -533,6 +539,9 @@ pub struct Config {
     pub system_prompt: Option<String>,
     /// Team-owned instructions layered separately from the agent system prompt.
     pub team_instructions: Option<String>,
+    /// Desktop-global instructions layered after team instructions and before
+    /// agent memory. Same trim/empty normalization as `team_instructions`.
+    pub shared_instructions: Option<String>,
     pub initial_message: Option<String>,
     pub subscribe_mode: SubscribeMode,
     pub dedup_mode: DedupMode,
@@ -1110,6 +1119,12 @@ impl Config {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(str::to_string),
+            shared_instructions: args
+                .shared_instructions
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
             initial_message: args.initial_message,
             subscribe_mode: args.subscribe,
             dedup_mode: args.dedup,
@@ -1486,6 +1501,7 @@ mod tests {
             heartbeat_prompt: None,
             system_prompt: None,
             team_instructions: None,
+            shared_instructions: None,
             initial_message: None,
             subscribe_mode: mode,
             dedup_mode: DedupMode::Queue,

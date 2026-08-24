@@ -59,6 +59,19 @@ pub(crate) fn effective_team_instructions(
         .map(str::to_string)
 }
 
+/// Resolve the global shared instructions for spawn/deploy: trimmed, `None`
+/// when blank. The spawn env write, the spawn stamp, and the prospective
+/// snapshot all resolve through this ONE helper so an unchanged global can
+/// never badge and a changed one always does.
+pub(crate) fn effective_shared_instructions(global: &GlobalAgentConfig) -> Option<String> {
+    global
+        .shared_instructions
+        .as_deref()
+        .map(str::trim)
+        .filter(|instructions| !instructions.is_empty())
+        .map(str::to_string)
+}
+
 /// The already-resolved values a spawn feeds into its `Command`.
 ///
 /// Taking them rather than re-resolving is what makes the stamp describe the
@@ -70,6 +83,7 @@ pub(crate) struct SpawnConfigInputs<'a> {
     /// Resolved workspace/pair relay — never the record's legacy pin.
     pub relay_url: &'a str,
     pub team_instructions: Option<&'a str>,
+    pub shared_instructions: Option<&'a str>,
     pub system_prompt: Option<&'a str>,
     pub model: Option<&'a str>,
     pub provider: Option<&'a str>,
@@ -108,6 +122,11 @@ pub(crate) struct SpawnConfigSnapshot {
     pub env: BTreeMap<String, String>,
     pub relay_url: String,
     pub team_instructions: Option<String>,
+    /// Global shared instructions stamped from the resolved global value
+    /// (`effective_shared_instructions`) — the same trimmed value the env
+    /// write puts in `BUZZ_ACP_SHARED_INSTRUCTIONS`, so editing the global
+    /// lights the badge exactly when a restart would change the prompt.
+    pub shared_instructions: Option<String>,
     pub system_prompt: Option<String>,
     pub model: Option<String>,
     pub provider: Option<String>,
@@ -162,6 +181,7 @@ impl SpawnConfigSnapshot {
             descriptor,
             relay_url,
             team_instructions,
+            shared_instructions,
             system_prompt,
             model,
             provider,
@@ -190,6 +210,7 @@ impl SpawnConfigSnapshot {
             },
             relay_url: relay_url.to_string(),
             team_instructions: team_instructions.map(str::to_string),
+            shared_instructions: shared_instructions.map(str::to_string),
             system_prompt: system_prompt.map(str::to_string),
             model: model.map(str::to_string),
             provider: provider.map(str::to_string),
@@ -305,6 +326,7 @@ pub(crate) fn prospective_spawn_config_snapshot(
         // (legacy pins ignored), so a workspace relay change must badge.
         relay_url: &crate::relay::effective_agent_relay_url(&record.relay_url, workspace_relay),
         team_instructions: effective_team_instructions(record, teams).as_deref(),
+        shared_instructions: effective_shared_instructions(global).as_deref(),
         system_prompt: prompt.as_deref(),
         model: model.as_deref(),
         provider: provider.as_deref(),

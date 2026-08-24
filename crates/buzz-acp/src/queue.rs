@@ -1449,6 +1449,9 @@ pub struct FormatPromptArgs<'a> {
     pub system_prompt: Option<&'a str>,
     /// Team instructions for legacy agents, rendered after `[Agent Instructions]`.
     pub team_instructions: Option<&'a str>,
+    /// Desktop-global shared instructions for legacy agents, rendered after
+    /// `[Team Instructions]` and before core memory.
+    pub shared_instructions: Option<&'a str>,
     /// Rendered `[Channel Canvas]` metadata section for legacy agents.
     ///
     /// For modern agents (protocol_version >= 2) the section is delivered via
@@ -1464,7 +1467,8 @@ pub struct FormatPromptArgs<'a> {
 }
 
 /// The prompt sections that do not change for the life of a session: base
-/// prompt, persona, team instructions, core memory, and channel canvas.
+/// prompt, persona, team instructions, shared instructions, core memory, and
+/// channel canvas.
 ///
 /// Protocol-v2 agents receive all of this through the system role at
 /// `session/new`, once. Legacy agents (`protocol_version < 2`) have no system
@@ -1480,15 +1484,21 @@ pub(crate) struct StandingContext<'a> {
     pub base_prompt: Option<&'a str>,
     pub system_prompt: Option<&'a str>,
     pub team_instructions: Option<&'a str>,
+    pub shared_instructions: Option<&'a str>,
     pub agent_core: Option<&'a str>,
     pub huddle_instructions: Option<&'a str>,
     pub agent_canvas: Option<&'a str>,
 }
 
 impl StandingContext<'_> {
-    /// Render the sections in the order legacy agents have always seen them.
+    /// Render the sections in the order legacy agents have always seen them:
+    /// `[Base]` → `[Agent Instructions]` → `[Team Instructions]` →
+    /// `[Shared Instructions]` → `[Agent Memory — core]` → `[Huddle
+    /// Instructions]` → `[Channel Canvas]` — the same narrow → broad →
+    /// per-channel order the system-role path composes (see
+    /// `pool::composed_system_prompt`).
     pub(crate) fn sections(&self) -> Vec<String> {
-        let mut sections = Vec::with_capacity(6);
+        let mut sections = Vec::with_capacity(7);
         if let Some(bp) = self.base_prompt {
             sections.push(base_section(bp));
         }
@@ -1501,6 +1511,13 @@ impl StandingContext<'_> {
             .filter(|value| !value.is_empty())
         {
             sections.push(format!("[Team Instructions]\n{team}"));
+        }
+        if let Some(shared) = self
+            .shared_instructions
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            sections.push(format!("[Shared Instructions]\n{shared}"));
         }
         if let Some(core) = self.agent_core {
             sections.push(core.to_string());
@@ -1532,7 +1549,8 @@ pub(crate) fn base_section(base_prompt: &str) -> String {
 ///
 /// Produces a stable prompt with these sections (in order):
 /// 0. [`StandingContext`] — `[Base]`, `[Agent Instructions]`, `[Team Instructions]`,
-///    `[Agent Memory — core]`, `[Channel Canvas]`. Legacy agents only, and only
+///    `[Shared Instructions]`, `[Agent Memory — core]`, `[Channel Canvas]`.
+///    Legacy agents only, and only
 ///    on the session's first message (see `standing_context_sent`)
 /// 1. `[Context]` — scope, channel name, and contextual hints for the agent
 /// 2. `[Thread Context]` or `[Conversation Context]` — if fetched
@@ -1568,17 +1586,18 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
 
     let mut sections: Vec<String> = Vec::with_capacity(7);
 
-    // Standing context — base prompt, persona, team instructions, core memory
-    // and canvas. Modern agents received all of it via the system role in
-    // session/new. Legacy agents get it here, in the session's first message
-    // only; `standing_context_sent` means an earlier message in this session
-    // already carried it.
+    // Standing context — base prompt, persona, team instructions, shared
+    // instructions, core memory and canvas. Modern agents received all of it
+    // via the system role in session/new. Legacy agents get it here, in the
+    // session's first message only; `standing_context_sent` means an earlier
+    // message in this session already carried it.
     if !args.has_system_prompt_support && !args.standing_context_sent {
         sections.extend(
             StandingContext {
                 base_prompt: args.base_prompt,
                 system_prompt: args.system_prompt,
                 team_instructions: args.team_instructions,
+                shared_instructions: args.shared_instructions,
                 agent_core: args.agent_core,
                 huddle_instructions: args.huddle_instructions,
                 agent_canvas: args.agent_canvas,
@@ -2640,6 +2659,7 @@ mod tests {
             base_prompt: Some("test base prompt"),
             system_prompt: Some("test system prompt"),
             team_instructions: Some("ship small"),
+            shared_instructions: Some("be kind to humans"),
             agent_core: Some(core),
             huddle_instructions: None,
             agent_canvas: Some(canvas),
@@ -2654,6 +2674,7 @@ mod tests {
             "[Base]",
             "[Agent Instructions]",
             "[Team Instructions]",
+            "[Shared Instructions]",
             "[Agent Memory — core]",
             "[Channel Canvas]",
         ] {
@@ -2668,6 +2689,55 @@ mod tests {
             "later turns must be smaller: {} vs {}",
             later.len(),
             first.len()
+        );
+    }
+
+    #[test]
+    fn test_format_prompt_legacy_agent_orders_agent_team_shared_core() {
+        // Pins the legacy-path section order (StandingContext::sections) to the
+        // same narrow → broad → per-channel order the system-role path composes
+        // in pool::composed_system_prompt: agent → team → shared → core.
+        let ch = Uuid::new_v4();
+        let batch = FlushBatch {
+            channel_id: ch,
+            events: vec![BatchEvent {
+                event: make_event("hello"),
+                prompt_tag: "test".into(),
+                received_at: Instant::now(),
+            }],
+            cancelled_events: vec![],
+            cancel_reason: None,
+        };
+
+        let prompt = format_prompt(
+            &batch,
+            &FormatPromptArgs {
+                has_system_prompt_support: false,
+                system_prompt: Some("test system prompt"),
+                team_instructions: Some("ship small"),
+                shared_instructions: Some("be kind to humans"),
+                agent_core: Some("[Agent Memory — core]\nremember this"),
+                ..Default::default()
+            },
+        )
+        .join("\n\n");
+
+        let positions: Vec<usize> = [
+            "[Agent Instructions]",
+            "[Team Instructions]\nship small",
+            "[Shared Instructions]\nbe kind to humans",
+            "[Agent Memory — core]",
+        ]
+        .iter()
+        .map(|needle| {
+            prompt
+                .find(needle)
+                .unwrap_or_else(|| panic!("missing {needle} in: {prompt}"))
+        })
+        .collect();
+        assert!(
+            positions.windows(2).all(|w| w[0] < w[1]),
+            "legacy standing order must be agent → team → shared → core; got: {prompt}"
         );
     }
 

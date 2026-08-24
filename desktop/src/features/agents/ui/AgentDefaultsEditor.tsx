@@ -39,6 +39,7 @@ import {
 } from "@/features/agents/ui/AgentConfigFields";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
+import { Textarea } from "@/shared/ui/textarea";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
@@ -195,11 +196,20 @@ export function AgentDefaultsEditor({
     // Snapshot the config being submitted so we can detect edits that arrive
     // during the IPC round-trip and avoid clobbering the user's newer input.
     const submittedConfig = config;
+    // Shared instructions save as trimmed-or-null: blank means "unset", and
+    // trailing whitespace must not turn an unchanged value into a save. The
+    // reference comparison below stays against `submittedConfig` (the object
+    // the user last edited), so a trim-only copy cannot be mistaken for a
+    // mid-flight edit.
+    const trimmedConfig: GlobalAgentConfig = {
+      ...submittedConfig,
+      shared_instructions: submittedConfig.shared_instructions?.trim() || null,
+    };
     onSavingChange?.(true);
     setSaveState("saving");
     setSaveError(null);
     try {
-      const result = await setGlobalAgentConfig(submittedConfig);
+      const result = await setGlobalAgentConfig(trimmedConfig);
       // Apply the backend's canonical config ONLY if nothing changed during the
       // IPC window. If the user edited, keep their newer value and leave dirty=true
       // so they can save again. setDirty(false) runs inside the updater so both
@@ -313,6 +323,36 @@ export function AgentDefaultsEditor({
           ) : (
             configFields
           )}
+          {/* Global-only field: intentionally NOT in AgentConfigFields, which
+              per-agent/persona dialogs share — those surfaces have no
+              shared-instructions concept. */}
+          <div className="space-y-1.5">
+            <label
+              className="text-sm font-medium text-foreground"
+              htmlFor="global-shared-instructions"
+            >
+              Shared instructions
+            </label>
+            <Textarea
+              className="min-h-24"
+              data-testid="global-shared-instructions"
+              disabled={saveState === "saving"}
+              id="global-shared-instructions"
+              onChange={(event) =>
+                handleConfigChange({
+                  ...config,
+                  shared_instructions:
+                    event.target.value === "" ? null : event.target.value,
+                })
+              }
+              placeholder="Optional instructions layered into every local agent, after its own and its team's."
+              value={config.shared_instructions ?? ""}
+            />
+            <p className="text-xs text-muted-foreground">
+              Added to every local agent at spawn, after its own instructions.
+              Live — agents pick it up on next restart.
+            </p>
+          </div>
         </>
       )}
 

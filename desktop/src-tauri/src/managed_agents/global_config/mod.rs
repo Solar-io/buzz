@@ -27,6 +27,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
+use crate::managed_agents::definition_validation::MAX_SYSTEM_PROMPT_BYTES;
 use crate::managed_agents::env_vars::{
     validate_user_env_keys, DERIVED_PROVIDER_MODEL_ENV_KEYS, MAX_ENV_VALUE_BYTES,
 };
@@ -70,6 +71,19 @@ pub struct GlobalAgentConfig {
     /// Preferred ACP runtime for definitions without an explicit runtime.
     #[serde(default)]
     pub preferred_runtime: Option<String>,
+
+    /// Global instructions layered into every agent's system prompt as a
+    /// `[Shared Instructions]` section — after `[Team Instructions]` and
+    /// before agent core memory.
+    ///
+    /// Live-resolved at spawn/readiness/deploy like the rest of global (never
+    /// copied onto agent records), passed to the harness as
+    /// `BUZZ_ACP_SHARED_INSTRUCTIONS`, and stamped in the spawn-config
+    /// snapshot so editing it lights the restart-required badge. Blank /
+    /// whitespace-only values normalize to `None` (unset); serializes as
+    /// `null` when unset.
+    #[serde(default)]
+    pub shared_instructions: Option<String>,
 }
 
 /// Validate a `GlobalAgentConfig` before persisting it.
@@ -140,6 +154,23 @@ pub fn validate_global_config(config: &GlobalAgentConfig) -> Result<(), String> 
         }
     }
 
+    // Shared instructions: free-form prompt text, so they carry the
+    // system-prompt byte cap rather than the per-env-value cap, and interior
+    // NUL bytes are rejected (they would truncate the env var the harness
+    // receives). Blank values normalize to `None` in
+    // `normalize_global_config_fields`.
+    if let Some(instructions) = &config.shared_instructions {
+        if instructions.contains('\0') {
+            return Err("Shared instructions must not contain NUL bytes".to_string());
+        }
+        if instructions.len() > MAX_SYSTEM_PROMPT_BYTES {
+            return Err(format!(
+                "Shared instructions are too long ({} bytes, max {MAX_SYSTEM_PROMPT_BYTES})",
+                instructions.len()
+            ));
+        }
+    }
+
     Ok(())
 }
 
@@ -152,7 +183,8 @@ pub fn strip_empty_env_vars(config: &mut GlobalAgentConfig) {
     config.env_vars.retain(|_, v| !v.is_empty());
 }
 
-/// Normalize `provider` and `model` to `None` when blank or whitespace-only.
+/// Normalize `provider`, `model`, and `shared_instructions` to `None` when
+/// blank or whitespace-only.
 ///
 /// `Some("")` and `Some("  ")` have no meaningful value and break
 /// unset/fallback semantics (a blank provider would be treated as "provider
@@ -170,6 +202,11 @@ pub fn normalize_global_config_fields(config: &mut GlobalAgentConfig) {
     if let Some(v) = &config.model {
         if v.trim().is_empty() {
             config.model = None;
+        }
+    }
+    if let Some(v) = &config.shared_instructions {
+        if v.trim().is_empty() {
+            config.shared_instructions = None;
         }
     }
 }
@@ -193,8 +230,8 @@ pub fn load_global_agent_config(app: &AppHandle) -> Result<GlobalAgentConfig, St
 
 /// Save the global agent config to disk.
 ///
-/// Strips empty env values and normalizes blank provider/model to `None`
-/// before writing (empty = "inherit" semantics).
+/// Strips empty env values and normalizes blank provider/model/
+/// shared-instructions to `None` before writing (empty = "inherit" semantics).
 /// Written `0o600` — same protection as `managed-agents.json`.
 pub fn save_global_agent_config(app: &AppHandle, config: &GlobalAgentConfig) -> Result<(), String> {
     let mut config = config.clone();

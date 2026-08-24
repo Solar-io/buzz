@@ -9,7 +9,10 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 const MAX_DISPLAY_NAME_CHARS: usize = 128;
-const MAX_SYSTEM_PROMPT_BYTES: usize = 64 * 1024;
+/// Byte cap for instruction text. Shared by the per-definition system prompt
+/// here and the global `shared_instructions` layer (`global_config`), so one
+/// global layer can never out-size an agent's own instructions.
+pub(crate) const MAX_SYSTEM_PROMPT_BYTES: usize = 64 * 1024;
 const EMOJI_VARIATION_SELECTOR: char = '\u{FE0F}';
 const ZERO_WIDTH_JOINER: char = '\u{200D}';
 

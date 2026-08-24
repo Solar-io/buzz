@@ -2200,6 +2200,7 @@ async fn tokio_main() -> Result<()> {
         system_prompt: config.system_prompt.clone(),
         session_title: config.session_title.clone(),
         team_instructions: config.team_instructions.clone(),
+        shared_instructions: config.shared_instructions.clone(),
         base_prompt: if config.no_base_prompt {
             None
         } else if let Some(content) = base_prompt_content {
@@ -6768,6 +6769,7 @@ mod build_mcp_servers_tests {
             heartbeat_prompt: None,
             system_prompt: None,
             team_instructions: None,
+            shared_instructions: None,
             initial_message: None,
             subscribe_mode: config::SubscribeMode::All,
             dedup_mode: config::DedupMode::Queue,
@@ -6992,6 +6994,7 @@ mod error_outcome_emission_tests {
             heartbeat_prompt: None,
             system_prompt: None,
             team_instructions: None,
+            shared_instructions: None,
             initial_message: None,
             subscribe_mode: config::SubscribeMode::All,
             dedup_mode: config::DedupMode::Queue,
