@@ -213,8 +213,8 @@ export function VideoChatPanel(props: {
             </div>
             <p className="text-muted-foreground">
               Paste the token as the Bearer/auth key on the Anam custom LLM
-              whose base URL points at this app (port 6371). It is stable
-              across app restarts.
+              whose base URL points at this app (port 6371). It is stable across
+              app restarts.
             </p>
           </div>
         )}
