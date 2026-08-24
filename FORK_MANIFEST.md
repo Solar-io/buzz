@@ -31,8 +31,10 @@ Dropped 2026-08-24: one auto-commit noise commit and a stray `logs/verification.
 ## Build tags
 
 Every build we install gets an annotated tag: `nest-<upstream-version>-<yyyymmdd>`.
-Current installed build: **`nest-0.5.18-20260824`** (upstream 0.5.18 base, commit
-series as of 2026-08-24, upstream main `0720f5380`).
+Current installed build: **`nest-0.5.18-20260824`** (upstream 0.5.18, series on
+upstream `0720f5380`). Since that build, `main` was rebased onto upstream `17af15eff`
+(+2 upstream commits, not yet built/installed) — next build from `main` gets a fresh
+tag. The tag always marks what the installed app contains; `main` is the series head.
 
 ## Remotes
 
