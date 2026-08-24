@@ -370,6 +370,14 @@ pub fn run() {
                     .store(port, std::sync::atomic::Ordering::Relaxed);
             });
 
+            // Start the video-chat loopback endpoint (Anam custom-LLM slot).
+            // Non-fatal on bind failure: the feature reports inactive via
+            // `video_chat_status` instead of blocking app startup.
+            let video_handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                video_chat::spawn(video_handle).await;
+            });
+
             // Create the Buzz nest (~/.buzz or ~/.buzz-dev for dev builds) before
             // agents are restored, so default_agent_workdir() resolves to the
             // nest directory. Non-fatal: agents fall back to $HOME if nest
@@ -599,6 +607,9 @@ pub fn run() {
             get_relay_ws_url,
             get_relay_http_url,
             get_media_proxy_port,
+            video_chat::video_chat_set_target,
+            video_chat::video_chat_clear_target,
+            video_chat::video_chat_status,
             fetch_link_preview_metadata,
             discover_acp_auth_methods,
             discover_acp_providers,
