@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { useHuddle } from "@/features/huddle";
 import { HuddleIndicator } from "@/features/huddle/components/HuddleIndicator";
+import { VideoChatButton } from "@/features/videoChat";
 import { formatHuddleActionError } from "@/features/huddle/lib/huddleError";
 import { buildHuddleChannelName } from "@/features/huddle/lib/huddleChannelName";
 import {
@@ -105,6 +106,13 @@ export function ChannelMembersBar({
     () => getDmHuddleMemberPubkeys(channel, huddleAgentPubkeys, currentPubkey),
     [channel, currentPubkey, huddleAgentPubkeys],
   );
+  // Video chat relays into this DM as the logged-in owner; it needs the agent
+  // participant's pubkey to p-mention (wake) and to label the panel.
+  const videoChatAgentPubkey = React.useMemo(() => {
+    if (channel.channelType !== "dm") return null;
+    const first = [...huddleAgentPubkeys][0];
+    return first ?? null;
+  }, [channel.channelType, huddleAgentPubkeys]);
   const huddleMemberPubkeysPending =
     hasOtherDmParticipant(channel, currentPubkey) &&
     (membersQuery.isPending ||
@@ -213,6 +221,19 @@ export function ChannelMembersBar({
             </span>
           </DropdownMenuItem>
           {huddleIndicator}
+          {videoChatAgentPubkey && (
+            <VideoChatButton
+              channelId={channel.id}
+              agentPubkey={videoChatAgentPubkey}
+              renderMode="menu-item"
+            />
+          )}
+          {videoChatAgentPubkey && (
+            <VideoChatButton
+              channelId={channel.id}
+              agentPubkey={videoChatAgentPubkey}
+            />
+          )}
           <DropdownMenuItem
             data-testid="channel-management-trigger"
             onSelect={onManageChannel}
