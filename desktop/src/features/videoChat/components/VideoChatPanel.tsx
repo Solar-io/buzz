@@ -37,6 +37,16 @@ export function VideoChatPanel(props: {
   const [error, setError] = React.useState<string | null>(null);
   const [micOn, setMicOn] = React.useState(true);
   const [showSettings, setShowSettings] = React.useState(false);
+  const [relayToken, setRelayToken] = React.useState<string | null>(null);
+
+  // Refresh the relay token whenever the settings sheet opens, so the
+  // copyable token shown for Anam Lab wiring is current.
+  React.useEffect(() => {
+    if (!showSettings) return;
+    void invoke<{ token: string | null }>("video_chat_status")
+      .then((s) => setRelayToken(s.token))
+      .catch(() => undefined);
+  }, [showSettings]);
 
   // Point the relay at this DM for the lifetime of the panel.
   React.useEffect(() => {
@@ -182,6 +192,30 @@ export function VideoChatPanel(props: {
               value={config.llmId}
               onChange={(v) => update({ llmId: v })}
             />
+            <div className="mt-1 flex items-center gap-2">
+              <span className="w-32 shrink-0 text-muted-foreground">
+                Relay token
+              </span>
+              <code className="flex-1 truncate rounded bg-muted px-2 py-1 text-xs">
+                {relayToken ?? "…"}
+              </code>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  void navigator.clipboard
+                    .writeText(relayToken ?? "")
+                    .catch(() => undefined)
+                }
+              >
+                Copy
+              </Button>
+            </div>
+            <p className="text-muted-foreground">
+              Paste the token as the Bearer/auth key on the Anam custom LLM
+              whose base URL points at this app (port 6371). It is stable
+              across app restarts.
+            </p>
           </div>
         )}
 
