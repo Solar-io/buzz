@@ -28,6 +28,13 @@ const POLL_INTERVAL_MS: u64 = 1000;
 const KEEPALIVE_INTERVAL_MS: u64 = 4000;
 /// Clock-skew grace when matching reply timestamps against the send.
 const SKEW_GRACE_SECS: i64 = 2;
+
+/// The (created_at secs, event id) of the last reply handed to the avatar.
+/// A follow-up turn sent within SKEW_GRACE_SECS of the previous reply
+/// otherwise re-matches the PREVIOUS event and re-speaks it instantly while
+/// the user is still talking (2026-08-24 call: "reply in 14ms", identical
+/// chars to the line before — the avatar barging in with its own last words).
+static LAST_REPLY: std::sync::Mutex<(i64, [u8; 32])> = std::sync::Mutex::new((0, [0u8; 32]));
 const FALLBACK_TEXT: &str = "(sorry — I could not reach the agent just then)";
 
 /// What the avatar SPEAKS when a completion arrives with no armed target.
@@ -54,6 +61,21 @@ pub fn no_target_stream_parts() -> Vec<String> {
 pub enum TurnError {
     /// Request-shape problems — surfaced as HTTP 400.
     Bad(String),
+}
+
+/// True when `candidate` is a reply the avatar has not already spoken:
+/// inside the send window, not older than the last returned reply, and not
+/// the exact event last returned (the same-second stale match). Pure so the
+/// stale-turn guard is unit-testable without a relay.
+pub(crate) fn is_fresh_reply(
+    cand_secs: i64,
+    cand_id: &[u8; 32],
+    sent_at: i64,
+    last: &(i64, [u8; 32]),
+) -> bool {
+    cand_secs >= sent_at - SKEW_GRACE_SECS
+        && cand_secs >= last.0
+        && cand_id != &last.1
 }
 
 type ByteStream = std::pin::Pin<Box<dyn Stream<Item = Result<Vec<u8>, std::io::Error>> + Send>>;
@@ -248,12 +270,24 @@ async fn await_reply(
         tokio::time::Instant::now() + Duration::from_millis(KEEPALIVE_INTERVAL_MS);
     loop {
         if let Ok(events) = crate::relay::query_relay(&state, &[filter.clone()]).await {
+            // Lock once per poll: read the guard, and remember the write below.
+            let mut last = LAST_REPLY.lock().unwrap_or_else(|e| e.into_inner());
+            let in_window =
+                |e: &nostr::Event| (e.created_at.as_secs() as i64) >= sent_at - SKEW_GRACE_SECS;
+            if events.iter().any(|e| {
+                in_window(e)
+                    && !e.content.trim().is_empty()
+                    && !is_fresh_reply(e.created_at.as_secs() as i64, e.id.as_bytes(), sent_at, &last)
+            }) {
+                super::vlog("reply wait: skipped an already-spoken reply (stale-turn guard)");
+            }
             let hit = events
                 .iter()
-                .filter(|e| (e.created_at.as_secs() as i64) >= sent_at - SKEW_GRACE_SECS)
+                .filter(|e| is_fresh_reply(e.created_at.as_secs() as i64, e.id.as_bytes(), sent_at, &last))
                 .filter(|e| !e.content.trim().is_empty())
                 .min_by_key(|e| e.created_at);
             if let Some(event) = hit {
+                *last = (event.created_at.as_secs() as i64, event.id.to_bytes());
                 return Ok(event.content.clone());
             }
         }
