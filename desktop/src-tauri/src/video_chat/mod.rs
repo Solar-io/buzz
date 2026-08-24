@@ -17,6 +17,8 @@ pub mod sse;
 pub mod turn;
 #[cfg(test)]
 mod target_route_tests;
+#[cfg(test)]
+mod turn_tests;
 
 use axum::{
     extract::State as AxumState,
@@ -235,6 +237,10 @@ async fn completions(
 ) -> Response {
     let token = state.token.as_str();
     if !authorized(&headers, token) {
+        // Anam retries quietly, so a bad token was previously invisible in
+        // video-chat.log — the exact blindness that hid the 8/24 stock-brain
+        // call's cause. Log the reject, never the token.
+        vlog("completions: 401 unauthorized (bad or missing bearer/x-api-key)");
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({ "error": { "message": "unauthorized" } })),
@@ -266,6 +272,7 @@ async fn internal_target(
 ) -> Response {
     let token = state.token.as_str();
     if !authorized(&headers, token) {
+        vlog("internal target: 401 unauthorized (bad or missing bearer/x-api-key)");
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({ "error": { "message": "unauthorized" } })),

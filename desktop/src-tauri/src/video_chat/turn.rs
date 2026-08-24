@@ -183,6 +183,16 @@ pub async fn handle_completion(
 
 /// Publish `text` as the logged-in user into the target DM, p-mentioning the
 /// agent (the tag that wakes its harness). Returns the signed event's
+/// Prefix marking a relayed turn as arriving from a live video call, so the
+/// agent's prompt can route it to short spoken-style replies instead of its
+/// usual long-form DM answers (2026-08-24: latency + awareness ask).
+pub const VIDEO_TURN_MARKER: &str = "[video]";
+
+/// Pure so the marker shape is unit-testable without an app handle.
+pub(crate) fn mark_video_turn(text: &str) -> String {
+    format!("{VIDEO_TURN_MARKER} {}", text.trim())
+}
+
 /// `created_at` second for reply matching.
 async fn publish_turn(
     app_handle: &tauri::AppHandle,
@@ -198,7 +208,7 @@ async fn publish_turn(
 
     let builder = crate::events::build_message(
         channel_uuid,
-        text.trim(),
+        &mark_video_turn(text),
         None,
         &[target.agent_pubkey.as_str()],
         &[],
