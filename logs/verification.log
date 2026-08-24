@@ -1,6 +1,55 @@
-[2026-08-23T14:13:08-0500] [Agent Brave -> com.dev.brave-agent (port 9222) + com.dev.brave-agent-mcp (port 9223)] 
-[2026-08-23T14:13:09-0500] [OK] reloaded launchd unit com.dev.brave-agent (verified loaded in gui/501)
-[2026-08-23T14:13:09-0500] [INFO] health_check http://127.0.0.1:9222/json/version -> 000000 (attempt 1/20)
-[2026-08-23T14:13:11-0500] [OK] health_check http://127.0.0.1:9222/json/version -> HTTP/1.1 200
-[2026-08-23T14:13:11-0500] [OK] reloaded launchd unit com.dev.brave-agent-mcp (verified loaded in gui/501)
-[2026-08-23T14:13:13-0500] [OK] Agent Brave up on :9222; MCP endpoint up on :9223 (https://crichton.tailb3d4b8.ts.net:9223/mcp)
+# Verification log — branch claude/video-chat-mode
+Date: 2026-08-24 (UTC local session)
+Verifier: tester subagent, read-only verification (no files modified, no services touched, app not launched)
+
+## 1. Git state — PASS
+- branch: claude/video-chat-mode
+- commits on branch (newest first): c4ca5ce8c, 189876f32, c097b87b4, 97133fbfe (base 39eebd5d5)
+  Note: the 4th commit is 189876f32 ("Anam video-chat panel for agent DMs"), not named in the task prompt.
+- git status --short: empty (clean)
+
+## 2. Rust unit tests — PASS
+cd desktop/src-tauri && cargo test --lib video_chat
+  test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 2773 filtered out
+
+## 3. Frontend checks — typecheck PASS, biome FAIL
+- pnpm typecheck (tsc --noEmit): exit 0
+- pnpm exec biome check src/features/videoChat/ src/features/channels/ui/ChannelMembersBar.tsx: exit 1
+  1 formatting error in src/features/videoChat/components/VideoChatPanel.tsx (lines 215-217, a
+  paragraph re-wrap: "…(port 6371). It is stable across / app restarts." line-break placement).
+  No lint/organize-imports errors; purely a `biome format` diff.
+
+## 4. Release bundle — PASS
+desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Buzz.app/Contents/MacOS/
+  7 binaries, all non-zero: buzz 13,736,528 · buzz-acp 14,629,296 · buzz-agent 10,703,488 ·
+  buzz-backend-kubernetes 10,161,328 · buzz-desktop 157,687,904 · buzz-dev-mcp 20,017,136 ·
+  git-credential-nostr 1,288,752
+- grep -ac video_chat_status buzz-desktop → 1 (also present: video_chat_set_target ×2).
+  NOTE: `strings buzz-desktop | grep -c video_chat_status` returned 0 — strings(1) did not emit
+  the token on its own line for this binary; a direct byte grep confirms it is present.
+
+## 5. Installed app matches bundle — PASS
+shasum both buzz-desktop binaries:
+  d66b616c6bf7e5006b04c84d2682855229451f3b  /Applications/Buzz.app/Contents/MacOS/buzz-desktop
+  d66b616c6bf7e5006b04c84d2682855229451f3b  <bundle>/Buzz.app/Contents/MacOS/buzz-desktop
+- /Applications/Buzz-backup-20260824.app exists.
+
+## 6. Funnel — PASS
+tailscale serve status:
+  https://crichton.tailb3d4b8.ts.net (Funnel on)
+  |-- / proxy http://127.0.0.1:6371
+  22 "(tailnet only)" entries still present.
+
+## 7. Adapter retired — PASS
+- launchctl list | grep anam → no output (exit 1)
+- curl http://127.0.0.1:6370/healthz → exit 7 (connection refused; not listening)
+- ~/Library/LaunchAgents/com.dev.evie-anam-adapter.plist.retired present
+
+## 8. Relay DB — PASS
+docker exec buzz-dev-postgres-1 psql -U buzz -d buzz -tAc "SELECT pubkey FROM relay_members":
+  9eed878843c0958049b7f078e5df04ce4d29736b2bfa43844556e41fa93dd08c
+  a9387088355b4efe46decbde77c8fe34ee9ecbd6619d41217d21be0123f08271
+  25f1ade509ed6cdbc5cf9856fb4f12bec4d056d19a54143eabec36db9fd2c33c
+Exactly 3 rows; none equals 6603a4d66e50cfc9126cba963a1ec34d399edddcaf294ead147c2f765b83bfc0.
+
+## Summary: 7 PASS, 1 FAIL (item 3 biome formatting)
