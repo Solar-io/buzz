@@ -49,6 +49,7 @@ mod terminal_transport;
 mod tray_menu;
 mod unread_catch_up;
 mod util;
+mod video_chat;
 #[cfg(target_os = "linux")]
 pub mod webkit_rendering;
 use app_state::{build_app_state, resolve_persisted_identity, AppState};
