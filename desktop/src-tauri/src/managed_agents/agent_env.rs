@@ -10,10 +10,14 @@ use base64::Engine as _;
 
 /// Seconds a woken lazy harness stays warm before it releases its worker
 /// subprocesses back to the empty-slot state (via `BUZZ_ACP_IDLE_POOL_SLEEP`).
-/// The next accepted event re-wakes it through the same lazy path. Matches the
-/// harness's own 15-minute per-turn idle window so a warm pool survives a
-/// normal back-and-forth but a truly quiet harness stops paying for workers.
-const IDLE_POOL_SLEEP_SECS: &str = "900";
+/// The next accepted event re-wakes it through the same lazy path. One week:
+/// a woken worker survives every real usage gap (overnight, weekends) so
+/// daily-use seats never re-pay the cold start, while a genuinely abandoned
+/// harness still releases its workers. Cold start measured at 17-105s
+/// (2026-08-24 lag investigation); a resident idle worker costs a few hundred
+/// MB. Lazy start at process spawn is unchanged — restore still boots N cheap
+/// harnesses, not N idle brains.
+const IDLE_POOL_SLEEP_SECS: &str = "604800";
 
 /// Value for `BUZZ_ACP_IDLE_POOL_SLEEP`. Idle re-sleep is only meaningful for
 /// lazy harnesses (the harness ignores it otherwise); gate to `lazy` here so
@@ -141,8 +145,23 @@ pub(crate) fn parse_agent_env_lines(raw: &str) -> Vec<(&str, &str)> {
 mod tests {
     use super::{
         baked_build_env, build_buzz_agent_provider_defaults, build_env_map,
-        discovery_env_with_baked_floor, parse_agent_env_lines,
+        discovery_env_with_baked_floor, idle_pool_sleep_env, parse_agent_env_lines,
+        IDLE_POOL_SLEEP_SECS,
     };
+
+    #[test]
+    fn idle_pool_sleep_env_gates_on_lazy() {
+        // Lazy harnesses get the desktop-owned hold time; eager harnesses get
+        // "0" (disabled — the harness ignores the value when not lazy-pooled).
+        // Pins the gate itself: flipping `lazy` must flip between the policy
+        // value and "0", and the policy value must be a plain seconds integer.
+        assert_eq!(idle_pool_sleep_env(true), IDLE_POOL_SLEEP_SECS);
+        assert_eq!(idle_pool_sleep_env(false), "0");
+        assert!(
+            IDLE_POOL_SLEEP_SECS.bytes().all(|b| b.is_ascii_digit()),
+            "policy value must parse as u64 seconds: {IDLE_POOL_SLEEP_SECS}"
+        );
+    }
 
     #[test]
     fn buzz_agent_provider_defaults_empty_in_oss_build() {
