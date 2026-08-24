@@ -66,6 +66,9 @@ importers:
 
   desktop:
     dependencies:
+      '@anam-ai/js-sdk':
+        specifier: ^1.0.0
+        version: 1.10.0
       '@dnd-kit/core':
         specifier: ^6.3.1
         version: 6.3.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -407,6 +410,9 @@ packages:
   '@alloc/quick-lru@5.2.0':
     resolution: {integrity: sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw==}
     engines: {node: '>=10'}
+
+  '@anam-ai/js-sdk@1.10.0':
+    resolution: {integrity: sha512-UY0vYEau0PhyXnsszDXauGuS7vWoXm45RQFHY1WMqkw6HCe1aAzkA7dJxl7YTo/tSDkCKiw8SxeXpzJrcoNBQA==}
 
   '@asamuzakjp/css-color@4.1.2':
     resolution: {integrity: sha512-NfBUvBaYgKIuq6E/RBLY1m0IohzNHAYyaJGuTK79Z23uNwmz2jl1mPsC5ZxCCxylinKhT1Amn5oNTlx1wN8cQg==}
@@ -3745,6 +3751,8 @@ snapshots:
   '@adobe/css-tools@4.5.0': {}
 
   '@alloc/quick-lru@5.2.0': {}
+
+  '@anam-ai/js-sdk@1.10.0': {}
 
   '@asamuzakjp/css-color@4.1.2':
     dependencies:
