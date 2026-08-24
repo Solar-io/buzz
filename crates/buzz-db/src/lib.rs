@@ -6186,9 +6186,10 @@ mod tests {
             db.replace_parameterized_event(community, &first, &d_tag, None),
             db.replace_parameterized_event(community, &second, &d_tag, None),
         );
+        let first_inserted = first_result.expect("first concurrent writer").1;
+        let second_inserted = second_result.expect("second concurrent writer").1;
         assert!(
-            first_result.expect("first concurrent writer").1
-                || second_result.expect("second concurrent writer").1,
+            first_inserted || second_inserted,
             "at least one concurrent writer must insert",
         );
 
