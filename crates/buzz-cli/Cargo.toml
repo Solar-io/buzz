@@ -86,8 +86,14 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 # Random number generation — full jitter for exponential backoff in with_retry
 rand = { workspace = true }
 
+# Image decode/re-encode for the upload sanitizer — same pin + features as the
+# desktop app (desktop/src-tauri) and buzz-media, so one version hits the lockfile.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
+
 [dev-dependencies]
 # Scratch files for channel-templates.json fixtures in tests
 tempfile = "3"
 # Minimal HTTP test server for retry/policy integration tests
 axum = { workspace = true }
+# Sanitizer tests assert both directions against the REAL relay validator
+buzz-media = { workspace = true }

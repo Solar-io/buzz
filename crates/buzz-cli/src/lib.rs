@@ -3,6 +3,7 @@ mod client;
 mod commands;
 mod error;
 mod links;
+mod sanitize;
 mod validate;
 
 use clap::{Parser, Subcommand};

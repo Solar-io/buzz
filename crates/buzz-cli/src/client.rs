@@ -1117,6 +1117,18 @@ impl BuzzClient {
             return Err(CliError::Usage(format!("unsupported file type: {mime}")));
         }
 
+        // 2b. Sanitize image bytes to the relay's metadata-free contract.
+        // Real-world images carry EXIF/text chunks the relay rejects with 422
+        // MetadataForbidden; strip them client-side like the desktop app does.
+        let bytes =
+            crate::sanitize::sanitize_image_for_upload(bytes, &mime).map_err(CliError::Usage)?;
+
+        // 2c. Re-sniff the MIME from the sanitized bytes — re-encode keeps the
+        // same format in practice, but never assume it.
+        let mime = infer::get(&bytes)
+            .map(|t| t.mime_type().to_string())
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+
         // 3. Size check
         let max = if mime.starts_with("video/") {
             MAX_VIDEO_BYTES
@@ -2125,13 +2137,17 @@ mod retry_policy_tests {
         use tokio::io::AsyncReadExt;
         use tokio::io::AsyncWriteExt;
 
-        // Write a minimal JPEG file so MIME detection works.
+        // Write a real JPEG file so MIME detection works AND the upload
+        // sanitizer can decode/re-encode it (a bare magic header is now a
+        // Usage error — the CLI refuses bytes it knows the relay will reject).
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
-        // JPEG magic + JFIF app0 marker: enough for `infer` to detect image/jpeg.
-        let jpeg_header: &[u8] = &[
-            0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01,
-        ];
-        tmp.write_all(jpeg_header).unwrap();
+        let img =
+            image::RgbImage::from_fn(2, 2, |x, y| image::Rgb([x as u8 * 80, y as u8 * 60, 32]));
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 95)
+            .encode_image(&img)
+            .unwrap();
+        tmp.write_all(&jpeg).unwrap();
         let file_path = tmp.path().to_str().unwrap().to_string();
 
         let counter = Arc::new(AtomicU32::new(0));
