@@ -15,6 +15,8 @@ pub mod sanitize;
 mod sanitize_tests;
 pub mod sse;
 pub mod turn;
+#[cfg(test)]
+mod target_route_tests;
 
 use axum::{
     extract::State as AxumState,
@@ -53,9 +55,99 @@ pub struct Target {
 static TARGET: RwLock<Option<Target>> = RwLock::new(None);
 static TOKEN: RwLock<Option<String>> = RwLock::new(None);
 static PORT: RwLock<Option<u16>> = RwLock::new(None);
+static LAST_FORWARD: RwLock<Option<String>> = RwLock::new(None);
 
 fn current_target() -> Option<Target> {
     TARGET.read().ok().and_then(|t| t.clone())
+}
+
+/// A peer install whose bridge should receive target updates
+/// (`video-chat-peers.json` next to the token file). The panel arms the
+/// process it runs in, but Anam calls the one funnel URL configured in
+/// Anam Lab — so an install whose panel is open forwards its arming to
+/// the funnel-side install instead. Verified necessary 2026-08-24: a
+/// panel open on aeryn armed only aeryn's loopback and every completion
+/// through crichton's funnel answered 400 "no video-chat target".
+#[derive(Clone, Debug, serde::Deserialize)]
+struct Peer {
+    url: String,
+    token: String,
+}
+
+fn load_peers(app_handle: &tauri::AppHandle) -> Vec<Peer> {
+    let Some(dir) = app_handle.path().app_config_dir().ok() else {
+        return Vec::new();
+    };
+    let Ok(raw) = std::fs::read_to_string(dir.join("video-chat-peers.json")) else {
+        return Vec::new();
+    };
+    match serde_json::from_str(&raw) {
+        Ok(peers) => peers,
+        Err(e) => {
+            eprintln!("video_chat: video-chat-peers.json unreadable ({e}); skipping peers");
+            Vec::new()
+        }
+    }
+}
+
+/// Best-effort POST of an arming payload to every configured peer bridge.
+/// Fire-and-forget on purpose: the local arming already succeeded, and a
+/// slow or down peer must not block the panel from opening.
+fn forward_to_peers(app_handle: tauri::AppHandle, body: serde_json::Value) {
+    let peers = load_peers(&app_handle);
+    if peers.is_empty() {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("video_chat: peer forward client build failed ({e})");
+                return;
+            }
+        };
+        let mut results: Vec<String> = Vec::new();
+        for peer in peers {
+            let url = format!("{}/v1/internal/target", peer.url.trim_end_matches('/'));
+            match client
+                .post(&url)
+                .bearer_auth(&peer.token)
+                .json(&body)
+                .send()
+                .await
+            {
+                Ok(r) if r.status().is_success() => results.push(format!("{url} ok")),
+                Ok(r) => results.push(format!("{url} http {}", r.status())),
+                Err(e) => results.push(format!("{url} unreachable ({e})")),
+            }
+        }
+        let summary = results.join("; ");
+        eprintln!("video_chat: peer forward: {summary}");
+        if let Ok(mut slot) = LAST_FORWARD.write() {
+            *slot = Some(summary);
+        }
+    });
+}
+
+/// Apply a target payload — `{"clear": true}` or a [`Target`] — to the
+/// local slot. Pure (no `AppHandle` / no HTTP) so the routing logic can
+/// be tested without a live app.
+fn apply_target_payload(payload: &serde_json::Value) -> Result<bool, String> {
+    if payload.get("clear").and_then(|v| v.as_bool()) == Some(true) {
+        if let Ok(mut slot) = TARGET.write() {
+            *slot = None;
+        }
+        return Ok(true);
+    }
+    let target: Target = serde_json::from_value(payload.clone())
+        .map_err(|e| format!("invalid target payload: {e}"))?;
+    if let Ok(mut slot) = TARGET.write() {
+        *slot = Some(target);
+    }
+    Ok(false)
 }
 
 /// GET / and /v1 — OpenAI-style base reachability probes (vendor wiring UIs
@@ -123,6 +215,47 @@ async fn completions(
     }
 }
 
+/// Peer-forwarded arming: `{"clear": true}` or a `Target` body, accepted
+/// only with the local bearer token. This is what makes a panel opened on
+/// aeryn arm the relay inside crichton's app, whose funnel Anam calls.
+async fn internal_target(
+    AxumState(state): AxumState<VideoChatState>,
+    headers: HeaderMap,
+    body: String,
+) -> Response {
+    let token = state.token.as_str();
+    if !authorized(&headers, token) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": { "message": "unauthorized" } })),
+        )
+            .into_response();
+    }
+    let parsed: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": { "message": format!("invalid JSON body: {e}") } })),
+            )
+                .into_response()
+        }
+    };
+    match apply_target_payload(&parsed) {
+        Ok(cleared) => Json(json!({
+            "ok": true,
+            "cleared": cleared,
+            "target": current_target(),
+        }))
+        .into_response(),
+        Err(msg) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": { "message": msg } })),
+        )
+            .into_response(),
+    }
+}
+
 /// Resolve the bearer token: `BUZZ_VIDEO_CHAT_TOKEN` wins (testing), else a
 /// token persisted in the app config dir so Anam Lab wiring survives app
 /// restarts, else a freshly generated (and persisted) one.
@@ -172,6 +305,7 @@ pub async fn spawn(app_handle: tauri::AppHandle) -> Option<u16> {
         .route("/healthz", get(healthz))
         .route("/v1/chat/completions", post(completions))
         .route("/chat/completions", post(completions))
+        .route("/v1/internal/target", post(internal_target))
         .with_state(state);
     let listener = match TcpListener::bind(("127.0.0.1", port)).await {
         Ok(l) => l,
@@ -193,9 +327,12 @@ pub async fn spawn(app_handle: tauri::AppHandle) -> Option<u16> {
 }
 
 /// Point the video-chat relay at a DM. Called by the panel when a video
-/// session opens; cleared by the frontend when it closes.
+/// session opens; cleared by the frontend when it closes. Any configured
+/// peer installs receive the same arming — the funnel-side app is the one
+/// Anam's custom LLM actually calls.
 #[tauri::command]
 pub async fn video_chat_set_target(
+    app_handle: tauri::AppHandle,
     channel_id: String,
     agent_pubkey: String,
     agent_name: Option<String>,
@@ -208,16 +345,20 @@ pub async fn video_chat_set_target(
     TARGET
         .write()
         .map_err(|_| "video chat state poisoned".to_string())?
-        .replace(target);
+        .replace(target.clone());
+    if let Ok(payload) = serde_json::to_value(&target) {
+        forward_to_peers(app_handle, payload);
+    }
     Ok(())
 }
 
-/// Clear the relay target when the panel closes.
+/// Clear the relay target when the panel closes — locally and on peers.
 #[tauri::command]
-pub async fn video_chat_clear_target() -> Result<(), String> {
+pub async fn video_chat_clear_target(app_handle: tauri::AppHandle) -> Result<(), String> {
     if let Ok(mut slot) = TARGET.write() {
         *slot = None;
     }
+    forward_to_peers(app_handle, json!({ "clear": true }));
     Ok(())
 }
 
@@ -225,12 +366,18 @@ pub async fn video_chat_clear_target() -> Result<(), String> {
 /// panel and funnel wiring. The token is only ever handed to the app's own
 /// frontend, which forwards it to Anam Lab out-of-band (once, by Sam).
 #[tauri::command]
-pub fn video_chat_status() -> serde_json::Value {
+pub fn video_chat_status(app_handle: tauri::AppHandle) -> serde_json::Value {
     let port = PORT.read().ok().and_then(|p| *p);
+    let peers: Vec<String> = load_peers(&app_handle)
+        .into_iter()
+        .map(|p| p.url)
+        .collect();
     json!({
         "port": port,
         "active": port.is_some(),
         "token": TOKEN.read().ok().and_then(|t| t.clone()),
         "target": current_target(),
+        "peers": peers,
+        "lastForward": LAST_FORWARD.read().ok().and_then(|s| s.clone()),
     })
 }

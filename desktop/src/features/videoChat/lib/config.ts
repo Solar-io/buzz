@@ -10,6 +10,8 @@ import * as React from "react";
 export interface VideoChatConfig {
   anamApiKey: string;
   personaName: string;
+  /** Anam Lab persona id — when set, it overrides avatar/voice (the Lab persona bundles them). */
+  personaId: string;
   avatarId: string;
   avatarModel: string;
   voiceId: string;
@@ -21,6 +23,7 @@ const STORAGE_KEY = "buzz.videoChat.config.v1";
 const EMPTY: VideoChatConfig = {
   anamApiKey: "",
   personaName: "Evie",
+  personaId: "",
   avatarId: "",
   avatarModel: "",
   voiceId: "",

@@ -6,7 +6,7 @@ import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { cn } from "@/shared/lib/cn";
 
-import { AnamError, startAnamSession } from "../lib/anam";
+import { describeAnamError, startAnamSession } from "../lib/anam";
 import { useVideoChatConfig } from "../lib/config";
 
 /**
@@ -15,8 +15,10 @@ import { useVideoChatConfig } from "../lib/config";
  *
  * Opening the panel points the Rust loopback relay at this DM
  * (`video_chat_set_target`) so the Anam custom LLM routes turns through the
- * logged-in owner — the same identity position huddles use. Closing stops
- * the stream and clears the target.
+ * logged-in owner — the same identity position huddles use. Arming also
+ * propagates to configured peer installs, so a panel on aeryn arms the
+ * crichton relay Anam's funnel URL reaches. Closing stops the stream and
+ * clears the target everywhere.
  */
 export function VideoChatPanel(props: {
   channelId: string;
@@ -72,9 +74,7 @@ export function VideoChatPanel(props: {
       setState("live");
     } catch (e) {
       setState("error");
-      setError(
-        e instanceof AnamError || e instanceof Error ? e.message : String(e),
-      );
+      setError(describeAnamError(e));
     }
   }, [config]);
 
@@ -107,7 +107,9 @@ export function VideoChatPanel(props: {
 
   const canStart =
     config.anamApiKey.length > 0 &&
-    (config.avatarId.length > 0 || config.avatarModel.length > 0);
+    (config.personaId.length > 0 ||
+      config.avatarId.length > 0 ||
+      config.avatarModel.length > 0);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6">
@@ -164,13 +166,21 @@ export function VideoChatPanel(props: {
           <div className="grid gap-2 rounded-lg border p-3 text-sm">
             <p className="text-muted-foreground">
               Anam persona wiring — from Anam Lab. The custom LLM (llmId) is the
-              one pointing at this app.
+              one pointing at this app. Persona ID is the Lab persona's ID —
+              when set it overrides Avatar ID / Voice (the persona bundles
+              them). A persona ID pasted into Avatar ID starts zero sessions:
+              Anam takes it at mint and rejects it at session start.
             </p>
             <SettingsField
               label="Anam API key"
               value={config.anamApiKey}
               onChange={(v) => update({ anamApiKey: v })}
               type="password"
+            />
+            <SettingsField
+              label="Persona ID"
+              value={config.personaId}
+              onChange={(v) => update({ personaId: v })}
             />
             <SettingsField
               label="Avatar ID"
