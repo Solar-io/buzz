@@ -24,9 +24,11 @@ export function ContentSurface({
   children,
   unframed = false,
   terminal,
+  webPanels,
 }: {
   children: ReactNode;
   terminal?: ReactNode;
+  webPanels?: ReactNode;
   /** Used by dedicated huddle windows, which should not resemble app cards. */
   unframed?: boolean;
 }) {
@@ -45,6 +47,9 @@ export function ContentSurface({
       </div>
       <div className="buzz-terminal-dock-host" data-terminal-dock>
         {terminal}
+      </div>
+      <div className="buzz-webpanel-dock-host" data-webpanel-dock>
+        {webPanels}
       </div>
     </div>
   );

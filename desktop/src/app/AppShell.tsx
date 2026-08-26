@@ -4,7 +4,11 @@ import { Outlet, useLocation } from "@tanstack/react-router";
 import { deriveShellRoute, markAllReadSources } from "@/app/AppShell.helpers";
 import { useTerminalContext } from "@/app/useTerminalContext";
 import { AppShellProvider } from "@/app/AppShellContext";
-import { AppShellOverlays, TerminalBootstrap } from "@/app/AppShellOverlays";
+import {
+  AppShellOverlays,
+  TerminalBootstrap,
+  WebPanelBootstrap,
+} from "@/app/AppShellOverlays";
 import { AppShellChannelSurface } from "@/app/AppShellChannelSurface";
 import { AppHuddleShell } from "@/app/AppHuddleShell";
 import { AppTopChrome } from "@/app/AppTopChrome";
@@ -931,6 +935,7 @@ export function AppShell() {
                           terminal={
                             <TerminalBootstrap {...effectiveTerminalContext} />
                           }
+                          webPanels={<WebPanelBootstrap />}
                         >
                           <Outlet />
                         </AppShellChannelSurface>

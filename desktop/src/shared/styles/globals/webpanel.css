@@ -1,0 +1,161 @@
+@layer components {
+  .buzz-webpanel-dock-host:has(.buzz-webpanel-substrate) {
+    align-items: flex-end;
+    display: flex;
+    flex: 0 0 auto;
+    min-height: 0;
+    overflow: hidden;
+    transition:
+      flex-grow 180ms ease,
+      flex-basis 180ms ease;
+  }
+
+  .buzz-webpanel-dock-host:has([data-webpanel-mode="maximized"]) {
+    flex: 1 1 auto;
+  }
+
+  /* The web panel host sits below the terminal dock host, so the general
+     sibling combinator is required here (the terminal's adjacent-sibling
+     rule keeps its own pairing with .buzz-content-primary). Like the
+     terminal's equivalent rule, this is authored in the components layer
+     and therefore loses to the `flex-1` utility on .buzz-content-primary;
+     the host rule below is what actually drives maximize. Kept for parity
+     with terminal.css. */
+  .buzz-content-primary:has(
+    ~ .buzz-webpanel-dock-host [data-webpanel-mode="maximized"]
+  ) {
+    flex: 0 1 0%;
+    min-height: 0;
+  }
+
+  .buzz-webpanel-substrate {
+    background: hsl(var(--background));
+    border-top: 1px solid hsl(var(--border));
+    display: flex;
+    flex-direction: column;
+    min-height: 180px;
+    opacity: 1;
+    position: relative;
+    transform: translateY(0);
+    transition:
+      height 180ms ease,
+      transform 180ms ease;
+    width: 100%;
+    z-index: 20;
+  }
+
+  .buzz-webpanel-substrate[data-webpanel-resizing="true"] {
+    transition: none;
+  }
+
+  .buzz-webpanel-substrate[data-webpanel-visible="false"] {
+    height: 0 !important;
+    min-height: 0;
+    pointer-events: none;
+    transform: translateY(16px);
+  }
+
+  .buzz-webpanel-dock-host [data-webpanel-mode="maximized"] {
+    flex: 1 1 auto;
+    height: 100%;
+  }
+
+  .buzz-webpanel-resize-handle {
+    cursor: ns-resize;
+    height: 5px;
+    left: 0;
+    position: absolute;
+    right: 0;
+    top: -3px;
+    z-index: 2;
+  }
+
+  .buzz-webpanel-contract-bar {
+    align-items: center;
+    background: hsl(var(--secondary));
+    border-bottom: 1px solid hsl(var(--border));
+    color: hsl(var(--secondary-foreground));
+    display: flex;
+    flex: 0 0 40px;
+    gap: 8px;
+    justify-content: space-between;
+    min-width: 0;
+    padding: 4px 1.25rem;
+  }
+
+  .buzz-webpanel-title {
+    align-items: center;
+    color: hsl(var(--muted-foreground));
+    display: flex;
+    font-size: calc(var(--buzz-type-rem) * 0.75);
+    font-weight: 500;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .buzz-webpanel-title span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .buzz-webpanel-title svg {
+    height: 16px;
+    width: 16px;
+  }
+
+  .buzz-webpanel-readout {
+    align-items: center;
+    display: flex;
+    flex: 0 0 auto;
+    gap: 4px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .buzz-webpanel-window-action {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: calc(var(--radius) - 2px);
+    color: hsl(var(--muted-foreground));
+    display: inline-flex;
+    height: 30px;
+    justify-content: center;
+    width: 30px;
+  }
+
+  .buzz-webpanel-window-action:hover,
+  .buzz-webpanel-window-action:focus-visible {
+    background: hsl(var(--foreground) / 0.06);
+    color: hsl(var(--foreground));
+  }
+
+  .buzz-webpanel-window-action svg {
+    height: 16px;
+    width: 16px;
+  }
+
+  .buzz-webpanel-viewport {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .buzz-webpanel-frame {
+    background: hsl(var(--background));
+    border: 0;
+    display: block;
+    height: 100%;
+    width: 100%;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-content-primary,
+    .buzz-webpanel-dock-host:has(.buzz-webpanel-substrate),
+    .buzz-webpanel-substrate {
+      transition: none;
+    }
+  }
+}
