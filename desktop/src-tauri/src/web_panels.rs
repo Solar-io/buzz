@@ -24,8 +24,8 @@ use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 
 use tauri::{
-    LogicalPosition, LogicalSize, Manager, Rect, WebviewUrl, WebviewBuilder,
-    WebviewWindowBuilder, Window,
+    LogicalPosition, LogicalSize, Manager, Rect, WebviewBuilder, WebviewUrl, WebviewWindowBuilder,
+    Window,
 };
 
 /// Destroyed instance ids. `ensure` arriving for a tombstoned instance is
@@ -159,7 +159,9 @@ fn panel_rect(x: f64, y: f64, width: f64, height: f64) -> Result<Rect, String> {
         }
     }
     if x < 0.0 || y < 0.0 {
-        return Err(format!("web panel rect origin must be >= 0, got ({x}, {y})"));
+        return Err(format!(
+            "web panel rect origin must be >= 0, got ({x}, {y})"
+        ));
     }
     if width < 1.0 || height < 1.0 {
         return Err(format!(
@@ -239,9 +241,9 @@ pub fn ensure_web_panel(
     }
 
     let panel_url = url.clone();
-    let builder = WebviewBuilder::new(label.clone(), WebviewUrl::External(url))
-        .on_navigation(move |url| {
-            let allowed = is_navigation_allowed(&url, &panel_url);
+    let builder =
+        WebviewBuilder::new(label.clone(), WebviewUrl::External(url)).on_navigation(move |url| {
+            let allowed = is_navigation_allowed(url, &panel_url);
             // Ops log: one line per navigation attempt, including blocked
             // ones — the only observable trace of the panel's nav policy.
             println!(
@@ -280,12 +282,7 @@ pub fn set_web_panel_visible(
         }
         return Ok(());
     };
-    if visible {
-        child.show()
-    } else {
-        child.hide()
-    }
-    .map_err(|error| error.to_string())
+    if visible { child.show() } else { child.hide() }.map_err(|error| error.to_string())
 }
 
 /// Destroy a panel instance's webview and release its WKWebView session.
@@ -551,12 +548,10 @@ mod tests {
         // Destroy is what tombstones; simulate a destroy racing an in-flight
         // ensure for the same instance.
         let unique = format!("files-{}", line!());
-        let request =
-            validate_ensure_request(&unique, "files", 0.0, 0.0, 100.0, 100.0);
+        let request = validate_ensure_request(&unique, "files", 0.0, 0.0, 100.0, 100.0);
         assert!(request.is_ok(), "fresh instance must validate");
         mark_tombstoned(&unique);
-        let raced =
-            validate_ensure_request(&unique, "files", 0.0, 0.0, 100.0, 100.0);
+        let raced = validate_ensure_request(&unique, "files", 0.0, 0.0, 100.0, 100.0);
         assert!(
             raced.is_err(),
             "ensure after destroy must not resurrect the webview"
@@ -572,9 +567,8 @@ mod tests {
         // Broken geometry.
         assert!(validate_ensure_request("files-1", "files", f64::NAN, 0.0, 10.0, 10.0).is_err());
         // Happy path carries label + url + logical rect.
-        let request =
-            validate_ensure_request("files-9", "files", 4.0, 300.0, 800.0, 320.0)
-                .expect("valid request");
+        let request = validate_ensure_request("files-9", "files", 4.0, 300.0, 800.0, 320.0)
+            .expect("valid request");
         assert_eq!(request.label, "webpanel-files-9");
         assert_eq!(
             request.url.as_str(),
