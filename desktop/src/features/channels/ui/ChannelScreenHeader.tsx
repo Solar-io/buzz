@@ -21,10 +21,8 @@ import {
   toggleTerminalPanel,
   useTerminalPanel,
 } from "@/features/terminal/terminalPanelStore";
-import {
-  toggleWebPanel,
-  useWebPanel,
-} from "@/features/webPanels/webPanelStore";
+import { toggleWebPanelWithFeedback } from "@/features/webPanels/webPanelActions";
+import { useWebPanel } from "@/features/webPanels/webPanelStore";
 import { WEB_PANELS } from "@/features/webPanels/webPanels.config";
 
 const DM_HEADER_AVATAR_SIZE = 32;
@@ -121,13 +119,19 @@ export function ChannelScreenHeader({
   const webPanelButtons = activeChannel
     ? WEB_PANELS.map((panel) => {
         const PanelIcon = panel.icon;
+        // The type button is a toggle: pressed while a tab of this panel
+        // type is the active tab of the dock.
+        const activeInstance = webPanel.instances.find(
+          (instance) => instance.instanceId === webPanel.activeInstanceId,
+        );
         const isOpen =
-          webPanel.mode !== "closed" && webPanel.openPanelId === panel.id;
+          webPanel.mode !== "closed" && activeInstance?.panelId === panel.id;
         return (
           <Button
-            aria-label={`Open ${panel.label} panel`}
+            aria-label={`Toggle ${panel.label} panel`}
+            aria-pressed={isOpen ? "true" : "false"}
             key={panel.id}
-            onClick={() => toggleWebPanel(panel.id)}
+            onClick={() => toggleWebPanelWithFeedback(panel.id)}
             size="icon"
             title={panel.label}
             type="button"
