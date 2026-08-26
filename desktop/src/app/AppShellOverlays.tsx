@@ -1,4 +1,5 @@
 export { TerminalBootstrap } from "@/features/terminal/TerminalBootstrap";
+export { WebPanelBootstrap } from "@/features/webPanels/WebPanelBootstrap";
 import * as React from "react";
 
 import { ObserverBootstrap } from "@/features/agents/ObserverBootstrap";

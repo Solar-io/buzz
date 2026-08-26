@@ -47,6 +47,7 @@ export default defineConfig({
         "**/channel-star.spec.ts",
         "**/channel-controls.spec.ts",
         "**/channel-activity-popover.spec.ts",
+        "**/web-panel.spec.ts",
         "**/active-turn-resilience.spec.ts",
         "**/profile-active-turn.spec.ts",
         "**/config-bridge-screenshots.spec.ts",

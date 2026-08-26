@@ -13,6 +13,7 @@ type AppShellChannelSurfaceProps = {
   isHuddleRoomStarting: boolean;
   mainInsetRef: React.RefObject<HTMLElement | null>;
   terminal?: React.ReactNode;
+  webPanels?: React.ReactNode;
 };
 
 export function AppShellChannelSurface({
@@ -22,6 +23,7 @@ export function AppShellChannelSurface({
   isHuddleRoomStarting,
   mainInsetRef,
   terminal,
+  webPanels,
 }: AppShellChannelSurfaceProps) {
   const { isMobile, openMobile, state: sidebarState } = useSidebar();
   const hasCollapsedSidebarGutter =
@@ -51,7 +53,11 @@ export function AppShellChannelSurface({
           />
         ) : null}
         {isHuddleRoom && !isHuddleRoomStarting ? <HuddleRoomHeader /> : null}
-        <BuzzTheme.ContentSurface terminal={terminal} unframed={isHuddleRoom}>
+        <BuzzTheme.ContentSurface
+          terminal={terminal}
+          unframed={isHuddleRoom}
+          webPanels={webPanels}
+        >
           {isHuddleRoomStarting ? <HuddleStartingView /> : children}
         </BuzzTheme.ContentSurface>
       </SidebarInset>

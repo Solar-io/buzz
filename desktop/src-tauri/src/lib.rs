@@ -50,6 +50,7 @@ mod tray_menu;
 mod unread_catch_up;
 mod util;
 mod video_chat;
+mod web_panels;
 #[cfg(target_os = "linux")]
 pub mod webkit_rendering;
 use app_state::{build_app_state, resolve_persisted_identity, AppState};
@@ -798,6 +799,7 @@ pub fn run() {
             get_huddle_state,
             close_huddle_companion,
             open_huddle_window,
+            web_panels::open_web_panel_login,
             push_audio_pcm,
             reconnect_huddle_audio,
             start_stt_pipeline,

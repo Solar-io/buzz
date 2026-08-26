@@ -21,6 +21,11 @@ import {
   toggleTerminalPanel,
   useTerminalPanel,
 } from "@/features/terminal/terminalPanelStore";
+import {
+  toggleWebPanel,
+  useWebPanel,
+} from "@/features/webPanels/webPanelStore";
+import { WEB_PANELS } from "@/features/webPanels/webPanels.config";
 
 const DM_HEADER_AVATAR_SIZE = 32;
 const DM_HEADER_AVATAR_STATUS_GEOMETRY = scaleProfileAvatarStatusGeometry(
@@ -84,6 +89,7 @@ export function ChannelScreenHeader({
     onJoinChannel;
 
   const terminalPanel = useTerminalPanel();
+  const webPanel = useWebPanel();
   const activityButton =
     activeChannel && showAgentActivityButton && onOpenAgentActivity ? (
       <Button
@@ -112,6 +118,26 @@ export function ChannelScreenHeader({
       <SquareTerminal />
     </Button>
   ) : null;
+  const webPanelButtons = activeChannel
+    ? WEB_PANELS.map((panel) => {
+        const PanelIcon = panel.icon;
+        const isOpen =
+          webPanel.mode !== "closed" && webPanel.openPanelId === panel.id;
+        return (
+          <Button
+            aria-label={`Open ${panel.label} panel`}
+            key={panel.id}
+            onClick={() => toggleWebPanel(panel.id)}
+            size="icon"
+            title={panel.label}
+            type="button"
+            variant={isOpen ? "secondary" : "outline"}
+          >
+            <PanelIcon />
+          </Button>
+        );
+      })
+    : [];
   const channelActions = activeChannel ? (
     showJoinButton ? (
       <Button
@@ -139,6 +165,7 @@ export function ChannelScreenHeader({
     <div className="flex items-center gap-1">
       {activityButton}
       {terminalButton}
+      {webPanelButtons}
       {channelActions}
     </div>
   ) : null;
