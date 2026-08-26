@@ -12,14 +12,11 @@ function report(error: unknown) {
 /**
  * Open the login companion window for a panel. All the app's webviews share
  * one cookie jar, so an OAuth login completed in that window is visible to
- * the docked iframe after its Reload button remounts it.
+ * the docked iframe after its Reload button remounts it. Only the panel id
+ * crosses the IPC boundary — the backend owns the URL and window title.
  */
 function openLoginWindow(panel: WebPanelDef) {
-  invoke("open_web_panel_login", {
-    panelId: panel.id,
-    url: panel.url,
-    title: `${panel.label} login`,
-  }).catch(report);
+  invoke("open_web_panel_login", { panelId: panel.id }).catch(report);
 }
 
 /**
