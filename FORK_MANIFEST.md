@@ -40,10 +40,10 @@ Dropped 2026-08-24: one auto-commit noise commit and a stray `logs/verification.
 
 Every build we install gets an annotated tag: `nest-<upstream-version>-<yyyymmdd>`
 (suffixed `-2`, `-3`… for additional same-day builds).
-Current installed build: **`nest-0.5.18-20260824-4`** (upstream 0.5.18, series on
-upstream `17af15eff`, incl. personaId wiring + peer-armed video-chat relay and the
-warm idle pool). Installed on crichton and aeryn; `buzz-desktop` sha256
-`280072e0…b3e02a` on both.
+Current installed build: **`nest-0.5.20-20260826-1`** (upstream 0.5.20 via
+`ef0d20256`, incl. the web-panels feature from `claude/web-panels`). Installed on
+crichton and aeryn 2026-08-26; `buzz-desktop` sha256
+`a8c58bc6…327864e8` on both, byte-identical to the independent same-day build.
 The tag always marks what the installed app contains; `main` is the series head.
 
 Per-host ops config (not in the repo): `video-chat-peers.json` in the app config
@@ -82,6 +82,12 @@ the funnel.
    then mv-swap — raw `rsync host:` trips the deploy-guard hook. Verify with
    `shasum -a 256 …/Contents/MacOS/buzz-desktop` on both hosts. The user must
    quit-and-reopen Buzz per machine to pick up the new build.
+   🔴 Check "is Buzz running" with `ps -axo pid,args | grep -w buzz-desktop | grep -v grep`,
+   NEVER `pgrep`: reproduced 2026-08-26 on crichton that a live, working buzz-desktop
+   (started two days earlier) is invisible to `pgrep -x`/`-fl` with every pattern while
+   `ps` sees it plainly — the 0.5.20 crichton swap went over a live process on a
+   pgrep-based "not running" check. The running binary survives an `mv` (its inode
+   stays open), so the miss was harmless in effect, but the check itself is wrong.
 6. If relay/backend binaries changed: restart `com.dev.buzz-relay`
 6. Tag `nest-<version>-<yyyymmdd>`, update this manifest, commit, push `main` + tag
    to the `nest` remote
