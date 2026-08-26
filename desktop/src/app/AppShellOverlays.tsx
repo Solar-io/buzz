@@ -1,6 +1,7 @@
 export { TerminalBootstrap } from "@/features/terminal/TerminalBootstrap";
 import * as React from "react";
 
+import { ObserverBootstrap } from "@/features/agents/ObserverBootstrap";
 import type { Channel } from "@/shared/api/types";
 import type { CreateChannelInput } from "@/features/sidebar/lib/useCreateChannelForm";
 import { useDeferredModalOpen } from "@/shared/ui/deferredModalOpen";
@@ -137,6 +138,11 @@ export function AppShellOverlays({
           />
         </React.Suspense>
       ) : null}
+
+      {/* Always-mounted: arms the observer frame subscription at app start
+          so this desktop archives agent activity history (ephemeral kind
+          24200 frames are only received while subscribed). Renders null. */}
+      <ObserverBootstrap />
     </>
   );
 }

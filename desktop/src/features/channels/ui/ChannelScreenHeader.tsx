@@ -1,4 +1,4 @@
-import { LogIn, SquareTerminal } from "lucide-react";
+import { Activity, LogIn, SquareTerminal } from "lucide-react";
 import type * as React from "react";
 
 import { ChatHeader } from "@/features/chat/ui/ChatHeader";
@@ -46,6 +46,9 @@ type ChannelScreenHeaderProps = {
   onJoinChannel?: () => Promise<void>;
   onManageChannel: () => void;
   onToggleMembers: () => void;
+  /** Open the agent activity pane; hidden when no agent target applies. */
+  onOpenAgentActivity?: () => void;
+  showAgentActivityButton?: boolean;
 };
 
 export function ChannelScreenHeader({
@@ -66,6 +69,8 @@ export function ChannelScreenHeader({
   onJoinChannel,
   onManageChannel,
   onToggleMembers,
+  onOpenAgentActivity,
+  showAgentActivityButton = false,
 }: ChannelScreenHeaderProps) {
   const isGroupDm =
     activeChannel?.channelType === "dm" &&
@@ -79,6 +84,20 @@ export function ChannelScreenHeader({
     onJoinChannel;
 
   const terminalPanel = useTerminalPanel();
+  const activityButton =
+    activeChannel && showAgentActivityButton && onOpenAgentActivity ? (
+      <Button
+        aria-label="Open agent activity"
+        data-testid="open-agent-activity"
+        onClick={onOpenAgentActivity}
+        size="icon"
+        title="Agent activity"
+        type="button"
+        variant="outline"
+      >
+        <Activity />
+      </Button>
+    ) : null;
   const terminalButton = activeChannel ? (
     <Button
       aria-label={
@@ -118,6 +137,7 @@ export function ChannelScreenHeader({
   ) : null;
   const actions = activeChannel ? (
     <div className="flex items-center gap-1">
+      {activityButton}
       {terminalButton}
       {channelActions}
     </div>

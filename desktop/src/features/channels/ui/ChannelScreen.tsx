@@ -46,6 +46,10 @@ import { buildMessageComposerEditTarget } from "@/features/messages/lib/draftMen
 import { formatTimelineMessages } from "@/features/messages/lib/formatTimelineMessages";
 import { DeleteMessageConfirmDialog } from "@/features/messages/ui/DeleteMessageConfirmDialog";
 import { getThreadReference } from "@/features/messages/lib/threading";
+import { toast } from "sonner";
+
+import { getWorkingAgentPubkeysForChannel } from "@/features/agents/agentWorkingSignal";
+import { resolveHeaderAgentActivity } from "@/features/channels/lib/headerAgentActivity";
 import { hasPersistedHydratedChannel } from "@/features/messages/lib/channelHeadCache";
 import {
   resolveTimelineLoadingLatch,
@@ -85,6 +89,9 @@ import { useChannelOpenReadState } from "./useChannelOpenReadState";
 import { useChannelUnreadState } from "./useChannelUnreadState";
 import type { ChannelScreenProps } from "./ChannelScreen.types";
 const EMPTY_RELAY_EVENTS: RelayEvent[] = [];
+// Visibility-only inputs for resolveHeaderAgentActivity: the working/session
+// lists influence only the target, which is resolved at click time instead.
+const NO_HEADER_ACTIVITY_PUBKEYS: readonly string[] = [];
 export function ChannelScreen({
   activeChannel,
   autoSendDraftKey,
@@ -597,6 +604,59 @@ export function ChannelScreen({
       setThreadReplyTargetId,
       setThreadScrollTargetId,
     });
+  // Header activity button: DMs open their agent participant directly; other
+  // channels resolve at click time — live working agent first, then the first
+  // channel session agent, so the pane still has local-archive history to
+  // show when nobody is mid-turn.
+  const dmAgentParticipantPubkey =
+    activeChannel?.channelType === "dm" &&
+    activeDmHeaderParticipants.length === 1
+      ? normalizePubkey(activeDmHeaderParticipants[0].pubkey)
+      : null;
+  const relayAgentPubkeySet = React.useMemo(
+    () => new Set(relayAgents.map((agent) => normalizePubkey(agent.pubkey))),
+    [relayAgents],
+  );
+  const headerAgentActivityVisible = React.useMemo(
+    () =>
+      activeChannel != null &&
+      resolveHeaderAgentActivity({
+        channelType: activeChannel.channelType,
+        dmParticipantPubkey: dmAgentParticipantPubkey,
+        dmParticipantIsAgent:
+          dmAgentParticipantPubkey != null &&
+          relayAgentPubkeySet.has(dmAgentParticipantPubkey),
+        dmParticipantCount: activeDmHeaderParticipants.length,
+        workingAgentPubkeys: NO_HEADER_ACTIVITY_PUBKEYS,
+        channelAgentPubkeys: NO_HEADER_ACTIVITY_PUBKEYS,
+      }).showButton,
+    [
+      activeChannel,
+      activeDmHeaderParticipants.length,
+      dmAgentParticipantPubkey,
+      relayAgentPubkeySet,
+    ],
+  );
+  const handleOpenHeaderAgentActivity = React.useCallback(() => {
+    const target =
+      (dmAgentParticipantPubkey != null &&
+        relayAgentPubkeySet.has(dmAgentParticipantPubkey) &&
+        dmAgentParticipantPubkey) ||
+      getWorkingAgentPubkeysForChannel(activeChannelId)[0] ||
+      channelAgentSessionAgents[0]?.pubkey ||
+      null;
+    if (target) {
+      handleOpenAgentSession(target, activeChannelId);
+    } else {
+      toast.info("No agent activity in this channel yet.");
+    }
+  }, [
+    activeChannelId,
+    channelAgentSessionAgents,
+    dmAgentParticipantPubkey,
+    handleOpenAgentSession,
+    relayAgentPubkeySet,
+  ]);
   const settledChannelIdRef = React.useRef<string | null>(null);
   const hasSettledThisChannel =
     activeChannelId !== null && settledChannelIdRef.current === activeChannelId;
@@ -756,6 +816,8 @@ export function ChannelScreen({
         onJoinChannel={joinChannelMutation.mutateAsync}
         onManageChannel={handleManageChannel}
         onToggleMembers={handleToggleMembers}
+        onOpenAgentActivity={handleOpenHeaderAgentActivity}
+        showAgentActivityButton={headerAgentActivityVisible}
         showHeaderContent={!isSinglePanelView && !isHuddleTranscript}
         transparentChrome={activeChannel?.channelType !== "forum"}
       />
@@ -775,6 +837,8 @@ export function ChannelScreen({
       joinChannelMutation.mutateAsync,
       handleManageChannel,
       handleToggleMembers,
+      handleOpenHeaderAgentActivity,
+      headerAgentActivityVisible,
       isSinglePanelView,
       isHuddleTranscript,
     ],
