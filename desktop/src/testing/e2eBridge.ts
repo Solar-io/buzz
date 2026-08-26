@@ -19,7 +19,11 @@ import { relayClient } from "@/shared/api/relayClient";
 import { activateRateLimit } from "@/shared/api/relayRateLimitGate";
 import { resolveAgentParallelism } from "@/features/agents/lib/agentParallelism";
 import type { ConnectionState } from "@/shared/api/relayClientShared";
-import type { ChannelTemplate, RelayEvent } from "@/shared/api/types";
+import type {
+  ChannelTemplate,
+  FeedItemCategory,
+  RelayEvent,
+} from "@/shared/api/types";
 import { getMarkdownParseCount } from "@/shared/ui/markdown/nodeCache";
 import { syncAgentTurnsFromEvents } from "@/features/agents/activeAgentTurnsStore";
 import { recordTimeoutFromRejection } from "@/features/moderation/lib/timeoutStore";
@@ -773,7 +777,7 @@ type RawFeedItem = {
   // backend always emits the key, as `null` when unknown.
   channel_type?: string | null;
   tags: string[][];
-  category: "mention" | "needs_action" | "activity" | "agent_activity";
+  category: FeedItemCategory;
 };
 
 type RawHomeFeedResponse = {
@@ -4414,6 +4418,15 @@ function getMockMessageStore(channelId: string): RelayEvent[] {
               kind: 45001,
               tags: [["h", channelId]],
               content: "Release checklist: async feedback thread.",
+              sig: "mocksig".repeat(20).slice(0, 128),
+            },
+            {
+              id: "mock-forum-offsite-thread",
+              pubkey: ALICE_PUBKEY,
+              created_at: Math.floor(Date.now() / 1000) - 85 * 60,
+              kind: 45001,
+              tags: [["h", channelId]],
+              content: "Team offsite planning and travel notes.",
               sig: "mocksig".repeat(20).slice(0, 128),
             },
             {
@@ -13585,6 +13598,15 @@ export function maybeInstallE2eTauriMocks() {
         return handleGetEvent(
           payload as Parameters<typeof handleGetEvent>[0],
           activeConfig,
+        );
+      case "get_events":
+        return Promise.all(
+          (payload as { eventIds: string[] }).eventIds.map(
+            async (eventId) =>
+              JSON.parse(
+                await handleGetEvent({ eventId }, activeConfig),
+              ) as RelayEvent,
+          ),
         );
       case "sign_event":
         window.__BUZZ_E2E_SIGNED_EVENTS__?.push({
