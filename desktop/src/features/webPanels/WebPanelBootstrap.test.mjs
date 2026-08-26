@@ -45,29 +45,115 @@ after(() => {
 beforeEach(() => {
   cleanup?.();
   invokes.length = 0;
+  dom.window.localStorage.clear();
 });
 
-test("login button sends only the panel id across the IPC boundary", async () => {
-  const { toggleWebPanel, resetWebPanelForTests } = await import(
-    "./webPanelStore.ts"
-  );
-  resetWebPanelForTests();
-  const view = render(createElement(WebPanelBootstrap));
-  await act(async () => {
-    toggleWebPanel("files");
-  });
-  const login = await waitFor(() => {
-    const button = view.getByLabelText("Log in to Files");
-    assert.ok(button, "login button must mount with the open panel");
-    return button;
-  });
+async function withOpenStore(run) {
+  const store = await import("./webPanelStore.ts");
+  store.resetWebPanelForTests();
+  store.restoreWebPanelSessionForTests();
+  await run(store);
+  store.resetWebPanelForTests();
+}
 
-  fireEvent.click(login);
+test("login button sends only the panel type id across the IPC boundary", async () => {
+  await withOpenStore(async (store) => {
+    const view = render(createElement(WebPanelBootstrap));
+    await act(async () => {
+      store.openWebPanelInstance("files");
+    });
+    const login = await waitFor(() => {
+      const button = view.getByLabelText("Log in to Files");
+      assert.ok(button, "login button must mount with the open panel");
+      return button;
+    });
 
-  assert.deepEqual(invokes, [["open_web_panel_login", { panelId: "files" }]]);
-  // The contract is id-only: url and title must never ride the invoke.
-  const [command, args] = invokes[0];
-  assert.equal(command, "open_web_panel_login");
-  assert.deepEqual(Object.keys(args), ["panelId"]);
-  resetWebPanelForTests();
+    fireEvent.click(login);
+
+    assert.deepEqual(invokes, [["open_web_panel_login", { panelId: "files" }]]);
+    // The contract is id-only: url and title must never ride the invoke.
+    const [command, args] = invokes[0];
+    assert.equal(command, "open_web_panel_login");
+    assert.deepEqual(Object.keys(args), ["panelId"]);
+  });
+});
+
+test("closing a tab destroys that instance's native webview", async () => {
+  await withOpenStore(async (store) => {
+    render(createElement(WebPanelBootstrap));
+    await act(async () => {
+      store.openWebPanelInstance("files");
+      store.openWebPanelInstance("files");
+    });
+    invokes.length = 0;
+    await act(async () => {
+      store.closeWebPanelInstance("files-2");
+    });
+    await waitFor(() => {
+      assert.deepEqual(invokes, [
+        ["destroy_web_panel", { instanceId: "files-2", panelId: "files" }],
+      ]);
+    });
+  });
+});
+
+test("closing the dock destroys every instance's webview", async () => {
+  await withOpenStore(async (store) => {
+    render(createElement(WebPanelBootstrap));
+    await act(async () => {
+      store.openWebPanelInstance("files");
+      store.openWebPanelInstance("files");
+    });
+    invokes.length = 0;
+    await act(async () => {
+      store.setWebPanelMode("closed");
+    });
+    await waitFor(() => assert.equal(invokes.length, 2));
+    const destroyed = invokes.map(([, args]) => args.instanceId).sort();
+    assert.deepEqual(destroyed, ["files-1", "files-2"]);
+  });
+});
+
+test("switching tabs keeps both webviews alive (no destroy)", async () => {
+  await withOpenStore(async (store) => {
+    render(createElement(WebPanelBootstrap));
+    await act(async () => {
+      store.openWebPanelInstance("files");
+      store.openWebPanelInstance("files");
+    });
+    invokes.length = 0;
+    await act(async () => {
+      store.setActiveWebPanelInstance("files-1");
+    });
+    assert.deepEqual(
+      invokes,
+      [],
+      "tab switch must hide, not destroy — keep-alive is the point of tabs",
+    );
+    assert.equal(store.getWebPanelSnapshotForTests().instances.length, 2);
+  });
+});
+
+test("restored sessions mount without boot-blocking", async () => {
+  await withOpenStore(async (store) => {
+    dom.window.localStorage.setItem(
+      "buzz-webpanel-session",
+      JSON.stringify({
+        version: 1,
+        mode: "docked",
+        instances: [{ instanceId: "files-4", panelId: "files", height: 410 }],
+        activeInstanceId: "files-4",
+      }),
+    );
+    store.restoreWebPanelSessionForTests();
+    const view = render(createElement(WebPanelBootstrap));
+    await waitFor(() => {
+      const substrate = view.container.querySelector(
+        ".buzz-webpanel-substrate",
+      );
+      assert.ok(substrate, "restored session must mount the dock");
+      assert.equal(substrate.style.height, "410px");
+    });
+    assert.equal(view.container.querySelectorAll('[role="tab"]').length, 1);
+  });
 });

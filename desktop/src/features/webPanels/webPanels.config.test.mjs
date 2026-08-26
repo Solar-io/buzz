@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { createElement, isValidElement } from "react";
 
 import tauriConf from "../../../src-tauri/tauri.conf.json";
-import { WEB_PANELS, getWebPanel } from "./webPanels.config.ts";
+import {
+  E2E_BUILD_FORCES_IFRAME,
+  WEB_PANELS,
+  getWebPanel,
+  resolveRenderMode,
+} from "./webPanels.config.ts";
 
 const FILES_URL = "https://crichton.tailb3d4b8.ts.net:6201/?panel=files";
 
@@ -23,6 +29,26 @@ test("ships the files panel against the Evie file manager", () => {
   assert.equal(files.id, "files");
   assert.equal(files.label, "Files");
   assert.equal(files.url, FILES_URL);
+});
+
+test("panels default to native rendering outside e2e builds", () => {
+  // The node test runner has no import.meta.env, so E2E_BUILD_FORCES_IFRAME
+  // is false here and every configured panel must be native.
+  assert.equal(E2E_BUILD_FORCES_IFRAME, false);
+  for (const panel of WEB_PANELS) {
+    assert.equal(
+      panel.render,
+      "native",
+      `${panel.id} must default to native rendering`,
+    );
+  }
+});
+
+test("resolveRenderMode forces iframe for e2e and honors explicit fallbacks", () => {
+  assert.equal(resolveRenderMode("native", true), "iframe");
+  assert.equal(resolveRenderMode("iframe", true), "iframe");
+  assert.equal(resolveRenderMode("native", false), "native");
+  assert.equal(resolveRenderMode("iframe", false), "iframe");
 });
 
 test("panel ids are unique", () => {
@@ -67,7 +93,7 @@ test("every panel origin is allowed by the CSP frame-src directive", () => {
 });
 
 test("frame-src allows exactly the configured panel origins", () => {
-  // The CSP is the enforcement point for which remote frames may load, so it
+  // The CSP is the enforcement point for iframe-fallback loading, so it
   // must not drift wider than the config: same count, no wildcards.
   const allowed = frameSrcOrigins();
   const origins = WEB_PANELS.map((panel) => new URL(panel.url).origin);
@@ -85,4 +111,37 @@ test("getWebPanel resolves configured ids and rejects everything else", () => {
   assert.equal(getWebPanel("files")?.url, FILES_URL);
   assert.equal(getWebPanel("nope"), null);
   assert.equal(getWebPanel(null), null);
+});
+
+test("rust panel table mirrors the typescript config", async () => {
+  // One source of truth, proven from the TS side: the Rust PANEL_TYPES
+  // table (which owns native webview URLs and the navigation allowlist)
+  // must match this config exactly — same ids, same urls, same count.
+  const rust = await readFile(
+    new URL("../../../src-tauri/src/web_panels.rs", import.meta.url),
+    "utf8",
+  );
+  const tableMatch = rust.match(/const PANEL_TYPES[^=]*= &\[([\s\S]*?)\];/);
+  assert.ok(tableMatch, "web_panels.rs must define the PANEL_TYPES table");
+  const entries = [
+    ...tableMatch[1].matchAll(/"([^"]+)"\s*,\s*"[^"]+"\s*,\s*"([^"]+)"/g),
+  ].map((match) => ({ id: match[1], url: match[2] }));
+  assert.ok(entries.length > 0, "PANEL_TYPES must not be empty");
+  assert.equal(
+    entries.length,
+    WEB_PANELS.length,
+    "PANEL_TYPES and WEB_PANELS disagree on panel count",
+  );
+  for (const [index, panel] of WEB_PANELS.entries()) {
+    assert.equal(
+      entries[index].id,
+      panel.id,
+      `panel id drift at index ${index}`,
+    );
+    assert.equal(
+      entries[index].url,
+      panel.url,
+      `panel url drift at index ${index}`,
+    );
+  }
 });
