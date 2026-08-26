@@ -28,6 +28,7 @@ export default defineConfig({
         "**/key-import-reveal.spec.ts",
         "**/navigation.spec.ts",
         "**/channels.spec.ts",
+        "**/header-agent-activity.spec.ts",
         "**/channel-shared-header-backdrop.spec.ts",
         "**/channel-composer-overflow.spec.ts",
         "**/badge.spec.ts",
