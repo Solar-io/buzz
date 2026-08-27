@@ -23,10 +23,6 @@ export type CustomPanelInfo = {
   title: string;
 };
 
-export type AddCustomSiteOutcome =
-  | { status: "added"; panel: CustomPanelInfo }
-  | { status: "cancelled" };
-
 export type CustomPanelPhase = "unloaded" | "loading" | "ready" | "failed";
 
 let phase: CustomPanelPhase = "unloaded";
@@ -74,18 +70,6 @@ function sanitizeInfos(raw: unknown): CustomPanelInfo[] {
     });
   }
   return infos;
-}
-
-function sanitizeOutcome(raw: unknown): AddCustomSiteOutcome | null {
-  if (typeof raw !== "object" || raw === null) return null;
-  const outcome = raw as Partial<AddCustomSiteOutcome> & { status?: unknown };
-  if (outcome.status === "cancelled") return { status: "cancelled" };
-  if (outcome.status === "added") {
-    const panel = outcome.panel;
-    const info = sanitizeInfos([panel])[0];
-    if (info) return { status: "added", panel: info };
-  }
-  return null;
 }
 
 async function runLoad(): Promise<void> {
@@ -146,21 +130,81 @@ export function allWebPanels(): readonly WebPanelDef[] {
 }
 
 /**
- * Run the native add-site flow (file picker + confirmation, Rust-owned).
- * Returns null when the invoke itself failed (a toast was shown) and
- * `{status: "cancelled"}` when the owner cancelled a dialog — no toast.
+ * Open the trusted add-site window (Rust-owned: a small fixed-size window
+ * over the bundled add.html form — the only webview whose
+ * `add_custom_panel` calls are honored; see the caller-label gate in
+ * custom_panels.rs). Returns false when the invoke itself failed (a toast
+ * was shown). Success is observed through `subscribeCustomPanelAdded`:
+ * the add window types the values, Rust persists and broadcasts
+ * `custom-panel-added`, and this registry refreshes in response.
  */
-export async function addCustomSite(): Promise<AddCustomSiteOutcome | null> {
+export async function openAddSiteWindow(): Promise<boolean> {
   try {
-    const outcome = sanitizeOutcome(await invoke("add_custom_panel"));
-    if (outcome?.status === "added") {
-      await refreshCustomPanels();
-    }
-    return outcome;
+    await invoke("open_web_panel_add_window");
+    return true;
   } catch (error) {
-    toast.error("Couldn't add the site", { description: describeError(error) });
-    return null;
+    toast.error("Couldn't open the add-site window", {
+      description: describeError(error),
+    });
+    return false;
   }
+}
+
+// ── custom-panel-added channel ───────────────────────────────────────────
+
+type AddedListener = (panel: CustomPanelInfo) => void;
+type AddedEventInstaller = (
+  handler: (raw: unknown) => void,
+) => Promise<() => void>;
+
+const addedListeners = new Set<AddedListener>();
+let addedChannelPromise: Promise<() => void> | null = null;
+let addedInstallerForTests: AddedEventInstaller | null = null;
+
+function defaultAddedInstaller(
+  handler: (raw: unknown) => void,
+): Promise<() => void> {
+  return import("@tauri-apps/api/event").then((api) =>
+    api.listen("custom-panel-added", (event) => handler(event.payload)),
+  );
+}
+
+/** Rust broadcast after a successful add; payload is a CustomPanelInfo
+ *  (never a URL). Sanitize anyway — Rust owns trust, this avoids crashes. */
+async function deliverCustomPanelAdded(raw: unknown): Promise<void> {
+  const info = sanitizeInfos([raw])[0];
+  if (!info) return;
+  // Refresh BEFORE notifying, so a listener that resolves the new panel
+  // (e.g. opening its tab) finds it in the registry.
+  await refreshCustomPanels();
+  for (const listener of addedListeners) {
+    listener(info);
+  }
+}
+
+function ensureAddedChannel(): void {
+  if (addedChannelPromise !== null) return;
+  const handler = (raw: unknown) => {
+    void deliverCustomPanelAdded(raw);
+  };
+  addedChannelPromise = (addedInstallerForTests ?? defaultAddedInstaller)(
+    handler,
+  ).catch((error: unknown) => {
+    // Fail soft: the picker still lists customs after its next refresh;
+    // losing the live nudge must not break the registry.
+    console.warn("custom-panel-added channel unavailable", error);
+    addedChannelPromise = null;
+    return () => {};
+  });
+}
+
+/** Subscribe to owner-added sites (refreshed registry, then notified). */
+export function subscribeCustomPanelAdded(
+  listener: AddedListener,
+): () => void {
+  ensureAddedChannel();
+  addedListeners.add(listener);
+  return () => addedListeners.delete(listener);
 }
 
 /**
@@ -191,9 +235,21 @@ export function setCustomPanelLoaderForTests(
   loaderForTests = loader;
 }
 
+/** Swap the custom-panel-added channel for a controllable fake (node
+ *  tests capture the handler and drive it directly). */
+export function setCustomPanelAddedInstallerForTests(
+  installer: AddedEventInstaller | null,
+): void {
+  addedInstallerForTests = installer;
+  addedChannelPromise = null;
+}
+
 export function resetWebPanelRegistryForTests(): void {
   phase = "unloaded";
   customs = [];
   readyPromise = null;
   loaderForTests = null;
+  addedInstallerForTests = null;
+  addedChannelPromise = null;
+  addedListeners.clear();
 }

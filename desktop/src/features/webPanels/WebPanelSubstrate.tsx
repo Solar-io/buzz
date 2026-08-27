@@ -17,7 +17,11 @@ import {
   E2E_BUILD_FORCES_IFRAME,
   showsCustomNativeNote,
 } from "./webPanels.config";
-import { addCustomSite, removeCustomSite } from "./webPanelRegistry";
+import {
+  openAddSiteWindow,
+  removeCustomSite,
+  subscribeCustomPanelAdded,
+} from "./webPanelRegistry";
 import {
   DOCK_HEIGHT_DEFAULT,
   DOCK_HEIGHT_MAX_RATIO,
@@ -151,12 +155,25 @@ export function WebPanelSubstrate({
     });
   };
 
+  // The add flow opens the trusted add window; the typed form there is
+  // the owner-intent proof (the Rust command checks the caller webview's
+  // label — this app webview can never supply a URL). Success arrives as
+  // the Rust-broadcast custom-panel-added event, which the subscription
+  // below turns into a freshly opened tab.
   const addSite = async () => {
-    const outcome = await addCustomSite();
-    if (outcome?.status === "added") {
-      onOpenInstance(outcome.panel.id);
-    }
+    setPickerOpen(false);
+    await openAddSiteWindow();
   };
+
+  React.useEffect(
+    () =>
+      subscribeCustomPanelAdded((panel) => {
+        onOpenInstance(panel.id);
+      }),
+    // Re-subscribing on an unstable callback is cheap (a Set swap); the
+    // registry keeps the single event channel regardless.
+    [onOpenInstance],
+  );
 
   const removeSite = async (panelId: string) => {
     setPickerOpen(false);

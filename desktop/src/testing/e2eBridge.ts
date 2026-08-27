@@ -14220,6 +14220,22 @@ export function maybeInstallE2eTauriMocks() {
           title: site.label,
         }));
       case "add_custom_panel": {
+        // Mirrors the real command's contract: typed {label, url} from the
+        // trusted add window (the caller-label gate is Rust-side and
+        // invisible here), a returned CustomPanelInfo — never a url — and
+        // an app-wide custom-panel-added broadcast that the registry
+        // channel turns into a refresh + tab open.
+        const input = payload as { label?: unknown; url?: unknown } | null;
+        if (
+          typeof input?.label !== "string" ||
+          typeof input?.url !== "string" ||
+          input.label.trim() === "" ||
+          input.url.trim() === ""
+        ) {
+          throw new Error(
+            "add_custom_panel requires non-empty label and url strings",
+          );
+        }
         const next =
           mockCustomWebPanels.reduce((max, site) => {
             const n = Number(site.id.replace(/^site-/, ""));
@@ -14227,15 +14243,19 @@ export function maybeInstallE2eTauriMocks() {
           }, 0) + 1;
         const site = {
           id: `site-${next}`,
-          label: "Docs",
-          url: "https://docs.example/",
+          label: input.label.trim(),
+          url: input.url.trim(),
         };
         mockCustomWebPanels.push(site);
-        return {
-          status: "added",
-          panel: { id: site.id, label: site.label, title: site.label },
-        };
+        const info = { id: site.id, label: site.label, title: site.label };
+        await emit("custom-panel-added", info);
+        return info;
       }
+      case "open_web_panel_add_window":
+        // The real command opens the trusted native add window over the
+        // bundled add.html form — unreachable from Playwright's chromium,
+        // so the add itself is driven through the add_custom_panel mock.
+        return null;
       case "remove_custom_panel":
         mockCustomWebPanels = mockCustomWebPanels.filter(
           (site) => site.id !== (payload as { id?: string } | null)?.id,

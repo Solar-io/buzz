@@ -476,7 +476,7 @@ test("remove flow: a removed site's open tabs close through the store path", asy
   assert.deepEqual(invokes[1], ["list_custom_panels", {}]);
 });
 
-test("add flow: an added site opens a tab for the new panel id", async () => {
+test("add flow: the picker opens the trusted add window; the Rust event opens the tab", async () => {
   const callbacks = {
     closes: [],
     heights: [],
@@ -486,13 +486,17 @@ test("add flow: an added site opens a tab for the new panel id", async () => {
     selects: [],
     modeChanges: [],
   };
-  respond("add_custom_panel", {
-    status: "added",
-    panel: { id: "site-2", label: "Wiki", title: "Wiki" },
-  });
+  // The add window's typed form lives in Rust-owned chrome; from here the
+  // flow is (1) invoke open_web_panel_add_window, (2) Rust persists and
+  // broadcasts custom-panel-added, which the registry channel delivers.
   respond("list_custom_panels", [
     { id: "site-2", label: "Wiki", title: "Wiki" },
   ]);
+  let deliverAdded = null;
+  registry.setCustomPanelAddedInstallerForTests(async (handler) => {
+    deliverAdded = handler;
+    return () => {};
+  });
   const view = render(
     createElement(WebPanelSubstrate, {
       tabs: [tab()],
@@ -510,6 +514,11 @@ test("add flow: an added site opens a tab for the new panel id", async () => {
   );
   fireEvent.click(view.getByLabelText("Open a new panel tab"));
   fireEvent.click(view.getByRole("menuitem", { name: "Add site…" }));
+  await waitFor(() => {
+    assert.deepEqual(invokes, [["open_web_panel_add_window", {}]]);
+  });
+  assert.ok(deliverAdded, "mounting must install the added-event channel");
+  deliverAdded({ id: "site-2", label: "Wiki", title: "Wiki" });
   await waitFor(() => {
     assert.deepEqual(callbacks.instances, ["site-2"]);
   });

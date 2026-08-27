@@ -22,11 +22,14 @@
 //!
 //! AMENDMENT (owner-added sites): besides the static `PANEL_TYPES` table, a
 //! panel id may resolve into the custom store owned by
-//! [`crate::custom_panels`] — sites the OWNER added through native OS
-//! dialogs. Resolution order is static table first, then the custom store;
-//! unknown ids are still an error, never a fallback. The amendment keeps
-//! the invariant above intact: the app webview still sends only ids, and
-//! `list_custom_panels` never returns a URL.
+//! [`crate::custom_panels`] — sites the OWNER added through the trusted
+//! bundled add window ([`custom_panels::WEBPANEL_ADD_WINDOW_LABEL`], opened
+//! by [`open_web_panel_add_window`] below). The URL crosses IPC only from
+//! that window, enforced by the calling webview's label — never from the
+//! main app webview. Resolution order is static table first, then the
+//! custom store; unknown ids are still an error, never a fallback. The
+//! amendment keeps the invariant above intact: the app webview still sends
+//! only ids, and `list_custom_panels` never returns a URL.
 
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
@@ -464,6 +467,34 @@ pub fn open_web_panel_login(app: tauri::AppHandle, panel_id: String) -> Result<(
         .center()
         .build()
         .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// Open (or focus) the trusted add-site window: a small fixed-size window
+/// over the app's OWN bundled `add.html` form — no query params, no
+/// external URLs, ever. This is the only webview whose
+/// `add_custom_panel` calls are honored (see
+/// [`custom_panels::WEBPANEL_ADD_WINDOW_LABEL`]); the form it hosts is
+/// where the owner types the name and URL.
+#[tauri::command]
+pub fn open_web_panel_add_window(app: tauri::AppHandle) -> Result<(), String> {
+    let label = custom_panels::WEBPANEL_ADD_WINDOW_LABEL;
+    if let Some(window) = app.get_webview_window(label) {
+        window.show().map_err(|error| error.to_string())?;
+        window.set_focus().map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(
+        &app,
+        label,
+        WebviewUrl::App("add.html".into()),
+    )
+    .title("Add site")
+    .inner_size(440.0, 280.0)
+    .resizable(false)
+    .center()
+    .build()
+    .map_err(|error| error.to_string())?;
     Ok(())
 }
 

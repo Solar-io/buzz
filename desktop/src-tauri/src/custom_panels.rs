@@ -5,12 +5,14 @@
 //! store of sites the OWNER adds at runtime, without weakening the
 //! invariant that the app webview can never supply a URL:
 //!
-//! - `add_custom_panel` takes no url/label arguments. The URL comes from a
-//!   native file picker the owner drives (an internet-shortcut/webloc/json
-//!   file — the plugin has no text-input dialog, see `parse_site_file`), and
-//!   a native confirm dialog shows the exact URL before anything persists.
-//!   App JS cannot drive either dialog to a chosen value, so a compromised
-//!   app webview cannot add a site.
+//! - The URL crosses the IPC boundary ONLY from the trusted bundled add
+//!   window ([`WEBPANEL_ADD_WINDOW_LABEL`], created by
+//!   `open_web_panel_add_window` over the app's own `add.html` asset — no
+//!   query params, no external URLs). `add_custom_panel` enforces this by
+//!   checking the CALLING WEBVIEW's label first: a compromised main app
+//!   webview can invoke the command but is refused, because its label is
+//!   "main". Typed values in the bundled form are the owner-intent proof,
+//!   so no native confirm runs on add.
 //! - `list_custom_panels` returns `{id, label, title}` only. The URL never
 //!   crosses to the app webview — which is also why custom panels render
 //!   native-only (the CSP `frame-src` stays a static, compile-time list).
@@ -28,7 +30,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use crate::web_panels::require_https;
 
@@ -37,11 +39,20 @@ pub const MAX_CUSTOM_PANELS: usize = 16;
 const STORE_VERSION: u32 = 1;
 const MAX_URL_LEN: usize = 2048;
 const MAX_LABEL_CHARS: usize = 64;
-/// Site files are little link stubs; anything bigger is not one.
-const MAX_SITE_FILE_BYTES: usize = 64 * 1024;
 /// `site-` plus at most this many digits keeps ids within the 32-char
 /// instance-id budget shared with `validate_instance_id`.
 const MAX_ID_DIGITS: usize = 26;
+
+/// The ONLY webview whose invocations of `add_custom_panel` are honored:
+/// the small trusted window `open_web_panel_add_window` builds over the
+/// bundled add form. This is the security gate — the main app webview (and
+/// every panel child webview) carries a different label and is refused.
+pub const WEBPANEL_ADD_WINDOW_LABEL: &str = "webpanel-add";
+
+/// Event emitted app-wide after a site is added, carrying the
+/// `CustomPanelInfo` (never the URL) so the app webview can refresh its
+/// registry and open a tab for the new site.
+const CUSTOM_PANEL_ADDED_EVENT: &str = "custom-panel-added";
 
 /// A stored site. `url` is the normalized (fragment-stripped) https URL.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -57,15 +68,6 @@ pub struct CustomPanelInfo {
     pub id: String,
     pub label: String,
     pub title: String,
-}
-
-/// Result of `add_custom_panel`. Cancelling at a native dialog is a no-op,
-/// not an error — the frontend shows no toast for it.
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
-#[serde(tag = "status")]
-pub enum AddCustomPanelOutcome {
-    Added { panel: CustomPanelInfo },
-    Cancelled,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -410,23 +412,7 @@ fn remove_entry(app: Option<&tauri::AppHandle>, id: &str) -> Result<(), String> 
     })
 }
 
-// ── Native dialogs (owner-driven; the app webview cannot type into these) ──
-
-async fn pick_site_file(app: &tauri::AppHandle) -> Result<Option<PathBuf>, String> {
-    use tauri_plugin_dialog::DialogExt;
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-    app.dialog()
-        .file()
-        .set_title("Choose the site to add")
-        .add_filter("Site link", &["url", "webloc", "json"])
-        .pick_file(move |path| {
-            let _ = sender.send(path);
-        });
-    let picked = receiver
-        .await
-        .map_err(|_| "the site picker closed unexpectedly".to_string())?;
-    Ok(picked.and_then(|path| path.as_path().map(Path::to_path_buf)))
-}
+// ── Native dialog (owner-driven; the app webview cannot click it away) ──
 
 async fn confirm_dialog(
     app: &tauri::AppHandle,
@@ -451,130 +437,6 @@ async fn confirm_dialog(
         .map_err(|_| "the confirmation dialog closed unexpectedly".to_string())
 }
 
-// ── Site-file parsing ───────────────────────────────────────────────────
-
-/// Extract the URL from an `.url` internet shortcut (`[InternetShortcut]`
-/// INI text with a `URL=` line).
-fn parse_internet_shortcut(bytes: &[u8]) -> Result<String, String> {
-    let text = String::from_utf8_lossy(bytes);
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.len() >= 4 && trimmed[..4].eq_ignore_ascii_case("URL=") {
-            // Slice the original line: the URL's path is case-sensitive.
-            let url = trimmed[4..].trim();
-            if !url.is_empty() {
-                return Ok(url.to_string());
-            }
-        }
-    }
-    Err("the shortcut has no URL= line".to_string())
-}
-
-/// Extract the URL from a `.webloc` (XML plist `<string>` element, or the
-/// raw URL bytes inside a binary plist — binary plists store plain ASCII
-/// strings inline, and anything extracted still passes full URL validation
-/// and the owner's confirmation before it is stored).
-fn parse_webloc(bytes: &[u8]) -> Result<String, String> {
-    if bytes.starts_with(b"bplist00") {
-        if let Some(url) = extract_url_bytes(bytes) {
-            return Ok(url);
-        }
-        return Err("the web location file carries no https url".to_string());
-    }
-    let text = String::from_utf8_lossy(bytes);
-    let Some(start) = text.find("<string>") else {
-        return Err("the web location file has no <string> element".to_string());
-    };
-    let after_open = &text[start + "<string>".len()..];
-    let Some(end) = after_open.find("</string>") else {
-        return Err("the web location file has an unterminated <string> element".to_string());
-    };
-    let url = after_open[..end].trim();
-    if url.is_empty() {
-        return Err("the web location file's <string> element is empty".to_string());
-    }
-    Ok(url.to_string())
-}
-
-/// The first `https://` run of printable ASCII bytes in a binary plist.
-fn extract_url_bytes(bytes: &[u8]) -> Option<String> {
-    let start = bytes.windows(8).position(|window| window == b"https://")?;
-    let mut end = start + 8;
-    while end < bytes.len() && (0x21..=0x7e).contains(&bytes[end]) {
-        end += 1;
-    }
-    std::str::from_utf8(&bytes[start..end])
-        .ok()
-        .map(str::to_string)
-}
-
-/// Extract url (+ optional label) from a `.json` site file.
-fn parse_json_site(bytes: &[u8]) -> Result<(Option<String>, String), String> {
-    let value: serde_json::Value = serde_json::from_slice(bytes)
-        .map_err(|error| format!("the json site file does not parse: {error}"))?;
-    let Some(object) = value.as_object() else {
-        return Err("the json site file must be an object".to_string());
-    };
-    let url = object
-        .get("url")
-        .or_else(|| object.get("URL"))
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| "the json site file has no url field".to_string())?;
-    if url.trim().is_empty() {
-        return Err("the json site file's url field is empty".to_string());
-    }
-    let label = object
-        .get("label")
-        .or_else(|| object.get("Label"))
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string);
-    Ok((label, url.to_string()))
-}
-
-/// Read the owner-picked file into a (label, url) pair. Supported shapes:
-/// `.url` shortcuts, `.webloc` web locations, and `.json` objects with a
-/// `url` (and optional `label`). The label falls back to the file name.
-pub(crate) fn parse_site_file(path: &Path) -> Result<(String, String), String> {
-    let bytes =
-        std::fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-    if bytes.len() > MAX_SITE_FILE_BYTES {
-        return Err(format!(
-            "{} is larger than the {}-byte site-file limit",
-            path.display(),
-            MAX_SITE_FILE_BYTES
-        ));
-    }
-    let extension = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(str::to_ascii_lowercase);
-    let (json_label, url) = match extension.as_deref() {
-        Some("url") => (None, parse_internet_shortcut(&bytes)?),
-        Some("webloc") => (None, parse_webloc(&bytes)?),
-        Some("json") => parse_json_site(&bytes)?,
-        _ => {
-            return Err(format!(
-                "{} is not a supported site file (.url, .webloc, or .json)",
-                path.display()
-            ))
-        }
-    };
-    let label = match json_label {
-        Some(label) => label,
-        None => path
-            .file_stem()
-            .map(|stem| stem.to_string_lossy().into_owned())
-            .filter(|stem| !stem.trim().is_empty())
-            .ok_or_else(|| {
-                format!(
-                    "{} has no usable name for a label; use a .json file with a label field",
-                    path.display()
-                )
-            })?,
-    };
-    Ok((label, url))
-}
-
 // ── Commands ────────────────────────────────────────────────────────────
 
 /// The custom site list. `{id, label, title}` only — never the URL.
@@ -583,28 +445,51 @@ pub fn list_custom_panels(app: tauri::AppHandle) -> Result<Vec<CustomPanelInfo>,
     panels(Some(&app))
 }
 
-/// Add a site through native dialogs only: pick a link file, confirm the
-/// parsed URL, persist. Cancelling either dialog is a no-op `Ok`.
-#[tauri::command]
-pub async fn add_custom_panel(app: tauri::AppHandle) -> Result<AddCustomPanelOutcome, String> {
-    let Some(path) = pick_site_file(&app).await? else {
-        return Ok(AddCustomPanelOutcome::Cancelled);
-    };
-    let (label, url) = parse_site_file(&path)?;
-    let confirmed = confirm_dialog(
-        &app,
-        "Add site",
-        format!("Add {label} ({url}) as a docked web panel?"),
-        "Add site",
-    )
-    .await?;
-    if !confirmed {
-        return Ok(AddCustomPanelOutcome::Cancelled);
+/// THE SECURITY GATE: `add_custom_panel` honors a caller only when the
+/// invoking webview IS the trusted bundled add window. The main app webview
+/// (label "main"), every panel child webview, and every login companion
+/// carries a different label and is refused before any validation or store
+/// access runs — a compromised app webview can invoke the command but can
+/// never supply a URL that sticks.
+pub(crate) fn validate_add_caller(caller_label: &str) -> Result<(), String> {
+    if caller_label != WEBPANEL_ADD_WINDOW_LABEL {
+        return Err(format!(
+            "add_custom_panel is only callable from the bundled add window ({WEBPANEL_ADD_WINDOW_LABEL}), not webview {caller_label:?}"
+        ));
     }
-    let entry = add_entry(Some(&app), &label, &url)?;
-    Ok(AddCustomPanelOutcome::Added {
-        panel: to_info(&entry),
-    })
+    Ok(())
+}
+
+/// Pure validation for an add request: the caller gate FIRST, then the
+/// label/url rules. Split out so the fail-closed rules (including the
+/// caller gate) are unit-testable without a Tauri app.
+fn validate_add_request(caller_label: &str, label: &str, url: &str) -> Result<(), String> {
+    validate_add_caller(caller_label)?;
+    validate_custom_label(label)?;
+    validate_custom_url(url)?;
+    Ok(())
+}
+
+/// Add a site typed into the trusted add window. The caller webview label
+/// is the gate (see [`validate_add_caller`]); the typed values are the
+/// owner-intent proof, so there is no native confirm on add. On success an
+/// app-wide `custom-panel-added` event carries the new panel's info (never
+/// its URL) so the app webview refreshes its registry.
+#[tauri::command]
+pub fn add_custom_panel(
+    webview: tauri::Webview,
+    label: String,
+    url: String,
+) -> Result<CustomPanelInfo, String> {
+    validate_add_request(webview.label(), &label, &url)?;
+    let entry = add_entry(Some(&webview.app_handle()), &label, &url)?;
+    let info = to_info(&entry);
+    // The add already persisted; a failed event delivery must not read as a
+    // failed add to the form (which would close without the tab opening).
+    if let Err(error) = webview.app_handle().emit(CUSTOM_PANEL_ADDED_EVENT, &info) {
+        eprintln!("cannot broadcast {CUSTOM_PANEL_ADDED_EVENT}: {error}");
+    }
+    Ok(info)
 }
 
 /// Remove a site after a native confirmation. Cancelling is a no-op `Ok`.
@@ -863,90 +748,51 @@ mod tests {
     }
 
     #[test]
-    fn site_file_parsing_covers_all_supported_shapes() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let url_file = dir.path().join("Team Docs.url");
-        std::fs::write(
-            &url_file,
-            "[InternetShortcut]\r\nURL=https://docs.example/team\r\n",
-        )
-        .expect("write shortcut");
-        assert_eq!(
-            parse_site_file(&url_file).expect("parses"),
-            (
-                "Team Docs".to_string(),
-                "https://docs.example/team".to_string()
-            )
-        );
-
-        let json_file = dir.path().join("anything.json");
-        std::fs::write(
-            &json_file,
-            r#"{"label":"Wiki","url":"https://wiki.example/"}"#,
-        )
-        .expect("write json");
-        assert_eq!(
-            parse_site_file(&json_file).expect("parses"),
-            ("Wiki".to_string(), "https://wiki.example/".to_string())
-        );
-
-        let json_unlabeled = dir.path().join("News.json");
-        std::fs::write(&json_unlabeled, r#"{"url":"https://news.example/"}"#).expect("write json");
-        assert_eq!(
-            parse_site_file(&json_unlabeled).expect("parses").1,
-            "https://news.example/"
-        );
-
-        let webloc = dir.path().join("Chat.webloc");
-        std::fs::write(
-            &webloc,
-            "<?xml version=\"1.0\"?><plist><dict><key>URL</key><string>https://chat.example/</string></dict></plist>",
-        )
-        .expect("write webloc");
-        assert_eq!(
-            parse_site_file(&webloc).expect("parses"),
-            ("Chat".to_string(), "https://chat.example/".to_string())
-        );
-
-        let webloc_binary = dir.path().join("Bin.webloc");
-        let mut binary = b"bplist00\x16".to_vec();
-        binary.extend_from_slice(b"https://bin.example/path");
-        binary.extend_from_slice(&[0x00, 0x08, 0x00]);
-        std::fs::write(&webloc_binary, &binary).expect("write binary webloc");
-        assert_eq!(
-            parse_site_file(&webloc_binary).expect("parses").1,
-            "https://bin.example/path".to_string()
-        );
+    fn add_from_a_non_add_window_caller_is_refused() {
+        // THE caller gate: only the bundled add window may supply a URL.
+        // "main" is exactly what a compromised app webview would call from;
+        // panel children and login companions use other labels.
+        for caller in [
+            "main",
+            "webpanel-files-1",
+            "webpanel-login-files",
+            "webpanel-add-typo",
+            "",
+        ] {
+            assert!(
+                validate_add_caller(caller).is_err(),
+                "caller {caller:?} must be refused"
+            );
+        }
+        assert!(validate_add_caller(WEBPANEL_ADD_WINDOW_LABEL).is_ok());
+        // Even an otherwise-valid payload from a wrong caller is refused —
+        // and never reaches the store.
+        with_store(|_| {
+            assert!(
+                validate_add_request("main", "Wiki", "https://wiki.example/").is_err(),
+                "a valid payload must still be refused from the main webview"
+            );
+            assert!(
+                panels(None).expect("list succeeds").is_empty(),
+                "a refused add must not persist anything"
+            );
+            // The trusted caller with the same payload validates.
+            assert!(
+                validate_add_request(WEBPANEL_ADD_WINDOW_LABEL, "Wiki", "https://wiki.example/")
+                    .is_ok()
+            );
+        });
     }
 
     #[test]
-    fn site_file_parsing_rejects_garbage() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let no_url_line = dir.path().join("bad.url");
-        std::fs::write(&no_url_line, "[InternetShortcut]\r\nName=x\r\n").expect("write");
-        assert!(parse_site_file(&no_url_line).is_err());
-
-        let bad_json = dir.path().join("bad.json");
-        std::fs::write(&bad_json, "{nope").expect("write");
-        assert!(parse_site_file(&bad_json).is_err());
-
-        let wrong_type = dir.path().join("bad.txt");
-        std::fs::write(&wrong_type, "https://x.example/").expect("write");
-        assert!(parse_site_file(&wrong_type).is_err());
-
-        let empty_plist = dir.path().join("bad.webloc");
-        std::fs::write(&empty_plist, "bplist00nothing printable").expect("write");
-        assert!(parse_site_file(&empty_plist).is_err());
-
-        let oversized = dir.path().join("big.json");
-        std::fs::write(
-            &oversized,
-            format!(
-                "{{\"url\":\"https://x/{}\"}}",
-                "a".repeat(MAX_SITE_FILE_BYTES)
-            ),
-        )
-        .expect("write");
-        assert!(parse_site_file(&oversized).is_err());
+    fn add_request_validation_runs_the_gate_before_the_payload_rules() {
+        // A garbage payload from a wrong caller must surface the CALLER
+        // error, not a label/url error — the gate is first, so nothing
+        // about the payload is even considered for a foreign webview.
+        let error = validate_add_request("main", "", "not a url").expect_err("refused");
+        assert!(
+            error.contains("add window"),
+            "the caller-gate error must fire first, got: {error}"
+        );
     }
 }

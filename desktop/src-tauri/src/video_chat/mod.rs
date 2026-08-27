@@ -14,9 +14,9 @@ pub mod sanitize;
 #[cfg(test)]
 mod sanitize_tests;
 pub mod sse;
-pub mod turn;
 #[cfg(test)]
 mod target_route_tests;
+pub mod turn;
 #[cfg(test)]
 mod turn_tests;
 
@@ -367,7 +367,9 @@ pub async fn spawn(app_handle: tauri::AppHandle) -> Option<u16> {
         Ok(l) => l,
         Err(e) => {
             eprintln!("video_chat: bind on {port} failed ({e}); video chat disabled this run");
-            vlog(&format!("bind on {port} FAILED ({e}); video chat disabled this run"));
+            vlog(&format!(
+                "bind on {port} FAILED ({e}); video chat disabled this run"
+            ));
             return None;
         }
     };
@@ -439,10 +441,7 @@ pub async fn video_chat_clear_target(app_handle: tauri::AppHandle) -> Result<(),
 #[tauri::command]
 pub fn video_chat_status(app_handle: tauri::AppHandle) -> serde_json::Value {
     let port = PORT.read().ok().and_then(|p| *p);
-    let peers: Vec<String> = load_peers(&app_handle)
-        .into_iter()
-        .map(|p| p.url)
-        .collect();
+    let peers: Vec<String> = load_peers(&app_handle).into_iter().map(|p| p.url).collect();
     json!({
         "port": port,
         "active": port.is_some(),

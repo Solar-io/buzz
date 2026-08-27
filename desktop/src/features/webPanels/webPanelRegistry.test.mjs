@@ -110,35 +110,66 @@ test("a failed list disables customs for the run without touching statics", asyn
   assert.equal(registry.getWebPanel("files")?.id, "files");
 });
 
-test("add flow: added outcome refreshes the registry", async () => {
-  respond("add_custom_panel", {
-    status: "added",
-    panel: { id: "site-2", label: "Wiki", title: "Wiki" },
+test("add flow: the picker opens the trusted add window by command", async () => {
+  const opened = await registry.openAddSiteWindow();
+  assert.equal(opened, true);
+  assert.deepEqual(invokes, [["open_web_panel_add_window", {}]]);
+  // Opening the window never touches the custom-panel list itself; the
+  // refresh rides the custom-panel-added event instead.
+  assert.equal(registry.customPanelPhase(), "unloaded");
+});
+
+test("add flow: a failed window-open invoke is contained", async () => {
+  respond("open_web_panel_add_window", ERROR);
+  const opened = await registry.openAddSiteWindow();
+  assert.equal(opened, false);
+});
+
+test("add flow: custom-panel-added refreshes the registry and notifies", async () => {
+  // Capture the channel handler through the installer seam, exactly the
+  // way the real @tauri-apps listen wiring would receive the Rust event.
+  let deliver = null;
+  registry.setCustomPanelAddedInstallerForTests(async (handler) => {
+    deliver = handler;
+    return () => {};
   });
-  respond("list_custom_panels", () => [
+  const seen = [];
+  const unsubscribe = registry.subscribeCustomPanelAdded((panel) =>
+    seen.push(panel),
+  );
+  assert.ok(deliver, "subscribing must install the event channel");
+  respond("list_custom_panels", [
     DOCS,
     { id: "site-2", label: "Wiki", title: "Wiki" },
   ]);
-  const outcome = await registry.addCustomSite();
-  assert.deepEqual(outcome, {
-    status: "added",
-    panel: { id: "site-2", label: "Wiki", title: "Wiki" },
-  });
-  assert.deepEqual(
-    invokes.map(([command]) => command),
-    ["add_custom_panel", "list_custom_panels"],
-  );
+  deliver({ id: "site-2", label: "Wiki", title: "Wiki" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(seen, [{ id: "site-2", label: "Wiki", title: "Wiki" }]);
   assert.equal(registry.getWebPanel("site-2")?.label, "Wiki");
+  assert.deepEqual(invokes, [["list_custom_panels", {}]]);
+  unsubscribe();
+  // Post-unsubscribe deliveries refresh but notify nobody.
+  seen.length = 0;
+  deliver({ id: "site-3", label: "X", title: "X" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(seen, []);
 });
 
-test("add flow: cancelled outcome does not refresh", async () => {
-  respond("add_custom_panel", { status: "cancelled" });
-  const outcome = await registry.addCustomSite();
-  assert.deepEqual(outcome, { status: "cancelled" });
+test("add flow: a malformed added payload is dropped, not crashed on", async () => {
+  let deliver = null;
+  registry.setCustomPanelAddedInstallerForTests(async (handler) => {
+    deliver = handler;
+    return () => {};
+  });
+  const seen = [];
+  registry.subscribeCustomPanelAdded((panel) => seen.push(panel));
+  deliver({ id: "", label: 7 });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(seen, []);
   assert.deepEqual(
     invokes.map(([command]) => command),
-    ["add_custom_panel"],
-    "a cancelled dialog must not trigger a refresh",
+    [],
+    "a dropped payload must not even trigger a refresh",
   );
 });
 

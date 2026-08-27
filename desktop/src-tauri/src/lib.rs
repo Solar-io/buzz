@@ -802,6 +802,7 @@ pub fn run() {
             close_huddle_companion,
             open_huddle_window,
             web_panels::open_web_panel_login,
+            web_panels::open_web_panel_add_window,
             web_panels::ensure_web_panel,
             web_panels::set_web_panel_visible,
             web_panels::destroy_web_panel,
