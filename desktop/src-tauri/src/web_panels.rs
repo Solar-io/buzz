@@ -484,17 +484,13 @@ pub fn open_web_panel_add_window(app: tauri::AppHandle) -> Result<(), String> {
         window.set_focus().map_err(|error| error.to_string())?;
         return Ok(());
     }
-    WebviewWindowBuilder::new(
-        &app,
-        label,
-        WebviewUrl::App("add.html".into()),
-    )
-    .title("Add site")
-    .inner_size(440.0, 280.0)
-    .resizable(false)
-    .center()
-    .build()
-    .map_err(|error| error.to_string())?;
+    WebviewWindowBuilder::new(&app, label, WebviewUrl::App("add.html".into()))
+        .title("Add site")
+        .inner_size(440.0, 280.0)
+        .resizable(false)
+        .center()
+        .build()
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 
