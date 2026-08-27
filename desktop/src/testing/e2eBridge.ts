@@ -319,6 +319,12 @@ type E2eConfig = {
     relayAgentListErrors?: (string | null)[];
     /** Pubkeys omitted only from targeted send-time authorization checks. */
     relayAgentRevalidationRevokedPubkeys?: string[];
+    /**
+     * Custom web panel sites seeded into the mocked custom-panel store.
+     * `add_custom_panel` appends `site-N` entries (label "Docs") on top of
+     * this seed; page reloads re-seed from this list.
+     */
+    customWebPanels?: Array<{ id: string; label: string; url: string }>;
     /** Native-like huddle state seeded from authoritative role-bearing membership. */
     huddle?: MockHuddleSeed;
     agentListDelayMs?: number;
@@ -3449,6 +3455,15 @@ type PersistedMockHuddle = {
 
 const MOCK_HUDDLE_STORAGE_KEY = "buzz.e2e.mock-huddle.v1";
 let mockHuddle: PersistedMockHuddle | null = null;
+
+/** The mocked owner-added custom web panel sites (web-panel specs). */
+let mockCustomWebPanels: Array<{ id: string; label: string; url: string }> = [];
+
+function resetMockCustomWebPanels(config: E2eConfig | undefined) {
+  mockCustomWebPanels = (config?.mock?.customWebPanels ?? []).map((site) => ({
+    ...site,
+  }));
+}
 
 function persistMockHuddle() {
   if (mockHuddle) {
@@ -10739,6 +10754,7 @@ export function maybeInstallE2eTauriMocks() {
   resetMockPersonaCatalogEvents(config);
   resetMockObservedUnread();
   resetMockSaveSubscriptions(config);
+  resetMockCustomWebPanels(config);
   resetMockPendingCommunityDeepLinks(config);
   resetMockPendingNavigationDeepLinks(config);
   resetMockPendingEntityDeepLinks(config);
@@ -14196,6 +14212,48 @@ export function maybeInstallE2eTauriMocks() {
         }
         return null;
       }
+      case "list_custom_panels":
+        // The IPC contract: id/label/title only — never a url.
+        return mockCustomWebPanels.map((site) => ({
+          id: site.id,
+          label: site.label,
+          title: site.label,
+        }));
+      case "add_custom_panel": {
+        const next =
+          mockCustomWebPanels.reduce((max, site) => {
+            const n = Number(site.id.replace(/^site-/, ""));
+            return Number.isFinite(n) ? Math.max(max, n) : max;
+          }, 0) + 1;
+        const site = {
+          id: `site-${next}`,
+          label: "Docs",
+          url: "https://docs.example/",
+        };
+        mockCustomWebPanels.push(site);
+        return {
+          status: "added",
+          panel: { id: site.id, label: site.label, title: site.label },
+        };
+      }
+      case "remove_custom_panel":
+        mockCustomWebPanels = mockCustomWebPanels.filter(
+          (site) => site.id !== (payload as { id?: string } | null)?.id,
+        );
+        return null;
+      case "web_panel_back":
+      case "web_panel_forward":
+      case "web_panel_home":
+        return null;
+      // Custom sites render native even in e2e builds (their URL never
+      // crosses the IPC boundary), so useNativePanelWebview drives these
+      // for real against the mock — specs assert the id-only payloads via
+      // __BUZZ_E2E_COMMANDS__ and the pending UI.
+      case "ensure_web_panel":
+      case "set_web_panel_visible":
+      case "destroy_web_panel":
+      case "reload_web_panel":
+        return null;
       default:
         throw new Error(`Unsupported mocked Tauri command: ${command}`);
     }

@@ -160,6 +160,8 @@ type MockBridgeOptions = {
   relaySelf?: string | null;
   /** Native-like huddle state seeded from authoritative role-bearing membership. */
   huddle?: MockHuddleSeed;
+  /** Custom web panel sites seeded into the mocked custom-panel store. */
+  customWebPanels?: Array<{ id: string; label: string; url: string }>;
   /** Builderlab account returned by hosted-community onboarding. Null/omitted = signed out. */
   builderlabAuth?: { email?: string; name?: string; expiresAt: string } | null;
   /** Optional policy returned by the native join-policy discovery command. */
