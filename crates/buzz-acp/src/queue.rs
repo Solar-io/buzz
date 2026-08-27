@@ -38,8 +38,8 @@ const MAX_RETRY_DELAY_SECS: u64 = 300;
 /// Buffer added to `max_turn_duration` to derive the in-flight deadline.
 const IN_FLIGHT_DEADLINE_BUFFER_SECS: u64 = 100;
 
-/// Default in-flight deadline: default max_turn (7200s) + 100s buffer.
-const DEFAULT_IN_FLIGHT_DEADLINE_SECS: u64 = 7300;
+/// Default in-flight deadline: default max_turn (43200s) + 100s buffer.
+const DEFAULT_IN_FLIGHT_DEADLINE_SECS: u64 = 43_300;
 
 /// An event waiting in the queue.
 #[derive(Debug, Clone)]
