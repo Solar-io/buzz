@@ -184,8 +184,13 @@ test.describe("web panels (iframe fallback)", () => {
 });
 
 // Owner-added custom sites, driven through the mocked custom-panel store
-// (see e2eBridge `customWebPanels` seed + the add/remove command mocks —
-// the real dialogs are native OS surfaces Playwright cannot reach).
+// (see e2eBridge `customWebPanels` seed + the add/remove command mocks).
+// The real add flow runs in the trusted `webpanel-add` window — a native
+// surface over the bundled add.html form that Playwright's chromium cannot
+// reach — so the picker's "Add site…" row is asserted against its
+// `open_web_panel_add_window` command, and the add itself is driven
+// through the mocked `add_custom_panel` (which broadcasts the same
+// `custom-panel-added` event the Rust command emits).
 // Customs render NATIVE even in the iframe-forced e2e build: their URL
 // never crosses the IPC boundary (no frame to build), so the registry pins
 // render:"native" and the substrate hosts them through the native
@@ -237,13 +242,34 @@ test.describe("web panels (custom sites)", () => {
     ).toBeVisible();
   });
 
-  test("the add-site flow appends a custom tab through the mocked IPC", async ({
+  test("the add-site flow opens the trusted add window; the add lands through the event", async ({
     page,
   }) => {
     await page.getByRole("button", { name: "Toggle Files panel" }).click();
     await page.getByLabel("Open a new panel tab").click();
-    // The mocked add_custom_panel appends a "Docs" site and returns it.
+    // The picker's row invokes the command that opens the native add
+    // window (the typed form there is unreachable from chromium).
     await page.getByRole("menuitem", { name: "Add site…" }).click();
+    await expect
+      .poll(async () => (await commandsSeen(page)).includes("open_web_panel_add_window"))
+      .toBe(true);
+
+    // Drive the add the way the real window would: the typed
+    // add_custom_panel, whose mock appends the site and broadcasts the
+    // same custom-panel-added event Rust emits on success.
+    await page.evaluate(() =>
+      (
+        window as unknown as {
+          __BUZZ_E2E_INVOKE_MOCK_COMMAND__: (
+            command: string,
+            payload: unknown,
+          ) => Promise<unknown>;
+        }
+      ).__BUZZ_E2E_INVOKE_MOCK_COMMAND__("add_custom_panel", {
+        label: "Docs",
+        url: "https://docs.example/",
+      }),
+    );
 
     await expect(page.locator('[role="tab"]')).toHaveCount(2);
     await expect(page.getByRole("tab", { name: "Docs" })).toBeVisible();

@@ -482,7 +482,7 @@ pub fn add_custom_panel(
     url: String,
 ) -> Result<CustomPanelInfo, String> {
     validate_add_request(webview.label(), &label, &url)?;
-    let entry = add_entry(Some(&webview.app_handle()), &label, &url)?;
+    let entry = add_entry(Some(webview.app_handle()), &label, &url)?;
     let info = to_info(&entry);
     // The add already persisted; a failed event delivery must not read as a
     // failed add to the form (which would close without the tab opening).
@@ -777,10 +777,12 @@ mod tests {
                 "a refused add must not persist anything"
             );
             // The trusted caller with the same payload validates.
-            assert!(
-                validate_add_request(WEBPANEL_ADD_WINDOW_LABEL, "Wiki", "https://wiki.example/")
-                    .is_ok()
-            );
+            assert!(validate_add_request(
+                WEBPANEL_ADD_WINDOW_LABEL,
+                "Wiki",
+                "https://wiki.example/"
+            )
+            .is_ok());
         });
     }
 

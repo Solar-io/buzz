@@ -321,8 +321,9 @@ type E2eConfig = {
     relayAgentRevalidationRevokedPubkeys?: string[];
     /**
      * Custom web panel sites seeded into the mocked custom-panel store.
-     * `add_custom_panel` appends `site-N` entries (label "Docs") on top of
-     * this seed; page reloads re-seed from this list.
+     * `add_custom_panel` (typed {label, url} from the trusted add window)
+     * appends `site-N` entries on top of this seed and broadcasts
+     * `custom-panel-added`; page reloads re-seed from this list.
      */
     customWebPanels?: Array<{ id: string; label: string; url: string }>;
     /** Native-like huddle state seeded from authoritative role-bearing membership. */
