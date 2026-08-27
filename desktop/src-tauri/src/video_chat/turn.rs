@@ -73,9 +73,7 @@ pub(crate) fn is_fresh_reply(
     sent_at: i64,
     last: &(i64, [u8; 32]),
 ) -> bool {
-    cand_secs >= sent_at - SKEW_GRACE_SECS
-        && cand_secs >= last.0
-        && cand_id != &last.1
+    cand_secs >= sent_at - SKEW_GRACE_SECS && cand_secs >= last.0 && cand_id != &last.1
 }
 
 type ByteStream = std::pin::Pin<Box<dyn Stream<Item = Result<Vec<u8>, std::io::Error>> + Send>>;
@@ -277,13 +275,25 @@ async fn await_reply(
             if events.iter().any(|e| {
                 in_window(e)
                     && !e.content.trim().is_empty()
-                    && !is_fresh_reply(e.created_at.as_secs() as i64, e.id.as_bytes(), sent_at, &last)
+                    && !is_fresh_reply(
+                        e.created_at.as_secs() as i64,
+                        e.id.as_bytes(),
+                        sent_at,
+                        &last,
+                    )
             }) {
                 super::vlog("reply wait: skipped an already-spoken reply (stale-turn guard)");
             }
             let hit = events
                 .iter()
-                .filter(|e| is_fresh_reply(e.created_at.as_secs() as i64, e.id.as_bytes(), sent_at, &last))
+                .filter(|e| {
+                    is_fresh_reply(
+                        e.created_at.as_secs() as i64,
+                        e.id.as_bytes(),
+                        sent_at,
+                        &last,
+                    )
+                })
                 .filter(|e| !e.content.trim().is_empty())
                 .min_by_key(|e| e.created_at);
             if let Some(event) = hit {

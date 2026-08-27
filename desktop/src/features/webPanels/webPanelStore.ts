@@ -1,6 +1,6 @@
 import * as React from "react";
 
-import { getWebPanel } from "./webPanels.config";
+import { getWebPanel } from "./webPanelRegistry";
 
 /**
  * Tabbed web panel dock state.
@@ -61,6 +61,8 @@ const CLOSED_SNAPSHOT: Snapshot = {
 let snapshot: Snapshot = CLOSED_SNAPSHOT;
 let nextSeq = 1;
 let restored = false;
+let restoreDeferred = false;
+let pagehideRegistered = false;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 const listeners = new Set<() => void>();
 
@@ -207,16 +209,34 @@ function readStoredSession(): string | null {
   }
 }
 
-/** One-shot, lazy: the first store access restores the persisted session. */
-function ensureRestored() {
+/**
+ * Boot-order gate: while deferred, store READS do not restore the persisted
+ * session. WebPanelBootstrap defers restore until the custom panel registry
+ * has resolved (or timed out), so a restored session can name owner-added
+ * sites — otherwise their tabs would be dropped as unknown panel ids.
+ */
+export function deferWebPanelRestore(): void {
+  if (!restored) {
+    restoreDeferred = true;
+  }
+}
+
+/** Release the gate and restore now (registry settled or timed out). */
+export function triggerWebPanelRestore(): void {
   if (restored) return;
-  restored = true;
+  restoreDeferred = false;
+  ensureRestored();
+}
+
+function performRestore() {
   const restoredSnapshot = parseWebPanelSession(readStoredSession());
   if (restoredSnapshot) {
     snapshot = restoredSnapshot;
     nextSeq = nextSequenceAfter(restoredSnapshot.instances);
+    for (const listener of listeners) listener();
   }
-  if (typeof window !== "undefined") {
+  if (typeof window !== "undefined" && !pagehideRegistered) {
+    pagehideRegistered = true;
     // Flush a pending debounced write if the window is going away.
     window.addEventListener("pagehide", () => {
       if (persistTimer !== null) {
@@ -228,10 +248,29 @@ function ensureRestored() {
   }
 }
 
+/** One-shot, lazy: the first store access restores the persisted session —
+ *  unless the boot gate is holding it for the registry. */
+function ensureRestored() {
+  if (restored || restoreDeferred) return;
+  restored = true;
+  performRestore();
+}
+
+/**
+ * User actions force the restore: proceeding against a CLOSED snapshot
+ * while the gate holds would let the later gated restore clobber what the
+ * user just opened. The window is milliseconds at boot; if an action does
+ * land there, custom ids may not be loaded yet and their tabs drop.
+ */
+function ensureRestoredForAction() {
+  restoreDeferred = false;
+  ensureRestored();
+}
+
 // ── Actions ────────────────────────────────────────────────────────────
 
 export function openWebPanelInstance(panelId: string): OpenPanelResult {
-  ensureRestored();
+  ensureRestoredForAction();
   if (!getWebPanel(panelId)) return { ok: false, reason: "unknown-panel" };
   if (snapshot.instances.length >= MAX_PANEL_INSTANCES) {
     return { ok: false, reason: "cap" };
@@ -253,7 +292,7 @@ export function openWebPanelInstance(panelId: string): OpenPanelResult {
 /** Close one tab; active falls to the neighbor, and the dock closes with
  *  its last tab. */
 export function closeWebPanelInstance(instanceId: string): void {
-  ensureRestored();
+  ensureRestoredForAction();
   const index = snapshot.instances.findIndex(
     (instance) => instance.instanceId === instanceId,
   );
@@ -273,7 +312,7 @@ export function closeWebPanelInstance(instanceId: string): void {
 }
 
 export function setActiveWebPanelInstance(instanceId: string): void {
-  ensureRestored();
+  ensureRestoredForAction();
   if (snapshot.activeInstanceId === instanceId) return;
   if (!snapshot.instances.some((i) => i.instanceId === instanceId)) return;
   publish({ ...snapshot, activeInstanceId: instanceId });
@@ -283,7 +322,7 @@ export function setWebPanelInstanceHeight(
   instanceId: string,
   height: number,
 ): void {
-  ensureRestored();
+  ensureRestoredForAction();
   if (!isFiniteHeight(height)) return;
   const index = snapshot.instances.findIndex(
     (instance) => instance.instanceId === instanceId,
@@ -299,7 +338,7 @@ export function setWebPanelInstanceHeight(
 /** Dock mode. Going to "closed" clears the tabs — the bootstrap destroys
  *  their webviews, keeping live WKWebView sessions bounded by the cap. */
 export function setWebPanelMode(mode: WebPanelMode): void {
-  ensureRestored();
+  ensureRestoredForAction();
   if (snapshot.mode === mode) return;
   if (mode === "closed") {
     publish(CLOSED_SNAPSHOT);
@@ -313,7 +352,7 @@ export function setWebPanelMode(mode: WebPanelMode): void {
  * type closed, activate an existing tab of that type, or open a new one.
  */
 export function toggleWebPanel(panelId: string): OpenPanelResult | null {
-  ensureRestored();
+  ensureRestoredForAction();
   const mine = snapshot.instances.filter((i) => i.panelId === panelId);
   const active = snapshot.instances.find(
     (instance) => instance.instanceId === snapshot.activeInstanceId,
@@ -358,6 +397,8 @@ export function resetWebPanelForTests(): void {
   // Tests get the same fresh-run state production starts from; a restore
   // (or further opens) re-advances it from whatever the seeded session owns.
   nextSeq = 1;
+  restored = false;
+  restoreDeferred = false;
 }
 
 export function getWebPanelSnapshotForTests(): Snapshot {
@@ -368,6 +409,7 @@ export function getWebPanelSnapshotForTests(): Snapshot {
 /** Test seam: force a restore pass against the current localStorage. */
 export function restoreWebPanelSessionForTests(): void {
   restored = false;
+  restoreDeferred = false;
   ensureRestored();
 }
 

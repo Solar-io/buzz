@@ -19,9 +19,22 @@
 //! trusted app window at an arbitrary address. Navigation inside a panel
 //! webview is pinned to the panel's own origin plus the OAuth hop hosts;
 //! everything else is refused (fail closed).
+//!
+//! AMENDMENT (owner-added sites): besides the static `PANEL_TYPES` table, a
+//! panel id may resolve into the custom store owned by
+//! [`crate::custom_panels`] — sites the OWNER added through the trusted
+//! bundled add window ([`custom_panels::WEBPANEL_ADD_WINDOW_LABEL`], opened
+//! by [`open_web_panel_add_window`] below). The URL crosses IPC only from
+//! that window, enforced by the calling webview's label — never from the
+//! main app webview. Resolution order is static table first, then the
+//! custom store; unknown ids are still an error, never a fallback. The
+//! amendment keeps the invariant above intact: the app webview still sends
+//! only ids, and `list_custom_panels` never returns a URL.
 
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
+
+use crate::custom_panels;
 
 use tauri::{
     LogicalPosition, LogicalSize, Manager, Rect, WebviewBuilder, WebviewUrl, WebviewWindowBuilder,
@@ -99,23 +112,37 @@ fn validate_instance_id(instance_id: &str, panel_id: &str) -> Result<(), String>
     Ok(())
 }
 
-/// Resolve a panel type id to its login title and URL. Unknown ids are an
-/// error, never a fallback or pass-through.
-fn resolve_panel_type(panel_id: &str) -> Result<(&'static str, tauri::Url), String> {
-    let (_, title, url) = PANEL_TYPES
+/// Resolve a panel type id to its login title and URL: the static
+/// `PANEL_TYPES` table first, then the owner-added custom store. Unknown
+/// ids are an error, never a fallback or pass-through.
+fn resolve_panel_type(
+    app: Option<&tauri::AppHandle>,
+    panel_id: &str,
+) -> Result<(String, tauri::Url), String> {
+    if let Some((_, title, url)) = PANEL_TYPES
         .iter()
         .find(|(known_id, _, _)| *known_id == panel_id)
-        .ok_or_else(|| format!("unknown web panel: {panel_id}"))?;
-    let url: tauri::Url = url
-        .parse()
-        .map_err(|error: url::ParseError| error.to_string())?;
-    require_https(&url)?;
-    Ok((title, url))
+    {
+        let url: tauri::Url = url
+            .parse()
+            .map_err(|error: url::ParseError| error.to_string())?;
+        require_https(&url)?;
+        return Ok((title.to_string(), url));
+    }
+    if let Some(entry) = custom_panels::find_entry(app, panel_id)? {
+        let url: tauri::Url = entry
+            .url
+            .parse()
+            .map_err(|error| format!("stored url for site {} does not parse: {error}", entry.id))?;
+        require_https(&url)?;
+        return Ok((format!("{} — sign in", entry.label), url));
+    }
+    Err(format!("unknown web panel: {panel_id}"))
 }
 
 /// Defense-in-depth on the table's own values: a panel must never be built
 /// from anything but an https URL.
-fn require_https(url: &tauri::Url) -> Result<(), String> {
+pub(crate) fn require_https(url: &tauri::Url) -> Result<(), String> {
     if url.scheme() != "https" {
         return Err(format!(
             "web panel requires an https url, got {}",
@@ -181,10 +208,12 @@ struct EnsureRequest {
     rect: Rect,
 }
 
-/// Pure-ish validation for an ensure request: known panel type, well-formed
-/// instance id, sane geometry, not previously destroyed. Split out so the
-/// fail-closed rules are unit-testable without a Tauri app.
+/// Pure-ish validation for an ensure request: known panel type (static or
+/// custom), well-formed instance id, sane geometry, not previously
+/// destroyed. Split out so the fail-closed rules are unit-testable without
+/// a Tauri app.
 fn validate_ensure_request(
+    app: Option<&tauri::AppHandle>,
     instance_id: &str,
     panel_id: &str,
     x: f64,
@@ -192,7 +221,7 @@ fn validate_ensure_request(
     width: f64,
     height: f64,
 ) -> Result<EnsureRequest, String> {
-    let (_, url) = resolve_panel_type(panel_id)?;
+    let (_, url) = resolve_panel_type(app, panel_id)?;
     validate_instance_id(instance_id, panel_id)?;
     let rect = panel_rect(x, y, width, height)?;
     if is_tombstoned(instance_id) {
@@ -221,7 +250,15 @@ pub fn ensure_web_panel(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
-    let request = validate_ensure_request(&instance_id, &panel_id, x, y, width, height)?;
+    let request = validate_ensure_request(
+        Some(webview.app_handle()),
+        &instance_id,
+        &panel_id,
+        x,
+        y,
+        width,
+        height,
+    )?;
     let EnsureRequest { label, url, rect } = request;
     let tauri::Position::Logical(position) = rect.position else {
         unreachable!("panel_rect only builds logical positions");
@@ -306,6 +343,24 @@ pub fn destroy_web_panel(
     }
 }
 
+/// The resolved target of a per-instance action command (reload, back,
+/// forward, home): a well-formed instance id's webview label, or a
+/// tombstoned instance, which is a silent no-op — a dock close is racing
+/// the action and there is nothing left to act on.
+#[derive(Debug, PartialEq, Eq)]
+enum ActionTarget {
+    Live(String),
+    Tombstoned,
+}
+
+fn resolve_action_target(instance_id: &str, panel_id: &str) -> Result<ActionTarget, String> {
+    validate_instance_id(instance_id, panel_id)?;
+    if is_tombstoned(instance_id) {
+        return Ok(ActionTarget::Tombstoned);
+    }
+    Ok(ActionTarget::Live(webpanel_label(instance_id)))
+}
+
 /// Reload a panel instance's webview in place (`location.reload()` keeps
 /// the origin, so the navigation policy allows it).
 #[tauri::command]
@@ -314,17 +369,80 @@ pub fn reload_web_panel(
     instance_id: String,
     panel_id: String,
 ) -> Result<(), String> {
-    validate_instance_id(&instance_id, &panel_id)?;
-    let label = webpanel_label(&instance_id);
-    if is_tombstoned(&instance_id) {
-        return Ok(());
-    }
+    let label = match resolve_action_target(&instance_id, &panel_id)? {
+        ActionTarget::Tombstoned => return Ok(()),
+        ActionTarget::Live(label) => label,
+    };
     let child = webview
         .get_webview(&label)
         .ok_or_else(|| format!("webview {label} does not exist; ensure it first"))?;
     child
         .eval("location.reload()")
         .map_err(|error| error.to_string())
+}
+
+/// Step back in a panel instance's webview history. Empty history is a
+/// no-op at the engine level; the child webview's history state is not
+/// readable from the app without handing foreign pages an IPC channel, so
+/// the button stays unconditionally enabled and this never errors.
+#[tauri::command]
+pub fn web_panel_back(
+    webview: tauri::Webview,
+    instance_id: String,
+    panel_id: String,
+) -> Result<(), String> {
+    let label = match resolve_action_target(&instance_id, &panel_id)? {
+        ActionTarget::Tombstoned => return Ok(()),
+        ActionTarget::Live(label) => label,
+    };
+    let child = webview
+        .get_webview(&label)
+        .ok_or_else(|| format!("webview {label} does not exist; ensure it first"))?;
+    child
+        .eval("history.back()")
+        .map_err(|error| error.to_string())
+}
+
+/// Step forward in a panel instance's webview history; see
+/// [`web_panel_back`].
+#[tauri::command]
+pub fn web_panel_forward(
+    webview: tauri::Webview,
+    instance_id: String,
+    panel_id: String,
+) -> Result<(), String> {
+    let label = match resolve_action_target(&instance_id, &panel_id)? {
+        ActionTarget::Tombstoned => return Ok(()),
+        ActionTarget::Live(label) => label,
+    };
+    let child = webview
+        .get_webview(&label)
+        .ok_or_else(|| format!("webview {label} does not exist; ensure it first"))?;
+    child
+        .eval("history.forward()")
+        .map_err(|error| error.to_string())
+}
+
+/// Navigate a panel instance's webview back to the panel's configured home
+/// URL. The URL is resolved Rust-side from the static table or the custom
+/// store — exactly the `ensure` resolution path — so the frontend still
+/// sends only ids, and the target is same-origin by construction (the
+/// navigation policy allows it).
+#[tauri::command]
+pub fn web_panel_home(
+    webview: tauri::Webview,
+    instance_id: String,
+    panel_id: String,
+) -> Result<(), String> {
+    let label = match resolve_action_target(&instance_id, &panel_id)? {
+        ActionTarget::Tombstoned => return Ok(()),
+        ActionTarget::Live(label) => label,
+    };
+    let (_, url) = resolve_panel_type(Some(webview.app_handle()), &panel_id)?;
+    let child = webview
+        .get_webview(&label)
+        .ok_or_else(|| format!("webview {label} does not exist; ensure it first"))?;
+    child.navigate(url).map_err(|error| error.to_string())
 }
 
 /// Open (or focus) the login companion window for a panel type. One window
@@ -334,7 +452,7 @@ pub fn reload_web_panel(
 /// in the shared jar for both the native panel webview and iframe fallback.
 #[tauri::command]
 pub fn open_web_panel_login(app: tauri::AppHandle, panel_id: String) -> Result<(), String> {
-    let (title, url) = resolve_panel_type(&panel_id)?;
+    let (title, url) = resolve_panel_type(Some(&app), &panel_id)?;
     let label = format!("webpanel-login-{panel_id}");
     if let Some(window) = app.get_webview_window(&label) {
         window.show().map_err(|error| error.to_string())?;
@@ -352,13 +470,41 @@ pub fn open_web_panel_login(app: tauri::AppHandle, panel_id: String) -> Result<(
     Ok(())
 }
 
+/// Open (or focus) the trusted add-site window: a small fixed-size window
+/// over the app's OWN bundled `add.html` form — no query params, no
+/// external URLs, ever. This is the only webview whose
+/// `add_custom_panel` calls are honored (see
+/// [`custom_panels::WEBPANEL_ADD_WINDOW_LABEL`]); the form it hosts is
+/// where the owner types the name and URL.
+#[tauri::command]
+pub fn open_web_panel_add_window(app: tauri::AppHandle) -> Result<(), String> {
+    let label = custom_panels::WEBPANEL_ADD_WINDOW_LABEL;
+    if let Some(window) = app.get_webview_window(label) {
+        window.show().map_err(|error| error.to_string())?;
+        window.set_focus().map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(
+        &app,
+        label,
+        WebviewUrl::App("add.html".into()),
+    )
+    .title("Add site")
+    .inner_size(440.0, 280.0)
+    .resizable(false)
+    .center()
+    .build()
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn resolves_the_files_panel_login_window() {
-        let (title, url) = resolve_panel_type("files").expect("files is registered");
+        let (title, url) = resolve_panel_type(None, "files").expect("files is registered");
         assert_eq!(title, "Files login");
         assert_eq!(
             url.as_str(),
@@ -371,10 +517,118 @@ mod tests {
         // A URL-shaped id must not pass through as a URL either.
         for bad in ["notes", "", "https://evil.example"] {
             assert!(
-                resolve_panel_type(bad).is_err(),
+                resolve_panel_type(None, bad).is_err(),
                 "panel id {bad:?} must not resolve"
             );
         }
+    }
+
+    /// Seed a custom store, run the body with it installed, then clean up.
+    /// Holds the custom-panels test lock for the whole body.
+    fn with_custom_store(run: impl FnOnce(&std::path::Path)) {
+        let lock = custom_panels::test_store_lock();
+        let _guard = lock.lock().expect("custom panel test lock");
+        let dir = tempfile::tempdir().expect("tempdir");
+        custom_panels::install_test_store(&dir.path().join("custom_web_panels.json"));
+        run(dir.path());
+        custom_panels::clear_test_store();
+    }
+
+    #[test]
+    fn resolves_custom_panels_from_the_owner_store() {
+        with_custom_store(|_| {
+            custom_panels::add_entry(None, "Wiki", "https://wiki.example/docs").expect("seed site");
+            let (title, url) = resolve_panel_type(None, "site-1").expect("custom panel resolves");
+            assert_eq!(title, "Wiki — sign in");
+            assert_eq!(url.as_str(), "https://wiki.example/docs");
+            // Statics still resolve while customs exist.
+            assert!(resolve_panel_type(None, "files").is_ok());
+            // Unknown ids are still errors, never a custom fallback.
+            assert!(resolve_panel_type(None, "site-2").is_err());
+            assert!(resolve_panel_type(None, "notes").is_err());
+        });
+    }
+
+    #[test]
+    fn home_resolution_is_the_same_path_as_ensure_for_static_and_custom() {
+        // web_panel_home navigates to resolve_panel_type's URL; pin both
+        // families so home can never drift from what ensure loaded.
+        let (_, static_home) = resolve_panel_type(None, "files").expect("static resolves");
+        assert_eq!(
+            static_home.as_str(),
+            "https://crichton.tailb3d4b8.ts.net:6201/?panel=files"
+        );
+        with_custom_store(|_| {
+            custom_panels::add_entry(None, "Wiki", "https://wiki.example/docs").expect("seed site");
+            let (_, custom_home) = resolve_panel_type(None, "site-1").expect("custom resolves");
+            assert_eq!(custom_home.as_str(), "https://wiki.example/docs");
+        });
+    }
+
+    #[test]
+    fn a_corrupt_custom_store_fails_only_custom_resolution() {
+        with_custom_store(|dir| {
+            std::fs::write(dir.join("custom_web_panels.json"), "{corrupt").expect("write garbage");
+            assert!(
+                resolve_panel_type(None, "site-1").is_err(),
+                "custom lookups must fail closed on a corrupt store"
+            );
+        });
+        // Static panels must resolve with the store poisoned (and with no
+        // store available at all).
+        assert!(resolve_panel_type(None, "files").is_ok());
+    }
+
+    #[test]
+    fn navigation_pins_a_custom_panel_to_its_own_origin() {
+        let custom_panel: tauri::Url = "https://wiki.example/docs"
+            .parse()
+            .expect("fixture url parses");
+        for allowed in [
+            "https://wiki.example/docs",
+            "https://wiki.example/other/page?x=1",
+        ] {
+            let url: tauri::Url = allowed.parse().expect("fixture url parses");
+            assert!(
+                is_navigation_allowed(&url, &custom_panel),
+                "{allowed} must be allowed"
+            );
+        }
+        for blocked in [
+            "https://evil.example/",
+            "https://wiki.example.evil.example/",
+            "http://wiki.example/",
+        ] {
+            let url: tauri::Url = blocked.parse().expect("fixture url parses");
+            assert!(
+                !is_navigation_allowed(&url, &custom_panel),
+                "{blocked} must be blocked"
+            );
+        }
+        // OAuth hops still work from a custom panel (GitHub/Supabase
+        // sign-in on any added site).
+        let hop: tauri::Url = "https://github.com/login/oauth/authorize"
+            .parse()
+            .expect("fixture url parses");
+        assert!(is_navigation_allowed(&hop, &custom_panel));
+    }
+
+    #[test]
+    fn action_targets_validate_like_reload() {
+        // The reload/back/forward/home shared core: malformed ids error,
+        // fresh instances resolve to their label, tombstoned ones no-op.
+        assert!(resolve_action_target("files-x", "files").is_err());
+        assert!(resolve_action_target("notes-1", "notes").is_ok());
+        assert_eq!(
+            resolve_action_target("files-7", "files").expect("fresh instance"),
+            ActionTarget::Live("webpanel-files-7".to_string())
+        );
+        let unique = format!("files-{}", line!());
+        mark_tombstoned(&unique);
+        assert_eq!(
+            resolve_action_target(&unique, "files").expect("tombstone is not an error"),
+            ActionTarget::Tombstoned
+        );
     }
 
     #[test]
@@ -548,10 +802,10 @@ mod tests {
         // Destroy is what tombstones; simulate a destroy racing an in-flight
         // ensure for the same instance.
         let unique = format!("files-{}", line!());
-        let request = validate_ensure_request(&unique, "files", 0.0, 0.0, 100.0, 100.0);
+        let request = validate_ensure_request(None, &unique, "files", 0.0, 0.0, 100.0, 100.0);
         assert!(request.is_ok(), "fresh instance must validate");
         mark_tombstoned(&unique);
-        let raced = validate_ensure_request(&unique, "files", 0.0, 0.0, 100.0, 100.0);
+        let raced = validate_ensure_request(None, &unique, "files", 0.0, 0.0, 100.0, 100.0);
         assert!(
             raced.is_err(),
             "ensure after destroy must not resurrect the webview"
@@ -561,13 +815,15 @@ mod tests {
     #[test]
     fn ensure_validation_covers_all_fail_closed_rules() {
         // Unknown panel type.
-        assert!(validate_ensure_request("notes-1", "notes", 0.0, 0.0, 10.0, 10.0).is_err());
+        assert!(validate_ensure_request(None, "notes-1", "notes", 0.0, 0.0, 10.0, 10.0).is_err());
         // Malformed instance id.
-        assert!(validate_ensure_request("files-x", "files", 0.0, 0.0, 10.0, 10.0).is_err());
+        assert!(validate_ensure_request(None, "files-x", "files", 0.0, 0.0, 10.0, 10.0).is_err());
         // Broken geometry.
-        assert!(validate_ensure_request("files-1", "files", f64::NAN, 0.0, 10.0, 10.0).is_err());
+        assert!(
+            validate_ensure_request(None, "files-1", "files", f64::NAN, 0.0, 10.0, 10.0).is_err()
+        );
         // Happy path carries label + url + logical rect.
-        let request = validate_ensure_request("files-9", "files", 4.0, 300.0, 800.0, 320.0)
+        let request = validate_ensure_request(None, "files-9", "files", 4.0, 300.0, 800.0, 320.0)
             .expect("valid request");
         assert_eq!(request.label, "webpanel-files-9");
         assert_eq!(

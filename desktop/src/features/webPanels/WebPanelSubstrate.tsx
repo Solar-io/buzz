@@ -1,8 +1,27 @@
 import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { LogIn, Maximize2, Minimize2, Plus, RotateCw, X } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  House,
+  LogIn,
+  Maximize2,
+  Minimize2,
+  Plus,
+  RotateCw,
+  X,
+} from "lucide-react";
 
 import type { WebPanelDef } from "./webPanels.config";
+import {
+  E2E_BUILD_FORCES_IFRAME,
+  showsCustomNativeNote,
+} from "./webPanels.config";
+import {
+  openAddSiteWindow,
+  removeCustomSite,
+  subscribeCustomPanelAdded,
+} from "./webPanelRegistry";
 import {
   DOCK_HEIGHT_DEFAULT,
   DOCK_HEIGHT_MAX_RATIO,
@@ -119,6 +138,54 @@ export function WebPanelSubstrate({
     }));
   };
 
+  // Back/Forward/Home share the reload IPC shape: ids only, never an
+  // address. Empty history back/forward is an engine-level no-op; the
+  // buttons stay unconditionally enabled because the child webview's
+  // history state is not readable from the app without handing foreign
+  // pages an IPC channel.
+  const navigateActive = (
+    command: "web_panel_back" | "web_panel_forward" | "web_panel_home",
+  ) => {
+    if (!activeTab || !activePanel || !native) return;
+    invoke(command, {
+      instanceId: activeTab.instanceId,
+      panelId: activePanel.id,
+    }).catch((error) => {
+      console.error("web panel navigation failed", error);
+    });
+  };
+
+  // The add flow opens the trusted add window; the typed form there is
+  // the owner-intent proof (the Rust command checks the caller webview's
+  // label — this app webview can never supply a URL). Success arrives as
+  // the Rust-broadcast custom-panel-added event, which the subscription
+  // below turns into a freshly opened tab.
+  const addSite = async () => {
+    setPickerOpen(false);
+    await openAddSiteWindow();
+  };
+
+  React.useEffect(
+    () =>
+      subscribeCustomPanelAdded((panel) => {
+        onOpenInstance(panel.id);
+      }),
+    // Re-subscribing on an unstable callback is cheap (a Set swap); the
+    // registry keeps the single event channel regardless.
+    [onOpenInstance],
+  );
+
+  const removeSite = async (panelId: string) => {
+    setPickerOpen(false);
+    const result = await removeCustomSite(panelId);
+    if (result !== "removed") return;
+    // The webviews of a removed site are this frontend's problem: closing
+    // its tabs drives destroy_web_panel through the usual store path.
+    for (const tab of tabs.filter((entry) => entry.panel.id === panelId)) {
+      onCloseTab(tab.instanceId);
+    }
+  };
+
   const startPointerResize = (event: React.PointerEvent<HTMLHRElement>) => {
     event.preventDefault();
     dragCleanupRef.current?.();
@@ -220,22 +287,64 @@ export function WebPanelSubstrate({
           >
             {panelTypes.map((panel) => {
               const PickerIcon = panel.icon;
+              const open = () => {
+                setPickerOpen(false);
+                onOpenInstance(panel.id);
+              };
+              if (!panel.custom) {
+                return (
+                  <button
+                    className="buzz-webpanel-picker-item"
+                    key={panel.id}
+                    onClick={open}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <PickerIcon />
+                    <span>{panel.label}</span>
+                  </button>
+                );
+              }
+              // Owner-added site: opens like any panel, plus a remove
+              // affordance that runs the native confirm flow.
               return (
-                <button
-                  className="buzz-webpanel-picker-item"
+                <div
+                  className="buzz-webpanel-picker-row"
                   key={panel.id}
-                  onClick={() => {
-                    setPickerOpen(false);
-                    onOpenInstance(panel.id);
-                  }}
-                  role="menuitem"
-                  type="button"
+                  role="presentation"
                 >
-                  <PickerIcon />
-                  <span>{panel.label}</span>
-                </button>
+                  <button
+                    className="buzz-webpanel-picker-item"
+                    onClick={open}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <PickerIcon />
+                    <span>{panel.label}</span>
+                  </button>
+                  <button
+                    aria-label={`Remove site ${panel.label}`}
+                    className="buzz-webpanel-picker-remove"
+                    onClick={() => void removeSite(panel.id)}
+                    type="button"
+                  >
+                    <X />
+                  </button>
+                </div>
               );
             })}
+            <button
+              className="buzz-webpanel-picker-item"
+              onClick={() => {
+                setPickerOpen(false);
+                void addSite();
+              }}
+              role="menuitem"
+              type="button"
+            >
+              <Plus />
+              <span>Add site…</span>
+            </button>
           </div>
         ) : null}
       </div>
@@ -289,6 +398,39 @@ export function WebPanelSubstrate({
           >
             <LogIn />
           </button>
+          {activePanel && native ? (
+            /* Native-mode navigation controls. Always enabled: empty
+               history is a no-op, and the child webview's history state is
+               not observable from the app (see navigateActive). The iframe
+               fallback keeps Reload only — cross-origin contentWindow
+               history is untouchable. */
+            <>
+              <button
+                aria-label={`Go back in ${activePanel.label}`}
+                className="buzz-webpanel-window-action"
+                onClick={() => navigateActive("web_panel_back")}
+                type="button"
+              >
+                <ArrowLeft />
+              </button>
+              <button
+                aria-label={`Go forward in ${activePanel.label}`}
+                className="buzz-webpanel-window-action"
+                onClick={() => navigateActive("web_panel_forward")}
+                type="button"
+              >
+                <ArrowRight />
+              </button>
+              <button
+                aria-label={`Open ${activePanel.label} home`}
+                className="buzz-webpanel-window-action"
+                onClick={() => navigateActive("web_panel_home")}
+                type="button"
+              >
+                <House />
+              </button>
+            </>
+          ) : null}
           <button
             aria-label={activePanel ? `Reload ${activePanel.label}` : "Reload"}
             className="buzz-webpanel-window-action"
@@ -327,27 +469,41 @@ export function WebPanelSubstrate({
              webviews managed through the store lifecycle. Clicking into the
              child webview moves keyboard focus there, and main-window
              shortcuts do not fire while it holds focus — click app chrome
-             (e.g. this header) to come back. */
-          <div
-            aria-hidden="true"
-            className="buzz-webpanel-native-placeholder"
-            data-webpanel-placeholder={activeTab?.instanceId}
-          />
+             (e.g. this header) to come back. Exception: in iframe-forced
+             (e2e) builds a custom site has no webview and no URL for a
+             frame, so the content area explains that instead. */
+          showsCustomNativeNote(activePanel, E2E_BUILD_FORCES_IFRAME) ? (
+            <div className="buzz-webpanel-custom-note" role="note">
+              {activePanel.label} opens in the native panel view
+            </div>
+          ) : (
+            <div
+              aria-hidden="true"
+              className="buzz-webpanel-native-placeholder"
+              data-webpanel-placeholder={activeTab?.instanceId}
+            />
+          )
         ) : (
           /* Iframe fallback: every tab stays mounted; inactive tabs are
              display:none — the same keep-alive semantics as native mode.
-             No `sandbox` attribute: the panel app needs cookies and
-             downloads. The per-instance `key` counter is the reload
-             mechanism. */
-          tabs.map((tab) => (
-            <iframe
-              className="buzz-webpanel-frame"
-              data-inactive={tab.active ? "false" : "true"}
-              key={`${tab.instanceId}:${reloadCounters[tab.instanceId] ?? 0}`}
-              src={tab.panel.url}
-              title={tab.panel.title}
-            />
-          ))
+             Reached only while a static iframe-fallback tab is active;
+             custom sites are native by construction (the registry pins
+             render:"native" because their URL never crosses the IPC
+             boundary), and as inactive tabs here they are filtered out —
+             there is no URL for a frame. No `sandbox` attribute: the panel
+             app needs cookies and downloads. The per-instance `key`
+             counter is the reload mechanism. */
+          tabs
+            .filter((tab) => tab.panel.url !== null)
+            .map((tab) => (
+              <iframe
+                className="buzz-webpanel-frame"
+                data-inactive={tab.active ? "false" : "true"}
+                key={`${tab.instanceId}:${reloadCounters[tab.instanceId] ?? 0}`}
+                src={tab.panel.url ?? "about:blank"}
+                title={tab.panel.title}
+              />
+            ))
         )}
       </div>
     </section>

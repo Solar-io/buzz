@@ -358,3 +358,94 @@ test("parse validates shape instead of trusting it", () => {
   );
   assert.equal(recovered.instances[0].height, null);
 });
+
+// ── Boot-order gate (registry before restore) ───────────────────────────
+
+let deferWebPanelRestore;
+let triggerWebPanelRestore;
+let registry;
+
+before(async () => {
+  ({ deferWebPanelRestore, triggerWebPanelRestore } = await import(
+    "./webPanelStore.ts"
+  ));
+  registry = await import("./webPanelRegistry.ts");
+});
+
+test("a deferred restore holds until the registry resolves custom ids", async () => {
+  registry.resetWebPanelRegistryForTests();
+  registry.setCustomPanelLoaderForTests(() =>
+    Promise.resolve([{ id: "site-3", label: "Wiki", title: "Wiki" }]),
+  );
+  await registry.customPanelsReady();
+
+  dom.window.localStorage.setItem(
+    WEBPANEL_SESSION_STORAGE_KEY,
+    JSON.stringify({
+      version: 1,
+      mode: "docked",
+      instances: [{ instanceId: "site-3-1", panelId: "site-3", height: null }],
+      activeInstanceId: "site-3-1",
+    }),
+  );
+  resetWebPanelForTests();
+  deferWebPanelRestore();
+  // Reads under the gate stay closed...
+  assert.equal(getWebPanelSnapshotForTests().mode, "closed");
+  // ...the release restores the custom tab.
+  triggerWebPanelRestore();
+  const snapshot = getWebPanelSnapshotForTests();
+  assert.deepEqual(
+    snapshot.instances.map((instance) => instance.panelId),
+    ["site-3"],
+    "the gated restore must see the loaded registry",
+  );
+  assert.equal(snapshot.activeInstanceId, "site-3-1");
+  registry.setCustomPanelLoaderForTests(null);
+  registry.resetWebPanelRegistryForTests();
+  resetWebPanelForTests();
+});
+
+test("a deferred restore against an empty registry drops custom tabs", async () => {
+  registry.resetWebPanelRegistryForTests();
+  registry.setCustomPanelLoaderForTests(() => Promise.resolve([]));
+  await registry.customPanelsReady();
+  dom.window.localStorage.setItem(
+    WEBPANEL_SESSION_STORAGE_KEY,
+    JSON.stringify({
+      version: 1,
+      mode: "docked",
+      instances: [{ instanceId: "site-3-1", panelId: "site-3", height: null }],
+      activeInstanceId: "site-3-1",
+    }),
+  );
+  resetWebPanelForTests();
+  deferWebPanelRestore();
+  triggerWebPanelRestore();
+  assert.equal(
+    getWebPanelSnapshotForTests().mode,
+    "closed",
+    "custom ids unknown to the registry must not restore",
+  );
+  registry.setCustomPanelLoaderForTests(null);
+  registry.resetWebPanelRegistryForTests();
+  resetWebPanelForTests();
+});
+
+test("user actions under the gate restore immediately instead of diverging", () => {
+  dom.window.localStorage.removeItem(WEBPANEL_SESSION_STORAGE_KEY);
+  resetWebPanelForTests();
+  deferWebPanelRestore();
+  const result = openWebPanelInstance("files");
+  assert.ok(result.ok, "opening works even while the gate holds");
+  assert.deepEqual(
+    getWebPanelSnapshotForTests().instances.map((i) => i.instanceId),
+    ["files-1"],
+  );
+  // The later gate release must not clobber the user's tab.
+  triggerWebPanelRestore();
+  assert.deepEqual(
+    getWebPanelSnapshotForTests().instances.map((i) => i.instanceId),
+    ["files-1"],
+  );
+});

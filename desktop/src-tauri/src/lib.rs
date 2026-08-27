@@ -5,6 +5,7 @@ mod archive;
 mod builderlab;
 mod channel_head_cache;
 mod commands;
+mod custom_panels;
 mod deep_link;
 mod egress_guard;
 mod event_sync;
@@ -801,10 +802,17 @@ pub fn run() {
             close_huddle_companion,
             open_huddle_window,
             web_panels::open_web_panel_login,
+            web_panels::open_web_panel_add_window,
             web_panels::ensure_web_panel,
             web_panels::set_web_panel_visible,
             web_panels::destroy_web_panel,
             web_panels::reload_web_panel,
+            web_panels::web_panel_back,
+            web_panels::web_panel_forward,
+            web_panels::web_panel_home,
+            custom_panels::list_custom_panels,
+            custom_panels::add_custom_panel,
+            custom_panels::remove_custom_panel,
             push_audio_pcm,
             reconnect_huddle_audio,
             start_stt_pipeline,

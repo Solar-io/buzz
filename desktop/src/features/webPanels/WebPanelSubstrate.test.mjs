@@ -13,6 +13,7 @@ const invokes = [];
 // placeholder reports a zero box and the native loop stays quiet — invoke
 // assertions here are about explicit actions only).
 
+let responses = {};
 let _act;
 let cleanup;
 let createElement;
@@ -22,6 +23,11 @@ let waitFor;
 let React;
 let WebPanelSubstrate;
 let WEB_PANELS;
+let registry;
+
+function respond(command, response) {
+  responses[command] = response;
+}
 
 before(async () => {
   Object.assign(globalThis, {
@@ -34,7 +40,10 @@ before(async () => {
   dom.window.__TAURI_INTERNALS__ = {
     invoke(command, args) {
       invokes.push([command, args]);
-      return Promise.resolve(null);
+      const response = responses[command];
+      return Promise.resolve(
+        typeof response === "function" ? response() : (response ?? null),
+      );
     },
   };
   ({ _act, cleanup, fireEvent, render, waitFor } = await import(
@@ -42,6 +51,7 @@ before(async () => {
   ));
   ({ createElement, default: React } = await import("react"));
   ({ WEB_PANELS } = await import("./webPanels.config.ts"));
+  registry = await import("./webPanelRegistry.ts");
   ({ WebPanelSubstrate } = await import("./WebPanelSubstrate.tsx"));
 });
 
@@ -53,6 +63,8 @@ after(() => {
 beforeEach(() => {
   cleanup?.();
   invokes.length = 0;
+  responses = {};
+  registry.resetWebPanelRegistryForTests();
   dom.window.localStorage.clear();
 });
 
@@ -179,7 +191,10 @@ test("the add-tab picker lists configured panel types and opens one", () => {
   fireEvent.click(view.getByLabelText("Open a new panel tab"));
   const menu = view.container.querySelector('[role="menu"]');
   assert.ok(menu, "picker must open as a menu");
-  fireEvent.click(view.getByRole("menuitem"));
+  // Static rows plus the owner-add entry; the static row opens its panel.
+  assert.ok(view.getByRole("menuitem", { name: "Files" }));
+  assert.ok(view.getByRole("menuitem", { name: "Add site…" }));
+  fireEvent.click(view.getByRole("menuitem", { name: "Files" }));
   assert.deepEqual(callbacks.instances, ["files"]);
   assert.equal(
     view.container.querySelectorAll('[role="menu"]').length,
@@ -377,4 +392,205 @@ test("closed docks keep their dom with tabs for the close transition", () => {
   const substrate = view.container.querySelector(".buzz-webpanel-substrate");
   assert.equal(substrate.dataset.webpanelVisible, "false");
   assert.equal(view.container.querySelectorAll('[role="tab"]').length, 1);
+});
+
+// ── Custom sites (owner-added) ──────────────────────────────────────────
+
+test("picker rows for customs carry a remove affordance and open on click", () => {
+  const docs = {
+    id: "site-1",
+    label: "Docs",
+    title: "Docs",
+    icon: WEB_PANELS[0].icon,
+    url: null,
+    render: "native",
+    custom: true,
+  };
+  const { callbacks, view } = fixture({ panelTypes: [WEB_PANELS[0], docs] });
+  fireEvent.click(view.getByLabelText("Open a new panel tab"));
+  const items = view.getAllByRole("menuitem");
+  assert.equal(items.length, 3, "Files, Docs, and Add site…");
+  // The remove affordance exists for the custom row only.
+  assert.ok(view.getByLabelText("Remove site Docs"));
+  assert.equal(
+    view.container.querySelectorAll('[aria-label="Remove site Files"]').length,
+    0,
+    "static rows never get a remove button",
+  );
+  fireEvent.click(view.getByRole("menuitem", { name: "Docs" }));
+  assert.deepEqual(callbacks.instances, ["site-1"]);
+  assert.equal(view.container.querySelectorAll('[role="menu"]').length, 0);
+});
+
+test("remove flow: a removed site's open tabs close through the store path", async () => {
+  const docs = {
+    id: "site-1",
+    label: "Docs",
+    title: "Docs",
+    icon: WEB_PANELS[0].icon,
+    url: null,
+    render: "native",
+    custom: true,
+  };
+  const callbacks = {
+    closes: [],
+    heights: [],
+    hide: 0,
+    instances: [],
+    logins: [],
+    selects: [],
+    modeChanges: [],
+  };
+  const tabs = [
+    tab(),
+    {
+      instanceId: "site-1-1",
+      panel: docs,
+      height: null,
+      active: false,
+    },
+  ];
+  // remove_custom_panel succeeds; the refreshed list no longer has site-1.
+  respond("list_custom_panels", []);
+  const view = render(
+    createElement(WebPanelSubstrate, {
+      tabs,
+      panelTypes: [WEB_PANELS[0], docs],
+      mode: "docked",
+      visible: true,
+      onHide: () => {},
+      onLogin: () => {},
+      onModeChange: () => {},
+      onSelectTab: (instanceId) => callbacks.selects.push(instanceId),
+      onCloseTab: (instanceId) => callbacks.closes.push(instanceId),
+      onOpenInstance: (panelId) => callbacks.instances.push(panelId),
+      onHeightCommit: () => {},
+    }),
+  );
+  fireEvent.click(view.getByLabelText("Open a new panel tab"));
+  fireEvent.click(view.getByLabelText("Remove site Docs"));
+  await waitFor(() => {
+    assert.deepEqual(callbacks.closes, ["site-1-1"]);
+  });
+  assert.deepEqual(invokes[0], ["remove_custom_panel", { id: "site-1" }]);
+  assert.deepEqual(invokes[1], ["list_custom_panels", {}]);
+});
+
+test("add flow: the picker opens the trusted add window; the Rust event opens the tab", async () => {
+  const callbacks = {
+    closes: [],
+    heights: [],
+    hide: 0,
+    instances: [],
+    logins: [],
+    selects: [],
+    modeChanges: [],
+  };
+  // The add window's typed form lives in Rust-owned chrome; from here the
+  // flow is (1) invoke open_web_panel_add_window, (2) Rust persists and
+  // broadcasts custom-panel-added, which the registry channel delivers.
+  respond("list_custom_panels", [
+    { id: "site-2", label: "Wiki", title: "Wiki" },
+  ]);
+  let deliverAdded = null;
+  registry.setCustomPanelAddedInstallerForTests(async (handler) => {
+    deliverAdded = handler;
+    return () => {};
+  });
+  const view = render(
+    createElement(WebPanelSubstrate, {
+      tabs: [tab()],
+      panelTypes: [WEB_PANELS[0]],
+      mode: "docked",
+      visible: true,
+      onHide: () => {},
+      onLogin: () => {},
+      onModeChange: () => {},
+      onSelectTab: () => {},
+      onCloseTab: () => {},
+      onOpenInstance: (panelId) => callbacks.instances.push(panelId),
+      onHeightCommit: () => {},
+    }),
+  );
+  fireEvent.click(view.getByLabelText("Open a new panel tab"));
+  fireEvent.click(view.getByRole("menuitem", { name: "Add site…" }));
+  await waitFor(() => {
+    assert.deepEqual(invokes, [["open_web_panel_add_window", {}]]);
+  });
+  assert.ok(deliverAdded, "mounting must install the added-event channel");
+  deliverAdded({ id: "site-2", label: "Wiki", title: "Wiki" });
+  await waitFor(() => {
+    assert.deepEqual(callbacks.instances, ["site-2"]);
+  });
+});
+
+test("custom tabs render the native placeholder and nav controls, never a frame", () => {
+  // The registry's toDef shape: url never crosses the IPC boundary, so a
+  // custom site is render:"native" by construction — even in e2e builds
+  // (the iframe force applies to configured panels only). The substrate
+  // must host it through the native placeholder path, never an iframe.
+  const custom = {
+    id: "site-1",
+    label: "Docs",
+    title: "Docs",
+    icon: WEB_PANELS[0].icon,
+    url: null,
+    render: "native",
+    custom: true,
+  };
+  const { view } = fixture({
+    tabs: [tab({ panel: custom })],
+  });
+  assert.equal(view.container.querySelectorAll("iframe").length, 0);
+  const placeholder = view.container.querySelector(
+    ".buzz-webpanel-native-placeholder",
+  );
+  assert.ok(placeholder, "custom tabs render through the native placeholder");
+  assert.equal(placeholder.getAttribute("data-webpanel-placeholder"), "files-1");
+  // Nav controls ride the native path for customs.
+  assert.ok(view.getByLabelText("Go back in Docs"));
+  assert.ok(view.getByLabelText("Go forward in Docs"));
+  assert.ok(view.getByLabelText("Open Docs home"));
+});
+
+test("native-mode header carries back/forward/home beside reload", () => {
+  const { view } = fixture();
+  assert.ok(view.getByLabelText("Go back in Files"));
+  assert.ok(view.getByLabelText("Go forward in Files"));
+  assert.ok(view.getByLabelText("Open Files home"));
+  assert.ok(view.getByLabelText("Reload Files"));
+});
+
+test("back/forward/home dispatch id-only invokes for the active tab", () => {
+  const { view } = fixture({
+    tabs: [tab(), tab({ instanceId: "files-2", active: false })],
+  });
+  fireEvent.click(view.getByLabelText("Go back in Files"));
+  fireEvent.click(view.getByLabelText("Go forward in Files"));
+  fireEvent.click(view.getByLabelText("Open Files home"));
+  return waitFor(() => {
+    assert.deepEqual(invokes, [
+      ["web_panel_back", { instanceId: "files-1", panelId: "files" }],
+      ["web_panel_forward", { instanceId: "files-1", panelId: "files" }],
+      ["web_panel_home", { instanceId: "files-1", panelId: "files" }],
+    ]);
+  });
+});
+
+test("iframe fallback keeps reload only — no back/forward/home", () => {
+  const iframePanel = { ...WEB_PANELS[0], render: "iframe" };
+  const { view } = fixture({ tabs: [tab({ panel: iframePanel })] });
+  assert.ok(view.getByLabelText("Reload Files"));
+  assert.equal(
+    view.container.querySelectorAll('[aria-label^="Go back in"]').length,
+    0,
+  );
+  assert.equal(
+    view.container.querySelectorAll('[aria-label^="Go forward in"]').length,
+    0,
+  );
+  assert.equal(
+    view.container.querySelectorAll('[aria-label$="home"]').length,
+    0,
+  );
 });

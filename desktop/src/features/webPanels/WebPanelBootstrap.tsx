@@ -1,12 +1,19 @@
 import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
 
-import { getWebPanel, WEB_PANELS } from "./webPanels.config";
+import {
+  allWebPanels,
+  customPanelsReady,
+  getWebPanel,
+  subscribeWebPanelRegistry,
+} from "./webPanelRegistry";
 import {
   closeWebPanelInstance,
+  deferWebPanelRestore,
   setActiveWebPanelInstance,
   setWebPanelInstanceHeight,
   setWebPanelMode,
+  triggerWebPanelRestore,
   useWebPanel,
   type WebPanelInstance,
 } from "./webPanelStore";
@@ -16,6 +23,16 @@ import { openWebPanelInstanceWithFeedback } from "./webPanelActions";
 function report(error: unknown) {
   console.error("web panel command failed", error);
 }
+
+// Boot order: the custom panel registry must resolve before the persisted
+// session restores, or a restored session cannot name owner-added sites.
+// The defer runs at module load — before ANY component can read the store —
+// and the effect below releases it.
+deferWebPanelRestore();
+
+/** A wedged registry must not wedge the dock: past this, restore proceeds
+ *  static-only and customs are disabled for the run. */
+const CUSTOM_PANELS_BOOT_TIMEOUT_MS = 5000;
 
 /**
  * Open the login companion window for a panel type. All the app's webviews
@@ -48,7 +65,32 @@ export function WebPanelBootstrap() {
   const [panelMounted, setPanelMounted] = React.useState(dockOpen);
   const previousModeRef = React.useRef(panel.mode);
 
+  // Registry-driven re-renders: added/removed sites update the "+" picker
+  // and the tab resolution below.
+  const [registryTick, setRegistryTick] = React.useState(0);
+  React.useEffect(
+    () => subscribeWebPanelRegistry(() => setRegistryTick((tick) => tick + 1)),
+    [],
+  );
+
+  // Release the restore gate once the custom list settles (or times out —
+  // static-only, console-warned on the registry side).
+  React.useEffect(() => {
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      triggerWebPanelRestore();
+    };
+    const timeout = window.setTimeout(release, CUSTOM_PANELS_BOOT_TIMEOUT_MS);
+    customPanelsReady().then(release, release);
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, []);
+
   // Tabs from the store; unknown panel ids (config renamed) are dropped.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: registryTick is an intentional cache-buster — a removed custom site changes what getWebPanel resolves without changing the store snapshot
   const tabs: readonly WebPanelTab[] = React.useMemo(() => {
     const resolved = panel.instances.flatMap((instance) => {
       const panelDef = getWebPanel(instance.panelId);
@@ -67,7 +109,7 @@ export function WebPanelBootstrap() {
       resolved[0] = { ...resolved[0], active: true };
     }
     return resolved;
-  }, [panel.instances, panel.activeInstanceId]);
+  }, [panel.instances, panel.activeInstanceId, registryTick]);
 
   // Keep the closing transition populated: the store clears instances the
   // moment the dock closes, but the collapsing substrate should still show
@@ -114,7 +156,11 @@ export function WebPanelBootstrap() {
   // Native webview lifecycle: destroy the webviews of instances that left
   // the store (tab close or dock close). Hidden-but-kept tabs never leave
   // the store, so only true removals destroy — that is what bounds live
-  // WKWebView sessions by the store's cap.
+  // WKWebView sessions by the store's cap. The render mode comes from the
+  // last RENDERED tab (with a live registry fallback): a removed custom
+  // site's def is already gone from the registry by the time its tabs
+  // close, so a live-only lookup would skip the destroy and leak the
+  // native webview.
   const instancesRef = React.useRef<readonly WebPanelInstance[]>([]);
   React.useEffect(() => {
     const previous = instancesRef.current;
@@ -124,7 +170,12 @@ export function WebPanelBootstrap() {
     );
     for (const removed of previous) {
       if (currentIds.has(removed.instanceId)) continue;
-      if (getWebPanel(removed.panelId)?.render !== "native") continue;
+      const rendered = lastTabsRef.current.find(
+        (tab) => tab.instanceId === removed.instanceId,
+      );
+      const render =
+        rendered?.panel.render ?? getWebPanel(removed.panelId)?.render;
+      if (render !== "native") continue;
       invoke("destroy_web_panel", {
         instanceId: removed.instanceId,
         panelId: removed.panelId,
@@ -144,7 +195,7 @@ export function WebPanelBootstrap() {
       onModeChange={setWebPanelMode}
       onOpenInstance={openWebPanelInstanceWithFeedback}
       onSelectTab={setActiveWebPanelInstance}
-      panelTypes={WEB_PANELS}
+      panelTypes={allWebPanels()}
       tabs={displayTabs}
       visible={panelVisible}
     />

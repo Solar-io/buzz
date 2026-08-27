@@ -32,6 +32,19 @@ export default defineConfig(async () => ({
     },
   },
 
+  // Two bundle entries: the main SPA and the tiny trusted add-site form
+  // the `webpanel-add` window loads (add.html). Without an explicit input
+  // list vite emits only index.html, and the Rust-side
+  // `WebviewUrl::App("add.html")` would 404 in production builds.
+  build: {
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, "index.html"),
+        add: path.resolve(__dirname, "add.html"),
+      },
+    },
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
