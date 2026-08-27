@@ -70,9 +70,15 @@ test("login button sends only the panel type id across the IPC boundary", async 
 
     fireEvent.click(login);
 
-    assert.deepEqual(invokes, [["open_web_panel_login", { panelId: "files" }]]);
+    // Boot order: the registry load precedes any panel command (the
+    // session-restore gate waits on it).
+    assert.deepEqual(invokes[0], ["list_custom_panels", {}]);
+    const loginInvoke = invokes.find(
+      ([command]) => command === "open_web_panel_login",
+    );
+    assert.ok(loginInvoke, "login invoke must have fired");
     // The contract is id-only: url and title must never ride the invoke.
-    const [command, args] = invokes[0];
+    const [command, args] = loginInvoke;
     assert.equal(command, "open_web_panel_login");
     assert.deepEqual(Object.keys(args), ["panelId"]);
   });
@@ -156,4 +162,86 @@ test("restored sessions mount without boot-blocking", async () => {
     });
     assert.equal(view.container.querySelectorAll('[role="tab"]').length, 1);
   });
+});
+
+test("session restore waits for the custom registry before restoring custom tabs", async () => {
+  // THE boot-order gate: a persisted session referencing an owner-added
+  // site must restore only after the registry knows that site, or the tab
+  // would be dropped as an unknown panel id.
+  const registry = await import("./webPanelRegistry.ts");
+  registry.resetWebPanelRegistryForTests();
+  let releaseList;
+  const listGate = new Promise((resolve) => {
+    releaseList = resolve;
+  });
+  registry.setCustomPanelLoaderForTests(() => listGate);
+
+  const store = await import("./webPanelStore.ts");
+  store.resetWebPanelForTests();
+  dom.window.localStorage.setItem(
+    "buzz-webpanel-session",
+    JSON.stringify({
+      version: 1,
+      mode: "docked",
+      instances: [{ instanceId: "site-3-1", panelId: "site-3", height: null }],
+      activeInstanceId: "site-3-1",
+    }),
+  );
+  // Re-arm the defer the bootstrap installs at module load.
+  store.deferWebPanelRestore();
+
+  const view = render(createElement(WebPanelBootstrap));
+  // Registry pending: nothing restores yet (static-only dock closed).
+  await act(async () => {
+    await Promise.resolve();
+  });
+  assert.equal(
+    view.container.querySelectorAll('[role="tab"]').length,
+    0,
+    "restore must not run while the registry is pending",
+  );
+
+  releaseList([{ id: "site-3", label: "Wiki", title: "Wiki" }]);
+  await waitFor(() => {
+    assert.equal(view.container.querySelectorAll('[role="tab"]').length, 1);
+  });
+  assert.equal(view.getAllByRole("tab")[0].textContent, "Wiki");
+  registry.setCustomPanelLoaderForTests(null);
+  registry.resetWebPanelRegistryForTests();
+  store.resetWebPanelForTests();
+});
+
+test("a removed custom site's tabs are dropped by restore", async () => {
+  const registry = await import("./webPanelRegistry.ts");
+  registry.resetWebPanelRegistryForTests();
+  registry.setCustomPanelLoaderForTests(() =>
+    Promise.resolve([{ id: "site-9", label: "Other", title: "Other" }]),
+  );
+  await registry.customPanelsReady();
+
+  const store = await import("./webPanelStore.ts");
+  store.resetWebPanelForTests();
+  dom.window.localStorage.setItem(
+    "buzz-webpanel-session",
+    JSON.stringify({
+      version: 1,
+      mode: "docked",
+      instances: [
+        { instanceId: "files-1", panelId: "files", height: null },
+        { instanceId: "site-3-1", panelId: "site-3", height: null },
+      ],
+      activeInstanceId: "site-3-1",
+    }),
+  );
+  store.deferWebPanelRestore();
+  store.triggerWebPanelRestore();
+  const snapshot = store.getWebPanelSnapshotForTests();
+  assert.deepEqual(
+    snapshot.instances.map((instance) => instance.instanceId),
+    ["files-1"],
+    "site-3 is no longer in the store, so its tab must not restore",
+  );
+  registry.setCustomPanelLoaderForTests(null);
+  registry.resetWebPanelRegistryForTests();
+  store.resetWebPanelForTests();
 });

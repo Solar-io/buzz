@@ -7,9 +7,13 @@ import tauriConf from "../../../src-tauri/tauri.conf.json";
 import {
   E2E_BUILD_FORCES_IFRAME,
   WEB_PANELS,
-  getWebPanel,
   resolveRenderMode,
+  showsCustomNativeNote,
 } from "./webPanels.config.ts";
+import {
+  getWebPanel,
+  resetWebPanelRegistryForTests,
+} from "./webPanelRegistry.ts";
 
 const FILES_URL = "https://crichton.tailb3d4b8.ts.net:6201/?panel=files";
 
@@ -49,6 +53,25 @@ test("resolveRenderMode forces iframe for e2e and honors explicit fallbacks", ()
   assert.equal(resolveRenderMode("iframe", true), "iframe");
   assert.equal(resolveRenderMode("native", false), "native");
   assert.equal(resolveRenderMode("iframe", false), "iframe");
+});
+
+test("showsCustomNativeNote fires only for url-less panels in forced-iframe builds", () => {
+  const custom = {
+    id: "site-1",
+    label: "Docs",
+    title: "Docs",
+    icon: WEB_PANELS[0].icon,
+    url: null,
+    render: "native",
+    custom: true,
+  };
+  // e2e: the note stands in for the unavailable native webview.
+  assert.equal(showsCustomNativeNote(custom, true), true);
+  // Production: the native child webview hosts it — no note.
+  assert.equal(showsCustomNativeNote(custom, false), false);
+  // Statics always have a URL for the iframe fallback.
+  assert.equal(showsCustomNativeNote(WEB_PANELS[0], true), false);
+  assert.equal(showsCustomNativeNote(null, true), false);
 });
 
 test("panel ids are unique", () => {
@@ -108,9 +131,12 @@ test("frame-src allows exactly the configured panel origins", () => {
 });
 
 test("getWebPanel resolves configured ids and rejects everything else", () => {
+  resetWebPanelRegistryForTests();
   assert.equal(getWebPanel("files")?.url, FILES_URL);
   assert.equal(getWebPanel("nope"), null);
   assert.equal(getWebPanel(null), null);
+  // Unloaded registry state must not invent custom panels.
+  assert.equal(getWebPanel("site-1"), null);
 });
 
 test("rust panel table mirrors the typescript config", async () => {
