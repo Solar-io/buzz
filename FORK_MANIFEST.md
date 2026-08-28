@@ -43,11 +43,15 @@ Dropped 2026-08-24: one auto-commit noise commit and a stray `logs/verification.
 
 Every build we install gets an annotated tag: `nest-<upstream-version>-<yyyymmdd>`
 (suffixed `-2`, `-3`… for additional same-day builds).
-Current installed build: **`nest-0.5.20-20260826-2`** (upstream 0.5.20, incl.
-the native tabbed web-panels feature). Installed on crichton and aeryn
-2026-08-26 evening; `buzz-desktop` sha256 `d2373dcc…2aec500f` verified on
-both hosts. The tag always marks what the installed app contains; `main` is
-the series head.
+Current installed build: **`nest-0.5.20-20260828`** (upstream 0.5.20, incl.
+web panels, custom sites + nav controls, 12h turn cap, and the per-turn
+temporal stamp). mv-swapped into `/Applications/Buzz.app` on crichton and
+aeryn 2026-08-28 ~20:15 UTC — takes effect on each machine's next Buzz
+relaunch; `buzz-acp` sha256 `5984458a…f388b653` and `buzz-desktop`
+`446b8d24…dfecb61` verified identical on both hosts. Previous build kept
+at `Buzz.app.old-nest-0.5.20-20260826-2` (rollback: mv both dirs back).
+The tag always marks what the installed app contains; `main` is the series
+head.
 
 Per-host ops config (not in the repo): `video-chat-peers.json` in the app config
 dir (`~/Library/Application Support/xyz.block.buzz.app/`) lists peer bridges
