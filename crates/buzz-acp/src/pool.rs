@@ -593,6 +593,10 @@ pub struct PromptContext {
     pub initial_message: Option<String>,
     pub idle_timeout: Duration,
     pub max_turn_duration: Duration,
+    /// Owner-local timezone rendered into every turn's `[Context]` temporal
+    /// lines and the heartbeat prompt (from `--prompt-timezone` /
+    /// `BUZZ_ACP_TIMEZONE`).
+    pub prompt_timezone: chrono_tz::Tz,
     /// Interval between per-turn `turn_liveness` observer pings. `Duration::ZERO`
     /// disables emission. This is the desktop crash-backstop signal — distinct
     /// from `heartbeat_prompt` (agent self-prompting).
@@ -2421,6 +2425,8 @@ pub async fn run_prompt_task(
         crate::queue::format_prompt(
             b,
             &crate::queue::FormatPromptArgs {
+                now: None,
+                prompt_timezone: Some(ctx.prompt_timezone),
                 agent_core: standing.agent_core,
                 huddle_instructions: standing.huddle_instructions,
                 channel_info: channel_info.as_ref(),
@@ -8051,6 +8057,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             initial_message: None,
             idle_timeout: Duration::from_secs(60),
             max_turn_duration: Duration::from_secs(120),
+            prompt_timezone: chrono_tz::UTC,
             turn_liveness_interval: Duration::ZERO,
             dedup_mode: DedupMode::Drop,
             system_prompt: None,

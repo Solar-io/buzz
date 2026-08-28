@@ -2195,6 +2195,7 @@ async fn tokio_main() -> Result<()> {
         initial_message: config.initial_message.clone(),
         idle_timeout: Duration::from_secs(config.idle_timeout_secs),
         max_turn_duration: Duration::from_secs(config.max_turn_duration_secs),
+        prompt_timezone: config.prompt_timezone,
         turn_liveness_interval: Duration::from_secs(config.turn_liveness_secs),
         dedup_mode: config.dedup_mode,
         system_prompt: config.system_prompt.clone(),
@@ -4407,7 +4408,7 @@ fn dispatch_heartbeat(
     let prompt_text = ctx
         .heartbeat_prompt
         .clone()
-        .unwrap_or_else(default_heartbeat_prompt);
+        .unwrap_or_else(|| default_heartbeat_prompt(ctx.prompt_timezone));
     let result_tx = pool.result_tx();
     let ctx_clone = Arc::clone(ctx);
     let agent_index = agent.index;
@@ -4496,10 +4497,12 @@ mod agent_draft_prompt_tests {
     }
 }
 
-fn default_heartbeat_prompt() -> String {
-    let now = chrono::Utc::now().to_rfc3339();
+fn default_heartbeat_prompt(tz: chrono_tz::Tz) -> String {
+    let now = chrono::Utc::now();
+    let utc = now.to_rfc3339();
+    let local = crate::queue::format_local_wall(now, tz);
     format!(
-        "[System: Heartbeat]\nTime: {now}\n\n\
+        "[System: Heartbeat]\nTime: {utc}\nLocal time (owner): {local}\n\n\
          You have been awakened for a routine heartbeat. You have NO incoming messages or\n\
          active channel context for this turn.\n\n\
          Your tasks:\n\
@@ -4513,6 +4516,34 @@ fn default_heartbeat_prompt() -> String {
          Do not run `buzz channels list` or `buzz messages search` unless you have a specific reason.\n\
          Do not invent work — only act on items surfaced by the feed commands."
     )
+}
+
+#[cfg(test)]
+mod heartbeat_prompt_tests {
+    use super::default_heartbeat_prompt;
+
+    #[test]
+    fn default_heartbeat_prompt_carries_utc_and_owner_local_time() {
+        let s = default_heartbeat_prompt("America/Chicago".parse().unwrap());
+        assert!(
+            s.starts_with("[System: Heartbeat]\nTime: "),
+            "UTC RFC3339 first: {s}"
+        );
+        assert!(
+            s.contains("\nLocal time (owner): "),
+            "owner-local wall clock line present: {s}"
+        );
+        // The local line must render the timezone abbreviation, not a bare
+        // offset, so CDT/CST is visible to the agent.
+        let local_line = s
+            .lines()
+            .find(|l| l.starts_with("Local time (owner):"))
+            .expect("local time line");
+        assert!(
+            local_line.contains("CDT (UTC-5)") || local_line.contains("CST (UTC-6)"),
+            "Chicago renders with CDT/CST depending on season: {local_line}"
+        );
+    }
 }
 
 /// Spawn a background respawn task for a crashed agent slot.
@@ -6762,6 +6793,7 @@ mod build_mcp_servers_tests {
             agent_args: vec!["acp".into()],
             mcp_command: "test-mcp-server".into(),
             idle_timeout_secs: config::DEFAULT_IDLE_TIMEOUT_SECS,
+            prompt_timezone: chrono_tz::UTC,
             max_turn_duration_secs: config::DEFAULT_MAX_TURN_DURATION_SECS,
             agents: 1,
             heartbeat_interval_secs: 0,
@@ -6987,6 +7019,7 @@ mod error_outcome_emission_tests {
             agent_args: vec![],
             mcp_command: "test-mcp-server".into(),
             idle_timeout_secs: config::DEFAULT_IDLE_TIMEOUT_SECS,
+            prompt_timezone: chrono_tz::UTC,
             max_turn_duration_secs: config::DEFAULT_MAX_TURN_DURATION_SECS,
             agents: 1,
             heartbeat_interval_secs: 0,

@@ -13,6 +13,7 @@
 //!   still queue normally.
 //! - **Queue** — all events accumulate; batched on the next flush cycle.
 
+use chrono::Offset;
 use nostr::{Event, ToBech32};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
@@ -1014,6 +1015,16 @@ pub struct ContextMessage {
     pub content: String,
 }
 
+impl ConversationContext {
+    /// The context's messages, oldest first, regardless of thread/DM flavor.
+    pub fn messages(&self) -> &[ContextMessage] {
+        match self {
+            ConversationContext::Thread { messages, .. } => messages,
+            ConversationContext::Dm { messages, .. } => messages,
+        }
+    }
+}
+
 /// Channel metadata for prompt formatting.
 #[derive(Debug, Clone)]
 pub struct PromptChannelInfo {
@@ -1256,6 +1267,75 @@ fn resolve_reply_anchor(
 /// multiline text is collapsed to single-space-joined lines before truncation.
 const MAX_DESCRIPTION_LEN: usize = 500;
 
+/// Render a coarse human-readable age from a signed second count.
+///
+/// Buckets: "just now" (< 2 min), "Nm", "Hh Mm", "Dd Hh". Negative deltas
+/// (clock skew between relay and harness) clamp to "just now" — a prompt must
+/// never tell the agent a message arrives "in the future".
+pub(crate) fn humanize_delta(secs: i64) -> String {
+    if secs < 120 {
+        return "just now".into();
+    }
+    let mins = secs / 60;
+    if mins < 60 {
+        return format!("{mins}m");
+    }
+    let hours = mins / 60;
+    if hours < 24 {
+        return format!("{hours}h {}m", mins % 60);
+    }
+    format!("{}d {}h", hours / 24, hours % 24)
+}
+
+/// Render the owner-local `HH:MM` with IANA abbreviation and UTC offset, e.g.
+/// `Friday 2026-08-28, 08:53 CDT (UTC-5)`.
+pub(crate) fn format_local_wall(now: chrono::DateTime<chrono::Utc>, tz: chrono_tz::Tz) -> String {
+    let local = now.with_timezone(&tz);
+    let offset_secs = local.offset().fix().local_minus_utc();
+    let offset = if offset_secs == 0 {
+        "UTC".to_string()
+    } else {
+        let sign = if offset_secs < 0 { '-' } else { '+' };
+        let abs = offset_secs.unsigned_abs();
+        format!("UTC{sign}{}", abs / 3600)
+    };
+    local.format("%A %Y-%m-%d, %H:%M %Z").to_string() + &format!(" ({offset})")
+}
+
+/// Render the two temporal ground-truth lines appended to every `[Context]`
+/// block: the owner-local wall clock alongside UTC, and how stale the
+/// triggering message is plus the channel's prior-message gap.
+///
+/// `previous_message` is the timestamp of the last message in the fetched
+/// conversation context (the most recent channel activity *before* the
+/// triggering event) — `None` when no context was fetched for this turn.
+pub(crate) fn temporal_context_lines(
+    now: chrono::DateTime<chrono::Utc>,
+    tz: chrono_tz::Tz,
+    event_created_at: chrono::DateTime<chrono::Utc>,
+    previous_message: Option<chrono::DateTime<chrono::Utc>>,
+) -> String {
+    let utc = now.format("%H:%M UTC");
+    let local = format_local_wall(now, tz);
+    let mut s = format!("Now: {local} · {utc}");
+
+    let age = humanize_delta((now - event_created_at).num_seconds());
+    s.push_str(&format!(
+        "\nTiming: this message is {age} old when you read it"
+    ));
+    if let Some(prev) = previous_message {
+        let gap = humanize_delta((event_created_at - prev).num_seconds());
+        s.push_str(&format!(
+            "; the previous channel message came {gap} before it"
+        ));
+    }
+    s.push_str(
+        "\nTime here is ground truth: derive dates, days, and part of day from these \
+         lines (and the event Time: fields, which are UTC), never from inference.",
+    );
+    s
+}
+
 /// Append a `Description: …` line to a `[Context]` block when non-empty.
 ///
 /// Collapses internal newlines (any `\r\n`, `\r`, or `\n`) to a single space
@@ -1298,6 +1378,7 @@ fn append_channel_description(s: &mut String, channel_info: Option<&PromptChanne
 /// replies; in the channel branch a `Some` anchor means a human-facing
 /// top-level mention whose reply should open a new thread rooted at the
 /// triggering event.
+#[allow(clippy::too_many_arguments)]
 fn format_context_hints(
     channel_id: Uuid,
     channel_info: Option<&PromptChannelInfo>,
@@ -1306,6 +1387,7 @@ fn format_context_hints(
     has_conversation_context: bool,
     conversation_context_had_delivered_events: bool,
     reply_anchor: Option<&str>,
+    time_lines: &str,
 ) -> String {
     let channel_display = match channel_info {
         Some(ci) => format!("{} (#{channel_id})", ci.name),
@@ -1335,6 +1417,7 @@ fn format_context_hints(
             "[Context]\n\
              Scope: dm\n\
              Channel: {channel_display}\n\
+             {time_lines}\n\
              {ctx_hint}"
         );
         // If this is a DM reply, include thread structural info as supplementary.
@@ -1361,7 +1444,8 @@ fn format_context_hints(
         let mut s = format!(
             "[Context]\n\
              Scope: thread\n\
-             Channel: {channel_display}"
+             Channel: {channel_display}\n\
+             {time_lines}"
         );
         append_channel_description(&mut s, channel_info);
         s.push_str(&format!("\nThread root: {root}"));
@@ -1379,7 +1463,8 @@ fn format_context_hints(
         let mut s = format!(
             "[Context]\n\
              Scope: channel\n\
-             Channel: {channel_display}"
+             Channel: {channel_display}\n\
+             {time_lines}"
         );
         append_channel_description(&mut s, channel_info);
         s.push_str(
@@ -1430,6 +1515,12 @@ fn format_conversation_context(
 /// Arguments for [`format_prompt`] beyond the required [`FlushBatch`].
 #[derive(Default)]
 pub struct FormatPromptArgs<'a> {
+    /// Wall clock rendered into the `[Context]` temporal lines. `None` →
+    /// `Utc::now()` at prompt build. Injected by tests for determinism.
+    pub now: Option<chrono::DateTime<chrono::Utc>>,
+    /// Owner-local timezone for the temporal lines. `None` → UTC (the
+    /// production caller always passes the configured value).
+    pub prompt_timezone: Option<chrono_tz::Tz>,
     pub agent_core: Option<&'a str>,
     /// Owner-signed instructions for an active huddle channel.
     pub huddle_instructions: Option<&'a str>,
@@ -1552,7 +1643,8 @@ pub(crate) fn base_section(base_prompt: &str) -> String {
 ///    `[Shared Instructions]`, `[Agent Memory — core]`, `[Channel Canvas]`.
 ///    Legacy agents only, and only
 ///    on the session's first message (see `standing_context_sent`)
-/// 1. `[Context]` — scope, channel name, and contextual hints for the agent
+/// 1. `[Context]` — scope, channel name, temporal ground truth (owner-local
+///    wall clock, UTC, message staleness) and contextual hints for the agent
 /// 2. `[Thread Context]` or `[Conversation Context]` — if fetched
 /// 3. `[Event]` / `[Buzz events]` — the triggering event(s)
 ///
@@ -1627,6 +1719,21 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
             args.profile_lookup,
         )
     };
+
+    // Temporal ground truth: local wall clock + message staleness. `now` is
+    // injectable for deterministic tests; production always lands here.
+    let now = args.now.unwrap_or_else(chrono::Utc::now);
+    let tz = args.prompt_timezone.unwrap_or(chrono_tz::UTC);
+    let event_time =
+        chrono::DateTime::from_timestamp(last_event.event.created_at.as_secs() as i64, 0)
+            .unwrap_or(now);
+    let previous_message = args
+        .conversation_context
+        .and_then(|ctx| ctx.messages().last())
+        .and_then(|msg| chrono::DateTime::parse_from_rfc3339(&msg.timestamp).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc));
+    let time_lines = temporal_context_lines(now, tz, event_time, previous_message);
+
     sections.push(format_context_hints(
         batch.channel_id,
         args.channel_info,
@@ -1635,6 +1742,7 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
         args.conversation_context.is_some(),
         args.conversation_context_had_delivered_events,
         reply_anchor.as_deref(),
+        &time_lines,
     ));
 
     // 3. Conversation context (thread or DM).
@@ -2040,6 +2148,149 @@ mod tests {
         assert!(prompt.contains("Event ID:"));
         // Should NOT contain "--- Event 1 ---" (that's the multi-event format).
         assert!(!prompt.contains("--- Event 1 ---"));
+    }
+
+    /// Fixed summer instant: 2026-08-28 13:53:09 UTC is a Friday, 08:53 CDT.
+    fn fixed_summer_now() -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339("2026-08-28T13:53:09Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    }
+
+    #[test]
+    fn test_format_local_wall_summer_dst() {
+        // Hardcoded expectation — NOT derived from the helper. America/Chicago
+        // is on CDT (UTC-5) in August; day-of-week and date render verbatim.
+        let s = format_local_wall(fixed_summer_now(), "America/Chicago".parse().unwrap());
+        assert_eq!(s, "Friday 2026-08-28, 08:53 CDT (UTC-5)");
+    }
+
+    #[test]
+    fn test_format_local_wall_winter_dst() {
+        // 2027-01-15 13:53 UTC is a Friday; Chicago is on CST (UTC-6) in
+        // January. The offset flipping between the two tests is the DST pin.
+        let winter = chrono::DateTime::parse_from_rfc3339("2027-01-15T13:53:09Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let s = format_local_wall(winter, "America/Chicago".parse().unwrap());
+        assert_eq!(s, "Friday 2027-01-15, 07:53 CST (UTC-6)");
+    }
+
+    #[test]
+    fn test_format_local_wall_utc_zero_offset() {
+        let s = format_local_wall(fixed_summer_now(), chrono_tz::UTC);
+        assert_eq!(s, "Friday 2026-08-28, 13:53 UTC (UTC)");
+    }
+
+    #[test]
+    fn test_humanize_delta_buckets() {
+        assert_eq!(humanize_delta(-30), "just now", "negative clamps");
+        assert_eq!(humanize_delta(0), "just now");
+        assert_eq!(humanize_delta(59), "just now");
+        assert_eq!(humanize_delta(119), "just now", "boundary: <2m is just now");
+        assert_eq!(humanize_delta(120), "2m");
+        assert_eq!(humanize_delta(3599), "59m");
+        assert_eq!(humanize_delta(3600), "1h 0m");
+        assert_eq!(humanize_delta(3660), "1h 1m");
+        assert_eq!(humanize_delta(86_400), "1d 0h");
+        assert_eq!(humanize_delta(90_000), "1d 1h");
+    }
+
+    #[test]
+    fn test_temporal_context_lines_full_pin() {
+        // 4m-old message; previous channel message 44m before it.
+        let now = fixed_summer_now();
+        let event = now - chrono::Duration::minutes(4);
+        let previous = event - chrono::Duration::minutes(44);
+        let s = temporal_context_lines(
+            now,
+            "America/Chicago".parse().unwrap(),
+            event,
+            Some(previous),
+        );
+        let expected = "Now: Friday 2026-08-28, 08:53 CDT (UTC-5) · 13:53 UTC\n\
+             Timing: this message is 4m old when you read it; \
+             the previous channel message came 44m before it\n\
+             Time here is ground truth: derive dates, days, and part of day from these \
+             lines (and the event Time: fields, which are UTC), never from inference.";
+        assert_eq!(s, expected);
+    }
+
+    #[test]
+    fn test_temporal_context_lines_no_previous_message() {
+        let now = fixed_summer_now();
+        let event = now - chrono::Duration::minutes(4);
+        let s = temporal_context_lines(now, chrono_tz::UTC, event, None);
+        assert!(s.starts_with("Now: Friday 2026-08-28, 13:53 UTC (UTC) · 13:53 UTC"));
+        assert!(s.contains("this message is 4m old when you read it"));
+        assert!(
+            !s.contains("previous channel message"),
+            "no conversation context → no prior-message gap: {s}"
+        );
+    }
+
+    #[test]
+    fn test_format_prompt_carries_temporal_stamp_in_context_block() {
+        // End-to-end: the [Context] section carries the temporal lines, with
+        // message age computed from the triggering event's created_at.
+        let ch = Uuid::new_v4();
+        let event = make_event("Hello @agent");
+        let ev_ts = event.created_at.as_secs() as i64;
+        let now = chrono::DateTime::from_timestamp(ev_ts + 4 * 60, 0).unwrap();
+        let previous = chrono::DateTime::from_timestamp(ev_ts - 44 * 60, 0).unwrap();
+
+        let batch = FlushBatch {
+            channel_id: ch,
+            events: vec![BatchEvent {
+                event,
+                prompt_tag: "@mention".into(),
+                received_at: Instant::now(),
+            }],
+            cancelled_events: vec![],
+            cancel_reason: None,
+        };
+        let ctx = ConversationContext::Dm {
+            messages: vec![ContextMessage {
+                event_id: String::new(),
+                pubkey: "prev-author".into(),
+                timestamp: previous.to_rfc3339(),
+                content: "earlier message".into(),
+            }],
+            total: 1,
+            truncated: false,
+        };
+
+        let prompt = format_prompt(
+            &batch,
+            &FormatPromptArgs {
+                now: Some(now),
+                prompt_timezone: Some("America/Chicago".parse().unwrap()),
+                conversation_context: Some(&ctx),
+                ..FormatPromptArgs::default()
+            },
+        )
+        .join("\n\n");
+
+        let context_block = prompt
+            .split("\n\n")
+            .find(|s| s.starts_with("[Context]"))
+            .expect("[Context] block present");
+        assert!(
+            context_block.contains("\nNow: "),
+            "temporal wall-clock line inside [Context]: {context_block}"
+        );
+        assert!(
+            context_block.contains("Timing: this message is 4m old when you read it"),
+            "hardcoded 4m age (now = event + 4m): {context_block}"
+        );
+        assert!(
+            context_block.contains("the previous channel message came 44m before it"),
+            "hardcoded 44m gap from conversation context: {context_block}"
+        );
+        assert!(
+            context_block.contains("Time here is ground truth"),
+            "directive line present: {context_block}"
+        );
     }
 
     /// Helper: build a merged (cancel + re-prompt) batch with one cancelled

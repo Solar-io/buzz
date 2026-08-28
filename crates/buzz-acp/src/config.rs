@@ -35,6 +35,16 @@ pub(crate) const DEFAULT_MAX_TURN_DURATION_SECS: u64 = 43_200;
 /// deadline (`max_turn_duration + IN_FLIGHT_DEADLINE_BUFFER_SECS`).
 pub(crate) const MAX_TURN_DURATION_CEILING_SECS: u64 = 604_800;
 
+/// Default IANA timezone for the per-turn temporal stamp (`[Context]` time
+/// lines and the heartbeat prompt's local-time line).
+///
+/// The stamp is the agents' only authoritative clock: event timestamps on the
+/// wire are UTC, and models left to infer "what day is it" / "morning or
+/// night" get it wrong. This value anchors local time to the owner's zone so
+/// DST transitions need no code change. Override via `--prompt-timezone` /
+/// `BUZZ_ACP_TIMEZONE`.
+pub(crate) const DEFAULT_PROMPT_TIMEZONE: &str = "America/Chicago";
+
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("failed to parse nostr keys: {0}")]
@@ -275,6 +285,12 @@ pub struct CliArgs {
     /// Absolute wall-clock cap per turn (safety valve).
     #[arg(long, env = "BUZZ_ACP_MAX_TURN_DURATION", default_value_t = DEFAULT_MAX_TURN_DURATION_SECS)]
     pub max_turn_duration: u64,
+
+    /// IANA timezone (e.g. "America/Chicago") used to render the owner-local
+    /// time in every turn's `[Context]` block and the heartbeat prompt.
+    /// Invalid names are a config error at startup.
+    #[arg(long, env = "BUZZ_ACP_TIMEZONE", default_value = DEFAULT_PROMPT_TIMEZONE)]
+    pub prompt_timezone: String,
 
     /// Deprecated: alias for --idle-timeout. If both set, --idle-timeout wins.
     #[arg(long, env = "BUZZ_ACP_TURN_TIMEOUT", hide = true)]
@@ -529,6 +545,10 @@ pub struct Config {
     pub mcp_command: String,
     pub idle_timeout_secs: u64,
     pub max_turn_duration_secs: u64,
+    /// Owner-local timezone for the per-turn temporal stamp. Parsed from
+    /// `--prompt-timezone` / `BUZZ_ACP_TIMEZONE`; a bad name fails startup
+    /// rather than silently stamping prompts with UTC.
+    pub prompt_timezone: chrono_tz::Tz,
     pub agents: u32,
     pub heartbeat_interval_secs: u64,
     /// Seconds between per-turn liveness pings. 0 = disabled. Distinct from
@@ -1030,6 +1050,22 @@ impl Config {
             }
         };
 
+        let prompt_timezone = {
+            let name = args.prompt_timezone.trim();
+            if name.is_empty() {
+                DEFAULT_PROMPT_TIMEZONE
+                    .parse()
+                    .expect("default timezone name must parse")
+            } else {
+                name.parse().map_err(|_| {
+                    ConfigError::ConfigFile(format!(
+                        "prompt_timezone {name:?} is not a valid IANA timezone name \
+                         (e.g. \"America/Chicago\", \"Europe/Berlin\", \"UTC\")"
+                    ))
+                })?
+            }
+        };
+
         // idle_timeout must be strictly less than max_turn_duration. If idle_timeout
         // >= max_turn_duration, the absolute wall-clock cap would fire before the idle
         // timeout ever could, making idle_timeout a dead letter.
@@ -1108,6 +1144,7 @@ impl Config {
             mcp_command: args.mcp_command,
             idle_timeout_secs,
             max_turn_duration_secs,
+            prompt_timezone,
             agents: args.agents,
             heartbeat_interval_secs: heartbeat_interval,
             turn_liveness_secs,
@@ -1495,6 +1532,7 @@ mod tests {
             mcp_command: "".into(),
             idle_timeout_secs: DEFAULT_IDLE_TIMEOUT_SECS,
             max_turn_duration_secs: DEFAULT_MAX_TURN_DURATION_SECS,
+            prompt_timezone: DEFAULT_PROMPT_TIMEZONE.parse().unwrap(),
             agents: 1,
             heartbeat_interval_secs: 0,
             turn_liveness_secs: 10,
@@ -2853,6 +2891,45 @@ channels = "ALL"
             msg.contains("anyone"),
             "error should name the disallowed mode: {msg}"
         );
+    }
+
+    #[test]
+    fn prompt_timezone_defaults_to_chicago() {
+        let args = CliArgs::try_parse_from(["buzz-acp", "--private-key", TEST_PRIVATE_KEY])
+            .expect("clap should parse args");
+        let config = Config::from_args(args).expect("default config must build");
+        assert_eq!(config.prompt_timezone, "America/Chicago".parse().unwrap());
+    }
+
+    #[test]
+    fn prompt_timezone_invalid_name_is_config_error() {
+        let args = CliArgs::try_parse_from([
+            "buzz-acp",
+            "--private-key",
+            TEST_PRIVATE_KEY,
+            "--prompt-timezone",
+            "Mars/Olympus_Mons",
+        ])
+        .expect("clap parses any string; validation happens in from_args");
+        let err = Config::from_args(args).expect_err("bad IANA name must fail startup");
+        assert!(
+            err.to_string().contains("not a valid IANA timezone name"),
+            "error names the problem: {err}"
+        );
+    }
+
+    #[test]
+    fn prompt_timezone_valid_override_round_trips() {
+        let args = CliArgs::try_parse_from([
+            "buzz-acp",
+            "--private-key",
+            TEST_PRIVATE_KEY,
+            "--prompt-timezone",
+            "Europe/Berlin",
+        ])
+        .expect("clap should parse args");
+        let config = Config::from_args(args).expect("Berlin is a valid IANA zone");
+        assert_eq!(config.prompt_timezone, "Europe/Berlin".parse().unwrap());
     }
 
     #[test]
