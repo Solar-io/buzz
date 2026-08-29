@@ -5,15 +5,27 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from "./routes/root";
+import { Route as settingsRouteImport } from "./routes/settings";
 import { Route as reposRouteImport } from "./routes/repos";
+import { Route as loginRouteImport } from "./routes/login";
 import { Route as indexRouteImport } from "./routes/index";
 import { Route as reposDotrepoIdRouteImport } from "./routes/repos.$repoId";
 import { Route as inviteDotcodeRouteImport } from "./routes/invite.$code";
 import { Route as reposDotrepoIdDotblobDotsplatRouteImport } from "./routes/repos.$repoId.blob.$";
 
+const settingsRoute = settingsRouteImport.update({
+  id: "/settings",
+  path: "/settings",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const reposRoute = reposRouteImport.update({
   id: "/repos",
   path: "/repos",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const loginRoute = loginRouteImport.update({
+  id: "/login",
+  path: "/login",
   getParentRoute: () => rootRouteImport,
 } as any);
 const indexRoute = indexRouteImport.update({
@@ -40,14 +52,18 @@ const reposDotrepoIdDotblobDotsplatRoute =
 
 export interface FileRoutesByFullPath {
   "/": typeof indexRoute;
+  "/login": typeof loginRoute;
   "/repos": typeof reposRoute;
+  "/settings": typeof settingsRoute;
   "/invite/$code": typeof inviteDotcodeRoute;
   "/repos/$repoId": typeof reposDotrepoIdRoute;
   "/repos/$repoId/blob/$": typeof reposDotrepoIdDotblobDotsplatRoute;
 }
 export interface FileRoutesByTo {
   "/": typeof indexRoute;
+  "/login": typeof loginRoute;
   "/repos": typeof reposRoute;
+  "/settings": typeof settingsRoute;
   "/invite/$code": typeof inviteDotcodeRoute;
   "/repos/$repoId": typeof reposDotrepoIdRoute;
   "/repos/$repoId/blob/$": typeof reposDotrepoIdDotblobDotsplatRoute;
@@ -55,7 +71,9 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport;
   "/": typeof indexRoute;
+  "/login": typeof loginRoute;
   "/repos": typeof reposRoute;
+  "/settings": typeof settingsRoute;
   "/invite/$code": typeof inviteDotcodeRoute;
   "/repos/$repoId": typeof reposDotrepoIdRoute;
   "/repos/$repoId/blob/$": typeof reposDotrepoIdDotblobDotsplatRoute;
@@ -64,21 +82,27 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath;
   fullPaths:
     | "/"
+    | "/login"
     | "/repos"
+    | "/settings"
     | "/invite/$code"
     | "/repos/$repoId"
     | "/repos/$repoId/blob/$";
   fileRoutesByTo: FileRoutesByTo;
   to:
     | "/"
+    | "/login"
     | "/repos"
+    | "/settings"
     | "/invite/$code"
     | "/repos/$repoId"
     | "/repos/$repoId/blob/$";
   id:
     | "__root__"
     | "/"
+    | "/login"
     | "/repos"
+    | "/settings"
     | "/invite/$code"
     | "/repos/$repoId"
     | "/repos/$repoId/blob/$";
@@ -86,7 +110,9 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   indexRoute: typeof indexRoute;
+  loginRoute: typeof loginRoute;
   reposRoute: typeof reposRoute;
+  settingsRoute: typeof settingsRoute;
   inviteDotcodeRoute: typeof inviteDotcodeRoute;
   reposDotrepoIdRoute: typeof reposDotrepoIdRoute;
   reposDotrepoIdDotblobDotsplatRoute: typeof reposDotrepoIdDotblobDotsplatRoute;
@@ -94,11 +120,25 @@ export interface RootRouteChildren {
 
 declare module "@tanstack/react-router" {
   interface FileRoutesByPath {
+    "/settings": {
+      id: "/settings";
+      path: "/settings";
+      fullPath: "/settings";
+      preLoaderRoute: typeof settingsRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     "/repos": {
       id: "/repos";
       path: "/repos";
       fullPath: "/repos";
       preLoaderRoute: typeof reposRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/login": {
+      id: "/login";
+      path: "/login";
+      fullPath: "/login";
+      preLoaderRoute: typeof loginRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/": {
@@ -134,7 +174,9 @@ declare module "@tanstack/react-router" {
 
 const rootRouteChildren: RootRouteChildren = {
   indexRoute: indexRoute,
+  loginRoute: loginRoute,
   reposRoute: reposRoute,
+  settingsRoute: settingsRoute,
   inviteDotcodeRoute: inviteDotcodeRoute,
   reposDotrepoIdRoute: reposDotrepoIdRoute,
   reposDotrepoIdDotblobDotsplatRoute: reposDotrepoIdDotblobDotsplatRoute,
