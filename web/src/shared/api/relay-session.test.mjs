@@ -247,3 +247,25 @@ test("signAuthEvent failure degrades to unauthenticated open", async () => {
   assert.equal(socket.sentOf("REQ").length, 1);
   session.close();
 });
+
+test("authEventTemplate carries the NIP-OA auth tag when provided", () => {
+  const tag = JSON.stringify(["auth", "attestation-payload"]);
+  const template = authEventTemplate("c", "wss://relay.test", tag);
+  assert.deepEqual(template.tags, [
+    ["challenge", "c"],
+    ["relay", "wss://relay.test"],
+    ["auth", "attestation-payload"],
+  ]);
+});
+
+test("authEventTemplate rejects malformed auth tags", () => {
+  assert.throws(() => authEventTemplate("c", "wss://r", "not-json"), /JSON/);
+  assert.throws(
+    () => authEventTemplate("c", "wss://r", JSON.stringify(["other", "x"])),
+    /auth/,
+  );
+  assert.throws(
+    () => authEventTemplate("c", "wss://r", JSON.stringify(["auth", 42])),
+    /auth/,
+  );
+});

@@ -5,7 +5,7 @@ import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { useAuth } from "./AuthProvider";
 import { QrScanner } from "./QrScanner";
-import { enrollSecretKey } from "@/shared/lib/key-store";
+import { enrollSecretKey, setAuthTagJson } from "@/shared/lib/key-store";
 import { type ParsedKey, parseSecretKeyInput } from "@/shared/lib/nsec";
 
 type Mode = "choose" | "paste" | "scan" | "set-pass" | "unlock";
@@ -18,6 +18,7 @@ export function LoginPage() {
   const [scanned, setScanned] = useState<ParsedKey | null>(null);
   const [passphrase, setPassphrase] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [tagInput, setTagInput] = useState("");
   const [busy, setBusy] = useState(false);
 
   if (canSign) {
@@ -31,6 +32,7 @@ export function LoginPage() {
         return;
       }
       setBusy(true);
+      setAuthTagJson(tagInput.trim() || null);
       try {
         await enrollSecretKey(parsed.secretKey, pass);
         toast.success("Signed in");
@@ -220,6 +222,22 @@ export function LoginPage() {
               value={confirm}
               onChange={(event) => setConfirm(event.target.value)}
             />
+            <details className="text-sm text-muted-foreground">
+              <summary className="cursor-pointer select-none">
+                Agent attestation (agents only)
+              </summary>
+              <textarea
+                className="mt-2 w-full rounded-md border border-input bg-transparent p-2 font-mono text-xs"
+                rows={3}
+                placeholder='["auth","…"] — from the agent environment'
+                value={tagInput}
+                onChange={(event) => setTagInput(event.target.value)}
+              />
+              <p className="mt-1 text-xs">
+                Relay membership for agent keys is attested by the owner. Humans
+                leave this empty.
+              </p>
+            </details>
             <Button
               className="w-full"
               disabled={busy || !passphrase || !confirm}

@@ -18,6 +18,14 @@ import {
 } from "./key-crypto.ts";
 
 const ENVELOPE_KEY = "buzz.identity-envelope.v1";
+const AUTH_TAG_KEY = "buzz.auth-tag.v1";
+
+/**
+ * NIP-OA agent attestation (["auth","<attestation>"] as a JSON string).
+ * Public-verifiable owner signature — carries no secret, so it is stored
+ * plainly next to the encrypted envelope; it only matters WITH its key.
+ */
+let authTagJson: string | null = null;
 
 export type AuthState =
   | { status: "anonymous" }
@@ -51,6 +59,14 @@ export function subscribeAuth(listener: Listener): () => void {
 /** Load the envelope (if any) from IndexedDB and derive the initial state. */
 export async function initKeyStore(): Promise<void> {
   try {
+    const storedTag = await get(AUTH_TAG_KEY);
+    if (typeof storedTag === "string" && storedTag.length > 0) {
+      authTagJson = storedTag;
+    }
+  } catch {
+    // Storage unavailable — tag simply stays unset.
+  }
+  try {
     const stored = await get(ENVELOPE_KEY);
     if (isValidEnvelope(stored)) {
       setState(
@@ -62,6 +78,20 @@ export async function initKeyStore(): Promise<void> {
   } catch {
     // Storage unavailable (private mode etc.): stay anonymous.
   }
+}
+
+export function setAuthTagJson(tag: string | null): void {
+  authTagJson = tag;
+  if (tag === null) {
+    void del(AUTH_TAG_KEY);
+  } else {
+    void set(AUTH_TAG_KEY, tag);
+  }
+}
+
+/** The stored NIP-OA attestation, or null for direct-member (human) auth. */
+export function getAuthTagJson(): string | null {
+  return authTagJson;
 }
 
 /** True when a raw secret key is held in memory for this page session. */
@@ -88,6 +118,7 @@ export async function enrollSecretKey(
   keyBytes.set(secretKey);
   const envelope = await encryptSecretKey(keyBytes, passphrase);
   await set(ENVELOPE_KEY, envelope);
+  await set(AUTH_TAG_KEY, authTagJson ?? "");
   unlockedSecretKey = keyBytes;
   setState({
     status: "unlocked",
@@ -131,7 +162,9 @@ export function lockNow(): void {
 /** Forget this device entirely: clear envelope and memory. */
 export async function signOut(): Promise<void> {
   unlockedSecretKey = null;
+  authTagJson = null;
   await del(ENVELOPE_KEY);
+  await del(AUTH_TAG_KEY);
   setState({ status: "anonymous" });
 }
 
