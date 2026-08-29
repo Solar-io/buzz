@@ -1,8 +1,21 @@
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useChannels } from "@/features/channels/useChannels";
 import { useAuth } from "@/features/auth/ui/AuthProvider";
 import { LoginPage } from "@/features/auth/ui/LoginPage";
+import {
+  sendChannelMessage,
+  useChannelMembers,
+  useChannelMessages,
+  useProfiles,
+} from "@/features/channels/hooks";
+import { useChannels } from "@/features/channels/useChannels";
+import { replyCounts } from "@/features/channels/lib/messageBuffer.ts";
+import { ChannelTimeline } from "@/features/channels/ui/ChannelTimeline";
+import { Composer } from "@/features/channels/ui/Composer";
+import { ThreadPanel } from "@/features/channels/ui/ThreadPanel";
+import { NewChannelDialog } from "@/features/channels/ui/NewChannelDialog";
 import { AppShell } from "@/shared/layout/AppShell";
+import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { cn } from "@/shared/lib/cn";
 
 /**
@@ -30,6 +43,46 @@ function ChannelBrowser() {
   const navigate = useNavigate({ from: "/repos" });
   const selectedId = Route.useSearch({ select: (s) => s.c });
   const current = channels.find((channel) => channel.id === selectedId) ?? null;
+
+  const { session } = useRelaySession();
+  const messages = useChannelMessages(current?.id ?? null);
+  const members = useChannelMembers(current?.id ?? null);
+  const profiles = useProfiles(
+    useMemo(
+      () =>
+        messages
+          .map((m) => m.authorPubkey)
+          .concat(members.map((m) => m.pubkey)),
+      [messages, members],
+    ),
+  );
+  const counts = useMemo(() => replyCounts(messages), [messages]);
+  const [threadRootId, setThreadRootId] = useState<string | null>(null);
+  const threadRoot = threadRootId
+    ? (messages.find((m) => m.id === threadRootId) ?? null)
+    : null;
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // Re-scroll on the newest message id; also re-run when switching channels.
+  const lastMessageId = messages[messages.length - 1]?.id ?? current?.id ?? "";
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+  }, [lastMessageId]);
+
+  const send = (options: {
+    content: string;
+    mentionPubkeys: string[];
+    threadRef: { rootId: string; replyToId: string } | null;
+  }) => {
+    if (!current) {
+      return Promise.resolve({ ok: false, message: "No channel selected." });
+    }
+    return sendChannelMessage(session, {
+      channelId: current.id,
+      content: options.content,
+      mentionPubkeys: options.mentionPubkeys,
+      threadRef: options.threadRef,
+    });
+  };
 
   const sidebar = (
     <div className="flex h-full min-h-0 flex-col">
@@ -68,12 +121,13 @@ function ChannelBrowser() {
                   "w-full truncate rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent",
                   channel.id === selectedId && "bg-accent font-medium",
                 )}
-                onClick={() =>
+                onClick={() => {
+                  setThreadRootId(null);
                   void navigate({
                     to: "/repos",
                     search: { c: channel.id },
-                  })
-                }
+                  });
+                }}
               >
                 {channel.name}
               </button>
@@ -81,7 +135,12 @@ function ChannelBrowser() {
           ))}
         </ul>
       </nav>
-      <div className="border-t border-border p-2">
+      <div className="space-y-0.5 border-t border-border p-2">
+        <NewChannelDialog
+          onCreated={(channelId) =>
+            void navigate({ to: "/repos", search: { c: channelId } })
+          }
+        />
         <Link
           to="/repos/browse"
           className="block rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent"
@@ -95,21 +154,47 @@ function ChannelBrowser() {
   return (
     <AppShell sidebar={sidebar}>
       {current ? (
-        <section className="flex h-full flex-col">
-          <div className="border-b border-border px-4 py-3">
-            <h1 className="text-lg font-semibold">{current.name}</h1>
-            {current.about && (
-              <p className="text-sm text-muted-foreground">{current.about}</p>
-            )}
-          </div>
-          <div className="flex flex-1 items-center justify-center p-8">
-            <p className="max-w-sm text-center text-sm text-muted-foreground">
-              Channel timelines, threads, mentions, and sending arrive in
-              Phase&nbsp;1. This screen proves the signed relay session works:
-              the list on the left is live channel metadata from the relay.
-            </p>
-          </div>
-        </section>
+        <div className="flex h-full min-h-0">
+          <section className="flex min-w-0 flex-1 flex-col">
+            <div className="border-b border-border px-4 py-3">
+              <h1 className="truncate text-lg font-semibold">{current.name}</h1>
+              {current.about && (
+                <p className="truncate text-sm text-muted-foreground">
+                  {current.about}
+                </p>
+              )}
+            </div>
+            <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+              <ChannelTimeline
+                messages={messages}
+                profiles={profiles}
+                replyCounts={counts}
+                onOpenThread={(message) => setThreadRootId(message.id)}
+              />
+            </div>
+            <Composer
+              members={members}
+              profiles={profiles}
+              threadRef={
+                threadRoot
+                  ? { rootId: threadRoot.id, replyToId: threadRoot.id }
+                  : null
+              }
+              onClearThread={() => setThreadRootId(null)}
+              send={send}
+            />
+          </section>
+          {threadRoot && (
+            <ThreadPanel
+              root={threadRoot}
+              buffer={messages}
+              members={members}
+              profiles={profiles}
+              onClose={() => setThreadRootId(null)}
+              send={send}
+            />
+          )}
+        </div>
       ) : (
         <div className="flex h-full items-center justify-center p-8">
           <p className="text-sm text-muted-foreground">
