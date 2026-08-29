@@ -32,6 +32,7 @@ export function Composer({
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [popupIndex, setPopupIndex] = useState(0);
+  const [mentionOpen, setMentionOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const namedMembers = useMemo(
@@ -55,7 +56,7 @@ export function Composer({
     return activeMentionQuery(text, textarea.selectionStart ?? text.length);
   })();
   const suggestions = useMemo(() => {
-    if (query === null) {
+    if (query === null || !mentionOpen) {
       return [];
     }
     const lower = query.toLowerCase();
@@ -64,7 +65,7 @@ export function Composer({
       .slice(0, 6);
     // `query` comes from an uncontrolled caret; recompute on text changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, text, namedMembers]);
+  }, [query, text, namedMembers, mentionOpen]);
 
   const applySuggestion = (name: string) => {
     const textarea = textareaRef.current;
@@ -79,6 +80,7 @@ export function Composer({
     }
     const next = text.slice(0, at) + `@${name} ` + text.slice(caret);
     setText(next);
+    setMentionOpen(false);
     requestAnimationFrame(() => {
       const position = at + name.length + 2;
       textarea.focus();
@@ -191,6 +193,12 @@ export function Composer({
           onChange={(event) => {
             setText(event.target.value);
             setPopupIndex(0);
+            setMentionOpen(
+              activeMentionQuery(
+                event.target.value,
+                event.target.selectionStart ?? event.target.value.length,
+              ) !== null,
+            );
           }}
           onKeyDown={onKeyDown}
           onBlur={() => setPopupIndex(0)}

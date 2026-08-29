@@ -40,7 +40,8 @@ export function LoginPage() {
       try {
         await enrollSecretKey(parsed.secretKey, pass);
         toast.success("Signed in");
-        void navigate({ to: "/repos" });
+        // authState flips and the shell route re-renders on its own; the
+        // URL (and any ?c= deep link) stays untouched.
       } catch (error) {
         toast.error(
           error instanceof Error ? error.message : "Could not store the key",
@@ -77,7 +78,6 @@ export function LoginPage() {
               unlock(passphrase)
                 .then(() => {
                   toast.success("Unlocked");
-                  void navigate({ to: "/repos" });
                 })
                 .catch(() => {
                   toast.error("Wrong passphrase");
