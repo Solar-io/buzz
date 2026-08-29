@@ -68,7 +68,7 @@ export function SettingsPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold">Settings</h1>
         <Button asChild variant="ghost" size="sm">
-          <Link to="/">Back</Link>
+          <Link to="/repos">Back to channels</Link>
         </Button>
       </div>
 

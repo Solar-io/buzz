@@ -1,17 +1,17 @@
 import { createHash } from "node:crypto";
 import { expect, test } from "@playwright/test";
 
-test("unauthenticated home redirects to login with pairing options", async ({
+test("unauthenticated entry at /repos shows pairing options", async ({
   page,
 }) => {
-  await page.goto("/");
+  await page.goto("/repos");
   await expect(page.getByRole("heading", { name: "Buzz" })).toBeVisible();
   await expect(page.getByText("Pair with QR code")).toBeVisible();
   await expect(page.getByText("Enter key manually")).toBeVisible();
 });
 
 test("manual key entry validates before passphrase step", async ({ page }) => {
-  await page.goto("/login");
+  await page.goto("/repos");
   await page.getByRole("button", { name: "Enter key manually" }).click();
   await page.getByPlaceholder("nsec1…").fill("not-a-key");
   await page.getByRole("button", { name: "Continue" }).click();
@@ -20,8 +20,8 @@ test("manual key entry validates before passphrase step", async ({ page }) => {
   ).toBeVisible();
 });
 
-test("repos page still loads at /repos", async ({ page }) => {
-  await page.goto("/repos");
+test("repos browser loads at /repos/browse", async ({ page }) => {
+  await page.goto("/repos/browse");
   await expect(page.getByText("Repositories")).toBeVisible();
 });
 

@@ -21,7 +21,7 @@ export function LoginPage() {
   const [busy, setBusy] = useState(false);
 
   if (canSign) {
-    void navigate({ to: "/" });
+    void navigate({ to: "/repos" });
   }
 
   const finishEnroll = useCallback(
@@ -34,7 +34,7 @@ export function LoginPage() {
       try {
         await enrollSecretKey(parsed.secretKey, pass);
         toast.success("Signed in");
-        void navigate({ to: "/" });
+        void navigate({ to: "/repos" });
       } catch (error) {
         toast.error(
           error instanceof Error ? error.message : "Could not store the key",
@@ -71,7 +71,7 @@ export function LoginPage() {
               unlock(passphrase)
                 .then(() => {
                   toast.success("Unlocked");
-                  void navigate({ to: "/" });
+                  void navigate({ to: "/repos" });
                 })
                 .catch(() => {
                   toast.error("Wrong passphrase");
@@ -101,7 +101,7 @@ export function LoginPage() {
             {extensionAvailable && (
               <Button
                 className="w-full"
-                onClick={() => void navigate({ to: "/" })}
+                onClick={() => void navigate({ to: "/repos" })}
               >
                 Continue with browser extension
               </Button>
