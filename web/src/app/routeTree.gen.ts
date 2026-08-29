@@ -5,32 +5,32 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from "./routes/root";
-import { Route as settingsRouteImport } from "./routes/settings";
 import { Route as reposRouteImport } from "./routes/repos";
-import { Route as loginRouteImport } from "./routes/login";
 import { Route as indexRouteImport } from "./routes/index";
+import { Route as reposDotsettingsRouteImport } from "./routes/repos.settings";
+import { Route as reposDotbrowseRouteImport } from "./routes/repos.browse";
 import { Route as reposDotrepoIdRouteImport } from "./routes/repos.$repoId";
 import { Route as inviteDotcodeRouteImport } from "./routes/invite.$code";
 import { Route as reposDotrepoIdDotblobDotsplatRouteImport } from "./routes/repos.$repoId.blob.$";
 
-const settingsRoute = settingsRouteImport.update({
-  id: "/settings",
-  path: "/settings",
-  getParentRoute: () => rootRouteImport,
-} as any);
 const reposRoute = reposRouteImport.update({
   id: "/repos",
   path: "/repos",
   getParentRoute: () => rootRouteImport,
 } as any);
-const loginRoute = loginRouteImport.update({
-  id: "/login",
-  path: "/login",
-  getParentRoute: () => rootRouteImport,
-} as any);
 const indexRoute = indexRouteImport.update({
   id: "/",
   path: "/",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const reposDotsettingsRoute = reposDotsettingsRouteImport.update({
+  id: "/repos/settings",
+  path: "/repos/settings",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const reposDotbrowseRoute = reposDotbrowseRouteImport.update({
+  id: "/repos/browse",
+  path: "/repos/browse",
   getParentRoute: () => rootRouteImport,
 } as any);
 const reposDotrepoIdRoute = reposDotrepoIdRouteImport.update({
@@ -52,81 +52,74 @@ const reposDotrepoIdDotblobDotsplatRoute =
 
 export interface FileRoutesByFullPath {
   "/": typeof indexRoute;
-  "/login": typeof loginRoute;
   "/repos": typeof reposRoute;
-  "/settings": typeof settingsRoute;
   "/invite/$code": typeof inviteDotcodeRoute;
   "/repos/$repoId": typeof reposDotrepoIdRoute;
+  "/repos/browse": typeof reposDotbrowseRoute;
+  "/repos/settings": typeof reposDotsettingsRoute;
   "/repos/$repoId/blob/$": typeof reposDotrepoIdDotblobDotsplatRoute;
 }
 export interface FileRoutesByTo {
   "/": typeof indexRoute;
-  "/login": typeof loginRoute;
   "/repos": typeof reposRoute;
-  "/settings": typeof settingsRoute;
   "/invite/$code": typeof inviteDotcodeRoute;
   "/repos/$repoId": typeof reposDotrepoIdRoute;
+  "/repos/browse": typeof reposDotbrowseRoute;
+  "/repos/settings": typeof reposDotsettingsRoute;
   "/repos/$repoId/blob/$": typeof reposDotrepoIdDotblobDotsplatRoute;
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport;
   "/": typeof indexRoute;
-  "/login": typeof loginRoute;
   "/repos": typeof reposRoute;
-  "/settings": typeof settingsRoute;
   "/invite/$code": typeof inviteDotcodeRoute;
   "/repos/$repoId": typeof reposDotrepoIdRoute;
+  "/repos/browse": typeof reposDotbrowseRoute;
+  "/repos/settings": typeof reposDotsettingsRoute;
   "/repos/$repoId/blob/$": typeof reposDotrepoIdDotblobDotsplatRoute;
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath;
   fullPaths:
     | "/"
-    | "/login"
     | "/repos"
-    | "/settings"
     | "/invite/$code"
     | "/repos/$repoId"
+    | "/repos/browse"
+    | "/repos/settings"
     | "/repos/$repoId/blob/$";
   fileRoutesByTo: FileRoutesByTo;
   to:
     | "/"
-    | "/login"
     | "/repos"
-    | "/settings"
     | "/invite/$code"
     | "/repos/$repoId"
+    | "/repos/browse"
+    | "/repos/settings"
     | "/repos/$repoId/blob/$";
   id:
     | "__root__"
     | "/"
-    | "/login"
     | "/repos"
-    | "/settings"
     | "/invite/$code"
     | "/repos/$repoId"
+    | "/repos/browse"
+    | "/repos/settings"
     | "/repos/$repoId/blob/$";
   fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
   indexRoute: typeof indexRoute;
-  loginRoute: typeof loginRoute;
   reposRoute: typeof reposRoute;
-  settingsRoute: typeof settingsRoute;
   inviteDotcodeRoute: typeof inviteDotcodeRoute;
   reposDotrepoIdRoute: typeof reposDotrepoIdRoute;
+  reposDotbrowseRoute: typeof reposDotbrowseRoute;
+  reposDotsettingsRoute: typeof reposDotsettingsRoute;
   reposDotrepoIdDotblobDotsplatRoute: typeof reposDotrepoIdDotblobDotsplatRoute;
 }
 
 declare module "@tanstack/react-router" {
   interface FileRoutesByPath {
-    "/settings": {
-      id: "/settings";
-      path: "/settings";
-      fullPath: "/settings";
-      preLoaderRoute: typeof settingsRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
     "/repos": {
       id: "/repos";
       path: "/repos";
@@ -134,18 +127,25 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof reposRouteImport;
       parentRoute: typeof rootRouteImport;
     };
-    "/login": {
-      id: "/login";
-      path: "/login";
-      fullPath: "/login";
-      preLoaderRoute: typeof loginRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
     "/": {
       id: "/";
       path: "/";
       fullPath: "/";
       preLoaderRoute: typeof indexRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/repos/settings": {
+      id: "/repos/settings";
+      path: "/repos/settings";
+      fullPath: "/repos/settings";
+      preLoaderRoute: typeof reposDotsettingsRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/repos/browse": {
+      id: "/repos/browse";
+      path: "/repos/browse";
+      fullPath: "/repos/browse";
+      preLoaderRoute: typeof reposDotbrowseRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/repos/$repoId": {
@@ -174,11 +174,11 @@ declare module "@tanstack/react-router" {
 
 const rootRouteChildren: RootRouteChildren = {
   indexRoute: indexRoute,
-  loginRoute: loginRoute,
   reposRoute: reposRoute,
-  settingsRoute: settingsRoute,
   inviteDotcodeRoute: inviteDotcodeRoute,
   reposDotrepoIdRoute: reposDotrepoIdRoute,
+  reposDotbrowseRoute: reposDotbrowseRoute,
+  reposDotsettingsRoute: reposDotsettingsRoute,
   reposDotrepoIdDotblobDotsplatRoute: reposDotrepoIdDotblobDotsplatRoute,
 };
 export const routeTree = rootRouteImport

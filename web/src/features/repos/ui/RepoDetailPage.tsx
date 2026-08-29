@@ -102,7 +102,7 @@ function BackToRepositories({
       {content}
     </a>
   ) : (
-    <Link to="/" className={className}>
+    <Link to="/repos" className={className}>
       {content}
     </Link>
   );

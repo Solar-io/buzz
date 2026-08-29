@@ -2,8 +2,9 @@
   "name": "Buzz",
   "short_name": "Buzz",
   "description": "Buzz web client",
-  "start_url": "/",
+  "start_url": "/repos/",
   "display": "standalone",
+  "scope": "/repos/",
   "background_color": "#0a0a0a",
   "theme_color": "#0a0a0a",
   "icons": [
