@@ -1,43 +1,12 @@
 import { useEffect, useState } from "react";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
+import {
+  type ChannelSummary,
+  channelFromEvent,
+} from "./lib/channelFromEvent.ts";
 
-export interface ChannelSummary {
-  id: string;
-  name: string;
-  about: string;
-  updatedAt: number;
-}
-
-/** NIP-29 group metadata (kind 39000): d tag = channel id, content = JSON. */
-function channelFromEvent(event: SignedNostrEvent): ChannelSummary | null {
-  const id = event.tags.find((tag) => tag[0] === "d")?.[1];
-  if (!id) {
-    return null;
-  }
-  let name = "";
-  let about = "";
-  try {
-    const parsed = JSON.parse(event.content) as {
-      name?: unknown;
-      about?: unknown;
-    };
-    if (typeof parsed.name === "string") {
-      name = parsed.name;
-    }
-    if (typeof parsed.about === "string") {
-      about = parsed.about;
-    }
-  } catch {
-    // Non-JSON content: fall back to the id as the display name.
-  }
-  return {
-    id,
-    name: name || id,
-    about,
-    updatedAt: event.created_at,
-  };
-}
+export type { ChannelSummary };
 
 /**
  * Live channel list: subscribes to kind 39000 metadata; later events win so

@@ -13,7 +13,11 @@ type Mode = "choose" | "paste" | "scan" | "set-pass" | "unlock";
 export function LoginPage() {
   const { canSign, isLocked, extensionAvailable, unlock } = useAuth();
   const navigate = useNavigate();
-  const [mode, setMode] = useState<Mode>(isLocked ? "unlock" : "choose");
+  // Derived until the user picks: initKeyStore resolves async after first
+  // render, so a locked device must upgrade "choose" → "unlock" on its own.
+  const [modeOverride, setModeOverride] = useState<Mode | null>(null);
+  const mode: Mode = modeOverride ?? (isLocked ? "unlock" : "choose");
+  const setMode = setModeOverride;
   const [keyInput, setKeyInput] = useState("");
   const [scanned, setScanned] = useState<ParsedKey | null>(null);
   const [passphrase, setPassphrase] = useState("");
@@ -44,7 +48,7 @@ export function LoginPage() {
         setBusy(false);
       }
     },
-    [navigate],
+    [navigate, tagInput],
   );
 
   const acceptScanned = useCallback((text: string) => {
