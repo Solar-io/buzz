@@ -148,7 +148,7 @@ export function useProfiles(pubkeys: string[]): Map<string, Profile> {
     // The profiles themselves are replaceable events; latest-wins by created_at
     // would need ordering, but first-seen is acceptable for Phase 1 display.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, key.join(",")]);
+  }, [session, key.length, key]);
 
   return profiles;
 }

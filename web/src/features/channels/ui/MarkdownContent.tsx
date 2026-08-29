@@ -39,9 +39,9 @@ function withMentions(
     const rest = node;
     let key = 0;
     const pattern = /@([A-Za-z0-9_.-]+)/g;
-    let match: RegExpExecArray | null;
     let last = 0;
-    while ((match = pattern.exec(rest.slice(last))) !== null) {
+    let match = pattern.exec(rest.slice(last));
+    while (match !== null) {
       const name = match[1];
       if (!mentionNames.has(name.toLowerCase())) {
         continue;
@@ -59,6 +59,7 @@ function withMentions(
         </span>,
       );
       last = start + match[0].length;
+      match = pattern.exec(rest.slice(last));
     }
     if (parts.length === 0) {
       return node;
@@ -70,7 +71,9 @@ function withMentions(
   }
   if (Array.isArray(node)) {
     return node.map((child, index) => (
-      // Array children keep their original keys where present.
+      // react-markdown children carry no stable ids; index keys are safe
+      // because the array is static per render.
+      // biome-ignore lint/suspicious/noArrayIndexKey: see comment above
       <Fragmentish key={index}>{withMentions(child, mentionNames)}</Fragmentish>
     ));
   }

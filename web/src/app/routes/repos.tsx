@@ -62,10 +62,11 @@ function ChannelBrowser() {
     ? (messages.find((m) => m.id === threadRootId) ?? null)
     : null;
   const scrollRef = useRef<HTMLDivElement>(null);
-  const lastMessageId = messages[messages.length - 1]?.id;
+  // Re-scroll on the newest message id; also re-run when switching channels.
+  const lastMessageId = messages[messages.length - 1]?.id ?? current?.id ?? "";
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [lastMessageId, current?.id]);
+  }, [lastMessageId]);
 
   const send = (options: {
     content: string;

@@ -49,7 +49,7 @@ export function LoginPage() {
         setBusy(false);
       }
     },
-    [navigate, tagInput],
+    [tagInput],
   );
 
   const acceptScanned = useCallback((text: string) => {

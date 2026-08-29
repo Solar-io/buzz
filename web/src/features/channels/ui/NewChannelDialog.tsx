@@ -23,7 +23,8 @@ export function NewChannelDialog({
   const { session } = useRelaySession();
 
   const create = async () => {
-    const trimmed = name.trim();
+    // Match buzz-core canonical_channel_name: strip a leading #.
+    const trimmed = name.trim().replace(/^#+/, "");
     if (!trimmed || busy) {
       return;
     }

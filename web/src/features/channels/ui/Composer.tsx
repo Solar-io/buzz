@@ -65,7 +65,7 @@ export function Composer({
       .slice(0, 6);
     // `query` comes from an uncontrolled caret; recompute on text changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, text, namedMembers, mentionOpen]);
+  }, [query, namedMembers, mentionOpen]);
 
   const applySuggestion = (name: string) => {
     const textarea = textareaRef.current;
@@ -78,7 +78,7 @@ export function Composer({
     if (at === -1) {
       return;
     }
-    const next = text.slice(0, at) + `@${name} ` + text.slice(caret);
+    const next = `${text.slice(0, at)}@${name} ${text.slice(caret)}`;
     setText(next);
     setMentionOpen(false);
     requestAnimationFrame(() => {
