@@ -10,14 +10,10 @@ test("unauthenticated home redirects to login with pairing options", async ({
   await expect(page.getByText("Enter key manually")).toBeVisible();
 });
 
-test("manual key entry validates before passphrase step", async ({
-  page,
-}) => {
+test("manual key entry validates before passphrase step", async ({ page }) => {
   await page.goto("/login");
   await page.getByRole("button", { name: "Enter key manually" }).click();
-  await page
-    .getByPlaceholder("nsec1…")
-    .fill("not-a-key");
+  await page.getByPlaceholder("nsec1…").fill("not-a-key");
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(
     page.getByText("Keys are nsec1… strings or 64-character hex."),

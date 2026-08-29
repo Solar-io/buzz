@@ -36,6 +36,8 @@ export function AppShell({
               fill="none"
               stroke="currentColor"
               strokeWidth="2"
+              role="img"
+              aria-label="Menu"
             >
               <path d="M4 6h16M4 12h16M4 18h16" />
             </svg>
