@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { MessageBuffer, TimelineMessage } from "../lib/messageBuffer.ts";
 export type { ChannelMember, Profile } from "../hooks.ts";
 import type { Profile } from "../hooks.ts";
+import { truncatePubkey } from "@/shared/lib/pubkey";
 import { MarkdownContent } from "./MarkdownContent.tsx";
 
 function formatTime(unixSeconds: number): string {
@@ -15,7 +16,7 @@ export function authorLabel(
   pubkey: string,
   profiles: Map<string, Profile>,
 ): string {
-  return profiles.get(pubkey)?.displayName ?? `${pubkey.slice(0, 8)}…`;
+  return profiles.get(pubkey)?.displayName ?? truncatePubkey(pubkey);
 }
 
 export function ChannelTimeline({

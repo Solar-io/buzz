@@ -14,6 +14,10 @@ import { ChannelTimeline } from "@/features/channels/ui/ChannelTimeline";
 import { Composer } from "@/features/channels/ui/Composer";
 import { ThreadPanel } from "@/features/channels/ui/ThreadPanel";
 import { NewChannelDialog } from "@/features/channels/ui/NewChannelDialog";
+import { useDms } from "@/features/dms/hooks";
+import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
+import { NewDmDialog } from "@/features/dms/ui/NewDmDialog";
+import { ownPubkey } from "@/shared/lib/nostr-signer";
 import { AppShell } from "@/shared/layout/AppShell";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { cn } from "@/shared/lib/cn";
@@ -44,6 +48,24 @@ function ChannelBrowser() {
   const selectedId = Route.useSearch({ select: (s) => s.c });
   const current = channels.find((channel) => channel.id === selectedId) ?? null;
 
+  // DMs ride the same kind:39000 list (relay `t` tag); they get their own
+  // sidebar section and participant-based names.
+  const { dms, channelsWithoutDms } = useDms(channels);
+  const [selfPubkey, setSelfPubkey] = useState<string | null>(null);
+  useEffect(() => {
+    void ownPubkey().then(setSelfPubkey);
+  }, []);
+  const dmParticipantPubkeys = useMemo(
+    () =>
+      dms.flatMap((dm) =>
+        dm.channel.participantPubkeys.filter((pk) => pk !== selfPubkey),
+      ),
+    [dms, selfPubkey],
+  );
+  const dmProfiles = useProfiles(dmParticipantPubkeys);
+  const dmName = (participantPubkeys: string[]): string =>
+    dmDisplayName(participantPubkeys, selfPubkey ?? "", dmProfiles);
+
   const { session } = useRelaySession();
   const messages = useChannelMessages(current?.id ?? null);
   const members = useChannelMembers(current?.id ?? null);
@@ -65,6 +87,10 @@ function ChannelBrowser() {
   // Re-scroll on the newest message id; also re-run when switching channels.
   const lastMessageId = messages[messages.length - 1]?.id ?? current?.id ?? "";
   useEffect(() => {
+    // lastMessageId is the trigger: "" = no channel yet, nothing to scroll.
+    if (lastMessageId === "") {
+      return;
+    }
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [lastMessageId]);
 
@@ -113,7 +139,7 @@ function ChannelBrowser() {
           </p>
         )}
         <ul className="space-y-0.5">
-          {channels.map((channel) => (
+          {channelsWithoutDms.map((channel) => (
             <li key={channel.id}>
               <button
                 type="button"
@@ -134,8 +160,42 @@ function ChannelBrowser() {
             </li>
           ))}
         </ul>
+        {dms.length > 0 && (
+          <>
+            <p className="px-2 pb-1 pt-4 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Direct messages
+            </p>
+            <ul className="space-y-0.5">
+              {dms.map(({ channel }) => (
+                <li key={channel.id}>
+                  <button
+                    type="button"
+                    className={cn(
+                      "w-full truncate rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent",
+                      channel.id === selectedId && "bg-accent font-medium",
+                    )}
+                    onClick={() => {
+                      setThreadRootId(null);
+                      void navigate({
+                        to: "/repos",
+                        search: { c: channel.id },
+                      });
+                    }}
+                  >
+                    {dmName(channel.participantPubkeys)}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
       </nav>
       <div className="space-y-0.5 border-t border-border p-2">
+        <NewDmDialog
+          onOpened={(channelId) =>
+            void navigate({ to: "/repos", search: { c: channelId } })
+          }
+        />
         <NewChannelDialog
           onCreated={(channelId) =>
             void navigate({ to: "/repos", search: { c: channelId } })
@@ -157,8 +217,12 @@ function ChannelBrowser() {
         <div className="flex h-full min-h-0">
           <section className="flex min-w-0 flex-1 flex-col">
             <div className="border-b border-border px-4 py-3">
-              <h1 className="truncate text-lg font-semibold">{current.name}</h1>
-              {current.about && (
+              <h1 className="truncate text-lg font-semibold">
+                {current.type === "dm"
+                  ? dmName(current.participantPubkeys)
+                  : current.name}
+              </h1>
+              {current.type !== "dm" && current.about && (
                 <p className="truncate text-sm text-muted-foreground">
                   {current.about}
                 </p>
