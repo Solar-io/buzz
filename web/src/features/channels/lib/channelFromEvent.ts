@@ -5,6 +5,14 @@ export interface ChannelSummary {
   name: string;
   about: string;
   updatedAt: number;
+  /** Channel type from the relay's `t` tag; "stream" when absent. */
+  type: "stream" | "forum" | "dm";
+  /**
+   * Participant pubkeys from the relay's `p` tags. The relay includes them
+   * on DM metadata precisely so clients can name DMs without a kind:39002
+   * fetch; empty on non-DM channels parsed from older emissions.
+   */
+  participantPubkeys: string[];
 }
 
 /**
@@ -23,10 +31,18 @@ export function channelFromEvent(
   }
   const name = tags.find((tag) => tag[0] === "name")?.[1] ?? "";
   const about = tags.find((tag) => tag[0] === "about")?.[1] ?? "";
+  const rawType = tags.find((tag) => tag[0] === "t")?.[1];
+  const type: ChannelSummary["type"] =
+    rawType === "dm" || rawType === "forum" ? rawType : "stream";
+  const participantPubkeys = tags
+    .filter((tag) => tag[0] === "p" && typeof tag[1] === "string")
+    .map((tag) => tag[1]);
   return {
     id,
     name: name || id,
     about,
     updatedAt: event.created_at,
+    type,
+    participantPubkeys,
   };
 }

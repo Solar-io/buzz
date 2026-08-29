@@ -61,6 +61,8 @@ export interface MinimalWebSocket {
 }
 
 const DEFAULT_AUTH_GRACE_MS = 1_000;
+/** A publish fails with a timeout if the relay answers no OK/FAILED by then. */
+const PUBLISH_ACK_TIMEOUT_MS = 15_000;
 
 function defaultReconnectDelay(attempt: number): number {
   return Math.min(500 * 2 ** attempt, 15_000);
@@ -290,6 +292,15 @@ export class RelaySession {
     }
     this.authenticated = false;
     this.openSubs.clear();
+    // A publish in flight when the socket drops would otherwise hang forever:
+    // the EVENT is not in `pending` (it was sent), so the reconnect never
+    // re-sends it and the relay's OK — if it even comes — finds no waiter.
+    // Fail fast so callers can surface the error and the user can retry
+    // (kind 41010 is idempotent server-side; kind 9 dedups by event id).
+    for (const waiter of this.publishWaiters.values()) {
+      waiter.resolve(false, "connection lost while sending");
+    }
+    this.publishWaiters.clear();
   }
 
   close(): void {
@@ -341,8 +352,17 @@ export class RelaySession {
         return;
       }
       const id = event.id;
+      // Belt-and-braces with teardown settling waiters: a relay that stays
+      // open but never answers OK/FAILED must not hang the caller forever.
+      const timer = setTimeout(() => {
+        this.publishWaiters.delete(id);
+        resolve({ ok: false, message: "timed out waiting for the relay" });
+      }, PUBLISH_ACK_TIMEOUT_MS);
       this.publishWaiters.set(id, {
-        resolve: (ok, message) => resolve({ ok, message }),
+        resolve: (ok, message) => {
+          clearTimeout(timer);
+          resolve({ ok, message });
+        },
       });
       this.sendWhenReady(JSON.stringify(["EVENT", event]));
     });

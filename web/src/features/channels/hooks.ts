@@ -4,6 +4,7 @@ import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { signNostrEvent } from "@/shared/lib/nostr-signer";
+import { truncatePubkey } from "@/shared/lib/pubkey";
 import {
   TIMELINE_KINDS,
   timelineMessageFromEvent,
@@ -82,7 +83,7 @@ export function useChannelMembers(channelId: string | null): ChannelMember[] {
 }
 
 function shortKey(pubkey: string): string {
-  return `${pubkey.slice(0, 8)}…`;
+  return truncatePubkey(pubkey);
 }
 
 export interface Profile {

@@ -127,3 +127,20 @@ export function activeSignerSource(): "local" | "extension" | "ephemeral" {
   }
   return hasNip07Provider() ? "extension" : "ephemeral";
 }
+
+/** Our own public key (hex) for the active signer; null when unknowable. */
+export async function ownPubkey(): Promise<string | null> {
+  const secret = getUnlockedSecretKey();
+  if (secret) {
+    return getPublicKey(secret);
+  }
+  const provider = hasNip07Provider() ? window.nostr : undefined;
+  if (provider) {
+    try {
+      return await provider.getPublicKey();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
