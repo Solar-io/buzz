@@ -155,6 +155,33 @@ test("publish waits for AUTH and resolves on OK/FAILED", async () => {
   session.close();
 });
 
+test("publish fails fast when the socket drops mid-send (no infinite hang)", async () => {
+  const { session } = makeSession();
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  socket.serverSend(["AUTH", "c"]);
+  await tick();
+  const pending = session.publish({ id: "dm-open-1", kind: 41010, sig: "s" });
+  await tick();
+  assert.equal(socket.sentOf("EVENT").length, 1, "EVENT was sent");
+  // Relay drops the connection without OK/FAILED — the waiter must settle.
+  socket.emit("close");
+  // Race a sentinel: a regression (waiter leak) surfaces as a clean FAIL,
+  // not a hung runner.
+  const result = await Promise.race([
+    pending,
+    new Promise((resolve) =>
+      setTimeout(() => resolve({ ok: "HUNG", message: "" }), 1_000),
+    ),
+  ]);
+  assert.deepEqual(result, {
+    ok: false,
+    message: "connection lost while sending",
+  });
+  session.close();
+});
+
 test("reconnect: closes → new socket → subscriptions replayed", async () => {
   const { session } = makeSession();
   const events = [];

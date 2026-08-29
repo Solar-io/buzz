@@ -15,9 +15,11 @@ export function parsePubkeyInput(raw: string): PubkeyParseResult {
   if (HEX64.test(trimmed)) {
     return { ok: true, pubkey: trimmed.toLowerCase() };
   }
-  if (/^[a-z0-9]+1[02-9ac-hj-np-z]+$/.test(trimmed)) {
+  // BIP-173 permits all-uppercase bech32; normalize before matching.
+  const lowered = trimmed.toLowerCase();
+  if (/^[a-z0-9]+1[02-9ac-hj-np-z]+$/.test(lowered)) {
     try {
-      const decoded = nip19Decode(trimmed);
+      const decoded = nip19Decode(lowered);
       if (decoded.type === "npub" && HEX64.test(decoded.data)) {
         return { ok: true, pubkey: decoded.data };
       }

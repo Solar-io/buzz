@@ -34,8 +34,12 @@ export function NewDmDialog({
       toast.error(parsed.error);
       return;
     }
+    if (parsed.pubkey === pubkey) {
+      toast.error("That's your own key — a DM needs someone else.");
+      return;
+    }
     setRecipients((previous) =>
-      previous.includes(parsed.pubkey) || parsed.pubkey === pubkey
+      previous.includes(parsed.pubkey)
         ? previous
         : [...previous, parsed.pubkey],
     );
