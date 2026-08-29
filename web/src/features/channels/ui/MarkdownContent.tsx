@@ -2,6 +2,7 @@ import { memo, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { mentionSetsEqual } from "../lib/mentionSets.ts";
+import { mentionParts } from "../lib/mentionParts.ts";
 
 /**
  * Render message markdown. react-markdown does not render raw HTML by
@@ -45,40 +46,23 @@ function withMentions(
   node: ReactNode,
   mentionNames: ReadonlySet<string>,
 ): ReactNode {
-  if (typeof node === "string" && mentionNames.size > 0) {
-    const parts: ReactNode[] = [];
-    const rest = node;
-    let key = 0;
-    const pattern = /@([A-Za-z0-9_.-]+)/g;
-    let last = 0;
-    let match = pattern.exec(rest.slice(last));
-    while (match !== null) {
-      const name = match[1];
-      if (!mentionNames.has(name.toLowerCase())) {
-        continue;
-      }
-      const start = last + match.index;
-      if (start > last) {
-        parts.push(node.slice(last, start));
-      }
-      parts.push(
-        <span
-          key={`m${key++}`}
-          className="rounded bg-accent px-0.5 font-medium text-accent-foreground"
-        >
-          @{name}
-        </span>,
-      );
-      last = start + match[0].length;
-      match = pattern.exec(rest.slice(last));
-    }
-    if (parts.length === 0) {
+  if (typeof node === "string") {
+    const split = mentionParts(node, mentionNames);
+    if (!split) {
       return node;
     }
-    if (last < node.length) {
-      parts.push(node.slice(last));
-    }
-    return parts;
+    return split.map((part) =>
+      part.kind === "mention" ? (
+        <span
+          key={part.key}
+          className="rounded bg-accent px-0.5 font-medium text-accent-foreground"
+        >
+          {part.text}
+        </span>
+      ) : (
+        part.text
+      ),
+    );
   }
   if (Array.isArray(node)) {
     return node.map((child, index) => (
