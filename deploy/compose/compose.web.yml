@@ -1,0 +1,14 @@
+# Overlay: serve the web client bundle from the relay origin.
+#
+# Pairs with BUZZ_WEB_DIR=/app/web-dist in .env (opt-in: the relay validates
+# that the mounted dir contains index.html at startup). The host path is
+# rsynced from a built web/dist — deliberately OUTSIDE the checkout
+# (BUZZ_WEB_DIST_HOST, default ~/.evie/buzz/web-dist) so a git clean or
+# worktree shuffle can never empty the live bundle.
+#
+# Deploy cadence: content updates need ONLY an rsync (ServeDir reads
+# per-request). Only BUZZ_WEB_DIR/.env or volume changes recreate the relay.
+services:
+  relay:
+    volumes:
+      - ${BUZZ_WEB_DIST_HOST:-./web-dist}:/app/web-dist:ro
