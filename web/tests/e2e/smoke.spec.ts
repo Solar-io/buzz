@@ -1,15 +1,27 @@
 import { createHash } from "node:crypto";
 import { expect, test } from "@playwright/test";
 
-test("home page loads with Buzz branding", async ({ page }) => {
+test("unauthenticated home redirects to login with pairing options", async ({
+  page,
+}) => {
   await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Buzz" })).toBeVisible();
+  await expect(page.getByText("Pair with QR code")).toBeVisible();
+  await expect(page.getByText("Enter key manually")).toBeVisible();
+});
+
+test("manual key entry validates before passphrase step", async ({ page }) => {
+  await page.goto("/login");
+  await page.getByRole("button", { name: "Enter key manually" }).click();
+  await page.getByPlaceholder("nsec1…").fill("not-a-key");
+  await page.getByRole("button", { name: "Continue" }).click();
   await expect(
-    page.getByRole("main").getByRole("img", { name: "Buzz" }),
+    page.getByText("Keys are nsec1… strings or 64-character hex."),
   ).toBeVisible();
 });
 
-test("home page shows repositories section", async ({ page }) => {
-  await page.goto("/");
+test("repos page still loads at /repos", async ({ page }) => {
+  await page.goto("/repos");
   await expect(page.getByText("Repositories")).toBeVisible();
 });
 

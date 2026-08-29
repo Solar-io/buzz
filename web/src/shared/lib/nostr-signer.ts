@@ -3,6 +3,7 @@ import {
   generateSecretKey,
   getPublicKey,
 } from "nostr-tools/pure";
+import { getUnlockedSecretKey } from "./key-store.ts";
 
 export type UnsignedNostrEvent = {
   kind: number;
@@ -61,7 +62,12 @@ function sameUnsignedEvent(
 }
 
 /**
- * Sign with NIP-07 when available, otherwise use a page-lifetime key.
+ * Sign with the unlocked local key when present, else NIP-07 when available,
+ * else a page-lifetime key.
+ *
+ * The unlocked local key wins over an extension deliberately: enrolling a
+ * key on this device is an explicit user choice, and device pairing relies
+ * on it (an extension will not export its key to render a pairing QR).
  *
  * The ephemeral fallback preserves anonymous browsing on open relays. Flows
  * that create durable membership must set `requireNip07` so a reload cannot
@@ -77,6 +83,15 @@ export async function signNostrEvent(
     ...template,
     created_at: template.created_at ?? Math.floor(Date.now() / 1000),
   };
+  const localSecret = getUnlockedSecretKey();
+  if (localSecret) {
+    const signed = finalizeEvent(unsigned, localSecret);
+    if (signed.pubkey !== getPublicKey(localSecret)) {
+      throw new Error("Failed to sign with the local identity key.");
+    }
+    return signed;
+  }
+
   const provider = typeof window === "undefined" ? undefined : window.nostr;
 
   if (provider) {
@@ -103,4 +118,12 @@ export async function signNostrEvent(
     throw new Error("Failed to create the ephemeral browser identity.");
   }
   return signed;
+}
+
+/** Which signer `signNostrEvent` will use right now — for settings UI. */
+export function activeSignerSource(): "local" | "extension" | "ephemeral" {
+  if (getUnlockedSecretKey()) {
+    return "local";
+  }
+  return hasNip07Provider() ? "extension" : "ephemeral";
 }
