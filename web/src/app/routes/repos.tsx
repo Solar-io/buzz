@@ -20,6 +20,8 @@ import { Composer } from "@/features/channels/ui/Composer";
 import { ThreadPanel } from "@/features/channels/ui/ThreadPanel";
 import { NewChannelDialog } from "@/features/channels/ui/NewChannelDialog";
 import { useObserverEvents } from "@/features/agents/hooks";
+import { agentWorkingState } from "@/features/agents/lib/observerEvents";
+import { useTick } from "@/features/agents/ui/WorkingBadge";
 import { AgentActivityPanel } from "@/features/agents/ui/AgentActivityPanel";
 import { useDms } from "@/features/dms/hooks";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
@@ -319,6 +321,20 @@ function ChannelBrowser() {
   const [thinkingOpen, setThinkingOpen] = useState(false);
   // DM right-pane tabs: thinking ↔ thread replies (channels stay thread-only).
   const [rightTab, setRightTab] = useState<"thinking" | "thread">("thinking");
+  // "Received and working": newest turn_started newer than the agent's last
+  // chat reply (their kind-9 landing = turn complete).
+  const working = useMemo(
+    () =>
+      agentWorkingState(
+        observerFeed.frames,
+        messages
+          .filter((m) => m.authorPubkey === dmAgentPubkey)
+          .reduce((max, m) => Math.max(max, m.createdAt), 0),
+        Math.floor(Date.now() / 1000),
+      ),
+    [observerFeed.frames, messages, dmAgentPubkey],
+  );
+  useTick(working.working);
 
   return (
     <AppShell
@@ -371,6 +387,16 @@ function ChannelBrowser() {
                   setRightTab("thread");
                 }}
                 activeRootId={threadRootId}
+                workingAgent={
+                  working.working && working.startedAt !== null && dmAgentPubkey
+                    ? {
+                        name:
+                          profiles.get(dmAgentPubkey)?.displayName ??
+                          dmAgentPubkey,
+                        startedAt: working.startedAt,
+                      }
+                    : null
+                }
               />
             </div>
             <Composer
@@ -441,6 +467,7 @@ function ChannelBrowser() {
               frames={observerFeed.frames}
               lockedCount={observerFeed.lockedCount}
               connected={connected}
+              working={working}
               mobileOpen={thinkingOpen}
               onCloseMobile={() => setThinkingOpen(false)}
               onSelectThreadTab={

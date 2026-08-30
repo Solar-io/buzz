@@ -5,6 +5,7 @@ import type { Profile } from "../hooks.ts";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { fetchSignedMedia } from "@/shared/api/blossom";
 import { cn } from "@/shared/lib/cn";
+import { formatElapsed } from "@/features/agents/ui/WorkingBadge";
 import { MarkdownContent } from "./MarkdownContent.tsx";
 
 function formatTime(unixSeconds: number): string {
@@ -94,6 +95,7 @@ export function ChannelTimeline({
   onOpenThread,
   activeRootId,
   flat,
+  workingAgent,
 }: {
   messages: MessageBuffer;
   profiles: Map<string, Profile>;
@@ -108,6 +110,8 @@ export function ChannelTimeline({
    * conversation and must show in full.
    */
   flat?: boolean;
+  /** When set, renders the "received and working" typing row at the bottom. */
+  workingAgent?: { name: string; startedAt: number } | null;
 }) {
   if (messages.length === 0) {
     return (
@@ -160,7 +164,25 @@ export function ChannelTimeline({
   // max-w keeps line lengths readable on wide desktops without affecting
   // phone layout (the column is already narrower than the cap there).
   return (
-    <div className="mx-auto w-full max-w-3xl px-1 py-2 sm:px-3">{rows}</div>
+    <div className="mx-auto w-full max-w-3xl px-1 py-2 sm:px-3">
+      {rows}
+      {workingAgent && (
+        <div className="mt-2 flex items-center gap-2 px-2 py-1 text-sm text-muted-foreground">
+          <span className="relative flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+          </span>
+          <span>{workingAgent.name} received it and is working</span>
+          <span className="tabular-nums">
+            ·{" "}
+            {formatElapsed(
+              workingAgent.startedAt,
+              Math.floor(Date.now() / 1000),
+            )}
+          </span>
+        </div>
+      )}
+    </div>
   );
 }
 

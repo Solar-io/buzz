@@ -205,3 +205,43 @@ export function transcriptFromFrames(frames: ObserverFrame[]): {
     suppressed,
   };
 }
+
+export interface AgentWorkingState {
+  working: boolean;
+  /** Turn start (unix seconds) when working. */
+  startedAt: number | null;
+}
+
+/** Freshness window: a turn with no frames for this long reads as stalled. */
+const WORKING_STALE_SECONDS = 180;
+
+/**
+ * "Received and working" indicator: a turn_started frame newer than the
+ * agent's last chat reply means the turn is in flight. The agent's kind-9
+ * message landing in the channel is the completion signal (the desktop uses
+ * the same correlation). A turn with no activity for three minutes reads as
+ * stalled rather than working.
+ */
+export function agentWorkingState(
+  frames: ObserverFrame[],
+  lastAgentReplyAt: number,
+  nowSeconds: number,
+): AgentWorkingState {
+  let startedAt: number | null = null;
+  let lastFrameAt = 0;
+  for (const frame of frames) {
+    if (frame.kind === "turn_started" && frame.createdAt > (startedAt ?? 0)) {
+      startedAt = frame.createdAt;
+    }
+    if (frame.createdAt > lastFrameAt) {
+      lastFrameAt = frame.createdAt;
+    }
+  }
+  if (startedAt === null || startedAt <= lastAgentReplyAt) {
+    return { working: false, startedAt: null };
+  }
+  if (nowSeconds - Math.max(startedAt, lastFrameAt) > WORKING_STALE_SECONDS) {
+    return { working: false, startedAt: null };
+  }
+  return { working: true, startedAt };
+}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { transcriptFromFrames } from "./observerEvents.ts";
+import { agentWorkingState, transcriptFromFrames } from "./observerEvents.ts";
 
 function frame(overrides = {}) {
   return {
@@ -94,4 +94,36 @@ test("string content passes through block text extraction", () => {
     }),
   ]);
   assert.equal(entries[0].text, "plain string thought");
+});
+
+test("agentWorkingState: turn newer than last reply means working", () => {
+  seqCounter = 500;
+  const { working, startedAt } = agentWorkingState(
+    [frame({ kind: "turn_started", createdAt: 2000 })],
+    1500,
+    2010,
+  );
+  assert.equal(working, true);
+  assert.equal(startedAt, 2000);
+});
+
+test("agentWorkingState: agent reply after turn start ends the turn", () => {
+  seqCounter = 510;
+  const { working } = agentWorkingState(
+    [frame({ kind: "turn_started", createdAt: 2000 })],
+    2100,
+    2200,
+  );
+  assert.equal(working, false);
+});
+
+test("agentWorkingState: no frames or stale turns read as idle", () => {
+  seqCounter = 520;
+  assert.equal(agentWorkingState([], 0, 1000).working, false);
+  const stale = agentWorkingState(
+    [frame({ kind: "turn_started", createdAt: 1000 })],
+    0,
+    1000 + 400,
+  );
+  assert.equal(stale.working, false);
 });

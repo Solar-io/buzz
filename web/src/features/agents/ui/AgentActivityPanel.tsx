@@ -3,9 +3,11 @@ import type { Profile } from "@/features/channels/hooks";
 import { AuthorAvatar } from "@/features/channels/ui/ChannelTimeline";
 import {
   transcriptFromFrames,
+  type AgentWorkingState,
   type ObserverFrame,
   type TranscriptEntry,
 } from "../lib/observerEvents";
+import { useTick, WorkingBadge } from "./WorkingBadge";
 
 function entryTime(at: number): string {
   return new Date(at * 1000).toLocaleTimeString([], {
@@ -74,6 +76,7 @@ export function AgentActivityPanel({
   frames,
   lockedCount,
   connected,
+  working,
   mobileOpen,
   onCloseMobile,
   onSelectThreadTab,
@@ -84,6 +87,8 @@ export function AgentActivityPanel({
   frames: ObserverFrame[];
   lockedCount: number;
   connected: boolean;
+  /** Turn-in-flight state with start time (drives the Working · timer). */
+  working: AgentWorkingState;
   /** Below lg the panel is a deliberate sheet opened from the chat header. */
   mobileOpen: boolean;
   onCloseMobile: () => void;
@@ -101,6 +106,7 @@ export function AgentActivityPanel({
       scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
     }
   }, [lastId, entries.length]);
+  useTick(working.working);
 
   return (
     // lg+: docked right pane (width rides the shared --thread-width var).
@@ -122,6 +128,9 @@ export function AgentActivityPanel({
           size="sm"
         />
         <span className="text-base font-semibold">Thinking</span>
+        {working.working && working.startedAt !== null && (
+          <WorkingBadge startedAt={working.startedAt} />
+        )}
         {onSelectThreadTab && (
           <button
             type="button"
