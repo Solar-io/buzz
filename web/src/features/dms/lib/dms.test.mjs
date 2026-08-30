@@ -156,21 +156,27 @@ test("extractOpenDmChannelId reads the relay response envelope", () => {
   assert.equal(extractOpenDmChannelId('{"accepted":true}'), null);
 });
 
-test("dmActivityFromEvents tracks the newest timestamp per DM", () => {
+test("dmActivityFromEvents tracks the newest message per DM", () => {
   const events = [
     event({
       kind: 9,
       created_at: 100,
+      pubkey: SAM,
+      content: "older message",
       tags: [["h", "dm-1"]],
     }),
     event({
       kind: 9,
       created_at: 300,
+      pubkey: SELF,
+      content: "**newest** with `markdown` noise",
       tags: [["h", "dm-1"]],
     }),
     event({
       kind: 9,
       created_at: 200,
+      pubkey: EVIE,
+      content: "![shot](https://example.invalid/a.png)",
       tags: [["h", "dm-2"]],
     }),
     event({
@@ -180,7 +186,12 @@ test("dmActivityFromEvents tracks the newest timestamp per DM", () => {
     }),
   ];
   const activity = dmActivityFromEvents(events);
-  assert.equal(activity.get("dm-1"), 300);
-  assert.equal(activity.get("dm-2"), 200);
+  const dm1 = activity.get("dm-1");
+  assert.equal(dm1.created_at, 300);
+  assert.equal(dm1.authorPubkey, SELF);
+  assert.equal(dm1.excerpt, "newest with markdown noise");
+  const dm2 = activity.get("dm-2");
+  assert.equal(dm2.created_at, 200);
+  assert.equal(dm2.excerpt, "📷 image");
   assert.equal(activity.size, 2);
 });

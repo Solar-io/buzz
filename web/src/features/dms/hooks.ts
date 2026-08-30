@@ -4,13 +4,15 @@ import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { signNostrEvent } from "@/shared/lib/nostr-signer";
 import type { ChannelSummary } from "@/features/channels/lib/channelFromEvent.ts";
-import { dmActivityFromEvents } from "./lib/dmActivity.ts";
+import { dmActivityFromEvents, type DmLastMessage } from "./lib/dmActivity.ts";
 import { extractOpenDmChannelId } from "./lib/dmInput.ts";
 
 export interface DmSummary {
   channel: ChannelSummary;
   /** Last kind:9 timestamp seen for this DM (0 = never sampled). */
   lastActivity: number;
+  /** Newest sampled message (author + excerpt) for the sidebar preview row. */
+  lastMessage: DmLastMessage | null;
 }
 
 /**
@@ -32,7 +34,8 @@ export function useDms(channels: ChannelSummary[]): {
       .filter((c) => c.type === "dm")
       .map((channel) => ({
         channel,
-        lastActivity: activity.get(channel.id) ?? 0,
+        lastActivity: activity.get(channel.id)?.created_at ?? 0,
+        lastMessage: activity.get(channel.id) ?? null,
       }));
     list.sort(
       (a, b) =>
@@ -54,7 +57,7 @@ export function useDms(channels: ChannelSummary[]): {
  * #h filter over all DM ids. Resubscribes only when the DM id SET changes
  * (joined key), so a growing DM list stays cheap.
  */
-function useDmActivity(dmIds: string[]): Map<string, number> {
+function useDmActivity(dmIds: string[]): Map<string, DmLastMessage> {
   const { session } = useRelaySession();
   const [events, setEvents] = useState<SignedNostrEvent[]>([]);
   // Pubkeys are comma-free, so the join is a lossless set key.

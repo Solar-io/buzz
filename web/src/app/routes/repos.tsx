@@ -7,15 +7,20 @@ import {
   useChannelMembers,
   useChannelMessages,
   useProfiles,
+  type Profile,
 } from "@/features/channels/hooks";
 import { useChannels } from "@/features/channels/useChannels";
 import { replyCounts } from "@/features/channels/lib/messageBuffer.ts";
-import { ChannelTimeline } from "@/features/channels/ui/ChannelTimeline";
+import {
+  AuthorAvatar,
+  ChannelTimeline,
+} from "@/features/channels/ui/ChannelTimeline";
 import { Composer } from "@/features/channels/ui/Composer";
 import { ThreadPanel } from "@/features/channels/ui/ThreadPanel";
 import { NewChannelDialog } from "@/features/channels/ui/NewChannelDialog";
 import { useDms } from "@/features/dms/hooks";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
+import type { DmLastMessage } from "@/features/dms/lib/dmActivity.ts";
 import { NewDmDialog } from "@/features/dms/ui/NewDmDialog";
 import { ownPubkey } from "@/shared/lib/nostr-signer";
 import { AppShell, useDrawerClose } from "@/shared/layout/AppShell";
@@ -222,15 +227,18 @@ function ChannelBrowser() {
         )}
         {dms.length > 0 && (
           <>
-            <p className="flex h-8 items-center px-2 text-xs font-medium uppercase tracking-wide text-sidebar-foreground/70">
+            <p className="mt-4 flex h-8 items-center px-2 text-xs font-medium uppercase tracking-wide text-sidebar-foreground/70">
               Direct messages
             </p>
             <ul className="space-y-0.5">
-              {dms.map(({ channel }) => (
+              {dms.map(({ channel, lastMessage }) => (
                 <li key={channel.id}>
-                  <SidebarNavButton
+                  <DmNavRow
                     selected={channel.id === selectedId}
-                    label={dmName(channel.participantPubkeys)}
+                    participants={channel.participantPubkeys}
+                    selfPubkey={selfPubkey}
+                    profiles={dmProfiles}
+                    lastMessage={lastMessage}
                     onSelect={() => {
                       setThreadRootId(null);
                       void navigate({
@@ -335,8 +343,9 @@ function ChannelBrowser() {
 }
 
 /**
- * Sidebar navigation entry, styled to the desktop client's SidebarMenuButton:
- * h-8 text-sm rows, hover = sidebar accent, active = solid mauve pill.
+ * Sidebar navigation entry, styled to Buzz Dark: hover = white/4 wash, the
+ * active row = the desktop's translucent white/18 pill (theme.css
+ * --sidebar-row-active-surface), no accent color.
  * Calls useDrawerClose after selecting so the phone drawer dismisses.
  */
 function SidebarNavButton({
@@ -354,9 +363,8 @@ function SidebarNavButton({
       type="button"
       className={cn(
         "flex h-8 w-full items-center truncate rounded-md px-2 text-left text-sm transition-colors",
-        "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-        selected &&
-          "bg-sidebar-primary font-semibold text-sidebar-primary-foreground hover:bg-sidebar-primary hover:text-sidebar-primary-foreground",
+        "hover:bg-white/5 hover:text-foreground",
+        selected && "bg-white/[0.18] font-medium text-foreground",
       )}
       onClick={() => {
         onSelect();
@@ -374,4 +382,87 @@ function shortDate(unixSeconds: number): string {
     month: "short",
     day: "numeric",
   });
+}
+
+/** Sidebar timestamp for DM rows: time today, else short date. */
+function shortStamp(unixSeconds: number): string {
+  const date = new Date(unixSeconds * 1000);
+  const now = new Date();
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  return sameDay
+    ? date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    : date.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+/**
+ * DM sidebar row in the desktop client's shape: avatar, display name, and a
+ * one-line preview of the newest sampled message with its stamp.
+ */
+function DmNavRow({
+  selected,
+  participants,
+  selfPubkey,
+  profiles,
+  lastMessage,
+  onSelect,
+}: {
+  selected: boolean;
+  participants: string[];
+  selfPubkey: string | null;
+  profiles: Map<string, Profile>;
+  lastMessage: DmLastMessage | null;
+  onSelect: () => void;
+}) {
+  const closeDrawer = useDrawerClose();
+  const others = participants.filter(
+    (pubkey, index) =>
+      pubkey !== selfPubkey && participants.indexOf(pubkey) === index,
+  );
+  const avatarPubkey = others[0] ?? participants[0] ?? "";
+  const avatarLabel = profiles.get(avatarPubkey)?.displayName ?? avatarPubkey;
+  const name = dmDisplayName(participants, selfPubkey ?? "", profiles);
+  return (
+    <button
+      type="button"
+      className={cn(
+        "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors",
+        "hover:bg-white/5",
+        selected && "bg-white/[0.18]",
+      )}
+      onClick={() => {
+        onSelect();
+        closeDrawer();
+      }}
+    >
+      <AuthorAvatar
+        pubkey={avatarPubkey}
+        label={avatarLabel}
+        picture={profiles.get(avatarPubkey)?.avatar}
+        size="sm"
+      />
+      <span className="min-w-0 flex-1">
+        <span
+          className={cn(
+            "block truncate text-sm",
+            selected ? "font-medium text-foreground" : "text-foreground",
+          )}
+        >
+          {name}
+        </span>
+        {lastMessage && (
+          <span className="block truncate text-xs text-muted-foreground">
+            {lastMessage.excerpt || "…"}
+          </span>
+        )}
+      </span>
+      {lastMessage && (
+        <span className="shrink-0 text-[11px] text-muted-foreground/70">
+          {shortStamp(lastMessage.created_at)}
+        </span>
+      )}
+    </button>
+  );
 }

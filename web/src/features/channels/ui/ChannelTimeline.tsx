@@ -32,16 +32,19 @@ function pubkeyHue(pubkey: string): number {
 /**
  * Author avatar: the profile picture when one is published (relay media is
  * auth-gated, so it goes through the signed fetch), else a hue-hash initials
- * circle in the desktop client's identicon style.
+ * circle in the desktop client's identicon style. Exported for the sidebar's
+ * DM rows.
  */
-function AuthorAvatar({
+export function AuthorAvatar({
   pubkey,
   label,
   picture,
+  size = "md",
 }: {
   pubkey: string;
   label: string;
   picture?: string;
+  size?: "sm" | "md";
 }) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   useEffect(() => {
@@ -63,18 +66,19 @@ function AuthorAvatar({
       cancelled = true;
     };
   }, [picture]);
+  const box = size === "sm" ? "h-5 w-5 text-[10px]" : "h-9 w-9 text-sm";
   if (objectUrl) {
     return (
       <img
         src={objectUrl}
         alt=""
-        className="h-9 w-9 rounded-full object-cover"
+        className={`rounded-full object-cover ${box}`}
       />
     );
   }
   return (
     <div
-      className="flex h-9 w-9 items-center justify-center rounded-full text-sm font-semibold text-white"
+      className={`flex items-center justify-center rounded-full font-semibold text-white ${box}`}
       style={{ backgroundColor: `hsl(${pubkeyHue(pubkey)}, 45%, 42%)` }}
     >
       {label.slice(0, 2)}
