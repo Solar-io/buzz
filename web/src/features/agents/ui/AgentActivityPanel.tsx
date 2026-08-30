@@ -181,6 +181,12 @@ export function AgentActivityPanel({
             {suppressed} internal event{suppressed === 1 ? "" : "s"} filtered
           </p>
         )}
+        {/* TEMPORARY feed diagnostics (remove once the indicator report is
+            resolved): raw frames in / locked / shown / connection state. */}
+        <p className="pt-3 text-center text-xs text-muted-foreground/60">
+          feed: {frames.length} frames · {lockedCount} locked ·{" "}
+          {entries.length} shown · {connected ? "live" : "connecting"}
+        </p>
       </div>
     </aside>
   );
