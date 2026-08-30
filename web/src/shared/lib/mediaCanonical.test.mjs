@@ -166,6 +166,22 @@ test("PNG: snapshot tEXt chunk is preserved", () => {
   );
 });
 
+test("a second snapshot tEXt chunk is dropped (relay allows one)", () => {
+  const snap = [...Array.from("buzz_agent_snapshot").map((c) => c.charCodeAt(0)), 0, 1, 2];
+  const input = Uint8Array.from([
+    ...PNG_SIG,
+    ...pngChunk("IHDR", [1]),
+    ...pngChunk("tEXt", snap),
+    ...pngChunk("tEXt", snap),
+    ...pngChunk("IEND", []),
+  ]);
+  const out = canonicalizeImage(input, "image/png");
+  assert.ok(out);
+  const text = Buffer.from(out).toString("latin1");
+  const occurrences = text.split("buzz_agent_snapshot").length - 1;
+  assert.equal(occurrences, 1, "exactly one snapshot chunk survives");
+});
+
 test("non-image mime returns null (passthrough)", () => {
   assert.equal(canonicalizeImage(Uint8Array.of(1), "video/mp4"), null);
 });

@@ -123,10 +123,14 @@ function SignedMedia({ src, alt }: { src: string; alt: string }) {
   }
   if (alt === "video") {
     return objectUrl ? (
+      // Uploaded videos carry no caption tracks; aria-label is the best
+      // available label. Suppression is deliberate, not an oversight.
+      // biome-ignore lint/a11y/useMediaCaption: no caption track exists for user uploads
       <video
         src={objectUrl}
         controls
         playsInline
+        aria-label={alt === "video" ? "Video attachment" : alt}
         className="max-h-96 rounded-lg"
       />
     ) : (

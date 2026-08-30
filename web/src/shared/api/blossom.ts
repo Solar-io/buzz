@@ -57,10 +57,16 @@ function serverDomain(url: string): string | null {
 
 async function buildAuthorization(
   action: "upload" | "get",
-  extras: { sha256?: string; content: string; targetUrl: string },
+  extras: {
+    sha256?: string;
+    content: string;
+    targetUrl: string;
+    video?: boolean;
+  },
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
-  const expiry = now + (action === "upload" ? 600 : 600);
+  // Videos get a 3600s window like the CLI (500MB on a slow link).
+  const expiry = now + (action === "upload" && extras.video ? 3600 : 600);
   const tags: string[][] = [["t", action]];
   if (extras.sha256) {
     tags.push(["x", extras.sha256]);
@@ -162,6 +168,7 @@ export async function uploadBlob(
       sha256,
       content: "Upload file",
       targetUrl: url,
+      video: mime.startsWith("video/"),
     });
     const headers: Record<string, string> = {
       Authorization: authorization,

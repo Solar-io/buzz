@@ -140,6 +140,7 @@ function canonicalizePng(bytes: Uint8Array): Uint8Array | null {
   const out: number[] = [...PNG_SIG];
   let i = PNG_SIG.length;
   let sawIend = false;
+  let sawSnapshot = false;
   while (i + 12 <= bytes.length) {
     const len =
       ((bytes[i] << 24) |
@@ -158,10 +159,15 @@ function canonicalizePng(bytes: Uint8Array): Uint8Array | null {
       return null;
     }
     const ancillary = (bytes[i + 4] & 0x20) !== 0;
+    const isSnapshot =
+      kind === "tEXt" && isSnapshotTextChunk(bytes.subarray(i + 8, end - 4));
+    // The relay allows exactly ONE snapshot chunk; keep the first, drop the rest.
+    const snapshotKeep = isSnapshot && !sawSnapshot;
+    if (isSnapshot) {
+      sawSnapshot = true;
+    }
     const keep =
-      !ancillary ||
-      PNG_RENDERING_CHUNKS.has(kind) ||
-      (kind === "tEXt" && isSnapshotTextChunk(bytes.subarray(i + 8, end - 4)));
+      !ancillary || PNG_RENDERING_CHUNKS.has(kind) || snapshotKeep;
     if (keep) {
       for (let j = i; j < end; j++) {
         out.push(bytes[j]);
