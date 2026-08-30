@@ -216,32 +216,37 @@ export interface AgentWorkingState {
 const WORKING_STALE_SECONDS = 180;
 
 /**
- * "Received and working" indicator: a turn_started frame newer than the
- * agent's last chat reply means the turn is in flight. The agent's kind-9
- * message landing in the channel is the completion signal (the desktop uses
- * the same correlation). A turn with no activity for three minutes reads as
- * stalled rather than working.
+ * "Received and working" indicator: the newest turn_started frame newer than
+ * the agent's last chat reply means the turn is in flight; ANY frame newer
+ * than the last reply also counts (turn_started can be filtered, paced, or
+ * land late — acp traffic is equally good evidence the agent is working).
+ * The agent's kind-9 message landing in the channel is the completion
+ * signal. A turn with no activity for three minutes reads as stalled.
  */
 export function agentWorkingState(
   frames: ObserverFrame[],
   lastAgentReplyAt: number,
   nowSeconds: number,
 ): AgentWorkingState {
-  let startedAt: number | null = null;
+  let turnStartedAt: number | null = null;
   let lastFrameAt = 0;
   for (const frame of frames) {
-    if (frame.kind === "turn_started" && frame.createdAt > (startedAt ?? 0)) {
-      startedAt = frame.createdAt;
+    if (
+      frame.kind === "turn_started" &&
+      frame.createdAt > (turnStartedAt ?? 0)
+    ) {
+      turnStartedAt = frame.createdAt;
     }
     if (frame.createdAt > lastFrameAt) {
       lastFrameAt = frame.createdAt;
     }
   }
-  if (startedAt === null || startedAt <= lastAgentReplyAt) {
+  const evidenceAt = Math.max(turnStartedAt ?? 0, lastFrameAt);
+  if (evidenceAt <= 0 || evidenceAt <= lastAgentReplyAt) {
     return { working: false, startedAt: null };
   }
-  if (nowSeconds - Math.max(startedAt, lastFrameAt) > WORKING_STALE_SECONDS) {
+  if (nowSeconds - evidenceAt > WORKING_STALE_SECONDS) {
     return { working: false, startedAt: null };
   }
-  return { working: true, startedAt };
+  return { working: true, startedAt: turnStartedAt ?? lastFrameAt };
 }

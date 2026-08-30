@@ -127,3 +127,14 @@ test("agentWorkingState: no frames or stale turns read as idle", () => {
   );
   assert.equal(stale.working, false);
 });
+
+test("agentWorkingState: any frame newer than the last reply signals working", () => {
+  seqCounter = 530;
+  const { working, startedAt } = agentWorkingState(
+    [sessionUpdate({ sessionUpdate: "agent_thought_chunk", content: "x", messageId: "m9" })],
+    100,
+    150,
+  );
+  assert.equal(working, true);
+  assert.ok(startedAt !== null && startedAt > 100);
+});
