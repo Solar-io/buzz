@@ -167,6 +167,7 @@ export async function sendChannelMessage(
     content: string;
     mentionPubkeys: string[];
     threadRef?: { rootId: string; replyToId: string } | null;
+    mediaTags?: string[][];
   },
 ): Promise<SendResult> {
   const tags: string[][] = [["h", options.channelId]];
@@ -181,6 +182,9 @@ export async function sendChannelMessage(
   }
   for (const pubkey of options.mentionPubkeys) {
     tags.push(["p", pubkey]);
+  }
+  for (const mediaTag of options.mediaTags ?? []) {
+    tags.push(mediaTag);
   }
 
   const event = await signNostrEvent({
