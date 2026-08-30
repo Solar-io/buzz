@@ -316,6 +316,8 @@ function ChannelBrowser() {
     threadRoot === null ? dmAgentPubkey : null,
   );
   const [thinkingOpen, setThinkingOpen] = useState(false);
+  // DM right-pane tabs: thinking ↔ thread replies (channels stay thread-only).
+  const [rightTab, setRightTab] = useState<"thinking" | "thread">("thinking");
 
   return (
     <AppShell
@@ -349,7 +351,10 @@ function ChannelBrowser() {
                 <button
                   type="button"
                   className="ml-auto shrink-0 rounded-full border border-border px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-accent lg:hidden"
-                  onClick={() => setThinkingOpen(true)}
+                  onClick={() => {
+                    setRightTab("thinking");
+                    setThinkingOpen(true);
+                  }}
                 >
                   🧠 Thinking
                 </button>
@@ -360,7 +365,10 @@ function ChannelBrowser() {
                 messages={messages}
                 profiles={profiles}
                 replyCounts={counts}
-                onOpenThread={(message) => setThreadRootId(message.id)}
+                onOpenThread={(message) => {
+                  setThreadRootId(message.id);
+                  setRightTab("thread");
+                }}
                 activeRootId={threadRootId}
               />
             </div>
@@ -398,7 +406,7 @@ function ChannelBrowser() {
               }}
             />
           )}
-          {threadRoot && (
+          {threadRoot && (!dmAgentPubkey || rightTab === "thread") && (
             <ThreadPanel
               root={threadRoot}
               buffer={messages}
@@ -406,9 +414,23 @@ function ChannelBrowser() {
               profiles={profiles}
               onClose={() => setThreadRootId(null)}
               send={send}
+              onSelectThinkingTab={
+                dmAgentPubkey ? () => setRightTab("thinking") : undefined
+              }
             />
           )}
-          {!threadRoot && dmAgentPubkey && (
+          {threadRoot && dmAgentPubkey && rightTab === "thinking" && (
+            <ThreadPanel
+              root={threadRoot}
+              buffer={messages}
+              members={members}
+              profiles={profiles}
+              onClose={() => setThreadRootId(null)}
+              send={send}
+              mobileOnly
+            />
+          )}
+          {dmAgentPubkey && (!threadRoot || rightTab === "thinking") && (
             <AgentActivityPanel
               agentPubkey={dmAgentPubkey}
               agentName={
@@ -420,6 +442,9 @@ function ChannelBrowser() {
               connected={connected}
               mobileOpen={thinkingOpen}
               onCloseMobile={() => setThinkingOpen(false)}
+              onSelectThreadTab={
+                threadRoot ? () => setRightTab("thread") : undefined
+              }
             />
           )}
         </div>

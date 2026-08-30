@@ -1,29 +1,71 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { Profile } from "@/features/channels/hooks";
 import { AuthorAvatar } from "@/features/channels/ui/ChannelTimeline";
 import {
-  observerFrameSummary,
-  observerKindLabel,
+  transcriptFromFrames,
   type ObserverFrame,
+  type TranscriptEntry,
 } from "../lib/observerEvents";
 
-function frameTime(frame: ObserverFrame): string {
-  let ms = frame.timestamp ? Date.parse(frame.timestamp) : Number.NaN;
-  if (Number.isNaN(ms)) {
-    ms = frame.createdAt * 1000;
-  }
-  return new Date(ms).toLocaleTimeString([], {
+function entryTime(at: number): string {
+  return new Date(at * 1000).toLocaleTimeString([], {
     hour: "numeric",
     minute: "2-digit",
     second: "2-digit",
   });
 }
 
+function statusColor(status: string): string {
+  if (status === "completed") {
+    return "text-emerald-500";
+  }
+  if (status === "failed" || status === "error") {
+    return "text-red-400";
+  }
+  return "text-amber-400";
+}
+
+function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
+  if (entry.type === "turn") {
+    return (
+      <li className="flex items-center gap-2 py-1 text-xs text-muted-foreground/70">
+        <span className="h-px flex-1 bg-border" />
+        Turn · {entryTime(entry.at)}
+        <span className="h-px flex-1 bg-border" />
+      </li>
+    );
+  }
+  if (entry.type === "tool") {
+    return (
+      <li className="flex items-baseline gap-2 rounded-lg px-1 py-0.5 text-sm">
+        <span aria-hidden="true">🔧</span>
+        <span className="min-w-0 flex-1 truncate font-medium">
+          {entry.title}
+        </span>
+        <span className={`shrink-0 text-xs ${statusColor(entry.status)}`}>
+          {entry.status}
+        </span>
+      </li>
+    );
+  }
+  return (
+    <li className="rounded-lg border border-border/60 bg-card/60 px-3 py-2">
+      <div className="mb-0.5 text-xs font-medium text-muted-foreground">
+        💭 Thinking · {entryTime(entry.at)}
+      </div>
+      <p className="break-words whitespace-pre-wrap text-sm leading-5 text-muted-foreground">
+        {entry.text.trim()}
+      </p>
+    </li>
+  );
+}
+
 /**
- * The DM right panel the desktop calls the agent session view: a live tail
- * of the agent's thinking/activity (observer frames). Frames arrive
- * NIP-44-encrypted to the owner; when the local key is not the owner the
- * panel says so instead of showing garbage.
+ * The DM right panel the desktop calls the agent session view: a curated
+ * transcript (thinking text + tool rows — raw RPC frames are suppressed),
+ * the same treatment as the desktop's "thinking on aeryn" enhancement.
+ * Frames arrive NIP-44-encrypted to the owner; a locked count shows when the
+ * local key cannot decrypt them.
  */
 export function AgentActivityPanel({
   agentPubkey,
@@ -34,6 +76,7 @@ export function AgentActivityPanel({
   connected,
   mobileOpen,
   onCloseMobile,
+  onSelectThreadTab,
 }: {
   agentPubkey: string;
   agentName: string;
@@ -44,14 +87,20 @@ export function AgentActivityPanel({
   /** Below lg the panel is a deliberate sheet opened from the chat header. */
   mobileOpen: boolean;
   onCloseMobile: () => void;
+  /** DMs offer a Thinking ↔ Replies switch in the header. */
+  onSelectThreadTab?: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const { entries, suppressed } = useMemo(
+    () => transcriptFromFrames(frames),
+    [frames],
+  );
   const lastId = frames[frames.length - 1]?.id ?? "";
   useEffect(() => {
     if (lastId !== "") {
       scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
     }
-  }, [lastId]);
+  }, [lastId, entries.length]);
 
   return (
     // lg+: docked right pane (width rides the shared --thread-width var).
@@ -73,7 +122,15 @@ export function AgentActivityPanel({
           size="sm"
         />
         <span className="text-base font-semibold">Thinking</span>
-        <span className="text-xs text-muted-foreground">{agentName}</span>
+        {onSelectThreadTab && (
+          <button
+            type="button"
+            className="rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+            onClick={onSelectThreadTab}
+          >
+            Replies
+          </button>
+        )}
         <span
           className={
             "ml-auto inline-block h-2 w-2 rounded-full " +
@@ -106,27 +163,15 @@ export function AgentActivityPanel({
           </p>
         )}
         <ol className="space-y-1.5">
-          {frames.map((frame) => (
-            <li
-              key={frame.id}
-              className="rounded-lg border border-border/60 bg-card/60 px-2.5 py-1.5"
-            >
-              <div className="flex items-baseline gap-2">
-                <span className="text-xs font-medium text-muted-foreground">
-                  {frameTime(frame)}
-                </span>
-                <span className="text-xs font-semibold">
-                  {observerKindLabel(frame.kind)}
-                </span>
-              </div>
-              {observerFrameSummary(frame) && (
-                <p className="mt-0.5 break-words text-sm text-muted-foreground">
-                  {observerFrameSummary(frame)}
-                </p>
-              )}
-            </li>
+          {entries.map((entry) => (
+            <TranscriptRow key={entry.id} entry={entry} />
           ))}
         </ol>
+        {suppressed > 0 && (
+          <p className="pt-2 text-center text-xs text-muted-foreground/50">
+            {suppressed} internal event{suppressed === 1 ? "" : "s"} filtered
+          </p>
+        )}
       </div>
     </aside>
   );
