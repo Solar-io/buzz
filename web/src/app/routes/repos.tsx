@@ -19,9 +19,15 @@ import {
 import { Composer } from "@/features/channels/ui/Composer";
 import { ThreadPanel } from "@/features/channels/ui/ThreadPanel";
 import { NewChannelDialog } from "@/features/channels/ui/NewChannelDialog";
-import { useObserverEvents } from "@/features/agents/hooks";
-import { agentWorkingState } from "@/features/agents/lib/observerEvents";
-import { useTick } from "@/features/agents/ui/WorkingBadge";
+import {
+  useAgentFrames,
+  useObserverStore,
+} from "@/features/agents/ObserverProvider";
+import {
+  agentRecentlyActive,
+  agentWorkingState,
+} from "@/features/agents/lib/observerEvents";
+import { useTick, WorkingBadge } from "@/features/agents/ui/WorkingBadge";
 import { AgentActivityPanel } from "@/features/agents/ui/AgentActivityPanel";
 import { useDms } from "@/features/dms/hooks";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
@@ -314,25 +320,32 @@ function ChannelBrowser() {
         current.participantPubkeys[0] ??
         null)
       : null;
-  const observerFeed = useObserverEvents(
-    threadRoot === null ? dmAgentPubkey : null,
-    current?.id ?? null,
+  // Per-agent selection from the global observer store (one subscription,
+  // indexed by the frame's agent tag — no cross-agent leakage).
+  const observerStore = useObserverStore();
+  const agentFrames = useAgentFrames(dmAgentPubkey);
+  const channelAgentFrames = useMemo(
+    () =>
+      agentFrames.filter(
+        (frame) => frame.channelId === null || frame.channelId === current?.id,
+      ),
+    [agentFrames, current?.id],
   );
   const [thinkingOpen, setThinkingOpen] = useState(false);
   // DM right-pane tabs: thinking ↔ thread replies (channels stay thread-only).
   const [rightTab, setRightTab] = useState<"thinking" | "thread">("thinking");
-  // "Received and working": newest turn_started newer than the agent's last
-  // chat reply (their kind-9 landing = turn complete).
+  // "Received and working": sticky turn start; the agent's kind-9 reply
+  // landing in the channel ends the turn.
   const working = useMemo(
     () =>
       agentWorkingState(
-        observerFeed.frames,
+        channelAgentFrames,
         messages
           .filter((m) => m.authorPubkey === dmAgentPubkey)
           .reduce((max, m) => Math.max(max, m.createdAt), 0),
         Math.floor(Date.now() / 1000),
       ),
-    [observerFeed.frames, messages, dmAgentPubkey],
+    [channelAgentFrames, messages, dmAgentPubkey],
   );
   useTick(working.working);
 
@@ -464,8 +477,8 @@ function ChannelBrowser() {
                 profiles.get(dmAgentPubkey)?.displayName ?? dmAgentPubkey
               }
               profile={dmProfiles.get(dmAgentPubkey)}
-              frames={observerFeed.frames}
-              lockedCount={observerFeed.lockedCount}
+              frames={channelAgentFrames}
+              lockedCount={observerStore?.lockedCount ?? 0}
               connected={connected}
               working={working}
               mobileOpen={thinkingOpen}
@@ -583,6 +596,11 @@ function DmNavRow({
   const avatarPubkey = others[0] ?? participants[0] ?? "";
   const avatarLabel = profiles.get(avatarPubkey)?.displayName ?? avatarPubkey;
   const name = dmDisplayName(participants, selfPubkey ?? "", profiles);
+  // Per-agent working pulse in the sidebar: the store's freshness view of
+  // THIS row's agent (multi-agent aware — several rows can pulse at once).
+  const rowFrames = useAgentFrames(avatarPubkey || null);
+  const active = agentRecentlyActive(rowFrames, Math.floor(Date.now() / 1000));
+  useTick(active);
   return (
     <button
       type="button"
@@ -596,12 +614,20 @@ function DmNavRow({
         closeDrawer();
       }}
     >
-      <AuthorAvatar
-        pubkey={avatarPubkey}
-        label={avatarLabel}
-        picture={profiles.get(avatarPubkey)?.avatar}
-        size="md"
-      />
+      <span className="relative shrink-0">
+        <AuthorAvatar
+          pubkey={avatarPubkey}
+          label={avatarLabel}
+          picture={profiles.get(avatarPubkey)?.avatar}
+          size="md"
+        />
+        {active && (
+          <span className="absolute -right-0.5 -bottom-0.5 flex h-3 w-3">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+            <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500" />
+          </span>
+        )}
+      </span>
       <span className="min-w-0 flex-1">
         <span
           className={cn(
@@ -617,7 +643,10 @@ function DmNavRow({
           </span>
         )}
       </span>
-      {lastMessage && (
+      {active && (
+        <WorkingBadge startedAt={rowFrames[0]?.createdAt ?? 0} compact />
+      )}
+      {lastMessage && !active && (
         <span className="shrink-0 text-[11px] text-muted-foreground/70">
           {shortStamp(lastMessage.created_at)}
         </span>

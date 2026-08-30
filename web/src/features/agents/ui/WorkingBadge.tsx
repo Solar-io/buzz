@@ -34,24 +34,31 @@ export function formatElapsed(startedAt: number, nowSeconds: number): string {
 export function WorkingBadge({
   startedAt,
   className,
+  compact,
 }: {
   startedAt: number;
   className?: string;
+  /** Sidebar form: timer only, no "Working" word (the dot carries it). */
+  compact?: boolean;
 }) {
   const nowSeconds = Math.floor(Date.now() / 1000);
   return (
     <span
       className={
-        "inline-flex items-center gap-1.5 rounded-full bg-white/[0.18] px-2.5 py-0.5 text-xs font-medium text-foreground " +
+        "inline-flex shrink-0 items-center gap-1.5 rounded-full bg-white/[0.18] px-2.5 py-0.5 text-xs font-medium tabular-nums text-foreground " +
         (className ?? "")
       }
       data-working-since={startedAt}
     >
-      <span className="relative flex h-2 w-2">
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-        <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-      </span>
-      Working · {formatElapsed(startedAt, nowSeconds)}
+      {!compact && (
+        <span className="relative flex h-2 w-2">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+        </span>
+      )}
+      {compact
+        ? formatElapsed(startedAt, nowSeconds)
+        : `Working · ${formatElapsed(startedAt, nowSeconds)}`}
     </span>
   );
 }

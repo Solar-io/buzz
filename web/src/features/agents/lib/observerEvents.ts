@@ -216,12 +216,13 @@ export interface AgentWorkingState {
 const WORKING_STALE_SECONDS = 180;
 
 /**
- * "Received and working" indicator: the newest turn_started frame newer than
- * the agent's last chat reply means the turn is in flight; ANY frame newer
- * than the last reply also counts (turn_started can be filtered, paced, or
- * land late — acp traffic is equally good evidence the agent is working).
- * The agent's kind-9 message landing in the channel is the completion
- * signal. A turn with no activity for three minutes reads as stalled.
+ * "Received and working" indicator. Turn boundaries:
+ * - START: the newest turn_started frame newer than the agent's last chat
+ *   reply — or, when turn_started was filtered/paced away, the FIRST frame
+ *   after the last reply (sticky by construction: the earliest evidence, not
+ *   the latest — a moving start would reset the timer on every tool call).
+ * - END: the agent's kind-9 message landing in the channel (newer than the
+ *   turn start), or three minutes of silence.
  */
 export function agentWorkingState(
   frames: ObserverFrame[],
@@ -229,24 +230,44 @@ export function agentWorkingState(
   nowSeconds: number,
 ): AgentWorkingState {
   let turnStartedAt: number | null = null;
+  let firstEvidenceAt: number | null = null;
   let lastFrameAt = 0;
   for (const frame of frames) {
-    if (
-      frame.kind === "turn_started" &&
-      frame.createdAt > (turnStartedAt ?? 0)
-    ) {
-      turnStartedAt = frame.createdAt;
+    if (frame.createdAt > lastAgentReplyAt) {
+      if (firstEvidenceAt === null || frame.createdAt < firstEvidenceAt) {
+        firstEvidenceAt = frame.createdAt;
+      }
+      if (
+        frame.kind === "turn_started" &&
+        frame.createdAt > (turnStartedAt ?? 0)
+      ) {
+        turnStartedAt = frame.createdAt;
+      }
     }
     if (frame.createdAt > lastFrameAt) {
       lastFrameAt = frame.createdAt;
     }
   }
-  const evidenceAt = Math.max(turnStartedAt ?? 0, lastFrameAt);
-  if (evidenceAt <= 0 || evidenceAt <= lastAgentReplyAt) {
+  const startedAt = turnStartedAt ?? firstEvidenceAt;
+  if (startedAt === null || lastFrameAt <= lastAgentReplyAt) {
     return { working: false, startedAt: null };
   }
-  if (nowSeconds - evidenceAt > WORKING_STALE_SECONDS) {
+  if (nowSeconds - lastFrameAt > WORKING_STALE_SECONDS) {
     return { working: false, startedAt: null };
   }
-  return { working: true, startedAt: turnStartedAt ?? lastFrameAt };
+  return { working: true, startedAt };
+}
+
+/** Sidebar heuristic: agent produced frames within the freshness window. */
+export function agentRecentlyActive(
+  frames: ObserverFrame[],
+  nowSeconds: number,
+): boolean {
+  let lastFrameAt = 0;
+  for (const frame of frames) {
+    if (frame.createdAt > lastFrameAt) {
+      lastFrameAt = frame.createdAt;
+    }
+  }
+  return lastFrameAt > 0 && nowSeconds - lastFrameAt <= WORKING_STALE_SECONDS;
 }

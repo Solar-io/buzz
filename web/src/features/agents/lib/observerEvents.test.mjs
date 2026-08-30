@@ -131,10 +131,42 @@ test("agentWorkingState: no frames or stale turns read as idle", () => {
 test("agentWorkingState: any frame newer than the last reply signals working", () => {
   seqCounter = 530;
   const { working, startedAt } = agentWorkingState(
-    [sessionUpdate({ sessionUpdate: "agent_thought_chunk", content: "x", messageId: "m9" })],
+    [
+      sessionUpdate({
+        sessionUpdate: "agent_thought_chunk",
+        content: "x",
+        messageId: "m9",
+      }),
+    ],
     100,
     150,
   );
   assert.equal(working, true);
   assert.ok(startedAt !== null && startedAt > 100);
+});
+
+test("timer start is sticky: later frames do not reset it", () => {
+  seqCounter = 540;
+  const frames = [
+    sessionUpdate({
+      sessionUpdate: "agent_thought_chunk",
+      content: "a",
+      messageId: "m1",
+    }),
+    sessionUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "t1",
+      title: "Read",
+    }),
+    sessionUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "t2",
+      title: "Grep",
+    }),
+  ];
+  const first = agentWorkingState(frames, 100, 150);
+  const later = agentWorkingState(frames, 100, 160);
+  assert.ok(first.startedAt !== null);
+  assert.equal(first.startedAt, later.startedAt);
+  assert.ok(later.working);
 });
