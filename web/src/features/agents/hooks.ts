@@ -45,8 +45,17 @@ function decodeFrame(
  * user (the owner). The desktop's ManagedAgentSessionPanel equivalent; frames
  * are ephemeral on the relay, so this is what is retained plus whatever the
  * relay replays on subscribe.
+ *
+ * Scoping is CLIENT-side: the relay routes ephemeral observer frames by kind
+ * + p tag only (subscription.rs global p-kind index — the authors filter is
+ * not honored for ephemeral fan-out), so every agent's frames addressed to
+ * the owner arrive here and must be filtered by author pubkey, and by the
+ * frame's channel when it names one.
  */
-export function useObserverEvents(agentPubkey: string | null): ObserverFeed {
+export function useObserverEvents(
+  agentPubkey: string | null,
+  channelId: string | null = null,
+): ObserverFeed {
   const { session } = useRelaySession();
   const [events, setEvents] = useState<SignedNostrEvent[]>([]);
 
@@ -72,6 +81,9 @@ export function useObserverEvents(agentPubkey: string | null): ObserverFeed {
         },
         {
           onEvent: (event) => {
+            if (event.pubkey !== agentPubkey) {
+              return;
+            }
             setEvents((previous) => [...previous, event]);
           },
         },
@@ -104,13 +116,21 @@ export function useObserverEvents(agentPubkey: string | null): ObserverFeed {
     let lockedCount = 0;
     for (const event of events) {
       const frame = decodeFrame(event, secretKey);
-      if (frame) {
-        frames.push(frame);
-      } else {
+      if (!frame) {
         lockedCount += 1;
+        continue;
+      }
+      // Channel-scoped frames belong only to their channel's panel;
+      // agent-level frames (null channel) show everywhere for that agent.
+      if (
+        channelId === null ||
+        frame.channelId === null ||
+        frame.channelId === channelId
+      ) {
+        frames.push(frame);
       }
     }
     frames.sort((a, b) => a.createdAt - b.createdAt || a.seq - b.seq);
     return { frames: frames.slice(-MAX_FRAMES), lockedCount };
-  }, [events]);
+  }, [events, channelId]);
 }

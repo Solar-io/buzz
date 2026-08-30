@@ -314,6 +314,7 @@ function ChannelBrowser() {
       : null;
   const observerFeed = useObserverEvents(
     threadRoot === null ? dmAgentPubkey : null,
+    current?.id ?? null,
   );
   const [thinkingOpen, setThinkingOpen] = useState(false);
   // DM right-pane tabs: thinking ↔ thread replies (channels stay thread-only).
