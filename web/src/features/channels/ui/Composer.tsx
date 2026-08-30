@@ -188,7 +188,7 @@ export function Composer({
   };
 
   return (
-    <div className="relative border-t border-border p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+    <div className="relative border-t border-border p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-4">
       {suggestions.length > 0 && (
         <ul className="absolute bottom-full left-3 mb-1 w-64 overflow-hidden rounded-md border border-border bg-popover shadow-lg">
           {suggestions.map((member, index) => (
@@ -225,7 +225,7 @@ export function Composer({
           type="button"
           aria-label="Attach a file"
           title="Attach images or video"
-          className="rounded-md p-2 text-muted-foreground hover:bg-accent disabled:opacity-50"
+          className="mb-0.5 rounded-lg p-2.5 text-muted-foreground hover:bg-accent disabled:opacity-50"
           disabled={uploading || busy}
           onClick={() => fileInputRef.current?.click()}
         >
@@ -233,7 +233,7 @@ export function Composer({
         </button>
         <textarea
           ref={textareaRef}
-          className="max-h-40 min-h-10 flex-1 resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+          className="max-h-56 min-h-14 flex-1 resize-y rounded-xl border border-input bg-card px-4 py-3 text-base shadow-xs placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
           placeholder="Message — @ to mention, Shift+Enter for newline"
           rows={1}
           value={text}

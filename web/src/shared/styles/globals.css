@@ -45,6 +45,39 @@
   line-height: 1.45;
 }
 
+/*
+ * Scrollbars (Sam 8/30: track must match the surface it sits on). The
+ * desktop client's pattern: transparent track AND thumb, with the thumb
+ * fading in only on hover — so the bar reads as part of the background
+ * until you go looking for it. Firefox via scrollbar-color; WebKit below.
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+*:hover {
+  scrollbar-color: hsl(0 0% 100% / 0.14) transparent;
+}
+*::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-clip: content-box;
+  background-color: transparent;
+  border: 3px solid transparent;
+  border-radius: 999px;
+}
+*:hover::-webkit-scrollbar-thumb {
+  background-color: hsl(0 0% 100% / 0.14);
+}
+*:hover::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(0 0% 100% / 0.22);
+}
+
 @layer base {
   :root {
     /* Catppuccin Latte (mauve accent) */
