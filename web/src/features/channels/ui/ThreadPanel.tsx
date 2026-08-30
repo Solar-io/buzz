@@ -4,8 +4,10 @@ import { ChannelTimeline } from "./ChannelTimeline.tsx";
 import { Composer } from "./Composer.tsx";
 
 /**
- * Thread view: the root message, every reply in the channel buffer, and a
- * composer that replies into the thread (NIP-10 root/reply tags).
+ * Thread view in the desktop client's shape: a "Thread" header with the reply
+ * count, the root message on a rounded card, every reply in the channel
+ * buffer, and a composer that replies into the thread (NIP-10 root/reply
+ * tags).
  */
 export function ThreadPanel({
   root,
@@ -35,8 +37,11 @@ export function ThreadPanel({
     // Below lg the thread is a full-screen sheet (safe-area aware) — a third
     // column at phone/tablet widths is what crushed the timeline. lg+: docked.
     <aside className="fixed inset-0 z-40 flex flex-col bg-background pt-[max(0.5rem,env(safe-area-inset-top))] lg:static lg:inset-auto lg:z-auto lg:w-96 lg:shrink-0 lg:border-l lg:border-border lg:pt-0">
-      <header className="flex items-center justify-between border-b border-border px-3 py-2">
+      <header className="flex items-baseline justify-between gap-2 border-b border-border px-3 py-2">
         <span className="text-sm font-semibold">Thread</span>
+        <span className="text-xs text-muted-foreground">
+          {replies.length} {replies.length === 1 ? "reply" : "replies"}
+        </span>
         <button
           type="button"
           aria-label="Close thread"
@@ -52,7 +57,7 @@ export function ThreadPanel({
           profiles={profiles}
           replyCounts={new Map()}
           onOpenThread={() => {
-            // Threads are flat in Phase 1: every reply targets the root.
+            // Threads are flat: every reply targets the root.
           }}
         />
       </div>

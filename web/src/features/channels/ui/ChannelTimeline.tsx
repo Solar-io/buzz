@@ -4,6 +4,7 @@ export type { ChannelMember, Profile } from "../hooks.ts";
 import type { Profile } from "../hooks.ts";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { fetchSignedMedia } from "@/shared/api/blossom";
+import { cn } from "@/shared/lib/cn";
 import { MarkdownContent } from "./MarkdownContent.tsx";
 
 function formatTime(unixSeconds: number): string {
@@ -91,11 +92,14 @@ export function ChannelTimeline({
   profiles,
   replyCounts,
   onOpenThread,
+  activeRootId,
 }: {
   messages: MessageBuffer;
   profiles: Map<string, Profile>;
   replyCounts: Map<string, number>;
   onOpenThread: (message: TimelineMessage) => void;
+  /** Root id of the currently open thread — highlights it in the timeline. */
+  activeRootId?: string | null;
 }) {
   if (messages.length === 0) {
     return (
@@ -109,22 +113,19 @@ export function ChannelTimeline({
   const rows: ReactNode[] = [];
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index];
-    // Top-level flow: replies render as counts in Phase 1 (thread view shows
-    // the chain); this keeps the main timeline readable.
+    // Replies render INLINE under their root (desktop pattern: indented
+    // previews with a connector rail, click opens the full thread panel).
     if (message.rootId || message.replyToId) {
       lastAuthor = null;
-      rows.push(
-        <ThreadReplyRow
-          key={message.id}
-          message={message}
-          profiles={profiles}
-          onOpenThread={onOpenThread}
-        />,
-      );
       continue;
     }
+    const replies = messages.filter(
+      (m) => m.rootId === message.id || m.replyToId === message.id,
+    );
     const grouped =
-      message.authorPubkey === lastAuthor && message.kind === lastKind;
+      message.authorPubkey === lastAuthor &&
+      message.kind === lastKind &&
+      replies.length === 0;
     lastAuthor = message.authorPubkey;
     lastKind = message.kind;
     rows.push(
@@ -135,7 +136,17 @@ export function ChannelTimeline({
         grouped={grouped}
         replyCount={replyCounts.get(message.id) ?? 0}
         onOpenThread={onOpenThread}
-      />,
+        active={activeRootId === message.id}
+      >
+        {replies.length > 0 && (
+          <ThreadPreview
+            replies={replies}
+            profiles={profiles}
+            onOpenThread={onOpenThread}
+            root={message}
+          />
+        )}
+      </MessageRow>,
     );
   }
   // max-w keeps line lengths readable on wide desktops without affecting
@@ -151,12 +162,16 @@ function MessageRow({
   grouped,
   replyCount,
   onOpenThread,
+  active,
+  children,
 }: {
   message: TimelineMessage;
   profiles: Map<string, Profile>;
   grouped: boolean;
   replyCount: number;
   onOpenThread: (message: TimelineMessage) => void;
+  active: boolean;
+  children?: ReactNode;
 }) {
   const mentionNames = new Set(
     message.mentionPubkeys.map((pubkey) =>
@@ -164,10 +179,14 @@ function MessageRow({
     ),
   );
   return (
+    // Desktop message cards: rounded-2xl rows, hover muted wash; the open
+    // thread's root keeps a persistent tint so the selection is traceable.
     <div
-      className={`group flex gap-3 rounded-md px-2 hover:bg-accent/40 ${
-        grouped ? "mt-0.5" : "mt-3"
-      }`}
+      className={cn(
+        "group flex gap-3 rounded-2xl px-2 transition-colors hover:bg-muted/50",
+        grouped ? "mt-0.5" : "mt-3",
+        active && "bg-muted/40 hover:bg-muted/40",
+      )}
     >
       <div className="w-9 shrink-0">
         {!grouped && (
@@ -193,15 +212,16 @@ function MessageRow({
           content={message.content}
           mentionNames={mentionNames}
         />
-        {replyCount > 0 && (
+        {replyCount > 2 && (
           <button
             type="button"
-            className="mt-0.5 text-xs text-muted-foreground hover:underline"
+            className="mt-0.5 text-sm font-medium text-muted-foreground hover:underline"
             onClick={() => onOpenThread(message)}
           >
-            {replyCount} {replyCount === 1 ? "reply" : "replies"} →
+            View all {replyCount} {replyCount === 1 ? "reply" : "replies"} →
           </button>
         )}
+        {children}
       </div>
       <button
         type="button"
@@ -215,33 +235,58 @@ function MessageRow({
   );
 }
 
-function ThreadReplyRow({
-  message,
+/**
+ * Inline thread previews under a root message, in the desktop's shape:
+ * indented under the avatar's center line, a connector rail on the left,
+ * the newest replies as one-line author + excerpt rows, and the whole block
+ * opens the thread panel on click.
+ */
+function ThreadPreview({
+  replies,
   profiles,
   onOpenThread,
+  root,
 }: {
-  message: TimelineMessage;
+  replies: TimelineMessage[];
   profiles: Map<string, Profile>;
   onOpenThread: (message: TimelineMessage) => void;
+  root: TimelineMessage;
 }) {
-  const rootId = message.rootId ?? message.replyToId ?? "";
+  const newest = [...replies].sort((a, b) => b.createdAt - a.createdAt);
+  const shown = newest.slice(0, 2);
   return (
-    <button
-      type="button"
-      className="ml-14 mt-1 block truncate rounded-md px-2 py-1 text-left text-sm text-muted-foreground hover:bg-accent/40 hover:underline"
-      onClick={() => {
-        // Open the thread by its root; the parent view resolves the message.
-        onOpenThread({
-          ...message,
-          id: rootId,
-          rootId: null,
-          replyToId: null,
-        });
-      }}
-    >
-      ↳ {authorLabel(message.authorPubkey, profiles)}:{" "}
-      {plainExcerpt(message.content)}
-    </button>
+    <div className="mt-1 ml-[18px] border-l-2 border-border/45 pl-3">
+      {shown.map((reply) => (
+        <button
+          key={reply.id}
+          type="button"
+          className="flex w-full items-center gap-2 rounded-lg py-0.5 pr-2 text-left hover:bg-muted/50"
+          onClick={() => onOpenThread(root)}
+        >
+          <AuthorAvatar
+            pubkey={reply.authorPubkey}
+            label={authorLabel(reply.authorPubkey, profiles)}
+            picture={profiles.get(reply.authorPubkey)?.avatar}
+            size="sm"
+          />
+          <span className="shrink-0 text-sm font-medium">
+            {authorLabel(reply.authorPubkey, profiles)}
+          </span>
+          <span className="truncate text-sm text-muted-foreground">
+            {plainExcerpt(reply.content)}
+          </span>
+        </button>
+      ))}
+      {newest.length > shown.length && (
+        <button
+          type="button"
+          className="py-0.5 pr-2 text-sm font-medium text-muted-foreground hover:underline"
+          onClick={() => onOpenThread(root)}
+        >
+          +{newest.length - shown.length} more →
+        </button>
+      )}
+    </div>
   );
 }
 

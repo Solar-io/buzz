@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { Hash } from "lucide-react";
 import { useAuth } from "@/features/auth/ui/AuthProvider";
 import { LoginPage } from "@/features/auth/ui/LoginPage";
 import {
@@ -190,6 +191,7 @@ function ChannelBrowser() {
               <SidebarNavButton
                 selected={channel.id === selectedId}
                 label={channel.name}
+                icon={<ChannelHash />}
                 onSelect={() => {
                   setThreadRootId(null);
                   void navigate({
@@ -281,7 +283,7 @@ function ChannelBrowser() {
         current
           ? current.type === "dm"
             ? dmName(current.participantPubkeys)
-            : current.name
+            : `# ${current.name}`
           : null
       }
     >
@@ -292,7 +294,7 @@ function ChannelBrowser() {
               <h1 className="truncate text-lg font-semibold">
                 {current.type === "dm"
                   ? dmName(current.participantPubkeys)
-                  : current.name}
+                  : `# ${current.name}`}
               </h1>
               {current.type !== "dm" && current.about && (
                 <p className="truncate text-sm text-muted-foreground">
@@ -306,6 +308,7 @@ function ChannelBrowser() {
                 profiles={profiles}
                 replyCounts={counts}
                 onOpenThread={(message) => setThreadRootId(message.id)}
+                activeRootId={threadRootId}
               />
             </div>
             <Composer
@@ -351,10 +354,13 @@ function ChannelBrowser() {
 function SidebarNavButton({
   selected,
   label,
+  icon,
   onSelect,
 }: {
   selected: boolean;
   label: string;
+  /** Leading glyph — channels pass the desktop's Hash mark. */
+  icon?: ReactNode;
   onSelect: () => void;
 }) {
   const closeDrawer = useDrawerClose();
@@ -362,7 +368,7 @@ function SidebarNavButton({
     <button
       type="button"
       className={cn(
-        "flex h-8 w-full items-center truncate rounded-md px-2 text-left text-sm transition-colors",
+        "flex h-8 w-full items-center gap-1.5 truncate rounded-md px-2 text-left text-sm transition-colors",
         "hover:bg-white/5 hover:text-foreground",
         selected && "bg-white/[0.18] font-medium text-foreground",
       )}
@@ -371,8 +377,19 @@ function SidebarNavButton({
         closeDrawer();
       }}
     >
+      {icon}
       <span className="truncate">{label}</span>
     </button>
+  );
+}
+
+/** The desktop's channel glyph: a muted Hash in front of channel names. */
+function ChannelHash() {
+  return (
+    <Hash
+      aria-hidden="true"
+      className="h-4 w-4 shrink-0 text-sidebar-foreground/60"
+    />
   );
 }
 
