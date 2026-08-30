@@ -228,7 +228,7 @@ function ThreadReplyRow({
   return (
     <button
       type="button"
-      className="ml-14 mt-1 block truncate rounded-md px-2 py-1 text-left text-xs text-muted-foreground hover:bg-accent/40 hover:underline"
+      className="ml-14 mt-1 block truncate rounded-md px-2 py-1 text-left text-sm text-muted-foreground hover:bg-accent/40 hover:underline"
       onClick={() => {
         // Open the thread by its root; the parent view resolves the message.
         onOpenThread({

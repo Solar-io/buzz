@@ -29,6 +29,21 @@
     U+2215, U+FEFF, U+FFFD;
 }
 
+/*
+ * Chat message text: Sam's ask (8/30) was +50% on the conversation text —
+ * 14px → 21px. Deliberately UNLAYERED so it wins over the typography
+ * plugin's `.prose`/`.prose-sm` font-size (same trick the desktop client
+ * uses for its gradient overrides). Everything inside prose is em-scaled,
+ * so headings/code/quotes grow with it.
+ */
+.message-prose {
+  font-size: 1.3125rem; /* 21px */
+  line-height: 1.45; /* ~30px */
+}
+.message-prose p {
+  line-height: 1.45;
+}
+
 @layer base {
   :root {
     /* Catppuccin Latte (mauve accent) */

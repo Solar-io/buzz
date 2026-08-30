@@ -441,7 +441,7 @@ function DmNavRow({
         pubkey={avatarPubkey}
         label={avatarLabel}
         picture={profiles.get(avatarPubkey)?.avatar}
-        size="sm"
+        size="md"
       />
       <span className="min-w-0 flex-1">
         <span
