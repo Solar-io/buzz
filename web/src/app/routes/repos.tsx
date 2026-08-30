@@ -19,6 +19,8 @@ import {
 import { Composer } from "@/features/channels/ui/Composer";
 import { ThreadPanel } from "@/features/channels/ui/ThreadPanel";
 import { NewChannelDialog } from "@/features/channels/ui/NewChannelDialog";
+import { useObserverEvents } from "@/features/agents/hooks";
+import { AgentActivityPanel } from "@/features/agents/ui/AgentActivityPanel";
 import { useDms } from "@/features/dms/hooks";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
 import type { DmLastMessage } from "@/features/dms/lib/dmActivity.ts";
@@ -111,6 +113,21 @@ function ChannelBrowser() {
   const threadRoot = threadRootId
     ? (messages.find((m) => m.id === threadRootId) ?? null)
     : null;
+  // Right-pane width (thread + agent activity share it), drag-resizable.
+  const [threadWidth, setThreadWidth] = useState<number>(() => {
+    const stored = Number.parseFloat(
+      globalThis.localStorage?.getItem("buzz.thread-width.v1") ?? "",
+    );
+    return Number.isFinite(stored) && stored >= 288 && stored <= 640
+      ? stored
+      : 384;
+  });
+  useEffect(() => {
+    globalThis.localStorage?.setItem(
+      "buzz.thread-width.v1",
+      String(Math.round(threadWidth)),
+    );
+  }, [threadWidth]);
   const scrollRef = useRef<HTMLDivElement>(null);
   // Re-scroll on the newest message id; also re-run when switching channels
   // (two channels can share a last-message id only in the empty case).
@@ -276,6 +293,18 @@ function ChannelBrowser() {
     </div>
   );
 
+  // DM with an agent → the right pane is the thinking/activity panel unless a
+  // thread is open (thread wins; both ride the same resizable width).
+  const dmAgentPubkey =
+    current?.type === "dm"
+      ? (current.participantPubkeys.find((pk) => pk !== selfPubkey) ??
+        current.participantPubkeys[0] ??
+        null)
+      : null;
+  const observerFeed = useObserverEvents(
+    threadRoot === null ? dmAgentPubkey : null,
+  );
+
   return (
     <AppShell
       sidebar={sidebar}
@@ -288,16 +317,19 @@ function ChannelBrowser() {
       }
     >
       {current ? (
-        <div className="flex h-full min-h-0">
+        <div
+          className="flex h-full min-h-0"
+          style={{ ["--thread-width" as string]: `${threadWidth}px` }}
+        >
           <section className="flex min-w-0 flex-1 flex-col">
-            <div className="border-b border-border px-4 py-3">
-              <h1 className="truncate text-lg font-semibold">
+            <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-[#272736] px-4">
+              <h1 className="truncate text-base font-semibold">
                 {current.type === "dm"
                   ? dmName(current.participantPubkeys)
                   : `# ${current.name}`}
               </h1>
               {current.type !== "dm" && current.about && (
-                <p className="truncate text-sm text-muted-foreground">
+                <p className="hidden truncate text-sm text-muted-foreground sm:block">
                   {current.about}
                 </p>
               )}
@@ -323,6 +355,28 @@ function ChannelBrowser() {
               send={send}
             />
           </section>
+          {(threadRoot || dmAgentPubkey) && (
+            <div
+              aria-label="Resize side panel"
+              role="separator"
+              aria-orientation="vertical"
+              className="relative z-10 hidden w-1 shrink-0 cursor-col-resize border-r border-border bg-transparent transition-colors hover:bg-white/15 active:bg-white/25 lg:block lg:-ml-px"
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.currentTarget.setPointerCapture(event.pointerId);
+              }}
+              onPointerMove={(event) => {
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                  setThreadWidth((previous) =>
+                    Math.min(640, Math.max(288, previous - event.movementX)),
+                  );
+                }
+              }}
+              onPointerUp={(event) => {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+              }}
+            />
+          )}
           {threadRoot && (
             <ThreadPanel
               root={threadRoot}
@@ -331,6 +385,18 @@ function ChannelBrowser() {
               profiles={profiles}
               onClose={() => setThreadRootId(null)}
               send={send}
+            />
+          )}
+          {!threadRoot && dmAgentPubkey && (
+            <AgentActivityPanel
+              agentPubkey={dmAgentPubkey}
+              agentName={
+                profiles.get(dmAgentPubkey)?.displayName ?? dmAgentPubkey
+              }
+              profile={dmProfiles.get(dmAgentPubkey)}
+              frames={observerFeed.frames}
+              lockedCount={observerFeed.lockedCount}
+              connected={connected}
             />
           )}
         </div>
@@ -368,7 +434,7 @@ function SidebarNavButton({
     <button
       type="button"
       className={cn(
-        "flex h-8 w-full items-center gap-1.5 truncate rounded-md px-2 text-left text-sm transition-colors",
+        "flex h-9 w-full items-center gap-1.5 truncate rounded-md px-2 text-left text-base transition-colors",
         "hover:bg-white/5 hover:text-foreground",
         selected && "bg-white/[0.18] font-medium text-foreground",
       )}
@@ -463,7 +529,7 @@ function DmNavRow({
       <span className="min-w-0 flex-1">
         <span
           className={cn(
-            "block truncate text-sm",
+            "block truncate text-base",
             selected ? "font-medium text-foreground" : "text-foreground",
           )}
         >
