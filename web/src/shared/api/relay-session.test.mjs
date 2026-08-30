@@ -296,3 +296,48 @@ test("authEventTemplate rejects malformed auth tags", () => {
     /auth/,
   );
 });
+
+test("CLOSED(auth-required) sub is re-REQd after AUTH completes", async () => {
+  const { session } = makeSession();
+  const events = [];
+  session.subscribe({ kinds: [24200] }, { onEvent: (e) => events.push(e) });
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  // Auth grace expires and the REQ goes out before the relay challenges.
+  await tick(20);
+  assert.equal(socket.sentOf("REQ").length, 1);
+  // Relay rejects the pre-auth REQ, then challenges.
+  socket.serverSend(["CLOSED", "s0", "auth-required: not authenticated"]);
+  socket.serverSend(["AUTH", "challenge-late"]);
+  await tick(20);
+  // AUTH went out and the sub was replayed exactly once more.
+  assert.ok(socket.sentOf("AUTH").length >= 1);
+  assert.equal(socket.sentOf("REQ").length, 2);
+  // A non-auth close stays closed — no retry loop.
+  socket.serverSend(["CLOSED", "s0", "restricted: nope"]);
+  await tick(20);
+  assert.equal(socket.sentOf("REQ").length, 2);
+  session.close();
+});
+
+test("CLOSED after auth retries once, bounded", async () => {
+  const { session } = makeSession();
+  session.subscribe({ kinds: [9] }, { onEvent: () => {} });
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  await tick(20);
+  socket.serverSend(["AUTH", "c1"]);
+  await tick(20);
+  const afterAuth = socket.sentOf("REQ").length;
+  socket.serverSend(["CLOSED", "s0", "auth-required: raced"]);
+  await tick(400);
+  assert.equal(socket.sentOf("REQ").length, afterAuth + 1);
+  // Second auth-required close for the same sub does not spiral: the retry
+  // re-opens it, one more CLOSED without further auth churn stops there.
+  socket.serverSend(["CLOSED", "s0", "auth-required: raced again"]);
+  await tick(400);
+  assert.equal(socket.sentOf("REQ").length, afterAuth + 2);
+  session.close();
+});

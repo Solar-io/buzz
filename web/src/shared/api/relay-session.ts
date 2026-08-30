@@ -95,6 +95,12 @@ export class RelaySession {
   /** Messages waiting for AUTH completion on the current socket. */
   private pending: PendingMessage[] = [];
   private authenticated = false;
+  /**
+   * True only when the RELAY accepted our AUTH — the auth-grace path sets
+   * `authenticated` without it, and a challenge arriving after grace must
+   * still be answered (the relay may have closed our pre-auth REQs).
+   */
+  private authedByRelay = false;
   private authTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
@@ -143,6 +149,7 @@ export class RelaySession {
     const socket = this.factory(this.wsUrl);
     this.socket = socket;
     this.authenticated = false;
+    this.authedByRelay = false;
     this.pending = [];
     socket.addEventListener("open", this.handleOpen);
     socket.addEventListener("message", this.handleMessage);
@@ -200,11 +207,32 @@ export class RelaySession {
       }
       return;
     }
-    // CLOSED / NOTICE / COUNT: nothing session-critical to do yet.
+    if (type === "CLOSED") {
+      // A REQ that raced AUTH comes back CLOSED("auth-required"); without
+      // this the sub stays listed as open, the post-AUTH replay skips it,
+      // and the feed is silently dead until a reconnect. Drop it from the
+      // open set so the next replay re-REQs (post-AUTH or reconnect); when
+      // the close says auth-required and we are already authenticated, do
+      // one bounded retry — other close reasons (e.g. policy) stay closed.
+      const subId = String(message[1] ?? "");
+      const reason = String(message[2] ?? "");
+      if (this.openSubs.has(subId)) {
+        this.openSubs.delete(subId);
+        if (this.authenticated && reason.includes("auth-required")) {
+          setTimeout(() => {
+            if (!this.openSubs.has(subId)) {
+              this.replaySubscriptions();
+            }
+          }, 250);
+        }
+      }
+      return;
+    }
+    // NOTICE / COUNT: nothing session-critical to do yet.
   };
 
   private async handleAuthChallenge(challenge: string): Promise<void> {
-    if (this.authenticated) {
+    if (this.authedByRelay) {
       return;
     }
     if (this.authTimer) {
@@ -218,6 +246,7 @@ export class RelaySession {
       const event = await this.signAuthEvent(challenge, this.wsUrl);
       this.socket?.send(JSON.stringify(["AUTH", event]));
       this.authenticated = true;
+      this.authedByRelay = true;
       this.setStatus("open");
       this.flushPending();
       this.replaySubscriptions();
@@ -291,6 +320,7 @@ export class RelaySession {
       this.socket = null;
     }
     this.authenticated = false;
+    this.authedByRelay = false;
     this.openSubs.clear();
     // A publish in flight when the socket drops would otherwise hang forever:
     // the EVENT is not in `pending` (it was sent), so the reconnect never
