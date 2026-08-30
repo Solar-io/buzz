@@ -32,6 +32,8 @@ export function AgentActivityPanel({
   frames,
   lockedCount,
   connected,
+  mobileOpen,
+  onCloseMobile,
 }: {
   agentPubkey: string;
   agentName: string;
@@ -39,6 +41,9 @@ export function AgentActivityPanel({
   frames: ObserverFrame[];
   lockedCount: number;
   connected: boolean;
+  /** Below lg the panel is a deliberate sheet opened from the chat header. */
+  mobileOpen: boolean;
+  onCloseMobile: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastId = frames[frames.length - 1]?.id ?? "";
@@ -49,10 +54,15 @@ export function AgentActivityPanel({
   }, [lastId]);
 
   return (
-    // Same docked-sheet contract as ThreadPanel: full-screen below lg,
-    // resizable right pane at lg+ (its width rides the same CSS variable).
+    // lg+: docked right pane (width rides the shared --thread-width var).
+    // Below lg: a closable full-screen sheet the user opens from the header —
+    // never an automatic cover over the conversation.
     <aside
-      className="fixed inset-0 z-40 flex flex-col bg-background pt-[max(0.5rem,env(safe-area-inset-top))] lg:static lg:inset-auto lg:z-auto lg:w-[var(--thread-width)] lg:shrink-0 lg:border-l lg:border-border lg:pt-0"
+      className={
+        mobileOpen
+          ? "fixed inset-0 z-40 flex flex-col bg-background pt-[max(0.5rem,env(safe-area-inset-top))] lg:hidden"
+          : "hidden lg:static lg:flex lg:w-[var(--thread-width)] lg:shrink-0 lg:flex-col lg:border-l lg:border-border"
+      }
       data-agent-panel={agentPubkey}
     >
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-[#272736] px-4">
@@ -71,6 +81,14 @@ export function AgentActivityPanel({
           }
           title={connected ? "Live" : "Connecting…"}
         />
+        <button
+          type="button"
+          aria-label="Close thinking panel"
+          className="rounded p-1 text-sm text-muted-foreground hover:bg-accent lg:hidden"
+          onClick={onCloseMobile}
+        >
+          ✕
+        </button>
       </header>
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-3">
         {frames.length === 0 && lockedCount === 0 && (

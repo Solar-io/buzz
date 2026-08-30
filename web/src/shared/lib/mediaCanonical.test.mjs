@@ -167,7 +167,12 @@ test("PNG: snapshot tEXt chunk is preserved", () => {
 });
 
 test("a second snapshot tEXt chunk is dropped (relay allows one)", () => {
-  const snap = [...Array.from("buzz_agent_snapshot").map((c) => c.charCodeAt(0)), 0, 1, 2];
+  const snap = [
+    ...Array.from("buzz_agent_snapshot").map((c) => c.charCodeAt(0)),
+    0,
+    1,
+    2,
+  ];
   const input = Uint8Array.from([
     ...PNG_SIG,
     ...pngChunk("IHDR", [1]),

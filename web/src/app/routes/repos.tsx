@@ -165,10 +165,21 @@ function ChannelBrowser() {
     if (!current) {
       return Promise.resolve({ ok: false, message: "No channel selected." });
     }
+    // DMs always tag the other participants — the desktop client and CLI do
+    // this too, so the peer's harness wakes on the message even without an
+    // explicit @mention in the text (a web-sent DM once arrived untagged and
+    // the agent never reacted to it).
+    const dmPeers =
+      current.type === "dm"
+        ? current.participantPubkeys.filter((pk) => pk !== selfPubkey)
+        : [];
+    const mentionPubkeys = Array.from(
+      new Set([...options.mentionPubkeys, ...dmPeers]),
+    );
     return sendChannelMessage(session, {
       channelId: current.id,
       content: options.content,
-      mentionPubkeys: options.mentionPubkeys,
+      mentionPubkeys,
       threadRef: options.threadRef,
       mediaTags: options.mediaTags,
     });
@@ -304,6 +315,7 @@ function ChannelBrowser() {
   const observerFeed = useObserverEvents(
     threadRoot === null ? dmAgentPubkey : null,
   );
+  const [thinkingOpen, setThinkingOpen] = useState(false);
 
   return (
     <AppShell
@@ -332,6 +344,15 @@ function ChannelBrowser() {
                 <p className="hidden truncate text-sm text-muted-foreground sm:block">
                   {current.about}
                 </p>
+              )}
+              {dmAgentPubkey && (
+                <button
+                  type="button"
+                  className="ml-auto shrink-0 rounded-full border border-border px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-accent lg:hidden"
+                  onClick={() => setThinkingOpen(true)}
+                >
+                  🧠 Thinking
+                </button>
               )}
             </div>
             <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
@@ -397,6 +418,8 @@ function ChannelBrowser() {
               frames={observerFeed.frames}
               lockedCount={observerFeed.lockedCount}
               connected={connected}
+              mobileOpen={thinkingOpen}
+              onCloseMobile={() => setThinkingOpen(false)}
             />
           )}
         </div>

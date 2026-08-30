@@ -166,8 +166,7 @@ function canonicalizePng(bytes: Uint8Array): Uint8Array | null {
     if (isSnapshot) {
       sawSnapshot = true;
     }
-    const keep =
-      !ancillary || PNG_RENDERING_CHUNKS.has(kind) || snapshotKeep;
+    const keep = !ancillary || PNG_RENDERING_CHUNKS.has(kind) || snapshotKeep;
     if (keep) {
       for (let j = i; j < end; j++) {
         out.push(bytes[j]);
