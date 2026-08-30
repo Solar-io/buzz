@@ -22,7 +22,7 @@ export const MarkdownContent = memo(
     mentionNames: ReadonlySet<string>;
   }) {
     return (
-      <div className="prose prose-sm dark:prose-invert max-w-none break-words prose-p:my-1 prose-pre:my-2 prose-code:before:content-none prose-code:after:content-none">
+      <div className="prose prose-sm dark:prose-invert max-w-none break-words leading-5 prose-p:my-1 prose-p:leading-5 prose-pre:my-2 prose-pre:font-mono prose-code:before:content-none prose-code:after:content-none">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{

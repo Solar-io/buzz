@@ -1,8 +1,9 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { MessageBuffer, TimelineMessage } from "../lib/messageBuffer.ts";
 export type { ChannelMember, Profile } from "../hooks.ts";
 import type { Profile } from "../hooks.ts";
 import { truncatePubkey } from "@/shared/lib/pubkey";
+import { fetchSignedMedia } from "@/shared/api/blossom";
 import { MarkdownContent } from "./MarkdownContent.tsx";
 
 function formatTime(unixSeconds: number): string {
@@ -17,6 +18,68 @@ export function authorLabel(
   profiles: Map<string, Profile>,
 ): string {
   return profiles.get(pubkey)?.displayName ?? truncatePubkey(pubkey);
+}
+
+/** Deterministic hue from a pubkey — the identicon fallback color. */
+function pubkeyHue(pubkey: string): number {
+  let hash = 0;
+  for (let i = 0; i < pubkey.length; i++) {
+    hash = (hash * 31 + pubkey.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash) % 360;
+}
+
+/**
+ * Author avatar: the profile picture when one is published (relay media is
+ * auth-gated, so it goes through the signed fetch), else a hue-hash initials
+ * circle in the desktop client's identicon style.
+ */
+function AuthorAvatar({
+  pubkey,
+  label,
+  picture,
+}: {
+  pubkey: string;
+  label: string;
+  picture?: string;
+}) {
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setObjectUrl(null);
+    if (!picture) {
+      return;
+    }
+    fetchSignedMedia(picture)
+      .then((url) => {
+        if (!cancelled) {
+          setObjectUrl(url);
+        }
+      })
+      .catch(() => {
+        // Unavailable media falls back to the identicon below.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [picture]);
+  if (objectUrl) {
+    return (
+      <img
+        src={objectUrl}
+        alt=""
+        className="h-9 w-9 rounded-full object-cover"
+      />
+    );
+  }
+  return (
+    <div
+      className="flex h-9 w-9 items-center justify-center rounded-full text-sm font-semibold text-white"
+      style={{ backgroundColor: `hsl(${pubkeyHue(pubkey)}, 45%, 42%)` }}
+    >
+      {label.slice(0, 2)}
+    </div>
+  );
 }
 
 export function ChannelTimeline({
@@ -104,9 +167,11 @@ function MessageRow({
     >
       <div className="w-9 shrink-0">
         {!grouped && (
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-muted text-sm font-semibold text-muted-foreground">
-            {authorLabel(message.authorPubkey, profiles).slice(0, 2)}
-          </div>
+          <AuthorAvatar
+            pubkey={message.authorPubkey}
+            label={authorLabel(message.authorPubkey, profiles)}
+            picture={profiles.get(message.authorPubkey)?.avatar}
+          />
         )}
       </div>
       <div className="min-w-0 flex-1">

@@ -32,8 +32,9 @@ export function AppShell({
 
   return (
     <div className="flex h-dvh w-full bg-background text-foreground">
-      {/* Desktop sidebar */}
-      <aside className="hidden w-72 shrink-0 flex-col border-r border-border md:flex">
+      {/* Desktop sidebar — its own tone (theme --sidebar-background), matching
+          the desktop client's deliberate sidebar/chat two-tone. */}
+      <aside className="hidden w-72 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex">
         {sidebar}
       </aside>
 
@@ -81,7 +82,7 @@ export function AppShell({
             className="absolute inset-0 bg-black/50"
             onClick={closeDrawer}
           />
-          <aside className="absolute top-0 bottom-0 left-0 flex w-72 max-w-[85vw] flex-col border-r border-border bg-background pt-[max(0.5rem,env(safe-area-inset-top))]">
+          <aside className="absolute top-0 bottom-0 left-0 flex w-72 max-w-[85vw] flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground pt-[max(0.5rem,env(safe-area-inset-top))]">
             <DrawerCloseContext.Provider value={closeDrawer}>
               {sidebar}
             </DrawerCloseContext.Provider>

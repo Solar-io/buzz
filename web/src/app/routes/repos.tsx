@@ -106,15 +106,32 @@ function ChannelBrowser() {
     ? (messages.find((m) => m.id === threadRootId) ?? null)
     : null;
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Re-scroll on the newest message id; also re-run when switching channels.
-  const lastMessageId = messages[messages.length - 1]?.id ?? current?.id ?? "";
+  // Re-scroll on the newest message id; also re-run when switching channels
+  // (two channels can share a last-message id only in the empty case).
+  // Double-rAF: the first frame commits layout for freshly rendered rows,
+  // the second measures the final scrollHeight — scrolling synchronously in
+  // the effect left iOS at the TOP of long back-logs. A delayed second pass
+  // catches late-sizing media (images/video placeholders).
+  const lastMessageId = messages[messages.length - 1]?.id ?? "";
+  const channelId = current?.id ?? "";
   useEffect(() => {
-    // lastMessageId is the trigger: "" = no channel yet, nothing to scroll.
-    if (lastMessageId === "") {
+    if (channelId === "" || lastMessageId === "") {
       return;
     }
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [lastMessageId]);
+    const scroller = scrollRef.current;
+    if (!scroller) {
+      return;
+    }
+    const scrollToEnd = () => {
+      scroller.scrollTo({ top: scroller.scrollHeight });
+    };
+    const raf = requestAnimationFrame(() => requestAnimationFrame(scrollToEnd));
+    const settle = window.setTimeout(scrollToEnd, 250);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(settle);
+    };
+  }, [channelId, lastMessageId]);
 
   const send = (options: {
     content: string;
@@ -142,13 +159,13 @@ function ChannelBrowser() {
           <span
             className={cn(
               "inline-block h-2 w-2 rounded-full",
-              connected ? "bg-emerald-500" : "bg-muted-foreground/40",
+              connected ? "bg-sidebar-primary" : "bg-sidebar-foreground/40",
             )}
             title={connected ? "Connected" : "Connecting…"}
           />
           <Link
             to="/repos/settings"
-            className="rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-accent"
+            className="rounded-md px-2 py-1 text-sm text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
           >
             Settings
           </Link>
@@ -180,8 +197,8 @@ function ChannelBrowser() {
           ))}
         </ul>
         {huddleChannels.length > 0 && (
-          <details className="px-2 pt-4">
-            <summary className="cursor-pointer select-none pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <details className="px-0 pt-2">
+            <summary className="flex h-8 cursor-pointer select-none items-center px-2 text-xs font-medium uppercase tracking-wide text-sidebar-foreground/70">
               Huddles ({huddleChannels.length})
             </summary>
             <ul className="space-y-0.5">
@@ -205,7 +222,7 @@ function ChannelBrowser() {
         )}
         {dms.length > 0 && (
           <>
-            <p className="px-2 pb-1 pt-4 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <p className="flex h-8 items-center px-2 text-xs font-medium uppercase tracking-wide text-sidebar-foreground/70">
               Direct messages
             </p>
             <ul className="space-y-0.5">
@@ -318,8 +335,9 @@ function ChannelBrowser() {
 }
 
 /**
- * Sidebar navigation entry. Calls useDrawerClose after selecting so the phone
- * drawer dismisses and the conversation is immediately visible.
+ * Sidebar navigation entry, styled to the desktop client's SidebarMenuButton:
+ * h-8 text-sm rows, hover = sidebar accent, active = solid mauve pill.
+ * Calls useDrawerClose after selecting so the phone drawer dismisses.
  */
 function SidebarNavButton({
   selected,
@@ -335,15 +353,17 @@ function SidebarNavButton({
     <button
       type="button"
       className={cn(
-        "w-full truncate rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent",
-        selected && "bg-accent font-medium",
+        "flex h-8 w-full items-center truncate rounded-md px-2 text-left text-sm transition-colors",
+        "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+        selected &&
+          "bg-sidebar-primary font-semibold text-sidebar-primary-foreground hover:bg-sidebar-primary hover:text-sidebar-primary-foreground",
       )}
       onClick={() => {
         onSelect();
         closeDrawer();
       }}
     >
-      {label}
+      <span className="truncate">{label}</span>
     </button>
   );
 }
