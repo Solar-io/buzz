@@ -32,7 +32,9 @@ export function ThreadPanel({
   const lastReply = replies[replies.length - 1] ?? root;
 
   return (
-    <aside className="flex w-full flex-col border-l border-border md:w-96 md:shrink-0">
+    // Below lg the thread is a full-screen sheet (safe-area aware) — a third
+    // column at phone/tablet widths is what crushed the timeline. lg+: docked.
+    <aside className="fixed inset-0 z-40 flex flex-col bg-background pt-[max(0.5rem,env(safe-area-inset-top))] lg:static lg:inset-auto lg:z-auto lg:w-96 lg:shrink-0 lg:border-l lg:border-border lg:pt-0">
       <header className="flex items-center justify-between border-b border-border px-3 py-2">
         <span className="text-sm font-semibold">Thread</span>
         <button

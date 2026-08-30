@@ -1,18 +1,34 @@
-import { useState, type ReactNode } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 
 /**
  * Two-pane responsive shell: sidebar + main. On small screens the sidebar
  * becomes an overlay drawer behind a top bar (iOS/iPadOS friendly: it uses
  * dvh sizing and safe-area padding).
  */
+
+/**
+ * Closes the mobile drawer when invoked. Sidebar navigation entries call this
+ * after navigating so phone users land on the conversation, not the drawer.
+ * No-op on desktop (and when the drawer is already closed).
+ */
+const DrawerCloseContext = createContext<() => void>(() => {});
+
+export function useDrawerClose(): () => void {
+  return useContext(DrawerCloseContext);
+}
+
 export function AppShell({
   sidebar,
+  title,
   children,
 }: {
   sidebar: ReactNode;
+  /** Current conversation label for the mobile top bar. */
+  title?: string | null;
   children: ReactNode;
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const closeDrawer = () => setDrawerOpen(false);
 
   return (
     <div className="flex h-dvh w-full bg-background text-foreground">
@@ -42,7 +58,17 @@ export function AppShell({
               <path d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <span className="font-semibold">Buzz</span>
+          <span className="min-w-0 truncate">
+            {title ? (
+              <>
+                <span className="text-muted-foreground">Buzz</span>
+                <span className="mx-1.5 text-muted-foreground">/</span>
+                <span className="font-semibold">{title}</span>
+              </>
+            ) : (
+              <span className="font-semibold">Buzz</span>
+            )}
+          </span>
         </header>
         <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
       </div>
@@ -53,10 +79,12 @@ export function AppShell({
             type="button"
             aria-label="Close channels"
             className="absolute inset-0 bg-black/50"
-            onClick={() => setDrawerOpen(false)}
+            onClick={closeDrawer}
           />
           <aside className="absolute top-0 bottom-0 left-0 flex w-72 max-w-[85vw] flex-col border-r border-border bg-background pt-[max(0.5rem,env(safe-area-inset-top))]">
-            {sidebar}
+            <DrawerCloseContext.Provider value={closeDrawer}>
+              {sidebar}
+            </DrawerCloseContext.Provider>
           </aside>
         </div>
       )}

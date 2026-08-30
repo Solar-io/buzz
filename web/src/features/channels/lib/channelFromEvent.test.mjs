@@ -54,3 +54,28 @@ test("later event for the same id is distinguishable by updatedAt", () => {
   assert.ok(newer.updatedAt > older.updatedAt);
   assert.equal(newer.name, "renamed");
 });
+
+test("defaults: not archived, no ttl", () => {
+  const channel = channelFromEvent(event());
+  assert.equal(channel.archived, false);
+  assert.equal(channel.ttlSeconds, null);
+});
+
+test("archived tag marks the channel hidden-from-sidebar", () => {
+  const channel = channelFromEvent(
+    event({ tags: [...event().tags, ["archived", "true"]] }),
+  );
+  assert.equal(channel.archived, true);
+});
+
+test("ttl tag marks an ephemeral (huddle) channel", () => {
+  const channel = channelFromEvent(
+    event({ tags: [...event().tags, ["ttl", "3600"]] }),
+  );
+  assert.equal(channel.ttlSeconds, 3600);
+  // Non-numeric ttl values parse as absent rather than NaN.
+  const junk = channelFromEvent(
+    event({ tags: [...event().tags, ["ttl", "soon"]] }),
+  );
+  assert.equal(junk.ttlSeconds, null);
+});

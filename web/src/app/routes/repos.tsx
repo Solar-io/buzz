@@ -18,7 +18,7 @@ import { useDms } from "@/features/dms/hooks";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
 import { NewDmDialog } from "@/features/dms/ui/NewDmDialog";
 import { ownPubkey } from "@/shared/lib/nostr-signer";
-import { AppShell } from "@/shared/layout/AppShell";
+import { AppShell, useDrawerClose } from "@/shared/layout/AppShell";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { cn } from "@/shared/lib/cn";
 
@@ -50,7 +50,29 @@ function ChannelBrowser() {
 
   // DMs ride the same kind:39000 list (relay `t` tag); they get their own
   // sidebar section and participant-based names.
-  const { dms, channelsWithoutDms } = useDms(channels);
+  const { dms, channelsWithoutDms: unfilteredChannels } = useDms(channels);
+  // Archived channels (expired huddles etc.) hide from the sidebar — the
+  // relay's `archived` tag exists for exactly this. Ephemeral (ttl) channels
+  // are huddle backing rooms: grouped apart, newest first, not mixed into
+  // the main channel list.
+  const visibleChannels = useMemo(
+    () =>
+      unfilteredChannels
+        .filter((channel) => !channel.archived && channel.ttlSeconds === null)
+        .sort((a, b) =>
+          a.name.localeCompare(b.name, undefined, {
+            sensitivity: "base",
+          }),
+        ),
+    [unfilteredChannels],
+  );
+  const huddleChannels = useMemo(
+    () =>
+      unfilteredChannels
+        .filter((channel) => !channel.archived && channel.ttlSeconds !== null)
+        .sort((a, b) => b.updatedAt - a.updatedAt),
+    [unfilteredChannels],
+  );
   const [selfPubkey, setSelfPubkey] = useState<string | null>(null);
   useEffect(() => {
     void ownPubkey().then(setSelfPubkey);
@@ -141,27 +163,46 @@ function ChannelBrowser() {
           </p>
         )}
         <ul className="space-y-0.5">
-          {channelsWithoutDms.map((channel) => (
+          {visibleChannels.map((channel) => (
             <li key={channel.id}>
-              <button
-                type="button"
-                className={cn(
-                  "w-full truncate rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent",
-                  channel.id === selectedId && "bg-accent font-medium",
-                )}
-                onClick={() => {
+              <SidebarNavButton
+                selected={channel.id === selectedId}
+                label={channel.name}
+                onSelect={() => {
                   setThreadRootId(null);
                   void navigate({
                     to: "/repos",
                     search: { c: channel.id },
                   });
                 }}
-              >
-                {channel.name}
-              </button>
+              />
             </li>
           ))}
         </ul>
+        {huddleChannels.length > 0 && (
+          <details className="px-2 pt-4">
+            <summary className="cursor-pointer select-none pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Huddles ({huddleChannels.length})
+            </summary>
+            <ul className="space-y-0.5">
+              {huddleChannels.map((channel) => (
+                <li key={channel.id}>
+                  <SidebarNavButton
+                    selected={channel.id === selectedId}
+                    label={`${channel.name} · ${shortDate(channel.updatedAt)}`}
+                    onSelect={() => {
+                      setThreadRootId(null);
+                      void navigate({
+                        to: "/repos",
+                        search: { c: channel.id },
+                      });
+                    }}
+                  />
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
         {dms.length > 0 && (
           <>
             <p className="px-2 pb-1 pt-4 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -170,22 +211,17 @@ function ChannelBrowser() {
             <ul className="space-y-0.5">
               {dms.map(({ channel }) => (
                 <li key={channel.id}>
-                  <button
-                    type="button"
-                    className={cn(
-                      "w-full truncate rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent",
-                      channel.id === selectedId && "bg-accent font-medium",
-                    )}
-                    onClick={() => {
+                  <SidebarNavButton
+                    selected={channel.id === selectedId}
+                    label={dmName(channel.participantPubkeys)}
+                    onSelect={() => {
                       setThreadRootId(null);
                       void navigate({
                         to: "/repos",
                         search: { c: channel.id },
                       });
                     }}
-                  >
-                    {dmName(channel.participantPubkeys)}
-                  </button>
+                  />
                 </li>
               ))}
             </ul>
@@ -214,7 +250,16 @@ function ChannelBrowser() {
   );
 
   return (
-    <AppShell sidebar={sidebar}>
+    <AppShell
+      sidebar={sidebar}
+      title={
+        current
+          ? current.type === "dm"
+            ? dmName(current.participantPubkeys)
+            : current.name
+          : null
+      }
+    >
       {current ? (
         <div className="flex h-full min-h-0">
           <section className="flex min-w-0 flex-1 flex-col">
@@ -270,4 +315,43 @@ function ChannelBrowser() {
       )}
     </AppShell>
   );
+}
+
+/**
+ * Sidebar navigation entry. Calls useDrawerClose after selecting so the phone
+ * drawer dismisses and the conversation is immediately visible.
+ */
+function SidebarNavButton({
+  selected,
+  label,
+  onSelect,
+}: {
+  selected: boolean;
+  label: string;
+  onSelect: () => void;
+}) {
+  const closeDrawer = useDrawerClose();
+  return (
+    <button
+      type="button"
+      className={cn(
+        "w-full truncate rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent",
+        selected && "bg-accent font-medium",
+      )}
+      onClick={() => {
+        onSelect();
+        closeDrawer();
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+/** Compact date for huddle entries: "Aug 29". */
+function shortDate(unixSeconds: number): string {
+  return new Date(unixSeconds * 1000).toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+  });
 }

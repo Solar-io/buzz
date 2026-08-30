@@ -82,6 +82,19 @@ test("dmDisplayName excludes self and uses profile names", () => {
   assert.equal(dmDisplayName([SELF, SAM], SELF, profiles), "Sam");
 });
 
+test("dmDisplayName prefers display_name when name is absent (Buzz profiles)", () => {
+  // Sam's relay profile carries only display_name — the name-keyed path used
+  // to render the truncated hex key in the sidebar instead of "Sam".
+  const profiles = new Map([[SAM, { name: "25f1ade5", displayName: "Sam" }]]);
+  assert.equal(dmDisplayName([SELF, SAM], SELF, profiles), "Sam");
+});
+
+test("dmDisplayName falls back to hex only with no profile at all", () => {
+  const profiles = new Map();
+  const label = dmDisplayName([SELF, SAM], SELF, profiles);
+  assert.match(label, /^[0-9a-f]{8}…[0-9a-f]{4}$/);
+});
+
 test("dmDisplayName joins pairs and collapses bigger groups", () => {
   const profiles = new Map([
     [SAM, { name: "Sam" }],

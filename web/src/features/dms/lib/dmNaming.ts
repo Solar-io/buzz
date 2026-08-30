@@ -36,8 +36,11 @@ export function dmDisplayName(
   if (others.length === 0) {
     return "Direct message";
   }
-  const nameOf = (pubkey: string): string =>
-    profiles.get(pubkey)?.name || shortKey(pubkey);
+  const nameOf = (pubkey: string): string => {
+    const profile = profiles.get(pubkey);
+    // display_name first: several Buzz profiles (e.g. Sam's) set only that.
+    return profile?.displayName || profile?.name || shortKey(pubkey);
+  };
   if (others.length === 1) {
     return nameOf(others[0]);
   }

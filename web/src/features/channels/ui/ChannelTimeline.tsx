@@ -71,7 +71,11 @@ export function ChannelTimeline({
       />,
     );
   }
-  return <div className="flex flex-col px-3 py-2">{rows}</div>;
+  // max-w keeps line lengths readable on wide desktops without affecting
+  // phone layout (the column is already narrower than the cap there).
+  return (
+    <div className="mx-auto w-full max-w-3xl px-1 py-2 sm:px-3">{rows}</div>
+  );
 }
 
 function MessageRow({
@@ -133,7 +137,7 @@ function MessageRow({
       <button
         type="button"
         aria-label="Reply in thread"
-        className="self-start rounded p-1 text-xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:bg-accent"
+        className="self-start rounded p-1 text-xs text-muted-foreground transition-opacity hover:bg-accent lg:opacity-0 lg:group-hover:opacity-100"
         onClick={() => onOpenThread(message)}
       >
         ↩

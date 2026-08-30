@@ -8,6 +8,17 @@ export interface ChannelSummary {
   /** Channel type from the relay's `t` tag; "stream" when absent. */
   type: "stream" | "forum" | "dm";
   /**
+   * True when the relay's `archived` tag is set — the relay's own comment on
+   * the tag: "clients use this to hide channels from the sidebar" (expired
+   * ephemeral/huddle channels land here once their TTL deadline passes).
+   */
+  archived: boolean;
+  /**
+   * Ephemeral-channel TTL seconds from the relay's `ttl` tag; null = permanent.
+   * Huddle backing channels carry 3600 — group them apart from real channels.
+   */
+  ttlSeconds: number | null;
+  /**
    * Participant pubkeys from the relay's `p` tags. The relay includes them
    * on DM metadata precisely so clients can name DMs without a kind:39002
    * fetch; empty on non-DM channels parsed from older emissions.
@@ -34,6 +45,12 @@ export function channelFromEvent(
   const rawType = tags.find((tag) => tag[0] === "t")?.[1];
   const type: ChannelSummary["type"] =
     rawType === "dm" || rawType === "forum" ? rawType : "stream";
+  const archived = tags.some((tag) => tag[0] === "archived");
+  const rawTtl = tags.find((tag) => tag[0] === "ttl")?.[1];
+  const parsedTtl =
+    typeof rawTtl === "string" && /^\d+$/.test(rawTtl)
+      ? Number.parseInt(rawTtl, 10)
+      : null;
   const participantPubkeys = tags
     .filter((tag) => tag[0] === "p" && typeof tag[1] === "string")
     .map((tag) => tag[1]);
@@ -43,6 +60,8 @@ export function channelFromEvent(
     about,
     updatedAt: event.created_at,
     type,
+    archived,
+    ttlSeconds: parsedTtl,
     participantPubkeys,
   };
 }

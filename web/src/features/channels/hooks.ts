@@ -130,7 +130,9 @@ export function useProfiles(pubkeys: string[]): Map<string, Profile> {
             // Malformed metadata: fall back to the truncated key.
           }
           const profile: Profile = {
-            name: name || shortKey(event.pubkey),
+            // Buzz profiles often set only display_name (e.g. Sam's): fall
+            // through to it so name-keyed consumers don't render hex keys.
+            name: name || displayName || shortKey(event.pubkey),
             displayName: displayName || name || shortKey(event.pubkey),
             avatar,
           };
