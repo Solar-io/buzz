@@ -93,6 +93,7 @@ export function ChannelTimeline({
   replyCounts,
   onOpenThread,
   activeRootId,
+  flat,
 }: {
   messages: MessageBuffer;
   profiles: Map<string, Profile>;
@@ -100,6 +101,13 @@ export function ChannelTimeline({
   onOpenThread: (message: TimelineMessage) => void;
   /** Root id of the currently open thread — highlights it in the timeline. */
   activeRootId?: string | null;
+  /**
+   * Thread-panel mode: render EVERY message as a full row. Without this,
+   * replies render as inline previews under their root — correct for the
+   * channel timeline, but inside an open thread the replies ARE the
+   * conversation and must show in full.
+   */
+  flat?: boolean;
 }) {
   if (messages.length === 0) {
     return (
@@ -115,17 +123,17 @@ export function ChannelTimeline({
     const message = messages[index];
     // Replies render INLINE under their root (desktop pattern: indented
     // previews with a connector rail, click opens the full thread panel).
-    if (message.rootId || message.replyToId) {
+    if (!flat && (message.rootId || message.replyToId)) {
       lastAuthor = null;
       continue;
     }
-    const replies = messages.filter(
-      (m) => m.rootId === message.id || m.replyToId === message.id,
-    );
+    const replies = flat
+      ? []
+      : messages.filter(
+          (m) => m.rootId === message.id || m.replyToId === message.id,
+        );
     const grouped =
-      message.authorPubkey === lastAuthor &&
-      message.kind === lastKind &&
-      replies.length === 0;
+      message.authorPubkey === lastAuthor && message.kind === lastKind;
     lastAuthor = message.authorPubkey;
     lastKind = message.kind;
     rows.push(
@@ -134,9 +142,9 @@ export function ChannelTimeline({
         message={message}
         profiles={profiles}
         grouped={grouped}
-        replyCount={replyCounts.get(message.id) ?? 0}
+        replyCount={flat ? 0 : (replyCounts.get(message.id) ?? 0)}
         onOpenThread={onOpenThread}
-        active={activeRootId === message.id}
+        active={!flat && activeRootId === message.id}
       >
         {replies.length > 0 && (
           <ThreadPreview

@@ -59,6 +59,7 @@ export function ThreadPanel({
           onOpenThread={() => {
             // Threads are flat: every reply targets the root.
           }}
+          flat
         />
       </div>
       <Composer
