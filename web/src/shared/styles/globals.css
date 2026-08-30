@@ -30,15 +30,16 @@
 }
 
 /*
- * Chat message text: Sam's ask (8/30) was +50% on the conversation text —
- * 14px → 21px. Deliberately UNLAYERED so it wins over the typography
+ * Chat message text: calibrated with Sam 8/30 — core message text ≈15%
+ * above the reply font (14px), i.e. 16px; the 21px (+50%) pass was much
+ * too large. Deliberately UNLAYERED so it wins over the typography
  * plugin's `.prose`/`.prose-sm` font-size (same trick the desktop client
  * uses for its gradient overrides). Everything inside prose is em-scaled,
  * so headings/code/quotes grow with it.
  */
 .message-prose {
-  font-size: 1.3125rem; /* 21px */
-  line-height: 1.45; /* ~30px */
+  font-size: 1rem; /* 16px */
+  line-height: 1.45; /* ~23px */
 }
 .message-prose p {
   line-height: 1.45;
