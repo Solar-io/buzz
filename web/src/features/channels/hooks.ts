@@ -167,6 +167,7 @@ export async function sendChannelMessage(
     content: string;
     mentionPubkeys: string[];
     threadRef?: { rootId: string; replyToId: string } | null;
+    mediaTags?: string[][];
   },
 ): Promise<SendResult> {
   const tags: string[][] = [["h", options.channelId]];

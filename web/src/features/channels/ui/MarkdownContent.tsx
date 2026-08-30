@@ -1,6 +1,7 @@
-import { memo, type ReactNode } from "react";
+import { memo, useEffect, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { fetchSignedMedia } from "@/shared/api/blossom";
 import { mentionSetsEqual } from "../lib/mentionSets.ts";
 import { mentionParts } from "../lib/mentionParts.ts";
 
@@ -28,6 +29,9 @@ export const MarkdownContent = memo(
             p: ({ children }) => <p>{withMentions(children, mentionNames)}</p>,
             li: ({ children }) => (
               <li>{withMentions(children, mentionNames)}</li>
+            ),
+            img: ({ src, alt }) => (
+              <SignedMedia src={String(src)} alt={alt ?? ""} />
             ),
           }}
         >
@@ -77,4 +81,68 @@ function withMentions(
 
 function Fragmentish({ children }: { children: ReactNode }) {
   return <>{children}</>;
+}
+
+/**
+ * Relay media requires a signed GET — <img> cannot sign. Fetch as a blob and
+ * render from the object URL (module-level cache dedupes across messages).
+ */
+function SignedMedia({ src, alt }: { src: string; alt: string }) {
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFailed(false);
+    fetchSignedMedia(src)
+      .then((url) => {
+        if (!cancelled) {
+          setObjectUrl(url);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFailed(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [src]);
+
+  if (failed) {
+    return (
+      <a
+        href={src}
+        className="text-xs text-muted-foreground underline"
+        onClick={(event) => event.preventDefault()}
+      >
+        [media unavailable — {alt}]
+      </a>
+    );
+  }
+  if (alt === "video") {
+    return objectUrl ? (
+      <video
+        src={objectUrl}
+        controls
+        playsInline
+        className="max-h-96 rounded-lg"
+      />
+    ) : (
+      <div className="h-24 w-48 animate-pulse rounded-lg bg-muted" />
+    );
+  }
+  return objectUrl ? (
+    <a href={objectUrl} target="_blank" rel="noreferrer">
+      <img
+        src={objectUrl}
+        alt={alt}
+        className="max-h-96 max-w-full rounded-lg"
+        loading="lazy"
+      />
+    </a>
+  ) : (
+    <div className="h-24 w-48 animate-pulse rounded-lg bg-muted" />
+  );
 }

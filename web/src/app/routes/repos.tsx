@@ -98,6 +98,7 @@ function ChannelBrowser() {
     content: string;
     mentionPubkeys: string[];
     threadRef: { rootId: string; replyToId: string } | null;
+    mediaTags: string[][];
   }) => {
     if (!current) {
       return Promise.resolve({ ok: false, message: "No channel selected." });
@@ -107,6 +108,7 @@ function ChannelBrowser() {
       content: options.content,
       mentionPubkeys: options.mentionPubkeys,
       threadRef: options.threadRef,
+      mediaTags: options.mediaTags,
     });
   };
 

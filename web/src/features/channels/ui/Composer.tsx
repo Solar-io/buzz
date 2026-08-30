@@ -3,6 +3,8 @@ import { toast } from "sonner";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 import { activeMentionQuery, resolveMentions } from "../lib/mentions.ts";
+import { buildImetaTag, mediaMarkdown } from "../lib/imeta.ts";
+import { uploadBlob, type BlobDescriptor } from "@/shared/api/blossom";
 import type { ChannelMember, Profile } from "../hooks.ts";
 
 export interface ThreadRef {
@@ -27,13 +29,17 @@ export function Composer({
     content: string;
     mentionPubkeys: string[];
     threadRef: ThreadRef | null;
+    mediaTags: string[][];
   }) => Promise<{ ok: boolean; message: string }>;
 }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [popupIndex, setPopupIndex] = useState(0);
   const [mentionOpen, setMentionOpen] = useState(false);
+  const [media, setMedia] = useState<BlobDescriptor[]>([]);
+  const [uploading, setUploading] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const namedMembers = useMemo(
     () =>
@@ -88,6 +94,27 @@ export function Composer({
     });
   };
 
+  const attach = async (files: FileList | null) => {
+    if (!files || files.length === 0) {
+      return;
+    }
+    setUploading(true);
+    try {
+      for (const file of Array.from(files)) {
+        const descriptor = await uploadBlob(file);
+        setMedia((previous) => [...previous, descriptor]);
+        setText((previous) => `${previous}${mediaMarkdown(descriptor)}`);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Upload failed.");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
   const submit = async () => {
     const trimmed = text.trim();
     if (!trimmed || busy) {
@@ -103,9 +130,11 @@ export function Composer({
         content: trimmed,
         mentionPubkeys,
         threadRef,
+        mediaTags: media.map((descriptor) => buildImetaTag(descriptor)),
       });
       if (result.ok) {
         setText("");
+        setMedia([]);
         onSent?.();
       } else {
         toast.error(result.message || "The relay rejected the message.");
@@ -184,6 +213,24 @@ export function Composer({
         </p>
       )}
       <div className="flex items-end gap-2">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/gif,image/webp,video/mp4"
+          multiple
+          className="hidden"
+          onChange={(event) => void attach(event.target.files)}
+        />
+        <button
+          type="button"
+          aria-label="Attach a file"
+          title="Attach images or video"
+          className="rounded-md p-2 text-muted-foreground hover:bg-accent disabled:opacity-50"
+          disabled={uploading || busy}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          {uploading ? "…" : "📎"}
+        </button>
         <textarea
           ref={textareaRef}
           className="max-h-40 min-h-10 flex-1 resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
