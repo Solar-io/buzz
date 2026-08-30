@@ -89,28 +89,28 @@
     /*
      * Buzz Dark — the desktop client's default look (theme-loader
      * "buzz-dark"): GitHub Dark neutral palette + flat near-black sidebar
-     * (#101117, Sam-specified), NOT Catppuccin. Values follow the desktop's
-     * own runtime derivation (createThemeVars over github-dark, plus
-     * --buzz-content-dark 0 0% 10.196% as the chat canvas).
+     * (#101117, Sam-specified), NOT Catppuccin. The chat/thread canvas is
+     * Sam-specified #1b1b29 (hsl 240 20.59% 13.33%) — the value his desktop
+     * renders — replacing the earlier neutral #1a1a1a derivation.
      */
-    --background: 0 0% 10.196%;
+    --background: 240 20.59% 13.33%;
     --foreground: 0 0% 83.1%;
-    --card: 0 0% 11.8%;
+    --card: 240 20% 15%;
     --card-foreground: 0 0% 83.1%;
-    --popover: 0 0% 18.8%;
+    --popover: 240 18% 18%;
     --popover-foreground: 0 0% 83.1%;
     --primary: 0 0% 83.1%;
-    --primary-foreground: 0 0% 10.196%;
-    --secondary: 0 0% 17.3%;
+    --primary-foreground: 240 20.59% 13.33%;
+    --secondary: 240 18% 19%;
     --secondary-foreground: 0 0% 83.1%;
-    --muted: 0 0% 17.3%;
-    --muted-foreground: 211.6 8.92% 58.2%;
-    --accent: 0 0% 17.3%;
+    --muted: 240 18% 19%;
+    --muted-foreground: 225 10% 62%;
+    --accent: 240 18% 19%;
     --accent-foreground: 0 0% 83.1%;
     --destructive: 2.7 92.59% 62.9%;
-    --destructive-foreground: 0 0% 10.196%;
-    --border: 0 0% 22.4%;
-    --input: 0 0% 22.4%;
+    --destructive-foreground: 240 20.59% 13.33%;
+    --border: 240 14% 24%;
+    --input: 240 14% 24%;
     --ring: 0 0% 83.1%;
     --chart-1: 333 20.78% 38.04%;
     --chart-2: 193 19.61% 38.04%;
