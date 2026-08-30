@@ -183,6 +183,9 @@ export async function sendChannelMessage(
   for (const pubkey of options.mentionPubkeys) {
     tags.push(["p", pubkey]);
   }
+  for (const mediaTag of options.mediaTags ?? []) {
+    tags.push(mediaTag);
+  }
 
   const event = await signNostrEvent({
     kind: 9,

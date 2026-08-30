@@ -12,6 +12,7 @@ import type { SignedNostrEvent } from "../lib/nostr-signer";
 import { signNostrEvent } from "../lib/nostr-signer";
 import { getAuthTagJson } from "../lib/key-store";
 import { relayHttpBaseUrl } from "../lib/relay-url";
+import { canonicalizeImage } from "../lib/mediaCanonical";
 
 export const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 export const MAX_VIDEO_BYTES = 500 * 1024 * 1024;
@@ -142,7 +143,11 @@ export async function uploadBlob(
   if (prepared.size > maxBytesFor(mime)) {
     throw new Error("File is too large.");
   }
-  const bytes = new Uint8Array(await prepared.arrayBuffer());
+  let bytes = new Uint8Array(await prepared.arrayBuffer());
+  const canonical = canonicalizeImage(bytes, mime);
+  if (canonical) {
+    bytes = new Uint8Array(canonical);
+  }
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   const sha256 = Array.from(new Uint8Array(digest), (b) =>
     b.toString(16).padStart(2, "0"),
@@ -183,7 +188,24 @@ export async function uploadBlob(
         `Upload rejected (${response.status}): ${body.slice(0, 200)}`,
       );
     }
-    return (await response.json()) as BlobDescriptor;
+    const raw = (await response.json()) as Partial<BlobDescriptor> & {
+      type?: string;
+    };
+    // The relay's wire shape uses "type"; normalize to mime_type.
+    const descriptor: BlobDescriptor = {
+      url: String(raw.url ?? ""),
+      sha256: String(raw.sha256 ?? ""),
+      mime_type: String(raw.mime_type ?? raw.type ?? ""),
+      size: Number(raw.size ?? 0),
+      dim: raw.dim,
+      blurhash: raw.blurhash,
+      thumb: raw.thumb,
+      duration: raw.duration,
+    };
+    if (!descriptor.url || !descriptor.mime_type) {
+      throw new Error("Upload response was missing url or type.");
+    }
+    return descriptor;
   }
   throw new Error(lastError);
 }
@@ -201,9 +223,12 @@ export async function fetchSignedMedia(url: string): Promise<string> {
     content: "Get media",
     targetUrl: url,
   });
-  const response = await fetch(url, {
-    headers: { Authorization: authorization },
-  });
+  const headers: Record<string, string> = { Authorization: authorization };
+  const authTag = getAuthTagJson();
+  if (authTag) {
+    headers["x-auth-tag"] = authTag;
+  }
+  const response = await fetch(url, { headers });
   if (!response.ok) {
     throw new Error(`Media fetch failed (${response.status})`);
   }
