@@ -11,21 +11,64 @@ import {
   upsertMessage,
   type MessageBuffer,
 } from "./lib/messageBuffer.ts";
+import {
+  reactionFromEvent,
+  upsertReaction,
+  type ReactionIndex,
+} from "./lib/reactions.ts";
+import { recordTyping, typingFromEvent, type TypingMap } from "./lib/typing.ts";
 
 /** Live timeline for one channel (kind 9 + channel event kinds, by #h tag). */
-export function useChannelMessages(channelId: string | null): MessageBuffer {
+export interface ChannelFeed {
+  messages: MessageBuffer;
+  reactions: ReactionIndex;
+  typing: TypingMap;
+}
+
+export function useChannelMessages(channelId: string | null): ChannelFeed {
   const { session } = useRelaySession();
   const [buffer, setBuffer] = useState<MessageBuffer>([]);
+  const [reactions, setReactions] = useState<ReactionIndex>(() => new Map());
+  const [typing, setTyping] = useState<TypingMap>(() => new Map());
 
   useEffect(() => {
     setBuffer([]);
+    setReactions(new Map());
+    setTyping(new Map());
     if (!channelId) {
       return;
     }
     return session.subscribe(
-      { kinds: [...TIMELINE_KINDS], "#h": [channelId], limit: 200 },
+      {
+        kinds: [...TIMELINE_KINDS, 7, 20002],
+        "#h": [channelId],
+        limit: 200,
+      },
       {
         onEvent: (event: SignedNostrEvent) => {
+          if (event.kind === 7) {
+            const reaction = reactionFromEvent(event);
+            if (reaction) {
+              setReactions((previous) =>
+                upsertReaction(previous, reaction, event.pubkey),
+              );
+            }
+            return;
+          }
+          if (event.kind === 20002) {
+            const typed = typingFromEvent(event);
+            if (typed) {
+              setTyping((previous) =>
+                recordTyping(
+                  previous,
+                  typed.channelId,
+                  event.pubkey,
+                  Date.now(),
+                ),
+              );
+            }
+            return;
+          }
           const message = timelineMessageFromEvent(event);
           if (!message || message.channelId !== channelId) {
             return;
@@ -36,7 +79,7 @@ export function useChannelMessages(channelId: string | null): MessageBuffer {
     );
   }, [session, channelId]);
 
-  return buffer;
+  return { messages: buffer, reactions, typing };
 }
 
 export interface ChannelMember {
@@ -162,6 +205,50 @@ export interface SendResult {
 }
 
 /** Publish a kind 9 channel message (mirrors buzz-sdk build_message tags). */
+export async function sendReaction(
+  session: RelaySession,
+  options: { targetEventId: string; emoji: string },
+): Promise<SendResult> {
+  // NIP-25 / buzz-sdk build_reaction shape: kind 7, content = emoji,
+  // one e tag naming the target. The relay persists it atomically with its
+  // reaction row; a duplicate from the same author is a no-op server-side.
+  const event = await signNostrEvent({
+    kind: 7,
+    tags: [["e", options.targetEventId]],
+    content: options.emoji,
+  });
+  const result = await session.publish(event);
+  return { ok: result.ok, message: result.message };
+}
+
+export async function sendTypingIndicator(
+  session: RelaySession,
+  channelId: string,
+  threadRef?: { rootId: string; replyToId: string } | null,
+): Promise<void> {
+  // Ephemeral kind 20002 (HarnessRelay::build_typing_event shape); the relay
+  // routes it without storage, so failures are silently ignored.
+  const tags: string[][] = [["h", channelId]];
+  if (threadRef) {
+    if (threadRef.rootId === threadRef.replyToId) {
+      tags.push(["e", threadRef.replyToId, "", "reply"]);
+    } else {
+      tags.push(["e", threadRef.rootId, "", "root"]);
+      tags.push(["e", threadRef.replyToId, "", "reply"]);
+    }
+  }
+  try {
+    const event = await signNostrEvent({
+      kind: 20002,
+      tags,
+      content: "",
+    });
+    await session.publish(event);
+  } catch {
+    // Typing is best-effort; never block the composer on it.
+  }
+}
+
 export async function sendChannelMessage(
   session: RelaySession,
   options: {

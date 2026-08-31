@@ -37,7 +37,10 @@ test("hint mismatch (stale key from a previous envelope) is rejected", () => {
 test("garbage shapes are rejected, not thrown on", () => {
   assert.equal(isValidRememberedKey(null, hintOf), false);
   assert.equal(isValidRememberedKey({}, hintOf), false);
-  assert.equal(isValidRememberedKey({ bytes: "nope", hint: "x" }, hintOf), false);
+  assert.equal(
+    isValidRememberedKey({ bytes: "nope", hint: "x" }, hintOf),
+    false,
+  );
   assert.equal(
     isValidRememberedKey({ bytes: keyBytes(3), hint: "x" }, hintOf),
     false,

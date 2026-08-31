@@ -6,7 +6,55 @@ import { truncatePubkey } from "@/shared/lib/pubkey";
 import { fetchSignedMedia } from "@/shared/api/blossom";
 import { cn } from "@/shared/lib/cn";
 import { formatElapsed } from "@/features/agents/ui/WorkingBadge";
+import {
+  QUICK_REACTIONS,
+  reactionGroups as groupReactions,
+  type ReactionGroup,
+  type ReactionIndex,
+} from "../lib/reactions.ts";
 import { MarkdownContent } from "./MarkdownContent.tsx";
+
+const EMPTY_REACTIONS: ReactionIndex = new Map();
+
+function formatDayLabel(unixSeconds: number): string {
+  const date = new Date(unixSeconds * 1000);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (date.toDateString() === today.toDateString()) {
+    return "Today";
+  }
+  if (date.toDateString() === yesterday.toDateString()) {
+    return "Yesterday";
+  }
+  return date.toLocaleDateString([], {
+    month: "long",
+    day: "numeric",
+    year: date.getFullYear() === today.getFullYear() ? undefined : "numeric",
+  });
+}
+
+function DayDivider({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-3 px-2 py-2">
+      <span className="h-px flex-1 bg-border" />
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <span className="h-px flex-1 bg-border" />
+    </div>
+  );
+}
+
+function UnreadDivider() {
+  return (
+    <div className="flex items-center gap-3 px-2 py-1">
+      <span className="h-px flex-1 bg-border" />
+      <span className="rounded-full bg-emerald-600/20 px-2 py-0.5 text-xs font-semibold text-emerald-500">
+        New
+      </span>
+      <span className="h-px flex-1 bg-border" />
+    </div>
+  );
+}
 
 function formatTime(unixSeconds: number): string {
   return new Date(unixSeconds * 1000).toLocaleTimeString([], {
@@ -96,6 +144,10 @@ export function ChannelTimeline({
   activeRootId,
   flat,
   workingAgent,
+  reactions,
+  onReact,
+  unreadBefore,
+  typingNames,
 }: {
   messages: MessageBuffer;
   profiles: Map<string, Profile>;
@@ -112,6 +164,14 @@ export function ChannelTimeline({
   flat?: boolean;
   /** When set, renders the "received and working" typing row at the bottom. */
   workingAgent?: { name: string; startedAt: number } | null;
+  /** Kind-7 reactions aggregated per target id. */
+  reactions?: ReactionIndex;
+  /** Send a reaction (emoji) on a message. */
+  onReact?: (messageId: string, emoji: string) => void;
+  /** createdAt of the first UNSEEN message — renders the unread divider. */
+  unreadBefore?: number | null;
+  /** Display names of people typing in this channel (footer row). */
+  typingNames?: string[];
 }) {
   if (messages.length === 0) {
     return (
@@ -122,9 +182,30 @@ export function ChannelTimeline({
   }
   let lastAuthor: string | null = null;
   let lastKind = 0;
+  let lastDay = "";
+  let unreadShown = false;
   const rows: ReactNode[] = [];
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index];
+    const day = new Date(message.createdAt * 1000).toDateString();
+    if (day !== lastDay) {
+      lastDay = day;
+      lastAuthor = null;
+      rows.push(
+        <DayDivider
+          key={`day:${day}`}
+          label={formatDayLabel(message.createdAt)}
+        />,
+      );
+    }
+    if (
+      !unreadShown &&
+      unreadBefore != null &&
+      message.createdAt >= unreadBefore
+    ) {
+      unreadShown = true;
+      rows.push(<UnreadDivider key="unread" />);
+    }
     // Replies render INLINE under their root (desktop pattern: indented
     // previews with a connector rail, click opens the full thread panel).
     if (!flat && (message.rootId || message.replyToId)) {
@@ -149,6 +230,11 @@ export function ChannelTimeline({
         replyCount={flat ? 0 : (replyCounts.get(message.id) ?? 0)}
         onOpenThread={onOpenThread}
         active={!flat && activeRootId === message.id}
+        reactionGroups={groupReactions(
+          reactions ?? EMPTY_REACTIONS,
+          message.id,
+        )}
+        onReact={onReact}
       >
         {replies.length > 0 && (
           <ThreadPreview
@@ -166,6 +252,20 @@ export function ChannelTimeline({
   return (
     <div className="mx-auto w-full max-w-3xl px-1 py-2 sm:px-3">
       {rows}
+      {typingNames && typingNames.length > 0 && (
+        <div className="mt-1 flex items-center gap-2 px-2 py-0.5 text-sm text-muted-foreground">
+          <span className="flex gap-0.5">
+            <span className="animate-bounce [animation-delay:0ms]">·</span>
+            <span className="animate-bounce [animation-delay:150ms]">·</span>
+            <span className="animate-bounce [animation-delay:300ms]">·</span>
+          </span>
+          <span>
+            {typingNames.slice(0, 3).join(", ")}
+            {typingNames.length > 3 ? ` +${typingNames.length - 3}` : ""}{" "}
+            {typingNames.length === 1 ? "is" : "are"} typing
+          </span>
+        </div>
+      )}
       {workingAgent && (
         <div className="mt-2 flex items-center gap-2 px-2 py-1 text-sm text-muted-foreground">
           <span className="relative flex h-2 w-2">
@@ -193,6 +293,8 @@ function MessageRow({
   replyCount,
   onOpenThread,
   active,
+  reactionGroups,
+  onReact,
   children,
 }: {
   message: TimelineMessage;
@@ -201,6 +303,8 @@ function MessageRow({
   replyCount: number;
   onOpenThread: (message: TimelineMessage) => void;
   active: boolean;
+  reactionGroups: ReactionGroup[];
+  onReact?: (messageId: string, emoji: string) => void;
   children?: ReactNode;
 }) {
   const mentionNames = new Set(
@@ -251,16 +355,50 @@ function MessageRow({
             View all {replyCount} {replyCount === 1 ? "reply" : "replies"} →
           </button>
         )}
+        {reactionGroups.length > 0 && (
+          <div className="mt-1 flex flex-wrap gap-1">
+            {reactionGroups.map((group) => (
+              <button
+                key={group.emoji}
+                type="button"
+                title={group.pubkeys.length.toString()}
+                className="flex items-center gap-1 rounded-full border border-border/60 bg-card/60 px-2 py-0.5 text-sm hover:bg-accent"
+                onClick={() => onReact?.(message.id, group.emoji)}
+              >
+                <span>{group.emoji}</span>
+                {group.pubkeys.length > 1 && (
+                  <span className="text-xs tabular-nums text-muted-foreground">
+                    {group.pubkeys.length}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
         {children}
       </div>
-      <button
-        type="button"
-        aria-label="Reply in thread"
-        className="self-start rounded p-1 text-xs text-muted-foreground transition-opacity hover:bg-accent lg:opacity-0 lg:group-hover:opacity-100"
-        onClick={() => onOpenThread(message)}
-      >
-        ↩
-      </button>
+      <div className="flex shrink-0 flex-col items-center gap-1 self-start">
+        {onReact &&
+          QUICK_REACTIONS.map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              aria-label={`React ${emoji}`}
+              className="hidden rounded p-0.5 text-xs text-muted-foreground transition-opacity hover:bg-accent group-hover:block lg:opacity-0 lg:group-hover:opacity-100"
+              onClick={() => onReact(message.id, emoji)}
+            >
+              {emoji}
+            </button>
+          ))}
+        <button
+          type="button"
+          aria-label="Reply in thread"
+          className="rounded p-1 text-xs text-muted-foreground transition-opacity hover:bg-accent lg:opacity-0 lg:group-hover:opacity-100"
+          onClick={() => onOpenThread(message)}
+        >
+          ↩
+        </button>
+      </div>
     </div>
   );
 }

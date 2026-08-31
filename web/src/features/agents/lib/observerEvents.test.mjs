@@ -180,26 +180,54 @@ test("usage_update renders a Tokens line; commands/other updates stay suppressed
       size: 1_000_000,
       cost: { amount: 310.5979, currency: "USD" },
     }),
-    sessionUpdate({ sessionUpdate: "available_commands_update", availableCommands: [] }),
+    sessionUpdate({
+      sessionUpdate: "available_commands_update",
+      availableCommands: [],
+    }),
   ]);
   const usage = entries.filter((e) => e.type === "usage");
   assert.equal(usage.length, 1);
-  assert.equal(
-    usage[0].text,
-    "Usage Tokens: 652259/1000000 ($310.5979 USD)",
-  );
+  assert.equal(usage[0].text, "Usage Tokens: 652259/1000000 ($310.5979 USD)");
   assert.ok(suppressed >= 1);
 });
 
 test("consecutive completed tools collapse into one burst; lone tools stay", () => {
   seqCounter = 610;
   const { entries } = transcriptFromFrames([
-    sessionUpdate({ sessionUpdate: "agent_thought_chunk", content: "thinking", messageId: "m1" }),
-    sessionUpdate({ sessionUpdate: "tool_call", toolCallId: "t1", title: "Terminal pending", status: "completed" }),
-    sessionUpdate({ sessionUpdate: "tool_call", toolCallId: "t2", title: "Read file", status: "completed" }),
-    sessionUpdate({ sessionUpdate: "tool_call", toolCallId: "t3", title: "Grep", status: "completed" }),
-    sessionUpdate({ sessionUpdate: "agent_thought_chunk", content: "more", messageId: "m2" }),
-    sessionUpdate({ sessionUpdate: "tool_call", toolCallId: "t4", title: "Solo", status: "completed" }),
+    sessionUpdate({
+      sessionUpdate: "agent_thought_chunk",
+      content: "thinking",
+      messageId: "m1",
+    }),
+    sessionUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "t1",
+      title: "Terminal pending",
+      status: "completed",
+    }),
+    sessionUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "t2",
+      title: "Read file",
+      status: "completed",
+    }),
+    sessionUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "t3",
+      title: "Grep",
+      status: "completed",
+    }),
+    sessionUpdate({
+      sessionUpdate: "agent_thought_chunk",
+      content: "more",
+      messageId: "m2",
+    }),
+    sessionUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "t4",
+      title: "Solo",
+      status: "completed",
+    }),
   ]);
   const bursts = entries.filter((e) => e.type === "toolBurst");
   const tools = entries.filter((e) => e.type === "tool");
@@ -212,8 +240,16 @@ test("consecutive completed tools collapse into one burst; lone tools stay", () 
 test("retained history arriving newest-first still derives oldest-first order", () => {
   seqCounter = 620;
   // Relay replay order: newest frame first.
-  const f1 = sessionUpdate({ sessionUpdate: "agent_thought_chunk", content: "first thought ", messageId: "m1" });
-  const f2 = sessionUpdate({ sessionUpdate: "agent_thought_chunk", content: "second thought", messageId: "m2" });
+  const f1 = sessionUpdate({
+    sessionUpdate: "agent_thought_chunk",
+    content: "first thought ",
+    messageId: "m1",
+  });
+  const f2 = sessionUpdate({
+    sessionUpdate: "agent_thought_chunk",
+    content: "second thought",
+    messageId: "m2",
+  });
   const newestFirst = [f2, f1];
   const { entries } = transcriptFromFrames(newestFirst);
   const thoughts = entries.filter((e) => e.type === "thought");

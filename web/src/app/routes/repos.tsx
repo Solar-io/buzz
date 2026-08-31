@@ -1,10 +1,19 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Hash } from "lucide-react";
 import { useAuth } from "@/features/auth/ui/AuthProvider";
 import { LoginPage } from "@/features/auth/ui/LoginPage";
 import {
   sendChannelMessage,
+  sendReaction,
+  sendTypingIndicator,
   useChannelMembers,
   useChannelMessages,
   useProfiles,
@@ -12,6 +21,14 @@ import {
 } from "@/features/channels/hooks";
 import { useChannels } from "@/features/channels/useChannels";
 import { replyCounts } from "@/features/channels/lib/messageBuffer.ts";
+import {
+  isUnread,
+  loadReadState,
+  markSeen,
+  saveReadState,
+  type ReadState,
+} from "@/features/channels/lib/readState.ts";
+import { activeTyping } from "@/features/channels/lib/typing.ts";
 import {
   AuthorAvatar,
   ChannelTimeline,
@@ -105,7 +122,60 @@ function ChannelBrowser() {
     dmDisplayName(participantPubkeys, selfPubkey ?? "", dmProfiles);
 
   const { session } = useRelaySession();
-  const messages = useChannelMessages(current?.id ?? null);
+  const channelId = current?.id ?? "";
+  const { messages, reactions, typing } = useChannelMessages(
+    current?.id ?? null,
+  );
+  // Read state: opening a channel marks its newest message seen; badges and
+  // the timeline unread divider derive from the marker.
+  const [readState, setReadState] = useState<ReadState>(() => loadReadState());
+  const newestMessageAt = messages[messages.length - 1]?.createdAt ?? 0;
+  useEffect(() => {
+    if (channelId === "" || newestMessageAt === 0) {
+      return;
+    }
+    setReadState((previous) => {
+      const next = markSeen(previous, channelId, newestMessageAt);
+      if (next !== previous) {
+        saveReadState(next);
+      }
+      return next;
+    });
+  }, [channelId, newestMessageAt]);
+  const handleReact = useCallback(
+    (messageId: string, emoji: string) => {
+      void sendReaction(session, { targetEventId: messageId, emoji });
+    },
+    [session],
+  );
+  // Typing broadcast: one kind-20002 frame per 3s while the composer has text.
+  const lastTypingSent = useRef(0);
+  const handleComposerText = useCallback(
+    (text: string) => {
+      if (!text.trim() || channelId === "") {
+        return;
+      }
+      const now = Date.now();
+      if (now - lastTypingSent.current < 3000) {
+        return;
+      }
+      lastTypingSent.current = now;
+      void sendTypingIndicator(session, channelId, null);
+    },
+    [session, channelId],
+  );
+  // Typing row: re-derive every few seconds so entries expire visibly.
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => forceTick((n) => n + 1), 3000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const typingNames = activeTyping(
+    typing,
+    channelId,
+    selfPubkey,
+    Date.now(),
+  ).map((pk) => profiles.get(pk)?.displayName ?? pk);
   const members = useChannelMembers(current?.id ?? null);
   const profiles = useProfiles(
     useMemo(
@@ -144,7 +214,6 @@ function ChannelBrowser() {
   // the effect left iOS at the TOP of long back-logs. A delayed second pass
   // catches late-sizing media (images/video placeholders).
   const lastMessageId = messages[messages.length - 1]?.id ?? "";
-  const channelId = current?.id ?? "";
   useEffect(() => {
     if (channelId === "" || lastMessageId === "") {
       return;
@@ -228,6 +297,7 @@ function ChannelBrowser() {
                 selected={channel.id === selectedId}
                 label={channel.name}
                 icon={<ChannelHash />}
+                unread={isUnread(readState, channel.id, channel.updatedAt)}
                 onSelect={() => {
                   setThreadRootId(null);
                   void navigate({
@@ -273,6 +343,15 @@ function ChannelBrowser() {
                 <li key={channel.id}>
                   <DmNavRow
                     selected={channel.id === selectedId}
+                    unread={
+                      lastMessage
+                        ? isUnread(
+                            readState,
+                            channel.id,
+                            lastMessage.created_at,
+                          )
+                        : false
+                    }
                     participants={channel.participantPubkeys}
                     selfPubkey={selfPubkey}
                     profiles={dmProfiles}
@@ -400,6 +479,9 @@ function ChannelBrowser() {
                   setRightTab("thread");
                 }}
                 activeRootId={threadRootId}
+                reactions={reactions}
+                onReact={handleReact}
+                typingNames={typingNames}
                 workingAgent={
                   working.working && working.startedAt !== null && dmAgentPubkey
                     ? {
@@ -414,6 +496,7 @@ function ChannelBrowser() {
             </div>
             <Composer
               members={members}
+              onTextChange={handleComposerText}
               profiles={profiles}
               threadRef={
                 threadRoot
@@ -510,12 +593,15 @@ function SidebarNavButton({
   selected,
   label,
   icon,
+  unread,
   onSelect,
 }: {
   selected: boolean;
   label: string;
   /** Leading glyph — channels pass the desktop's Hash mark. */
   icon?: ReactNode;
+  /** Unread dot — newest activity newer than the read marker. */
+  unread?: boolean;
   onSelect: () => void;
 }) {
   const closeDrawer = useDrawerClose();
@@ -534,6 +620,9 @@ function SidebarNavButton({
     >
       {icon}
       <span className="truncate">{label}</span>
+      {unread && (
+        <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+      )}
     </button>
   );
 }
@@ -575,6 +664,7 @@ function shortStamp(unixSeconds: number): string {
  */
 function DmNavRow({
   selected,
+  unread,
   participants,
   selfPubkey,
   profiles,
@@ -582,6 +672,7 @@ function DmNavRow({
   onSelect,
 }: {
   selected: boolean;
+  unread: boolean;
   participants: string[];
   selfPubkey: string | null;
   profiles: Map<string, Profile>;
@@ -645,6 +736,9 @@ function DmNavRow({
       </span>
       {active && (
         <WorkingBadge startedAt={rowFrames[0]?.createdAt ?? 0} compact />
+      )}
+      {unread && !active && (
+        <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
       )}
       {lastMessage && !active && (
         <span className="shrink-0 text-[11px] text-muted-foreground/70">

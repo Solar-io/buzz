@@ -18,6 +18,7 @@ export function Composer({
   threadRef,
   onClearThread,
   onSent,
+  onTextChange,
   send,
 }: {
   members: ChannelMember[];
@@ -25,6 +26,8 @@ export function Composer({
   threadRef: ThreadRef | null;
   onClearThread: () => void;
   onSent?: () => void;
+  /** Notified on every text change — the parent broadcasts typing frames. */
+  onTextChange?: (text: string) => void;
   send: (options: {
     content: string;
     mentionPubkeys: string[];
@@ -239,6 +242,7 @@ export function Composer({
           value={text}
           onChange={(event) => {
             setText(event.target.value);
+            onTextChange?.(event.target.value);
             setPopupIndex(0);
             setMentionOpen(
               activeMentionQuery(

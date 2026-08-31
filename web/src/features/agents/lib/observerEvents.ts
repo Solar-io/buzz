@@ -45,7 +45,8 @@ export function parseObserverPayload(raw: string): ObserverFrame | null {
       seq: typeof parsed.seq === "number" ? parsed.seq : 0,
       timestamp: typeof parsed.timestamp === "string" ? parsed.timestamp : "",
       kind: parsed.kind,
-      agentIndex: typeof parsed.agentIndex === "number" ? parsed.agentIndex : null,
+      agentIndex:
+        typeof parsed.agentIndex === "number" ? parsed.agentIndex : null,
       channelId: typeof parsed.channelId === "string" ? parsed.channelId : null,
       sessionId: typeof parsed.sessionId === "string" ? parsed.sessionId : null,
       turnId: typeof parsed.turnId === "string" ? parsed.turnId : null,
@@ -280,7 +281,9 @@ export function transcriptFromFrames(frames: ObserverFrame[]): {
     }
   }
   return {
-    entries: collapseToolBursts(order.map((id) => byId.get(id) as TranscriptEntry)),
+    entries: collapseToolBursts(
+      order.map((id) => byId.get(id) as TranscriptEntry),
+    ),
     suppressed,
   };
 }
