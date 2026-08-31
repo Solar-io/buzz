@@ -4,35 +4,51 @@
  * to the OWNER (buzz-core observer.rs), so only the owner's key decrypts
  * them; other viewers see the locked count.
  *
- * The DECRYPTED payload is typed by the desktop's canonical ObserverEvent
- * (type-only import — compile-time drift guard, no runtime coupling): if
- * the desktop schema changes, this module stops compiling instead of
- * silently mis-parsing.
+ * Field names mirror the desktop's canonical ObserverEvent (and the Rust
+ * serde camelCase rename) exactly; a @desktop type-only import was tried as
+ * a compile-time drift guard but the image's web-builder stage copies only
+ * web/ + admin-web/, so the alias cannot ride in container builds. Re-check
+ * against desktop/src/features/agents/ui/agentSessionTypes.ts when touching
+ * this shape.
  */
-import type { ObserverEvent } from "@desktop/features/agents/ui/agentSessionTypes";
-
-export interface ObserverFrame extends ObserverEvent {
+export interface ObserverFrame {
   /** Relay event id (the encrypted envelope's id). */
   id: string;
   /** Envelope created_at, unix seconds. */
   createdAt: number;
+  /** Monotonic process-local sequence from the agent. */
+  seq: number;
+  /** RFC3339 UTC timestamp. */
+  timestamp: string;
+  /** Observer event kind, e.g. "turn_started" / "acp_read". */
+  kind: string;
+  agentIndex: number | null;
+  /** Buzz channel UUID for channel-scoped events. */
+  channelId: string | null;
+  sessionId: string | null;
+  turnId: string | null;
+  startedAt?: string | null;
+  /** Raw or semantic payload. */
+  payload: unknown;
 }
 
-/** Parse an decrypted observer payload against the canonical desktop shape. */
-export function parseObserverPayload(raw: string): ObserverEvent | null {
+/** Parse a decrypted observer payload; null on malformed JSON or kind. */
+export function parseObserverPayload(raw: string): ObserverFrame | null {
   try {
-    const parsed = JSON.parse(raw) as Partial<ObserverEvent>;
+    const parsed = JSON.parse(raw) as Partial<ObserverFrame>;
     if (typeof parsed.kind !== "string") {
       return null;
     }
     return {
+      id: "",
+      createdAt: 0,
       seq: typeof parsed.seq === "number" ? parsed.seq : 0,
       timestamp: typeof parsed.timestamp === "string" ? parsed.timestamp : "",
       kind: parsed.kind,
-      agentIndex: parsed.agentIndex ?? null,
+      agentIndex: typeof parsed.agentIndex === "number" ? parsed.agentIndex : null,
       channelId: typeof parsed.channelId === "string" ? parsed.channelId : null,
-      sessionId: parsed.sessionId ?? null,
-      turnId: parsed.turnId ?? null,
+      sessionId: typeof parsed.sessionId === "string" ? parsed.sessionId : null,
+      turnId: typeof parsed.turnId === "string" ? parsed.turnId : null,
       startedAt: parsed.startedAt ?? null,
       payload: parsed.payload ?? null,
     };

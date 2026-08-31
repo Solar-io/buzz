@@ -6,8 +6,7 @@
     "module": "ESNext",
     "skipLibCheck": true,
     "paths": {
-      "@/*": ["./src/*"],
-      "@desktop/*": ["../desktop/src/*"]
+      "@/*": ["./src/*"]
     },
 
     /* Bundler mode */
