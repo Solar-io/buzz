@@ -301,12 +301,6 @@ function ChannelBrowser() {
     const timer = window.setInterval(() => forceTick((n) => n + 1), 3000);
     return () => window.clearInterval(timer);
   }, []);
-  const typingNames = activeTyping(
-    typing,
-    channelId,
-    selfPubkey,
-    Date.now(),
-  ).map((pk) => profiles.get(pk)?.displayName ?? pk);
   const members = useChannelMembers(current?.id ?? null);
   const profiles = useProfiles(
     useMemo(
@@ -317,6 +311,17 @@ function ChannelBrowser() {
       [messages, members],
     ),
   );
+  // Must be derived AFTER profiles: the .map callback runs synchronously and
+  // touched `profiles` across the TDZ boundary when anyone was typing —
+  // "Cannot access 'I' before initialization" (live incident 2026-08-31,
+  // whole page to the root error boundary; TS cannot flag closure forward
+  // references, so the declaration order is load-bearing).
+  const typingNames = activeTyping(
+    typing,
+    channelId,
+    selfPubkey,
+    Date.now(),
+  ).map((pk) => profiles.get(pk)?.displayName ?? pk);
   const counts = useMemo(() => replyCounts(messages), [messages]);
   const [threadRootId, setThreadRootId] = useState<string | null>(null);
   const threadRoot = threadRootId
