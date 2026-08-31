@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import type { MessageBuffer, TimelineMessage } from "../lib/messageBuffer.ts";
 import type { ChannelMember, Profile } from "../hooks.ts";
 import { ChannelTimeline } from "./ChannelTimeline.tsx";
@@ -41,6 +42,23 @@ export function ThreadPanel({
   const threadMessages = [root, ...replies];
   const lastReply = replies[replies.length - 1] ?? root;
 
+  // Auto-tail (Sam 8/31): thread-heavy agents have long threads — the panel
+  // must open on the NEWEST reply, not the root. Same double-rAF pattern as
+  // the chat timeline; re-fires when a new reply lands or the thread changes.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const lastReplyId = lastReply.id;
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) {
+      return;
+    }
+    const scrollToEnd = () => {
+      scroller.scrollTo({ top: scroller.scrollHeight });
+    };
+    const raf = requestAnimationFrame(() => requestAnimationFrame(scrollToEnd));
+    return () => cancelAnimationFrame(raf);
+  }, [root.id, lastReplyId, replies.length]);
+
   return (
     // Below lg the thread is a full-screen sheet (safe-area aware) — a third
     // column at phone/tablet widths is what crushed the timeline. lg+: docked,
@@ -75,7 +93,7 @@ export function ThreadPanel({
           ✕
         </button>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
         <ChannelTimeline
           messages={threadMessages}
           profiles={profiles}
