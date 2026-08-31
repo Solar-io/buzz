@@ -60,6 +60,9 @@ import {
 } from "@/features/channels/ui/ChannelTimeline";
 import { Composer } from "@/features/channels/ui/Composer";
 import { SearchPanel } from "@/features/channels/ui/SearchPanel";
+import { HuddleBar } from "@/features/huddle/ui/HuddleBar";
+import { useHuddleLinks } from "@/features/huddle/useHuddleLinks";
+import { startHuddle } from "@/features/huddle/lib/huddleLifecycle";
 import { ThreadPanel } from "@/features/channels/ui/ThreadPanel";
 import { NewChannelDialog } from "@/features/channels/ui/NewChannelDialog";
 import {
@@ -378,6 +381,19 @@ function ChannelBrowser() {
     });
   };
 
+  // Huddle registry: kind-48100 links parent channels to their ephemeral
+  // voice rooms; only linked rooms are joinable (the audio relay verifies
+  // the link), so the Huddles section keys off the registry, not bare ttl.
+  const huddleLinks = useHuddleLinks();
+  const linkedHuddleChannels = useMemo(
+    () => huddleChannels.filter((channel) => huddleLinks.has(channel.id)),
+    [huddleChannels, huddleLinks],
+  );
+  const currentHuddleParent =
+    current && huddleLinks.has(current.id)
+      ? (huddleLinks.get(current.id)?.parentId ?? null)
+      : null;
+
   // Viewer-side channel prefs (starred / muted), local like the desktop's DB.
   const [channelPrefs, setChannelPrefs] = useState<ChannelPrefs>(() =>
     loadChannelPrefs(),
@@ -547,13 +563,13 @@ function ChannelBrowser() {
             </li>
           ))}
         </ul>
-        {huddleChannels.length > 0 && (
+        {linkedHuddleChannels.length > 0 && (
           <details className="px-0 pt-2">
             <summary className="flex h-8 cursor-pointer select-none items-center px-2 text-xs font-medium uppercase tracking-wide text-sidebar-foreground/70">
-              Huddles ({huddleChannels.length})
+              Huddles ({linkedHuddleChannels.length})
             </summary>
             <ul className="space-y-0.5">
-              {huddleChannels.map((channel) => (
+              {linkedHuddleChannels.map((channel) => (
                 <li key={channel.id}>
                   <SidebarNavButton
                     selected={channel.id === selectedId}
@@ -721,11 +737,43 @@ function ChannelBrowser() {
                   {current.about}
                 </p>
               )}
+              {current.ttlSeconds === null && (
+                <button
+                  type="button"
+                  aria-label="Start a huddle in this channel"
+                  title="Start huddle"
+                  className="ml-auto shrink-0 rounded p-1.5 text-sm text-muted-foreground hover:bg-accent"
+                  onClick={() => {
+                    void startHuddle(session, { parentChannelId: current.id })
+                      .then((result) => {
+                        if (result.ok && result.channelId) {
+                          toast.success(result.message);
+                          void navigate({
+                            to: "/repos",
+                            search: { c: result.channelId },
+                          });
+                          // The private room's 39000 has no live fan-out —
+                          // staggered re-REQs pull it into the sidebar.
+                          window.setTimeout(refreshChannels, 500);
+                          window.setTimeout(refreshChannels, 2000);
+                        } else {
+                          toast.error(result.message);
+                        }
+                      })
+                      .catch(() => toast.error("Could not start the huddle."));
+                  }}
+                >
+                  🎙
+                </button>
+              )}
               <button
                 type="button"
                 aria-label="Search messages"
                 title="Search (⌘K)"
-                className="ml-auto shrink-0 rounded p-1.5 text-sm text-muted-foreground hover:bg-accent"
+                className={cn(
+                  "shrink-0 rounded p-1.5 text-sm text-muted-foreground hover:bg-accent",
+                  current.ttlSeconds === null && "ml-auto",
+                )}
                 onClick={() => setSearchOpen(true)}
               >
                 🔍
@@ -743,6 +791,13 @@ function ChannelBrowser() {
                 </button>
               )}
             </div>
+            {current.ttlSeconds !== null && (
+              <HuddleBar
+                channelId={current.id}
+                parentChannelId={currentHuddleParent}
+                selfPubkey={selfPubkey}
+              />
+            )}
             <ChannelTimeline
               messages={messages}
               profiles={profiles}
