@@ -25,6 +25,7 @@ export function useChannels(): {
   const [refreshKey, setRefreshKey] = useState(0);
   const refresh = useCallback(() => setRefreshKey((key) => key + 1), []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is the re-REQ trigger by design
   useEffect(() => {
     const apply = (event: SignedNostrEvent) => {
       const channel = channelFromEvent(event);

@@ -373,6 +373,9 @@ importers:
       tailwind-merge:
         specifier: ^3.5.0
         version: 3.6.0
+      virtua:
+        specifier: 0.49.3
+        version: 0.49.3(patch_hash=30a7a92b94800ec37be8d36546ea98c04a05dcd0637f9fac27a06f016ba2eff4)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
     devDependencies:
       '@playwright/test':
         specifier: ^1.58.2

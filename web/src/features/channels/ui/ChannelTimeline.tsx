@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from "react";
+import { VList, type VListHandle } from "virtua";
 import type { MessageBuffer, TimelineMessage } from "../lib/messageBuffer.ts";
 export type { ChannelMember, Profile } from "../hooks.ts";
 import type { Profile } from "../hooks.ts";
@@ -155,6 +162,7 @@ export function ChannelTimeline({
   highlightId,
   unreadBefore,
   typingNames,
+  tailKey,
 }: {
   messages: MessageBuffer;
   profiles: Map<string, Profile>;
@@ -195,19 +203,21 @@ export function ChannelTimeline({
   unreadBefore?: number | null;
   /** Display names of people typing in this channel (footer row). */
   typingNames?: string[];
+  /**
+   * Auto-tail trigger: every change scrolls the list to its bottom (the
+   * desktop's VList pattern). Compose it from the channel + newest message id
+   * (`${channelId}:${lastMessageId}`) so both new messages and channel
+   * switches re-tail. Null disables tailing.
+   */
+  tailKey?: string | null;
 }) {
-  if (messages.length === 0) {
-    return (
-      <p className="p-8 text-center text-sm text-muted-foreground">
-        No messages yet. Say something.
-      </p>
-    );
-  }
+  const listRef = useRef<VListHandle>(null);
+  const isEmpty = messages.length === 0;
   let lastAuthor: string | null = null;
   let lastKind = 0;
   let lastDay = "";
   let unreadShown = false;
-  const rows: ReactNode[] = [];
+  const rows: ReactElement[] = [];
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index];
     // Deleted messages disappear from the timeline entirely (desktop parity:
@@ -282,12 +292,20 @@ export function ChannelTimeline({
       </MessageRow>,
     );
   }
-  // max-w keeps line lengths readable on wide desktops without affecting
-  // phone layout (the column is already narrower than the cap there).
-  return (
-    <div className="mx-auto w-full max-w-3xl px-1 py-2 sm:px-3">
-      {rows}
-      {typingNames && typingNames.length > 0 && (
+  // Virtualized (virtua VList — the desktop's timeline virtualizer): only the
+  // visible window of rows mounts, so a 500-message buffer scrolls smoothly.
+  // Each row carries its own max-w centering wrapper so line lengths stay
+  // readable on wide desktops without affecting phone layout.
+  const items: ReactNode[] = [
+    ...rows.map((row) => (
+      <div key={row.key} className="mx-auto w-full max-w-3xl px-1 sm:px-3">
+        {row}
+      </div>
+    )),
+  ];
+  if (typingNames && typingNames.length > 0) {
+    items.push(
+      <div key="typing" className="mx-auto w-full max-w-3xl px-1 sm:px-3">
         <div className="mt-1 flex items-center gap-2 px-2 py-0.5 text-sm text-muted-foreground">
           <span className="flex gap-0.5">
             <span className="animate-bounce [animation-delay:0ms]">·</span>
@@ -300,8 +318,12 @@ export function ChannelTimeline({
             {typingNames.length === 1 ? "is" : "are"} typing
           </span>
         </div>
-      )}
-      {workingAgent && (
+      </div>,
+    );
+  }
+  if (workingAgent) {
+    items.push(
+      <div key="working" className="mx-auto w-full max-w-3xl px-1 sm:px-3">
         <div className="mt-2 flex items-center gap-2 px-2 py-1 text-sm text-muted-foreground">
           <span className="relative flex h-2 w-2">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
@@ -316,8 +338,39 @@ export function ChannelTimeline({
             )}
           </span>
         </div>
-      )}
-    </div>
+      </div>,
+    );
+  }
+  // Auto-tail: tailKey changes → scroll to the newest row. Double-rAF lets
+  // virtua measure freshly mounted rows; the settle pass catches late-sizing
+  // media. (Same pattern the timeline used before virtualization.)
+  useEffect(() => {
+    if (!tailKey) {
+      return;
+    }
+    const toBottom = () =>
+      listRef.current?.scrollToIndex(items.length - 1, { align: "end" });
+    const raf = requestAnimationFrame(() => requestAnimationFrame(toBottom));
+    const settle = window.setTimeout(toBottom, 250);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(settle);
+    };
+    // items.length covers the growing list; tailKey covers channel switches.
+  }, [tailKey, items.length]);
+  // Empty state AFTER the hooks — conditional hook order would break the
+  // 0 → N message transition.
+  if (isEmpty) {
+    return (
+      <p className="p-8 text-center text-sm text-muted-foreground">
+        No messages yet. Say something.
+      </p>
+    );
+  }
+  return (
+    <VList ref={listRef} className="min-h-0 flex-1">
+      {items}
+    </VList>
   );
 }
 

@@ -1,4 +1,3 @@
-import { useEffect, useRef } from "react";
 import type { MessageBuffer, TimelineMessage } from "../lib/messageBuffer.ts";
 import type { ChannelMember, Profile } from "../hooks.ts";
 import { ChannelTimeline } from "./ChannelTimeline.tsx";
@@ -41,23 +40,9 @@ export function ThreadPanel({
   ].sort((a, b) => a.createdAt - b.createdAt);
   const threadMessages = [root, ...replies];
   const lastReply = replies[replies.length - 1] ?? root;
-
   // Auto-tail (Sam 8/31): thread-heavy agents have long threads — the panel
-  // must open on the NEWEST reply, not the root. Same double-rAF pattern as
-  // the chat timeline; re-fires when a new reply lands or the thread changes.
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const lastReplyId = lastReply.id;
-  useEffect(() => {
-    const scroller = scrollRef.current;
-    if (!scroller) {
-      return;
-    }
-    const scrollToEnd = () => {
-      scroller.scrollTo({ top: scroller.scrollHeight });
-    };
-    const raf = requestAnimationFrame(() => requestAnimationFrame(scrollToEnd));
-    return () => cancelAnimationFrame(raf);
-  }, [root.id, lastReplyId, replies.length]);
+  // must open on the NEWEST reply, not the root. The timeline's tailKey
+  // handles it now that the list is virtualized.
 
   return (
     // Below lg the thread is a full-screen sheet (safe-area aware) — a third
@@ -93,17 +78,16 @@ export function ThreadPanel({
           ✕
         </button>
       </header>
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
-        <ChannelTimeline
-          messages={threadMessages}
-          profiles={profiles}
-          replyCounts={new Map()}
-          onOpenThread={() => {
-            // Threads are flat: every reply targets the root.
-          }}
-          flat
-        />
-      </div>
+      <ChannelTimeline
+        messages={threadMessages}
+        profiles={profiles}
+        replyCounts={new Map()}
+        onOpenThread={() => {
+          // Threads are flat: every reply targets the root.
+        }}
+        flat
+        tailKey={`${root.id}:${lastReply.id}:${replies.length}`}
+      />
       <Composer
         members={members}
         profiles={profiles}

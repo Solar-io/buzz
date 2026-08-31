@@ -38,6 +38,7 @@ import {
   ChannelTimeline,
 } from "@/features/channels/ui/ChannelTimeline";
 import { Composer } from "@/features/channels/ui/Composer";
+import { SearchPanel } from "@/features/channels/ui/SearchPanel";
 import { ThreadPanel } from "@/features/channels/ui/ThreadPanel";
 import { NewChannelDialog } from "@/features/channels/ui/NewChannelDialog";
 import {
@@ -218,7 +219,8 @@ function ChannelBrowser() {
   );
   // Permalink target (?m=): once the message is in the buffer the row scrolls
   // itself into view and flashes; then m is dropped from the URL so later
-  // arrivals don't fight the auto-tail scroll.
+  // arrivals don't fight the auto-tail scroll. Hits older than the fetch
+  // window never enter the buffer — a 4s fallback still cleans the URL.
   const permalinkReady =
     permalinkMessageId != null &&
     messages.some((m) => m.id === permalinkMessageId);
@@ -235,6 +237,19 @@ function ChannelBrowser() {
     }, 800);
     return () => window.clearTimeout(timer);
   }, [permalinkReady, navigate, selectedId]);
+  useEffect(() => {
+    if (permalinkMessageId == null || permalinkReady) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void navigate({
+        to: "/repos",
+        search: { c: selectedId },
+        replace: true,
+      });
+    }, 4000);
+    return () => window.clearTimeout(timer);
+  }, [permalinkMessageId, permalinkReady, navigate, selectedId]);
   // Typing broadcast: one kind-20002 frame per 3s while the composer has text.
   // Draft persistence rides along — every text change stores the channel's
   // draft (empty text clears it), independent of the typing throttle.
@@ -298,32 +313,14 @@ function ChannelBrowser() {
       String(Math.round(threadWidth)),
     );
   }, [threadWidth]);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  // Re-scroll on the newest message id; also re-run when switching channels
-  // (two channels can share a last-message id only in the empty case).
-  // Double-rAF: the first frame commits layout for freshly rendered rows,
-  // the second measures the final scrollHeight — scrolling synchronously in
-  // the effect left iOS at the TOP of long back-logs. A delayed second pass
-  // catches late-sizing media (images/video placeholders).
+  // Auto-tail now lives INSIDE the virtualized timeline (tailKey) — the VList
+  // owns its scroll node. The key covers both new messages and channel
+  // switches (two channels share a last-message id only in the empty case).
   const lastMessageId = messages[messages.length - 1]?.id ?? "";
-  useEffect(() => {
-    if (channelId === "" || lastMessageId === "") {
-      return;
-    }
-    const scroller = scrollRef.current;
-    if (!scroller) {
-      return;
-    }
-    const scrollToEnd = () => {
-      scroller.scrollTo({ top: scroller.scrollHeight });
-    };
-    const raf = requestAnimationFrame(() => requestAnimationFrame(scrollToEnd));
-    const settle = window.setTimeout(scrollToEnd, 250);
-    return () => {
-      cancelAnimationFrame(raf);
-      window.clearTimeout(settle);
-    };
-  }, [channelId, lastMessageId]);
+  const tailKey =
+    channelId === "" || lastMessageId === ""
+      ? null
+      : `${channelId}:${lastMessageId}`;
 
   const send = (options: {
     content: string;
@@ -520,6 +517,18 @@ function ChannelBrowser() {
     [agentFrames, current?.id],
   );
   const [thinkingOpen, setThinkingOpen] = useState(false);
+  // ⌘K / Ctrl+K opens search from anywhere in the app.
+  const [searchOpen, setSearchOpen] = useState(false);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   // DM right-pane tabs: thinking ↔ thread replies (channels stay thread-only).
   const [rightTab, setRightTab] = useState<"thinking" | "thread">("thinking");
   // "Received and working": sticky turn start; the agent's kind-9 reply
@@ -565,10 +574,19 @@ function ChannelBrowser() {
                   {current.about}
                 </p>
               )}
+              <button
+                type="button"
+                aria-label="Search messages"
+                title="Search (⌘K)"
+                className="ml-auto shrink-0 rounded p-1.5 text-sm text-muted-foreground hover:bg-accent"
+                onClick={() => setSearchOpen(true)}
+              >
+                🔍
+              </button>
               {dmAgentPubkey && (
                 <button
                   type="button"
-                  className="ml-auto shrink-0 rounded-full border border-border px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-accent lg:hidden"
+                  className="shrink-0 rounded-full border border-border px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-accent lg:hidden"
                   onClick={() => {
                     setRightTab("thinking");
                     setThinkingOpen(true);
@@ -578,37 +596,36 @@ function ChannelBrowser() {
                 </button>
               )}
             </div>
-            <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
-              <ChannelTimeline
-                messages={messages}
-                profiles={profiles}
-                replyCounts={counts}
-                onOpenThread={(message) => {
-                  setThreadRootId(message.id);
-                  setRightTab("thread");
-                }}
-                activeRootId={threadRootId}
-                reactions={reactions}
-                onReact={handleReact}
-                onEdit={handleEdit}
-                onDelete={handleDelete}
-                onShare={handleShare}
-                selfPubkey={selfPubkey}
-                agentPubkeys={agentPubkeys}
-                highlightId={permalinkMessageId ?? null}
-                typingNames={typingNames}
-                workingAgent={
-                  working.working && working.startedAt !== null && dmAgentPubkey
-                    ? {
-                        name:
-                          profiles.get(dmAgentPubkey)?.displayName ??
-                          dmAgentPubkey,
-                        startedAt: working.startedAt,
-                      }
-                    : null
-                }
-              />
-            </div>
+            <ChannelTimeline
+              messages={messages}
+              profiles={profiles}
+              replyCounts={counts}
+              onOpenThread={(message) => {
+                setThreadRootId(message.id);
+                setRightTab("thread");
+              }}
+              activeRootId={threadRootId}
+              reactions={reactions}
+              onReact={handleReact}
+              onEdit={handleEdit}
+              onDelete={handleDelete}
+              onShare={handleShare}
+              selfPubkey={selfPubkey}
+              agentPubkeys={agentPubkeys}
+              highlightId={permalinkMessageId ?? null}
+              typingNames={typingNames}
+              tailKey={tailKey}
+              workingAgent={
+                working.working && working.startedAt !== null && dmAgentPubkey
+                  ? {
+                      name:
+                        profiles.get(dmAgentPubkey)?.displayName ??
+                        dmAgentPubkey,
+                      startedAt: working.startedAt,
+                    }
+                  : null
+              }
+            />
             <Composer
               members={members}
               onTextChange={handleComposerText}
@@ -698,6 +715,19 @@ function ChannelBrowser() {
           </p>
         </div>
       )}
+      <SearchPanel
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        channels={channels}
+        profiles={profiles}
+        defaultChannelId={current?.id ?? null}
+        onOpenResult={(channelId, messageId) => {
+          void navigate({
+            to: "/repos",
+            search: { c: channelId, m: messageId },
+          });
+        }}
+      />
     </AppShell>
   );
 }
