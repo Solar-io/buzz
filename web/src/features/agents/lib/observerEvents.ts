@@ -3,21 +3,42 @@
  * DM's right panel. Frames are kind 24200, NIP-44 v2 encrypted by the agent
  * to the OWNER (buzz-core observer.rs), so only the owner's key decrypts
  * them; other viewers see the locked count.
+ *
+ * The DECRYPTED payload is typed by the desktop's canonical ObserverEvent
+ * (type-only import — compile-time drift guard, no runtime coupling): if
+ * the desktop schema changes, this module stops compiling instead of
+ * silently mis-parsing.
  */
+import type { ObserverEvent } from "@desktop/features/agents/ui/agentSessionTypes";
 
-export interface ObserverFrame {
+export interface ObserverFrame extends ObserverEvent {
+  /** Relay event id (the encrypted envelope's id). */
   id: string;
+  /** Envelope created_at, unix seconds. */
   createdAt: number;
-  /** Monotonic process-local sequence from the agent. */
-  seq: number;
-  /** RFC3339 UTC timestamp. */
-  timestamp: string;
-  /** Observer event kind, e.g. "turn_started" / "acp_read". */
-  kind: string;
-  /** Buzz channel UUID for channel-scoped events. */
-  channelId: string | null;
-  /** Raw or semantic payload. */
-  payload: unknown;
+}
+
+/** Parse an decrypted observer payload against the canonical desktop shape. */
+export function parseObserverPayload(raw: string): ObserverEvent | null {
+  try {
+    const parsed = JSON.parse(raw) as Partial<ObserverEvent>;
+    if (typeof parsed.kind !== "string") {
+      return null;
+    }
+    return {
+      seq: typeof parsed.seq === "number" ? parsed.seq : 0,
+      timestamp: typeof parsed.timestamp === "string" ? parsed.timestamp : "",
+      kind: parsed.kind,
+      agentIndex: parsed.agentIndex ?? null,
+      channelId: typeof parsed.channelId === "string" ? parsed.channelId : null,
+      sessionId: parsed.sessionId ?? null,
+      turnId: parsed.turnId ?? null,
+      startedAt: parsed.startedAt ?? null,
+      payload: parsed.payload ?? null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export interface ObserverFeed {

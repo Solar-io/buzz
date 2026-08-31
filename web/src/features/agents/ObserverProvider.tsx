@@ -11,7 +11,7 @@ import { getPublicKey } from "nostr-tools";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { getUnlockedSecretKey } from "@/shared/lib/key-store";
-import type { ObserverFrame } from "./lib/observerEvents";
+import { parseObserverPayload, type ObserverFrame } from "./lib/observerEvents";
 
 /**
  * Global observer store — the desktop's architecture, ported.
@@ -56,23 +56,11 @@ function decodeFrame(
       event.pubkey,
     );
     const plaintext = nip44.v2.decrypt(event.content, conversationKey);
-    const parsed = JSON.parse(plaintext) as {
-      seq?: unknown;
-      timestamp?: unknown;
-      kind?: unknown;
-      channel_id?: unknown;
-      payload?: unknown;
-    };
-    return {
-      id: event.id,
-      createdAt: event.created_at,
-      seq: typeof parsed.seq === "number" ? parsed.seq : 0,
-      timestamp: typeof parsed.timestamp === "string" ? parsed.timestamp : "",
-      kind: typeof parsed.kind === "string" ? parsed.kind : "event",
-      channelId:
-        typeof parsed.channel_id === "string" ? parsed.channel_id : null,
-      payload: parsed.payload ?? null,
-    };
+    const parsed = parseObserverPayload(plaintext);
+    if (!parsed) {
+      return null;
+    }
+    return { ...parsed, id: event.id, createdAt: event.created_at };
   } catch {
     return null;
   }
