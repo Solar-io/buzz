@@ -10,8 +10,8 @@ use sqlx::{PgConnection, PgPool, Postgres, QueryBuilder, Row, Transaction};
 use uuid::Uuid;
 
 use buzz_core::kind::{
-    event_kind_i32, is_ephemeral, is_parameterized_replaceable, KIND_AUTH, KIND_EVENT_REMINDER,
-    KIND_HUDDLE_STARTED, SHARED_GATED_KINDS,
+    event_kind_i32, is_ephemeral, is_parameterized_replaceable, KIND_AGENT_OBSERVER_FRAME,
+    KIND_AUTH, KIND_EVENT_REMINDER, KIND_HUDDLE_STARTED, SHARED_GATED_KINDS,
 };
 use buzz_core::{CommunityId, StoredEvent};
 
@@ -267,6 +267,58 @@ pub async fn huddle_started_link_exists(
         .any(|content| huddle_started_content_links(content, ephemeral_channel_id)))
 }
 
+/// Delete retained agent observer frames (kind 24200) older than `cutoff`,
+/// batching to keep each statement's lock footprint small. Mention rows go
+/// first (no FK on `event_mentions`, so they are removed explicitly).
+/// Returns the number of event rows deleted.
+pub async fn prune_expired_observer_frames(
+    pool: &PgPool,
+    cutoff: DateTime<Utc>,
+) -> Result<u64> {
+    const BATCH: i64 = 5_000;
+    let kind_i32 = event_kind_i32_for_observer();
+    let mut total_deleted: u64 = 0;
+    loop {
+        let mut tx = pool.begin().await?;
+        // ids as bytea, not uuid — events.id is the 32-byte event id.
+        let ids: Vec<(Vec<u8>,)> = sqlx::query_as(
+            "SELECT id FROM events WHERE kind = $1 AND created_at < $2 LIMIT $3",
+        )
+        .bind(kind_i32)
+        .bind(cutoff)
+        .bind(BATCH)
+        .fetch_all(&mut *tx)
+        .await?;
+        if ids.is_empty() {
+            tx.commit().await?;
+            break;
+        }
+        let mut id_slice: Vec<&[u8]> = Vec::with_capacity(ids.len());
+        for (id,) in &ids {
+            id_slice.push(id.as_slice());
+        }
+        // No FK on event_mentions — remove rows for this batch explicitly.
+        sqlx::query("DELETE FROM event_mentions WHERE event_id = ANY($1)")
+            .bind(&id_slice)
+            .execute(&mut *tx)
+            .await?;
+        let deleted = sqlx::query("DELETE FROM events WHERE id = ANY($1)")
+            .bind(&id_slice)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        total_deleted += deleted.rows_affected();
+        if (ids.len() as i64) < BATCH {
+            break;
+        }
+    }
+    Ok(total_deleted)
+}
+
+fn event_kind_i32_for_observer() -> i32 {
+    KIND_AGENT_OBSERVER_FRAME as i32
+}
+
 /// Insert a Nostr event. Rejects AUTH and ephemeral kinds.
 ///
 /// Returns `(StoredEvent, was_inserted)` — `was_inserted` is `false` on duplicate.
@@ -306,7 +358,12 @@ async fn insert_event_on(
     if kind_u32 == KIND_AUTH {
         return Err(DbError::AuthEventRejected);
     }
-    if is_ephemeral(kind_u32) {
+    // Observer frames (kind 24200) are the ONE retained ephemeral-range kind:
+    // the relay stores their NIP-44 ciphertext so every owner client (web,
+    // desktop, future devices) can read the same history, then the reaper
+    // prunes them on the retention window. Everything else in 20000-29999
+    // stays pub/sub-only.
+    if is_ephemeral(kind_u32) && kind_u32 != KIND_AGENT_OBSERVER_FRAME {
         return Err(DbError::EphemeralEventRejected(kind_u16));
     }
 
@@ -1166,7 +1223,12 @@ pub(crate) async fn insert_event_with_thread_metadata_tx(
     if kind_u32 == KIND_AUTH {
         return Err(DbError::AuthEventRejected);
     }
-    if is_ephemeral(kind_u32) {
+    // Observer frames (kind 24200) are the ONE retained ephemeral-range kind:
+    // the relay stores their NIP-44 ciphertext so every owner client (web,
+    // desktop, future devices) can read the same history, then the reaper
+    // prunes them on the retention window. Everything else in 20000-29999
+    // stays pub/sub-only.
+    if is_ephemeral(kind_u32) && kind_u32 != KIND_AGENT_OBSERVER_FRAME {
         return Err(DbError::EphemeralEventRejected(kind_u16));
     }
 
@@ -2737,5 +2799,64 @@ mod tests {
         .to_string();
         assert!(!huddle_started_content_links(&wrong_field, channel_id));
         assert!(!huddle_started_content_links("not-json", channel_id));
+    }
+
+    fn make_observer_frame_event(owner_hex: &str, created_at: i64) -> nostr::Event {
+        let keys = Keys::generate();
+        EventBuilder::new(Kind::Custom(24200), "A%")
+            .tags(vec![
+                Tag::parse(["p", owner_hex]).expect("p tag"),
+                Tag::parse(["agent", &keys.public_key().to_hex()]).expect("agent tag"),
+                Tag::parse(["frame", "telemetry"]).expect("frame tag"),
+            ])
+            .custom_created_at(nostr::Timestamp::from_secs(created_at as u64))
+            .sign_with_keys(&keys)
+            .expect("sign observer frame")
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn observer_frames_are_retained_and_pruned() {
+        let pool = setup_pool().await;
+        let community = make_test_community(&pool).await;
+        let owner = Keys::generate();
+        let owner_hex = owner.public_key().to_hex();
+
+        // Observer frames (24200) are the one retained ephemeral kind.
+        let fresh = make_observer_frame_event(&owner_hex, 1_750_000_100);
+        insert_event(&pool, CommunityId::from_uuid(community), &fresh, None)
+            .await
+            .expect("observer frame insert");
+
+        // The #p-indexed read path finds it (p_tag_hex join).
+        let query = EventQuery {
+            kinds: Some(vec![24200]),
+            p_tag_hex: Some(owner_hex.clone()),
+            ..EventQuery::for_community(CommunityId::from_uuid(community))
+        };
+        let found = query_events(&pool, &query).await.expect("query");
+        assert!(
+            found.iter().any(|e| e.event.id == fresh.id),
+            "retained observer frame must be queryable by #p"
+        );
+
+        // Old frames prune; fresh ones stay.
+        let old = make_observer_frame_event(&owner_hex, 1_700_000_000);
+        insert_event(&pool, CommunityId::from_uuid(community), &old, None)
+            .await
+            .expect("old observer frame insert");
+        let cutoff = DateTime::from_timestamp(1_740_000_000, 0).expect("cutoff");
+        let deleted =
+            prune_expired_observer_frames(&pool, cutoff).await.expect("prune");
+        assert!(deleted >= 1, "old observer frame must be pruned");
+        let after = query_events(&pool, &query).await.expect("query after prune");
+        assert!(
+            after.iter().any(|e| e.event.id == fresh.id),
+            "fresh observer frame survives the prune"
+        );
+        assert!(
+            !after.iter().any(|e| e.event.id == old.id),
+            "old observer frame is gone"
+        );
     }
 }

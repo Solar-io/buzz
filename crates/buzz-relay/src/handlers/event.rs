@@ -1098,6 +1098,30 @@ async fn handle_agent_observer_event(
     fan_out_event_to_local_subscribers(&state, conn.tenant.community(), &stored_event).await;
 
     conn.send(RelayMessage::ok(event_id_hex, true, ""));
+
+    // Retained history (Sam, 8/30): persist the ciphertext row so every owner
+    // client — web, desktop, future devices — reads the same past from the
+    // relay instead of only what each happened to catch live. The reaper
+    // prunes on the retention window; reads stay p-gated. Spawned AFTER the
+    // OK so live fan-out never waits on the write; best-effort — a storage
+    // failure logs and skips (live delivery already happened). Db::insert_event
+    // indexes p-tag mentions itself (the #p read path).
+    if state.config.observer_retention_secs > 0 {
+        let retain_state = Arc::clone(&state);
+        let community = conn.tenant.community();
+        let retain_event = event.clone();
+        let retain_conn_id = conn_id;
+        let retain_event_id = event_id_hex.to_owned();
+        tokio::spawn(async move {
+            if let Err(e) = retain_state
+                .db
+                .insert_event(community, &retain_event, None)
+                .await
+            {
+                warn!(conn_id = %retain_conn_id, event_id = %retain_event_id, "Observer retention insert failed: {e}");
+            }
+        });
+    }
 }
 
 fn agent_observer_route(event: &Event) -> Result<Option<AgentObserverRoute>, String> {

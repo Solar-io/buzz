@@ -2133,6 +2133,15 @@ impl Db {
         channel::reap_expired_ephemeral_channels(&self.pool).await
     }
 
+    /// Delete retained agent observer frames older than `cutoff`.
+    #[datastore_span(name = "prune_expired_observer_frames", system = "postgresql")]
+    pub async fn prune_expired_observer_frames(
+        &self,
+        cutoff: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64> {
+        event::prune_expired_observer_frames(&self.pool, cutoff).await
+    }
+
     /// Query due reminders ready for delivery.
     #[datastore_span(name = "query_due_reminders", system = "postgresql")]
     pub async fn query_due_reminders(

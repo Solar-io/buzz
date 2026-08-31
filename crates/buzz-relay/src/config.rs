@@ -267,6 +267,12 @@ pub struct Config {
     /// 60 seconds after the last message.
     pub ephemeral_ttl_override: Option<i32>,
 
+    /// Retention window (seconds) for stored agent observer frames (kind
+    /// 24200). The frames are NIP-44 ciphertext to the owner; reads are
+    /// p-gated exactly like the live feed. 0 disables retention.
+    /// Default: 604_800 (7 days). `BUZZ_OBSERVER_RETENTION_SECS`.
+    pub observer_retention_secs: i64,
+
     /// Root directory for the relay's local git scratch. No authoritative
     /// repository state lives here — runtime reads/writes hydrate ephemeral
     /// repos from object storage per request. Temporary workspaces, buffered
@@ -855,6 +861,15 @@ impl Config {
             );
         }
 
+        // Retained observer-frame history: kind 24200 ciphertext rows age out
+        // after this window. 0 disables retention entirely (relay returns to
+        // live-only). Default: 7 days.
+        let observer_retention_secs: i64 = std::env::var("BUZZ_OBSERVER_RETENTION_SECS")
+            .ok()
+            .and_then(|v| v.parse::<i64>().ok())
+            .filter(|&v| v >= 0)
+            .unwrap_or(7 * 24 * 3600);
+
         // Git server config
         let git_repo_path = ensure_git_repo_path(
             std::env::var("BUZZ_GIT_REPO_PATH").unwrap_or_else(|_| "./repos".to_string()),
@@ -1064,6 +1079,7 @@ impl Config {
             media_uploads_per_minute,
             audit_enabled,
             ephemeral_ttl_override,
+            observer_retention_secs,
             git_repo_path,
             git_pack_cache_path,
             git_max_pack_bytes,

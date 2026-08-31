@@ -645,6 +645,34 @@ async fn main() -> anyhow::Result<()> {
     let wf_cron = Arc::clone(&workflow_engine);
     tokio::spawn(async move { wf_cron.run().await });
 
+    // Retained observer-frame pruner — kind 24200 rows age out on the
+    // retention window (BUZZ_OBSERVER_RETENTION_SECS, default 7 days).
+    // Hourly, batched deletes; 0 retention disables the loop entirely.
+    if state.config.observer_retention_secs > 0 {
+        let prune_state = Arc::clone(&state);
+        let retention_secs = state.config.observer_retention_secs;
+        tokio::spawn(async move {
+            info!(
+                retention_secs,
+                "Observer frame retention pruner started"
+            );
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+                let cutoff = chrono::Utc::now()
+                    - chrono::Duration::seconds(retention_secs);
+                match prune_state
+                    .db
+                    .prune_expired_observer_frames(cutoff)
+                    .await
+                {
+                    Ok(0) => {}
+                    Ok(n) => info!(count = n, "Pruned expired observer frames"),
+                    Err(e) => error!("Observer frame prune failed: {e}"),
+                }
+            }
+        });
+    }
+
     // Ephemeral channel reaper — archives channels whose TTL deadline has passed.
     // Runs every 60s, matching the workflow cron loop pattern. The SQL UPDATE
     // uses `archived_at IS NULL` as a guard, so concurrent runs from multiple
