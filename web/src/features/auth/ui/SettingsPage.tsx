@@ -8,7 +8,12 @@ import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { useAuth } from "./AuthProvider";
 import { activeSignerSource } from "@/shared/lib/nostr-signer";
-import { getUnlockedSecretKey } from "@/shared/lib/key-store";
+import {
+  clearRememberedKey,
+  getUnlockedSecretKey,
+  hasRememberedKey,
+  rememberSecretKeyForSettings,
+} from "@/shared/lib/key-store";
 import { nsecFromSecretKey } from "@/shared/lib/nsec";
 import { relayWsUrl } from "@/shared/lib/relay-url";
 
@@ -17,6 +22,33 @@ export function SettingsPage() {
   const source = activeSignerSource();
   const [npub, setNpub] = useState<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [staySignedIn, setStaySignedIn] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    void hasRememberedKey().then(setStaySignedIn);
+  }, []);
+
+  const toggleStaySignedIn = useCallback(() => {
+    const next = !staySignedIn;
+    setStaySignedIn(next);
+    if (next) {
+      const secretKey = getUnlockedSecretKey();
+      if (secretKey) {
+        void rememberSecretKeyForSettings(secretKey).catch(() => {
+          toast.error("Could not store the remembered key.");
+          setStaySignedIn(false);
+        });
+      } else {
+        toast.error("Unlock first, then enable stay-signed-in.");
+        setStaySignedIn(false);
+      }
+    } else {
+      void clearRememberedKey().catch(() => {
+        toast.error("Could not remove the remembered key.");
+        setStaySignedIn(true);
+      });
+    }
+  }, [staySignedIn]);
 
   useEffect(() => {
     let cancelled = false;
@@ -89,6 +121,23 @@ export function SettingsPage() {
             <dt className="text-muted-foreground">Relay</dt>
             <dd className="truncate font-mono text-xs">{relayWsUrl()}</dd>
           </div>
+          {source === "local" && staySignedIn !== null && (
+            <div className="flex items-center justify-between gap-4">
+              <dt className="text-muted-foreground">Stay signed in</dt>
+              <dd className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  keeps refreshes unlocked
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={toggleStaySignedIn}
+                >
+                  {staySignedIn ? "On" : "Off"}
+                </Button>
+              </dd>
+            </div>
+          )}
           {npub && (
             <div className="flex justify-between gap-4">
               <dt className="text-muted-foreground">You</dt>
