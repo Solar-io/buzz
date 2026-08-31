@@ -22,7 +22,24 @@ import {
   useProfiles,
   type Profile,
 } from "@/features/channels/hooks";
-import { useChannels } from "@/features/channels/useChannels";
+import {
+  useChannels,
+  type ChannelSummary,
+} from "@/features/channels/useChannels";
+import {
+  forgetChannel,
+  isMuted,
+  loadChannelPrefs,
+  toggleMuted,
+  toggleStarred,
+  type ChannelPrefs,
+} from "@/features/channels/lib/channelPrefs.ts";
+import {
+  leaveChannel,
+  sendPresence,
+  usePresence,
+} from "@/features/channels/hooks";
+import { ContextMenu, type ContextMenuItem } from "@/shared/ui/ContextMenu";
 import { replyCounts } from "@/features/channels/lib/messageBuffer.ts";
 import {
   isUnread,
@@ -32,6 +49,10 @@ import {
   type ReadState,
 } from "@/features/channels/lib/readState.ts";
 import { activeTyping } from "@/features/channels/lib/typing.ts";
+import {
+  presenceDotClass,
+  type PresenceEntry,
+} from "@/features/channels/lib/presence.ts";
 import { clearDraft, saveDraft } from "@/features/channels/lib/drafts.ts";
 import {
   AuthorAvatar,
@@ -357,6 +378,91 @@ function ChannelBrowser() {
     });
   };
 
+  // Viewer-side channel prefs (starred / muted), local like the desktop's DB.
+  const [channelPrefs, setChannelPrefs] = useState<ChannelPrefs>(() =>
+    loadChannelPrefs(),
+  );
+  const starredChannels = useMemo(
+    () =>
+      visibleChannels.filter((channel) =>
+        channelPrefs.starred.includes(channel.id),
+      ),
+    [visibleChannels, channelPrefs],
+  );
+  const unstarredChannels = useMemo(
+    () =>
+      visibleChannels.filter(
+        (channel) => !channelPrefs.starred.includes(channel.id),
+      ),
+    [visibleChannels, channelPrefs],
+  );
+  // Context menu per channel: star / mark read / mute / leave.
+  const channelMenu = (channel: ChannelSummary): ContextMenuItem[] => [
+    {
+      label: channelPrefs.starred.includes(channel.id)
+        ? "Unstar"
+        : "Star channel",
+      onSelect: () =>
+        setChannelPrefs((prefs) => toggleStarred(prefs, channel.id)),
+    },
+    {
+      label: "Mark read",
+      onSelect: () => {
+        setReadState((previous) => {
+          const next = markSeen(previous, channel.id, channel.updatedAt);
+          if (next !== previous) {
+            saveReadState(next);
+          }
+          return next;
+        });
+      },
+    },
+    {
+      label: channelPrefs.muted.includes(channel.id) ? "Unmute" : "Mute",
+      onSelect: () =>
+        setChannelPrefs((prefs) => toggleMuted(prefs, channel.id)),
+    },
+    {
+      label: "Leave channel",
+      danger: true,
+      onSelect: () => {
+        if (!window.confirm(`Leave #${channel.name}?`)) {
+          return;
+        }
+        void leaveChannel(session, channel.id).then((result) => {
+          if (result.ok) {
+            setChannelPrefs((prefs) => forgetChannel(prefs, channel.id));
+            window.setTimeout(refreshChannels, 500);
+            window.setTimeout(refreshChannels, 2000);
+          } else {
+            toast.error(result.message || "Could not leave the channel.");
+          }
+        });
+      },
+    },
+  ];
+  // Presence: subscribe for every DM peer; publish self as online once the
+  // session is live (the relay expires it server-side, no offline beacon).
+  const dmPeerPubkeys = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          dms.flatMap(({ channel }) =>
+            channel.participantPubkeys.filter((pk) => pk !== selfPubkey),
+          ),
+        ),
+      ),
+    [dms, selfPubkey],
+  );
+  const presence = usePresence(dmPeerPubkeys);
+  const publishedPresence = useRef(false);
+  useEffect(() => {
+    if (connected && session && !publishedPresence.current) {
+      publishedPresence.current = true;
+      void sendPresence(session, "online");
+    }
+  }, [connected, session]);
+
   const sidebar = (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between px-3 py-2">
@@ -385,14 +491,50 @@ function ChannelBrowser() {
               : "Connecting to the relay…"}
           </p>
         )}
+        {starredChannels.length > 0 && (
+          <>
+            <p className="flex h-8 items-center px-2 text-xs font-medium uppercase tracking-wide text-sidebar-foreground/70">
+              Starred
+            </p>
+            <ul className="space-y-0.5">
+              {starredChannels.map((channel) => (
+                <li key={channel.id}>
+                  <SidebarNavButton
+                    selected={channel.id === selectedId}
+                    label={channel.name}
+                    icon={<ChannelHash />}
+                    unread={
+                      !isMuted(channelPrefs, channel.id) &&
+                      isUnread(readState, channel.id, channel.updatedAt)
+                    }
+                    onSelect={() => {
+                      setThreadRootId(null);
+                      void navigate({
+                        to: "/repos",
+                        search: { c: channel.id },
+                      });
+                    }}
+                    menuItems={channelMenu(channel)}
+                  />
+                </li>
+              ))}
+            </ul>
+            <p className="mt-4 flex h-8 items-center px-2 text-xs font-medium uppercase tracking-wide text-sidebar-foreground/70">
+              Channels
+            </p>
+          </>
+        )}
         <ul className="space-y-0.5">
-          {visibleChannels.map((channel) => (
+          {unstarredChannels.map((channel) => (
             <li key={channel.id}>
               <SidebarNavButton
                 selected={channel.id === selectedId}
                 label={channel.name}
                 icon={<ChannelHash />}
-                unread={isUnread(readState, channel.id, channel.updatedAt)}
+                unread={
+                  !isMuted(channelPrefs, channel.id) &&
+                  isUnread(readState, channel.id, channel.updatedAt)
+                }
                 onSelect={() => {
                   setThreadRootId(null);
                   void navigate({
@@ -400,6 +542,7 @@ function ChannelBrowser() {
                     search: { c: channel.id },
                   });
                 }}
+                menuItems={channelMenu(channel)}
               />
             </li>
           ))}
@@ -451,6 +594,10 @@ function ChannelBrowser() {
                     selfPubkey={selfPubkey}
                     profiles={dmProfiles}
                     lastMessage={lastMessage}
+                    presence={channel.participantPubkeys
+                      .filter((pk) => pk !== selfPubkey)
+                      .map((pk) => presence.get(pk))
+                      .find((entry) => entry != null)}
                     onSelect={() => {
                       setThreadRootId(null);
                       void navigate({
@@ -744,6 +891,7 @@ function SidebarNavButton({
   icon,
   unread,
   onSelect,
+  menuItems,
 }: {
   selected: boolean;
   label: string;
@@ -752,13 +900,15 @@ function SidebarNavButton({
   /** Unread dot — newest activity newer than the read marker. */
   unread?: boolean;
   onSelect: () => void;
+  /** Right-click / ⋯ context menu items, when provided. */
+  menuItems?: ContextMenuItem[];
 }) {
   const closeDrawer = useDrawerClose();
-  return (
+  const row = (open: (x: number, y: number) => void) => (
     <button
       type="button"
       className={cn(
-        "flex h-9 w-full items-center gap-1.5 truncate rounded-md px-2 text-left text-base transition-colors",
+        "group/row flex h-9 w-full items-center gap-1.5 truncate rounded-md px-2 text-left text-base transition-colors",
         "hover:bg-white/5 hover:text-foreground",
         selected && "bg-white/[0.18] font-medium text-foreground",
       )}
@@ -766,14 +916,54 @@ function SidebarNavButton({
         onSelect();
         closeDrawer();
       }}
+      onContextMenu={
+        menuItems
+          ? (event) => {
+              event.preventDefault();
+              open(event.clientX, event.clientY);
+            }
+          : undefined
+      }
     >
       {icon}
       <span className="truncate">{label}</span>
       {unread && (
         <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
       )}
+      {menuItems && (
+        // A real <button> cannot nest inside the row button — the span keeps
+        // keyboard access via tabIndex + onKeyDown below.
+        // biome-ignore lint/a11y/useSemanticElements: nested interactive elements cannot both be buttons
+        <span
+          role="button"
+          tabIndex={0}
+          aria-label={`Options for ${label}`}
+          className={cn(
+            "hidden shrink-0 rounded p-0.5 text-xs text-sidebar-foreground/60 hover:bg-white/10 group-hover/row:block",
+            !unread && "ml-auto",
+          )}
+          onClick={(event) => {
+            event.stopPropagation();
+            const rect = event.currentTarget.getBoundingClientRect();
+            open(rect.left, rect.bottom + 4);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.stopPropagation();
+              const rect = event.currentTarget.getBoundingClientRect();
+              open(rect.left, rect.bottom + 4);
+            }
+          }}
+        >
+          ⋯
+        </span>
+      )}
     </button>
   );
+  if (menuItems) {
+    return <ContextMenu items={menuItems}>{row}</ContextMenu>;
+  }
+  return row(() => {});
 }
 
 /** The desktop's channel glyph: a muted Hash in front of channel names. */
@@ -818,6 +1008,7 @@ function DmNavRow({
   selfPubkey,
   profiles,
   lastMessage,
+  presence,
   onSelect,
 }: {
   selected: boolean;
@@ -826,6 +1017,8 @@ function DmNavRow({
   selfPubkey: string | null;
   profiles: Map<string, Profile>;
   lastMessage: DmLastMessage | null;
+  /** Latest presence entry for the row's avatar pubkey, when subscribed. */
+  presence?: PresenceEntry;
   onSelect: () => void;
 }) {
   const closeDrawer = useDrawerClose();
@@ -861,11 +1054,21 @@ function DmNavRow({
           picture={profiles.get(avatarPubkey)?.avatar}
           size="md"
         />
-        {active && (
+        {active ? (
           <span className="absolute -right-0.5 -bottom-0.5 flex h-3 w-3">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
             <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500" />
           </span>
+        ) : (
+          presence && (
+            <span
+              title={presence.status}
+              className={cn(
+                "absolute -right-0.5 -bottom-0.5 h-3 w-3 rounded-full border border-sidebar",
+                presenceDotClass(presence.status),
+              )}
+            />
+          )
         )}
       </span>
       <span className="min-w-0 flex-1">

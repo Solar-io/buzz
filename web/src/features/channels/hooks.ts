@@ -19,6 +19,12 @@ import {
   type ReactionIndex,
 } from "./lib/reactions.ts";
 import { recordTyping, typingFromEvent, type TypingMap } from "./lib/typing.ts";
+import {
+  PRESENCE_KIND,
+  mergePresence,
+  presenceFromEvent,
+  type PresenceEntry,
+} from "./lib/presence.ts";
 
 /** Live timeline for one channel (kind 9 + channel event kinds, by #h tag). */
 export interface ChannelFeed {
@@ -332,4 +338,69 @@ export async function sendChannelMessage(
     content: options.content,
   });
   return session.publish(event);
+}
+
+/** Publish own presence (kind 20001) — the relay keeps it in Redis and
+ *  synthesizes snapshot events for author-scoped subscribers. */
+export async function sendPresence(
+  session: RelaySession,
+  status: "online" | "away" | "offline",
+): Promise<void> {
+  try {
+    const event = await signNostrEvent({
+      kind: 20001,
+      tags: [],
+      content: status,
+    });
+    await session.publish(event);
+  } catch {
+    // Presence is best-effort.
+  }
+}
+
+/** NIP-29 leave request (kind 9022, h tag) — the relay drops membership. */
+export async function leaveChannel(
+  session: RelaySession,
+  channelId: string,
+): Promise<SendResult> {
+  const event = await signNostrEvent({
+    kind: 9022,
+    tags: [["h", channelId]],
+    content: "",
+  });
+  const result = await session.publish(event);
+  return { ok: result.ok, message: result.message };
+}
+
+/**
+ * Presence for a set of pubkeys: one author-scoped kind-20001 subscription.
+ * The relay synthesizes a snapshot on subscribe, so the map is immediately
+ * populated; live updates arrive as users re-publish.
+ */
+export function usePresence(pubkeys: string[]): Map<string, PresenceEntry> {
+  const { session } = useRelaySession();
+  const [entries, setEntries] = useState<Map<string, PresenceEntry>>(new Map());
+  const key = useMemo(() => Array.from(new Set(pubkeys)).sort(), [pubkeys]);
+  const keyRef = useRef(key);
+  keyRef.current = key;
+
+  useEffect(() => {
+    if (key.length === 0) {
+      return;
+    }
+    setEntries(new Map());
+    return session.subscribe(
+      { kinds: [PRESENCE_KIND], authors: key, limit: key.length },
+      {
+        onEvent: (event: SignedNostrEvent) => {
+          const entry = presenceFromEvent(event);
+          if (entry) {
+            setEntries((current) => mergePresence(current, entry));
+          }
+        },
+      },
+    );
+  }, [session, key]);
+
+  return entries;
 }
