@@ -185,6 +185,13 @@ export function transcriptFromFrames(frames: ObserverFrame[]): {
   entries: TranscriptEntry[];
   suppressed: number;
 } {
+  // The store appends frames in ARRIVAL order; retained history replays
+  // newest-first from the relay, so an unsorted walk renders the transcript
+  // backwards and "scroll to bottom" lands on the OLDEST turn. Walk in
+  // chronological (createdAt, seq) order instead — stable for equal stamps.
+  const sorted = [...frames].sort(
+    (a, b) => a.createdAt - b.createdAt || a.seq - b.seq,
+  );
   const byId = new Map<string, TranscriptEntry>();
   const order: string[] = [];
   let suppressed = 0;
@@ -197,7 +204,7 @@ export function transcriptFromFrames(frames: ObserverFrame[]): {
       order.push(entry.id);
     }
   };
-  for (const frame of frames) {
+  for (const frame of sorted) {
     if (frame.kind === "turn_started") {
       upsert({ type: "turn", id: `turn:${frame.id}`, at: frame.createdAt });
       continue;

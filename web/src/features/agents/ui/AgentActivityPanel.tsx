@@ -118,12 +118,27 @@ export function AgentActivityPanel({
     () => transcriptFromFrames(frames),
     [frames],
   );
+  // Auto-tail: land on the NEWEST entry when the panel mounts with retained
+  // history, when the agent switches, and as new frames stream in. Double-rAF
+  // (same pattern as the chat timeline): the first frame commits layout for
+  // freshly rendered rows, the second measures the final scrollHeight —
+  // scrolling synchronously in the effect lands a render short.
   const lastId = frames[frames.length - 1]?.id ?? "";
+  const agentKey = agentPubkey;
   useEffect(() => {
-    if (lastId !== "") {
-      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    if (lastId === "") {
+      return;
     }
-  }, [lastId, entries.length]);
+    const scroller = scrollRef.current;
+    if (!scroller) {
+      return;
+    }
+    const scrollToEnd = () => {
+      scroller.scrollTo({ top: scroller.scrollHeight });
+    };
+    const raf = requestAnimationFrame(() => requestAnimationFrame(scrollToEnd));
+    return () => cancelAnimationFrame(raf);
+  }, [lastId, entries.length, agentKey]);
   useTick(working.working);
 
   return (

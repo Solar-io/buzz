@@ -208,3 +208,16 @@ test("consecutive completed tools collapse into one burst; lone tools stay", () 
   assert.equal(tools.length, 1);
   assert.equal(tools[0].title, "Solo");
 });
+
+test("retained history arriving newest-first still derives oldest-first order", () => {
+  seqCounter = 620;
+  // Relay replay order: newest frame first.
+  const f1 = sessionUpdate({ sessionUpdate: "agent_thought_chunk", content: "first thought ", messageId: "m1" });
+  const f2 = sessionUpdate({ sessionUpdate: "agent_thought_chunk", content: "second thought", messageId: "m2" });
+  const newestFirst = [f2, f1];
+  const { entries } = transcriptFromFrames(newestFirst);
+  const thoughts = entries.filter((e) => e.type === "thought");
+  assert.equal(thoughts.length, 2);
+  assert.equal(thoughts[0].text, "first thought ");
+  assert.equal(thoughts[1].text, "second thought");
+});
