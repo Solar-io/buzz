@@ -9,6 +9,17 @@ import { toast } from "sonner";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 import { activeMentionQuery, resolveMentions } from "../lib/mentions.ts";
+import {
+  applyCode,
+  applyLinePrefix,
+  applyLink,
+  applyWrap,
+} from "../lib/composerFormat.ts";
+import {
+  activeEmojiQuery,
+  applyEmojiCompletion,
+  emojiSuggestions,
+} from "../lib/emojiAutocomplete.ts";
 import { loadDraft } from "../lib/drafts.ts";
 import { buildImetaTag, mediaMarkdown } from "../lib/imeta.ts";
 import { uploadBlob, type BlobDescriptor } from "@/shared/api/blossom";
@@ -159,6 +170,64 @@ export function Composer({
     });
   };
 
+  // Rich-text toolbar: apply a format fn to the current selection and restore
+  // the selection the fn computed (rAF so React's controlled value lands first).
+  const applyFormat = (
+    format: (
+      text: string,
+      start: number,
+      end: number,
+    ) => { text: string; selStart: number; selEnd: number },
+  ) => {
+    const textarea = textareaRef.current;
+    if (!textarea || editingActive) {
+      return;
+    }
+    const result = format(
+      text,
+      textarea.selectionStart ?? text.length,
+      textarea.selectionEnd ?? text.length,
+    );
+    setText(result.text);
+    onTextChange?.(result.text);
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(result.selStart, result.selEnd);
+    });
+  };
+
+  // :code: emoji autocomplete — rides the same popup machinery as mentions.
+  const emojiToken = (() => {
+    const textarea = textareaRef.current;
+    if (!textarea || query !== null) {
+      return null;
+    }
+    return activeEmojiQuery(text, textarea.selectionStart ?? text.length);
+  })();
+  const emojiMatches = useMemo(
+    () => (emojiToken === null ? [] : emojiSuggestions(emojiToken)),
+    [emojiToken],
+  );
+  const [emojiIndex, setEmojiIndex] = useState(0);
+  const applyEmojiMatch = (match: { emoji: string }) => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
+    }
+    const result = applyEmojiCompletion(
+      text,
+      textarea.selectionStart ?? text.length,
+      match.emoji,
+    );
+    setText(result.text);
+    onTextChange?.(result.text);
+    setEmojiIndex(0);
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(result.caret, result.caret);
+    });
+  };
+
   const attach = async (files: FileList | null) => {
     if (!files || files.length === 0) {
       return;
@@ -247,6 +316,41 @@ export function Composer({
         return;
       }
     }
+    if (emojiMatches.length > 0) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setEmojiIndex((index) => (index + 1) % emojiMatches.length);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setEmojiIndex(
+          (index) => (index - 1 + emojiMatches.length) % emojiMatches.length,
+        );
+        return;
+      }
+      if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
+        event.preventDefault();
+        applyEmojiMatch(emojiMatches[emojiIndex] ?? emojiMatches[0]);
+        return;
+      }
+      if (event.key === "Escape") {
+        setEmojiIndex(0);
+        return;
+      }
+    }
+    // Rich-text shortcuts: ⌘B bold, ⌘I italic (no browser conflict inside a
+    // textarea except ⌘I in some browsers — preventDefault covers it).
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
+      event.preventDefault();
+      applyFormat((t, s, e) => applyWrap(t, s, e, "**"));
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "i") {
+      event.preventDefault();
+      applyFormat((t, s, e) => applyWrap(t, s, e, "_"));
+      return;
+    }
     if (event.key === "Escape" && editingActive) {
       onCancelEdit?.();
       return;
@@ -281,6 +385,24 @@ export function Composer({
           ))}
         </ul>
       )}
+      {emojiMatches.length > 0 && (
+        <ul className="absolute bottom-full left-3 mb-1 w-64 overflow-hidden rounded-md border border-border bg-popover shadow-lg">
+          {emojiMatches.map((match, index) => (
+            <li key={match.code}>
+              <button
+                type="button"
+                className={cn(
+                  "block w-full truncate px-3 py-1.5 text-left text-sm hover:bg-accent",
+                  index === emojiIndex && "bg-accent",
+                )}
+                onClick={() => applyEmojiMatch(match)}
+              >
+                {match.emoji} {match.code}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       {threadRef && !editingActive && (
         <p className="mb-1 text-xs text-muted-foreground">
           Replying in thread — Esc clears
@@ -298,6 +420,84 @@ export function Composer({
           </button>
           <span className="text-muted-foreground">— Esc cancels</span>
         </p>
+      )}
+      {!editingActive && (
+        <div
+          className="mb-1.5 flex items-center gap-0.5"
+          role="toolbar"
+          aria-label="Format message"
+        >
+          {(
+            [
+              {
+                label: "Bold",
+                hint: "B",
+                title: "Bold (⌘B)",
+                apply: (t: string, s: number, e: number) =>
+                  applyWrap(t, s, e, "**"),
+                content: <span className="font-bold">B</span>,
+              },
+              {
+                label: "Italic",
+                hint: "I",
+                title: "Italic (⌘I)",
+                apply: (t: string, s: number, e: number) =>
+                  applyWrap(t, s, e, "_"),
+                content: <span className="italic">I</span>,
+              },
+              {
+                label: "Strikethrough",
+                hint: "S",
+                title: "Strikethrough",
+                apply: (t: string, s: number, e: number) =>
+                  applyWrap(t, s, e, "~~"),
+                content: <span className="line-through">S</span>,
+              },
+              {
+                label: "Inline code",
+                hint: "code",
+                title: "Inline code",
+                apply: applyCode,
+                content: <span className="font-mono text-xs">{"<>"}</span>,
+              },
+              {
+                label: "Link",
+                hint: "link",
+                title: "Link",
+                apply: applyLink,
+                content: "🔗",
+              },
+              {
+                label: "Bulleted list",
+                hint: "list",
+                title: "Bulleted list",
+                apply: (t: string, s: number, e: number) =>
+                  applyLinePrefix(t, s, e, "- "),
+                content: "•—",
+              },
+              {
+                label: "Quote",
+                hint: "quote",
+                title: "Quote",
+                apply: (t: string, s: number, e: number) =>
+                  applyLinePrefix(t, s, e, "> "),
+                content: "❝",
+              },
+            ] as const
+          ).map((item) => (
+            <button
+              key={item.hint}
+              type="button"
+              aria-label={item.label}
+              title={item.title}
+              className="rounded p-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40"
+              disabled={busy}
+              onClick={() => applyFormat(item.apply)}
+            >
+              {item.content}
+            </button>
+          ))}
+        </div>
       )}
       <div className="flex items-end gap-2">
         <input
