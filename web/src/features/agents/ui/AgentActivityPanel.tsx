@@ -37,6 +37,24 @@ function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
       </li>
     );
   }
+  if (entry.type === "toolBurst") {
+    return (
+      <li className="flex items-baseline gap-2 rounded-lg px-1 py-0.5 text-sm text-muted-foreground">
+        <span aria-hidden="true">🔧</span>
+        <span className="font-medium">
+          Ran {entry.count} tool call{entry.count === 1 ? "" : "s"}
+        </span>
+      </li>
+    );
+  }
+  if (entry.type === "usage") {
+    return (
+      <li className="flex items-baseline gap-2 rounded-lg px-1 py-0.5 text-sm text-muted-foreground">
+        <span aria-hidden="true">📊</span>
+        <span className="font-medium tabular-nums">{entry.text}</span>
+      </li>
+    );
+  }
   if (entry.type === "tool") {
     return (
       <li className="flex items-baseline gap-2 rounded-lg px-1 py-0.5 text-sm">

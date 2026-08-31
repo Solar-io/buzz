@@ -118,6 +118,20 @@ export type TranscriptEntry =
       status: string;
     }
   | {
+      /** Collapsed run of routine tool calls — desktop "Ran N tool calls". */
+      type: "toolBurst";
+      id: string;
+      at: number;
+      count: number;
+    }
+  | {
+      /** Turn-scoped usage from usage_update — "Tokens: used/size ($cost)". */
+      type: "usage";
+      id: string;
+      at: number;
+      text: string;
+    }
+  | {
       type: "turn";
       id: string;
       at: number;
@@ -231,6 +245,27 @@ export function transcriptFromFrames(frames: ObserverFrame[]): {
           asString(update.status) ??
           (updateType === "tool_call_update" ? "completed" : "executing"),
       });
+    } else if (updateType === "usage_update") {
+      // Desktop parity: "Usage Tokens: 652259/1000000 ($310.5979 USD)".
+      const used = typeof update.used === "number" ? update.used : null;
+      const size = typeof update.size === "number" ? update.size : null;
+      if (used !== null && size !== null) {
+        const cost = asRecord(update.cost);
+        const amount = typeof cost?.amount === "number" ? cost.amount : null;
+        const currency = asString(cost?.currency);
+        const costStr =
+          amount !== null && currency
+            ? ` ($${amount.toFixed(4)} ${currency})`
+            : "";
+        upsert({
+          type: "usage",
+          id: `usage:${frame.channelId ?? ""}:${frame.turnId ?? key}`,
+          at: frame.createdAt,
+          text: `Usage Tokens: ${used}/${size}${costStr}`,
+        });
+      } else {
+        suppressed += 1;
+      }
     } else {
       // user echoes, assistant message chunks (they land in the chat), RPC
       // housekeeping — noise for this pane.
@@ -238,9 +273,44 @@ export function transcriptFromFrames(frames: ObserverFrame[]): {
     }
   }
   return {
-    entries: order.map((id) => byId.get(id) as TranscriptEntry),
+    entries: collapseToolBursts(order.map((id) => byId.get(id) as TranscriptEntry)),
     suppressed,
   };
+}
+
+/**
+ * Collapse runs of CONSECUTIVE completed tool rows into one
+ * "Ran N tool calls" summary (the desktop's agentSessionTranscriptGrouping
+ * burst pass, condensed): raw per-tool titles like "Terminal pending" are
+ * noise at this altitude. An executing tool stays visible on its own so the
+ * current step is always readable.
+ */
+function collapseToolBursts(entries: TranscriptEntry[]): TranscriptEntry[] {
+  const out: TranscriptEntry[] = [];
+  let run: TranscriptEntry[] = [];
+  const flush = () => {
+    if (run.length === 1) {
+      out.push(run[0]);
+    } else if (run.length > 1) {
+      out.push({
+        type: "toolBurst",
+        id: `burst:${run[0].id}`,
+        at: run[0].at,
+        count: run.length,
+      });
+    }
+    run = [];
+  };
+  for (const entry of entries) {
+    if (entry.type === "tool" && entry.status === "completed") {
+      run.push(entry);
+      continue;
+    }
+    flush();
+    out.push(entry);
+  }
+  flush();
+  return out;
 }
 
 export interface AgentWorkingState {

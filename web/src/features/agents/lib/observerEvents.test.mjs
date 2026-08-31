@@ -170,3 +170,41 @@ test("timer start is sticky: later frames do not reset it", () => {
   assert.equal(first.startedAt, later.startedAt);
   assert.ok(later.working);
 });
+
+test("usage_update renders a Tokens line; commands/other updates stay suppressed", () => {
+  seqCounter = 600;
+  const { entries, suppressed } = transcriptFromFrames([
+    sessionUpdate({
+      sessionUpdate: "usage_update",
+      used: 652259,
+      size: 1_000_000,
+      cost: { amount: 310.5979, currency: "USD" },
+    }),
+    sessionUpdate({ sessionUpdate: "available_commands_update", availableCommands: [] }),
+  ]);
+  const usage = entries.filter((e) => e.type === "usage");
+  assert.equal(usage.length, 1);
+  assert.equal(
+    usage[0].text,
+    "Usage Tokens: 652259/1000000 ($310.5979 USD)",
+  );
+  assert.ok(suppressed >= 1);
+});
+
+test("consecutive completed tools collapse into one burst; lone tools stay", () => {
+  seqCounter = 610;
+  const { entries } = transcriptFromFrames([
+    sessionUpdate({ sessionUpdate: "agent_thought_chunk", content: "thinking", messageId: "m1" }),
+    sessionUpdate({ sessionUpdate: "tool_call", toolCallId: "t1", title: "Terminal pending", status: "completed" }),
+    sessionUpdate({ sessionUpdate: "tool_call", toolCallId: "t2", title: "Read file", status: "completed" }),
+    sessionUpdate({ sessionUpdate: "tool_call", toolCallId: "t3", title: "Grep", status: "completed" }),
+    sessionUpdate({ sessionUpdate: "agent_thought_chunk", content: "more", messageId: "m2" }),
+    sessionUpdate({ sessionUpdate: "tool_call", toolCallId: "t4", title: "Solo", status: "completed" }),
+  ]);
+  const bursts = entries.filter((e) => e.type === "toolBurst");
+  const tools = entries.filter((e) => e.type === "tool");
+  assert.equal(bursts.length, 1);
+  assert.equal(bursts[0].count, 3);
+  assert.equal(tools.length, 1);
+  assert.equal(tools[0].title, "Solo");
+});
