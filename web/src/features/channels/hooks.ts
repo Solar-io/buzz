@@ -12,7 +12,13 @@ import {
   timelineMessageFromEvent,
   upsertMessage,
   type MessageBuffer,
+  type TimelineMessage,
 } from "./lib/messageBuffer.ts";
+import {
+  FORUM_COMMENT_KIND,
+  FORUM_POST_KIND,
+  forumThreadReplies,
+} from "./lib/forum.ts";
 import {
   reactionFromEvent,
   upsertReaction,
@@ -102,6 +108,127 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
   }, [session, channelId]);
 
   return { messages: buffer, reactions, typing };
+}
+
+export interface ForumPostsFeed {
+  messages: MessageBuffer;
+  /** True until the relay has replayed the channel history (first EOSE). */
+  loading: boolean;
+}
+
+/**
+ * Forum posts history for one channel: a dedicated roots-deep subscription.
+ * Desktop's forum list REQs kind 45001 only; the read side here widens to
+ * the chat root kinds (9, 40002, 40008) so live kind-9 thread traffic (the
+ * #alerts engine) renders as posts while writes stay desktop-exact 45001.
+ * Overlay kinds (5 delete, 40003 edit) ride along so deleting or editing a
+ * post tombstones/patches it in this list, not just the main feed window.
+ */
+export function useForumPosts(channelId: string | null): ForumPostsFeed {
+  const { session } = useRelaySession();
+  const [buffer, setBuffer] = useState<MessageBuffer>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setBuffer([]);
+    setLoading(true);
+    if (!channelId) {
+      return;
+    }
+    return session.subscribe(
+      {
+        kinds: [9, 40002, 40008, FORUM_POST_KIND, 5, 40003],
+        "#h": [channelId],
+        limit: 100,
+      },
+      {
+        onEose: () => setLoading(false),
+        onEvent: (event: SignedNostrEvent) => {
+          if (event.kind === 40003 || event.kind === 5) {
+            const targetId = editTargetFromEvent(event);
+            if (targetId) {
+              setBuffer((previous) =>
+                applyOverlay(
+                  previous,
+                  event.kind,
+                  targetId,
+                  event.kind === 40003 ? event.content : null,
+                ),
+              );
+            }
+            return;
+          }
+          const message = timelineMessageFromEvent(event);
+          if (!message || message.channelId !== channelId) {
+            return;
+          }
+          setBuffer((previous) => upsertMessage(previous, message));
+        },
+      },
+    );
+  }, [session, channelId]);
+
+  return { messages: buffer, loading };
+}
+
+export interface ForumThread {
+  root: TimelineMessage | null;
+  /** Replies in order — kind-9 appends and kind-45003 comments alike. */
+  replies: TimelineMessage[];
+}
+
+/**
+ * One forum thread, fetched with desktop's two REQs (messages/forum.rs): the
+ * root by id, then everything referencing it inside the channel. The #e
+ * match catches both marker shapes — a nested reply's root marker names the
+ * post, as does a first-level comment's reply marker.
+ */
+export function useForumThread(
+  channelId: string | null,
+  postId: string | null,
+): ForumThread {
+  const { session } = useRelaySession();
+  const [buffer, setBuffer] = useState<MessageBuffer>([]);
+
+  useEffect(() => {
+    setBuffer([]);
+    if (!channelId || !postId) {
+      return;
+    }
+    const onEvent = (event: SignedNostrEvent) => {
+      const message = timelineMessageFromEvent(event);
+      if (!message || message.channelId !== channelId) {
+        return;
+      }
+      setBuffer((previous) => upsertMessage(previous, message));
+    };
+    const unsubscribeRoot = session.subscribe(
+      {
+        ids: [postId],
+        kinds: [9, 40002, FORUM_POST_KIND, FORUM_COMMENT_KIND],
+        limit: 1,
+      },
+      { onEvent },
+    );
+    const unsubscribeReplies = session.subscribe(
+      {
+        kinds: [9, FORUM_COMMENT_KIND],
+        "#e": [postId],
+        "#h": [channelId],
+        limit: 200,
+      },
+      { onEvent },
+    );
+    return () => {
+      unsubscribeRoot();
+      unsubscribeReplies();
+    };
+  }, [session, channelId, postId]);
+
+  return {
+    root: postId ? (buffer.find((m) => m.id === postId) ?? null) : null,
+    replies: postId ? forumThreadReplies(buffer, postId) : [],
+  };
 }
 
 export interface ChannelMember {
@@ -313,6 +440,13 @@ export async function sendChannelMessage(
     mentionPubkeys: string[];
     threadRef?: { rootId: string; replyToId: string } | null;
     mediaTags?: string[][];
+    /**
+     * Event kind to publish. Chat messages are kind 9; forum views pass
+     * 45001 (top-level post, threadRef null) or 45003 (comment, threadRef
+     * set) — desktop's build_forum_post/build_forum_comment tag shapes,
+     * which this builder already produces.
+     */
+    kind?: number;
   },
 ): Promise<SendResult> {
   const tags: string[][] = [["h", options.channelId]];
@@ -333,7 +467,7 @@ export async function sendChannelMessage(
   }
 
   const event = await signNostrEvent({
-    kind: 9,
+    kind: options.kind ?? 9,
     tags,
     content: options.content,
   });

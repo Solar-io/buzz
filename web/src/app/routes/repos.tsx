@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { Hash } from "lucide-react";
+import { Hash, MessageSquareText } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/features/auth/ui/AuthProvider";
 import { LoginPage } from "@/features/auth/ui/LoginPage";
@@ -59,6 +59,7 @@ import {
   ChannelTimeline,
 } from "@/features/channels/ui/ChannelTimeline";
 import { Composer } from "@/features/channels/ui/Composer";
+import { ForumView } from "@/features/channels/ui/ForumView";
 import { SearchPanel } from "@/features/channels/ui/SearchPanel";
 import { HuddleBar } from "@/features/huddle/ui/HuddleBar";
 import { useHuddleLinks } from "@/features/huddle/useHuddleLinks";
@@ -121,8 +122,9 @@ function ChannelBrowser() {
   // Archived channels (expired huddles etc.) hide from the sidebar — the
   // relay's `archived` tag exists for exactly this. Ephemeral (ttl) channels
   // are huddle backing rooms: grouped apart, newest first, not mixed into
-  // the main channel list.
-  const visibleChannels = useMemo(
+  // the main channel list. Forum-type channels split into their own sidebar
+  // section (and their own channel body); streams keep the Channels list.
+  const permanentChannels = useMemo(
     () =>
       unfilteredChannels
         .filter((channel) => !channel.archived && channel.ttlSeconds === null)
@@ -132,6 +134,14 @@ function ChannelBrowser() {
           }),
         ),
     [unfilteredChannels],
+  );
+  const visibleChannels = useMemo(
+    () => permanentChannels.filter((channel) => channel.type !== "forum"),
+    [permanentChannels],
+  );
+  const forumChannels = useMemo(
+    () => permanentChannels.filter((channel) => channel.type === "forum"),
+    [permanentChannels],
   );
   const huddleChannels = useMemo(
     () =>
@@ -319,6 +329,14 @@ function ChannelBrowser() {
   );
   const counts = useMemo(() => replyCounts(messages), [messages]);
   const [threadRootId, setThreadRootId] = useState<string | null>(null);
+  // Forum thread selection: picking a post swaps the posts list for the
+  // thread view. Switching channels clears it (same reset pattern as the
+  // stream thread/editing state above).
+  const [forumPostId, setForumPostId] = useState<string | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: channelId is the reset trigger by design
+  useEffect(() => {
+    setForumPostId(null);
+  }, [channelId]);
   const threadRoot = threadRootId
     ? (messages.find((m) => m.id === threadRootId) ?? null)
     : null;
@@ -351,6 +369,8 @@ function ChannelBrowser() {
     mentionPubkeys: string[];
     threadRef: { rootId: string; replyToId: string } | null;
     mediaTags: string[][];
+    /** Event kind — chat default 9; forum views pass 45001/45003. */
+    kind?: number;
   }) => {
     if (!current) {
       return Promise.resolve({ ok: false, message: "No channel selected." });
@@ -373,6 +393,7 @@ function ChannelBrowser() {
       mentionPubkeys,
       threadRef: options.threadRef,
       mediaTags: options.mediaTags,
+      kind: options.kind,
     }).then((result) => {
       if (result.ok) {
         clearDraft(current.id);
@@ -563,6 +584,36 @@ function ChannelBrowser() {
             </li>
           ))}
         </ul>
+        {forumChannels.length > 0 && (
+          <>
+            <p className="mt-4 flex h-8 items-center px-2 text-xs font-medium uppercase tracking-wide text-sidebar-foreground/70">
+              Forums
+            </p>
+            <ul className="space-y-0.5">
+              {forumChannels.map((channel) => (
+                <li key={channel.id}>
+                  <SidebarNavButton
+                    selected={channel.id === selectedId}
+                    label={channel.name}
+                    icon={<ChannelForum />}
+                    unread={
+                      !isMuted(channelPrefs, channel.id) &&
+                      isUnread(readState, channel.id, channel.updatedAt)
+                    }
+                    onSelect={() => {
+                      setThreadRootId(null);
+                      void navigate({
+                        to: "/repos",
+                        search: { c: channel.id },
+                      });
+                    }}
+                    menuItems={channelMenu(channel)}
+                  />
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
         {linkedHuddleChannels.length > 0 && (
           <details className="px-0 pt-2">
             <summary className="flex h-8 cursor-pointer select-none items-center px-2 text-xs font-medium uppercase tracking-wide text-sidebar-foreground/70">
@@ -798,52 +849,73 @@ function ChannelBrowser() {
                 selfPubkey={selfPubkey}
               />
             )}
-            <ChannelTimeline
-              messages={messages}
-              profiles={profiles}
-              replyCounts={counts}
-              onOpenThread={(message) => {
-                setThreadRootId(message.id);
-                setRightTab("thread");
-              }}
-              activeRootId={threadRootId}
-              reactions={reactions}
-              onReact={handleReact}
-              onEdit={handleEdit}
-              onDelete={handleDelete}
-              onShare={handleShare}
-              selfPubkey={selfPubkey}
-              agentPubkeys={agentPubkeys}
-              highlightId={permalinkMessageId ?? null}
-              typingNames={typingNames}
-              tailKey={tailKey}
-              workingAgent={
-                working.working && working.startedAt !== null && dmAgentPubkey
-                  ? {
-                      name:
-                        profiles.get(dmAgentPubkey)?.displayName ??
-                        dmAgentPubkey,
-                      startedAt: working.startedAt,
-                    }
-                  : null
-              }
-            />
-            <Composer
-              members={members}
-              onTextChange={handleComposerText}
-              editing={editing}
-              onCancelEdit={() => setEditing(null)}
-              editSend={handleEditSend}
-              profiles={profiles}
-              threadRef={
-                threadRoot
-                  ? { rootId: threadRoot.id, replyToId: threadRoot.id }
-                  : null
-              }
-              onClearThread={() => setThreadRootId(null)}
-              draftKey={current.id}
-              send={send}
-            />
+            {current.type === "forum" ? (
+              <ForumView
+                channel={current}
+                selfPubkey={selfPubkey}
+                profiles={profiles}
+                members={members}
+                feedReactions={reactions}
+                replyCounts={counts}
+                selectedPostId={forumPostId}
+                onSelectPost={setForumPostId}
+                onClosePost={() => setForumPostId(null)}
+                onReact={handleReact}
+                onDelete={handleDelete}
+                send={send}
+              />
+            ) : (
+              <>
+                <ChannelTimeline
+                  messages={messages}
+                  profiles={profiles}
+                  replyCounts={counts}
+                  onOpenThread={(message) => {
+                    setThreadRootId(message.id);
+                    setRightTab("thread");
+                  }}
+                  activeRootId={threadRootId}
+                  reactions={reactions}
+                  onReact={handleReact}
+                  onEdit={handleEdit}
+                  onDelete={handleDelete}
+                  onShare={handleShare}
+                  selfPubkey={selfPubkey}
+                  agentPubkeys={agentPubkeys}
+                  highlightId={permalinkMessageId ?? null}
+                  typingNames={typingNames}
+                  tailKey={tailKey}
+                  workingAgent={
+                    working.working &&
+                    working.startedAt !== null &&
+                    dmAgentPubkey
+                      ? {
+                          name:
+                            profiles.get(dmAgentPubkey)?.displayName ??
+                            dmAgentPubkey,
+                          startedAt: working.startedAt,
+                        }
+                      : null
+                  }
+                />
+                <Composer
+                  members={members}
+                  onTextChange={handleComposerText}
+                  editing={editing}
+                  onCancelEdit={() => setEditing(null)}
+                  editSend={handleEditSend}
+                  profiles={profiles}
+                  threadRef={
+                    threadRoot
+                      ? { rootId: threadRoot.id, replyToId: threadRoot.id }
+                      : null
+                  }
+                  onClearThread={() => setThreadRootId(null)}
+                  draftKey={current.id}
+                  send={send}
+                />
+              </>
+            )}
           </section>
           {(threadRoot || dmAgentPubkey) && (
             <div
@@ -1025,6 +1097,16 @@ function SidebarNavButton({
 function ChannelHash() {
   return (
     <Hash
+      aria-hidden="true"
+      className="h-4 w-4 shrink-0 text-sidebar-foreground/60"
+    />
+  );
+}
+
+/** Forum channels get the desktop forum glyph instead of the Hash. */
+function ChannelForum() {
+  return (
+    <MessageSquareText
       aria-hidden="true"
       className="h-4 w-4 shrink-0 text-sidebar-foreground/60"
     />

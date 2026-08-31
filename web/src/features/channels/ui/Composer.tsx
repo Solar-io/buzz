@@ -42,6 +42,7 @@ export function Composer({
   onCancelEdit,
   editSend,
   draftKey,
+  placeholder,
   send,
 }: {
   members: ChannelMember[];
@@ -57,6 +58,8 @@ export function Composer({
   editSend?: (content: string) => Promise<{ ok: boolean; message: string }>;
   /** Channel id the draft belongs to — changing it restores that channel's draft. */
   draftKey?: string;
+  /** Overrides the idle textarea hint (forum views say "Write your post..."). */
+  placeholder?: string;
   send: (options: {
     content: string;
     mentionPubkeys: string[];
@@ -539,7 +542,8 @@ export function Composer({
           placeholder={
             editingActive
               ? "Editing your message — Esc cancels"
-              : "Message — @ to mention, Shift+Enter for newline"
+              : (placeholder ??
+                "Message — @ to mention, Shift+Enter for newline")
           }
           rows={1}
           value={text}
