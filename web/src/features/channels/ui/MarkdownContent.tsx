@@ -2,6 +2,7 @@ import { memo, useEffect, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { fetchSignedMedia } from "@/shared/api/blossom";
+import { Lightbox } from "@/shared/ui/Lightbox";
 import { mentionSetsEqual } from "../lib/mentionSets.ts";
 import { mentionParts } from "../lib/mentionParts.ts";
 
@@ -90,6 +91,7 @@ function Fragmentish({ children }: { children: ReactNode }) {
 function SignedMedia({ src, alt }: { src: string; alt: string }) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [enlarged, setEnlarged] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -138,14 +140,28 @@ function SignedMedia({ src, alt }: { src: string; alt: string }) {
     );
   }
   return objectUrl ? (
-    <a href={objectUrl} target="_blank" rel="noreferrer">
-      <img
-        src={objectUrl}
-        alt={alt}
-        className="max-h-96 max-w-full rounded-lg"
-        loading="lazy"
-      />
-    </a>
+    <>
+      <button
+        type="button"
+        aria-label={alt ? `Enlarge image: ${alt}` : "Enlarge image"}
+        className="block cursor-zoom-in rounded-lg focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={() => setEnlarged(true)}
+      >
+        <img
+          src={objectUrl}
+          alt={alt}
+          className="max-h-96 max-w-full rounded-lg"
+          loading="lazy"
+        />
+      </button>
+      {enlarged && (
+        <Lightbox
+          src={objectUrl}
+          alt={alt}
+          onClose={() => setEnlarged(false)}
+        />
+      )}
+    </>
   ) : (
     <div className="h-24 w-48 animate-pulse rounded-lg bg-muted" />
   );

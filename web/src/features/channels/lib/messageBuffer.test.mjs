@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  applyOverlay,
+  editTargetFromEvent,
   replyCounts,
   threadReplies,
   timelineMessageFromEvent,
   upsertMessage,
+  EDIT_KIND,
+  DELETE_KIND,
 } from "./messageBuffer.ts";
 
 function event(overrides = {}) {
@@ -31,6 +35,8 @@ function message(overrides = {}) {
     rootId: null,
     replyToId: null,
     mentionPubkeys: [],
+    edited: false,
+    deleted: false,
     ...overrides,
   };
 }
@@ -124,4 +130,59 @@ test("replyCounts aggregates by effective root", () => {
   ];
   assert.equal(replyCounts(buffer).get("t1"), 2);
   assert.equal(replyCounts(buffer).get("t2"), 1);
+});
+
+test("editTargetFromEvent reads the e tag of edit/delete kinds only", () => {
+  const target = "f".repeat(64);
+  assert.equal(
+    editTargetFromEvent(
+      event({
+        kind: EDIT_KIND,
+        tags: [
+          ["h", "chan-1"],
+          ["e", target],
+        ],
+      }),
+    ),
+    target,
+  );
+  assert.equal(
+    editTargetFromEvent(
+      event({
+        kind: DELETE_KIND,
+        tags: [
+          ["h", "chan-1"],
+          ["e", target],
+        ],
+      }),
+    ),
+    target,
+  );
+  // Chat kinds and overlay events without an e tag have no target.
+  assert.equal(editTargetFromEvent(event({ id: target })), null);
+  assert.equal(
+    editTargetFromEvent(event({ kind: EDIT_KIND, tags: [["h", "chan-1"]] })),
+    null,
+  );
+});
+
+test("applyOverlay edits content and flags the marker without mutating input", () => {
+  const original = message({ id: "tgt", content: "before" });
+  const next = applyOverlay([original], EDIT_KIND, "tgt", "after");
+  assert.equal(next[0].content, "after");
+  assert.equal(next[0].edited, true);
+  assert.equal(original.content, "before", "input buffer is untouched");
+  assert.equal(original.edited, false);
+});
+
+test("applyOverlay delete hides the row; unknown targets reuse the reference", () => {
+  const buffer = [message({ id: "tgt" })];
+  const deleted = applyOverlay(buffer, DELETE_KIND, "tgt", null);
+  assert.equal(deleted[0].deleted, true);
+  assert.equal(buffer[0].deleted, false, "input buffer is untouched");
+  const same = applyOverlay(buffer, DELETE_KIND, "missing", null);
+  assert.equal(same, buffer, "no match returns the same reference");
+  // An edit without content is not an edit at all.
+  const noContent = applyOverlay(buffer, EDIT_KIND, "tgt", null);
+  assert.equal(noContent, buffer, "null content is a no-op");
 });

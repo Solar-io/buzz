@@ -1,9 +1,10 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { MessageBuffer, TimelineMessage } from "../lib/messageBuffer.ts";
 export type { ChannelMember, Profile } from "../hooks.ts";
 import type { Profile } from "../hooks.ts";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { fetchSignedMedia } from "@/shared/api/blossom";
+import { EmojiPicker } from "@/shared/ui/EmojiPicker";
 import { cn } from "@/shared/lib/cn";
 import { formatElapsed } from "@/features/agents/ui/WorkingBadge";
 import {
@@ -146,6 +147,12 @@ export function ChannelTimeline({
   workingAgent,
   reactions,
   onReact,
+  onEdit,
+  onDelete,
+  onShare,
+  selfPubkey,
+  agentPubkeys,
+  highlightId,
   unreadBefore,
   typingNames,
 }: {
@@ -168,6 +175,22 @@ export function ChannelTimeline({
   reactions?: ReactionIndex;
   /** Send a reaction (emoji) on a message. */
   onReact?: (messageId: string, emoji: string) => void;
+  /** Begin editing one of the viewer's own messages. */
+  onEdit?: (message: TimelineMessage) => void;
+  /** Delete one of the viewer's own messages (after confirm). */
+  onDelete?: (messageId: string) => void;
+  /** Copy a permalink to any message. */
+  onShare?: (messageId: string) => void;
+  /** The viewer's pubkey — gates edit/delete to own messages. */
+  selfPubkey?: string | null;
+  /**
+   * Authors known to be agents (derived from the observer store — any agent
+   * that has emitted frames this session). Rows get the desktop's identity
+   * treatment: an "agent" chip plus the author's truncated address.
+   */
+  agentPubkeys?: ReadonlySet<string>;
+  /** Permalink target — the row scrolls into view and flashes once. */
+  highlightId?: string | null;
   /** createdAt of the first UNSEEN message — renders the unread divider. */
   unreadBefore?: number | null;
   /** Display names of people typing in this channel (footer row). */
@@ -187,6 +210,12 @@ export function ChannelTimeline({
   const rows: ReactNode[] = [];
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index];
+    // Deleted messages disappear from the timeline entirely (desktop parity:
+    // the overlay tombstones them out of the rendered list).
+    if (message.deleted) {
+      lastAuthor = null;
+      continue;
+    }
     const day = new Date(message.createdAt * 1000).toDateString();
     if (day !== lastDay) {
       lastDay = day;
@@ -235,6 +264,12 @@ export function ChannelTimeline({
           message.id,
         )}
         onReact={onReact}
+        onEdit={onEdit}
+        onDelete={onDelete}
+        onShare={onShare}
+        canModify={selfPubkey === message.authorPubkey}
+        isAgent={agentPubkeys?.has(message.authorPubkey) ?? false}
+        highlighted={message.id === highlightId}
       >
         {replies.length > 0 && (
           <ThreadPreview
@@ -295,6 +330,12 @@ function MessageRow({
   active,
   reactionGroups,
   onReact,
+  onEdit,
+  onDelete,
+  onShare,
+  canModify,
+  isAgent,
+  highlighted,
   children,
 }: {
   message: TimelineMessage;
@@ -305,6 +346,12 @@ function MessageRow({
   active: boolean;
   reactionGroups: ReactionGroup[];
   onReact?: (messageId: string, emoji: string) => void;
+  onEdit?: (message: TimelineMessage) => void;
+  onDelete?: (messageId: string) => void;
+  onShare?: (messageId: string) => void;
+  canModify?: boolean;
+  isAgent?: boolean;
+  highlighted?: boolean;
   children?: ReactNode;
 }) {
   const mentionNames = new Set(
@@ -312,14 +359,27 @@ function MessageRow({
       authorLabel(pubkey, profiles).toLowerCase(),
     ),
   );
+  const rowRef = useRef<HTMLDivElement>(null);
+  // Permalink arrival: scroll the target into view (centered) and flash a
+  // ring. Runs once per mount with `highlighted` — the route drops ?m from
+  // the URL right after, so this never fights the auto-tail scroll.
+  useEffect(() => {
+    if (!highlighted) {
+      return;
+    }
+    rowRef.current?.scrollIntoView({ block: "center" });
+  }, [highlighted]);
   return (
     // Desktop message cards: rounded-2xl rows, hover muted wash; the open
     // thread's root keeps a persistent tint so the selection is traceable.
     <div
+      ref={rowRef}
       className={cn(
         "group flex gap-3 rounded-2xl px-2 transition-colors hover:bg-muted/50",
         grouped ? "mt-0.5" : "mt-3",
         active && "bg-muted/40 hover:bg-muted/40",
+        highlighted &&
+          "bg-primary/10 ring-1 ring-primary/40 [animation:pingFlash_1.2s_ease-out_1]",
       )}
     >
       <div className="w-9 shrink-0">
@@ -337,6 +397,19 @@ function MessageRow({
             <span className="text-sm font-semibold">
               {authorLabel(message.authorPubkey, profiles)}
             </span>
+            {isAgent && (
+              <>
+                <span className="rounded bg-accent/50 px-1 text-[10px] font-medium uppercase tracking-wide text-accent-foreground/80">
+                  agent
+                </span>
+                <span
+                  className="hidden font-mono text-[10px] text-muted-foreground/60 sm:inline"
+                  title={message.authorPubkey}
+                >
+                  {truncatePubkey(message.authorPubkey)}
+                </span>
+              </>
+            )}
             <span className="text-xs text-muted-foreground">
               {formatTime(message.createdAt)}
             </span>
@@ -346,6 +419,11 @@ function MessageRow({
           content={message.content}
           mentionNames={mentionNames}
         />
+        {message.edited && (
+          <span className="ml-1 align-baseline text-xs text-muted-foreground/70">
+            (edited)
+          </span>
+        )}
         {replyCount > 2 && (
           <button
             type="button"
@@ -378,6 +456,28 @@ function MessageRow({
         {children}
       </div>
       <div className="flex shrink-0 flex-col items-center gap-1 self-start">
+        {canModify && onEdit && (
+          <button
+            type="button"
+            aria-label="Edit message"
+            className="rounded p-1 text-xs text-muted-foreground transition-opacity hover:bg-accent lg:opacity-0 lg:group-hover:opacity-100"
+            onClick={() => onEdit(message)}
+          >
+            ✎
+          </button>
+        )}
+        {canModify && onDelete && (
+          <button
+            type="button"
+            aria-label="Delete message"
+            className="rounded p-1 text-xs text-muted-foreground transition-opacity hover:bg-accent lg:opacity-0 lg:group-hover:opacity-100"
+            onClick={() => {
+              if (window.confirm("Delete this message?")) onDelete(message.id);
+            }}
+          >
+            🗑
+          </button>
+        )}
         {onReact &&
           QUICK_REACTIONS.map((emoji) => (
             <button
@@ -390,6 +490,35 @@ function MessageRow({
               {emoji}
             </button>
           ))}
+        {onReact && (
+          <EmojiPicker
+            label="More reactions"
+            onSelect={(emoji) => onReact(message.id, emoji)}
+          >
+            {(props) => (
+              <button
+                type="button"
+                ref={props.ref}
+                aria-label={props["aria-label"]}
+                className="hidden rounded p-1 text-xs text-muted-foreground transition-opacity hover:bg-accent group-hover:block lg:opacity-0 lg:group-hover:opacity-100"
+                onClick={props.onClick}
+              >
+                ＋
+              </button>
+            )}
+          </EmojiPicker>
+        )}
+        {onShare && (
+          <button
+            type="button"
+            aria-label="Copy link to message"
+            title="Copy link to message"
+            className="rounded p-1 text-xs text-muted-foreground transition-opacity hover:bg-accent lg:opacity-0 lg:group-hover:opacity-100"
+            onClick={() => onShare(message.id)}
+          >
+            🔗
+          </button>
+        )}
         <button
           type="button"
           aria-label="Reply in thread"

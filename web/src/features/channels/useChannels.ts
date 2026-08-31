@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import {
@@ -16,9 +16,14 @@ export type { ChannelSummary };
 export function useChannels(): {
   channels: ChannelSummary[];
   connected: boolean;
+  /** Re-REQ the channel list — the relay has no live 39000 fan-out, so a
+   *  freshly created channel only appears via a new historical replay. */
+  refresh: () => void;
 } {
   const { session, status } = useRelaySession();
   const [channels, setChannels] = useState<ChannelSummary[]>([]);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const refresh = useCallback(() => setRefreshKey((key) => key + 1), []);
 
   useEffect(() => {
     const apply = (event: SignedNostrEvent) => {
@@ -44,7 +49,7 @@ export function useChannels(): {
         onEvent: apply,
       },
     );
-  }, [session]);
+  }, [session, refreshKey]);
 
-  return { channels, connected: status === "open" };
+  return { channels, connected: status === "open", refresh };
 }

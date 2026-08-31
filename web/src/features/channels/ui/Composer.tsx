@@ -1,10 +1,18 @@
-import { useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import { toast } from "sonner";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 import { activeMentionQuery, resolveMentions } from "../lib/mentions.ts";
+import { loadDraft } from "../lib/drafts.ts";
 import { buildImetaTag, mediaMarkdown } from "../lib/imeta.ts";
 import { uploadBlob, type BlobDescriptor } from "@/shared/api/blossom";
+import { EmojiPicker } from "@/shared/ui/EmojiPicker";
 import type { ChannelMember, Profile } from "../hooks.ts";
 
 export interface ThreadRef {
@@ -19,6 +27,10 @@ export function Composer({
   onClearThread,
   onSent,
   onTextChange,
+  editing,
+  onCancelEdit,
+  editSend,
+  draftKey,
   send,
 }: {
   members: ChannelMember[];
@@ -28,6 +40,12 @@ export function Composer({
   onSent?: () => void;
   /** Notified on every text change — the parent broadcasts typing frames. */
   onTextChange?: (text: string) => void;
+  /** Message being edited — prefills the composer; submit routes to editSend. */
+  editing?: { id: string; original: string } | null;
+  onCancelEdit?: () => void;
+  editSend?: (content: string) => Promise<{ ok: boolean; message: string }>;
+  /** Channel id the draft belongs to — changing it restores that channel's draft. */
+  draftKey?: string;
   send: (options: {
     content: string;
     mentionPubkeys: string[];
@@ -35,7 +53,7 @@ export function Composer({
     mediaTags: string[][];
   }) => Promise<{ ok: boolean; message: string }>;
 }) {
-  const [text, setText] = useState("");
+  const [text, setText] = useState(() => (draftKey ? loadDraft(draftKey) : ""));
   const [busy, setBusy] = useState(false);
   const [popupIndex, setPopupIndex] = useState(0);
   const [mentionOpen, setMentionOpen] = useState(false);
@@ -43,6 +61,31 @@ export function Composer({
   const [uploading, setUploading] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Switching channels restores that channel's persisted draft.
+  useEffect(() => {
+    setText(draftKey ? loadDraft(draftKey) : "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey]);
+  // Entering edit mode prefills the composer with the original text. Leaving
+  // it restores the channel draft — after a successful edit the route has
+  // already cleared the stored draft, so this is ""; after cancel it is the
+  // user's pre-edit draft.
+  const editingIdRef = useRef<string | null>(null);
+  // draftKey changes are handled by the switch effect above.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: draftKey covered by the draftKey effect
+  useEffect(() => {
+    if (editing) {
+      editingIdRef.current = editing.id;
+      setText(editing.original);
+      textareaRef.current?.focus();
+      return;
+    }
+    if (editingIdRef.current !== null) {
+      editingIdRef.current = null;
+      setText(draftKey ? loadDraft(draftKey) : "");
+    }
+  }, [editing]);
+  const editingActive = editing != null;
 
   const namedMembers = useMemo(
     () =>
@@ -97,6 +140,25 @@ export function Composer({
     });
   };
 
+  /** Insert an emoji at the caret (or the end when the textarea is unfocused). */
+  const insertEmoji = (emoji: string) => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      setText((previous) => `${previous}${emoji}`);
+      return;
+    }
+    const start = textarea.selectionStart ?? text.length;
+    const end = textarea.selectionEnd ?? start;
+    const next = `${text.slice(0, start)}${emoji}${text.slice(end)}`;
+    setText(next);
+    onTextChange?.(next);
+    requestAnimationFrame(() => {
+      const caret = start + emoji.length;
+      textarea.focus();
+      textarea.setSelectionRange(caret, caret);
+    });
+  };
+
   const attach = async (files: FileList | null) => {
     if (!files || files.length === 0) {
       return;
@@ -129,15 +191,20 @@ export function Composer({
     );
     setBusy(true);
     try {
-      const result = await send({
-        content: trimmed,
-        mentionPubkeys,
-        threadRef,
-        mediaTags: media.map((descriptor) => buildImetaTag(descriptor)),
-      });
+      const result = editingActive
+        ? ((await editSend?.(trimmed)) ?? { ok: false, message: "" })
+        : await send({
+            content: trimmed,
+            mentionPubkeys,
+            threadRef,
+            mediaTags: media.map((descriptor) => buildImetaTag(descriptor)),
+          });
       if (result.ok) {
         setText("");
         setMedia([]);
+        if (editingActive) {
+          onCancelEdit?.();
+        }
         onSent?.();
       } else {
         toast.error(result.message || "The relay rejected the message.");
@@ -180,6 +247,10 @@ export function Composer({
         return;
       }
     }
+    if (event.key === "Escape" && editingActive) {
+      onCancelEdit?.();
+      return;
+    }
     if (event.key === "Escape" && threadRef) {
       onClearThread();
       return;
@@ -210,9 +281,22 @@ export function Composer({
           ))}
         </ul>
       )}
-      {threadRef && (
+      {threadRef && !editingActive && (
         <p className="mb-1 text-xs text-muted-foreground">
           Replying in thread — Esc clears
+        </p>
+      )}
+      {editingActive && (
+        <p className="mb-1 flex items-center gap-2 text-xs text-amber-300/90">
+          Editing message
+          <button
+            type="button"
+            className="underline underline-offset-2 hover:text-amber-200"
+            onClick={() => onCancelEdit?.()}
+          >
+            cancel
+          </button>
+          <span className="text-muted-foreground">— Esc cancels</span>
         </p>
       )}
       <div className="flex items-end gap-2">
@@ -234,10 +318,29 @@ export function Composer({
         >
           {uploading ? "…" : "📎"}
         </button>
+        <EmojiPicker label="Insert emoji" onSelect={insertEmoji}>
+          {(props) => (
+            <button
+              type="button"
+              ref={props.ref}
+              aria-label={props["aria-label"]}
+              title="Insert emoji"
+              className="mb-0.5 rounded-lg p-2.5 text-lg leading-none text-muted-foreground hover:bg-accent disabled:opacity-50"
+              disabled={busy || editingActive}
+              onClick={props.onClick}
+            >
+              🙂
+            </button>
+          )}
+        </EmojiPicker>
         <textarea
           ref={textareaRef}
           className="max-h-56 min-h-14 flex-1 resize-y rounded-xl border border-input bg-card px-4 py-3 text-base shadow-xs placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
-          placeholder="Message — @ to mention, Shift+Enter for newline"
+          placeholder={
+            editingActive
+              ? "Editing your message — Esc cancels"
+              : "Message — @ to mention, Shift+Enter for newline"
+          }
           rows={1}
           value={text}
           onChange={(event) => {
@@ -259,7 +362,7 @@ export function Composer({
           disabled={busy || !text.trim()}
           onClick={() => void submit()}
         >
-          Send
+          {editingActive ? "Save" : "Send"}
         </Button>
       </div>
     </div>

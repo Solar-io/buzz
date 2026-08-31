@@ -180,3 +180,13 @@
     font-family: "Inter Variable", Inter, "Avenir Next", "Segoe UI", sans-serif;
   }
 }
+
+/* Permalink arrival flash: one-shot highlight when a ?m= target renders. */
+@keyframes pingFlash {
+  0% {
+    background-color: rgb(var(--primary) / 0.28);
+  }
+  100% {
+    background-color: rgb(var(--primary) / 0.08);
+  }
+}

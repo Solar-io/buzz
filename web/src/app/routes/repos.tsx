@@ -8,9 +8,12 @@ import {
 } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Hash } from "lucide-react";
+import { toast } from "sonner";
 import { useAuth } from "@/features/auth/ui/AuthProvider";
 import { LoginPage } from "@/features/auth/ui/LoginPage";
 import {
+  deleteChannelMessage,
+  editChannelMessage,
   sendChannelMessage,
   sendReaction,
   sendTypingIndicator,
@@ -29,6 +32,7 @@ import {
   type ReadState,
 } from "@/features/channels/lib/readState.ts";
 import { activeTyping } from "@/features/channels/lib/typing.ts";
+import { clearDraft, saveDraft } from "@/features/channels/lib/drafts.ts";
 import {
   AuthorAvatar,
   ChannelTimeline,
@@ -61,8 +65,12 @@ import { cn } from "@/shared/lib/cn";
  * flag on). Everything else is client-side navigation from here.
  */
 export const Route = createFileRoute("/repos")({
-  validateSearch: (search: Record<string, unknown>): { c?: string } => ({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { c?: string; m?: string } => ({
     c: typeof search.c === "string" ? search.c : undefined,
+    // Permalink target: scroll to and flash this message once it loads.
+    m: typeof search.m === "string" ? search.m : undefined,
   }),
   component: AppRoute,
 });
@@ -76,9 +84,10 @@ function AppRoute() {
 }
 
 function ChannelBrowser() {
-  const { channels, connected } = useChannels();
+  const { channels, connected, refresh: refreshChannels } = useChannels();
   const navigate = useNavigate({ from: "/repos" });
   const selectedId = Route.useSearch({ select: (s) => s.c });
+  const permalinkMessageId = Route.useSearch({ select: (s) => s.m });
   const current = channels.find((channel) => channel.id === selectedId) ?? null;
 
   // DMs ride the same kind:39000 list (relay `t` tag); they get their own
@@ -148,10 +157,93 @@ function ChannelBrowser() {
     },
     [session],
   );
+  // Edit mode: ✎ prefills the composer with the original text; submit sends a
+  // kind-40003 overlay. Cancelled/switching channels clears it.
+  const [editing, setEditing] = useState<{
+    id: string;
+    original: string;
+  } | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: channelId is the reset trigger by design
+  useEffect(() => {
+    setEditing(null);
+  }, [channelId]);
+  const handleEdit = useCallback(
+    (message: { id: string; content: string }) =>
+      setEditing({ id: message.id, original: message.content }),
+    [],
+  );
+  const handleDelete = useCallback(
+    (messageId: string) => {
+      if (!current) {
+        return;
+      }
+      void deleteChannelMessage(session, {
+        channelId: current.id,
+        targetEventId: messageId,
+      });
+    },
+    [session, current],
+  );
+  const handleEditSend = useCallback(
+    (content: string) => {
+      if (!current || !editing) {
+        return Promise.resolve({ ok: false, message: "Nothing to edit." });
+      }
+      return editChannelMessage(session, {
+        channelId: current.id,
+        targetEventId: editing.id,
+        content,
+      }).then((result) => {
+        if (result.ok) {
+          clearDraft(current.id);
+        }
+        return result;
+      });
+    },
+    [session, current, editing],
+  );
+  // Permalink: copies the channel + message URL to the clipboard.
+  const handleShare = useCallback(
+    (messageId: string) => {
+      if (!current) {
+        return;
+      }
+      const url = `${globalThis.location.origin}/repos?c=${current.id}&m=${messageId}`;
+      void navigator.clipboard
+        ?.writeText(url)
+        .then(() => toast.success("Link copied"))
+        .catch(() => toast.error("Could not copy the link."));
+    },
+    [current],
+  );
+  // Permalink target (?m=): once the message is in the buffer the row scrolls
+  // itself into view and flashes; then m is dropped from the URL so later
+  // arrivals don't fight the auto-tail scroll.
+  const permalinkReady =
+    permalinkMessageId != null &&
+    messages.some((m) => m.id === permalinkMessageId);
+  useEffect(() => {
+    if (!permalinkReady) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void navigate({
+        to: "/repos",
+        search: { c: selectedId },
+        replace: true,
+      });
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [permalinkReady, navigate, selectedId]);
   // Typing broadcast: one kind-20002 frame per 3s while the composer has text.
+  // Draft persistence rides along — every text change stores the channel's
+  // draft (empty text clears it), independent of the typing throttle.
   const lastTypingSent = useRef(0);
   const handleComposerText = useCallback(
     (text: string) => {
+      if (channelId !== "") {
+        saveDraft(channelId, text);
+      }
       if (!text.trim() || channelId === "") {
         return;
       }
@@ -242,6 +334,7 @@ function ChannelBrowser() {
     if (!current) {
       return Promise.resolve({ ok: false, message: "No channel selected." });
     }
+    // A sent message consumes the channel's draft.
     // DMs always tag the other participants — the desktop client and CLI do
     // this too, so the peer's harness wakes on the message even without an
     // explicit @mention in the text (a web-sent DM once arrived untagged and
@@ -259,6 +352,11 @@ function ChannelBrowser() {
       mentionPubkeys,
       threadRef: options.threadRef,
       mediaTags: options.mediaTags,
+    }).then((result) => {
+      if (result.ok) {
+        clearDraft(current.id);
+      }
+      return result;
     });
   };
 
@@ -377,9 +475,13 @@ function ChannelBrowser() {
           }
         />
         <NewChannelDialog
-          onCreated={(channelId) =>
-            void navigate({ to: "/repos", search: { c: channelId } })
-          }
+          onCreated={(channelId) => {
+            void navigate({ to: "/repos", search: { c: channelId } });
+            // The relay stores the 39000 in a spawned task with no live
+            // fan-out — staggered re-REQs pick it up once it lands.
+            window.setTimeout(refreshChannels, 500);
+            window.setTimeout(refreshChannels, 2000);
+          }}
         />
         <Link
           to="/repos/browse"
@@ -402,6 +504,13 @@ function ChannelBrowser() {
   // Per-agent selection from the global observer store (one subscription,
   // indexed by the frame's agent tag — no cross-agent leakage).
   const observerStore = useObserverStore();
+  // Agent identity: any pubkey that has emitted observer frames this session.
+  // The desktop reads its local agents registry; the web's relay-native
+  // equivalent is the observer store (agents active since page load).
+  const agentPubkeys = useMemo(
+    () => new Set(observerStore?.byAgent.keys() ?? []),
+    [observerStore],
+  );
   const agentFrames = useAgentFrames(dmAgentPubkey);
   const channelAgentFrames = useMemo(
     () =>
@@ -481,6 +590,12 @@ function ChannelBrowser() {
                 activeRootId={threadRootId}
                 reactions={reactions}
                 onReact={handleReact}
+                onEdit={handleEdit}
+                onDelete={handleDelete}
+                onShare={handleShare}
+                selfPubkey={selfPubkey}
+                agentPubkeys={agentPubkeys}
+                highlightId={permalinkMessageId ?? null}
                 typingNames={typingNames}
                 workingAgent={
                   working.working && working.startedAt !== null && dmAgentPubkey
@@ -497,6 +612,9 @@ function ChannelBrowser() {
             <Composer
               members={members}
               onTextChange={handleComposerText}
+              editing={editing}
+              onCancelEdit={() => setEditing(null)}
+              editSend={handleEditSend}
               profiles={profiles}
               threadRef={
                 threadRoot
@@ -504,6 +622,7 @@ function ChannelBrowser() {
                   : null
               }
               onClearThread={() => setThreadRootId(null)}
+              draftKey={current.id}
               send={send}
             />
           </section>

@@ -2,6 +2,10 @@ import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 
 /** Kinds that render in a channel timeline (mirrors the CLI list filter). */
 export const TIMELINE_KINDS = [9, 40002, 40008, 45001, 45003] as const;
+/** Kind 40003: an edit overlay for an existing message (e tag = target). */
+export const EDIT_KIND = 40003;
+/** Kind 5: NIP-09 deletion request (e tag = target; h keeps it channel-scoped). */
+export const DELETE_KIND = 5;
 
 export interface TimelineMessage {
   id: string;
@@ -16,6 +20,10 @@ export interface TimelineMessage {
   replyToId: string | null;
   /** Mentioned pubkeys from p tags. */
   mentionPubkeys: string[];
+  /** Edit overlay present (renders the "(edited)" marker). */
+  edited: boolean;
+  /** Deleted via kind 5 — rows hide rather than render. */
+  deleted: boolean;
 }
 
 export function timelineMessageFromEvent(
@@ -59,7 +67,50 @@ export function timelineMessageFromEvent(
     mentionPubkeys: event.tags
       .filter((tag) => tag[0] === "p" && typeof tag[1] === "string")
       .map((tag) => tag[1]),
+    edited: false,
+    deleted: false,
   };
+}
+
+/** Target id from the first e tag of an edit (40003) or delete (5) event. */
+export function editTargetFromEvent(event: SignedNostrEvent): string | null {
+  if (event.kind !== EDIT_KIND && event.kind !== DELETE_KIND) {
+    return null;
+  }
+  const target = event.tags.find((tag) => tag[0] === "e")?.[1];
+  return target ?? null;
+}
+
+/**
+ * Apply an edit/delete overlay event to the buffer. Edits replace the target's
+ * content (the relay validated ownership at ingest) and mark it edited;
+ * deletes hide the row. Returns the same reference when nothing matched.
+ */
+export function applyOverlay(
+  buffer: MessageBuffer,
+  kind: number,
+  targetId: string,
+  newContent: string | null,
+): MessageBuffer {
+  // An edit without content (or an already-deleted target) changes nothing —
+  // return the same reference so React state updates are no-ops.
+  if (kind === EDIT_KIND && newContent === null) {
+    return buffer;
+  }
+  const index = buffer.findIndex((m) => m.id === targetId);
+  if (index === -1) {
+    return buffer;
+  }
+  const next = buffer.slice();
+  const message = { ...next[index] };
+  if (kind === EDIT_KIND) {
+    message.content = newContent ?? message.content;
+    message.edited = true;
+  } else if (kind === DELETE_KIND) {
+    message.deleted = true;
+  }
+  next[index] = message;
+  return next;
 }
 
 export type MessageBuffer = TimelineMessage[];

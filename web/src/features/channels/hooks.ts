@@ -6,6 +6,8 @@ import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { signNostrEvent } from "@/shared/lib/nostr-signer";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import {
+  applyOverlay,
+  editTargetFromEvent,
   TIMELINE_KINDS,
   timelineMessageFromEvent,
   upsertMessage,
@@ -40,12 +42,26 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
     }
     return session.subscribe(
       {
-        kinds: [...TIMELINE_KINDS, 7, 20002],
+        kinds: [...TIMELINE_KINDS, 7, 20002, 40003, 5],
         "#h": [channelId],
         limit: 200,
       },
       {
         onEvent: (event: SignedNostrEvent) => {
+          if (event.kind === 40003 || event.kind === 5) {
+            const targetId = editTargetFromEvent(event);
+            if (targetId) {
+              setBuffer((previous) =>
+                applyOverlay(
+                  previous,
+                  event.kind,
+                  targetId,
+                  event.kind === 40003 ? event.content : null,
+                ),
+              );
+            }
+            return;
+          }
           if (event.kind === 7) {
             const reaction = reactionFromEvent(event);
             if (reaction) {
@@ -247,6 +263,40 @@ export async function sendTypingIndicator(
   } catch {
     // Typing is best-effort; never block the composer on it.
   }
+}
+
+export async function editChannelMessage(
+  session: RelaySession,
+  options: { channelId: string; targetEventId: string; content: string },
+): Promise<SendResult> {
+  // Desktop build_message_edit shape: kind 40003, h + e(target), new content.
+  const event = await signNostrEvent({
+    kind: 40003,
+    tags: [
+      ["h", options.channelId],
+      ["e", options.targetEventId],
+    ],
+    content: options.content,
+  });
+  const result = await session.publish(event);
+  return { ok: result.ok, message: result.message };
+}
+
+export async function deleteChannelMessage(
+  session: RelaySession,
+  options: { channelId: string; targetEventId: string },
+): Promise<SendResult> {
+  // Desktop build_delete_compat shape: kind 5, h + e(target), empty content.
+  const event = await signNostrEvent({
+    kind: 5,
+    tags: [
+      ["h", options.channelId],
+      ["e", options.targetEventId],
+    ],
+    content: "",
+  });
+  const result = await session.publish(event);
+  return { ok: result.ok, message: result.message };
 }
 
 export async function sendChannelMessage(
