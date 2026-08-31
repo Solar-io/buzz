@@ -105,6 +105,19 @@ export function SettingsPage() {
       </div>
 
       <section className="space-y-2 rounded-lg border border-border bg-card p-4">
+        <div className="flex items-center justify-between">
+          <h2 className="font-medium">Agents</h2>
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/repos/agents">Manage agents</Link>
+          </Button>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Create agents and change their settings — drafts are reviewed in Buzz
+          Desktop.
+        </p>
+      </section>
+
+      <section className="space-y-2 rounded-lg border border-border bg-card p-4">
         <h2 className="font-medium">This device</h2>
         <dl className="space-y-1 text-sm">
           <div className="flex justify-between gap-4">

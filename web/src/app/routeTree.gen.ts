@@ -9,6 +9,7 @@ import { Route as reposRouteImport } from "./routes/repos";
 import { Route as indexRouteImport } from "./routes/index";
 import { Route as reposDotsettingsRouteImport } from "./routes/repos.settings";
 import { Route as reposDotbrowseRouteImport } from "./routes/repos.browse";
+import { Route as reposDotagentsRouteImport } from "./routes/repos.agents";
 import { Route as reposDotrepoIdRouteImport } from "./routes/repos.$repoId";
 import { Route as inviteDotcodeRouteImport } from "./routes/invite.$code";
 import { Route as reposDotrepoIdDotblobDotsplatRouteImport } from "./routes/repos.$repoId.blob.$";
@@ -33,6 +34,11 @@ const reposDotbrowseRoute = reposDotbrowseRouteImport.update({
   path: "/repos/browse",
   getParentRoute: () => rootRouteImport,
 } as any);
+const reposDotagentsRoute = reposDotagentsRouteImport.update({
+  id: "/repos/agents",
+  path: "/repos/agents",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const reposDotrepoIdRoute = reposDotrepoIdRouteImport.update({
   id: "/repos/$repoId",
   path: "/repos/$repoId",
@@ -55,6 +61,7 @@ export interface FileRoutesByFullPath {
   "/repos": typeof reposRoute;
   "/invite/$code": typeof inviteDotcodeRoute;
   "/repos/$repoId": typeof reposDotrepoIdRoute;
+  "/repos/agents": typeof reposDotagentsRoute;
   "/repos/browse": typeof reposDotbrowseRoute;
   "/repos/settings": typeof reposDotsettingsRoute;
   "/repos/$repoId/blob/$": typeof reposDotrepoIdDotblobDotsplatRoute;
@@ -64,6 +71,7 @@ export interface FileRoutesByTo {
   "/repos": typeof reposRoute;
   "/invite/$code": typeof inviteDotcodeRoute;
   "/repos/$repoId": typeof reposDotrepoIdRoute;
+  "/repos/agents": typeof reposDotagentsRoute;
   "/repos/browse": typeof reposDotbrowseRoute;
   "/repos/settings": typeof reposDotsettingsRoute;
   "/repos/$repoId/blob/$": typeof reposDotrepoIdDotblobDotsplatRoute;
@@ -74,6 +82,7 @@ export interface FileRoutesById {
   "/repos": typeof reposRoute;
   "/invite/$code": typeof inviteDotcodeRoute;
   "/repos/$repoId": typeof reposDotrepoIdRoute;
+  "/repos/agents": typeof reposDotagentsRoute;
   "/repos/browse": typeof reposDotbrowseRoute;
   "/repos/settings": typeof reposDotsettingsRoute;
   "/repos/$repoId/blob/$": typeof reposDotrepoIdDotblobDotsplatRoute;
@@ -85,6 +94,7 @@ export interface FileRouteTypes {
     | "/repos"
     | "/invite/$code"
     | "/repos/$repoId"
+    | "/repos/agents"
     | "/repos/browse"
     | "/repos/settings"
     | "/repos/$repoId/blob/$";
@@ -94,6 +104,7 @@ export interface FileRouteTypes {
     | "/repos"
     | "/invite/$code"
     | "/repos/$repoId"
+    | "/repos/agents"
     | "/repos/browse"
     | "/repos/settings"
     | "/repos/$repoId/blob/$";
@@ -103,6 +114,7 @@ export interface FileRouteTypes {
     | "/repos"
     | "/invite/$code"
     | "/repos/$repoId"
+    | "/repos/agents"
     | "/repos/browse"
     | "/repos/settings"
     | "/repos/$repoId/blob/$";
@@ -113,6 +125,7 @@ export interface RootRouteChildren {
   reposRoute: typeof reposRoute;
   inviteDotcodeRoute: typeof inviteDotcodeRoute;
   reposDotrepoIdRoute: typeof reposDotrepoIdRoute;
+  reposDotagentsRoute: typeof reposDotagentsRoute;
   reposDotbrowseRoute: typeof reposDotbrowseRoute;
   reposDotsettingsRoute: typeof reposDotsettingsRoute;
   reposDotrepoIdDotblobDotsplatRoute: typeof reposDotrepoIdDotblobDotsplatRoute;
@@ -148,6 +161,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof reposDotbrowseRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/repos/agents": {
+      id: "/repos/agents";
+      path: "/repos/agents";
+      fullPath: "/repos/agents";
+      preLoaderRoute: typeof reposDotagentsRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     "/repos/$repoId": {
       id: "/repos/$repoId";
       path: "/repos/$repoId";
@@ -177,6 +197,7 @@ const rootRouteChildren: RootRouteChildren = {
   reposRoute: reposRoute,
   inviteDotcodeRoute: inviteDotcodeRoute,
   reposDotrepoIdRoute: reposDotrepoIdRoute,
+  reposDotagentsRoute: reposDotagentsRoute,
   reposDotbrowseRoute: reposDotbrowseRoute,
   reposDotsettingsRoute: reposDotsettingsRoute,
   reposDotrepoIdDotblobDotsplatRoute: reposDotrepoIdDotblobDotsplatRoute,

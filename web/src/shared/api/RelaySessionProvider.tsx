@@ -37,14 +37,23 @@ export function RelaySessionProvider({
     [],
   );
 
+  // Connect on enable — but do NOT close on the enable flip's cleanup: child
+  // effects (page subscriptions) run BEFORE this effect's cleanup, so a
+  // close() here wipes activeSubs and silently eats every subscription that
+  // mounted in the same commit as the false→true transition (seen live: the
+  // agents page's channel list never fired its REQ). The session is torn
+  // down on unmount only; disabling keeps the socket (the relay gates reads
+  // server-side) and re-enable's connect() is a no-op when already open.
   useEffect(() => {
     if (enabled) {
       session.connect();
     }
+  }, [session, enabled]);
+  useEffect(() => {
     return () => {
       session.close();
     };
-  }, [session, enabled]);
+  }, [session]);
 
   const value = useMemo(() => ({ session, status }), [session, status]);
   return (
