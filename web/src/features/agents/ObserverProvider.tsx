@@ -11,7 +11,11 @@ import { getPublicKey } from "nostr-tools";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { getUnlockedSecretKey } from "@/shared/lib/key-store";
-import { parseObserverPayload, type ObserverFrame } from "./lib/observerEvents";
+import {
+  expandObserverFrame,
+  parseObserverPayload,
+  type ObserverFrame,
+} from "./lib/observerEvents";
 
 /**
  * Global observer store — the desktop's architecture, ported.
@@ -49,7 +53,7 @@ function frameAgentPubkey(event: SignedNostrEvent): string {
 function decodeFrame(
   event: SignedNostrEvent,
   secretKey: Uint8Array,
-): ObserverFrame | null {
+): ObserverFrame[] | null {
   try {
     const conversationKey = nip44.v2.utils.getConversationKey(
       secretKey,
@@ -60,7 +64,11 @@ function decodeFrame(
     if (!parsed) {
       return null;
     }
-    return { ...parsed, id: event.id, createdAt: event.created_at };
+    return expandObserverFrame({
+      ...parsed,
+      id: event.id,
+      createdAt: event.created_at,
+    });
   } catch {
     return null;
   }
@@ -105,7 +113,7 @@ export function ObserverProvider({
           const agent = frameAgentPubkey(event);
           setByAgent((previous) => {
             const next = new Map(previous);
-            const frames = [...(next.get(agent) ?? []), frame];
+            const frames = [...(next.get(agent) ?? []), ...frame];
             next.set(
               agent,
               frames.length > FRAMES_PER_AGENT

@@ -72,6 +72,7 @@ import {
 } from "@/features/agents/ObserverProvider";
 import {
   agentRecentlyActive,
+  agentTurnStart,
   agentWorkingState,
 } from "@/features/agents/lib/observerEvents";
 import { useTick, WorkingBadge } from "@/features/agents/ui/WorkingBadge";
@@ -1229,7 +1230,10 @@ function DmNavRow({
         )}
       </span>
       {active && (
-        <WorkingBadge startedAt={rowFrames[0]?.createdAt ?? 0} compact />
+        <WorkingBadge
+          startedAt={agentTurnStart(rowFrames) ?? rowFrames[0]?.createdAt ?? 0}
+          compact
+        />
       )}
       {unread && !active && (
         <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />

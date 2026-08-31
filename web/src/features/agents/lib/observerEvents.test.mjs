@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { agentWorkingState, transcriptFromFrames } from "./observerEvents.ts";
+import {
+  agentWorkingState,
+  transcriptFromFrames,
+  agentTurnStart,
+  expandObserverFrame,
+} from "./observerEvents.ts";
 
 function frame(overrides = {}) {
   return {
@@ -256,4 +261,99 @@ test("retained history arriving newest-first still derives oldest-first order", 
   assert.equal(thoughts.length, 2);
   assert.equal(thoughts[0].text, "first thought ");
   assert.equal(thoughts[1].text, "second thought");
+});
+
+test("batch envelopes expand into their nested events", () => {
+  const envelope = {
+    id: "env-1",
+    createdAt: 1788214368,
+    seq: 524705,
+    timestamp: "2026-08-31T22:12:48.887Z",
+    kind: "batch",
+    agentIndex: 0,
+    channelId: "ch-1",
+    sessionId: "s-1",
+    turnId: "t-1",
+    startedAt: "2026-08-31T22:12:48.866Z",
+    payload: {
+      events: [
+        {
+          kind: "turn_started",
+          timestamp: "2026-08-31T22:12:48.866Z",
+          seq: 524701,
+          channelId: "ch-1",
+          turnId: "t-1",
+          payload: { source: "channel" },
+        },
+        {
+          kind: "session_resolved",
+          timestamp: "2026-08-31T22:12:48.866Z",
+          payload: { isNewSession: false },
+        },
+      ],
+    },
+  };
+  const expanded = expandObserverFrame(envelope);
+  assert.equal(expanded.length, 2);
+  assert.equal(expanded[0].kind, "turn_started");
+  assert.equal(
+    expanded[0].createdAt,
+    1788214368 - 0,
+    "nested timestamp parsed to seconds",
+  );
+  // Nested field falls back to the envelope's when missing.
+  assert.equal(expanded[1].sessionId, "s-1");
+  // Non-batch frames pass through untouched.
+  const plain = { ...envelope, kind: "thought", payload: null };
+  assert.equal(expandObserverFrame(plain).length, 1);
+  // Batch with no/empty events passes through as itself.
+  const empty = { ...envelope, payload: { events: [] } };
+  assert.equal(expandObserverFrame(empty)[0].kind, "batch");
+});
+
+test("working state keys off turn_started INSIDE a batch after flattening", () => {
+  const envelope = {
+    id: "env-1",
+    createdAt: 1788214368,
+    seq: 1,
+    timestamp: "",
+    kind: "batch",
+    agentIndex: 0,
+    channelId: "ch-1",
+    sessionId: null,
+    turnId: "t-2",
+    startedAt: null,
+    payload: {
+      events: [
+        {
+          kind: "turn_started",
+          timestamp: "2026-08-31T22:12:48.866Z",
+          payload: {},
+        },
+      ],
+    },
+  };
+  const frames = [
+    // Previous turn's tail — the frames that used to latch the timer.
+    { kind: "thought", createdAt: 1788213340, channelId: "ch-1", id: "a" },
+    ...expandObserverFrame(envelope),
+    { kind: "tool_call", createdAt: 1788214390, channelId: "ch-1", id: "c" },
+  ];
+  const state = agentWorkingState(frames, 1788212958, 1788214404);
+  assert.equal(state.working, true);
+  assert.equal(state.startedAt, 1788214368, "turn start, not the 21:55 tail");
+});
+
+test("agentTurnStart finds the newest boundary for the sidebar badge", () => {
+  const frames = [
+    { kind: "thought", createdAt: 100, id: "a" },
+    { kind: "turn_started", createdAt: 200, id: "b" },
+    { kind: "tool_call", createdAt: 300, id: "c" },
+    { kind: "turn_started", createdAt: 400, id: "d" },
+  ];
+  assert.equal(agentTurnStart(frames), 400);
+  assert.equal(
+    agentTurnStart([{ kind: "thought", createdAt: 1, id: "x" }]),
+    null,
+  );
 });

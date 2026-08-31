@@ -58,6 +58,73 @@ export function parseObserverPayload(raw: string): ObserverFrame | null {
   }
 }
 
+/** RFC3339 → unix seconds; null when unparseable. */
+function rfc3339ToSeconds(value: unknown): number | null {
+  if (typeof value !== "string" || value === "") {
+    return null;
+  }
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+}
+
+/**
+ * Expand one decrypted envelope into the frames it carries. The harness's
+ * observer pipeline BATCHES high-frequency events: a kind-"batch" envelope's
+ * payload.events array holds fully-formed nested events (turn_started,
+ * session_resolved, prompt_context_delivery, …) — the wire carries ~zero
+ * top-level turn_started, so every turn-boundary consumer MUST read the
+ * nested events. Nested fields fall back to the envelope's.
+ */
+export function expandObserverFrame(frame: ObserverFrame): ObserverFrame[] {
+  if (frame.kind !== "batch") {
+    return [frame];
+  }
+  const payload = frame.payload as { events?: unknown } | null;
+  const events = payload?.events;
+  if (!Array.isArray(events) || events.length === 0) {
+    return [frame];
+  }
+  const expanded: ObserverFrame[] = [];
+  for (const candidate of events) {
+    if (typeof candidate !== "object" || candidate === null) {
+      continue;
+    }
+    const nested = candidate as Partial<ObserverFrame>;
+    if (typeof nested.kind !== "string") {
+      continue;
+    }
+    expanded.push({
+      id: frame.id,
+      createdAt:
+        rfc3339ToSeconds(nested.timestamp) ??
+        rfc3339ToSeconds(nested.startedAt) ??
+        frame.createdAt,
+      seq: typeof nested.seq === "number" ? nested.seq : frame.seq,
+      timestamp:
+        typeof nested.timestamp === "string"
+          ? nested.timestamp
+          : frame.timestamp,
+      kind: nested.kind,
+      agentIndex:
+        typeof nested.agentIndex === "number"
+          ? nested.agentIndex
+          : frame.agentIndex,
+      channelId:
+        typeof nested.channelId === "string"
+          ? nested.channelId
+          : frame.channelId,
+      sessionId:
+        typeof nested.sessionId === "string"
+          ? nested.sessionId
+          : frame.sessionId,
+      turnId: typeof nested.turnId === "string" ? nested.turnId : frame.turnId,
+      startedAt: nested.startedAt ?? frame.startedAt ?? null,
+      payload: nested.payload ?? null,
+    });
+  }
+  return expanded.length > 0 ? expanded : [frame];
+}
+
 export interface ObserverFeed {
   frames: ObserverFrame[];
   /** Frames whose content could not be decrypted with the local key. */
@@ -373,6 +440,20 @@ export function agentWorkingState(
     return { working: false, startedAt: null };
   }
   return { working: true, startedAt };
+}
+
+/**
+ * The most recent turn_started in the buffer — the sidebar badge's start
+ * time. Falls back to null when no boundary is known (caller decides).
+ */
+export function agentTurnStart(frames: ObserverFrame[]): number | null {
+  let startedAt: number | null = null;
+  for (const frame of frames) {
+    if (frame.kind === "turn_started" && frame.createdAt > (startedAt ?? 0)) {
+      startedAt = frame.createdAt;
+    }
+  }
+  return startedAt;
 }
 
 /** Sidebar heuristic: agent produced frames within the freshness window. */
