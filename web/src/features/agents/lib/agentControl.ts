@@ -92,6 +92,11 @@ export async function publishOwnProfile(
     if (!self) {
       return { ok: false, message: "No signing key available." };
     }
+    // Only publish a picture when it is a real http(s) URL — anything else
+    // (blank, or stray text) would 404 in every avatar render downstream.
+    const picture = /^https?:\/\/.+/.test(profile.picture)
+      ? profile.picture
+      : undefined;
     const event = await signNostrEvent({
       kind: 0,
       tags: [],
@@ -99,7 +104,7 @@ export async function publishOwnProfile(
         name: profile.name,
         display_name: profile.name,
         about: profile.about,
-        picture: profile.picture,
+        ...(picture ? { picture } : {}),
       }),
     });
     const result = await session.publish(event);
