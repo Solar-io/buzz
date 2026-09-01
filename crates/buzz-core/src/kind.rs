@@ -130,6 +130,8 @@ pub const AUTHOR_ONLY_KINDS: &[u32] = &[
     KIND_EVENT_REMINDER,
     KIND_PUSH_LEASE,
     KIND_PRIVATE_MANAGED_AGENT,
+    KIND_OWNER_ADMIN_COMMAND,
+    KIND_OWNER_ADMIN_ACK,
 ];
 
 /// Kinds that require a result-level read gate beyond the filter-layer
@@ -467,6 +469,14 @@ pub const KIND_PAIRING: u32 = 24134;
 pub const KIND_TYPING_INDICATOR: u32 = 20002;
 /// Ephemeral: owner-scoped encrypted agent observer telemetry and control frame.
 pub const KIND_AGENT_OBSERVER_FRAME: u32 = 24200;
+/// Ephemeral: owner-signed remote agent-admin command (web → owner's desktop).
+/// NIP-44 sealed to the owner's own key; author-only fan-out. Carries the
+/// create/update/delete/start/stop intents for managed agents — applied by
+/// the owner's desktop through its own save paths, never stored.
+pub const KIND_OWNER_ADMIN_COMMAND: u32 = 24201;
+/// Ephemeral: owner-signed ack for a [`KIND_OWNER_ADMIN_COMMAND`] — applied
+/// ok/error verdict keyed by the command's `request_id`. Author-only fan-out.
+pub const KIND_OWNER_ADMIN_ACK: u32 = 24202;
 /// Ephemeral: huddle emoji reaction burst. Channel-scoped to the ephemeral
 /// huddle channel with an `h` tag; never stored in the timeline.
 pub const KIND_HUDDLE_REACTION: u32 = 24810;
