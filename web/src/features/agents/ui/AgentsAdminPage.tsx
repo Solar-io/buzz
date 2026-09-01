@@ -6,8 +6,14 @@ import { useAuth } from "@/features/auth/ui/AuthProvider";
 import { LoginPage } from "@/features/auth/ui/LoginPage";
 import type { RelaySession } from "@/shared/api/relay-session";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
-import { useObserverStore } from "@/features/agents/ObserverProvider";
+import {
+  useObserverStore,
+  useAgentFrames,
+} from "@/features/agents/ObserverProvider";
+import { useAgentRegistry } from "@/features/agents/useAgentRegistry";
+import { agentRecentlyActive } from "@/features/agents/lib/observerEvents";
 import { useProfiles } from "@/features/channels/hooks";
+import { AuthorAvatar } from "@/features/channels/ui/ChannelTimeline";
 import {
   publishOwnProfile,
   sendAgentControl,
@@ -22,19 +28,21 @@ function newRequestId(): string {
 }
 
 /**
- * Agent admin for the web, scoped to what the protocol allows the OWNER to
- * do remotely: live control commands (switch model, cancel turn) over
- * owner→agent kind-24200 control frames, plus own profile (kind 0).
+ * Agent admin for the web: the owner's agent registry (kind-30177 public
+ * projections straight from the relay) plus live control commands (switch
+ * model, cancel turn) over owner→agent kind-24200 control frames, and own
+ * profile (kind 0).
  *
- * Not here by design: agent creation and prompt edits. Those ride the
- * agent→owner telemetry channel (relay-enforced direction), which only an
- * agent's own key can send — the owner's web session is protocol-invalid
- * there. Creating agents stays a desktop action.
+ * Creating/deleting agents and harness assignment stay desktop actions for
+ * now: the runnable config (keys, harness, env) lives in the desktop's local
+ * store, which syncs one-way to the relay. A remote-admin channel (owner
+ * command → desktop applier) is the planned next step.
  */
 export function AgentsAdminPage() {
   const { canSign } = useAuth();
   const { session } = useRelaySession();
   const observerStore = useObserverStore();
+  const registry = useAgentRegistry();
 
   if (!canSign) {
     return <LoginPage />;
@@ -47,25 +55,147 @@ export function AgentsAdminPage() {
           <Link to="/repos/settings">Back to settings</Link>
         </Button>
       </div>
-      <AgentCommands observerStore={observerStore} session={session} />
+      <AgentRegistryList registry={registry} />
+      <AgentCommands
+        observerStore={observerStore}
+        session={session}
+        registry={registry}
+      />
       <ProfileEditor session={session} />
     </div>
+  );
+}
+
+function AgentWorkingDot({ pubkey }: { pubkey: string }) {
+  const frames = useAgentFrames(pubkey);
+  const active = agentRecentlyActive(frames, Math.floor(Date.now() / 1000));
+  return (
+    <span
+      title={active ? "Working" : "Idle"}
+      className={
+        active
+          ? "inline-block h-2 w-2 rounded-full bg-emerald-500"
+          : "inline-block h-2 w-2 rounded-full bg-muted-foreground/40"
+      }
+    />
+  );
+}
+
+function AgentRegistryList({
+  registry,
+}: {
+  registry: ReturnType<typeof useAgentRegistry>;
+}) {
+  const pubkeys = useMemo(
+    () => registry.map((entry) => entry.pubkey),
+    [registry],
+  );
+  const profiles = useProfiles(pubkeys);
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  if (registry.length === 0) {
+    return (
+      <section className="space-y-3 rounded-lg border border-border bg-card p-4">
+        <h2 className="font-medium">Your agents</h2>
+        <p className="text-sm text-muted-foreground">
+          No agent registrations on the relay yet — agents appear here once your
+          desktop publishes them.
+        </p>
+      </section>
+    );
+  }
+  return (
+    <section className="space-y-2 rounded-lg border border-border bg-card p-4">
+      <h2 className="font-medium">Your agents</h2>
+      <ul className="divide-y divide-border">
+        {registry.map((entry) => {
+          const profile = profiles.get(entry.pubkey);
+          const isOpen = expanded === entry.pubkey;
+          return (
+            <li key={entry.pubkey} className="py-2">
+              <button
+                type="button"
+                className="flex w-full items-center gap-3 rounded-md px-1 py-1 text-left hover:bg-accent/50"
+                onClick={() => setExpanded(isOpen ? null : entry.pubkey)}
+                aria-expanded={isOpen}
+              >
+                <AuthorAvatar
+                  pubkey={entry.pubkey}
+                  label={profile?.displayName ?? entry.name}
+                  picture={profile?.avatar}
+                  size="sm"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">
+                    {profile?.displayName ?? entry.name}
+                  </span>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {[entry.model, entry.provider]
+                      .filter(Boolean)
+                      .join(" @ ") ||
+                      `registered ${new Date(entry.updatedAt * 1000).toLocaleDateString([], { month: "short", day: "numeric" })}`}
+                  </span>
+                </span>
+                <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                  {entry.respondTo}
+                  <AgentWorkingDot pubkey={entry.pubkey} />
+                </span>
+              </button>
+              {isOpen && (
+                <div className="mt-2 space-y-2 rounded-md bg-accent/30 p-3">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      System prompt
+                    </p>
+                    <pre className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap font-sans text-xs text-foreground/90">
+                      {entry.systemPrompt || "(empty)"}
+                    </pre>
+                  </div>
+                  {entry.respondToAllowlist.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Allowlist ({entry.respondToAllowlist.length})
+                      </p>
+                      <p className="font-mono text-xs text-muted-foreground">
+                        {entry.respondToAllowlist
+                          .map((pk) => `${pk.slice(0, 8)}…`)
+                          .join(", ")}
+                      </p>
+                    </div>
+                  )}
+                  <p className="font-mono text-[10px] text-muted-foreground/70">
+                    {entry.pubkey}
+                  </p>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      <p className="text-xs text-muted-foreground">
+        Registry from the relay (kind 30177). Prompt, harness, and lifecycle
+        changes are desktop actions for now — remote admin is on the way.
+      </p>
+    </section>
   );
 }
 
 function AgentCommands({
   observerStore,
   session,
+  registry,
 }: {
   observerStore: ReturnType<typeof useObserverStore>;
   session: RelaySession;
+  registry: ReturnType<typeof useAgentRegistry>;
 }) {
-  // Agents known from the observer store — every agent that has emitted
-  // frames to you this session.
-  const agentPubkeys = useMemo(
-    () => Array.from(observerStore?.byAgent.keys() ?? []).sort(),
-    [observerStore],
-  );
+  // Union of registered (30177) and observed (frames this session) agents —
+  // registered first so the list is stable across sessions.
+  const agentPubkeys = useMemo(() => {
+    const seen = Array.from(observerStore?.byAgent.keys() ?? []);
+    const registered = registry.map((entry) => entry.pubkey);
+    return Array.from(new Set([...registered, ...seen])).sort();
+  }, [observerStore, registry]);
   const profiles = useProfiles(agentPubkeys);
   const [selected, setSelected] = useState("");
   const [modelId, setModelId] = useState("");
@@ -96,10 +226,10 @@ function AgentCommands({
 
   return (
     <section className="space-y-3 rounded-lg border border-border bg-card p-4">
-      <h2 className="font-medium">Running agents</h2>
+      <h2 className="font-medium">Live control</h2>
       {agentPubkeys.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No agents have reported in this session yet.
+          No agents known yet — they appear once they register or report in.
         </p>
       ) : (
         <>
