@@ -25,6 +25,7 @@ export function SearchPanel({
   profiles,
   defaultChannelId,
   onOpenResult,
+  initialQuery,
 }: {
   open: boolean;
   onClose: () => void;
@@ -33,6 +34,8 @@ export function SearchPanel({
   /** Channel open when the panel was invoked — the scope default. */
   defaultChannelId: string | null;
   onOpenResult: (channelId: string, messageId: string) => void;
+  /** Text typed into the sidebar's search field before opening, if any. */
+  initialQuery?: string;
 }) {
   const { session } = useRelaySession();
   const [query, setQuery] = useState("");
@@ -42,11 +45,17 @@ export function SearchPanel({
   const [debounced, setDebounced] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // initialQuery is an open-time seed only: later sidebar typing must not
+  // mutate an in-flight panel search, so it rides a ref instead of deps.
+  const initialQueryRef = useRef(initialQuery);
+  initialQueryRef.current = initialQuery;
   useEffect(() => {
     if (open) {
-      // Reset per invocation so reopening starts a fresh search.
-      setQuery("");
-      setDebounced("");
+      // Reset per invocation so reopening starts a fresh search — seeded
+      // with whatever was typed in the sidebar field that opened us.
+      const seed = initialQueryRef.current ?? "";
+      setQuery(seed);
+      setDebounced(seed);
       setHits([]);
       requestAnimationFrame(() => inputRef.current?.focus());
     }

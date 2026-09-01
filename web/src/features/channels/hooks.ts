@@ -6,6 +6,10 @@ import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { signNostrEvent } from "@/shared/lib/nostr-signer";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import {
+  deleteChannelTags,
+  renameChannelTags,
+} from "@/features/channels/lib/channelAdmin.ts";
+import {
   applyOverlay,
   editTargetFromEvent,
   TIMELINE_KINDS,
@@ -500,6 +504,35 @@ export async function leaveChannel(
   const event = await signNostrEvent({
     kind: 9022,
     tags: [["h", channelId]],
+    content: "",
+  });
+  const result = await session.publish(event);
+  return { ok: result.ok, message: result.message };
+}
+
+/** NIP-29 edit-metadata rename (kind 9002, h+name tags — build_update_channel). */
+export async function renameChannel(
+  session: RelaySession,
+  channelId: string,
+  name: string,
+): Promise<SendResult> {
+  const event = await signNostrEvent({
+    kind: 9002,
+    tags: renameChannelTags(channelId, name),
+    content: "",
+  });
+  const result = await session.publish(event);
+  return { ok: result.ok, message: result.message };
+}
+
+/** NIP-29 delete-group (kind 9008, h tag — build_delete_channel). Owner/admin only. */
+export async function deleteChannel(
+  session: RelaySession,
+  channelId: string,
+): Promise<SendResult> {
+  const event = await signNostrEvent({
+    kind: 9008,
+    tags: deleteChannelTags(channelId),
     content: "",
   });
   const result = await session.publish(event);

@@ -15,10 +15,20 @@ import { openDm } from "../hooks";
  */
 export function NewDmDialog({
   onOpened,
+  open: openProp,
+  onOpenChange,
 }: {
   onOpened: (channelId: string) => void;
+  /** Controlled mode (sidebar + button) — renders no trigger of its own. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [openInternal, setOpenInternal] = useState(false);
+  const open = openProp ?? openInternal;
+  const setOpen = (next: boolean) => {
+    setOpenInternal(next);
+    onOpenChange?.(next);
+  };
   const [entry, setEntry] = useState("");
   const [recipients, setRecipients] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -80,6 +90,9 @@ export function NewDmDialog({
   };
 
   if (!open) {
+    if (openProp !== undefined) {
+      return null;
+    }
     return (
       <button
         type="button"
