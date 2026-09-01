@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.dev.buzz-relay — brings the Buzz DEV compose project up at login.
+
+  Label is com.dev.buzz-*, NOT com.dev.evie-*, and that distinction is
+  load-bearing: deploy-dev.sh boots out ENUMERATED com.dev.evie-* labels and
+  never a com.dev.* wildcard (verified 2026-08-23), so an evie dev deploy
+  leaves this alone.
+
+  KeepAlive is false on purpose. compose already carries
+  `restart: unless-stopped` for the containers, so the containers are what
+  gets kept alive. This unit's job is the one-shot "after login, make sure the
+  project is up" — a KeepAlive here would fight compose and respawn a wrapper
+  whose work is already done.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>              <string>com.dev.buzz-relay</string>
+  <key>ProgramArguments</key>   <array><string>__WRAPPER__</string></array>
+  <key>RunAtLoad</key>          <true/>
+  <key>KeepAlive</key>          <false/>
+  <key>ProcessType</key>        <string>Background</string>
+  <key>StandardOutPath</key>    <string>__LOGDIR__/buzz-relay-dev.log</string>
+  <key>StandardErrorPath</key>  <string>__LOGDIR__/buzz-relay-dev.err.log</string>
+</dict>
+</plist>

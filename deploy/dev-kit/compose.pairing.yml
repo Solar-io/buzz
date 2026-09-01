@@ -1,0 +1,49 @@
+# ============================================================================
+# compose.pairing.yml — NIP-AB device-pairing sidecar.
+#
+# 🔴 WHY THIS FILE EXISTS.
+# The desktop's "start pairing" probes the relay's NIP-11 document for
+# `pairing_relay_url` — the designed way to find the dedicated pairing relay.
+# Measured 2026-08-24: with nothing advertised, the desktop falls back to a
+# legacy heuristic (NIP-43 in supported_nips ⇒ try `<relay>/pair`), and this
+# relay advertises NIP-43 because BUZZ_REQUIRE_RELAY_MEMBERSHIP=true — so every
+# pairing attempt died with "WebSocket connection failed: HTTP error: 404 Not
+# Found" against a route that has never existed on the main relay.
+#
+# The sidecar is the SAME pinned image running /usr/local/bin/buzz-pair-relay —
+# exactly the shape deploy/charts/buzz/templates/pairing-relay.yaml deploys on
+# Kubernetes. It is stateless WS glue between the desktop and a fresh phone,
+# deliberately unauthenticated: a phone with no identity yet cannot NIP-42-auth
+# to the closed main relay (chicken-and-egg — the identity arrives VIA pairing).
+# The tailnet front door is its only network boundary.
+#
+# BUZZ_PAIRING_RELAY_URL does not need to be re-declared on the relay service
+# here: upstream compose.yml gives the relay `env_file: .env`, so the variable
+# set in env/buzz-dev.env.template reaches the relay and is advertised in
+# NIP-11 automatically.
+#
+# Loopback-published like the relay itself (see compose.loopback.yml).
+# Applied automatically by deploy-buzz-dev.sh.
+# ============================================================================
+services:
+  pairing-relay:
+    image: ${BUZZ_IMAGE:-ghcr.io/block/buzz:main}
+    # Upstream ENTRYPOINT is buzz-relay; the sidecar is a second binary in the
+    # same image (helm does the same via `command:`).
+    entrypoint: ["/usr/local/bin/buzz-pair-relay"]
+    environment:
+      BUZZ_PAIR_RELAY_BIND_ADDR: "0.0.0.0:5000"
+    ports:
+      - "127.0.0.1:${BUZZ_PAIRING_PORT:?set BUZZ_PAIRING_PORT (install-buzz-dev.sh renders it from the port registry)}:5000"
+    # /dev/tcp probe, same technique as the relay's own healthcheck — the image
+    # ships bash but no curl/wget, and the sidecar is a bare WS listener with
+    # no HTTP health route.
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec 'exec 3<>/dev/tcp/127.0.0.1/5000'"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - buzz-net

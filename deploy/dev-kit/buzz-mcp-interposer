@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# ============================================================================
+# buzz-mcp-interposer — a SELF-CONTAINED, ZERO-ARGUMENT launcher for the MCP
+# interposer (BUZZ-MIGRATION-PLAN.md §4.1 option 2, §5 W3).
+#
+# Point Buzz at THIS FILE instead of at `buzz-dev-mcp`:
+#
+#     BUZZ_ACP_MCP_COMMAND=/…/evie-ui/deploy/buzz/buzz-mcp-interposer
+#
+# The agent keeps every tool it had — the interposer spawns the real
+# `buzz-dev-mcp` as a child and forwards `tools/list` verbatim — and gains the
+# real PreToolUse hooks in front of every `tools/call`, plus a `_Stop` answered
+# by evie's `runHooks()` and chained to the child's todo output.
+#
+# WHY A WRAPPER AND NOT JUST `bun …/buzz-mcp-interposer.ts serve` — the same two
+# measured constraints that produced `evie-hooks-mcp`, which this SUPERSEDES:
+#
+#   1. `buzz-acp`'s `build_mcp_servers()` (crates/buzz-acp/src/lib.rs) hardcodes
+#          args: vec![]                    ← no arguments can be passed
+#          env:  BUZZ_RELAY_URL, BUZZ_PRIVATE_KEY, [BUZZ_AUTH_TAG],
+#                [BUZZ_ACP_DISPLAY_NAME]   ← and NOTHING else
+#      So neither `serve` nor `EVIE_HARNESS_HOOKS` can be handed in. Both are
+#      baked in here.
+#   2. `buzz-agent` `env_clear()`s its MCP children and re-adds only
+#      PASSTHROUGH_ENV. `EVIE_HARNESS_HOOKS` is not on that list and the
+#      substrate defaults OFF (ADR-091) — omit it and the interposer starts,
+#      proxies everything perfectly, and enforces nothing.
+#
+# 🟢 AND IT RESOLVES THE ONE-SLOT PROBLEM. `buzz-acp` passes exactly ONE MCP
+#    server, so `evie-hooks-mcp` forced a choice: hooks OR shell/file tools.
+#    This wrapper is one server that is both. Prefer it over `evie-hooks-mcp`
+#    for any buzz-acp-driven agent; `evie-hooks-mcp` remains useful only when
+#    something else is already providing the tools.
+#
+# ⚠️ THE GATE ONLY COVERS WHAT GOES THROUGH IT. `buzz-agent`'s only in-process
+#    tool that bypasses MCP is `load_skill`, and it is read-only — which is what
+#    makes this a complete gate. Configure a SECOND MCP server and the agent
+#    routes around it; keep MAX_MCP_SERVERS at one.
+#
+# Everything below is overridable for testing; the defaults are the crichton
+# install.
+# ============================================================================
+set -euo pipefail
+
+EVIE_REPO="${EVIE_REPO:-$HOME/software_development/projects/evie-ui}"
+INTERPOSER="$EVIE_REPO/agent/harness/buzz-mcp-interposer.ts"
+
+# buzz-agent keeps PATH, but a bun installed under ~/.bun may not be on the PATH
+# launchd hands the parent process.
+export PATH="${PATH}:$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin"
+
+BUN="$(command -v bun || true)"
+[ -n "$BUN" ] || { echo "buzz-mcp-interposer: bun not found on PATH" >&2; exit 1; }
+[ -f "$INTERPOSER" ] || {
+  echo "buzz-mcp-interposer: no interposer at $INTERPOSER (set EVIE_REPO)" >&2
+  exit 1
+}
+
+# The child. Overridable per host; the default is the installed Buzz.app.
+export EVIE_BUZZ_DEV_MCP="${EVIE_BUZZ_DEV_MCP:-/Applications/Buzz.app/Contents/MacOS/buzz-dev-mcp}"
+if [ ! -x "$EVIE_BUZZ_DEV_MCP" ]; then
+  # Fail LOUDLY and early. Starting without a child would present an agent with
+  # an empty tool list, which reads as "Buzz is broken" rather than as a
+  # misconfiguration of this wrapper.
+  echo "buzz-mcp-interposer: no executable child at $EVIE_BUZZ_DEV_MCP" >&2
+  echo "buzz-mcp-interposer: set EVIE_BUZZ_DEV_MCP to the real buzz-dev-mcp" >&2
+  exit 1
+fi
+
+# THE FLAG. Defaults OFF in the substrate (ADR-091) and is NOT in buzz-agent's
+# PASSTHROUGH_ENV. Without this line the interposer proxies faithfully and gates
+# nothing — governed-looking and inert.
+export EVIE_HARNESS_HOOKS="${EVIE_HARNESS_HOOKS:-1}"
+
+# `_Stop`/`_PostCompact` must answer inside buzz-agent's 2500 ms hook timeout
+# (two consecutive timeouts kill the server). A `tools/call` is not on that path,
+# so the PreToolUse gate gets the same 10 s a Claude seat gives it.
+export EVIE_BUZZ_HOOK_BUDGET_MS="${EVIE_BUZZ_HOOK_BUDGET_MS:-2000}"
+export EVIE_BUZZ_PRETOOL_BUDGET_MS="${EVIE_BUZZ_PRETOOL_BUDGET_MS:-10000}"
+
+# EVIE_BUZZ_AGENT_ID is deliberately NOT defaulted. Setting it makes
+# `pre-enforce-worktree.sh` treat this agent as a SUBAGENT, which turns its
+# canonical-checkout rule from an advisory warning into a hard deny. Export it
+# yourself when the Buzz agent really is a delegated worker.
+#
+# EVIE_HARNESS_SETTINGS is left unset on purpose: hooks.ts already defaults to
+# the canonical registry, and pinning it here would be a second source of truth.
+
+exec "$BUN" "$INTERPOSER" serve

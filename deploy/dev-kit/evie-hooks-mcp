@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# ============================================================================
+# evie-hooks-mcp — a SELF-CONTAINED launcher for the shared-hook MCP bridge.
+#
+# WHY A WRAPPER AND NOT JUST `bun …/buzz-hook-bridge.ts serve`:
+#
+# `buzz-acp` builds its MCP server list in `build_mcp_servers()`
+# (crates/buzz-acp/src/lib.rs) from `BUZZ_ACP_MCP_COMMAND`, and it hardcodes:
+#
+#     args: vec![]                       ← no arguments can be passed
+#     env:  BUZZ_RELAY_URL, BUZZ_PRIVATE_KEY, [BUZZ_AUTH_TAG],
+#           [BUZZ_ACP_DISPLAY_NAME]      ← and NOTHING else
+#
+# So under buzz-acp there is no way to hand the bridge `serve`, and no way to
+# set `EVIE_HARNESS_HOOKS`. Both have to be baked into an executable. That is
+# this file. Point `BUZZ_ACP_MCP_COMMAND` at it.
+#
+# 🔴 AND NOTE THE OTHER HALF OF THAT FINDING: buzz-acp supports exactly ONE
+#    MCP server. Using the slot for hooks means the agent has NO shell or file
+#    tools (buzz-dev-mcp), and using it for tools means NO hooks. Today you
+#    pick one.
+#
+#    ✅ THAT IS FIXED, and this wrapper is no longer the one to reach for.
+#    `deploy/buzz/buzz-mcp-interposer` (W3) is one MCP server that fronts
+#    buzz-dev-mcp AND serves `_Stop`/`_PostCompact` AND gates every tools/call
+#    through the real PreToolUse hooks. Prefer it for any buzz-acp-driven agent.
+#    Keep THIS wrapper only where something else already provides the tools —
+#    e.g. driving buzz-agent directly over ACP, whose session/new takes a list
+#    of servers and has no one-slot limit (that is what verify-hook-bridge.sh
+#    does).
+#
+# Overridable for testing; the defaults are the crichton install.
+# ============================================================================
+set -euo pipefail
+
+EVIE_REPO="${EVIE_REPO:-$HOME/software_development/projects/evie-ui}"
+BRIDGE="$EVIE_REPO/agent/harness/buzz-hook-bridge.ts"
+
+# buzz-agent env_clear()s its children and keeps only PASSTHROUGH_ENV, so PATH
+# is present but a bun installed under ~/.bun may not be on it under launchd.
+export PATH="${PATH}:$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin"
+
+BUN="$(command -v bun || true)"
+[ -n "$BUN" ] || { echo "evie-hooks-mcp: bun not found on PATH" >&2; exit 1; }
+[ -f "$BRIDGE" ] || { echo "evie-hooks-mcp: no bridge at $BRIDGE (set EVIE_REPO)" >&2; exit 1; }
+
+# THE FLAG. Defaults OFF in the substrate (ADR-091) and is NOT in buzz-agent's
+# PASSTHROUGH_ENV, so without this line the bridge starts, lists both tools,
+# and answers every _Stop with "" forever — governed-looking and inert.
+export EVIE_HARNESS_HOOKS="${EVIE_HARNESS_HOOKS:-1}"
+export EVIE_BUZZ_HOOK_BUDGET_MS="${EVIE_BUZZ_HOOK_BUDGET_MS:-2000}"
+# EVIE_HARNESS_SETTINGS is left unset on purpose: hooks.ts already defaults to
+# the canonical registry, and pinning it here would be a second source of truth.
+
+exec "$BUN" "$BRIDGE" serve

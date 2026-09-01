@@ -1,0 +1,37 @@
+# ============================================================================
+# compose.loopback.yml — pin the relay's published port to LOOPBACK.
+#
+# 🔴 WHY THIS FILE EXISTS.
+# buzz's own deploy/compose/compose.yml publishes the relay as:
+#
+#     ports: ["${BUZZ_HTTP_PORT:-3000}:3000"]
+#
+# A ports entry with no host IP binds 0.0.0.0 — every interface. Measured
+# 2026-08-23: the container came up as `0.0.0.0:6100->3000/tcp`. That is
+# correct for the VPS this bundle was written for, and WRONG for crichton,
+# which sits on a LAN *and* a tailnet: it would publish the relay straight
+# onto the LAN, reachable without ever passing through `tailscale serve`.
+#
+# This is the same shape as the mistake ADR-038 records for evie-ui — trusting
+# network topology to do an authorization job. The relay does have its own auth
+# (BUZZ_REQUIRE_AUTH_TOKEN / BUZZ_REQUIRE_RELAY_MEMBERSHIP, both true in our
+# rendered .env), so this is defence in depth, not the only lock. But an
+# unintended LAN listener is not something to leave in place because the lock
+# behind it is probably fine.
+#
+# evie-ui binds 127.0.0.1 for exactly this reason and lets the proxy be the
+# only door. Buzz does the same here.
+#
+# Applied automatically by deploy-buzz-dev.sh. Drop it only if you deliberately
+# want the relay reachable off-host without the tailnet front door.
+# ============================================================================
+# ⚠️ `!override` IS REQUIRED — a plain `ports:` in an override file APPENDS to
+# the base list, it does not replace it. Measured: without the tag the relay
+# got BOTH `0.0.0.0:6100->3000` and `127.0.0.1:6100->3000`, which collide on
+# the same host port and leave the container unhealthy at startup. buzz's own
+# compose.caddy.yml uses the sibling `!reset` tag for the same reason.
+# Needs Compose >= 2.24.4, which the bundle already requires.
+services:
+  relay:
+    ports: !override
+      - "127.0.0.1:${BUZZ_HTTP_PORT:-3000}:3000"
