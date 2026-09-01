@@ -12,6 +12,7 @@ import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { getUnlockedSecretKey } from "@/shared/lib/key-store";
 import {
+  capFrames,
   expandObserverFrame,
   parseObserverPayload,
   type ObserverFrame,
@@ -114,12 +115,7 @@ export function ObserverProvider({
           setByAgent((previous) => {
             const next = new Map(previous);
             const frames = [...(next.get(agent) ?? []), ...frame];
-            next.set(
-              agent,
-              frames.length > FRAMES_PER_AGENT
-                ? frames.slice(-FRAMES_PER_AGENT)
-                : frames,
-            );
+            next.set(agent, capFrames(frames, FRAMES_PER_AGENT));
             return next;
           });
         },

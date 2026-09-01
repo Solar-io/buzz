@@ -442,6 +442,30 @@ export function agentWorkingState(
   return { working: true, startedAt };
 }
 
+/** Frame kinds that mark turn boundaries — never evicted by the cap. */
+const BOUNDARY_KINDS = new Set(["turn_started"]);
+
+/**
+ * Cap a per-agent frame buffer at `cap` newest frames, EXCEPT turn-boundary
+ * frames, which always survive. A busy turn floods 4-10 frames/sec and
+ * pushes its OWN turn_started out of a plain newest-N slice within ~40s —
+ * after which every timer derivation falls back to stale evidence and the
+ * web/desktop clocks split again. Boundaries are rare and tiny; keeping
+ * them all costs nothing.
+ */
+export function capFrames(
+  frames: ObserverFrame[],
+  cap: number,
+): ObserverFrame[] {
+  if (frames.length <= cap) {
+    return frames;
+  }
+  const evicted = frames.slice(0, frames.length - cap);
+  const kept = frames.slice(frames.length - cap);
+  const boundaries = evicted.filter((frame) => BOUNDARY_KINDS.has(frame.kind));
+  return boundaries.length > 0 ? [...boundaries, ...kept] : kept;
+}
+
 /**
  * The most recent turn_started in the buffer — the sidebar badge's start
  * time. Falls back to null when no boundary is known (caller decides).

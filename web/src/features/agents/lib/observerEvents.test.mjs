@@ -5,6 +5,7 @@ import {
   transcriptFromFrames,
   agentTurnStart,
   expandObserverFrame,
+  capFrames,
 } from "./observerEvents.ts";
 
 function frame(overrides = {}) {
@@ -356,4 +357,38 @@ test("agentTurnStart finds the newest boundary for the sidebar badge", () => {
     agentTurnStart([{ kind: "thought", createdAt: 1, id: "x" }]),
     null,
   );
+});
+
+test("capFrames preserves evicted turn boundaries", () => {
+  const frames = [];
+  // A turn boundary at the very front, then a flood that pushes it out.
+  frames.push({ kind: "turn_started", createdAt: 100, id: "b1" });
+  for (let i = 0; i < 300; i++) {
+    frames.push({ kind: "tool_call", createdAt: 200 + i, id: `f${i}` });
+  }
+  const capped = capFrames(frames, 200);
+  assert.equal(capped.length, 201, "200 newest + the surviving boundary");
+  assert.equal(capped[0].kind, "turn_started");
+  assert.equal(capped[0].createdAt, 100);
+  // No boundaries to save → plain newest-N.
+  const plain = capFrames(frames.slice(1), 200);
+  assert.equal(plain.length, 200);
+  assert.equal(plain[0].id, "f100", "newest 200 of 300");
+  // Under cap → untouched.
+  const small = capFrames(frames.slice(0, 10), 200);
+  assert.equal(small.length, 10);
+});
+
+test("a busy turn's own boundary survives the cap and drives the timer", () => {
+  // ESP32's exact failure: boundary at turn start, flood pushes it past 200
+  // frames, then the timer is read — must still find the boundary, not the
+  // oldest surviving tool frame.
+  const frames = [{ kind: "turn_started", createdAt: 1000, id: "b" }];
+  for (let i = 0; i < 250; i++) {
+    frames.push({ kind: "tool_call", createdAt: 1010 + i, id: `f${i}` });
+  }
+  const capped = capFrames(frames, 200);
+  assert.equal(agentTurnStart(capped), 1000);
+  const state = agentWorkingState(capped, 500, 1265);
+  assert.equal(state.startedAt, 1000, "boundary start, not first flood frame");
 });
