@@ -54,6 +54,7 @@ import { useAutoRestartPolicy } from "@/features/agents/lib/useAutoRestartPolicy
 import { usePersonaSync } from "@/features/agents/lib/usePersonaSync";
 import { useAgentObserverIngestion } from "@/features/agents/useAgentObserverIngestion";
 import { useOwnerAdminCommands } from "@/features/agents/useOwnerAdminCommands";
+import { useDesktopCatalogPublisher } from "@/features/agents/useDesktopCatalogPublisher";
 import { AgentManagementDialogs } from "@/features/agents/ui/AgentManagementDialogs";
 import { RequestedAgentCreateDialogs } from "@/features/agents/ui/RequestedAgentCreateDialogs";
 import {
@@ -210,6 +211,9 @@ export function AppShell() {
   // Owner admin commands (kind 24201) — web-issued agent management
   // applied through the desktop's own save paths. See useOwnerAdminCommands.
   useOwnerAdminCommands();
+  // Desktop catalog (kind 30180) — publish this machine's real harness list
+  // + runnable agent pubkeys so the web can mirror them and target commands.
+  useDesktopCatalogPublisher();
   // Kind 24200 is relay-ephemeral, so reconciliation runs eagerly (not
   // deferred): seeds kind 24200 for fresh identities, no-ops for explicit
   // opt-outs. Frames before the listener opens are permanently lost.

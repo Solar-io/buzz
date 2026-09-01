@@ -15,11 +15,13 @@ import {
   publishOwnerAdminAck,
 } from "@/shared/api/tauriOwnerAdmin";
 import {
+  commandTargetsThisMachine,
   parseOwnerAdminCommand,
   type OwnerAdminCommand,
 } from "./ownerAdminProtocol";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { normalizePubkey } from "@/shared/lib/pubkey";
+import { getMachineHostname } from "@/shared/api/machineIdentity";
 
 /**
  * Owner admin-command ingestion (kind 24201): applies web-issued agent
@@ -30,6 +32,15 @@ import { normalizePubkey } from "@/shared/lib/pubkey";
  * must equal our pubkey — the owner key is the admin credential, same trust
  * domain as every other owner-signed write. Commands are deduped by
  * requestId (ephemeral redelivery can replay).
+ *
+ * Machine targeting: when the envelope carries `target` (a hostname, from
+ * the web's kind-30180 catalog), only the desktop whose hostname matches
+ * applies it. Without the gate, an owner running Desktop on two machines
+ * would mint every web-issued create twice (two pubkeys, two 30177s). A
+ * targeted command this machine does not own is dropped silently, no ack —
+ * the targeted machine acks. A missing hostname lookup fails closed: a
+ * targeted command is never applied by a machine that cannot prove it is
+ * the target.
  */
 export function useOwnerAdminCommands() {
   const identityQuery = useIdentityQuery();
@@ -48,6 +59,12 @@ export function useOwnerAdminCommands() {
       }
       if (!command) {
         return;
+      }
+      if (command.target) {
+        const hostname = await getMachineHostname();
+        if (!commandTargetsThisMachine(command, hostname)) {
+          return;
+        }
       }
       if (seenRequestIds.current.has(command.requestId)) {
         return;

@@ -136,6 +136,7 @@ export function AgentActivityPanel({
   // scrolling synchronously in the effect lands a render short.
   const lastId = frames[frames.length - 1]?.id ?? "";
   const agentKey = agentPubkey;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: entries.length and agentKey are deliberate scroll re-triggers (a new retained entry, an agent switch), not reads inside the effect
   useEffect(() => {
     if (lastId === "") {
       return;

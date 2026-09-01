@@ -104,6 +104,17 @@ pub fn get_media_proxy_port(state: State<'_, AppState>) -> u16 {
         .load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// This machine's hostname, trimmed and lowercased — the stable machine id
+/// used for owner admin-command targeting (kind 24201 `target` gate) and the
+/// `d` tag of the kind-30180 desktop catalog. Lowercasing matches the web
+/// client, which round-trips the value the catalog published.
+#[tauri::command]
+pub fn machine_hostname() -> Result<String, String> {
+    whoami::hostname()
+        .map(|host| host.trim().to_lowercase())
+        .map_err(|error| format!("hostname lookup failed: {error}"))
+}
+
 #[tauri::command]
 pub async fn sign_event(
     kind: u16,

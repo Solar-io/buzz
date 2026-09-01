@@ -101,6 +101,10 @@ nostr = { version = "0.44", features = ["nip44", "nip49"] }
 # OS-entropy source for backup passphrase generation (already in the tree as a
 # transitive dependency; pinned here for direct use).
 getrandom = "0.2"
+# Hostname for the machine id (owner admin-command targeting + kind-30180
+# catalog d tag). Already in the tree as a transitive dependency; pinned here
+# for direct use.
+whoami = "2"
 zeroize = "1"
 percent-encoding = "2"
 reqwest = { version = "0.13", features = ["json", "query", "stream", "blocking"] }

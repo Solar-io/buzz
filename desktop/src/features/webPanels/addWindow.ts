@@ -19,15 +19,12 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 const form = document.querySelector<HTMLFormElement>("#buzz-add-form");
 const labelInput = document.querySelector<HTMLInputElement>("#buzz-add-label");
 const urlInput = document.querySelector<HTMLInputElement>("#buzz-add-url");
-const errorOutput = document.querySelector<HTMLParagraphElement>(
-  "#buzz-add-error",
-);
-const cancelButton = document.querySelector<HTMLButtonElement>(
-  "#buzz-add-cancel",
-);
-const submitButton = document.querySelector<HTMLButtonElement>(
-  "#buzz-add-submit",
-);
+const errorOutput =
+  document.querySelector<HTMLParagraphElement>("#buzz-add-error");
+const cancelButton =
+  document.querySelector<HTMLButtonElement>("#buzz-add-cancel");
+const submitButton =
+  document.querySelector<HTMLButtonElement>("#buzz-add-submit");
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -35,9 +32,11 @@ function describeError(error: unknown): string {
 
 function closeWindow(): void {
   // The capability grants core:window:allow-close to "webpanel-add".
-  getCurrentWindow().close().catch((error: unknown) => {
-    console.error("cannot close the add-site window", error);
-  });
+  getCurrentWindow()
+    .close()
+    .catch((error: unknown) => {
+      console.error("cannot close the add-site window", error);
+    });
 }
 
 if (

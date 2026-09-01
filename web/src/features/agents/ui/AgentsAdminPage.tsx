@@ -5,16 +5,25 @@ import { Button } from "@/shared/ui/button";
 import { useAuth } from "@/features/auth/ui/AuthProvider";
 import { LoginPage } from "@/features/auth/ui/LoginPage";
 import type { RelaySession } from "@/shared/api/relay-session";
+import { truncatePubkey } from "@/shared/lib/pubkey";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import {
   useObserverStore,
   useAgentFrames,
 } from "@/features/agents/ObserverProvider";
 import { useAgentRegistry } from "@/features/agents/useAgentRegistry";
+import { useDesktopCatalogs } from "@/features/agents/useDesktopCatalogs";
+import { usePersonas } from "@/features/agents/usePersonas";
 import { agentRecentlyActive } from "@/features/agents/lib/observerEvents";
+import type { PersonaDefinition } from "@/features/agents/lib/personas";
+import {
+  duplicatePubkeys,
+  findStaleAgents,
+} from "@/features/agents/lib/staleAgents";
 import {
   AgentAdminPanel,
   AgentRowActions,
+  EditAgentForm,
   useAdminCommands,
 } from "@/features/agents/ui/AgentAdminPanel";
 import { useProfiles } from "@/features/channels/hooks";
@@ -33,20 +42,20 @@ function newRequestId(): string {
 }
 
 /**
- * Agent admin for the web: the owner's agent registry (kind-30177 public
- * projections straight from the relay) plus live control commands (switch
- * model, cancel turn) over owner→agent kind-24200 control frames, and own
- * profile (kind 0).
- *
- * Creating/deleting agents and harness assignment stay desktop actions for
- * now: the runnable config (keys, harness, env) lives in the desktop's local
- * store, which syncs one-way to the relay. A remote-admin channel (owner
- * command → desktop applier) is the planned next step.
+ * Agent admin for the web — feature-parity with the desktop's Agents view.
+ * The registry (kind 30177) is the source of truth; every mutation rides the
+ * owner admin-command channel (kind 24201, NIP-44 sealed) and is applied by
+ * the owner's Buzz Desktop through its own save paths, acking on kind 24202.
+ * The live harness list and machine targeting come from each desktop's
+ * kind-30180 catalog; stale registrations (old re-mints, retired desktops)
+ * are detected from registry + catalogs and cleaned with delete commands.
  */
 export function AgentsAdminPage() {
   const { canSign } = useAuth();
   const observerStore = useObserverStore();
   const registry = useAgentRegistry();
+  const catalogs = useDesktopCatalogs();
+  const personas = usePersonas();
   const { session, status } = useRelaySession();
   const admin = useAdminCommands(session, status);
 
@@ -61,8 +70,18 @@ export function AgentsAdminPage() {
           <Link to="/repos/settings">Back to settings</Link>
         </Button>
       </div>
-      <AgentAdminPanel admin={admin} />
-      <AgentRegistryList registry={registry} admin={admin} />
+      <AgentAdminPanel admin={admin} catalogs={catalogs} />
+      <AgentRegistryList
+        registry={registry}
+        admin={admin}
+        catalogs={catalogs}
+        personas={personas}
+      />
+      <StaleCleanupSection
+        registry={registry}
+        catalogs={catalogs}
+        admin={admin}
+      />
       <AgentCommands
         observerStore={observerStore}
         session={session}
@@ -91,9 +110,13 @@ function AgentWorkingDot({ pubkey }: { pubkey: string }) {
 function AgentRegistryList({
   registry,
   admin,
+  catalogs,
+  personas,
 }: {
   registry: ReturnType<typeof useAgentRegistry>;
   admin: ReturnType<typeof useAdminCommands>;
+  catalogs: ReturnType<typeof useDesktopCatalogs>;
+  personas: Map<string, PersonaDefinition>;
 }) {
   const pubkeys = useMemo(
     () => registry.map((entry) => entry.pubkey),
@@ -101,6 +124,8 @@ function AgentRegistryList({
   );
   const profiles = useProfiles(pubkeys);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const duplicates = useMemo(() => duplicatePubkeys(registry), [registry]);
 
   if (registry.length === 0) {
     return (
@@ -120,6 +145,11 @@ function AgentRegistryList({
         {registry.map((entry) => {
           const profile = profiles.get(entry.pubkey);
           const isOpen = expanded === entry.pubkey;
+          const isEditing = editing === entry.pubkey;
+          const persona =
+            entry.personaId !== null
+              ? (personas.get(entry.personaId) ?? null)
+              : null;
           return (
             <li key={entry.pubkey} className="py-2">
               <button
@@ -137,6 +167,22 @@ function AgentRegistryList({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium">
                     {profile?.displayName ?? entry.name}
+                    {duplicates.has(entry.pubkey) && (
+                      <span
+                        title="An older registration shares this name — see cleanup below"
+                        className="ml-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-normal uppercase tracking-wide text-amber-500"
+                      >
+                        duplicate
+                      </span>
+                    )}
+                    {entry.personaId !== null && (
+                      <span
+                        title="Definition-linked: its persona (kind 30175) supplies the definition"
+                        className="ml-2 rounded bg-accent px-1.5 py-0.5 text-[10px] font-normal uppercase tracking-wide text-muted-foreground"
+                      >
+                        linked
+                      </span>
+                    )}
                   </span>
                   <span className="block truncate text-xs text-muted-foreground">
                     {[entry.model, entry.provider]
@@ -157,7 +203,9 @@ function AgentRegistryList({
                       System prompt
                     </p>
                     <pre className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap font-sans text-xs text-foreground/90">
-                      {entry.systemPrompt || "(empty)"}
+                      {(entry.personaId !== null
+                        ? (persona?.systemPrompt ?? "")
+                        : entry.systemPrompt) || "(empty)"}
                     </pre>
                   </div>
                   {entry.respondToAllowlist.length > 0 && (
@@ -179,7 +227,17 @@ function AgentRegistryList({
                     pubkey={entry.pubkey}
                     name={profile?.displayName ?? entry.name}
                     admin={admin}
+                    onEdit={() => setEditing(isEditing ? null : entry.pubkey)}
                   />
+                  {isEditing && (
+                    <EditAgentForm
+                      admin={admin}
+                      entry={entry}
+                      persona={persona}
+                      catalogs={catalogs}
+                      onClose={() => setEditing(null)}
+                    />
+                  )}
                 </div>
               )}
             </li>
@@ -187,9 +245,125 @@ function AgentRegistryList({
         })}
       </ul>
       <p className="text-xs text-muted-foreground">
-        Registry from the relay (kind 30177). Prompt, harness, and lifecycle
-        changes are desktop actions for now — remote admin is on the way.
+        Registry from the relay (kind 30177). Create, edit, harness, and
+        lifecycle changes ride the sealed admin-command channel and are applied
+        by your desktop.
       </p>
+    </section>
+  );
+}
+
+/**
+ * Stale-registration cleanup: older duplicates from key re-mints and
+ * registrations no published desktop reports. Every row is a delete command
+ * (forceRemoteDelete) the owner confirms; nothing is removed automatically.
+ */
+function StaleCleanupSection({
+  registry,
+  catalogs,
+  admin,
+}: {
+  registry: ReturnType<typeof useAgentRegistry>;
+  catalogs: ReturnType<typeof useDesktopCatalogs>;
+  admin: ReturnType<typeof useAdminCommands>;
+}) {
+  const stale = useMemo(
+    () => findStaleAgents(registry, catalogs),
+    [registry, catalogs],
+  );
+  const [open, setOpen] = useState(false);
+  const [checked, setChecked] = useState<Set<string>>(() => new Set());
+
+  if (stale.length === 0) {
+    return null;
+  }
+  const selected = stale.filter((entry) => checked.has(entry.pubkey));
+  const toggle = (pubkey: string) => {
+    setChecked((previous) => {
+      const next = new Set(previous);
+      if (next.has(pubkey)) {
+        next.delete(pubkey);
+      } else {
+        next.add(pubkey);
+      }
+      return next;
+    });
+  };
+  const runCleanup = () => {
+    for (const entry of selected) {
+      void admin.send(
+        {
+          action: "delete",
+          request: { pubkey: entry.pubkey, forceRemoteDelete: true },
+        },
+        `Delete ${entry.name} (${entry.reason})`,
+      );
+    }
+    setOpen(false);
+    setChecked(new Set());
+  };
+
+  return (
+    <section className="space-y-3 rounded-lg border border-amber-500/40 bg-card p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="font-medium">Clean up stale registrations</h2>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            setOpen(!open);
+            if (!open) {
+              // All pre-checked — one click confirms, unchecking spares rows.
+              setChecked(new Set(stale.map((entry) => entry.pubkey)));
+            }
+          }}
+        >
+          {open ? "Close" : `Review ${stale.length}`}
+        </Button>
+      </div>
+      {open && (
+        <>
+          <ul className="space-y-1">
+            {stale.map((entry) => (
+              <li
+                key={entry.pubkey}
+                className="flex items-center gap-2 rounded-md bg-accent/40 px-2 py-1.5 text-xs"
+              >
+                <input
+                  type="checkbox"
+                  checked={checked.has(entry.pubkey)}
+                  onChange={() => toggle(entry.pubkey)}
+                  aria-label={`Delete ${entry.name}`}
+                />
+                <span className="min-w-0 flex-1 truncate">
+                  <span className="font-medium">{entry.name}</span>{" "}
+                  <span className="text-muted-foreground">
+                    — {entry.reason}
+                  </span>
+                </span>
+                <span className="shrink-0 font-mono text-[10px] text-muted-foreground/70">
+                  {truncatePubkey(entry.pubkey)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-muted-foreground">
+              Each row sends a delete command (tombstones the 30177 even if no
+              desktop has a local record).
+            </p>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={selected.length === 0}
+              onClick={runCleanup}
+            >
+              Delete {selected.length} stale registration
+              {selected.length === 1 ? "" : "s"}
+            </Button>
+          </div>
+        </>
+      )}
     </section>
   );
 }
@@ -218,7 +392,7 @@ function AgentCommands({
 
   const agent = selected || agentPubkeys[0] || "";
   const label = (pubkey: string) =>
-    profiles.get(pubkey)?.displayName ?? `${pubkey.slice(0, 8)}…`;
+    profiles.get(pubkey)?.displayName ?? truncatePubkey(pubkey);
 
   const run = async (command: AgentControlCommand) => {
     if (!agent) {

@@ -233,9 +233,9 @@ test.describe("web panels (custom sites)", () => {
     // The Files tab's iframe is not mounted while the native tab owns the
     // viewport (keep-alive applies within a render family, not across it).
     await expect(page.locator("iframe.buzz-webpanel-frame")).toHaveCount(0);
-    await expect(
-      page.locator(".buzz-webpanel-native-placeholder"),
-    ).toHaveCount(0);
+    await expect(page.locator(".buzz-webpanel-native-placeholder")).toHaveCount(
+      0,
+    );
     // Nav controls ride the native path for the custom tab.
     await expect(
       page.getByRole("button", { name: "Go back in Wiki" }),
@@ -251,7 +251,9 @@ test.describe("web panels (custom sites)", () => {
     // window (the typed form there is unreachable from chromium).
     await page.getByRole("menuitem", { name: "Add site…" }).click();
     await expect
-      .poll(async () => (await commandsSeen(page)).includes("open_web_panel_add_window"))
+      .poll(async () =>
+        (await commandsSeen(page)).includes("open_web_panel_add_window"),
+      )
       .toBe(true);
 
     // Drive the add the way the real window would: the typed

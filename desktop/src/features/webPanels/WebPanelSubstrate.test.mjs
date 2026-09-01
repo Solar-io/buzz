@@ -546,7 +546,10 @@ test("custom tabs render the native placeholder and nav controls, never a frame"
     ".buzz-webpanel-native-placeholder",
   );
   assert.ok(placeholder, "custom tabs render through the native placeholder");
-  assert.equal(placeholder.getAttribute("data-webpanel-placeholder"), "files-1");
+  assert.equal(
+    placeholder.getAttribute("data-webpanel-placeholder"),
+    "files-1",
+  );
   // Nav controls ride the native path for customs.
   assert.ok(view.getByLabelText("Go back in Docs"));
   assert.ok(view.getByLabelText("Go forward in Docs"));

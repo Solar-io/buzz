@@ -199,9 +199,7 @@ function ensureAddedChannel(): void {
 }
 
 /** Subscribe to owner-added sites (refreshed registry, then notified). */
-export function subscribeCustomPanelAdded(
-  listener: AddedListener,
-): () => void {
+export function subscribeCustomPanelAdded(listener: AddedListener): () => void {
   ensureAddedChannel();
   addedListeners.add(listener);
   return () => addedListeners.delete(listener);

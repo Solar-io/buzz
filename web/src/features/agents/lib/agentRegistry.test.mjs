@@ -49,6 +49,30 @@ test("agentFromEvent defaults: no name falls back to pubkey prefix", () => {
   assert.equal(entry.respondTo, "owner-only");
 });
 
+test("agentFromEvent surfaces persona_id (slimming marker) and parallelism", () => {
+  const linked = agentFromEvent(
+    event({
+      content: JSON.stringify({
+        name: "Linked",
+        persona_id: "persona-1",
+        parallelism: 4,
+        respond_to: "owner-only",
+      }),
+    }),
+  );
+  assert.equal(linked.personaId, "persona-1");
+  assert.equal(linked.parallelism, 4);
+  assert.equal(linked.systemPrompt, "");
+
+  const unlinked = agentFromEvent(
+    event({
+      content: JSON.stringify({ name: "Solo", parallelism: 0 }),
+    }),
+  );
+  assert.equal(unlinked.personaId, null);
+  assert.equal(unlinked.parallelism, null);
+});
+
 test("mergeAgentEntry is newest-wins and immutable", () => {
   const first = agentFromEvent(event());
   const newer = agentFromEvent(

@@ -14,7 +14,7 @@ test("activeTyping returns fresh peers in the channel, excluding self", () => {
 
 test("entries older than the TTL expire", () => {
   const old = Date.now() - 10_000;
-  let map = recordTyping(new Map(), "ch1", PEER, old);
+  const map = recordTyping(new Map(), "ch1", PEER, old);
   assert.equal(activeTyping(map, "ch1", SELF, Date.now()).length, 0);
 });
 

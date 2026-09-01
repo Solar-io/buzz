@@ -62,9 +62,12 @@ function ResizeHandle({
   label: string;
 }) {
   return (
+    // biome-ignore lint/a11y/useFocusableInteractive: pointer-only resize handle; keyboard resize is not implemented
+    // biome-ignore lint/a11y/useSemanticElements: pointer-only resize handle; keyboard resize is not implemented
     <div
-      role="separator"
       aria-label={label}
+      // biome-ignore lint/a11y/useAriaPropsForRole: drag handle is not a value slider; aria-valuenow would be meaningless
+      role="separator"
       aria-orientation="vertical"
       className={
         "group relative z-10 hidden w-1 shrink-0 cursor-col-resize border-sidebar-border bg-transparent transition-colors hover:bg-white/15 active:bg-white/25 md:block " +

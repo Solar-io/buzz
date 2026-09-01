@@ -652,19 +652,11 @@ async fn main() -> anyhow::Result<()> {
         let prune_state = Arc::clone(&state);
         let retention_secs = state.config.observer_retention_secs;
         tokio::spawn(async move {
-            info!(
-                retention_secs,
-                "Observer frame retention pruner started"
-            );
+            info!(retention_secs, "Observer frame retention pruner started");
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
-                let cutoff = chrono::Utc::now()
-                    - chrono::Duration::seconds(retention_secs);
-                match prune_state
-                    .db
-                    .prune_expired_observer_frames(cutoff)
-                    .await
-                {
+                let cutoff = chrono::Utc::now() - chrono::Duration::seconds(retention_secs);
+                match prune_state.db.prune_expired_observer_frames(cutoff).await {
                     Ok(0) => {}
                     Ok(n) => info!(count = n, "Pruned expired observer frames"),
                     Err(e) => error!("Observer frame prune failed: {e}"),

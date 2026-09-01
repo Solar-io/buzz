@@ -94,6 +94,15 @@ export interface AdminCommandEnvelope {
   action: AdminCommand["action"];
   requestId: string;
   issuedAt: string;
+  /**
+   * Machine targeting (hostname, e.g. "crichton.local"): only the desktop
+   * whose hostname matches applies the command; every other desktop ignores
+   * it silently (no ack — the targeted machine acks). Absent = legacy
+   * broadcast: every desktop applies it. Sent whenever the web knows at
+   * least one desktop catalog, so a two-desktop owner never mints the same
+   * agent twice.
+   */
+  target?: string;
   request: unknown;
 }
 
@@ -173,7 +182,7 @@ function optionalPubkeyList(value: unknown): string[] | undefined {
  */
 export function parseAdminCommand(
   value: unknown,
-): (AdminCommandEnvelope & { command: AdminCommand }) | null {
+): (AdminCommandEnvelope & { command: AdminCommand; target?: string }) | null {
   if (typeof value !== "object" || value === null) {
     return null;
   }
@@ -214,7 +223,7 @@ export function parseAdminCommand(
           harness:
             request.harness === undefined
               ? undefined
-              : parseHarness(request.harness) ?? undefined,
+              : (parseHarness(request.harness) ?? undefined),
           envVars: optionalStringRecord(request.envVars),
           parallelism: optionalNumber(request.parallelism),
           respondTo:
@@ -253,7 +262,7 @@ export function parseAdminCommand(
           harness:
             request.harness === undefined
               ? undefined
-              : parseHarness(request.harness) ?? undefined,
+              : (parseHarness(request.harness) ?? undefined),
           envVars: optionalStringRecord(request.envVars),
           parallelism: optionalNumber(request.parallelism),
           respondTo:
@@ -306,11 +315,15 @@ export function parseAdminCommand(
   if (!command) {
     return null;
   }
+  // Optional machine targeting: a non-string target is dropped, the command
+  // still parses (legacy senders never set it).
+  const target = optionalString(envelope.target);
   return {
     type: AGENT_ADMIN_COMMAND_TYPE,
     action: envelope.action,
     requestId: envelope.requestId,
     issuedAt: issuedAt,
+    ...(target ? { target } : {}),
     request: envelope.request,
     command,
   };

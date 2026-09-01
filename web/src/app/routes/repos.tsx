@@ -8,6 +8,7 @@ import {
 } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
+  Bot,
   Brain,
   Folder,
   Hash,
@@ -132,6 +133,8 @@ function AppRoute() {
 function ChannelBrowser() {
   const { channels, connected, refresh: refreshChannels } = useChannels();
   const navigate = useNavigate({ from: "/repos" });
+  // Phone drawer dismiss — shared by the sidebar rows and the Agents link.
+  const closeDrawer = useDrawerClose();
   const selectedId = Route.useSearch({ select: (s) => s.c });
   const permalinkMessageId = Route.useSearch({ select: (s) => s.m });
   const current = channels.find((channel) => channel.id === selectedId) ?? null;
@@ -864,6 +867,14 @@ function ChannelBrowser() {
           <Folder aria-hidden className="h-4 w-4" />
           Files
         </button>
+        <Link
+          to="/repos/agents"
+          className="mt-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+          onClick={closeDrawer}
+        >
+          <Bot aria-hidden className="h-4 w-4" />
+          Agents
+        </Link>
       </div>
     </div>
   );
@@ -1076,8 +1087,11 @@ function ChannelBrowser() {
             )}
           </section>
           {(threadRoot || dmAgentPubkey) && (
+            // biome-ignore lint/a11y/useFocusableInteractive: pointer-only resize handle; keyboard resize is not implemented
+            // biome-ignore lint/a11y/useSemanticElements: pointer-only resize handle; keyboard resize is not implemented
             <div
               aria-label="Resize side panel"
+              // biome-ignore lint/a11y/useAriaPropsForRole: drag handle is not a value slider; aria-valuenow would be meaningless
               role="separator"
               aria-orientation="vertical"
               className="relative z-10 hidden w-1 shrink-0 cursor-col-resize border-r border-border bg-transparent transition-colors hover:bg-white/15 active:bg-white/25 lg:block lg:-ml-px"

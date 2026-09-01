@@ -25,6 +25,7 @@ import {
 export async function sendAdminCommand(
   session: RelaySession,
   command: AdminCommand,
+  options?: { target?: string },
 ): Promise<{ ok: boolean; requestId: string; message?: string }> {
   const pubkey = await ownPubkey();
   if (!pubkey) {
@@ -38,6 +39,9 @@ export async function sendAdminCommand(
     action: command.action,
     requestId,
     issuedAt: new Date().toISOString(),
+    // Machine targeting (kind-30180 catalog machine id): only the named
+    // desktop applies + acks the command. Absent = legacy broadcast.
+    ...(options?.target ? { target: options.target } : {}),
     request: command.request,
   };
   const { ciphertext } = nip44EncryptTo(JSON.stringify(envelope), pubkey);
@@ -76,23 +80,29 @@ export function useAdminAckWatcher(
       if (!alive || !pubkey) {
         return;
       }
-      cleanup = session.subscribe({ kinds: [ADMIN_ACK_KIND], authors: [pubkey] }, {
-        onEvent: (event) => {
-          try {
-            const { plaintext } = nip44DecryptFrom(event.content, event.pubkey);
-            const ack = parseAdminAck(JSON.parse(plaintext));
-            if (ack) {
-              setAcks((previous) => {
-                const next = new Map(previous);
-                next.set(ack.requestId, ack);
-                return next;
-              });
+      cleanup = session.subscribe(
+        { kinds: [ADMIN_ACK_KIND], authors: [pubkey] },
+        {
+          onEvent: (event) => {
+            try {
+              const { plaintext } = nip44DecryptFrom(
+                event.content,
+                event.pubkey,
+              );
+              const ack = parseAdminAck(JSON.parse(plaintext));
+              if (ack) {
+                setAcks((previous) => {
+                  const next = new Map(previous);
+                  next.set(ack.requestId, ack);
+                  return next;
+                });
+              }
+            } catch {
+              // Sealed to a different key or malformed — not ours, drop it.
             }
-          } catch {
-            // Sealed to a different key or malformed — not ours, drop it.
-          }
+          },
         },
-      });
+      );
     });
     return () => {
       alive = false;

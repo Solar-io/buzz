@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 
-import { installMockBridge, openNewMessagePage, TEST_IDENTITIES } from "../helpers/bridge";
+import {
+  installMockBridge,
+  openNewMessagePage,
+  TEST_IDENTITIES,
+} from "../helpers/bridge";
 
 // #random has no default mock relay agents (alice covers general + agents),
 // so the only session-agent candidate is the one this spec seeds.
@@ -40,14 +44,17 @@ test.describe("header agent-activity button", () => {
     const terminalBox = await terminalButton.boundingBox();
     expect(activityBox).not.toBeNull();
     expect(terminalBox).not.toBeNull();
-    expect(activityBox!.x).toBeLessThan(terminalBox!.x);
-    expect(activityBox!.y).toBe(terminalBox!.y);
+    if (!activityBox || !terminalBox) {
+      throw new Error("activity/terminal bounding boxes missing");
+    }
+    expect(activityBox.x).toBeLessThan(terminalBox.x);
+    expect(activityBox.y).toBe(terminalBox.y);
 
     // Golden path: click opens the agent session pane scoped to this channel.
     await activityButton(page).click();
-    await expect(
-      page.getByTestId("agent-session-thread-panel"),
-    ).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("agent-session-thread-panel")).toBeVisible({
+      timeout: 10_000,
+    });
     await expect(page.getByTestId("agent-session-agent-name")).toHaveText(
       "Observer Agent",
     );
@@ -67,9 +74,9 @@ test.describe("header agent-activity button", () => {
 
     await expect(activityButton(page)).toBeVisible();
     await activityButton(page).click();
-    await expect(
-      page.getByTestId("agent-session-thread-panel"),
-    ).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("agent-session-thread-panel")).toBeVisible({
+      timeout: 10_000,
+    });
     await expect(page.getByTestId("agent-session-agent-name")).toHaveText(
       "alice",
     );

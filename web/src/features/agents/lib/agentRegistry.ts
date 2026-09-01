@@ -14,6 +14,15 @@ export interface AgentRegistryEntry {
   systemPrompt: string;
   model: string;
   provider: string;
+  /**
+   * Linked persona definition id (the 30177 `persona_id`), or null for a
+   * definition-less instance. Definition-linked entries omit the definition
+   * quad on the wire ("slimming") — the quad lives in the kind-30175
+   * definition event.
+   */
+  personaId: string | null;
+  /** Spawn-time parallelism cap from the 30177 content; null when absent. */
+  parallelism: number | null;
   /** "owner-only" | "anyone" | "allowlist" — who may summon the agent. */
   respondTo: string;
   respondToAllowlist: string[];
@@ -41,12 +50,20 @@ export function agentFromEvent(
   const str = (key: string): string =>
     typeof parsed[key] === "string" ? (parsed[key] as string) : "";
   const allowlist = parsed.respond_to_allowlist;
+  const parallelism = parsed.parallelism;
   return {
     pubkey: dTag,
     name: str("name") || dTag.slice(0, 8),
     systemPrompt: str("system_prompt"),
     model: str("model"),
     provider: str("provider"),
+    personaId: str("persona_id") || null,
+    parallelism:
+      typeof parallelism === "number" &&
+      Number.isFinite(parallelism) &&
+      parallelism > 0
+        ? Math.floor(parallelism)
+        : null,
     respondTo: str("respond_to") || "owner-only",
     respondToAllowlist: Array.isArray(allowlist)
       ? allowlist.filter((pk): pk is string => typeof pk === "string")

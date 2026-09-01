@@ -39,10 +39,14 @@ test("parseAdminCommand accepts a create with custom harness", () => {
 });
 
 test("parseAdminCommand accepts update/delete/start/stop by pubkey", () => {
-  const upd = parseAdminCommand(envelope("update", { pubkey: PK, model: "m2" }));
+  const upd = parseAdminCommand(
+    envelope("update", { pubkey: PK, model: "m2" }),
+  );
   assert.equal(upd.command.request.pubkey, PK);
   assert.equal(upd.command.request.model, "m2");
-  const del = parseAdminCommand(envelope("delete", { pubkey: PK, forceRemoteDelete: true }));
+  const del = parseAdminCommand(
+    envelope("delete", { pubkey: PK, forceRemoteDelete: true }),
+  );
   assert.equal(del.command.request.forceRemoteDelete, true);
   const start = parseAdminCommand(envelope("start", { pubkey: PK }));
   assert.equal(start.command.action, "start");
@@ -53,14 +57,13 @@ test("parseAdminCommand accepts update/delete/start/stop by pubkey", () => {
 test("parseAdminCommand rejects wrong type, missing fields, bad pubkeys, unknown action", () => {
   assert.equal(parseAdminCommand(null), null);
   assert.equal(parseAdminCommand({ type: "other" }), null);
-  assert.equal(
-    parseAdminCommand(envelope("create", { name: "x" })),
-    null,
-  );
+  assert.equal(parseAdminCommand(envelope("create", { name: "x" })), null);
   assert.equal(parseAdminCommand(envelope("delete", { pubkey: "zz" })), null);
   assert.equal(parseAdminCommand(envelope("explode", { pubkey: PK })), null);
   assert.equal(
-    parseAdminCommand(envelope("create", { name: "x", systemPrompt: "y" }, { issuedAt: 5 })),
+    parseAdminCommand(
+      envelope("create", { name: "x", systemPrompt: "y" }, { issuedAt: 5 }),
+    ),
     null,
   );
 });
@@ -76,6 +79,32 @@ test("parseAdminCommand drops a malformed harness rather than rejecting the comm
   assert.equal(parsed.command.request.harness, undefined);
 });
 
+test("parseAdminCommand surfaces an envelope target for machine targeting", () => {
+  const parsed = parseAdminCommand(
+    envelope(
+      "create",
+      { name: "x", systemPrompt: "y" },
+      { target: "crichton.local" },
+    ),
+  );
+  assert.equal(parsed.target, "crichton.local");
+  assert.equal(parsed.command.action, "create");
+});
+
+test("parseAdminCommand: absent target stays undefined (legacy broadcast)", () => {
+  const parsed = parseAdminCommand(envelope("start", { pubkey: PK }));
+  assert.equal(parsed.target, undefined);
+  assert.ok(!("target" in parsed));
+});
+
+test("parseAdminCommand: non-string target is dropped, command still parses", () => {
+  const parsed = parseAdminCommand(
+    envelope("create", { name: "x", systemPrompt: "y" }, { target: 5 }),
+  );
+  assert.equal(parsed.target, undefined);
+  assert.equal(parsed.command.action, "create");
+});
+
 test("parseAdminAck round shape + rejects", () => {
   const ack = parseAdminAck({
     type: "agent_admin_ack",
@@ -85,10 +114,17 @@ test("parseAdminAck round shape + rejects", () => {
   });
   assert.equal(ack.ok, true);
   assert.equal(ack.agentPubkey, PK);
-  assert.equal(parseAdminAck({ type: "agent_admin_ack", requestId: "r1" }), null);
   assert.equal(
-    parseAdminAck({ type: "agent_admin_ack", requestId: "r1", ok: true, agentPubkey: "nope" })
-      .agentPubkey,
+    parseAdminAck({ type: "agent_admin_ack", requestId: "r1" }),
+    null,
+  );
+  assert.equal(
+    parseAdminAck({
+      type: "agent_admin_ack",
+      requestId: "r1",
+      ok: true,
+      agentPubkey: "nope",
+    }).agentPubkey,
     undefined,
   );
 });
@@ -98,10 +134,13 @@ test("harnessFromSelection: preset wins, custom splits args, empty is null", () 
     kind: "preset",
     runtimeId: "claude-code",
   });
-  assert.deepEqual(harnessFromSelection(null, "bun run seat.ts", "  --a  --b "), {
-    kind: "custom",
-    command: "bun run seat.ts",
-    args: ["--a", "--b"],
-  });
+  assert.deepEqual(
+    harnessFromSelection(null, "bun run seat.ts", "  --a  --b "),
+    {
+      kind: "custom",
+      command: "bun run seat.ts",
+      args: ["--a", "--b"],
+    },
+  );
   assert.equal(harnessFromSelection(null, "   ", ""), null);
 });

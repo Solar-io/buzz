@@ -609,6 +609,7 @@ pub fn run() {
             get_relay_ws_url,
             get_relay_http_url,
             get_media_proxy_port,
+            machine_hostname,
             video_chat::video_chat_set_target,
             video_chat::video_chat_clear_target,
             video_chat::video_chat_status,

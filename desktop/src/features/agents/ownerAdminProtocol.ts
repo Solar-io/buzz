@@ -10,7 +10,14 @@ export type HarnessSelection =
   | { kind: "preset"; runtimeId: string }
   | { kind: "custom"; command: string; args: string[] };
 
-export type OwnerAdminCommand =
+export type OwnerAdminCommand = {
+  /**
+   * Machine targeting (hostname, e.g. "crichton.local"): when present and not
+   * this machine's hostname, the command is for another desktop — ignore it
+   * silently (no ack; the targeted machine acks). Absent = legacy broadcast.
+   */
+  target?: string;
+} & (
   | {
       action: "create";
       requestId: string;
@@ -54,7 +61,8 @@ export type OwnerAdminCommand =
       forceRemoteDelete?: boolean;
     }
   | { action: "start"; requestId: string; pubkey: string }
-  | { action: "stop"; requestId: string; pubkey: string };
+  | { action: "stop"; requestId: string; pubkey: string }
+);
 
 const PUBKEY_RE = /^[0-9a-f]{64}$/;
 
@@ -124,6 +132,29 @@ function optionalRespondTo(
 }
 
 /**
+ * Machine-targeting gate: should THIS desktop apply the command?
+ *
+ * - No `target` → legacy broadcast, every desktop applies it.
+ * - `target` matching our hostname → ours to apply.
+ * - `target` for another machine → not ours, drop silently (no ack — the
+ *   targeted machine acks).
+ * - `target` present but our hostname unknown ("" — lookup failed) → fail
+ *   closed: never apply a targeted command we cannot prove is ours.
+ */
+export function commandTargetsThisMachine(
+  command: Pick<OwnerAdminCommand, "target">,
+  hostname: string,
+): boolean {
+  if (!command.target) {
+    return true;
+  }
+  const normalized = command.target.trim().toLowerCase();
+  return (
+    hostname.trim().length > 0 && hostname.trim().toLowerCase() === normalized
+  );
+}
+
+/**
  * Narrow parse of a decrypted command payload. Anything outside the contract
  * is dropped (null) — same discipline as parseAgentManagementRequest.
  */
@@ -147,7 +178,14 @@ export function parseOwnerAdminCommand(
   if (!request) {
     return null;
   }
-  const base = { requestId: envelope.requestId };
+  const base = {
+    requestId: envelope.requestId,
+    // Optional machine targeting; a non-string target is dropped and the
+    // command still parses (legacy senders never set it).
+    ...(optionalString(envelope.target)
+      ? { target: optionalString(envelope.target) }
+      : {}),
+  };
 
   switch (envelope.action) {
     case "create":

@@ -292,6 +292,21 @@ pub const KIND_TEAM: u32 = 30176;
 /// since these events are world-readable on the relay.
 pub const KIND_MANAGED_AGENT: u32 = 30177;
 
+/// NIP-AP: Owner Desktop Catalog (parameterized replaceable, owner-authored).
+///
+/// Per-machine capability projection published by each Buzz Desktop the owner
+/// runs. Addressed by `(pubkey, kind, d_tag)` where `d_tag` is the machine's
+/// hostname (e.g. `crichton.local`). Content is a versioned JSON body carrying
+/// the harness catalog (`id`, `label`, `source`, `availability` — nothing
+/// runnable) and the pubkeys of the managed agents runnable on that machine,
+/// so the web client can offer the owner's real harness list, target admin
+/// commands at one machine, and detect stale registrations no desktop reports.
+///
+/// Like [`KIND_MANAGED_AGENT`] this is an explicit opt-IN projection: it MUST
+/// never carry harness commands, args, env vars, file paths, or secrets — the
+/// runnable config stays in the desktop's local store.
+pub const KIND_DESKTOP_CATALOG: u32 = 30180;
+
 /// NIP-AP: Team Catalog projection (parameterized replaceable, owner-authored).
 ///
 /// The shareable projection of a team, addressed by `(pubkey, kind, d_tag)`
@@ -665,6 +680,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_PERSONA,
     KIND_TEAM,
     KIND_MANAGED_AGENT,
+    KIND_DESKTOP_CATALOG,
     KIND_TEAM_CATALOG,
     KIND_PRIVATE_MANAGED_AGENT,
     KIND_REPORT,
@@ -866,6 +882,7 @@ const _: () = assert!(is_replaceable(KIND_AGENT_PROFILE)); // 10100 ∈ 10000–
 const _: () = assert!(is_parameterized_replaceable(KIND_PERSONA)); // 30175 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_TEAM)); // 30176 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_MANAGED_AGENT)); // 30177 ∈ 30000–39999
+const _: () = assert!(is_parameterized_replaceable(KIND_DESKTOP_CATALOG)); // 30180 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_TEAM_CATALOG)); // 30178 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_PRIVATE_MANAGED_AGENT)); // 30179 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_WORKFLOW_DEF)); // 30620 ∈ 30000–39999
@@ -1091,5 +1108,8 @@ mod tests {
         // from its own delegated readers.
         assert!(!is_shared_gated_kind(KIND_TEAM));
         assert!(!is_shared_gated_kind(KIND_MANAGED_AGENT));
+        // 30180 is public-read by design (harness labels + agent pubkeys only)
+        // — same read model as 30177, no `shared` opt-in.
+        assert!(!is_shared_gated_kind(KIND_DESKTOP_CATALOG));
     }
 }

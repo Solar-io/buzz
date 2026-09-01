@@ -49,6 +49,7 @@
   }
 
   .buzz-webpanel-substrate[data-webpanel-visible="false"] {
+    /* biome-ignore lint/complexity/noImportantStyles: collapsed substrate must beat JS-set inline heights */
     height: 0 !important;
     min-height: 0;
     pointer-events: none;
