@@ -4,6 +4,7 @@ import {
   getPublicKey,
 } from "nostr-tools/pure";
 import { getUnlockedSecretKey } from "./key-store.ts";
+import * as nip44 from "nostr-tools/nip44";
 
 export type UnsignedNostrEvent = {
   kind: number;
@@ -118,6 +119,39 @@ export async function signNostrEvent(
     throw new Error("Failed to create the ephemeral browser identity.");
   }
   return signed;
+}
+
+/**
+ * NIP-44 v2 helpers for payloads sealed to a specific peer. Uses the
+ * unlocked local key (the web login keystore); NIP-07-only sessions throw —
+ * extension encryption is not wired, and callers should surface that.
+ */
+export function nip44EncryptTo(
+  plaintext: string,
+  peerPubkey: string,
+): { ciphertext: string } {
+  const secret = getUnlockedSecretKey();
+  if (!secret) {
+    throw new Error(
+      "Encryption needs the unlocked local key (NIP-07-only sessions cannot seal payloads).",
+    );
+  }
+  const key = nip44.v2.utils.getConversationKey(secret, peerPubkey);
+  return { ciphertext: nip44.v2.encrypt(plaintext, key) };
+}
+
+export function nip44DecryptFrom(
+  ciphertext: string,
+  peerPubkey: string,
+): { plaintext: string } {
+  const secret = getUnlockedSecretKey();
+  if (!secret) {
+    throw new Error(
+      "Decryption needs the unlocked local key (NIP-07-only sessions cannot open sealed payloads).",
+    );
+  }
+  const key = nip44.v2.utils.getConversationKey(secret, peerPubkey);
+  return { plaintext: nip44.v2.decrypt(ciphertext, key) };
 }
 
 /** Which signer `signNostrEvent` will use right now — for settings UI. */

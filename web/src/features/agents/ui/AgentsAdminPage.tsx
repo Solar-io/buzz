@@ -12,6 +12,11 @@ import {
 } from "@/features/agents/ObserverProvider";
 import { useAgentRegistry } from "@/features/agents/useAgentRegistry";
 import { agentRecentlyActive } from "@/features/agents/lib/observerEvents";
+import {
+  AgentAdminPanel,
+  AgentRowActions,
+  useAdminCommands,
+} from "@/features/agents/ui/AgentAdminPanel";
 import { useProfiles } from "@/features/channels/hooks";
 import { AuthorAvatar } from "@/features/channels/ui/ChannelTimeline";
 import {
@@ -40,9 +45,10 @@ function newRequestId(): string {
  */
 export function AgentsAdminPage() {
   const { canSign } = useAuth();
-  const { session } = useRelaySession();
   const observerStore = useObserverStore();
   const registry = useAgentRegistry();
+  const { session, status } = useRelaySession();
+  const admin = useAdminCommands(session, status);
 
   if (!canSign) {
     return <LoginPage />;
@@ -55,7 +61,8 @@ export function AgentsAdminPage() {
           <Link to="/repos/settings">Back to settings</Link>
         </Button>
       </div>
-      <AgentRegistryList registry={registry} />
+      <AgentAdminPanel admin={admin} />
+      <AgentRegistryList registry={registry} admin={admin} />
       <AgentCommands
         observerStore={observerStore}
         session={session}
@@ -83,8 +90,10 @@ function AgentWorkingDot({ pubkey }: { pubkey: string }) {
 
 function AgentRegistryList({
   registry,
+  admin,
 }: {
   registry: ReturnType<typeof useAgentRegistry>;
+  admin: ReturnType<typeof useAdminCommands>;
 }) {
   const pubkeys = useMemo(
     () => registry.map((entry) => entry.pubkey),
@@ -166,6 +175,11 @@ function AgentRegistryList({
                   <p className="font-mono text-[10px] text-muted-foreground/70">
                     {entry.pubkey}
                   </p>
+                  <AgentRowActions
+                    pubkey={entry.pubkey}
+                    name={profile?.displayName ?? entry.name}
+                    admin={admin}
+                  />
                 </div>
               )}
             </li>
