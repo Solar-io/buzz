@@ -120,46 +120,48 @@
   .dark {
     --radius: 0.625rem;
     /*
-     * Buzz Dark — the desktop client's default look (theme-loader
-     * "buzz-dark"): GitHub Dark neutral palette + flat near-black sidebar
-     * (#101117, Sam-specified), NOT Catppuccin. The chat/thread canvas is
-     * Sam-specified #1b1b29 (hsl 240 20.59% 13.33%) — the value his desktop
-     * renders — replacing the earlier neutral #1a1a1a derivation.
+     * Catppuccin Macchiato — token-for-token from the desktop's theme.css
+     * Macchiato block (Sam's desktop theme, 2026-09-01: "I want it to look
+     * like what I am using"). Mauve primary (267 82.69% 79.61% = #CBA6F7);
+     * selected rows/sidebar-active use the solid mauve with dark text; the
+     * sidebar is Macchiato mantle (one step darker than base).
      */
-    --background: 240 20.59% 13.33%;
-    --foreground: 0 0% 83.1%;
-    --card: 240 20% 15%;
-    --card-foreground: 0 0% 83.1%;
-    --popover: 240 18% 18%;
-    --popover-foreground: 0 0% 83.1%;
-    --primary: 0 0% 83.1%;
-    --primary-foreground: 240 20.59% 13.33%;
-    --secondary: 240 18% 19%;
-    --secondary-foreground: 0 0% 83.1%;
-    --muted: 240 18% 19%;
-    --muted-foreground: 225 10% 62%;
-    --accent: 240 18% 19%;
-    --accent-foreground: 0 0% 83.1%;
-    --destructive: 2.7 92.59% 62.9%;
-    --destructive-foreground: 240 20.59% 13.33%;
-    --border: 240 14% 24%;
-    --input: 240 14% 24%;
-    --ring: 0 0% 83.1%;
+    --background: 232 23.4% 18.43%;
+    --foreground: 227 68.25% 87.65%;
+    --card: 232 23.4% 18.43%;
+    --card-foreground: 227 68.25% 87.65%;
+    --popover: 230 18.8% 26.08%;
+    --popover-foreground: 227 68.25% 87.65%;
+    --primary: 267 82.69% 79.61%;
+    --primary-foreground: 232 23.4% 18.43%;
+    --secondary: 230 18.8% 26.08%;
+    --secondary-foreground: 227 68.25% 87.65%;
+    --muted: 230 18.8% 26.08%;
+    --muted-foreground: 228 39.22% 80%;
+    --accent: 230 18.8% 26.08%;
+    --accent-foreground: 227 68.25% 87.65%;
+    --destructive: 351 73.91% 72.94%;
+    --destructive-foreground: 232 23.4% 18.43%;
+    --border: 231 15.61% 33.92%;
+    --input: 231 15.61% 33.92%;
+    --ring: 227 68.25% 87.65%;
     --chart-1: 333 20.78% 38.04%;
     --chart-2: 193 19.61% 38.04%;
     --chart-3: 224 26.67% 41.18%;
     --chart-4: 30 8.24% 42.35%;
     --chart-5: 139 10.98% 38.82%;
-    /* #101117 — rendered flat in the desktop's Buzz Dark sidebar. */
-    --sidebar: 228 18% 7.65%;
-    --sidebar-background: 228 18% 7.65%;
-    --sidebar-foreground: 0 0% 83.1%;
-    --sidebar-primary: 0 0% 83.1%;
-    --sidebar-primary-foreground: 0 0% 10.196%;
-    --sidebar-accent: 0 0% 14%;
-    --sidebar-accent-foreground: 0 0% 83.1%;
-    --sidebar-border: 228 14% 13%;
-    --sidebar-ring: 0 0% 22.4%;
+    /* Macchiato mantle #1E2030 — the desktop's Macchiato sidebar. */
+    --sidebar: 234 22.75% 17.25%;
+    --sidebar-background: 234 22.75% 17.25%;
+    --sidebar-foreground: 227 68.25% 87.65%;
+    --sidebar-primary: 267 82.69% 79.61%;
+    --sidebar-primary-foreground: 232 23.4% 18.43%;
+    --sidebar-active: 267 82.69% 79.61%;
+    --sidebar-active-foreground: 232 23.4% 18.43%;
+    --sidebar-accent: 230 18.8% 26.08%;
+    --sidebar-accent-foreground: 227 68.25% 87.65%;
+    --sidebar-border: 231 15.61% 33.92%;
+    --sidebar-ring: 231 15.61% 33.92%;
   }
 
   * {

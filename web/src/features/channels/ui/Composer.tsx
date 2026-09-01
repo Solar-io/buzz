@@ -7,7 +7,6 @@ import {
   type KeyboardEvent,
 } from "react";
 import { toast } from "sonner";
-import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 import { activeMentionQuery, resolveMentions } from "../lib/mentions.ts";
 import {
@@ -597,13 +596,28 @@ export function Composer({
           onKeyDown={onKeyDown}
           onBlur={() => setPopupIndex(0)}
         />
-        <Button
-          size="sm"
+        {/* Desktop's send control: filled primary circle with an up arrow. */}
+        <button
+          type="button"
+          aria-label={editingActive ? "Save" : "Send"}
           disabled={busy || !text.trim()}
+          className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
           onClick={() => void submit()}
         >
-          {editingActive ? "Save" : "Send"}
-        </Button>
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-4 w-4"
+          >
+            <path d="m5 12 7-7 7 7" />
+            <path d="M12 19V5" />
+          </svg>
+        </button>
       </div>
     </div>
   );

@@ -786,7 +786,7 @@ function ChannelBrowser() {
           style={{ ["--thread-width" as string]: `${threadWidth}px` }}
         >
           <section className="flex min-w-0 flex-1 flex-col">
-            <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-[#272736] px-4">
+            <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-secondary px-4">
               <h1 className="truncate text-base font-semibold">
                 {current.type === "dm"
                   ? dmName(current.participantPubkeys)
@@ -1051,7 +1051,8 @@ function SidebarNavButton({
       className={cn(
         "group/row flex h-9 w-full items-center gap-1.5 truncate rounded-md px-2 text-left text-base transition-colors",
         "hover:bg-white/5 hover:text-foreground",
-        selected && "bg-white/[0.18] font-medium text-foreground",
+        selected &&
+          "bg-[hsl(var(--sidebar-active))] font-medium text-[hsl(var(--sidebar-active-foreground))]",
       )}
       onClick={() => {
         onSelect();
@@ -1192,7 +1193,8 @@ function DmNavRow({
       className={cn(
         "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors",
         "hover:bg-white/5",
-        selected && "bg-white/[0.18]",
+        selected &&
+          "bg-[hsl(var(--sidebar-active))] text-[hsl(var(--sidebar-active-foreground))]",
       )}
       onClick={() => {
         onSelect();

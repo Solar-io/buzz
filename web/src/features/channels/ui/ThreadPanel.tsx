@@ -55,7 +55,7 @@ export function ThreadPanel({
           : "fixed inset-0 z-40 flex flex-col bg-background pt-[max(0.5rem,env(safe-area-inset-top))] lg:static lg:inset-auto lg:z-auto lg:w-[var(--thread-width)] lg:shrink-0 lg:border-l lg:border-border lg:pt-0"
       }
     >
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-[#272736] px-4">
+      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-secondary px-4">
         <span className="text-base font-semibold">Replies</span>
         {onSelectThinkingTab && (
           <button

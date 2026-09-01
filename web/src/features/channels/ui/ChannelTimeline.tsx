@@ -500,7 +500,7 @@ function MessageRow({
         {replyCount > 2 && (
           <button
             type="button"
-            className="mt-0.5 text-sm font-medium text-muted-foreground hover:underline"
+            className="mt-0.5 text-sm font-medium text-primary hover:underline"
             onClick={() => onOpenThread(message)}
           >
             View all {replyCount} {replyCount === 1 ? "reply" : "replies"} →
