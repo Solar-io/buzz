@@ -3662,7 +3662,7 @@ fn try_native_steer(
         prompt_tag: prompt_tag.clone(),
         received_at: std::time::Instant::now(),
     };
-    let event_block = queue::format_event_block(channel_id, None, &be, None);
+    let event_block = queue::format_event_block(channel_id, None, &be, None, None);
     let body = format!("{header}\n\n[Buzz event: {prompt_tag}]\n{event_block}\n\n{closing}");
 
     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<pool::SteerAck>();

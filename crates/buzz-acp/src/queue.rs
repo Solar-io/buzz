@@ -1115,12 +1115,23 @@ pub(crate) fn format_event_block(
     channel_info: Option<&PromptChannelInfo>,
     be: &BatchEvent,
     profile_lookup: Option<&PromptProfileLookup>,
+    tz: Option<chrono_tz::Tz>,
 ) -> String {
     let hex = be.event.pubkey.to_hex();
     let npub = be.event.pubkey.to_bech32().unwrap_or_else(|_| hex.clone());
 
+    // Annotate the RFC3339 UTC stamp with the owner-local wall time when the
+    // timezone is known — models were reading the bare UTC stamp as the
+    // owner's local time ("it's 3am your time" at 10:31pm CDT).
     let time = chrono::DateTime::from_timestamp(be.event.created_at.as_secs() as i64, 0)
-        .map(|dt| dt.to_rfc3339())
+        .map(|dt| match tz {
+        Some(tz) => format!(
+            "{} ({}, owner-local)",
+            dt.to_rfc3339(),
+            dt.with_timezone(&tz).format("%a %b %d, %I:%M%P %Z")
+        ),
+        None => dt.to_rfc3339(),
+    })
         .unwrap_or_else(|| be.event.created_at.as_secs().to_string());
 
     let kind = be.event.kind.as_u16() as u32;
@@ -1302,6 +1313,19 @@ pub(crate) fn format_local_wall(now: chrono::DateTime<chrono::Utc>, tz: chrono_t
     local.format("%A %Y-%m-%d, %H:%M %Z").to_string() + &format!(" ({offset})")
 }
 
+/// Render an owner-local timestamp for conversation-context message lines:
+/// `2026-08-28 08:53 CDT`. Falls back to the raw stored timestamp when it
+/// cannot be parsed as RFC3339 (older messages or synthetic fixtures).
+pub(crate) fn format_local_stamp(raw: &str, tz: Option<chrono_tz::Tz>) -> String {
+    match (chrono::DateTime::parse_from_rfc3339(raw), tz) {
+        (Ok(dt), Some(tz)) => dt
+            .with_timezone(&tz)
+            .format("%Y-%m-%d %H:%M %Z")
+            .to_string(),
+        _ => raw.to_string(),
+    }
+}
+
 /// Render the two temporal ground-truth lines appended to every `[Context]`
 /// block: the owner-local wall clock alongside UTC, and how stale the
 /// triggering message is plus the channel's prior-message gap.
@@ -1331,7 +1355,10 @@ pub(crate) fn temporal_context_lines(
     }
     s.push_str(
         "\nTime here is ground truth: derive dates, days, and part of day from these \
-         lines (and the event Time: fields, which are UTC), never from inference.",
+         lines, never from inference. The Now: line IS the owner's local clock. Any \
+         RFC3339 stamp ending in +00:00 or Z is UTC — for arithmetic only; never \
+         present a UTC time as the owner's local time (the event Time: lines carry \
+         the owner-local reading in parentheses for exactly this reason).",
     );
     s
 }
@@ -1481,6 +1508,7 @@ fn format_context_hints(
 fn format_conversation_context(
     ctx: &ConversationContext,
     profile_lookup: Option<&PromptProfileLookup>,
+    tz: Option<chrono_tz::Tz>,
 ) -> String {
     let (label, messages, total, truncated) = match ctx {
         ConversationContext::Thread {
@@ -1505,7 +1533,7 @@ fn format_conversation_context(
             "\n[{}] {} ({}): {}",
             i + 1,
             format_prompt_actor(&msg.pubkey, profile_lookup),
-            msg.timestamp,
+            format_local_stamp(&msg.timestamp, tz),
             msg.content,
         ));
     }
@@ -1747,7 +1775,11 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
 
     // 3. Conversation context (thread or DM).
     if let Some(ctx) = args.conversation_context {
-        sections.push(format_conversation_context(ctx, args.profile_lookup));
+        sections.push(format_conversation_context(
+            ctx,
+            args.profile_lookup,
+            args.prompt_timezone,
+        ));
     }
 
     // 4. Cancelled + re-prompt framing. When a turn was cancelled to deliver
@@ -1767,7 +1799,13 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
                 "\n\n--- Event {} ({}) ---\n{}",
                 i + 1,
                 be.prompt_tag,
-                format_event_block(batch.channel_id, args.channel_info, be, args.profile_lookup)
+                format_event_block(
+                    batch.channel_id,
+                    args.channel_info,
+                    be,
+                    args.profile_lookup,
+                    args.prompt_timezone,
+                )
             ));
         }
         sections.push(s);
@@ -1781,13 +1819,25 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
                 "{}\n\n--- Event 1 ({}) ---\n{}",
                 framing.new_header_single,
                 be.prompt_tag,
-                format_event_block(batch.channel_id, args.channel_info, be, args.profile_lookup)
+                format_event_block(
+                    batch.channel_id,
+                    args.channel_info,
+                    be,
+                    args.profile_lookup,
+                    args.prompt_timezone,
+                )
             )
         } else {
             format!(
                 "[Buzz event: {}]\n{}",
                 be.prompt_tag,
-                format_event_block(batch.channel_id, args.channel_info, be, args.profile_lookup)
+                format_event_block(
+                    batch.channel_id,
+                    args.channel_info,
+                    be,
+                    args.profile_lookup,
+                    args.prompt_timezone,
+                )
             )
         }
     } else {
@@ -1806,7 +1856,13 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
                 "\n\n--- Event {} ({}) ---\n{}",
                 i + 1,
                 be.prompt_tag,
-                format_event_block(batch.channel_id, args.channel_info, be, args.profile_lookup)
+                format_event_block(
+                    batch.channel_id,
+                    args.channel_info,
+                    be,
+                    args.profile_lookup,
+                    args.prompt_timezone,
+                )
             ));
         }
         s
@@ -2212,7 +2268,10 @@ mod tests {
              Timing: this message is 4m old when you read it; \
              the previous channel message came 44m before it\n\
              Time here is ground truth: derive dates, days, and part of day from these \
-             lines (and the event Time: fields, which are UTC), never from inference.";
+             lines, never from inference. The Now: line IS the owner's local clock. Any \
+             RFC3339 stamp ending in +00:00 or Z is UTC — for arithmetic only; never \
+             present a UTC time as the owner's local time (the event Time: lines carry \
+             the owner-local reading in parentheses for exactly this reason).";
         assert_eq!(s, expected);
     }
 
@@ -2227,6 +2286,85 @@ mod tests {
             !s.contains("previous channel message"),
             "no conversation context → no prior-message gap: {s}"
         );
+    }
+
+    #[test]
+    fn test_format_local_stamp() {
+        // 2026-08-31T03:31:00Z = 2026-08-30 22:31 America/Chicago (CDT, UTC-5).
+        assert_eq!(
+            format_local_stamp(
+                "2026-08-31T03:31:00+00:00",
+                Some("America/Chicago".parse().unwrap()),
+            ),
+            "2026-08-30 22:31 CDT"
+        );
+        // No timezone (steer path / legacy) → raw passthrough.
+        assert_eq!(
+            format_local_stamp("2026-08-31T03:31:00+00:00", None),
+            "2026-08-31T03:31:00+00:00"
+        );
+        // Unparseable → passthrough, never a panic.
+        assert_eq!(
+            format_local_stamp("not-a-time", Some("America/Chicago".parse().unwrap())),
+            "not-a-time"
+        );
+    }
+
+    #[test]
+    fn test_event_block_annotates_owner_local_time() {
+        // 2026-09-01T03:31:56Z = Mon Aug 31, 10:31pm CDT — the exact
+        // "agents say it's 3am at 10:31pm" trap this annotation exists for.
+        let dt = chrono::DateTime::parse_from_rfc3339("2026-09-01T03:31:56+00:00").unwrap();
+        let qe = make_queued_created_at(Uuid::new_v4(), "hello", dt.timestamp() as u64);
+        let be = BatchEvent {
+            event: qe.event,
+            prompt_tag: "test".into(),
+            received_at: Instant::now(),
+        };
+
+        let block = format_event_block(
+            Uuid::new_v4(),
+            None,
+            &be,
+            None,
+            Some("America/Chicago".parse().unwrap()),
+        );
+        assert!(
+            block.contains("2026-09-01T03:31:56+00:00 (Mon Aug 31, 10:31pm CDT, owner-local)"),
+            "event block Time line not annotated: {block}"
+        );
+
+        // Without a timezone the legacy single-stamp rendering is preserved
+        // (goose steer path passes None).
+        let legacy = format_event_block(Uuid::new_v4(), None, &be, None, None);
+        assert!(legacy.contains("2026-09-01T03:31:56+00:00"));
+        assert!(!legacy.contains("owner-local"));
+    }
+
+    #[test]
+    fn test_conversation_context_localizes_stamps() {
+        let ctx = ConversationContext::Dm {
+            messages: vec![ContextMessage {
+                event_id: String::new(),
+                pubkey: "aa".repeat(32),
+                timestamp: "2026-08-31T03:31:00+00:00".into(),
+                content: "ping".into(),
+            }],
+            total: 1,
+            truncated: false,
+        };
+        let s = format_conversation_context(
+            &ctx,
+            None,
+            Some("America/Chicago".parse().unwrap()),
+        );
+        assert!(
+            s.contains("(2026-08-30 22:31 CDT): ping"),
+            "conversation stamp not localized: {s}"
+        );
+        // Legacy rendering (no tz) keeps the raw stamp.
+        let legacy = format_conversation_context(&ctx, None, None);
+        assert!(legacy.contains("2026-08-31T03:31:00+00:00"));
     }
 
     #[test]
