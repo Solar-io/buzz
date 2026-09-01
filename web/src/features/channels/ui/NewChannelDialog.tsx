@@ -12,10 +12,20 @@ import { signNostrEvent } from "@/shared/lib/nostr-signer";
  */
 export function NewChannelDialog({
   onCreated,
+  open: openProp,
+  onOpenChange,
 }: {
   onCreated: (channelId: string) => void;
+  /** Controlled mode (sidebar + button) — renders no trigger of its own. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [openInternal, setOpenInternal] = useState(false);
+  const open = openProp ?? openInternal;
+  const setOpen = (next: boolean) => {
+    setOpenInternal(next);
+    onOpenChange?.(next);
+  };
   const [name, setName] = useState("");
   const [about, setAbout] = useState("");
   const [isPrivate, setIsPrivate] = useState(true);
@@ -61,6 +71,9 @@ export function NewChannelDialog({
   };
 
   if (!open) {
+    if (openProp !== undefined) {
+      return null;
+    }
     return (
       <button
         type="button"

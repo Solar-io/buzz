@@ -7,7 +7,16 @@ import {
   type ReactNode,
 } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { Hash, Lock, MessageSquareText } from "lucide-react";
+import {
+  Brain,
+  Folder,
+  Hash,
+  Headphones,
+  Lock,
+  MessageSquareText,
+  Plus,
+  Search,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/features/auth/ui/AuthProvider";
 import { LoginPage } from "@/features/auth/ui/LoginPage";
@@ -35,10 +44,13 @@ import {
   type ChannelPrefs,
 } from "@/features/channels/lib/channelPrefs.ts";
 import {
+  deleteChannel,
   leaveChannel,
+  renameChannel,
   sendPresence,
   usePresence,
 } from "@/features/channels/hooks";
+import { canonicalChannelName } from "@/features/channels/lib/channelAdmin.ts";
 import { ContextMenu, type ContextMenuItem } from "@/shared/ui/ContextMenu";
 import { replyCounts } from "@/features/channels/lib/messageBuffer.ts";
 import {
@@ -81,6 +93,13 @@ import { useDms } from "@/features/dms/hooks";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
 import type { DmLastMessage } from "@/features/dms/lib/dmActivity.ts";
 import { NewDmDialog } from "@/features/dms/ui/NewDmDialog";
+import {
+  hideDm,
+  loadHiddenDms,
+  saveHiddenDms,
+  unhideDm,
+} from "@/features/dms/lib/hiddenDms.ts";
+import { FilesPanel } from "@/features/files/ui/FilesPanel";
 import { ownPubkey } from "@/shared/lib/nostr-signer";
 import { AppShell, useDrawerClose } from "@/shared/layout/AppShell";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
@@ -466,6 +485,59 @@ function ChannelBrowser() {
         setChannelPrefs((prefs) => toggleMuted(prefs, channel.id)),
     },
     {
+      label: "Rename channel…",
+      onSelect: () => {
+        const next = window.prompt(`Rename #${channel.name}`, channel.name);
+        if (next === null) {
+          return;
+        }
+        const canonical = canonicalChannelName(next);
+        if (!canonical || canonical === channel.name) {
+          return;
+        }
+        void renameChannel(session, channel.id, canonical).then((result) => {
+          if (result.ok) {
+            toast.success(`Renamed to #${canonical}`);
+            // The relay re-emits the 39000 after the edit; staggered re-REQs
+            // cover a missed live fan-out.
+            window.setTimeout(refreshChannels, 500);
+            window.setTimeout(refreshChannels, 2000);
+          } else {
+            toast.error(result.message || "The relay refused the rename.");
+          }
+        });
+      },
+    },
+    {
+      label: "Delete channel",
+      danger: true,
+      onSelect: () => {
+        if (
+          !window.confirm(
+            `Delete #${channel.name} for everyone? This cannot be undone.`,
+          )
+        ) {
+          return;
+        }
+        void deleteChannel(session, channel.id).then((result) => {
+          if (result.ok) {
+            toast.success(`Deleted #${channel.name}`);
+            setChannelPrefs((prefs) => forgetChannel(prefs, channel.id));
+            if (selectedId === channel.id) {
+              void navigate({ to: "/repos", search: { c: undefined } });
+            }
+            window.setTimeout(refreshChannels, 500);
+            window.setTimeout(refreshChannels, 2000);
+          } else {
+            toast.error(
+              result.message ||
+                "The relay refused the delete (owners only). Try Leave instead.",
+            );
+          }
+        });
+      },
+    },
+    {
       label: "Leave channel",
       danger: true,
       onSelect: () => {
@@ -506,6 +578,41 @@ function ChannelBrowser() {
     }
   }, [connected, session]);
 
+  // ⌘K / Ctrl+K opens search from anywhere in the app. The sidebar's search
+  // field feeds the same panel (initialQuery seeds it); its text clears when
+  // the panel closes so the field never shows a stale query.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [sidebarQuery, setSidebarQuery] = useState("");
+  const openSearch = (seed?: string) => {
+    if (seed !== undefined) {
+      setSidebarQuery(seed);
+    }
+    setSearchOpen(true);
+  };
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setSidebarQuery("");
+  };
+  // Files overlay — the desktop's docked Files panel as an iframe layer.
+  const [filesOpen, setFilesOpen] = useState(false);
+  // Sidebar + buttons: section-header plus buttons open the create dialogs.
+  const [newChannelOpen, setNewChannelOpen] = useState(false);
+  const [newDmOpen, setNewDmOpen] = useState(false);
+  // Hidden DMs — local-only (the desktop's hide_dm equivalent); re-opening
+  // the DM via the new-DM flow un-hides it.
+  const [hiddenDmIds, setHiddenDmIds] = useState<string[]>(() =>
+    loadHiddenDms(window.localStorage),
+  );
+  const persistHiddenDms = (ids: string[]) => {
+    setHiddenDmIds(ids);
+    saveHiddenDms(window.localStorage, ids);
+  };
+
+  const visibleDms = useMemo(
+    () => dms.filter(({ channel }) => !hiddenDmIds.includes(channel.id)),
+    [dms, hiddenDmIds],
+  );
+
   const sidebar = (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between px-3 py-2">
@@ -526,6 +633,27 @@ function ChannelBrowser() {
           </Link>
         </div>
       </div>
+      {/* Desktop-style search field: typing here opens the ⌘K search panel
+          seeded with what was typed. */}
+      <div className="px-2 pb-2">
+        <div className="flex items-center gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/40 px-2 py-1.5">
+          <Search
+            aria-hidden
+            className="h-4 w-4 shrink-0 text-muted-foreground"
+          />
+          <input
+            value={sidebarQuery}
+            onChange={(event) => openSearch(event.target.value)}
+            onFocus={() => setSearchOpen(true)}
+            placeholder="Search"
+            aria-label="Search messages"
+            className="w-full bg-transparent text-sm outline-hidden placeholder:text-muted-foreground"
+          />
+          <kbd className="hidden rounded border border-border px-1 font-sans text-[10px] text-muted-foreground sm:block">
+            ⌘K
+          </kbd>
+        </div>
+      </div>
       <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {channels.length === 0 && (
           <p className="px-2 py-4 text-sm text-muted-foreground">
@@ -536,9 +664,7 @@ function ChannelBrowser() {
         )}
         {starredChannels.length > 0 && (
           <>
-            <p className="flex h-8 items-center px-2 text-xs font-medium uppercase tracking-wide text-sidebar-foreground/70">
-              Starred
-            </p>
+            <SectionHeader label="Starred" />
             <ul className="space-y-0.5">
               {starredChannels.map((channel) => (
                 <li key={channel.id}>
@@ -562,11 +688,25 @@ function ChannelBrowser() {
                 </li>
               ))}
             </ul>
-            <p className="mt-4 flex h-8 items-center px-2 text-xs font-medium uppercase tracking-wide text-sidebar-foreground/70">
-              Channels
-            </p>
           </>
         )}
+        <SectionHeader
+          label="Channels"
+          className={starredChannels.length > 0 ? "mt-4" : undefined}
+          onAdd={() => setNewChannelOpen(true)}
+          addLabel="New channel"
+        />
+        <NewChannelDialog
+          open={newChannelOpen}
+          onOpenChange={setNewChannelOpen}
+          onCreated={(channelId) => {
+            void navigate({ to: "/repos", search: { c: channelId } });
+            // The relay stores the 39000 in a spawned task with no live
+            // fan-out — staggered re-REQs pick it up once it lands.
+            window.setTimeout(refreshChannels, 500);
+            window.setTimeout(refreshChannels, 2000);
+          }}
+        />
         <ul className="space-y-0.5">
           {unstarredChannels.map((channel) => (
             <li key={channel.id}>
@@ -644,62 +784,76 @@ function ChannelBrowser() {
             </ul>
           </details>
         )}
-        {dms.length > 0 && (
-          <>
-            <p className="mt-4 flex h-8 items-center px-2 text-xs font-medium uppercase tracking-wide text-sidebar-foreground/70">
-              Direct messages
-            </p>
-            <ul className="space-y-0.5">
-              {dms.map(({ channel, lastMessage }) => (
-                <li key={channel.id}>
-                  <DmNavRow
-                    selected={channel.id === selectedId}
-                    unread={
-                      lastMessage
-                        ? isUnread(
-                            readState,
-                            channel.id,
-                            lastMessage.created_at,
-                          )
-                        : false
-                    }
-                    participants={channel.participantPubkeys}
-                    selfPubkey={selfPubkey}
-                    profiles={dmProfiles}
-                    lastMessage={lastMessage}
-                    presence={channel.participantPubkeys
-                      .filter((pk) => pk !== selfPubkey)
-                      .map((pk) => presence.get(pk))
-                      .find((entry) => entry != null)}
-                    onSelect={() => {
-                      setThreadRootId(null);
-                      void navigate({
-                        to: "/repos",
-                        search: { c: channel.id },
-                      });
-                    }}
-                  />
-                </li>
-              ))}
-            </ul>
-          </>
+        <SectionHeader
+          label="Direct messages"
+          className="mt-4"
+          onAdd={() => setNewDmOpen(true)}
+          addLabel="New direct message"
+        />
+        <NewDmDialog
+          open={newDmOpen}
+          onOpenChange={setNewDmOpen}
+          onOpened={(channelId) => {
+            // Re-opening a hidden DM restores it to the list.
+            if (hiddenDmIds.includes(channelId)) {
+              persistHiddenDms(unhideDm(hiddenDmIds, channelId));
+            }
+            void navigate({ to: "/repos", search: { c: channelId } });
+          }}
+        />
+        {dms.length > 0 && visibleDms.length === 0 && (
+          <p className="px-2 py-2 text-xs text-muted-foreground">
+            All DMs hidden — use + to start one.
+          </p>
+        )}
+        {visibleDms.length > 0 && (
+          <ul className="space-y-0.5">
+            {visibleDms.map(({ channel, lastMessage }) => (
+              <li key={channel.id}>
+                <DmNavRow
+                  selected={channel.id === selectedId}
+                  unread={
+                    lastMessage
+                      ? isUnread(readState, channel.id, lastMessage.created_at)
+                      : false
+                  }
+                  participants={channel.participantPubkeys}
+                  selfPubkey={selfPubkey}
+                  profiles={dmProfiles}
+                  lastMessage={lastMessage}
+                  presence={channel.participantPubkeys
+                    .filter((pk) => pk !== selfPubkey)
+                    .map((pk) => presence.get(pk))
+                    .find((entry) => entry != null)}
+                  onSelect={() => {
+                    setThreadRootId(null);
+                    void navigate({
+                      to: "/repos",
+                      search: { c: channel.id },
+                    });
+                  }}
+                  menuItems={[
+                    {
+                      label: "Remove from list",
+                      danger: true,
+                      onSelect: () => {
+                        persistHiddenDms(hideDm(hiddenDmIds, channel.id));
+                        if (selectedId === channel.id) {
+                          void navigate({
+                            to: "/repos",
+                            search: { c: undefined },
+                          });
+                        }
+                      },
+                    },
+                  ]}
+                />
+              </li>
+            ))}
+          </ul>
         )}
       </nav>
       <div className="space-y-0.5 border-t border-border p-2">
-        <NewDmDialog
-          onOpened={(channelId) =>
-            void navigate({ to: "/repos", search: { c: channelId } })
-          }
-        />
-        <NewChannelDialog
-          onCreated={(channelId) => {
-            void navigate({ to: "/repos", search: { c: channelId } });
-            // The relay stores the 39000 in a spawned task with no live
-            // fan-out — staggered re-REQs pick it up once it lands.
-            window.setTimeout(refreshChannels, 500);
-            window.setTimeout(refreshChannels, 2000);
-          }}
-        />
         <Link
           to="/repos/browse"
           className="block rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent"
@@ -740,8 +894,6 @@ function ChannelBrowser() {
   // Desktop DM right-pane dismissal: closing the thinking panel collapses
   // the pane; the header 🧠 reopens it.
   const [dmPaneHidden, setDmPaneHidden] = useState(false);
-  // ⌘K / Ctrl+K opens search from anywhere in the app.
-  const [searchOpen, setSearchOpen] = useState(false);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
@@ -823,33 +975,34 @@ function ChannelBrowser() {
                       .catch(() => toast.error("Could not start the huddle."));
                   }}
                 >
-                  🎙
+                  <Headphones aria-hidden className="h-4 w-4" />
                 </button>
               )}
               <button
                 type="button"
-                aria-label="Search messages"
-                title="Search (⌘K)"
+                aria-label="Open files"
+                title="Files"
                 className={cn(
-                  "shrink-0 rounded p-1.5 text-sm text-muted-foreground hover:bg-accent",
-                  current.ttlSeconds === null && "ml-auto",
+                  "shrink-0 rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground",
+                  current.ttlSeconds !== null && "ml-auto",
                 )}
-                onClick={() => setSearchOpen(true)}
+                onClick={() => setFilesOpen(true)}
               >
-                🔍
+                <Folder aria-hidden className="h-4 w-4" />
               </button>
               {dmAgentPubkey && (
                 <button
                   type="button"
                   aria-label="Toggle thinking panel"
-                  className="shrink-0 rounded-full border border-border px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-accent"
+                  title="Thinking"
+                  className="shrink-0 rounded-full border border-border p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
                   onClick={() => {
                     setRightTab("thinking");
                     setDmPaneHidden(false);
                     setThinkingOpen(true);
                   }}
                 >
-                  🧠
+                  <Brain aria-hidden className="h-4 w-4" />
                 </button>
               )}
             </div>
@@ -1005,7 +1158,8 @@ function ChannelBrowser() {
       )}
       <SearchPanel
         open={searchOpen}
-        onClose={() => setSearchOpen(false)}
+        onClose={closeSearch}
+        initialQuery={sidebarQuery}
         channels={channels}
         profiles={profiles}
         defaultChannelId={current?.id ?? null}
@@ -1016,7 +1170,49 @@ function ChannelBrowser() {
           });
         }}
       />
+      <FilesPanel open={filesOpen} onClose={() => setFilesOpen(false)} />
     </AppShell>
+  );
+}
+
+/**
+ * Sidebar section label with the desktop's header-row plus button — the
+ * create dialogs open inline just below the header.
+ */
+function SectionHeader({
+  label,
+  onAdd,
+  addLabel,
+  className,
+}: {
+  label: string;
+  /** Shows the + button when provided (Channels, Direct messages). */
+  onAdd?: () => void;
+  addLabel?: string;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex h-8 items-center justify-between pl-2 pr-1",
+        className,
+      )}
+    >
+      <p className="text-xs font-medium uppercase tracking-wide text-sidebar-foreground/70">
+        {label}
+      </p>
+      {onAdd && (
+        <button
+          type="button"
+          aria-label={addLabel ?? label}
+          title={addLabel ?? label}
+          className="rounded p-1 text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+          onClick={onAdd}
+        >
+          <Plus className="h-4 w-4" />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -1163,6 +1359,7 @@ function DmNavRow({
   lastMessage,
   presence,
   onSelect,
+  menuItems,
 }: {
   selected: boolean;
   unread: boolean;
@@ -1173,6 +1370,8 @@ function DmNavRow({
   /** Latest presence entry for the row's avatar pubkey, when subscribed. */
   presence?: PresenceEntry;
   onSelect: () => void;
+  /** Right-click menu items (remove from list), when provided. */
+  menuItems?: ContextMenuItem[];
 }) {
   const closeDrawer = useDrawerClose();
   const others = participants.filter(
@@ -1187,7 +1386,7 @@ function DmNavRow({
   const rowFrames = useAgentFrames(avatarPubkey || null);
   const active = agentRecentlyActive(rowFrames, Math.floor(Date.now() / 1000));
   useTick(active);
-  return (
+  const row = (open: (x: number, y: number) => void) => (
     <button
       type="button"
       className={cn(
@@ -1200,6 +1399,14 @@ function DmNavRow({
         onSelect();
         closeDrawer();
       }}
+      onContextMenu={
+        menuItems
+          ? (event) => {
+              event.preventDefault();
+              open(event.clientX, event.clientY);
+            }
+          : undefined
+      }
     >
       <span className="relative shrink-0">
         <AuthorAvatar
@@ -1256,4 +1463,8 @@ function DmNavRow({
       )}
     </button>
   );
+  if (menuItems) {
+    return <ContextMenu items={menuItems}>{row}</ContextMenu>;
+  }
+  return row(() => {});
 }
