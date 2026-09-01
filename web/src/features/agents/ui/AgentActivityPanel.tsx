@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
+import { BarChart3, Brain } from "lucide-react";
 import type { Profile } from "@/features/channels/hooks";
 import { AuthorAvatar } from "@/features/channels/ui/ChannelTimeline";
 import {
@@ -50,7 +51,10 @@ function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
   if (entry.type === "usage") {
     return (
       <li className="flex items-baseline gap-2 rounded-lg px-1 py-0.5 text-sm text-muted-foreground">
-        <span aria-hidden="true">📊</span>
+        <BarChart3
+          aria-hidden="true"
+          className="h-3.5 w-3.5 text-muted-foreground"
+        />
         <span className="font-medium tabular-nums">{entry.text}</span>
       </li>
     );
@@ -71,7 +75,11 @@ function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
   return (
     <li className="rounded-lg border border-border/60 bg-card/60 px-3 py-2">
       <div className="mb-0.5 text-xs font-medium text-muted-foreground">
-        💭 Thinking · {entryTime(entry.at)}
+        <Brain
+          aria-hidden="true"
+          className="mr-1 inline h-3.5 w-3.5 text-muted-foreground"
+        />
+        Thinking · {entryTime(entry.at)}
       </div>
       <p className="break-words whitespace-pre-wrap text-sm leading-5 text-muted-foreground">
         {entry.text.trim()}
@@ -97,6 +105,7 @@ export function AgentActivityPanel({
   working,
   mobileOpen,
   onCloseMobile,
+  onCloseDesktop,
   onSelectThreadTab,
 }: {
   agentPubkey: string;
@@ -110,6 +119,8 @@ export function AgentActivityPanel({
   /** Below lg the panel is a deliberate sheet opened from the chat header. */
   mobileOpen: boolean;
   onCloseMobile: () => void;
+  /** Collapses the desktop right pane entirely. */
+  onCloseDesktop?: () => void;
   /** DMs offer a Thinking ↔ Replies switch in the header. */
   onSelectThreadTab?: () => void;
 }) {
@@ -148,7 +159,10 @@ export function AgentActivityPanel({
     <aside
       className={
         mobileOpen
-          ? "fixed inset-0 z-40 flex flex-col bg-background pt-[max(0.5rem,env(safe-area-inset-top))] lg:hidden"
+          ? // Overlay below lg; at lg the SAME open state docks as the
+            // right pane (lg:hidden here would make the 🧠 reopen button
+            // dead on desktop — the overlay and the dock must compose).
+            "fixed inset-0 z-40 flex flex-col bg-background pt-[max(0.5rem,env(safe-area-inset-top))] lg:static lg:inset-auto lg:z-auto lg:w-[var(--thread-width)] lg:shrink-0 lg:border-l lg:border-border lg:pt-0"
           : "hidden lg:static lg:flex lg:w-[var(--thread-width)] lg:shrink-0 lg:flex-col lg:border-l lg:border-border"
       }
       data-agent-panel={agentPubkey}
@@ -183,8 +197,11 @@ export function AgentActivityPanel({
         <button
           type="button"
           aria-label="Close thinking panel"
-          className="rounded p-1 text-sm text-muted-foreground hover:bg-accent lg:hidden"
-          onClick={onCloseMobile}
+          className="rounded p-1 text-sm text-muted-foreground hover:bg-accent"
+          onClick={() => {
+            onCloseMobile();
+            onCloseDesktop?.();
+          }}
         >
           ✕
         </button>

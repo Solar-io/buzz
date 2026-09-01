@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   type KeyboardEvent,
@@ -70,6 +71,9 @@ export function Composer({
   const [text, setText] = useState(() => (draftKey ? loadDraft(draftKey) : ""));
   const [busy, setBusy] = useState(false);
   const [popupIndex, setPopupIndex] = useState(0);
+  // Re-render trigger for caret moves that happen outside React's knowledge
+  // (the @ button sets the caret in rAF; suggestions read DOM selection).
+  const [, bumpCaretRender] = useReducer((tick: number) => tick + 1, 0);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [media, setMedia] = useState<BlobDescriptor[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -119,7 +123,13 @@ export function Composer({
     if (!textarea) {
       return null;
     }
-    return activeMentionQuery(text, textarea.selectionStart ?? text.length);
+    const caret = textarea.selectionStart ?? text.length;
+    const token = activeMentionQuery(text, caret);
+    if (token !== null) {
+      return token;
+    }
+    // The @ button leaves a bare "@" at the caret — show the full list.
+    return mentionOpen && text.slice(0, caret).endsWith("@") ? "" : null;
   })();
   const suggestions = useMemo(() => {
     if (query === null || !mentionOpen) {
@@ -520,6 +530,32 @@ export function Composer({
           onClick={() => fileInputRef.current?.click()}
         >
           {uploading ? "…" : "📎"}
+        </button>
+        <button
+          type="button"
+          aria-label="Mention someone"
+          title="Mention — inserts @"
+          className="mb-0.5 rounded-lg p-2.5 text-sm font-medium text-muted-foreground hover:bg-accent disabled:opacity-50"
+          disabled={busy || editingActive}
+          onClick={() => {
+            const textarea = textareaRef.current;
+            if (!textarea) {
+              return;
+            }
+            const start = textarea.selectionStart ?? text.length;
+            const end = textarea.selectionEnd ?? start;
+            const next = `${text.slice(0, start)}@${text.slice(end)}`;
+            setText(next);
+            setMentionOpen(true);
+            requestAnimationFrame(() => {
+              const caret = start + 1;
+              textarea.focus();
+              textarea.setSelectionRange(caret, caret);
+              bumpCaretRender();
+            });
+          }}
+        >
+          @
         </button>
         <EmojiPicker label="Insert emoji" onSelect={insertEmoji}>
           {(props) => (

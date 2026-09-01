@@ -26,7 +26,7 @@ export function useDrawerClose(): () => void {
 }
 
 const SIDEBAR_WIDTH_KEY = "buzz.sidebar-width.v1";
-const DEFAULT_SIDEBAR_WIDTH = 288;
+const DEFAULT_SIDEBAR_WIDTH = 232;
 const MIN_SIDEBAR_WIDTH = 200;
 const MAX_SIDEBAR_WIDTH = 480;
 

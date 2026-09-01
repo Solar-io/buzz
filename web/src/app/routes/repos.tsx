@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { Hash, MessageSquareText } from "lucide-react";
+import { Hash, Lock, MessageSquareText } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/features/auth/ui/AuthProvider";
 import { LoginPage } from "@/features/auth/ui/LoginPage";
@@ -545,7 +545,7 @@ function ChannelBrowser() {
                   <SidebarNavButton
                     selected={channel.id === selectedId}
                     label={channel.name}
-                    icon={<ChannelHash />}
+                    icon={<ChannelGlyph isPrivate={channel.isPrivate} />}
                     unread={
                       !isMuted(channelPrefs, channel.id) &&
                       isUnread(readState, channel.id, channel.updatedAt)
@@ -573,7 +573,7 @@ function ChannelBrowser() {
               <SidebarNavButton
                 selected={channel.id === selectedId}
                 label={channel.name}
-                icon={<ChannelHash />}
+                icon={<ChannelGlyph isPrivate={channel.isPrivate} />}
                 unread={
                   !isMuted(channelPrefs, channel.id) &&
                   isUnread(readState, channel.id, channel.updatedAt)
@@ -737,6 +737,9 @@ function ChannelBrowser() {
     [agentFrames, current?.id],
   );
   const [thinkingOpen, setThinkingOpen] = useState(false);
+  // Desktop DM right-pane dismissal: closing the thinking panel collapses
+  // the pane; the header 🧠 reopens it.
+  const [dmPaneHidden, setDmPaneHidden] = useState(false);
   // ⌘K / Ctrl+K opens search from anywhere in the app.
   const [searchOpen, setSearchOpen] = useState(false);
   useEffect(() => {
@@ -838,13 +841,15 @@ function ChannelBrowser() {
               {dmAgentPubkey && (
                 <button
                   type="button"
-                  className="shrink-0 rounded-full border border-border px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-accent lg:hidden"
+                  aria-label="Toggle thinking panel"
+                  className="shrink-0 rounded-full border border-border px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-accent"
                   onClick={() => {
                     setRightTab("thinking");
+                    setDmPaneHidden(false);
                     setThinkingOpen(true);
                   }}
                 >
-                  🧠 Thinking
+                  🧠
                 </button>
               )}
             </div>
@@ -969,24 +974,27 @@ function ChannelBrowser() {
               mobileOnly
             />
           )}
-          {dmAgentPubkey && (!threadRoot || rightTab === "thinking") && (
-            <AgentActivityPanel
-              agentPubkey={dmAgentPubkey}
-              agentName={
-                profiles.get(dmAgentPubkey)?.displayName ?? dmAgentPubkey
-              }
-              profile={dmProfiles.get(dmAgentPubkey)}
-              frames={channelAgentFrames}
-              lockedCount={observerStore?.lockedCount ?? 0}
-              connected={connected}
-              working={working}
-              mobileOpen={thinkingOpen}
-              onCloseMobile={() => setThinkingOpen(false)}
-              onSelectThreadTab={
-                threadRoot ? () => setRightTab("thread") : undefined
-              }
-            />
-          )}
+          {dmAgentPubkey &&
+            !dmPaneHidden &&
+            (!threadRoot || rightTab === "thinking") && (
+              <AgentActivityPanel
+                agentPubkey={dmAgentPubkey}
+                agentName={
+                  profiles.get(dmAgentPubkey)?.displayName ?? dmAgentPubkey
+                }
+                profile={dmProfiles.get(dmAgentPubkey)}
+                frames={channelAgentFrames}
+                lockedCount={observerStore?.lockedCount ?? 0}
+                connected={connected}
+                working={working}
+                mobileOpen={thinkingOpen}
+                onCloseMobile={() => setThinkingOpen(false)}
+                onCloseDesktop={() => setDmPaneHidden(true)}
+                onSelectThreadTab={
+                  threadRoot ? () => setRightTab("thread") : undefined
+                }
+              />
+            )}
         </div>
       ) : (
         <div className="flex h-full items-center justify-center p-8">
@@ -1099,10 +1107,11 @@ function SidebarNavButton({
   return row(() => {});
 }
 
-/** The desktop's channel glyph: a muted Hash in front of channel names. */
-function ChannelHash() {
+/** The desktop's channel glyphs: Hash for public, Lock for private. */
+function ChannelGlyph({ isPrivate }: { isPrivate?: boolean }) {
+  const Glyph = isPrivate ? Lock : Hash;
   return (
-    <Hash
+    <Glyph
       aria-hidden="true"
       className="h-4 w-4 shrink-0 text-sidebar-foreground/60"
     />

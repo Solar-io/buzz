@@ -13,6 +13,8 @@ export interface ChannelSummary {
    * ephemeral/huddle channels land here once their TTL deadline passes).
    */
   archived: boolean;
+  /** Relay `private` tag on the 39000 — drives the padlock glyph. */
+  isPrivate: boolean;
   /**
    * Ephemeral-channel TTL seconds from the relay's `ttl` tag; null = permanent.
    * Huddle backing channels carry 3600 — group them apart from real channels.
@@ -46,6 +48,11 @@ export function channelFromEvent(
   const type: ChannelSummary["type"] =
     rawType === "dm" || rawType === "forum" ? rawType : "stream";
   const archived = tags.some((tag) => tag[0] === "archived");
+  const isPrivate = tags.some(
+    (tag) =>
+      tag[0] === "private" &&
+      (tag.length === 1 || tag[1] === undefined || tag[1] === ""),
+  );
   const rawTtl = tags.find((tag) => tag[0] === "ttl")?.[1];
   const parsedTtl =
     typeof rawTtl === "string" && /^\d+$/.test(rawTtl)
@@ -61,6 +68,7 @@ export function channelFromEvent(
     updatedAt: event.created_at,
     type,
     archived,
+    isPrivate,
     ttlSeconds: parsedTtl,
     participantPubkeys,
   };

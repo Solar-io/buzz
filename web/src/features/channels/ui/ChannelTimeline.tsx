@@ -64,11 +64,31 @@ function UnreadDivider() {
   );
 }
 
+/**
+ * Desktop-qualified timestamps: time-only today, "Yesterday at …", weekday
+ * within the week, "Aug 28 at …" beyond. Day dividers carry the day for
+ * scanning; the qualifier keeps individual rows self-describing.
+ */
 function formatTime(unixSeconds: number): string {
-  return new Date(unixSeconds * 1000).toLocaleTimeString([], {
+  const date = new Date(unixSeconds * 1000);
+  const time = date.toLocaleTimeString([], {
     hour: "numeric",
     minute: "2-digit",
   });
+  const today = new Date();
+  const dayKey = (d: Date) => d.toDateString();
+  if (dayKey(date) === dayKey(today)) {
+    return time;
+  }
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (dayKey(date) === dayKey(yesterday)) {
+    return `Yesterday at ${time}`;
+  }
+  if (today.getTime() - date.getTime() < 7 * 86_400_000) {
+    return `${date.toLocaleDateString([], { weekday: "long" })} at ${time}`;
+  }
+  return `${date.toLocaleDateString([], { month: "short", day: "numeric" })} at ${time}`;
 }
 
 export function authorLabel(
