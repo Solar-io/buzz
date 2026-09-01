@@ -38,6 +38,10 @@ know exactly what they must modify — and what they can skip.
 | Thinking panel — history after reload | **Fork: relay** | Observer-frame retention patch (`af996b981`): stock relays don't retain kind-24200s, so a reload loses prior turns. Without it: live-only. |
 | Remote agent admin — create/update/delete/start/stop, harness assignment | **Fork: desktop** | Kinds 24201/24202 listener + applier (see below). Commands sent without an updated desktop honestly time out ("no desktop responded"). |
 | Remote agent admin — privacy gate | **Fork: relay** | `AUTHOR_ONLY_KINDS` += 24201/24202 so sealed command traffic doesn't fan out to other members. Without it: commands still work (generic ephemeral path) with weaker privacy. |
+| Remote agent admin — machine targeting (`target` on 24201) | **Fork: desktop** | Only the addressed desktop applies a command. Without it, every updated desktop applies every create → duplicate agents on multi-desktop owners. Legacy commands (no `target`) still broadcast. |
+| Live harness catalog (create/edit dropdowns) | **Fork: desktop** + **Fork: relay** | Desktops publish kind-30180 catalogs (d = hostname; harness list + locally-runnable agents). Without it: static preset fallback + "apply on" picker hidden; stale cleanup falls back to duplicate-name detection only. |
+| Stale-registration cleanup | **Fork: desktop** (relay tier optional) | Bulk forceRemoteDelete over existing 24201 delete commands. 30180 `agents` claims power the "not reported by any desktop" reason; without catalogs, older-duplicate detection still works. |
+| Agents in the main left bar + edit form | Stock UI | Renders from the 30177 registry (Stock tier); editing rides the remote-admin rows above. |
 | Files panel | **External** | Embeds a file-manager web app by URL (`web/src/features/files/webPanels.ts`). Bring your own URL; nothing Buzz-side is required. |
 
 ## Fork changes, per feature
@@ -73,6 +77,25 @@ know exactly what they must modify — and what they can skip.
 - **Why**: generic ephemeral fan-out would expose command timing/size to any
   community member with an open subscription; contents are sealed, but the
   gate removes the metadata too.
+
+### Desktop catalog (kind 30180)
+
+- **What**: each Buzz Desktop publishes a parameterized-replaceable
+  kind-30180 event (d tag = hostname) describing its harness catalog
+  (`{id, label, source: builtin|preset|custom, availability}` per entry —
+  never commands, args, env, or paths) and the agent pubkeys it can run
+  locally. The web uses it for the create/edit harness dropdowns, the
+  "apply on" machine picker, and stale-registration detection.
+- **Where**: `crates/buzz-core/src/kind.rs` (`KIND_DESKTOP_CATALOG`),
+  relay ingest scope (UsersWrite), desktop publisher
+  `desktop/src/features/agents/useDesktopCatalogPublisher.ts`, web consumer
+  `web/src/features/agents/lib/desktopCatalog.ts`.
+- **Wire contract**: content shape pinned in
+  `web/src/features/agents/lib/desktopCatalog.ts` + tests; the 24201
+  envelope's optional `target` field (hostname) selects the applying
+  desktop (`ownerAdminProtocol.ts` on the desktop side).
+- **Upstream intent**: candidate for upstream as an opt-in "fleet catalog"
+  alongside the remote-admin capability.
 
 ## Deployment notes for self-hosters
 
