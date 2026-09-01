@@ -853,13 +853,17 @@ function ChannelBrowser() {
           </ul>
         )}
       </nav>
-      <div className="space-y-0.5 border-t border-border p-2">
-        <Link
-          to="/repos/browse"
-          className="block rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent"
+      <div className="border-t border-border p-2">
+        <button
+          type="button"
+          aria-label="Files"
+          title="Files"
+          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+          onClick={() => setFilesOpen(true)}
         >
-          Browse repositories
-        </Link>
+          <Folder aria-hidden className="h-4 w-4" />
+          Files
+        </button>
       </div>
     </div>
   );
@@ -932,7 +936,9 @@ function ChannelBrowser() {
           : null
       }
     >
-      {current ? (
+      {filesOpen ? (
+        <FilesPanel onClose={() => setFilesOpen(false)} />
+      ) : current ? (
         <div
           className="flex h-full min-h-0"
           style={{ ["--thread-width" as string]: `${threadWidth}px` }}
@@ -978,18 +984,6 @@ function ChannelBrowser() {
                   <Headphones aria-hidden className="h-4 w-4" />
                 </button>
               )}
-              <button
-                type="button"
-                aria-label="Open files"
-                title="Files"
-                className={cn(
-                  "shrink-0 rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground",
-                  current.ttlSeconds !== null && "ml-auto",
-                )}
-                onClick={() => setFilesOpen(true)}
-              >
-                <Folder aria-hidden className="h-4 w-4" />
-              </button>
               {dmAgentPubkey && (
                 <button
                   type="button"
@@ -1164,13 +1158,13 @@ function ChannelBrowser() {
         profiles={profiles}
         defaultChannelId={current?.id ?? null}
         onOpenResult={(channelId, messageId) => {
+          setFilesOpen(false);
           void navigate({
             to: "/repos",
             search: { c: channelId, m: messageId },
           });
         }}
       />
-      <FilesPanel open={filesOpen} onClose={() => setFilesOpen(false)} />
     </AppShell>
   );
 }

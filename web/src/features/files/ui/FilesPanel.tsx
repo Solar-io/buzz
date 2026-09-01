@@ -3,21 +3,12 @@ import { Folder, X } from "lucide-react";
 import { FILES_PANEL_URL } from "@/features/files/webPanels";
 
 /**
- * Files overlay — the desktop's docked Files panel as a full-cover layer:
- * themed chrome (header + close) around the file-manager app in an iframe.
- * Esc closes, like the search panel.
+ * Files panel — fills the main content area (chat + thinking columns
+ * together; the sidebar stays). Opened from the sidebar's bottom-left
+ * folder icon; the ✕ (or Esc) hands the area back to the conversation.
  */
-export function FilesPanel({
-  open,
-  onClose,
-}: {
-  open: boolean;
-  onClose: () => void;
-}) {
+export function FilesPanel({ onClose }: { onClose: () => void }) {
   useEffect(() => {
-    if (!open) {
-      return;
-    }
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         onClose();
@@ -25,17 +16,14 @@ export function FilesPanel({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [onClose]);
 
-  if (!open) {
-    return null;
-  }
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-background">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+    <div className="flex h-full min-h-0 w-full flex-col bg-background">
+      <div className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-secondary px-4">
         <div className="flex items-center gap-2">
           <Folder aria-hidden className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold">Files</h2>
+          <h2 className="text-base font-semibold">Files</h2>
         </div>
         <button
           type="button"
