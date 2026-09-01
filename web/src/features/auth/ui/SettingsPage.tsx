@@ -6,6 +6,10 @@ import { npubEncode } from "nostr-tools/nip19";
 import { toast } from "sonner";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
+import {
+  getConfiguredFilesUrl,
+  setConfiguredFilesUrl,
+} from "@/features/files/filesConfig";
 import { useAuth } from "./AuthProvider";
 import { activeSignerSource } from "@/shared/lib/nostr-signer";
 import {
@@ -117,6 +121,8 @@ export function SettingsPage() {
         </p>
       </section>
 
+      <FilesUrlSection />
+
       <section className="space-y-2 rounded-lg border border-border bg-card p-4">
         <h2 className="font-medium">This device</h2>
         <dl className="space-y-1 text-sm">
@@ -200,6 +206,60 @@ export function SettingsPage() {
         <ConfirmForget onConfirm={() => void forgetDevice()} />
       </section>
     </div>
+  );
+}
+
+/**
+ * File-manager URL — the one External-tier setting. Shows the effective URL
+ * (browser override, else the build default), lets the user change or clear
+ * it. Changing it here is the supported path once a URL is already set.
+ */
+function FilesUrlSection() {
+  const [url, setUrl] = useState(() => getConfiguredFilesUrl());
+  const [entry, setEntry] = useState("");
+  const effective = url || "(not configured — Files will ask)";
+  return (
+    <section className="space-y-2 rounded-lg border border-border bg-card p-4">
+      <h2 className="font-medium">Files</h2>
+      <p className="text-sm text-muted-foreground">
+        The web file manager embedded by the Files panel. Current:{" "}
+        <span className="break-all font-mono text-xs">{effective}</span>
+      </p>
+      <div className="flex gap-2">
+        <Input
+          value={entry}
+          onChange={(event) => setEntry(event.target.value)}
+          placeholder="https://files.your-network/"
+          aria-label="File manager URL"
+        />
+        <Button
+          size="sm"
+          disabled={!entry.trim()}
+          onClick={() => {
+            setConfiguredFilesUrl(entry.trim());
+            setUrl(entry.trim());
+            setEntry("");
+          }}
+        >
+          Save
+        </Button>
+        {url ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setConfiguredFilesUrl(null);
+              setUrl("");
+            }}
+          >
+            Clear
+          </Button>
+        ) : null}
+      </div>
+      <p className="text-xs text-muted-foreground/70">
+        Saved on this browser; a build-time default may apply when cleared.
+      </p>
+    </section>
   );
 }
 
