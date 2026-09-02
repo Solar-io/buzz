@@ -796,6 +796,7 @@ function ChannelBrowser() {
         <NewDmDialog
           open={newDmOpen}
           onOpenChange={setNewDmOpen}
+          contacts={dmParticipantPubkeys}
           onOpened={(channelId) => {
             // Re-opening a hidden DM restores it to the list.
             if (hiddenDmIds.includes(channelId)) {
