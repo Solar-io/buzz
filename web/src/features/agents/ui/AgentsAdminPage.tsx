@@ -92,7 +92,7 @@ export function AgentsAdminPage() {
   );
 }
 
-function AgentWorkingDot({ pubkey }: { pubkey: string }) {
+export function AgentWorkingDot({ pubkey }: { pubkey: string }) {
   const frames = useAgentFrames(pubkey);
   const active = agentRecentlyActive(frames, Math.floor(Date.now() / 1000));
   return (

@@ -5,6 +5,8 @@
  * Sources: the owner's agent registry (kind 30177 — every registered agent)
  * plus the counterparties of the user's existing DMs. Registry entries win
  * dedupe so an agent is badged "Agent" even when it also has a DM history.
+ * Registry pubkeys flagged stale (older duplicate of a re-minted name, or
+ * unclaimed by any desktop catalog) are demoted: dead keys dead-letter DMs.
  */
 
 import type { AgentRegistryEntry } from "../../agents/lib/agentRegistry.ts";
@@ -20,6 +22,12 @@ export interface DmSuggestion {
   /** Best display name available (profile > agent name > truncated key). */
   label: string;
   sublabel: "Agent" | "Contact";
+  /**
+   * True for registry entries flagged stale (older duplicate of a re-minted
+   * name, or unclaimed by any desktop catalog). Stale keys are dead — DMs
+   * sent to them dead-letter — so they sort last and render demoted.
+   */
+  stale?: boolean;
 }
 
 export function profileLabel(
@@ -40,7 +48,8 @@ export function profileLabel(
  * - an agent entry wins over a contact entry for the same pubkey;
  * - `filter` matches case-insensitively against the label OR the hex pubkey
  *   (so pasting part of a key still narrows), empty filter = all;
- * - agents sort before contacts, each group alphabetical by label.
+ * - stale agents sort dead last, then agents before contacts, each group
+ *   alphabetical by label.
  */
 export function buildDmSuggestions({
   agents,
@@ -48,12 +57,15 @@ export function buildDmSuggestions({
   profiles,
   selfPubkey,
   filter,
+  stalePubkeys = new Set<string>(),
 }: {
   agents: AgentRegistryEntry[];
   contacts: string[];
   profiles: Map<string, NameLikeProfile>;
   selfPubkey: string | null;
   filter: string;
+  /** Registry pubkeys flagged stale (older duplicate / unclaimed). */
+  stalePubkeys?: Set<string>;
 }): DmSuggestion[] {
   const byPubkey = new Map<string, DmSuggestion>();
   for (const pubkey of contacts) {
@@ -76,6 +88,7 @@ export function buildDmSuggestions({
       pubkey: agent.pubkey,
       label: agent.name || profileLabel(agent.pubkey, profiles),
       sublabel: "Agent",
+      stale: stalePubkeys.has(agent.pubkey) || undefined,
     });
   }
 
@@ -89,6 +102,9 @@ export function buildDmSuggestions({
     )
     .sort(
       (a, b) =>
+        // Stale keys are dead last — a demoted registration must never
+        // outrank a live contact, let alone a live agent.
+        Number(Boolean(a.stale)) - Number(Boolean(b.stale)) ||
         Number(a.sublabel === "Contact") - Number(b.sublabel === "Contact") ||
         a.label.localeCompare(b.label),
     );

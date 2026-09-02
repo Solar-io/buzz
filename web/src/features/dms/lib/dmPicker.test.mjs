@@ -122,3 +122,49 @@ test("recipientLabel: prefers a suggestion label, falls back to profile", () => 
   assert.equal(recipientLabel(CRASH, suggestions, profiles), "Crash Override");
   assert.equal(recipientLabel(SAM, suggestions, profiles), "Sam");
 });
+
+test("buildDmSuggestions: stale agents are flagged and sort after live agents and contacts", () => {
+  const list = build({
+    stalePubkeys: new Set([CRASH]),
+  });
+  assert.deepEqual(
+    list.map((s) => [s.label, s.sublabel, Boolean(s.stale)]),
+    [
+      ["Lord Nikon", "Agent", false],
+      [profileLabel(STRANGER, profiles), "Contact", false],
+      ["Sam", "Contact", false],
+      ["Crash Override", "Agent", true],
+    ],
+  );
+});
+
+test("buildDmSuggestions: stale flag on a contact pubkey is inert (contacts never stale)", () => {
+  const list = build({ stalePubkeys: new Set([SAM]) });
+  const sam = list.find((s) => s.pubkey === SAM);
+  assert.equal(sam?.sublabel, "Contact");
+  assert.notEqual(sam?.stale, true);
+});
+
+test("buildDmSuggestions: duplicate-name keeper stays live, only older keys demote", () => {
+  // Mirror of staleAgents.duplicatePubkeys semantics: the picker receives
+  // the already-computed set; the keeper is absent from it.
+  const OLD_ACID = "ff".repeat(32);
+  const list = buildDmSuggestions({
+    agents: [
+      { pubkey: CRASH, name: "Acid Burn", updatedAt: 20 },
+      { pubkey: OLD_ACID, name: "Acid Burn", updatedAt: 10 },
+    ],
+    contacts: [],
+    profiles: new Map(),
+    selfPubkey: SELF,
+    filter: "",
+    stalePubkeys: new Set([OLD_ACID]),
+  });
+  assert.deepEqual(
+    list.map((s) => [s.label, s.pubkey, Boolean(s.stale)]),
+    [
+      ["Acid Burn", CRASH, false],
+      ["Acid Burn", OLD_ACID, true],
+    ],
+  );
+});
