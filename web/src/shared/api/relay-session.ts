@@ -43,6 +43,15 @@ export interface RelaySessionOptions {
   reconnectDelayMs?: (attempt: number) => number;
   /** How long to wait for an AUTH challenge before proceeding unauthenticated. */
   authGraceMs?: number;
+  /**
+   * Clock for liveness bookkeeping (injectable for tests). Default Date.now.
+   */
+  nowMs?: () => number;
+  /**
+   * Cadence of the background staleness probe; 0 disables the timer (the
+   * visibility/online wake triggers still apply). Default 30s.
+   */
+  livenessIntervalMs?: number;
   onStatusChange?: (status: RelaySessionStatus) => void;
 }
 
@@ -63,6 +72,41 @@ export interface MinimalWebSocket {
 const DEFAULT_AUTH_GRACE_MS = 1_000;
 /** A publish fails with a timeout if the relay answers no OK/FAILED by then. */
 const PUBLISH_ACK_TIMEOUT_MS = 15_000;
+/**
+ * Liveness: the relay sends no WS pings, so a socket killed by laptop sleep
+ * or a network change (no close event — the TCP pair is just gone) reads as
+ * "connected" forever and every subscription silently stops delivering until
+ * the user refreshes (live incident 2026-09-01: an afternoon of agent
+ * messages arrived only after a manual reload; the desktop survived via its
+ * own resume machinery). Probes below force a reconnect when the socket has
+ * been silent; the post-AUTH subscription replay then backfills everything
+ * the zombie missed (REQ re-fetches recent stored events regardless of when
+ * they were published).
+ */
+const DEFAULT_LIVENESS_INTERVAL_MS = 30_000;
+/** Visible tab: reconnect after this much total silence. */
+const VISIBLE_STALE_MS = 60_000;
+/**
+ * Hidden/background tab: quiet subscriptions are normal, so only a much
+ * longer silence counts as a dead socket.
+ */
+const BACKGROUND_STALE_MS = 10 * 60_000;
+
+/**
+ * Pure liveness decision: force a reconnect when a socket that believes it
+ * is open has heard nothing for longer than the threshold for its tab state.
+ */
+export function shouldForceReconnect(
+  lastMessageAt: number | null,
+  now: number,
+  tabVisible: boolean,
+): boolean {
+  if (lastMessageAt === null) {
+    return false;
+  }
+  const silentFor = now - lastMessageAt;
+  return silentFor >= (tabVisible ? VISIBLE_STALE_MS : BACKGROUND_STALE_MS);
+}
 
 function defaultReconnectDelay(attempt: number): number {
   return Math.min(500 * 2 ** attempt, 15_000);
@@ -105,6 +149,13 @@ export class RelaySession {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
   private manualClose = false;
+  private readonly nowMs: () => number;
+  private readonly livenessIntervalMs: number;
+  private livenessTimer: ReturnType<typeof setInterval> | null = null;
+  /** Wall-clock of the last frame received on the CURRENT socket. */
+  private lastMessageAt: number | null = null;
+  private wakeListenersAttached = false;
+  private onlineListenerAttached = false;
   /** Resolvers for EVENTs awaiting OK, by event id. */
   private readonly publishWaiters = new Map<
     string,
@@ -124,6 +175,9 @@ export class RelaySession {
         ));
     this.reconnectDelayMs = options.reconnectDelayMs ?? defaultReconnectDelay;
     this.authGraceMs = options.authGraceMs ?? DEFAULT_AUTH_GRACE_MS;
+    this.nowMs = options.nowMs ?? (() => Date.now());
+    this.livenessIntervalMs =
+      options.livenessIntervalMs ?? DEFAULT_LIVENESS_INTERVAL_MS;
     this.onStatusChange = options.onStatusChange;
   }
 
@@ -141,7 +195,68 @@ export class RelaySession {
       return;
     }
     this.manualClose = false;
+    this.startLiveness();
     this.setStatus(this.reconnectAttempt === 0 ? "connecting" : "reconnecting");
+    this.openSocket();
+  }
+
+  /**
+   * Liveness machinery: a periodic staleness probe plus wake triggers
+   * (tab visible again / network online) that probe immediately. A zombie
+   * socket — killed by sleep or a network change without a close event —
+   * reconnects here, and the replay machinery backfills what it missed.
+   */
+  private startLiveness(): void {
+    if (this.livenessIntervalMs > 0 && !this.livenessTimer) {
+      this.livenessTimer = setInterval(
+        () => this.probeLiveness(),
+        this.livenessIntervalMs,
+      );
+    }
+    if (!this.wakeListenersAttached && typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", this.handleWake);
+      this.wakeListenersAttached = true;
+    }
+    if (!this.onlineListenerAttached && typeof window !== "undefined") {
+      window.addEventListener("online", this.handleWake);
+      this.onlineListenerAttached = true;
+    }
+  }
+
+  private stopLiveness(): void {
+    if (this.livenessTimer) {
+      clearInterval(this.livenessTimer);
+      this.livenessTimer = null;
+    }
+    if (this.wakeListenersAttached && typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", this.handleWake);
+      this.wakeListenersAttached = false;
+    }
+    if (this.onlineListenerAttached && typeof window !== "undefined") {
+      window.removeEventListener("online", this.handleWake);
+      this.onlineListenerAttached = false;
+    }
+  }
+
+  private readonly handleWake = (): void => {
+    this.probeLiveness();
+  };
+
+  private probeLiveness(): void {
+    if (this.manualClose || !this.socket) {
+      return;
+    }
+    // No DOM (tests/SSR) counts as visible — use the shorter threshold.
+    const visible = typeof document === "undefined" || !document.hidden;
+    if (!shouldForceReconnect(this.lastMessageAt, this.nowMs(), visible)) {
+      return;
+    }
+    // Socket presumed dead (silent past threshold): tear it down and dial
+    // again immediately. If the relay is genuinely down, the resulting close
+    // event routes into the normal backoff path.
+    this.teardownSocket();
+    this.reconnectAttempt = 0;
+    this.setStatus("reconnecting");
     this.openSocket();
   }
 
@@ -158,6 +273,8 @@ export class RelaySession {
   }
 
   private readonly handleOpen = (): void => {
+    // Socket proven reachable — start the liveness clock from the handshake.
+    this.lastMessageAt = this.nowMs();
     // Give the relay a beat to send its AUTH challenge before any REQ.
     this.authTimer = setTimeout(() => this.flushPending(), this.authGraceMs);
   };
@@ -166,6 +283,7 @@ export class RelaySession {
     if (typeof event.data !== "string") {
       return;
     }
+    this.lastMessageAt = this.nowMs();
     let message: unknown;
     try {
       message = JSON.parse(event.data);
@@ -321,6 +439,7 @@ export class RelaySession {
     }
     this.authenticated = false;
     this.authedByRelay = false;
+    this.lastMessageAt = null;
     this.openSubs.clear();
     // A publish in flight when the socket drops would otherwise hang forever:
     // the EVENT is not in `pending` (it was sent), so the reconnect never
@@ -335,6 +454,7 @@ export class RelaySession {
 
   close(): void {
     this.manualClose = true;
+    this.stopLiveness();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

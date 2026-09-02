@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { RelaySession, authEventTemplate } from "./relay-session.ts";
+import {
+  RelaySession,
+  authEventTemplate,
+  shouldForceReconnect,
+} from "./relay-session.ts";
 
 class FakeSocket {
   constructor(url) {
@@ -247,6 +251,38 @@ test("no-challenge relay: auth grace expires and subs flow", async () => {
   session.close();
 });
 
+test("liveness: a socket that opens but never sends a single frame is redialed", async () => {
+  // Pins the handleOpen seed of the liveness clock: without it, a relay
+  // that completes the WS handshake and then goes completely silent (no
+  // AUTH challenge, no frames at all) reads lastMessageAt=null and the
+  // probe never fires.
+  let clock = 1_000_000;
+  FakeSocket.instances = [];
+  const session = new RelaySession({
+    wsUrl: "wss://relay.test",
+    webSocketFactory: (url) => new FakeSocket(url),
+    signAuthEvent: async (challenge) => fakeAuthEvent(challenge),
+    reconnectDelayMs: () => 0,
+    authGraceMs: 5,
+    nowMs: () => clock,
+    livenessIntervalMs: 5,
+  });
+  try {
+    session.connect();
+    const first = firstSocket();
+    first.emit("open"); // and then… nothing. Ever.
+    await tick(20);
+    assert.equal(session.status, "open"); // auth grace expired silently
+    assert.equal(FakeSocket.instances.length, 1);
+
+    clock += 61_000;
+    await tick(30);
+    assert.equal(FakeSocket.instances.length, 2, "zero-frame socket redialed");
+  } finally {
+    session.close();
+  }
+});
+
 test("authEventTemplate carries NIP-42 fields", () => {
   const template = authEventTemplate("abc", "wss://relay.test:6351/");
   assert.equal(template.kind, 22242);
@@ -340,4 +376,86 @@ test("CLOSED after auth retries once, bounded", async () => {
   await tick(400);
   assert.equal(socket.sentOf("REQ").length, afterAuth + 2);
   session.close();
+});
+
+test("shouldForceReconnect: thresholds are 60s visible / 10min hidden, null clock never forces", () => {
+  // Hardcoded — the incident shape was an afternoon-long zombie.
+  assert.equal(
+    shouldForceReconnect(1_000_000, 1_000_000 + 59_999, true),
+    false,
+  );
+  assert.equal(shouldForceReconnect(1_000_000, 1_000_000 + 60_000, true), true);
+  assert.equal(
+    shouldForceReconnect(1_000_000, 1_000_000 + 8 * 3600 * 1000, true),
+    true,
+  );
+  assert.equal(
+    shouldForceReconnect(1_000_000, 1_000_000 + 10 * 60_000 - 1, false),
+    false,
+  );
+  assert.equal(
+    shouldForceReconnect(1_000_000, 1_000_000 + 10 * 60_000, false),
+    true,
+  );
+  assert.equal(shouldForceReconnect(null, 1_000_000 + 999_999, true), false);
+});
+
+test("liveness: a silent-socket zombie is torn down and re-dialed, subs replayed", async () => {
+  let clock = 1_000_000;
+  FakeSocket.instances = [];
+  const session = new RelaySession({
+    wsUrl: "wss://relay.test",
+    webSocketFactory: (url) => new FakeSocket(url),
+    signAuthEvent: async (challenge) => fakeAuthEvent(challenge),
+    reconnectDelayMs: () => 0,
+    authGraceMs: 5,
+    nowMs: () => clock,
+    livenessIntervalMs: 5,
+  });
+  const got = [];
+  // try/finally: a failed assertion must still close the session — its
+  // liveness interval would otherwise keep the node test runner alive.
+  try {
+    session.subscribe({ kinds: [9] }, { onEvent: (e) => got.push(e) });
+    session.connect();
+    const first = firstSocket();
+    first.emit("open");
+    first.serverSend(["AUTH", "c1"]);
+    await tick(20);
+    assert.equal(FakeSocket.instances.length, 1);
+    assert.equal(session.status, "open");
+
+    // 30s of silence on a visible tab: still fine (node has no document, so
+    // the visible threshold applies).
+    clock += 30_000;
+    await tick(20);
+    assert.equal(FakeSocket.instances.length, 1);
+
+    // Past the visible threshold with zero frames: the zombie is replaced.
+    clock += 31_000;
+    await tick(30);
+    assert.equal(FakeSocket.instances.length, 2);
+    assert.equal(session.status, "reconnecting");
+    // The old socket must be deregistered before the new one dials.
+    assert.equal(first.listeners.get("close")?.length ?? 0, 0);
+
+    // The replacement completes its handshake and replays the subscription.
+    const second = FakeSocket.instances[1];
+    second.emit("open");
+    second.serverSend(["AUTH", "c2"]);
+    await tick(20);
+    assert.equal(session.status, "open");
+    const reqs = second.sentOf("REQ");
+    assert.equal(reqs.length, 1);
+    assert.deepEqual(reqs[0][2], { kinds: [9] });
+
+    // Traffic keeps the new socket alive: no further re-dials.
+    clock += 5_000;
+    second.serverSend(["EOSE", reqs[0][1]]);
+    clock += 45_000;
+    await tick(20);
+    assert.equal(FakeSocket.instances.length, 2);
+  } finally {
+    session.close();
+  }
 });

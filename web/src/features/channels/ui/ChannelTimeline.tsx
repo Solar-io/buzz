@@ -14,6 +14,7 @@ import { fetchSignedMedia } from "@/shared/api/blossom";
 import { EmojiPicker } from "@/shared/ui/EmojiPicker";
 import { cn } from "@/shared/lib/cn";
 import { formatElapsed } from "@/features/agents/ui/WorkingBadge";
+import { isWithinGroupingWindow } from "@/features/channels/lib/messageGrouping";
 import {
   QUICK_REACTIONS,
   reactionGroups as groupReactions,
@@ -235,6 +236,10 @@ export function ChannelTimeline({
   const isEmpty = messages.length === 0;
   let lastAuthor: string | null = null;
   let lastKind = 0;
+  // createdAt (Unix seconds) of the previous RENDERED message — the anchor
+  // for the grouping window. Chained like the desktop: each message compares
+  // against its immediate predecessor, grouped or not.
+  let lastRenderedAt: number | null = null;
   let lastDay = "";
   let unreadShown = false;
   const rows: ReactElement[] = [];
@@ -244,12 +249,14 @@ export function ChannelTimeline({
     // the overlay tombstones them out of the rendered list).
     if (message.deleted) {
       lastAuthor = null;
+      lastRenderedAt = null;
       continue;
     }
     const day = new Date(message.createdAt * 1000).toDateString();
     if (day !== lastDay) {
       lastDay = day;
       lastAuthor = null;
+      lastRenderedAt = null;
       rows.push(
         <DayDivider
           key={`day:${day}`}
@@ -276,10 +283,17 @@ export function ChannelTimeline({
       : messages.filter(
           (m) => m.rootId === message.id || m.replyToId === message.id,
         );
+    // Continuation = consecutive same author + kind AND inside the desktop's
+    // 10-minute grouping window. The window is the fix for messages from
+    // "earlier in the day" rendering merged into a prior block with no
+    // timestamp of their own.
     const grouped =
-      message.authorPubkey === lastAuthor && message.kind === lastKind;
+      message.authorPubkey === lastAuthor &&
+      message.kind === lastKind &&
+      isWithinGroupingWindow(lastRenderedAt, message.createdAt);
     lastAuthor = message.authorPubkey;
     lastKind = message.kind;
+    lastRenderedAt = message.createdAt;
     rows.push(
       <MessageRow
         key={message.id}
