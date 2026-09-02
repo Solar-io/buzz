@@ -1,10 +1,60 @@
 import { memo, useEffect, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { toast } from "sonner";
 import { fetchSignedMedia } from "@/shared/api/blossom";
+import { relayHttpBaseUrl } from "@/shared/lib/relay-url";
+import { openLink } from "@/shared/lib/linkOpen";
 import { Lightbox } from "@/shared/ui/Lightbox";
 import { mentionSetsEqual } from "../lib/mentionSets.ts";
 import { mentionParts } from "../lib/mentionParts.ts";
+
+/**
+ * Message links must never navigate the SPA tab away. Plain links open in a
+ * new tab; file-typical links open in a popup viewer window (relay media is
+ * signed-fetched first). Modifier-clicks keep native behavior.
+ */
+function MessageLink({
+  href,
+  children,
+}: {
+  href?: string;
+  children: ReactNode;
+}) {
+  return (
+    <a
+      href={href}
+      title={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-accent underline underline-offset-2"
+      onClick={(event) => {
+        if (
+          event.defaultPrevented ||
+          event.button !== 0 ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.altKey
+        ) {
+          return;
+        }
+        const target = String(href ?? "");
+        if (target === "") {
+          return;
+        }
+        event.preventDefault();
+        void openLink(target, {
+          relayBase: relayHttpBaseUrl(),
+          fetchSigned: fetchSignedMedia,
+          onError: (message) => toast.error(message),
+        });
+      }}
+    >
+      {children}
+    </a>
+  );
+}
 
 /**
  * Render message markdown. react-markdown does not render raw HTML by
@@ -30,6 +80,9 @@ export const MarkdownContent = memo(
             p: ({ children }) => <p>{withMentions(children, mentionNames)}</p>,
             li: ({ children }) => (
               <li>{withMentions(children, mentionNames)}</li>
+            ),
+            a: ({ href, children }) => (
+              <MessageLink href={href}>{children}</MessageLink>
             ),
             img: ({ src, alt }) => (
               <SignedMedia src={String(src)} alt={alt ?? ""} />
