@@ -41,7 +41,18 @@ export function NewDmDialog({
   };
   const [entry, setEntry] = useState("");
   const [recipients, setRecipients] = useState<string[]>([]);
+  const [entryError, setEntryError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // A closed dialog is a CANCELLED dialog: clear the filter text and the
+  // pending recipients so a reopen starts clean (QA: stale filter made the
+  // reopened list look empty).
+  useEffect(() => {
+    if (!open) {
+      setEntry("");
+      setRecipients([]);
+      setEntryError(null);
+    }
+  }, [open]);
   const { session } = useRelaySession();
   const [pubkey, setPubkey] = useState<string | null>(null);
   useEffect(() => {
@@ -80,19 +91,22 @@ export function NewDmDialog({
 
   const addRecipient = (candidate: string) => {
     if (candidate === pubkey) {
-      toast.error("That's your own key — a DM needs someone else.");
+      setEntryError("That's your own key — a DM needs someone else.");
       return;
     }
     setRecipients((previous) =>
       previous.includes(candidate) ? previous : [...previous, candidate],
     );
     setEntry("");
+    setEntryError(null);
   };
 
   const addFromEntry = () => {
     const parsed = parsePubkeyInput(entry);
     if (!parsed.ok) {
-      toast.error(parsed.error);
+      // Inline, next to the input: a corner toast is easy to miss while the
+      // user's eyes are on the field (QA: invalid paste looked silent).
+      setEntryError(parsed.error);
       return;
     }
     addRecipient(parsed.pubkey);
@@ -178,7 +192,10 @@ export function NewDmDialog({
         <Input
           placeholder="Pick below or paste npub… / 64-hex key"
           value={entry}
-          onChange={(event) => setEntry(event.target.value)}
+          onChange={(event) => {
+            setEntry(event.target.value);
+            setEntryError(null);
+          }}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
               event.preventDefault();
@@ -191,6 +208,15 @@ export function NewDmDialog({
           Add
         </Button>
       </div>
+      {entryError && (
+        <p
+          className="text-xs text-red-400"
+          data-testid="dm-input-error"
+          role="alert"
+        >
+          {entryError}
+        </p>
+      )}
       {filtered.length > 0 && (
         <ul
           className="max-h-48 space-y-0.5 overflow-y-auto rounded-md border border-border bg-background/60 p-1"
