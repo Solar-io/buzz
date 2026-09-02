@@ -52,6 +52,8 @@ export interface RelaySessionOptions {
    * visibility/online wake triggers still apply). Default 30s.
    */
   livenessIntervalMs?: number;
+  /** Delay before auth-race retry N (1-based). Default: exponential backoff. */
+  authRetryDelayMs?: (attempt: number) => number;
   onStatusChange?: (status: RelaySessionStatus) => void;
 }
 
@@ -112,6 +114,29 @@ function defaultReconnectDelay(attempt: number): number {
   return Math.min(500 * 2 ** attempt, 15_000);
 }
 
+/**
+ * Auth-race retry: the relay hard-CLOSES any REQ that arrives before it has
+ * processed our AUTH frame (handlers/req.rs: "auth-required: not
+ * authenticated"), and a page load fires ~8 REQs in that exact window. A
+ * sub that loses the race used to get ONE 250ms retry — when that also
+ * raced, the subscription died permanently and its panel silently never
+ * loaded until the user refreshed (live incident 2026-09-01: "sometimes I
+ * have to refresh multiple times before everything will load"). Retries
+ * back off exponentially instead, bounded — after the last attempt the next
+ * reconnect/replay is still the backstop.
+ */
+const AUTH_RETRY_MAX_ATTEMPTS = 5;
+const AUTH_RETRY_BASE_DELAY_MS = 250;
+const AUTH_RETRY_MAX_DELAY_MS = 4_000;
+
+/** Delay before auth-race retry N (1-based). Pure — unit-tested. */
+export function authRetryDelayMs(attempt: number): number {
+  return Math.min(
+    AUTH_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
+    AUTH_RETRY_MAX_DELAY_MS,
+  );
+}
+
 interface ActiveSubscription {
   filter: NostrFilter;
   options: SubscribeOptions;
@@ -151,11 +176,14 @@ export class RelaySession {
   private manualClose = false;
   private readonly nowMs: () => number;
   private readonly livenessIntervalMs: number;
+  private readonly authRetryDelayMsFn: (attempt: number) => number;
   private livenessTimer: ReturnType<typeof setInterval> | null = null;
   /** Wall-clock of the last frame received on the CURRENT socket. */
   private lastMessageAt: number | null = null;
   private wakeListenersAttached = false;
   private onlineListenerAttached = false;
+  /** Auth-race retry attempt count per subId (reset on socket teardown). */
+  private readonly authRetryAttempts = new Map<string, number>();
   /** Resolvers for EVENTs awaiting OK, by event id. */
   private readonly publishWaiters = new Map<
     string,
@@ -178,6 +206,7 @@ export class RelaySession {
     this.nowMs = options.nowMs ?? (() => Date.now());
     this.livenessIntervalMs =
       options.livenessIntervalMs ?? DEFAULT_LIVENESS_INTERVAL_MS;
+    this.authRetryDelayMsFn = options.authRetryDelayMs ?? authRetryDelayMs;
     this.onStatusChange = options.onStatusChange;
   }
 
@@ -329,19 +358,16 @@ export class RelaySession {
       // A REQ that raced AUTH comes back CLOSED("auth-required"); without
       // this the sub stays listed as open, the post-AUTH replay skips it,
       // and the feed is silently dead until a reconnect. Drop it from the
-      // open set so the next replay re-REQs (post-AUTH or reconnect); when
-      // the close says auth-required and we are already authenticated, do
-      // one bounded retry — other close reasons (e.g. policy) stay closed.
+      // open set and schedule a backing-off retry — auth processing on the
+      // relay can outlast any single fixed delay, so one retry is not
+      // enough (see AUTH_RETRY_MAX_ATTEMPTS). Other close reasons (e.g.
+      // policy) stay closed.
       const subId = String(message[1] ?? "");
       const reason = String(message[2] ?? "");
       if (this.openSubs.has(subId)) {
         this.openSubs.delete(subId);
         if (this.authenticated && reason.includes("auth-required")) {
-          setTimeout(() => {
-            if (!this.openSubs.has(subId)) {
-              this.replaySubscriptions();
-            }
-          }, 250);
+          this.scheduleAuthRetry(subId);
         }
       }
       return;
@@ -405,8 +431,45 @@ export class RelaySession {
         continue;
       }
       this.openSubs.set(subId, sub);
+      // A fresh REQ is a fresh chance — its auth-race budget resets with it.
+      this.authRetryAttempts.delete(subId);
       this.socket?.send(JSON.stringify(["REQ", subId, sub.filter]));
     }
+  }
+
+  /**
+   * Re-REQ one subscription after it lost the AUTH race, with exponential
+   * backoff. Bounded by {@link AUTH_RETRY_MAX_ATTEMPTS}; a successful REQ
+   * (via replay or here) resets the counter, and teardown clears it so a
+   * new socket starts every sub with a full budget.
+   */
+  private scheduleAuthRetry(subId: string): void {
+    const sub = this.activeSubs.get(subId);
+    if (!sub) {
+      return;
+    }
+    const attempt = (this.authRetryAttempts.get(subId) ?? 0) + 1;
+    if (attempt > AUTH_RETRY_MAX_ATTEMPTS) {
+      return;
+    }
+    this.authRetryAttempts.set(subId, attempt);
+    setTimeout(() => {
+      const stillActive = this.activeSubs.get(subId);
+      if (
+        !stillActive ||
+        this.openSubs.has(subId) ||
+        !this.socket ||
+        this.manualClose
+      ) {
+        return;
+      }
+      // The counter is NOT reset here: a sent retry that gets CLOSED again
+      // must consume budget, or the cap would never bind. Only a
+      // replaySubscriptions REQ (post-auth/reconnect — a genuinely fresh
+      // context) or a new socket restores the full budget.
+      this.openSubs.set(subId, stillActive);
+      this.socket.send(JSON.stringify(["REQ", subId, stillActive.filter]));
+    }, this.authRetryDelayMsFn(attempt));
   }
 
   private readonly handleClose = (): void => {
@@ -441,6 +504,7 @@ export class RelaySession {
     this.authedByRelay = false;
     this.lastMessageAt = null;
     this.openSubs.clear();
+    this.authRetryAttempts.clear();
     // A publish in flight when the socket drops would otherwise hang forever:
     // the EVENT is not in `pending` (it was sent), so the reconnect never
     // re-sends it and the relay's OK — if it even comes — finds no waiter.
@@ -485,6 +549,7 @@ export class RelaySession {
     }
     return () => {
       this.activeSubs.delete(subId);
+      this.authRetryAttempts.delete(subId);
       if (this.openSubs.delete(subId)) {
         this.socket?.send(JSON.stringify(["CLOSE", subId]));
       }

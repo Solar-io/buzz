@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   RelaySession,
   authEventTemplate,
+  authRetryDelayMs,
   shouldForceReconnect,
 } from "./relay-session.ts";
 
@@ -357,8 +358,8 @@ test("CLOSED(auth-required) sub is re-REQd after AUTH completes", async () => {
   session.close();
 });
 
-test("CLOSED after auth retries once, bounded", async () => {
-  const { session } = makeSession();
+test("CLOSED after auth retries again with backoff (no spiral)", async () => {
+  const { session } = makeSession({ authRetryDelayMs: () => 5 });
   session.subscribe({ kinds: [9] }, { onEvent: () => {} });
   session.connect();
   const socket = firstSocket();
@@ -368,12 +369,13 @@ test("CLOSED after auth retries once, bounded", async () => {
   await tick(20);
   const afterAuth = socket.sentOf("REQ").length;
   socket.serverSend(["CLOSED", "s0", "auth-required: raced"]);
-  await tick(400);
+  await tick(40);
   assert.equal(socket.sentOf("REQ").length, afterAuth + 1);
-  // Second auth-required close for the same sub does not spiral: the retry
-  // re-opens it, one more CLOSED without further auth churn stops there.
+  // Second auth-required close schedules another backoff retry — the sub
+  // is not left dead after one loss — and rejections eventually stop the
+  // cycle at the attempt cap (see the bounded test below).
   socket.serverSend(["CLOSED", "s0", "auth-required: raced again"]);
-  await tick(400);
+  await tick(40);
   assert.equal(socket.sentOf("REQ").length, afterAuth + 2);
   session.close();
 });
@@ -458,4 +460,69 @@ test("liveness: a silent-socket zombie is torn down and re-dialed, subs replayed
   } finally {
     session.close();
   }
+});
+
+test("authRetryDelayMs: exponential from 250ms, capped at 4s", () => {
+  assert.equal(authRetryDelayMs(1), 250);
+  assert.equal(authRetryDelayMs(2), 500);
+  assert.equal(authRetryDelayMs(3), 1000);
+  assert.equal(authRetryDelayMs(4), 2000);
+  assert.equal(authRetryDelayMs(5), 4000);
+  assert.equal(authRetryDelayMs(6), 4000); // capped beyond the last attempt
+});
+
+test("auth-race: a CLOSED auth-required sub retries until the REQ lands post-auth", async () => {
+  const { session } = makeSession({ authRetryDelayMs: () => 5 });
+  const got = [];
+  session.subscribe({ kinds: [9] }, { onEvent: (e) => got.push(e) });
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  // No AUTH challenge yet — grace path marks authenticated and REQs.
+  await tick(20);
+  assert.equal(socket.sentOf("REQ").length, 1);
+  const subId = socket.sentOf("REQ")[0][1];
+
+  // Relay rejects the first REQ and the two following retries — the exact
+  // load-time race. Old behavior: ONE retry, then the sub died forever.
+  socket.serverSend(["CLOSED", subId, "auth-required: not authenticated"]);
+  await tick(20);
+  socket.serverSend(["CLOSED", subId, "auth-required: not authenticated"]);
+  await tick(20);
+  socket.serverSend(["CLOSED", subId, "auth-required: not authenticated"]);
+
+  // The next retry fires AFTER auth completed — it must succeed: no further
+  // CLOSED, and events flow on the raced sub.
+  socket.serverSend(["AUTH", "late-challenge"]);
+  await tick(40);
+  const reqs = socket.sentOf("REQ");
+  assert.equal(reqs.length, 4, "initial + three retries");
+  assert.equal(session.status, "open");
+  socket.serverSend(["EVENT", subId, { id: "arrived", kind: 9 }]);
+  assert.deepEqual(
+    got.map((e) => e.id),
+    ["arrived"],
+    "the raced sub is live after backoff retries",
+  );
+  session.close();
+});
+
+test("auth-race: retries are bounded — after 5 failures the sub stays dead", async () => {
+  const { session } = makeSession({ authRetryDelayMs: () => 5 });
+  session.subscribe({ kinds: [9] }, { onEvent: () => {} });
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  await tick(20);
+  const subId = socket.sentOf("REQ")[0][1];
+  // Reject every attempt: initial + 5 retries = 6 REQs total, then silence.
+  for (let i = 0; i < 6; i++) {
+    socket.serverSend(["CLOSED", subId, "auth-required: not authenticated"]);
+    await tick(20);
+  }
+  const after = socket.sentOf("REQ").length;
+  await tick(60);
+  assert.equal(socket.sentOf("REQ").length, after, "no unbounded retry spiral");
+  assert.equal(after, 6, "initial REQ + exactly 5 retries");
+  session.close();
 });

@@ -174,7 +174,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 if admin_host {
                     if let (Some(index), Some(files)) = (admin_index, admin_files) {
                         if path.starts_with("/assets/") {
-                            return files.oneshot(req).await.map(IntoResponse::into_response);
+                            let served = files.oneshot(req).await;
+                            return served
+                                .map(IntoResponse::into_response)
+                                .map(|response| with_cache_control(response, ASSET_CACHE_CONTROL));
                         }
                         if is_admin_spa_path(path) {
                             return Ok(read_spa_index(&index).await);
@@ -185,7 +188,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
                 if let (Some(index), Some(files)) = (web_index, web_files) {
                     if path.starts_with("/assets/") {
-                        return files.oneshot(req).await.map(IntoResponse::into_response);
+                        let served = files.oneshot(req).await;
+                        return served
+                            .map(IntoResponse::into_response)
+                            .map(|response| with_cache_control(response, ASSET_CACHE_CONTROL));
                     }
                     if should_serve_spa(path, serve_git_web_gui) {
                         return Ok(read_spa_index(&index).await);
@@ -237,9 +243,38 @@ fn is_git_web_gui_path(path: &str) -> bool {
     path == "/" || path == "/repos" || path.starts_with("/repos/")
 }
 
+/// `Cache-Control` for the SPA index: always revalidate. The index names the
+/// current content-hashed chunk files; a heuristically-cached stale index
+/// references chunks a deploy just deleted, which loads as 404s and sends the
+/// user into refresh roulette (live incident 2026-09-01 — reported minutes
+/// after a bundle deploy). `no-cache` (revalidate every load) is correct even
+/// without validators: the body is a few KB.
+pub(crate) const SPA_INDEX_CACHE_CONTROL: &str = "no-cache";
+
+/// `Cache-Control` for `/assets/*`: content-hashed filenames make the files
+/// immutable by construction — a new build ships new hashes, so a year-long
+/// immutable cache is safe and makes repeat loads instant.
+pub(crate) const ASSET_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
+
+/// Stamp a static-web response with the given `Cache-Control` value.
+fn with_cache_control(
+    response: axum::response::Response,
+    value: &'static str,
+) -> axum::response::Response {
+    let (mut parts, body) = response.into_parts();
+    parts.headers.insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static(value),
+    );
+    axum::response::Response::from_parts(parts, body)
+}
+
 async fn read_spa_index(index: &std::path::Path) -> axum::response::Response {
     match tokio::fs::read(index).await {
-        Ok(body) => axum::response::Html(body).into_response(),
+        Ok(body) => {
+            let response: axum::response::Response = axum::response::Html(body).into_response();
+            with_cache_control(response, SPA_INDEX_CACHE_CONTROL)
+        }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
@@ -515,6 +550,30 @@ mod tests {
         assert!(should_serve_spa("/", true));
         assert!(should_serve_spa("/repos/example", true));
         assert!(!should_serve_spa("/arbitrary", true));
+    }
+
+    #[test]
+    fn static_web_cache_control_pins_the_load_reliability_contract() {
+        // Hardcoded strings, not derived: the index MUST revalidate (a stale
+        // index references chunks a deploy deleted), assets MUST be immutable
+        // (content-hashed names change with every build).
+        assert_eq!(SPA_INDEX_CACHE_CONTROL, "no-cache");
+        assert_eq!(ASSET_CACHE_CONTROL, "public, max-age=31536000, immutable");
+
+        // The stamping helper actually sets the header it is given.
+        let base = axum::response::Html("<html>".to_string()).into_response();
+        assert!(base
+            .headers()
+            .get(axum::http::header::CACHE_CONTROL)
+            .is_none());
+        let stamped = with_cache_control(base, SPA_INDEX_CACHE_CONTROL);
+        assert_eq!(
+            stamped
+                .headers()
+                .get(axum::http::header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("no-cache")
+        );
     }
 
     #[test]
