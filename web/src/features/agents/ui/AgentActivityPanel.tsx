@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { BarChart3, Brain } from "lucide-react";
 import type { Profile } from "@/features/channels/hooks";
 import { AuthorAvatar } from "@/features/channels/ui/ChannelTimeline";
+import { isScrolledToBottom } from "@/features/agents/lib/scrollFollow";
 import {
   transcriptFromFrames,
   type AgentWorkingState,
@@ -125,6 +126,11 @@ export function AgentActivityPanel({
   onSelectThreadTab?: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Follow-the-tail state. Geometry-driven (see lib/scrollFollow.ts): the
+  // user scrolling up pauses tailing; scrolling back to the bottom resumes
+  // it. No user-vs-programmatic disambiguation — both just set follow from
+  // where the scroller ended up.
+  const followRef = useRef(true);
   const { entries, suppressed } = useMemo(
     () => transcriptFromFrames(frames),
     [frames],
@@ -133,24 +139,49 @@ export function AgentActivityPanel({
   // history, when the agent switches, and as new frames stream in. Double-rAF
   // (same pattern as the chat timeline): the first frame commits layout for
   // freshly rendered rows, the second measures the final scrollHeight —
-  // scrolling synchronously in the effect lands a render short.
+  // scrolling synchronously in the effect lands a render short. Tail scrolls
+  // happen ONLY while following — a reader scrolled up is never yanked back.
   const lastId = frames[frames.length - 1]?.id ?? "";
   const agentKey = agentPubkey;
+  const lastAgentKeyRef = useRef(agentKey);
   // biome-ignore lint/correctness/useExhaustiveDependencies: entries.length and agentKey are deliberate scroll re-triggers (a new retained entry, an agent switch), not reads inside the effect
   useEffect(() => {
     if (lastId === "") {
       return;
+    }
+    // A fresh agent/mount always re-lands on the newest entry. Keyed on the
+    // agent change itself (not per-frame — a per-frame reset would defeat
+    // the pause).
+    if (lastAgentKeyRef.current !== agentKey) {
+      lastAgentKeyRef.current = agentKey;
+      followRef.current = true;
     }
     const scroller = scrollRef.current;
     if (!scroller) {
       return;
     }
     const scrollToEnd = () => {
+      if (!followRef.current) {
+        return;
+      }
       scroller.scrollTo({ top: scroller.scrollHeight });
     };
     const raf = requestAnimationFrame(() => requestAnimationFrame(scrollToEnd));
     return () => cancelAnimationFrame(raf);
   }, [lastId, entries.length, agentKey]);
+  // Follow updates from scroll position only: up = paused, back at the
+  // bottom = following again (and the next frame re-tails).
+  const handleScroll = () => {
+    const scroller = scrollRef.current;
+    if (!scroller) {
+      return;
+    }
+    followRef.current = isScrolledToBottom(
+      scroller.scrollTop,
+      scroller.scrollHeight,
+      scroller.clientHeight,
+    );
+  };
   useTick(working.working);
 
   return (
@@ -207,7 +238,11 @@ export function AgentActivityPanel({
           ✕
         </button>
       </header>
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-3">
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="min-h-0 flex-1 overflow-y-auto p-3"
+      >
         {frames.length === 0 && lockedCount === 0 && (
           <p className="p-6 text-center text-sm text-muted-foreground">
             {connected
