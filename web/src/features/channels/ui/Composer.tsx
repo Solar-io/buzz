@@ -4,9 +4,22 @@ import {
   useReducer,
   useRef,
   useState,
+  type ClipboardEvent,
   type KeyboardEvent,
 } from "react";
 import { toast } from "sonner";
+import {
+  AtSign,
+  Bold,
+  Code,
+  Italic,
+  Link as LinkIcon,
+  List,
+  Paperclip,
+  Quote,
+  Smile,
+  Strikethrough,
+} from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { activeMentionQuery, resolveMentions } from "../lib/mentions.ts";
 import {
@@ -20,6 +33,7 @@ import {
   applyEmojiCompletion,
   emojiSuggestions,
 } from "../lib/emojiAutocomplete.ts";
+import { imageFilesFromClipboard } from "../lib/composerPaste.ts";
 import { loadDraft } from "../lib/drafts.ts";
 import { buildImetaTag, mediaMarkdown } from "../lib/imeta.ts";
 import { uploadBlob, type BlobDescriptor } from "@/shared/api/blossom";
@@ -244,9 +258,16 @@ export function Composer({
     if (!files || files.length === 0) {
       return;
     }
+    await attachFiles(Array.from(files));
+  };
+
+  const attachFiles = async (files: File[]) => {
+    if (files.length === 0) {
+      return;
+    }
     setUploading(true);
     try {
-      for (const file of Array.from(files)) {
+      for (const file of files) {
         const descriptor = await uploadBlob(file);
         setMedia((previous) => [...previous, descriptor]);
         setText((previous) => `${previous}${mediaMarkdown(descriptor)}`);
@@ -259,6 +280,21 @@ export function Composer({
         fileInputRef.current.value = "";
       }
     }
+  };
+
+  // Screenshot paste (Sam 2026-09-02): a clipboard image uploads and lands
+  // as an attachment exactly like the paperclip. Text pastes fall through
+  // to the browser default.
+  const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (editingActive) {
+      return;
+    }
+    const images = imageFilesFromClipboard(event.clipboardData);
+    if (images.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    void attachFiles(images);
   };
 
   const submit = async () => {
@@ -447,7 +483,7 @@ export function Composer({
                 title: "Bold (⌘B)",
                 apply: (t: string, s: number, e: number) =>
                   applyWrap(t, s, e, "**"),
-                content: <span className="font-bold">B</span>,
+                content: <Bold aria-hidden className="h-4 w-4" />,
               },
               {
                 label: "Italic",
@@ -455,7 +491,7 @@ export function Composer({
                 title: "Italic (⌘I)",
                 apply: (t: string, s: number, e: number) =>
                   applyWrap(t, s, e, "_"),
-                content: <span className="italic">I</span>,
+                content: <Italic aria-hidden className="h-4 w-4" />,
               },
               {
                 label: "Strikethrough",
@@ -463,21 +499,21 @@ export function Composer({
                 title: "Strikethrough",
                 apply: (t: string, s: number, e: number) =>
                   applyWrap(t, s, e, "~~"),
-                content: <span className="line-through">S</span>,
+                content: <Strikethrough aria-hidden className="h-4 w-4" />,
               },
               {
                 label: "Inline code",
                 hint: "code",
                 title: "Inline code",
                 apply: applyCode,
-                content: <span className="font-mono text-xs">{"<>"}</span>,
+                content: <Code aria-hidden className="h-4 w-4" />,
               },
               {
                 label: "Link",
                 hint: "link",
                 title: "Link",
                 apply: applyLink,
-                content: "🔗",
+                content: <LinkIcon aria-hidden className="h-4 w-4" />,
               },
               {
                 label: "Bulleted list",
@@ -485,7 +521,7 @@ export function Composer({
                 title: "Bulleted list",
                 apply: (t: string, s: number, e: number) =>
                   applyLinePrefix(t, s, e, "- "),
-                content: "•—",
+                content: <List aria-hidden className="h-4 w-4" />,
               },
               {
                 label: "Quote",
@@ -493,7 +529,7 @@ export function Composer({
                 title: "Quote",
                 apply: (t: string, s: number, e: number) =>
                   applyLinePrefix(t, s, e, "> "),
-                content: "❝",
+                content: <Quote aria-hidden className="h-4 w-4" />,
               },
             ] as const
           ).map((item) => (
@@ -502,7 +538,7 @@ export function Composer({
               type="button"
               aria-label={item.label}
               title={item.title}
-              className="rounded p-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40"
+              className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40"
               disabled={busy}
               onClick={() => applyFormat(item.apply)}
             >
@@ -520,88 +556,108 @@ export function Composer({
           className="hidden"
           onChange={(event) => void attach(event.target.files)}
         />
-        <button
-          type="button"
-          aria-label="Attach a file"
-          title="Attach images or video"
-          className="mb-0.5 rounded-lg p-2.5 text-muted-foreground hover:bg-accent disabled:opacity-50"
-          disabled={uploading || busy}
-          onClick={() => fileInputRef.current?.click()}
+        {/* Desktop's composer shape: ONE rounded field carrying the icons
+            inside it (attach / mention / emoji at the right edge), send
+            circle just outside. No emoji glyphs — proper lucide icons. */}
+        <div
+          className={cn(
+            "flex max-h-56 min-h-14 flex-1 items-end gap-1 rounded-2xl border border-input bg-card py-1.5 pl-1 pr-1.5 shadow-xs transition-colors",
+            "focus-within:border-ring/60 focus-within:ring-1 focus-within:ring-ring",
+          )}
         >
-          {uploading ? "…" : "📎"}
-        </button>
-        <button
-          type="button"
-          aria-label="Mention someone"
-          title="Mention — inserts @"
-          className="mb-0.5 rounded-lg p-2.5 text-sm font-medium text-muted-foreground hover:bg-accent disabled:opacity-50"
-          disabled={busy || editingActive}
-          onClick={() => {
-            const textarea = textareaRef.current;
-            if (!textarea) {
-              return;
+          <textarea
+            ref={textareaRef}
+            className="max-h-48 min-h-11 flex-1 resize-none self-stretch bg-transparent px-3 py-2 text-base placeholder:text-muted-foreground focus-visible:outline-hidden"
+            placeholder={
+              editingActive
+                ? "Editing your message — Esc cancels"
+                : (placeholder ??
+                  "Message — @ to mention, Shift+Enter for newline")
             }
-            const start = textarea.selectionStart ?? text.length;
-            const end = textarea.selectionEnd ?? start;
-            const next = `${text.slice(0, start)}@${text.slice(end)}`;
-            setText(next);
-            setMentionOpen(true);
-            requestAnimationFrame(() => {
-              const caret = start + 1;
-              textarea.focus();
-              textarea.setSelectionRange(caret, caret);
-              bumpCaretRender();
-            });
-          }}
-        >
-          @
-        </button>
-        <EmojiPicker label="Insert emoji" onSelect={insertEmoji}>
-          {(props) => (
+            rows={1}
+            value={text}
+            onChange={(event) => {
+              setText(event.target.value);
+              onTextChange?.(event.target.value);
+              setPopupIndex(0);
+              setMentionOpen(
+                activeMentionQuery(
+                  event.target.value,
+                  event.target.selectionStart ?? event.target.value.length,
+                ) !== null,
+              );
+            }}
+            onKeyDown={onKeyDown}
+            onPaste={onPaste}
+            onBlur={() => setPopupIndex(0)}
+          />
+          <div
+            className="flex items-center gap-0.5 pb-0.5"
+            role="toolbar"
+            aria-label="Insert"
+          >
             <button
               type="button"
-              ref={props.ref}
-              aria-label={props["aria-label"]}
-              title="Insert emoji"
-              className="mb-0.5 rounded-lg p-2.5 text-lg leading-none text-muted-foreground hover:bg-accent disabled:opacity-50"
-              disabled={busy || editingActive}
-              onClick={props.onClick}
+              aria-label="Attach a file"
+              title="Attach images or video — or paste a screenshot"
+              className="rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+              disabled={uploading || busy}
+              onClick={() => fileInputRef.current?.click()}
             >
-              🙂
+              <Paperclip
+                aria-hidden
+                className={cn("h-5 w-5", uploading && "animate-pulse")}
+              />
             </button>
-          )}
-        </EmojiPicker>
-        <textarea
-          ref={textareaRef}
-          className="max-h-56 min-h-14 flex-1 resize-y rounded-xl border border-input bg-card px-4 py-3 text-base shadow-xs placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
-          placeholder={
-            editingActive
-              ? "Editing your message — Esc cancels"
-              : (placeholder ??
-                "Message — @ to mention, Shift+Enter for newline")
-          }
-          rows={1}
-          value={text}
-          onChange={(event) => {
-            setText(event.target.value);
-            onTextChange?.(event.target.value);
-            setPopupIndex(0);
-            setMentionOpen(
-              activeMentionQuery(
-                event.target.value,
-                event.target.selectionStart ?? event.target.value.length,
-              ) !== null,
-            );
-          }}
-          onKeyDown={onKeyDown}
-          onBlur={() => setPopupIndex(0)}
-        />
+            <button
+              type="button"
+              aria-label="Mention someone"
+              title="Mention — inserts @"
+              className="rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+              disabled={busy || editingActive}
+              onClick={() => {
+                const textarea = textareaRef.current;
+                if (!textarea) {
+                  return;
+                }
+                const start = textarea.selectionStart ?? text.length;
+                const end = textarea.selectionEnd ?? start;
+                const next = `${text.slice(0, start)}@${text.slice(end)}`;
+                setText(next);
+                setMentionOpen(true);
+                requestAnimationFrame(() => {
+                  const caret = start + 1;
+                  textarea.focus();
+                  textarea.setSelectionRange(caret, caret);
+                  bumpCaretRender();
+                });
+              }}
+            >
+              <AtSign aria-hidden className="h-5 w-5" />
+            </button>
+            <EmojiPicker label="Insert emoji" onSelect={insertEmoji}>
+              {(props) => (
+                <button
+                  type="button"
+                  ref={props.ref}
+                  aria-label={props["aria-label"]}
+                  title="Insert emoji"
+                  className="rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+                  disabled={busy || editingActive}
+                  onClick={props.onClick}
+                >
+                  <Smile aria-hidden className="h-5 w-5" />
+                </button>
+              )}
+            </EmojiPicker>
+          </div>
+        </div>
         {/* Desktop's send control: filled primary circle with an up arrow. */}
         <button
           type="button"
           aria-label={editingActive ? "Save" : "Send"}
           disabled={busy || !text.trim()}
-          className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
+          className="mb-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
           onClick={() => void submit()}
         >
           <svg
@@ -612,7 +668,7 @@ export function Composer({
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
-            className="h-4 w-4"
+            className="h-5 w-5"
           >
             <path d="m5 12 7-7 7 7" />
             <path d="M12 19V5" />

@@ -120,20 +120,19 @@
   .dark {
     --radius: 0.625rem;
     /*
-     * Catppuccin Macchiato — token-for-token from the desktop's theme.css
-     * Macchiato block (Sam's desktop theme, 2026-09-01: "I want it to look
-     * like what I am using"). Mauve primary (267 82.69% 79.61% = #CBA6F7);
-     * selected rows/sidebar-active use the solid mauve with dark text; the
-     * sidebar is Macchiato mantle (one step darker than base).
+     * Sam's fleet palette (2026-09-02): main body #1e1e2d, left nav #0f1017 —
+     * darker and bluer than the Macchiato base it replaces. Mauve primary
+     * (267 82.69% 79.61% = #CBA6F7) and selected rows = #9d5aef kept from
+     * the Macchiato re-theme.
      */
-    --background: 232 23.4% 18.43%;
+    --background: 240 20% 14.71%;
     --foreground: 227 68.25% 87.65%;
-    --card: 232 23.4% 18.43%;
+    --card: 240 20% 14.71%;
     --card-foreground: 227 68.25% 87.65%;
     --popover: 230 18.8% 26.08%;
     --popover-foreground: 227 68.25% 87.65%;
     --primary: 267 82.69% 79.61%;
-    --primary-foreground: 232 23.4% 18.43%;
+    --primary-foreground: 240 20% 14.71%;
     --secondary: 230 18.8% 26.08%;
     --secondary-foreground: 227 68.25% 87.65%;
     --muted: 230 18.8% 26.08%;
@@ -141,7 +140,7 @@
     --accent: 230 18.8% 26.08%;
     --accent-foreground: 227 68.25% 87.65%;
     --destructive: 351 73.91% 72.94%;
-    --destructive-foreground: 232 23.4% 18.43%;
+    --destructive-foreground: 240 20% 14.71%;
     --border: 231 15.61% 33.92%;
     --input: 231 15.61% 33.92%;
     --ring: 227 68.25% 87.65%;
@@ -150,18 +149,18 @@
     --chart-3: 224 26.67% 41.18%;
     --chart-4: 30 8.24% 42.35%;
     --chart-5: 139 10.98% 38.82%;
-    /* Macchiato mantle #1E2030 — the desktop's Macchiato sidebar. */
-    --sidebar: 234 22.75% 17.25%;
-    --sidebar-background: 234 22.75% 17.25%;
+    /* Sam 2026-09-02: left nav = #0f1017 — near-black indigo rail. */
+    --sidebar: 232.5 21.1% 7.5%;
+    --sidebar-background: 232.5 21.1% 7.5%;
     --sidebar-foreground: 227 68.25% 87.65%;
     --sidebar-primary: 267 82.69% 79.61%;
-    --sidebar-primary-foreground: 232 23.4% 18.43%;
+    --sidebar-primary-foreground: 240 20% 14.71%;
     /* Sam 2026-09-01: selected rows = #9d5aef (267 82% 65%) with black text. */
     --sidebar-active: 267 82% 65%;
     --sidebar-active-foreground: 0 0% 0%;
     --sidebar-accent: 230 18.8% 26.08%;
     --sidebar-accent-foreground: 227 68.25% 87.65%;
-    --sidebar-border: 231 15.61% 33.92%;
+    --sidebar-border: 232.5 14% 15%;
     --sidebar-ring: 231 15.61% 33.92%;
   }
 
