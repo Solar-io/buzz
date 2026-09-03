@@ -27,6 +27,7 @@ import {
 const ENVELOPE_KEY = "buzz.identity-envelope.v1";
 const AUTH_TAG_KEY = "buzz.auth-tag.v1";
 const REMEMBERED_KEY = "buzz.session-key.v1";
+const NO_PASSPHRASE_KEY = "buzz.no-passphrase.v1";
 
 /** Stored shape for the remembered-device key: bytes + the hint it must match. */
 export interface RememberedKey {
@@ -209,6 +210,7 @@ export async function enrollSecretKey(
   const envelope = await encryptSecretKey(keyBytes, passphrase);
   await set(ENVELOPE_KEY, envelope);
   await set(AUTH_TAG_KEY, authTagJson ?? "");
+  await set(NO_PASSPHRASE_KEY, false);
   try {
     await rememberSecretKey(keyBytes);
   } catch {
@@ -220,6 +222,34 @@ export async function enrollSecretKey(
     source: "local",
     pubkeyHint: hintFromKey(keyBytes),
   });
+}
+
+/**
+ * QR-pairing enroll: seal under a device-generated passphrase nobody ever
+ * types. Scanning a pairing QR signs the device straight in (Sam's ask,
+ * 9/3) — with the remembered key on by default the passphrase ceremony
+ * bought nothing. Marks the device no-passphrase so Settings knows that
+ * turning stay-signed-in off must sign out rather than lock out.
+ */
+export async function enrollSecretKeyFromPairing(
+  secretKey: Uint8Array,
+): Promise<void> {
+  const random = crypto.getRandomValues(new Uint8Array(32));
+  const passphrase = Array.from(random, (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
+  await enrollSecretKey(secretKey, passphrase);
+  await set(NO_PASSPHRASE_KEY, true);
+}
+
+/** True when this device's envelope is sealed under a generated (unknown
+ * to the user) passphrase — i.e. it was paired by QR. */
+export async function hasNoPassphrase(): Promise<boolean> {
+  try {
+    return (await get(NO_PASSPHRASE_KEY)) === true;
+  } catch {
+    return false;
+  }
 }
 
 /** Unlock the persisted envelope with its passphrase. */
@@ -285,6 +315,7 @@ export async function signOut(): Promise<void> {
   await del(ENVELOPE_KEY);
   await del(AUTH_TAG_KEY);
   await del(REMEMBERED_KEY);
+  await del(NO_PASSPHRASE_KEY);
   setState({ status: "anonymous" });
 }
 

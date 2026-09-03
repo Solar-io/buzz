@@ -15,6 +15,7 @@ import { activeSignerSource } from "@/shared/lib/nostr-signer";
 import {
   clearRememberedKey,
   getUnlockedSecretKey,
+  hasNoPassphrase,
   hasRememberedKey,
   rememberSecretKeyForSettings,
 } from "@/shared/lib/key-store";
@@ -27,15 +28,17 @@ export function SettingsPage() {
   const [npub, setNpub] = useState<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [staySignedIn, setStaySignedIn] = useState<boolean | null>(null);
+  const [noPassphrase, setNoPassphrase] = useState(false);
 
   useEffect(() => {
     void hasRememberedKey().then(setStaySignedIn);
+    void hasNoPassphrase().then(setNoPassphrase);
   }, []);
 
   const toggleStaySignedIn = useCallback(() => {
     const next = !staySignedIn;
-    setStaySignedIn(next);
     if (next) {
+      setStaySignedIn(true);
       const secretKey = getUnlockedSecretKey();
       if (secretKey) {
         void rememberSecretKeyForSettings(secretKey).catch(() => {
@@ -46,13 +49,28 @@ export function SettingsPage() {
         toast.error("Unlock first, then enable stay-signed-in.");
         setStaySignedIn(false);
       }
-    } else {
-      void clearRememberedKey().catch(() => {
-        toast.error("Could not remove the remembered key.");
-        setStaySignedIn(true);
-      });
+      return;
     }
-  }, [staySignedIn]);
+    // Turning stay-signed-in off on a QR-paired device: there is no user
+    // passphrase to fall back on, so removing the remembered key would
+    // leave the envelope permanently locked. Sign out instead (re-pair to
+    // return) — confirm because it signs out of this browser.
+    if (noPassphrase) {
+      const signOutNow = window.confirm(
+        "This device was paired without a passphrase. Turning stay-signed-in off signs it out completely — re-scan a pairing QR to use Buzz here again.",
+      );
+      if (!signOutNow) {
+        return;
+      }
+      void forgetDevice();
+      return;
+    }
+    setStaySignedIn(false);
+    void clearRememberedKey().catch(() => {
+      toast.error("Could not remove the remembered key.");
+      setStaySignedIn(true);
+    });
+  }, [staySignedIn, noPassphrase, forgetDevice]);
 
   useEffect(() => {
     let cancelled = false;
@@ -181,8 +199,9 @@ export function SettingsPage() {
           <h2 className="font-medium">Pair a device</h2>
           <p className="text-sm text-muted-foreground">
             Show a QR that opens Buzz with your key — scan it with any camera
-            and the login picks up from there. The key rides inside the link
-            itself, only on your screens — treat it like a password.
+            and that device signs straight in, nothing to type. The key rides
+            inside the link itself, only on your screens — treat it like a
+            password.
           </p>
           {qrDataUrl ? (
             <img

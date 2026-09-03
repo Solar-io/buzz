@@ -5,7 +5,11 @@ import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { useAuth } from "./AuthProvider";
 import { QrScanner } from "./QrScanner";
-import { enrollSecretKey, setAuthTagJson } from "@/shared/lib/key-store";
+import {
+  enrollSecretKey,
+  enrollSecretKeyFromPairing,
+  setAuthTagJson,
+} from "@/shared/lib/key-store";
 import { type ParsedKey, parseSecretKeyInput } from "@/shared/lib/nsec";
 
 type Mode = "choose" | "paste" | "scan" | "set-pass" | "unlock";
@@ -52,19 +56,43 @@ export function LoginPage() {
     [tagInput],
   );
 
-  const acceptScanned = useCallback((text: string) => {
-    const parsed = parseSecretKeyInput(text);
-    if (!parsed.ok) {
-      toast.error(parsed.error);
-      return;
-    }
-    setScanned(parsed);
-    setMode("set-pass");
-  }, []);
+  // A key that arrived by pairing QR (URL link or in-app scan) signs this
+  // device straight in: enroll under a device-generated passphrase nobody
+  // types (Sam's ask, 9/3 — the passphrase screen bought nothing with the
+  // remembered key on by default). Manual entry keeps its passphrase form.
+  const enrollFromQr = useCallback(
+    async (parsed: Extract<ParsedKey, { ok: true }>) => {
+      setBusy(true);
+      try {
+        await enrollSecretKeyFromPairing(parsed.secretKey);
+        toast.success("Signed in");
+        // authState flips and the shell route re-renders on its own; the
+        // URL (and any ?c= deep link) stays untouched.
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Could not store the key",
+        );
+        setBusy(false);
+      }
+    },
+    [],
+  );
+
+  const acceptScanned = useCallback(
+    (text: string) => {
+      const parsed = parseSecretKeyInput(text);
+      if (!parsed.ok) {
+        toast.error(parsed.error);
+        return;
+      }
+      void enrollFromQr(parsed);
+    },
+    [enrollFromQr],
+  );
 
   // Pairing-link landing: a camera-scanned QR opens this page with the key in
-  // the URL fragment (fragments never reach a server). Consume it once into
-  // the normal set-pass flow, then scrub the address bar so the key does not
+  // the URL fragment (fragments never reach a server). Consume it once —
+  // enrolling immediately — then scrub the address bar so the key does not
   // linger in history or get copy-pasted around accidentally.
   useEffect(() => {
     const hash = window.location.hash;
@@ -80,12 +108,11 @@ export function LoginPage() {
       window.location.pathname + window.location.search,
     );
     if (parsed.ok) {
-      setScanned(parsed);
-      setMode("set-pass");
+      void enrollFromQr(parsed);
     } else {
       toast.error(parsed.error);
     }
-  }, []);
+  }, [enrollFromQr]);
 
   return (
     <div className="flex min-h-dvh items-center justify-center bg-background px-4">
