@@ -10,6 +10,7 @@ import {
   getConfiguredFilesUrl,
   setConfiguredFilesUrl,
 } from "@/features/files/filesConfig";
+import { AppearanceSection } from "./AppearanceSection";
 import { useAuth } from "./AuthProvider";
 import { activeSignerSource } from "@/shared/lib/nostr-signer";
 import {
@@ -141,6 +142,8 @@ export function SettingsPage() {
           Desktop.
         </p>
       </section>
+
+      <AppearanceSection />
 
       <FilesUrlSection />
 
