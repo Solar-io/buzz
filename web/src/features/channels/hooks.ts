@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RelaySession } from "@/shared/api/relay-session";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 
@@ -12,12 +12,22 @@ import {
 import {
   applyOverlay,
   editTargetFromEvent,
-  TIMELINE_KINDS,
   timelineMessageFromEvent,
   upsertMessage,
   type MessageBuffer,
   type TimelineMessage,
 } from "./lib/messageBuffer.ts";
+import {
+  applyOverlayToCache,
+  initialSyncFilters,
+  loadTimelineCache,
+  mergeCachedMessage,
+  mergeCachedReaction,
+  olderPageFilter,
+  OLDER_PAGE,
+  saveTimelineCache,
+  type TimelineCacheEntry,
+} from "./lib/timelineCache.ts";
 import {
   FORUM_COMMENT_KIND,
   FORUM_POST_KIND,
@@ -41,77 +51,231 @@ export interface ChannelFeed {
   messages: MessageBuffer;
   reactions: ReactionIndex;
   typing: TypingMap;
+  /** Fetch one older-history page (scroll-up). No-op when exhausted/busy. */
+  loadOlder: () => void;
+  loadingOlder: boolean;
+  /** True once an older page came back short — the channel start is reached. */
+  historyExhausted: boolean;
 }
+
+/**
+ * Cache write-through interval: batching disk writes keeps a busy channel
+ * from re-serializing the whole buffer per message.
+ */
+const CACHE_FLUSH_MS = 1_000;
 
 export function useChannelMessages(channelId: string | null): ChannelFeed {
   const { session } = useRelaySession();
   const [buffer, setBuffer] = useState<MessageBuffer>([]);
   const [reactions, setReactions] = useState<ReactionIndex>(() => new Map());
   const [typing, setTyping] = useState<TypingMap>(() => new Map());
+  const [historyExhausted, setHistoryExhausted] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  /** Cache state mirror — updated synchronously with every buffer change. */
+  const cacheRef = useRef<TimelineCacheEntry | null>(null);
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadingOlderRef = useRef(false);
+
+  const flushCache = useCallback(() => {
+    if (flushTimer.current) {
+      clearTimeout(flushTimer.current);
+      flushTimer.current = null;
+    }
+    if (cacheRef.current && channelId) {
+      void saveTimelineCache(channelId, cacheRef.current);
+    }
+  }, [channelId]);
+
+  const scheduleFlush = useCallback(() => {
+    if (flushTimer.current) {
+      clearTimeout(flushTimer.current);
+    }
+    flushTimer.current = setTimeout(flushCache, CACHE_FLUSH_MS);
+  }, [flushCache]);
+
+  /**
+   * One relay event → buffer state + cache write-through. Shared by the live
+   * sync subscription and scroll-up pagination pages so both paths apply
+   * overlays, reactions and messages identically.
+   */
+  const applyEvent = useCallback(
+    (event: SignedNostrEvent) => {
+      if (event.kind === 40003 || event.kind === 5) {
+        const targetId = editTargetFromEvent(event);
+        if (targetId) {
+          const content = event.kind === 40003 ? event.content : null;
+          setBuffer((previous) =>
+            applyOverlay(previous, event.kind, targetId, content),
+          );
+          if (cacheRef.current) {
+            cacheRef.current = applyOverlayToCache(
+              cacheRef.current,
+              event.kind,
+              targetId,
+              content,
+            );
+            scheduleFlush();
+          }
+        }
+        return;
+      }
+      if (event.kind === 7) {
+        const reaction = reactionFromEvent(event);
+        if (reaction) {
+          setReactions((previous) =>
+            upsertReaction(previous, reaction, event.pubkey),
+          );
+          if (cacheRef.current) {
+            cacheRef.current = mergeCachedReaction(
+              cacheRef.current,
+              reaction,
+              event.pubkey,
+            );
+            scheduleFlush();
+          }
+        }
+        return;
+      }
+      if (event.kind === 20002) {
+        const typed = typingFromEvent(event);
+        if (typed) {
+          setTyping((previous) =>
+            recordTyping(previous, typed.channelId, event.pubkey, Date.now()),
+          );
+        }
+        return;
+      }
+      const message = timelineMessageFromEvent(event);
+      if (!message || message.channelId !== channelId) {
+        return;
+      }
+      setBuffer((previous) => upsertMessage(previous, message));
+      if (cacheRef.current) {
+        cacheRef.current = mergeCachedMessage(cacheRef.current, message);
+        scheduleFlush();
+      }
+    },
+    [channelId, scheduleFlush],
+  );
 
   useEffect(() => {
     setBuffer([]);
     setReactions(new Map());
     setTyping(new Map());
+    setHistoryExhausted(false);
+    setLoadingOlder(false);
+    loadingOlderRef.current = false;
+    cacheRef.current = null;
     if (!channelId) {
       return;
     }
-    return session.subscribe(
-      {
-        kinds: [...TIMELINE_KINDS, 7, 20002, 40003, 5],
-        "#h": [channelId],
-        limit: 200,
-      },
-      {
-        onEvent: (event: SignedNostrEvent) => {
-          if (event.kind === 40003 || event.kind === 5) {
-            const targetId = editTargetFromEvent(event);
-            if (targetId) {
-              setBuffer((previous) =>
-                applyOverlay(
-                  previous,
-                  event.kind,
-                  targetId,
-                  event.kind === 40003 ? event.content : null,
-                ),
-              );
-            }
-            return;
-          }
-          if (event.kind === 7) {
-            const reaction = reactionFromEvent(event);
-            if (reaction) {
-              setReactions((previous) =>
-                upsertReaction(previous, reaction, event.pubkey),
-              );
-            }
-            return;
-          }
-          if (event.kind === 20002) {
-            const typed = typingFromEvent(event);
-            if (typed) {
-              setTyping((previous) =>
-                recordTyping(
-                  previous,
-                  typed.channelId,
-                  event.pubkey,
-                  Date.now(),
-                ),
-              );
-            }
-            return;
-          }
-          const message = timelineMessageFromEvent(event);
-          if (!message || message.channelId !== channelId) {
-            return;
-          }
-          setBuffer((previous) => upsertMessage(previous, message));
-        },
-      },
-    );
-  }, [session, channelId]);
 
-  return { messages: buffer, reactions, typing };
+    let alive = true;
+    let unsubscribe: (() => void) | undefined;
+
+    void (async () => {
+      // Seed from disk first: the cursor decides what the sync REQ must ask
+      // for, and a warm cache paints the timeline before the network moves.
+      const cached = await loadTimelineCache(channelId);
+      if (!alive) {
+        return;
+      }
+      cacheRef.current = cached ?? {
+        messages: [],
+        reactions: new Map(),
+        cursor: 0,
+        historyExhausted: false,
+      };
+      if (cached) {
+        setBuffer(cached.messages);
+        setReactions(cached.reactions);
+        setHistoryExhausted(cached.historyExhausted);
+      }
+      unsubscribe = session.subscribe(
+        initialSyncFilters(channelId, cached ? cached.cursor : null),
+        { onEvent: applyEvent },
+      );
+    })();
+
+    return () => {
+      alive = false;
+      unsubscribe?.();
+      if (flushTimer.current) {
+        clearTimeout(flushTimer.current);
+        flushTimer.current = null;
+      }
+      if (cacheRef.current) {
+        void saveTimelineCache(channelId, cacheRef.current);
+      }
+    };
+  }, [session, channelId, applyEvent]);
+
+  const loadOlder = useCallback(() => {
+    if (
+      !channelId ||
+      loadingOlderRef.current ||
+      historyExhausted ||
+      buffer.length === 0
+    ) {
+      return;
+    }
+    const oldest = buffer[0].createdAt;
+    if (oldest <= 1) {
+      return;
+    }
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    let messageCount = 0;
+    let done = false;
+    const finish = () => {
+      if (done) {
+        return;
+      }
+      done = true;
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
+      // A short page means the channel's start is inside what we just
+      // loaded — stop offering pagination, and persist that in the cache.
+      if (messageCount < OLDER_PAGE) {
+        setHistoryExhausted(true);
+        if (cacheRef.current) {
+          cacheRef.current = {
+            ...cacheRef.current,
+            historyExhausted: true,
+          };
+          void saveTimelineCache(channelId, cacheRef.current);
+        }
+      }
+    };
+    const unsubscribe = session.subscribe(olderPageFilter(channelId, oldest), {
+      onEvent: (event: SignedNostrEvent) => {
+        if (
+          event.kind !== 20002 &&
+          event.kind !== 7 &&
+          event.kind !== 40003 &&
+          event.kind !== 5
+        ) {
+          messageCount++;
+        }
+        applyEvent(event);
+      },
+      onEose: () => {
+        finish();
+        unsubscribe();
+      },
+    });
+    // Belt and braces: a lost EOSE must not wedge the pagination guard.
+    setTimeout(finish, 10_000);
+  }, [channelId, historyExhausted, buffer, session, applyEvent]);
+
+  return {
+    messages: buffer,
+    reactions,
+    typing,
+    loadOlder,
+    loadingOlder,
+    historyExhausted,
+  };
 }
 
 export interface ForumPostsFeed {

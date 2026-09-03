@@ -189,6 +189,9 @@ export function ChannelTimeline({
   unreadBefore,
   typingNames,
   tailKey,
+  onLoadOlder,
+  loadingOlder,
+  historyExhausted,
 }: {
   messages: MessageBuffer;
   profiles: Map<string, Profile>;
@@ -236,8 +239,24 @@ export function ChannelTimeline({
    * switches re-tail. Null disables tailing.
    */
   tailKey?: string | null;
+  /** Scroll-up pagination: called when the viewport reaches the top. */
+  onLoadOlder?: () => void;
+  /** An older-history page is in flight (renders the top loading row). */
+  loadingOlder?: boolean;
+  /** Older pagination already hit the channel start — stop offering it. */
+  historyExhausted?: boolean;
 }) {
   const listRef = useRef<VListHandle>(null);
+  /**
+   * Pagination scroll anchor: when an older page lands, the list must not
+   * jump to the NEW top — it re-pins to the row the user was reading. The
+   * phases: idle → loading (top reached, page requested) → restore (page
+   * landed, pin the anchor) → idle.
+   */
+  const pagePhase = useRef<"idle" | "loading" | "restore">("idle");
+  const anchorIdRef = useRef<string | null>(null);
+  /** message id → item index, rebuilt every render by the row loop. */
+  const rowIndexRef = useRef<Map<string, number> | null>(null);
   const isEmpty = messages.length === 0;
   let lastAuthor: string | null = null;
   let lastKind = 0;
@@ -248,6 +267,8 @@ export function ChannelTimeline({
   let lastDay = "";
   let unreadShown = false;
   const rows: ReactElement[] = [];
+  const rowIndex = new Map<string, number>();
+  rowIndexRef.current = rowIndex;
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index];
     // Deleted messages disappear from the timeline entirely (desktop parity:
@@ -299,6 +320,7 @@ export function ChannelTimeline({
     lastAuthor = message.authorPubkey;
     lastKind = message.kind;
     lastRenderedAt = message.createdAt;
+    rowIndex.set(message.id, rows.length);
     rows.push(
       <MessageRow
         key={message.id}
