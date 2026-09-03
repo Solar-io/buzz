@@ -28,7 +28,9 @@ know exactly what they must modify — and what they can skip.
 | Channels: create/join/leave, rename (9002), delete (9008), private padlock | Stock | |
 | DMs: open, groups, local hide | Stock | Hide is client-local by design (desktop parity). |
 | Search (⌘K + sidebar field, NIP-50) | Stock | |
-| Media: upload, rendering, lightbox | Stock | |
+| Media: upload, rendering, mosaic, zoomable lightbox, file cards | Stock | Reads NIP-92 `imeta` (`dim`, `m`, `size`, `filename`) off the event; no relay change. |
+| Link previews — rendering a received card | **Stock, not built** | Purely a client render of the sender's `link-preview` snapshot tags. No relay change needed; see below. |
+| Link previews — authoring one when sending | **Blocked in a browser** | Needs a server-side unfurl the relay does not expose. See below. |
 | Huddle voice (start/join, Opus) | Stock | 48100/48102 + WebCodecs. |
 | Profile editor (kind 0) | Stock | |
 | Agent registry view (30177 list, status dots) | Stock | 30177 is community-readable upstream. |
@@ -43,6 +45,57 @@ know exactly what they must modify — and what they can skip.
 | Stale-registration cleanup | **Fork: desktop** (relay tier optional) | Bulk forceRemoteDelete over existing 24201 delete commands. 30180 `agents` claims power the "not reported by any desktop" reason; without catalogs, older-duplicate detection still works. |
 | Agents in the main left bar + edit form | Stock UI | Renders from the 30177 registry (Stock tier); editing rides the remote-admin rows above. |
 | Files panel | **External** | Embeds a file-manager web app by URL (`web/src/features/files/webPanels.ts`). Bring your own URL; nothing Buzz-side is required. |
+
+## Link previews — feasibility, measured 2026-09-03
+
+Buzz link previews are **not** a recipient-side unfurl. The desktop resolves
+metadata once, **at send time**, and ships the result inside the event as
+sender-authored tags; recipients render those tags and never contact the
+external site. That split decides what the web client can and cannot do, and
+the two halves land in different tiers.
+
+**Receiving is stock and needs nothing from the relay.** The relay already
+accepts and validates the tags — `validate_link_preview_tags` in
+`crates/buzz-relay/src/handlers/ingest.rs` — so they arrive on the event like
+any other tag. The shape is an 11-element tag:
+
+```
+["link-preview", "snapshot", "1", <canonical https URL>, <title>, <site>,
+ <description>, <image URL>, <image sha256>, <favicon URL>, <favicon sha256>]
+```
+
+with `["link-preview", "none"]` as the per-message suppression marker (the
+relay rejects a message that carries both). The canonical URL must appear in
+the message body, and both media pairs must point at image blobs in this
+relay's own store. Rendering these is pure presentation: no fetch, no CORS,
+no relay endpoint. What is missing on the web side is only plumbing — the
+timeline's `TimelineMessage` (`features/channels/lib/messageBuffer.ts`) keeps
+`imetaByUrl` and drops the rest of the event's tags, so the tags never reach
+`MarkdownContent`.
+
+**Authoring one in a browser is blocked, and not by anything we can patch in
+the web client.** Producing a snapshot means fetching an arbitrary
+third-party page, parsing its OpenGraph tags, then fetching its preview image
+and favicon and uploading both to Blossom. The desktop does all of that in
+native Rust — `fetch_link_preview_metadata`, registered in
+`desktop/src-tauri/src/lib.rs` and called from
+`desktop/src/shared/lib/useResolvedLinkPreviews.ts` — where the same-origin
+policy does not apply. A browser cannot: a cross-origin `fetch` of a page that
+sends no `Access-Control-Allow-Origin` is unreadable, and an opaque `no-cors`
+response cannot be parsed or re-uploaded. The relay exposes no unfurl route
+either (`crates/buzz-relay/src/router.rs` lists the whole HTTP surface:
+NIP-11/NIP-05, `/events`, `/query`, `/count`, GIF search, invites,
+moderation, webhooks, Blossom media, git, health — nothing that fetches a
+remote URL on a client's behalf).
+
+So a web client can only ever author previews with **a new relay endpoint**
+(server-side unfurl returning OG metadata, ideally uploading the images to
+Blossom in the same call), or a general CORS proxy. Both are relay changes,
+and a relay change is a product decision, not a client one. Until that
+decision is taken, the honest behaviour on the web is what ships today: links
+render as links, and messages sent from the web simply carry no snapshot
+tags — which the desktop already handles, since a message without them shows
+a plain link there too.
 
 ## Fork changes, per feature
 
