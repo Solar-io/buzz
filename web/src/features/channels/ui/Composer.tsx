@@ -96,6 +96,12 @@ export function Composer({
   // (the @ button sets the caret in rAF; suggestions read DOM selection).
   const [, bumpCaretRender] = useReducer((tick: number) => tick + 1, 0);
   const [mentionDismissed, setMentionDismissed] = useState(false);
+  // Pubkeys captured when the author picks from the mention autocomplete.
+  // Resolving by display name at send time cannot tell two members with the
+  // same name apart; a pick can. Keyed by lowercased inserted name.
+  const [mentionPicks, setMentionPicks] = useState<Map<string, string>>(
+    () => new Map(),
+  );
   const [media, setMedia] = useState<BlobDescriptor[]>([]);
   const [uploading, setUploading] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -182,7 +188,14 @@ export function Composer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, namedMembers, mentionDismissed]);
 
-  const applySuggestion = (name: string) => {
+  const applySuggestion = (name: string, pubkey?: string) => {
+    if (pubkey) {
+      setMentionPicks((previous) => {
+        const next = new Map(previous);
+        next.set(name.toLowerCase(), pubkey);
+        return next;
+      });
+    }
     const textarea = textareaRef.current;
     if (!textarea) {
       return;
@@ -331,6 +344,7 @@ export function Composer({
     const { mentionPubkeys, unresolved } = resolveMentions(
       trimmed,
       namedMembers,
+      mentionPicks,
     );
     setBusy(true);
     try {
@@ -345,6 +359,7 @@ export function Composer({
       if (result.ok) {
         setText("");
         setMedia([]);
+        setMentionPicks(new Map());
         if (editingActive) {
           onCancelEdit?.();
         }
@@ -382,7 +397,10 @@ export function Composer({
       }
       if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
         event.preventDefault();
-        applySuggestion(suggestions[popupIndex]?.name ?? "");
+        applySuggestion(
+          suggestions[popupIndex]?.name ?? "",
+          suggestions[popupIndex]?.pubkey,
+        );
         return;
       }
       if (event.key === "Escape") {
@@ -453,7 +471,7 @@ export function Composer({
                   "block w-full truncate px-3 py-1.5 text-left text-sm hover:bg-accent",
                   index === popupIndex && "bg-accent",
                 )}
-                onClick={() => applySuggestion(member.name)}
+                onClick={() => applySuggestion(member.name, member.pubkey)}
               >
                 @{member.name}
               </button>

@@ -47,13 +47,31 @@ export function extractMentionTokens(text: string): MentionToken[] {
 }
 
 /**
+ * A mention the author picked from the autocomplete, remembered by the name
+ * that was inserted. Keys are lowercased so lookup matches the token compare.
+ */
+export type MentionPicks = ReadonlyMap<string, string>;
+
+/**
  * Resolve @Name tokens against channel members. Unique matches become
  * p-tags; ambiguous or unknown names are left alone (the caller decides
  * whether to block sending, matching the CLI's explicit-mention contract).
+ *
+ * `picks` carries the pubkeys the author chose from the autocomplete. They win
+ * over name matching, which is what makes two members sharing a display name
+ * distinguishable: without a pick, "@Sam" is ambiguous and correctly resolves
+ * to nothing, but a picked "@Sam" carries the pubkey the author actually
+ * clicked. Names typed by hand still fall back to member matching.
+ *
+ * A pick keeps applying while its name is still in the text, so deleting a
+ * picked mention and retyping the same name reuses that pubkey. That is the
+ * intended "last pick wins" behaviour; the alternative — silently dropping to
+ * ambiguity on an edit — is harder to explain and easier to get wrong.
  */
 export function resolveMentions(
   text: string,
   members: { pubkey: string; name: string }[],
+  picks?: MentionPicks,
 ): {
   mentionPubkeys: string[];
   unresolved: string[];
@@ -68,8 +86,20 @@ export function resolveMentions(
   const mentionPubkeys: string[] = [];
   const unresolved: string[] = [];
   const seen = new Set<string>();
+  const add = (pubkey: string) => {
+    if (!seen.has(pubkey)) {
+      seen.add(pubkey);
+      mentionPubkeys.push(pubkey);
+    }
+  };
   for (const token of extractMentionTokens(text)) {
-    const matches = byLower.get(token.name.toLowerCase());
+    const lower = token.name.toLowerCase();
+    const picked = picks?.get(lower);
+    if (picked) {
+      add(picked);
+      continue;
+    }
+    const matches = byLower.get(lower);
     if (!matches) {
       unresolved.push(token.name);
       continue;
@@ -78,11 +108,7 @@ export function resolveMentions(
       unresolved.push(token.name);
       continue;
     }
-    const [pubkey] = matches;
-    if (!seen.has(pubkey)) {
-      seen.add(pubkey);
-      mentionPubkeys.push(pubkey);
-    }
+    add(matches[0]);
   }
   return { mentionPubkeys, unresolved };
 }
