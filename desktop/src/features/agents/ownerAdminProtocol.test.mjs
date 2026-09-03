@@ -124,3 +124,64 @@ test("commandTargetsThisMachine: legacy broadcast applies; targeted only on matc
     false,
   );
 });
+
+// ── Phase 2: envVarsPatch + restart ─────────────────────────────────────────
+
+test("parses_update_env_vars_patch", () => {
+  const parsed = parseOwnerAdminCommand(
+    envelope("update", {
+      pubkey: PK,
+      envVarsPatch: { BUZZ_AGENT_THINKING_EFFORT: "high", OLD_KEY: null },
+    }),
+  );
+  assert.deepEqual(parsed.envVarsPatch, {
+    BUZZ_AGENT_THINKING_EFFORT: "high",
+    OLD_KEY: null,
+  });
+});
+
+test("drops_malformed_env_vars_patch_values", () => {
+  // A number (or any non-string-non-null) value anywhere drops the WHOLE
+  // patch field; the command still parses and applies its other fields.
+  const parsed = parseOwnerAdminCommand(
+    envelope("update", {
+      pubkey: PK,
+      name: "N",
+      envVarsPatch: { GOOD: "1", BAD: 7 },
+    }),
+  );
+  assert.equal(parsed.envVarsPatch, undefined);
+  assert.equal(parsed.name, "N");
+  // Non-object patch shapes drop the field too.
+  const arrayPatch = parseOwnerAdminCommand(
+    envelope("update", { pubkey: PK, envVarsPatch: ["a"] }),
+  );
+  assert.equal(arrayPatch.envVarsPatch, undefined);
+  const nullPatch = parseOwnerAdminCommand(
+    envelope("update", { pubkey: PK, envVarsPatch: null }),
+  );
+  assert.equal(nullPatch.envVarsPatch, undefined);
+});
+
+test("parses_restart_action", () => {
+  const parsed = parseOwnerAdminCommand(
+    envelope("restart", { pubkey: PK }, { target: "crichton.local" }),
+  );
+  assert.equal(parsed.action, "restart");
+  assert.equal(parsed.pubkey, PK);
+  assert.equal(parsed.target, "crichton.local");
+  // start/stop keep their exact shape beside the new action.
+  const start = parseOwnerAdminCommand(envelope("start", { pubkey: PK }));
+  assert.deepEqual(
+    { action: start.action, pubkey: start.pubkey },
+    { action: "start", pubkey: PK },
+  );
+});
+
+test("rejects_restart_without_valid_pubkey", () => {
+  assert.equal(
+    parseOwnerAdminCommand(envelope("restart", { pubkey: "zz" })),
+    null,
+  );
+  assert.equal(parseOwnerAdminCommand(envelope("restart", {})), null);
+});

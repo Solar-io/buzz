@@ -15,6 +15,10 @@ import {
   accessWarning,
   type RespondToMode,
 } from "../lib/respondToField";
+import {
+  THINKING_EFFORT_VALUES,
+  type EffortSelection,
+} from "../lib/effortControl";
 
 /**
  * Shared presentational form sections, used by BOTH the create form and the
@@ -52,6 +56,7 @@ export function IdentityFields({
   promptNote,
   avatarUrl,
   onAvatarUrlChange,
+  avatarNote,
 }: {
   name: string;
   onNameChange: (next: string) => void;
@@ -60,9 +65,10 @@ export function IdentityFields({
   /** Definition-linked agents: the prompt is definition-owned (edit mode). */
   promptDisabled?: boolean;
   promptNote?: string;
-  /** Create-only: the update path drops avatarUrl (protocol limit). */
   avatarUrl?: string;
   onAvatarUrlChange?: (next: string) => void;
+  /** Edit mode: explains the keep/clear semantics under the input. */
+  avatarNote?: string;
 }) {
   return (
     <div className="space-y-3">
@@ -102,8 +108,20 @@ export function IdentityFields({
             aria-label="Avatar URL"
             value={avatarUrl ?? ""}
             onChange={(event) => onAvatarUrlChange(event.target.value)}
-            placeholder="https://… (create-only — the desktop dialog edits it later)"
+            placeholder={
+              avatarNote
+                ? "Leave unchanged to keep the current picture"
+                : "https://…"
+            }
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
           />
+          {avatarNote && (
+            <span className="block text-xs text-muted-foreground">
+              {avatarNote}
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -404,6 +422,142 @@ export function EnvFields({
         dirty={dirty}
         editMode={editMode}
       />
+    </div>
+  );
+}
+
+/**
+ * Turn-length timeouts. No read path exists (30177 publishes neither), so the
+ * copy never claims to show the current value: blank keeps whatever the
+ * desktop holds, 0 is the explicit "back to the harness default" sentinel.
+ */
+export function TimeoutFields({
+  idleTimeoutSeconds,
+  onIdleTimeoutChange,
+  maxTurnDurationSeconds,
+  onMaxTurnDurationChange,
+}: {
+  idleTimeoutSeconds: string;
+  onIdleTimeoutChange: (next: string) => void;
+  maxTurnDurationSeconds: string;
+  onMaxTurnDurationChange: (next: string) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <SectionHeading>Turn limits</SectionHeading>
+      <div className="flex gap-2">
+        <div className="min-w-0 flex-1 space-y-1">
+          <span className="block text-sm text-muted-foreground">
+            Idle timeout (seconds)
+          </span>
+          <Input
+            aria-label="Idle timeout in seconds"
+            value={idleTimeoutSeconds}
+            onChange={(event) => onIdleTimeoutChange(event.target.value)}
+            placeholder="Blank keeps the current setting"
+            inputMode="numeric"
+            className="max-w-28"
+          />
+        </div>
+        <div className="min-w-0 flex-1 space-y-1">
+          <span className="block text-sm text-muted-foreground">
+            Max turn duration (seconds)
+          </span>
+          <Input
+            aria-label="Max turn duration in seconds"
+            value={maxTurnDurationSeconds}
+            onChange={(event) => onMaxTurnDurationChange(event.target.value)}
+            placeholder="Blank keeps the current setting"
+            inputMode="numeric"
+            className="max-w-28"
+          />
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        The current values aren't readable here. Blank keeps them; 0 resets one
+        to the harness default (idle 320 s, max turn 3600 s).
+      </p>
+    </div>
+  );
+}
+
+/** Start-on-app-launch: tri-state select (keep / on / off — no read path). */
+export function StartOnLaunchField({
+  value,
+  onChange,
+}: {
+  value: "keep" | "on" | "off";
+  onChange: (next: "keep" | "on" | "off") => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <SectionHeading>Startup</SectionHeading>
+      <label className="block space-y-1">
+        <span className="block text-sm text-muted-foreground">
+          Start when the desktop app launches
+        </span>
+        <select
+          value={value}
+          onChange={(event) =>
+            onChange(event.target.value as "keep" | "on" | "off")
+          }
+          className="w-full max-w-64 rounded-md border border-input bg-card px-3 py-2 text-sm"
+          aria-label="Start when the desktop app launches"
+        >
+          <option value="keep">Leave unchanged</option>
+          <option value="on">Start on launch</option>
+          <option value="off">Don't start on launch</option>
+        </select>
+      </label>
+      <p className="text-xs text-muted-foreground">
+        The current setting isn't readable here — this sets it, it doesn't show
+        it.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Thinking-effort set/clear for buzz-agent harnesses (the
+ * BUZZ_AGENT_THINKING_EFFORT env surface — not the desktop's canonical effort
+ * field, which wins at spawn when set). Blind by necessity: the web cannot
+ * read the stored value, so the control defaults to "leave unchanged" and
+ * never displays a value it cannot know.
+ */
+export function EffortField({
+  value,
+  onChange,
+}: {
+  value: EffortSelection;
+  onChange: (next: EffortSelection) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <SectionHeading>Thinking effort</SectionHeading>
+      <label className="block space-y-1">
+        <span className="block text-sm text-muted-foreground">
+          Effort at next start
+        </span>
+        <select
+          value={value}
+          onChange={(event) => onChange(event.target.value as EffortSelection)}
+          className="w-full max-w-64 rounded-md border border-input bg-card px-3 py-2 text-sm"
+          aria-label="Thinking effort"
+        >
+          <option value="keep">Leave unchanged</option>
+          <option value="clear">Remove setting</option>
+          {THINKING_EFFORT_VALUES.map((effort) => (
+            <option key={effort} value={effort}>
+              {effort}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="text-xs text-muted-foreground">
+        Applies to buzz-agent harnesses at next start. The web can't read the
+        current value — this sets or removes the agent-level setting, it doesn't
+        show it.
+      </p>
     </div>
   );
 }

@@ -54,15 +54,25 @@ export interface UpdateAgentRequest {
   pubkey: string;
   name?: string;
   systemPrompt?: string;
+  /** Absent = keep. Non-empty = set. `""` = clear to the harness default. */
   avatarUrl?: string;
   model?: string;
   provider?: string;
   harness?: HarnessSelection;
   envVars?: Record<string, string>;
+  /**
+   * Merge-patch for the stored env map, applied AFTER any `envVars` replace
+   * in the same command: string = set/overwrite the key, null = delete it
+   * (deleting a missing key is a no-op). The web builder never sends both —
+   * a dirty env table folds the effort key into its replace instead.
+   */
+  envVarsPatch?: Record<string, string | null>;
   parallelism?: number;
   respondTo?: "owner-only" | "anyone" | "allowlist";
   respondToAllowlist?: string[];
+  /** Absent = keep. `>0` = set. `0` = clear to the harness default (320 s). */
   idleTimeoutSeconds?: number;
+  /** Absent = keep. `>0` = set. `0` = clear to the harness default (3600 s). */
   maxTurnDurationSeconds?: number;
   startOnAppLaunch?: boolean;
 }
@@ -81,12 +91,17 @@ export interface StopAgentRequest {
   pubkey: string;
 }
 
+export interface RestartAgentRequest {
+  pubkey: string;
+}
+
 export type AdminCommand =
   | { action: "create"; request: CreateAgentRequest }
   | { action: "update"; request: UpdateAgentRequest }
   | { action: "delete"; request: DeleteAgentRequest }
   | { action: "start"; request: StartAgentRequest }
-  | { action: "stop"; request: StopAgentRequest };
+  | { action: "stop"; request: StopAgentRequest }
+  | { action: "restart"; request: RestartAgentRequest };
 
 /** Envelope carried inside the NIP-44-sealed kind-24201 content. */
 export interface AdminCommandEnvelope {
@@ -173,6 +188,31 @@ function optionalPubkeyList(value: unknown): string[] | undefined {
   }
   const list = value.filter(isText);
   return list.length === value.length ? list : undefined;
+}
+
+/**
+ * envVarsPatch parse (mirror of the desktop's `optionalEnvPatch`): an object
+ * whose every value is a string (set) or null (delete). Any other value
+ * anywhere — or an array — drops the whole field; the command still parses.
+ */
+function optionalEnvPatch(
+  value: unknown,
+): Record<string, string | null> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const out: Record<string, string | null> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry === null) {
+      out[key] = null;
+      continue;
+    }
+    if (!isText(entry)) {
+      return undefined;
+    }
+    out[key] = entry;
+  }
+  return out;
 }
 
 /**
@@ -264,6 +304,7 @@ export function parseAdminCommand(
               ? undefined
               : (parseHarness(request.harness) ?? undefined),
           envVars: optionalStringRecord(request.envVars),
+          envVarsPatch: optionalEnvPatch(request.envVarsPatch),
           parallelism: optionalNumber(request.parallelism),
           respondTo:
             request.respondTo === "owner-only" ||
@@ -300,6 +341,7 @@ export function parseAdminCommand(
       break;
     case "start":
     case "stop":
+    case "restart":
       if (!isText(request.pubkey) || !PUBKEY_RE.test(request.pubkey)) {
         return null;
       }

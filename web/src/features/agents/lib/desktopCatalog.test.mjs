@@ -54,6 +54,7 @@ function content(overrides = {}) {
 test("desktopCatalogFromEvent parses a valid catalog", () => {
   const catalog = desktopCatalogFromEvent(catalogEvent());
   assert.equal(catalog.machine, "crichton.local");
+  assert.equal(catalog.version, 1);
   assert.equal(catalog.harnesses.length, 2);
   assert.deepEqual(catalog.harnesses[0], {
     id: "claude-code-glm",
@@ -65,7 +66,26 @@ test("desktopCatalogFromEvent parses a valid catalog", () => {
   assert.equal(catalog.updatedAt, 1788300000);
 });
 
-test("desktopCatalogFromEvent rejects wrong kind, format, and version", () => {
+test("desktopCatalogFromEvent accepts version 2 and carries it (the skew guard)", () => {
+  // A v2 desktop (Phase-2 capabilities) must still populate an older web's
+  // roster — the version gate is >= 1, and capability gating on >= 2 happens
+  // elsewhere. This is the row that keeps a desktop bump from blanking the
+  // agents screen.
+  const catalog = desktopCatalogFromEvent(
+    catalogEvent({ content: JSON.stringify(content({ version: 2 })) }),
+  );
+  assert.notEqual(catalog, null);
+  assert.equal(catalog.version, 2);
+  assert.equal(catalog.machine, "crichton.local");
+  assert.deepEqual(catalog.agents, [AGENT_A, AGENT_B]);
+  // A future bump is equally fine to parse.
+  const v3 = desktopCatalogFromEvent(
+    catalogEvent({ content: JSON.stringify(content({ version: 3 })) }),
+  );
+  assert.equal(v3.version, 3);
+});
+
+test("desktopCatalogFromEvent rejects wrong kind, format, and bad versions", () => {
   assert.equal(desktopCatalogFromEvent(catalogEvent({ kind: 30177 })), null);
   assert.equal(
     desktopCatalogFromEvent(
@@ -75,7 +95,21 @@ test("desktopCatalogFromEvent rejects wrong kind, format, and version", () => {
   );
   assert.equal(
     desktopCatalogFromEvent(
-      catalogEvent({ content: JSON.stringify(content({ version: 2 })) }),
+      catalogEvent({ content: JSON.stringify(content({ version: 0 })) }),
+    ),
+    null,
+  );
+  assert.equal(
+    desktopCatalogFromEvent(
+      catalogEvent({ content: JSON.stringify(content({ version: "2" })) }),
+    ),
+    null,
+  );
+  assert.equal(
+    desktopCatalogFromEvent(
+      catalogEvent({
+        content: JSON.stringify(content({ version: Number.NaN })),
+      }),
     ),
     null,
   );

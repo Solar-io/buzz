@@ -7,10 +7,10 @@ import { validateAllowlist, type RespondToMode } from "./respondToField.ts";
  * ONLY the fields the desktop applier actually applies on create
  * (useOwnerAdminCommands.ts create case) and only when the user set them:
  * blank optionals stay absent, the env record rides only when the table has
- * content, and parallelism rides only when it parses. No timeout fields —
- * the desktop applier never forwards them (plan §0), so the form never
- * offers them. `spawnAfterCreate` is always true and `startOnAppLaunch`
- * defaults on — both are applied on create, unlike on update.
+ * content, and parallelism rides only when it parses. The two turn timeouts
+ * ride when > 0 (create has nothing to clear — blank and 0 both mean "harness
+ * default", so neither is sent). `spawnAfterCreate` is always true and
+ * `startOnAppLaunch` defaults on — both are applied on create.
  */
 
 export interface CreateAgentFormValue {
@@ -30,6 +30,9 @@ export interface CreateAgentFormValue {
   customArgs: string;
   envRows: EnvRow[];
   startOnAppLaunch: boolean;
+  /** Blank = harness default; positive int = set. */
+  idleTimeoutSeconds: string;
+  maxTurnDurationSeconds: string;
 }
 
 /**
@@ -82,6 +85,26 @@ export function buildCreateCommand(
     parallelism = parsed;
   }
 
+  // Create-side timeouts: >0 sets, blank/0 stay absent (harness default).
+  const timeout = (label: string, text: string) => {
+    const trimmed = text.trim();
+    if (trimmed === "") {
+      return { seconds: undefined };
+    }
+    if (!/^\d+$/.test(trimmed)) {
+      return { error: `${label} must be a whole number of seconds.` };
+    }
+    return { seconds: Number.parseInt(trimmed, 10) };
+  };
+  const idle = timeout("Idle timeout", value.idleTimeoutSeconds);
+  if (idle.error) {
+    return { error: idle.error };
+  }
+  const maxTurn = timeout("Max turn duration", value.maxTurnDurationSeconds);
+  if (maxTurn.error) {
+    return { error: maxTurn.error };
+  }
+
   const allowlistError = validateAllowlist(value.respondToAllowlist);
   if (value.respondTo === "allowlist" && allowlistError !== null) {
     return { error: allowlistError };
@@ -101,6 +124,8 @@ export function buildCreateCommand(
         ...(harness ? { harness } : {}),
         ...(Object.keys(envVars).length > 0 ? { envVars } : {}),
         ...(parallelism !== undefined ? { parallelism } : {}),
+        ...(idle.seconds ? { idleTimeoutSeconds: idle.seconds } : {}),
+        ...(maxTurn.seconds ? { maxTurnDurationSeconds: maxTurn.seconds } : {}),
         respondTo: value.respondTo,
         ...(value.respondTo === "allowlist"
           ? {

@@ -673,36 +673,12 @@ export type RuntimeConfigSurface = {
   effortOptions?: AcpConfigOptionValue[];
 };
 
-export type UpdateManagedAgentInput = {
-  pubkey: string;
-  name?: string;
-  model?: string | null;
-  provider?: string | null;
-  systemPrompt?: string | null;
-  /** Absent = don't touch. Present = replace the env_vars map entirely. */
-  envVars?: Record<string, string>;
-  parallelism?: number;
-  turnTimeoutSeconds?: number;
-  relayUrl?: string;
-  acpCommand?: string;
-  agentCommand?: string;
-  /**
-   * True when `agentCommand` is a runtime/Custom command the user deliberately
-   * picked (the dialog is not inheriting). Preserves a pin that maps to the
-   * linked persona's own runtime instead of letting the backend drop it back to
-   * inherit. Ignored when `agentCommand` is absent or the inherit sentinel.
-   */
-  harnessOverride?: boolean;
-  agentArgs?: string[];
-  mcpCommand?: string;
-  /** Absent = don't touch. Present = set the mode. */
-  respondTo?: RespondToMode;
-  /**
-   * Absent = don't touch. Present = replace the allowlist with this list
-   * (validated & normalized server-side).
-   */
-  respondToAllowlist?: string[];
-};
+/**
+ * Extracted to `managedAgentInputs.ts` (file-size cap; this file is over the
+ * 1000-line ratchet and frozen). Re-exported so every existing
+ * `from "./types"` / `"@/shared/api/types"` import keeps working.
+ */
+export type { UpdateManagedAgentInput } from "./managedAgentInputs";
 export type AgentPersona = {
   id: string;
   displayName: string;

@@ -16,15 +16,19 @@ import {
   type EditAgentFormValue,
 } from "../lib/editAgentRequest";
 import { targetForAgent, type RosterRow } from "../lib/roster";
+import { controlsEnabled } from "../lib/adminCommandCapabilities";
 import type { DesktopCatalog } from "../lib/desktopCatalog";
 import type { useAdminCommands } from "./AgentAdminPanel";
 import {
   AccessFields,
+  EffortField,
   EnvFields,
   IdentityFields,
   ModelProviderFields,
   RuntimeFields,
   SectionHeading,
+  StartOnLaunchField,
+  TimeoutFields,
 } from "./AgentFormSections";
 import { AgentWorkingDot } from "./AgentRosterSidebar";
 
@@ -65,8 +69,11 @@ export function AgentConfigPanel({
   onDeleted: () => void;
 }) {
   const prefill = useMemo(
-    () => prefillEditForm(row.entry, row.persona),
-    [row.entry, row.persona],
+    // The kind-0 profile picture is the only avatar the web can see; it is
+    // also exactly what an avatar edit republishes, so it is the keep/clear
+    // baseline.
+    () => prefillEditForm(row.entry, row.persona, profile?.avatar ?? null),
+    [row.entry, row.persona, profile?.avatar],
   );
   const [value, setValue] = useState<EditAgentFormValue>(prefill);
   const [busy, setBusy] = useState(false);
@@ -93,6 +100,10 @@ export function AgentConfigPanel({
   }, [ack, row.name]);
 
   const target = targetForAgent(row.machines);
+  // Phase-2 controls render only when EVERY claiming desktop's catalog is
+  // >= v2 — an older desktop parses the new fields but drops them at the
+  // applier, which is exactly the half-applied state the gate prevents.
+  const phase2 = controlsEnabled(catalogs, row.machines);
   const pendingForAgent = admin.pending.filter((entry) =>
     entry.summary.includes(row.name),
   );
@@ -115,10 +126,10 @@ export function AgentConfigPanel({
     }
   };
 
-  const lifecycle = (action: "start" | "stop") =>
+  const lifecycle = (action: "start" | "stop" | "restart") =>
     void admin.send(
       { action, request: { pubkey: row.pubkey } },
-      `${action === "start" ? "Start" : "Stop"} ${row.name}`,
+      `${action === "start" ? "Start" : action === "stop" ? "Stop" : "Restart"} ${row.name}`,
       target,
     );
 
@@ -149,6 +160,15 @@ export function AgentConfigPanel({
         onSystemPromptChange={(next) => set("systemPrompt", next)}
         promptDisabled={row.personaLinked}
         promptNote={row.personaLinked ? LINKED_QUAD_NOTE : undefined}
+        avatarUrl={value.avatarUrl}
+        onAvatarUrlChange={
+          phase2 ? (next) => set("avatarUrl", next) : undefined
+        }
+        avatarNote={
+          phase2
+            ? "Leave unchanged to keep the current picture; clearing the field resets it to the harness default."
+            : undefined
+        }
       />
       <ModelProviderFields
         model={value.model}
@@ -171,6 +191,22 @@ export function AgentConfigPanel({
         parallelism={value.parallelism}
         onParallelismChange={(next) => set("parallelism", next)}
       />
+      {phase2 && (
+        <TimeoutFields
+          idleTimeoutSeconds={value.idleTimeoutSeconds}
+          onIdleTimeoutChange={(next) => set("idleTimeoutSeconds", next)}
+          maxTurnDurationSeconds={value.maxTurnDurationSeconds}
+          onMaxTurnDurationChange={(next) =>
+            set("maxTurnDurationSeconds", next)
+          }
+        />
+      )}
+      {phase2 && (
+        <StartOnLaunchField
+          value={value.startOnAppLaunch}
+          onChange={(next) => set("startOnAppLaunch", next)}
+        />
+      )}
       <AccessFields
         respondTo={value.respondTo}
         onRespondToChange={(next) => set("respondTo", next)}
@@ -189,19 +225,29 @@ export function AgentConfigPanel({
         dirty={value.envDirty}
         editMode
       />
+      {phase2 && (
+        <EffortField
+          value={value.effort}
+          onChange={(next) => set("effort", next)}
+        />
+      )}
       <LiveControlSection session={session} agentPubkey={row.pubkey} />
       <ActionsRow
         busy={busy}
         pendingCount={pendingForAgent.length}
         confirmingDelete={confirmingDelete}
         setConfirmingDelete={setConfirmingDelete}
+        restartEnabled={phase2}
         onSave={() => void submit()}
         onLifecycle={lifecycle}
         onDelete={confirmDelete}
       />
       <p className="text-xs text-muted-foreground">
-        Only changed fields are sent. Avatar and turn timeouts are create-time
-        or desktop-dialog fields (protocol limit) and are not editable here.
+        Only changed fields are sent. Fields marked "not readable here" have no
+        relay read path — the web sets them and the desktop applies them on
+        save.
+        {!phase2 &&
+          " Editing the avatar, turn limits, startup, effort, and restarting needs a desktop update (catalog v2)."}
       </p>
     </div>
   );
@@ -365,6 +411,7 @@ function ActionsRow({
   pendingCount,
   confirmingDelete,
   setConfirmingDelete,
+  restartEnabled,
   onSave,
   onLifecycle,
   onDelete,
@@ -373,8 +420,10 @@ function ActionsRow({
   pendingCount: number;
   confirmingDelete: boolean;
   setConfirmingDelete: (next: boolean) => void;
+  /** Catalog v2 gate: restart composes the Phase-2 stop-then-start applier. */
+  restartEnabled: boolean;
   onSave: () => void;
-  onLifecycle: (action: "start" | "stop") => void;
+  onLifecycle: (action: "start" | "stop" | "restart") => void;
   onDelete: () => void;
 }) {
   const lifecycleBusy = pendingCount > 0;
@@ -401,6 +450,16 @@ function ActionsRow({
         >
           Stop
         </Button>
+        {restartEnabled && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={lifecycleBusy}
+            onClick={() => onLifecycle("restart")}
+          >
+            Restart
+          </Button>
+        )}
         {confirmingDelete ? (
           <>
             <Button size="sm" variant="destructive" onClick={onDelete}>

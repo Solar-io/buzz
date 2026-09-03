@@ -17,6 +17,8 @@ function form(overrides = {}) {
     customArgs: "",
     envRows: [],
     startOnAppLaunch: true,
+    idleTimeoutSeconds: "",
+    maxTurnDurationSeconds: "",
     ...overrides,
   };
 }
@@ -173,4 +175,41 @@ test("parallelism: blank omits the key, invalid values error, valid sends a numb
     assert.fail(valid.error);
   }
   assert.equal(valid.command.request.parallelism, 4);
+});
+
+test("timeouts: ride when >0, omitted when blank or 0, error on garbage", () => {
+  const blank = buildCreateCommand(form());
+  if ("error" in blank) {
+    assert.fail(blank.error);
+  }
+  assert.equal("idleTimeoutSeconds" in blank.command.request, false);
+  assert.equal("maxTurnDurationSeconds" in blank.command.request, false);
+
+  // 0 means harness default on create — nothing to clear, so nothing rides.
+  const zero = buildCreateCommand(
+    form({ idleTimeoutSeconds: "0", maxTurnDurationSeconds: "0" }),
+  );
+  if ("error" in zero) {
+    assert.fail(zero.error);
+  }
+  assert.equal("idleTimeoutSeconds" in zero.command.request, false);
+  assert.equal("maxTurnDurationSeconds" in zero.command.request, false);
+
+  const set = buildCreateCommand(
+    form({ idleTimeoutSeconds: "600", maxTurnDurationSeconds: "3600" }),
+  );
+  if ("error" in set) {
+    assert.fail(set.error);
+  }
+  assert.equal(set.command.request.idleTimeoutSeconds, 600);
+  assert.equal(set.command.request.maxTurnDurationSeconds, 3600);
+
+  assert.equal(
+    buildCreateCommand(form({ idleTimeoutSeconds: "soon" })).error,
+    "Idle timeout must be a whole number of seconds.",
+  );
+  assert.equal(
+    buildCreateCommand(form({ maxTurnDurationSeconds: "-5" })).error,
+    "Max turn duration must be a whole number of seconds.",
+  );
 });
