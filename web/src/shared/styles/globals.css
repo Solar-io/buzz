@@ -197,6 +197,13 @@
     --sidebar-foreground: 234 16.02% 35.49%;
     --sidebar-primary: 266 85.05% 58.04%;
     --sidebar-primary-foreground: 220 23.08% 94.9%;
+    /* Selected sidebar rows. The dark block overrides these with a specific
+       purple + black text (see the note there); light had no definition at
+       all, so every consumer of --sidebar-active resolved to nothing and
+       selection lost its fill whenever the light theme was active. Default to
+       the primary pair, which is how the desktop defines them. */
+    --sidebar-active: var(--sidebar-primary);
+    --sidebar-active-foreground: var(--sidebar-primary-foreground);
     --sidebar-accent: 220 23.08% 94.9%;
     --sidebar-accent-foreground: 234 16.02% 35.49%;
     --sidebar-border: 225 13.56% 76.86%;
@@ -319,13 +326,23 @@
 
 /* Permalink arrival flash: one-shot highlight when a ?m= target renders. */
 
-/* DM avatar identicon + group avatar — desktop source values
-   (SidebarSection.tsx: bg-sidebar-accent/80 text-sidebar-foreground,
-   text-2xs = 11px at 16px type rem; dark-theme --sidebar-accent is
-   hsl(232.4 23.4% 18.43%), --sidebar-foreground hsl(227 68.25% 87.65%)). */
+/* DM avatar identicon + group avatar — desktop source is
+   `bg-sidebar-accent/80 text-sidebar-foreground text-2xs`
+   (SidebarSection.tsx).
+
+   These were previously frozen literals: someone resolved those two tokens by
+   hand against the DARK palette and pasted the results, so the identicon
+   rendered dark-on-dark inside an otherwise light UI whenever the light theme
+   was active — and it stopped tracking the theme in both. Use the tokens the
+   desktop actually names.
+
+   TODO(typography): font-size is still a literal. The desktop's `text-2xs`
+   (0.6875rem against the virtual type rem = 11px) has no web equivalent until
+   the typography scale is ported; swap this for the token then, so it follows
+   the font-size preference and Cmd +/- zoom instead of being frozen. */
 .dm-identicon {
-  background-color: hsl(232.4 23.4% 18.43% / 0.8);
-  color: hsl(227 68.25% 87.65%);
+  background-color: hsl(var(--sidebar-accent) / 0.8);
+  color: hsl(var(--sidebar-foreground));
   font-size: 11px;
 }
 
@@ -338,8 +355,12 @@
   height: 15px;
   padding: 0 6.5px;
   border-radius: 999px;
-  background: rgba(154, 62, 246, 0.09);
-  color: #9a3ef6;
+  /* Was rgba(154, 62, 246, 0.09) / #9a3ef6 — the accent purple frozen as a
+     literal, so the pill ignored the theme and will ignore the user's accent
+     once that layer lands. --sidebar-primary is the token those literals were
+     hand-resolved from. */
+  background: hsl(var(--sidebar-primary) / 0.09);
+  color: hsl(var(--sidebar-primary));
   font-size: 11px;
   font-weight: 500;
   line-height: 1;
@@ -348,8 +369,10 @@
 }
 
 .dm-timer-pill-selected {
-  background: rgba(0, 0, 0, 0.2);
-  color: #07030b;
+  /* On a selected row the pill sits on the active fill, so it takes the
+     active foreground rather than a frozen near-black. */
+  background: rgb(0 0 0 / 0.2);
+  color: hsl(var(--sidebar-active-foreground));
 }
 
 @keyframes dm-timer-pulse {
