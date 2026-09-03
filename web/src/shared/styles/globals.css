@@ -186,6 +186,16 @@
 
 /* Permalink arrival flash: one-shot highlight when a ?m= target renders. */
 
+/* DM avatar identicon + group avatar — desktop source values
+   (SidebarSection.tsx: bg-sidebar-accent/80 text-sidebar-foreground,
+   text-2xs = 11px at 16px type rem; dark-theme --sidebar-accent is
+   hsl(232.4 23.4% 18.43%), --sidebar-foreground hsl(227 68.25% 87.65%)). */
+.dm-identicon {
+  background-color: hsl(232.4 23.4% 18.43% / 0.8);
+  color: hsl(227 68.25% 87.65%);
+  font-size: 11px;
+}
+
 /* DM list timer pill — dm-list-spec.md §6: whole-element pulse 0.8 → 1.0 →
    0.8, each pill's phase independent (negative animation-delay keyed to its
    own countdown's elapsed seconds). Selected row inverts per spec. */

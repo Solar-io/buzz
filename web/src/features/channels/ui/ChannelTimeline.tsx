@@ -165,8 +165,12 @@ export function AuthorAvatar({
   }
   return (
     <div
-      className={`flex items-center justify-center rounded-full font-semibold text-white ${box}`}
-      style={{ backgroundColor: `hsl(${pubkeyHue(pubkey)}, 45%, 42%)` }}
+      className={`flex items-center justify-center rounded-full font-semibold text-white ${box} ${
+        size === "dm" ? "dm-identicon font-semibold" : ""
+      }`}
+      style={
+        size === "dm" ? undefined : { backgroundColor: `hsl(${pubkeyHue(pubkey)}, 45%, 42%)` }
+      }
     >
       {label.slice(0, 2)}
     </div>

@@ -1389,10 +1389,11 @@ function shortDate(unixSeconds: number): string {
  */
 function GroupAvatar({ count, dm }: { count: number; dm?: boolean }) {
   if (dm) {
-    // dm-list-spec.md §9: 24px circle, #191926 fill, #C5CFF2 numeral.
+    // Desktop source (SidebarSection.tsx channel-dm-count): 24px circle,
+    // sidebar-accent/80 fill, 11px semibold foreground numeral.
     return (
-      <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[#191926] text-xs font-bold text-[#C5CFF2]">
-        {count}
+      <span className="dm-identicon flex size-6 shrink-0 items-center justify-center rounded-full font-semibold leading-none">
+        <span className="translate-x-px leading-none">{count}</span>
       </span>
     );
   }
@@ -1560,7 +1561,7 @@ function DmNavRow({
           <span
             title={presence.status}
             className={cn(
-              "absolute bottom-[0.5px] right-[0.5px] size-1.5 rounded-full border-[1.5px] border-sidebar",
+              "absolute -bottom-[1.2px] -right-[1.2px] size-1.5 rounded-full border-[1.8px] border-sidebar",
               presenceDotClass(presence.status),
             )}
           />
@@ -1569,12 +1570,14 @@ function DmNavRow({
       <span
         className={cn(
           "min-w-0 flex-1 truncate text-sm",
-          // §4: read #A0A8C7 (500), unread #C4CFF2 (600), selected #000000.
+          // Desktop source (SidebarSection row): read = normal weight at 80%
+          // foreground; unread = bold at full foreground; active = normal
+          // black (data-[active=true]:font-normal).
           selected
-            ? "font-medium text-black"
+            ? "font-normal text-black"
             : unread
-              ? "font-semibold text-[#C4CFF2]"
-              : "font-medium text-[#A0A8C7]",
+              ? "font-bold text-sidebar-foreground"
+              : "font-normal text-sidebar-foreground/80",
         )}
       >
         {name}
@@ -1595,8 +1598,12 @@ function DmNavRow({
               §6: the pill's right edge stays fixed whether or not a badge
               is present — the 20px slot always reserves it. */}
           {unread ? (
-            <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-[#9A3EF6] text-[11px] font-bold leading-none text-black">
-              {unreadCount != null && unreadCount > 0 ? unreadCount : ""}
+            <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-[#9A3EF6] px-1 text-[11px] font-semibold leading-none tabular-nums text-black">
+              {unreadCount != null && unreadCount > 0
+                ? unreadCount > 99
+                  ? "99+"
+                  : unreadCount
+                : ""}
             </span>
           ) : (
             <span className="size-5 shrink-0" aria-hidden />
