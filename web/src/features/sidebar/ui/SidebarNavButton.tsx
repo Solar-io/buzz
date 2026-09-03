@@ -1,6 +1,18 @@
 import { BellOff } from "lucide-react";
 import type { ReactNode } from "react";
-import { ContextMenu, type ContextMenuItem } from "@/shared/ui/ContextMenu";
+import type { SidebarMenuItem } from "@/features/sidebar/lib/sidebarMenuItem";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/shared/ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/shared/ui/dropdown-menu";
 import { useDrawerClose } from "@/shared/layout/AppShell";
 import { cn } from "@/shared/lib/cn";
 
@@ -20,8 +32,8 @@ export interface SidebarNavButtonProps {
    */
   muted?: boolean;
   onSelect: () => void;
-  /** Right-click / ⋯ context menu items, when provided. */
-  menuItems?: ContextMenuItem[];
+  /** Right-click / ⋯ menu items, when provided. */
+  menuItems?: SidebarMenuItem[];
 }
 
 /**
@@ -40,7 +52,7 @@ export function SidebarNavButton({
   menuItems,
 }: SidebarNavButtonProps) {
   const closeDrawer = useDrawerClose();
-  const row = (open: (x: number, y: number) => void) => (
+  const row = (
     <button
       type="button"
       className={cn(
@@ -56,14 +68,6 @@ export function SidebarNavButton({
         onSelect();
         closeDrawer();
       }}
-      onContextMenu={
-        menuItems
-          ? (event) => {
-              event.preventDefault();
-              open(event.clientX, event.clientY);
-            }
-          : undefined
-      }
     >
       {icon}
       <span
@@ -93,37 +97,65 @@ export function SidebarNavButton({
         />
       )}
       {menuItems && (
-        // A real <button> cannot nest inside the row button — the span keeps
-        // keyboard access via tabIndex + onKeyDown below.
-        // biome-ignore lint/a11y/useSemanticElements: nested interactive elements cannot both be buttons
-        <span
-          role="button"
-          tabIndex={0}
-          aria-label={`Options for ${label}`}
-          className={cn(
-            "hidden shrink-0 rounded p-0.5 text-xs text-sidebar-foreground/60 hover:bg-white/10 group-hover/row:block",
-            !unread && !muted && "ml-auto",
-          )}
-          onClick={(event) => {
-            event.stopPropagation();
-            const rect = event.currentTarget.getBoundingClientRect();
-            open(rect.left, rect.bottom + 4);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.stopPropagation();
-              const rect = event.currentTarget.getBoundingClientRect();
-              open(rect.left, rect.bottom + 4);
-            }
-          }}
-        >
-          ⋯
-        </span>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            {/* A real <button> cannot nest inside the row button; the span is
+                the trigger and Radix gives it keyboard handling. */}
+            {/* biome-ignore lint/a11y/useSemanticElements: nested interactive elements cannot both be buttons */}
+            {/* biome-ignore lint/a11y/useKeyWithClickEvents: DropdownMenuTrigger asChild supplies onKeyDown — verified in the installed @radix-ui/react-dropdown-menu, which composes Enter / Space / ArrowDown onto this child */}
+            <span
+              role="button"
+              tabIndex={0}
+              aria-label={`Options for ${label}`}
+              className={cn(
+                "hidden shrink-0 rounded p-0.5 text-xs text-sidebar-foreground/60 hover:bg-white/10 group-hover/row:block",
+                !unread && !muted && "ml-auto",
+              )}
+              onClick={(event) => event.stopPropagation()}
+            >
+              ⋯
+            </span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            {menuItems.map((item) => (
+              <DropdownMenuItem
+                key={item.label}
+                onSelect={item.onSelect}
+                className={
+                  item.danger
+                    ? "text-destructive focus:text-destructive"
+                    : undefined
+                }
+              >
+                {item.label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
     </button>
   );
-  if (menuItems) {
-    return <ContextMenu items={menuItems}>{row}</ContextMenu>;
+  if (!menuItems) {
+    return row;
   }
-  return row(() => {});
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
+      <ContextMenuContent>
+        {menuItems.map((item) => (
+          <ContextMenuItem
+            key={item.label}
+            onSelect={item.onSelect}
+            className={
+              item.danger
+                ? "text-destructive focus:text-destructive"
+                : undefined
+            }
+          >
+            {item.label}
+          </ContextMenuItem>
+        ))}
+      </ContextMenuContent>
+    </ContextMenu>
+  );
 }

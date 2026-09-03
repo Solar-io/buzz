@@ -17,7 +17,7 @@ import { DmNavRow } from "@/features/sidebar/ui/DmNavRow";
 import { SectionHeader } from "@/features/sidebar/ui/SectionHeader";
 import { SidebarNavButton } from "@/features/sidebar/ui/SidebarNavButton";
 import { useDrawerClose } from "@/shared/layout/AppShell";
-import type { ContextMenuItem } from "@/shared/ui/ContextMenu";
+import type { SidebarMenuItem } from "@/features/sidebar/lib/sidebarMenuItem";
 import { cn } from "@/shared/lib/cn";
 
 /** The sidebar's sections, already filtered and sorted by the shell. */
@@ -75,7 +75,7 @@ export interface ChannelSidebarActions {
   /** Open a channel or DM in the main pane. */
   onSelectChannel: (channelId: string) => void;
   /** Right-click / ⋯ menu for a channel row. */
-  channelMenuItems: (channel: ChannelSummary) => ContextMenuItem[];
+  channelMenuItems: (channel: ChannelSummary) => SidebarMenuItem[];
   /** A new channel landed at the relay. */
   onChannelCreated: (channelId: string) => void;
   /** A DM was opened (or re-opened, which un-hides it). */

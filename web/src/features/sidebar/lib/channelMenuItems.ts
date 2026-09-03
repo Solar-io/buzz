@@ -19,7 +19,7 @@ import {
 } from "@/features/channels/lib/readState.ts";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import type { RelaySession } from "@/shared/api/relay-session";
-import type { ContextMenuItem } from "@/shared/ui/ContextMenu";
+import type { SidebarMenuItem } from "@/features/sidebar/lib/sidebarMenuItem";
 
 /** Everything {@link channelMenuItems} needs from the channel shell. */
 export interface ChannelMenuDeps {
@@ -50,7 +50,7 @@ export function channelMenuItems(
     selectedId,
     onCloseChannel,
   }: ChannelMenuDeps,
-): ContextMenuItem[] {
+): SidebarMenuItem[] {
   return [
     {
       label: channelPrefs.starred.includes(channel.id)

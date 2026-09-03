@@ -15,7 +15,13 @@ import { useUnreadCount } from "@/features/sidebar/lib/useUnreadCount.ts";
 import { DmTimerPill } from "@/features/sidebar/ui/DmTimerPill";
 import { GroupAvatar } from "@/features/sidebar/ui/GroupAvatar";
 import { useDrawerClose } from "@/shared/layout/AppShell";
-import { ContextMenu, type ContextMenuItem } from "@/shared/ui/ContextMenu";
+import type { SidebarMenuItem } from "@/features/sidebar/lib/sidebarMenuItem";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/shared/ui/context-menu";
 import { cn } from "@/shared/lib/cn";
 
 /** Props for {@link DmNavRow}. */
@@ -32,7 +38,7 @@ export interface DmNavRowProps {
   presence?: PresenceEntry;
   onSelect: () => void;
   /** Right-click menu items (remove from list), when provided. */
-  menuItems?: ContextMenuItem[];
+  menuItems?: SidebarMenuItem[];
 }
 
 /**
@@ -66,7 +72,7 @@ export function DmNavRow({
   const active = agentRecentlyActive(rowFrames, now);
   useTick(active);
   const unreadCount = useUnreadCount(channelId, lastSeenAt, selfPubkey);
-  const row = (open: (x: number, y: number) => void) => (
+  const row = (
     <button
       type="button"
       className={cn(
@@ -82,14 +88,6 @@ export function DmNavRow({
         onSelect();
         closeDrawer();
       }}
-      onContextMenu={
-        menuItems
-          ? (event) => {
-              event.preventDefault();
-              open(event.clientX, event.clientY);
-            }
-          : undefined
-      }
     >
       <span className="relative shrink-0">
         {others.length > 1 ? (
@@ -158,8 +156,27 @@ export function DmNavRow({
       )}
     </button>
   );
-  if (menuItems) {
-    return <ContextMenu items={menuItems}>{row}</ContextMenu>;
+  if (!menuItems) {
+    return row;
   }
-  return row(() => {});
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
+      <ContextMenuContent>
+        {menuItems.map((item) => (
+          <ContextMenuItem
+            key={item.label}
+            onSelect={item.onSelect}
+            className={
+              item.danger
+                ? "text-destructive focus:text-destructive"
+                : undefined
+            }
+          >
+            {item.label}
+          </ContextMenuItem>
+        ))}
+      </ContextMenuContent>
+    </ContextMenu>
+  );
 }
