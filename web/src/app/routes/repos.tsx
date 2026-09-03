@@ -53,6 +53,7 @@ import {
 } from "@/features/channels/hooks";
 import { canonicalChannelName } from "@/features/channels/lib/channelAdmin.ts";
 import { shortKey } from "@/features/dms/lib/dmNaming.ts";
+
 import { ContextMenu, type ContextMenuItem } from "@/shared/ui/ContextMenu";
 import { replyCounts } from "@/features/channels/lib/messageBuffer.ts";
 import {
@@ -93,7 +94,6 @@ import { useTick, WorkingBadge } from "@/features/agents/ui/WorkingBadge";
 import { AgentActivityPanel } from "@/features/agents/ui/AgentActivityPanel";
 import { useDms } from "@/features/dms/hooks";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
-import type { DmLastMessage } from "@/features/dms/lib/dmActivity.ts";
 import { NewDmDialog } from "@/features/dms/ui/NewDmDialog";
 import {
   hideDm,
@@ -830,7 +830,7 @@ function ChannelBrowser() {
           </p>
         )}
         {visibleDms.length > 0 && (
-          <ul className="space-y-0.5">
+          <ul className="space-y-1">
             {visibleDms.map(({ channel, lastMessage }) => (
               <li key={channel.id}>
                 <DmNavRow
@@ -843,7 +843,6 @@ function ChannelBrowser() {
                   participants={channel.participantPubkeys}
                   selfPubkey={selfPubkey}
                   profiles={dmProfiles}
-                  lastMessage={lastMessage}
                   presence={channel.participantPubkeys
                     .filter((pk) => pk !== selfPubkey)
                     .map((pk) => presence.get(pk))
@@ -1361,30 +1360,29 @@ function shortDate(unixSeconds: number): string {
   });
 }
 
-/** Sidebar timestamp for DM rows: time today, else short date. */
-function shortStamp(unixSeconds: number): string {
-  const date = new Date(unixSeconds * 1000);
-  const now = new Date();
-  const sameDay =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate();
-  return sameDay
-    ? date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-    : date.toLocaleDateString([], { month: "short", day: "numeric" });
-}
 
 /**
  * DM sidebar row in the desktop client's shape: avatar, display name, and a
  * one-line preview of the newest sampled message with its stamp.
  */
+/**
+ * Group-DM avatar placeholder (mock 2026-09-02): dark rounded square with
+ * the member count, matching AuthorAvatar's md box so rows stay aligned.
+ */
+function GroupAvatar({ count }: { count: number }) {
+  return (
+    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-muted text-sm font-bold text-foreground">
+      {count}
+    </span>
+  );
+}
+
 function DmNavRow({
   selected,
   unread,
   participants,
   selfPubkey,
   profiles,
-  lastMessage,
   presence,
   onSelect,
   menuItems,
@@ -1394,7 +1392,6 @@ function DmNavRow({
   participants: string[];
   selfPubkey: string | null;
   profiles: Map<string, Profile>;
-  lastMessage: DmLastMessage | null;
   /** Latest presence entry for the row's avatar pubkey, when subscribed. */
   presence?: PresenceEntry;
   onSelect: () => void;
@@ -1418,10 +1415,12 @@ function DmNavRow({
     <button
       type="button"
       className={cn(
-        "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors",
+        // Avatar-first, name-only rows (Sam 2026-09-02 DM mock): taller
+        // row, pill-shaped selection, no excerpt/timestamp clutter.
+        "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors",
         "hover:bg-white/5",
         selected &&
-          "bg-[hsl(var(--sidebar-active))] text-[hsl(var(--sidebar-active-foreground))]",
+          "rounded-full bg-[hsl(var(--sidebar-active))] px-4 py-2.5 text-[hsl(var(--sidebar-active-foreground))]",
       )}
       onClick={() => {
         onSelect();
@@ -1437,43 +1436,41 @@ function DmNavRow({
       }
     >
       <span className="relative shrink-0">
-        <AuthorAvatar
-          pubkey={avatarPubkey}
-          label={avatarLabel}
-          picture={profiles.get(avatarPubkey)?.avatar}
-          size="md"
-        />
-        {active ? (
-          <span className="absolute -right-0.5 -bottom-0.5 flex h-3 w-3">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-            <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500" />
-          </span>
+        {others.length > 1 ? (
+          <GroupAvatar count={others.length} />
         ) : (
-          presence && (
-            <span
-              title={presence.status}
-              className={cn(
-                "absolute -right-0.5 -bottom-0.5 h-3 w-3 rounded-full border border-sidebar",
-                presenceDotClass(presence.status),
-              )}
-            />
-          )
+          <AuthorAvatar
+            pubkey={avatarPubkey}
+            label={avatarLabel}
+            picture={profiles.get(avatarPubkey)?.avatar}
+            size="md"
+          />
         )}
+        {others.length <= 1 &&
+          (active ? (
+            <span className="absolute -right-0.5 -bottom-0.5 flex h-3 w-3">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+              <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500" />
+            </span>
+          ) : (
+            presence && (
+              <span
+                title={presence.status}
+                className={cn(
+                  "absolute -right-0.5 -bottom-0.5 h-3 w-3 rounded-full border border-sidebar",
+                  presenceDotClass(presence.status),
+                )}
+              />
+            )
+          ))}
       </span>
-      <span className="min-w-0 flex-1">
-        <span
-          className={cn(
-            "block truncate text-base",
-            selected ? "font-medium text-foreground" : "text-foreground",
-          )}
-        >
-          {name}
-        </span>
-        {lastMessage && (
-          <span className="block truncate text-xs text-muted-foreground">
-            {lastMessage.excerpt || "…"}
-          </span>
+      <span
+        className={cn(
+          "min-w-0 flex-1 truncate text-base",
+          unread && !active && "font-bold",
         )}
+      >
+        {name}
       </span>
       {active && (
         <WorkingBadge
@@ -1482,12 +1479,7 @@ function DmNavRow({
         />
       )}
       {unread && !active && (
-        <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
-      )}
-      {lastMessage && !active && (
-        <span className="shrink-0 text-[11px] text-muted-foreground/70">
-          {shortStamp(lastMessage.created_at)}
-        </span>
+        <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-accent ring-2 ring-sidebar" />
       )}
     </button>
   );
