@@ -1,14 +1,11 @@
 import * as React from "react";
 
+import { createManagedAgent, updateManagedAgent } from "@/shared/api/tauri";
 import {
-  createManagedAgent,
   deleteManagedAgent,
-  unregisterManagedAgent,
-  updateManagedAgent,
-} from "@/shared/api/tauri";
-import {
   startManagedAgent,
   stopManagedAgent,
+  unregisterManagedAgent,
 } from "@/shared/api/tauriManagedAgents";
 import { relayClient } from "@/shared/api/relayClient";
 import {

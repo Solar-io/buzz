@@ -23,7 +23,6 @@ import {
 } from "@/shared/lib/useDocumentVisible";
 import {
   createManagedAgent,
-  deleteManagedAgent,
   deleteCustomHarness,
   discoverBackendProviders,
   discoverGitBashPrerequisite,
@@ -44,6 +43,7 @@ import {
 import type { HarnessDefinitionInput } from "@/shared/api/tauri";
 import { discoverAcpRuntimes } from "@/shared/api/tauriAcpDiscovery";
 import {
+  deleteManagedAgent,
   setManagedAgentAutoRestart,
   setManagedAgentStartOnAppLaunch,
   startManagedAgent,

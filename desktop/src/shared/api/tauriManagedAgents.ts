@@ -122,3 +122,30 @@ export async function reconcileManagedAgentRuntimes(
 ): Promise<ManagedAgentRuntimeStatus[]> {
   return invokeTauri("reconcile_managed_agent_runtimes", { communities });
 }
+
+/**
+ * Delete a managed agent: stops any process, removes the local record, and
+ * WIPES the keyring key (after a 0o600 backup export — backend invariant).
+ * The backend refuses a running agent unless forceRunningDelete is explicit.
+ */
+export async function deleteManagedAgent(
+  pubkey: string,
+  forceRemoteDelete?: boolean,
+  forceRunningDelete?: boolean,
+): Promise<void> {
+  await invokeTauri("delete_managed_agent", {
+    pubkey,
+    forceRemoteDelete: forceRemoteDelete ?? null,
+    forceRunningDelete: forceRunningDelete ?? null,
+  });
+}
+
+/**
+ * Remove the RELAY registration for an agent (kind-5 tombstone + NIP-IA
+ * archive) without stopping a process, removing a local record, or touching
+ * the keyring. Refuses agents this desktop owns locally — those must go
+ * through delete (the reconciler would otherwise re-publish the 30177).
+ */
+export async function unregisterManagedAgent(pubkey: string): Promise<void> {
+  await invokeTauri("unregister_managed_agent", { pubkey });
+}
