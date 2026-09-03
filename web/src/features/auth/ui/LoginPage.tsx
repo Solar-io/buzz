@@ -93,25 +93,34 @@ export function LoginPage() {
   // Pairing-link landing: a camera-scanned QR opens this page with the key in
   // the URL fragment (fragments never reach a server). Consume it once —
   // enrolling immediately — then scrub the address bar so the key does not
-  // linger in history or get copy-pasted around accidentally.
+  // linger in history or get copy-pasted around accidentally. Also listens
+  // for hashchange so pasting the link into an already-open login tab works
+  // (a same-document hash navigation does not reload the page).
   useEffect(() => {
-    const hash = window.location.hash;
-    if (!hash.toLowerCase().includes("nsec=")) {
-      return;
-    }
-    const parsed = parseSecretKeyInput(
-      `${window.location.origin}${window.location.pathname}${hash}`,
-    );
-    window.history.replaceState(
-      null,
-      "",
-      window.location.pathname + window.location.search,
-    );
-    if (parsed.ok) {
-      void enrollFromQr(parsed);
-    } else {
-      toast.error(parsed.error);
-    }
+    const consumePairingHash = () => {
+      const hash = window.location.hash;
+      if (!hash.toLowerCase().includes("nsec=")) {
+        return;
+      }
+      const parsed = parseSecretKeyInput(
+        `${window.location.origin}${window.location.pathname}${hash}`,
+      );
+      window.history.replaceState(
+        null,
+        "",
+        window.location.pathname + window.location.search,
+      );
+      if (parsed.ok) {
+        void enrollFromQr(parsed);
+      } else {
+        toast.error(parsed.error);
+      }
+    };
+    consumePairingHash();
+    window.addEventListener("hashchange", consumePairingHash);
+    return () => {
+      window.removeEventListener("hashchange", consumePairingHash);
+    };
   }, [enrollFromQr]);
 
   return (
