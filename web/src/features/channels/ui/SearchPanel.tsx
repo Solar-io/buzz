@@ -163,7 +163,7 @@ export function SearchPanel({
             </button>
           </div>
         </div>
-        <div className="max-h-[50vh] overflow-y-auto">
+        <div className="buzz-channel-activity-scrollbar max-h-[50vh] overflow-y-auto">
           {searching && hits.length === 0 && (
             <p className="px-4 py-3 text-sm text-muted-foreground">
               Searching…

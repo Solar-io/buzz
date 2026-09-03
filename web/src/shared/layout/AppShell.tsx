@@ -170,7 +170,9 @@ export function AppShell({
             )}
           </span>
         </header>
-        <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
+        <main className="buzz-content-scrollbar min-h-0 flex-1 overflow-y-auto">
+          {children}
+        </main>
       </div>
 
       {drawerOpen && (

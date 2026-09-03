@@ -190,7 +190,7 @@ export function SnapshotPreviewDialog({
             ✕
           </button>
         </header>
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+        <div className="buzz-content-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
           {sharedBy ? (
             <p className="text-xs text-muted-foreground">
               Shared by {sharedBy}
@@ -351,7 +351,7 @@ function AgentReviewBody({
             These pubkeys come from the sender's environment. A web import
             always starts owner-only — they are never copied.
           </p>
-          <ul className="max-h-28 space-y-1 overflow-y-auto rounded bg-muted/60 p-2 font-mono text-xs">
+          <ul className="buzz-channel-activity-scrollbar max-h-28 space-y-1 overflow-y-auto rounded bg-muted/60 p-2 font-mono text-xs">
             {definition.respondToAllowlist.map((pubkey) => (
               <li className="break-all" key={pubkey}>
                 {pubkey}

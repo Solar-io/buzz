@@ -193,9 +193,7 @@ export function NewDmDialog({
                 aria-label="Remove recipient"
                 className="text-muted-foreground hover:text-foreground"
                 onClick={() =>
-                  setRecipients((previous) =>
-                    previous.filter((p) => p !== pk),
-                  )
+                  setRecipients((previous) => previous.filter((p) => p !== pk))
                 }
               >
                 ×
@@ -235,7 +233,7 @@ export function NewDmDialog({
       )}
       {filtered.length > 0 && (
         <ul
-          className="max-h-48 space-y-0.5 overflow-y-auto rounded-md border border-border bg-background/60 p-1"
+          className="buzz-channel-activity-scrollbar max-h-48 space-y-0.5 overflow-y-auto rounded-md border border-border bg-background/60 p-1"
           data-testid="dm-suggestions"
         >
           {filtered.map((suggestion) => {
