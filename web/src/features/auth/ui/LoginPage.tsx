@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Button } from "@/shared/ui/button";
@@ -60,6 +60,31 @@ export function LoginPage() {
     }
     setScanned(parsed);
     setMode("set-pass");
+  }, []);
+
+  // Pairing-link landing: a camera-scanned QR opens this page with the key in
+  // the URL fragment (fragments never reach a server). Consume it once into
+  // the normal set-pass flow, then scrub the address bar so the key does not
+  // linger in history or get copy-pasted around accidentally.
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (!hash.toLowerCase().includes("nsec=")) {
+      return;
+    }
+    const parsed = parseSecretKeyInput(
+      `${window.location.origin}${window.location.pathname}${hash}`,
+    );
+    window.history.replaceState(
+      null,
+      "",
+      window.location.pathname + window.location.search,
+    );
+    if (parsed.ok) {
+      setScanned(parsed);
+      setMode("set-pass");
+    } else {
+      toast.error(parsed.error);
+    }
   }, []);
 
   return (

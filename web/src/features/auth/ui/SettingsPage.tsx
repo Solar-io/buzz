@@ -18,7 +18,7 @@ import {
   hasRememberedKey,
   rememberSecretKeyForSettings,
 } from "@/shared/lib/key-store";
-import { nsecFromSecretKey } from "@/shared/lib/nsec";
+import { pairingLink } from "@/shared/lib/nsec";
 import { relayWsUrl } from "@/shared/lib/relay-url";
 
 export function SettingsPage() {
@@ -88,11 +88,14 @@ export function SettingsPage() {
       return;
     }
     try {
-      const dataUrl = await QRCode.toDataURL(nsecFromSecretKey(secretKey), {
-        errorCorrectionLevel: "M",
-        margin: 2,
-        width: 320,
-      });
+      const dataUrl = await QRCode.toDataURL(
+        pairingLink(window.location.origin, secretKey),
+        {
+          errorCorrectionLevel: "M",
+          margin: 2,
+          width: 320,
+        },
+      );
       setQrDataUrl(dataUrl);
     } catch {
       toast.error("Could not render the QR code.");
@@ -177,9 +180,9 @@ export function SettingsPage() {
         <section className="space-y-3 rounded-lg border border-border bg-card p-4">
           <h2 className="font-medium">Pair a device</h2>
           <p className="text-sm text-muted-foreground">
-            Show a QR containing your key. On the other device's login screen,
-            choose "Pair with QR code" and scan. The key is only on your screens
-            — treat it like a password.
+            Show a QR that opens Buzz with your key — scan it with any camera
+            and the login picks up from there. The key rides inside the link
+            itself, only on your screens — treat it like a password.
           </p>
           {qrDataUrl ? (
             <img

@@ -1360,7 +1360,6 @@ function shortDate(unixSeconds: number): string {
   });
 }
 
-
 /**
  * DM sidebar row in the desktop client's shape: avatar, display name, and a
  * one-line preview of the newest sampled message with its stamp.
