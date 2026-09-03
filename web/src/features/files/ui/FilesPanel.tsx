@@ -3,10 +3,27 @@ import { Folder, X } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
+import { useTheme } from "@/shared/theme/ThemeProvider";
 import {
   getConfiguredFilesUrl,
   setConfiguredFilesUrl,
 } from "@/features/files/filesConfig";
+
+/**
+ * Append the shell's resolved theme so panels that understand it (the
+ * default file manager renders ?theme=light|dark) follow Buzz's theme
+ * instead of guessing. Panels that don't know the param ignore it.
+ */
+function withThemeParam(url: string, isDark: boolean): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.searchParams.has("theme")) return url;
+    parsed.searchParams.set("theme", isDark ? "dark" : "light");
+    return parsed.toString();
+  } catch {
+    return url; // not a parseable absolute URL — leave it untouched
+  }
+}
 
 /**
  * Files panel — fills the main content area (chat + thinking columns
@@ -17,6 +34,7 @@ import {
  */
 export function FilesPanel({ onClose }: { onClose: () => void }) {
   const [url, setUrl] = useState(getConfiguredFilesUrl);
+  const { isDark } = useTheme();
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -55,7 +73,7 @@ export function FilesPanel({ onClose }: { onClose: () => void }) {
       {url ? (
         <iframe
           title="Files"
-          src={url}
+          src={withThemeParam(url, isDark)}
           className="min-h-0 flex-1 border-0 bg-background"
         />
       ) : (
