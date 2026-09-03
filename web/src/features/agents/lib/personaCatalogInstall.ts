@@ -90,9 +90,7 @@ export function buildCatalogCreate(
         systemPrompt,
         ...(avatarUrl ? { avatarUrl } : {}),
         ...(agent.model?.trim() ? { model: agent.model.trim() } : {}),
-        ...(agent.provider?.trim()
-          ? { provider: agent.provider.trim() }
-          : {}),
+        ...(agent.provider?.trim() ? { provider: agent.provider.trim() } : {}),
         ...(harness ? { harness } : {}),
         ...(agent.parallelism ? { parallelism: agent.parallelism } : {}),
         respondTo: "owner-only",

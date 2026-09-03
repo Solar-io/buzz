@@ -43,26 +43,30 @@ export function usePersonaCatalog(
     // Deliberately all-authors (no `authors`): the relay gate filters. A
     // 500-event cap mirrors the desktop's page-1 size; the shared opt-in set
     // is small by construction.
-    cleanup = session.subscribe({ kinds: [30175], limit: 500 }, {
-      onEvent: (event) => {
-        let verified = false;
-        try {
-          verified = verifyFn(event);
-        } catch {
-          verified = false;
-        }
-        if (verified) {
-          setEvents((previous) => mergeVerifiedCatalogEvent(previous, event));
-        }
+    cleanup = session.subscribe(
+      { kinds: [30175], limit: 500 },
+      {
+        onEvent: (event) => {
+          let verified = false;
+          try {
+            verified = verifyFn(event);
+          } catch {
+            verified = false;
+          }
+          if (verified) {
+            setEvents((previous) => mergeVerifiedCatalogEvent(previous, event));
+          }
+        },
       },
-    });
+    );
     return () => {
       cleanup?.();
     };
   }, [session, status, verifyFn]);
 
   const publications = useMemo(
-    () => catalogPublicationsByKey(publicationsFromVerifiedEvents(events.values())),
+    () =>
+      catalogPublicationsByKey(publicationsFromVerifiedEvents(events.values())),
     [events],
   );
 

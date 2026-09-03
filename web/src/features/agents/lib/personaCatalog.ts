@@ -117,7 +117,9 @@ function exactTag(event: SignedNostrEvent, name: string): string | null {
 }
 
 /** Mirror of `parse_agent` — null means the event contributes nothing. */
-export function parseCatalogAgent(content: string): CatalogAgentProjection | null {
+export function parseCatalogAgent(
+  content: string,
+): CatalogAgentProjection | null {
   let value: unknown;
   try {
     value = JSON.parse(content);
@@ -236,8 +238,9 @@ export function safeAvatar(value: string): boolean {
 export function publicationsFromVerifiedEvents(
   events: Iterable<SignedNostrEvent>,
 ): CatalogPublication[] {
-  const sorted = [...events].sort((left, right) =>
-    right.created_at - left.created_at || (left.id < right.id ? -1 : 1),
+  const sorted = [...events].sort(
+    (left, right) =>
+      right.created_at - left.created_at || (left.id < right.id ? -1 : 1),
   );
   const claimed = new Set<string>();
   const publications: CatalogPublication[] = [];
@@ -305,7 +308,10 @@ export function catalogPublicationsByKey(
   const byKey = new Map<string, CatalogPublication>();
   for (const publication of publications) {
     byKey.set(
-      catalogCoordinateKey(publication.ownerPubkey, publication.sourcePersonaId),
+      catalogCoordinateKey(
+        publication.ownerPubkey,
+        publication.sourcePersonaId,
+      ),
       publication,
     );
   }

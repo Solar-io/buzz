@@ -109,7 +109,11 @@ test("unshared newest head suppresses the older shared head", () => {
   // THE claim-before-visibility case: the unshared newer event claims the
   // coordinate, so the older shared event must NOT be resurrected.
   const publications = publicationsFromVerifiedEvents([
-    ev({ id: "old-shared", created_at: 100, content: oldContent("Old Shared") }),
+    ev({
+      id: "old-shared",
+      created_at: 100,
+      content: oldContent("Old Shared"),
+    }),
     ev({
       id: "new-unshared",
       created_at: 200,
@@ -121,7 +125,11 @@ test("unshared newest head suppresses the older shared head", () => {
 
 test("malformed newest head also suppresses the older shared head", () => {
   const publications = publicationsFromVerifiedEvents([
-    ev({ id: "old-shared", created_at: 100, content: oldContent("Old Shared") }),
+    ev({
+      id: "old-shared",
+      created_at: 100,
+      content: oldContent("Old Shared"),
+    }),
     ev({ id: "new-bad-json", created_at: 200, content: "{not json" }),
   ]);
   assert.deepEqual(publications, []);
@@ -130,7 +138,13 @@ test("malformed newest head also suppresses the older shared head", () => {
 test("non-shared events are skipped entirely", () => {
   const publications = publicationsFromVerifiedEvents([
     ev({ id: "a", tags: [["d", "night-shift"]] }),
-    ev({ id: "b", tags: [["d", "other"], ["shared", "false"]] }),
+    ev({
+      id: "b",
+      tags: [
+        ["d", "other"],
+        ["shared", "false"],
+      ],
+    }),
   ]);
   assert.deepEqual(publications, []);
 });
@@ -151,10 +165,10 @@ test("two owners with the same d tag are separate coordinates", () => {
     ev({ id: "b", pubkey: OWNER_B, created_at: 90 }),
   ]);
   assert.equal(publications.length, 2);
-  assert.deepEqual(
-    publications.map((p) => p.ownerPubkey).sort(),
-    [OWNER_A, OWNER_B],
-  );
+  assert.deepEqual(publications.map((p) => p.ownerPubkey).sort(), [
+    OWNER_A,
+    OWNER_B,
+  ]);
 });
 
 test("shared tag must be exactly one [" + 'shared,"true"] pair', () => {
@@ -170,7 +184,10 @@ test("shared tag must be exactly one [" + 'shared,"true"] pair', () => {
     publicationsFromVerifiedEvents([
       ev({
         id: "three",
-        tags: [["d", "night-shift"], ["shared", "true", "x"]],
+        tags: [
+          ["d", "night-shift"],
+          ["shared", "true", "x"],
+        ],
       }),
     ]),
     [],
@@ -192,7 +209,10 @@ test("shared tag must be exactly one [" + 'shared,"true"] pair', () => {
 });
 
 test("d tag must exist exactly once and be non-empty", () => {
-  assert.deepEqual(publicationsFromVerifiedEvents([ev({ id: "x", tags: [] })]), []);
+  assert.deepEqual(
+    publicationsFromVerifiedEvents([ev({ id: "x", tags: [] })]),
+    [],
+  );
   assert.deepEqual(
     publicationsFromVerifiedEvents([
       ev({
@@ -208,7 +228,13 @@ test("d tag must exist exactly once and be non-empty", () => {
   );
   assert.deepEqual(
     publicationsFromVerifiedEvents([
-      ev({ id: "x", tags: [["d", ""], ["shared", "true"]] }),
+      ev({
+        id: "x",
+        tags: [
+          ["d", ""],
+          ["shared", "true"],
+        ],
+      }),
     ]),
     [],
   );
@@ -398,7 +424,10 @@ test("avatar_url is null unless safeAvatar passes", () => {
     parseCatalogAgent(
       JSON.stringify({ display_name: "N", system_prompt: "p", avatar_url }),
     ).avatarUrl;
-  assert.equal(parse("https://relay.example/a.png"), "https://relay.example/a.png");
+  assert.equal(
+    parse("https://relay.example/a.png"),
+    "https://relay.example/a.png",
+  );
   assert.equal(parse("javascript:alert(1)"), null);
   assert.equal(parse(42), null);
 });
@@ -438,10 +467,7 @@ test("a late-arriving unshared newest head still suppresses the shared one", () 
     events,
     ev({ id: "shared-first", created_at: 100 }),
   );
-  assert.equal(
-    publicationsFromVerifiedEvents(events.values()).length,
-    1,
-  );
+  assert.equal(publicationsFromVerifiedEvents(events.values()).length, 1);
   events = mergeVerifiedCatalogEvent(
     events,
     ev({ id: "unshared-later", created_at: 200, tags: [["d", "night-shift"]] }),

@@ -65,9 +65,7 @@ test("legacy event without persona_ids parses as membership-unknown", () => {
 test("explicit empty persona_ids is known-empty, not unknown", () => {
   // New clients always publish Some, even for an empty list — [] is the
   // explicit no-members signal a pre-fix client can never produce.
-  const team = teamFromEvent(
-    teamEvent('{"name":"Team","persona_ids":[]}'),
-  );
+  const team = teamFromEvent(teamEvent('{"name":"Team","persona_ids":[]}'));
   assert.equal(team.membershipUnknown, false);
   assert.deepEqual(team.personaIds, []);
 });
@@ -111,7 +109,10 @@ test("wrong kind, bad JSON, missing d tag, or missing name → null", () => {
   assert.equal(teamFromEvent(teamEvent("{}", { kind: 30175 })), null);
   assert.equal(teamFromEvent(teamEvent("{not json")), null);
   assert.equal(teamFromEvent(teamEvent("{}", { tags: [] })), null);
-  assert.equal(teamFromEvent(teamEvent('{"name":"x"}', { tags: [["d", ""]] })), null);
+  assert.equal(
+    teamFromEvent(teamEvent('{"name":"x"}', { tags: [["d", ""]] })),
+    null,
+  );
   assert.equal(teamFromEvent(teamEvent('{"persona_ids":["p1"]}')), null);
   assert.equal(teamFromEvent(teamEvent('{"name":42}')), null);
   assert.equal(teamFromEvent(teamEvent('{"name":"   "}')), null);
@@ -157,7 +158,10 @@ test("newest event wins the coordinate", () => {
   teams = mergeTeam(teams, view({ eventId: "b", updatedAt: 200, name: "New" }));
   assert.equal(teams.get("team-123").name, "New");
   // Older arriving later still loses.
-  teams = mergeTeam(teams, view({ eventId: "c", updatedAt: 50, name: "Older" }));
+  teams = mergeTeam(
+    teams,
+    view({ eventId: "c", updatedAt: 50, name: "Older" }),
+  );
   assert.equal(teams.get("team-123").name, "New");
 });
 

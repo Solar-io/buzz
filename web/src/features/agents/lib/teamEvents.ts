@@ -78,7 +78,8 @@ export function teamFromEvent(event: SignedNostrEvent): TeamView | null {
   return {
     id: dTag,
     name: object.name,
-    description: typeof object.description === "string" ? object.description : null,
+    description:
+      typeof object.description === "string" ? object.description : null,
     instructions:
       typeof object.instructions === "string" ? object.instructions : null,
     membershipUnknown,
@@ -103,7 +104,8 @@ export function mergeTeam(
   if (existing) {
     const existingWins =
       existing.updatedAt > team.updatedAt ||
-      (existing.updatedAt === team.updatedAt && existing.eventId <= team.eventId);
+      (existing.updatedAt === team.updatedAt &&
+        existing.eventId <= team.eventId);
     if (existingWins) {
       return teams as Map<string, TeamView>;
     }

@@ -41,7 +41,14 @@ function catalog(overrides = {}) {
   return {
     machine: "crichton.local",
     version: 2,
-    harnesses: [{ id: "claude", label: "Claude Code", source: "builtin", availability: "available" }],
+    harnesses: [
+      {
+        id: "claude",
+        label: "Claude Code",
+        source: "builtin",
+        availability: "available",
+      },
+    ],
     agents: [],
     updatedAt: 1,
     ...overrides,
@@ -105,10 +112,9 @@ test("full publication maps every carried field", () => {
 });
 
 test("respondTo is forced to owner-only even when the publication says anyone", () => {
-  const built = buildCatalogCreate(
-    publication({}, { respondTo: "anyone" }),
-    [catalog()],
-  );
+  const built = buildCatalogCreate(publication({}, { respondTo: "anyone" }), [
+    catalog(),
+  ]);
   if (!("command" in built)) {
     assert.fail(built.error);
   }

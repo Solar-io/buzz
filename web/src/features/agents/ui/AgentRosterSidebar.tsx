@@ -10,6 +10,7 @@ import { AuthorAvatar } from "@/features/channels/ui/ChannelTimeline";
 import { findStaleAgents } from "../lib/staleAgents";
 import { publishOwnProfile } from "../lib/agentControl";
 import type { RosterRow } from "../lib/roster";
+import type { RosterGroupSection } from "../lib/rosterGroups";
 import type { AdminCommand } from "../lib/adminCommands";
 import { RESPOND_TO_OPTIONS } from "../lib/respondToField";
 import { agentRecentlyActive } from "../lib/observerEvents";
@@ -55,6 +56,8 @@ function accessLabel(respondTo: string): string {
 
 export function AgentRosterSidebar({
   roster,
+  sections,
+  teamNamesByPersona,
   selectedPubkey,
   onSelect,
   onNewAgent,
@@ -64,6 +67,10 @@ export function AgentRosterSidebar({
   session,
 }: {
   roster: RosterRow[];
+  /** Persona-grouped sections (lib/rosterGroups) — a view over `roster`. */
+  sections: RosterGroupSection[];
+  /** Persona id → team names, for row badges (unknown membership = none). */
+  teamNamesByPersona: ReadonlyMap<string, string[]>;
   selectedPubkey: string | null;
   onSelect: (pubkey: string) => void;
   onNewAgent: () => void;
@@ -91,17 +98,40 @@ export function AgentRosterSidebar({
             your desktop publishes them.
           </p>
         ) : (
-          <ul className="divide-y divide-border">
-            {roster.map((row) => (
-              <AgentRosterRow
-                key={row.pubkey}
-                row={row}
-                profile={profiles.get(row.pubkey)}
-                selected={row.pubkey === selectedPubkey}
-                onSelect={() => onSelect(row.pubkey)}
-              />
-            ))}
-          </ul>
+          <div className="space-y-3">
+            {sections.map((section) => {
+              // Persona headers always render (a definition with zero
+              // instances is real state); the catch-all buckets stay hidden
+              // while empty — the desktop library's behavior.
+              if (section.rows.length === 0 && section.persona === null) {
+                return null;
+              }
+              return (
+                <div key={section.key} className="space-y-1">
+                  <p className="px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {section.title} ({section.rows.length})
+                  </p>
+                  <ul className="divide-y divide-border">
+                    {section.rows.map((row) => (
+                      <AgentRosterRow
+                        key={row.pubkey}
+                        row={row}
+                        profile={profiles.get(row.pubkey)}
+                        teamNames={
+                          row.entry.personaId !== null
+                            ? (teamNamesByPersona.get(row.entry.personaId) ??
+                              [])
+                            : []
+                        }
+                        selected={row.pubkey === selectedPubkey}
+                        onSelect={() => onSelect(row.pubkey)}
+                      />
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
         )}
         <p className="text-xs text-muted-foreground">
           Registry from the relay (kind 30177). Changes ride the sealed
@@ -117,11 +147,13 @@ export function AgentRosterSidebar({
 function AgentRosterRow({
   row,
   profile,
+  teamNames,
   selected,
   onSelect,
 }: {
   row: RosterRow;
   profile?: Profile;
+  teamNames: string[];
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -164,6 +196,15 @@ function AgentRosterRow({
                 linked
               </span>
             )}
+            {teamNames.map((teamName) => (
+              <span
+                key={teamName}
+                title={`Member of the team "${teamName}"`}
+                className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-normal text-sky-600 dark:text-sky-400"
+              >
+                {teamName}
+              </span>
+            ))}
           </span>
           <span className="block truncate text-xs text-muted-foreground">
             {subtitle}
