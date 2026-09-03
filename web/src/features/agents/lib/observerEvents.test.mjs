@@ -359,6 +359,24 @@ test("agentTurnStart finds the newest boundary for the sidebar badge", () => {
   );
 });
 
+test("agentTurnStart prefers the payload turn start across reloads", () => {
+  // The live shape after a mid-turn reload: the turn_started frame is long
+  // gone (ephemeral), and every frame since load carries the harness's own
+  // startedAt for the ORIGINAL turn. The timer must show the true age, not
+  // time-since-page-load.
+  const frames = [
+    { kind: "thought", createdAt: 300, id: "a", startedAt: "1970-01-01T00:00:02.000Z" },
+    { kind: "tool_call", createdAt: 400, id: "b", startedAt: "1970-01-01T00:00:02.000Z" },
+  ];
+  assert.equal(agentTurnStart(frames), 2);
+  // A newer turn's payload start outranks an older turn's lingering frames.
+  const twoTurns = [
+    { kind: "thought", createdAt: 100, id: "x", startedAt: "1970-01-01T00:00:05.000Z" },
+    { kind: "tool_call", createdAt: 200, id: "y", startedAt: "1970-01-01T00:00:02.000Z" },
+  ];
+  assert.equal(agentTurnStart(twoTurns), 5);
+});
+
 test("capFrames preserves evicted turn boundaries", () => {
   const frames = [];
   // A turn boundary at the very front, then a flood that pushes it out.

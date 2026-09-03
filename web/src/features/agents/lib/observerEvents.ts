@@ -471,13 +471,25 @@ export function capFrames(
  * time. Falls back to null when no boundary is known (caller decides).
  */
 export function agentTurnStart(frames: ObserverFrame[]): number | null {
-  let startedAt: number | null = null;
+  // The harness stamps every frame with the turn's own startedAt — the
+  // authoritative start, and the only one that survives a page reload
+  // mid-turn (frames are ephemeral: the turn_started event itself is never
+  // re-delivered, so its createdAt is load-time evidence only). Take the
+  // LATEST payload start (turn starts increase; older turns' frames may
+  // still sit in the capped buffer) and fall back to the turn_started
+  // frame's arrival time when payloads carry no start.
+  let payloadStart: number | null = null;
+  let turnFrameStart: number | null = null;
   for (const frame of frames) {
-    if (frame.kind === "turn_started" && frame.createdAt > (startedAt ?? 0)) {
-      startedAt = frame.createdAt;
+    const started = rfc3339ToSeconds(frame.startedAt ?? null);
+    if (started !== null && started > (payloadStart ?? 0)) {
+      payloadStart = started;
+    }
+    if (frame.kind === "turn_started" && frame.createdAt > (turnFrameStart ?? 0)) {
+      turnFrameStart = frame.createdAt;
     }
   }
-  return startedAt;
+  return payloadStart ?? turnFrameStart;
 }
 
 /** Sidebar heuristic: agent produced frames within the freshness window. */

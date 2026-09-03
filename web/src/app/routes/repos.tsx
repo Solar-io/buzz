@@ -102,7 +102,7 @@ import {
   unhideDm,
 } from "@/features/dms/lib/hiddenDms.ts";
 import { FilesPanel } from "@/features/files/ui/FilesPanel";
-import { ownPubkey } from "@/shared/lib/nostr-signer";
+import { ownPubkey, type SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { AppShell, useDrawerClose } from "@/shared/layout/AppShell";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { cn } from "@/shared/lib/cn";
@@ -1432,16 +1432,18 @@ function DmTimerPill({
 }
 
 /**
- * Unread count for a DM row, derived from the persistent timeline cache:
- * cached, non-deleted messages from others newer than the read marker.
- * Null when the cache is cold (that DM was never opened here) — the badge
- * then renders its dot form without inventing a number.
+ * Unread count for a DM row. First source: the persistent timeline cache
+ * (messages from others newer than the read marker). When the cache is cold
+ * — that DM was never opened on this machine — one bounded one-shot REQ
+ * counts messages since the read marker from the relay, so the badge gets a
+ * real number instead of an empty circle.
  */
 function useCachedUnreadCount(
   channelId: string | null,
   lastSeenAt: number | null,
   selfPubkey: string | null,
 ): number | null {
+  const { session } = useRelaySession();
   const [count, setCount] = useState<number | null>(null);
   useEffect(() => {
     let alive = true;
@@ -1453,21 +1455,38 @@ function useCachedUnreadCount(
       if (!alive) {
         return;
       }
-      setCount(
-        entry
-          ? entry.messages.filter(
-              (m) =>
-                m.createdAt > lastSeenAt &&
-                m.authorPubkey !== selfPubkey &&
-                !m.deleted,
-            ).length
-          : null,
+      if (entry) {
+        setCount(
+          entry.messages.filter(
+            (m) =>
+              m.createdAt > lastSeenAt &&
+              m.authorPubkey !== selfPubkey &&
+              !m.deleted,
+          ).length,
+        );
+        return;
+      }
+      // Cold cache: ask the relay directly (bounded one-shot).
+      let seen = 0;
+      const unsubscribe = session.subscribe(
+        { kinds: [9], "#h": [channelId], since: lastSeenAt, limit: 200 },
+        {
+          onEvent: (event: SignedNostrEvent) => {
+            if (event.pubkey !== selfPubkey) {
+              seen += 1;
+            }
+            if (alive) {
+              setCount(seen);
+            }
+          },
+          onEose: () => unsubscribe(),
+        },
       );
     });
     return () => {
       alive = false;
     };
-  }, [channelId, lastSeenAt, selfPubkey]);
+  }, [channelId, lastSeenAt, selfPubkey, session]);
   return count;
 }
 
@@ -1573,7 +1592,7 @@ function DmNavRow({
       >
         {name}
       </span>
-      {(active || (unread && !active)) && (
+      {(active || unread) && (
         <span className="flex shrink-0 items-center gap-2">
           {active && (
             <DmTimerPill
@@ -1584,9 +1603,11 @@ function DmNavRow({
               selected={selected}
             />
           )}
-          {/* §7: 20px badge; §6: the pill's right edge stays fixed whether
-              or not a badge is present — the 20px slot always reserves it. */}
-          {unread && !active ? (
+          {/* §7: 20px badge; the reference shows badge and pill together —
+              an unread row keeps its badge even while the agent works.
+              §6: the pill's right edge stays fixed whether or not a badge
+              is present — the 20px slot always reserves it. */}
+          {unread ? (
             <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-[#9A3EF6] text-[11px] font-bold leading-none text-black">
               {unreadCount != null && unreadCount > 0 ? unreadCount : ""}
             </span>
