@@ -46,6 +46,32 @@ test("/repos/agents shows the key gate when signed out", async ({ page }) => {
   expect(consoleErrors).toEqual([]);
 });
 
+test("/repos renders the key gate when signed out (snapshot-card surface regression)", async ({
+  page,
+}) => {
+  // Phase 3: the channels shell now mounts the snapshot-preview provider
+  // around the timeline. Signed out there is no timeline and no snapshot
+  // surface at all — the gate must render cleanly with zero console errors.
+  const consoleErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      consoleErrors.push(message.text());
+    }
+  });
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await page.goto("/repos");
+  await expect(page.getByRole("heading", { name: "Buzz" })).toBeVisible();
+  await expect(page.getByText("Pair with QR code")).toBeVisible();
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+  // No snapshot UI may exist unauthenticated: cards need a signed relay
+  // session for their verified fetch.
+  expect(await page.getByTestId("web-snapshot-card").count()).toBe(0);
+  expect(await page.getByTestId("web-snapshot-preview").count()).toBe(0);
+});
+
 test("invite requires age and legal consent before opening Buzz", async ({
   page,
 }) => {
