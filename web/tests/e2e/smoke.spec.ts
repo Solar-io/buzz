@@ -25,6 +25,27 @@ test("repos browser loads at /repos/browse", async ({ page }) => {
   await expect(page.getByText("Repositories")).toBeVisible();
 });
 
+test("/repos/agents shows the key gate when signed out", async ({ page }) => {
+  const consoleErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      consoleErrors.push(message.text());
+    }
+  });
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await page.goto("/repos/agents");
+  // Signed out, the agents screen renders the login/pairing gate — no crash,
+  // no console errors. Full flows need the owner key + a live desktop and are
+  // covered by the tester's checklist, not e2e.
+  await expect(page.getByRole("heading", { name: "Buzz" })).toBeVisible();
+  await expect(page.getByText("Pair with QR code")).toBeVisible();
+  await expect(page.getByText("Enter key manually")).toBeVisible();
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});
+
 test("invite requires age and legal consent before opening Buzz", async ({
   page,
 }) => {

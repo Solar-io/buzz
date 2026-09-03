@@ -1,11 +1,7 @@
 import type { AdminCommand, HarnessSelection } from "./adminCommands";
 import type { AgentRegistryEntry } from "./agentRegistry";
 import type { PersonaDefinition } from "./personas";
-import {
-  envRowsToRecord,
-  reservedKeyErrors,
-  type EnvRow,
-} from "./envRows.ts";
+import { envRowsToRecord, reservedKeyErrors, type EnvRow } from "./envRows.ts";
 
 /**
  * Pure edit-form → update-command builder, testable without React. The
@@ -183,12 +179,11 @@ export function buildUpdateCommand(
   }
   if (allowlistChanged) {
     if (
-      normalizedAllowlist.some(
-        (entryKey) => !/^[0-9a-f]{64}$/.test(entryKey),
-      )
+      normalizedAllowlist.some((entryKey) => !/^[0-9a-f]{64}$/.test(entryKey))
     ) {
       return {
-        error: "Allowlist entries must be agent keys — copy them from the desktop or a profile.",
+        error:
+          "Allowlist entries must be agent keys — copy them from the desktop or a profile.",
       };
     }
     changed.respondToAllowlist = normalizedAllowlist;

@@ -41,7 +41,6 @@ export function modelSuggestions(
   registryModels: readonly string[],
 ): string[] {
   const known = MODEL_SUGGESTIONS_BY_PROVIDER[normalizeProvider(provider)];
-  const mirror =
-    known ?? Object.values(MODEL_SUGGESTIONS_BY_PROVIDER).flat();
+  const mirror = known ?? Object.values(MODEL_SUGGESTIONS_BY_PROVIDER).flat();
   return merged([...mirror, ...registryModels]);
 }

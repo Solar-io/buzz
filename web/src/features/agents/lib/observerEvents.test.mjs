@@ -23,7 +23,7 @@ function frame(overrides = {}) {
 
 let seqCounter = 0;
 
-function sessionUpdate(update, messageId = "m1") {
+function sessionUpdate(update) {
   return frame({
     payload: { method: "session/update", params: { update } },
     kind: "acp_read",

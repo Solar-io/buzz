@@ -85,8 +85,8 @@ export const RESERVED_ENV_KEYS: readonly string[] = [
 
 /** Case-insensitive reserved-key test (mirrors `is_reserved_env_keys.rs`). */
 export function isReservedEnvKey(key: string): boolean {
-  return RESERVED_ENV_KEYS.some((reserved) =>
-    reserved.toLowerCase() === key.toLowerCase(),
+  return RESERVED_ENV_KEYS.some(
+    (reserved) => reserved.toLowerCase() === key.toLowerCase(),
   );
 }
 

@@ -14,10 +14,12 @@ test("the static mirror is pinned exactly (updating it is deliberate)", () => {
 });
 
 test("known provider merges mirror entries with registry models, sorted + deduped", () => {
-  assert.deepEqual(
-    modelSuggestions("openai", ["glm-5.3"]),
-    ["glm-5.3", "gpt-5.4", "gpt-5.4-mini", "gpt-5.5"],
-  );
+  assert.deepEqual(modelSuggestions("openai", ["glm-5.3"]), [
+    "glm-5.3",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.5",
+  ]);
   // Registry model that also sits in the mirror must not duplicate.
   assert.deepEqual(modelSuggestions("zai", ["glm-5.3"]), [
     "glm-5.3",

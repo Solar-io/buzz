@@ -203,7 +203,10 @@ test("dirty env table sends the FULL record (replace semantics)", () => {
     base,
     prefill,
     value(prefill, {
-      envRows: [row("r1", "BUZZ_AGENT_PROVIDER", "zai"), row("r2", "", "mid-edit")],
+      envRows: [
+        row("r1", "BUZZ_AGENT_PROVIDER", "zai"),
+        row("r2", "", "mid-edit"),
+      ],
       envDirty: true,
     }),
   );

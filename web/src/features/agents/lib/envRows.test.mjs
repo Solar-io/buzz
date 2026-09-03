@@ -12,11 +12,7 @@ function row(key, value) {
 }
 
 test("envRowsToRecord skips empty-key rows and keeps the rest", () => {
-  const record = envRowsToRecord([
-    row("A", "1"),
-    row("", "x"),
-    row("B", "2"),
-  ]);
+  const record = envRowsToRecord([row("A", "1"), row("", "x"), row("B", "2")]);
   assert.deepEqual(record, { A: "1", B: "2" });
 });
 
@@ -26,7 +22,10 @@ test("envRowsToRecord duplicate keys resolve LAST row wins", () => {
 });
 
 test("envRowsToRecord keeps values verbatim (no trimming, empty values allowed)", () => {
-  const record = envRowsToRecord([row(" SPACES ", "  kept  "), row("EMPTY", "")]);
+  const record = envRowsToRecord([
+    row(" SPACES ", "  kept  "),
+    row("EMPTY", ""),
+  ]);
   assert.deepEqual(record, { " SPACES ": "  kept  ", EMPTY: "" });
 });
 

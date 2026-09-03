@@ -1,9 +1,5 @@
 import type { AdminCommand, HarnessSelection } from "./adminCommands";
-import {
-  envRowsToRecord,
-  reservedKeyErrors,
-  type EnvRow,
-} from "./envRows.ts";
+import { envRowsToRecord, reservedKeyErrors, type EnvRow } from "./envRows.ts";
 import { validateAllowlist, type RespondToMode } from "./respondToField.ts";
 
 /**
@@ -97,7 +93,9 @@ export function buildCreateCommand(
       request: {
         name,
         systemPrompt,
-        ...(value.avatarUrl.trim() ? { avatarUrl: value.avatarUrl.trim() } : {}),
+        ...(value.avatarUrl.trim()
+          ? { avatarUrl: value.avatarUrl.trim() }
+          : {}),
         ...(value.model.trim() ? { model: value.model.trim() } : {}),
         ...(value.provider.trim() ? { provider: value.provider.trim() } : {}),
         ...(harness ? { harness } : {}),

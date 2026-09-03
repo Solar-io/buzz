@@ -114,7 +114,10 @@ test("startOnAppLaunch unchecked sends false (applied on create)", () => {
 });
 
 test("blank name and blank prompt are errors", () => {
-  assert.equal(buildCreateCommand(form({ name: "   " })).error, "A name is required.");
+  assert.equal(
+    buildCreateCommand(form({ name: "   " })).error,
+    "A name is required.",
+  );
   assert.equal(
     buildCreateCommand(form({ systemPrompt: "" })).error,
     "A system prompt is required.",
@@ -125,7 +128,10 @@ test("custom harness without a command is an error", () => {
   const built = buildCreateCommand(
     form({ harnessId: "__custom", customCommand: "   " }),
   );
-  assert.equal("error" in built && built.error, "A custom harness needs a command.");
+  assert.equal(
+    "error" in built && built.error,
+    "A custom harness needs a command.",
+  );
 });
 
 test("reserved env key is an error naming the key", () => {

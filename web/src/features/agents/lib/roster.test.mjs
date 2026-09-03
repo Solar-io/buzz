@@ -87,24 +87,16 @@ test("linked entry with a missing persona: name falls back, quad reads unknown",
 });
 
 test("machines lists every claiming catalog, sorted; unclaimed is empty", () => {
-  const one = buildRoster(
-    [entry()],
-    new Map(),
-    [
-      catalog("zephyr.local", [PK_A]),
-      catalog("crichton.local", []),
-    ],
-  );
+  const one = buildRoster([entry()], new Map(), [
+    catalog("zephyr.local", [PK_A]),
+    catalog("crichton.local", []),
+  ]);
   assert.deepEqual(one[0].machines, ["zephyr.local"]);
 
-  const both = buildRoster(
-    [entry()],
-    new Map(),
-    [
-      catalog("zephyr.local", [PK_A]),
-      catalog("crichton.local", [PK_A]),
-    ],
-  );
+  const both = buildRoster([entry()], new Map(), [
+    catalog("zephyr.local", [PK_A]),
+    catalog("crichton.local", [PK_A]),
+  ]);
   assert.deepEqual(both[0].machines, ["crichton.local", "zephyr.local"]);
 
   const none = buildRoster([entry()], new Map(), [
