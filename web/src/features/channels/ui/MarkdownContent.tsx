@@ -1,11 +1,20 @@
-import { memo, useEffect, useState, type ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
+import {
+  isValidElement,
+  memo,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import { fetchSignedMedia } from "@/shared/api/blossom";
 import { relayHttpBaseUrl } from "@/shared/lib/relay-url";
 import { openLink } from "@/shared/lib/linkOpen";
-import { Lightbox } from "@/shared/ui/Lightbox";
+import { Lightbox, type LightboxItem } from "@/shared/ui/Lightbox";
 import { useSnapshotPreview } from "@/features/agents/ui/SnapshotPreviewProvider";
 import type { ImetaEntry } from "../lib/imetaEntries.ts";
 import { mentionSetsEqual } from "../lib/mentionSets.ts";
@@ -13,6 +22,14 @@ import { mentionParts } from "../lib/mentionParts.ts";
 import { CodeBlock, extractLanguage } from "./CodeBlock";
 import { resolveSnapshotCard } from "../lib/snapshotCard.ts";
 import { SnapshotCard } from "./SnapshotCard.tsx";
+import { galleryFromTriggers, resolveFileCard } from "../lib/messageMedia.ts";
+import { FileCard } from "./FileCard.tsx";
+import { ImageMosaic } from "./ImageMosaic.tsx";
+import {
+  MessageMedia,
+  MessageMediaProvider,
+  type MessageMediaProps,
+} from "./MessageMedia.tsx";
 
 /**
  * Message links must never navigate the SPA tab away. Plain links open in a
@@ -73,14 +90,51 @@ function nodeText(node: ReactNode): string {
 }
 
 /**
+ * Split a paragraph's children into media and everything else.
+ *
+ * Media children are recognised by component identity — `MessageMedia` is
+ * registered as react-markdown's `img` renderer, so every image node in the
+ * tree is literally an element of that type. That is exact, unlike the
+ * desktop's `data-block-media` prop sniffing, which has to cope with a deeper
+ * component tree.
+ *
+ * Whitespace-only strings are not "other content": consecutive `![…](…)`
+ * lines land in ONE paragraph separated by a soft-break "\n" text node, and
+ * treating that newline as content would defeat every mosaic.
+ */
+function splitMediaChildren(children: ReactNode[]): {
+  media: ReactElement<MessageMediaProps>[];
+  other: ReactNode[];
+} {
+  const media: ReactElement<MessageMediaProps>[] = [];
+  const other: ReactNode[] = [];
+  for (const child of children) {
+    if (isValidElement(child) && child.type === MessageMedia) {
+      media.push(child as ReactElement<MessageMediaProps>);
+    } else if (!(typeof child === "string" && child.trim() === "")) {
+      other.push(child);
+    }
+  }
+  return { media, other };
+}
+
+/**
  * Render message markdown. react-markdown does not render raw HTML by
  * default, so content is structurally sanitized. @mention tokens get a
  * distinct style so addressed readers scan faster.
  *
+ * Attachments (desktop `markdown.tsx` parity):
+ * - Several standalone images in one paragraph render as a count-aware
+ *   mosaic; a single image keeps its own aspect-ratio frame.
+ * - Every image is a lightbox trigger, and the lightbox opens as a gallery
+ *   over the images of THIS message — the root div below is the scope.
+ * - A link (or, from the CLI, an `![image](…)` node) whose imeta MIME is
+ *   neither image nor video renders as a download card.
+ *
  * Snapshot links: when an imeta map is supplied (ChannelTimeline/ThreadPanel)
  * and a link classifies as a snapshot candidate, it renders as a SnapshotCard
- * instead of a plain link (desktop markdown.tsx parity). Without imeta the
- * same link degrades to a plain link — same as the desktop.
+ * instead of a plain link. Without imeta the same link degrades to a plain
+ * link — same as the desktop.
  *
  * memo uses a custom comparator: a fresh Set instance must NOT bust the
  * memo (see lib/mentionSets.ts). The imeta map compares BY REFERENCE — it is
@@ -102,72 +156,143 @@ export const MarkdownContent = memo(
     snapshotSharedBy?: string;
   }) {
     const openSnapshotPreview = useSnapshotPreview();
+    const rootRef = useRef<HTMLDivElement>(null);
+    const [gallery, setGallery] = useState<{
+      items: LightboxItem[];
+      index: number;
+      /** The clicked tile — focus returns here when the lightbox closes. */
+      trigger: HTMLElement;
+    } | null>(null);
+
+    /**
+     * Build the gallery from the DOM at click time, scoped to this message.
+     * DOM order is the only ordering that is guaranteed to match what the
+     * reader sees — it survives mosaics, mixed paragraphs and images that
+     * resolve out of order.
+     */
+    const openGallery = useCallback((trigger: HTMLElement) => {
+      const root = rootRef.current;
+      const triggers = root
+        ? Array.from(
+            root.querySelectorAll<HTMLElement>("[data-lightbox-trigger]"),
+          )
+        : [trigger];
+      const next = galleryFromTriggers(triggers, trigger);
+      if (next.items.length > 0) {
+        setGallery({ ...next, trigger });
+      }
+    }, []);
+
+    const mediaContext = useMemo(
+      () => ({ imetaByUrl, openGallery }),
+      [imetaByUrl, openGallery],
+    );
+
+    /**
+     * The renderer map MUST be memoized on the message's own inputs.
+     *
+     * react-markdown uses these functions as React component types, so a
+     * fresh object literal per render gives every node a new type and React
+     * unmounts and remounts the ENTIRE markdown subtree. With gallery state
+     * living in this component, an inline map meant that opening the lightbox
+     * tore down and rebuilt every image — detaching the very button the
+     * lightbox has to return focus to, and re-running each attachment's load
+     * effect. Caught in a live browser, 2026-09-03; unit tests cannot see it.
+     */
+    const components = useMemo<Components>(
+      () => ({
+        p: ({ children }) => {
+          const childArray = Array.isArray(children) ? children : [children];
+          const { media, other } = splitMediaChildren(childArray);
+          if (media.length >= 2 && other.length === 0) {
+            return <ImageMosaic>{media}</ImageMosaic>;
+          }
+          return <p>{withMentions(children, mentionNames)}</p>;
+        },
+        li: ({ children }) => <li>{withMentions(children, mentionNames)}</li>,
+        a: ({ href, children }) => {
+          // Exact-match lookup, mirroring the desktop markdown.tsx
+          // (`imetaByUrl?.get(href)`).
+          const entry = imetaByUrl?.get(String(href ?? ""));
+          const label = nodeText(children);
+          const card = imetaByUrl
+            ? resolveSnapshotCard(entry, href, label)
+            : null;
+          if (card) {
+            return (
+              <SnapshotCard
+                card={card}
+                sharedBy={snapshotSharedBy}
+                onPreview={
+                  openSnapshotPreview
+                    ? () => openSnapshotPreview(card, snapshotSharedBy)
+                    : undefined
+                }
+              />
+            );
+          }
+          // A generic file attachment: the desktop writes these as a
+          // plain `[filename](url)` link, and only the imeta MIME can
+          // tell them from an ordinary link.
+          const file = resolveFileCard(entry, href, label);
+          if (file) {
+            return <FileCard {...file} />;
+          }
+          return <MessageLink href={href}>{children}</MessageLink>;
+        },
+        img: MessageMedia,
+        // react-markdown hands fenced blocks to `code` wrapped in a
+        // `pre`; inline code arrives here too, distinguished only by the
+        // absence of a language class and of a newline. Only fenced
+        // blocks become CodeBlock — inline `code` must stay inline.
+        code: ({ className, children, ...rest }) => {
+          const language = extractLanguage(className);
+          const text = nodeText(children);
+          const fenced = language !== "" || text.includes("\n");
+          if (!fenced) {
+            return (
+              <code className={className} {...rest}>
+                {children}
+              </code>
+            );
+          }
+          return (
+            <CodeBlock code={text.replace(/\n$/, "")} language={language}>
+              {children}
+            </CodeBlock>
+          );
+        },
+        // CodeBlock renders its own <pre>; without this react-markdown
+        // would nest one inside another and the layout would double up.
+        pre: ({ children }) => <>{children}</>,
+      }),
+      [imetaByUrl, mentionNames, openSnapshotPreview, snapshotSharedBy],
+    );
+
     return (
-      <div className="message-prose prose dark:prose-invert max-w-none break-words prose-p:my-1 prose-pre:my-2 prose-pre:font-mono prose-code:before:content-none prose-code:after:content-none">
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          components={{
-            p: ({ children }) => <p>{withMentions(children, mentionNames)}</p>,
-            li: ({ children }) => (
-              <li>{withMentions(children, mentionNames)}</li>
-            ),
-            a: ({ href, children }) => {
-              // Exact-match lookup, mirroring the desktop markdown.tsx
-              // (`imetaByUrl?.get(href)`).
-              const card = imetaByUrl
-                ? resolveSnapshotCard(
-                    imetaByUrl.get(String(href ?? "")),
-                    href,
-                    nodeText(children),
-                  )
-                : null;
-              if (card) {
-                return (
-                  <SnapshotCard
-                    card={card}
-                    sharedBy={snapshotSharedBy}
-                    onPreview={
-                      openSnapshotPreview
-                        ? () => openSnapshotPreview(card, snapshotSharedBy)
-                        : undefined
-                    }
-                  />
-                );
-              }
-              return <MessageLink href={href}>{children}</MessageLink>;
-            },
-            img: ({ src, alt }) => (
-              <SignedMedia src={String(src)} alt={alt ?? ""} />
-            ),
-            // react-markdown hands fenced blocks to `code` wrapped in a
-            // `pre`; inline code arrives here too, distinguished only by the
-            // absence of a language class and of a newline. Only fenced
-            // blocks become CodeBlock — inline `code` must stay inline.
-            code: ({ className, children, ...rest }) => {
-              const language = extractLanguage(className);
-              const text = nodeText(children);
-              const fenced = language !== "" || text.includes("\n");
-              if (!fenced) {
-                return (
-                  <code className={className} {...rest}>
-                    {children}
-                  </code>
-                );
-              }
-              return (
-                <CodeBlock code={text.replace(/\n$/, "")} language={language}>
-                  {children}
-                </CodeBlock>
-              );
-            },
-            // CodeBlock renders its own <pre>; without this react-markdown
-            // would nest one inside another and the layout would double up.
-            pre: ({ children }) => <>{children}</>,
-          }}
+      <MessageMediaProvider value={mediaContext}>
+        <div
+          ref={rootRef}
+          className="message-prose prose dark:prose-invert max-w-none break-words prose-p:my-1 prose-pre:my-2 prose-pre:font-mono prose-code:before:content-none prose-code:after:content-none"
         >
-          {content}
-        </ReactMarkdown>
-      </div>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+            {content}
+          </ReactMarkdown>
+        </div>
+        {gallery ? (
+          <Lightbox
+            items={gallery.items}
+            index={gallery.index}
+            returnFocusTo={gallery.trigger}
+            onIndexChange={(index) =>
+              setGallery((current) =>
+                current === null ? current : { ...current, index },
+              )
+            }
+            onClose={() => setGallery(null)}
+          />
+        ) : null}
+      </MessageMediaProvider>
     );
   },
   (prev, next) =>
@@ -213,87 +338,4 @@ function withMentions(
 
 function Fragmentish({ children }: { children: ReactNode }) {
   return <>{children}</>;
-}
-
-/**
- * Relay media requires a signed GET — <img> cannot sign. Fetch as a blob and
- * render from the object URL (module-level cache dedupes across messages).
- */
-function SignedMedia({ src, alt }: { src: string; alt: string }) {
-  const [objectUrl, setObjectUrl] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [enlarged, setEnlarged] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    setFailed(false);
-    fetchSignedMedia(src)
-      .then((url) => {
-        if (!cancelled) {
-          setObjectUrl(url);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setFailed(true);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [src]);
-
-  if (failed) {
-    return (
-      <a
-        href={src}
-        className="text-xs text-muted-foreground underline"
-        onClick={(event) => event.preventDefault()}
-      >
-        [media unavailable — {alt}]
-      </a>
-    );
-  }
-  if (alt === "video") {
-    return objectUrl ? (
-      // Uploaded videos carry no caption tracks; aria-label is the best
-      // available label. Suppression is deliberate, not an oversight.
-      // biome-ignore lint/a11y/useMediaCaption: no caption track exists for user uploads
-      <video
-        src={objectUrl}
-        controls
-        playsInline
-        aria-label={alt === "video" ? "Video attachment" : alt}
-        className="max-h-96 rounded-lg"
-      />
-    ) : (
-      <div className="h-24 w-48 animate-pulse rounded-lg bg-muted" />
-    );
-  }
-  return objectUrl ? (
-    <>
-      <button
-        type="button"
-        aria-label={alt ? `Enlarge image: ${alt}` : "Enlarge image"}
-        className="block cursor-zoom-in rounded-lg focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-        onClick={() => setEnlarged(true)}
-      >
-        <img
-          src={objectUrl}
-          alt={alt}
-          className="max-h-96 max-w-full rounded-lg"
-          loading="lazy"
-        />
-      </button>
-      {enlarged && (
-        <Lightbox
-          src={objectUrl}
-          alt={alt}
-          onClose={() => setEnlarged(false)}
-        />
-      )}
-    </>
-  ) : (
-    <div className="h-24 w-48 animate-pulse rounded-lg bg-muted" />
-  );
 }
