@@ -609,16 +609,14 @@ pub(crate) fn export_agent_key_backup(
     app: &AppHandle,
     record: &ManagedAgentRecord,
 ) -> Result<Option<std::path::PathBuf>, String> {
-    let Some(store) = agent_secret_store() else {
-        // Keyringless builds keep keys inline in the 0o600 registry JSON; the
-        // registry write itself is the durable copy. Nothing extra to do.
-        return Ok(None);
-    };
-    let Some(nsec) = backup_nsec_choice(
-        store.load(&agent_keyring_name(&record.pubkey)),
-        &record.private_key_nsec,
-        &record.pubkey,
-    )?
+    // Keyringless builds have no store to read — model that as "keyring has
+    // no key" so backup_nsec_choice's inline fallback still fires: the
+    // registry save that follows the delete destroys the inline nsec, which
+    // makes the backup file the only surviving copy (review finding 2).
+    let keyring = agent_secret_store()
+        .map(|store| store.load(&agent_keyring_name(&record.pubkey)))
+        .unwrap_or(Ok(None));
+    let Some(nsec) = backup_nsec_choice(keyring, &record.private_key_nsec, &record.pubkey)?
     else {
         return Ok(None);
     };
