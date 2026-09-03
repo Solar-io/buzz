@@ -28,6 +28,7 @@ import {
   initialSyncFilters,
   loadTimelineCache,
   mergeCachedMessage,
+  dropCachedReaction,
   mergeCachedReaction,
   olderPageFilter,
   OLDER_PAGE,
@@ -41,6 +42,7 @@ import {
 } from "./lib/forum.ts";
 import {
   reactionFromEvent,
+  removeReaction,
   upsertReaction,
   type ReactionIndex,
 } from "./lib/reactions.ts";
@@ -63,6 +65,17 @@ export interface ChannelFeed {
   loadingOlder: boolean;
   /** True once an older page came back short — the channel start is reached. */
   historyExhausted: boolean;
+  /**
+   * Drop the viewer's own reaction from live state and cache, without waiting
+   * for the relay. A reaction removal is a kind-5 targeting the reaction
+   * event, which the message-overlay path cannot apply, so the UI has to
+   * account for it here.
+   */
+  forgetOwnReaction: (
+    targetId: string,
+    emoji: string,
+    selfPubkey: string,
+  ) => void;
 }
 
 /**
@@ -299,6 +312,32 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
     setTimeout(finish, 10_000);
   }, [channelId, historyExhausted, buffer, session, applyEvent]);
 
+  /**
+   * Optimistically drop the viewer's own reaction from live state and cache.
+   *
+   * The relay confirmation cannot do this for us: a reaction removal is a
+   * kind-5 whose target is the *reaction* event, and `applyEvent` routes
+   * kind-5 to the message overlay path, which no-ops because no message
+   * carries that id. Without this the chip would sit there until reload, and
+   * `dropCachedReaction` is what stops the reload repainting it from disk.
+   */
+  const forgetOwnReaction = useCallback(
+    (targetId: string, emoji: string, selfPubkey: string) => {
+      setReactions((previous) =>
+        removeReaction(previous, targetId, emoji, selfPubkey),
+      );
+      if (cacheRef.current) {
+        cacheRef.current = dropCachedReaction(
+          cacheRef.current,
+          { targetId, emoji },
+          selfPubkey,
+        );
+        scheduleFlush();
+      }
+    },
+    [scheduleFlush],
+  );
+
   return {
     messages: buffer,
     reactions,
@@ -306,6 +345,7 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
     loadOlder,
     loadingOlder,
     historyExhausted,
+    forgetOwnReaction,
   };
 }
 
@@ -492,9 +532,7 @@ export function useProfiles(pubkeys: string[]): Map<string, Profile> {
   // frame while the relay answers.
   const [profiles, setProfiles] = useState<Map<string, Profile>>(() => {
     const seed = new Map<string, Profile>();
-    for (const [pubkey, value] of Object.entries(
-      loadSeed(PROFILE_SEED_KEY),
-    )) {
+    for (const [pubkey, value] of Object.entries(loadSeed(PROFILE_SEED_KEY))) {
       if (
         value &&
         typeof value === "object" &&
@@ -569,10 +607,7 @@ export function useProfiles(pubkeys: string[]): Map<string, Profile> {
       return;
     }
     const timer = setTimeout(() => {
-      mergeSeed(
-        PROFILE_SEED_KEY,
-        Object.fromEntries(profiles.entries()),
-      );
+      mergeSeed(PROFILE_SEED_KEY, Object.fromEntries(profiles.entries()));
     }, 1_000);
     return () => clearTimeout(timer);
   }, [profiles]);

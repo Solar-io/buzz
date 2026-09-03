@@ -40,7 +40,8 @@ export function threadRepliesOf(
 ): TimelineMessage[] {
   return buffer
     .filter(
-      (m) => m.rootId === rootId || (m.rootId === null && m.replyToId === rootId),
+      (m) =>
+        m.rootId === rootId || (m.rootId === null && m.replyToId === rootId),
     )
     .sort((a, b) => a.createdAt - b.createdAt);
 }

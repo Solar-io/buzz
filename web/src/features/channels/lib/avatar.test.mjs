@@ -29,8 +29,14 @@ test("the palette has exactly the desktop's seven classes", () => {
 });
 
 test("avatarPaletteClass is stable and case-insensitive per name", () => {
-  assert.equal(avatarPaletteClass("Sam Gallant"), avatarPaletteClass("Sam Gallant"));
-  assert.equal(avatarPaletteClass("Sam Gallant"), avatarPaletteClass(" sam gallant "));
+  assert.equal(
+    avatarPaletteClass("Sam Gallant"),
+    avatarPaletteClass("Sam Gallant"),
+  );
+  assert.equal(
+    avatarPaletteClass("Sam Gallant"),
+    avatarPaletteClass(" sam gallant "),
+  );
 });
 
 test("avatarPaletteClass always returns a palette member", () => {

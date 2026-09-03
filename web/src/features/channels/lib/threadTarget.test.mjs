@@ -56,7 +56,10 @@ test("selecting a MID-THREAD reply targets that reply", () => {
 });
 
 test("selecting the first reply targets the first reply", () => {
-  assert.equal(resolveThreadReplyRef(ROOT, REPLIES, "first").replyToId, "first");
+  assert.equal(
+    resolveThreadReplyRef(ROOT, REPLIES, "first").replyToId,
+    "first",
+  );
 });
 
 test("selecting the newest reply targets the newest reply", () => {

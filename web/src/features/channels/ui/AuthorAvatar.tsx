@@ -48,9 +48,9 @@ export function AuthorAvatar({
   // 2xs/3xs type tokens, so the desktop's exact ramp is not available here.
   const box =
     size === "sm"
-      ? "h-5 w-5 text-[10px]"
+      ? "h-5 w-5 text-badge"
       : size === "dm"
-        ? "h-6 w-6 text-[10px]"
+        ? "h-6 w-6 text-badge"
         : size === "md-sm"
           ? "h-7 w-7 text-xs"
           : "h-9 w-9 text-sm";

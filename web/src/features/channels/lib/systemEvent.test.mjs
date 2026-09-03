@@ -7,10 +7,7 @@ import {
   SYSTEM_MESSAGE_KIND,
 } from "./systemEvent.ts";
 import { MESSAGE_SEARCH_KINDS, TIMELINE_KINDS } from "./messageBuffer.ts";
-import {
-  initialSyncFilters,
-  olderPageFilter,
-} from "./timelineCache.ts";
+import { initialSyncFilters, olderPageFilter } from "./timelineCache.ts";
 
 const ALICE = "a".repeat(64);
 const BOB = "b".repeat(64);
@@ -21,7 +18,10 @@ const labels = { [ALICE]: "Alice", [BOB]: "Bob", [MOD]: "Mod" };
 const resolve = (pubkey) => (pubkey ? (labels[pubkey] ?? pubkey) : "Someone");
 
 function describe(payload) {
-  return describeSystemEvent(systemEventFromContent(JSON.stringify(payload)), resolve);
+  return describeSystemEvent(
+    systemEventFromContent(JSON.stringify(payload)),
+    resolve,
+  );
 }
 
 // --- kind wiring -----------------------------------------------------------
@@ -192,7 +192,10 @@ test("a removal names both parties", () => {
 // --- rows that must not render --------------------------------------------
 
 test("out-of-scope and malformed payloads describe to null (never raw JSON)", () => {
-  assert.equal(describe({ type: "topic_changed", actor: ALICE, topic: "x" }), null);
+  assert.equal(
+    describe({ type: "topic_changed", actor: ALICE, topic: "x" }),
+    null,
+  );
   assert.equal(describe({ type: "channel_created", actor: ALICE }), null);
   assert.equal(describe({ type: "member_joined", actor: ALICE }), null);
   assert.equal(describe({ type: "member_left" }), null);

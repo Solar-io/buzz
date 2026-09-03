@@ -7,6 +7,7 @@ import {
   applyOverlayToCache,
   initialSyncFilters,
   mergeCachedMessage,
+  dropCachedReaction,
   mergeCachedReaction,
   olderPageFilter,
 } from "./timelineCache.ts";
@@ -111,9 +112,15 @@ test("initialSyncFilters: cold start fetches one newest page", () => {
 test("initialSyncFilters: warm start is a since-delta plus overlay backfill", () => {
   const filters = initialSyncFilters("chan", 1_700_000_000);
   assert.equal(filters.length, 2);
-  assert.equal(filters[0].since, 1_700_000_000, "delta refetches inclusively (dedupe by id)");
+  assert.equal(
+    filters[0].since,
+    1_700_000_000,
+    "delta refetches inclusively (dedupe by id)",
+  );
   assert.equal(filters[0].limit, DELTA_CAP);
-  assert.ok(filters[1].kinds.includes(EDIT_KIND) && filters[1].kinds.length === 2);
+  assert.ok(
+    filters[1].kinds.includes(EDIT_KIND) && filters[1].kinds.length === 2,
+  );
   assert.ok(
     (filters[1].since ?? 0) < 1_700_000_000,
     "overlay backfill reaches BELOW the watermark",
@@ -129,4 +136,74 @@ test("olderPageFilter steps strictly below the oldest loaded row", () => {
   assert.equal(f["#h"][0], "chan");
   // Zero floor never goes negative.
   assert.equal(olderPageFilter("chan", 0).until, 0);
+});
+
+// --- dropCachedReaction ------------------------------------------------------
+// mergeCachedReaction only ever adds. Without a remover, un-reacting clears the
+// live chip but IndexedDB keeps it, so the next reload repaints it from disk.
+
+function entryWith(reactions) {
+  return { messages: [], reactions, cursor: 0, historyExhausted: false };
+}
+
+test("dropCachedReaction removes only the named author", () => {
+  const entry = entryWith(
+    new Map([["m1", new Map([["👍", ["alice", "bob"]]])]]),
+  );
+  const next = dropCachedReaction(
+    entry,
+    { targetId: "m1", emoji: "👍" },
+    "bob",
+  );
+  assert.deepEqual(next.reactions.get("m1").get("👍"), ["alice"]);
+});
+
+test("dropCachedReaction deletes an emoji whose last reactor leaves", () => {
+  const entry = entryWith(new Map([["m1", new Map([["👍", ["bob"]]])]]));
+  const next = dropCachedReaction(
+    entry,
+    { targetId: "m1", emoji: "👍" },
+    "bob",
+  );
+  assert.equal(next.reactions.get("m1"), undefined);
+});
+
+test("dropCachedReaction keeps other emoji on the same message", () => {
+  const entry = entryWith(
+    new Map([
+      [
+        "m1",
+        new Map([
+          ["👍", ["bob"]],
+          ["🔥", ["alice"]],
+        ]),
+      ],
+    ]),
+  );
+  const next = dropCachedReaction(
+    entry,
+    { targetId: "m1", emoji: "👍" },
+    "bob",
+  );
+  assert.equal(next.reactions.get("m1").has("👍"), false);
+  assert.deepEqual(next.reactions.get("m1").get("🔥"), ["alice"]);
+});
+
+test("dropCachedReaction is a no-op for an author who never reacted", () => {
+  const entry = entryWith(new Map([["m1", new Map([["👍", ["alice"]]])]]));
+  const next = dropCachedReaction(
+    entry,
+    { targetId: "m1", emoji: "👍" },
+    "bob",
+  );
+  assert.equal(next, entry, "an unrelated author must not clone the entry");
+});
+
+test("a merged reaction survives a drop by a different author", () => {
+  // Round-trip against the adder, so the two cannot drift into disagreement.
+  let entry = entryWith(new Map());
+  entry = mergeCachedReaction(entry, { targetId: "m1", emoji: "👍" }, "alice");
+  entry = mergeCachedReaction(entry, { targetId: "m1", emoji: "👍" }, "bob");
+  entry = dropCachedReaction(entry, { targetId: "m1", emoji: "👍" }, "bob");
+  assert.deepEqual(entry.reactions.get("m1").get("👍"), ["alice"]);
 });

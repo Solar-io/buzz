@@ -45,7 +45,7 @@ function MessageTimestamp({
           data-testid="message-timestamp"
           className={cn(
             "shrink-0 cursor-default whitespace-nowrap tabular-nums text-muted-foreground",
-            gutter ? "text-[10px]" : "text-xs",
+            gutter ? "text-badge" : "text-xs",
             className,
           )}
         >
@@ -155,11 +155,11 @@ export function MessageRow({
             <span className="text-sm font-semibold">{label}</span>
             {isAgent && (
               <>
-                <span className="rounded bg-accent/50 px-1 text-[10px] font-medium uppercase tracking-wide text-accent-foreground/80">
+                <span className="rounded bg-accent/50 px-1 text-badge font-medium uppercase tracking-wide text-accent-foreground/80">
                   agent
                 </span>
                 <span
-                  className="hidden font-mono text-[10px] text-muted-foreground/60 sm:inline"
+                  className="hidden font-mono text-badge text-muted-foreground/60 sm:inline"
                   title={message.authorPubkey}
                 >
                   {truncatePubkey(message.authorPubkey)}

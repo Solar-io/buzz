@@ -19,6 +19,7 @@ import { sendPresence, usePresence } from "@/features/channels/hooks";
 import { shortKey } from "@/features/dms/lib/dmNaming.ts";
 
 import { replyCounts } from "@/features/channels/lib/messageBuffer.ts";
+import { unreactToMessage } from "@/features/channels/lib/unreact.ts";
 import {
   loadReadState,
   markSeen,
@@ -116,6 +117,7 @@ function ChannelBrowser() {
     loadOlder,
     loadingOlder,
     historyExhausted,
+    forgetOwnReaction,
   } = useChannelMessages(current?.id ?? null);
   // Read state: opening a channel marks its newest message seen; badges and
   // the timeline unread divider derive from the marker.
@@ -538,6 +540,18 @@ function ChannelBrowser() {
                   activeRootId={threadRootId}
                   reactions={reactions}
                   onReact={messageActions.onReact}
+                  onUnreact={(messageId, emoji) => {
+                    if (!selfPubkey) return;
+                    // Drop it locally first: the relay's kind-5 acknowledgement
+                    // targets the reaction event, which the message-overlay
+                    // path cannot apply, so nothing would clear the chip.
+                    forgetOwnReaction(messageId, emoji, selfPubkey);
+                    void unreactToMessage(session, {
+                      targetEventId: messageId,
+                      emoji,
+                      selfPubkey,
+                    });
+                  }}
                   onEdit={messageActions.onEdit}
                   onDelete={messageActions.onDelete}
                   onShare={messageActions.onShare}

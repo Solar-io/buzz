@@ -164,6 +164,41 @@ export function mergeCachedReaction(
   return { ...entry, reactions: next };
 }
 
+/**
+ * Drop one author's reaction from the cached index.
+ *
+ * The counterpart to {@link mergeCachedReaction}, which only ever adds. Without
+ * this a removed reaction reappears on reload: the chip is gone from live state
+ * but IndexedDB still holds it, so the cached paint restores it until a delta
+ * happens to overwrite that entry — which, for a reaction nobody touches again,
+ * is never.
+ */
+export function dropCachedReaction(
+  entry: TimelineCacheEntry,
+  reaction: { targetId: string; emoji: string },
+  authorPubkey: string,
+): TimelineCacheEntry {
+  const byEmoji = entry.reactions.get(reaction.targetId);
+  const pubkeys = byEmoji?.get(reaction.emoji);
+  if (!byEmoji || !pubkeys?.includes(authorPubkey)) {
+    return entry;
+  }
+  const remaining = pubkeys.filter((pubkey) => pubkey !== authorPubkey);
+  const nextByEmoji = new Map(byEmoji);
+  if (remaining.length === 0) {
+    nextByEmoji.delete(reaction.emoji);
+  } else {
+    nextByEmoji.set(reaction.emoji, remaining);
+  }
+  const next = new Map(entry.reactions);
+  if (nextByEmoji.size === 0) {
+    next.delete(reaction.targetId);
+  } else {
+    next.set(reaction.targetId, nextByEmoji);
+  }
+  return { ...entry, reactions: next };
+}
+
 /** Initial sync filters: full first page on a cold start, delta afterwards. */
 export function initialSyncFilters(
   channelId: string,

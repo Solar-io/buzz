@@ -34,7 +34,7 @@ export function DayDivider({
       <p
         className={cn(
           "shrink-0 rounded-full border border-border/70 bg-background px-2.5 py-1",
-          "text-[11px] font-medium tracking-[0.02em] text-muted-foreground",
+          "text-2xs font-medium tracking-[0.02em] text-muted-foreground",
           pinned && "shadow-xs",
         )}
       >

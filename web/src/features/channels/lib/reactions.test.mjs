@@ -96,7 +96,11 @@ test("describeReactors names the viewer first as You", () => {
 });
 
 test("describeReactors omits You when the viewer did not react", () => {
-  const index = upsertReaction(new Map(), { targetId: "t", emoji: "👍" }, ALICE);
+  const index = upsertReaction(
+    new Map(),
+    { targetId: "t", emoji: "👍" },
+    ALICE,
+  );
   const [group] = reactionGroups(index, "t", ME);
   assert.equal(
     describeReactors(group, () => "Alice", ME),
@@ -165,14 +169,27 @@ test("buildReactionDeleteTemplate is a kind-5 with exactly one e tag", () => {
   // The relay rejects a deletion with anything but one e-or-a target, and
   // derives the channel from the target — an h tag here would be wrong.
   assert.equal(template.tags.filter((tag) => tag[0] === "e").length, 1);
-  assert.equal(template.tags.some((tag) => tag[0] === "h"), false);
+  assert.equal(
+    template.tags.some((tag) => tag[0] === "h"),
+    false,
+  );
 });
 
 test("pickOwnReactionEventId ignores other authors, emoji and targets", () => {
-  const wrongAuthor = { ...reactionEvent("👍", "t", ALICE), id: "wrong-author" };
+  const wrongAuthor = {
+    ...reactionEvent("👍", "t", ALICE),
+    id: "wrong-author",
+  };
   const wrongEmoji = { ...reactionEvent("🔥", "t", ME), id: "wrong-emoji" };
-  const wrongTarget = { ...reactionEvent("👍", "other", ME), id: "wrong-target" };
-  const wrongKind = { ...reactionEvent("👍", "t", ME), kind: 9, id: "wrong-kind" };
+  const wrongTarget = {
+    ...reactionEvent("👍", "other", ME),
+    id: "wrong-target",
+  };
+  const wrongKind = {
+    ...reactionEvent("👍", "t", ME),
+    kind: 9,
+    id: "wrong-kind",
+  };
   const right = { ...reactionEvent("👍", "t", ME), id: "right" };
   assert.equal(
     pickOwnReactionEventId(
@@ -195,8 +212,16 @@ test("pickOwnReactionEventId returns null when the viewer has no reaction", () =
 });
 
 test("pickOwnReactionEventId prefers the newest duplicate", () => {
-  const older = { ...reactionEvent("👍", "t", ME), id: "older", created_at: 10 };
-  const newer = { ...reactionEvent("👍", "t", ME), id: "newer", created_at: 20 };
+  const older = {
+    ...reactionEvent("👍", "t", ME),
+    id: "older",
+    created_at: 10,
+  };
+  const newer = {
+    ...reactionEvent("👍", "t", ME),
+    id: "newer",
+    created_at: 20,
+  };
   assert.equal(
     pickOwnReactionEventId([newer, older], {
       targetEventId: "t",
