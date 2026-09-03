@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -38,6 +38,68 @@ pub(crate) struct RestartClose {
 
 /// Maximum outbound data frames buffered into the websocket sink before one flush.
 const MAX_WS_SEND_BATCH: usize = 64;
+
+/// Slow-client backpressure tracker, shared by direct sends and fan-out.
+///
+/// A burst of failed `try_send`s means the producer outran the socket for an
+/// instant — an ordinary history replay does exactly that (hundreds of frames
+/// pushed while the writer is still draining the first batch). Only
+/// backpressure SUSTAINED for `grace_ms` means the client is genuinely too
+/// slow to keep up. The previous attempt-counted grace (`grace_limit`
+/// consecutive fulls) cancelled healthy clients mid-replay: fifteen failed
+/// sends land in ~3ms of burst, so every large initial sync was killed and
+/// re-killed on reconnect.
+pub struct Backpressure {
+    /// Failed-send count since the last successful send (metrics/logging).
+    attempts: AtomicU64,
+    /// Unix-ms timestamp of the first failed send in the current full streak;
+    /// 0 while the buffer is not under backpressure.
+    since_ms: AtomicU64,
+    /// How long continuous fullness must persist before the client is cancelled.
+    grace_ms: u64,
+}
+
+impl Backpressure {
+    /// Creates a tracker that cancels after `grace_ms` of continuous fullness.
+    pub fn new(grace_ms: u64) -> Self {
+        Self {
+            attempts: AtomicU64::new(0),
+            since_ms: AtomicU64::new(0),
+            grace_ms,
+        }
+    }
+
+    /// A successful send: the buffer had room, so backpressure is over.
+    pub fn record_send(&self) {
+        self.attempts.store(0, Ordering::Relaxed);
+        self.since_ms.store(0, Ordering::Relaxed);
+    }
+
+    /// The buffer was full. Returns `true` when fullness has persisted for the
+    /// whole grace window and the connection should be cancelled.
+    pub fn record_full(&self) -> bool {
+        self.attempts.fetch_add(1, Ordering::Relaxed);
+        let now = now_unix_ms();
+        let since = self.since_ms.load(Ordering::Relaxed);
+        if since == 0 {
+            self.since_ms.store(now, Ordering::Relaxed);
+            return false;
+        }
+        now.saturating_sub(since) >= self.grace_ms
+    }
+
+    /// Failed-send count since the last success (for logs and tests).
+    pub fn attempts(&self) -> u64 {
+        self.attempts.load(Ordering::Relaxed)
+    }
+}
+
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
 
 /// NIP-42 authentication state for a single connection.
 #[derive(Debug, Clone)]
@@ -78,35 +140,34 @@ pub struct ConnectionState {
     pub ctrl_tx: mpsc::Sender<WsMessage>,
     /// Token used to signal graceful shutdown of this connection's tasks.
     pub cancel: CancellationToken,
-    /// Consecutive buffer-full events. Cancel only after `grace_limit`.
-    /// Shared with `ConnectionManager::ConnEntry` so both direct sends and
-    /// fan-out broadcasts track the same counter.
-    pub backpressure_count: Arc<AtomicU8>,
-    /// Configurable slow-client grace limit (from `Config::slow_client_grace_limit`).
-    pub grace_limit: u8,
+    /// Slow-client tracker shared with `ConnectionManager::ConnEntry` so both
+    /// direct sends and fan-out broadcasts observe the same backpressure.
+    pub backpressure: Arc<Backpressure>,
 }
 
 impl ConnectionState {
     /// Sends a data message to this connection's outbound channel.
     ///
-    /// On a full buffer, increments the backpressure counter. The first
-    /// `grace_limit` occurrences log a warning; sustained backpressure
-    /// cancels the connection to prevent unbounded memory growth.
+    /// On a full buffer, records the failure. A client whose buffer stays
+    /// full continuously for the whole grace window (default 10s) is a slow
+    /// client and is cancelled; a producer burst that merely outruns the
+    /// writer for an instant is not.
     pub fn send(&self, msg: String) -> bool {
         match self.send_tx.try_send(WsMessage::Text(msg.into())) {
             Ok(_) => {
-                // Successful send resets the grace counter.
-                self.backpressure_count.store(0, Ordering::Relaxed);
+                self.backpressure.record_send();
                 true
             }
             Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                let count = self.backpressure_count.fetch_add(1, Ordering::Relaxed) + 1;
-                if count >= self.grace_limit {
-                    warn!(conn_id = %self.conn_id, count, "sustained backpressure — closing slow client");
+                let attempts = self.backpressure.attempts() + 1;
+                if self.backpressure.record_full() {
+                    warn!(conn_id = %self.conn_id, attempts, "sustained backpressure — closing slow client");
                     metrics::counter!("buzz_ws_backpressure_disconnects_total").increment(1);
                     self.cancel.cancel();
+                } else if attempts == 1 {
+                    warn!(conn_id = %self.conn_id, "send buffer full — slow-client grace window opened");
                 } else {
-                    warn!(conn_id = %self.conn_id, count, grace = self.grace_limit, "send buffer full — grace {count}/{}", self.grace_limit);
+                    debug!(conn_id = %self.conn_id, attempts, "send buffer full — draining");
                 }
                 false
             }
@@ -176,7 +237,7 @@ async fn handle_active_connection(
     // to graceful-shutdown delivery tracking.
     let (restart_tx, restart_rx) = mpsc::channel::<RestartClose>(1);
 
-    let backpressure_count = Arc::new(AtomicU8::new(0));
+    let backpressure = Arc::new(Backpressure::new(state.config.slow_client_grace_ms));
     let subscriptions = Arc::new(Mutex::new(HashMap::new()));
 
     let conn = Arc::new(ConnectionState {
@@ -190,8 +251,7 @@ async fn handle_active_connection(
         send_tx: tx.clone(),
         ctrl_tx: ctrl_tx.clone(),
         cancel: cancel.clone(),
-        backpressure_count: Arc::clone(&backpressure_count),
-        grace_limit: state.config.slow_client_grace_limit,
+        backpressure: Arc::clone(&backpressure),
     });
 
     info!(conn_id = %conn_id, addr = %addr, "WebSocket connection established");
@@ -223,9 +283,8 @@ async fn handle_active_connection(
         Some(restart_tx),
         cancel.clone(),
         conn.tenant.community(),
-        Arc::clone(&backpressure_count),
+        Arc::clone(&backpressure),
         subscriptions,
-        state.config.slow_client_grace_limit,
     );
 
     let (ws_send, ws_recv) = socket.split();
@@ -1106,6 +1165,48 @@ mod tests {
         assert!(
             matches!(state.messages[1], WsMessage::Close(None)),
             "ordinary cancellation retains the bare Close after the reason frame"
+        );
+    }
+
+    #[test]
+    fn backpressure_burst_never_cancels_inside_window() {
+        // Regression shape of the production kill loop: a history replay
+        // pushes thousands of frames while the writer is still draining the
+        // first batch. Under attempt-counted grace this cancelled the client
+        // in ~3ms; a time window must let the whole burst through.
+        let bp = Backpressure::new(10_000);
+        for _ in 0..10_000 {
+            assert!(
+                !bp.record_full(),
+                "burst inside the grace window must not cancel"
+            );
+        }
+        assert_eq!(bp.attempts(), 10_000);
+    }
+
+    #[test]
+    fn backpressure_cancels_only_after_sustained_fullness() {
+        let bp = Backpressure::new(30);
+        assert!(!bp.record_full(), "window opens, no cancel yet");
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        assert!(
+            bp.record_full(),
+            "fullness sustained past the window should cancel"
+        );
+    }
+
+    #[test]
+    fn backpressure_success_reopens_the_window() {
+        let bp = Backpressure::new(30);
+        assert!(!bp.record_full());
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        // A drain succeeded in between: the old window is closed and a new
+        // full streak starts from zero instead of inheriting the elapsed time.
+        bp.record_send();
+        assert_eq!(bp.attempts(), 0);
+        assert!(
+            !bp.record_full(),
+            "post-drain full opens a fresh window, not a stale cancel"
         );
     }
 }

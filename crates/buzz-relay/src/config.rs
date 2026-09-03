@@ -135,8 +135,11 @@ pub struct Config {
     pub send_buffer_size: usize,
     /// Maximum inbound WebSocket frame size in bytes.
     pub max_frame_bytes: usize,
-    /// Number of consecutive buffer-full events tolerated before cancelling a slow client.
-    pub slow_client_grace_limit: u8,
+    /// How long (ms) continuous send-buffer fullness is tolerated before
+    /// cancelling a slow client. Attempt-counted grace cancelled healthy
+    /// clients mid-burst (15 failed sends land in ~3ms during a history
+    /// replay), so the window is time-based.
+    pub slow_client_grace_ms: u64,
     /// Authentication provider configuration.
     pub auth: buzz_auth::AuthConfig,
     /// Whether REST API requests must present a valid token. Independent of
@@ -612,10 +615,11 @@ impl Config {
             .filter(|&v| v > 0)
             .unwrap_or(DEFAULT_MAX_FRAME_BYTES);
 
-        let slow_client_grace_limit = std::env::var("BUZZ_SLOW_CLIENT_GRACE_LIMIT")
+        let slow_client_grace_ms = std::env::var("BUZZ_SLOW_CLIENT_GRACE_MS")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(15);
+            .filter(|&v| v > 0)
+            .unwrap_or(10_000);
 
         let require_auth_token = std::env::var("BUZZ_REQUIRE_AUTH_TOKEN")
             .map(|v| v == "true" || v == "1")
@@ -1055,7 +1059,7 @@ impl Config {
             max_concurrent_handlers,
             send_buffer_size,
             max_frame_bytes,
-            slow_client_grace_limit,
+            slow_client_grace_ms,
             auth,
             require_auth_token,
             cors_origins,
@@ -1185,7 +1189,8 @@ mod tests {
         assert!(config.max_connections > 0);
         assert!(config.send_buffer_size > 0);
         assert_eq!(config.max_frame_bytes, DEFAULT_MAX_FRAME_BYTES);
-        assert!(config.slow_client_grace_limit > 0);
+        assert!(config.slow_client_grace_ms > 0);
+        assert_eq!(config.slow_client_grace_ms, 10_000);
         assert!(
             !config.pubkey_allowlist_enabled,
             "pubkey_allowlist_enabled should default to false"

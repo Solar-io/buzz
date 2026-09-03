@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -103,11 +103,10 @@ struct ConnEntry {
     /// receiver-side tenant label fan-out must compare against the event label.
     community_id: CommunityId,
     /// Shared with `ConnectionState` — both direct sends and fan-out
-    /// broadcasts track the same consecutive-full counter.
-    backpressure_count: Arc<AtomicU8>,
+    /// broadcasts track the same slow-client window.
+    backpressure: Arc<crate::connection::Backpressure>,
     subscriptions: ConnectionSubscriptions,
     authenticated_pubkey: Arc<std::sync::RwLock<Option<Vec<u8>>>>,
-    grace_limit: u8,
 }
 
 /// Community-scoped lifecycle registry shared by every long-lived socket type.
@@ -252,8 +251,8 @@ impl ConnectionManager {
     }
 
     /// Registers a connection with its outbound sender, cancellation token,
-    /// server-resolved community, shared backpressure counter, mutable
-    /// subscription map, and grace limit.
+    /// server-resolved community, shared slow-client tracker, and mutable
+    /// subscription map.
     // Each argument is a distinct per-connection attribute stored verbatim in
     // `ConnEntry`; a params struct would only relocate the same fields.
     #[allow(clippy::too_many_arguments)]
@@ -265,9 +264,8 @@ impl ConnectionManager {
         restart_tx: Option<mpsc::Sender<RestartClose>>,
         cancel: CancellationToken,
         community_id: CommunityId,
-        backpressure_count: Arc<AtomicU8>,
+        backpressure: Arc<crate::connection::Backpressure>,
         subscriptions: ConnectionSubscriptions,
-        grace_limit: u8,
     ) {
         let drain_ctrl_tx = ctrl_tx.clone();
         let drain_cancel = cancel.clone();
@@ -279,10 +277,9 @@ impl ConnectionManager {
                 restart_tx,
                 cancel,
                 community_id,
-                backpressure_count,
+                backpressure,
                 subscriptions,
                 authenticated_pubkey: Arc::new(std::sync::RwLock::new(None)),
-                grace_limit,
             },
         );
         // Insert-then-check pairs with drain_all's store-then-iterate: either
@@ -573,8 +570,8 @@ impl ConnectionManager {
     /// Sends a text message to the given connection.
     ///
     /// Returns `false` if the connection is gone or the buffer is full.
-    /// On sustained backpressure (>grace_limit consecutive full buffers),
-    /// cancels the connection. Transient stalls get a warning only.
+    /// A client whose buffer stays full continuously for the whole slow-client
+    /// grace window is cancelled; transient stalls get a warning only.
     pub fn send_to(&self, conn_id: Uuid, msg: String) -> bool {
         self.try_send_ws_message(conn_id, WsMessage::Text(msg.into()))
     }
@@ -594,17 +591,19 @@ impl ConnectionManager {
             let conn = entry.value();
             match conn.tx.try_send(msg) {
                 Ok(_) => {
-                    conn.backpressure_count.store(0, Ordering::Relaxed);
+                    conn.backpressure.record_send();
                     true
                 }
                 Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                    let count = conn.backpressure_count.fetch_add(1, Ordering::Relaxed) + 1;
-                    if count >= conn.grace_limit {
-                        tracing::warn!(conn_id = %conn_id, count, "fan-out: sustained backpressure — cancelling slow client");
+                    let attempts = conn.backpressure.attempts() + 1;
+                    if conn.backpressure.record_full() {
+                        tracing::warn!(conn_id = %conn_id, attempts, "fan-out: sustained backpressure — cancelling slow client");
                         metrics::counter!("buzz_ws_backpressure_disconnects_total").increment(1);
                         conn.cancel.cancel();
+                    } else if attempts == 1 {
+                        tracing::warn!(conn_id = %conn_id, "fan-out: send buffer full — slow-client grace window opened");
                     } else {
-                        tracing::warn!(conn_id = %conn_id, count, grace = conn.grace_limit, "fan-out: send buffer full — grace {count}/{}", conn.grace_limit);
+                        tracing::debug!(conn_id = %conn_id, attempts, "fan-out: send buffer full — draining");
                     }
                     false
                 }
@@ -1372,7 +1371,8 @@ mod tests {
 
     /// Helper: create a ConnectionManager with one registered connection.
     /// Returns (manager, conn_id, receiver, ctrl_receiver, cancel,
-    /// shared_backpressure_count).
+    /// shared backpressure tracker). Tests use a 30ms grace window so
+    /// sustained-fullness tests sleep briefly instead of 10s.
     fn setup_conn(
         buffer_size: usize,
     ) -> (
@@ -1381,14 +1381,14 @@ mod tests {
         mpsc::Receiver<WsMessage>,
         mpsc::Receiver<WsMessage>,
         CancellationToken,
-        Arc<AtomicU8>,
+        Arc<crate::connection::Backpressure>,
     ) {
         let mgr = ConnectionManager::new();
         let conn_id = Uuid::new_v4();
         let (tx, rx) = mpsc::channel(buffer_size);
         let (ctrl_tx, ctrl_rx) = mpsc::channel(buffer_size);
         let cancel = CancellationToken::new();
-        let bp = Arc::new(AtomicU8::new(0));
+        let bp = Arc::new(crate::connection::Backpressure::new(30));
         mgr.register(
             conn_id,
             tx,
@@ -1398,7 +1398,6 @@ mod tests {
             buzz_core::tenant::CommunityId::from_uuid(Uuid::nil()),
             Arc::clone(&bp),
             Arc::new(Mutex::new(HashMap::new())),
-            3,
         );
         (mgr, conn_id, rx, ctrl_rx, cancel, bp)
     }
@@ -1441,62 +1440,65 @@ mod tests {
     }
 
     #[test]
-    fn send_to_resets_grace_counter_on_success() {
-        let (mgr, id, _rx, _ctrl_rx, _cancel, bp) = setup_conn(16);
-        // Simulate prior backpressure.
-        bp.store(2, Ordering::Relaxed);
+    fn send_to_resets_grace_window_on_success() {
+        let (mgr, id, mut rx, _ctrl_rx, _cancel, _bp) = setup_conn(16);
+        // Simulate a prior full streak by filling and overflowing.
+        for _ in 0..16 {
+            assert!(mgr.send_to(id, "fill".into()));
+        }
+        assert!(!mgr.send_to(id, "overflow".into()));
+        // Drain one frame: the next send succeeds and closes the window.
+        let _ = rx.try_recv();
         assert!(mgr.send_to(id, "hello".into()));
         assert_eq!(
-            bp.load(Ordering::Relaxed),
+            _bp.attempts(),
             0,
-            "successful send should reset counter"
+            "successful send should reset the full streak"
         );
     }
 
     #[test]
-    fn send_to_increments_grace_counter_on_full() {
-        // Buffer size 1 — fill it, then the next send is Full.
+    fn send_to_burst_of_fulls_does_not_cancel() {
+        // Buffer size 1 — fill it, then hammer it with overflows far beyond
+        // the old attempt limit. A replay burst must not cancel the client.
         let (mgr, id, _rx, _ctrl_rx, cancel, bp) = setup_conn(1);
         assert!(mgr.send_to(id, "fill".into()));
-        // Buffer is now full.
-        assert!(!mgr.send_to(id, "overflow-1".into()));
-        assert_eq!(bp.load(Ordering::Relaxed), 1, "first overflow → count=1");
+        for _ in 0..1_000 {
+            assert!(!mgr.send_to(id, "overflow".into()));
+        }
+        assert_eq!(bp.attempts(), 1_000);
         assert!(
             !cancel.is_cancelled(),
-            "should not cancel on first overflow"
-        );
-
-        assert!(!mgr.send_to(id, "overflow-2".into()));
-        assert_eq!(bp.load(Ordering::Relaxed), 2);
-        assert!(
-            !cancel.is_cancelled(),
-            "should not cancel on second overflow"
+            "a sub-grace-window burst of fulls must not cancel"
         );
     }
 
     #[test]
-    fn send_to_cancels_after_grace_limit() {
+    fn send_to_cancels_after_sustained_backpressure() {
         let (mgr, id, _rx, _ctrl_rx, cancel, _bp) = setup_conn(1);
         assert!(mgr.send_to(id, "fill".into()));
-        // Exhaust grace: 3 consecutive Full events (matches grace_limit=3 from setup_conn).
-        for _ in 0..3u8 {
-            mgr.send_to(id, "overflow".into());
-        }
+        // Open the window, then outlive the 30ms grace without draining.
+        assert!(!mgr.send_to(id, "overflow".into()));
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        assert!(
+            !mgr.send_to(id, "overflow-past-grace".into()),
+            "buffer still full"
+        );
         assert!(
             cancel.is_cancelled(),
-            "should cancel after grace_limit overflows"
+            "fullness sustained past the grace window should cancel"
         );
     }
 
     #[test]
-    fn shared_counter_between_direct_and_fanout() {
+    fn shared_window_between_direct_and_fanout() {
         // Verify that ConnectionState::send() and ConnectionManager::send_to()
-        // share the same backpressure counter via Arc<AtomicU8>.
+        // share the same slow-client window via Arc<Backpressure>.
         let conn_id = Uuid::new_v4();
         let (tx, _rx) = mpsc::channel(1);
         let (ctrl_tx, _ctrl_rx) = mpsc::channel(8);
         let cancel = CancellationToken::new();
-        let bp = Arc::new(AtomicU8::new(0));
+        let bp = Arc::new(crate::connection::Backpressure::new(30));
 
         let conn = ConnectionState {
             conn_id,
@@ -1510,8 +1512,7 @@ mod tests {
             send_tx: tx.clone(),
             ctrl_tx,
             cancel: cancel.clone(),
-            backpressure_count: Arc::clone(&bp),
-            grace_limit: 3,
+            backpressure: Arc::clone(&bp),
         };
 
         let mgr = ConnectionManager::new();
@@ -1524,30 +1525,30 @@ mod tests {
             buzz_core::tenant::CommunityId::from_uuid(Uuid::nil()),
             Arc::clone(&bp),
             Arc::clone(&conn.subscriptions),
-            3,
         );
 
-        // Fill the buffer via direct send.
+        // Fill the buffer via direct send, then overflow via both paths.
         assert!(conn.send("fill".into()));
-        // Overflow via fan-out.
         assert!(!mgr.send_to(conn_id, "overflow-fanout".into()));
         assert_eq!(
-            bp.load(Ordering::Relaxed),
+            bp.attempts(),
             1,
-            "fan-out overflow increments shared counter"
+            "fan-out overflow increments the shared streak"
         );
-        // Overflow via direct send.
         assert!(!conn.send("overflow-direct".into()));
         assert_eq!(
-            bp.load(Ordering::Relaxed),
+            bp.attempts(),
             2,
-            "direct overflow increments same counter"
+            "direct overflow increments the same streak"
         );
-        // One more fan-out overflow → should cancel (3 consecutive).
+        assert!(!cancel.is_cancelled());
+        // Outlive the grace window; the next fan-out overflow cancels via the
+        // mixed path regardless of which send observed the window opening.
+        std::thread::sleep(std::time::Duration::from_millis(60));
         mgr.send_to(conn_id, "overflow-final".into());
         assert!(
             cancel.is_cancelled(),
-            "shared counter reached limit via mixed path"
+            "sustained fullness reached the grace window via mixed path"
         );
     }
 
@@ -1569,9 +1570,8 @@ mod tests {
             None,
             CancellationToken::new(),
             community_a,
-            Arc::new(AtomicU8::new(0)),
+            Arc::new(crate::connection::Backpressure::new(10_000)),
             Arc::new(Mutex::new(HashMap::new())),
-            3,
         );
         mgr.register(
             conn_b,
@@ -1580,9 +1580,8 @@ mod tests {
             None,
             CancellationToken::new(),
             community_b,
-            Arc::new(AtomicU8::new(0)),
+            Arc::new(crate::connection::Backpressure::new(10_000)),
             Arc::new(Mutex::new(HashMap::new())),
-            3,
         );
 
         let pubkey = vec![7u8; 32];
@@ -1608,7 +1607,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(1);
         let (ctrl_tx, _ctrl_rx) = mpsc::channel(1);
         let cancel = CancellationToken::new();
-        let bp = Arc::new(AtomicU8::new(0));
+        let bp = Arc::new(crate::connection::Backpressure::new(10_000));
         let subscriptions = Arc::new(Mutex::new(HashMap::new()));
         mgr.register(
             conn_id,
@@ -1619,7 +1618,6 @@ mod tests {
             buzz_core::tenant::CommunityId::from_uuid(Uuid::nil()),
             bp,
             subscriptions,
-            3,
         );
 
         assert_eq!(mgr.pubkey_for_conn(conn_id), None);
@@ -1951,9 +1949,8 @@ mod tests {
                 None,
                 cancel.clone(),
                 community,
-                Arc::new(AtomicU8::new(0)),
+                Arc::new(crate::connection::Backpressure::new(10_000)),
                 Arc::new(Mutex::new(HashMap::new())),
-                3,
             );
             mgr.set_authenticated_pubkey(conn_id, pubkey.clone());
             cancel
@@ -1992,9 +1989,8 @@ mod tests {
             Some(restart_tx),
             cancel.clone(),
             buzz_core::tenant::CommunityId::from_uuid(Uuid::nil()),
-            Arc::new(AtomicU8::new(0)),
+            Arc::new(crate::connection::Backpressure::new(10_000)),
             Arc::new(Mutex::new(HashMap::new())),
-            3,
         );
 
         let drain_mgr = Arc::clone(&mgr);
@@ -2036,9 +2032,8 @@ mod tests {
                 Some(restart_tx),
                 cancel.clone(),
                 buzz_core::tenant::CommunityId::from_uuid(Uuid::nil()),
-                Arc::new(AtomicU8::new(0)),
+                Arc::new(crate::connection::Backpressure::new(10_000)),
                 Arc::new(Mutex::new(HashMap::new())),
-                3,
             );
 
             assert_eq!(mgr.drain_all_jittered(1).await, 1);
@@ -2067,9 +2062,8 @@ mod tests {
             Some(restart_tx),
             cancel.clone(),
             buzz_core::tenant::CommunityId::from_uuid(Uuid::nil()),
-            Arc::new(AtomicU8::new(0)),
+            Arc::new(crate::connection::Backpressure::new(10_000)),
             Arc::new(Mutex::new(HashMap::new())),
-            3,
         );
 
         let drain_mgr = Arc::clone(&mgr);
@@ -2107,9 +2101,8 @@ mod tests {
                 None,
                 cancel.clone(),
                 community,
-                Arc::new(AtomicU8::new(0)),
+                Arc::new(crate::connection::Backpressure::new(10_000)),
                 Arc::new(Mutex::new(HashMap::new())),
-                3,
             );
             (ctrl_rx, cancel)
         };
@@ -2159,9 +2152,8 @@ mod tests {
             None,
             cancel.clone(),
             buzz_core::tenant::CommunityId::from_uuid(Uuid::nil()),
-            Arc::new(AtomicU8::new(0)),
+            Arc::new(crate::connection::Backpressure::new(10_000)),
             Arc::new(Mutex::new(HashMap::new())),
-            3,
         );
         // Wedge the 1-slot control channel.
         ctrl_tx
@@ -2207,9 +2199,8 @@ mod tests {
             None,
             cancel.clone(),
             buzz_core::tenant::CommunityId::from_uuid(Uuid::nil()),
-            Arc::new(AtomicU8::new(0)),
+            Arc::new(crate::connection::Backpressure::new(10_000)),
             Arc::new(Mutex::new(HashMap::new())),
-            3,
         );
 
         assert!(
@@ -2245,9 +2236,8 @@ mod tests {
             None,
             cancel.clone(),
             buzz_core::tenant::CommunityId::from_uuid(Uuid::nil()),
-            Arc::new(AtomicU8::new(0)),
+            Arc::new(crate::connection::Backpressure::new(10_000)),
             Arc::new(Mutex::new(HashMap::new())),
-            3,
         );
 
         let closed = mgr.drain_all();
@@ -2282,9 +2272,8 @@ mod tests {
             None,
             cancel.clone(),
             buzz_core::tenant::CommunityId::from_uuid(Uuid::nil()),
-            Arc::new(AtomicU8::new(0)),
+            Arc::new(crate::connection::Backpressure::new(10_000)),
             Arc::new(Mutex::new(HashMap::new())),
-            3,
         );
 
         let jitter_ms = 20_000u64;
@@ -2320,9 +2309,8 @@ mod tests {
             None,
             late_cancel.clone(),
             buzz_core::tenant::CommunityId::from_uuid(Uuid::nil()),
-            Arc::new(AtomicU8::new(0)),
+            Arc::new(crate::connection::Backpressure::new(10_000)),
             Arc::new(Mutex::new(HashMap::new())),
-            3,
         );
         assert!(
             late_cancel.is_cancelled(),

@@ -1190,7 +1190,6 @@ fn single_tag_content<'a>(event: &'a Event, tag_name: &str) -> Result<&'a str, S
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::sync::atomic::AtomicU8;
     use std::sync::Arc;
 
     use buzz_core::kind::{
@@ -1432,8 +1431,7 @@ mod tests {
             send_tx,
             ctrl_tx,
             cancel: CancellationToken::new(),
-            backpressure_count: Arc::new(AtomicU8::new(0)),
-            grace_limit: 3,
+            backpressure: Arc::new(crate::connection::Backpressure::new(10_000)),
         });
 
         super::handle_agent_observer_event(
@@ -1461,7 +1459,6 @@ mod tests {
 
     mod pubsub_fanout {
         use std::collections::HashMap;
-        use std::sync::atomic::AtomicU8;
         use std::sync::Arc;
 
         use axum::extract::ws::Message;
@@ -1495,9 +1492,8 @@ mod tests {
                 None,
                 CancellationToken::new(),
                 buzz_core::tenant::CommunityId::from_uuid(Uuid::nil()),
-                Arc::new(AtomicU8::new(0)),
+                Arc::new(crate::connection::Backpressure::new(10_000)),
                 Arc::new(Mutex::new(HashMap::new())),
-                3,
             );
             if let Some(pubkey) = pubkey {
                 state.conn_manager.set_authenticated_pubkey(conn_id, pubkey);
@@ -2135,9 +2131,8 @@ mod tests {
                 None,
                 CancellationToken::new(),
                 buzz_core::tenant::CommunityId::from_uuid(Uuid::nil()),
-                Arc::new(AtomicU8::new(0)),
+                Arc::new(crate::connection::Backpressure::new(10_000)),
                 Arc::new(Mutex::new(HashMap::new())),
-                3,
             );
             if let Some(pk) = pubkey {
                 state.conn_manager.set_authenticated_pubkey(conn_id, pk);
@@ -2461,9 +2456,8 @@ mod tests {
                 None,
                 CancellationToken::new(),
                 community_id,
-                Arc::new(AtomicU8::new(0)),
+                Arc::new(crate::connection::Backpressure::new(10_000)),
                 Arc::new(Mutex::new(HashMap::new())),
-                3,
             );
             if let Some(pk) = pubkey {
                 state.conn_manager.set_authenticated_pubkey(conn_id, pk);
