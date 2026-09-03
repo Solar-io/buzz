@@ -110,7 +110,10 @@ export function ForumThreadView({
           <span aria-hidden="true">←</span> Back to posts
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto" ref={scrollRef}>
+      <div
+        className="buzz-content-scrollbar min-h-0 flex-1 overflow-y-auto"
+        ref={scrollRef}
+      >
         <div className="mx-auto w-full max-w-3xl px-1 sm:px-3">
           {root ? (
             <ForumMessageCard

@@ -160,7 +160,7 @@ export function ChannelSidebar({
           </kbd>
         </div>
       </div>
-      <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+      <nav className="buzz-sidebar-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {channelCount === 0 && (
           <p className="px-2 py-4 text-sm text-muted-foreground">
             {connected

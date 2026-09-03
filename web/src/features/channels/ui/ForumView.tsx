@@ -150,7 +150,7 @@ export function ForumView({
           )}
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="buzz-content-scrollbar min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-3xl px-1 py-2 sm:px-3">
           {loading && posts.length === 0 ? (
             <p className="p-8 text-center text-sm text-muted-foreground">
