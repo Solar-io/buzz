@@ -81,7 +81,7 @@ export function AgentCreateForm({
   }, [ack]);
 
   const submit = async () => {
-    if (busy) {
+    if (busy || requestId !== null) {
       return;
     }
     const built = buildCreateCommand(value);
@@ -174,16 +174,31 @@ export function AgentCreateForm({
           </span>
         </label>
       )}
+      {requestId !== null && (
+        <p className="rounded-md border border-border bg-accent/30 px-2 py-1.5 text-xs text-muted-foreground">
+          Sent — waiting for your desktop to apply it. Creating again before it
+          responds can mint the same agent twice.
+        </p>
+      )}
       <div className="flex justify-end gap-2">
         <Button size="sm" variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
         <Button
           size="sm"
-          disabled={busy || !value.name.trim() || !value.systemPrompt.trim()}
+          disabled={
+            busy ||
+            requestId !== null ||
+            !value.name.trim() ||
+            !value.systemPrompt.trim()
+          }
           onClick={() => void submit()}
         >
-          {busy ? "Sending…" : "Create agent"}
+          {busy
+            ? "Sending…"
+            : requestId !== null
+              ? "Waiting for desktop…"
+              : "Create agent"}
         </Button>
       </div>
     </div>
