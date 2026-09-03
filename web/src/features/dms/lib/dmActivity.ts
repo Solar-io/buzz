@@ -9,6 +9,30 @@ export interface DmLastMessage {
   created_at: number;
 }
 
+export interface DmRecencyRank {
+  /** Newest sampled message time; 0 when the DM has never been messaged. */
+  lastActivity: number;
+  /** Channel metadata (39000) time — re-opens bump this without a message. */
+  updatedAt: number;
+  name: string;
+}
+
+/**
+ * Most-recent-ACTIVITY ordering for the DM list. A real message beats a
+ * metadata touch, so re-opening an old DM cannot float it over a
+ * conversation that was actually messaged more recently; never-messaged
+ * DMs fall back to their metadata (creation) time, ties break by name.
+ */
+export function compareDmRecency(
+  a: DmRecencyRank,
+  b: DmRecencyRank,
+): number {
+  return (
+    (b.lastActivity || b.updatedAt) - (a.lastActivity || a.updatedAt) ||
+    a.name.localeCompare(b.name)
+  );
+}
+
 /**
  * Last-activity info per DM channel, derived from ONE kind:9 subscription
  * spanning all known DM ids (`#h: [id1, id2, …]` — nostr filters are OR

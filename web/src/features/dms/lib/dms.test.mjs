@@ -8,7 +8,7 @@ import {
   extractOpenDmChannelId,
   parsePubkeyInput,
 } from "./dmInput.ts";
-import { dmActivityFromEvents } from "./dmActivity.ts";
+import { dmActivityFromEvents, compareDmRecency } from "./dmActivity.ts";
 
 const SELF = "aa".repeat(32);
 const SAM = "bb".repeat(32);
@@ -194,4 +194,55 @@ test("dmActivityFromEvents tracks the newest message per DM", () => {
   assert.equal(dm2.created_at, 200);
   assert.equal(dm2.excerpt, "📷 image");
   assert.equal(activity.size, 2);
+});
+
+test("compareDmRecency: a real message beats a newer metadata touch", () => {
+  // Re-opened old DM: metadata bumped to 1000, last message at 100.
+  // Chatty DM: last message at 500, metadata stale at 50.
+  assert.equal(
+    Math.sign(
+      compareDmRecency(
+        { lastActivity: 100, updatedAt: 1000, name: "A Reopened" },
+        { lastActivity: 500, updatedAt: 50, name: "B Active" },
+      ),
+    ),
+    1,
+  );
+});
+
+test("compareDmRecency: never-messaged DMs fall back to metadata time", () => {
+  assert.equal(
+    Math.sign(
+      compareDmRecency(
+        { lastActivity: 0, updatedAt: 900, name: "A New" },
+        { lastActivity: 0, updatedAt: 100, name: "B Old" },
+      ),
+    ),
+    -1,
+  );
+});
+
+test("compareDmRecency: fresh DMs rank by creation, messaged DMs by last message", () => {
+  // A just-started DM (no messages, newest metadata) sits on top — you
+  // opened it and are about to type. Everything messaged ranks strictly by
+  // its newest message.
+  const ordered = [
+    { lastActivity: 10, updatedAt: 5, name: "Old message" },
+    { lastActivity: 0, updatedAt: 9999, name: "Fresh DM" },
+    { lastActivity: 800, updatedAt: 4, name: "Latest" },
+  ].sort(compareDmRecency);
+  assert.deepEqual(
+    ordered.map((dm) => dm.name),
+    ["Fresh DM", "Latest", "Old message"],
+  );
+});
+
+test("compareDmRecency: ties break by name", () => {
+  assert.equal(
+    compareDmRecency(
+      { lastActivity: 100, updatedAt: 0, name: "Alpha" },
+      { lastActivity: 100, updatedAt: 0, name: "Beta" },
+    ),
+    -1,
+  );
 });

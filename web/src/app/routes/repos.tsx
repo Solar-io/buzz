@@ -830,7 +830,7 @@ function ChannelBrowser() {
           </p>
         )}
         {visibleDms.length > 0 && (
-          <ul className="space-y-1">
+          <ul className="space-y-0.5">
             {visibleDms.map(({ channel, lastMessage }) => (
               <li key={channel.id}>
                 <DmNavRow
@@ -1371,7 +1371,7 @@ function shortDate(unixSeconds: number): string {
  */
 function GroupAvatar({ count }: { count: number }) {
   return (
-    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-muted text-sm font-bold text-foreground">
+    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted text-xs font-bold text-foreground">
       {count}
     </span>
   );
@@ -1415,12 +1415,13 @@ function DmNavRow({
     <button
       type="button"
       className={cn(
-        // Avatar-first, name-only rows (Sam 2026-09-02 DM mock): taller
-        // row, pill-shaped selection, no excerpt/timestamp clutter.
-        "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors",
+        // Avatar-first, name-only rows (Sam 2026-09-02 DM mock), at the
+        // desktop's measured density: 26-28px row-to-row text pitch,
+        // 12px avatar-to-name gap, no excerpt/timestamp clutter.
+        "flex w-full items-center gap-3 rounded-lg px-3 py-0.5 text-left transition-colors",
         "hover:bg-white/5",
         selected &&
-          "rounded-full bg-[hsl(var(--sidebar-active))] px-4 py-2.5 text-[hsl(var(--sidebar-active-foreground))]",
+          "rounded-full bg-[hsl(var(--sidebar-active))] px-3.5 py-1 text-[hsl(var(--sidebar-active-foreground))]",
       )}
       onClick={() => {
         onSelect();
@@ -1443,21 +1444,21 @@ function DmNavRow({
             pubkey={avatarPubkey}
             label={avatarLabel}
             picture={profiles.get(avatarPubkey)?.avatar}
-            size="md"
+            size="md-sm"
           />
         )}
         {others.length <= 1 &&
           (active ? (
-            <span className="absolute -right-0.5 -bottom-0.5 flex h-3 w-3">
+            <span className="absolute -right-0.5 -bottom-0.5 flex h-2.5 w-2.5">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-              <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
             </span>
           ) : (
             presence && (
               <span
                 title={presence.status}
                 className={cn(
-                  "absolute -right-0.5 -bottom-0.5 h-3 w-3 rounded-full border border-sidebar",
+                  "absolute -right-0.5 -bottom-0.5 h-2.5 w-2.5 rounded-full border border-sidebar",
                   presenceDotClass(presence.status),
                 )}
               />
@@ -1466,7 +1467,7 @@ function DmNavRow({
       </span>
       <span
         className={cn(
-          "min-w-0 flex-1 truncate text-base",
+          "min-w-0 flex-1 truncate text-sm",
           unread && !active && "font-bold",
         )}
       >

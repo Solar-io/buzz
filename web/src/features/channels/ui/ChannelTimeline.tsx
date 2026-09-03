@@ -123,7 +123,7 @@ export function AuthorAvatar({
   pubkey: string;
   label: string;
   picture?: string;
-  size?: "sm" | "md";
+  size?: "sm" | "md" | "md-sm";
 }) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   useEffect(() => {
@@ -145,7 +145,12 @@ export function AuthorAvatar({
       cancelled = true;
     };
   }, [picture]);
-  const box = size === "sm" ? "h-5 w-5 text-[10px]" : "h-9 w-9 text-sm";
+  const box =
+    size === "sm"
+      ? "h-5 w-5 text-[10px]"
+      : size === "md-sm"
+        ? "h-7 w-7 text-xs"
+        : "h-9 w-9 text-sm";
   if (objectUrl) {
     return (
       <img
