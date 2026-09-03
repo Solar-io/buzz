@@ -1,3 +1,4 @@
+import { BellOff } from "lucide-react";
 import type { ReactNode } from "react";
 import { ContextMenu, type ContextMenuItem } from "@/shared/ui/ContextMenu";
 import { useDrawerClose } from "@/shared/layout/AppShell";
@@ -11,6 +12,13 @@ export interface SidebarNavButtonProps {
   icon?: ReactNode;
   /** Unread dot — newest activity newer than the read marker. */
   unread?: boolean;
+  /**
+   * Muted rows dim and carry a bell-off glyph, matching the desktop.
+   * Mute already suppresses the unread dot; without this the row looked
+   * identical to a read one, so there was no way to tell a muted channel
+   * from a quiet one.
+   */
+  muted?: boolean;
   onSelect: () => void;
   /** Right-click / ⋯ context menu items, when provided. */
   menuItems?: ContextMenuItem[];
@@ -27,6 +35,7 @@ export function SidebarNavButton({
   label,
   icon,
   unread,
+  muted,
   onSelect,
   menuItems,
 }: SidebarNavButtonProps) {
@@ -40,6 +49,8 @@ export function SidebarNavButton({
         "group/row flex h-8 w-full items-center gap-2 truncate rounded-[8px] px-2 text-left text-sm transition-colors",
         "hover:bg-white/5 hover:text-foreground",
         selected && "bg-[#9A3EF6] font-normal text-black",
+        // Desktop dims muted rows rather than hiding them.
+        muted && !selected && "opacity-50",
       )}
       onClick={() => {
         onSelect();
@@ -67,8 +78,19 @@ export function SidebarNavButton({
       >
         {label}
       </span>
+      {muted && (
+        <BellOff
+          className={cn("h-3.5 w-3.5 shrink-0", !unread && "ml-auto")}
+          aria-label="Muted"
+        />
+      )}
       {unread && (
-        <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-[#9A3EF6]" />
+        <span
+          className={cn(
+            "h-2 w-2 shrink-0 rounded-full bg-[#9A3EF6]",
+            !muted && "ml-auto",
+          )}
+        />
       )}
       {menuItems && (
         // A real <button> cannot nest inside the row button — the span keeps
@@ -80,7 +102,7 @@ export function SidebarNavButton({
           aria-label={`Options for ${label}`}
           className={cn(
             "hidden shrink-0 rounded p-0.5 text-xs text-sidebar-foreground/60 hover:bg-white/10 group-hover/row:block",
-            !unread && "ml-auto",
+            !unread && !muted && "ml-auto",
           )}
           onClick={(event) => {
             event.stopPropagation();

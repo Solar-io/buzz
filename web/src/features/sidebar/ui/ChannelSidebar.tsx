@@ -182,6 +182,7 @@ export function ChannelSidebar({
                       !isMuted(readState.prefs, channel.id) &&
                       isUnread(readState.read, channel.id, channel.updatedAt)
                     }
+                    muted={isMuted(readState.prefs, channel.id)}
                     onSelect={() => actions.onSelectChannel(channel.id)}
                     menuItems={actions.channelMenuItems(channel)}
                   />
@@ -212,6 +213,7 @@ export function ChannelSidebar({
                   !isMuted(readState.prefs, channel.id) &&
                   isUnread(readState.read, channel.id, channel.updatedAt)
                 }
+                muted={isMuted(readState.prefs, channel.id)}
                 onSelect={() => actions.onSelectChannel(channel.id)}
                 menuItems={actions.channelMenuItems(channel)}
               />
@@ -234,6 +236,7 @@ export function ChannelSidebar({
                       !isMuted(readState.prefs, channel.id) &&
                       isUnread(readState.read, channel.id, channel.updatedAt)
                     }
+                    muted={isMuted(readState.prefs, channel.id)}
                     onSelect={() => actions.onSelectChannel(channel.id)}
                     menuItems={actions.channelMenuItems(channel)}
                   />
