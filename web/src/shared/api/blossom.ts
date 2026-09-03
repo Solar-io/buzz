@@ -16,7 +16,10 @@ import { canonicalizeImage } from "../lib/mediaCanonical";
 
 export const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 export const MAX_VIDEO_BYTES = 500 * 1024 * 1024;
+/** `max_file_bytes` default in crates/buzz-media/src/config.rs — 100 MB. */
+export const MAX_FILE_BYTES = 100 * 1024 * 1024;
 
+/** Types the relay's thumbnailing image pipeline accepts. */
 export const ALLOWED_MIMES = [
   "image/jpeg",
   "image/png",
@@ -84,17 +87,30 @@ async function buildAuthorization(
   return `Nostr ${toBase64UrlNoPad(new TextEncoder().encode(JSON.stringify(event)))}`;
 }
 
-/** Sniff a subset of the CLI's magic-byte checks; fall back to file.type. */
-export function detectMime(file: File): string | null {
-  if (file.type && (ALLOWED_MIMES as readonly string[]).includes(file.type)) {
-    return file.type;
-  }
-  // Browsers reliably label the allowed set; anything else is rejected.
-  return null;
+/**
+ * Content-Type to send with the upload.
+ *
+ * The relay treats this header as advisory — `upload_blob` sniffs the first
+ * 4 KiB and routes on the actual bytes — so this only has to be truthful, not
+ * gate-keeping. The gate that matters is the relay's: images and MP4 take
+ * their own pipelines and everything else takes the generic attachment path,
+ * which is a deny-list (no audio, no SVG/JS, no executables).
+ *
+ * Client-side pre-flight against those rules lives in
+ * `features/channels/lib/attachmentAccept.ts`, where the picker's `accept`
+ * list is derived from the same Rust. Rejecting here as well would duplicate
+ * that in the transport layer and, historically, silently refused every
+ * document and archive the relay was happy to store.
+ */
+export function detectMime(file: File): string {
+  return file.type || "application/octet-stream";
 }
 
 export function maxBytesFor(mime: string): number {
-  return mime.startsWith("video/") ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
+  if (mime.startsWith("video/")) {
+    return MAX_VIDEO_BYTES;
+  }
+  return mime.startsWith("image/") ? MAX_IMAGE_BYTES : MAX_FILE_BYTES;
 }
 
 /**
@@ -131,7 +147,65 @@ export async function prepareForUpload(file: File): Promise<File> {
 }
 
 export interface UploadOptions {
+  /** Called with 0..1 as the request body is written. */
   onProgress?: (fraction: number) => void;
+  /** Aborts the in-flight request when signalled. */
+  signal?: AbortSignal;
+}
+
+interface UploadResponse {
+  status: number;
+  body: string;
+}
+
+/**
+ * PUT the bytes and report real upload progress.
+ *
+ * `fetch` cannot report request-body progress in any shipping browser (the
+ * streaming-upload half of the Streams spec is Chromium-only and requires
+ * HTTP/2 plus `duplex: "half"`), so a fetch-based uploader can only ever fake
+ * it — which is what the previous `onProgress?.(1)` after the await did. XHR
+ * exposes `upload.onprogress`, so the composer's per-file bars track the
+ * actual bytes on the wire.
+ */
+function putWithProgress(
+  url: string,
+  headers: Record<string, string>,
+  bytes: Uint8Array,
+  options: UploadOptions,
+): Promise<UploadResponse> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("PUT", url, true);
+    for (const [name, value] of Object.entries(headers)) {
+      request.setRequestHeader(name, value);
+    }
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) {
+        options.onProgress?.(Math.min(1, event.loaded / event.total));
+      }
+    };
+    request.onload = () => {
+      options.onProgress?.(1);
+      resolve({ status: request.status, body: request.responseText });
+    };
+    request.onerror = () =>
+      reject(new Error("Network error while uploading — is the relay up?"));
+    request.ontimeout = () => reject(new Error("Upload timed out."));
+    request.onabort = () => reject(new DOMException("Aborted", "AbortError"));
+    if (options.signal) {
+      if (options.signal.aborted) {
+        reject(new DOMException("Aborted", "AbortError"));
+        return;
+      }
+      options.signal.addEventListener("abort", () => request.abort(), {
+        once: true,
+      });
+    }
+    // A fresh copy: XHR keeps a reference to the buffer for the life of the
+    // request, and the caller's view may be a slice of a larger ArrayBuffer.
+    request.send(bytes.slice().buffer as ArrayBuffer);
+  });
 }
 
 /** Upload a file via BUD-02. Returns the relay's blob descriptor. */
@@ -141,11 +215,6 @@ export async function uploadBlob(
 ): Promise<BlobDescriptor> {
   const prepared = await prepareForUpload(file);
   const mime = detectMime(prepared);
-  if (!mime) {
-    throw new Error(
-      `Unsupported file type (${prepared.type || "unknown"}) — images and MP4 only.`,
-    );
-  }
   if (prepared.size > maxBytesFor(mime)) {
     throw new Error("File is too large.");
   }
@@ -179,23 +248,17 @@ export async function uploadBlob(
     if (authTag) {
       headers["x-auth-tag"] = authTag;
     }
-    const response = await fetch(url, {
-      method: "PUT",
-      headers,
-      body: bytes,
-    });
-    options.onProgress?.(1);
+    const response = await putWithProgress(url, headers, bytes, options);
     if (response.status === 404 || response.status === 405) {
       lastError = `endpoint ${url} unavailable`;
       continue;
     }
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
+    if (response.status < 200 || response.status >= 300) {
       throw new Error(
-        `Upload rejected (${response.status}): ${body.slice(0, 200)}`,
+        `Upload rejected (${response.status}): ${response.body.slice(0, 200)}`,
       );
     }
-    const raw = (await response.json()) as Partial<BlobDescriptor> & {
+    const raw = JSON.parse(response.body) as Partial<BlobDescriptor> & {
       type?: string;
     };
     // The relay's wire shape uses "type"; normalize to mime_type.

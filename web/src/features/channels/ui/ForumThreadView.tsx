@@ -89,8 +89,13 @@ export function ForumThreadView({
   // never "whatever arrived last", which is what it used to be.
   const threadRef = resolveThreadReplyRef(postId, replies, selectedReplyId);
   const target = replyTargetMessage(postId, replies, selectedReplyId);
-  const targetLabel = target
-    ? authorLabel(target.authorPubkey, profiles)
+  // The composer's quoted reply banner wants the author AND an excerpt of what
+  // they said, not just a name (see ui/ComposerReplyBanner.tsx).
+  const replyTarget = target
+    ? {
+        author: authorLabel(target.authorPubkey, profiles),
+        body: target.content,
+      }
     : null;
   const sendComment: ForumSend = (options) =>
     send({
@@ -168,7 +173,7 @@ export function ForumThreadView({
           members={members}
           profiles={profiles}
           threadRef={threadRef}
-          replyTargetLabel={targetLabel}
+          replyTarget={replyTarget}
           onClearThread={() => {
             // Esc steps back one level: drop a mid-thread target first, and
             // only leave the thread once the composer is aimed at the post.

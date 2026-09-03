@@ -1,43 +1,66 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
-  useReducer,
   useRef,
   useState,
   type ClipboardEvent,
   type KeyboardEvent,
 } from "react";
 import { toast } from "sonner";
-import {
-  AtSign,
-  Bold,
-  Code,
-  Italic,
-  Link as LinkIcon,
-  List,
-  Paperclip,
-  Quote,
-  Smile,
-  Strikethrough,
-} from "lucide-react";
+import { AtSign, Paperclip, Smile } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { activeMentionQuery, resolveMentions } from "../lib/mentions.ts";
+import { applyWrap } from "../lib/composerFormat.ts";
 import {
-  applyCode,
-  applyLinePrefix,
-  applyLink,
-  applyWrap,
-} from "../lib/composerFormat.ts";
+  activeMarks,
+  NO_ACTIVE_MARKS,
+  type ActiveMarks,
+} from "../lib/composerActiveMarks.ts";
 import {
   activeEmojiQuery,
   applyEmojiCompletion,
   emojiSuggestions,
 } from "../lib/emojiAutocomplete.ts";
 import { imageFilesFromClipboard } from "../lib/composerPaste.ts";
-import { loadDraft } from "../lib/drafts.ts";
-import { buildImetaTag, mediaMarkdown } from "../lib/imeta.ts";
-import { uploadBlob, type BlobDescriptor } from "@/shared/api/blossom";
+import { loadDraftState, saveDraftState } from "../lib/drafts.ts";
+import { buildImetaTag } from "../lib/imeta.ts";
+import {
+  attachmentMarkdown,
+  removeAttachmentMarkdown,
+} from "../lib/attachmentMarkdown.ts";
+import {
+  ATTACHMENT_ACCEPT,
+  attachmentRejectionReason,
+} from "../lib/attachmentAccept.ts";
+import {
+  filenamesByUrl,
+  hasPendingUploads,
+  markFailed,
+  markUploaded,
+  markUploading,
+  queuedFrom,
+  queueFromDescriptors,
+  removeAttachment,
+  uploadedDescriptors,
+  withProgress,
+  type QueuedAttachment,
+} from "../lib/attachmentQueue.ts";
+import {
+  channelLabelFromSeed,
+  composerPlaceholder,
+} from "../lib/composerPlaceholder.ts";
+import { uploadBlob } from "@/shared/api/blossom";
 import { EmojiPicker } from "@/shared/ui/EmojiPicker";
+import {
+  ComposerFormatToolbar,
+  type FormatFn,
+} from "./ComposerFormatToolbar.tsx";
+import {
+  ComposerEditBanner,
+  ComposerReplyBanner,
+} from "./ComposerReplyBanner.tsx";
+import { ComposerAttachmentTray } from "./ComposerAttachmentTray.tsx";
 import type { ChannelMember, Profile } from "../hooks.ts";
 
 export interface ThreadRef {
@@ -45,11 +68,24 @@ export interface ThreadRef {
   replyToId: string;
 }
 
+/** The message a reply is aimed at, for the composer's quoted banner. */
+export interface ComposerReplyTarget {
+  author: string;
+  /** Raw content — excerpted for display, never rendered as markdown. */
+  body: string;
+}
+
+/** Selection offsets into the textarea's value. */
+interface Selection {
+  start: number;
+  end: number;
+}
+
 export function Composer({
   members,
   profiles,
   threadRef,
-  replyTargetLabel,
+  replyTarget,
   onClearThread,
   onSent,
   onTextChange,
@@ -57,6 +93,7 @@ export function Composer({
   onCancelEdit,
   editSend,
   draftKey,
+  channelName,
   placeholder,
   send,
 }: {
@@ -64,12 +101,12 @@ export function Composer({
   profiles: Map<string, Profile>;
   threadRef: ThreadRef | null;
   /**
-   * Author of the message the NIP-10 `reply` marker names, when that is a
-   * specific message rather than the thread root. The reply target is
-   * otherwise invisible state — the author cannot tell what their reply will
-   * be threaded under. Null means "the thread itself".
+   * The message the NIP-10 `reply` marker names, when that is a specific
+   * message rather than the thread root. The reply target is otherwise
+   * invisible state — the author cannot tell what their reply will be threaded
+   * under. Null means "the thread itself".
    */
-  replyTargetLabel?: string | null;
+  replyTarget?: ComposerReplyTarget | null;
   onClearThread: () => void;
   onSent?: () => void;
   /** Notified on every text change — the parent broadcasts typing frames. */
@@ -80,6 +117,12 @@ export function Composer({
   editSend?: (content: string) => Promise<{ ok: boolean; message: string }>;
   /** Channel id the draft belongs to — changing it restores that channel's draft. */
   draftKey?: string;
+  /**
+   * Channel display name for the placeholder. Optional: when the caller does
+   * not have it (the channel route passes only the id), it is resolved from
+   * the seeded channel list — see lib/composerPlaceholder.ts.
+   */
+  channelName?: string | null;
   /** Overrides the idle textarea hint (forum views say "Write your post..."). */
   placeholder?: string;
   send: (options: {
@@ -89,23 +132,77 @@ export function Composer({
     mediaTags: string[][];
   }) => Promise<{ ok: boolean; message: string }>;
 }) {
-  const [text, setText] = useState(() => (draftKey ? loadDraft(draftKey) : ""));
+  const initialDraft = useRef(draftKey ? loadDraftState(draftKey) : null);
+  const [text, setText] = useState(() => initialDraft.current?.text ?? "");
   const [busy, setBusy] = useState(false);
   const [popupIndex, setPopupIndex] = useState(0);
-  // Re-render trigger for caret moves that happen outside React's knowledge
-  // (the @ button sets the caret in rAF; suggestions read DOM selection).
-  const [, bumpCaretRender] = useReducer((tick: number) => tick + 1, 0);
+  // The caret/selection, mirrored into React state. The textarea is
+  // uncontrolled for selection, but the toolbar's aria-pressed depends on
+  // where the caret is, so every caret move has to reach a render.
+  const [selection, setSelection] = useState<Selection>({ start: 0, end: 0 });
   const [mentionDismissed, setMentionDismissed] = useState(false);
   // Pubkeys captured when the author picks from the mention autocomplete.
   // Resolving by display name at send time cannot tell two members with the
   // same name apart; a pick can. Keyed by lowercased inserted name.
   const [mentionPicks, setMentionPicks] = useState<Map<string, string>>(
-    () => new Map(),
+    () => new Map(Object.entries(initialDraft.current?.mentionPicks ?? {})),
   );
-  const [media, setMedia] = useState<BlobDescriptor[]>([]);
-  const [uploading, setUploading] = useState(false);
+  const [attachments, setAttachments] = useState<QueuedAttachment[]>(() =>
+    queueFromDescriptors(
+      initialDraft.current?.media ?? [],
+      initialDraft.current?.filenames ?? {},
+    ),
+  );
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Current text without waiting for a re-render: the upload path appends
+  // markdown from an async callback, and reading `text` there would capture
+  // whatever the closure was created with.
+  const textRef = useRef(text);
+  const onTextChangeRef = useRef(onTextChange);
+  onTextChangeRef.current = onTextChange;
+
+  /** The single place text changes: keeps the ref, state and parent in step. */
+  const applyText = useCallback((next: string) => {
+    textRef.current = next;
+    setText(next);
+    onTextChangeRef.current?.(next);
+  }, []);
+
+  /** Set text without notifying the parent (draft restore, edit prefill). */
+  const restoreText = useCallback((next: string) => {
+    textRef.current = next;
+    setText(next);
+  }, []);
+
+  /** Read the live caret back out of the DOM after any programmatic move. */
+  const syncSelection = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) {
+      return;
+    }
+    setSelection((previous) => {
+      const start = el.selectionStart ?? 0;
+      const end = el.selectionEnd ?? start;
+      return previous.start === start && previous.end === end
+        ? previous
+        : { start, end };
+    });
+  }, []);
+
+  /** Focus the textarea, place the caret, and refresh the mark state. */
+  const focusAt = useCallback((start: number, end: number = start) => {
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) {
+        return;
+      }
+      el.focus();
+      el.setSelectionRange(start, end);
+      setSelection({ start, end });
+    });
+  }, []);
+
   // Auto-grow (Sam 2026-09-02: "the text entry area should expand as the
   // user types"): fit the textarea's height to its content on every text
   // change — typing, draft restore, edit prefill, paste — capped at
@@ -120,11 +217,54 @@ export function Composer({
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 240)}px`;
   }, [text]);
-  // Switching channels restores that channel's persisted draft.
+
+  // Switching channels restores that channel's persisted draft — text,
+  // uploaded attachments and mention picks together (see lib/drafts.ts).
+  const firstDraftLoad = useRef(true);
+  // Set while a channel switch is mid-flight: the restore effect below has
+  // loaded the NEW channel's draft but the attachment/pick state still belongs
+  // to the OLD one until React re-renders. Without this, the persist effect —
+  // which runs in the same commit because draftKey is one of its deps — would
+  // briefly write the old channel's attachments under the new channel's key.
+  const restoringDraft = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: draftKey is the restore trigger; the setters are stable
   useEffect(() => {
-    setText(draftKey ? loadDraft(draftKey) : "");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (firstDraftLoad.current) {
+      // useState initialisers already loaded this draft; re-running here
+      // would clobber a keystroke typed before the effect first fires.
+      firstDraftLoad.current = false;
+      return;
+    }
+    restoringDraft.current = true;
+    const draft = draftKey ? loadDraftState(draftKey) : null;
+    restoreText(draft?.text ?? "");
+    setMentionPicks(new Map(Object.entries(draft?.mentionPicks ?? {})));
+    setAttachments(
+      queueFromDescriptors(draft?.media ?? [], draft?.filenames ?? {}),
+    );
   }, [draftKey]);
+
+  // Persist attachments and mention picks. Text is written by the parent's
+  // onTextChange (saveDraft merges rather than replaces, so it cannot drop
+  // what this writes); this effect runs after render, so textRef is current.
+  useEffect(() => {
+    if (!draftKey) {
+      return;
+    }
+    if (restoringDraft.current) {
+      // Skip exactly one run — the restore's setters always change state
+      // identity, so the next commit re-runs this with the new channel's data.
+      restoringDraft.current = false;
+      return;
+    }
+    saveDraftState(draftKey, {
+      text: textRef.current,
+      media: uploadedDescriptors(attachments),
+      filenames: filenamesByUrl(attachments),
+      mentionPicks: Object.fromEntries(mentionPicks),
+    });
+  }, [draftKey, attachments, mentionPicks]);
+
   // Entering edit mode prefills the composer with the original text. Leaving
   // it restores the channel draft — after a successful edit the route has
   // already cleared the stored draft, so this is ""; after cancel it is the
@@ -135,13 +275,13 @@ export function Composer({
   useEffect(() => {
     if (editing) {
       editingIdRef.current = editing.id;
-      setText(editing.original);
+      restoreText(editing.original);
       textareaRef.current?.focus();
       return;
     }
     if (editingIdRef.current !== null) {
       editingIdRef.current = null;
-      setText(draftKey ? loadDraft(draftKey) : "");
+      restoreText(draftKey ? loadDraftState(draftKey).text : "");
     }
   }, [editing]);
   const editingActive = editing != null;
@@ -159,19 +299,15 @@ export function Composer({
     [members, profiles],
   );
 
-  const query = (() => {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      return null;
-    }
-    const caret = textarea.selectionStart ?? text.length;
-    // Non-null the moment an "@" token is open at the caret — including a
-    // bare "@" (the regex's name group matches empty), which is what the
-    // @ button leaves behind. TYPING @ therefore opens the list, not just
-    // the button (Sam 2026-09-02: "if I do an @ and an agent's name,
-    // nothing happens").
-    return activeMentionQuery(text, caret);
-  })();
+  // Non-null the moment an "@" token is open at the caret — including a
+  // bare "@" (the regex's name group matches empty), which is what the
+  // @ button leaves behind. TYPING @ therefore opens the list, not just
+  // the button (Sam 2026-09-02: "if I do an @ and an agent's name,
+  // nothing happens").
+  const query = activeMentionQuery(
+    text,
+    Math.min(selection.start, text.length),
+  );
   // A fresh token re-arms the popup after an Escape dismissal.
   useEffect(() => {
     setMentionDismissed(false);
@@ -184,9 +320,20 @@ export function Composer({
     return namedMembers
       .filter((member) => member.name.toLowerCase().includes(lower))
       .slice(0, 6);
-    // `query` comes from an uncontrolled caret; recompute on text changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, namedMembers, mentionDismissed]);
+
+  // Which toolbar buttons render as pressed. Reading marks off the markdown
+  // around the selection is the textarea equivalent of the desktop's
+  // `editor.isActive(...)`; see lib/composerActiveMarks.ts for what it
+  // deliberately refuses to guess at.
+  const marks: ActiveMarks = useMemo(() => {
+    if (editingActive) {
+      return NO_ACTIVE_MARKS;
+    }
+    const start = Math.min(selection.start, text.length);
+    const end = Math.min(selection.end, text.length);
+    return activeMarks(text, start, end);
+  }, [text, selection, editingActive]);
 
   const applySuggestion = (name: string, pubkey?: string) => {
     if (pubkey) {
@@ -196,101 +343,57 @@ export function Composer({
         return next;
       });
     }
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      return;
-    }
-    const caret = textarea.selectionStart ?? text.length;
+    const caret = Math.min(selection.start, text.length);
     const upToCaret = text.slice(0, caret);
     const at = upToCaret.lastIndexOf("@");
     if (at === -1) {
       return;
     }
-    const next = `${text.slice(0, at)}@${name} ${text.slice(caret)}`;
-    setText(next);
+    applyText(`${text.slice(0, at)}@${name} ${text.slice(caret)}`);
     setMentionDismissed(true);
-    requestAnimationFrame(() => {
-      const position = at + name.length + 2;
-      textarea.focus();
-      textarea.setSelectionRange(position, position);
-    });
+    focusAt(at + name.length + 2);
   };
 
   /** Insert an emoji at the caret (or the end when the textarea is unfocused). */
   const insertEmoji = (emoji: string) => {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      setText((previous) => `${previous}${emoji}`);
-      return;
-    }
-    const start = textarea.selectionStart ?? text.length;
-    const end = textarea.selectionEnd ?? start;
-    const next = `${text.slice(0, start)}${emoji}${text.slice(end)}`;
-    setText(next);
-    onTextChange?.(next);
-    requestAnimationFrame(() => {
-      const caret = start + emoji.length;
-      textarea.focus();
-      textarea.setSelectionRange(caret, caret);
-    });
+    const start = Math.min(selection.start, text.length);
+    const end = Math.min(selection.end, text.length);
+    applyText(`${text.slice(0, start)}${emoji}${text.slice(end)}`);
+    focusAt(start + emoji.length);
   };
 
   // Rich-text toolbar: apply a format fn to the current selection and restore
-  // the selection the fn computed (rAF so React's controlled value lands first).
-  const applyFormat = (
-    format: (
-      text: string,
-      start: number,
-      end: number,
-    ) => { text: string; selStart: number; selEnd: number },
-  ) => {
-    const textarea = textareaRef.current;
-    if (!textarea || editingActive) {
+  // the selection the fn computed.
+  const applyFormat = (format: FormatFn) => {
+    if (editingActive) {
       return;
     }
-    const result = format(
-      text,
-      textarea.selectionStart ?? text.length,
-      textarea.selectionEnd ?? text.length,
-    );
-    setText(result.text);
-    onTextChange?.(result.text);
-    requestAnimationFrame(() => {
-      textarea.focus();
-      textarea.setSelectionRange(result.selStart, result.selEnd);
-    });
+    const start = Math.min(selection.start, text.length);
+    const end = Math.min(selection.end, text.length);
+    const result = format(text, start, end);
+    applyText(result.text);
+    focusAt(result.selStart, result.selEnd);
   };
 
   // :code: emoji autocomplete — rides the same popup machinery as mentions.
-  const emojiToken = (() => {
-    const textarea = textareaRef.current;
-    if (!textarea || query !== null) {
-      return null;
-    }
-    return activeEmojiQuery(text, textarea.selectionStart ?? text.length);
-  })();
+  const emojiToken =
+    query !== null
+      ? null
+      : activeEmojiQuery(text, Math.min(selection.start, text.length));
   const emojiMatches = useMemo(
     () => (emojiToken === null ? [] : emojiSuggestions(emojiToken)),
     [emojiToken],
   );
   const [emojiIndex, setEmojiIndex] = useState(0);
   const applyEmojiMatch = (match: { emoji: string }) => {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      return;
-    }
     const result = applyEmojiCompletion(
       text,
-      textarea.selectionStart ?? text.length,
+      Math.min(selection.start, text.length),
       match.emoji,
     );
-    setText(result.text);
-    onTextChange?.(result.text);
+    applyText(result.text);
     setEmojiIndex(0);
-    requestAnimationFrame(() => {
-      textarea.focus();
-      textarea.setSelectionRange(result.caret, result.caret);
-    });
+    focusAt(result.caret);
   };
 
   const attach = async (files: FileList | null) => {
@@ -300,24 +403,72 @@ export function Composer({
     await attachFiles(Array.from(files));
   };
 
+  /**
+   * Queue and upload files one at a time, each with its own row in the tray.
+   *
+   * Sequential rather than parallel on purpose: the relay's upload path takes
+   * a per-pubkey in-flight permit, and a serial queue makes the per-file
+   * progress bars mean what they appear to mean.
+   */
   const attachFiles = async (files: File[]) => {
-    if (files.length === 0) {
+    const accepted: { file: File; row: QueuedAttachment }[] = [];
+    for (const file of files) {
+      const reason = attachmentRejectionReason(file);
+      if (reason) {
+        toast.error(`${file.name}: ${reason}`);
+        continue;
+      }
+      const previewUrl = file.type.startsWith("image/")
+        ? URL.createObjectURL(file)
+        : undefined;
+      accepted.push({ file, row: queuedFrom(file, previewUrl) });
+    }
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+    if (accepted.length === 0) {
       return;
     }
-    setUploading(true);
-    try {
-      for (const file of files) {
-        const descriptor = await uploadBlob(file);
-        setMedia((previous) => [...previous, descriptor]);
-        setText((previous) => `${previous}${mediaMarkdown(descriptor)}`);
+    setAttachments((previous) => [
+      ...previous,
+      ...accepted.map((entry) => entry.row),
+    ]);
+    for (const { file, row } of accepted) {
+      setAttachments((previous) => markUploading(previous, row.id));
+      try {
+        const descriptor = await uploadBlob(file, {
+          onProgress: (fraction) =>
+            setAttachments((previous) =>
+              withProgress(previous, row.id, fraction),
+            ),
+        });
+        setAttachments((previous) =>
+          markUploaded(previous, row.id, descriptor),
+        );
+        applyText(
+          `${textRef.current}${attachmentMarkdown(descriptor, file.name)}`,
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Upload failed.";
+        setAttachments((previous) => markFailed(previous, row.id, message));
+        toast.error(`${file.name}: ${message}`);
       }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Upload failed.");
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
+    }
+  };
+
+  /** Drop one attachment, its preview, and the markdown that referenced it. */
+  const removeQueued = (id: string) => {
+    const item = attachments.find((entry) => entry.id === id);
+    setAttachments((previous) => removeAttachment(previous, id));
+    if (!item) {
+      return;
+    }
+    if (item.previewUrl) {
+      URL.revokeObjectURL(item.previewUrl);
+    }
+    if (item.descriptor) {
+      applyText(removeAttachmentMarkdown(textRef.current, item.descriptor.url));
     }
   };
 
@@ -336,9 +487,11 @@ export function Composer({
     void attachFiles(images);
   };
 
+  const uploadsPending = hasPendingUploads(attachments);
+
   const submit = async () => {
     const trimmed = text.trim();
-    if (!trimmed || busy) {
+    if (!trimmed || busy || uploadsPending) {
       return;
     }
     const { mentionPubkeys, unresolved } = resolveMentions(
@@ -354,11 +507,18 @@ export function Composer({
             content: trimmed,
             mentionPubkeys,
             threadRef,
-            mediaTags: media.map((descriptor) => buildImetaTag(descriptor)),
+            mediaTags: uploadedDescriptors(attachments).map((descriptor) =>
+              buildImetaTag(descriptor),
+            ),
           });
       if (result.ok) {
-        setText("");
-        setMedia([]);
+        for (const item of attachments) {
+          if (item.previewUrl) {
+            URL.revokeObjectURL(item.previewUrl);
+          }
+        }
+        applyText("");
+        setAttachments([]);
         setMentionPicks(new Map());
         if (editingActive) {
           onCancelEdit?.();
@@ -459,6 +619,20 @@ export function Composer({
     }
   };
 
+  const channelLabel = useMemo(
+    () =>
+      channelName
+        ? { name: channelName, isDm: false }
+        : channelLabelFromSeed(draftKey),
+    [channelName, draftKey],
+  );
+  const computedPlaceholder = composerPlaceholder({
+    override: placeholder,
+    editing: editingActive,
+    channel: channelLabel,
+    replyToAuthor: replyTarget?.author ?? null,
+  });
+
   return (
     <div className="relative border-t border-border p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-4">
       {suggestions.length > 0 && (
@@ -497,117 +671,38 @@ export function Composer({
           ))}
         </ul>
       )}
-      {threadRef && !editingActive && (
+      {editingActive ? (
+        <ComposerEditBanner onCancel={() => onCancelEdit?.()} />
+      ) : threadRef && replyTarget ? (
+        <ComposerReplyBanner
+          author={replyTarget.author}
+          body={replyTarget.body}
+          onDismiss={onClearThread}
+        />
+      ) : threadRef ? (
         <p className="mb-1 text-xs text-muted-foreground">
-          {replyTargetLabel ? (
-            <>
-              Replying to{" "}
-              <span className="font-medium text-foreground">
-                {replyTargetLabel}
-              </span>{" "}
-              — Esc clears
-            </>
-          ) : (
-            "Replying in thread — Esc clears"
-          )}
+          Replying in thread — Esc clears
         </p>
-      )}
-      {editingActive && (
-        <p className="mb-1 flex items-center gap-2 text-xs text-amber-300/90">
-          Editing message
-          <button
-            type="button"
-            className="underline underline-offset-2 hover:text-amber-200"
-            onClick={() => onCancelEdit?.()}
-          >
-            cancel
-          </button>
-          <span className="text-muted-foreground">— Esc cancels</span>
-        </p>
+      ) : null}
+      {!editingActive && (
+        <ComposerFormatToolbar
+          marks={marks}
+          disabled={busy}
+          onApply={applyFormat}
+          onCaptureSelection={syncSelection}
+        />
       )}
       {!editingActive && (
-        <div
-          className="mb-1.5 flex items-center gap-0.5"
-          role="toolbar"
-          aria-label="Format message"
-        >
-          {(
-            [
-              {
-                label: "Bold",
-                hint: "B",
-                title: "Bold (⌘B)",
-                apply: (t: string, s: number, e: number) =>
-                  applyWrap(t, s, e, "**"),
-                content: <Bold aria-hidden className="h-4 w-4" />,
-              },
-              {
-                label: "Italic",
-                hint: "I",
-                title: "Italic (⌘I)",
-                apply: (t: string, s: number, e: number) =>
-                  applyWrap(t, s, e, "_"),
-                content: <Italic aria-hidden className="h-4 w-4" />,
-              },
-              {
-                label: "Strikethrough",
-                hint: "S",
-                title: "Strikethrough",
-                apply: (t: string, s: number, e: number) =>
-                  applyWrap(t, s, e, "~~"),
-                content: <Strikethrough aria-hidden className="h-4 w-4" />,
-              },
-              {
-                label: "Inline code",
-                hint: "code",
-                title: "Inline code",
-                apply: applyCode,
-                content: <Code aria-hidden className="h-4 w-4" />,
-              },
-              {
-                label: "Link",
-                hint: "link",
-                title: "Link",
-                apply: applyLink,
-                content: <LinkIcon aria-hidden className="h-4 w-4" />,
-              },
-              {
-                label: "Bulleted list",
-                hint: "list",
-                title: "Bulleted list",
-                apply: (t: string, s: number, e: number) =>
-                  applyLinePrefix(t, s, e, "- "),
-                content: <List aria-hidden className="h-4 w-4" />,
-              },
-              {
-                label: "Quote",
-                hint: "quote",
-                title: "Quote",
-                apply: (t: string, s: number, e: number) =>
-                  applyLinePrefix(t, s, e, "> "),
-                content: <Quote aria-hidden className="h-4 w-4" />,
-              },
-            ] as const
-          ).map((item) => (
-            <button
-              key={item.hint}
-              type="button"
-              aria-label={item.label}
-              title={item.title}
-              className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40"
-              disabled={busy}
-              onClick={() => applyFormat(item.apply)}
-            >
-              {item.content}
-            </button>
-          ))}
-        </div>
+        <ComposerAttachmentTray
+          attachments={attachments}
+          onRemove={removeQueued}
+        />
       )}
       <div className="flex items-end gap-2">
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/jpeg,image/png,image/gif,image/webp,video/mp4"
+          accept={ATTACHMENT_ACCEPT}
           multiple
           className="hidden"
           onChange={(event) => void attach(event.target.files)}
@@ -623,21 +718,21 @@ export function Composer({
         >
           <textarea
             ref={textareaRef}
+            data-testid="composer-input"
             className="max-h-60 min-h-11 flex-1 resize-none overflow-y-auto bg-transparent px-3 py-2 text-base placeholder:text-muted-foreground focus-visible:outline-hidden"
-            placeholder={
-              editingActive
-                ? "Editing your message — Esc cancels"
-                : (placeholder ??
-                  "Message — @ to mention, Shift+Enter for newline")
-            }
+            placeholder={computedPlaceholder}
             rows={1}
             value={text}
             onChange={(event) => {
-              setText(event.target.value);
-              onTextChange?.(event.target.value);
+              applyText(event.target.value);
               setPopupIndex(0);
+              syncSelection();
             }}
             onKeyDown={onKeyDown}
+            onKeyUp={syncSelection}
+            onClick={syncSelection}
+            onSelect={syncSelection}
+            onFocus={syncSelection}
             onPaste={onPaste}
             onBlur={() => setPopupIndex(0)}
           />
@@ -649,15 +744,12 @@ export function Composer({
             <button
               type="button"
               aria-label="Attach a file"
-              title="Attach images or video — or paste a screenshot"
+              title="Attach images, video or files — or paste a screenshot"
               className="rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
-              disabled={uploading || busy}
+              disabled={busy}
               onClick={() => fileInputRef.current?.click()}
             >
-              <Paperclip
-                aria-hidden
-                className={cn("h-5 w-5", uploading && "animate-pulse")}
-              />
+              <Paperclip aria-hidden className="h-5 w-5" />
             </button>
             <button
               type="button"
@@ -666,21 +758,11 @@ export function Composer({
               className="rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
               disabled={busy || editingActive}
               onClick={() => {
-                const textarea = textareaRef.current;
-                if (!textarea) {
-                  return;
-                }
-                const start = textarea.selectionStart ?? text.length;
-                const end = textarea.selectionEnd ?? start;
-                const next = `${text.slice(0, start)}@${text.slice(end)}`;
-                setText(next);
+                const start = Math.min(selection.start, text.length);
+                const end = Math.min(selection.end, text.length);
+                applyText(`${text.slice(0, start)}@${text.slice(end)}`);
                 setMentionDismissed(false);
-                requestAnimationFrame(() => {
-                  const caret = start + 1;
-                  textarea.focus();
-                  textarea.setSelectionRange(caret, caret);
-                  bumpCaretRender();
-                });
+                focusAt(start + 1);
               }}
             >
               <AtSign aria-hidden className="h-5 w-5" />
@@ -706,7 +788,8 @@ export function Composer({
         <button
           type="button"
           aria-label={editingActive ? "Save" : "Send"}
-          disabled={busy || !text.trim()}
+          title={uploadsPending ? "Waiting for uploads to finish" : undefined}
+          disabled={busy || uploadsPending || !text.trim()}
           className="mb-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
           onClick={() => void submit()}
         >
