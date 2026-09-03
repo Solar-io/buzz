@@ -380,6 +380,43 @@ test("CLOSED after auth retries again with backoff (no spiral)", async () => {
   session.close();
 });
 
+test("CLOSED(rate-limited) sub retries with backoff instead of dying", async () => {
+  // The relay's global handler semaphore rejects REQs during fleet-wide load
+  // bursts ("rate-limited: too many concurrent requests"). Old behavior: the
+  // sub was dropped for the whole session — the profiles query losing that
+  // lottery is exactly the bare-names-and-avatars bug.
+  const { session } = makeSession({ authRetryDelayMs: () => 5 });
+  session.subscribe({ kinds: [0], authors: ["aa"] }, { onEvent: () => {} });
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  await tick(20);
+  socket.serverSend(["AUTH", "c1"]);
+  await tick(20);
+  const afterAuth = socket.sentOf("REQ").length;
+  socket.serverSend([
+    "CLOSED",
+    "s0",
+    "rate-limited: too many concurrent requests",
+  ]);
+  await tick(40);
+  assert.equal(
+    socket.sentOf("REQ").length,
+    afterAuth + 1,
+    "rate-limited CLOSED must re-REQ",
+  );
+  // A second rejection consumes budget and schedules another retry — same
+  // bounded spiral semantics as the auth race.
+  socket.serverSend([
+    "CLOSED",
+    "s0",
+    "rate-limited: too many concurrent requests",
+  ]);
+  await tick(40);
+  assert.equal(socket.sentOf("REQ").length, afterAuth + 2);
+  session.close();
+});
+
 test("shouldForceReconnect: thresholds are 60s visible / 10min hidden, null clock never forces", () => {
   // Hardcoded — the incident shape was an afternoon-long zombie.
   assert.equal(
