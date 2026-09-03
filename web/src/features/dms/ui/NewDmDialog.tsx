@@ -269,10 +269,10 @@ export function NewDmDialog({
                     <span
                       className={
                         suggestion.stale
-                          ? "rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-amber-300"
+                          ? "rounded bg-amber-500/20 px-1.5 py-0.5 text-badge uppercase tracking-wide text-amber-300"
                           : suggestion.sublabel === "Agent"
-                            ? "rounded bg-accent px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-foreground"
-                            : "rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground"
+                            ? "rounded bg-accent px-1.5 py-0.5 text-badge uppercase tracking-wide text-foreground"
+                            : "rounded bg-muted px-1.5 py-0.5 text-badge uppercase tracking-wide text-muted-foreground"
                       }
                     >
                       {suggestion.stale ? "stale" : suggestion.sublabel}

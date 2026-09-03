@@ -14,6 +14,104 @@
    at-rules, so placing this above them silently drops the rest of the sheet. */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/*
+ * Buzz motion system — ported from the desktop client's
+ * shared/styles/globals/motion.css.
+ *
+ * Keep shared timing, easing, distance, and semantic motion primitives here.
+ * Features decide when motion runs; this layer defines how Buzz moves.
+ */
+:root {
+  /* Durations: feedback → state change → composed arrival. */
+  --motion-duration-instant: 120ms;
+  --motion-duration-fast: 180ms;
+  --motion-duration-standard: 240ms;
+  --motion-duration-arrival: 500ms;
+
+  /* Easing: direct for feedback, confident deceleration for entrances. */
+  --motion-ease-standard: cubic-bezier(0.25, 1, 0.5, 1);
+  --motion-ease-arrival: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Distances stay restrained so motion supports hierarchy without spectacle. */
+  --motion-distance-arrival: 0.75rem;
+  --motion-blur-arrival: 2px;
+}
+
+@layer base {
+  :root {
+    /*
+     * Ported from the desktop client's shared/styles/globals/typography.css.
+     *
+     * Two independent dials compose here:
+     *
+     * - Cmd +/- zoom scales the real root font-size (see
+     *   app/useZoomShortcuts.ts), so every rem in the app — text, gaps,
+     *   widths, radii — grows and shrinks together. True zoom.
+     * - The Font size preference sets `data-font-size` on the root; it nudges
+     *   only the type scale below, so text changes without moving layout.
+     *
+     * Every text token derives from this virtual typography rem, which is
+     * rem-relative so it rides on top of zoom automatically. At the default
+     * preference and zoom it equals 16px, making `text-sm` 14px.
+     *
+     * `--text-xs`…`--text-6xl` are Tailwind v4's own font-size theme
+     * namespace, declared here in `base` so they win over the defaults the
+     * `theme` layer emits — that is how the stock `text-sm`/`text-xs`
+     * utilities come to ride the virtual rem instead of a frozen literal.
+     */
+    --buzz-type-scale: 1;
+    --buzz-type-rem: calc(1rem * var(--buzz-type-scale));
+    --text-xs: calc(var(--buzz-type-rem) * 0.75);
+    --text-sm: calc(var(--buzz-type-rem) * 0.875);
+    --text-base: var(--buzz-type-rem);
+    --text-lg: calc(var(--buzz-type-rem) * 1.125);
+    --text-xl: calc(var(--buzz-type-rem) * 1.25);
+    --text-2xl: calc(var(--buzz-type-rem) * 1.5);
+    --text-3xl: calc(var(--buzz-type-rem) * 1.875);
+    --text-4xl: calc(var(--buzz-type-rem) * 2.25);
+    --text-5xl: calc(var(--buzz-type-rem) * 3);
+    --text-6xl: calc(var(--buzz-type-rem) * 3.75);
+
+    /*
+     * Default conversation type and comfy spacing for channels, DMs, threads,
+     * and the composer. Font size changes the type tokens only; Conversation
+     * density overrides only spacing.
+     */
+    --conversation-message-font-size: calc(var(--buzz-type-rem) * 0.875);
+    --conversation-message-line-height: calc(var(--buzz-type-rem) * 1.25);
+    --conversation-author-line-height: var(--buzz-type-rem);
+    --conversation-body-gap: 0.125rem;
+    --conversation-row-padding-block: 0.25rem;
+    --conversation-paragraph-gap: 0.5rem;
+    --conversation-list-item-gap: 0.375rem;
+    --conversation-timestamp-font-size: calc(var(--buzz-type-rem) * 0.75);
+    --conversation-timestamp-line-height: var(--buzz-type-rem);
+  }
+
+  /* Conversation text contract: 13 / 14 / 15px before keyboard zoom. */
+  :root[data-font-size="smaller"] {
+    --buzz-type-scale: calc(13 / 14);
+  }
+
+  :root[data-font-size="larger"] {
+    --buzz-type-scale: calc(15 / 14);
+  }
+
+  :root[data-conversation-density="compact"] {
+    --conversation-body-gap: 0rem;
+    --conversation-row-padding-block: 0.25rem;
+    --conversation-paragraph-gap: 0.375rem;
+    --conversation-list-item-gap: 0.25rem;
+  }
+
+  :root[data-conversation-density="spacious"] {
+    --conversation-body-gap: 0.25rem;
+    --conversation-row-padding-block: 0.5rem;
+    --conversation-paragraph-gap: 0.625rem;
+    --conversation-list-item-gap: 0.5rem;
+  }
+}
+
 /* JetBrains Mono (code blocks) — self-hosted from the desktop's bundle so the
    web matches the desktop client's mono rendering without a new dependency. */
 @font-face {
@@ -41,19 +139,23 @@
 }
 
 /*
- * Chat message text: calibrated with Sam 8/30 — core message text ≈15%
- * above the reply font (14px), i.e. 16px; the 21px (+50%) pass was much
- * too large. Deliberately UNLAYERED so it wins over the typography
+ * Chat message text. Deliberately UNLAYERED so it wins over the typography
  * plugin's `.prose`/`.prose-sm` font-size (same trick the desktop client
  * uses for its gradient overrides). Everything inside prose is em-scaled,
  * so headings/code/quotes grow with it.
+ *
+ * This used to be a frozen `font-size: 1rem` (16px). The desktop contract is
+ * 13 / 14 / 15px for the Smaller / Default / Larger font-size preference, so
+ * conversation text now takes the shared `text-message` token — the same one
+ * the desktop client's message rows use — which resolves to
+ * `--conversation-message-font-size` (0.875 × the virtual type rem). It
+ * follows both dials: the Font size preference and Cmd +/- zoom.
  */
 .message-prose {
-  font-size: 1rem; /* 16px */
-  line-height: 1.45; /* ~23px */
+  @apply text-message;
 }
 .message-prose p {
-  line-height: 1.45;
+  line-height: var(--conversation-message-line-height);
 }
 
 /*
@@ -285,6 +387,46 @@
     @apply border-border;
   }
 
+  html,
+  body,
+  #root {
+    height: 100%;
+    min-height: 100%;
+    width: 100%;
+  }
+
+  /*
+   * The app is a fixed-height shell — the document itself must never scroll
+   * or rubber-band. `overscroll-behavior: none` stops scroll chaining from
+   * inner containers reaching the viewport on both axes, and `overflow:
+   * hidden` removes any document-level scrollability. Ported from the desktop
+   * client's shared/styles/globals/theme.css.
+   */
+  html,
+  body {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  /*
+   * Web-specific, and NOT in the desktop source: the desktop shell is fixed
+   * height end-to-end, but this client's route shells are `min-h-dvh`
+   * (root.tsx, repos.browse.tsx, the route error boundary) — they are built to
+   * grow past the viewport and be scrolled by the document. Measured in Brave
+   * against the built bundle: with the rule above and nothing here, a 4000px
+   * child of #root reports scrollHeight 1332 === clientHeight and a real
+   * 1200px wheel moves nothing, i.e. the overflow is unreachable. Handing the
+   * scroll to #root keeps the document itself unscrollable (same guarantee the
+   * desktop wants) while leaving that content reachable: same probe, the wheel
+   * moves #root's scrollTop to 1200.
+   *
+   * Remove this once every web route owns its own inner scroller, the way the
+   * desktop's do.
+   */
+  #root {
+    overflow: auto;
+  }
+
   mark {
     background-color: transparent;
     color: inherit;
@@ -297,6 +439,14 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-family: "Inter Variable", Inter, "Avenir Next", "Segoe UI", sans-serif;
+    /* Text-rendering baseline ported from the desktop client's
+       shared/styles/globals/typography.css: no synthesised weights (Inter
+       Variable already ships every weight), text-presentation emoji, no
+       contextual ligatures. */
+    font-synthesis-weight: none;
+    font-variant-emoji: unicode;
+    font-variant-ligatures: no-contextual;
+    text-rendering: optimizeLegibility;
   }
 
   /*
@@ -336,14 +486,13 @@
    was active — and it stopped tracking the theme in both. Use the tokens the
    desktop actually names.
 
-   TODO(typography): font-size is still a literal. The desktop's `text-2xs`
-   (0.6875rem against the virtual type rem = 11px) has no web equivalent until
-   the typography scale is ported; swap this for the token then, so it follows
-   the font-size preference and Cmd +/- zoom instead of being frozen. */
+   The font size now uses the desktop's `text-2xs` token (0.6875 × the virtual
+   type rem = 11px at the default preference and zoom), so it follows the
+   font-size preference and Cmd +/- zoom instead of being a frozen literal. */
 .dm-identicon {
   background-color: hsl(var(--sidebar-accent) / 0.8);
   color: hsl(var(--sidebar-foreground));
-  font-size: 11px;
+  @apply text-2xs;
 }
 
 /* DM list timer pill — dm-list-spec.md §6: whole-element pulse 0.8 → 1.0 →
@@ -352,8 +501,11 @@
 .dm-timer-pill {
   display: inline-flex;
   align-items: center;
-  height: 15px;
-  padding: 0 6.5px;
+  /* The spec's 15px box and 6.5px inset, expressed in rem so the pill and its
+     label zoom together — identical geometry at the default 16px root, but a
+     px box around rem text would clip once Cmd + enlarges the label. */
+  height: 0.9375rem;
+  padding: 0 0.40625rem;
   border-radius: 999px;
   /* Was rgba(154, 62, 246, 0.09) / #9a3ef6 — the accent purple frozen as a
      literal, so the pill ignored the theme and will ignore the user's accent
@@ -361,7 +513,9 @@
      hand-resolved from. */
   background: hsl(var(--sidebar-primary) / 0.09);
   color: hsl(var(--sidebar-primary));
-  font-size: 11px;
+  /* Spec 11px, taken from the shared meta-text token so it rides the type
+     scale rather than freezing against zoom. */
+  font-size: calc(var(--buzz-type-rem) * 0.6875);
   font-weight: 500;
   line-height: 1;
   font-variant-numeric: tabular-nums;
@@ -391,5 +545,71 @@
   }
   100% {
     background-color: hsl(var(--primary) / 0.08);
+  }
+}
+
+/*
+ * Reduced motion.
+ *
+ * The web client shipped with no `prefers-reduced-motion` handling at all
+ * while running an infinitely pulsing DM timer pill, a permalink arrival
+ * flash, and the Radix enter/exit animations on tooltips and menus. Redefining
+ * the keyframes inside the query (the pattern the desktop client uses in
+ * shared/styles/globals/motion.css) neutralises the animations without having
+ * to reach into the components that apply them.
+ *
+ * `animate-spin` is deliberately NOT covered: a stopped spinner reads as a
+ * hung app rather than as calm, and it communicates ongoing work rather than
+ * decoration.
+ */
+@media (prefers-reduced-motion: reduce) {
+  /* Infinite decorative loops: hold the resting frame. */
+  .dm-timer-pill {
+    animation: none;
+    opacity: 1;
+  }
+
+  @keyframes dm-timer-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+  }
+
+  /* Permalink arrival flash — land on the settled tint, don't fade into it. */
+  @keyframes pingFlash {
+    0%,
+    100% {
+      background-color: hsl(var(--primary) / 0.08);
+    }
+  }
+
+  .animate-pulse,
+  .animate-bounce,
+  .animate-ping {
+    animation: none;
+  }
+
+  /*
+   * tw-animate-css enter/exit (tooltips, menus, dialogs). Collapsing the
+   * duration alone still plays a 1ms scale/slide pop, so the transform and
+   * opacity inputs are reset to their identity values too. These rules are
+   * unlayered on purpose, so they outrank the utilities that set the same
+   * custom properties.
+   */
+  .animate-in,
+  .animate-out {
+    animation-duration: 1ms;
+    animation-delay: 0ms;
+    --tw-enter-opacity: 1;
+    --tw-enter-scale: 1;
+    --tw-enter-rotate: 0;
+    --tw-enter-translate-x: 0;
+    --tw-enter-translate-y: 0;
+    --tw-exit-opacity: 1;
+    --tw-exit-scale: 1;
+    --tw-exit-rotate: 0;
+    --tw-exit-translate-x: 0;
+    --tw-exit-translate-y: 0;
   }
 }

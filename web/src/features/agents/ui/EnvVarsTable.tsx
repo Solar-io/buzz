@@ -78,12 +78,12 @@ export function EnvVarsTable({
                     className="font-mono text-xs"
                   />
                   {reserved && (
-                    <span className="block rounded bg-red-500/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-red-400">
+                    <span className="block rounded bg-red-500/15 px-1.5 py-0.5 text-badge uppercase tracking-wide text-red-400">
                       {row.key.trim() ? "set by Buzz" : "reserved key"}
                     </span>
                   )}
                   {duplicate && (
-                    <span className="block text-[10px] text-amber-500">
+                    <span className="block text-badge text-amber-500">
                       duplicate — the last row with this key wins
                     </span>
                   )}

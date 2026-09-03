@@ -287,7 +287,7 @@ function AgentReviewBody({
             {chips.map((chip) => (
               <span
                 key={chip}
-                className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                className="rounded bg-muted px-1.5 py-0.5 text-2xs text-muted-foreground"
               >
                 {chip}
               </span>
