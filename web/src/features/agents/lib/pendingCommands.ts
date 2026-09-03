@@ -29,3 +29,38 @@ export function pendingRowState(
   const timedOut = now - sentAt > ACK_TIMEOUT_MS;
   return { status: timedOut ? "unknown" : "sent", timedOut };
 }
+
+/**
+ * Add-agent button feedback for the snapshot preview dialog — the same
+ * honesty clock as the pending strip, derived through pendingRowState so the
+ * two surfaces can never disagree about what a silent 20s means.
+ *
+ * `no-response` deliberately RE-ENABLES the button: an un-acked create was
+ * never applied (no ack = no desktop ran it), so retrying cannot mint the
+ * agent twice — but the amber "no desktop responded" line says why it
+ * silently did nothing. An error ack (`refused`) also leaves the button
+ * enabled; only `sending` and `applied` disable it.
+ */
+export type SnapshotAddFeedback =
+  | { phase: "idle" }
+  | { phase: "sending" }
+  | { phase: "no-response" }
+  | { phase: "applied" }
+  | { phase: "refused"; error: string | null };
+
+export function snapshotAddFeedback(
+  sentAt: number | null,
+  ack: { ok: boolean; error?: string } | undefined,
+  now: number,
+): SnapshotAddFeedback {
+  if (ack) {
+    return ack.ok
+      ? { phase: "applied" }
+      : { phase: "refused", error: ack.error ?? null };
+  }
+  if (sentAt === null) {
+    return { phase: "idle" };
+  }
+  const { status } = pendingRowState(sentAt, undefined, now);
+  return status === "unknown" ? { phase: "no-response" } : { phase: "sending" };
+}

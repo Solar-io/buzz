@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Lock } from "lucide-react";
 import { fetchSignedBytes } from "@/shared/api/blossom";
+import { useTick } from "@/features/agents/ui/WorkingBadge";
 import type { DesktopCatalog } from "../lib/desktopCatalog.ts";
+import {
+  snapshotAddFeedback,
+  type SnapshotAddFeedback,
+} from "../lib/pendingCommands.ts";
 import { buildSnapshotCreate } from "../lib/snapshotCreateRequest.ts";
 import {
   decodeSnapshotBytes,
@@ -60,13 +65,16 @@ export function SnapshotPreviewDialog({
   onClose: () => void;
 }) {
   const [state, setState] = useState<DialogState>({ phase: "fetching" });
-  const [requestId, setRequestId] = useState<string | null>(null);
+  const [sent, setSent] = useState<{
+    requestId: string;
+    sentAt: number;
+  } | null>(null);
   const inFlight = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     setState({ phase: "fetching" });
-    setRequestId(null);
+    setSent(null);
     if (card.snapshotKind === "team") {
       // Team members each need full rule-12 review — desktop-only. No fetch:
       // the download on the card is the byte-accurate path for teams.
@@ -109,7 +117,12 @@ export function SnapshotPreviewDialog({
     };
   }, [card.href, card.filename, card.sha256, card.size, card.snapshotKind]);
 
-  const ack = requestId ? admin.acks.get(requestId) : undefined;
+  const ack = sent ? admin.acks.get(sent.requestId) : undefined;
+  // 1s re-render while the command ages without an ack — without a clock the
+  // 20s "?" state below computes once at "Sending…" and never changes (the
+  // same bug the pending strip fixed, QA 2026-09-02).
+  useTick(sent !== null && !ack);
+  const feedback = snapshotAddFeedback(sent?.sentAt ?? null, ack, Date.now());
 
   const machines = useMemo(
     () => catalogs.map((catalog) => catalog.machine),
@@ -139,7 +152,7 @@ export function SnapshotPreviewDialog({
         built.target ? { target: built.target } : undefined,
       );
       if (id) {
-        setRequestId(id);
+        setSent({ requestId: id, sentAt: Date.now() });
       }
     } finally {
       inFlight.current = false;
@@ -228,15 +241,7 @@ export function SnapshotPreviewDialog({
               machines={machines}
               harnessIds={harnessIds}
               hasCatalog={catalogs.length > 0}
-              ackMessage={
-                ack
-                  ? ack.ok
-                    ? null
-                    : (ack.error ?? "The desktop refused the command.")
-                  : null
-              }
-              acked={ack?.ok === true}
-              pending={requestId !== null && !ack}
+              feedback={feedback}
               onAdd={() => void handleAdd(state.snapshot)}
             />
           )}
@@ -251,18 +256,14 @@ function AgentReviewBody({
   machines,
   harnessIds,
   hasCatalog,
-  pending,
-  acked,
-  ackMessage,
+  feedback,
   onAdd,
 }: {
   snapshot: AgentSnapshotView;
   machines: string[];
   harnessIds: string[];
   hasCatalog: boolean;
-  pending: boolean;
-  acked: boolean;
-  ackMessage: string | null;
+  feedback: SnapshotAddFeedback;
   onAdd: () => void;
 }) {
   const built = useMemo(
@@ -389,12 +390,14 @@ function AgentReviewBody({
                 type="button"
                 className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                 data-testid="web-snapshot-add-agent"
-                disabled={pending || acked}
+                disabled={
+                  feedback.phase === "sending" || feedback.phase === "applied"
+                }
                 onClick={onAdd}
               >
-                {pending
+                {feedback.phase === "sending"
                   ? "Sending…"
-                  : acked
+                  : feedback.phase === "applied"
                     ? "Sent"
                     : "command" in built && built.target
                       ? `Add agent on ${built.target}`
@@ -404,19 +407,33 @@ function AgentReviewBody({
                 Owner-only, not auto-started.
               </span>
             </div>
-            {pending && (
+            {feedback.phase === "sending" && (
               <p className="text-xs text-muted-foreground">
                 Waiting for the desktop to apply and acknowledge…
               </p>
             )}
-            {acked && (
+            {feedback.phase === "no-response" && (
+              // The pending strip's "?" honesty path, surfaced here: 20s with
+              // no ack means no desktop applied it, so the button above is
+              // re-enabled — retrying cannot mint the agent twice.
+              <p
+                className="text-xs text-amber-500 dark:text-amber-400"
+                data-testid="web-snapshot-add-no-response"
+              >
+                No desktop responded. Is Buzz running? The command wasn't
+                acknowledged, so it wasn't applied — you can try again.
+              </p>
+            )}
+            {feedback.phase === "applied" && (
               <p className="text-xs text-emerald-600 dark:text-emerald-400">
                 Agent created — it appears in the roster as owner-only and not
                 running.
               </p>
             )}
-            {ackMessage && (
-              <p className="text-xs text-destructive">{ackMessage}</p>
+            {feedback.phase === "refused" && (
+              <p className="text-xs text-destructive">
+                {feedback.error ?? "The desktop refused the command."}
+              </p>
             )}
           </>
         )}
