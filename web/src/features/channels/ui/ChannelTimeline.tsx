@@ -190,6 +190,9 @@ export function ChannelTimeline({
   unreadBefore,
   typingNames,
   tailKey,
+  onLoadOlder,
+  loadingOlder,
+  historyExhausted,
 }: {
   messages: MessageBuffer;
   profiles: Map<string, Profile>;
@@ -237,8 +240,22 @@ export function ChannelTimeline({
    * switches re-tail. Null disables tailing.
    */
   tailKey?: string | null;
+  /** Scroll-up pagination: called when the viewport reaches the top. */
+  onLoadOlder?: () => void;
+  /** An older-history page is in flight (renders the top loading row). */
+  loadingOlder?: boolean;
+  /** Older pagination already hit the channel start — stop offering it. */
+  historyExhausted?: boolean;
 }) {
   const listRef = useRef<VListHandle>(null);
+  /**
+   * Pagination scroll anchor: when an older page lands, the list must not
+   * jump to the NEW top — it re-pins to the row the user was reading. The
+   * phases: idle → loading (top reached, page requested) → restore (page
+   * landed, pin the anchor) → idle.
+   */
+  const pagePhase = useRef<"idle" | "loading" | "restore">("idle");
+  const anchorIdRef = useRef<string | null>(null);
   /** message id → item index, rebuilt every render by the row loop. */
   const rowIndexRef = useRef<Map<string, number> | null>(null);
   const isEmpty = messages.length === 0;
