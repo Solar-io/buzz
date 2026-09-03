@@ -12,6 +12,7 @@ import {
 } from "../lib/dateFormatters.ts";
 import type { ReactionGroup } from "../lib/reactions.ts";
 import { AuthorAvatar } from "./AuthorAvatar.tsx";
+import { LinkPreviewCards } from "./LinkPreviewCards.tsx";
 import { MarkdownContent } from "./MarkdownContent.tsx";
 import { MessageActionBar } from "./MessageActionBar.tsx";
 import { ReactionChips } from "./ReactionChips.tsx";
@@ -196,6 +197,7 @@ export function MessageRow({
             (edited)
           </span>
         )}
+        <LinkPreviewCards previews={message.linkPreviews} />
         {replyCount > 2 && (
           <button
             type="button"

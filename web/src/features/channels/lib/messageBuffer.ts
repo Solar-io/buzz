@@ -1,5 +1,6 @@
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { imetaByUrl, type ImetaEntry } from "./imetaEntries.ts";
+import { linkPreviewsFromTags, type LinkPreview } from "./linkPreview.ts";
 import { SYSTEM_MESSAGE_KIND } from "./systemEvent.ts";
 
 /**
@@ -34,6 +35,7 @@ export const DELETE_KIND = 5;
 
 /** Reference-stable empty map — messages without imeta tags share it. */
 const EMPTY_IMETA: Map<string, ImetaEntry> = new Map();
+const EMPTY_PREVIEWS: LinkPreview[] = [];
 
 export interface TimelineMessage {
   id: string;
@@ -55,6 +57,13 @@ export interface TimelineMessage {
    * the field by reference — pinned by the buffer suite).
    */
   imetaByUrl: Map<string, ImetaEntry>;
+  /**
+   * Sender-authored link previews, from the event's own tags. Rendering these
+   * contacts no third-party site — the sender resolved the page, so opening a
+   * channel does not fan out requests to every domain anyone has linked.
+   * A construction-time constant, like imetaByUrl: edits replace content only.
+   */
+  linkPreviews: LinkPreview[];
   /** Edit overlay present (renders the "(edited)" marker). */
   edited: boolean;
   /** Deleted via kind 5 — rows hide rather than render. */
@@ -106,6 +115,9 @@ export function timelineMessageFromEvent(
       .filter((tag) => tag[0] === "p" && typeof tag[1] === "string")
       .map((tag) => tag[1]),
     imetaByUrl: attachments,
+    linkPreviews: event.tags.some((tag) => tag[0] === "link-preview")
+      ? linkPreviewsFromTags(event.tags).previews
+      : EMPTY_PREVIEWS,
     edited: false,
     deleted: false,
   };
