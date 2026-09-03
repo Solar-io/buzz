@@ -385,13 +385,20 @@ export class RelaySession {
       // and the feed is silently dead until a reconnect. Drop it from the
       // open set and schedule a backing-off retry — auth processing on the
       // relay can outlast any single fixed delay, so one retry is not
-      // enough (see AUTH_RETRY_MAX_ATTEMPTS). Other close reasons (e.g.
-      // policy) stay closed.
+      // enough (see AUTH_RETRY_MAX_ATTEMPTS). "rate-limited" is the same
+      // shape of transient failure: the relay's global handler semaphore
+      // rejects REQs during fleet-wide load bursts (measured: ~46 slots of
+      // headroom on a weekday morning), and without a retry the unlucky
+      // sub — often the kind:0 profiles query — dies for the session,
+      // which reads in the UI as names and avatars never loading. Other
+      // close reasons (e.g. policy) stay closed.
       const subId = String(message[1] ?? "");
       const reason = String(message[2] ?? "");
       if (this.openSubs.has(subId)) {
         this.openSubs.delete(subId);
-        if (this.authenticated && reason.includes("auth-required")) {
+        const transient =
+          reason.includes("auth-required") || reason.includes("rate-limited");
+        if (this.authenticated && transient) {
           this.scheduleAuthRetry(subId);
         }
       }
@@ -502,10 +509,11 @@ export class RelaySession {
   }
 
   /**
-   * Re-REQ one subscription after it lost the AUTH race, with exponential
-   * backoff. Bounded by {@link AUTH_RETRY_MAX_ATTEMPTS}; a successful REQ
-   * (via replay or here) resets the counter, and teardown clears it so a
-   * new socket starts every sub with a full budget.
+   * Re-REQ one subscription after a transient CLOSED — the AUTH race or a
+   * relay-side rate-limit — with exponential backoff. Bounded by
+   * {@link AUTH_RETRY_MAX_ATTEMPTS}; a successful REQ (via replay or here)
+   * resets the counter, and teardown clears it so a new socket starts every
+   * sub with a full budget.
    */
   private scheduleAuthRetry(subId: string): void {
     const sub = this.activeSubs.get(subId);
