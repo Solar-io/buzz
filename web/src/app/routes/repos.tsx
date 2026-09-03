@@ -803,7 +803,7 @@ function ChannelBrowser() {
         <SectionHeader
           label="Direct messages"
           variant="dm"
-          className="mt-4 mb-[13px]"
+          className="mt-4 mb-[4px]"
           onAdd={() => setNewDmOpen(true)}
           addLabel="New direct message"
         />
@@ -831,7 +831,7 @@ function ChannelBrowser() {
           </p>
         )}
         {visibleDms.length > 0 && (
-          <ul className="space-y-1">
+          <ul className="-mx-0.5 space-y-1">
             {visibleDms.map(({ channel, lastMessage }) => (
               <li key={channel.id}>
                 <DmNavRow
@@ -1235,7 +1235,7 @@ function SectionHeader({
     <div
       className={cn(
         "flex h-8 items-center justify-between pl-2 pr-1",
-        variant === "dm" && "pl-[14px]",
+        variant === "dm" && "pl-[6px]",
         className,
       )}
     >
@@ -1519,7 +1519,7 @@ function DmNavRow({
         // dm-list-spec.md §3: 32px rows, 8px-radius highlight inset 6px,
         // 24px avatar at 14px (8px inside the highlight), 8px avatar→label
         // gap, 4px badge inset on the right.
-        "flex h-8 w-full items-center gap-2 rounded-lg pl-1.5 pr-1 text-left transition-colors",
+        "flex h-8 w-full items-center gap-2 rounded-[8px] pl-2 pr-1 text-left transition-colors",
         "hover:bg-white/5",
         // §5: flat solid #9A3EF6 fill, no ring, black label.
         selected && "bg-[#9A3EF6]",
@@ -1537,7 +1537,7 @@ function DmNavRow({
           : undefined
       }
     >
-      <span className="relative ml-2 shrink-0">
+      <span className="relative shrink-0">
         {others.length > 1 ? (
           <GroupAvatar count={others.length} dm />
         ) : (
@@ -1588,7 +1588,7 @@ function DmNavRow({
               or not a badge is present — the 20px slot always reserves it. */}
           {unread && !active ? (
             <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-[#9A3EF6] text-[11px] font-bold leading-none text-black">
-              {unreadCount ?? ""}
+              {unreadCount != null && unreadCount > 0 ? unreadCount : ""}
             </span>
           ) : (
             <span className="size-5 shrink-0" aria-hidden />
