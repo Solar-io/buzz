@@ -28,6 +28,11 @@ use crate::state::{
 /// Maximum time a new socket may hold a connection slot without completing NIP-42 auth.
 const AUTH_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How long a REQ waits in line for a handler permit before the relay falls
+/// back to rejecting it. Client publish-ack timeouts are 15s, so a queued REQ
+/// still answers well inside them.
+const REQ_QUEUE_WAIT: Duration = Duration::from_secs(5);
+
 /// Shared mutable subscription map for a single WebSocket connection.
 pub(crate) type ConnectionSubscriptions = Arc<Mutex<HashMap<String, Vec<Filter>>>>;
 
@@ -655,19 +660,31 @@ async fn handle_text_message(text: String, conn: Arc<ConnectionState>, state: Ar
         ClientMessage::Req { sub_id, filters } => {
             let conn = Arc::clone(&conn);
             let state = Arc::clone(&state);
-            let permit = match state.handler_semaphore.clone().try_acquire_owned() {
-                Ok(p) => p,
-                Err(_) => {
-                    conn.send(request_rejection_message(
-                        Some(&sub_id),
-                        "rate-limited: too many concurrent requests",
-                    ));
-                    return;
-                }
-            };
             let span = tracing::info_span!("ws.req", conn_id = %conn.conn_id, sub_id = %sub_id);
             tokio::spawn(
                 async move {
+                    // Queue behind concurrent handlers (bounded) instead of
+                    // rejecting outright: the semaphore saturates during
+                    // fleet-wide load bursts, and a rejected REQ surfaced in
+                    // the web client as a panel that never loaded. Acquiring
+                    // inside the spawned task keeps the connection's receive
+                    // loop free to process further frames (CLOSE, AUTH) while
+                    // this REQ waits its turn.
+                    let permit = match tokio::time::timeout(
+                        REQ_QUEUE_WAIT,
+                        state.handler_semaphore.clone().acquire_owned(),
+                    )
+                    .await
+                    {
+                        Ok(Ok(permit)) => permit,
+                        _ => {
+                            conn.send(request_rejection_message(
+                                Some(&sub_id),
+                                "rate-limited: too many concurrent requests",
+                            ));
+                            return;
+                        }
+                    };
                     handlers::req::handle_req(sub_id, filters, conn, state).await;
                     drop(permit);
                 }

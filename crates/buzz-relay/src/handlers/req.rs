@@ -24,6 +24,48 @@ use crate::state::AppState;
 
 const MAX_SUBSCRIPTIONS: usize = 1024;
 
+/// Total time a backlog frame waits for the writer to drain a full
+/// per-connection send buffer before its handler gives up.
+const BACKLOG_DRAIN_WAIT_MS: u64 = 2_000;
+/// Poll cadence while waiting for the buffer to drain.
+const BACKLOG_DRAIN_POLL_MS: u64 = 20;
+
+/// Send one historical frame, waiting — bounded by `BACKLOG_DRAIN_WAIT_MS` —
+/// for the writer to drain when the send buffer is momentarily full.
+///
+/// Concurrent history pushes (a web client's page load opens ~40
+/// subscriptions at once) fill the buffer faster than the socket drains. The
+/// old abort-on-full silently truncated the backlog: remaining events dropped,
+/// no EOSE, the sub left live-only — the client rendered whatever fragment
+/// happened to arrive first (the kind:0 profiles query losing that race is the
+/// bare-names-and-avatars bug, and client-side retries re-aborted identically
+/// because every retry hit the same full buffer). Waiting converts burst
+/// contention into latency; the slow-client grace window still cancels a
+/// connection whose buffer stays full because its socket is genuinely stalled,
+/// so a dead client cannot pin handlers for long.
+///
+/// `build` reconstructs the frame — `ConnectionState::send` consumes its
+/// argument on both the full and the sent path — so the happy path (buffer has
+/// room) allocates nothing extra. Returns false only when the drain window
+/// expired or the connection was cancelled.
+async fn send_backlog_frame(conn: &ConnectionState, build: impl Fn() -> String) -> bool {
+    if conn.send(build()) {
+        return true;
+    }
+    let deadline =
+        tokio::time::Instant::now() + std::time::Duration::from_millis(BACKLOG_DRAIN_WAIT_MS);
+    while !conn.cancel.is_cancelled() {
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(BACKLOG_DRAIN_POLL_MS)).await;
+        if conn.send(build()) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Maximum `query_events` calls in flight per multi-filter REQ / bridge query.
 ///
 /// NIP-01 gives each filter its own DB query (OR semantics — see the comment at
@@ -459,7 +501,7 @@ pub async fn handle_req(
             }
 
             let msg = RelayMessage::event(&sub_id, &stored.event);
-            if !conn.send(msg) {
+            if !send_backlog_frame(&conn, || msg.clone()).await {
                 return;
             }
             total_sent += 1;
@@ -789,7 +831,9 @@ async fn handle_search_req(
                     if !seen_ids.insert(stored.event.id) {
                         continue;
                     }
-                    if !conn.send(RelayMessage::event(sub_id, &stored.event)) {
+                    if !send_backlog_frame(conn, || RelayMessage::event(sub_id, &stored.event))
+                        .await
+                    {
                         return;
                     }
                     emitted += 1;
@@ -1417,6 +1461,73 @@ pub(crate) fn author_only_filters_authorized(filters: &[Filter], authed_pubkey_h
 mod tests {
     use super::*;
     use nostr::{Alphabet, Filter, SingleLetterTag};
+
+    /// ConnectionState with a `cap`-sized send buffer, for drain-wait tests.
+    fn drain_test_conn(
+        cap: usize,
+    ) -> (
+        Arc<ConnectionState>,
+        tokio::sync::mpsc::Receiver<axum::extract::ws::Message>,
+        tokio_util::sync::CancellationToken,
+    ) {
+        let (tx, rx) = tokio::sync::mpsc::channel(cap);
+        let (ctrl_tx, _ctrl_rx) = tokio::sync::mpsc::channel(8);
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let conn = Arc::new(ConnectionState {
+            conn_id: uuid::Uuid::new_v4(),
+            tenant: buzz_core::tenant::TenantContext::resolved(
+                buzz_core::tenant::CommunityId::from_uuid(uuid::Uuid::nil()),
+                "test.local".to_string(),
+            ),
+            remote_addr: "127.0.0.1:1234".parse().unwrap(),
+            auth_state: tokio::sync::RwLock::new(AuthState::Failed),
+            subscriptions: std::sync::Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+            send_tx: tx,
+            ctrl_tx,
+            cancel: cancel.clone(),
+            backpressure: std::sync::Arc::new(crate::connection::Backpressure::new(10_000)),
+        });
+        (conn, rx, cancel)
+    }
+
+    #[tokio::test]
+    async fn backlog_frame_waits_for_buffer_drain() {
+        // Buffer capacity 1, pre-filled: the first send fails, and the frame
+        // must wait for the writer to drain instead of being dropped (the
+        // old abort-on-full truncated backlogs with no EOSE).
+        let (conn, mut rx, _cancel) = drain_test_conn(1);
+        assert!(conn.send("fill".to_string()));
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let _ = rx.try_recv();
+            // Hold the receiver open past the frame's landing — dropping it
+            // here would close the channel and fail every later send.
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        });
+        let started = std::time::Instant::now();
+        let sent = send_backlog_frame(&conn, || "backlog-frame".to_string()).await;
+        assert!(sent, "frame must land once the writer drains");
+        assert!(
+            started.elapsed() >= std::time::Duration::from_millis(80),
+            "it must have waited for the drain, not raced it"
+        );
+    }
+
+    #[tokio::test]
+    async fn backlog_frame_gives_up_fast_when_cancelled() {
+        let (conn, _rx, cancel) = drain_test_conn(1);
+        assert!(conn.send("fill".to_string()));
+        cancel.cancel();
+        let started = std::time::Instant::now();
+        let sent = send_backlog_frame(&conn, || "backlog-frame".to_string()).await;
+        assert!(!sent, "cancelled connection must not keep waiting");
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(500),
+            "cancel must short-circuit the drain wait"
+        );
+    }
 
     #[test]
     fn global_queries_push_access_scope_before_limit() {
