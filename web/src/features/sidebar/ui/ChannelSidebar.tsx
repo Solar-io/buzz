@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { Search } from "lucide-react";
 import type { Profile } from "@/features/channels/hooks";
@@ -15,6 +16,13 @@ import { NewDmDialog } from "@/features/dms/ui/NewDmDialog";
 import { shortDate } from "@/features/sidebar/lib/shortDate.ts";
 import { ChannelForum, ChannelGlyph } from "@/features/sidebar/ui/ChannelGlyph";
 import { DmNavRow } from "@/features/sidebar/ui/DmNavRow";
+import {
+  isCollapsed,
+  loadCollapsedSections,
+  saveCollapsedSections,
+  toggleSection,
+  type CollapsedSections,
+} from "@/features/sidebar/lib/collapsedSections.ts";
 import { SectionHeader } from "@/features/sidebar/ui/SectionHeader";
 import { SidebarNavButton } from "@/features/sidebar/ui/SidebarNavButton";
 import { RelayConnectionCard } from "@/features/sidebar/ui/RelayConnectionCard";
@@ -126,6 +134,19 @@ export function ChannelSidebar({
   dialogs,
   actions,
 }: ChannelSidebarProps) {
+  // Per-device, deliberately: collapsing a section on a laptop should not
+  // fold it on a phone, where the reach/overview tradeoff is different.
+  const [collapsed, setCollapsed] = useState<CollapsedSections>(() =>
+    loadCollapsedSections(),
+  );
+  const toggle = (sectionId: string) => {
+    setCollapsed((previous) => {
+      const next = toggleSection(previous, sectionId);
+      saveCollapsedSections(next);
+      return next;
+    });
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between px-3 py-2">
@@ -204,30 +225,36 @@ export function ChannelSidebar({
           className={lists.starred.length > 0 ? "mt-4" : undefined}
           onAdd={() => dialogs.onNewChannelOpenChange(true)}
           addLabel="New channel"
+          collapsible
+          collapsed={isCollapsed(collapsed, "channels")}
+          onToggleCollapsed={() => toggle("channels")}
+          itemCount={lists.unstarred.length}
         />
         <NewChannelDialog
           open={dialogs.newChannelOpen}
           onOpenChange={dialogs.onNewChannelOpenChange}
           onCreated={actions.onChannelCreated}
         />
-        <ul className="space-y-0.5">
-          {lists.unstarred.map((channel) => (
-            <li key={channel.id}>
-              <SidebarNavButton
-                selected={channel.id === selectedId}
-                label={channel.name}
-                icon={<ChannelGlyph isPrivate={channel.isPrivate} />}
-                unread={
-                  !isMuted(readState.prefs, channel.id) &&
-                  isUnread(readState.read, channel.id, channel.updatedAt)
-                }
-                muted={isMuted(readState.prefs, channel.id)}
-                onSelect={() => actions.onSelectChannel(channel.id)}
-                menuItems={actions.channelMenuItems(channel)}
-              />
-            </li>
-          ))}
-        </ul>
+        {!isCollapsed(collapsed, "channels") && (
+          <ul className="space-y-0.5">
+            {lists.unstarred.map((channel) => (
+              <li key={channel.id}>
+                <SidebarNavButton
+                  selected={channel.id === selectedId}
+                  label={channel.name}
+                  icon={<ChannelGlyph isPrivate={channel.isPrivate} />}
+                  unread={
+                    !isMuted(readState.prefs, channel.id) &&
+                    isUnread(readState.read, channel.id, channel.updatedAt)
+                  }
+                  muted={isMuted(readState.prefs, channel.id)}
+                  onSelect={() => actions.onSelectChannel(channel.id)}
+                  menuItems={actions.channelMenuItems(channel)}
+                />
+              </li>
+            ))}
+          </ul>
+        )}
         {lists.forums.length > 0 && (
           <>
             <p className="mt-4 mb-[4px] flex h-8 items-center pl-[6px] pr-2 text-[13px] font-medium normal-case tracking-normal text-sidebar-foreground/60">
@@ -277,6 +304,10 @@ export function ChannelSidebar({
           className="mt-4 mb-[4px]"
           onAdd={() => dialogs.onNewDmOpenChange(true)}
           addLabel="New direct message"
+          collapsible
+          collapsed={isCollapsed(collapsed, "dms")}
+          onToggleCollapsed={() => toggle("dms")}
+          itemCount={lists.visibleDms.length}
         />
         <NewDmDialog
           open={dialogs.newDmOpen}
@@ -289,7 +320,7 @@ export function ChannelSidebar({
             All DMs hidden — use + to start one.
           </p>
         )}
-        {lists.visibleDms.length > 0 && (
+        {!isCollapsed(collapsed, "dms") && lists.visibleDms.length > 0 && (
           <ul className="-mx-0.5 space-y-1">
             {lists.visibleDms.map(({ channel, lastMessage }) => (
               <li key={channel.id}>

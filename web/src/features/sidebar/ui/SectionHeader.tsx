@@ -1,4 +1,4 @@
-import { Plus } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 
 /** Props for {@link SectionHeader}. */
@@ -15,6 +15,15 @@ export interface SectionHeaderProps {
    * spec's sampled #8E96B0 was a dark-theme reading of exactly that.
    */
   variant?: "default" | "dm";
+  /**
+   * Makes the label a collapse toggle. Omit for a static header — "Starred"
+   * has no `+` and nothing worth folding.
+   */
+  collapsible?: boolean;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
+  /** Rows hidden by the collapse, surfaced on the header so the count is not lost. */
+  itemCount?: number;
 }
 
 /**
@@ -27,7 +36,16 @@ export function SectionHeader({
   addLabel,
   className,
   variant = "dm",
+  collapsible,
+  collapsed,
+  onToggleCollapsed,
+  itemCount,
 }: SectionHeaderProps) {
+  const labelClass = cn(
+    "text-xs font-medium uppercase tracking-wide text-sidebar-foreground/70",
+    variant === "dm" &&
+      "text-[13px] font-medium normal-case tracking-normal text-sidebar-foreground/60",
+  );
   return (
     <div
       className={cn(
@@ -36,15 +54,30 @@ export function SectionHeader({
         className,
       )}
     >
-      <p
-        className={cn(
-          "text-xs font-medium uppercase tracking-wide text-sidebar-foreground/70",
-          variant === "dm" &&
-            "text-[13px] font-medium normal-case tracking-normal text-sidebar-foreground/60",
-        )}
-      >
-        {label}
-      </p>
+      {collapsible ? (
+        <button
+          type="button"
+          aria-expanded={!collapsed}
+          onClick={onToggleCollapsed}
+          className={cn(
+            "group/section -ml-1 flex min-w-0 items-center gap-1 rounded px-1 hover:bg-sidebar-accent/50",
+            labelClass,
+          )}
+        >
+          {collapsed ? (
+            <ChevronRight aria-hidden className="size-3 shrink-0" />
+          ) : (
+            <ChevronDown aria-hidden className="size-3 shrink-0" />
+          )}
+          <span className="truncate">{label}</span>
+          {collapsed && itemCount !== undefined && itemCount > 0 && (
+            // Collapsing must not make rows vanish without trace.
+            <span className="shrink-0 text-2xs opacity-70">{itemCount}</span>
+          )}
+        </button>
+      ) : (
+        <p className={labelClass}>{label}</p>
+      )}
       {onAdd && (
         <button
           type="button"
