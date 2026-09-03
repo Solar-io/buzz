@@ -26,6 +26,13 @@ export interface DesktopCatalogHarness {
 export interface DesktopCatalog {
   /** Machine id (hostname, e.g. "crichton.local") — the event's d tag. */
   machine: string;
+  /**
+   * Wire `version` — the capability signal, not a schema revision (v2 =
+   * avatar/timeout/start-on-launch edits, envVarsPatch, restart). Parsed
+   * tolerantly: any finite number >= 1 is accepted, so a future bump can
+   * never blank an older web's catalog the way a `!== 1` gate would.
+   */
+  version: number;
   harnesses: DesktopCatalogHarness[];
   /** 64-hex pubkeys of agents runnable on that machine. */
   agents: string[];
@@ -65,8 +72,9 @@ function parseHarness(value: unknown): DesktopCatalogHarness | null {
 
 /**
  * Narrow parse of one 30180 catalog; null for wrong-shape events (wrong kind,
- * wrong format/version, missing or mismatched machine id, bad updated_at).
- * Malformed harness entries and non-hex agents are dropped individually.
+ * wrong format, non-numeric or pre-1 version, missing or mismatched machine
+ * id, bad updated_at). Malformed harness entries and non-hex agents are
+ * dropped individually.
  */
 export function desktopCatalogFromEvent(
   event: SignedNostrEvent,
@@ -84,9 +92,18 @@ export function desktopCatalogFromEvent(
   } catch {
     return null;
   }
-  if (parsed.format !== "buzz-desktop-catalog" || parsed.version !== 1) {
+  // Tolerant version read: any finite >= 1. Capability gating (>= 2) lives in
+  // adminCommandCapabilities.ts; parsing accepts older AND newer catalogs so
+  // a desktop update can never blank an older web bundle's roster.
+  if (
+    parsed.format !== "buzz-desktop-catalog" ||
+    typeof parsed.version !== "number" ||
+    !Number.isFinite(parsed.version) ||
+    parsed.version < 1
+  ) {
     return null;
   }
+  const version = parsed.version;
   const machine =
     typeof parsed.machine === "string"
       ? parsed.machine.trim().toLowerCase()
@@ -116,6 +133,7 @@ export function desktopCatalogFromEvent(
     : [];
   return {
     machine,
+    version,
     harnesses,
     agents: Array.from(new Set(agents)),
     updatedAt: parsed.updated_at,

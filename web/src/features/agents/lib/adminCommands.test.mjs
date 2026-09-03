@@ -105,6 +105,56 @@ test("parseAdminCommand: non-string target is dropped, command still parses", ()
   assert.equal(parsed.command.action, "create");
 });
 
+// ── Phase 2: envVarsPatch + restart ─────────────────────────────────────────
+
+test("parseAdminCommand parses an update's envVarsPatch exactly", () => {
+  const parsed = parseAdminCommand(
+    envelope("update", {
+      pubkey: PK,
+      envVarsPatch: { BUZZ_AGENT_THINKING_EFFORT: "high", OLD_KEY: null },
+    }),
+  );
+  assert.deepEqual(parsed.command.request.envVarsPatch, {
+    BUZZ_AGENT_THINKING_EFFORT: "high",
+    OLD_KEY: null,
+  });
+});
+
+test("parseAdminCommand drops a malformed envVarsPatch but keeps the command", () => {
+  const parsed = parseAdminCommand(
+    envelope("update", {
+      pubkey: PK,
+      name: "N",
+      envVarsPatch: { GOOD: "1", BAD: 7 },
+    }),
+  );
+  assert.equal(parsed.command.request.envVarsPatch, undefined);
+  assert.equal(parsed.command.request.name, "N");
+  // Arrays and non-objects drop the field too.
+  assert.equal(
+    parseAdminCommand(envelope("update", { pubkey: PK, envVarsPatch: ["a"] }))
+      .command.request.envVarsPatch,
+    undefined,
+  );
+  assert.equal(
+    parseAdminCommand(envelope("update", { pubkey: PK, envVarsPatch: "nope" }))
+      .command.request.envVarsPatch,
+    undefined,
+  );
+});
+
+test("parseAdminCommand parses the restart action beside start/stop", () => {
+  const restart = parseAdminCommand(
+    envelope("restart", { pubkey: PK }, { target: "crichton.local" }),
+  );
+  assert.equal(restart.command.action, "restart");
+  assert.deepEqual(restart.command.request, { pubkey: PK });
+  assert.equal(restart.target, "crichton.local");
+  // Same pubkey gate as start/stop.
+  assert.equal(parseAdminCommand(envelope("restart", { pubkey: "zz" })), null);
+  assert.equal(parseAdminCommand(envelope("restart", {})), null);
+});
+
 test("parseAdminAck round shape + rejects", () => {
   const ack = parseAdminAck({
     type: "agent_admin_ack",

@@ -5,6 +5,7 @@ import {
   buildCreateCommand,
   type CreateAgentFormValue,
 } from "../lib/createAgentRequest";
+import { createControlsEnabled } from "../lib/adminCommandCapabilities";
 import type { DesktopCatalog } from "../lib/desktopCatalog";
 import type { useAdminCommands } from "./AgentAdminPanel";
 import { mergedCatalogHarnesses } from "./HarnessSelect";
@@ -14,6 +15,7 @@ import {
   IdentityFields,
   ModelProviderFields,
   RuntimeFields,
+  TimeoutFields,
 } from "./AgentFormSections";
 
 /**
@@ -37,6 +39,20 @@ export function AgentCreateForm({
   onCancel: () => void;
 }) {
   const machines = useMemo(() => catalogs.map((c) => c.machine), [catalogs]);
+  // The effective target machine (selected applyOn when several, the single
+  // catalog when one, none when zero) must publish catalog >= v2 for the
+  // timeout controls to render — an older desktop drops them at the applier.
+  const [applyOn, setApplyOn] = useState(machines[0] ?? "");
+  const effectiveTarget =
+    machines.length === 1
+      ? machines[0]
+      : machines.length >= 2 && applyOn
+        ? applyOn
+        : null;
+  const timeoutControlsEnabled = createControlsEnabled(
+    catalogs,
+    effectiveTarget,
+  );
   const [value, setValue] = useState<CreateAgentFormValue>(() => ({
     name: "",
     systemPrompt: "",
@@ -51,8 +67,9 @@ export function AgentCreateForm({
     customArgs: "",
     envRows: [],
     startOnAppLaunch: true,
+    idleTimeoutSeconds: "",
+    maxTurnDurationSeconds: "",
   }));
-  const [applyOn, setApplyOn] = useState(machines[0] ?? "");
   const [busy, setBusy] = useState(false);
   const [requestId, setRequestId] = useState<string | null>(null);
 
@@ -94,11 +111,7 @@ export function AgentCreateForm({
       const id = await admin.send(
         built.command,
         `Create ${value.name.trim()}`,
-        machines.length === 1
-          ? { target: machines[0] }
-          : machines.length >= 2 && applyOn
-            ? { target: applyOn }
-            : undefined,
+        effectiveTarget ? { target: effectiveTarget } : undefined,
       );
       setRequestId(id);
     } finally {
@@ -134,6 +147,16 @@ export function AgentCreateForm({
         parallelism={value.parallelism}
         onParallelismChange={(next) => set("parallelism", next)}
       />
+      {timeoutControlsEnabled && (
+        <TimeoutFields
+          idleTimeoutSeconds={value.idleTimeoutSeconds}
+          onIdleTimeoutChange={(next) => set("idleTimeoutSeconds", next)}
+          maxTurnDurationSeconds={value.maxTurnDurationSeconds}
+          onMaxTurnDurationChange={(next) =>
+            set("maxTurnDurationSeconds", next)
+          }
+        />
+      )}
       <AccessFields
         respondTo={value.respondTo}
         onRespondToChange={(next) => set("respondTo", next)}

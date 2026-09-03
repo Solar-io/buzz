@@ -363,3 +363,223 @@ test("parallelism: blank keeps, invalid errors, changed sends a number", () => {
   }
   assert.equal(good.command.request.parallelism, 5);
 });
+
+// ── Phase 2: avatar, timeouts, start-on-launch, effort ──────────────────────
+
+const AVATAR = "https://img.example/x.png";
+
+function prefillWithAvatar() {
+  return prefillEditForm(entry(), null, AVATAR);
+}
+
+test("avatar: unchanged absent, changed sends the URL, cleared sends the empty-string sentinel", () => {
+  const base = entry();
+
+  const unchanged = buildUpdateCommand(
+    base,
+    prefillWithAvatar(),
+    value(prefillWithAvatar(), { name: "Renamed" }),
+  );
+  if ("error" in unchanged) {
+    assert.fail(unchanged.error);
+  }
+  assert.equal("avatarUrl" in unchanged.command.request, false);
+
+  const changed = buildUpdateCommand(
+    base,
+    prefillWithAvatar(),
+    value(prefillWithAvatar(), { avatarUrl: "https://img.example/y.png" }),
+  );
+  if ("error" in changed) {
+    assert.fail(changed.error);
+  }
+  assert.deepEqual(changed.command.request, {
+    pubkey: PK,
+    avatarUrl: "https://img.example/y.png",
+  });
+
+  const cleared = buildUpdateCommand(
+    base,
+    prefillWithAvatar(),
+    value(prefillWithAvatar(), { avatarUrl: "" }),
+  );
+  if ("error" in cleared) {
+    assert.fail(cleared.error);
+  }
+  assert.deepEqual(cleared.command.request, {
+    pubkey: PK,
+    avatarUrl: "",
+  });
+});
+
+test("timeouts: blank absent, 0 clears, positive sets, garbage errors", () => {
+  const base = entry();
+  const prefill = prefillEditForm(base, null);
+
+  const set = buildUpdateCommand(
+    base,
+    prefill,
+    value(prefill, {
+      idleTimeoutSeconds: "600",
+      maxTurnDurationSeconds: "3600",
+    }),
+  );
+  if ("error" in set) {
+    assert.fail(set.error);
+  }
+  assert.equal(set.command.request.idleTimeoutSeconds, 600);
+  assert.equal(set.command.request.maxTurnDurationSeconds, 3600);
+
+  const clear = buildUpdateCommand(
+    base,
+    prefill,
+    value(prefill, { idleTimeoutSeconds: "0" }),
+  );
+  if ("error" in clear) {
+    assert.fail(clear.error);
+  }
+  assert.deepEqual(clear.command.request, {
+    pubkey: PK,
+    idleTimeoutSeconds: 0,
+  });
+
+  for (const bad of ["abc", "-5", "1.5", "12s"]) {
+    const invalid = buildUpdateCommand(
+      base,
+      prefill,
+      value(prefill, { maxTurnDurationSeconds: bad }),
+    );
+    assert.equal("error" in invalid, true, `${bad} must be an error`);
+  }
+});
+
+test("startOnAppLaunch: keep absent, on/off send booleans", () => {
+  const base = entry();
+  const prefill = prefillEditForm(base, null);
+  const on = buildUpdateCommand(
+    base,
+    prefill,
+    value(prefill, { startOnAppLaunch: "on" }),
+  );
+  if ("error" in on) {
+    assert.fail(on.error);
+  }
+  assert.deepEqual(on.command.request, { pubkey: PK, startOnAppLaunch: true });
+
+  const off = buildUpdateCommand(
+    base,
+    prefill,
+    value(prefill, { startOnAppLaunch: "off" }),
+  );
+  if ("error" in off) {
+    assert.fail(off.error);
+  }
+  assert.deepEqual(off.command.request, {
+    pubkey: PK,
+    startOnAppLaunch: false,
+  });
+});
+
+test("effort alone rides envVarsPatch only — never an envVars key", () => {
+  const base = entry();
+  const prefill = prefillEditForm(base, null);
+  const built = buildUpdateCommand(
+    base,
+    prefill,
+    value(prefill, { effort: "high" }),
+  );
+  if ("error" in built) {
+    assert.fail(built.error);
+  }
+  assert.deepEqual(built.command.request, {
+    pubkey: PK,
+    envVarsPatch: { BUZZ_AGENT_THINKING_EFFORT: "high" },
+  });
+  assert.equal("envVars" in built.command.request, false);
+
+  const cleared = buildUpdateCommand(
+    base,
+    prefill,
+    value(prefill, { effort: "clear" }),
+  );
+  if ("error" in cleared) {
+    assert.fail(cleared.error);
+  }
+  assert.deepEqual(cleared.command.request, {
+    pubkey: PK,
+    envVarsPatch: { BUZZ_AGENT_THINKING_EFFORT: null },
+  });
+});
+
+test("effort plus a dirty env table folds into ONE envVars replace", () => {
+  const base = entry();
+  const prefill = prefillEditForm(base, null);
+  const built = buildUpdateCommand(
+    base,
+    prefill,
+    value(prefill, {
+      effort: "high",
+      envRows: [row("r1", "OTHER_KEY", "v")],
+      envDirty: true,
+    }),
+  );
+  if ("error" in built) {
+    assert.fail(built.error);
+  }
+  assert.deepEqual(built.command.request.envVars, {
+    OTHER_KEY: "v",
+    BUZZ_AGENT_THINKING_EFFORT: "high",
+  });
+  assert.equal("envVarsPatch" in built.command.request, false);
+
+  // The fold wins over a table row holding the same key (newer intent).
+  const conflict = buildUpdateCommand(
+    base,
+    prefill,
+    value(prefill, {
+      effort: "high",
+      envRows: [row("r1", "BUZZ_AGENT_THINKING_EFFORT", "low")],
+      envDirty: true,
+    }),
+  );
+  if ("error" in conflict) {
+    assert.fail(conflict.error);
+  }
+  assert.deepEqual(conflict.command.request.envVars, {
+    BUZZ_AGENT_THINKING_EFFORT: "high",
+  });
+});
+
+test("fold-clear colliding with the key in the table is a builder error", () => {
+  const base = entry();
+  const prefill = prefillEditForm(base, null);
+  const built = buildUpdateCommand(
+    base,
+    prefill,
+    value(prefill, {
+      effort: "clear",
+      envRows: [row("r1", "BUZZ_AGENT_THINKING_EFFORT", "low")],
+      envDirty: true,
+    }),
+  );
+  assert.equal(
+    "error" in built && built.error,
+    "The environment table sets the same key the effort control would remove.",
+  );
+
+  // Clear + dirty table WITHOUT the key is fine: the replace simply omits it.
+  const fine = buildUpdateCommand(
+    base,
+    prefill,
+    value(prefill, {
+      effort: "clear",
+      envRows: [row("r1", "OTHER_KEY", "v")],
+      envDirty: true,
+    }),
+  );
+  if ("error" in fine) {
+    assert.fail(fine.error);
+  }
+  assert.deepEqual(fine.command.request.envVars, { OTHER_KEY: "v" });
+  assert.equal("envVarsPatch" in fine.command.request, false);
+});
