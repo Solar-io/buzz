@@ -3,6 +3,17 @@
 @plugin "@tailwindcss/typography";
 @config "../../../tailwind.config.js";
 
+/* The app persists its selected theme on the root `.dark` class
+   (see shared/theme/ThemeProvider.tsx). Use that class, rather than the
+   system preference, for every `dark:` utility. Without this declaration
+   Tailwind v4's default `dark` variant is
+   `@media (prefers-color-scheme: dark)`, so every `dark:` utility silently
+   follows the OS instead of the app's own toggle.
+
+   Must stay below every `@import`: CSS requires `@import` to precede other
+   at-rules, so placing this above them silently drops the rest of the sheet. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* JetBrains Mono (code blocks) — self-hosted from the desktop's bundle so the
    web matches the desktop client's mono rendering without a new dependency. */
 @font-face {
@@ -46,36 +57,111 @@
 }
 
 /*
- * Scrollbars (Sam 8/30: track must match the surface it sits on). The
- * desktop client's pattern: transparent track AND thumb, with the thumb
- * fading in only on hover — so the bar reads as part of the background
- * until you go looking for it. Firefox via scrollbar-color; WebKit below.
+ * Scrollbars (Sam 8/30: track must match the surface it sits on). Ported
+ * faithfully from the desktop client's shared/styles/globals/scrollbars.css.
+ * These are scoped, opt-in classes rather than a global `*` rule: the old
+ * global rule hardcoded a white thumb, which is invisible against the light
+ * theme's `#eff1f5` ground. Every thumb here derives from a theme token.
  */
-* {
+.buzz-sidebar-scrollbar {
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
 }
-*:hover {
-  scrollbar-color: hsl(0 0% 100% / 0.14) transparent;
+
+.buzz-sidebar-scrollbar:hover {
+  scrollbar-color: var(
+      --buzz-sidebar-scrollbar-thumb,
+      hsl(var(--sidebar-border) / 0.8)
+    )
+    transparent;
 }
-*::-webkit-scrollbar {
+
+.buzz-sidebar-scrollbar::-webkit-scrollbar {
   height: 10px;
   width: 10px;
 }
-*::-webkit-scrollbar-track {
+
+.buzz-sidebar-scrollbar::-webkit-scrollbar-track {
   background: transparent;
 }
-*::-webkit-scrollbar-thumb {
+
+.buzz-sidebar-scrollbar::-webkit-scrollbar-thumb {
   background-clip: content-box;
   background-color: transparent;
   border: 3px solid transparent;
   border-radius: 999px;
 }
-*:hover::-webkit-scrollbar-thumb {
-  background-color: hsl(0 0% 100% / 0.14);
+
+.buzz-sidebar-scrollbar:hover::-webkit-scrollbar-thumb {
+  background-color: var(
+    --buzz-sidebar-scrollbar-thumb,
+    hsl(var(--sidebar-border) / 0.8)
+  );
 }
-*:hover::-webkit-scrollbar-thumb:hover {
-  background-color: hsl(0 0% 100% / 0.22);
+
+/* Channel activity keeps its chrome outside the scrolling surface. The slim,
+ * low-contrast thumb belongs only to the activity list beneath the header. */
+.buzz-channel-activity-scrollbar {
+  scrollbar-gutter: stable;
+}
+
+.buzz-channel-activity-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.buzz-channel-activity-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.buzz-channel-activity-scrollbar::-webkit-scrollbar-thumb {
+  background-clip: content-box;
+  background-color: hsl(var(--foreground) / 0.15);
+  border: 2px solid transparent;
+  border-radius: 999px;
+}
+
+/*
+ * Main-content scroll areas that have sticky blurred chrome inside them.
+ * Native overlay scrollbars paint UNDER composited descendants
+ * (backdrop-filter + z-index) in WKWebView, so the thumb looks cut off
+ * behind the blur bar. A custom scrollbar occupies its own gutter outside
+ * the content box, so sticky children can no longer cover it.
+ */
+/*
+ * NOTE: no `scrollbar-color` here on purpose — when the standard property is
+ * set, engines ignore the `::-webkit-scrollbar` pseudo styles and fall back
+ * to overlay scrollbars, which reintroduces the bug.
+ */
+.buzz-content-scrollbar {
+  scrollbar-gutter: stable;
+}
+
+.buzz-content-scrollbar::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+
+.buzz-content-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* The native thumb stays permanently transparent (but grabbable — the hit
+ * area is real). Visibility while scrolling is handled by a separate overlay
+ * indicator element positioned over the gutter, because WebKit does not
+ * re-resolve `::-webkit-scrollbar` styles when classes/attributes on the
+ * scroller change dynamically. */
+.buzz-content-scrollbar::-webkit-scrollbar-thumb {
+  background-clip: content-box;
+  background-color: transparent;
+  border: 3px solid transparent;
+  border-radius: 999px;
+}
+
+/* Scrollbar-part pseudo-classes are resolved by the scrollbar itself, so
+ * these DO update dynamically — keep the thumb visible under the pointer. */
+.buzz-content-scrollbar::-webkit-scrollbar-thumb:hover,
+.buzz-content-scrollbar::-webkit-scrollbar-thumb:active {
+  background-color: hsl(var(--border) / 0.9);
 }
 
 @layer base {
@@ -115,6 +201,21 @@
     --sidebar-accent-foreground: 234 16.02% 35.49%;
     --sidebar-border: 225 13.56% 76.86%;
     --sidebar-ring: 225 13.56% 76.86%;
+
+    /*
+     * Diff/status + warning colors. These are consumed as whole colors via
+     * `var()` (see tailwind.config.js `status.*` / `warning.*`), NOT as HSL
+     * triples. Values mirror the desktop client's static fallbacks in
+     * shared/theme/adaptive-theme.ts. A later phase will layer a runtime
+     * theme engine on top that rewrites these same custom properties on the
+     * root element — ordinary `:root` / `.dark` declarations like these are
+     * deliberately low enough in specificity for that override to win.
+     */
+    --status-added: #1a7f37;
+    --status-deleted: #cf222e;
+    --status-modified: #9a6700;
+    --ui-warning: #9a6700;
+    --ui-warning-bg: rgba(154, 103, 0, 0.08);
   }
 
   .dark {
@@ -163,6 +264,14 @@
     --sidebar-accent-foreground: 227 68.25% 87.65%;
     --sidebar-border: 232.5 14% 15%;
     --sidebar-ring: 231 15.61% 33.92%;
+
+    /* Dark counterparts of the status/warning tokens declared in `:root`
+       above. Same note applies: a runtime theme engine may override these. */
+    --status-added: #3fb950;
+    --status-deleted: #f85149;
+    --status-modified: #d29922;
+    --ui-warning: #d29922;
+    --ui-warning-bg: rgba(210, 153, 34, 0.1);
   }
 
   * {
@@ -181,6 +290,30 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-family: "Inter Variable", Inter, "Avenir Next", "Segoe UI", sans-serif;
+  }
+
+  /*
+   * Tailwind v4's preflight no longer sets `cursor: pointer` on buttons.
+   * Restore it for clearly actionable elements so hover affordance is
+   * consistent across the app. Disabled / aria-disabled elements keep
+   * the default cursor; explicit `cursor-*` utility classes still win
+   * because utilities are in a later layer than base.
+   */
+  button:not(:disabled),
+  a[href],
+  summary,
+  [role="button"]:not([aria-disabled="true"]),
+  [role="menuitem"]:not([aria-disabled="true"]),
+  [role="menuitemcheckbox"]:not([aria-disabled="true"]),
+  [role="menuitemradio"]:not([aria-disabled="true"]),
+  [role="tab"]:not([aria-disabled="true"]),
+  [role="link"] {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [aria-disabled="true"] {
+    cursor: default;
   }
 }
 
@@ -231,9 +364,9 @@
 
 @keyframes pingFlash {
   0% {
-    background-color: rgb(var(--primary) / 0.28);
+    background-color: hsl(var(--primary) / 0.28);
   }
   100% {
-    background-color: rgb(var(--primary) / 0.08);
+    background-color: hsl(var(--primary) / 0.08);
   }
 }
