@@ -253,6 +253,31 @@ pub struct UpdateManagedAgentRequest {
     /// normalized server-side).
     #[serde(default)]
     pub respond_to_allowlist: Option<Vec<String>>,
+    /// Absent = don't touch. Non-empty = set (trimmed). `""` = clear to the
+    /// harness default avatar — the kind-0 republish then falls back to the
+    /// command-derived picture. Clear is the empty string, not JSON null,
+    /// so the web's "sent empty" and "not sent" stay distinguishable.
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+    /// Absent = don't touch. `>0` = set. `0` = clear to the harness default
+    /// (320 s) — the same convention as the create path, with the filter
+    /// applied here so clear is expressed exactly once (TS forwards 0).
+    #[serde(default)]
+    pub idle_timeout_seconds: Option<u64>,
+    /// Absent = don't touch. `>0` = set. `0` = clear to the harness default
+    /// (3600 s) — same convention as `idle_timeout_seconds`.
+    #[serde(default)]
+    pub max_turn_duration_seconds: Option<u64>,
+    /// Absent = don't touch. Present = set the flag (booleans have no clear).
+    #[serde(default)]
+    pub start_on_app_launch: Option<bool>,
+    /// Absent = don't touch. Present = merge onto the stored env map AFTER
+    /// any `env_vars` replace in the same command: `Some(v)` sets/overwrites
+    /// the key, `None` deletes it (deleting a missing key is a no-op). The
+    /// FINAL merged map is validated (`validate_user_env_keys`) before the
+    /// record is saved, so a bad patch rejects the whole update.
+    #[serde(default)]
+    pub env_vars_patch: Option<BTreeMap<String, Option<String>>>,
 }
 
 #[cfg(test)]
@@ -466,5 +491,46 @@ mod tests {
         )
         .expect("a create payload without provenance should deserialize");
         assert_eq!(request.catalog_source, None);
+    }
+
+    /// Phase-2 web admin commands (kind 24201) ride the same camelCase update
+    /// payload the desktop dialog sends. Every new field must deserialize with
+    /// its sentinel intact: `""` avatar, `0` timeouts, tri-state patch values.
+    #[test]
+    fn update_request_deserializes_phase2_fields() {
+        let request: UpdateManagedAgentRequest = serde_json::from_str(
+            r#"{
+                "pubkey": "ab",
+                "avatarUrl": "",
+                "idleTimeoutSeconds": 0,
+                "maxTurnDurationSeconds": 3600,
+                "startOnAppLaunch": false,
+                "envVarsPatch": { "A": "1", "B": null }
+            }"#,
+        )
+        .expect("camelCase Phase-2 update payload should deserialize");
+        assert_eq!(request.avatar_url.as_deref(), Some(""));
+        assert_eq!(request.idle_timeout_seconds, Some(0));
+        assert_eq!(request.max_turn_duration_seconds, Some(3600));
+        assert_eq!(request.start_on_app_launch, Some(false));
+        let mut expected_patch = std::collections::BTreeMap::new();
+        expected_patch.insert("A".to_string(), Some("1".to_string()));
+        expected_patch.insert("B".to_string(), None);
+        assert_eq!(request.env_vars_patch, Some(expected_patch));
+    }
+
+    /// An update payload that omits every Phase-2 field (the desktop dialog,
+    /// legacy senders) must deserialize with all of them absent — absent is
+    /// "don't touch", never an error and never a silent clear.
+    #[test]
+    fn update_request_without_phase2_fields_leaves_them_absent() {
+        let request: UpdateManagedAgentRequest =
+            serde_json::from_str(r#"{ "pubkey": "ab", "name": "N" }"#)
+                .expect("a pre-Phase-2 update payload should deserialize");
+        assert_eq!(request.avatar_url, None);
+        assert_eq!(request.idle_timeout_seconds, None);
+        assert_eq!(request.max_turn_duration_seconds, None);
+        assert_eq!(request.start_on_app_launch, None);
+        assert_eq!(request.env_vars_patch, None);
     }
 }

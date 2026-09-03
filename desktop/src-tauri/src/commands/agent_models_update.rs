@@ -35,6 +35,90 @@ fn ensure_access_policy_change_supported(
     Ok(())
 }
 
+/// Apply the Phase-2 scalar patch fields (avatar, both turn timeouts,
+/// start-on-launch) onto a record. Pure so the tri-state semantics are
+/// unit-pinned without an `AppHandle`:
+/// - avatar: absent = keep, non-empty = set (trimmed), `""` = clear;
+/// - timeouts: absent = keep, `>0` = set, `0` = clear to the harness default
+///   (mirrors the create path's `.filter(|s| *s > 0)`);
+/// - start-on-launch: absent = keep, present = set — forced `false` for
+///   non-local backends, mirroring create (provider agents are managed
+///   externally, the launch flag is meaningless there).
+///
+/// Returns whether the AVATAR changed — the extra kind-0 republish trigger
+/// beyond renames (the web reads the picture from kind 0).
+fn apply_agent_scalar_updates(
+    record: &mut ManagedAgentRecord,
+    avatar_url: Option<String>,
+    idle_timeout_seconds: Option<u64>,
+    max_turn_duration_seconds: Option<u64>,
+    start_on_app_launch: Option<bool>,
+) -> bool {
+    let mut avatar_changed = false;
+    if let Some(avatar_update) = avatar_url {
+        let trimmed = avatar_update.trim().to_string();
+        let next = if trimmed.is_empty() { None } else { Some(trimmed) };
+        if record.avatar_url != next {
+            record.avatar_url = next;
+            avatar_changed = true;
+        }
+    }
+    if let Some(idle_timeout) = idle_timeout_seconds {
+        record.idle_timeout_seconds = Some(idle_timeout).filter(|s| *s > 0);
+    }
+    if let Some(max_turn_duration) = max_turn_duration_seconds {
+        record.max_turn_duration_seconds = Some(max_turn_duration).filter(|s| *s > 0);
+    }
+    if let Some(start_on_app_launch) = start_on_app_launch {
+        record.start_on_app_launch =
+            record.backend == crate::managed_agents::BackendKind::Local
+                && start_on_app_launch;
+    }
+    avatar_changed
+}
+
+/// An edit that must re-sync the kind:0 profile: renames and avatar changes.
+/// An avatar-only save without a republish would persist locally but never
+/// surface — the web roster reads the picture from kind 0.
+fn profile_republish_needed(name_changed: bool, avatar_changed: bool) -> bool {
+    name_changed || avatar_changed
+}
+
+/// Apply the two env write modes onto a record's agent-level env map:
+/// replace first, patch second — the literal order IS the wire precedence for
+/// a command carrying both. The FINAL map is validated
+/// (`validate_user_env_keys`) before the record is touched, so a reserved
+/// key, malformed key, NUL byte, or size-cap breach rejects the whole update
+/// and leaves the record unchanged; combined with the command's single
+/// save-at-the-end, a bad command cannot half-apply.
+fn apply_env_vars_update(
+    record: &mut ManagedAgentRecord,
+    replace: Option<std::collections::BTreeMap<String, String>>,
+    patch: Option<std::collections::BTreeMap<String, Option<String>>>,
+) -> Result<(), String> {
+    let mut next = record.env_vars.clone();
+    if let Some(map) = replace {
+        crate::managed_agents::validate_user_env_keys(&map)?;
+        next = map;
+    }
+    if let Some(patch) = patch {
+        for (key, value) in patch {
+            match value {
+                Some(v) => {
+                    next.insert(key, v);
+                }
+                None => {
+                    // Deleting a key the map does not have is a no-op success.
+                    next.remove(&key);
+                }
+            }
+        }
+        crate::managed_agents::validate_user_env_keys(&next)?;
+    }
+    record.env_vars = next;
+    Ok(())
+}
+
 /// Flush a retained managed-agent policy, preserving any earlier profile error.
 pub(crate) async fn flush_managed_agent_policy(
     app: &AppHandle,
@@ -100,6 +184,13 @@ pub async fn update_managed_agent(
         if let Some(parallelism) = input.parallelism {
             record.parallelism = parallelism;
         }
+        let avatar_changed = apply_agent_scalar_updates(
+            record,
+            input.avatar_url,
+            input.idle_timeout_seconds,
+            input.max_turn_duration_seconds,
+            input.start_on_app_launch,
+        );
         // turn_timeout_seconds is intentionally not applied here —
         // BUZZ_ACP_TURN_TIMEOUT is deprecated and ignored by the harness.
         // Use idle_timeout_seconds or max_turn_duration_seconds instead.
@@ -136,10 +227,7 @@ pub async fn update_managed_agent(
         // mcp_command is intentionally not applied here — the effective MCP
         // command is always catalog-derived (known_acp_runtime at spawn time)
         // and the per-record field is never read by the runtime.
-        if let Some(env_vars) = input.env_vars {
-            crate::managed_agents::validate_user_env_keys(&env_vars)?;
-            record.env_vars = env_vars;
-        }
+        apply_env_vars_update(record, input.env_vars, input.env_vars_patch)?;
 
         // Native provider/model fields are authoritative. Keep the typed marker
         // derived for new records while retaining legacy typed records for
@@ -225,11 +313,12 @@ pub async fn update_managed_agent(
         // update that touched only runtime/local fields is a no-op publish.
         super::super::agents::retain_managed_agent_pending(&app, &state, record);
 
-        let sync_params = if name_changed {
+        let sync_params = if profile_republish_needed(name_changed, avatar_changed) {
             let agent_keys = Keys::parse(&record.private_key_nsec)
                 .map_err(|e| format!("failed to parse agent keys: {e}"))?;
-            // Re-publish the renamed profile to the agent's effective relay:
-            // an explicit per-agent relay wins; empty falls back to workspace.
+            // Re-publish the edited profile (name and/or avatar) to the
+            // agent's effective relay: an explicit per-agent relay wins;
+            // empty falls back to workspace.
             let relay_url = crate::relay::effective_agent_relay_url(
                 &record.relay_url,
                 &relay_ws_url_with_override(&state),
@@ -251,7 +340,7 @@ pub async fn update_managed_agent(
         };
 
         let summary = { super::super::agents::summarize_from_disk(&app, record, &runtimes)? };
-        let rollback = name_changed
+        let rollback = profile_republish_needed(name_changed, avatar_changed)
             .then(|| AgentUpdateRollback::new(previous_record, record, access_policy_changed));
         (
             summary,
@@ -288,9 +377,9 @@ pub async fn update_managed_agent(
         );
     }
 
-    // A rename is committed only when profile sync succeeds; otherwise restore
-    // the complete pre-edit record so Desktop and the relay keep one
-    // authoritative name.
+    // A profile edit (rename and/or avatar) is committed only when profile
+    // sync succeeds; otherwise restore the complete pre-edit record so Desktop
+    // and the relay keep one authoritative profile.
     if let Some((agent_keys, relay_url, display_name, avatar_url, auth_tag)) = sync_params {
         if let Err(sync_error) = sync_managed_agent_profile(
             &state,
@@ -329,7 +418,7 @@ pub async fn update_managed_agent(
                 "No changes were saved"
             };
             return Err(format!(
-                "Agent rename failed because its relay profile could not be updated. {rollback_message}: {sync_error}.{restart_suffix}"
+                "Agent profile edit failed because its relay profile could not be republished. {rollback_message}: {sync_error}.{restart_suffix}"
             ));
         }
     }
