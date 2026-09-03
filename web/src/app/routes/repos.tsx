@@ -1,111 +1,62 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import {
-  Bot,
-  Brain,
-  Folder,
-  Hash,
-  Headphones,
-  Lock,
-  MessageSquareText,
-  Plus,
-  Search,
-} from "lucide-react";
-import { toast } from "sonner";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/features/auth/ui/AuthProvider";
 import { LoginPage } from "@/features/auth/ui/LoginPage";
 import {
-  deleteChannelMessage,
-  editChannelMessage,
-  sendChannelMessage,
-  sendReaction,
-  sendTypingIndicator,
   useChannelMembers,
   useChannelMessages,
   useProfiles,
-  type Profile,
 } from "@/features/channels/hooks";
 import {
   useChannels,
   type ChannelSummary,
 } from "@/features/channels/useChannels";
 import {
-  forgetChannel,
-  isMuted,
   loadChannelPrefs,
-  toggleMuted,
-  toggleStarred,
   type ChannelPrefs,
 } from "@/features/channels/lib/channelPrefs.ts";
-import {
-  deleteChannel,
-  leaveChannel,
-  renameChannel,
-  sendPresence,
-  usePresence,
-} from "@/features/channels/hooks";
-import { canonicalChannelName } from "@/features/channels/lib/channelAdmin.ts";
+import { sendPresence, usePresence } from "@/features/channels/hooks";
 import { shortKey } from "@/features/dms/lib/dmNaming.ts";
 
-import { ContextMenu, type ContextMenuItem } from "@/shared/ui/ContextMenu";
 import { replyCounts } from "@/features/channels/lib/messageBuffer.ts";
 import {
-  isUnread,
   loadReadState,
   markSeen,
   saveReadState,
   type ReadState,
 } from "@/features/channels/lib/readState.ts";
 import { activeTyping } from "@/features/channels/lib/typing.ts";
-import {
-  presenceDotClass,
-  type PresenceEntry,
-} from "@/features/channels/lib/presence.ts";
-import { clearDraft, saveDraft } from "@/features/channels/lib/drafts.ts";
-import {
-  AuthorAvatar,
-  ChannelTimeline,
-} from "@/features/channels/ui/ChannelTimeline";
+import { useChannelLists } from "@/features/channels/lib/useChannelLists.ts";
+import { useMessageActions } from "@/features/channels/lib/useMessageActions.ts";
+import { ChannelTimeline } from "@/features/channels/ui/ChannelTimeline";
+import { ChannelHeader } from "@/features/channels/ui/ChannelHeader";
 import { Composer } from "@/features/channels/ui/Composer";
 import { ForumView } from "@/features/channels/ui/ForumView";
 import { SearchPanel } from "@/features/channels/ui/SearchPanel";
 import { HuddleBar } from "@/features/huddle/ui/HuddleBar";
 import { useHuddleLinks } from "@/features/huddle/useHuddleLinks";
-import { startHuddle } from "@/features/huddle/lib/huddleLifecycle";
 import { ThreadPanel } from "@/features/channels/ui/ThreadPanel";
-import { NewChannelDialog } from "@/features/channels/ui/NewChannelDialog";
 import {
   useAgentFrames,
   useObserverStore,
 } from "@/features/agents/ObserverProvider";
-import {
-  agentRecentlyActive,
-  agentTurnStart,
-  agentWorkingState,
-} from "@/features/agents/lib/observerEvents";
-import { formatElapsed, useTick } from "@/features/agents/ui/WorkingBadge";
+import { agentWorkingState } from "@/features/agents/lib/observerEvents";
+import { useTick } from "@/features/agents/ui/WorkingBadge";
 import { AgentActivityPanel } from "@/features/agents/ui/AgentActivityPanel";
 import { useDms } from "@/features/dms/hooks";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
-import { NewDmDialog } from "@/features/dms/ui/NewDmDialog";
 import {
   hideDm,
   loadHiddenDms,
   saveHiddenDms,
   unhideDm,
 } from "@/features/dms/lib/hiddenDms.ts";
+import { channelMenuItems } from "@/features/sidebar/lib/channelMenuItems.ts";
+import { ChannelSidebar } from "@/features/sidebar/ui/ChannelSidebar";
 import { FilesPanel } from "@/features/files/ui/FilesPanel";
-import { ownPubkey, type SignedNostrEvent } from "@/shared/lib/nostr-signer";
-import { AppShell, useDrawerClose } from "@/shared/layout/AppShell";
+import { ownPubkey } from "@/shared/lib/nostr-signer";
+import { AppShell } from "@/shared/layout/AppShell";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
-import { cn } from "@/shared/lib/cn";
 
 /**
  * The app lives at /repos — the one browser-servable path the relay's
@@ -134,8 +85,6 @@ function AppRoute() {
 function ChannelBrowser() {
   const { channels, connected, refresh: refreshChannels } = useChannels();
   const navigate = useNavigate({ from: "/repos" });
-  // Phone drawer dismiss — shared by the sidebar rows and the Agents link.
-  const closeDrawer = useDrawerClose();
   const selectedId = Route.useSearch({ select: (s) => s.c });
   const permalinkMessageId = Route.useSearch({ select: (s) => s.m });
   const current = channels.find((channel) => channel.id === selectedId) ?? null;
@@ -143,37 +92,6 @@ function ChannelBrowser() {
   // DMs ride the same kind:39000 list (relay `t` tag); they get their own
   // sidebar section and participant-based names.
   const { dms, channelsWithoutDms: unfilteredChannels } = useDms(channels);
-  // Archived channels (expired huddles etc.) hide from the sidebar — the
-  // relay's `archived` tag exists for exactly this. Ephemeral (ttl) channels
-  // are huddle backing rooms: grouped apart, newest first, not mixed into
-  // the main channel list. Forum-type channels split into their own sidebar
-  // section (and their own channel body); streams keep the Channels list.
-  const permanentChannels = useMemo(
-    () =>
-      unfilteredChannels
-        .filter((channel) => !channel.archived && channel.ttlSeconds === null)
-        .sort((a, b) =>
-          a.name.localeCompare(b.name, undefined, {
-            sensitivity: "base",
-          }),
-        ),
-    [unfilteredChannels],
-  );
-  const visibleChannels = useMemo(
-    () => permanentChannels.filter((channel) => channel.type !== "forum"),
-    [permanentChannels],
-  );
-  const forumChannels = useMemo(
-    () => permanentChannels.filter((channel) => channel.type === "forum"),
-    [permanentChannels],
-  );
-  const huddleChannels = useMemo(
-    () =>
-      unfilteredChannels
-        .filter((channel) => !channel.archived && channel.ttlSeconds !== null)
-        .sort((a, b) => b.updatedAt - a.updatedAt),
-    [unfilteredChannels],
-  );
   const [selfPubkey, setSelfPubkey] = useState<string | null>(null);
   useEffect(() => {
     void ownPubkey().then(setSelfPubkey);
@@ -191,8 +109,14 @@ function ChannelBrowser() {
 
   const { session } = useRelaySession();
   const channelId = current?.id ?? "";
-  const { messages, reactions, typing, loadOlder, loadingOlder, historyExhausted } =
-    useChannelMessages(current?.id ?? null);
+  const {
+    messages,
+    reactions,
+    typing,
+    loadOlder,
+    loadingOlder,
+    historyExhausted,
+  } = useChannelMessages(current?.id ?? null);
   // Read state: opening a channel marks its newest message seen; badges and
   // the timeline unread divider derive from the marker.
   const [readState, setReadState] = useState<ReadState>(() => loadReadState());
@@ -209,71 +133,14 @@ function ChannelBrowser() {
       return next;
     });
   }, [channelId, newestMessageAt]);
-  const handleReact = useCallback(
-    (messageId: string, emoji: string) => {
-      void sendReaction(session, { targetEventId: messageId, emoji });
-    },
-    [session],
-  );
-  // Edit mode: ✎ prefills the composer with the original text; submit sends a
-  // kind-40003 overlay. Cancelled/switching channels clears it.
-  const [editing, setEditing] = useState<{
-    id: string;
-    original: string;
-  } | null>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: channelId is the reset trigger by design
-  useEffect(() => {
-    setEditing(null);
-  }, [channelId]);
-  const handleEdit = useCallback(
-    (message: { id: string; content: string }) =>
-      setEditing({ id: message.id, original: message.content }),
-    [],
-  );
-  const handleDelete = useCallback(
-    (messageId: string) => {
-      if (!current) {
-        return;
-      }
-      void deleteChannelMessage(session, {
-        channelId: current.id,
-        targetEventId: messageId,
-      });
-    },
-    [session, current],
-  );
-  const handleEditSend = useCallback(
-    (content: string) => {
-      if (!current || !editing) {
-        return Promise.resolve({ ok: false, message: "Nothing to edit." });
-      }
-      return editChannelMessage(session, {
-        channelId: current.id,
-        targetEventId: editing.id,
-        content,
-      }).then((result) => {
-        if (result.ok) {
-          clearDraft(current.id);
-        }
-        return result;
-      });
-    },
-    [session, current, editing],
-  );
-  // Permalink: copies the channel + message URL to the clipboard.
-  const handleShare = useCallback(
-    (messageId: string) => {
-      if (!current) {
-        return;
-      }
-      const url = `${globalThis.location.origin}/repos?c=${current.id}&m=${messageId}`;
-      void navigator.clipboard
-        ?.writeText(url)
-        .then(() => toast.success("Link copied"))
-        .catch(() => toast.error("Could not copy the link."));
-    },
-    [current],
-  );
+  // React / edit / delete / share / typing / send for the open channel.
+  const messageActions = useMessageActions({
+    session,
+    current,
+    channelId,
+    selfPubkey,
+  });
+  const { send } = messageActions;
   // Permalink target (?m=): once the message is in the buffer the row scrolls
   // itself into view and flashes; then m is dropped from the URL so later
   // arrivals don't fight the auto-tail scroll. Hits older than the fetch
@@ -307,27 +174,6 @@ function ChannelBrowser() {
     }, 4000);
     return () => window.clearTimeout(timer);
   }, [permalinkMessageId, permalinkReady, navigate, selectedId]);
-  // Typing broadcast: one kind-20002 frame per 3s while the composer has text.
-  // Draft persistence rides along — every text change stores the channel's
-  // draft (empty text clears it), independent of the typing throttle.
-  const lastTypingSent = useRef(0);
-  const handleComposerText = useCallback(
-    (text: string) => {
-      if (channelId !== "") {
-        saveDraft(channelId, text);
-      }
-      if (!text.trim() || channelId === "") {
-        return;
-      }
-      const now = Date.now();
-      if (now - lastTypingSent.current < 3000) {
-        return;
-      }
-      lastTypingSent.current = now;
-      void sendTypingIndicator(session, channelId, null);
-    },
-    [session, channelId],
-  );
   // Typing row: re-derive every few seconds so entries expire visibly.
   const [, forceTick] = useState(0);
   useEffect(() => {
@@ -404,52 +250,7 @@ function ChannelBrowser() {
       ? null
       : `${channelId}:${lastMessageId}`;
 
-  const send = (options: {
-    content: string;
-    mentionPubkeys: string[];
-    threadRef: { rootId: string; replyToId: string } | null;
-    mediaTags: string[][];
-    /** Event kind — chat default 9; forum views pass 45001/45003. */
-    kind?: number;
-  }) => {
-    if (!current) {
-      return Promise.resolve({ ok: false, message: "No channel selected." });
-    }
-    // A sent message consumes the channel's draft.
-    // DMs always tag the other participants — the desktop client and CLI do
-    // this too, so the peer's harness wakes on the message even without an
-    // explicit @mention in the text (a web-sent DM once arrived untagged and
-    // the agent never reacted to it).
-    const dmPeers =
-      current.type === "dm"
-        ? current.participantPubkeys.filter((pk) => pk !== selfPubkey)
-        : [];
-    const mentionPubkeys = Array.from(
-      new Set([...options.mentionPubkeys, ...dmPeers]),
-    );
-    return sendChannelMessage(session, {
-      channelId: current.id,
-      content: options.content,
-      mentionPubkeys,
-      threadRef: options.threadRef,
-      mediaTags: options.mediaTags,
-      kind: options.kind,
-    }).then((result) => {
-      if (result.ok) {
-        clearDraft(current.id);
-      }
-      return result;
-    });
-  };
-
-  // Huddle registry: kind-48100 links parent channels to their ephemeral
-  // voice rooms; only linked rooms are joinable (the audio relay verifies
-  // the link), so the Huddles section keys off the registry, not bare ttl.
   const huddleLinks = useHuddleLinks();
-  const linkedHuddleChannels = useMemo(
-    () => huddleChannels.filter((channel) => huddleLinks.has(channel.id)),
-    [huddleChannels, huddleLinks],
-  );
   const currentHuddleParent =
     current && huddleLinks.has(current.id)
       ? (huddleLinks.get(current.id)?.parentId ?? null)
@@ -459,118 +260,6 @@ function ChannelBrowser() {
   const [channelPrefs, setChannelPrefs] = useState<ChannelPrefs>(() =>
     loadChannelPrefs(),
   );
-  const starredChannels = useMemo(
-    () =>
-      visibleChannels.filter((channel) =>
-        channelPrefs.starred.includes(channel.id),
-      ),
-    [visibleChannels, channelPrefs],
-  );
-  const unstarredChannels = useMemo(
-    () =>
-      visibleChannels.filter(
-        (channel) => !channelPrefs.starred.includes(channel.id),
-      ),
-    [visibleChannels, channelPrefs],
-  );
-  // Context menu per channel: star / mark read / mute / leave.
-  const channelMenu = (channel: ChannelSummary): ContextMenuItem[] => [
-    {
-      label: channelPrefs.starred.includes(channel.id)
-        ? "Unstar"
-        : "Star channel",
-      onSelect: () =>
-        setChannelPrefs((prefs) => toggleStarred(prefs, channel.id)),
-    },
-    {
-      label: "Mark read",
-      onSelect: () => {
-        setReadState((previous) => {
-          const next = markSeen(previous, channel.id, channel.updatedAt);
-          if (next !== previous) {
-            saveReadState(next);
-          }
-          return next;
-        });
-      },
-    },
-    {
-      label: channelPrefs.muted.includes(channel.id) ? "Unmute" : "Mute",
-      onSelect: () =>
-        setChannelPrefs((prefs) => toggleMuted(prefs, channel.id)),
-    },
-    {
-      label: "Rename channel…",
-      onSelect: () => {
-        const next = window.prompt(`Rename #${channel.name}`, channel.name);
-        if (next === null) {
-          return;
-        }
-        const canonical = canonicalChannelName(next);
-        if (!canonical || canonical === channel.name) {
-          return;
-        }
-        void renameChannel(session, channel.id, canonical).then((result) => {
-          if (result.ok) {
-            toast.success(`Renamed to #${canonical}`);
-            // The relay re-emits the 39000 after the edit; staggered re-REQs
-            // cover a missed live fan-out.
-            window.setTimeout(refreshChannels, 500);
-            window.setTimeout(refreshChannels, 2000);
-          } else {
-            toast.error(result.message || "The relay refused the rename.");
-          }
-        });
-      },
-    },
-    {
-      label: "Delete channel",
-      danger: true,
-      onSelect: () => {
-        if (
-          !window.confirm(
-            `Delete #${channel.name} for everyone? This cannot be undone.`,
-          )
-        ) {
-          return;
-        }
-        void deleteChannel(session, channel.id).then((result) => {
-          if (result.ok) {
-            toast.success(`Deleted #${channel.name}`);
-            setChannelPrefs((prefs) => forgetChannel(prefs, channel.id));
-            if (selectedId === channel.id) {
-              void navigate({ to: "/repos", search: { c: undefined } });
-            }
-            window.setTimeout(refreshChannels, 500);
-            window.setTimeout(refreshChannels, 2000);
-          } else {
-            toast.error(
-              result.message ||
-                "The relay refused the delete (owners only). Try Leave instead.",
-            );
-          }
-        });
-      },
-    },
-    {
-      label: "Leave channel",
-      danger: true,
-      onSelect: () => {
-        if (!window.confirm(`Leave #${channel.name}?`)) {
-          return;
-        }
-        void leaveChannel(session, channel.id).then((result) => {
-          if (result.ok) {
-            setChannelPrefs((prefs) => forgetChannel(prefs, channel.id));
-            window.setTimeout(refreshChannels, 500);
-            window.setTimeout(refreshChannels, 2000);
-          } else {
-            toast.error(result.message || "Could not leave the channel.");
-          }
-        });
-      },
-    },
-  ];
   // Presence: subscribe for every DM peer; publish self as online once the
   // session is live (the relay expires it server-side, no offline beacon).
   const dmPeerPubkeys = useMemo(
@@ -622,282 +311,104 @@ function ChannelBrowser() {
     setHiddenDmIds(ids);
     saveHiddenDms(window.localStorage, ids);
   };
+  const lists = useChannelLists({
+    channels: unfilteredChannels,
+    dms,
+    channelPrefs,
+    hiddenDmIds,
+    huddleLinks,
+  });
 
-  const visibleDms = useMemo(
-    () => dms.filter(({ channel }) => !hiddenDmIds.includes(channel.id)),
-    [dms, hiddenDmIds],
-  );
+  const selectChannel = (channelId: string) => {
+    setThreadRootId(null);
+    void navigate({ to: "/repos", search: { c: channelId } });
+  };
+  const closeChannel = () => {
+    void navigate({ to: "/repos", search: { c: undefined } });
+  };
+  const onChannelCreated = (channelId: string) => {
+    void navigate({ to: "/repos", search: { c: channelId } });
+    // The relay stores the 39000 in a spawned task with no live
+    // fan-out — staggered re-REQs pick it up once it lands.
+    window.setTimeout(refreshChannels, 500);
+    window.setTimeout(refreshChannels, 2000);
+  };
+  const onDmOpened = (channelId: string) => {
+    // Re-opening a hidden DM restores it to the list.
+    if (hiddenDmIds.includes(channelId)) {
+      persistHiddenDms(unhideDm(hiddenDmIds, channelId));
+    }
+    void navigate({ to: "/repos", search: { c: channelId } });
+    // The relay stores the DM's 39000 in a spawned task with no
+    // live fan-out — without a re-REQ the new channel never lands,
+    // the ?c= view stays on the empty state, and the DM is missing
+    // from the sidebar (mirrors NewChannelDialog's onCreated).
+    window.setTimeout(refreshChannels, 500);
+    window.setTimeout(refreshChannels, 2000);
+  };
+  const onHideDm = (channelId: string) => {
+    persistHiddenDms(hideDm(hiddenDmIds, channelId));
+    if (selectedId === channelId) {
+      closeChannel();
+    }
+  };
+  const onHuddleStarted = (channelId: string) => {
+    void navigate({ to: "/repos", search: { c: channelId } });
+    // The private room's 39000 has no live fan-out —
+    // staggered re-REQs pull it into the sidebar.
+    window.setTimeout(refreshChannels, 500);
+    window.setTimeout(refreshChannels, 2000);
+  };
 
   const sidebar = (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center justify-between px-3 py-2">
-        <span className="px-1 font-semibold">Channels</span>
-        <div className="flex items-center gap-2">
-          <span
-            className={cn(
-              "inline-block h-2 w-2 rounded-full",
-              connected ? "bg-sidebar-primary" : "bg-sidebar-foreground/40",
-            )}
-            title={connected ? "Connected" : "Connecting…"}
-          />
-          <Link
-            to="/repos/settings"
-            className="rounded-md px-2 py-1 text-sm text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-          >
-            Settings
-          </Link>
-        </div>
-      </div>
-      {/* Desktop-style search field: typing here opens the ⌘K search panel
-          seeded with what was typed. */}
-      <div className="px-2 pb-2">
-        <div className="flex items-center gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/40 px-2 py-1.5">
-          <Search
-            aria-hidden
-            className="h-4 w-4 shrink-0 text-muted-foreground"
-          />
-          <input
-            value={sidebarQuery}
-            onChange={(event) => openSearch(event.target.value)}
-            onFocus={() => setSearchOpen(true)}
-            placeholder="Search"
-            aria-label="Search messages"
-            className="w-full bg-transparent text-sm outline-hidden placeholder:text-muted-foreground"
-          />
-          <kbd className="hidden rounded border border-border px-1 font-sans text-[10px] text-muted-foreground sm:block">
-            ⌘K
-          </kbd>
-        </div>
-      </div>
-      <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-        {channels.length === 0 && (
-          <p className="px-2 py-4 text-sm text-muted-foreground">
-            {connected
-              ? "No channels visible yet."
-              : "Connecting to the relay…"}
-          </p>
-        )}
-        {starredChannels.length > 0 && (
-          <>
-            <SectionHeader label="Starred" />
-            <ul className="space-y-0.5">
-              {starredChannels.map((channel) => (
-                <li key={channel.id}>
-                  <SidebarNavButton
-                    selected={channel.id === selectedId}
-                    label={channel.name}
-                    icon={<ChannelGlyph isPrivate={channel.isPrivate} />}
-                    unread={
-                      !isMuted(channelPrefs, channel.id) &&
-                      isUnread(readState, channel.id, channel.updatedAt)
-                    }
-                    onSelect={() => {
-                      setThreadRootId(null);
-                      void navigate({
-                        to: "/repos",
-                        search: { c: channel.id },
-                      });
-                    }}
-                    menuItems={channelMenu(channel)}
-                  />
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-        <SectionHeader
-          label="Channels"
-          className={starredChannels.length > 0 ? "mt-4" : undefined}
-          onAdd={() => setNewChannelOpen(true)}
-          addLabel="New channel"
-        />
-        <NewChannelDialog
-          open={newChannelOpen}
-          onOpenChange={setNewChannelOpen}
-          onCreated={(channelId) => {
-            void navigate({ to: "/repos", search: { c: channelId } });
-            // The relay stores the 39000 in a spawned task with no live
-            // fan-out — staggered re-REQs pick it up once it lands.
-            window.setTimeout(refreshChannels, 500);
-            window.setTimeout(refreshChannels, 2000);
-          }}
-        />
-        <ul className="space-y-0.5">
-          {unstarredChannels.map((channel) => (
-            <li key={channel.id}>
-              <SidebarNavButton
-                selected={channel.id === selectedId}
-                label={channel.name}
-                icon={<ChannelGlyph isPrivate={channel.isPrivate} />}
-                unread={
-                  !isMuted(channelPrefs, channel.id) &&
-                  isUnread(readState, channel.id, channel.updatedAt)
-                }
-                onSelect={() => {
-                  setThreadRootId(null);
-                  void navigate({
-                    to: "/repos",
-                    search: { c: channel.id },
-                  });
-                }}
-                menuItems={channelMenu(channel)}
-              />
-            </li>
-          ))}
-        </ul>
-        {forumChannels.length > 0 && (
-          <>
-            <p className="mt-4 mb-[4px] flex h-8 items-center pl-[6px] pr-2 text-[13px] font-medium normal-case tracking-normal text-[#8E96B0]">
-              Forums
-            </p>
-            <ul className="space-y-0.5">
-              {forumChannels.map((channel) => (
-                <li key={channel.id}>
-                  <SidebarNavButton
-                    selected={channel.id === selectedId}
-                    label={channel.name}
-                    icon={<ChannelForum />}
-                    unread={
-                      !isMuted(channelPrefs, channel.id) &&
-                      isUnread(readState, channel.id, channel.updatedAt)
-                    }
-                    onSelect={() => {
-                      setThreadRootId(null);
-                      void navigate({
-                        to: "/repos",
-                        search: { c: channel.id },
-                      });
-                    }}
-                    menuItems={channelMenu(channel)}
-                  />
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-        {linkedHuddleChannels.length > 0 && (
-          <details className="px-0 pt-2">
-            <summary className="mb-[4px] flex h-8 cursor-pointer select-none items-center pl-[6px] pr-2 text-[13px] font-medium normal-case tracking-normal text-[#8E96B0]">
-              Huddles ({linkedHuddleChannels.length})
-            </summary>
-            <ul className="space-y-0.5">
-              {linkedHuddleChannels.map((channel) => (
-                <li key={channel.id}>
-                  <SidebarNavButton
-                    selected={channel.id === selectedId}
-                    label={`${channel.name} · ${shortDate(channel.updatedAt)}`}
-                    onSelect={() => {
-                      setThreadRootId(null);
-                      void navigate({
-                        to: "/repos",
-                        search: { c: channel.id },
-                      });
-                    }}
-                  />
-                </li>
-              ))}
-            </ul>
-          </details>
-        )}
-        <SectionHeader
-          label="Direct messages"
-          variant="dm"
-          className="mt-4 mb-[4px]"
-          onAdd={() => setNewDmOpen(true)}
-          addLabel="New direct message"
-        />
-        <NewDmDialog
-          open={newDmOpen}
-          onOpenChange={setNewDmOpen}
-          contacts={dmParticipantPubkeys}
-          onOpened={(channelId) => {
-            // Re-opening a hidden DM restores it to the list.
-            if (hiddenDmIds.includes(channelId)) {
-              persistHiddenDms(unhideDm(hiddenDmIds, channelId));
-            }
-            void navigate({ to: "/repos", search: { c: channelId } });
-            // The relay stores the DM's 39000 in a spawned task with no
-            // live fan-out — without a re-REQ the new channel never lands,
-            // the ?c= view stays on the empty state, and the DM is missing
-            // from the sidebar (mirrors NewChannelDialog's onCreated).
-            window.setTimeout(refreshChannels, 500);
-            window.setTimeout(refreshChannels, 2000);
-          }}
-        />
-        {dms.length > 0 && visibleDms.length === 0 && (
-          <p className="px-2 py-2 text-xs text-muted-foreground">
-            All DMs hidden — use + to start one.
-          </p>
-        )}
-        {visibleDms.length > 0 && (
-          <ul className="-mx-0.5 space-y-1">
-            {visibleDms.map(({ channel, lastMessage }) => (
-              <li key={channel.id}>
-                <DmNavRow
-                  selected={channel.id === selectedId}
-                  channelId={channel.id}
-                  lastSeenAt={readState[channel.id] ?? null}
-                  unread={
-                    lastMessage
-                      ? isUnread(readState, channel.id, lastMessage.created_at)
-                      : false
-                  }
-                  participants={channel.participantPubkeys}
-                  selfPubkey={selfPubkey}
-                  profiles={dmProfiles}
-                  presence={channel.participantPubkeys
-                    .filter((pk) => pk !== selfPubkey)
-                    .map((pk) => presence.get(pk))
-                    .find((entry) => entry != null)}
-                  onSelect={() => {
-                    setThreadRootId(null);
-                    void navigate({
-                      to: "/repos",
-                      search: { c: channel.id },
-                    });
-                  }}
-                  menuItems={[
-                    {
-                      label: "Remove from list",
-                      danger: true,
-                      onSelect: () => {
-                        persistHiddenDms(hideDm(hiddenDmIds, channel.id));
-                        if (selectedId === channel.id) {
-                          void navigate({
-                            to: "/repos",
-                            search: { c: undefined },
-                          });
-                        }
-                      },
-                    },
-                  ]}
-                />
-              </li>
-            ))}
-          </ul>
-        )}
-      </nav>
-      <div className="border-t border-border p-2">
-        <button
-          type="button"
-          aria-label="Files"
-          title="Files"
-          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
-          onClick={() => setFilesOpen(true)}
-        >
-          <Folder aria-hidden className="h-4 w-4" />
-          Files
-        </button>
-        <Link
-          to="/repos/agents"
-          className="mt-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
-          onClick={closeDrawer}
-        >
-          <Bot aria-hidden className="h-4 w-4" />
-          Agents
-        </Link>
-      </div>
-    </div>
+    <ChannelSidebar
+      connected={connected}
+      channelCount={channels.length}
+      selectedId={selectedId}
+      lists={{
+        starred: lists.starred,
+        unstarred: lists.unstarred,
+        forums: lists.forums,
+        huddles: lists.huddles,
+        dms,
+        visibleDms: lists.visibleDms,
+      }}
+      readState={{ prefs: channelPrefs, read: readState }}
+      search={{
+        query: sidebarQuery,
+        onQueryChange: openSearch,
+        onFocus: () => setSearchOpen(true),
+      }}
+      dmIdentity={{
+        selfPubkey,
+        profiles: dmProfiles,
+        presence,
+        contacts: dmParticipantPubkeys,
+      }}
+      dialogs={{
+        newChannelOpen,
+        onNewChannelOpenChange: setNewChannelOpen,
+        newDmOpen,
+        onNewDmOpenChange: setNewDmOpen,
+      }}
+      actions={{
+        onSelectChannel: selectChannel,
+        channelMenuItems: (channel: ChannelSummary) =>
+          channelMenuItems(channel, {
+            session,
+            channelPrefs,
+            setChannelPrefs,
+            setReadState,
+            refreshChannels,
+            selectedId,
+            onCloseChannel: closeChannel,
+          }),
+        onChannelCreated,
+        onDmOpened,
+        onHideDm,
+        onOpenFiles: () => setFilesOpen(true),
+      }}
+    />
   );
 
   // DM with an agent → the right pane is the thinking/activity panel unless a
@@ -976,62 +487,22 @@ function ChannelBrowser() {
           style={{ ["--thread-width" as string]: `${threadWidth}px` }}
         >
           <section className="flex min-w-0 flex-1 flex-col">
-            <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-secondary px-4">
-              <h1 className="truncate text-base font-semibold">
-                {current.type === "dm"
+            <ChannelHeader
+              channel={current}
+              title={
+                current.type === "dm"
                   ? dmName(current.participantPubkeys)
-                  : `# ${current.name}`}
-              </h1>
-              {current.type !== "dm" && current.about && (
-                <p className="hidden truncate text-sm text-muted-foreground sm:block">
-                  {current.about}
-                </p>
-              )}
-              {current.ttlSeconds === null && (
-                <button
-                  type="button"
-                  aria-label="Start a huddle in this channel"
-                  title="Start huddle"
-                  className="ml-auto shrink-0 rounded p-1.5 text-sm text-muted-foreground hover:bg-accent"
-                  onClick={() => {
-                    void startHuddle(session, { parentChannelId: current.id })
-                      .then((result) => {
-                        if (result.ok && result.channelId) {
-                          toast.success(result.message);
-                          void navigate({
-                            to: "/repos",
-                            search: { c: result.channelId },
-                          });
-                          // The private room's 39000 has no live fan-out —
-                          // staggered re-REQs pull it into the sidebar.
-                          window.setTimeout(refreshChannels, 500);
-                          window.setTimeout(refreshChannels, 2000);
-                        } else {
-                          toast.error(result.message);
-                        }
-                      })
-                      .catch(() => toast.error("Could not start the huddle."));
-                  }}
-                >
-                  <Headphones aria-hidden className="h-4 w-4" />
-                </button>
-              )}
-              {dmAgentPubkey && (
-                <button
-                  type="button"
-                  aria-label="Toggle thinking panel"
-                  title="Thinking"
-                  className="shrink-0 rounded-full border border-border p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-                  onClick={() => {
-                    setRightTab("thinking");
-                    setDmPaneHidden(false);
-                    setThinkingOpen(true);
-                  }}
-                >
-                  <Brain aria-hidden className="h-4 w-4" />
-                </button>
-              )}
-            </div>
+                  : `# ${current.name}`
+              }
+              session={session}
+              onHuddleStarted={onHuddleStarted}
+              agentPubkey={dmAgentPubkey}
+              onOpenThinking={() => {
+                setRightTab("thinking");
+                setDmPaneHidden(false);
+                setThinkingOpen(true);
+              }}
+            />
             {current.ttlSeconds !== null && (
               <HuddleBar
                 channelId={current.id}
@@ -1050,8 +521,8 @@ function ChannelBrowser() {
                 selectedPostId={forumPostId}
                 onSelectPost={setForumPostId}
                 onClosePost={() => setForumPostId(null)}
-                onReact={handleReact}
-                onDelete={handleDelete}
+                onReact={messageActions.onReact}
+                onDelete={messageActions.onDelete}
                 send={send}
               />
             ) : (
@@ -1066,10 +537,10 @@ function ChannelBrowser() {
                   }}
                   activeRootId={threadRootId}
                   reactions={reactions}
-                  onReact={handleReact}
-                  onEdit={handleEdit}
-                  onDelete={handleDelete}
-                  onShare={handleShare}
+                  onReact={messageActions.onReact}
+                  onEdit={messageActions.onEdit}
+                  onDelete={messageActions.onDelete}
+                  onShare={messageActions.onShare}
                   selfPubkey={selfPubkey}
                   agentPubkeys={agentPubkeys}
                   highlightId={permalinkMessageId ?? null}
@@ -1093,10 +564,10 @@ function ChannelBrowser() {
                 />
                 <Composer
                   members={members}
-                  onTextChange={handleComposerText}
-                  editing={editing}
-                  onCancelEdit={() => setEditing(null)}
-                  editSend={handleEditSend}
+                  onTextChange={messageActions.onComposerText}
+                  editing={messageActions.editing}
+                  onCancelEdit={() => messageActions.setEditing(null)}
+                  editSend={messageActions.editSend}
                   profiles={profiles}
                   threadRef={
                     threadRoot
@@ -1205,426 +676,4 @@ function ChannelBrowser() {
       />
     </AppShell>
   );
-}
-
-/**
- * Sidebar section label with the desktop's header-row plus button — the
- * create dialogs open inline just below the header.
- */
-function SectionHeader({
-  label,
-  onAdd,
-  addLabel,
-  className,
-  variant = "dm",
-}: {
-  label: string;
-  /** Shows the + button when provided (Channels, Direct messages). */
-  onAdd?: () => void;
-  addLabel?: string;
-  className?: string;
-  /**
-   * "dm" renders the dm-list-spec.md §2 treatment: sentence case, ~13px,
-   * #8E96B0, ink aligned to the avatar left edge (14px) instead of the
-   * uppercase channel-section style.
-   */
-  variant?: "default" | "dm";
-}) {
-  return (
-    <div
-      className={cn(
-        "flex h-8 items-center justify-between pl-2 pr-1",
-        variant === "dm" && "pl-[6px]",
-        className,
-      )}
-    >
-      <p
-        className={cn(
-          "text-xs font-medium uppercase tracking-wide text-sidebar-foreground/70",
-          variant === "dm" &&
-            "text-[13px] font-medium normal-case tracking-normal text-[#8E96B0]",
-        )}
-      >
-        {label}
-      </p>
-      {onAdd && (
-        <button
-          type="button"
-          aria-label={addLabel ?? label}
-          title={addLabel ?? label}
-          className="rounded p-1 text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-          onClick={onAdd}
-        >
-          <Plus className="h-4 w-4" />
-        </button>
-      )}
-    </div>
-  );
-}
-
-/**
- * Sidebar navigation entry, styled to Buzz Dark: hover = white/4 wash, the
- * active row = the desktop's translucent white/18 pill (theme.css
- * --sidebar-row-active-surface), no accent color.
- * Calls useDrawerClose after selecting so the phone drawer dismisses.
- */
-function SidebarNavButton({
-  selected,
-  label,
-  icon,
-  unread,
-  onSelect,
-  menuItems,
-}: {
-  selected: boolean;
-  label: string;
-  /** Leading glyph — channels pass the desktop's Hash mark. */
-  icon?: ReactNode;
-  /** Unread dot — newest activity newer than the read marker. */
-  unread?: boolean;
-  onSelect: () => void;
-  /** Right-click / ⋯ context menu items, when provided. */
-  menuItems?: ContextMenuItem[];
-}) {
-  const closeDrawer = useDrawerClose();
-  const row = (open: (x: number, y: number) => void) => (
-    <button
-      type="button"
-      className={cn(
-        // Same desktop row recipe as the DM list (SidebarMenuButton h-8
-        // text-sm): the sections read as one surface.
-        "group/row flex h-8 w-full items-center gap-2 truncate rounded-[8px] px-2 text-left text-sm transition-colors",
-        "hover:bg-white/5 hover:text-foreground",
-        selected && "bg-[#9A3EF6] font-normal text-black",
-      )}
-      onClick={() => {
-        onSelect();
-        closeDrawer();
-      }}
-      onContextMenu={
-        menuItems
-          ? (event) => {
-              event.preventDefault();
-              open(event.clientX, event.clientY);
-            }
-          : undefined
-      }
-    >
-      {icon}
-      <span
-        className={cn(
-          "truncate",
-          selected
-            ? "text-black"
-            : unread
-              ? "font-semibold text-[#C4CFF2]"
-              : "font-normal text-[#A0A8C7]",
-        )}
-      >
-        {label}
-      </span>
-      {unread && (
-        <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-[#9A3EF6]" />
-      )}
-      {menuItems && (
-        // A real <button> cannot nest inside the row button — the span keeps
-        // keyboard access via tabIndex + onKeyDown below.
-        // biome-ignore lint/a11y/useSemanticElements: nested interactive elements cannot both be buttons
-        <span
-          role="button"
-          tabIndex={0}
-          aria-label={`Options for ${label}`}
-          className={cn(
-            "hidden shrink-0 rounded p-0.5 text-xs text-sidebar-foreground/60 hover:bg-white/10 group-hover/row:block",
-            !unread && "ml-auto",
-          )}
-          onClick={(event) => {
-            event.stopPropagation();
-            const rect = event.currentTarget.getBoundingClientRect();
-            open(rect.left, rect.bottom + 4);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.stopPropagation();
-              const rect = event.currentTarget.getBoundingClientRect();
-              open(rect.left, rect.bottom + 4);
-            }
-          }}
-        >
-          ⋯
-        </span>
-      )}
-    </button>
-  );
-  if (menuItems) {
-    return <ContextMenu items={menuItems}>{row}</ContextMenu>;
-  }
-  return row(() => {});
-}
-
-/** The desktop's channel glyphs: Hash for public, Lock for private. */
-function ChannelGlyph({ isPrivate }: { isPrivate?: boolean }) {
-  const Glyph = isPrivate ? Lock : Hash;
-  return (
-    <Glyph
-      aria-hidden="true"
-      className="h-4 w-4 shrink-0 text-sidebar-foreground/60"
-    />
-  );
-}
-
-/** Forum channels get the desktop forum glyph instead of the Hash. */
-function ChannelForum() {
-  return (
-    <MessageSquareText
-      aria-hidden="true"
-      className="h-4 w-4 shrink-0 text-sidebar-foreground/60"
-    />
-  );
-}
-
-/** Compact date for huddle entries: "Aug 29". */
-function shortDate(unixSeconds: number): string {
-  return new Date(unixSeconds * 1000).toLocaleDateString([], {
-    month: "short",
-    day: "numeric",
-  });
-}
-
-/**
- * DM sidebar row in the desktop client's shape: avatar, display name, and a
- * one-line preview of the newest sampled message with its stamp.
- */
-/**
- * Group-DM avatar placeholder (mock 2026-09-02): dark rounded square with
- * the member count, matching AuthorAvatar's md box so rows stay aligned.
- */
-function GroupAvatar({ count, dm }: { count: number; dm?: boolean }) {
-  if (dm) {
-    // B-target palette (dm-list-diff.md): #191926 fill, #C5CFF2 numeral;
-    // 11px semibold per the desktop source (text-2xs).
-    return (
-      <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[#191926] text-[11px] font-semibold leading-none text-[#C5CFF2]">
-        <span className="translate-x-px leading-none">{count}</span>
-      </span>
-    );
-  }
-  return (
-    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted text-xs font-bold text-foreground">
-      {count}
-    </span>
-  );
-}
-
-/**
- * DM-list timer pill (dm-list-spec.md §6): 15px fully-rounded pill,
- * ~9% accent background, accent text; the whole element pulses
- * 0.8 → 1.0 → 0.8 with a phase tied to its own countdown (negative
- * animation-delay), and inverts on the selected row.
- */
-function DmTimerPill({
-  startedAt,
-  now,
-  selected,
-}: {
-  startedAt: number;
-  now: number;
-  selected: boolean;
-}) {
-  const period = 2.4;
-  const elapsed = Math.max(0, now - startedAt);
-  return (
-    <span
-      className={cn("dm-timer-pill", selected && "dm-timer-pill-selected")}
-      style={{ animationDelay: `-${(elapsed % period).toFixed(2)}s` }}
-    >
-      {formatElapsed(startedAt, now)}
-    </span>
-  );
-}
-
-/**
- * Unread count for a DM row: one bounded one-shot REQ counting the other
- * party's messages newer than the read marker. The relay is the only honest
- * source — a closed DM's timeline cache is stale by definition, so counting
- * from it would miss exactly the messages that make the row unread.
- * Module-level in-flight map keeps one REQ per (channel, marker) even as
- * rows re-render.
- */
-const unreadCountInFlight = new Set<string>();
-
-function useUnreadCount(
-  channelId: string | null,
-  lastSeenAt: number | null,
-  selfPubkey: string | null,
-): number | null {
-  const { session } = useRelaySession();
-  const [count, setCount] = useState<number | null>(null);
-  useEffect(() => {
-    if (!channelId || !lastSeenAt) {
-      setCount(null);
-      return;
-    }
-    const key = `${channelId}:${lastSeenAt}`;
-    if (unreadCountInFlight.has(key)) {
-      return;
-    }
-    unreadCountInFlight.add(key);
-    let seen = 0;
-    const unsubscribe = session.subscribe(
-      { kinds: [9], "#h": [channelId], since: lastSeenAt, limit: 200 },
-      {
-        onEvent: (event: SignedNostrEvent) => {
-          if (event.pubkey !== selfPubkey) {
-            seen += 1;
-            setCount(seen);
-          }
-        },
-        onEose: () => {
-          unreadCountInFlight.delete(key);
-          unsubscribe();
-        },
-      },
-    );
-  }, [channelId, lastSeenAt, selfPubkey, session]);
-  return count;
-}
-
-function DmNavRow({
-  selected,
-  unread,
-  channelId,
-  lastSeenAt,
-  participants,
-  selfPubkey,
-  profiles,
-  presence,
-  onSelect,
-  menuItems,
-}: {
-  selected: boolean;
-  unread: boolean;
-  channelId: string | null;
-  /** Read marker (unix seconds) for the unread count, when known. */
-  lastSeenAt: number | null;
-  participants: string[];
-  selfPubkey: string | null;
-  profiles: Map<string, Profile>;
-  /** Latest presence entry for the row's avatar pubkey, when subscribed. */
-  presence?: PresenceEntry;
-  onSelect: () => void;
-  /** Right-click menu items (remove from list), when provided. */
-  menuItems?: ContextMenuItem[];
-}) {
-  const closeDrawer = useDrawerClose();
-  const others = participants.filter(
-    (pubkey, index) =>
-      pubkey !== selfPubkey && participants.indexOf(pubkey) === index,
-  );
-  const avatarPubkey = others[0] ?? participants[0] ?? "";
-  const avatarLabel = profiles.get(avatarPubkey)?.displayName ?? avatarPubkey;
-  const name = dmDisplayName(participants, selfPubkey ?? "", profiles);
-  // Per-agent working pulse in the sidebar: the store's freshness view of
-  // THIS row's agent (multi-agent aware — several rows can pulse at once).
-  const rowFrames = useAgentFrames(avatarPubkey || null);
-  const now = Math.floor(Date.now() / 1000);
-  const active = agentRecentlyActive(rowFrames, now);
-  useTick(active);
-  const unreadCount = useUnreadCount(channelId, lastSeenAt, selfPubkey);
-  const row = (open: (x: number, y: number) => void) => (
-    <button
-      type="button"
-      className={cn(
-        // dm-list-spec.md §3: 32px rows, 8px-radius highlight inset 6px,
-        // 24px avatar at 14px (8px inside the highlight), 8px avatar→label
-        // gap, 4px badge inset on the right.
-        "flex h-8 w-full items-center gap-2 rounded-[8px] pl-2 pr-1 text-left transition-colors",
-        "hover:bg-white/5",
-        // §5: flat solid #9A3EF6 fill, no ring, black label.
-        selected && "bg-[#9A3EF6]",
-      )}
-      onClick={() => {
-        onSelect();
-        closeDrawer();
-      }}
-      onContextMenu={
-        menuItems
-          ? (event) => {
-              event.preventDefault();
-              open(event.clientX, event.clientY);
-            }
-          : undefined
-      }
-    >
-      <span className="relative shrink-0">
-        {others.length > 1 ? (
-          <GroupAvatar count={others.length} dm />
-        ) : (
-          <AuthorAvatar
-            pubkey={avatarPubkey}
-            label={avatarLabel}
-            picture={profiles.get(avatarPubkey)?.avatar}
-            size="dm"
-          />
-        )}
-        {/* §8: 6px presence dot at the avatar's 45° bottom-right, ringed in
-            the page background (cut-out), 1:1 rows only. */}
-        {others.length <= 1 && presence && (
-          <span
-            title={presence.status}
-            className={cn(
-              "absolute -bottom-px -right-px size-1.5 rounded-full border-[1.5px] border-sidebar",
-              presenceDotClass(presence.status),
-            )}
-          />
-        )}
-      </span>
-      <span
-        className={cn(
-          "min-w-0 flex-1 truncate text-sm",
-          // B-target palette (dm-list-diff.md Defect 2): read #A0A8C7,
-          // unread #C4CFF2, selected #000000.
-          selected
-            ? "font-normal text-black"
-            : unread
-              ? "font-semibold text-[#C4CFF2]"
-              : "font-normal text-[#A0A8C7]",
-        )}
-      >
-        {name}
-      </span>
-      {(active || unread) && (
-        <span className="flex shrink-0 items-center gap-2">
-          {active && (
-            <DmTimerPill
-              startedAt={
-                agentTurnStart(rowFrames) ?? rowFrames[0]?.createdAt ?? now
-              }
-              now={now}
-              selected={selected}
-            />
-          )}
-          {/* §7: 20px badge; the reference shows badge and pill together —
-              an unread row keeps its badge even while the agent works.
-              §6: the pill's right edge stays fixed whether or not a badge
-              is present — the 20px slot always reserves it. */}
-          {unread ? (
-            <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-[#9A3EF6] px-1 text-[11px] font-semibold leading-none tabular-nums text-black">
-              {unreadCount != null && unreadCount > 0
-                ? unreadCount > 99
-                  ? "99+"
-                  : unreadCount
-                : ""}
-            </span>
-          ) : (
-            <span className="size-5 shrink-0" aria-hidden />
-          )}
-        </span>
-      )}
-    </button>
-  );
-  if (menuItems) {
-    return <ContextMenu items={menuItems}>{row}</ContextMenu>;
-  }
-  return row(() => {});
 }
