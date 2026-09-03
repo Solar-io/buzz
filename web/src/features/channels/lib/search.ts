@@ -5,7 +5,7 @@
  */
 
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
-import { TIMELINE_KINDS } from "./messageBuffer.ts";
+import { MESSAGE_SEARCH_KINDS } from "./messageBuffer.ts";
 
 export type SearchScope = "all" | "channel";
 
@@ -29,7 +29,7 @@ export function searchFilter(
     limit: number;
     "#h"?: string[];
   } = {
-    kinds: [...TIMELINE_KINDS],
+    kinds: [...MESSAGE_SEARCH_KINDS],
     search: trimmed,
     limit: 50,
   };

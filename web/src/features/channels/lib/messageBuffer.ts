@@ -1,8 +1,32 @@
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { imetaByUrl, type ImetaEntry } from "./imetaEntries.ts";
+import { SYSTEM_MESSAGE_KIND } from "./systemEvent.ts";
 
-/** Kinds that render in a channel timeline (mirrors the CLI list filter). */
-export const TIMELINE_KINDS = [9, 40002, 40008, 45001, 45003] as const;
+/**
+ * Kinds that render their own row in a channel timeline.
+ *
+ * 40099 is a system row, not a message row: joins, leaves and — the one that
+ * matters — moderation tombstones. It renders through SystemMessageRow, never
+ * through the message row, so any consumer of this list that assumes
+ * message-shaped content must exclude it (see MESSAGE_SEARCH_KINDS below).
+ */
+export const TIMELINE_KINDS = [
+  9,
+  40002,
+  40008,
+  SYSTEM_MESSAGE_KIND,
+  45001,
+  45003,
+] as const;
+
+/**
+ * Timeline kinds whose content is human prose, for NIP-50 full-text search.
+ * 40099 is excluded on purpose: its body is a JSON payload, so including it
+ * would surface `{"type":"member_joined",...}` blobs as search hits.
+ */
+export const MESSAGE_SEARCH_KINDS = TIMELINE_KINDS.filter(
+  (kind) => kind !== SYSTEM_MESSAGE_KIND,
+);
 /** Kind 40003: an edit overlay for an existing message (e tag = target). */
 export const EDIT_KIND = 40003;
 /** Kind 5: NIP-09 deletion request (e tag = target; h keeps it channel-scoped). */

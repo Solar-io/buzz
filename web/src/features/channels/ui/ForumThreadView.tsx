@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MessageSquareText } from "lucide-react";
 import type { ChannelSummary } from "../lib/channelFromEvent.ts";
 import type { TimelineMessage } from "../lib/messageBuffer.ts";
@@ -11,6 +11,11 @@ import {
 } from "../lib/reactions.ts";
 import type { ChannelMember, Profile } from "../hooks.ts";
 import { useForumThread } from "../hooks.ts";
+import {
+  replyTargetMessage,
+  resolveThreadReplyRef,
+} from "../lib/threadTarget.ts";
+import { cn } from "@/shared/lib/cn";
 import { relativeTime } from "@/shared/lib/relative-time";
 import { AuthorAvatar, authorLabel } from "./ChannelTimeline.tsx";
 import { Composer } from "./Composer.tsx";
@@ -69,15 +74,29 @@ export function ForumThreadView({
     }
   }, [lastReplyId, root?.id]);
 
+  // Which reply the comment is a reply TO. Null = the post itself, whose
+  // NIP-10 parent is the post id. Cleared when a different post opens.
+  const [selectedReplyId, setSelectedReplyId] = useState<string | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: postId is the reset trigger, not a value read inside the effect
+  useEffect(() => {
+    setSelectedReplyId(null);
+  }, [postId]);
+
   // Comments are desktop-exact kind 45003 with the same NIP-10 markers
   // sendChannelMessage already builds (single reply marker when replying
-  // to the root, root+reply pair when replying to a reply).
-  const lastReply = replies.length > 0 ? replies[replies.length - 1] : null;
+  // to the root, root+reply pair when replying to a reply). The `reply`
+  // marker names the message the reader picked, defaulting to the post —
+  // never "whatever arrived last", which is what it used to be.
+  const threadRef = resolveThreadReplyRef(postId, replies, selectedReplyId);
+  const target = replyTargetMessage(postId, replies, selectedReplyId);
+  const targetLabel = target
+    ? authorLabel(target.authorPubkey, profiles)
+    : null;
   const sendComment: ForumSend = (options) =>
     send({
       ...options,
       kind: FORUM_COMMENT_KIND,
-      threadRef: { rootId: postId, replyToId: lastReply?.id ?? postId },
+      threadRef,
     });
 
   return (
@@ -128,6 +147,8 @@ export function ForumThreadView({
                   canDelete={selfPubkey === reply.authorPubkey}
                   onReact={onReact}
                   onDelete={onDelete}
+                  onReply={setSelectedReplyId}
+                  replying={selectedReplyId === reply.id}
                   compact
                 />
               ))}
@@ -143,8 +164,17 @@ export function ForumThreadView({
         <Composer
           members={members}
           profiles={profiles}
-          threadRef={{ rootId: postId, replyToId: lastReply?.id ?? postId }}
-          onClearThread={onBack}
+          threadRef={threadRef}
+          replyTargetLabel={targetLabel}
+          onClearThread={() => {
+            // Esc steps back one level: drop a mid-thread target first, and
+            // only leave the thread once the composer is aimed at the post.
+            if (selectedReplyId) {
+              setSelectedReplyId(null);
+              return;
+            }
+            onBack();
+          }}
           placeholder="Reply to this post..."
           send={sendComment}
         />
@@ -167,6 +197,8 @@ function ForumMessageCard({
   canDelete,
   onReact,
   onDelete,
+  onReply,
+  replying,
 }: {
   message: TimelineMessage;
   profiles: Map<string, Profile>;
@@ -177,6 +209,10 @@ function ForumMessageCard({
   canDelete: boolean;
   onReact: (messageId: string, emoji: string) => void;
   onDelete: (messageId: string) => void;
+  /** Aim the composer at THIS message (sets the NIP-10 `reply` marker). */
+  onReply?: (messageId: string) => void;
+  /** This card is the composer's current reply target. */
+  replying?: boolean;
 }) {
   const mentionNames = useMemo(
     () =>
@@ -255,6 +291,22 @@ function ForumMessageCard({
             </span>
           </div>
         </div>
+        {onReply && (
+          <button
+            type="button"
+            aria-label="Reply to this message"
+            title="Reply to this message"
+            className={cn(
+              "shrink-0 self-start rounded p-1 text-xs transition-opacity hover:bg-accent",
+              replying
+                ? "bg-accent text-foreground"
+                : "text-muted-foreground lg:opacity-0 lg:group-hover:opacity-100",
+            )}
+            onClick={() => onReply(message.id)}
+          >
+            ↩
+          </button>
+        )}
         {canDelete && (
           <button
             type="button"

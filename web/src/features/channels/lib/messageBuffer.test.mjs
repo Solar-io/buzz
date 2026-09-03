@@ -224,3 +224,45 @@ test("imeta tags parse into a per-message url map; edits never touch it", () => 
   );
   assert.equal(edited[0].imetaByUrl, withImeta.imetaByUrl);
 });
+
+test("a kind-40099 system event survives the buffer as its own row", () => {
+  // 40099 is hardcoded — deriving it from TIMELINE_KINDS would make this
+  // assertion agree with whatever the constant happens to say.
+  const system = timelineMessageFromEvent(
+    event({
+      id: "s1",
+      kind: 40099,
+      createdAt: 20,
+      content: JSON.stringify({
+        type: "member_joined",
+        actor: "a".repeat(64),
+        target: "a".repeat(64),
+      }),
+      // The relay signs system messages with an h tag and nothing else
+      // (emit_system_message, buzz-relay side_effects.rs) — no e tags at all.
+      tags: [["h", "chan-1"]],
+    }),
+  );
+  assert.equal(system.kind, 40099);
+  assert.equal(system.channelId, "chan-1");
+  assert.equal(system.rootId, null, "a system row is never a thread reply");
+  assert.equal(system.replyToId, null);
+
+  const buffer = upsertMessage(
+    upsertMessage([], message({ id: "m1", createdAt: 10 })),
+    { ...system, createdAt: 20 },
+  );
+  assert.deepEqual(
+    buffer.map((m) => m.id),
+    ["m1", "s1"],
+  );
+
+  // ...and it must not inflate any thread's reply count.
+  assert.equal(replyCounts(buffer).size, 0);
+});
+
+test("a moderation tombstone hides the message it names", () => {
+  const target = message({ id: "victim" });
+  const hidden = applyOverlay([target], DELETE_KIND, "victim", null);
+  assert.equal(hidden[0].deleted, true);
+});

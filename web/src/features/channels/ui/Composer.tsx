@@ -49,6 +49,7 @@ export function Composer({
   members,
   profiles,
   threadRef,
+  replyTargetLabel,
   onClearThread,
   onSent,
   onTextChange,
@@ -62,6 +63,13 @@ export function Composer({
   members: ChannelMember[];
   profiles: Map<string, Profile>;
   threadRef: ThreadRef | null;
+  /**
+   * Author of the message the NIP-10 `reply` marker names, when that is a
+   * specific message rather than the thread root. The reply target is
+   * otherwise invisible state — the author cannot tell what their reply will
+   * be threaded under. Null means "the thread itself".
+   */
+  replyTargetLabel?: string | null;
   onClearThread: () => void;
   onSent?: () => void;
   /** Notified on every text change — the parent broadcasts typing frames. */
@@ -473,7 +481,17 @@ export function Composer({
       )}
       {threadRef && !editingActive && (
         <p className="mb-1 text-xs text-muted-foreground">
-          Replying in thread — Esc clears
+          {replyTargetLabel ? (
+            <>
+              Replying to{" "}
+              <span className="font-medium text-foreground">
+                {replyTargetLabel}
+              </span>{" "}
+              — Esc clears
+            </>
+          ) : (
+            "Replying in thread — Esc clears"
+          )}
         </p>
       )}
       {editingActive && (
