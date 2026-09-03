@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { Bot, Folder, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import type { Profile } from "@/features/channels/hooks";
 import {
   isMuted,
@@ -16,7 +16,7 @@ import { ChannelForum, ChannelGlyph } from "@/features/sidebar/ui/ChannelGlyph";
 import { DmNavRow } from "@/features/sidebar/ui/DmNavRow";
 import { SectionHeader } from "@/features/sidebar/ui/SectionHeader";
 import { SidebarNavButton } from "@/features/sidebar/ui/SidebarNavButton";
-import { useDrawerClose } from "@/shared/layout/AppShell";
+import { SidebarProfileCard } from "@/features/sidebar/ui/SidebarProfileCard";
 import type { SidebarMenuItem } from "@/features/sidebar/lib/sidebarMenuItem";
 import { cn } from "@/shared/lib/cn";
 
@@ -117,8 +117,6 @@ export function ChannelSidebar({
   dialogs,
   actions,
 }: ChannelSidebarProps) {
-  // Phone drawer dismiss — shared by the sidebar rows and the Agents link.
-  const closeDrawer = useDrawerClose();
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between px-3 py-2">
@@ -319,26 +317,12 @@ export function ChannelSidebar({
           </ul>
         )}
       </nav>
-      <div className="border-t border-border p-2">
-        <button
-          type="button"
-          aria-label="Files"
-          title="Files"
-          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
-          onClick={actions.onOpenFiles}
-        >
-          <Folder aria-hidden className="h-4 w-4" />
-          Files
-        </button>
-        <Link
-          to="/repos/agents"
-          className="mt-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
-          onClick={closeDrawer}
-        >
-          <Bot aria-hidden className="h-4 w-4" />
-          Agents
-        </Link>
-      </div>
+      <SidebarProfileCard
+        selfPubkey={dmIdentity.selfPubkey}
+        profiles={dmIdentity.profiles}
+        connected={connected}
+        onOpenFiles={actions.onOpenFiles}
+      />
     </div>
   );
 }
