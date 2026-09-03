@@ -23,6 +23,11 @@ import {
   type ReactionIndex,
 } from "../lib/reactions.ts";
 import { MarkdownContent } from "./MarkdownContent.tsx";
+import { SYSTEM_MESSAGE_KIND } from "../lib/systemEvent.ts";
+import {
+  describeSystemMessage,
+  SystemMessageRow,
+} from "./SystemMessageRow.tsx";
 
 const EMPTY_REACTIONS: ReactionIndex = new Map();
 
@@ -304,6 +309,26 @@ export function ChannelTimeline({
     ) {
       unreadShown = true;
       rows.push(<UnreadDivider key="unread" />);
+    }
+    // Kind 40099 is a SYSTEM row, not a message row: joins, leaves and
+    // moderation tombstones. It renders centered and muted with no author
+    // card, so it never participates in author grouping — reset the chain so
+    // the next real message starts a fresh block instead of merging with the
+    // one before the system row. A payload the row cannot describe (an event
+    // type outside this pass's scope) renders nothing at all rather than
+    // spilling raw JSON into the conversation.
+    if (message.kind === SYSTEM_MESSAGE_KIND) {
+      lastAuthor = null;
+      lastRenderedAt = null;
+      const description = describeSystemMessage(message, profiles);
+      if (!description) {
+        continue;
+      }
+      rowIndex.set(message.id, rows.length);
+      rows.push(
+        <SystemMessageRow key={message.id} description={description} />,
+      );
+      continue;
     }
     // Replies render INLINE under their root (desktop pattern: indented
     // previews with a connector rail, click opens the full thread panel).
