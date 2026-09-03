@@ -163,7 +163,7 @@ export function CodeBlock({
   return (
     <div className="group/code relative my-2">
       {language && (
-        <span className="pointer-events-none absolute top-1.5 left-3 font-mono text-[0.6875rem] text-muted-foreground/70 select-none">
+        <span className="pointer-events-none absolute top-1.5 left-3 font-mono text-2xs text-muted-foreground/70 select-none">
           {language}
         </span>
       )}
