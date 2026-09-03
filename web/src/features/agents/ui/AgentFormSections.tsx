@@ -6,7 +6,10 @@ import { HarnessSelect } from "./HarnessSelect";
 import { EnvVarsTable } from "./EnvVarsTable";
 import type { DesktopCatalog } from "../lib/desktopCatalog";
 import type { EnvRow } from "../lib/envRows";
-import { modelSuggestions } from "../lib/modelSuggestions";
+import {
+  MODEL_SUGGESTIONS_BY_PROVIDER,
+  modelSuggestions,
+} from "../lib/modelSuggestions";
 import {
   RESPOND_TO_OPTIONS,
   accessWarning,
@@ -144,12 +147,19 @@ export function ModelProviderFields({
   harnessKeep?: boolean;
 }) {
   const listId = useId();
+  const providerListId = useId();
   const models = modelSuggestions(provider, registryModels);
+  const providerIds = Object.keys(MODEL_SUGGESTIONS_BY_PROVIDER).sort();
   return (
     <div className="space-y-3">
       <SectionHeading>Model &amp; provider</SectionHeading>
       <datalist id={listId}>
         {models.map((suggestion) => (
+          <option key={suggestion} value={suggestion} />
+        ))}
+      </datalist>
+      <datalist id={providerListId}>
+        {providerIds.map((suggestion) => (
           <option key={suggestion} value={suggestion} />
         ))}
       </datalist>
@@ -176,6 +186,7 @@ export function ModelProviderFields({
             onChange={(event) => onProviderChange(event.target.value)}
             placeholder="e.g. zai"
             disabled={quadDisabled}
+            list={providerListId}
             autoCapitalize="none"
             autoCorrect="off"
             spellCheck={false}
