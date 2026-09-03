@@ -556,6 +556,7 @@ function ChannelBrowser() {
                   onDelete={messageActions.onDelete}
                   onShare={messageActions.onShare}
                   selfPubkey={selfPubkey}
+                  pendingIds={messageActions.pendingIds}
                   agentPubkeys={agentPubkeys}
                   highlightId={permalinkMessageId ?? null}
                   typingNames={typingNames}

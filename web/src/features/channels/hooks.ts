@@ -714,6 +714,13 @@ export async function sendChannelMessage(
      * which this builder already produces.
      */
     kind?: number;
+    /**
+     * Called with the signed event after signing but before it reaches the
+     * relay. Signing yields the event's real id, so a caller can insert an
+     * optimistic row keyed by that id and the relay's echo upserts the same
+     * row rather than duplicating it.
+     */
+    onSigned?: (event: { id: string; created_at: number }) => void;
   },
 ): Promise<SendResult> {
   const tags: string[][] = [["h", options.channelId]];
@@ -738,6 +745,7 @@ export async function sendChannelMessage(
     tags,
     content: options.content,
   });
+  options.onSigned?.(event);
   return session.publish(event);
 }
 

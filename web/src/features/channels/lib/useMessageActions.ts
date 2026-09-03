@@ -56,6 +56,11 @@ export interface MessageActions {
   onShare: (messageId: string) => void;
   onComposerText: (text: string) => void;
   send: (options: MessageSendOptions) => Promise<MessageSendResult>;
+  /**
+   * Messages signed and in flight to the relay, keyed by their real event id.
+   * The timeline renders these as "Sending…" until the relay acknowledges.
+   */
+  pendingIds: ReadonlySet<string>;
 }
 
 /**
@@ -153,6 +158,27 @@ export function useMessageActions({
     [session, channelId],
   );
 
+  /**
+   * Ids of messages signed but not yet acknowledged by the relay.
+   *
+   * Keyed by the event's real id, which signing produces before publishing —
+   * so when the relay echoes the message back it upserts the same row rather
+   * than appearing as a second copy. An id leaves the set on acknowledgement
+   * or on failure; a failed send also surfaces its error, so a row cannot sit
+   * marked "Sending…" forever.
+   */
+  const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const settlePending = useCallback((id: string) => {
+    setPendingIds((previous) => {
+      if (!previous.has(id)) return previous;
+      const next = new Set(previous);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+
   const send = (options: MessageSendOptions) => {
     if (!current) {
       return Promise.resolve({ ok: false, message: "No channel selected." });
@@ -169,6 +195,7 @@ export function useMessageActions({
     const mentionPubkeys = Array.from(
       new Set([...options.mentionPubkeys, ...dmPeers]),
     );
+    let signedId: string | null = null;
     return sendChannelMessage(session, {
       channelId: current.id,
       content: options.content,
@@ -176,12 +203,26 @@ export function useMessageActions({
       threadRef: options.threadRef,
       mediaTags: options.mediaTags,
       kind: options.kind,
-    }).then((result) => {
-      if (result.ok) {
-        clearDraft(current.id);
-      }
-      return result;
-    });
+      onSigned: (event) => {
+        signedId = event.id;
+        setPendingIds((previous) => new Set(previous).add(event.id));
+      },
+    })
+      .then((result) => {
+        if (result.ok) {
+          clearDraft(current.id);
+        }
+        if (signedId) {
+          settlePending(signedId);
+        }
+        return result;
+      })
+      .catch((error: unknown) => {
+        if (signedId) {
+          settlePending(signedId);
+        }
+        throw error;
+      });
   };
 
   return {
@@ -194,5 +235,6 @@ export function useMessageActions({
     onShare,
     onComposerText,
     send,
+    pendingIds,
   };
 }
