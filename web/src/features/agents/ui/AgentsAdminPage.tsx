@@ -89,7 +89,11 @@ export function AgentsAdminPage() {
     <div className="mx-auto max-w-5xl space-y-4 p-4">
       <div className="flex items-center justify-between gap-2">
         <h1 className="text-lg font-semibold">Agents</h1>
-        <div className="flex items-center gap-2">
+        {/* flex-wrap (the app's standard action-row pattern, e.g.
+            RepoDetailPage/HuddleBar): the four buttons are ~446px side by
+            side, which overflows a 375px viewport — wrapped rows keep the
+            page from scrolling horizontally. */}
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <Button
             size="sm"
             variant="outline"
