@@ -11,10 +11,11 @@ export interface GroupAvatarProps {
  */
 export function GroupAvatar({ count, dm }: GroupAvatarProps) {
   if (dm) {
-    // B-target palette (dm-list-diff.md): #191926 fill, #C5CFF2 numeral;
+    // Theme tokens, matching the desktop's group avatar. These were
+    // sampled literals (#191926 / #C5CFF2) that ignored the active theme.
     // 11px semibold per the desktop source (text-2xs).
     return (
-      <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[#191926] text-[11px] font-semibold leading-none text-[#C5CFF2]">
+      <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-sidebar-accent text-2xs font-semibold leading-none text-sidebar-accent-foreground">
         <span className="translate-x-px leading-none">{count}</span>
       </span>
     );

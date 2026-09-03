@@ -9,9 +9,10 @@ export interface SectionHeaderProps {
   addLabel?: string;
   className?: string;
   /**
-   * "dm" renders the dm-list-spec.md §2 treatment: sentence case, ~13px,
-   * #8E96B0, ink aligned to the avatar left edge (14px) instead of the
-   * uppercase channel-section style.
+   * "dm" renders the dm-list-spec.md §2 treatment: sentence case, ~13px, ink
+   * aligned to the avatar left edge (14px) instead of the uppercase
+   * channel-section style. The colour comes from the sidebar tokens — the
+   * spec's sampled #8E96B0 was a dark-theme reading of exactly that.
    */
   variant?: "default" | "dm";
 }
@@ -39,7 +40,7 @@ export function SectionHeader({
         className={cn(
           "text-xs font-medium uppercase tracking-wide text-sidebar-foreground/70",
           variant === "dm" &&
-            "text-[13px] font-medium normal-case tracking-normal text-[#8E96B0]",
+            "text-[13px] font-medium normal-case tracking-normal text-sidebar-foreground/60",
         )}
       >
         {label}

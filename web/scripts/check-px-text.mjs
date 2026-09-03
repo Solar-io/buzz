@@ -36,10 +36,6 @@ const overrides = new Set([
   "src/features/sidebar/ui/ChannelSidebar.tsx:text-[13px]",
   // src/features/sidebar/ui/SectionHeader.tsx:42 — same section-label recipe.
   "src/features/sidebar/ui/SectionHeader.tsx:text-[13px]",
-  // src/features/sidebar/ui/DmNavRow.tsx:147 — unread count pill.
-  "src/features/sidebar/ui/DmNavRow.tsx:text-[11px]",
-  // src/features/sidebar/ui/GroupAvatar.tsx:17 — group avatar initials.
-  "src/features/sidebar/ui/GroupAvatar.tsx:text-[11px]",
   // src/features/channels/ui/ChannelTimeline.tsx:156,158 — avatar initials
   // sized to their disc; :615,619 — broadcast tag and event-id chip.
   "src/features/channels/ui/ChannelTimeline.tsx:text-[10px]",

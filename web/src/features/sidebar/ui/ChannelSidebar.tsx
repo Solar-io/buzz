@@ -220,7 +220,7 @@ export function ChannelSidebar({
         </ul>
         {lists.forums.length > 0 && (
           <>
-            <p className="mt-4 mb-[4px] flex h-8 items-center pl-[6px] pr-2 text-[13px] font-medium normal-case tracking-normal text-[#8E96B0]">
+            <p className="mt-4 mb-[4px] flex h-8 items-center pl-[6px] pr-2 text-[13px] font-medium normal-case tracking-normal text-sidebar-foreground/60">
               Forums
             </p>
             <ul className="space-y-0.5">
@@ -245,7 +245,7 @@ export function ChannelSidebar({
         )}
         {lists.huddles.length > 0 && (
           <details className="px-0 pt-2">
-            <summary className="mb-[4px] flex h-8 cursor-pointer select-none items-center pl-[6px] pr-2 text-[13px] font-medium normal-case tracking-normal text-[#8E96B0]">
+            <summary className="mb-[4px] flex h-8 cursor-pointer select-none items-center pl-[6px] pr-2 text-[13px] font-medium normal-case tracking-normal text-sidebar-foreground/60">
               Huddles ({lists.huddles.length})
             </summary>
             <ul className="space-y-0.5">

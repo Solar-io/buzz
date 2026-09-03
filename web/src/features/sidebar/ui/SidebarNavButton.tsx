@@ -60,7 +60,8 @@ export function SidebarNavButton({
         // text-sm): the sections read as one surface.
         "group/row flex h-8 w-full items-center gap-2 truncate rounded-[8px] px-2 text-left text-sm transition-colors",
         "hover:bg-white/5 hover:text-foreground",
-        selected && "bg-[#9A3EF6] font-normal text-black",
+        selected &&
+          "bg-sidebar-active font-normal text-sidebar-active-foreground",
         // Desktop dims muted rows rather than hiding them.
         muted && !selected && "opacity-50",
       )}
@@ -74,10 +75,10 @@ export function SidebarNavButton({
         className={cn(
           "truncate",
           selected
-            ? "text-black"
+            ? "text-sidebar-active-foreground"
             : unread
-              ? "font-semibold text-[#C4CFF2]"
-              : "font-normal text-[#A0A8C7]",
+              ? "font-semibold text-sidebar-foreground"
+              : "font-normal text-sidebar-foreground/70",
         )}
       >
         {label}
@@ -91,7 +92,7 @@ export function SidebarNavButton({
       {unread && (
         <span
           className={cn(
-            "h-2 w-2 shrink-0 rounded-full bg-[#9A3EF6]",
+            "h-2 w-2 shrink-0 rounded-full bg-sidebar-active",
             !muted && "ml-auto",
           )}
         />

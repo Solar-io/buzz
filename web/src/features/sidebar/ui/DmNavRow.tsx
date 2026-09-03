@@ -81,8 +81,8 @@ export function DmNavRow({
         // gap, 4px badge inset on the right.
         "flex h-8 w-full items-center gap-2 rounded-[8px] pl-2 pr-1 text-left transition-colors",
         "hover:bg-white/5",
-        // §5: flat solid #9A3EF6 fill, no ring, black label.
-        selected && "bg-[#9A3EF6]",
+        // §5: flat solid accent fill, no ring, contrasting label.
+        selected && "bg-sidebar-active",
       )}
       onClick={() => {
         onSelect();
@@ -115,13 +115,13 @@ export function DmNavRow({
       <span
         className={cn(
           "min-w-0 flex-1 truncate text-sm",
-          // B-target palette (dm-list-diff.md Defect 2): read #A0A8C7,
-          // unread #C4CFF2, selected #000000.
+          // Read / unread / selected, from the sidebar tokens rather than
+          // the sampled literals they were pinned to.
           selected
             ? "font-normal text-black"
             : unread
-              ? "font-semibold text-[#C4CFF2]"
-              : "font-normal text-[#A0A8C7]",
+              ? "font-semibold text-sidebar-foreground"
+              : "font-normal text-sidebar-foreground/70",
         )}
       >
         {name}
@@ -142,7 +142,7 @@ export function DmNavRow({
               §6: the pill's right edge stays fixed whether or not a badge
               is present — the 20px slot always reserves it. */}
           {unread ? (
-            <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-[#9A3EF6] px-1 text-[11px] font-semibold leading-none tabular-nums text-black">
+            <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-sidebar-active px-1 text-2xs font-semibold leading-none tabular-nums text-sidebar-active-foreground">
               {unreadCount != null && unreadCount > 0
                 ? unreadCount > 99
                   ? "99+"
