@@ -747,7 +747,7 @@ function ChannelBrowser() {
         </ul>
         {forumChannels.length > 0 && (
           <>
-            <p className="mt-4 flex h-8 items-center px-2 text-xs font-medium uppercase tracking-wide text-sidebar-foreground/70">
+            <p className="mt-4 mb-[4px] flex h-8 items-center pl-[6px] pr-2 text-[13px] font-medium normal-case tracking-normal text-[#8E96B0]">
               Forums
             </p>
             <ul className="space-y-0.5">
@@ -777,7 +777,7 @@ function ChannelBrowser() {
         )}
         {linkedHuddleChannels.length > 0 && (
           <details className="px-0 pt-2">
-            <summary className="flex h-8 cursor-pointer select-none items-center px-2 text-xs font-medium uppercase tracking-wide text-sidebar-foreground/70">
+            <summary className="mb-[4px] flex h-8 cursor-pointer select-none items-center pl-[6px] pr-2 text-[13px] font-medium normal-case tracking-normal text-[#8E96B0]">
               Huddles ({linkedHuddleChannels.length})
             </summary>
             <ul className="space-y-0.5">
@@ -1216,7 +1216,7 @@ function SectionHeader({
   onAdd,
   addLabel,
   className,
-  variant,
+  variant = "dm",
 }: {
   label: string;
   /** Shows the + button when provided (Channels, Direct messages). */
@@ -1291,10 +1291,11 @@ function SidebarNavButton({
     <button
       type="button"
       className={cn(
-        "group/row flex h-9 w-full items-center gap-1.5 truncate rounded-md px-2 text-left text-base transition-colors",
+        // Same desktop row recipe as the DM list (SidebarMenuButton h-8
+        // text-sm): the sections read as one surface.
+        "group/row flex h-8 w-full items-center gap-2 truncate rounded-[8px] px-2 text-left text-sm transition-colors",
         "hover:bg-white/5 hover:text-foreground",
-        selected &&
-          "bg-[hsl(var(--sidebar-active))] font-medium text-[hsl(var(--sidebar-active-foreground))]",
+        selected && "bg-[#9A3EF6] font-normal text-black",
       )}
       onClick={() => {
         onSelect();
@@ -1310,9 +1311,20 @@ function SidebarNavButton({
       }
     >
       {icon}
-      <span className="truncate">{label}</span>
+      <span
+        className={cn(
+          "truncate",
+          selected
+            ? "text-black"
+            : unread
+              ? "font-semibold text-[#C4CFF2]"
+              : "font-normal text-[#A0A8C7]",
+        )}
+      >
+        {label}
+      </span>
       {unread && (
-        <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+        <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-[#9A3EF6]" />
       )}
       {menuItems && (
         // A real <button> cannot nest inside the row button — the span keeps
