@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import {
-  buildUpdateCommand,
-  prefillEditForm,
-  parseEnvText,
-} from "./editAgentRequest.ts";
+import { buildUpdateCommand, prefillEditForm } from "./editAgentRequest.ts";
 
 const PK = "ab".repeat(32);
+const KEY_A = "cd".repeat(32);
+const KEY_B = "ee".repeat(32);
 
 function entry(overrides = {}) {
   return {
@@ -18,8 +16,21 @@ function entry(overrides = {}) {
     personaId: null,
     parallelism: 3,
     respondTo: "owner-only",
-    respondToAllowlist: ["cd".repeat(32)],
+    respondToAllowlist: [KEY_A],
     updatedAt: 1000,
+    ...overrides,
+  };
+}
+
+function persona(overrides = {}) {
+  return {
+    id: "persona-1",
+    name: "Night Shift (definition)",
+    systemPrompt: "From the definition.",
+    model: "glm-5.3",
+    provider: "zai",
+    runtime: "claude-code-glm",
+    updatedAt: 900,
     ...overrides,
   };
 }
@@ -28,7 +39,11 @@ function value(prefill, overrides = {}) {
   return { ...prefill, ...overrides };
 }
 
-test("prefillEditForm fills from the entry; definition-linked entries fill from the persona", () => {
+function row(id, key, val) {
+  return { id, key, value: val };
+}
+
+test("prefillEditForm fills from the entry; linked entries fill from the persona", () => {
   const prefill = prefillEditForm(entry(), null);
   assert.equal(prefill.name, "Night Shift");
   assert.equal(prefill.systemPrompt, "You work nights.");
@@ -36,10 +51,10 @@ test("prefillEditForm fills from the entry; definition-linked entries fill from 
   assert.equal(prefill.provider, "zai");
   assert.equal(prefill.parallelism, "3");
   assert.equal(prefill.respondTo, "owner-only");
-  assert.equal(prefill.respondToAllowlist, "cd".repeat(32));
+  assert.deepEqual(prefill.respondToAllowlist, [KEY_A]);
   assert.equal(prefill.harnessId, "__keep");
-  assert.equal(prefill.envText, "");
-  assert.equal(prefill.startOnAppLaunch, "keep");
+  assert.deepEqual(prefill.envRows, []);
+  assert.equal(prefill.envDirty, false);
   assert.equal(prefill.personaLinked, false);
 
   // Slimmed 30177 (definition-linked): quad comes from the 30175 definition.
@@ -50,19 +65,20 @@ test("prefillEditForm fills from the entry; definition-linked entries fill from 
       model: "",
       provider: "",
     }),
-    {
-      id: "persona-1",
-      name: "Night Shift (definition)",
-      systemPrompt: "From the definition.",
-      model: "glm-5.3",
-      provider: "zai",
-      runtime: "claude-code-glm",
-      updatedAt: 900,
-    },
+    persona(),
   );
   assert.equal(linked.personaLinked, true);
   assert.equal(linked.systemPrompt, "From the definition.");
   assert.equal(linked.name, "Night Shift (definition)");
+  assert.equal(linked.model, "glm-5.3");
+  assert.equal(linked.provider, "zai");
+});
+
+test("prefill is a copy, not an alias, of the entry's allowlist", () => {
+  const base = entry();
+  const prefill = prefillEditForm(base, null);
+  prefill.respondToAllowlist.push("mutant");
+  assert.deepEqual(base.respondToAllowlist, [KEY_A]);
 });
 
 test("unchanged fields are absent from the update request", () => {
@@ -91,7 +107,22 @@ test("only the changed field is sent", () => {
   });
 });
 
-test('harness "keep current" sends no harness key; a picked harness sends one', () => {
+test("blank model sends no model key (blank-means-keep is load-bearing)", () => {
+  const base = entry();
+  const prefill = prefillEditForm(base, null);
+  const built = buildUpdateCommand(
+    base,
+    prefill,
+    value(prefill, { name: "Renamed", model: "" }),
+  );
+  if ("error" in built) {
+    assert.fail(built.error);
+  }
+  assert.equal("model" in built.command.request, false);
+  assert.deepEqual(built.command.request, { pubkey: PK, name: "Renamed" });
+});
+
+test('harness "keep current" sends no harness key; picked and custom send theirs', () => {
   const base = entry();
   const prefill = prefillEditForm(base, null);
   const keep = buildUpdateCommand(
@@ -146,122 +177,189 @@ test('harness "keep current" sends no harness key; a picked harness sends one', 
   );
 });
 
-test("blank env sends no envVars; filled env replaces wholesale", () => {
+test("clean env table sends no envVars key even when rows are present", () => {
   const base = entry();
   const prefill = prefillEditForm(base, null);
-  const blank = buildUpdateCommand(
+  const built = buildUpdateCommand(
     base,
     prefill,
-    value(prefill, { model: "glm-5.4" }),
+    value(prefill, {
+      name: "Renamed",
+      envRows: [row("r1", "SOME_KEY", "present-but-clean")],
+      envDirty: false,
+    }),
   );
-  if ("error" in blank) {
-    assert.fail(blank.error);
+  if ("error" in built) {
+    assert.fail(built.error);
   }
-  assert.equal("envVars" in blank.command.request, false);
+  assert.equal("envVars" in built.command.request, false);
+  assert.deepEqual(built.command.request, { pubkey: PK, name: "Renamed" });
+});
 
-  const filled = buildUpdateCommand(
+test("dirty env table sends the FULL record (replace semantics)", () => {
+  const base = entry();
+  const prefill = prefillEditForm(base, null);
+  const built = buildUpdateCommand(
     base,
     prefill,
-    value(prefill, { envText: "KEY=value\nOTHER=2" }),
+    value(prefill, {
+      envRows: [
+        row("r1", "BUZZ_AGENT_PROVIDER", "zai"),
+        row("r2", "", "mid-edit"),
+      ],
+      envDirty: true,
+    }),
   );
-  if ("error" in filled) {
-    assert.fail(filled.error);
+  if ("error" in built) {
+    assert.fail(built.error);
   }
-  assert.deepEqual(filled.command.request.envVars, {
-    KEY: "value",
-    OTHER: "2",
+  assert.deepEqual(built.command.request.envVars, {
+    BUZZ_AGENT_PROVIDER: "zai",
   });
-
-  const malformed = buildUpdateCommand(
-    base,
-    prefill,
-    value(prefill, { envText: "NOEQUALS" }),
-  );
-  assert.equal("error" in malformed, true);
 });
 
-test("startOnAppLaunch keep sends nothing; on/off send the boolean", () => {
+test("dirty env table with zero valid rows explicitly clears all env", () => {
   const base = entry();
   const prefill = prefillEditForm(base, null);
-  const keep = buildUpdateCommand(
+  const built = buildUpdateCommand(
+    base,
+    prefill,
+    value(prefill, { envRows: [], envDirty: true }),
+  );
+  if ("error" in built) {
+    assert.fail(built.error);
+  }
+  assert.deepEqual(built.command.request.envVars, {});
+});
+
+test("reserved env key in a dirty table is an error naming the key", () => {
+  const base = entry();
+  const prefill = prefillEditForm(base, null);
+  const built = buildUpdateCommand(
+    base,
+    prefill,
+    value(prefill, {
+      envRows: [row("r1", "buzz_private_key", "nope")],
+      envDirty: true,
+    }),
+  );
+  assert.equal(
+    "error" in built && built.error,
+    "BUZZ_PRIVATE_KEY is set by Buzz and can't be overridden.",
+  );
+});
+
+test("linked entry refuses quad edits with the definition error", () => {
+  const base = entry({ personaId: "persona-1", model: "", provider: "" });
+  const prefill = prefillEditForm(base, persona());
+  const promptEdit = buildUpdateCommand(
+    base,
+    prefill,
+    value(prefill, { systemPrompt: "owner tries to change it" }),
+  );
+  assert.match(
+    "error" in promptEdit ? promptEdit.error : "",
+    /comes from its definition/,
+  );
+  const modelEdit = buildUpdateCommand(
     base,
     prefill,
     value(prefill, { model: "glm-5.4" }),
   );
-  if ("error" in keep) {
-    assert.fail(keep.error);
-  }
-  assert.equal("startOnAppLaunch" in keep.command.request, false);
-
-  const on = buildUpdateCommand(
+  assert.equal("error" in modelEdit, true);
+  // Linked entries still accept everything the desktop applies for them:
+  const nameEdit = buildUpdateCommand(
     base,
     prefill,
-    value(prefill, { startOnAppLaunch: "on" }),
+    value(prefill, { name: "Renamed" }),
   );
-  if ("error" in on) {
-    assert.fail(on.error);
+  if ("error" in nameEdit) {
+    assert.fail(nameEdit.error);
   }
-  assert.equal(on.command.request.startOnAppLaunch, true);
-
-  const off = buildUpdateCommand(
-    base,
-    prefill,
-    value(prefill, { startOnAppLaunch: "off" }),
-  );
-  if ("error" in off) {
-    assert.fail(off.error);
-  }
-  assert.equal(off.command.request.startOnAppLaunch, false);
+  assert.equal(nameEdit.command.request.name, "Renamed");
 });
 
-test("allowlist edit validates hex and parallelism must be a positive int", () => {
+test("allowlist edits validate hex; mode switch to allowlist needs a key", () => {
   const base = entry();
   const prefill = prefillEditForm(base, null);
   const badList = buildUpdateCommand(
     base,
     prefill,
-    value(prefill, { respondToAllowlist: "not-hex" }),
+    value(prefill, { respondToAllowlist: ["not-hex"] }),
   );
   assert.equal("error" in badList, true);
 
   const goodList = buildUpdateCommand(
     base,
     prefill,
-    value(prefill, { respondToAllowlist: `  ${"ee".repeat(32)}  \n` }),
+    value(prefill, { respondToAllowlist: [KEY_B] }),
   );
   if ("error" in goodList) {
     assert.fail(goodList.error);
   }
-  assert.deepEqual(goodList.command.request.respondToAllowlist, [
-    "ee".repeat(32),
-  ]);
+  assert.deepEqual(goodList.command.request.respondToAllowlist, [KEY_B]);
 
-  const badParallelism = buildUpdateCommand(
+  const emptySwitch = buildUpdateCommand(
     base,
     prefill,
-    value(prefill, { parallelism: "zero" }),
+    value(prefill, { respondTo: "allowlist", respondToAllowlist: [] }),
   );
   assert.equal(
-    "error" in badParallelism && badParallelism.error,
-    "Nothing changed.",
+    "error" in emptySwitch && emptySwitch.error,
+    "Specific people requires at least one key.",
   );
 
-  const goodParallelism = buildUpdateCommand(
+  // Switching to allowlist keeps the prefilled (unchanged) list — that is a
+  // real key, so it sends.
+  const keepSwitch = buildUpdateCommand(
+    base,
+    prefill,
+    value(prefill, { respondTo: "allowlist" }),
+  );
+  if ("error" in keepSwitch) {
+    assert.fail(keepSwitch.error);
+  }
+  assert.equal(keepSwitch.command.request.respondTo, "allowlist");
+
+  const anyone = buildUpdateCommand(
+    base,
+    prefill,
+    value(prefill, { respondTo: "anyone" }),
+  );
+  if ("error" in anyone) {
+    assert.fail(anyone.error);
+  }
+  assert.deepEqual(anyone.command.request, { pubkey: PK, respondTo: "anyone" });
+});
+
+test("parallelism: blank keeps, invalid errors, changed sends a number", () => {
+  const base = entry();
+  const prefill = prefillEditForm(base, null);
+  const blank = buildUpdateCommand(
+    base,
+    prefill,
+    value(prefill, { parallelism: "" }),
+  );
+  assert.equal("error" in blank && blank.error, "Nothing changed.");
+
+  assert.equal(
+    buildUpdateCommand(base, prefill, value(prefill, { parallelism: "zero" }))
+      .error,
+    "Parallelism must be a whole number of 1 or more.",
+  );
+  assert.equal(
+    buildUpdateCommand(base, prefill, value(prefill, { parallelism: "0" }))
+      .error,
+    "Parallelism must be a whole number of 1 or more.",
+  );
+
+  const good = buildUpdateCommand(
     base,
     prefill,
     value(prefill, { parallelism: "5" }),
   );
-  if ("error" in goodParallelism) {
-    assert.fail(goodParallelism.error);
+  if ("error" in good) {
+    assert.fail(good.error);
   }
-  assert.equal(goodParallelism.command.request.parallelism, 5);
-});
-
-test("parseEnvText: empty is {}, malformed line reports the line", () => {
-  assert.deepEqual(parseEnvText("   "), { envVars: {} });
-  assert.deepEqual(parseEnvText("A=1\nB=two words"), {
-    envVars: { A: "1", B: "two words" },
-  });
-  const bad = parseEnvText("A=1\nBAD");
-  assert.equal("error" in bad && bad.error.includes("BAD"), true);
+  assert.equal(good.command.request.parallelism, 5);
 });
