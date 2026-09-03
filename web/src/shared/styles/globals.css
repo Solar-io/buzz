@@ -149,9 +149,10 @@
     --chart-3: 224 26.67% 41.18%;
     --chart-4: 30 8.24% 42.35%;
     --chart-5: 139 10.98% 38.82%;
-    /* Sam 2026-09-02: left nav = #0f1017 — near-black indigo rail. */
-    --sidebar: 232.5 21.1% 7.5%;
-    --sidebar-background: 232.5 21.1% 7.5%;
+    /* Sam 2026-09-03 (dm-list-spec.md §1): left nav = #101117 — measured
+       from the desktop reference (was #0f1017). */
+    --sidebar: 231.4 17.9% 7.6%;
+    --sidebar-background: 231.4 17.9% 7.6%;
     --sidebar-foreground: 227 68.25% 87.65%;
     --sidebar-primary: 267 82.69% 79.61%;
     --sidebar-primary-foreground: 240 20% 14.71%;
@@ -184,6 +185,40 @@
 }
 
 /* Permalink arrival flash: one-shot highlight when a ?m= target renders. */
+
+/* DM list timer pill — dm-list-spec.md §6: whole-element pulse 0.8 → 1.0 →
+   0.8, each pill's phase independent (negative animation-delay keyed to its
+   own countdown's elapsed seconds). Selected row inverts per spec. */
+.dm-timer-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 15px;
+  padding: 0 6.5px;
+  border-radius: 999px;
+  background: rgba(154, 62, 246, 0.09);
+  color: #9a3ef6;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  animation: dm-timer-pulse 2.4s ease-in-out infinite;
+}
+
+.dm-timer-pill-selected {
+  background: rgba(0, 0, 0, 0.2);
+  color: #07030b;
+}
+
+@keyframes dm-timer-pulse {
+  0%,
+  100% {
+    opacity: 0.8;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 @keyframes pingFlash {
   0% {
     background-color: rgb(var(--primary) / 0.28);

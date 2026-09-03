@@ -90,7 +90,7 @@ import {
   agentTurnStart,
   agentWorkingState,
 } from "@/features/agents/lib/observerEvents";
-import { useTick, WorkingBadge } from "@/features/agents/ui/WorkingBadge";
+import { formatElapsed, useTick } from "@/features/agents/ui/WorkingBadge";
 import { AgentActivityPanel } from "@/features/agents/ui/AgentActivityPanel";
 import { useDms } from "@/features/dms/hooks";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
@@ -106,6 +106,7 @@ import { ownPubkey } from "@/shared/lib/nostr-signer";
 import { AppShell, useDrawerClose } from "@/shared/layout/AppShell";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { cn } from "@/shared/lib/cn";
+import { loadTimelineCache } from "@/features/channels/lib/timelineCache.ts";
 
 /**
  * The app lives at /repos — the one browser-servable path the relay's
@@ -801,7 +802,8 @@ function ChannelBrowser() {
         )}
         <SectionHeader
           label="Direct messages"
-          className="mt-4"
+          variant="dm"
+          className="mt-4 mb-[13px]"
           onAdd={() => setNewDmOpen(true)}
           addLabel="New direct message"
         />
@@ -829,11 +831,13 @@ function ChannelBrowser() {
           </p>
         )}
         {visibleDms.length > 0 && (
-          <ul className="space-y-0.5">
+          <ul className="space-y-1">
             {visibleDms.map(({ channel, lastMessage }) => (
               <li key={channel.id}>
                 <DmNavRow
                   selected={channel.id === selectedId}
+                  channelId={channel.id}
+                  lastSeenAt={readState[channel.id] ?? null}
                   unread={
                     lastMessage
                       ? isUnread(readState, channel.id, lastMessage.created_at)
@@ -1213,21 +1217,35 @@ function SectionHeader({
   onAdd,
   addLabel,
   className,
+  variant,
 }: {
   label: string;
   /** Shows the + button when provided (Channels, Direct messages). */
   onAdd?: () => void;
   addLabel?: string;
   className?: string;
+  /**
+   * "dm" renders the dm-list-spec.md §2 treatment: sentence case, ~13px,
+   * #8E96B0, ink aligned to the avatar left edge (14px) instead of the
+   * uppercase channel-section style.
+   */
+  variant?: "default" | "dm";
 }) {
   return (
     <div
       className={cn(
         "flex h-8 items-center justify-between pl-2 pr-1",
+        variant === "dm" && "pl-[14px]",
         className,
       )}
     >
-      <p className="text-xs font-medium uppercase tracking-wide text-sidebar-foreground/70">
+      <p
+        className={cn(
+          "text-xs font-medium uppercase tracking-wide text-sidebar-foreground/70",
+          variant === "dm" &&
+            "text-[13px] font-medium normal-case tracking-normal text-[#8E96B0]",
+        )}
+      >
         {label}
       </p>
       {onAdd && (
@@ -1370,7 +1388,15 @@ function shortDate(unixSeconds: number): string {
  * Group-DM avatar placeholder (mock 2026-09-02): dark rounded square with
  * the member count, matching AuthorAvatar's md box so rows stay aligned.
  */
-function GroupAvatar({ count }: { count: number }) {
+function GroupAvatar({ count, dm }: { count: number; dm?: boolean }) {
+  if (dm) {
+    // dm-list-spec.md §9: 24px circle, #191926 fill, #C5CFF2 numeral.
+    return (
+      <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[#191926] text-xs font-bold text-[#C5CFF2]">
+        {count}
+      </span>
+    );
+  }
   return (
     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted text-xs font-bold text-foreground">
       {count}
@@ -1378,9 +1404,78 @@ function GroupAvatar({ count }: { count: number }) {
   );
 }
 
+/**
+ * DM-list timer pill (dm-list-spec.md §6): 15px fully-rounded pill,
+ * ~9% accent background, accent text; the whole element pulses
+ * 0.8 → 1.0 → 0.8 with a phase tied to its own countdown (negative
+ * animation-delay), and inverts on the selected row.
+ */
+function DmTimerPill({
+  startedAt,
+  now,
+  selected,
+}: {
+  startedAt: number;
+  now: number;
+  selected: boolean;
+}) {
+  const period = 2.4;
+  const elapsed = Math.max(0, now - startedAt);
+  return (
+    <span
+      className={cn("dm-timer-pill", selected && "dm-timer-pill-selected")}
+      style={{ animationDelay: `-${(elapsed % period).toFixed(2)}s` }}
+    >
+      {formatElapsed(startedAt, now)}
+    </span>
+  );
+}
+
+/**
+ * Unread count for a DM row, derived from the persistent timeline cache:
+ * cached, non-deleted messages from others newer than the read marker.
+ * Null when the cache is cold (that DM was never opened here) — the badge
+ * then renders its dot form without inventing a number.
+ */
+function useCachedUnreadCount(
+  channelId: string | null,
+  lastSeenAt: number | null,
+  selfPubkey: string | null,
+): number | null {
+  const [count, setCount] = useState<number | null>(null);
+  useEffect(() => {
+    let alive = true;
+    if (!channelId || !lastSeenAt) {
+      setCount(null);
+      return;
+    }
+    void loadTimelineCache(channelId).then((entry) => {
+      if (!alive) {
+        return;
+      }
+      setCount(
+        entry
+          ? entry.messages.filter(
+              (m) =>
+                m.createdAt > lastSeenAt &&
+                m.authorPubkey !== selfPubkey &&
+                !m.deleted,
+            ).length
+          : null,
+      );
+    });
+    return () => {
+      alive = false;
+    };
+  }, [channelId, lastSeenAt, selfPubkey]);
+  return count;
+}
+
 function DmNavRow({
   selected,
   unread,
+  channelId,
+  lastSeenAt,
   participants,
   selfPubkey,
   profiles,
@@ -1390,6 +1485,9 @@ function DmNavRow({
 }: {
   selected: boolean;
   unread: boolean;
+  channelId: string | null;
+  /** Read marker (unix seconds) for the unread count, when known. */
+  lastSeenAt: number | null;
   participants: string[];
   selfPubkey: string | null;
   profiles: Map<string, Profile>;
@@ -1410,19 +1508,21 @@ function DmNavRow({
   // Per-agent working pulse in the sidebar: the store's freshness view of
   // THIS row's agent (multi-agent aware — several rows can pulse at once).
   const rowFrames = useAgentFrames(avatarPubkey || null);
-  const active = agentRecentlyActive(rowFrames, Math.floor(Date.now() / 1000));
+  const now = Math.floor(Date.now() / 1000);
+  const active = agentRecentlyActive(rowFrames, now);
   useTick(active);
+  const unreadCount = useCachedUnreadCount(channelId, lastSeenAt, selfPubkey);
   const row = (open: (x: number, y: number) => void) => (
     <button
       type="button"
       className={cn(
-        // Avatar-first, name-only rows (Sam 2026-09-02 DM mock), at the
-        // desktop's measured density: 26-28px row-to-row text pitch,
-        // 12px avatar-to-name gap, no excerpt/timestamp clutter.
-        "flex w-full items-center gap-3 rounded-lg px-3 py-0.5 text-left transition-colors",
+        // dm-list-spec.md §3: 32px rows, 8px-radius highlight inset 6px,
+        // 24px avatar at 14px (8px inside the highlight), 8px avatar→label
+        // gap, 4px badge inset on the right.
+        "flex h-8 w-full items-center gap-2 rounded-lg pl-1.5 pr-1 text-left transition-colors",
         "hover:bg-white/5",
-        selected &&
-          "rounded-full bg-[hsl(var(--sidebar-active))] px-3.5 py-1 text-[hsl(var(--sidebar-active-foreground))]",
+        // §5: flat solid #9A3EF6 fill, no ring, black label.
+        selected && "bg-[#9A3EF6]",
       )}
       onClick={() => {
         onSelect();
@@ -1437,51 +1537,63 @@ function DmNavRow({
           : undefined
       }
     >
-      <span className="relative shrink-0">
+      <span className="relative ml-2 shrink-0">
         {others.length > 1 ? (
-          <GroupAvatar count={others.length} />
+          <GroupAvatar count={others.length} dm />
         ) : (
           <AuthorAvatar
             pubkey={avatarPubkey}
             label={avatarLabel}
             picture={profiles.get(avatarPubkey)?.avatar}
-            size="md-sm"
+            size="dm"
           />
         )}
-        {others.length <= 1 &&
-          (active ? (
-            <span className="absolute -right-0.5 -bottom-0.5 flex h-2.5 w-2.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
-            </span>
-          ) : (
-            presence && (
-              <span
-                title={presence.status}
-                className={cn(
-                  "absolute -right-0.5 -bottom-0.5 h-2.5 w-2.5 rounded-full border border-sidebar",
-                  presenceDotClass(presence.status),
-                )}
-              />
-            )
-          ))}
+        {/* §8: 6px presence dot at the avatar's 45° bottom-right, ringed in
+            the page background (cut-out), 1:1 rows only. */}
+        {others.length <= 1 && presence && (
+          <span
+            title={presence.status}
+            className={cn(
+              "absolute bottom-[0.5px] right-[0.5px] size-1.5 rounded-full border-[1.5px] border-sidebar",
+              presenceDotClass(presence.status),
+            )}
+          />
+        )}
       </span>
       <span
         className={cn(
           "min-w-0 flex-1 truncate text-sm",
-          unread && !active && "font-bold",
+          // §4: read #A0A8C7 (500), unread #C4CFF2 (600), selected #000000.
+          selected
+            ? "font-medium text-black"
+            : unread
+              ? "font-semibold text-[#C4CFF2]"
+              : "font-medium text-[#A0A8C7]",
         )}
       >
         {name}
       </span>
-      {active && (
-        <WorkingBadge
-          startedAt={agentTurnStart(rowFrames) ?? rowFrames[0]?.createdAt ?? 0}
-          compact
-        />
-      )}
-      {unread && !active && (
-        <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-accent ring-2 ring-sidebar" />
+      {(active || (unread && !active)) && (
+        <span className="flex shrink-0 items-center gap-2">
+          {active && (
+            <DmTimerPill
+              startedAt={
+                agentTurnStart(rowFrames) ?? rowFrames[0]?.createdAt ?? now
+              }
+              now={now}
+              selected={selected}
+            />
+          )}
+          {/* §7: 20px badge; §6: the pill's right edge stays fixed whether
+              or not a badge is present — the 20px slot always reserves it. */}
+          {unread && !active ? (
+            <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-[#9A3EF6] text-[11px] font-bold leading-none text-black">
+              {unreadCount ?? ""}
+            </span>
+          ) : (
+            <span className="size-5 shrink-0" aria-hidden />
+          )}
+        </span>
       )}
     </button>
   );
