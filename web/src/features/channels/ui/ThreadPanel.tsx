@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { MessageBuffer, TimelineMessage } from "../lib/messageBuffer.ts";
 import type { ChannelMember, Profile } from "../hooks.ts";
 import {
@@ -6,8 +6,17 @@ import {
   resolveThreadReplyRef,
   threadRepliesOf,
 } from "../lib/threadTarget.ts";
+import { threadParticipants, threadSummaryLine } from "../lib/threadSummary.ts";
+import {
+  loadThreadReadState,
+  markThreadSeen,
+  saveThreadReadState,
+  threadSeenAt,
+  threadUnreadCount,
+} from "../lib/threadReadState.ts";
 import { authorLabel, ChannelTimeline } from "./ChannelTimeline.tsx";
 import { Composer } from "./Composer.tsx";
+import { ThreadParticipantStack } from "./ThreadParticipantStack.tsx";
 
 /**
  * Thread view in the desktop client's shape: a "Thread" header with the reply
@@ -15,6 +24,11 @@ import { Composer } from "./Composer.tsx";
  * buffer, and a composer that replies into the thread (NIP-10 root/reply
  * tags). At lg+ the panel docks right; its width comes from the shared
  * --thread-width CSS variable the shell maintains (drag handle there).
+ *
+ * The header carries what the desktop's thread summary carries: the
+ * participants as an overlapping avatar stack, the reply count, and when the
+ * last reply landed. Threads here stay FLAT by an explicit decision — no
+ * nesting, no depth guides, no collapse.
  *
  * The composer's NIP-10 `reply` marker names the message the author chose to
  * respond to — the thread root by default, or whichever reply the reader
@@ -61,11 +75,39 @@ export function ThreadPanel({
     setSelectedReplyId(null);
   }, [rootId]);
 
+  // Unread replies since this thread was last open.
+  //
+  // The marker is SNAPSHOT on open and then advanced. Reading it live would
+  // make the badge correct for one frame and zero forever after, because the
+  // same panel that displays the count is the thing that marks the thread
+  // read. See lib/threadReadState.ts for why the channel-level read state in
+  // lib/readState.ts cannot answer this question at all.
+  const [seenAtOnOpen, setSeenAtOnOpen] = useState(0);
+  useEffect(() => {
+    setSeenAtOnOpen(threadSeenAt(loadThreadReadState(), rootId));
+  }, [rootId]);
+  const newestReplyAt = lastReply.createdAt;
+  useEffect(() => {
+    const state = loadThreadReadState();
+    const next = markThreadSeen(state, rootId, newestReplyAt);
+    if (next !== state) {
+      saveThreadReadState(next);
+    }
+  }, [rootId, newestReplyAt]);
+  const unreadCount = threadUnreadCount(replies, seenAtOnOpen);
+
+  const participants = useMemo(
+    () => threadParticipants(root, replies),
+    [root, replies],
+  );
+  const summary = threadSummaryLine(
+    replies.length,
+    replies.length > 0 ? lastReply.createdAt : null,
+  );
+
   const threadRef = resolveThreadReplyRef(rootId, replies, selectedReplyId);
   const target = replyTargetMessage(rootId, replies, selectedReplyId);
-  const targetLabel = target
-    ? authorLabel(target.authorPubkey, profiles)
-    : null;
+  const rootAuthor = authorLabel(root.authorPubkey, profiles);
 
   return (
     // Below lg the thread is a full-screen sheet (safe-area aware) — a third
@@ -79,23 +121,46 @@ export function ThreadPanel({
       }
     >
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-secondary px-4">
-        <span className="text-base font-semibold">Replies</span>
-        {onSelectThinkingTab && (
-          <button
-            type="button"
-            className="rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
-            onClick={onSelectThinkingTab}
-          >
-            Thinking
-          </button>
-        )}
-        <span className="text-xs text-muted-foreground">
-          {replies.length} {replies.length === 1 ? "reply" : "replies"}
-        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-foreground">
+              Replies
+            </span>
+            {onSelectThinkingTab && (
+              <button
+                type="button"
+                className="rounded-md px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                onClick={onSelectThinkingTab}
+              >
+                Thinking
+              </button>
+            )}
+            {unreadCount > 0 && (
+              <span
+                data-testid="thread-unread-badge"
+                className="rounded-full bg-primary px-1.5 py-0.5 text-badge font-semibold text-primary-foreground"
+              >
+                {unreadCount} new
+              </span>
+            )}
+          </div>
+          <div className="mt-0.5 flex items-center gap-1.5">
+            <ThreadParticipantStack
+              participants={participants}
+              profiles={profiles}
+            />
+            <span
+              data-testid="thread-summary"
+              className="truncate text-2xs text-muted-foreground"
+            >
+              {summary}
+            </span>
+          </div>
+        </div>
         <button
           type="button"
           aria-label="Close thread"
-          className="ml-auto rounded p-1 text-sm text-muted-foreground hover:bg-accent"
+          className="shrink-0 rounded p-1 text-sm text-muted-foreground hover:bg-accent"
           onClick={onClose}
         >
           ✕
@@ -116,7 +181,19 @@ export function ThreadPanel({
         members={members}
         profiles={profiles}
         threadRef={threadRef}
-        replyTargetLabel={targetLabel}
+        replyTarget={
+          target
+            ? {
+                author: authorLabel(target.authorPubkey, profiles),
+                body: target.content,
+              }
+            : null
+        }
+        // With no mid-thread target the composer answers the thread itself, so
+        // the hint names its root author (the desktop's
+        // `Reply in thread to <head author>`). With a target, the placeholder
+        // falls through to "Reply to <author>" and the banner quotes them.
+        placeholder={target ? undefined : `Reply in thread to ${rootAuthor}`}
         onClearThread={() => {
           // Esc steps back one level: drop a mid-thread target first, and
           // only close the panel once the composer is aimed at the thread.
