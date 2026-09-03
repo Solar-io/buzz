@@ -5,15 +5,8 @@ import { cn } from "@/shared/lib/cn";
 
 // Ported from the desktop client's shared/ui/badge.tsx: a pill-shaped, uppercase,
 // wide-tracked label rather than the rounded-rect sentence-case chip web had.
-//
-// TODO(typography): the size step is `text-2xs` on desktop (0.6875rem / 11px at a
-// 16px type rem, defined in desktop/tailwind.config.js under
-// theme.extend.fontSize). Web's tailwind.config.js does not define that token
-// yet, so the literal below stands in for it. Once `text-2xs` exists in web's
-// config, replace `text-[0.6875rem]` with `text-2xs` — the value is identical, so
-// this is a pure token swap with no visual change.
 const badgeVariants = cva(
-  "inline-flex items-center rounded-full px-2 pb-[3px] pt-[5px] text-[0.6875rem] font-semibold uppercase leading-none tracking-[0.18em]",
+  "inline-flex items-center rounded-full px-2 pb-[3px] pt-[5px] text-2xs font-semibold uppercase leading-none tracking-[0.18em]",
   {
     variants: {
       variant: {
