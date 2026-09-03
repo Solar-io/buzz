@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { Search } from "lucide-react";
 import type { Profile } from "@/features/channels/hooks";
+import type { RelaySessionStatus } from "@/shared/api/relay-session";
 import {
   isMuted,
   type ChannelPrefs,
@@ -16,6 +17,7 @@ import { ChannelForum, ChannelGlyph } from "@/features/sidebar/ui/ChannelGlyph";
 import { DmNavRow } from "@/features/sidebar/ui/DmNavRow";
 import { SectionHeader } from "@/features/sidebar/ui/SectionHeader";
 import { SidebarNavButton } from "@/features/sidebar/ui/SidebarNavButton";
+import { RelayConnectionCard } from "@/features/sidebar/ui/RelayConnectionCard";
 import { SidebarProfileCard } from "@/features/sidebar/ui/SidebarProfileCard";
 import type { SidebarMenuItem } from "@/features/sidebar/lib/sidebarMenuItem";
 import { cn } from "@/shared/lib/cn";
@@ -90,6 +92,12 @@ export interface ChannelSidebarActions {
 export interface ChannelSidebarProps {
   /** Relay connection state — the header dot and the empty copy read it. */
   connected: boolean;
+  /**
+   * Full session status. `connected` is the boolean collapse of this; the
+   * connection card needs the states it discards (connecting vs reconnecting
+   * vs closed) to say anything useful.
+   */
+  relayStatus: RelaySessionStatus;
   /** Every visible channel, before sectioning (empty-state copy). */
   channelCount: number;
   /** Channel currently open (?c=), or undefined. */
@@ -108,6 +116,7 @@ export interface ChannelSidebarProps {
  */
 export function ChannelSidebar({
   connected,
+  relayStatus,
   channelCount,
   selectedId,
   lists,
@@ -158,6 +167,7 @@ export function ChannelSidebar({
           </kbd>
         </div>
       </div>
+      <RelayConnectionCard status={relayStatus} />
       <nav className="buzz-sidebar-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {channelCount === 0 && (
           <p className="px-2 py-4 text-sm text-muted-foreground">

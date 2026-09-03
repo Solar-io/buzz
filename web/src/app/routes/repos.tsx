@@ -108,7 +108,7 @@ function ChannelBrowser() {
   const dmName = (participantPubkeys: string[]): string =>
     dmDisplayName(participantPubkeys, selfPubkey ?? "", dmProfiles);
 
-  const { session } = useRelaySession();
+  const { session, status: relayStatus } = useRelaySession();
   const channelId = current?.id ?? "";
   const {
     messages,
@@ -411,6 +411,7 @@ function ChannelBrowser() {
   const sidebar = (
     <ChannelSidebar
       connected={connected}
+      relayStatus={relayStatus}
       channelCount={channels.length}
       selectedId={selectedId}
       lists={{
