@@ -12,6 +12,12 @@ import {
   type SearchHit,
   type SearchScope,
 } from "../lib/search.ts";
+import {
+  normalizeQuickQuery,
+  rankQuickTargets,
+  type QuickCandidate,
+  type QuickTarget,
+} from "../lib/quickSwitcher.ts";
 
 /**
  * Spotlight-style NIP-50 search over the channel header / ⌘K. One-shot REQ
@@ -26,6 +32,8 @@ export function SearchPanel({
   defaultChannelId,
   onOpenResult,
   initialQuery,
+  onJumpToChannel,
+  actions,
 }: {
   open: boolean;
   onClose: () => void;
@@ -36,6 +44,13 @@ export function SearchPanel({
   onOpenResult: (channelId: string, messageId: string) => void;
   /** Text typed into the sidebar's search field before opening, if any. */
   initialQuery?: string;
+  /** Jump to a channel or DM without a relay round-trip. */
+  onJumpToChannel: (channelId: string) => void;
+  /**
+   * Palette actions — "New channel", "Settings" and so on. Supplied by the
+   * shell because they are shell concerns; the panel only ranks and renders.
+   */
+  actions?: QuickCandidate[];
 }) {
   const { session } = useRelaySession();
   const [query, setQuery] = useState("");
@@ -109,6 +124,31 @@ export function SearchPanel({
     return (id: string) => map.get(id)?.name ?? "";
   }, [channels]);
 
+  /**
+   * Jump targets resolve from state the shell already holds, so they render
+   * on the first keystroke while message hits are still debounced behind a
+   * relay round-trip. Message search remains the panel's other half.
+   */
+  const targets: QuickTarget[] = useMemo(() => {
+    const candidates: QuickCandidate[] = [
+      ...channels.map((channel) => ({
+        id: channel.id,
+        kind: "channel" as const,
+        label: channel.name,
+        hint: channel.about || undefined,
+        weight: channel.updatedAt,
+      })),
+      ...(actions ?? []),
+    ];
+    return rankQuickTargets(normalizeQuickQuery(query), candidates, 6);
+  }, [channels, actions, query]);
+
+  const actionById = useMemo(() => {
+    const map = new Map<string, QuickCandidate>();
+    for (const action of actions ?? []) map.set(action.id, action);
+    return map;
+  }, [actions]);
+
   if (!open) {
     return null;
   }
@@ -134,8 +174,8 @@ export function SearchPanel({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             className="flex-1 bg-transparent py-1.5 text-base outline-hidden placeholder:text-muted-foreground"
-            placeholder="Search messages…"
-            aria-label="Search messages"
+            placeholder="Jump to a channel, or search messages…"
+            aria-label="Jump to a channel, or search messages"
           />
           <div className="flex overflow-hidden rounded-md border border-border text-xs">
             <button
@@ -164,6 +204,40 @@ export function SearchPanel({
           </div>
         </div>
         <div className="buzz-channel-activity-scrollbar max-h-[50vh] overflow-y-auto">
+          {targets.length > 0 && (
+            <div className="border-b border-border/50 py-1">
+              <p className="px-3 pb-1 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+                Jump to
+              </p>
+              {targets.map((target) => (
+                <button
+                  key={`${target.kind}:${target.id}`}
+                  type="button"
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-accent/50"
+                  onClick={() => {
+                    if (target.kind === "action") {
+                      actionById.get(target.id)?.onSelect?.();
+                    } else {
+                      onJumpToChannel(target.id);
+                    }
+                    onClose();
+                  }}
+                >
+                  <span aria-hidden className="text-muted-foreground">
+                    {target.kind === "action" ? "⌘" : "#"}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-sm">
+                    {target.label}
+                  </span>
+                  {target.hint && (
+                    <span className="hidden max-w-[50%] truncate text-xs text-muted-foreground sm:block">
+                      {target.hint}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
           {searching && hits.length === 0 && (
             <p className="px-4 py-3 text-sm text-muted-foreground">
               Searching…

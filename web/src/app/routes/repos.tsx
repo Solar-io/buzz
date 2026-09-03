@@ -325,6 +325,52 @@ function ChannelBrowser() {
     setThreadRootId(null);
     void navigate({ to: "/repos", search: { c: channelId } });
   };
+
+  /**
+   * Actions the ⌘K palette offers alongside channel jumps. Defined here
+   * rather than in the panel because every one of them is a shell concern —
+   * the panel ranks and renders, the shell decides what the app can do.
+   */
+  const paletteActions = useMemo(
+    () => [
+      {
+        id: "action:new-channel",
+        kind: "action" as const,
+        label: "New channel",
+        keywords: ["create", "add", "channel"],
+        onSelect: () => setNewChannelOpen(true),
+      },
+      {
+        id: "action:new-dm",
+        kind: "action" as const,
+        label: "New message",
+        keywords: ["dm", "direct", "message", "person"],
+        onSelect: () => setNewDmOpen(true),
+      },
+      {
+        id: "action:files",
+        kind: "action" as const,
+        label: "Files",
+        keywords: ["files", "browse"],
+        onSelect: () => setFilesOpen(true),
+      },
+      {
+        id: "action:settings",
+        kind: "action" as const,
+        label: "Settings",
+        keywords: ["settings", "preferences", "theme", "appearance"],
+        onSelect: () => void navigate({ to: "/repos/settings" }),
+      },
+      {
+        id: "action:agents",
+        kind: "action" as const,
+        label: "Agents",
+        keywords: ["agents", "bots"],
+        onSelect: () => void navigate({ to: "/repos/agents" }),
+      },
+    ],
+    [navigate],
+  );
   const closeChannel = () => {
     void navigate({ to: "/repos", search: { c: undefined } });
   };
@@ -678,6 +724,8 @@ function ChannelBrowser() {
         open={searchOpen}
         onClose={closeSearch}
         initialQuery={sidebarQuery}
+        onJumpToChannel={(id) => selectChannel(id)}
+        actions={paletteActions}
         channels={channels}
         profiles={profiles}
         defaultChannelId={current?.id ?? null}
