@@ -1389,10 +1389,10 @@ function shortDate(unixSeconds: number): string {
  */
 function GroupAvatar({ count, dm }: { count: number; dm?: boolean }) {
   if (dm) {
-    // Desktop source (SidebarSection.tsx channel-dm-count): 24px circle,
-    // sidebar-accent/80 fill, 11px semibold foreground numeral.
+    // B-target palette (dm-list-diff.md): #191926 fill, #C5CFF2 numeral;
+    // 11px semibold per the desktop source (text-2xs).
     return (
-      <span className="dm-identicon flex size-6 shrink-0 items-center justify-center rounded-full font-semibold leading-none">
+      <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[#191926] text-[11px] font-semibold leading-none text-[#C5CFF2]">
         <span className="translate-x-px leading-none">{count}</span>
       </span>
     );
@@ -1561,7 +1561,7 @@ function DmNavRow({
           <span
             title={presence.status}
             className={cn(
-              "absolute -bottom-[1.2px] -right-[1.2px] size-1.5 rounded-full border-[1.8px] border-sidebar",
+              "absolute -bottom-px -right-px size-1.5 rounded-full border-[1.5px] border-sidebar",
               presenceDotClass(presence.status),
             )}
           />
@@ -1570,14 +1570,13 @@ function DmNavRow({
       <span
         className={cn(
           "min-w-0 flex-1 truncate text-sm",
-          // Desktop source (SidebarSection row): read = normal weight at 80%
-          // foreground; unread = bold at full foreground; active = normal
-          // black (data-[active=true]:font-normal).
+          // B-target palette (dm-list-diff.md Defect 2): read #A0A8C7,
+          // unread #C4CFF2, selected #000000.
           selected
             ? "font-normal text-black"
             : unread
-              ? "font-bold text-sidebar-foreground"
-              : "font-normal text-sidebar-foreground/80",
+              ? "font-semibold text-[#C4CFF2]"
+              : "font-normal text-[#A0A8C7]",
         )}
       >
         {name}
