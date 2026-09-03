@@ -106,7 +106,6 @@ import { ownPubkey, type SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { AppShell, useDrawerClose } from "@/shared/layout/AppShell";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { cn } from "@/shared/lib/cn";
-import { loadTimelineCache } from "@/features/channels/lib/timelineCache.ts";
 
 /**
  * The app lives at /repos — the one browser-servable path the relay's
@@ -1432,13 +1431,16 @@ function DmTimerPill({
 }
 
 /**
- * Unread count for a DM row. First source: the persistent timeline cache
- * (messages from others newer than the read marker). When the cache is cold
- * — that DM was never opened on this machine — one bounded one-shot REQ
- * counts messages since the read marker from the relay, so the badge gets a
- * real number instead of an empty circle.
+ * Unread count for a DM row: one bounded one-shot REQ counting the other
+ * party's messages newer than the read marker. The relay is the only honest
+ * source — a closed DM's timeline cache is stale by definition, so counting
+ * from it would miss exactly the messages that make the row unread.
+ * Module-level in-flight map keeps one REQ per (channel, marker) even as
+ * rows re-render.
  */
-function useCachedUnreadCount(
+const unreadCountInFlight = new Set<string>();
+
+function useUnreadCount(
   channelId: string | null,
   lastSeenAt: number | null,
   selfPubkey: string | null,
@@ -1446,46 +1448,31 @@ function useCachedUnreadCount(
   const { session } = useRelaySession();
   const [count, setCount] = useState<number | null>(null);
   useEffect(() => {
-    let alive = true;
     if (!channelId || !lastSeenAt) {
       setCount(null);
       return;
     }
-    void loadTimelineCache(channelId).then((entry) => {
-      if (!alive) {
-        return;
-      }
-      if (entry) {
-        setCount(
-          entry.messages.filter(
-            (m) =>
-              m.createdAt > lastSeenAt &&
-              m.authorPubkey !== selfPubkey &&
-              !m.deleted,
-          ).length,
-        );
-        return;
-      }
-      // Cold cache: ask the relay directly (bounded one-shot).
-      let seen = 0;
-      const unsubscribe = session.subscribe(
-        { kinds: [9], "#h": [channelId], since: lastSeenAt, limit: 200 },
-        {
-          onEvent: (event: SignedNostrEvent) => {
-            if (event.pubkey !== selfPubkey) {
-              seen += 1;
-            }
-            if (alive) {
-              setCount(seen);
-            }
-          },
-          onEose: () => unsubscribe(),
+    const key = `${channelId}:${lastSeenAt}`;
+    if (unreadCountInFlight.has(key)) {
+      return;
+    }
+    unreadCountInFlight.add(key);
+    let seen = 0;
+    const unsubscribe = session.subscribe(
+      { kinds: [9], "#h": [channelId], since: lastSeenAt, limit: 200 },
+      {
+        onEvent: (event: SignedNostrEvent) => {
+          if (event.pubkey !== selfPubkey) {
+            seen += 1;
+            setCount(seen);
+          }
         },
-      );
-    });
-    return () => {
-      alive = false;
-    };
+        onEose: () => {
+          unreadCountInFlight.delete(key);
+          unsubscribe();
+        },
+      },
+    );
   }, [channelId, lastSeenAt, selfPubkey, session]);
   return count;
 }
@@ -1530,7 +1517,7 @@ function DmNavRow({
   const now = Math.floor(Date.now() / 1000);
   const active = agentRecentlyActive(rowFrames, now);
   useTick(active);
-  const unreadCount = useCachedUnreadCount(channelId, lastSeenAt, selfPubkey);
+  const unreadCount = useUnreadCount(channelId, lastSeenAt, selfPubkey);
   const row = (open: (x: number, y: number) => void) => (
     <button
       type="button"
