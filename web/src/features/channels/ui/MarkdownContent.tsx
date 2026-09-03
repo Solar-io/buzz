@@ -10,6 +10,7 @@ import { useSnapshotPreview } from "@/features/agents/ui/SnapshotPreviewProvider
 import type { ImetaEntry } from "../lib/imetaEntries.ts";
 import { mentionSetsEqual } from "../lib/mentionSets.ts";
 import { mentionParts } from "../lib/mentionParts.ts";
+import { CodeBlock, extractLanguage } from "./CodeBlock";
 import { resolveSnapshotCard } from "../lib/snapshotCard.ts";
 import { SnapshotCard } from "./SnapshotCard.tsx";
 
@@ -138,6 +139,30 @@ export const MarkdownContent = memo(
             img: ({ src, alt }) => (
               <SignedMedia src={String(src)} alt={alt ?? ""} />
             ),
+            // react-markdown hands fenced blocks to `code` wrapped in a
+            // `pre`; inline code arrives here too, distinguished only by the
+            // absence of a language class and of a newline. Only fenced
+            // blocks become CodeBlock — inline `code` must stay inline.
+            code: ({ className, children, ...rest }) => {
+              const language = extractLanguage(className);
+              const text = nodeText(children);
+              const fenced = language !== "" || text.includes("\n");
+              if (!fenced) {
+                return (
+                  <code className={className} {...rest}>
+                    {children}
+                  </code>
+                );
+              }
+              return (
+                <CodeBlock code={text.replace(/\n$/, "")} language={language}>
+                  {children}
+                </CodeBlock>
+              );
+            },
+            // CodeBlock renders its own <pre>; without this react-markdown
+            // would nest one inside another and the layout would double up.
+            pre: ({ children }) => <>{children}</>,
           }}
         >
           {content}
