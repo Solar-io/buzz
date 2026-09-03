@@ -1,4 +1,5 @@
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
+import { imetaByUrl, type ImetaEntry } from "./imetaEntries.ts";
 
 /** Kinds that render in a channel timeline (mirrors the CLI list filter). */
 export const TIMELINE_KINDS = [9, 40002, 40008, 45001, 45003] as const;
@@ -6,6 +7,9 @@ export const TIMELINE_KINDS = [9, 40002, 40008, 45001, 45003] as const;
 export const EDIT_KIND = 40003;
 /** Kind 5: NIP-09 deletion request (e tag = target; h keeps it channel-scoped). */
 export const DELETE_KIND = 5;
+
+/** Reference-stable empty map — messages without imeta tags share it. */
+const EMPTY_IMETA: Map<string, ImetaEntry> = new Map();
 
 export interface TimelineMessage {
   id: string;
@@ -20,6 +24,13 @@ export interface TimelineMessage {
   replyToId: string | null;
   /** Mentioned pubkeys from p tags. */
   mentionPubkeys: string[];
+  /**
+   * NIP-92 attachment metadata (url → entry), read at parse time. Snapshot
+   * cards classify their links through this map. A construction-time
+   * constant: edits replace content only and never mutate it (overlays copy
+   * the field by reference — pinned by the buffer suite).
+   */
+  imetaByUrl: Map<string, ImetaEntry>;
   /** Edit overlay present (renders the "(edited)" marker). */
   edited: boolean;
   /** Deleted via kind 5 — rows hide rather than render. */
@@ -55,6 +66,9 @@ export function timelineMessageFromEvent(
     }
   }
 
+  const attachments = event.tags.some((tag) => tag[0] === "imeta")
+    ? imetaByUrl(event.tags)
+    : EMPTY_IMETA;
   return {
     id: event.id,
     channelId,
@@ -67,6 +81,7 @@ export function timelineMessageFromEvent(
     mentionPubkeys: event.tags
       .filter((tag) => tag[0] === "p" && typeof tag[1] === "string")
       .map((tag) => tag[1]),
+    imetaByUrl: attachments,
     edited: false,
     deleted: false,
   };

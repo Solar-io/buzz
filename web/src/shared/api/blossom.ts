@@ -243,3 +243,27 @@ export async function fetchSignedMedia(url: string): Promise<string> {
   objectUrlCache.set(url, objectUrl);
   return objectUrl;
 }
+
+/**
+ * Signed GET returning the RAW bytes — for callers that verify hashes or
+ * parse the payload (snapshot cards) rather than render it. Deliberately NOT
+ * object-URL cached and NOT routed through fetchSignedMedia: hashing must see
+ * the exact bytes, and fetchSignedMedia's Blob keeps the response MIME for
+ * <img> rendering, which byte consumers don't want.
+ */
+export async function fetchSignedBytes(url: string): Promise<Uint8Array> {
+  const authorization = await buildAuthorization("get", {
+    content: "Get media",
+    targetUrl: url,
+  });
+  const headers: Record<string, string> = { Authorization: authorization };
+  const authTag = getAuthTagJson();
+  if (authTag) {
+    headers["x-auth-tag"] = authTag;
+  }
+  const response = await fetch(url, { headers });
+  if (!response.ok) {
+    throw new Error(`Media fetch failed (${response.status})`);
+  }
+  return new Uint8Array(await response.arrayBuffer());
+}

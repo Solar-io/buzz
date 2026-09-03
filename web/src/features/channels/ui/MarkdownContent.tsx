@@ -6,8 +6,12 @@ import { fetchSignedMedia } from "@/shared/api/blossom";
 import { relayHttpBaseUrl } from "@/shared/lib/relay-url";
 import { openLink } from "@/shared/lib/linkOpen";
 import { Lightbox } from "@/shared/ui/Lightbox";
+import { useSnapshotPreview } from "@/features/agents/ui/SnapshotPreviewProvider";
+import type { ImetaEntry } from "../lib/imetaEntries.ts";
 import { mentionSetsEqual } from "../lib/mentionSets.ts";
 import { mentionParts } from "../lib/mentionParts.ts";
+import { resolveSnapshotCard } from "../lib/snapshotCard.ts";
+import { SnapshotCard } from "./SnapshotCard.tsx";
 
 /**
  * Message links must never navigate the SPA tab away. Plain links open in a
@@ -56,22 +60,47 @@ function MessageLink({
   );
 }
 
+/** Flatten anchor children to their literal text (the card-classifier label). */
+function nodeText(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") {
+    return String(node);
+  }
+  if (Array.isArray(node)) {
+    return node.map(nodeText).join("");
+  }
+  return "";
+}
+
 /**
  * Render message markdown. react-markdown does not render raw HTML by
  * default, so content is structurally sanitized. @mention tokens get a
  * distinct style so addressed readers scan faster.
  *
+ * Snapshot links: when an imeta map is supplied (ChannelTimeline/ThreadPanel)
+ * and a link classifies as a snapshot candidate, it renders as a SnapshotCard
+ * instead of a plain link (desktop markdown.tsx parity). Without imeta the
+ * same link degrades to a plain link — same as the desktop.
+ *
  * memo uses a custom comparator: a fresh Set instance must NOT bust the
- * memo (see lib/mentionSets.ts).
+ * memo (see lib/mentionSets.ts). The imeta map compares BY REFERENCE — it is
+ * a per-message construction-time constant (messageBuffer.ts), so reference
+ * equality is the correct identity.
  */
 export const MarkdownContent = memo(
   function MarkdownContent({
     content,
     mentionNames,
+    imetaByUrl,
+    snapshotSharedBy,
   }: {
     content: string;
     mentionNames: ReadonlySet<string>;
+    /** NIP-92 attachment metadata for this message, from TimelineMessage. */
+    imetaByUrl?: Map<string, ImetaEntry>;
+    /** Author label for the "Shared by" line on snapshot cards. */
+    snapshotSharedBy?: string;
   }) {
+    const openSnapshotPreview = useSnapshotPreview();
     return (
       <div className="message-prose prose dark:prose-invert max-w-none break-words prose-p:my-1 prose-pre:my-2 prose-pre:font-mono prose-code:before:content-none prose-code:after:content-none">
         <ReactMarkdown
@@ -81,9 +110,31 @@ export const MarkdownContent = memo(
             li: ({ children }) => (
               <li>{withMentions(children, mentionNames)}</li>
             ),
-            a: ({ href, children }) => (
-              <MessageLink href={href}>{children}</MessageLink>
-            ),
+            a: ({ href, children }) => {
+              // Exact-match lookup, mirroring the desktop markdown.tsx
+              // (`imetaByUrl?.get(href)`).
+              const card = imetaByUrl
+                ? resolveSnapshotCard(
+                    imetaByUrl.get(String(href ?? "")),
+                    href,
+                    nodeText(children),
+                  )
+                : null;
+              if (card) {
+                return (
+                  <SnapshotCard
+                    card={card}
+                    sharedBy={snapshotSharedBy}
+                    onPreview={
+                      openSnapshotPreview
+                        ? () => openSnapshotPreview(card, snapshotSharedBy)
+                        : undefined
+                    }
+                  />
+                );
+              }
+              return <MessageLink href={href}>{children}</MessageLink>;
+            },
             img: ({ src, alt }) => (
               <SignedMedia src={String(src)} alt={alt ?? ""} />
             ),
@@ -96,7 +147,9 @@ export const MarkdownContent = memo(
   },
   (prev, next) =>
     prev.content === next.content &&
-    mentionSetsEqual(prev.mentionNames, next.mentionNames),
+    mentionSetsEqual(prev.mentionNames, next.mentionNames) &&
+    prev.imetaByUrl === next.imetaByUrl &&
+    prev.snapshotSharedBy === next.snapshotSharedBy,
 );
 
 /** Wrap @Name text nodes in a styled span (names matched case-insensitively). */

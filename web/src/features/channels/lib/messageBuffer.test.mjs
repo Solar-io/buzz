@@ -186,3 +186,41 @@ test("applyOverlay delete hides the row; unknown targets reuse the reference", (
   const noContent = applyOverlay(buffer, EDIT_KIND, "tgt", null);
   assert.equal(noContent, buffer, "null content is a no-op");
 });
+
+test("imeta tags parse into a per-message url map; edits never touch it", () => {
+  const sha = "ab".repeat(32);
+  const url = "https://relay.example/media/aa11";
+  const withImeta = timelineMessageFromEvent(
+    event({
+      content: `Shared [Night Shift](${url})`,
+      tags: [
+        ["h", "chan-1"],
+        [
+          "imeta",
+          `url ${url}`,
+          "m image/png",
+          `x ${sha}`,
+          "size 2048",
+          "filename night-shift.agent.png",
+        ],
+      ],
+    }),
+  );
+  // One real-world-shaped snapshot share event: markdown anchor + imeta tag.
+  assert.equal(withImeta.imetaByUrl.get(url).filename, "night-shift.agent.png");
+  assert.equal(withImeta.imetaByUrl.get(url).x, sha);
+
+  // Reference-stable empty default, and overlays preserve the map by
+  // reference (edits replace content only).
+  const plainA = timelineMessageFromEvent(event({ id: "p1" }));
+  const plainB = timelineMessageFromEvent(event({ id: "p2" }));
+  assert.equal(plainA.imetaByUrl.size, 0);
+  assert.equal(plainA.imetaByUrl, plainB.imetaByUrl);
+  const edited = applyOverlay(
+    [withImeta],
+    EDIT_KIND,
+    withImeta.id,
+    "edited body",
+  );
+  assert.equal(edited[0].imetaByUrl, withImeta.imetaByUrl);
+});
