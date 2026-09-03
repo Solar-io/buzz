@@ -10,6 +10,7 @@ import {
 } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkSpoilers from "@/shared/lib/remarkSpoilers";
 import { toast } from "sonner";
 import { fetchSignedMedia } from "@/shared/api/blossom";
 import { relayHttpBaseUrl } from "@/shared/lib/relay-url";
@@ -20,6 +21,7 @@ import type { ImetaEntry } from "../lib/imetaEntries.ts";
 import { mentionSetsEqual } from "../lib/mentionSets.ts";
 import { mentionParts } from "../lib/mentionParts.ts";
 import { CodeBlock, extractLanguage } from "./CodeBlock";
+import { Spoiler } from "./Spoiler";
 import { resolveSnapshotCard } from "../lib/snapshotCard.ts";
 import { SnapshotCard } from "./SnapshotCard.tsx";
 import { galleryFromTriggers, resolveFileCard } from "../lib/messageMedia.ts";
@@ -210,6 +212,18 @@ export const MarkdownContent = memo(
           return <p>{withMentions(children, mentionNames)}</p>;
         },
         li: ({ children }) => <li>{withMentions(children, mentionNames)}</li>,
+        // remarkSpoilers emits a <spoiler> element. Without an entry here
+        // react-markdown drops the unknown tag and renders the hidden text
+        // plainly — which is worse than not supporting spoilers at all,
+        // because the author believes it is concealed.
+        // react-markdown's Components type has no key for a custom element,
+        // hence the cast — kept to this one entry rather than widening the
+        // whole map and losing inference on every other renderer.
+        ...({
+          spoiler: ({ children }: { children?: ReactNode }) => (
+            <Spoiler>{children}</Spoiler>
+          ),
+        } as Partial<Components>),
         a: ({ href, children }) => {
           // Exact-match lookup, mirroring the desktop markdown.tsx
           // (`imetaByUrl?.get(href)`).
@@ -275,7 +289,10 @@ export const MarkdownContent = memo(
           ref={rootRef}
           className="message-prose prose dark:prose-invert max-w-none break-words prose-p:my-1 prose-pre:my-2 prose-pre:font-mono prose-code:before:content-none prose-code:after:content-none"
         >
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm, remarkSpoilers]}
+            components={components}
+          >
             {content}
           </ReactMarkdown>
         </div>
