@@ -10,6 +10,10 @@ const TIE_LOW_PK = "33".repeat(32); // same updatedAt as TIE_HIGH
 const TIE_HIGH_PK = "44".repeat(32); // same updatedAt, higher pubkey → keeper
 const SOLO_PK = "55".repeat(32); // unique name, claimed
 const GONE_PK = "66".repeat(32); // unique name, unclaimed
+// 9/2 rekey incident shape: the LIVE key is an older registration a desktop
+// catalog still claims; a newer unclaimed re-mint twin shares its name.
+const LIVE_OLD_PK = "77".repeat(32); // OLDER updatedAt, catalog-claimed (live seat)
+const LIVE_TWIN_PK = "88".repeat(32); // NEWER updatedAt, unclaimed re-mint twin
 
 function entry(pubkey, name, updatedAt) {
   return {
@@ -109,11 +113,57 @@ test("claims union across machines", () => {
 });
 
 test("duplicatePubkeys badges only the non-keepers", () => {
-  const dupes = duplicatePubkeys(REGISTRY);
+  const dupes = duplicatePubkeys(REGISTRY, []);
   assert.equal(dupes.has(OLD_PK), true);
   assert.equal(dupes.has(TIE_LOW_PK), true);
   assert.equal(dupes.has(NEW_PK), false);
   assert.equal(dupes.has(TIE_HIGH_PK), false);
   assert.equal(dupes.has(SOLO_PK), false);
   assert.equal(dupes.has(GONE_PK), false);
+});
+
+// The 9/2 incident, as a test: liveness outranks recency. A catalog-claimed
+// member of a duplicate group is the keeper EVEN WHEN a twin carries a newer
+// updatedAt — the old keeper rule (newest-updatedAt-wins) flagged exactly
+// these live keys as "older duplicates" and the cleanup deleted them.
+test("catalog-claimed member wins keeper despite older updatedAt", () => {
+  const reg = [
+    entry(LIVE_TWIN_PK, "Night Shift", 3000), // newer, no desktop claims it
+    entry(LIVE_OLD_PK, "night shift", 1000), // older, crichton still runs it
+  ];
+  const stale = findStaleAgents(reg, [
+    catalog("crichton.local", [LIVE_OLD_PK]),
+  ]);
+  const reasons = new Map(stale.map((row) => [row.pubkey, row.reason]));
+  assert.equal(reasons.get(LIVE_OLD_PK), undefined);
+  assert.equal(
+    reasons.get(LIVE_TWIN_PK),
+    "newer unclaimed duplicate of night shift",
+  );
+});
+
+test("duplicatePubkeys badges the unclaimed twin, not the claimed live key", () => {
+  const reg = [
+    entry(LIVE_TWIN_PK, "Night Shift", 3000),
+    entry(LIVE_OLD_PK, "night shift", 1000),
+  ];
+  const dupes = duplicatePubkeys(reg, [
+    catalog("crichton.local", [LIVE_OLD_PK]),
+  ]);
+  assert.equal(dupes.has(LIVE_OLD_PK), false);
+  assert.equal(dupes.has(LIVE_TWIN_PK), true);
+});
+
+test("two claimed members: newest updatedAt among the claimed wins", () => {
+  const reg = [
+    entry(LIVE_TWIN_PK, "Night Shift", 3000), // claimed AND newer
+    entry(LIVE_OLD_PK, "night shift", 1000), // claimed, older
+  ];
+  const stale = findStaleAgents(reg, [
+    catalog("crichton.local", [LIVE_OLD_PK, LIVE_TWIN_PK]),
+  ]);
+  const reasons = new Map(stale.map((row) => [row.pubkey, row.reason]));
+  // Both live — flagged only by the duplicate rule, older one out.
+  assert.equal(reasons.get(LIVE_TWIN_PK), undefined);
+  assert.equal(reasons.get(LIVE_OLD_PK), "older duplicate of Night Shift");
 });

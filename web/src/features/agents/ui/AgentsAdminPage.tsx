@@ -48,7 +48,8 @@ function newRequestId(): string {
  * the owner's Buzz Desktop through its own save paths, acking on kind 24202.
  * The live harness list and machine targeting come from each desktop's
  * kind-30180 catalog; stale registrations (old re-mints, retired desktops)
- * are detected from registry + catalogs and cleaned with delete commands.
+ * are detected from registry + catalogs and cleaned with unregister commands
+ * (relay-side removal only — never a key-wiping delete).
  */
 export function AgentsAdminPage() {
   const { canSign } = useAuth();
@@ -125,7 +126,10 @@ function AgentRegistryList({
   const profiles = useProfiles(pubkeys);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
-  const duplicates = useMemo(() => duplicatePubkeys(registry), [registry]);
+  const duplicates = useMemo(
+    () => duplicatePubkeys(registry, catalogs),
+    [registry, catalogs],
+  );
 
   if (registry.length === 0) {
     return (
@@ -254,9 +258,11 @@ function AgentRegistryList({
 }
 
 /**
- * Stale-registration cleanup: older duplicates from key re-mints and
- * registrations no published desktop reports. Every row is a delete command
- * (forceRemoteDelete) the owner confirms; nothing is removed automatically.
+ * Stale-registration cleanup: non-keeper duplicates from key re-mints and
+ * registrations no published desktop reports. Every row sends an
+ * UNREGISTER command — tombstone + archive the relay registration only; no
+ * process is stopped, no local record removed, no key wiped. Delete is a
+ * separate, deliberate action for real removals.
  */
 function StaleCleanupSection({
   registry,
@@ -293,10 +299,10 @@ function StaleCleanupSection({
     for (const entry of selected) {
       void admin.send(
         {
-          action: "delete",
-          request: { pubkey: entry.pubkey, forceRemoteDelete: true },
+          action: "unregister",
+          request: { pubkey: entry.pubkey },
         },
-        `Delete ${entry.name} (${entry.reason})`,
+        `Unregister ${entry.name} (${entry.reason})`,
       );
     }
     setOpen(false);
@@ -333,7 +339,7 @@ function StaleCleanupSection({
                   type="checkbox"
                   checked={checked.has(entry.pubkey)}
                   onChange={() => toggle(entry.pubkey)}
-                  aria-label={`Delete ${entry.name}`}
+                  aria-label={`Unregister ${entry.name}`}
                 />
                 <span className="min-w-0 flex-1 truncate">
                   <span className="font-medium">{entry.name}</span>{" "}
@@ -349,16 +355,16 @@ function StaleCleanupSection({
           </ul>
           <div className="flex items-center justify-between">
             <p className="text-xs text-muted-foreground">
-              Each row sends a delete command (tombstones the 30177 even if no
-              desktop has a local record).
+              Each row sends an unregister command — tombstones and archives the
+              relay registration only. No process is stopped, no key is deleted.
             </p>
             <Button
               size="sm"
-              variant="destructive"
+              variant="outline"
               disabled={selected.length === 0}
               onClick={runCleanup}
             >
-              Delete {selected.length} stale registration
+              Unregister {selected.length} stale registration
               {selected.length === 1 ? "" : "s"}
             </Button>
           </div>

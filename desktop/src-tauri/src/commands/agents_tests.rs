@@ -694,3 +694,36 @@ fn owner_only_access_deploy_payload_clamps_stale_access() {
         "owner-only-access deploy payload retained a stale allowlist"
     );
 }
+
+#[test]
+fn agent_is_running_matches_pubkey_across_relay_urls() {
+    use crate::managed_agents::ManagedAgentRuntimeKey;
+    // Two entries for the same pubkey (two relay URLs) must both count: the
+    // guard asks "does this agent have a live process", not "this exact pair".
+    let key_a = ManagedAgentRuntimeKey::new("aa".repeat(32), "ws://one").unwrap();
+    let key_b = ManagedAgentRuntimeKey::new("aa".repeat(32), "ws://two").unwrap();
+    let other = ManagedAgentRuntimeKey::new("bb".repeat(32), "ws://one").unwrap();
+    let keys = vec![&key_a, &other];
+    assert!(agent_is_running(&"aa".repeat(32), keys.iter().copied()));
+    assert!(!agent_is_running(&"bb".repeat(32), std::iter::once(&key_b).filter(|_| false)));
+    // Same pubkey, second relay URL alone — still one agent, one life.
+    assert!(agent_is_running(&"aa".repeat(32), std::iter::once(&key_b)));
+    // Empty runtime map: nothing is running.
+    assert!(!agent_is_running(&"aa".repeat(32), std::iter::empty()));
+}
+
+#[test]
+fn running_delete_guard_refuses_unforced_and_allows_forced() {
+    // The 9/2 incident as a unit: a running agent must refuse delete unless
+    // the caller explicitly forces it, and the error must say how to recover.
+    let refusal = running_delete_guard("aa".repeat(32).as_str(), true, false).unwrap_err();
+    assert!(refusal.contains("is running"), "refusal must name the state: {refusal}");
+    assert!(
+        refusal.contains("force_running_delete"),
+        "refusal must name the escape hatch: {refusal}"
+    );
+    // Not running → allowed without force.
+    assert!(running_delete_guard("aa".repeat(32).as_str(), false, false).is_ok());
+    // Running + explicit force → allowed (deliberate owner action).
+    assert!(running_delete_guard("aa".repeat(32).as_str(), true, true).is_ok());
+}

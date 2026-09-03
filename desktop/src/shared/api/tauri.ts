@@ -823,11 +823,23 @@ export async function createManagedAgent(input: CreateManagedAgentInput) {
 export async function deleteManagedAgent(
   pubkey: string,
   forceRemoteDelete?: boolean,
+  forceRunningDelete?: boolean,
 ): Promise<void> {
   await invokeTauri("delete_managed_agent", {
     pubkey,
     forceRemoteDelete: forceRemoteDelete ?? null,
+    forceRunningDelete: forceRunningDelete ?? null,
   });
+}
+
+/**
+ * Remove the RELAY registration for an agent (kind-5 tombstone + NIP-IA
+ * archive) without stopping a process, removing a local record, or touching
+ * the keyring. Refuses agents this desktop owns locally — those must go
+ * through delete (the reconciler would otherwise re-publish the 30177).
+ */
+export async function unregisterManagedAgent(pubkey: string): Promise<void> {
+  await invokeTauri("unregister_managed_agent", { pubkey });
 }
 
 export async function getManagedAgentLog(pubkey: string, lineCount?: number) {

@@ -52,6 +52,9 @@ test("parseAdminCommand accepts update/delete/start/stop by pubkey", () => {
   assert.equal(start.command.action, "start");
   const stop = parseAdminCommand(envelope("stop", { pubkey: PK }));
   assert.equal(stop.command.action, "stop");
+  const unreg = parseAdminCommand(envelope("unregister", { pubkey: PK }));
+  assert.equal(unreg.command.action, "unregister");
+  assert.deepEqual(unreg.command.request, { pubkey: PK });
 });
 
 test("parseAdminCommand rejects wrong type, missing fields, bad pubkeys, unknown action", () => {
@@ -59,6 +62,10 @@ test("parseAdminCommand rejects wrong type, missing fields, bad pubkeys, unknown
   assert.equal(parseAdminCommand({ type: "other" }), null);
   assert.equal(parseAdminCommand(envelope("create", { name: "x" })), null);
   assert.equal(parseAdminCommand(envelope("delete", { pubkey: "zz" })), null);
+  assert.equal(
+    parseAdminCommand(envelope("unregister", { pubkey: "zz" })),
+    null,
+  );
   assert.equal(parseAdminCommand(envelope("explode", { pubkey: PK })), null);
   assert.equal(
     parseAdminCommand(

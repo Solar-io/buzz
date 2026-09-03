@@ -3,6 +3,7 @@ import * as React from "react";
 import {
   createManagedAgent,
   deleteManagedAgent,
+  unregisterManagedAgent,
   updateManagedAgent,
 } from "@/shared/api/tauri";
 import {
@@ -193,6 +194,9 @@ async function applyOwnerAdminCommand(
     }
     case "delete":
       await deleteManagedAgent(command.pubkey, command.forceRemoteDelete);
+      return null;
+    case "unregister":
+      await unregisterManagedAgent(command.pubkey);
       return null;
     case "start":
       await startManagedAgent(command.pubkey);

@@ -73,6 +73,16 @@ export interface DeleteAgentRequest {
   forceRemoteDelete?: boolean;
 }
 
+/**
+ * Remove an agent's RELAY registration only — kind-5 tombstone + NIP-IA
+ * archive — without stopping a process, touching the local record, or
+ * wiping the keyring key. The stale-cleanup path sends this, never delete:
+ * delete is for real removals and destroys the (unrecoverable) agent key.
+ */
+export interface UnregisterAgentRequest {
+  pubkey: string;
+}
+
 export interface StartAgentRequest {
   pubkey: string;
 }
@@ -85,6 +95,7 @@ export type AdminCommand =
   | { action: "create"; request: CreateAgentRequest }
   | { action: "update"; request: UpdateAgentRequest }
   | { action: "delete"; request: DeleteAgentRequest }
+  | { action: "unregister"; request: UnregisterAgentRequest }
   | { action: "start"; request: StartAgentRequest }
   | { action: "stop"; request: StopAgentRequest };
 
@@ -300,6 +311,7 @@ export function parseAdminCommand(
       break;
     case "start":
     case "stop":
+    case "unregister":
       if (!isText(request.pubkey) || !PUBKEY_RE.test(request.pubkey)) {
         return null;
       }

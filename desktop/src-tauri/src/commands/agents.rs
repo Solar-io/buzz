@@ -1087,12 +1087,40 @@ pub async fn stop_managed_agent(
     .map_err(|e| format!("spawn_blocking failed: {e}"))?
 }
 
+/// True when the agent pubkey holds a live local runtime entry. Callers that
+/// need accuracy over staleness run `sync_managed_agent_processes` first so
+/// dead entries are already reaped. Takes only the keys — the runtime values
+/// are irrelevant to liveness and this keeps the decision unit-testable.
+fn agent_is_running<'a, I>(pubkey: &str, runtime_keys: I) -> bool
+where
+    I: IntoIterator<Item = &'a crate::managed_agents::ManagedAgentRuntimeKey>,
+{
+    runtime_keys.into_iter().any(|key| key.pubkey == pubkey)
+}
+
+/// Pure core of the running-agent delete guard, so the refusal is unit-testable
+/// without an AppHandle. Mirrors the remote-backend guard contract: a UI
+/// convention ("confirm first") made into a backend invariant.
+fn running_delete_guard(
+    pubkey: &str,
+    is_running: bool,
+    force_running_delete: bool,
+) -> Result<(), String> {
+    if is_running && !force_running_delete {
+        return Err(format!(
+            "agent {pubkey} is running — stop it first, or pass force_running_delete: true"
+        ));
+    }
+    Ok(())
+}
+
 // Async so the blocking body (disk reads/writes, process termination, keyring
 // delete, nest regeneration) runs off the main UI thread via spawn_blocking.
 #[tauri::command]
 pub async fn delete_managed_agent(
     pubkey: String,
     force_remote_delete: Option<bool>,
+    force_running_delete: Option<bool>,
     app: AppHandle,
 ) -> Result<(), String> {
     use tauri::Manager;
@@ -1138,12 +1166,28 @@ pub async fn delete_managed_agent(
                 }
             }
 
+            // Guard: reject deletion of an agent with a live local runtime
+            // unless explicitly forced. Same backend-invariant contract as the
+            // remote guard above — the 9/2 rekey incident killed five live
+            // seats through exactly this path (a web cleanup batch deleted
+            // running agents with only force_remote_delete set), and "stop
+            // first" is the owner-legible recovery.
+            running_delete_guard(
+                &pubkey,
+                agent_is_running(&pubkey, runtimes.keys()),
+                force_running_delete.unwrap_or(false),
+            )?;
+
             let persona_id = records
                 .iter()
                 .find(|record| record.pubkey == pubkey)
                 .and_then(|record| record.persona_id.clone());
-            if let Some(record) = records.iter_mut().find(|record| record.pubkey == pubkey) {
-                stop_managed_agent_process(&app, record, &mut runtimes)?;
+            let Some(record) = records.iter().find(|record| record.pubkey == pubkey).cloned()
+            else {
+                return Err(format!("agent {pubkey} not found"));
+            };
+            if let Some(record_mut) = records.iter_mut().find(|r| r.pubkey == pubkey) {
+                stop_managed_agent_process(&app, record_mut, &mut runtimes)?;
             }
             state.clear_agent_session_caches(&pubkey);
             let initial_len = records.len();
@@ -1152,6 +1196,18 @@ pub async fn delete_managed_agent(
                 return Err(format!("agent {pubkey} not found"));
             }
             save_managed_agents(&app, &records)?;
+            // Key material is unrecoverable once wiped (no software keyring
+            // recovery on Apple Silicon) — export a durable 0o600 copy FIRST
+            // and fail closed: a delete whose backup export fails never
+            // reaches the keyring wipe.
+            if let Some(path) =
+                crate::managed_agents::export_agent_key_backup(&app, &record)?
+            {
+                eprintln!(
+                    "buzz-desktop: exported key for deleted agent {pubkey} to {}",
+                    path.display()
+                );
+            }
             crate::managed_agents::delete_agent_key(&pubkey);
             // Tombstone after confirmed removal (inside lock; every published agent tombstones).
             tombstone_managed_agent_pending(&app, &state, &pubkey);
@@ -1161,6 +1217,57 @@ pub async fn delete_managed_agent(
             archive_managed_agent_pending(&app, &state, &pubkey, persona_id.as_deref());
         }
         try_regenerate_nest(&app);
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+}
+
+/// Remove an agent's RELAY registration only: kind-5 tombstone for the 30177
+/// plus a NIP-IA archive request. Never stops a process, never removes a
+/// local record, never touches the keyring — this is the stale-cleanup verb,
+/// split from delete after the 9/2 rekey incident (cleanup sent full deletes
+/// and wiped five live agents' unrecoverable keys).
+///
+/// Refuses an agent this desktop owns as a local record: the boot reconciler
+/// republishes 30177s from records, so unregistering a record this desktop
+/// holds would resurrect the registration on next boot. That case is a
+/// delete, not an unregister. Works with NO local record at all — stale
+/// twins re-minted on another machine are the primary case.
+#[tauri::command]
+pub async fn unregister_managed_agent(pubkey: String, app: AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    tokio::task::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        {
+            // Same lock discipline as delete: the pending helpers must run
+            // inside the store-lock-held body and never across an .await.
+            let _store_guard = state
+                .managed_agents_store_lock
+                .lock()
+                .map_err(|error| error.to_string())?;
+            let records = load_managed_agents(&app)?;
+            if records.iter().any(|record| record.pubkey == pubkey) {
+                return Err(format!(
+                    "agent {pubkey} is a local record on this desktop — delete it instead; \
+                     unregister only removes relay registrations this desktop does not own"
+                ));
+            }
+            let runtimes = state
+                .managed_agent_processes
+                .lock()
+                .map_err(|error| error.to_string())?;
+            if agent_is_running(&pubkey, runtimes.keys()) {
+                return Err(format!(
+                    "agent {pubkey} has a running process — stop it first"
+                ));
+            }
+            // Registration removal: purge any pending 30177 row and enqueue
+            // the tombstone, then the NIP-IA archive. No persona id — there
+            // is no local record to source one from.
+            tombstone_managed_agent_pending(&app, &state, &pubkey);
+            archive_managed_agent_pending(&app, &state, &pubkey, None);
+        }
         Ok(())
     })
     .await
