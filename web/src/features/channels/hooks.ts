@@ -39,6 +39,7 @@ import {
   type ReactionIndex,
 } from "./lib/reactions.ts";
 import { recordTyping, typingFromEvent, type TypingMap } from "./lib/typing.ts";
+import { loadSeed, mergeSeed } from "@/shared/lib/localSeed.ts";
 import {
   PRESENCE_KIND,
   mergePresence,
@@ -453,9 +454,27 @@ export interface Profile {
 }
 
 /** kind 0 profile metadata for a set of authors, fetched once per author. */
+const PROFILE_SEED_KEY = "profiles:v1";
+
 export function useProfiles(pubkeys: string[]): Map<string, Profile> {
   const { session } = useRelaySession();
-  const [profiles, setProfiles] = useState<Map<string, Profile>>(new Map());
+  // Seed from localStorage first: the sidebar paints names on the first
+  // frame while the relay answers.
+  const [profiles, setProfiles] = useState<Map<string, Profile>>(() => {
+    const seed = new Map<string, Profile>();
+    for (const [pubkey, value] of Object.entries(
+      loadSeed(PROFILE_SEED_KEY),
+    )) {
+      if (
+        value &&
+        typeof value === "object" &&
+        typeof (value as Profile).name === "string"
+      ) {
+        seed.set(pubkey, value as Profile);
+      }
+    }
+    return seed;
+  });
   const key = useMemo(() => Array.from(new Set(pubkeys)).sort(), [pubkeys]);
   const keyRef = useRef(key);
   keyRef.current = key;
@@ -512,6 +531,21 @@ export function useProfiles(pubkeys: string[]): Map<string, Profile> {
     // would need ordering, but first-seen is acceptable for Phase 1 display.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, key.length, key]);
+
+  // Write-through (merged, so several instances with different author sets
+  // enrich the same seed instead of clobbering each other).
+  useEffect(() => {
+    if (profiles.size === 0) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      mergeSeed(
+        PROFILE_SEED_KEY,
+        Object.fromEntries(profiles.entries()),
+      );
+    }, 1_000);
+    return () => clearTimeout(timer);
+  }, [profiles]);
 
   return profiles;
 }

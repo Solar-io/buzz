@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
+import { loadSeed, mergeSeed } from "@/shared/lib/localSeed.ts";
 import {
   type ChannelSummary,
   channelFromEvent,
@@ -13,6 +14,8 @@ export type { ChannelSummary };
  * renames appear without a reload. Replays automatically after reconnects
  * (the session owns that).
  */
+const CHANNEL_SEED_KEY = "channels:v1";
+
 export function useChannels(): {
   channels: ChannelSummary[];
   connected: boolean;
@@ -21,7 +24,21 @@ export function useChannels(): {
   refresh: () => void;
 } {
   const { session, status } = useRelaySession();
-  const [channels, setChannels] = useState<ChannelSummary[]>([]);
+  const [channels, setChannels] = useState<ChannelSummary[]>(() => {
+    const seed = new Map<string, ChannelSummary>();
+    for (const value of Object.values(loadSeed(CHANNEL_SEED_KEY))) {
+      if (
+        value &&
+        typeof value === "object" &&
+        typeof (value as ChannelSummary).id === "string"
+      ) {
+        seed.set((value as ChannelSummary).id, value as ChannelSummary);
+      }
+    }
+    return Array.from(seed.values()).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    );
+  });
   const [refreshKey, setRefreshKey] = useState(0);
   const refresh = useCallback(() => setRefreshKey((key) => key + 1), []);
 
@@ -51,6 +68,20 @@ export function useChannels(): {
       },
     );
   }, [session, refreshKey]);
+
+  // Write-through so the next reload paints the channel list immediately.
+  useEffect(() => {
+    if (channels.length === 0) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      mergeSeed(
+        CHANNEL_SEED_KEY,
+        Object.fromEntries(channels.map((c) => [c.id, c])),
+      );
+    }, 1_000);
+    return () => clearTimeout(timer);
+  }, [channels]);
 
   return { channels, connected: status === "open", refresh };
 }

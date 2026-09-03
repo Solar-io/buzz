@@ -191,9 +191,8 @@ function ChannelBrowser() {
 
   const { session } = useRelaySession();
   const channelId = current?.id ?? "";
-  const { messages, reactions, typing } = useChannelMessages(
-    current?.id ?? null,
-  );
+  const { messages, reactions, typing, loadOlder, loadingOlder, historyExhausted } =
+    useChannelMessages(current?.id ?? null);
   // Read state: opening a channel marks its newest message seen; badges and
   // the timeline unread divider derive from the marker.
   const [readState, setReadState] = useState<ReadState>(() => loadReadState());
@@ -1073,6 +1072,9 @@ function ChannelBrowser() {
                   highlightId={permalinkMessageId ?? null}
                   typingNames={typingNames}
                   tailKey={tailKey}
+                  onLoadOlder={loadOlder}
+                  loadingOlder={loadingOlder}
+                  historyExhausted={historyExhausted}
                   workingAgent={
                     working.working &&
                     working.startedAt !== null &&

@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -364,6 +365,19 @@ export function ChannelTimeline({
       </div>
     )),
   ];
+  if (loadingOlder) {
+    // Prepended (not appended): the reader is at the top waiting for it.
+    // This row exists only while a page is in flight, so it never shifts
+    // the anchor math of a completed restore.
+    items.unshift(
+      <div key="older-loading" className="mx-auto w-full max-w-3xl px-1 sm:px-3">
+        <div className="flex items-center gap-2 px-2 py-1 text-sm text-muted-foreground">
+          <span className="inline-block size-3 animate-spin rounded-full border-2 border-muted-foreground/40 border-t-transparent" />
+          <span>Loading earlier messages…</span>
+        </div>
+      </div>,
+    );
+  }
   if (typingNames && typingNames.length > 0) {
     items.push(
       <div key="typing" className="mx-auto w-full max-w-3xl px-1 sm:px-3">
@@ -404,9 +418,12 @@ export function ChannelTimeline({
   }
   // Auto-tail: tailKey changes → scroll to the newest row. Double-rAF lets
   // virtua measure freshly mounted rows; the settle pass catches late-sizing
-  // media. (Same pattern the timeline used before virtualization.)
+  // media. (Same pattern the timeline used before virtualization.) Tailing is
+  // keyed on tailKey ONLY — an older-history page growing the list must not
+  // yank the reader to the bottom — and never fires while a pagination
+  // restore is pinning the viewport to its anchor row.
   useEffect(() => {
-    if (!tailKey) {
+    if (!tailKey || pagePhase.current !== "idle") {
       return;
     }
     const toBottom = () =>
@@ -417,8 +434,59 @@ export function ChannelTimeline({
       cancelAnimationFrame(raf);
       window.clearTimeout(settle);
     };
-    // items.length covers the growing list; tailKey covers channel switches.
-  }, [tailKey, items.length]);
+    // items.length is read for the bottom index only; tailKey is the trigger.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: pagination pages must not re-tail
+  }, [tailKey]);
+
+  // Top reached → request one older page (once per flight).
+  const handleScroll = useCallback(
+    (offset: number) => {
+      if (
+        offset > 4 ||
+        pagePhase.current !== "idle" ||
+        loadingOlder ||
+        historyExhausted ||
+        messages.length === 0 ||
+        !onLoadOlder
+      ) {
+        return;
+      }
+      anchorIdRef.current = messages[0].id;
+      pagePhase.current = "loading";
+      onLoadOlder();
+    },
+    [loadingOlder, historyExhausted, messages, onLoadOlder],
+  );
+
+  // Older page landed: pin the viewport back to the row the user was reading
+  // instead of letting the list jump to its new top.
+  useEffect(() => {
+    if (pagePhase.current !== "loading" || loadingOlder) {
+      return;
+    }
+    const anchorId = anchorIdRef.current;
+    const landedNew =
+      anchorId != null && messages.length > 0 && messages[0].id !== anchorId;
+    if (!landedNew) {
+      pagePhase.current = "idle";
+      anchorIdRef.current = null;
+      return;
+    }
+    pagePhase.current = "restore";
+    const target = rowIndexRef.current?.get(anchorId);
+    if (target == null) {
+      pagePhase.current = "idle";
+      return;
+    }
+    const raf = requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        listRef.current?.scrollToIndex(target, { align: "start" });
+        pagePhase.current = "idle";
+        anchorIdRef.current = null;
+      }),
+    );
+    return () => cancelAnimationFrame(raf);
+  }, [loadingOlder, messages]);
   // Empty state AFTER the hooks — conditional hook order would break the
   // 0 → N message transition.
   if (isEmpty) {
@@ -429,7 +497,7 @@ export function ChannelTimeline({
     );
   }
   return (
-    <VList ref={listRef} className="min-h-0 flex-1">
+    <VList ref={listRef} className="min-h-0 flex-1" onScroll={handleScroll}>
       {items}
     </VList>
   );
