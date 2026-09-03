@@ -87,7 +87,7 @@ export function Composer({
   // Re-render trigger for caret moves that happen outside React's knowledge
   // (the @ button sets the caret in rAF; suggestions read DOM selection).
   const [, bumpCaretRender] = useReducer((tick: number) => tick + 1, 0);
-  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionDismissed, setMentionDismissed] = useState(false);
   const [media, setMedia] = useState<BlobDescriptor[]>([]);
   const [uploading, setUploading] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -151,15 +151,19 @@ export function Composer({
       return null;
     }
     const caret = textarea.selectionStart ?? text.length;
-    const token = activeMentionQuery(text, caret);
-    if (token !== null) {
-      return token;
-    }
-    // The @ button leaves a bare "@" at the caret — show the full list.
-    return mentionOpen && text.slice(0, caret).endsWith("@") ? "" : null;
+    // Non-null the moment an "@" token is open at the caret — including a
+    // bare "@" (the regex's name group matches empty), which is what the
+    // @ button leaves behind. TYPING @ therefore opens the list, not just
+    // the button (Sam 2026-09-02: "if I do an @ and an agent's name,
+    // nothing happens").
+    return activeMentionQuery(text, caret);
   })();
+  // A fresh token re-arms the popup after an Escape dismissal.
+  useEffect(() => {
+    setMentionDismissed(false);
+  }, [query]);
   const suggestions = useMemo(() => {
-    if (query === null || !mentionOpen) {
+    if (query === null || mentionDismissed) {
       return [];
     }
     const lower = query.toLowerCase();
@@ -168,7 +172,7 @@ export function Composer({
       .slice(0, 6);
     // `query` comes from an uncontrolled caret; recompute on text changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, namedMembers, mentionOpen]);
+  }, [query, namedMembers, mentionDismissed]);
 
   const applySuggestion = (name: string) => {
     const textarea = textareaRef.current;
@@ -183,7 +187,7 @@ export function Composer({
     }
     const next = `${text.slice(0, at)}@${name} ${text.slice(caret)}`;
     setText(next);
-    setMentionOpen(false);
+    setMentionDismissed(true);
     requestAnimationFrame(() => {
       const position = at + name.length + 2;
       textarea.focus();
@@ -375,6 +379,8 @@ export function Composer({
       }
       if (event.key === "Escape") {
         setPopupIndex(0);
+        // Dismiss until the token changes (a fresh query re-arms it).
+        setMentionDismissed(true);
         return;
       }
     }
@@ -594,12 +600,6 @@ export function Composer({
               setText(event.target.value);
               onTextChange?.(event.target.value);
               setPopupIndex(0);
-              setMentionOpen(
-                activeMentionQuery(
-                  event.target.value,
-                  event.target.selectionStart ?? event.target.value.length,
-                ) !== null,
-              );
             }}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
@@ -638,7 +638,7 @@ export function Composer({
                 const end = textarea.selectionEnd ?? start;
                 const next = `${text.slice(0, start)}@${text.slice(end)}`;
                 setText(next);
-                setMentionOpen(true);
+                setMentionDismissed(false);
                 requestAnimationFrame(() => {
                   const caret = start + 1;
                   textarea.focus();

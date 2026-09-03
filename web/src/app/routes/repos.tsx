@@ -52,6 +52,7 @@ import {
   usePresence,
 } from "@/features/channels/hooks";
 import { canonicalChannelName } from "@/features/channels/lib/channelAdmin.ts";
+import { shortKey } from "@/features/dms/lib/dmNaming.ts";
 import { ContextMenu, type ContextMenuItem } from "@/shared/ui/ContextMenu";
 import { replyCounts } from "@/features/channels/lib/messageBuffer.ts";
 import {
@@ -334,7 +335,19 @@ function ChannelBrowser() {
     const timer = window.setInterval(() => forceTick((n) => n + 1), 3000);
     return () => window.clearInterval(timer);
   }, []);
-  const members = useChannelMembers(current?.id ?? null);
+  const channelMembers = useChannelMembers(current?.id ?? null);
+  // DMs carry no 39002 member events — their roster IS the 39000's p tags.
+  // Without this, @-mention autocomplete and p-tag resolution are dead in
+  // DMs (empty member list).
+  const members = useMemo(
+    () =>
+      current?.type === "dm" && selfPubkey
+        ? current.participantPubkeys
+            .filter((pk) => pk !== selfPubkey)
+            .map((pk) => ({ pubkey: pk, name: shortKey(pk) }))
+        : channelMembers,
+    [current, selfPubkey, channelMembers],
+  );
   const profiles = useProfiles(
     useMemo(
       () =>
@@ -803,6 +816,12 @@ function ChannelBrowser() {
               persistHiddenDms(unhideDm(hiddenDmIds, channelId));
             }
             void navigate({ to: "/repos", search: { c: channelId } });
+            // The relay stores the DM's 39000 in a spawned task with no
+            // live fan-out — without a re-REQ the new channel never lands,
+            // the ?c= view stays on the empty state, and the DM is missing
+            // from the sidebar (mirrors NewChannelDialog's onCreated).
+            window.setTimeout(refreshChannels, 500);
+            window.setTimeout(refreshChannels, 2000);
           }}
         />
         {dms.length > 0 && visibleDms.length === 0 && (
