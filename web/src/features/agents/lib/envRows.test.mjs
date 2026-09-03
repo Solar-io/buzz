@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   RESERVED_ENV_KEYS,
+  duplicateKeyRowIds,
   envRowsToRecord,
   isReservedEnvKey,
   reservedKeyErrors,
@@ -27,6 +28,27 @@ test("envRowsToRecord keeps values verbatim (no trimming, empty values allowed)"
     row("EMPTY", ""),
   ]);
   assert.deepEqual(record, { " SPACES ": "  kept  ", EMPTY: "" });
+});
+
+test("duplicateKeyRowIds marks only the EARLIER row of each duplicate key", () => {
+  // row() derives ids from key+value, so same-key rows get distinct ids.
+  const shadowed = duplicateKeyRowIds([
+    row("A", "first"),
+    row("B", "only"),
+    row("A", "second"),
+    row("A", "third"),
+    row("", "empty key ignored"),
+  ]);
+  // The LAST of each key wins; every earlier duplicate is shadowed.
+  assert.deepEqual(Array.from(shadowed), ["id-A-first", "id-A-second"]);
+});
+
+test("duplicateKeyRowIds is empty with no duplicates", () => {
+  assert.deepEqual(
+    Array.from(duplicateKeyRowIds([row("A", "1"), row("B", "2")])),
+    [],
+  );
+  assert.deepEqual(Array.from(duplicateKeyRowIds([])), []);
 });
 
 test("reserved-key mirror pins the exact 22-key desktop list", () => {

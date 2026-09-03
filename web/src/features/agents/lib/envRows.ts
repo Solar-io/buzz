@@ -44,6 +44,28 @@ export function envRowsToRecord(
 }
 
 /**
+ * Ids of rows whose non-empty key is overridden by a LATER row with the same
+ * key — the rows the last-row-wins conversion will discard. Powers the
+ * "duplicate — last row wins" hint in the table so the semantics are visible
+ * before saving, not just pinned in tests.
+ */
+export function duplicateKeyRowIds(rows: readonly EnvRow[]): Set<string> {
+  const lastIdByKey = new Map<string, string>();
+  for (const row of rows) {
+    if (row.key.length > 0) {
+      lastIdByKey.set(row.key, row.id);
+    }
+  }
+  const shadowed = new Set<string>();
+  for (const row of rows) {
+    if (row.key.length > 0 && lastIdByKey.get(row.key) !== row.id) {
+      shadowed.add(row.id);
+    }
+  }
+  return shadowed;
+}
+
+/**
  * Env keys Buzz sets itself and the owner must not override. Deliberate
  * mirror of `desktop/src-tauri/src/managed_agents/reserved_env_keys.rs`
  * (`RESERVED_ENV_KEYS`, 22 keys) — updating either list is a deliberate,

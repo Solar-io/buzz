@@ -1,7 +1,12 @@
 import { Plus, X } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
-import { isReservedEnvKey, newEnvRowId, type EnvRow } from "../lib/envRows";
+import {
+  duplicateKeyRowIds,
+  isReservedEnvKey,
+  newEnvRowId,
+  type EnvRow,
+} from "../lib/envRows";
 
 /**
  * KEY/VALUE row editor for agent env vars — the web counterpart of the
@@ -30,6 +35,9 @@ export function EnvVarsTable({
       rows.map((row) => (row.id === id ? { ...row, [field]: next } : row)),
     );
   const remove = (id: string) => onChange(rows.filter((row) => row.id !== id));
+  // Earlier rows sharing a key with a later row are discarded at conversion
+  // (last row wins) — flagged inline so the semantics are visible pre-save.
+  const shadowedIds = duplicateKeyRowIds(rows);
 
   return (
     <div className="space-y-2">
@@ -53,6 +61,7 @@ export function EnvVarsTable({
         <ul className="space-y-1.5">
           {rows.map((row) => {
             const reserved = isReservedEnvKey(row.key);
+            const duplicate = shadowedIds.has(row.id);
             return (
               <li key={row.id} className="flex items-start gap-1.5">
                 <div className="min-w-0 flex-1 space-y-1">
@@ -71,6 +80,11 @@ export function EnvVarsTable({
                   {reserved && (
                     <span className="block rounded bg-red-500/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-red-400">
                       {row.key.trim() ? "set by Buzz" : "reserved key"}
+                    </span>
+                  )}
+                  {duplicate && (
+                    <span className="block text-[10px] text-amber-500">
+                      duplicate — the last row with this key wins
                     </span>
                   )}
                 </div>

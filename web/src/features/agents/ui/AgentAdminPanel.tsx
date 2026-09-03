@@ -3,6 +3,8 @@ import { toast } from "sonner";
 import type { RelaySession } from "@/shared/api/relay-session";
 import { sendAdminCommand, useAdminAckWatcher } from "../lib/adminCommandsSend";
 import type { AdminAckEnvelope, AdminCommand } from "../lib/adminCommands";
+import { ACK_TIMEOUT_MS, pendingRowState } from "../lib/pendingCommands";
+import { useTick } from "./WorkingBadge";
 
 /**
  * Remote agent administration (kinds 24201/24202): owner commands the web
@@ -21,8 +23,6 @@ interface PendingCommand {
   summary: string;
   sentAt: number;
 }
-
-const ACK_TIMEOUT_MS = 20_000;
 
 export function useAdminCommands(
   session: RelaySession | null,
@@ -79,10 +79,18 @@ export function useAdminCommands(
 }
 
 /**
- * Page-level pending-command strip. A "?" row that ages out does NOT mean
- * failure: a command targeted at one machine is silently ignored by every
- * other desktop, and a sleeping target never acks at all — hence the "Is
- * Buzz running?" hint rather than an error verdict.
+ * Page-level pending-command strip.
+ *
+ * The strip re-renders on a 1s clock while anything is pending (QA HIGH,
+ * 2026-09-02): a quiet relay never delivers an event that would re-render
+ * it, so the "?" timeout state computed at render time was invisible — the
+ * row read "sent" until the prune timer deleted it. `useTick` runs only
+ * while `pending` is non-empty and cleans up when it empties.
+ *
+ * A "?" row that ages out does NOT mean failure: a command targeted at one
+ * machine is silently ignored by every other desktop, and a sleeping target
+ * never acks at all — hence the "Is Buzz running?" hint rather than an
+ * error verdict.
  */
 export function PendingCommandsStrip({
   pending,
@@ -91,14 +99,17 @@ export function PendingCommandsStrip({
   pending: PendingCommand[];
   acks: Map<string, AdminAckEnvelope>;
 }) {
+  // 1s re-render while un-acked commands exist; no timer when idle.
+  useTick(pending.some((entry) => !acks.has(entry.requestId)));
   if (pending.length === 0) {
     return null;
   }
+  const now = Date.now();
   return (
     <ul className="space-y-1">
       {pending.map((entry) => {
         const ack = acks.get(entry.requestId);
-        const timedOut = !ack && Date.now() - entry.sentAt > ACK_TIMEOUT_MS;
+        const { status, timedOut } = pendingRowState(entry.sentAt, ack, now);
         return (
           <li
             key={entry.requestId}
@@ -125,9 +136,7 @@ export function PendingCommandsStrip({
                 </span>
               )}
             </span>
-            <span className="shrink-0 text-muted-foreground">
-              {ack ? (ack.ok ? "applied" : "error") : timedOut ? "?" : "sent"}
-            </span>
+            <span className="shrink-0 text-muted-foreground">{status}</span>
           </li>
         );
       })}
