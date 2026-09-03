@@ -19,6 +19,11 @@ import {
   parseOwnerAdminCommand,
   type OwnerAdminCommand,
 } from "./ownerAdminProtocol";
+import {
+  createInputFromCommand,
+  lifecycleCallsFromCommand,
+  updateInputFromCommand,
+} from "./ownerAdminAppliers";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import { getMachineHostname } from "@/shared/api/machineIdentity";
@@ -132,73 +137,31 @@ async function applyOwnerAdminCommand(
 ): Promise<string | null> {
   switch (command.action) {
     case "create": {
-      const harnessFields = command.harness
-        ? command.harness.kind === "preset"
-          ? { acpCommand: command.harness.runtimeId }
-          : {
-              agentCommand: command.harness.command,
-              agentArgs: command.harness.args,
-              harnessOverride: true,
-            }
-        : {};
-      const { agent } = await createManagedAgent({
-        name: command.name,
-        systemPrompt: command.systemPrompt,
-        ...(command.avatarUrl ? { avatarUrl: command.avatarUrl } : {}),
-        ...(command.model ? { model: command.model } : {}),
-        ...(command.provider ? { provider: command.provider } : {}),
-        ...harnessFields,
-        ...(command.envVars ? { envVars: command.envVars } : {}),
-        ...(command.parallelism ? { parallelism: command.parallelism } : {}),
-        ...(command.respondTo ? { respondTo: command.respondTo } : {}),
-        ...(command.respondToAllowlist
-          ? { respondToAllowlist: command.respondToAllowlist }
-          : {}),
-        ...(command.spawnAfterCreate !== undefined
-          ? { spawnAfterCreate: command.spawnAfterCreate }
-          : {}),
-        ...(command.startOnAppLaunch !== undefined
-          ? { startOnAppLaunch: command.startOnAppLaunch }
-          : {}),
-      });
+      const { agent } = await createManagedAgent(
+        createInputFromCommand(command),
+      );
       return agent.pubkey;
     }
     case "update": {
-      const harnessFields = command.harness
-        ? command.harness.kind === "preset"
-          ? { acpCommand: command.harness.runtimeId }
-          : {
-              agentCommand: command.harness.command,
-              agentArgs: command.harness.args,
-              harnessOverride: true,
-            }
-        : {};
-      // UpdateManagedAgentInput carries no avatarUrl or timeout fields —
-      // those ride the create path or the desktop dialog.
-      const { agent } = await updateManagedAgent({
-        pubkey: command.pubkey,
-        ...(command.name ? { name: command.name } : {}),
-        ...(command.systemPrompt ? { systemPrompt: command.systemPrompt } : {}),
-        ...(command.model ? { model: command.model } : {}),
-        ...(command.provider ? { provider: command.provider } : {}),
-        ...harnessFields,
-        ...(command.envVars ? { envVars: command.envVars } : {}),
-        ...(command.parallelism ? { parallelism: command.parallelism } : {}),
-        ...(command.respondTo ? { respondTo: command.respondTo } : {}),
-        ...(command.respondToAllowlist
-          ? { respondToAllowlist: command.respondToAllowlist }
-          : {}),
-      });
+      const { agent } = await updateManagedAgent(
+        updateInputFromCommand(command),
+      );
       return agent.pubkey;
     }
     case "delete":
       await deleteManagedAgent(command.pubkey, command.forceRemoteDelete);
       return null;
     case "start":
-      await startManagedAgent(command.pubkey);
-      return command.pubkey;
     case "stop":
-      await stopManagedAgent(command.pubkey);
+    case "restart": {
+      // Restart = stop-then-start over the same two Tauri commands; a stop
+      // failure aborts before the start half runs (one ack, error side).
+      for (const call of lifecycleCallsFromCommand(command)) {
+        await (call.op === "stop"
+          ? stopManagedAgent(call.pubkey)
+          : startManagedAgent(call.pubkey));
+      }
       return command.pubkey;
+    }
   }
 }

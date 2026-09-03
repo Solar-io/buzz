@@ -37,9 +37,11 @@ test("buildDesktopCatalogContent produces the pinned wire shape", () => {
     updatedAt: 1788300000,
   });
   // Hardcoded expected body — the contract, not a echo of the input order.
+  // version 2 = the Phase-2 capability signal (avatar/timeout/start-on-launch
+  // edits, envVarsPatch, restart); the web gates its controls on >= 2.
   assert.deepEqual(content, {
     format: "buzz-desktop-catalog",
-    version: 1,
+    version: 2,
     machine: "crichton.local",
     harnesses: [
       {

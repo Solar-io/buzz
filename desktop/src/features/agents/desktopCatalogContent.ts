@@ -8,7 +8,7 @@ import type { AcpAvailabilityStatus } from "@/shared/api/types";
  * ```json
  * {
  *   "format": "buzz-desktop-catalog",
- *   "version": 1,
+ *   "version": 2,
  *   "machine": "crichton.local",
  *   "harnesses": [
  *     {"id": "claude-code-glm", "label": "Claude Code GLM", "source": "custom",
@@ -23,11 +23,17 @@ import type { AcpAvailabilityStatus } from "@/shared/api/types";
  * physically cannot carry commands, args, env, or file paths — a harness entry
  * is `{id, label, source, availability}` and nothing else — so the builder
  * cannot leak the runnable config even by mistake. It MUST stay that way.
+ *
+ * `version` is the capability signal, not a schema revision: v2 (Phase 2 of
+ * the web agents screen) means this desktop's update path applies
+ * avatar/timeout/start-on-launch edits, envVarsPatch, and restart. The web
+ * parses any version >= 1 and gates the Phase 2 controls on >= 2 — bump ONLY
+ * when a newly-learned capability needs the web to change behavior.
  */
 
 export const DESKTOP_CATALOG_KIND = 30180;
 export const DESKTOP_CATALOG_FORMAT = "buzz-desktop-catalog";
-export const DESKTOP_CATALOG_VERSION = 1;
+export const DESKTOP_CATALOG_VERSION = 2;
 
 /** Wire `source` values — the desktop harness catalog's three tiers. */
 export type DesktopCatalogSource = "builtin" | "preset" | "custom";

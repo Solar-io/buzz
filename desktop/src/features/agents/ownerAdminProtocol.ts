@@ -47,6 +47,13 @@ export type OwnerAdminCommand = {
       provider?: string;
       harness?: HarnessSelection;
       envVars?: Record<string, string>;
+      /**
+       * Merge-patch for the stored env map, applied AFTER any `envVars`
+       * replace in the same command: string = set/overwrite the key, null =
+       * delete it (deleting a missing key is a no-op). The backend validates
+       * the FINAL merged map before saving.
+       */
+      envVarsPatch?: Record<string, string | null>;
       parallelism?: number;
       respondTo?: "owner-only" | "anyone" | "allowlist";
       respondToAllowlist?: string[];
@@ -62,6 +69,7 @@ export type OwnerAdminCommand = {
     }
   | { action: "start"; requestId: string; pubkey: string }
   | { action: "stop"; requestId: string; pubkey: string }
+  | { action: "restart"; requestId: string; pubkey: string }
 );
 
 const PUBKEY_RE = /^[0-9a-f]{64}$/;
@@ -88,6 +96,32 @@ function optionalStringRecord(
   }
   const out: Record<string, string> = {};
   for (const [key, entry] of Object.entries(value)) {
+    if (!isText(entry)) {
+      return undefined;
+    }
+    out[key] = entry;
+  }
+  return out;
+}
+
+/**
+ * envVarsPatch parse: an object whose every value is a string (set) or null
+ * (delete). ANY other value anywhere → undefined (field dropped, command
+ * still parses) — same stance as `optionalStringRecord`, so a malformed patch
+ * degrades to "no patch" rather than killing the whole command.
+ */
+function optionalEnvPatch(
+  value: unknown,
+): Record<string, string | null> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const out: Record<string, string | null> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry === null) {
+      out[key] = null;
+      continue;
+    }
     if (!isText(entry)) {
       return undefined;
     }
@@ -231,6 +265,7 @@ export function parseOwnerAdminCommand(
         provider: optionalString(request.provider),
         harness: parseHarness(request.harness),
         envVars: optionalStringRecord(request.envVars),
+        envVarsPatch: optionalEnvPatch(request.envVarsPatch),
         parallelism: optionalNumber(request.parallelism),
         respondTo: optionalRespondTo(request.respondTo),
         respondToAllowlist: optionalPubkeyList(request.respondToAllowlist),
@@ -256,6 +291,7 @@ export function parseOwnerAdminCommand(
       };
     case "start":
     case "stop":
+    case "restart":
       if (!isText(request.pubkey) || !PUBKEY_RE.test(request.pubkey)) {
         return null;
       }
