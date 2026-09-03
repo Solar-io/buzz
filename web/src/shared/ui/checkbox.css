@@ -1,0 +1,39 @@
+/*
+ * Checkbox tick draw.
+ *
+ * The desktop client animates this path with `motion/react`
+ * (`initial={{opacity: 0, pathLength: 0}}` → `animate={{opacity: 1,
+ * pathLength: 1}}`, 0.18s, cubic-bezier(0.23, 1, 0.32, 1), skipped under
+ * reduced motion). Web has no `motion` dependency and adding one for a single
+ * tick is a poor trade, so the same curve, duration and reduced-motion
+ * behaviour are expressed in CSS instead.
+ *
+ * The path carries `pathLength="1"` and `stroke-dasharray="1"`, which
+ * normalises its geometric length to 1 — so `stroke-dashoffset` 1 → 0 is
+ * exactly Motion's `pathLength` 0 → 1. `animation-fill-mode: both` applies the
+ * hidden from-state before the first frame, matching Motion's `initial`.
+ */
+
+.buzz-checkbox-tick {
+  animation: buzz-checkbox-tick-draw 180ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+@keyframes buzz-checkbox-tick-draw {
+  from {
+    opacity: 0;
+    stroke-dashoffset: 1;
+  }
+
+  to {
+    opacity: 1;
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .buzz-checkbox-tick {
+    animation: none;
+    opacity: 1;
+    stroke-dashoffset: 0;
+  }
+}

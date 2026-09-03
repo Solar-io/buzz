@@ -1,0 +1,21 @@
+/*
+ * Ported verbatim from the desktop client's shared/styles/globals/animations.css
+ * (the `.sprout-arc-spinner` rule and its keyframes).
+ *
+ * Colocated with spinner.tsx and imported by it rather than added to web's
+ * shared/styles/globals.css: without this rule the spinner renders a static
+ * ring — correct markup, no motion.
+ *
+ * Deliberately NOT gated on `prefers-reduced-motion`, matching desktop: a
+ * loading indicator that stops moving stops indicating.
+ */
+
+.sprout-arc-spinner {
+  animation: sprout-arc-spinner-spin 500ms linear infinite;
+}
+
+@keyframes sprout-arc-spinner-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

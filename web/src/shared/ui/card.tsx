@@ -2,6 +2,12 @@ import * as React from "react";
 
 import { cn } from "@/shared/lib/cn";
 
+// Kept in step with the desktop client's shared/ui/card.tsx, with one deliberate
+// divergence: the desktop `variant="textured"` nine-slice powder surface and its
+// baked PNG assets (card-texture.css) are NOT ported. Web ships only the
+// `default` surface, so `Card` stays a plain forwardRef div rather than a cva
+// component with an `asChild` escape hatch. The class string for that default
+// surface is identical to desktop's.
 const Card = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement>
@@ -35,7 +41,10 @@ const CardTitle = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <div
     ref={ref}
-    className={cn("font-semibold leading-none tracking-tight", className)}
+    className={cn(
+      "text-2xl font-semibold leading-none tracking-tight",
+      className,
+    )}
     {...props}
   />
 ));
