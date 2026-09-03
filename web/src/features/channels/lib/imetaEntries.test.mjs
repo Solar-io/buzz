@@ -13,7 +13,7 @@ function snapshotTag(overrides = {}) {
     `x ${SHA}`,
     "size 2048",
     "filename night-shift.agent.png",
-    ...overrides.extra ?? [],
+    ...(overrides.extra ?? []),
   ];
 }
 

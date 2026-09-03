@@ -39,7 +39,10 @@ test("agent png with full imeta classifies with thumb = href", () => {
 
 test("agent json has no thumb and keeps the json suffix out of the name", () => {
   const card = resolveSnapshotCard(
-    entry({ m: "application/octet-stream", filename: "night-shift.agent.json" }),
+    entry({
+      m: "application/octet-stream",
+      filename: "night-shift.agent.json",
+    }),
     URL,
     "Night Shift",
   );
@@ -121,11 +124,7 @@ test("fall-through: no imeta entry, no href, unknown suffix", () => {
   assert.equal(resolveSnapshotCard(undefined, URL, "label"), null);
   assert.equal(resolveSnapshotCard(entry(), undefined, "label"), null);
   assert.equal(
-    resolveSnapshotCard(
-      entry({ filename: "notes.txt" }),
-      URL,
-      "notes.txt",
-    ),
+    resolveSnapshotCard(entry({ filename: "notes.txt" }), URL, "notes.txt"),
     null,
   );
 });

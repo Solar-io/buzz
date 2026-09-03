@@ -444,7 +444,13 @@ export async function sha256Hex(
   bytes: Uint8Array,
   subtle: SubtleCrypto = globalThis.crypto.subtle,
 ): Promise<string> {
-  const digest = await subtle.digest("SHA-256", bytes);
+  const digest = await subtle.digest(
+    "SHA-256",
+    // TS 5.7+ types a generic Uint8Array's buffer as ArrayBufferLike while
+    // digest wants an ArrayBuffer-backed view; every producer here is one,
+    // and digest only reads the bytes.
+    bytes as unknown as BufferSource,
+  );
   return Array.from(new Uint8Array(digest), (b) =>
     b.toString(16).padStart(2, "0"),
   ).join("");

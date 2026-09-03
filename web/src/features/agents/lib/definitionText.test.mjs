@@ -115,11 +115,14 @@ test("blank display name is required-error, exactly the Rust wording", () => {
 });
 
 test("prohibited-character error names the field and code point, Rust wording", () => {
-  assert.deepEqual(validateAgentDefinitionText("Review\u200Ber", "Review code."), {
-    ok: false,
-    error:
-      "Display name contains prohibited invisible or formatting character U+200B",
-  });
+  assert.deepEqual(
+    validateAgentDefinitionText("Review\u200Ber", "Review code."),
+    {
+      ok: false,
+      error:
+        "Display name contains prohibited invisible or formatting character U+200B",
+    },
+  );
   assert.deepEqual(
     validateAgentDefinitionText("Reviewer", "Review code.\u202E"),
     {
