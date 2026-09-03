@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { ArrowLeft, Plus } from "lucide-react";
+import { ArrowLeft, BookOpen, Plus, Users } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { Button } from "@/shared/ui/button";
 import { useAuth } from "@/features/auth/ui/AuthProvider";
@@ -8,12 +8,16 @@ import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { useAgentRegistry } from "@/features/agents/useAgentRegistry";
 import { useDesktopCatalogs } from "@/features/agents/useDesktopCatalogs";
 import { usePersonas } from "@/features/agents/usePersonas";
+import { useTeams } from "@/features/agents/useTeams";
 import { useProfiles } from "@/features/channels/hooks";
 import { buildRoster, type RosterRow } from "../lib/roster";
+import { buildRosterGroups, teamNamesByPersonaId } from "../lib/rosterGroups";
 import { useAdminCommands, PendingCommandsStrip } from "./AgentAdminPanel";
 import { AgentRosterSidebar, AgentWorkingDot } from "./AgentRosterSidebar";
 import { AgentConfigPanel } from "./AgentConfigPanel";
 import { AgentCreateForm } from "./AgentCreateForm";
+import { PersonaCatalogPanel } from "./PersonaCatalogPanel";
+import { TeamsPanel } from "./TeamsPanel";
 
 /**
  * Agent admin for the web — the desktop's two-pane Agents view. The roster
@@ -33,13 +37,16 @@ import { AgentCreateForm } from "./AgentCreateForm";
 type Mode =
   | { kind: "roster" }
   | { kind: "create" }
-  | { kind: "agent"; pubkey: string };
+  | { kind: "agent"; pubkey: string }
+  | { kind: "catalog" }
+  | { kind: "teams" };
 
 export function AgentsAdminPage() {
   const { canSign } = useAuth();
   const registry = useAgentRegistry();
   const catalogs = useDesktopCatalogs();
   const personas = usePersonas();
+  const teams = useTeams();
   const { session, status } = useRelaySession();
   const admin = useAdminCommands(session, status);
   const [mode, setMode] = useState<Mode>({ kind: "roster" });
@@ -47,6 +54,14 @@ export function AgentsAdminPage() {
   const roster = useMemo(
     () => buildRoster(registry, personas, catalogs),
     [registry, personas, catalogs],
+  );
+  const rosterSections = useMemo(
+    () => buildRosterGroups(roster, personas),
+    [roster, personas],
+  );
+  const teamBadges = useMemo(
+    () => teamNamesByPersonaId(personas.keys(), teams),
+    [personas, teams],
   );
   const rosterPubkeys = useMemo(
     () => roster.map((row) => row.pubkey),
@@ -74,7 +89,27 @@ export function AgentsAdminPage() {
     <div className="mx-auto max-w-5xl space-y-4 p-4">
       <div className="flex items-center justify-between gap-2">
         <h1 className="text-lg font-semibold">Agents</h1>
-        <div className="flex items-center gap-2">
+        {/* flex-wrap (the app's standard action-row pattern, e.g.
+            RepoDetailPage/HuddleBar): the four buttons are ~446px side by
+            side, which overflows a 375px viewport — wrapped rows keep the
+            page from scrolling horizontally. */}
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setMode({ kind: "catalog" })}
+          >
+            <BookOpen aria-hidden className="mr-1 h-4 w-4" />
+            Catalog
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setMode({ kind: "teams" })}
+          >
+            <Users aria-hidden className="mr-1 h-4 w-4" />
+            Teams
+          </Button>
           <Button
             size="sm"
             variant="outline"
@@ -93,6 +128,8 @@ export function AgentsAdminPage() {
         <div className={mode.kind === "roster" ? "" : "hidden lg:block"}>
           <AgentRosterSidebar
             roster={roster}
+            sections={rosterSections}
+            teamNamesByPersona={teamBadges}
             selectedPubkey={selected?.pubkey ?? null}
             onSelect={(pubkey) => setMode({ kind: "agent", pubkey })}
             onNewAgent={() => setMode({ kind: "create" })}
@@ -153,6 +190,22 @@ export function AgentsAdminPage() {
                 one.
               </p>
             </div>
+          )}
+          {mode.kind === "catalog" && (
+            <PaneShell
+              title="Agent catalog"
+              onBack={() => setMode({ kind: "roster" })}
+            >
+              <PersonaCatalogPanel admin={admin} catalogs={catalogs} />
+            </PaneShell>
+          )}
+          {mode.kind === "teams" && (
+            <PaneShell
+              title="Agent teams"
+              onBack={() => setMode({ kind: "roster" })}
+            >
+              <TeamsPanel teams={teams} personas={personas} />
+            </PaneShell>
           )}
         </div>
       </div>

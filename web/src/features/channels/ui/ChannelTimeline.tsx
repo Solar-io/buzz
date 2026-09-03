@@ -424,6 +424,8 @@ export function ChannelTimeline({
   // keyed on tailKey ONLY — an older-history page growing the list must not
   // yank the reader to the bottom — and never fires while a pagination
   // restore is pinning the viewport to its anchor row.
+  // items.length is read for the bottom index only; tailKey is the trigger.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pagination pages must not re-tail
   useEffect(() => {
     if (!tailKey || pagePhase.current !== "idle") {
       return;
@@ -436,8 +438,6 @@ export function ChannelTimeline({
       cancelAnimationFrame(raf);
       window.clearTimeout(settle);
     };
-    // items.length is read for the bottom index only; tailKey is the trigger.
-    // biome-ignore lint/correctness/useExhaustiveDependencies: pagination pages must not re-tail
   }, [tailKey]);
 
   // Top reached → request one older page (once per flight).
