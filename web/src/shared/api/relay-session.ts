@@ -75,6 +75,16 @@ const DEFAULT_AUTH_GRACE_MS = 1_000;
 /** A publish fails with a timeout if the relay answers no OK/FAILED by then. */
 const PUBLISH_ACK_TIMEOUT_MS = 15_000;
 /**
+ * Pace between REQ opens during (re)connect replay. The relay closes a
+ * connection as a slow client after sustained send-buffer backpressure
+ * (grace 15); opening ~40 subscriptions at once on a large dataset hits
+ * that before the socket drains. 120ms lets each sub's initial push
+ * drain; 40 subs fully live in under five seconds, filling progressively.
+ */
+const REQ_OPEN_PACE_MS = 120;
+/** Replays at or below this size open synchronously (no pacing needed). */
+const UNPACED_REPLAY_MAX = 8;
+/**
  * Liveness: the relay sends no WS pings, so a socket killed by laptop sleep
  * or a network change (no close event — the TCP pair is just gone) reads as
  * "connected" forever and every subscription silently stops delivering until
@@ -184,6 +194,8 @@ export class RelaySession {
    */
   private authedByRelay = false;
   private authTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Pacing timers for staggered REQ replay; cleared on teardown. */
+  private readonly replayPaceTimers = new Set<ReturnType<typeof setTimeout>>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
   private manualClose = false;
@@ -439,14 +451,53 @@ export class RelaySession {
     // (Re-)REQ every active subscription not already open on this socket.
     // Skips duplicates when called twice on one socket (auth grace then a
     // late AUTH challenge) and survives reconnects after teardownSocket.
+    //
+    // PACED: opening every REQ in one tight loop floods the relay's send
+    // buffer faster than the socket drains — on a large dataset the relay
+    // hits sustained backpressure and closes us as a slow client, the
+    // reconnect replays the same flood, and the session never settles
+    // (observed live: profiles never complete, sidebar goes to hex keys).
+    // Spacing the opens lets each sub's initial push drain first.
+    const toOpen: Array<[string, ActiveSubscription]> = [];
     for (const [subId, sub] of this.activeSubs) {
-      if (this.openSubs.has(subId)) {
-        continue;
+      if (!this.openSubs.has(subId)) {
+        toOpen.push([subId, sub]);
+      }
+    }
+    const openOne = (index: number) => {
+      const [subId, sub] = toOpen[index];
+      // Socket may have torn down mid-pace, the sub may have closed, or a
+      // concurrent replay may already have opened it.
+      if (
+        !this.socket ||
+        this.statusValue === "closed" ||
+        !this.activeSubs.has(subId) ||
+        this.openSubs.has(subId)
+      ) {
+        return;
       }
       this.openSubs.set(subId, sub);
       // A fresh REQ is a fresh chance — its auth-race budget resets with it.
       this.authRetryAttempts.delete(subId);
-      this.socket?.send(reqFrame(subId, sub.filter));
+      this.socket.send(reqFrame(subId, sub.filter));
+    };
+    if (toOpen.length <= UNPACED_REPLAY_MAX) {
+      for (let i = 0; i < toOpen.length; i++) {
+        openOne(i);
+      }
+      return;
+    }
+    // Large replay: space EVERY open (index 0 included) so each sub's
+    // initial push drains before the next arrives. Both replay triggers
+    // (AUTH success and the auth-grace flush) can schedule overlapping
+    // timers for the same sub — the openSubs guard in openOne makes the
+    // duplicates no-ops, so exactly one REQ goes out per subscription.
+    for (let i = 0; i < toOpen.length; i++) {
+      const timer = setTimeout(() => {
+        this.replayPaceTimers.delete(timer);
+        openOne(i);
+      }, i * REQ_OPEN_PACE_MS);
+      this.replayPaceTimers.add(timer);
     }
   }
 
@@ -518,6 +569,10 @@ export class RelaySession {
     this.lastMessageAt = null;
     this.openSubs.clear();
     this.authRetryAttempts.clear();
+    for (const timer of this.replayPaceTimers) {
+      clearTimeout(timer);
+    }
+    this.replayPaceTimers.clear();
     // A publish in flight when the socket drops would otherwise hang forever:
     // the EVENT is not in `pending` (it was sent), so the reconnect never
     // re-sends it and the relay's OK — if it even comes — finds no waiter.

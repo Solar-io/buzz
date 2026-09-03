@@ -526,3 +526,45 @@ test("auth-race: retries are bounded — after 5 failures the sub stays dead", a
   assert.equal(after, 6, "initial REQ + exactly 5 retries");
   session.close();
 });
+
+test("replay paces REQ opens so the relay send buffer can drain", async () => {
+  const { session } = makeSession();
+  for (let i = 0; i < 10; i++) {
+    session.subscribe({ kinds: [9], "#h": [`dm-${i}`], limit: 1 }, { onEvent: () => {} });
+  }
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  socket.serverSend(["AUTH", "chal-pace"]);
+  try {
+    await tick();
+    // Nothing synchronous; index 0 lands on its 0ms timer, the rest pace.
+    assert.equal(socket.sentOf("REQ").length, 1);
+    await tick(250);
+    assert.equal(socket.sentOf("REQ").length, 3);
+    await tick(120 * 10);
+    assert.equal(socket.sentOf("REQ").length, 10);
+    const ids = socket.sentOf("REQ").map((frame) => frame[1]);
+    assert.equal(new Set(ids).size, 10, "each sub opened exactly once");
+  } finally {
+    session.close();
+  }
+});
+
+test("subscribe with a filter array spreads the filters in one REQ frame", async () => {
+  const { session } = makeSession();
+  const filters = [
+    { kinds: [9], "#h": ["a"], limit: 1 },
+    { kinds: [9], "#h": ["b"], limit: 1 },
+  ];
+  session.subscribe(filters, { onEvent: () => {} });
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  socket.serverSend(["AUTH", "chal-multi"]);
+  await tick();
+  const reqs = socket.sentOf("REQ");
+  assert.equal(reqs.length, 1);
+  assert.deepEqual(reqs[0].slice(2), filters);
+  session.close();
+});
