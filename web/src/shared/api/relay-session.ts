@@ -138,8 +138,21 @@ export function authRetryDelayMs(attempt: number): number {
 }
 
 interface ActiveSubscription {
-  filter: NostrFilter;
+  /** Single filter, or several OR'd filters in one REQ (relay caps at 10). */
+  filter: NostrFilter | NostrFilter[];
   options: SubscribeOptions;
+}
+
+/** Frame body for a REQ: one or more filters spread after the sub id. */
+function reqFrame(
+  subId: string,
+  filter: NostrFilter | NostrFilter[],
+): string {
+  return JSON.stringify([
+    "REQ",
+    subId,
+    ...(Array.isArray(filter) ? filter : [filter]),
+  ]);
 }
 
 type PendingMessage = string;
@@ -433,7 +446,7 @@ export class RelaySession {
       this.openSubs.set(subId, sub);
       // A fresh REQ is a fresh chance — its auth-race budget resets with it.
       this.authRetryAttempts.delete(subId);
-      this.socket?.send(JSON.stringify(["REQ", subId, sub.filter]));
+      this.socket?.send(reqFrame(subId, sub.filter));
     }
   }
 
@@ -468,7 +481,7 @@ export class RelaySession {
       // replaySubscriptions REQ (post-auth/reconnect — a genuinely fresh
       // context) or a new socket restores the full budget.
       this.openSubs.set(subId, stillActive);
-      this.socket.send(JSON.stringify(["REQ", subId, stillActive.filter]));
+      this.socket.send(reqFrame(subId, stillActive.filter));
     }, this.authRetryDelayMsFn(attempt));
   }
 
@@ -537,15 +550,20 @@ export class RelaySession {
    * Subscribe to a filter. Events and EOSE flow through callbacks; call the
    * returned handle to unsubscribe. Subscriptions survive reconnects.
    */
-  subscribe(filter: NostrFilter, options: SubscribeOptions): Unsubscribe {
+  subscribe(
+    filters: NostrFilter | NostrFilter[],
+    options: SubscribeOptions,
+  ): Unsubscribe {
     const subId = `s${this.nextSubId++}`;
-    const sub: ActiveSubscription = { filter, options };
+    const sub: ActiveSubscription = { filter: filters, options };
     this.activeSubs.set(subId, sub);
     // If not yet authenticated/open, the auth handshake replays this REQ;
     // no need to queue it in `pending` (which is for writes only).
     if (this.authenticated && this.socket) {
       this.openSubs.set(subId, sub);
-      this.socket.send(JSON.stringify(["REQ", subId, filter]));
+      this.socket.send(
+        JSON.stringify(["REQ", subId, ...(Array.isArray(filters) ? filters : [filters])]),
+      );
     }
     return () => {
       this.activeSubs.delete(subId);

@@ -4,7 +4,12 @@ import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { signNostrEvent } from "@/shared/lib/nostr-signer";
 import type { ChannelSummary } from "@/features/channels/lib/channelFromEvent.ts";
-import { dmActivityFromEvents, compareDmRecency, type DmLastMessage } from "./lib/dmActivity.ts";
+import {
+  dmActivityFromEvents,
+  compareDmRecency,
+  dmActivityFilterBatches,
+  type DmLastMessage,
+} from "./lib/dmActivity.ts";
 import { extractOpenDmChannelId } from "./lib/dmInput.ts";
 
 export interface DmSummary {
@@ -73,36 +78,35 @@ function useDmActivity(dmIds: string[]): Map<string, DmLastMessage> {
       return;
     }
     setEvents([]);
-    // ONE combined sub with a shared limit starves quiet DMs: a chatty
-    // conversation eats the window and everyone else falls back to
-    // metadata/name order (Sam 2026-09-02: "most recent isn't always on
-    // top"). One limit-1 sub per DM is exact — each returns that DM's
-    // newest message — and the DM set is small.
-    const unsubscribes = ids.map((id) =>
-      session.subscribe(
-        { kinds: [9], "#h": [id], limit: 1 },
-        {
-          onEvent: (event) => {
-            setEvents((previous) => {
-              // Keep only the newest event per DM id.
-              const existing = previous.find(
+    // Exact per-DM sampling (a shared limit starves quiet DMs) packed into
+    // multi-filter REQs so mount does not fire one REQ per DM — the burst
+    // tripped the relay's concurrency limiter and sibling subs (profiles!)
+    // got refused, blanking sidebar names/photos.
+    const unsubscribes = dmActivityFilterBatches(ids).map((filters) =>
+      session.subscribe(filters, {
+        onEvent: (event) => {
+          setEvents((previous) => {
+            const id = event.tags.find((tag) => tag[0] === "h")?.[1];
+            if (!id) {
+              return previous;
+            }
+            const existing = previous.find(
+              (candidate) =>
+                candidate.tags.find((tag) => tag[0] === "h")?.[1] === id,
+            );
+            if (existing && existing.created_at >= event.created_at) {
+              return previous;
+            }
+            return [
+              ...previous.filter(
                 (candidate) =>
-                  candidate.tags.find((tag) => tag[0] === "h")?.[1] === id,
-              );
-              if (existing && existing.created_at >= event.created_at) {
-                return previous;
-              }
-              return [
-                ...previous.filter(
-                  (candidate) =>
-                    candidate.tags.find((tag) => tag[0] === "h")?.[1] !== id,
-                ),
-                event,
-              ];
-            });
-          },
+                  candidate.tags.find((tag) => tag[0] === "h")?.[1] !== id,
+              ),
+              event,
+            ];
+          });
         },
-      ),
+      }),
     );
     return () => {
       for (const unsubscribe of unsubscribes) {

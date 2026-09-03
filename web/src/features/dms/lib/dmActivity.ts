@@ -33,6 +33,40 @@ export function compareDmRecency(
   );
 }
 
+/** Relay NIP-11 max_filters: 10 per REQ. */
+export const MAX_FILTERS_PER_REQ = 10;
+
+export interface DmActivityFilter {
+  kinds: number[];
+  "#h": string[];
+  limit: number;
+  // Satisfy NostrFilter's tag-index signature without widening the shape.
+  [key: `#${string}`]: string[];
+}
+
+/**
+ * Exact per-DM newest-message sampling as multi-filter REQ batches: one
+ * {kinds:[9], #h:[id], limit:1} filter per DM, OR'd into at most
+ * MAX_FILTERS_PER_REQ filters per REQ. This keeps each DM's sample exact
+ * (a shared limit starves quiet DMs) without firing one REQ per DM at
+ * mount — the concurrent-REQ burst tripped the relay's handler semaphore
+ * and randomly refused sibling subscriptions (profiles: names/photos
+ * vanished from the sidebar).
+ */
+export function dmActivityFilterBatches(
+  dmIds: string[],
+): DmActivityFilter[][] {
+  const batches: DmActivityFilter[][] = [];
+  for (let i = 0; i < dmIds.length; i += MAX_FILTERS_PER_REQ) {
+    batches.push(
+      dmIds
+        .slice(i, i + MAX_FILTERS_PER_REQ)
+        .map((id) => ({ kinds: [9], "#h": [id], limit: 1 })),
+    );
+  }
+  return batches;
+}
+
 /**
  * Last-activity info per DM channel, derived from ONE kind:9 subscription
  * spanning all known DM ids (`#h: [id1, id2, …]` — nostr filters are OR

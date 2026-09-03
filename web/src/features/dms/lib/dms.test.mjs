@@ -8,7 +8,11 @@ import {
   extractOpenDmChannelId,
   parsePubkeyInput,
 } from "./dmInput.ts";
-import { dmActivityFromEvents, compareDmRecency } from "./dmActivity.ts";
+import {
+  dmActivityFromEvents,
+  compareDmRecency,
+  dmActivityFilterBatches,
+} from "./dmActivity.ts";
 
 const SELF = "aa".repeat(32);
 const SAM = "bb".repeat(32);
@@ -245,4 +249,24 @@ test("compareDmRecency: ties break by name", () => {
     ),
     -1,
   );
+});
+
+test("dmActivityFilterBatches: one limit-1 filter per DM, max 10 per REQ", () => {
+  const ids = Array.from({ length: 23 }, (_, i) => `dm-${i}`);
+  const batches = dmActivityFilterBatches(ids);
+  assert.deepEqual(
+    batches.map((batch) => batch.length),
+    [10, 10, 3],
+  );
+  const flat = batches.flat();
+  for (const [index, filter] of flat.entries()) {
+    assert.deepEqual(filter, { kinds: [9], "#h": [`dm-${index}`], limit: 1 });
+  }
+});
+
+test("dmActivityFilterBatches: empty and small inputs", () => {
+  assert.deepEqual(dmActivityFilterBatches([]), []);
+  assert.deepEqual(dmActivityFilterBatches(["only"]), [
+    [{ kinds: [9], "#h": ["only"], limit: 1 }],
+  ]);
 });
