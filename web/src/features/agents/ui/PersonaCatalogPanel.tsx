@@ -203,7 +203,7 @@ function CatalogAvatar({
 }) {
   // avatarUrl already passed the safeAvatar mirror (http/https or inline
   // image data only); an SVG in an <img> cannot execute script.
-  const box = size === "lg" ? "h-12 w-12 text-base" : "h-6 w-6 text-[10px]";
+  const box = size === "lg" ? "h-12 w-12 text-base" : "h-6 w-6 text-badge";
   if (avatarUrl) {
     return (
       <img
@@ -351,7 +351,7 @@ function CatalogDetail({
           {chips.map((chip) => (
             <span
               key={chip}
-              className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
+              className="rounded bg-muted px-1.5 py-0.5 text-2xs text-muted-foreground"
             >
               {chip}
             </span>

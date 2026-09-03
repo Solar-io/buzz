@@ -1,6 +1,7 @@
 import { RouterProvider } from "@tanstack/react-router";
 
 import { router } from "@/app/router";
+import { useZoomShortcuts } from "@/app/useZoomShortcuts";
 import { AuthProvider, useAuth } from "@/features/auth/ui/AuthProvider";
 import { RelaySessionProvider } from "@/shared/api/RelaySessionProvider";
 import { ObserverProvider } from "@/features/agents/ObserverProvider";
@@ -25,6 +26,7 @@ function AuthenticatedApp() {
 }
 
 export function App() {
+  useZoomShortcuts();
   return (
     <AuthProvider>
       <AuthenticatedApp />

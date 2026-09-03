@@ -108,7 +108,7 @@ export function AgentRosterSidebar({
               }
               return (
                 <div key={section.key} className="space-y-1">
-                  <p className="px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  <p className="px-1 text-badge font-semibold uppercase tracking-wide text-muted-foreground">
                     {section.title} ({section.rows.length})
                   </p>
                   <ul className="divide-y divide-border">
@@ -183,7 +183,7 @@ function AgentRosterRow({
             {row.duplicate && (
               <span
                 title="An older registration shares this name — see cleanup below"
-                className="ml-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-normal uppercase tracking-wide text-amber-500"
+                className="ml-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-badge font-normal uppercase tracking-wide text-amber-500"
               >
                 duplicate
               </span>
@@ -191,7 +191,7 @@ function AgentRosterRow({
             {row.personaLinked && (
               <span
                 title="Definition-linked: its persona (kind 30175) supplies the definition"
-                className="ml-2 rounded bg-accent px-1.5 py-0.5 text-[10px] font-normal uppercase tracking-wide text-muted-foreground"
+                className="ml-2 rounded bg-accent px-1.5 py-0.5 text-badge font-normal uppercase tracking-wide text-muted-foreground"
               >
                 linked
               </span>
@@ -200,7 +200,7 @@ function AgentRosterRow({
               <span
                 key={teamName}
                 title={`Member of the team "${teamName}"`}
-                className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-normal text-sky-600 dark:text-sky-400"
+                className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-badge font-normal text-sky-600 dark:text-sky-400"
               >
                 {teamName}
               </span>
@@ -212,7 +212,7 @@ function AgentRosterRow({
         </span>
         <span className="flex shrink-0 flex-col items-end gap-1">
           <span className="flex items-center gap-1.5">
-            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            <span className="text-badge uppercase tracking-wide text-muted-foreground">
               {accessLabel(row.entry.respondTo)}
             </span>
             <AgentWorkingDot pubkey={row.pubkey} />
@@ -220,7 +220,7 @@ function AgentRosterRow({
           {row.machines.length > 0 && (
             <span
               title={`Runnable on ${row.machines.join(", ")}`}
-              className="max-w-32 truncate text-[10px] text-muted-foreground/70"
+              className="max-w-32 truncate text-badge text-muted-foreground/70"
             >
               {row.machines.join(", ")}
             </span>
@@ -319,7 +319,7 @@ function StaleCleanupCard({
                     — {entry.reason}
                   </span>
                 </span>
-                <span className="shrink-0 font-mono text-[10px] text-muted-foreground/70">
+                <span className="shrink-0 font-mono text-badge text-muted-foreground/70">
                   {truncatePubkey(entry.pubkey)}
                 </span>
               </li>
