@@ -10,177 +10,31 @@ import { VList, type VListHandle } from "virtua";
 import type { MessageBuffer, TimelineMessage } from "../lib/messageBuffer.ts";
 export type { ChannelMember, Profile } from "../hooks.ts";
 import type { Profile } from "../hooks.ts";
-import { truncatePubkey } from "@/shared/lib/pubkey";
-import { fetchSignedMedia } from "@/shared/api/blossom";
-import { EmojiPicker } from "@/shared/ui/EmojiPicker";
-import { cn } from "@/shared/lib/cn";
 import { formatElapsed } from "@/features/agents/ui/WorkingBadge";
 import { isWithinGroupingWindow } from "@/features/channels/lib/messageGrouping";
+import { authorLabel } from "../lib/authorLabel.ts";
+import { formatDayLabel } from "../lib/dateFormatters.ts";
 import {
-  QUICK_REACTIONS,
   reactionGroups as groupReactions,
-  type ReactionGroup,
   type ReactionIndex,
 } from "../lib/reactions.ts";
-import { MarkdownContent } from "./MarkdownContent.tsx";
 import { SYSTEM_MESSAGE_KIND } from "../lib/systemEvent.ts";
+import { AuthorAvatar } from "./AuthorAvatar.tsx";
+import { MessageRow } from "./MessageRow.tsx";
+import { DayDivider, UnreadDivider } from "./TimelineDividers.tsx";
 import {
   describeSystemMessage,
   SystemMessageRow,
 } from "./SystemMessageRow.tsx";
 
+// Re-exported for the sidebar DM rows, the agent panels and the huddle bar,
+// which have imported them from this module since before the row components
+// were split out.
+export { AuthorAvatar } from "./AuthorAvatar.tsx";
+export { authorLabel } from "../lib/authorLabel.ts";
+
 const EMPTY_REACTIONS: ReactionIndex = new Map();
-
-function formatDayLabel(unixSeconds: number): string {
-  const date = new Date(unixSeconds * 1000);
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  if (date.toDateString() === today.toDateString()) {
-    return "Today";
-  }
-  if (date.toDateString() === yesterday.toDateString()) {
-    return "Yesterday";
-  }
-  return date.toLocaleDateString([], {
-    month: "long",
-    day: "numeric",
-    year: date.getFullYear() === today.getFullYear() ? undefined : "numeric",
-  });
-}
-
-function DayDivider({ label }: { label: string }) {
-  return (
-    <div className="flex items-center gap-3 px-2 py-2">
-      <span className="h-px flex-1 bg-border" />
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      <span className="h-px flex-1 bg-border" />
-    </div>
-  );
-}
-
-function UnreadDivider() {
-  return (
-    <div className="flex items-center gap-3 px-2 py-1">
-      <span className="h-px flex-1 bg-border" />
-      <span className="rounded-full bg-emerald-600/20 px-2 py-0.5 text-xs font-semibold text-emerald-500">
-        New
-      </span>
-      <span className="h-px flex-1 bg-border" />
-    </div>
-  );
-}
-
-/**
- * Desktop-qualified timestamps: time-only today, "Yesterday at …", weekday
- * within the week, "Aug 28 at …" beyond. Day dividers carry the day for
- * scanning; the qualifier keeps individual rows self-describing.
- */
-function formatTime(unixSeconds: number): string {
-  const date = new Date(unixSeconds * 1000);
-  const time = date.toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-  const today = new Date();
-  const dayKey = (d: Date) => d.toDateString();
-  if (dayKey(date) === dayKey(today)) {
-    return time;
-  }
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  if (dayKey(date) === dayKey(yesterday)) {
-    return `Yesterday at ${time}`;
-  }
-  if (today.getTime() - date.getTime() < 7 * 86_400_000) {
-    return `${date.toLocaleDateString([], { weekday: "long" })} at ${time}`;
-  }
-  return `${date.toLocaleDateString([], { month: "short", day: "numeric" })} at ${time}`;
-}
-
-export function authorLabel(
-  pubkey: string,
-  profiles: Map<string, Profile>,
-): string {
-  return profiles.get(pubkey)?.displayName ?? truncatePubkey(pubkey);
-}
-
-/** Deterministic hue from a pubkey — the identicon fallback color. */
-function pubkeyHue(pubkey: string): number {
-  let hash = 0;
-  for (let i = 0; i < pubkey.length; i++) {
-    hash = (hash * 31 + pubkey.charCodeAt(i)) | 0;
-  }
-  return Math.abs(hash) % 360;
-}
-
-/**
- * Author avatar: the profile picture when one is published (relay media is
- * auth-gated, so it goes through the signed fetch), else a hue-hash initials
- * circle in the desktop client's identicon style. Exported for the sidebar's
- * DM rows.
- */
-export function AuthorAvatar({
-  pubkey,
-  label,
-  picture,
-  size = "md",
-}: {
-  pubkey: string;
-  label: string;
-  picture?: string;
-  size?: "sm" | "dm" | "md" | "md-sm";
-}) {
-  const [objectUrl, setObjectUrl] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    setObjectUrl(null);
-    if (!picture) {
-      return;
-    }
-    fetchSignedMedia(picture)
-      .then((url) => {
-        if (!cancelled) {
-          setObjectUrl(url);
-        }
-      })
-      .catch(() => {
-        // Unavailable media falls back to the identicon below.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [picture]);
-  const box =
-    size === "sm"
-      ? "h-5 w-5 text-[10px]"
-      : size === "dm"
-        ? "h-6 w-6 text-[10px]"
-        : size === "md-sm"
-          ? "h-7 w-7 text-xs"
-          : "h-9 w-9 text-sm";
-  if (objectUrl) {
-    return (
-      <img
-        src={objectUrl}
-        alt=""
-        className={`rounded-full object-cover ${box}`}
-      />
-    );
-  }
-  return (
-    <div
-      className={`flex items-center justify-center rounded-full font-semibold text-white ${box} ${
-        size === "dm" ? "dm-identicon font-semibold" : ""
-      }`}
-      style={
-        size === "dm" ? undefined : { backgroundColor: `hsl(${pubkeyHue(pubkey)}, 45%, 42%)` }
-      }
-    >
-      {label.slice(0, 2)}
-    </div>
-  );
-}
+const EMPTY_PENDING: ReadonlySet<string> = new Set();
 
 export function ChannelTimeline({
   messages,
@@ -192,6 +46,7 @@ export function ChannelTimeline({
   workingAgent,
   reactions,
   onReact,
+  onUnreact,
   onEdit,
   onDelete,
   onShare,
@@ -200,6 +55,7 @@ export function ChannelTimeline({
   highlightId,
   unreadBefore,
   typingNames,
+  pendingIds,
   tailKey,
   onLoadOlder,
   loadingOlder,
@@ -224,13 +80,20 @@ export function ChannelTimeline({
   reactions?: ReactionIndex;
   /** Send a reaction (emoji) on a message. */
   onReact?: (messageId: string, emoji: string) => void;
+  /**
+   * Remove the viewer's OWN reaction — a NIP-09 kind-5 deletion of their
+   * kind-7, not a second kind-7. Without it, a chip the viewer is already
+   * part of renders pressed but is inert (clicking would otherwise re-send a
+   * reaction the relay dedupes server-side, so the chip would never clear).
+   */
+  onUnreact?: (messageId: string, emoji: string) => void;
   /** Begin editing one of the viewer's own messages. */
   onEdit?: (message: TimelineMessage) => void;
-  /** Delete one of the viewer's own messages (after confirm). */
+  /** Delete one of the viewer's own messages (confirmed in the action bar). */
   onDelete?: (messageId: string) => void;
   /** Copy a permalink to any message. */
   onShare?: (messageId: string) => void;
-  /** The viewer's pubkey — gates edit/delete to own messages. */
+  /** The viewer's pubkey — gates edit/delete and drives reaction self-state. */
   selfPubkey?: string | null;
   /**
    * Authors known to be agents (derived from the observer store — any agent
@@ -244,6 +107,13 @@ export function ChannelTimeline({
   unreadBefore?: number | null;
   /** Display names of people typing in this channel (footer row). */
   typingNames?: string[];
+  /**
+   * Ids of optimistically inserted sends still awaiting their relay OK. Those
+   * rows render the desktop's "Sending…" status. The web client has no
+   * optimistic insert yet, so this is empty in production today; the row
+   * surface exists so wiring one is a prop change rather than a redesign.
+   */
+  pendingIds?: ReadonlySet<string>;
   /**
    * Auto-tail trigger: every change scrolls the list to its bottom (the
    * desktop's VList pattern). Compose it from the channel + newest message id
@@ -269,7 +139,15 @@ export function ChannelTimeline({
   const anchorIdRef = useRef<string | null>(null);
   /** message id → item index, rebuilt every render by the row loop. */
   const rowIndexRef = useRef<Map<string, number> | null>(null);
+  /**
+   * Per-item day label and "is itself a day divider", rebuilt every render
+   * and read through refs so the scroll handler stays reference-stable.
+   */
+  const itemDaysRef = useRef<(string | null)[]>([]);
+  const itemIsDividerRef = useRef<boolean[]>([]);
+  const [pinnedDay, setPinnedDay] = useState<string | null>(null);
   const isEmpty = messages.length === 0;
+  const pending = pendingIds ?? EMPTY_PENDING;
   let lastAuthor: string | null = null;
   let lastKind = 0;
   // createdAt (Unix seconds) of the previous RENDERED message — the anchor
@@ -277,8 +155,17 @@ export function ChannelTimeline({
   // against its immediate predecessor, grouped or not.
   let lastRenderedAt: number | null = null;
   let lastDay = "";
+  let currentDayLabel = "";
   let unreadShown = false;
   const rows: ReactElement[] = [];
+  /** Day label in force for each entry of `rows`, and divider-ness. */
+  const rowDays: string[] = [];
+  const rowIsDivider: boolean[] = [];
+  const pushRow = (row: ReactElement, isDivider = false) => {
+    rows.push(row);
+    rowDays.push(currentDayLabel);
+    rowIsDivider.push(isDivider);
+  };
   const rowIndex = new Map<string, number>();
   rowIndexRef.current = rowIndex;
   for (let index = 0; index < messages.length; index++) {
@@ -295,12 +182,8 @@ export function ChannelTimeline({
       lastDay = day;
       lastAuthor = null;
       lastRenderedAt = null;
-      rows.push(
-        <DayDivider
-          key={`day:${day}`}
-          label={formatDayLabel(message.createdAt)}
-        />,
-      );
+      currentDayLabel = formatDayLabel(message.createdAt);
+      pushRow(<DayDivider key={`day:${day}`} label={currentDayLabel} />, true);
     }
     if (
       !unreadShown &&
@@ -308,7 +191,7 @@ export function ChannelTimeline({
       message.createdAt >= unreadBefore
     ) {
       unreadShown = true;
-      rows.push(<UnreadDivider key="unread" />);
+      pushRow(<UnreadDivider key="unread" />);
     }
     // Kind 40099 is a SYSTEM row, not a message row: joins, leaves and
     // moderation tombstones. It renders centered and muted with no author
@@ -325,9 +208,7 @@ export function ChannelTimeline({
         continue;
       }
       rowIndex.set(message.id, rows.length);
-      rows.push(
-        <SystemMessageRow key={message.id} description={description} />,
-      );
+      pushRow(<SystemMessageRow key={message.id} description={description} />);
       continue;
     }
     // Replies render INLINE under their root (desktop pattern: indented
@@ -353,7 +234,7 @@ export function ChannelTimeline({
     lastKind = message.kind;
     lastRenderedAt = message.createdAt;
     rowIndex.set(message.id, rows.length);
-    rows.push(
+    pushRow(
       <MessageRow
         key={message.id}
         message={message}
@@ -365,14 +246,18 @@ export function ChannelTimeline({
         reactionGroups={groupReactions(
           reactions ?? EMPTY_REACTIONS,
           message.id,
+          selfPubkey,
         )}
         onReact={onReact}
+        onUnreact={onUnreact}
         onEdit={onEdit}
         onDelete={onDelete}
         onShare={onShare}
         canModify={selfPubkey === message.authorPubkey}
         isAgent={agentPubkeys?.has(message.authorPubkey) ?? false}
         highlighted={message.id === highlightId}
+        pending={pending.has(message.id)}
+        selfPubkey={selfPubkey}
       >
         {replies.length > 0 && (
           <ThreadPreview
@@ -396,18 +281,25 @@ export function ChannelTimeline({
       </div>
     )),
   ];
+  const itemDays: (string | null)[] = [...rowDays];
+  const itemIsDivider: boolean[] = [...rowIsDivider];
   if (loadingOlder) {
     // Prepended (not appended): the reader is at the top waiting for it.
     // This row exists only while a page is in flight, so it never shifts
     // the anchor math of a completed restore.
     items.unshift(
-      <div key="older-loading" className="mx-auto w-full max-w-3xl px-1 sm:px-3">
+      <div
+        key="older-loading"
+        className="mx-auto w-full max-w-3xl px-1 sm:px-3"
+      >
         <div className="flex items-center gap-2 px-2 py-1 text-sm text-muted-foreground">
           <span className="inline-block size-3 animate-spin rounded-full border-2 border-muted-foreground/40 border-t-transparent" />
           <span>Loading earlier messages…</span>
         </div>
       </div>,
     );
+    itemDays.unshift(null);
+    itemIsDivider.unshift(false);
   }
   if (typingNames && typingNames.length > 0) {
     items.push(
@@ -426,6 +318,8 @@ export function ChannelTimeline({
         </div>
       </div>,
     );
+    itemDays.push(null);
+    itemIsDivider.push(false);
   }
   if (workingAgent) {
     items.push(
@@ -446,7 +340,31 @@ export function ChannelTimeline({
         </div>
       </div>,
     );
+    itemDays.push(null);
+    itemIsDivider.push(false);
   }
+  itemDaysRef.current = itemDays;
+  itemIsDividerRef.current = itemIsDivider;
+
+  /**
+   * Which day the row at the top of the viewport belongs to. Null while that
+   * row IS the day's own divider, so the pinned pill and the in-flow pill
+   * never render on top of each other.
+   */
+  const resolvePinnedDay = useCallback((offset: number) => {
+    const list = listRef.current;
+    if (!list) {
+      return;
+    }
+    const index = list.findItemIndex(offset);
+    const days = itemDaysRef.current;
+    if (index < 0 || index >= days.length || itemIsDividerRef.current[index]) {
+      setPinnedDay(null);
+      return;
+    }
+    setPinnedDay(days[index]);
+  }, []);
+
   // Auto-tail: tailKey changes → scroll to the newest row. Double-rAF lets
   // virtua measure freshly mounted rows; the settle pass catches late-sizing
   // media. (Same pattern the timeline used before virtualization.) Tailing is
@@ -469,9 +387,11 @@ export function ChannelTimeline({
     };
   }, [tailKey]);
 
-  // Top reached → request one older page (once per flight).
+  // Top reached → request one older page (once per flight). Also the pinned
+  // day-divider tick: it is the only scroll signal virtua gives us.
   const handleScroll = useCallback(
     (offset: number) => {
+      resolvePinnedDay(offset);
       if (
         offset > 4 ||
         pagePhase.current !== "idle" ||
@@ -486,7 +406,7 @@ export function ChannelTimeline({
       pagePhase.current = "loading";
       onLoadOlder();
     },
-    [loadingOlder, historyExhausted, messages, onLoadOlder],
+    [loadingOlder, historyExhausted, messages, onLoadOlder, resolvePinnedDay],
   );
 
   // Older page landed: pin the viewport back to the row the user was reading
@@ -518,6 +438,17 @@ export function ChannelTimeline({
     );
     return () => cancelAnimationFrame(raf);
   }, [loadingOlder, messages]);
+
+  // First paint (and any change to the rendered set) settles the pinned pill
+  // without waiting for the reader to scroll.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-resolve whenever the rendered set changes
+  useEffect(() => {
+    const raf = requestAnimationFrame(() =>
+      resolvePinnedDay(listRef.current?.scrollOffset ?? 0),
+    );
+    return () => cancelAnimationFrame(raf);
+  }, [resolvePinnedDay, items.length, tailKey]);
+
   // Empty state AFTER the hooks — conditional hook order would break the
   // 0 → N message transition.
   if (isEmpty) {
@@ -528,221 +459,17 @@ export function ChannelTimeline({
     );
   }
   return (
-    <VList ref={listRef} className="min-h-0 flex-1" onScroll={handleScroll}>
-      {items}
-    </VList>
-  );
-}
-
-function MessageRow({
-  message,
-  profiles,
-  grouped,
-  replyCount,
-  onOpenThread,
-  active,
-  reactionGroups,
-  onReact,
-  onEdit,
-  onDelete,
-  onShare,
-  canModify,
-  isAgent,
-  highlighted,
-  children,
-}: {
-  message: TimelineMessage;
-  profiles: Map<string, Profile>;
-  grouped: boolean;
-  replyCount: number;
-  onOpenThread: (message: TimelineMessage) => void;
-  active: boolean;
-  reactionGroups: ReactionGroup[];
-  onReact?: (messageId: string, emoji: string) => void;
-  onEdit?: (message: TimelineMessage) => void;
-  onDelete?: (messageId: string) => void;
-  onShare?: (messageId: string) => void;
-  canModify?: boolean;
-  isAgent?: boolean;
-  highlighted?: boolean;
-  children?: ReactNode;
-}) {
-  const mentionNames = new Set(
-    message.mentionPubkeys.map((pubkey) =>
-      authorLabel(pubkey, profiles).toLowerCase(),
-    ),
-  );
-  const rowRef = useRef<HTMLDivElement>(null);
-  // Permalink arrival: scroll the target into view (centered) and flash a
-  // ring. Runs once per mount with `highlighted` — the route drops ?m from
-  // the URL right after, so this never fights the auto-tail scroll.
-  useEffect(() => {
-    if (!highlighted) {
-      return;
-    }
-    rowRef.current?.scrollIntoView({ block: "center" });
-  }, [highlighted]);
-  return (
-    // Desktop message cards: rounded-2xl rows, hover muted wash; the open
-    // thread's root keeps a persistent tint so the selection is traceable.
-    <div
-      ref={rowRef}
-      className={cn(
-        "group flex gap-3 rounded-2xl px-2 transition-colors hover:bg-muted/50",
-        grouped ? "mt-0.5" : "mt-3",
-        active && "bg-muted/40 hover:bg-muted/40",
-        highlighted &&
-          "bg-primary/10 ring-1 ring-primary/40 [animation:pingFlash_1.2s_ease-out_1]",
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      {pinnedDay && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-20">
+          <div className="mx-auto w-full max-w-3xl px-1 sm:px-3">
+            <DayDivider label={pinnedDay} pinned />
+          </div>
+        </div>
       )}
-    >
-      <div className="w-9 shrink-0">
-        {!grouped && (
-          <AuthorAvatar
-            pubkey={message.authorPubkey}
-            label={authorLabel(message.authorPubkey, profiles)}
-            picture={profiles.get(message.authorPubkey)?.avatar}
-          />
-        )}
-      </div>
-      <div className="min-w-0 flex-1">
-        {!grouped && (
-          <div className="flex items-baseline gap-2">
-            <span className="text-sm font-semibold">
-              {authorLabel(message.authorPubkey, profiles)}
-            </span>
-            {isAgent && (
-              <>
-                <span className="rounded bg-accent/50 px-1 text-[10px] font-medium uppercase tracking-wide text-accent-foreground/80">
-                  agent
-                </span>
-                <span
-                  className="hidden font-mono text-[10px] text-muted-foreground/60 sm:inline"
-                  title={message.authorPubkey}
-                >
-                  {truncatePubkey(message.authorPubkey)}
-                </span>
-              </>
-            )}
-            <span className="text-xs text-muted-foreground">
-              {formatTime(message.createdAt)}
-            </span>
-          </div>
-        )}
-        <MarkdownContent
-          content={message.content}
-          mentionNames={mentionNames}
-          imetaByUrl={message.imetaByUrl}
-          snapshotSharedBy={authorLabel(message.authorPubkey, profiles)}
-        />
-        {message.edited && (
-          <span className="ml-1 align-baseline text-xs text-muted-foreground/70">
-            (edited)
-          </span>
-        )}
-        {replyCount > 2 && (
-          <button
-            type="button"
-            className="mt-0.5 text-sm font-medium text-primary hover:underline"
-            onClick={() => onOpenThread(message)}
-          >
-            View all {replyCount} {replyCount === 1 ? "reply" : "replies"} →
-          </button>
-        )}
-        {reactionGroups.length > 0 && (
-          <div className="mt-1 flex flex-wrap gap-1">
-            {reactionGroups.map((group) => (
-              <button
-                key={group.emoji}
-                type="button"
-                title={group.pubkeys.length.toString()}
-                className="flex items-center gap-1 rounded-full border border-border/60 bg-card/60 px-2 py-0.5 text-sm hover:bg-accent"
-                onClick={() => onReact?.(message.id, group.emoji)}
-              >
-                <span>{group.emoji}</span>
-                {group.pubkeys.length > 1 && (
-                  <span className="text-xs tabular-nums text-muted-foreground">
-                    {group.pubkeys.length}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-        )}
-        {children}
-      </div>
-      <div className="flex shrink-0 flex-col items-center gap-1 self-start">
-        {canModify && onEdit && (
-          <button
-            type="button"
-            aria-label="Edit message"
-            className="rounded p-1 text-xs text-muted-foreground transition-opacity hover:bg-accent lg:opacity-0 lg:group-hover:opacity-100"
-            onClick={() => onEdit(message)}
-          >
-            ✎
-          </button>
-        )}
-        {canModify && onDelete && (
-          <button
-            type="button"
-            aria-label="Delete message"
-            className="rounded p-1 text-xs text-muted-foreground transition-opacity hover:bg-accent lg:opacity-0 lg:group-hover:opacity-100"
-            onClick={() => {
-              if (window.confirm("Delete this message?")) onDelete(message.id);
-            }}
-          >
-            🗑
-          </button>
-        )}
-        {onReact &&
-          QUICK_REACTIONS.map((emoji) => (
-            <button
-              key={emoji}
-              type="button"
-              aria-label={`React ${emoji}`}
-              className="hidden rounded p-0.5 text-xs text-muted-foreground transition-opacity hover:bg-accent group-hover:block lg:opacity-0 lg:group-hover:opacity-100"
-              onClick={() => onReact(message.id, emoji)}
-            >
-              {emoji}
-            </button>
-          ))}
-        {onReact && (
-          <EmojiPicker
-            label="More reactions"
-            onSelect={(emoji) => onReact(message.id, emoji)}
-          >
-            {(props) => (
-              <button
-                type="button"
-                ref={props.ref}
-                aria-label={props["aria-label"]}
-                className="hidden rounded p-1 text-xs text-muted-foreground transition-opacity hover:bg-accent group-hover:block lg:opacity-0 lg:group-hover:opacity-100"
-                onClick={props.onClick}
-              >
-                ＋
-              </button>
-            )}
-          </EmojiPicker>
-        )}
-        {onShare && (
-          <button
-            type="button"
-            aria-label="Copy link to message"
-            title="Copy link to message"
-            className="rounded p-1 text-xs text-muted-foreground transition-opacity hover:bg-accent lg:opacity-0 lg:group-hover:opacity-100"
-            onClick={() => onShare(message.id)}
-          >
-            🔗
-          </button>
-        )}
-        <button
-          type="button"
-          aria-label="Reply in thread"
-          className="rounded p-1 text-xs text-muted-foreground transition-opacity hover:bg-accent lg:opacity-0 lg:group-hover:opacity-100"
-          onClick={() => onOpenThread(message)}
-        >
-          ↩
-        </button>
-      </div>
+      <VList ref={listRef} className="min-h-0 flex-1" onScroll={handleScroll}>
+        {items}
+      </VList>
     </div>
   );
 }
