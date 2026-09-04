@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Search } from "lucide-react";
+import { Inbox, Search } from "lucide-react";
 import type { Profile } from "@/features/channels/hooks";
 import type { RelaySessionStatus } from "@/shared/api/relay-session";
 import {
@@ -94,6 +94,8 @@ export interface ChannelSidebarActions {
   onHideDm: (channelId: string) => void;
   /** Raise the Files overlay. */
   onOpenFiles: () => void;
+  /** Open the inbox view. */
+  onOpenInbox: () => void;
 }
 
 /** Props for {@link ChannelSidebar}. */
@@ -110,6 +112,8 @@ export interface ChannelSidebarProps {
   channelCount: number;
   /** Channel currently open (?c=), or undefined. */
   selectedId: string | undefined;
+  /** The inbox view is the active pane. */
+  inboxSelected: boolean;
   lists: ChannelSidebarLists;
   readState: ChannelSidebarReadState;
   search: ChannelSidebarSearch;
@@ -127,6 +131,7 @@ export function ChannelSidebar({
   relayStatus,
   channelCount,
   selectedId,
+  inboxSelected,
   lists,
   readState,
   search,
@@ -190,6 +195,18 @@ export function ChannelSidebar({
       </div>
       <RelayConnectionCard status={relayStatus} />
       <nav className="buzz-sidebar-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+        {/* Above the sections, like the desktop's primary nav: the inbox is a
+            destination, not one channel among many. */}
+        <ul className="mb-2 space-y-0.5">
+          <li>
+            <SidebarNavButton
+              selected={inboxSelected}
+              label="Inbox"
+              icon={<Inbox aria-hidden className="h-4 w-4 shrink-0" />}
+              onSelect={actions.onOpenInbox}
+            />
+          </li>
+        </ul>
         {channelCount === 0 && (
           <p className="px-2 py-4 text-sm text-muted-foreground">
             {connected

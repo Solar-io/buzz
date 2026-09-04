@@ -54,6 +54,7 @@ import {
 } from "@/features/dms/lib/hiddenDms.ts";
 import { channelMenuItems } from "@/features/sidebar/lib/channelMenuItems.ts";
 import { ChannelSidebar } from "@/features/sidebar/ui/ChannelSidebar";
+import { HomeInboxRoute } from "@/features/home/ui/HomeInboxRoute";
 import { NotificationRuntime } from "@/features/notifications/ui/NotificationRuntime";
 import { ProfileActionsProvider } from "@/features/profile/ProfileActionsContext";
 import { FilesPanel } from "@/features/files/ui/FilesPanel";
@@ -69,10 +70,14 @@ import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 export const Route = createFileRoute("/repos")({
   validateSearch: (
     search: Record<string, unknown>,
-  ): { c?: string; m?: string } => ({
+  ): { c?: string; m?: string; view?: "inbox" } => ({
     c: typeof search.c === "string" ? search.c : undefined,
     // Permalink target: scroll to and flash this message once it loads.
     m: typeof search.m === "string" ? search.m : undefined,
+    // The inbox is a view of the same shell, not a separate route: a route
+    // would unmount the sidebar, and the shell is what holds the channel
+    // subscriptions every pane reads from.
+    view: search.view === "inbox" ? ("inbox" as const) : undefined,
   }),
   component: AppRoute,
 });
@@ -90,6 +95,7 @@ function ChannelBrowser() {
   const navigate = useNavigate({ from: "/repos" });
   const selectedId = Route.useSearch({ select: (s) => s.c });
   const permalinkMessageId = Route.useSearch({ select: (s) => s.m });
+  const view = Route.useSearch({ select: (s) => s.view });
   const current = channels.find((channel) => channel.id === selectedId) ?? null;
 
   // DMs ride the same kind:39000 list (relay `t` tag); they get their own
@@ -350,6 +356,14 @@ function ChannelBrowser() {
         onSelect: () => setNewDmOpen(true),
       },
       {
+        id: "action:inbox",
+        kind: "action" as const,
+        label: "Inbox",
+        keywords: ["inbox", "mentions", "unread", "home"],
+        onSelect: () =>
+          void navigate({ to: "/repos", search: { view: "inbox" } }),
+      },
+      {
         id: "action:files",
         kind: "action" as const,
         label: "Files",
@@ -414,6 +428,7 @@ function ChannelBrowser() {
     <ChannelSidebar
       connected={connected}
       relayStatus={relayStatus}
+      inboxSelected={view === "inbox"}
       channelCount={channels.length}
       selectedId={selectedId}
       lists={{
@@ -458,6 +473,8 @@ function ChannelBrowser() {
         onDmOpened,
         onHideDm,
         onOpenFiles: () => setFilesOpen(true),
+        onOpenInbox: () =>
+          void navigate({ to: "/repos", search: { view: "inbox" } }),
       }}
     />
   );
@@ -549,6 +566,17 @@ function ChannelBrowser() {
         >
           {filesOpen ? (
             <FilesPanel onClose={() => setFilesOpen(false)} />
+          ) : view === "inbox" ? (
+            <HomeInboxRoute
+              channels={channels}
+              selfPubkey={selfPubkey}
+              onOpenChannel={(channelId, messageId) => {
+                void navigate({
+                  to: "/repos",
+                  search: { c: channelId, m: messageId },
+                });
+              }}
+            />
           ) : current ? (
             <div
               className="flex h-full min-h-0"
