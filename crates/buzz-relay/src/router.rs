@@ -75,6 +75,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Relay-owned third-party GIF metadata proxy (NIP-98 auth).
         .route(api::gifs::SEARCH_PATH, post(api::gifs::search))
         .route(api::gifs::SHARE_PATH, post(api::gifs::share))
+        // Sender-side link-preview unfurl (NIP-98 auth). See
+        // `api::link_preview` for the SSRF fence around the outbound fetch.
+        .route(
+            api::link_preview::UNFURL_PATH,
+            post(api::link_preview::unfurl),
+        )
         .route(
             "/workflows/{workflow_id}/runs",
             get(api::workflows::workflow_runs),

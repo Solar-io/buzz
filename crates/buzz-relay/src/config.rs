@@ -257,6 +257,12 @@ pub struct Config {
     pub media_max_concurrent_uploads_per_pubkey: u32,
     /// Maximum media upload starts accepted from one pubkey per minute.
     pub media_uploads_per_minute: u32,
+    /// Maximum concurrent link-preview unfurls handled by one relay process.
+    ///
+    /// This is the ceiling on outbound fetches the relay will make on behalf
+    /// of members at any instant; it is what stops the endpoint being used to
+    /// amplify traffic at a third party.
+    pub link_preview_max_concurrent: usize,
 
     /// Whether tamper-evident event/media audit logging is enabled. Defaults to true.
     /// This does not control the separate `moderation_actions` audit trail.
@@ -359,6 +365,10 @@ fn rate_limit_config_from_env() -> Result<buzz_auth::RateLimitConfig, ConfigErro
         gif_searches_per_min: positive_u64_from_env(
             "BUZZ_RATE_LIMIT_GIF_SEARCHES_PER_MIN",
             defaults.gif_searches_per_min,
+        )?,
+        link_previews_per_min: positive_u64_from_env(
+            "BUZZ_RATE_LIMIT_LINK_PREVIEWS_PER_MIN",
+            defaults.link_previews_per_min,
         )?,
         human_api_calls_per_min: positive_u64_from_env(
             "BUZZ_RATE_LIMIT_HUMAN_API_CALLS_PER_MIN",
@@ -839,6 +849,11 @@ impl Config {
                 .filter(|&v| v > 0)
                 .unwrap_or(2)
                 .min(u32::try_from(media_max_concurrent_uploads).unwrap_or(u32::MAX));
+        let link_preview_max_concurrent: usize = std::env::var("BUZZ_LINK_PREVIEW_MAX_CONCURRENT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|&v| v > 0)
+            .unwrap_or(4);
         let media_uploads_per_minute: u32 = std::env::var("BUZZ_MEDIA_UPLOADS_PER_MINUTE")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -1081,6 +1096,7 @@ impl Config {
             media_max_concurrent_uploads,
             media_max_concurrent_uploads_per_pubkey,
             media_uploads_per_minute,
+            link_preview_max_concurrent,
             audit_enabled,
             ephemeral_ttl_override,
             observer_retention_secs,

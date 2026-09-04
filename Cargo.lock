@@ -1286,6 +1286,7 @@ dependencies = [
  "futures-util",
  "hex",
  "hmac 0.13.0",
+ "image",
  "infer",
  "mesh-llm-host-runtime",
  "mesh-llm-sdk",

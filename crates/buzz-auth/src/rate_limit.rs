@@ -62,6 +62,8 @@ pub enum LimitType {
     ApiCalls,
     /// Relay-proxied GIF metadata searches.
     GifSearches,
+    /// Relay-side link-preview unfurls (outbound page + image fetches).
+    LinkPreviews,
     /// All WebSocket events (broader than `Messages`).
     WsEvents,
     /// Concurrent WebSocket connections from a single IP address.
@@ -75,6 +77,7 @@ impl LimitType {
             Self::Messages => "msg",
             Self::ApiCalls => "api",
             Self::GifSearches => "gif",
+            Self::LinkPreviews => "linkprev",
             Self::WsEvents => "ws",
             Self::IpConnections => "conn",
         }
@@ -94,6 +97,11 @@ pub struct RateLimitConfig {
     /// Default: 30.
     #[serde(default = "default_gif_searches")]
     pub gif_searches_per_min: u64,
+    /// Maximum relay-side link-preview unfurls per minute for each pubkey.
+    /// Lower than the GIF budget: one unfurl can cost three outbound fetches
+    /// and two stored blobs. Default: 20.
+    #[serde(default = "default_link_previews")]
+    pub link_previews_per_min: u64,
     /// Maximum HTTP API calls per minute for human users. Default: 300.
     #[serde(default = "default_human_api")]
     pub human_api_calls_per_min: u64,
@@ -120,6 +128,9 @@ fn default_human_msg() -> u64 {
 fn default_gif_searches() -> u64 {
     30
 }
+fn default_link_previews() -> u64 {
+    20
+}
 fn default_human_api() -> u64 {
     300
 }
@@ -144,6 +155,7 @@ impl Default for RateLimitConfig {
         Self {
             human_messages_per_min: default_human_msg(),
             gif_searches_per_min: default_gif_searches(),
+            link_previews_per_min: default_link_previews(),
             human_api_calls_per_min: default_human_api(),
             human_ws_events_per_sec: default_human_ws(),
             agent_standard_messages_per_min: default_agent_std_msg(),

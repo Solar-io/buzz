@@ -662,6 +662,12 @@ pub struct AppState {
     pub git_semaphore: Arc<Semaphore>,
     /// Semaphore limiting concurrent media upload parsing/transcoding work.
     pub media_upload_semaphore: Arc<Semaphore>,
+    /// Semaphore limiting concurrent relay-side link-preview unfurls.
+    ///
+    /// Every permit is one member-initiated outbound fetch chain. Capping
+    /// them bounds both the relay's own socket use and the traffic this
+    /// endpoint can aim at any single third party.
+    pub link_preview_semaphore: Arc<Semaphore>,
 
     /// Workflow engine for background processing.
     pub workflow_engine: Arc<WorkflowEngine>,
@@ -835,6 +841,7 @@ impl AppState {
 
         let git_max_concurrent_ops = config.git_max_concurrent_ops;
         let media_max_concurrent_uploads = config.media_max_concurrent_uploads;
+        let link_preview_max_concurrent = config.link_preview_max_concurrent;
         let git_store = crate::api::git::store::GitStore::new(
             &config.media.s3_endpoint,
             &config.media.s3_access_key,
@@ -874,6 +881,7 @@ impl AppState {
             handler_semaphore: Arc::new(Semaphore::new(max_concurrent_handlers)),
             git_semaphore: Arc::new(Semaphore::new(git_max_concurrent_ops)),
             media_upload_semaphore: Arc::new(Semaphore::new(media_max_concurrent_uploads)),
+            link_preview_semaphore: Arc::new(Semaphore::new(link_preview_max_concurrent)),
             workflow_engine,
             relay_keypair,
 

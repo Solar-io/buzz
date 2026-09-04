@@ -1,5 +1,71 @@
+import { useEffect, useState } from "react";
+
+import { fetchSignedMedia } from "@/shared/api/blossom";
+import { isRelayMediaHref } from "@/shared/lib/linkOpen";
+import { relayHttpBaseUrl } from "@/shared/lib/relay-url";
 import { useLinkPreviewStyle } from "@/features/settings/lib/appearanceStore.ts";
 import type { LinkPreview } from "../lib/linkPreview.ts";
+
+/**
+ * A preview asset, fetched with a signed GET when it lives on this relay.
+ *
+ * Every snapshot asset does: the relay refuses a snapshot whose image or
+ * favicon is not one of its own blobs. And `GET /media/{sha256}` runs
+ * `authenticate_media_read` (crates/buzz-relay/src/api/media.rs), which an
+ * `<img>` element cannot satisfy — it has no way to sign a NIP-98 header. A
+ * plain `src` therefore renders every relay-hosted preview image broken, the
+ * same defect custom emoji had. `fetchSignedMedia` caches one object URL per
+ * source URL app-wide, so the same card scrolled past twice costs one request.
+ *
+ * A failed fetch renders nothing rather than a broken-image glyph: a preview
+ * is decoration, and it must never take a message row down with it.
+ */
+function PreviewImage({
+  alt,
+  className,
+  url,
+}: {
+  alt: string;
+  className: string;
+  url: string;
+}) {
+  const needsSignedGet = isRelayMediaHref(url, relayHttpBaseUrl());
+  const [signedUrl, setSignedUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+    if (!needsSignedGet) {
+      setSignedUrl(null);
+      return;
+    }
+    let cancelled = false;
+    fetchSignedMedia(url)
+      .then((objectUrl) => {
+        if (!cancelled) setSignedUrl(objectUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [needsSignedGet, url]);
+
+  const src = needsSignedGet ? signedUrl : url;
+  if (failed || !src) {
+    return null;
+  }
+  return (
+    <img
+      alt={alt}
+      className={className}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      src={src}
+    />
+  );
+}
 
 /**
  * Sender-authored link preview cards.
@@ -61,25 +127,23 @@ export function LinkPreviewCards({
           }
         >
           {preview.imageUrl && (
-            <img
-              src={preview.imageUrl}
+            <PreviewImage
               alt=""
-              loading="lazy"
               className={
                 rich
                   ? "h-44 w-full shrink-0 object-cover"
                   : "h-20 w-20 shrink-0 object-cover"
               }
+              url={preview.imageUrl}
             />
           )}
           <span className="min-w-0 flex-1 p-2.5">
             <span className="flex items-center gap-1.5">
               {preview.faviconUrl && (
-                <img
-                  src={preview.faviconUrl}
+                <PreviewImage
                   alt=""
-                  loading="lazy"
                   className="size-3.5 shrink-0 rounded-sm"
+                  url={preview.faviconUrl}
                 />
               )}
               {preview.site && (
