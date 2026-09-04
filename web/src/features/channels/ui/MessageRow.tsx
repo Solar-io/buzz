@@ -251,6 +251,11 @@ export function MessageRow({
       <MessageActionBar
         messageId={message.id}
         canModify={canModify}
+        // Moderation authority is two-axis and per-channel, so the bar needs
+        // both the channel it is judging within and the author it would act
+        // against. Both already ride on TimelineMessage.
+        channelId={message.channelId}
+        authorPubkey={message.authorPubkey}
         onReact={onReact ? (emoji) => onReact(message.id, emoji) : undefined}
         onReply={() => onOpenThread(message)}
         onShare={onShare ? () => onShare(message.id) : undefined}
