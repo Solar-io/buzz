@@ -11,6 +11,7 @@ import {
   formatTime,
 } from "../lib/dateFormatters.ts";
 import type { ReactionGroup } from "../lib/reactions.ts";
+import { UserProfilePopover } from "@/features/profile/ui/UserProfilePopover";
 import { AuthorAvatar } from "./AuthorAvatar.tsx";
 import { LinkPreviewCards } from "./LinkPreviewCards.tsx";
 import { MarkdownContent } from "./MarkdownContent.tsx";
@@ -78,6 +79,7 @@ export function MessageRow({
   highlighted,
   pending,
   selfPubkey,
+  onOpenDm,
   children,
 }: {
   message: TimelineMessage;
@@ -98,6 +100,13 @@ export function MessageRow({
   /** Optimistic send still in flight — renders the desktop's "Sending…". */
   pending?: boolean;
   selfPubkey?: string | null;
+  /**
+   * Open a DM with the author, offered by the profile card. The shell owns DM
+   * creation, so this is optional here; when it is omitted the card falls back
+   * to `ProfileActionsProvider` from `features/profile`, and when neither is
+   * present it simply does not render the action.
+   */
+  onOpenDm?: (pubkey: string) => void;
   children?: ReactNode;
 }) {
   const mentionNames = new Set(
@@ -116,6 +125,21 @@ export function MessageRow({
     rowRef.current?.scrollIntoView({ block: "center" });
   }, [highlighted]);
   const label = authorLabel(message.authorPubkey, profiles);
+  // Avatar and author name are the two things a reader points at to ask "who
+  // is this?", and until now both were inert. They share one card so the two
+  // answers cannot drift.
+  const profileCard = (children: ReactNode, triggerClassName?: string) => (
+    <UserProfilePopover
+      fallbackLabel={label}
+      onOpenDm={onOpenDm}
+      picture={profiles.get(message.authorPubkey)?.avatar}
+      pubkey={message.authorPubkey}
+      selfPubkey={selfPubkey}
+      triggerClassName={triggerClassName}
+    >
+      {children}
+    </UserProfilePopover>
+  );
   return (
     // Desktop message cards: rounded-2xl rows, hover muted wash; the open
     // thread's root keeps a persistent tint so the selection is traceable.
@@ -143,17 +167,24 @@ export function MessageRow({
             <MessageTimestamp createdAt={message.createdAt} gutter />
           </div>
         ) : (
-          <AuthorAvatar
-            pubkey={message.authorPubkey}
-            label={label}
-            picture={profiles.get(message.authorPubkey)?.avatar}
-          />
+          profileCard(
+            <AuthorAvatar
+              pubkey={message.authorPubkey}
+              label={label}
+              picture={profiles.get(message.authorPubkey)?.avatar}
+            />,
+            "rounded-full",
+          )
         )}
       </div>
       <div className="min-w-0 flex-1">
         {!grouped && (
           <div className="flex items-baseline gap-2">
-            <span className="text-sm font-semibold">{label}</span>
+            {profileCard(
+              <span className="text-sm font-semibold hover:underline">
+                {label}
+              </span>,
+            )}
             {isAgent && (
               <>
                 <span className="rounded bg-accent/50 px-1 text-badge font-medium uppercase tracking-wide text-accent-foreground/80">
