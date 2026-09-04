@@ -90,6 +90,12 @@ export function useDocumentHidden(): boolean {
   return hidden;
 }
 
+/**
+ * Explicit `#h` values the relay accepts in one REQ.
+ * `MAX_EXPLICIT_CHANNEL_VALUES` in `crates/buzz-relay/src/handlers/req.rs`.
+ */
+const MAX_CHANNELS_PER_REQ = 128;
+
 export interface NotificationRuntimeOptions {
   selfPubkey: string | null;
   /** Channel currently open on screen; null when none is selected. */
@@ -229,17 +235,17 @@ export function useNotificationRuntime(
       return;
     }
     const since = Math.floor(Date.now() / 1000);
-    const filter =
-      mode === "mentions"
-        ? {
-            kinds: [KIND_CHAT_MESSAGE],
-            "#h": ids,
-            "#p": [selfPubkey],
-            since,
-          }
-        : { kinds: [KIND_CHAT_MESSAGE], "#h": ids, since };
+    // The relay refuses a REQ carrying more than MAX_EXPLICIT_CHANNEL_VALUES
+    // (128) explicit #h values — it answers CLOSED "restricted: too many
+    // explicit channels". Unchunked, an account in 129 channels loses
+    // notifications entirely and silently, which is the worst possible
+    // failure for a feature whose whole job is to tell you something happened.
+    const chunks: string[][] = [];
+    for (let i = 0; i < ids.length; i += MAX_CHANNELS_PER_REQ) {
+      chunks.push(ids.slice(i, i + MAX_CHANNELS_PER_REQ));
+    }
 
-    return session.subscribe(filter, {
+    const handlers = {
       onEvent: (event: SignedNostrEvent) => {
         if (seenIds.current.has(event.id)) {
           return;
@@ -303,7 +309,26 @@ export function useNotificationRuntime(
           // has already counted the message.
         }
       },
-    });
+    };
+
+    const unsubscribes = chunks.map((chunk) =>
+      session.subscribe(
+        mode === "mentions"
+          ? {
+              kinds: [KIND_CHAT_MESSAGE],
+              "#h": chunk,
+              "#p": [selfPubkey],
+              since,
+            }
+          : { kinds: [KIND_CHAT_MESSAGE], "#h": chunk, since },
+        handlers,
+      ),
+    );
+    return () => {
+      for (const unsubscribe of unsubscribes) {
+        unsubscribe();
+      }
+    };
   }, [session, mode, selfPubkey, watchedKey]);
 
   return { badgeCount, lastDecision, clearBadge };
