@@ -108,7 +108,10 @@ export function ProjectsPage({
   }, [projects, search]);
 
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6">
+    <div
+      className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6"
+      data-testid="projects-page"
+    >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold text-foreground">Projects</h1>
