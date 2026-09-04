@@ -18,6 +18,7 @@ use buzz_core::TenantContext;
 
 use crate::cursor::{extract_before_id, resolve_before_id, BeforeId};
 use crate::handlers::ingest::{IngestAuth, IngestError};
+use crate::handlers::moderation_authz::ModerationAuthzError;
 use crate::state::AppState;
 
 use super::{api_error, internal_error, not_found};
@@ -2258,14 +2259,51 @@ async fn authorize_moderation_read(
         crate::handlers::moderation_authz::ModerationAction::ViewQueue,
     )
     .await
-    .map_err(|_| {
-        api_error(
-            StatusCode::FORBIDDEN,
-            "restricted: moderator access required",
-        )
-    })?;
+    .map_err(|e| moderation_read_refusal(&tenant, &pubkey.to_hex(), path, e))?;
 
     Ok(tenant)
+}
+
+/// Turn a refused moderation read into its HTTP response, and record it.
+///
+/// Split out from [`authorize_moderation_read`] because the classification is
+/// the whole point and is worth testing on its own: a
+/// [`ModerationAuthzError::Denied`] is the gate's policy answer and belongs to
+/// the caller as a 403, while a
+/// [`ModerationAuthzError::Lookup`] means the relay never reached a policy
+/// answer and is a 500. Collapsing them tells a legitimate moderator they lack
+/// access while the real fault is a database outage.
+///
+/// Both arms record the refusal — the denial as the same `HTTP bridge request`
+/// attribution line `/events` and `/query` emit, the lookup failure through
+/// [`internal_error`]. A refused moderation read used to leave nothing at all
+/// server-side, so the first question a 403 report raises — *which* pubkey did
+/// the relay actually judge? — could not be answered from the logs, only by
+/// reproducing the request with a capture in front of it.
+fn moderation_read_refusal(
+    tenant: &TenantContext,
+    actor_hex: &str,
+    path: &str,
+    error: ModerationAuthzError,
+) -> (StatusCode, Json<Value>) {
+    match error {
+        ModerationAuthzError::Denied(_) => {
+            tracing::info!(
+                pubkey = %actor_hex,
+                community = %tenant.community(),
+                route = %path,
+                status = 403u16,
+                "HTTP bridge request"
+            );
+            api_error(
+                StatusCode::FORBIDDEN,
+                "restricted: moderator access required",
+            )
+        }
+        ModerationAuthzError::Lookup(e) => {
+            internal_error(&format!("moderation authorization for {actor_hex}: {e}"))
+        }
+    }
 }
 
 /// Cap on rows returned by a single moderation read.
@@ -2821,6 +2859,55 @@ mod tests {
             pubkey,
             keys.public_key(),
             "returned pubkey must be the signer's"
+        );
+    }
+
+    /// A moderation read refused by policy is the client's answer: 403 with
+    /// the queue's own wording. This is the arm that must NOT change when the
+    /// lookup-failure arm is split out of it.
+    #[test]
+    fn moderation_read_policy_denial_is_forbidden() {
+        let tenant = fresh_tenant("host-a.example");
+        let (status, Json(body)) = moderation_read_refusal(
+            &tenant,
+            "aa".repeat(32).as_str(),
+            "/moderation/reports",
+            ModerationAuthzError::Denied("moderator access required".to_string()),
+        );
+
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body["error"], "restricted: moderator access required");
+    }
+
+    /// A failed *role lookup* is not a policy answer and must never be
+    /// reported as one.
+    ///
+    /// `authorize_moderation_action` reads `relay_members` to find the actor's
+    /// role; when that read fails (pool exhausted, connection dropped,
+    /// statement timeout) the relay has learned nothing about the actor's
+    /// authority. Answering 403 "moderator access required" tells a community
+    /// owner they are not a moderator, hides an outage behind a permissions
+    /// error, and is indistinguishable at the client from a real denial — which
+    /// is exactly what makes a moderation-queue 403 undiagnosable from outside
+    /// the relay.
+    #[test]
+    fn moderation_read_lookup_failure_is_internal_not_a_denial() {
+        let tenant = fresh_tenant("host-a.example");
+        let (status, Json(body)) = moderation_read_refusal(
+            &tenant,
+            "aa".repeat(32).as_str(),
+            "/moderation/reports",
+            ModerationAuthzError::Lookup(anyhow::anyhow!("database error: connection closed")),
+        );
+
+        assert_eq!(
+            status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "a failed relay_members lookup is a relay fault, not a denial"
+        );
+        assert_ne!(
+            body["error"], "restricted: moderator access required",
+            "an outage must not be reported to the caller as a missing role"
         );
     }
 

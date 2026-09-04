@@ -69,7 +69,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::handlers::moderation_authz::{
-    authorize_moderation_action, ModerationAction, ModerationTarget,
+    authorize_moderation_action, ModerationAction, ModerationAuthzError, ModerationTarget,
 };
 use crate::handlers::moderation_notices::{send_moderation_notice, ModerationNotice};
 use crate::state::AppState;
@@ -545,8 +545,22 @@ async fn insert_audit(
 }
 
 /// Map an authorization error to a client-safe `restricted:`-prefixed denial.
-fn authz_denial(e: anyhow::Error) -> String {
-    format!("restricted: {e}")
+/// Render a refused moderation command for `OK false`.
+///
+/// A [`ModerationAuthzError::Denied`] is the policy's own client-safe text and
+/// keeps the `restricted:` prefix the CLI and clients match on. A
+/// [`ModerationAuthzError::Lookup`] is not a denial at all — the relay could
+/// not read the actor's role — so it reports as `error:` alongside the other
+/// database failures in this handler. Reporting it as `restricted:` would tell
+/// a community owner they lack authority during a database blip, and would
+/// echo the raw driver error to the client as if it were policy text.
+fn authz_denial(e: ModerationAuthzError) -> String {
+    match e {
+        ModerationAuthzError::Denied(message) => format!("restricted: {message}"),
+        ModerationAuthzError::Lookup(source) => error(format!(
+            "database error resolving moderation authority: {source}"
+        )),
+    }
 }
 
 fn invalid(message: impl Into<String>) -> String {
@@ -673,10 +687,34 @@ mod tests {
         }
     }
 
+    /// A failed role lookup is not a denial and must not be dressed as one.
+    ///
+    /// `restricted:` is the token clients and the CLI match on to mean "the
+    /// policy said no". Sending it for a database failure tells a community
+    /// owner they lack authority during an outage, and echoes the raw driver
+    /// error to the client as if it were policy text.
+    #[test]
+    fn authz_denial_reports_a_lookup_failure_as_an_error_not_a_restriction() {
+        let rendered = authz_denial(ModerationAuthzError::Lookup(anyhow::anyhow!(
+            "database error: connection closed"
+        )));
+
+        assert!(
+            rendered.starts_with("error: "),
+            "a lookup failure must use the error: prefix, got {rendered:?}"
+        );
+        assert!(
+            !rendered.starts_with("restricted: "),
+            "a lookup failure must not be reported as a policy denial, got {rendered:?}"
+        );
+    }
+
     #[test]
     fn command_error_prefix_helpers_preserve_machine_readable_token() {
         assert_eq!(
-            authz_denial(anyhow::anyhow!("moderator access required")),
+            authz_denial(ModerationAuthzError::Denied(
+                "moderator access required".to_string()
+            )),
             "restricted: moderator access required"
         );
         assert_eq!(invalid("missing status tag"), "invalid: missing status tag");

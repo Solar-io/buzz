@@ -68,6 +68,51 @@ pub enum ModerationAuthority {
     ChannelRole,
 }
 
+/// Why [`authorize_moderation_action`] did not return an authority.
+///
+/// The two variants are different answers and callers MUST NOT collapse them.
+/// [`Denied`](ModerationAuthzError::Denied) is the policy speaking, and its
+/// message is client-safe. [`Lookup`](ModerationAuthzError::Lookup) means the
+/// relay could not read the actor's role at all, so it has no policy answer to
+/// give: reporting it as a denial tells a legitimate moderator they lack
+/// access, hides an outage behind a permissions error, and — because the two
+/// are indistinguishable at the client — makes the difference undiagnosable
+/// from outside the relay.
+#[derive(Debug)]
+pub enum ModerationAuthzError {
+    /// The policy refused. The message is client-safe and is surfaced verbatim.
+    Denied(String),
+    /// The actor's role could not be resolved (e.g. the database is
+    /// unreachable). Not a policy answer: callers report this as an internal
+    /// failure, never as "moderator access required".
+    Lookup(anyhow::Error),
+}
+
+impl std::fmt::Display for ModerationAuthzError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Denied(message) => f.write_str(message),
+            Self::Lookup(error) => write!(f, "moderation role lookup failed: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for ModerationAuthzError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Denied(_) => None,
+            Self::Lookup(error) => Some(error.as_ref()),
+        }
+    }
+}
+
+impl ModerationAuthzError {
+    /// A policy denial carrying client-safe text.
+    fn denied(message: impl Into<String>) -> Self {
+        Self::Denied(message.into())
+    }
+}
+
 /// Decide whether `actor` may perform `action` on `target`.
 ///
 /// - Community `owner`/`admin` (tenant-scoped `relay_members.role`) are
@@ -78,8 +123,9 @@ pub enum ModerationAuthority {
 /// - Guard rails (plan): an admin cannot ban/timeout the community owner or
 ///   a fellow admin; only the owner can action an admin.
 ///
-/// Returns the matched authority for the audit row, or `Err` with a
-/// client-safe denial message.
+/// Returns the matched authority for the audit row, or a
+/// [`ModerationAuthzError`] distinguishing a policy denial from a failed role
+/// lookup.
 pub async fn authorize_moderation_action(
     tenant: &TenantContext,
     state: &Arc<AppState>,
@@ -87,16 +133,20 @@ pub async fn authorize_moderation_action(
     channel_id: Option<Uuid>,
     target: ModerationTarget<'_>,
     action: ModerationAction,
-) -> anyhow::Result<ModerationAuthority> {
+) -> Result<ModerationAuthority, ModerationAuthzError> {
     let community = tenant.community();
 
     // Community role: `relay_members` stores pubkeys as 64-char hex, fenced to
     // `community` in the query itself. This is the primary authority — owner and
     // admin can moderate any channel in their community.
+    //
+    // A failure here is `Lookup`, never `Denied`: "the role could not be read"
+    // and "the role does not authorize you" are different answers.
     let actor_role = state
         .db
         .get_relay_member(community, &hex::encode(actor_pubkey))
-        .await?
+        .await
+        .map_err(|e| ModerationAuthzError::Lookup(e.into()))?
         .map(|m| m.role);
 
     // The target's community role is read only for the admin guard rail — i.e.
@@ -108,7 +158,8 @@ pub async fn authorize_moderation_action(
                 ModerationTarget::Pubkey(pk) => state
                     .db
                     .get_relay_member(community, &hex::encode(pk))
-                    .await?
+                    .await
+                    .map_err(|e| ModerationAuthzError::Lookup(e.into()))?
                     .map(|m| m.role),
                 _ => None,
             }
@@ -120,12 +171,11 @@ pub async fn authorize_moderation_action(
     // the action is channel-local (DeleteMessage/Kick within `channel_id`).
     let channel_role = match (actor_role.as_deref(), action, channel_id) {
         (Some("owner") | Some("admin"), _, _) => None,
-        (_, ModerationAction::DeleteMessage | ModerationAction::Kick, Some(channel_id)) => {
-            state
-                .db
-                .get_member_role(community, channel_id, actor_pubkey)
-                .await?
-        }
+        (_, ModerationAction::DeleteMessage | ModerationAction::Kick, Some(channel_id)) => state
+            .db
+            .get_member_role(community, channel_id, actor_pubkey)
+            .await
+            .map_err(|e| ModerationAuthzError::Lookup(e.into()))?,
         _ => None,
     };
 
@@ -148,7 +198,7 @@ fn decide_authority(
     target_role: Option<&str>,
     channel_role: Option<&str>,
     action: ModerationAction,
-) -> anyhow::Result<ModerationAuthority> {
+) -> Result<ModerationAuthority, ModerationAuthzError> {
     match actor_role {
         // Owner holds every capability, community-wide, with no guard rail.
         Some("owner") => Ok(ModerationAuthority::CommunityOwner),
@@ -164,7 +214,9 @@ fn decide_authority(
             if matches!(action, ModerationAction::Ban | ModerationAction::Timeout)
                 && matches!(target_role, Some("owner") | Some("admin"))
             {
-                anyhow::bail!("an admin cannot ban or time out a community owner or fellow admin");
+                return Err(ModerationAuthzError::denied(
+                    "an admin cannot ban or time out a community owner or fellow admin",
+                ));
             }
             Ok(ModerationAuthority::CommunityAdmin)
         }
@@ -175,7 +227,7 @@ fn decide_authority(
                 ModerationAction::DeleteMessage | ModerationAction::Kick,
                 Some("owner") | Some("admin"),
             ) => Ok(ModerationAuthority::ChannelRole),
-            _ => anyhow::bail!("moderator access required"),
+            _ => Err(ModerationAuthzError::denied("moderator access required")),
         },
     }
 }
@@ -197,8 +249,53 @@ mod tests {
         ModerationAction::ViewQueue,
     ];
 
-    fn ok(r: anyhow::Result<ModerationAuthority>) -> ModerationAuthority {
+    fn ok(r: Result<ModerationAuthority, ModerationAuthzError>) -> ModerationAuthority {
         r.expect("expected authorization")
+    }
+
+    /// The pure policy never reports a lookup failure: every refusal it can
+    /// produce is a `Denied` carrying client-safe text.
+    ///
+    /// This is what lets the callers split the two — if `decide_authority`
+    /// could yield `Lookup`, a policy refusal would end up reported as a relay
+    /// outage, which is the same conflation in the opposite direction.
+    #[test]
+    fn policy_refusals_are_denials_never_lookup_failures() {
+        let mut refusals = 0;
+
+        // A non-member with no channel role: refused for every action.
+        for action in ALL_ACTIONS {
+            match decide_authority(None, None, None, action) {
+                Err(ModerationAuthzError::Denied(message)) => {
+                    refusals += 1;
+                    assert_eq!(message, "moderator access required");
+                }
+                Err(ModerationAuthzError::Lookup(e)) => {
+                    panic!("policy refusal surfaced as a lookup failure for {action:?}: {e}")
+                }
+                Ok(authority) => panic!("{action:?} must be refused, got {authority:?}"),
+            }
+        }
+
+        // The admin guard rail is a denial too, with its own client-safe text.
+        for action in [ModerationAction::Ban, ModerationAction::Timeout] {
+            match decide_authority(Some("admin"), Some("owner"), None, action) {
+                Err(ModerationAuthzError::Denied(message)) => {
+                    refusals += 1;
+                    assert!(
+                        message.contains("cannot ban or time out"),
+                        "unexpected guard-rail text: {message:?}"
+                    );
+                }
+                other => panic!("{action:?} against an owner must be denied, got {other:?}"),
+            }
+        }
+
+        assert_eq!(
+            refusals,
+            ALL_ACTIONS.len() + 2,
+            "every refusal arm must have been exercised"
+        );
     }
 
     #[test]
