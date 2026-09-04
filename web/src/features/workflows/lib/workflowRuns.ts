@@ -1,11 +1,11 @@
 /**
  * Reading workflow run history and step traces.
  *
- * Runs are NOT Nostr events. The kinds reserved for them (46001–46012 in
- * `crates/buzz-core/src/kind.rs`) are never emitted — `buzz-cli`'s own
- * `cmd_get_workflow_runs` says so in as many words: "The relay does not
- * currently emit workflow execution events (46001-46003). Run history is
- * stored in the workflow_runs DB table". The authoritative read is therefore
+ * A run is a relay-owned row, not a Nostr event. Since WF-08 the relay also
+ * publishes execution events as a run progresses (kinds 46001–46012 in
+ * `crates/buzz-core/src/kind.rs`), but those are a *notification* stream: they
+ * are best-effort, they carry no status field, and a run that started before a
+ * subscriber connected has no replay guarantee. The authoritative read stays
  * the relay's structured endpoint:
  *
  *   GET /workflows/{workflow_id}/runs?limit=N

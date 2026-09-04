@@ -957,12 +957,25 @@ pub enum WorkflowsCmd {
         #[arg(long)]
         limit: Option<u32>,
     },
+    /// List pending and decided approvals for a run
+    #[command(
+        after_help = "Examples:\n  buzz workflows approvals --workflow <UUID> --run <UUID>\n\nEach entry's `approval_ref` is what `buzz workflows approve --token` takes."
+    )]
+    Approvals {
+        /// Workflow UUID
+        #[arg(long)]
+        workflow: String,
+        /// Run UUID
+        #[arg(long)]
+        run: String,
+    },
     /// Approve or deny a workflow step
     #[command(
-        after_help = "Examples:\n  buzz workflows approve --token <UUID>\n  buzz workflows approve --token <UUID> --approved false --note \"needs revision\""
+        after_help = "Examples:\n  buzz workflows approve --token <APPROVAL_REF>\n  buzz workflows approve --token <APPROVAL_REF> --approved false --note \"needs revision\"\n\nGet APPROVAL_REF from `buzz workflows approvals`, or from the `approval`\ntag of the kind:46010 event that announced the request."
     )]
     Approve {
-        /// The approval token UUID (from the approval request)
+        /// The approval reference — the 64-hex `approval_ref` from
+        /// `buzz workflows approvals` or a kind:46010 event's `approval` tag
         #[arg(long)]
         token: String,
         /// Approve (true) or deny (false) the step
@@ -2323,7 +2336,17 @@ mod tests {
         );
         assert_eq!(
             names(&cmd, "workflows"),
-            vec!["approve", "create", "delete", "get", "list", "runs", "trigger", "update"]
+            vec![
+                "approvals",
+                "approve",
+                "create",
+                "delete",
+                "get",
+                "list",
+                "runs",
+                "trigger",
+                "update"
+            ]
         );
         assert_eq!(names(&cmd, "feed"), vec!["get"]);
         assert_eq!(
@@ -2420,7 +2443,7 @@ mod tests {
             ("social", 7),
             ("upload", 1),
             ("users", 5),
-            ("workflows", 8),
+            ("workflows", 9),
         ];
 
         let cmd = Cli::command();

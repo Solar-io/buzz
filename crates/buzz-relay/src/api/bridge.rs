@@ -2102,19 +2102,17 @@ pub async fn workflow_webhook(
             }
         };
 
+        let run_ref = buzz_workflow::executor::RunRef::new(community_id, id, run_id);
         let result = buzz_workflow::executor::execute_from_step(
             &engine,
-            community_id,
-            run_id,
+            run_ref,
             &def,
             &trigger_ctx_clone,
             0,
             None,
         )
         .await;
-        engine
-            .finalize_run(community_id, run_id, result, None)
-            .await;
+        engine.finalize_run(run_ref, result, None).await;
     });
 
     Ok((

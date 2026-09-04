@@ -541,6 +541,11 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         KIND_DM_OPEN | KIND_DM_ADD_MEMBER | KIND_DM_HIDE => Ok(Scope::MessagesWrite),
         KIND_WORKFLOW_DEF | KIND_WORKFLOW_TRIGGER => Ok(Scope::MessagesWrite),
         KIND_APPROVAL_GRANT | KIND_APPROVAL_DENY => Ok(Scope::MessagesWrite),
+        // Workflow execution events (46001–46012) are deliberately absent: they
+        // are relay-authored (see `is_relay_only_kind`), so a client submission
+        // is refused here as an unknown kind *and* again by the relay-only
+        // check. Adding a scope arm for them would remove the first of those two
+        // bars — the second is what actually names the property, so keep both.
         _ => Err("restricted: unknown event kind"),
     }
 }

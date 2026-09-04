@@ -57,12 +57,15 @@ pub async fn cmd_get_workflow(client: &BuzzClient, workflow_id: &str) -> Result<
     Ok(())
 }
 
-/// Get workflow run history — query kinds [46001, 46002, 46003].
+/// Get workflow run history — query kinds [46001, 46002, 46003] by `#d`.
 ///
-/// NOTE: The relay does not currently emit workflow execution events (46001-46003).
-/// Run history is stored in the workflow_runs DB table, not as Nostr events.
-/// This command will return an empty array until the relay adds event emission
-/// or a dedicated REST endpoint for run history.
+/// Since WF-08 the relay publishes execution events as a run progresses, so
+/// this returns the triggered/step-started/step-completed events for the
+/// workflow, newest first. They are the *notification* view: best-effort, with
+/// no status field, and scoped to the workflow's channel. The authoritative run
+/// record — including terminal status, error code and the full step trace —
+/// lives in `workflow_runs` and is served by the relay's
+/// `GET /workflows/{id}/runs` endpoint.
 pub async fn cmd_get_workflow_runs(
     client: &BuzzClient,
     workflow_id: &str,
@@ -202,19 +205,61 @@ pub async fn cmd_trigger_workflow(
     Ok(())
 }
 
+/// List the approvals recorded for one workflow run.
+///
+/// Reads the relay's authorized `approvals` view rather than the event stream:
+/// the record — including whether an approval has already been granted, denied,
+/// or has expired — is a relay-owned row, and kind:46010 only announces that one
+/// was minted. Each entry's `approval_ref` is the value
+/// [`cmd_approve_step`] takes.
+pub async fn cmd_list_approvals(
+    client: &BuzzClient,
+    workflow_id: &str,
+    run_id: &str,
+) -> Result<(), CliError> {
+    validate_uuid(workflow_id)?;
+    validate_uuid(run_id)?;
+    let resp = client
+        .get_authed(&format!("/workflows/{workflow_id}/runs/{run_id}/approvals"))
+        .await?;
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap_or(serde_json::Value::Null);
+    let approvals = parsed
+        .get("approvals")
+        .cloned()
+        .unwrap_or(serde_json::json!([]));
+    println!("{}", serde_json::to_string(&approvals).unwrap_or_default());
+    Ok(())
+}
+
 /// Approve or deny a workflow step — sign and submit a kind:46030 (grant) or 46031 (deny) event.
+///
+/// `approval_ref` is the reference the relay publishes: the hex of the stored
+/// token hash, as `approval_ref` in `buzz workflows approvals` and in the
+/// `approval` tag of the kind:46010 event that announced the request. The raw
+/// approval token never leaves the relay, so a raw-token UUID is accepted only
+/// for a caller that already holds one out of band — it is hashed to the same
+/// reference before being sent.
 pub async fn cmd_approve_step(
     client: &BuzzClient,
-    approval_token: &str,
+    approval_ref: &str,
     approved: bool,
     note: Option<&str>,
 ) -> Result<(), CliError> {
-    validate_uuid(approval_token)?;
-
     let content = note.unwrap_or("");
 
-    // The relay expects d-tag = hex(SHA256(token)), not the raw token UUID.
-    let token_hash = hex::encode(Sha256::digest(approval_token.as_bytes()));
+    let token_hash =
+        if approval_ref.len() == 64 && approval_ref.chars().all(|c| c.is_ascii_hexdigit()) {
+            approval_ref.to_ascii_lowercase()
+        } else if uuid::Uuid::parse_str(approval_ref).is_ok() {
+            hex::encode(Sha256::digest(approval_ref.as_bytes()))
+        } else {
+            return Err(CliError::Usage(
+                "--token must be the 64-hex approval_ref from `buzz workflows approvals` \
+             (or a raw approval token UUID)"
+                    .into(),
+            ));
+        };
+
     let builder =
         buzz_sdk::build_workflow_approval(&token_hash, approved, content).map_err(sdk_err)?;
     let event = client.sign_event(builder)?;
@@ -243,6 +288,9 @@ pub async fn dispatch(cmd: crate::WorkflowsCmd, client: &BuzzClient) -> Result<(
         }
         WorkflowsCmd::Runs { workflow, limit } => {
             cmd_get_workflow_runs(client, &workflow, limit).await
+        }
+        WorkflowsCmd::Approvals { workflow, run } => {
+            cmd_list_approvals(client, &workflow, &run).await
         }
         WorkflowsCmd::Approve {
             token,
