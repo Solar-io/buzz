@@ -11,7 +11,7 @@ import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { loadSeed } from "@/shared/lib/localSeed";
 import { loadChannelPrefs } from "@/features/channels/lib/channelPrefs.ts";
 import type { Profile } from "@/features/channels/hooks";
-import { useChannels } from "@/features/channels/useChannels";
+import type { ChannelSummary } from "@/features/channels/useChannels";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { classifyMessage } from "./lib/classifyMessage.ts";
 import { notificationCopy } from "./lib/notificationCopy.ts";
@@ -96,6 +96,12 @@ export interface NotificationRuntimeOptions {
   activeChannelId: string | null;
   /** Navigate to a channel when a notification is clicked. */
   onOpenChannel?: (channelId: string) => void;
+  /**
+   * The shell's channel list. Passed in rather than fetched: the runtime needs
+   * every non-muted channel to build its h-scoped filter, and subscribing for
+   * itself would open a second kind:39000 REQ duplicating the shell's.
+   */
+  channels: ChannelSummary[];
 }
 
 export interface NotificationRuntimeState {
@@ -147,15 +153,11 @@ function readAuthorName(pubkey: string): string {
 export function useNotificationRuntime(
   options: NotificationRuntimeOptions,
 ): NotificationRuntimeState {
-  const { selfPubkey, activeChannelId, onOpenChannel } = options;
+  const { selfPubkey, activeChannelId, onOpenChannel, channels } = options;
   const { session } = useRelaySession();
   const settings = useNotificationSettings();
   const permission = useNotificationPermission();
   const hidden = useDocumentHidden();
-  // The runtime's own channel list. Mounted inside the shell this duplicates
-  // the shell's kind:39000 subscription; the fix is to hoist the runtime and
-  // pass the list down, not to read a cache that misses new channels.
-  const { channels } = useChannels();
 
   const [badgeCount, setBadgeCount] = useState(0);
   const [lastDecision, setLastDecision] = useState<NotifyDecision | null>(null);

@@ -1,9 +1,12 @@
 import { useNavigate, useRouterState } from "@tanstack/react-router";
+import type { ChannelSummary } from "@/features/channels/useChannels";
 import { useNotificationRuntime } from "../hooks";
 
 export interface NotificationRuntimeProps {
   /** The signed-in key; the runtime is inert until it resolves. */
   selfPubkey: string | null;
+  /** The shell's channel list — see the hook for why it is not fetched here. */
+  channels: ChannelSummary[];
 }
 
 /**
@@ -14,13 +17,14 @@ export interface NotificationRuntimeProps {
  * channel from the router rather than taking it as a prop, so it can be
  * mounted anywhere inside the app shell without new wiring.
  *
- * It is mounted from the sidebar profile card today because that is the one
- * always-present piece of the signed-in shell this change owns. Its natural
- * home is the shell itself (`app/routes/repos.tsx`), which would also let it
- * take the live channel list instead of the localStorage cache; moving it is
- * a one-line change and needs nothing from this module.
+ * Mounted from the shell (`app/routes/repos.tsx`) so it survives every route
+ * the signed-in app can be on — mounted in the sidebar it would die wherever
+ * the sidebar unmounts.
  */
-export function NotificationRuntime({ selfPubkey }: NotificationRuntimeProps) {
+export function NotificationRuntime({
+  selfPubkey,
+  channels,
+}: NotificationRuntimeProps) {
   const navigate = useNavigate();
   const activeChannelId = useRouterState({
     select: (state) => {
@@ -31,6 +35,7 @@ export function NotificationRuntime({ selfPubkey }: NotificationRuntimeProps) {
 
   useNotificationRuntime({
     selfPubkey,
+    channels,
     activeChannelId,
     onOpenChannel: (channelId) => {
       void navigate({ to: "/repos", search: { c: channelId } });

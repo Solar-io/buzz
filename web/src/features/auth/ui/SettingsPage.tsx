@@ -10,6 +10,7 @@ import {
   getConfiguredFilesUrl,
   setConfiguredFilesUrl,
 } from "@/features/files/filesConfig";
+import { NotificationSettingsDialog } from "@/features/notifications/ui/NotificationSettingsDialog";
 import { AppearanceSection } from "./AppearanceSection";
 import { useAuth } from "./AuthProvider";
 import { activeSignerSource } from "@/shared/lib/nostr-signer";
@@ -143,6 +144,8 @@ export function SettingsPage() {
         </p>
       </section>
 
+      <NotificationsSection />
+
       <AppearanceSection />
 
       <FilesUrlSection />
@@ -239,6 +242,31 @@ export function SettingsPage() {
  * (browser override, else the build default), lets the user change or clear
  * it. Changing it here is the supported path once a URL is already set.
  */
+/**
+ * Notifications entry point.
+ *
+ * The dialog owns the permission prompt, because the browser only grants
+ * permission from a real user gesture — so it has to be raised from the
+ * control the user actually clicked, not on mount.
+ */
+function NotificationsSection() {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="space-y-2 rounded-lg border border-border bg-card p-4">
+      <div className="flex items-center justify-between gap-4">
+        <h2 className="font-medium">Notifications</h2>
+        <Button variant="ghost" size="sm" onClick={() => setOpen(true)}>
+          Manage
+        </Button>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        Choose what alerts you when Buzz is in a background tab.
+      </p>
+      <NotificationSettingsDialog open={open} onOpenChange={setOpen} />
+    </section>
+  );
+}
+
 function FilesUrlSection() {
   const [url, setUrl] = useState(() => getConfiguredFilesUrl());
   const [entry, setEntry] = useState("");

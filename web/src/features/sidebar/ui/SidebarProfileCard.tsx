@@ -4,7 +4,6 @@ import { npubEncode } from "nostr-tools/nip19";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import type { Profile } from "@/features/channels/hooks";
-import { NotificationRuntime } from "@/features/notifications/ui/NotificationRuntime";
 import { NotificationSettingsDialog } from "@/features/notifications/ui/NotificationSettingsDialog";
 import {
   publishUserStatus,
@@ -117,7 +116,6 @@ export function SidebarProfileCard({
 
   return (
     <div className="border-t border-sidebar-border p-2">
-      <NotificationRuntime selfPubkey={selfPubkey} />
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <button

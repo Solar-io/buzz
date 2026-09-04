@@ -54,6 +54,7 @@ import {
 } from "@/features/dms/lib/hiddenDms.ts";
 import { channelMenuItems } from "@/features/sidebar/lib/channelMenuItems.ts";
 import { ChannelSidebar } from "@/features/sidebar/ui/ChannelSidebar";
+import { NotificationRuntime } from "@/features/notifications/ui/NotificationRuntime";
 import { ProfileActionsProvider } from "@/features/profile/ProfileActionsContext";
 import { FilesPanel } from "@/features/files/ui/FilesPanel";
 import { ownPubkey } from "@/shared/lib/nostr-signer";
@@ -522,236 +523,247 @@ function ChannelBrowser() {
     // Profile cards open DMs; DM creation is the shell's job, and the row that
     // raises the card renders under ChannelTimeline, so the callback reaches it
     // by context rather than through two files the shell does not own.
-    <ProfileActionsProvider
-      onOpenDm={(pubkey) => {
-        void openDm(session, [pubkey]).then((result) => {
-          if (result.ok && result.channelId) {
-            onDmOpened(result.channelId);
-          }
-        });
-      }}
-    >
-      <AppShell
-        sidebar={sidebar}
-        title={
-          current
-            ? current.type === "dm"
-              ? dmName(current.participantPubkeys)
-              : `# ${current.name}`
-            : null
-        }
+    <>
+      {/* Mounted at the shell so it outlives every route the signed-in app can
+        be on; in the sidebar it died wherever the sidebar unmounted. It takes
+        the shell's channel list rather than opening a second kind:39000 REQ. */}
+      <NotificationRuntime selfPubkey={selfPubkey} channels={channels} />
+      <ProfileActionsProvider
+        onOpenDm={(pubkey) => {
+          void openDm(session, [pubkey]).then((result) => {
+            if (result.ok && result.channelId) {
+              onDmOpened(result.channelId);
+            }
+          });
+        }}
       >
-        {filesOpen ? (
-          <FilesPanel onClose={() => setFilesOpen(false)} />
-        ) : current ? (
-          <div
-            className="flex h-full min-h-0"
-            style={{ ["--thread-width" as string]: `${threadWidth}px` }}
-          >
-            <section className="flex min-w-0 flex-1 flex-col">
-              <ChannelHeader
-                channel={current}
-                title={
-                  current.type === "dm"
-                    ? dmName(current.participantPubkeys)
-                    : `# ${current.name}`
-                }
-                session={session}
-                onHuddleStarted={onHuddleStarted}
-                agentPubkey={dmAgentPubkey}
-                onOpenThinking={() => {
-                  setRightTab("thinking");
-                  setDmPaneHidden(false);
-                  setThinkingOpen(true);
-                }}
-              />
-              {current.ttlSeconds !== null && (
-                <HuddleBar
-                  channelId={current.id}
-                  parentChannelId={currentHuddleParent}
-                  selfPubkey={selfPubkey}
-                />
-              )}
-              {current.type === "forum" ? (
-                <ForumView
+        <AppShell
+          sidebar={sidebar}
+          title={
+            current
+              ? current.type === "dm"
+                ? dmName(current.participantPubkeys)
+                : `# ${current.name}`
+              : null
+          }
+        >
+          {filesOpen ? (
+            <FilesPanel onClose={() => setFilesOpen(false)} />
+          ) : current ? (
+            <div
+              className="flex h-full min-h-0"
+              style={{ ["--thread-width" as string]: `${threadWidth}px` }}
+            >
+              <section className="flex min-w-0 flex-1 flex-col">
+                <ChannelHeader
                   channel={current}
-                  selfPubkey={selfPubkey}
-                  profiles={profiles}
-                  members={members}
-                  feedReactions={reactions}
-                  replyCounts={counts}
-                  selectedPostId={forumPostId}
-                  onSelectPost={setForumPostId}
-                  onClosePost={() => setForumPostId(null)}
-                  onReact={messageActions.onReact}
-                  onDelete={messageActions.onDelete}
-                  send={send}
+                  title={
+                    current.type === "dm"
+                      ? dmName(current.participantPubkeys)
+                      : `# ${current.name}`
+                  }
+                  session={session}
+                  onHuddleStarted={onHuddleStarted}
+                  agentPubkey={dmAgentPubkey}
+                  onOpenThinking={() => {
+                    setRightTab("thinking");
+                    setDmPaneHidden(false);
+                    setThinkingOpen(true);
+                  }}
                 />
-              ) : (
-                <>
-                  <ChannelTimeline
-                    messages={messages}
-                    profiles={profiles}
-                    replyCounts={counts}
-                    onOpenThread={(message) => {
-                      setThreadRootId(message.id);
-                      setRightTab("thread");
-                    }}
-                    activeRootId={threadRootId}
-                    reactions={reactions}
-                    onReact={messageActions.onReact}
-                    onUnreact={(messageId, emoji) => {
-                      if (!selfPubkey) return;
-                      // Drop it locally first: the relay's kind-5 acknowledgement
-                      // targets the reaction event, which the message-overlay
-                      // path cannot apply, so nothing would clear the chip.
-                      forgetOwnReaction(messageId, emoji, selfPubkey);
-                      void unreactToMessage(session, {
-                        targetEventId: messageId,
-                        emoji,
-                        selfPubkey,
-                      });
-                    }}
-                    onEdit={messageActions.onEdit}
-                    onDelete={messageActions.onDelete}
-                    onShare={messageActions.onShare}
+                {current.ttlSeconds !== null && (
+                  <HuddleBar
+                    channelId={current.id}
+                    parentChannelId={currentHuddleParent}
                     selfPubkey={selfPubkey}
-                    pendingIds={messageActions.pendingIds}
-                    agentPubkeys={agentPubkeys}
-                    highlightId={permalinkMessageId ?? null}
-                    typingNames={typingNames}
-                    tailKey={tailKey}
-                    onLoadOlder={loadOlder}
-                    loadingOlder={loadingOlder}
-                    historyExhausted={historyExhausted}
-                    workingAgent={
-                      working.working &&
-                      working.startedAt !== null &&
-                      dmAgentPubkey
-                        ? {
-                            name:
-                              profiles.get(dmAgentPubkey)?.displayName ??
-                              dmAgentPubkey,
-                            startedAt: working.startedAt,
-                          }
-                        : null
-                    }
                   />
-                  <Composer
-                    members={members}
-                    onTextChange={messageActions.onComposerText}
-                    editing={messageActions.editing}
-                    onCancelEdit={() => messageActions.setEditing(null)}
-                    editSend={messageActions.editSend}
+                )}
+                {current.type === "forum" ? (
+                  <ForumView
+                    channel={current}
+                    selfPubkey={selfPubkey}
                     profiles={profiles}
-                    threadRef={
-                      threadRoot
-                        ? { rootId: threadRoot.id, replyToId: threadRoot.id }
-                        : null
-                    }
-                    onClearThread={() => setThreadRootId(null)}
-                    draftKey={current.id}
+                    members={members}
+                    feedReactions={reactions}
+                    replyCounts={counts}
+                    selectedPostId={forumPostId}
+                    onSelectPost={setForumPostId}
+                    onClosePost={() => setForumPostId(null)}
+                    onReact={messageActions.onReact}
+                    onDelete={messageActions.onDelete}
                     send={send}
                   />
-                </>
+                ) : (
+                  <>
+                    <ChannelTimeline
+                      messages={messages}
+                      profiles={profiles}
+                      replyCounts={counts}
+                      onOpenThread={(message) => {
+                        setThreadRootId(message.id);
+                        setRightTab("thread");
+                      }}
+                      activeRootId={threadRootId}
+                      reactions={reactions}
+                      onReact={messageActions.onReact}
+                      onUnreact={(messageId, emoji) => {
+                        if (!selfPubkey) return;
+                        // Drop it locally first: the relay's kind-5 acknowledgement
+                        // targets the reaction event, which the message-overlay
+                        // path cannot apply, so nothing would clear the chip.
+                        forgetOwnReaction(messageId, emoji, selfPubkey);
+                        void unreactToMessage(session, {
+                          targetEventId: messageId,
+                          emoji,
+                          selfPubkey,
+                        });
+                      }}
+                      onEdit={messageActions.onEdit}
+                      onDelete={messageActions.onDelete}
+                      onShare={messageActions.onShare}
+                      selfPubkey={selfPubkey}
+                      pendingIds={messageActions.pendingIds}
+                      agentPubkeys={agentPubkeys}
+                      highlightId={permalinkMessageId ?? null}
+                      typingNames={typingNames}
+                      tailKey={tailKey}
+                      onLoadOlder={loadOlder}
+                      loadingOlder={loadingOlder}
+                      historyExhausted={historyExhausted}
+                      workingAgent={
+                        working.working &&
+                        working.startedAt !== null &&
+                        dmAgentPubkey
+                          ? {
+                              name:
+                                profiles.get(dmAgentPubkey)?.displayName ??
+                                dmAgentPubkey,
+                              startedAt: working.startedAt,
+                            }
+                          : null
+                      }
+                    />
+                    <Composer
+                      members={members}
+                      onTextChange={messageActions.onComposerText}
+                      editing={messageActions.editing}
+                      onCancelEdit={() => messageActions.setEditing(null)}
+                      editSend={messageActions.editSend}
+                      profiles={profiles}
+                      threadRef={
+                        threadRoot
+                          ? { rootId: threadRoot.id, replyToId: threadRoot.id }
+                          : null
+                      }
+                      onClearThread={() => setThreadRootId(null)}
+                      draftKey={current.id}
+                      send={send}
+                    />
+                  </>
+                )}
+              </section>
+              {(threadRoot || dmAgentPubkey) && (
+                // biome-ignore lint/a11y/useFocusableInteractive: pointer-only resize handle; keyboard resize is not implemented
+                // biome-ignore lint/a11y/useSemanticElements: pointer-only resize handle; keyboard resize is not implemented
+                <div
+                  aria-label="Resize side panel"
+                  // biome-ignore lint/a11y/useAriaPropsForRole: drag handle is not a value slider; aria-valuenow would be meaningless
+                  role="separator"
+                  aria-orientation="vertical"
+                  className="relative z-10 hidden w-1 shrink-0 cursor-col-resize border-r border-border bg-transparent transition-colors hover:bg-white/15 active:bg-white/25 lg:block lg:-ml-px"
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                  }}
+                  onPointerMove={(event) => {
+                    if (
+                      event.currentTarget.hasPointerCapture(event.pointerId)
+                    ) {
+                      setThreadWidth((previous) =>
+                        Math.min(
+                          640,
+                          Math.max(288, previous - event.movementX),
+                        ),
+                      );
+                    }
+                  }}
+                  onPointerUp={(event) => {
+                    event.currentTarget.releasePointerCapture(event.pointerId);
+                  }}
+                />
               )}
-            </section>
-            {(threadRoot || dmAgentPubkey) && (
-              // biome-ignore lint/a11y/useFocusableInteractive: pointer-only resize handle; keyboard resize is not implemented
-              // biome-ignore lint/a11y/useSemanticElements: pointer-only resize handle; keyboard resize is not implemented
-              <div
-                aria-label="Resize side panel"
-                // biome-ignore lint/a11y/useAriaPropsForRole: drag handle is not a value slider; aria-valuenow would be meaningless
-                role="separator"
-                aria-orientation="vertical"
-                className="relative z-10 hidden w-1 shrink-0 cursor-col-resize border-r border-border bg-transparent transition-colors hover:bg-white/15 active:bg-white/25 lg:block lg:-ml-px"
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  event.currentTarget.setPointerCapture(event.pointerId);
-                }}
-                onPointerMove={(event) => {
-                  if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                    setThreadWidth((previous) =>
-                      Math.min(640, Math.max(288, previous - event.movementX)),
-                    );
-                  }
-                }}
-                onPointerUp={(event) => {
-                  event.currentTarget.releasePointerCapture(event.pointerId);
-                }}
-              />
-            )}
-            {threadRoot && (!dmAgentPubkey || rightTab === "thread") && (
-              <ThreadPanel
-                root={threadRoot}
-                buffer={messages}
-                members={members}
-                profiles={profiles}
-                onClose={() => setThreadRootId(null)}
-                send={send}
-                onSelectThinkingTab={
-                  dmAgentPubkey ? () => setRightTab("thinking") : undefined
-                }
-              />
-            )}
-            {threadRoot && dmAgentPubkey && rightTab === "thinking" && (
-              <ThreadPanel
-                root={threadRoot}
-                buffer={messages}
-                members={members}
-                profiles={profiles}
-                onClose={() => setThreadRootId(null)}
-                send={send}
-                mobileOnly
-              />
-            )}
-            {dmAgentPubkey &&
-              !dmPaneHidden &&
-              (!threadRoot || rightTab === "thinking") && (
-                <AgentActivityPanel
-                  agentPubkey={dmAgentPubkey}
-                  agentName={
-                    profiles.get(dmAgentPubkey)?.displayName ?? dmAgentPubkey
-                  }
-                  profile={dmProfiles.get(dmAgentPubkey)}
-                  frames={channelAgentFrames}
-                  lockedCount={observerStore?.lockedCount ?? 0}
-                  connected={connected}
-                  working={working}
-                  mobileOpen={thinkingOpen}
-                  onCloseMobile={() => setThinkingOpen(false)}
-                  onCloseDesktop={() => setDmPaneHidden(true)}
-                  onSelectThreadTab={
-                    threadRoot ? () => setRightTab("thread") : undefined
+              {threadRoot && (!dmAgentPubkey || rightTab === "thread") && (
+                <ThreadPanel
+                  root={threadRoot}
+                  buffer={messages}
+                  members={members}
+                  profiles={profiles}
+                  onClose={() => setThreadRootId(null)}
+                  send={send}
+                  onSelectThinkingTab={
+                    dmAgentPubkey ? () => setRightTab("thinking") : undefined
                   }
                 />
               )}
-          </div>
-        ) : (
-          <div className="flex h-full items-center justify-center p-8">
-            <p className="text-sm text-muted-foreground">
-              Pick a channel to get started.
-            </p>
-          </div>
-        )}
-        <SearchPanel
-          open={searchOpen}
-          onClose={closeSearch}
-          initialQuery={sidebarQuery}
-          onJumpToChannel={(id) => selectChannel(id)}
-          actions={paletteActions}
-          channels={channels}
-          profiles={profiles}
-          defaultChannelId={current?.id ?? null}
-          onOpenResult={(channelId, messageId) => {
-            setFilesOpen(false);
-            void navigate({
-              to: "/repos",
-              search: { c: channelId, m: messageId },
-            });
-          }}
-        />
-      </AppShell>
-    </ProfileActionsProvider>
+              {threadRoot && dmAgentPubkey && rightTab === "thinking" && (
+                <ThreadPanel
+                  root={threadRoot}
+                  buffer={messages}
+                  members={members}
+                  profiles={profiles}
+                  onClose={() => setThreadRootId(null)}
+                  send={send}
+                  mobileOnly
+                />
+              )}
+              {dmAgentPubkey &&
+                !dmPaneHidden &&
+                (!threadRoot || rightTab === "thinking") && (
+                  <AgentActivityPanel
+                    agentPubkey={dmAgentPubkey}
+                    agentName={
+                      profiles.get(dmAgentPubkey)?.displayName ?? dmAgentPubkey
+                    }
+                    profile={dmProfiles.get(dmAgentPubkey)}
+                    frames={channelAgentFrames}
+                    lockedCount={observerStore?.lockedCount ?? 0}
+                    connected={connected}
+                    working={working}
+                    mobileOpen={thinkingOpen}
+                    onCloseMobile={() => setThinkingOpen(false)}
+                    onCloseDesktop={() => setDmPaneHidden(true)}
+                    onSelectThreadTab={
+                      threadRoot ? () => setRightTab("thread") : undefined
+                    }
+                  />
+                )}
+            </div>
+          ) : (
+            <div className="flex h-full items-center justify-center p-8">
+              <p className="text-sm text-muted-foreground">
+                Pick a channel to get started.
+              </p>
+            </div>
+          )}
+          <SearchPanel
+            open={searchOpen}
+            onClose={closeSearch}
+            initialQuery={sidebarQuery}
+            onJumpToChannel={(id) => selectChannel(id)}
+            actions={paletteActions}
+            channels={channels}
+            profiles={profiles}
+            defaultChannelId={current?.id ?? null}
+            onOpenResult={(channelId, messageId) => {
+              setFilesOpen(false);
+              void navigate({
+                to: "/repos",
+                search: { c: channelId, m: messageId },
+              });
+            }}
+          />
+        </AppShell>
+      </ProfileActionsProvider>
+    </>
   );
 }
