@@ -319,6 +319,8 @@ export function Composer({
     Math.min(selection.start, text.length),
   );
   // A fresh token re-arms the popup after an Escape dismissal.
+  //
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `query` is the trigger, not a read — the body deliberately ignores its value and exists only to re-run when the token changes. Dropping it, as the rule suggests, would run this once at mount, so one Escape would suppress the mention popup for the rest of the session.
   useEffect(() => {
     setMentionDismissed(false);
   }, [query]);

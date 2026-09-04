@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import {
-  isRelayMediaHref,
-  linkDisposition,
-} from "./linkOpen.ts";
+import { isRelayMediaHref, linkDisposition } from "./linkOpen.ts";
 
 const RELAY = "https://crichton.tailb3d4b8.ts.net:6351";
 
@@ -13,10 +10,7 @@ test("linkDisposition: file-typical URLs are popup", () => {
     linkDisposition(`${RELAY}/media/0c67${"a".repeat(56)}.png`),
     "popup",
   );
-  assert.equal(
-    linkDisposition("https://host/edition/latest.md"),
-    "popup",
-  );
+  assert.equal(linkDisposition("https://host/edition/latest.md"), "popup");
   assert.equal(linkDisposition("https://host/report.pdf?download=1"), "popup");
   assert.equal(linkDisposition("https://host/clip.MOV"), "popup");
   assert.equal(linkDisposition("https://host/archive.tar.gz"), "popup");
@@ -25,7 +19,10 @@ test("linkDisposition: file-typical URLs are popup", () => {
 
 test("linkDisposition: non-file URLs are tab", () => {
   assert.equal(linkDisposition("https://iana.org"), "tab");
-  assert.equal(linkDisposition("https://openclaw.ai/blog/openclaw-2-accidentally"), "tab");
+  assert.equal(
+    linkDisposition("https://openclaw.ai/blog/openclaw-2-accidentally"),
+    "tab",
+  );
   assert.equal(linkDisposition(`${RELAY}/repos?c=abc`), "tab");
   assert.equal(linkDisposition("/repos"), "tab");
 });

@@ -154,10 +154,7 @@ interface ActiveSubscription {
 }
 
 /** Frame body for a REQ: one or more filters spread after the sub id. */
-function reqFrame(
-  subId: string,
-  filter: NostrFilter | NostrFilter[],
-): string {
+function reqFrame(subId: string, filter: NostrFilter | NostrFilter[]): string {
   return JSON.stringify([
     "REQ",
     subId,
@@ -625,7 +622,11 @@ export class RelaySession {
     if (this.authenticated && this.socket) {
       this.openSubs.set(subId, sub);
       this.socket.send(
-        JSON.stringify(["REQ", subId, ...(Array.isArray(filters) ? filters : [filters])]),
+        JSON.stringify([
+          "REQ",
+          subId,
+          ...(Array.isArray(filters) ? filters : [filters]),
+        ]),
       );
     }
     return () => {

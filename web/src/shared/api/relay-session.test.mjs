@@ -567,7 +567,10 @@ test("auth-race: retries are bounded — after 5 failures the sub stays dead", a
 test("replay paces REQ opens so the relay send buffer can drain", async () => {
   const { session } = makeSession();
   for (let i = 0; i < 10; i++) {
-    session.subscribe({ kinds: [9], "#h": [`dm-${i}`], limit: 1 }, { onEvent: () => {} });
+    session.subscribe(
+      { kinds: [9], "#h": [`dm-${i}`], limit: 1 },
+      { onEvent: () => {} },
+    );
   }
   session.connect();
   const socket = firstSocket();

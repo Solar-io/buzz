@@ -23,10 +23,7 @@ export interface DmRecencyRank {
  * conversation that was actually messaged more recently; never-messaged
  * DMs fall back to their metadata (creation) time, ties break by name.
  */
-export function compareDmRecency(
-  a: DmRecencyRank,
-  b: DmRecencyRank,
-): number {
+export function compareDmRecency(a: DmRecencyRank, b: DmRecencyRank): number {
   return (
     (b.lastActivity || b.updatedAt) - (a.lastActivity || a.updatedAt) ||
     a.name.localeCompare(b.name)
@@ -53,9 +50,7 @@ export interface DmActivityFilter {
  * and randomly refused sibling subscriptions (profiles: names/photos
  * vanished from the sidebar).
  */
-export function dmActivityFilterBatches(
-  dmIds: string[],
-): DmActivityFilter[][] {
+export function dmActivityFilterBatches(dmIds: string[]): DmActivityFilter[][] {
   const batches: DmActivityFilter[][] = [];
   for (let i = 0; i < dmIds.length; i += MAX_FILTERS_PER_REQ) {
     batches.push(

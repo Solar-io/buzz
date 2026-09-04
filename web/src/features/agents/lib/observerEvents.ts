@@ -485,7 +485,10 @@ export function agentTurnStart(frames: ObserverFrame[]): number | null {
     if (started !== null && started > (payloadStart ?? 0)) {
       payloadStart = started;
     }
-    if (frame.kind === "turn_started" && frame.createdAt > (turnFrameStart ?? 0)) {
+    if (
+      frame.kind === "turn_started" &&
+      frame.createdAt > (turnFrameStart ?? 0)
+    ) {
       turnFrameStart = frame.createdAt;
     }
   }

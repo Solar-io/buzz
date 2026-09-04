@@ -14,14 +14,65 @@ export type LinkDisposition = "popup" | "tab" | "default";
 
 const FILE_EXTENSIONS = new Set([
   // images
-  "png", "jpg", "jpeg", "gif", "webp", "avif", "svg", "bmp", "ico",
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "avif",
+  "svg",
+  "bmp",
+  "ico",
   // video / audio
-  "mp4", "webm", "mov", "m4v", "avi", "mkv", "mp3", "wav", "flac", "ogg", "m4a", "aac",
+  "mp4",
+  "webm",
+  "mov",
+  "m4v",
+  "avi",
+  "mkv",
+  "mp3",
+  "wav",
+  "flac",
+  "ogg",
+  "m4a",
+  "aac",
   // documents / text
-  "pdf", "txt", "md", "csv", "tsv", "json", "xml", "yaml", "yml", "html", "htm",
-  "doc", "docx", "xls", "xlsx", "ppt", "pptx", "pages", "numbers", "key", "rtf",
+  "pdf",
+  "txt",
+  "md",
+  "csv",
+  "tsv",
+  "json",
+  "xml",
+  "yaml",
+  "yml",
+  "html",
+  "htm",
+  "doc",
+  "docx",
+  "xls",
+  "xlsx",
+  "ppt",
+  "pptx",
+  "pages",
+  "numbers",
+  "key",
+  "rtf",
   // archives / code
-  "zip", "tar", "gz", "bz2", "7z", "rar", "dmg", "iso", "ts", "js", "py", "sh", "rs", "toml",
+  "zip",
+  "tar",
+  "gz",
+  "bz2",
+  "7z",
+  "rar",
+  "dmg",
+  "iso",
+  "ts",
+  "js",
+  "py",
+  "sh",
+  "rs",
+  "toml",
 ]);
 
 /** Parse-relative base so pure classification stays testable. */
@@ -57,10 +108,7 @@ export function linkDisposition(href: string): LinkDisposition {
  * True when the URL points at the relay's Blossom media store (auth-gated,
  * needs a signed GET before a window can show it).
  */
-export function isRelayMediaHref(
-  href: string,
-  relayBase: string,
-): boolean {
+export function isRelayMediaHref(href: string, relayBase: string): boolean {
   let url: URL;
   let base: URL;
   try {

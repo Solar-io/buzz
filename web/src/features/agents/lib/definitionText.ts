@@ -132,10 +132,7 @@ function hasPrecedingEmojiBase(characters: string[], index: number): boolean {
   for (let previous = index - 1; previous >= 0; previous--) {
     const character = characters[previous];
     const codePoint = character.codePointAt(0);
-    if (
-      codePoint !== EMOJI_VARIATION_SELECTOR &&
-      !isEmojiModifier(character)
-    ) {
+    if (codePoint !== EMOJI_VARIATION_SELECTOR && !isEmojiModifier(character)) {
       return isExtendedPictographic(character);
     }
   }

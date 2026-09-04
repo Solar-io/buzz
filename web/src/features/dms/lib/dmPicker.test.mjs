@@ -49,7 +49,10 @@ test("buildDmSuggestions: agents first, then contacts, alphabetical in group", (
 });
 
 test("buildDmSuggestions: self is never suggested from either source", () => {
-  assert.equal(build().some((s) => s.pubkey === SELF), false);
+  assert.equal(
+    build().some((s) => s.pubkey === SELF),
+    false,
+  );
 });
 
 test("buildDmSuggestions: agent entry wins dedupe for a dual agent+contact pubkey", () => {
@@ -111,10 +114,16 @@ test("buildDmSuggestions: agent with no name falls back to profile label", () =>
 test("profileLabel: displayName wins, then name, then truncated key", () => {
   assert.equal(profileLabel(SAM, profiles), "Sam");
   assert.equal(
-    profileLabel("ff".repeat(32), new Map([[ "ff".repeat(32), { name: "x", displayName: "" } ]])),
+    profileLabel(
+      "ff".repeat(32),
+      new Map([["ff".repeat(32), { name: "x", displayName: "" }]]),
+    ),
     "x",
   );
-  assert.match(profileLabel("ab".repeat(32), new Map()), /^[0-9a-f]+…[0-9a-f]+$/);
+  assert.match(
+    profileLabel("ab".repeat(32), new Map()),
+    /^[0-9a-f]+…[0-9a-f]+$/,
+  );
 });
 
 test("recipientLabel: prefers a suggestion label, falls back to profile", () => {

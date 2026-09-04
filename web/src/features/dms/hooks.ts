@@ -45,10 +45,20 @@ export function useDms(channels: ChannelSummary[]): {
     // Most recent ACTIVITY first: a real message beats a metadata touch,
     // and only never-messaged DMs fall back to their creation time
     // (Sam 2026-09-02: "they should sort based on most recent activity").
-    list.sort((a, b) => compareDmRecency(
-      { lastActivity: a.lastActivity, updatedAt: a.channel.updatedAt, name: a.channel.name },
-      { lastActivity: b.lastActivity, updatedAt: b.channel.updatedAt, name: b.channel.name },
-    ));
+    list.sort((a, b) =>
+      compareDmRecency(
+        {
+          lastActivity: a.lastActivity,
+          updatedAt: a.channel.updatedAt,
+          name: a.channel.name,
+        },
+        {
+          lastActivity: b.lastActivity,
+          updatedAt: b.channel.updatedAt,
+          name: b.channel.name,
+        },
+      ),
+    );
     return list;
   }, [channels, activity]);
   const channelsWithoutDms = useMemo(

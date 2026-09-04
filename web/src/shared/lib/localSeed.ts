@@ -33,10 +33,7 @@ export function loadSeed(key: string): Record<string, unknown> {
 }
 
 /** Union `entries` into the seed under `key`, capped at the newest 400. */
-export function mergeSeed(
-  key: string,
-  entries: Record<string, unknown>,
-): void {
+export function mergeSeed(key: string, entries: Record<string, unknown>): void {
   if (Object.keys(entries).length === 0) {
     return;
   }
