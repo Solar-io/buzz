@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "gen:routes": "node ./scripts/gen-routes.mjs",
     "typecheck": "tsc --noEmit",
     "check:file-sizes": "node ./scripts/check-file-sizes.mjs",
     "check:pubkey-truncation": "node ./scripts/check-pubkey-truncation.mjs",

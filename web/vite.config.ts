@@ -7,6 +7,14 @@ export default defineConfig({
   plugins: [
     tanstackRouter({
       target: "react",
+      // Generation is done by `pnpm gen:routes`, not here. The plugin is
+      // active and reads this config, but silently reproduces the previous
+      // route set: a new entry in routes.ts never reaches routeTree.gen.ts,
+      // and a build would overwrite a correctly generated tree with the stale
+      // one. The generator itself is fine when driven directly, which is what
+      // scripts/gen-routes.mjs does. The plugin is kept for code-splitting and
+      // HMR. See scripts/gen-routes.mjs.
+      enableRouteGeneration: false,
       routesDirectory: "./src/app/routes",
       generatedRouteTree: "./src/app/routeTree.gen.ts",
       virtualRouteConfig: "./src/app/routes.ts",
