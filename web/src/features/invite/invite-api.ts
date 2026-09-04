@@ -1,4 +1,4 @@
-import { makeNip98AuthHeader } from "@/shared/lib/nip98";
+import { nip98Headers } from "@/shared/lib/nip98";
 import { relayHttpBaseUrl } from "@/shared/lib/relay-url";
 
 const INVITE_REQUEST_TIMEOUT_MS = 15_000;
@@ -19,16 +19,9 @@ export async function claimInviteInBrowser(
     code,
     policy_receipt: policyReceipt,
   });
-  const authorization = await makeNip98AuthHeader(url, "POST", {
-    body,
-    requireNip07: true,
-  });
   const response = await fetch(url, {
     method: "POST",
-    headers: {
-      Authorization: authorization,
-      "Content-Type": "application/json",
-    },
+    headers: await nip98Headers(url, "POST", { body, requireNip07: true }),
     body,
     signal: AbortSignal.timeout(INVITE_REQUEST_TIMEOUT_MS),
   });

@@ -9,7 +9,7 @@
  */
 
 import { getAuthTagJson } from "@/shared/lib/key-store";
-import { makeNip98AuthHeader } from "@/shared/lib/nip98";
+import { nip98Headers } from "@/shared/lib/nip98";
 import { relayHttpBaseUrl } from "@/shared/lib/relay-url";
 import {
   gifErrorMessage,
@@ -30,8 +30,7 @@ async function relayPost<T>(
   const url = `${relayHttpBaseUrl().replace(/\/+$/, "")}${path}`;
   const body = JSON.stringify(payload);
   const headers: Record<string, string> = {
-    Authorization: await makeNip98AuthHeader(url, "POST", { body }),
-    "Content-Type": "application/json",
+    ...(await nip98Headers(url, "POST", { body })),
   };
   const authTag = getAuthTagJson();
   if (authTag) {

@@ -2,7 +2,7 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
-import { makeNip98AuthHeader } from "@/shared/lib/nip98";
+import { nip98Headers } from "@/shared/lib/nip98";
 import type { NostrFilter } from "@/shared/lib/nostr-client";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { signNostrEvent } from "@/shared/lib/nostr-signer";
@@ -83,8 +83,9 @@ export class ModerationReadError extends Error {
  */
 async function moderationGet<T>(pathWithQuery: string): Promise<T> {
   const url = `${relayHttpBaseUrl().replace(/\/+$/, "")}${pathWithQuery}`;
-  const authorization = await makeNip98AuthHeader(url, "GET");
-  const response = await fetch(url, { headers: { authorization } });
+  const response = await fetch(url, {
+    headers: await nip98Headers(url, "GET"),
+  });
   if (!response.ok) {
     throw new ModerationReadError(
       response.status,

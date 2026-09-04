@@ -20,8 +20,7 @@
 import type { RelaySession } from "@/shared/api/relay-session";
 import type { NostrFilter } from "@/shared/lib/nostr-client";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
-import { getAuthTagJson } from "@/shared/lib/key-store";
-import { makeNip98AuthHeader } from "@/shared/lib/nip98";
+import { nip98Headers } from "@/shared/lib/nip98";
 import { relayHttpBaseUrl } from "@/shared/lib/relay-url";
 import {
   enumerateEventsComposite,
@@ -95,21 +94,12 @@ export async function httpQueryPage(
 ): Promise<SignedNostrEvent[]> {
   const url = `${relayHttpBaseUrl().replace(/\/+$/, "")}/query`;
   const body = JSON.stringify([filter]);
-  const authorization = await makeNip98AuthHeader(url, "POST", { body });
-  const headers: Record<string, string> = {
-    authorization,
-    "content-type": "application/json",
-  };
-  // `enforce_relay_membership` reads this on every HTTP bridge route, and
-  // without it a member whose membership is tag-scoped is refused with a bare
-  // 403 — the same reason `features/gifs/lib/relay.ts` and
-  // `shared/api/blossom.ts` both send it. Measured against the dev relay: nine
-  // 403s on /query, the relay naming the authenticated pubkey each time, so
-  // NIP-98 was fine and the refusal was authorization.
-  const authTag = getAuthTagJson();
-  if (authTag) {
-    headers["x-auth-tag"] = authTag;
-  }
+  // `nip98Headers` carries the `x-auth-tag` the relay reads on every bridge
+  // route. Without it a member whose membership is tag-scoped is refused with
+  // a bare 403 — measured against the dev relay as nine 403s on /query, the
+  // relay naming the authenticated pubkey each time, so NIP-98 was fine and
+  // the refusal was authorization.
+  const headers = await nip98Headers(url, "POST", { body });
   const response = await fetch(url, { method: "POST", headers, body });
   if (!response.ok) {
     // The relay explains itself — "restricted: …" — and swallowing that turns

@@ -1,6 +1,6 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
 
-import { makeNip98AuthHeader } from "@/shared/lib/nip98";
+import { nip98Headers } from "@/shared/lib/nip98";
 import { relayHttpBaseUrl } from "@/shared/lib/relay-url";
 import {
   approvalsFromJson,
@@ -33,8 +33,9 @@ function base(): string {
 }
 
 async function authorizedGet(url: string): Promise<unknown> {
-  const authorization = await makeNip98AuthHeader(url, "GET");
-  const response = await fetch(url, { headers: { authorization } });
+  const response = await fetch(url, {
+    headers: await nip98Headers(url, "GET"),
+  });
   if (!response.ok) {
     // The relay's own reasons are client-safe here ("workflow not found",
     // "workflow is not accessible"), and far more useful than a bare code.

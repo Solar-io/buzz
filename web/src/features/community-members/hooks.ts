@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
-import { makeNip98AuthHeader } from "@/shared/lib/nip98";
+import { nip98Headers } from "@/shared/lib/nip98";
 import { signNostrEvent } from "@/shared/lib/nostr-signer";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { relayHttpBaseUrl, relayWsUrl } from "@/shared/lib/relay-url";
@@ -157,13 +157,9 @@ export async function mintInvite(
   // The relay requires a `payload` tag carrying sha256(body) for signed POSTs
   // and checks the `u` tag against the exact URL, so both are finalized before
   // signing.
-  const authorization = await makeNip98AuthHeader(url, "POST", { body });
   const response = await fetch(url, {
     method: "POST",
-    headers: {
-      Authorization: authorization,
-      "Content-Type": "application/json",
-    },
+    headers: await nip98Headers(url, "POST", { body }),
     body,
     signal: AbortSignal.timeout(INVITE_TIMEOUT_MS),
   });

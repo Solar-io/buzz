@@ -3,7 +3,7 @@
  * the validation and parsing there stay loadable by `node --test`.
  */
 
-import { makeNip98AuthHeader } from "@/shared/lib/nip98";
+import { nip98Headers } from "@/shared/lib/nip98";
 import { relayHttpBaseUrl } from "@/shared/lib/relay-url";
 
 import {
@@ -33,13 +33,9 @@ export async function mintInvite(
       ? { max_uses: request.maxUses }
       : {}),
   });
-  const authorization = await makeNip98AuthHeader(url, "POST", { body });
   const response = await fetch(url, {
     method: "POST",
-    headers: {
-      Authorization: authorization,
-      "Content-Type": "application/json",
-    },
+    headers: await nip98Headers(url, "POST", { body }),
     body,
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });

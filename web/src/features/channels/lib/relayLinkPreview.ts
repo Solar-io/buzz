@@ -27,7 +27,7 @@
  */
 
 import { getAuthTagJson } from "@/shared/lib/key-store";
-import { makeNip98AuthHeader } from "@/shared/lib/nip98";
+import { nip98Headers } from "@/shared/lib/nip98";
 import { relayHttpBaseUrl } from "@/shared/lib/relay-url";
 import {
   linkPreviewCapability,
@@ -81,8 +81,7 @@ export async function unfurlLink(
   const endpoint = `${base}${unfurlPath}`;
   const body = JSON.stringify({ url });
   const headers: Record<string, string> = {
-    Authorization: await makeNip98AuthHeader(endpoint, "POST", { body }),
-    "Content-Type": "application/json",
+    ...(await nip98Headers(endpoint, "POST", { body })),
   };
   const authTag = getAuthTagJson();
   if (authTag) {
