@@ -10,6 +10,7 @@ import {
   getConfiguredFilesUrl,
   setConfiguredFilesUrl,
 } from "@/features/files/filesConfig";
+import { LocalArchiveSettingsCard } from "@/features/local-archive";
 import { NotificationSettingsDialog } from "@/features/notifications/ui/NotificationSettingsDialog";
 import { AppearanceSection } from "./AppearanceSection";
 import { useAuth } from "./AuthProvider";
@@ -145,6 +146,8 @@ export function SettingsPage() {
       </section>
 
       <NotificationsSection />
+
+      <LocalArchiveSettingsCard />
 
       <AppearanceSection />
 
