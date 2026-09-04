@@ -29,8 +29,7 @@ know exactly what they must modify — and what they can skip.
 | DMs: open, groups, local hide | Stock | Hide is client-local by design (desktop parity). |
 | Search (⌘K + sidebar field, NIP-50) | Stock | |
 | Media: upload, rendering, mosaic, zoomable lightbox, file cards | Stock | Reads NIP-92 `imeta` (`dim`, `m`, `size`, `filename`) off the event; no relay change. |
-| Link previews — rendering a received card | **Stock, not built** | Purely a client render of the sender's `link-preview` snapshot tags. No relay change needed; see below. |
-| Link previews — authoring one when sending | **Blocked in a browser** | Needs a server-side unfurl the relay does not expose. See below. |
+| Link previews — rendering a received card, and authoring one | **Built; authoring needs a relay endpoint** | Rendering is a pure client render of the sender's `link-preview` snapshot tags. Authoring cannot be done in a browser at all, so it goes through a new relay unfurl route; see below. |
 | Huddle voice (start/join, Opus) | Stock | 48100/48102 + WebCodecs. |
 | Profile editor (kind 0) | Stock | |
 | Agent registry view (30177 list, status dots) | Stock | 30177 is community-readable upstream. |
@@ -69,7 +68,7 @@ know exactly what they must modify — and what they can skip.
 | Custom emoji: add, rename, remove | Stock | Read-modify-write on the caller's own kind:30030, uploading through the same Blossom path the composer already uses. Rename is not on the wire — it is the same republish with one shortcode changed. `CustomEmojiImage` used a plain `<img src>`, but `GET /media/{sha}` runs `authenticate_media_read` and an `<img>` cannot sign, so every relay-hosted emoji rendered broken; relay URLs now route through `fetchSignedMedia`. |
 | Image paste and attachments | Stock | Already present before this wave and verified end to end against the live relay: a pasted PNG uploads with real progress, lands in the attachment tray, and renders in the timeline. A malformed upload surfaces the relay's 422 in the row rather than swallowing it. |
 
-## Link previews — feasibility, measured 2026-09-03
+## Link previews — how authoring works (measured 2026-09-03, built 2026-09-04)
 
 Buzz link previews are **not** a recipient-side unfurl. The desktop resolves
 metadata once, **at send time**, and ships the result inside the event as
@@ -96,29 +95,42 @@ timeline's `TimelineMessage` (`features/channels/lib/messageBuffer.ts`) keeps
 `imetaByUrl` and drops the rest of the event's tags, so the tags never reach
 `MarkdownContent`.
 
-**Authoring one in a browser is blocked, and not by anything we can patch in
-the web client.** Producing a snapshot means fetching an arbitrary
-third-party page, parsing its OpenGraph tags, then fetching its preview image
-and favicon and uploading both to Blossom. The desktop does all of that in
-native Rust — `fetch_link_preview_metadata`, registered in
-`desktop/src-tauri/src/lib.rs` and called from
-`desktop/src/shared/lib/useResolvedLinkPreviews.ts` — where the same-origin
-policy does not apply. A browser cannot: a cross-origin `fetch` of a page that
-sends no `Access-Control-Allow-Origin` is unreadable, and an opaque `no-cors`
-response cannot be parsed or re-uploaded. The relay exposes no unfurl route
-either (`crates/buzz-relay/src/router.rs` lists the whole HTTP surface:
-NIP-11/NIP-05, `/events`, `/query`, `/count`, GIF search, invites,
-moderation, webhooks, Blossom media, git, health — nothing that fetches a
-remote URL on a client's behalf).
+**Authoring one in a browser needs the relay, and now has it.** Producing a
+snapshot means fetching an arbitrary third-party page, parsing its OpenGraph
+tags, then fetching its preview image and favicon and putting both in this
+relay's media store. The desktop does all of that in native Rust —
+`fetch_link_preview_metadata`, registered in `desktop/src-tauri/src/lib.rs` —
+where the same-origin policy does not apply. A browser cannot: a cross-origin
+`fetch` of a page that sends no `Access-Control-Allow-Origin` is unreadable,
+and an opaque `no-cors` response cannot be parsed or re-uploaded.
 
-So a web client can only ever author previews with **a new relay endpoint**
-(server-side unfurl returning OG metadata, ideally uploading the images to
-Blossom in the same call), or a general CORS proxy. Both are relay changes,
-and a relay change is a product decision, not a client one. Until that
-decision is taken, the honest behaviour on the web is what ships today: links
-render as links, and messages sent from the web simply carry no snapshot
-tags — which the desktop already handles, since a message without them shows
-a plain link there too.
+So the web client gained a relay endpoint instead:
+`POST /link-preview/unfurl` (`crates/buzz-relay/src/api/link_preview.rs`),
+NIP-98 + membership like the other bridge routes. It resolves the page behind
+an SSRF fence (https only, resolved addresses checked against
+`is_private_ip`, addresses pinned into the client so a rebind cannot slip
+past, every redirect hop re-gated, bounded size/time/redirects/concurrency),
+re-encodes the image and favicon, stores them as this relay's own blobs, and
+returns the fields a snapshot tag needs. `204` means the page had nothing
+worth showing. A relay that can do this advertises `link_preview: { unfurl }`
+and the `buzz-link-preview` extension in NIP-11, so a client talking to an
+older or upstream relay simply does not offer the feature.
+
+The web half lives in `features/channels/lib/`:
+`linkPreviewCandidates.ts` (which links get offered), `relayLinkPreview.ts` +
+`linkPreviewCapability.ts` (transport and capability), `linkPreviewSnapshot.ts`
+(building the 11-part tag, and re-checking every rule ingest applies — a bad
+tag rejects the whole message, not just the tag), and
+`useComposerLinkPreviews.ts` (debounce, cache, suppression). The composer shows
+what it is about to attach, with a "Preview off" control that emits
+`["link-preview","none"]`. Sending is never held up waiting for a third-party
+site: an unresolved link just sends as a plain link.
+
+One reader-side defect fell out of building it. `LinkPreviewCards` rendered
+snapshot assets with a plain `<img src>`, but those assets are relay blobs and
+`GET /media/{sha256}` runs `authenticate_media_read` — an `<img>` cannot sign a
+NIP-98 header, so every relay-hosted preview image rendered broken. Exactly the
+custom-emoji bug, and fixed the same way: through `fetchSignedMedia`.
 
 ## Fork changes, per feature
 

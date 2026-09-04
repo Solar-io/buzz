@@ -56,9 +56,21 @@ pub struct RelayInfo {
     /// provider-agnostic; provider credentials remain server-side.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gif: Option<GifDescriptor>,
+    /// Relay-side link-preview unfurl. Present whenever the relay can author
+    /// snapshots on a member's behalf, which is how a browser client decides
+    /// whether it may offer sender-side previews at all.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_preview: Option<LinkPreviewDescriptor>,
     /// Relay's own signing pubkey (NIP-11 `self` field, NIP-43).
     #[serde(rename = "self", skip_serializing_if = "Option::is_none")]
     pub relay_self: Option<String>,
+}
+
+/// Public capability descriptor for relay-side link-preview unfurling.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LinkPreviewDescriptor {
+    /// Relay-relative authenticated unfurl endpoint.
+    pub unfurl: String,
 }
 
 /// Public capability descriptor for relay-proxied GIF search.
@@ -176,7 +188,7 @@ impl RelayInfo {
             supported_nips.push(NIP_RELAY_MEMBERSHIP);
         }
 
-        let mut supported_extensions = vec!["nip-er".to_string()];
+        let mut supported_extensions = vec!["nip-er".to_string(), "buzz-link-preview".to_string()];
         let gif = gif_provider.map(|provider| {
             supported_extensions.push("buzz-gif".to_string());
             GifDescriptor {
@@ -200,6 +212,9 @@ impl RelayInfo {
             limitation: Some(relay_limitation(max_message_length)),
             pairing_relay_url: pairing_relay_url.map(str::to_string),
             gif,
+            link_preview: Some(LinkPreviewDescriptor {
+                unfurl: crate::api::link_preview::UNFURL_PATH.to_string(),
+            }),
             relay_self: relay_self.map(|s| s.to_string()),
         }
     }

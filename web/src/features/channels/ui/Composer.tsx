@@ -63,6 +63,8 @@ import {
   ComposerReplyBanner,
 } from "./ComposerReplyBanner.tsx";
 import { ComposerAttachmentTray } from "./ComposerAttachmentTray.tsx";
+import { ComposerLinkPreviewTray } from "./ComposerLinkPreviewTray.tsx";
+import { useComposerLinkPreviews } from "../lib/useComposerLinkPreviews.ts";
 import { useComposerTimeout } from "@/features/moderation/hooks";
 import { ComposerTimeoutBanner } from "@/features/moderation/ui/ComposerTimeoutBanner";
 import type { ChannelMember, Profile } from "../hooks.ts";
@@ -516,6 +518,11 @@ export function Composer({
 
   const uploadsPending = hasPendingUploads(attachments);
 
+  // Sender-authored link previews. Editing an existing message never
+  // re-resolves: the snapshot belongs to the original send, and an edit that
+  // silently swapped it would rewrite what recipients already saw.
+  const linkPreviews = useComposerLinkPreviews(editingActive ? "" : text);
+
   const submit = async () => {
     const trimmed = text.trim();
     if (!trimmed || busy || uploadsPending) {
@@ -546,6 +553,12 @@ export function Composer({
                 buildImetaTag(descriptor),
               ),
               ...buildCustomEmojiTags(trimmed, customEmoji),
+              // Link-preview snapshots, or the `["link-preview","none"]`
+              // marker when the author dismissed the tray. Derived from the
+              // FINAL content, like the emoji tags above: a snapshot whose
+              // canonical URL is not in the body is rejected by the relay,
+              // and it would take the whole message with it.
+              ...linkPreviews.tagsFor(trimmed),
             ],
           });
       composerTimeout.noteSendResult(result);
@@ -558,6 +571,7 @@ export function Composer({
         applyText("");
         setAttachments([]);
         setMentionPicks(new Map());
+        linkPreviews.reset();
         if (editingActive) {
           onCancelEdit?.();
         }
@@ -737,6 +751,12 @@ export function Composer({
         <ComposerAttachmentTray
           attachments={attachments}
           onRemove={removeQueued}
+        />
+      )}
+      {!editingActive && (
+        <ComposerLinkPreviewTray
+          cards={linkPreviews.cards}
+          onSuppress={linkPreviews.suppress}
         />
       )}
       <div className="flex items-end gap-2">

@@ -68,6 +68,11 @@ s3 = { version = "0.37", package = "rust-s3", default-features = false, features
 tempfile = "3"
 bytes = "1"
 infer = "0.19"
+# Link-preview images are decoded and re-encoded before storage: that is what
+# rejects decompression bombs and animation, and what drops third-party
+# EXIF/XMP/ICC so the bytes satisfy the media store's metadata-free contract.
+# Same version and feature set as buzz-media's decoder.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 serde_yaml      = { workspace = true }
 sha2            = { workspace = true }
 hmac            = { workspace = true }
