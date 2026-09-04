@@ -1,32 +1,45 @@
 import { MessageSquare, Pencil, User } from "lucide-react";
 import { useState, type ReactNode } from "react";
+
+import { PresenceAvatarDot } from "@/features/presence/ui/PresenceBadge";
+import { usePresenceStatus } from "@/features/presence/hooks";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { Skeleton } from "@/shared/ui/skeleton";
+
 import { useProfileMetadata } from "../hooks.ts";
 import { profileLabel } from "../lib/kind0.ts";
+import { labelledName } from "../lib/userLabels.ts";
 import { useProfileActions } from "../ProfileActionsContext.tsx";
+import { useFollow, useOwnContactList } from "../useContacts.ts";
+import { useUserLabels } from "../useUserLabels.ts";
 import { CopyableNpub } from "./CopyableNpub.tsx";
 import { ProfileAvatar } from "./ProfileAvatar.tsx";
 import { ProfileDialog } from "./ProfileDialog.tsx";
+import {
+  CommunityRoleRow,
+  FollowButton,
+  Nip05Row,
+  PresenceStatusRow,
+} from "./ProfileIdentityRows.tsx";
 
 /**
  * The identity card behind every avatar and author name in the timeline.
  *
  * Ported in shape from `desktop/src/features/profile/ui/UserProfilePopover.tsx`
- * and deliberately smaller than it. The desktop card fans out to seven
- * queries — presence, user status, relay agents, managed agents, NIP-OA
- * ownership, agent working-state — because the desktop client has all of
- * those features. The web client has none of them yet, so this carries the
- * four things it can actually answer: who this is, their npub, their bio, and
- * the two actions that exist (message them, or edit yourself).
+ * and still smaller than it — the desktop card also carries managed-agent
+ * controls, persona actions and agent working-state, none of which exist in
+ * the browser client. What it now answers that it did not before: whether the
+ * person is here (presence), what they said they are doing (kind:30315),
+ * whether their domain agrees with their handle (NIP-05), what they can do in
+ * this community (kind:13534), and whether you follow them (kind:3).
  *
  * Two structural details are kept from the desktop because they are not
  * cosmetic:
  *
- * - The body is mounted only while the card is open. It holds a relay
- *   subscription; an eager body would open one REQ per rendered message.
+ * - The body is mounted only while the card is open. It holds several relay
+ *   subscriptions; an eager body would open them per rendered message.
  * - Opening is a *click*, not a hover. The desktop opens on dwell; on the web
  *   the same trigger has to work on touch, where there is no hover.
  */
@@ -47,11 +60,6 @@ export function UserProfilePopover({
   picture?: string;
   /** The viewer's key; when it matches, the card offers editing instead. */
   selfPubkey?: string | null;
-  /**
-   * Open a DM with this person. Falls back to
-   * {@link useProfileActions}'s shell-provided handler; when neither is set
-   * the action is not rendered at all.
-   */
   onOpenDm?: (pubkey: string) => void;
   triggerClassName?: string;
   triggerAriaLabel?: string;
@@ -130,11 +138,16 @@ function UserProfilePopoverBody({
 }) {
   const { metadata, loading } = useProfileMetadata(pubkey);
   const shellActions = useProfileActions();
+  const { labels } = useUserLabels();
+  const presence = usePresenceStatus(pubkey);
+  const contacts = useOwnContactList(selfPubkey);
+  const follow = useFollow(contacts, selfPubkey, pubkey);
   // An explicit prop wins over the shell's provider, so a caller that already
   // holds the handler need not depend on the context being mounted.
   const openDm = onOpenDm ?? shellActions.onOpenDm;
 
-  const label = profileLabel(metadata, fallbackLabel);
+  const published = profileLabel(metadata, fallbackLabel);
+  const label = labelledName(labels, pubkey, published, fallbackLabel);
   const avatar = metadata.picture || picture;
   const about = metadata.about.trim();
   const isSelf =
@@ -144,7 +157,7 @@ function UserProfilePopoverBody({
   return (
     <PopoverContent
       align="start"
-      className="w-72 p-3"
+      className="w-80 p-3"
       data-testid="user-profile-popover"
       // A card raised from a message row must not steal focus into its first
       // button — that reads as if the button were already chosen. Tab still
@@ -160,28 +173,32 @@ function UserProfilePopoverBody({
           onClick={() => onOpenFullProfile(false)}
           type="button"
         >
-          <ProfileAvatar
-            className="h-10 w-10 text-sm"
-            label={label}
-            picture={avatar}
-            testId="user-profile-popover-avatar"
-          />
+          <span className="relative shrink-0">
+            <ProfileAvatar
+              className="size-10 text-sm"
+              label={label}
+              picture={avatar}
+              testId="user-profile-popover-avatar"
+            />
+            <PresenceAvatarDot status={presence} />
+          </span>
           <span className="min-w-0 flex-1">
-            <span
-              className="block truncate text-sm font-semibold"
-              data-testid="user-profile-popover-name"
-            >
-              {label}
-            </span>
-            {metadata.nip05.trim() && (
-              <span className="block truncate text-2xs text-muted-foreground">
-                {metadata.nip05.trim()}
+            <span className="flex min-w-0 items-center gap-2">
+              <span
+                className="min-w-0 truncate text-sm font-semibold"
+                data-testid="user-profile-popover-name"
+              >
+                {label}
               </span>
-            )}
+              <CommunityRoleRow pubkey={pubkey} />
+            </span>
+            <Nip05Row claim={metadata.nip05} pubkey={pubkey} />
           </span>
         </button>
 
         <CopyableNpub className="-ml-1 self-start" pubkey={pubkey} />
+
+        <PresenceStatusRow pubkey={pubkey} />
 
         {loading && !about ? (
           <Skeleton className="h-4 w-40" />
@@ -196,7 +213,7 @@ function UserProfilePopoverBody({
           )
         )}
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {isSelf ? (
             <Button
               className="min-w-0 flex-1"
@@ -210,22 +227,31 @@ function UserProfilePopoverBody({
               Edit profile
             </Button>
           ) : (
-            openDm && (
-              <Button
+            <>
+              {openDm && (
+                <Button
+                  className="min-w-0 flex-1"
+                  data-testid="user-profile-popover-message"
+                  onClick={() => {
+                    setOpen(false);
+                    openDm(pubkey);
+                  }}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  <MessageSquare aria-hidden />
+                  Message
+                </Button>
+              )}
+              <FollowButton
                 className="min-w-0 flex-1"
-                data-testid="user-profile-popover-message"
-                onClick={() => {
-                  setOpen(false);
-                  openDm(pubkey);
-                }}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                <MessageSquare aria-hidden />
-                Message
-              </Button>
-            )
+                following={follow.following}
+                onToggle={follow.toggle}
+                pending={follow.pending}
+                ready={follow.ready}
+              />
+            </>
           )}
           <Button
             className="min-w-0 flex-1"

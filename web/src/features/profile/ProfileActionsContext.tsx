@@ -18,15 +18,30 @@ export interface ProfileActions {
    * Open (or create) a DM with this pubkey. Omit to hide the affordance.
    */
   onOpenDm?: (pubkey: string) => void;
+  /**
+   * Resolve a channel id to its name, for the card's recent-activity list.
+   * Omit and the list still renders — it just shows no channel labels.
+   */
+  channelName?: (channelId: string) => string;
+  /**
+   * Jump to one message. Omit and recent activity is read-only rather than
+   * clickable; it never renders a row that goes nowhere.
+   */
+  onOpenMessage?: (channelId: string, messageId: string) => void;
 }
 
 const ProfileActionsContext = createContext<ProfileActions>({});
 
 export function ProfileActionsProvider({
   onOpenDm,
+  channelName,
+  onOpenMessage,
   children,
 }: ProfileActions & { children: ReactNode }) {
-  const value = useMemo<ProfileActions>(() => ({ onOpenDm }), [onOpenDm]);
+  const value = useMemo<ProfileActions>(
+    () => ({ onOpenDm, channelName, onOpenMessage }),
+    [onOpenDm, channelName, onOpenMessage],
+  );
   return (
     <ProfileActionsContext.Provider value={value}>
       {children}

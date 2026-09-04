@@ -12,6 +12,8 @@ import {
 } from "@/features/files/filesConfig";
 import { LocalArchiveSettingsCard } from "@/features/local-archive";
 import { NotificationSettingsDialog } from "@/features/notifications/ui/NotificationSettingsDialog";
+import { CommunityMembersCard } from "@/features/community-members/ui/CommunityMembersCard";
+import { PresenceSettingsCard } from "@/features/presence/ui/PresenceSettingsCard";
 import { AppearanceSection } from "./AppearanceSection";
 import { useAuth } from "./AuthProvider";
 import { activeSignerSource } from "@/shared/lib/nostr-signer";
@@ -124,7 +126,7 @@ export function SettingsPage() {
   }, []);
 
   return (
-    <div className="mx-auto max-w-lg space-y-6 p-4">
+    <div className="mx-auto max-w-2xl space-y-6 p-4">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold">Settings</h1>
         <Button asChild variant="ghost" size="sm">
@@ -144,6 +146,10 @@ export function SettingsPage() {
           Desktop.
         </p>
       </section>
+
+      <CommunityMembersCard />
+
+      <PresenceSettingsCard />
 
       <NotificationsSection />
 
