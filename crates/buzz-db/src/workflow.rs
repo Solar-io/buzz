@@ -30,7 +30,13 @@ pub const LIST_MAX_LIMIT: i64 = 1000;
 ///
 /// Approval tokens are stored hashed so that a DB read does not expose
 /// the raw token (same pattern as API tokens in buzz-auth).
-fn hash_approval_token(token: &str) -> Vec<u8> {
+///
+/// Public because the hash — not the token — is the value that travels: the
+/// HTTP bridge publishes its hex as `approval_ref`, kind:46010 carries it in an
+/// `approval` tag, and a kind:46030/46031 decision names the approval by it. The
+/// minting side must derive that reference with exactly the function the lookup
+/// side hashes with, or a granted approval would never match its record.
+pub fn hash_approval_token(token: &str) -> Vec<u8> {
     Sha256::digest(token.as_bytes()).to_vec()
 }
 
@@ -2348,6 +2354,277 @@ mod tests {
             after_b.status,
             ApprovalStatus::Pending,
             "B's approval must remain pending after A is granted"
+        );
+    }
+
+    // -- WF-08: an approval is decided exactly once ---------------------------
+    //
+    // An approval is an authorization decision, so "at most one decision"
+    // is the property that matters, not "the happy path works". Every test
+    // below drives the same predicate — the `AND status = 'pending'` on
+    // `update_approval_by_stored_hash` — from a different direction, because it
+    // is the single thing standing between a replayed kind:46030 and a second
+    // execution of the rest of a workflow under its owner's authority.
+
+    /// Mint one pending approval and return `(community, workflow, run, token)`.
+    async fn pending_approval(pool: &PgPool) -> (CommunityId, Uuid, Uuid, String) {
+        let community = make_community(pool).await;
+        let workflow_id = Uuid::new_v4();
+        insert_workflow_with_ids(pool, community, workflow_id, Uuid::new_v4(), "gated").await;
+        let run_id = create_workflow_run(pool, community, workflow_id, None, None)
+            .await
+            .expect("create run");
+        let token = Uuid::new_v4().to_string();
+        create_approval(
+            pool,
+            CreateApprovalParams {
+                community_id: community,
+                token: &token,
+                workflow_id,
+                run_id,
+                step_id: "gate",
+                step_index: 0,
+                approver_spec: "any",
+                expires_at: Utc::now() + chrono::Duration::hours(1),
+            },
+        )
+        .await
+        .expect("create approval");
+        (community, workflow_id, run_id, token)
+    }
+
+    /// Replay: the same grant arriving twice decides once. Without the
+    /// `status = 'pending'` predicate the second UPDATE would also report
+    /// success, and the relay would spawn a second resume of the same run.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_replayed_grant_is_rejected() {
+        let pool = setup_pool().await;
+        let (community, _, _, token) = pending_approval(&pool).await;
+        let approver = vec![0xa1; 32];
+
+        let first = update_approval(
+            &pool,
+            community,
+            &token,
+            ApprovalStatus::Granted,
+            Some(&approver),
+            Some("ship it"),
+        )
+        .await
+        .expect("first grant");
+        let second = update_approval(
+            &pool,
+            community,
+            &token,
+            ApprovalStatus::Granted,
+            Some(&approver),
+            Some("ship it"),
+        )
+        .await
+        .expect("replayed grant");
+
+        assert!(first, "the first grant decides the approval");
+        assert!(!second, "a replayed grant must not decide it a second time");
+    }
+
+    /// Denied, then granted: a refusal is final. The grant must not talk the
+    /// approval back into a state the relay would resume from.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_denied_approval_cannot_later_be_granted() {
+        let pool = setup_pool().await;
+        let (community, _, _, token) = pending_approval(&pool).await;
+
+        let denied = update_approval(
+            &pool,
+            community,
+            &token,
+            ApprovalStatus::Denied,
+            Some(&[0xd1; 32]),
+            Some("no"),
+        )
+        .await
+        .expect("deny");
+        assert!(denied);
+
+        let granted = update_approval(
+            &pool,
+            community,
+            &token,
+            ApprovalStatus::Granted,
+            Some(&[0xa1; 32]),
+            Some("actually yes"),
+        )
+        .await
+        .expect("late grant");
+
+        assert!(!granted, "a denied approval must not accept a later grant");
+        let record = get_approval(&pool, community, &token)
+            .await
+            .expect("re-read approval");
+        assert_eq!(record.status, ApprovalStatus::Denied);
+        assert_eq!(
+            record.note.as_deref(),
+            Some("no"),
+            "the rejected grant must not overwrite the denial's note"
+        );
+        assert_eq!(
+            record.approver_pubkey.as_deref(),
+            Some([0xd1u8; 32].as_slice()),
+            "the recorded decider must still be the approver who denied"
+        );
+    }
+
+    /// Granted, then denied: symmetric to the case above, and the one that
+    /// matters most — a late denial must not be able to un-grant an approval
+    /// whose run has already resumed.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_granted_approval_cannot_later_be_denied() {
+        let pool = setup_pool().await;
+        let (community, _, _, token) = pending_approval(&pool).await;
+
+        assert!(update_approval(
+            &pool,
+            community,
+            &token,
+            ApprovalStatus::Granted,
+            Some(&[0xa1; 32]),
+            None,
+        )
+        .await
+        .expect("grant"));
+
+        let denied = update_approval(
+            &pool,
+            community,
+            &token,
+            ApprovalStatus::Denied,
+            Some(&[0xd1; 32]),
+            Some("changed my mind"),
+        )
+        .await
+        .expect("late deny");
+
+        assert!(!denied, "a granted approval must not accept a later denial");
+        assert_eq!(
+            get_approval(&pool, community, &token)
+                .await
+                .expect("re-read")
+                .status,
+            ApprovalStatus::Granted
+        );
+    }
+
+    /// Two approvers deciding at the same instant: exactly one wins, and the
+    /// stored decision is the winner's — not a blend of the two.
+    ///
+    /// The two decisions are deliberately *different* (`granted` vs `denied`)
+    /// so the assertion can tell which one landed; a race test where both sides
+    /// write the same value cannot distinguish "one won" from "both applied".
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn racing_approvers_produce_exactly_one_decision() {
+        let pool = setup_pool().await;
+        let (community, _, _, token) = pending_approval(&pool).await;
+
+        let granter = vec![0xa1; 32];
+        let denier = vec![0xd1; 32];
+
+        let grant_pool = pool.clone();
+        let grant_token = token.clone();
+        let grant_key = granter.clone();
+        let grant = tokio::spawn(async move {
+            update_approval(
+                &grant_pool,
+                community,
+                &grant_token,
+                ApprovalStatus::Granted,
+                Some(&grant_key),
+                Some("yes"),
+            )
+            .await
+            .expect("grant")
+        });
+
+        let deny_pool = pool.clone();
+        let deny_token = token.clone();
+        let deny_key = denier.clone();
+        let deny = tokio::spawn(async move {
+            update_approval(
+                &deny_pool,
+                community,
+                &deny_token,
+                ApprovalStatus::Denied,
+                Some(&deny_key),
+                Some("no"),
+            )
+            .await
+            .expect("deny")
+        });
+
+        let granted = grant.await.expect("grant task");
+        let denied = deny.await.expect("deny task");
+
+        assert_ne!(
+            granted, denied,
+            "exactly one of two racing decisions must win (granted={granted}, denied={denied})"
+        );
+
+        let record = get_approval(&pool, community, &token)
+            .await
+            .expect("re-read approval");
+        let (expected_status, expected_key, expected_note) = if granted {
+            (ApprovalStatus::Granted, granter, "yes")
+        } else {
+            (ApprovalStatus::Denied, denier, "no")
+        };
+        assert_eq!(record.status, expected_status);
+        assert_eq!(record.approver_pubkey.as_deref(), Some(&expected_key[..]));
+        assert_eq!(record.note.as_deref(), Some(expected_note));
+    }
+
+    /// The wire reference is the hash of the token, and the hash-keyed lookup
+    /// the relay's decision handler uses resolves the same row the token-keyed
+    /// lookup does.
+    ///
+    /// Values are checked against each other, not recomputed: an assertion that
+    /// re-hashed the token the same way the code does would keep passing if the
+    /// mint and lookup sides drifted together.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn stored_token_is_the_hash_the_relay_looks_up_by() {
+        let pool = setup_pool().await;
+        let (community, workflow_id, run_id, token) = pending_approval(&pool).await;
+
+        let by_token = get_approval(&pool, community, &token)
+            .await
+            .expect("lookup by token");
+        assert_ne!(
+            by_token.token,
+            token.as_bytes(),
+            "the stored value must be the digest, never the token itself"
+        );
+        assert_eq!(by_token.token.len(), 32, "SHA-256 is 32 bytes");
+
+        let by_hash = get_approval_by_stored_hash(&pool, community, &by_token.token)
+            .await
+            .expect("lookup by stored hash");
+        assert_eq!(by_hash.run_id, run_id);
+        assert_eq!(by_hash.workflow_id, workflow_id);
+        assert_eq!(by_hash.step_id, "gate");
+
+        // And the published reference — `hex(token column)` — round-trips back
+        // to the same record, which is the whole contract a client relies on.
+        let approval_ref = hex::encode(&by_token.token);
+        let decoded = hex::decode(&approval_ref).expect("approval_ref is hex");
+        assert_eq!(
+            get_approval_by_stored_hash(&pool, community, &decoded)
+                .await
+                .expect("lookup by published ref")
+                .run_id,
+            run_id
         );
     }
 

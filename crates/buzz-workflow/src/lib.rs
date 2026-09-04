@@ -35,7 +35,7 @@ pub mod error;
 pub mod executor;
 pub mod schema;
 
-pub use action_sink::{ActionSink, ActionSinkError};
+pub use action_sink::{ActionSink, ActionSinkError, WorkflowEvent};
 pub use error::{PartialProgress, WorkflowError};
 pub use executor::ExecutionResult;
 pub use schema::{ActionDef, Step, TriggerDef, WorkflowDef};
@@ -202,21 +202,84 @@ impl WorkflowEngine {
         schema::parse_yaml(yaml)
     }
 
+    /// Publish one workflow execution event (kind 46001–46012), best-effort.
+    ///
+    /// History is observability, not the authoritative record — the
+    /// `workflow_runs` row is. A relay that cannot publish (sink not wired,
+    /// fan-out failure, workflow with no channel to publish into) logs and lets
+    /// the run carry on rather than failing work that already happened. The one
+    /// caller that does *not* use this path is the approval gate: kind:46010 is
+    /// how the approver finds out, so it propagates its error instead.
+    pub async fn emit_execution_event(&self, community_id: CommunityId, event: WorkflowEvent) {
+        let kind = event.kind;
+        let run_id = event.run_id;
+        let sink = match self.action_sink() {
+            Ok(sink) => sink,
+            Err(e) => {
+                tracing::debug!(
+                    run_id = %run_id,
+                    "Skipping kind:{kind} workflow execution event — no action sink: {e}"
+                );
+                return;
+            }
+        };
+        if let Err(e) = sink.emit_workflow_event(community_id, event).await {
+            tracing::warn!(
+                run_id = %run_id,
+                "Failed to emit kind:{kind} workflow execution event: {e}"
+            );
+        }
+    }
+
+    /// Publish a kind:46004 step-failure event naming the step and its error.
+    pub(crate) async fn emit_step_failed(
+        &self,
+        run: executor::RunRef,
+        step_id: &str,
+        step_index: usize,
+        error: &str,
+    ) {
+        self.emit_execution_event(
+            run.community_id,
+            WorkflowEvent::new(
+                buzz_core::kind::KIND_WORKFLOW_STEP_FAILED,
+                run.workflow_id,
+                run.run_id,
+                serde_json::json!({
+                    "run_id": run.run_id,
+                    "step_index": step_index,
+                    "error": error,
+                })
+                .to_string(),
+            )
+            .with_step(step_id),
+        )
+        .await;
+    }
+
     /// Finalize a workflow run after execution completes or fails.
     ///
     /// This is the **single** place that maps an executor result to a DB status
     /// update. All execution paths (event-triggered, manual trigger/webhook,
     /// approval resume) call this instead of duplicating the 3-way match.
     ///
+    /// A run that suspended at an approval gate lands in
+    /// [`RunStatus::WaitingApproval`]: the gate has already minted the approval
+    /// record and published kind:46010, so the run is genuinely parked on a
+    /// decision rather than finished. `step_index` is the index of the
+    /// suspending step, which is what the relay's decision handler adds one to
+    /// when it resumes.
+    ///
     /// `existing_trace` is prepended to the executor's trace — used by the
     /// approval-resume path where pre-approval steps already have trace entries.
     pub async fn finalize_run(
         &self,
-        community_id: CommunityId,
-        run_id: uuid::Uuid,
+        run: executor::RunRef,
         result: Result<ExecutionResult, (WorkflowError, PartialProgress)>,
         existing_trace: Option<Vec<serde_json::Value>>,
     ) {
+        let community_id = run.community_id;
+        let run_id = run.run_id;
         let prefix = existing_trace.unwrap_or_default();
 
         match result {
@@ -227,31 +290,26 @@ impl WorkflowEngine {
                 let step_count = result.step_index as i32;
 
                 if result.approval_token.is_some() {
-                    // Approval gates are not yet implemented (WF-08).
-                    // Fail explicitly rather than creating unreachable WaitingApproval rows.
-                    tracing::warn!(
+                    tracing::info!(
                         run_id = %run_id,
                         step_index = result.step_index,
-                        "Workflow hit approval gate — not yet implemented, marking as failed"
+                        "Workflow suspended at approval gate — awaiting a decision"
                     );
                     if let Err(e) = self
                         .db
                         .update_workflow_run(
                             community_id,
                             run_id,
-                            RunStatus::Failed,
+                            RunStatus::WaitingApproval,
                             step_count,
                             &trace_json,
-                            Some(buzz_db::workflow::WorkflowRunFailure {
-                                code: "approval_not_supported",
-                                message: "approval gates not yet implemented — see WF-08",
-                            }),
+                            None,
                         )
                         .await
                     {
                         tracing::error!(
                             run_id = %run_id,
-                            "Failed to update run to Failed (approval gate): {e}"
+                            "Failed to update run to WaitingApproval: {e}"
                         );
                     }
                 } else {
@@ -273,6 +331,20 @@ impl WorkflowEngine {
                             "Failed to update run to Completed: {e}"
                         );
                     }
+                    self.emit_execution_event(
+                        community_id,
+                        WorkflowEvent::new(
+                            buzz_core::kind::KIND_WORKFLOW_COMPLETED,
+                            run.workflow_id,
+                            run_id,
+                            serde_json::json!({
+                                "run_id": run_id,
+                                "steps": result.step_index,
+                            })
+                            .to_string(),
+                        ),
+                    )
+                    .await;
                 }
             }
             Err((e, progress)) => {
@@ -280,6 +352,22 @@ impl WorkflowEngine {
                 let mut full_trace = prefix;
                 full_trace.extend(progress.trace);
                 let trace_json = serde_json::Value::Array(full_trace);
+                self.emit_execution_event(
+                    community_id,
+                    WorkflowEvent::new(
+                        buzz_core::kind::KIND_WORKFLOW_FAILED,
+                        run.workflow_id,
+                        run_id,
+                        serde_json::json!({
+                            "run_id": run_id,
+                            "step_index": progress.step_index,
+                            "code": e.code(),
+                            "error": e.to_string(),
+                        })
+                        .to_string(),
+                    ),
+                )
+                .await;
                 if let Err(db_err) = self
                     .db
                     .update_workflow_run(
@@ -428,14 +516,11 @@ impl WorkflowEngine {
             let engine = Arc::clone(self);
             let def_clone = def.clone();
             let ctx_clone = trigger_ctx.clone();
+            let run_ref = executor::RunRef::new(community_id, workflow.id, run_id);
 
             tokio::spawn(async move {
-                let result =
-                    executor::execute_run(&engine, community_id, run_id, &def_clone, &ctx_clone)
-                        .await;
-                engine
-                    .finalize_run(community_id, run_id, result, None)
-                    .await;
+                let result = executor::execute_run(&engine, run_ref, &def_clone, &ctx_clone).await;
+                engine.finalize_run(run_ref, result, None).await;
             });
         }
 
@@ -723,18 +808,11 @@ impl WorkflowEngine {
                 let engine = Arc::clone(self);
                 let def_clone = def.clone();
                 let ctx_clone = trigger_ctx.clone();
+                let run_ref = executor::RunRef::new(community_id, workflow.id, run_id);
                 tokio::spawn(async move {
-                    let result = executor::execute_run(
-                        &engine,
-                        community_id,
-                        run_id,
-                        &def_clone,
-                        &ctx_clone,
-                    )
-                    .await;
-                    engine
-                        .finalize_run(community_id, run_id, result, None)
-                        .await;
+                    let result =
+                        executor::execute_run(&engine, run_ref, &def_clone, &ctx_clone).await;
+                    engine.finalize_run(run_ref, result, None).await;
                 });
             }
 

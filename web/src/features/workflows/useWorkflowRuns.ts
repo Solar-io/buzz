@@ -13,10 +13,11 @@ import {
 } from "./lib/workflowRuns.ts";
 
 /**
- * Run history and approvals come from the relay's structured HTTP reads, not
- * from Nostr events: the execution kinds 46001–46012 exist in the kind registry
- * but nothing emits them, which `buzz-cli`'s `cmd_get_workflow_runs` states
- * outright. The endpoints are NIP-98 authenticated GETs
+ * Run history and approvals come from the relay's structured HTTP reads rather
+ * than from the execution events (kinds 46001–46012), which the relay does now
+ * publish: those announce progress but carry no status, so an approval's
+ * granted/denied/expired state and a run's terminal status are only readable
+ * from the rows. The endpoints are NIP-98 authenticated GETs
  * (`authorize_workflow_read` in `crates/buzz-relay/src/api/workflows.rs`), which
  * a browser can sign with the same signer it uses for everything else — the
  * signed `u` tag must be the full URL including the query string, because the

@@ -585,6 +585,49 @@ pub const KIND_WORKFLOW_TRIGGER: u32 = 46020;
 pub const KIND_APPROVAL_GRANT: u32 = 46030;
 /// Deny pending approval.
 pub const KIND_APPROVAL_DENY: u32 = 46031;
+
+// ── Workflow execution events (46001–46012) ──────────────────────────────────
+//
+// Relay-authored records of what a workflow run did. They are the Nostr-visible
+// half of the `workflow_runs` / `workflow_approvals` tables: the HTTP bridge
+// still serves the authoritative read model, but subscribers learn about
+// progress (and about a pending decision) without polling it.
+//
+// **Provenance.** All twelve are relay-signed (see [`is_relay_only_kind`]); a
+// client-submitted execution event is rejected at ingest. Without that, anyone
+// could forge a kind:46010 carrying a `p` tag and inject arbitrary entries into
+// another member's needs-action feed (`buzz_db::feed::query_needs_action`
+// selects on kind 46010) and push stream.
+//
+// **Scope.** Every execution event is channel-scoped: `["h", <channel uuid>]`
+// plus a stored `channel_id`, so ordinary channel access decides who can read
+// it. A workflow with no channel scope emits nothing — a global event would
+// leak workflow and run identifiers to the whole community.
+//
+// **Common tags.**
+// - `["d", <workflow uuid>]` — the workflow. Matches the kind:46020 trigger and
+//   is the tag `buzz workflows runs` filters on (`#d`). 46001–46012 are outside
+//   the NIP-33 range, so this `d` never triggers replacement.
+// - `["h", <channel uuid>]` — NIP-29 channel scope.
+// - `["run", <run uuid>]` — the run.
+// - `["step", <step id>]` — step-level and approval events only.
+// - `["approval", <approval ref>]` — approval events only. The ref is the hex
+//   of the SHA-256 *hash* of the approval token, identical to the
+//   `approval_ref` field the HTTP bridge publishes, and is the value a client
+//   copies into the `d` tag of a kind:46030/46031 decision. The raw token never
+//   leaves the relay.
+// - `["p", <pubkey hex>]` — the workflow owner on run-level events (46001,
+//   46005–46007) and on approval events, plus the designated approver on
+//   46010 and the deciding approver on 46011/46012. Deliberately absent from
+//   the per-step events (46002–46004): they are history, not notifications, and
+//   a `p` tag per step would write one `event_mentions` row per step for no
+//   consumer.
+//
+// **Content.** 46001–46007 carry a compact JSON object (`{"run_id":…}` plus
+// event-specific fields). 46010–46012 are user-facing notifications and carry
+// human-readable text — the approval message, then the approver's note — which
+// is what the desktop, web and mobile clients render directly.
+
 /// A workflow was triggered by a matching event.
 pub const KIND_WORKFLOW_TRIGGERED: u32 = 46001;
 /// A workflow step began execution.
@@ -816,6 +859,19 @@ pub const fn is_workflow_execution_kind(kind: u32) -> bool {
     kind >= KIND_WORKFLOW_TRIGGERED && kind <= KIND_WORKFLOW_APPROVAL_DENIED
 }
 
+/// Returns `true` if `kind` reports on a single workflow *step* (46002–46004)
+/// rather than on the run or an approval.
+///
+/// Step events are history, not notifications: the relay deliberately publishes
+/// them with no `p` tag, so a long workflow does not write one `event_mentions`
+/// row per step for a reader that does not exist.
+pub const fn is_workflow_step_kind(kind: u32) -> bool {
+    matches!(
+        kind,
+        KIND_WORKFLOW_STEP_STARTED | KIND_WORKFLOW_STEP_COMPLETED | KIND_WORKFLOW_STEP_FAILED
+    )
+}
+
 /// Returns `true` if `kind` is a NIP-43 relay membership admin command (9030–9032)
 /// or the Buzz workspace-profile admin command (9033).
 pub const fn is_relay_admin_kind(kind: u32) -> bool {
@@ -853,6 +909,13 @@ pub const fn is_command_kind(kind: u32) -> bool {
 
 /// Returns `true` if `kind` may only be authored by the relay.
 /// Client submission of these kinds must be rejected.
+///
+/// Workflow execution events (46001–46012) are included: they are the relay's
+/// own record of what a run did, and kind:46010 in particular drives the
+/// needs-action feed and the push stream, so a client-forged one would let any
+/// member inject an "approval required" notification into another member's
+/// inbox. The client-authored workflow *commands* — kind:46020 trigger and
+/// kind:46030/46031 decisions — sit outside that range and are unaffected.
 pub const fn is_relay_only_kind(kind: u32) -> bool {
     matches!(
         kind,
@@ -862,7 +925,7 @@ pub const fn is_relay_only_kind(kind: u32) -> bool {
             | KIND_DM_VISIBILITY
             | KIND_THREAD_SUMMARY
             | KIND_WINDOW_BOUNDS
-    )
+    ) || is_workflow_execution_kind(kind)
 }
 
 /// Extract the kind from a nostr Event as u32.
@@ -938,6 +1001,36 @@ mod tests {
     fn nip43_membership_snapshot_is_relay_only() {
         assert!(is_relay_only_kind(KIND_NIP43_MEMBERSHIP_LIST));
         assert!(!is_relay_only_kind(KIND_NIP43_LEAVE_REQUEST));
+    }
+
+    /// Every workflow execution event is relay-authored. Hardcodes the twelve
+    /// kind numbers rather than deriving them from the range predicate, so a
+    /// change to `is_workflow_execution_kind`'s bounds cannot move this test's
+    /// expectation along with the code it pins.
+    #[test]
+    fn workflow_execution_events_are_relay_only() {
+        for kind in [
+            46001u32, 46002, 46003, 46004, 46005, 46006, 46007, 46010, 46011, 46012,
+        ] {
+            assert!(
+                is_relay_only_kind(kind),
+                "kind {kind} must be relay-authored: a forged execution event injects \
+                 entries into another member's needs-action feed"
+            );
+        }
+    }
+
+    /// The client-authored workflow commands must stay submittable — the
+    /// trigger and both approval decisions are exactly what a user signs.
+    #[test]
+    fn workflow_command_kinds_are_not_relay_only() {
+        assert!(!is_relay_only_kind(46020));
+        assert!(!is_relay_only_kind(46030));
+        assert!(!is_relay_only_kind(46031));
+        // Boundaries of the execution range: 46000 and 46013 are unassigned and
+        // must not be swept in by a range that is too wide.
+        assert!(!is_relay_only_kind(46000));
+        assert!(!is_relay_only_kind(46013));
     }
 
     #[test]

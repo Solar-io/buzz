@@ -18,7 +18,7 @@ use tracing::warn;
 use uuid::Uuid;
 
 use buzz_core::kind::*;
-use buzz_core::tenant::{CommunityId, TenantContext};
+use buzz_core::tenant::TenantContext;
 use buzz_datastore_tracing::datastore_span;
 use buzz_db::workflow::{ApprovalStatus, RunStatus};
 use buzz_db::DbError;
@@ -956,19 +956,17 @@ async fn handle_workflow_trigger(
             }
         };
 
+        let run_ref = buzz_workflow::executor::RunRef::new(community_id, workflow_id, run_id);
         let result = buzz_workflow::executor::execute_from_step(
             &engine,
-            community_id,
-            run_id,
+            run_ref,
             &def,
             &trigger_ctx_clone,
             0,
             None,
         )
         .await;
-        engine
-            .finalize_run(community_id, run_id, result, None)
-            .await;
+        engine.finalize_run(run_ref, result, None).await;
     });
 
     // 6. Return response
@@ -1101,17 +1099,44 @@ async fn handle_approval_grant(
         .await
         .map_err(|e| IngestError::Internal(format!("error: commit transaction: {e}")))?;
 
-    // 6. Resume workflow execution (post-commit, async)
+    // 6. Announce the decision, then resume execution (post-commit, async).
+    //
+    // Both happen after the status UPDATE has committed, and that UPDATE is the
+    // serialization point: it only touches a row still `pending`, so a replayed
+    // or racing 46030 has already been rejected above and never reaches here. A
+    // second grant therefore cannot publish a second kind:46011 or start a
+    // second resume of the same run.
     let community_id = tenant.community();
     let run_id = approval.run_id;
     let workflow_id = approval.workflow_id;
     let resume_index = approval.step_index as usize + 1;
     let engine = Arc::clone(&state.workflow_engine);
     let db = state.db.clone();
+    let decision = ApprovalDecision {
+        run: buzz_workflow::executor::RunRef::new(community_id, workflow_id, run_id),
+        step_id: approval.step_id.clone(),
+        step_index: approval.step_index as usize,
+        approval_ref: token_hash_hex.clone(),
+        approver_hex: self_hex.clone(),
+        note: note.map(str::to_owned),
+    };
 
     tokio::spawn(async move {
-        resume_workflow_after_approval(engine, db, community_id, run_id, workflow_id, resume_index)
+        engine
+            .emit_execution_event(
+                community_id,
+                buzz_workflow::WorkflowEvent::new(
+                    KIND_WORKFLOW_APPROVAL_GRANTED,
+                    workflow_id,
+                    run_id,
+                    decision.note.clone().unwrap_or_default(),
+                )
+                .with_step(&decision.step_id)
+                .with_approval_ref(&decision.approval_ref)
+                .notifying(&decision.approver_hex),
+            )
             .await;
+        resume_workflow_after_approval(engine, db, decision, resume_index).await;
     });
 
     // 7. Return response
@@ -1212,13 +1237,38 @@ async fn handle_approval_deny(
         .await
         .map_err(|e| IngestError::Internal(format!("error: commit transaction: {e}")))?;
 
-    // 6. Cancel the workflow run (post-commit, async)
+    // 6. Announce the denial and cancel the run (post-commit, async).
+    //
+    // A denied run does not continue: the remaining steps carry the workflow
+    // owner's standing authority, and "the approver said no" must not be a
+    // recoverable state that some later grant or retry can talk its way out of.
+    // As with the grant path, the `status = 'pending'` predicate on the UPDATE
+    // above is what makes this run at most once per approval.
     let community_id = tenant.community();
     let run_id = approval.run_id;
+    let workflow_id = approval.workflow_id;
     let pubkey_hex = self_hex.clone();
+    let step_id = approval.step_id.clone();
+    let note_owned = note.map(str::to_owned);
     let db = state.db.clone();
+    let engine = Arc::clone(&state.workflow_engine);
 
     tokio::spawn(async move {
+        engine
+            .emit_execution_event(
+                community_id,
+                buzz_workflow::WorkflowEvent::new(
+                    KIND_WORKFLOW_APPROVAL_DENIED,
+                    workflow_id,
+                    run_id,
+                    note_owned.unwrap_or_default(),
+                )
+                .with_step(&step_id)
+                .with_approval_ref(&token_hash_hex)
+                .notifying(&pubkey_hex),
+            )
+            .await;
+
         let run = match db.get_workflow_run(community_id, run_id).await {
             Ok(r) => r,
             Err(e) => {
@@ -1227,6 +1277,10 @@ async fn handle_approval_deny(
             }
         };
 
+        // Late arrival: the run has already moved on (completed, failed, or was
+        // cancelled by an operator) while this approval sat pending. The
+        // decision is recorded on the approval row either way; there is no run
+        // left to cancel, so stop rather than rewrite a terminal status.
         if run.status != RunStatus::WaitingApproval {
             tracing::warn!(
                 "approval_deny: run {run_id} has status '{}', expected 'waiting_approval'",
@@ -1251,7 +1305,26 @@ async fn handle_approval_deny(
             .await
         {
             tracing::error!("approval_deny: failed to cancel run {run_id}: {e}");
+            return;
         }
+
+        engine
+            .emit_execution_event(
+                community_id,
+                buzz_workflow::WorkflowEvent::new(
+                    KIND_WORKFLOW_CANCELLED,
+                    workflow_id,
+                    run_id,
+                    serde_json::json!({
+                        "run_id": run_id,
+                        "step_index": run.current_step,
+                        "code": "approval_denied",
+                        "error": cancel_msg,
+                    })
+                    .to_string(),
+                ),
+            )
+            .await;
     });
 
     // 7. Return response
@@ -1268,15 +1341,28 @@ async fn handle_approval_deny(
     })
 }
 
+/// A committed approval decision, carried from the ingest handler to the
+/// post-commit task that acts on it.
+struct ApprovalDecision {
+    run: buzz_workflow::executor::RunRef,
+    step_id: String,
+    step_index: usize,
+    /// Hex of the stored token hash — the reference published on the wire.
+    approval_ref: String,
+    approver_hex: String,
+    note: Option<String>,
+}
+
 /// Resume a suspended workflow run after an approval gate has been granted.
 async fn resume_workflow_after_approval(
     engine: Arc<buzz_workflow::WorkflowEngine>,
     db: buzz_db::Db,
-    community_id: CommunityId,
-    run_id: Uuid,
-    workflow_id: Uuid,
+    decision: ApprovalDecision,
     resume_index: usize,
 ) {
+    let community_id = decision.run.community_id;
+    let run_id = decision.run.run_id;
+    let workflow_id = decision.run.workflow_id;
     let run = match db.get_workflow_run(community_id, run_id).await {
         Ok(r) => r,
         Err(e) => {
@@ -1285,7 +1371,15 @@ async fn resume_workflow_after_approval(
         }
     };
 
-    // Guard: only resume runs that are actually waiting for approval
+    // Guard: only resume runs that are actually waiting for approval.
+    //
+    // This is the second of two independent bars a replayed grant has to clear.
+    // The first is the `status = 'pending'` predicate on the approval UPDATE,
+    // which already rejects a duplicate decision at ingest. This one catches the
+    // rest: an approval granted for a run that has since been cancelled, failed,
+    // or completed — where the decision is real and first, but there is no
+    // suspended run to continue. Resuming one would re-execute steps under the
+    // owner's authority against a run whose record says it is over.
     if run.status != RunStatus::WaitingApproval {
         tracing::warn!(
             "resume_workflow: run {run_id} has status '{}', expected 'waiting_approval'",
@@ -1327,17 +1421,52 @@ async fn resume_workflow_after_approval(
         }
     };
 
+    // The gate step suspended before it could record anything, so close it out
+    // now that its answer is known. Written into the trace (not just the
+    // in-memory outputs) so it survives a later resume and shows up in run
+    // history, and so `if: steps_<gate>_output_approved == true` — the shape the
+    // approval example in the schema docs uses — resolves for the steps after
+    // the gate.
+    let approval_output = serde_json::json!({
+        "approved": true,
+        "approver": decision.approver_hex,
+        "note": decision.note,
+        "step_index": decision.step_index,
+    });
+    let mut trace_entries: Vec<serde_json::Value> =
+        run.execution_trace.as_array().cloned().unwrap_or_default();
+    trace_entries.push(serde_json::json!({
+        "step_id": decision.step_id,
+        "status": "completed",
+        "output": approval_output,
+    }));
+    let trace_json = serde_json::Value::Array(trace_entries.clone());
+    if let Err(e) = db
+        .update_workflow_run(
+            community_id,
+            run_id,
+            RunStatus::WaitingApproval,
+            run.current_step,
+            &trace_json,
+            None,
+        )
+        .await
+    {
+        // Non-fatal: the run still resumes, but later steps would not see the
+        // gate's output, so say so loudly rather than silently changing what
+        // `{{steps.<gate>.output}}` resolves to.
+        tracing::error!("resume_workflow: failed to record approval outcome for run {run_id}: {e}");
+    }
+
     // Reconstruct step_outputs from execution trace for template resolution
     let mut initial_outputs: std::collections::HashMap<String, serde_json::Value> =
         std::collections::HashMap::new();
-    if let Some(trace_arr) = run.execution_trace.as_array() {
-        for entry in trace_arr {
-            if let (Some(step_id), Some(output)) = (
-                entry.get("step_id").and_then(|v| v.as_str()),
-                entry.get("output"),
-            ) {
-                initial_outputs.insert(step_id.to_string(), output.clone());
-            }
+    for entry in &trace_entries {
+        if let (Some(step_id), Some(output)) = (
+            entry.get("step_id").and_then(|v| v.as_str()),
+            entry.get("output"),
+        ) {
+            initial_outputs.insert(step_id.to_string(), output.clone());
         }
     }
 
@@ -1349,11 +1478,9 @@ async fn resume_workflow_after_approval(
         .unwrap_or_default();
 
     // Execute remaining steps
-    let existing_trace = run.execution_trace.as_array().cloned();
     let result = buzz_workflow::executor::execute_from_step(
         &engine,
-        community_id,
-        run_id,
+        decision.run,
         &def,
         &trigger_ctx,
         resume_index,
@@ -1361,7 +1488,7 @@ async fn resume_workflow_after_approval(
     )
     .await;
     engine
-        .finalize_run(community_id, run_id, result, existing_trace)
+        .finalize_run(decision.run, result, Some(trace_entries))
         .await;
 }
 

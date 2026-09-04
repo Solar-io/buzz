@@ -1656,6 +1656,9 @@ mod workflows {
     /// Workflow trigger command (kind 46020). `d` tag = the server-generated
     /// workflow id to fire.
     const KIND_WORKFLOW_TRIGGER: u16 = 46020;
+    /// Approval grant command (kind 46030). `d` tag = the approval reference,
+    /// i.e. the hex of the stored token hash the relay publishes.
+    const KIND_APPROVAL_GRANT: u16 = 46030;
 
     /// Convert any base form to `http(s)://` for the REST `POST /events` door.
     fn to_http(base: &str) -> String {
@@ -1925,26 +1928,205 @@ mod workflows {
         );
     }
 
-    /// Obligation (approval-token half): an approval token (its stored hash)
-    /// minted under community A cannot be satisfied by a grant on host B, and
-    /// vice versa. The grant resolution is already community-scoped
-    /// (`get_approval_by_stored_hash(community, hash)`), but this half is
-    /// **not wire-live**: nothing mints a pending approval over the wire yet —
-    /// the executor approval gate is an explicit TODO (WF-08), and
-    /// `create_approval` is reached only from unit tests. Left as a precise
-    /// `pending_lane` so the WF-08 owner fills in *their* row; a green run can
-    /// never be faked by a DB-only/empty body. Depends on WF-08 (approval
-    /// minting), **not** buzz-db — the scoping fence it will exercise is
-    /// already landed.
+    /// Obligation (approval-token half): an approval reference minted under
+    /// community A cannot be satisfied by a grant on host B.
+    ///
+    /// This row was a `pending_lane` until WF-08: the grant resolution
+    /// (`get_approval_by_stored_hash(community, hash)`) has always been
+    /// community-scoped, but nothing *minted* a pending approval over the wire,
+    /// so the fence could not be exercised end to end. The executor's approval
+    /// gate now mints one and announces it as kind:46010, which makes the
+    /// reference a real wire value — and a real thing to try to spend on the
+    /// wrong host.
+    ///
+    /// Reading the failure: delete the `community` argument from the grant
+    /// handler's `get_approval_by_stored_hash` call (or bind a global
+    /// approval lookup) and step 4 goes RED — host B resolves A's approval by
+    /// its hash alone and accepts a grant that continues an A-community run.
+    /// Step 5 is the positive control: the same reference on host A must be
+    /// accepted, so a B rejection cannot be explained by a malformed reference
+    /// or an already-decided approval.
     #[tokio::test]
     #[ignore]
     async fn approval_token_is_community_confined() {
-        pending_lane(
-            "WF-08 (approval minting)",
-            "an approval token minted under A cannot be satisfied by a grant on host B — \
-             blocked until the executor approval gate (WF-08) mints pending approvals over \
-             the wire; the get_approval_by_stored_hash(community, hash) fence is already landed",
+        let http_a = to_http(&url_a());
+        let http_b = to_http(&url_b());
+
+        // One keypair across both communities — as with the trigger row, the
+        // fence under test must be community_id, never pubkey.
+        let keys = Keys::generate();
+
+        // (1) A channel in A, and the same UUID in B, so K is an owner-member on
+        // both sides and "not a member" cannot explain B's rejection.
+        let shared_uuid = uuid::Uuid::new_v4();
+        let chan_a = create_open_channel(&http_a, &keys, shared_uuid).await;
+        let _chan_b = create_open_channel(&http_b, &keys, shared_uuid).await;
+
+        // (2) A gated workflow under A, and fire it so the gate mints an
+        // approval and publishes its reference.
+        //
+        // The `d` tag carries the workflow's NIP-33 id. It is a *client*-chosen
+        // value, and deliberately not what this row confines: an approval
+        // reference is a server-side hash of a server-generated token, so the
+        // fence being tested is that the reference resolves in exactly one
+        // community — the workflow id could be guessed, the reference cannot.
+        let name = format!("wfapproval_{}", uuid::Uuid::new_v4().simple());
+        let workflow_id = uuid::Uuid::new_v4().to_string();
+        let event = EventBuilder::new(
+            Kind::Custom(KIND_WORKFLOW_DEF),
+            format!(
+                "name: {name}\n\
+                 description: conformance approval-isolation probe\n\
+                 trigger:\n\
+                 \x20 on: webhook\n\
+                 steps:\n\
+                 \x20 - id: gate\n\
+                 \x20   action: request_approval\n\
+                 \x20   from: \"any\"\n\
+                 \x20   message: \"conformance approval\"\n\
+                 \x20   timeout: 1h\n"
+            ),
+        )
+        .tags(vec![
+            Tag::parse(["d", workflow_id.as_str()]).unwrap(),
+            Tag::parse(["h", chan_a.as_str()]).unwrap(),
+            Tag::parse(["name", name.as_str()]).unwrap(),
+        ])
+        .sign_with_keys(&keys)
+        .unwrap();
+        let def_body = submit_event(&http_a, &keys, event).await;
+        assert!(
+            def_body["accepted"].as_bool().unwrap_or(false),
+            "gated workflow def not accepted under A: {def_body}"
         );
+
+        let trigger_body = trigger_workflow(&http_a, &keys, &workflow_id).await;
+        assert_eq!(
+            trigger_body["accepted"].as_bool(),
+            Some(true),
+            "host A rejected a trigger for its own gated workflow: {trigger_body}"
+        );
+
+        // (3) Read the minted reference from A's authorized approvals view. It
+        // is the hex of the stored token hash — the same value kind:46010
+        // publishes and a kind:46030 names.
+        let run_id = trigger_body["message"]
+            .as_str()
+            .and_then(|msg| msg.strip_prefix("response:"))
+            .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+            .and_then(|value| value["run_id"].as_str().map(str::to_string))
+            .unwrap_or_else(|| panic!("trigger response missing run_id: {trigger_body}"));
+        let approval_ref = poll_approval_ref(&http_a, &keys, &workflow_id, &run_id).await;
+
+        // (4) Spend A's reference on host B. B has no such approval row, so the
+        // scoped lookup must miss and the grant must be refused.
+        let grant_b = EventBuilder::new(
+            Kind::Custom(KIND_APPROVAL_GRANT),
+            "cross-community grant attempt",
+        )
+        .tags(vec![Tag::parse(["d", approval_ref.as_str()]).unwrap()])
+        .sign_with_keys(&keys)
+        .unwrap();
+        let b_resp = submit_event_allowing_rejection(&http_b, &keys, grant_b).await;
+        assert_eq!(
+            b_resp["accepted"].as_bool(),
+            Some(false),
+            "host B satisfied an approval minted under community A — cross-community \
+             approval leak. response: {b_resp}"
+        );
+
+        // (5) Positive control: the same reference on host A is accepted, so the
+        // B rejection is community confinement rather than a bad reference.
+        let grant_a = EventBuilder::new(Kind::Custom(KIND_APPROVAL_GRANT), "same-community grant")
+            .tags(vec![Tag::parse(["d", approval_ref.as_str()]).unwrap()])
+            .sign_with_keys(&keys)
+            .unwrap();
+        let a_resp = submit_event_allowing_rejection(&http_a, &keys, grant_a).await;
+        assert_eq!(
+            a_resp["accepted"].as_bool(),
+            Some(true),
+            "host A rejected a grant for its own approval — positive control failed, so the \
+             B rejection cannot be attributed to community confinement. response: {a_resp}"
+        );
+    }
+
+    /// Read a run's `approval_ref` from the relay's authorized approvals view,
+    /// retrying while the gate's post-commit execution catches up.
+    async fn poll_approval_ref(
+        http_base: &str,
+        keys: &Keys,
+        workflow_id: &str,
+        run_id: &str,
+    ) -> String {
+        let path = format!("/workflows/{workflow_id}/runs/{run_id}/approvals");
+        let url = format!("{http_base}{path}");
+        let client = reqwest::Client::new();
+        for _ in 0..40 {
+            let resp = client
+                .get(&url)
+                .header("Authorization", nip98_get_header(keys, &url))
+                .send()
+                .await
+                .unwrap_or_else(|e| panic!("GET {url} failed: {e}"));
+            if resp.status().is_success() {
+                let body: serde_json::Value = resp.json().await.expect("parse approvals body");
+                if let Some(reference) = body["approvals"]
+                    .as_array()
+                    .and_then(|entries| entries.first())
+                    .and_then(|entry| entry["approval_ref"].as_str())
+                {
+                    return reference.to_string();
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        panic!("no approval was minted for run {run_id} within the timeout");
+    }
+
+    /// Like [`submit_event`], but a `4xx` rejection is a result rather than a
+    /// panic: the HTTP bridge maps `IngestError::Rejected` to 400 while the
+    /// WebSocket door maps the same condition to `OK false`, and this row
+    /// asserts on the accept/reject either envelope carries.
+    async fn submit_event_allowing_rejection(
+        http_base: &str,
+        keys: &Keys,
+        event: nostr::Event,
+    ) -> serde_json::Value {
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("{http_base}/events"))
+            .header("X-Pubkey", keys.public_key().to_hex())
+            .header("Content-Type", "application/json")
+            .body(serde_json::to_string(&event).expect("serialize event"))
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("POST /events to {http_base} failed: {e}"));
+        let status = resp.status();
+        let body = resp.text().await.expect("read /events body");
+        if status.is_success() {
+            return serde_json::from_str(&body)
+                .unwrap_or_else(|e| panic!("parse /events JSON from {http_base}: {e} ({body})"));
+        }
+        serde_json::json!({ "accepted": false, "message": body })
+    }
+
+    /// NIP-98 `Authorization` header for a GET against the authorized read
+    /// endpoints.
+    fn nip98_get_header(keys: &Keys, url: &str) -> String {
+        use base64::engine::general_purpose::STANDARD as BASE64;
+        use base64::Engine;
+
+        let event = EventBuilder::new(Kind::Custom(27_235), "")
+            .tags(vec![
+                Tag::parse(["u", url]).unwrap(),
+                Tag::parse(["method", "GET"]).unwrap(),
+            ])
+            .sign_with_keys(keys)
+            .expect("sign nip98 event");
+        format!(
+            "Nostr {}",
+            BASE64.encode(serde_json::to_string(&event).expect("serialize nip98 event"))
+        )
     }
 }
 

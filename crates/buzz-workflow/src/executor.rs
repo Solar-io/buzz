@@ -12,15 +12,55 @@
 use std::collections::HashMap;
 
 use buzz_core::tenant::CommunityId;
+use buzz_db::workflow::hash_approval_token as approval_token_hash;
+use chrono::Utc;
 use evalexpr::HashMapContext;
 use nostr::ToBech32;
 use serde_json::Value as JsonValue;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+use crate::action_sink::WorkflowEvent;
 use crate::error::WorkflowError;
 use crate::schema::{ActionDef, Step, WorkflowDef};
 use crate::WorkflowEngine;
+
+/// Identity of the run being executed.
+///
+/// The same workflow UUID can exist in two communities and the run row is keyed
+/// `(community_id, id)`, so all three travel together. Passing them as one value
+/// keeps the execution entry points from growing an argument list, and gives the
+/// executor the workflow id it needs to publish execution events (kind
+/// 46001–46012) and to mint approval records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RunRef {
+    /// Server-resolved community that owns the workflow and its run.
+    pub community_id: CommunityId,
+    /// The workflow definition being instantiated.
+    pub workflow_id: Uuid,
+    /// The `workflow_runs` row this execution is writing to.
+    pub run_id: Uuid,
+}
+
+impl RunRef {
+    /// Create a run reference.
+    pub fn new(community_id: CommunityId, workflow_id: Uuid, run_id: Uuid) -> Self {
+        Self {
+            community_id,
+            workflow_id,
+            run_id,
+        }
+    }
+}
+
+/// Approver spec meaning "any authenticated member may decide".
+///
+/// The relay's decision handler treats `""` and `"any"` alike; the executor
+/// stores the explicit form so a read of `workflow_approvals` says what it means.
+pub const APPROVER_ANY: &str = "any";
+
+/// Lifetime of an approval request when the step does not set `timeout:`.
+pub const DEFAULT_APPROVAL_TIMEOUT: &str = "24h";
 
 /// Data extracted from the triggering event, passed to every step.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -529,20 +569,22 @@ fn resolve_send_message_channel(
 
 /// Dispatch a resolved action and return its output.
 ///
-/// For MVP, most actions log their intent and return a success output.
-/// Real event emission is wired in WF-07/08 (relay integration).
-///
-/// `RequestApproval` returns `StepResult::Suspended` — the caller must
-/// persist state and stop the execution loop.
+/// `RequestApproval` mints a durable approval record, publishes kind:46010 so
+/// the approver learns a decision is pending, and returns
+/// [`StepResult::Suspended`] — the caller must persist state and stop the
+/// execution loop.
 pub async fn dispatch_action(
     step_id: &str,
+    step_index: usize,
     action: &ActionDef,
     engine: &WorkflowEngine,
-    community_id: CommunityId,
-    run_id: Uuid,
+    run: RunRef,
     trigger_ctx: &TriggerContext,
 ) -> Result<StepResult, WorkflowError> {
     use ActionDef::*;
+
+    let community_id = run.community_id;
+    let run_id = run.run_id;
 
     // The workflow engine can outlive the serving request that spawned it.
     // Revalidate the durable community fence immediately before every external
@@ -715,16 +757,107 @@ pub async fn dispatch_action(
                     message,
                     timeout,
                 } => {
-                    let timeout_str = timeout.as_deref().unwrap_or("24h");
+                    let timeout_str = timeout.as_deref().unwrap_or(DEFAULT_APPROVAL_TIMEOUT);
                     info!(
                         run_id = %run_id, step = step_id,
                         "RequestApproval from={from} timeout={timeout_str}: {message}"
                     );
 
+                    let sink = engine.action_sink()?;
+
+                    // Resolve the approver before anything durable is written.
+                    // The relay's decision handler only honours `any` or an
+                    // exact pubkey, so a spec it could never accept must fail
+                    // the step here — minting it would suspend the run until a
+                    // 24h expiry that sweeps nothing and reports nothing.
+                    let approver_spec = sink
+                        .resolve_approver(community_id, run.workflow_id, from)
+                        .await
+                        .map_err(|error| match error {
+                            crate::ActionSinkError::ApproverUnresolved(spec) => {
+                                WorkflowError::InvalidDefinition(format!(
+                                    "RequestApproval: no member resolves the approver \
+                                     spec '{spec}' — use 'any', an exact 64-hex pubkey, \
+                                     or an @Name that matches exactly one channel member"
+                                ))
+                            }
+                            other => WorkflowError::from(other),
+                        })?;
+
+                    let timeout_secs = parse_duration_secs(timeout_str)?;
+                    let expires_at = Utc::now()
+                        + chrono::Duration::try_seconds(timeout_secs as i64).ok_or_else(|| {
+                            WorkflowError::InvalidDefinition(format!(
+                                "RequestApproval: timeout '{timeout_str}' is out of range"
+                            ))
+                        })?;
+
                     let token = generate_approval_token(run_id, step_id);
 
-                    // TODO (WF-08): create approval record in DB, emit kind:46010.
-                    // For now, return Suspended with the token so the caller can persist state.
+                    engine
+                        .db
+                        .create_approval(buzz_db::workflow::CreateApprovalParams {
+                            community_id,
+                            token: &token,
+                            workflow_id: run.workflow_id,
+                            run_id,
+                            step_id,
+                            step_index: step_index as i32,
+                            approver_spec: &approver_spec,
+                            expires_at,
+                        })
+                        .await
+                        .map_err(WorkflowError::from)?;
+
+                    // The wire reference is the hash of the token, never the
+                    // token: it is what the HTTP bridge already publishes as
+                    // `approval_ref`, and what a client copies into the `d` tag
+                    // of its kind:46030/46031 decision.
+                    let approval_ref = hex::encode(approval_token_hash(&token));
+
+                    let mut emitted = WorkflowEvent::new(
+                        buzz_core::kind::KIND_WORKFLOW_APPROVAL_REQUESTED,
+                        run.workflow_id,
+                        run_id,
+                        message.clone(),
+                    )
+                    .with_step(step_id)
+                    .with_approval_ref(&approval_ref);
+                    if approver_spec != APPROVER_ANY {
+                        emitted = emitted.notifying(&approver_spec);
+                    }
+
+                    // Unlike the other execution events this one is load-bearing
+                    // rather than observability: it is how the approver finds
+                    // out. A run suspended with no notification is a run nobody
+                    // knows to unblock, so a failure here fails the step.
+                    //
+                    // The record was written first, so that no client can see a
+                    // kind:46010 naming an approval that does not exist yet. If
+                    // the announcement then fails, retire the record rather than
+                    // leaving a `pending` row nobody was told about: it would
+                    // show up in the approvals view of a run that has already
+                    // failed, and invite a decision that can never resume
+                    // anything.
+                    if let Err(error) = sink.emit_workflow_event(community_id, emitted).await {
+                        if let Err(cleanup) = engine
+                            .db
+                            .update_approval(
+                                community_id,
+                                &token,
+                                buzz_db::workflow::ApprovalStatus::Expired,
+                                None,
+                                Some("retired: the approval request could not be published"),
+                            )
+                            .await
+                        {
+                            warn!(
+                                run_id = %run_id, step = step_id,
+                                "Failed to retire the unannounced approval record: {cleanup}"
+                            );
+                        }
+                        return Err(WorkflowError::from(error));
+                    }
 
                     Ok(StepResult::Suspended {
                         approval_token: token,
@@ -1050,8 +1183,7 @@ pub struct ExecutionResult {
 /// Transitions the run to `Running` after acquiring a permit.
 pub async fn execute_run(
     engine: &WorkflowEngine,
-    community_id: CommunityId,
-    run_id: Uuid,
+    run: RunRef,
     def: &WorkflowDef,
     trigger_ctx: &TriggerContext,
 ) -> Result<ExecutionResult, (WorkflowError, crate::error::PartialProgress)> {
@@ -1066,8 +1198,8 @@ pub async fn execute_run(
     engine
         .db
         .update_workflow_run(
-            community_id,
-            run_id,
+            run.community_id,
+            run.run_id,
             buzz_db::workflow::RunStatus::Running,
             0,
             &serde_json::json!([]),
@@ -1081,7 +1213,7 @@ pub async fn execute_run(
             )
         })?;
 
-    execute_steps(engine, community_id, run_id, def, trigger_ctx, 0, None).await
+    execute_steps(engine, run, def, trigger_ctx, 0, None).await
 }
 
 /// Resume execution from a specific step index (used for approval resume).
@@ -1098,8 +1230,7 @@ pub async fn execute_run(
 /// reference `{{steps.PREV_STEP.output.X}}` correctly.
 pub async fn execute_from_step(
     engine: &WorkflowEngine,
-    community_id: CommunityId,
-    run_id: Uuid,
+    run: RunRef,
     def: &WorkflowDef,
     trigger_ctx: &TriggerContext,
     start_index: usize,
@@ -1115,11 +1246,15 @@ pub async fn execute_from_step(
 
     // Mark run as Running now that we have a permit (resume from approval).
     // Preserve the existing execution trace from pre-approval steps.
-    let existing_trace = match engine.db.get_workflow_run(community_id, run_id).await {
+    let existing_trace = match engine
+        .db
+        .get_workflow_run(run.community_id, run.run_id)
+        .await
+    {
         Ok(r) => r.execution_trace,
         Err(e) => {
             warn!(
-                run_id = %run_id,
+                run_id = %run.run_id,
                 "Failed to read existing trace for resume — pre-approval trace will be lost: {e}"
             );
             serde_json::json!([])
@@ -1128,8 +1263,8 @@ pub async fn execute_from_step(
     engine
         .db
         .update_workflow_run(
-            community_id,
-            run_id,
+            run.community_id,
+            run.run_id,
             buzz_db::workflow::RunStatus::Running,
             start_index as i32,
             &existing_trace,
@@ -1143,16 +1278,7 @@ pub async fn execute_from_step(
             )
         })?;
 
-    execute_steps(
-        engine,
-        community_id,
-        run_id,
-        def,
-        trigger_ctx,
-        start_index,
-        initial_outputs,
-    )
-    .await
+    execute_steps(engine, run, def, trigger_ctx, start_index, initial_outputs).await
 }
 
 /// Internal: execute workflow steps starting from `start_index`, without
@@ -1163,15 +1289,38 @@ pub async fn execute_from_step(
 /// the trace of steps completed before the failure.
 async fn execute_steps(
     engine: &WorkflowEngine,
-    community_id: CommunityId,
-    run_id: Uuid,
+    run: RunRef,
     def: &WorkflowDef,
     trigger_ctx: &TriggerContext,
     start_index: usize,
     initial_outputs: Option<HashMap<String, JsonValue>>,
 ) -> Result<ExecutionResult, (WorkflowError, crate::error::PartialProgress)> {
+    let community_id = run.community_id;
+    let run_id = run.run_id;
     let mut step_outputs: HashMap<String, JsonValue> = initial_outputs.unwrap_or_default();
     let mut trace: Vec<JsonValue> = Vec::new();
+
+    // Announce the run once, at its real beginning. Every fresh-start path
+    // (event trigger, cron tick, manual kind:46020, webhook) enters here with
+    // `start_index == 0`; an approval resume enters at the suspended step's
+    // index plus one, so it never re-announces a run already in flight.
+    if start_index == 0 {
+        engine
+            .emit_execution_event(
+                community_id,
+                WorkflowEvent::new(
+                    buzz_core::kind::KIND_WORKFLOW_TRIGGERED,
+                    run.workflow_id,
+                    run_id,
+                    serde_json::json!({
+                        "run_id": run_id,
+                        "steps": def.steps.len(),
+                    })
+                    .to_string(),
+                ),
+            )
+            .await;
+    }
 
     for (i, step) in def.steps.iter().enumerate() {
         if i < start_index {
@@ -1194,6 +1343,9 @@ async fn execute_steps(
                 }
                 Err(e) => {
                     warn!(run_id = %run_id, step = %step.id, "Condition error: {e}");
+                    engine
+                        .emit_step_failed(run, &step.id, i, &e.to_string())
+                        .await;
                     let progress = crate::error::PartialProgress {
                         step_index: i,
                         trace,
@@ -1206,6 +1358,9 @@ async fn execute_steps(
         let resolved_action = match resolve_step_templates(step, trigger_ctx, &step_outputs) {
             Ok(a) => a,
             Err(e) => {
+                engine
+                    .emit_step_failed(run, &step.id, i, &e.to_string())
+                    .await;
                 let progress = crate::error::PartialProgress {
                     step_index: i,
                     trace,
@@ -1214,25 +1369,34 @@ async fn execute_steps(
             }
         };
 
+        engine
+            .emit_execution_event(
+                community_id,
+                WorkflowEvent::new(
+                    buzz_core::kind::KIND_WORKFLOW_STEP_STARTED,
+                    run.workflow_id,
+                    run_id,
+                    serde_json::json!({ "run_id": run_id, "step_index": i }).to_string(),
+                )
+                .with_step(&step.id),
+            )
+            .await;
+
         let timeout_secs = step
             .timeout_secs
             .unwrap_or(engine.config.default_timeout_secs);
         let dispatch_result = tokio::time::timeout(
             std::time::Duration::from_secs(timeout_secs),
-            dispatch_action(
-                &step.id,
-                &resolved_action,
-                engine,
-                community_id,
-                run_id,
-                trigger_ctx,
-            ),
+            dispatch_action(&step.id, i, &resolved_action, engine, run, trigger_ctx),
         )
         .await;
 
         let result = match dispatch_result {
             Ok(Ok(r)) => r,
             Ok(Err(e)) => {
+                engine
+                    .emit_step_failed(run, &step.id, i, &e.to_string())
+                    .await;
                 let progress = crate::error::PartialProgress {
                     step_index: i,
                     trace,
@@ -1240,23 +1404,41 @@ async fn execute_steps(
                 return Err((e, progress));
             }
             Err(_timeout) => {
+                let error = WorkflowError::StepTimeout {
+                    step_id: step.id.clone(),
+                    timeout_secs,
+                };
+                engine
+                    .emit_step_failed(run, &step.id, i, &error.to_string())
+                    .await;
                 let progress = crate::error::PartialProgress {
                     step_index: i,
                     trace,
                 };
-                return Err((
-                    WorkflowError::StepTimeout {
-                        step_id: step.id.clone(),
-                        timeout_secs,
-                    },
-                    progress,
-                ));
+                return Err((error, progress));
             }
         };
 
         match result {
             StepResult::Completed(output) => {
                 debug!(run_id = %run_id, step = %step.id, "Step completed");
+                engine
+                    .emit_execution_event(
+                        community_id,
+                        WorkflowEvent::new(
+                            buzz_core::kind::KIND_WORKFLOW_STEP_COMPLETED,
+                            run.workflow_id,
+                            run_id,
+                            serde_json::json!({
+                                "run_id": run_id,
+                                "step_index": i,
+                                "output": output,
+                            })
+                            .to_string(),
+                        )
+                        .with_step(&step.id),
+                    )
+                    .await;
                 trace.push(serde_json::json!({
                     "step_id": step.id,
                     "status": "completed",

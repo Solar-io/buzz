@@ -10,7 +10,8 @@ use std::sync::{Arc, Weak};
 
 use buzz_core::kind::KIND_STREAM_MESSAGE;
 use buzz_core::tenant::CommunityId;
-use buzz_workflow::action_sink::{ActionSink, ActionSinkError};
+use buzz_workflow::action_sink::{ActionSink, ActionSinkError, WorkflowEvent};
+use buzz_workflow::executor::APPROVER_ANY;
 use chrono::Utc;
 use nostr::{EventBuilder, Kind, Tag};
 use tracing::info;
@@ -146,6 +147,110 @@ fn resolve_mention_pubkeys(text: &str, members: &[(String, String)]) -> Vec<Stri
         }
     }
     out
+}
+
+/// Whether an approver spec can be settled without reading the channel roster.
+///
+/// Split out so the expensive branch (a member lookup) is only taken for the
+/// one spec shape that needs it, and so both branches are testable without a
+/// relay.
+enum ApproverSpec {
+    /// Already in the form the relay's decision check honours.
+    Resolved(String),
+    /// An `@Name` that must be matched against the channel's members.
+    NeedsMembers(String),
+    /// Nothing the decision check could ever accept.
+    Unresolvable(String),
+}
+
+/// Classify an approver spec, resolving everything that does not need the
+/// channel roster.
+///
+/// `""`, `"any"` (any case) and `"@any"` mean anyone may decide. A bare 64-char
+/// hex pubkey is lowercased and used as-is. Anything else must either start with
+/// `@` — a display-name mention to resolve against members — or be rejected: the
+/// relay's `check_approver_spec` fails closed on every other shape, so storing
+/// one would mint an approval that no decision could ever satisfy.
+fn classify_approver_spec(spec: &str) -> ApproverSpec {
+    let spec = spec.trim();
+    if spec.is_empty() || spec.eq_ignore_ascii_case("any") || spec.eq_ignore_ascii_case("@any") {
+        return ApproverSpec::Resolved(APPROVER_ANY.to_owned());
+    }
+    if spec.len() == 64 && spec.chars().all(|c| c.is_ascii_hexdigit()) {
+        return ApproverSpec::Resolved(spec.to_ascii_lowercase());
+    }
+    if spec.starts_with('@') {
+        return ApproverSpec::NeedsMembers(spec.to_owned());
+    }
+    ApproverSpec::Unresolvable(spec.to_owned())
+}
+
+/// Resolve an `@Name` approver spec against a channel's named members.
+///
+/// Exactly one member, or nobody: [`resolve_mention_pubkeys`] already drops a
+/// display name two members share, and a spec naming two different people
+/// yields two hits, which is not an approver either. Both cases are an error
+/// rather than a guess — picking one of two people to hold a veto is not a
+/// decision the relay gets to make.
+fn resolve_named_approver(
+    spec: &str,
+    named_members: &[(String, String)],
+) -> Result<String, ActionSinkError> {
+    match resolve_mention_pubkeys(spec, named_members).as_slice() {
+        [only] => Ok(only.to_ascii_lowercase()),
+        _ => Err(ActionSinkError::ApproverUnresolved(spec.to_owned())),
+    }
+}
+
+/// Build the tag set for a workflow execution event.
+///
+/// See [`buzz_core::kind`] for the wire contract. Kept separate from publishing
+/// so the shape can be asserted without a live relay.
+fn workflow_event_tags(
+    event: &WorkflowEvent,
+    channel_id: Uuid,
+    owner_hex: &str,
+) -> Result<Vec<Tag>, ActionSinkError> {
+    let mut tags = vec![
+        Tag::parse(["d", &event.workflow_id.to_string()])
+            .map_err(|e| ActionSinkError::EventBuild(format!("d tag: {e}")))?,
+        Tag::parse(["h", &channel_id.to_string()])
+            .map_err(|e| ActionSinkError::EventBuild(format!("h tag: {e}")))?,
+        Tag::parse(["run", &event.run_id.to_string()])
+            .map_err(|e| ActionSinkError::EventBuild(format!("run tag: {e}")))?,
+    ];
+    if let Some(step_id) = &event.step_id {
+        tags.push(
+            Tag::parse(["step", step_id])
+                .map_err(|e| ActionSinkError::EventBuild(format!("step tag: {e}")))?,
+        );
+    }
+    if let Some(approval_ref) = &event.approval_ref {
+        tags.push(
+            Tag::parse(["approval", approval_ref])
+                .map_err(|e| ActionSinkError::EventBuild(format!("approval tag: {e}")))?,
+        );
+    }
+
+    // `p` tags are the notification surface: the owner on run-level and approval
+    // events, plus whoever else must act or be told. Per-step events carry none
+    // — one `event_mentions` row per step, for no consumer, is index churn.
+    let mut notified: Vec<String> = Vec::new();
+    if !buzz_core::kind::is_workflow_step_kind(event.kind) {
+        notified.push(owner_hex.to_owned());
+    }
+    for pubkey in &event.notify_pubkeys {
+        if !notified.iter().any(|existing| existing == pubkey) {
+            notified.push(pubkey.clone());
+        }
+    }
+    for pubkey in &notified {
+        tags.push(
+            Tag::parse(["p", pubkey])
+                .map_err(|e| ActionSinkError::EventBuild(format!("p tag: {e}")))?,
+        );
+    }
+    Ok(tags)
 }
 
 /// Relay-side action sink — executes workflow side-effects directly.
@@ -427,6 +532,137 @@ impl ActionSink for RelayActionSink {
             }
 
             Ok(event_id_hex)
+        })
+    }
+
+    fn emit_workflow_event(
+        &self,
+        community_id: CommunityId,
+        event: WorkflowEvent,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<String>, ActionSinkError>> + Send + '_>> {
+        Box::pin(async move {
+            let state = self
+                .state
+                .upgrade()
+                .ok_or_else(|| ActionSinkError::Database("relay is shutting down".into()))?;
+
+            let workflow = state
+                .db
+                .get_workflow(community_id, event.workflow_id)
+                .await
+                .map_err(|e| ActionSinkError::Database(e.to_string()))?;
+
+            // No channel scope, nowhere safe to publish. A community-global
+            // execution event would hand every member the workflow and run ids
+            // of automations they cannot otherwise see, so emit nothing rather
+            // than widen the audience. Runs still record to `workflow_runs`.
+            let Some(channel_uuid) = workflow.channel_id else {
+                return Ok(None);
+            };
+
+            let host = state
+                .db
+                .lookup_community_host(community_id)
+                .await
+                .map_err(|e| ActionSinkError::Database(e.to_string()))?
+                .ok_or_else(|| {
+                    ActionSinkError::Database(format!(
+                        "workflow run community {community_id} is not mapped to a host"
+                    ))
+                })?;
+            let tenant = buzz_core::tenant::TenantContext::resolved(community_id, host);
+
+            let owner_hex = nostr::PublicKey::from_slice(&workflow.owner_pubkey)
+                .map_err(|e| ActionSinkError::InvalidInput(format!("owner pubkey: {e}")))?
+                .to_hex();
+
+            let tags = workflow_event_tags(&event, channel_uuid, &owner_hex)?;
+
+            let signed = EventBuilder::new(Kind::from(event.kind as u16), &event.content)
+                .tags(tags)
+                .sign_with_keys(&state.relay_keypair)
+                .map_err(|e| ActionSinkError::EventBuild(format!("signing: {e}")))?;
+            let event_id_hex = signed.id.to_hex();
+
+            let (stored_event, was_inserted) = state
+                .db
+                .insert_event(tenant.community(), &signed, Some(channel_uuid))
+                .await
+                .map_err(|e| ActionSinkError::Database(e.to_string()))?;
+
+            if was_inserted {
+                let _ = dispatch_persistent_event(
+                    &tenant,
+                    &state,
+                    &stored_event,
+                    event.kind,
+                    &owner_hex,
+                    None,
+                )
+                .await;
+            }
+
+            info!(
+                event_id = %event_id_hex,
+                run_id = %event.run_id,
+                "Workflow execution event: published kind {} event", event.kind
+            );
+
+            Ok(Some(event_id_hex))
+        })
+    }
+
+    fn resolve_approver(
+        &self,
+        community_id: CommunityId,
+        workflow_id: Uuid,
+        spec: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<String, ActionSinkError>> + Send + '_>> {
+        // "anyone" and a bare pubkey need no lookup — settle them before
+        // touching the DB, so an open approval gate does not depend on the
+        // channel roster being readable.
+        let spec = match classify_approver_spec(spec) {
+            ApproverSpec::Resolved(resolved) => return Box::pin(async move { Ok(resolved) }),
+            ApproverSpec::Unresolvable(spec) => {
+                return Box::pin(async move { Err(ActionSinkError::ApproverUnresolved(spec)) })
+            }
+            ApproverSpec::NeedsMembers(spec) => spec,
+        };
+        Box::pin(async move {
+            let state = self
+                .state
+                .upgrade()
+                .ok_or_else(|| ActionSinkError::Database("relay is shutting down".into()))?;
+
+            let workflow = state
+                .db
+                .get_workflow(community_id, workflow_id)
+                .await
+                .map_err(|e| ActionSinkError::Database(e.to_string()))?;
+            let Some(channel_uuid) = workflow.channel_id else {
+                return Err(ActionSinkError::ApproverUnresolved(spec));
+            };
+
+            let members = state
+                .db
+                .get_members(community_id, channel_uuid)
+                .await
+                .map_err(|e| ActionSinkError::Database(e.to_string()))?;
+            let member_pubkeys: Vec<Vec<u8>> = members.iter().map(|m| m.pubkey.clone()).collect();
+            let users = state
+                .db
+                .get_users_bulk(community_id, &member_pubkeys)
+                .await
+                .map_err(|e| ActionSinkError::Database(e.to_string()))?;
+            let named_members: Vec<(String, String)> = users
+                .into_iter()
+                .filter_map(|u| {
+                    let name = u.display_name?;
+                    Some((name, nostr::PublicKey::from_slice(&u.pubkey).ok()?.to_hex()))
+                })
+                .collect();
+
+            resolve_named_approver(&spec, &named_members)
         })
     }
 }
@@ -1124,5 +1360,200 @@ mod integration_tests {
             matches!(err, ActionSinkError::InvalidInput(_)),
             "expected InvalidInput, got {err:?}"
         );
+    }
+}
+
+/// Wire shape and approver-spec normalization for workflow execution events
+/// (kinds 46001–46012). Pure — no relay, no database.
+#[cfg(test)]
+mod execution_event_tests {
+    use super::*;
+
+    fn pubkey(nibble: char) -> String {
+        std::iter::repeat_n(nibble, 64).collect()
+    }
+
+    fn values<'a>(tags: &'a [Tag], name: &str) -> Vec<&'a str> {
+        tags.iter()
+            .filter(|tag| tag.kind().to_string() == name)
+            .filter_map(|tag| tag.content())
+            .collect()
+    }
+
+    fn resolved(spec: &str) -> Option<String> {
+        match classify_approver_spec(spec) {
+            ApproverSpec::Resolved(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn open_approval_specs_resolve_to_any() {
+        for spec in ["", "  ", "any", "ANY", "@any", "@Any"] {
+            assert_eq!(
+                resolved(spec).as_deref(),
+                Some("any"),
+                "spec {spec:?} means anyone may decide"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bare_pubkey_spec_is_lowercased() {
+        let upper: String = std::iter::repeat_n("AB", 32).collect();
+        let lower: String = std::iter::repeat_n("ab", 32).collect();
+        assert_eq!(resolved(&upper).as_deref(), Some(lower.as_str()));
+        assert_eq!(resolved(&lower).as_deref(), Some(lower.as_str()));
+    }
+
+    #[test]
+    fn a_role_name_is_not_an_approver_spec() {
+        // `check_approver_spec` in the relay's decision handler fails closed on
+        // anything but "any" or an exact pubkey, so a bare role name must be
+        // rejected at mint time rather than parked as an ungrantable approval.
+        let non_hex_64 = "z".repeat(64);
+        for spec in [
+            "engineering-lead",
+            "role:lead",
+            "owner",
+            "ab",
+            non_hex_64.as_str(),
+        ] {
+            assert!(
+                matches!(classify_approver_spec(spec), ApproverSpec::Unresolvable(_)),
+                "spec {spec:?} must not be accepted as an approver"
+            );
+        }
+    }
+
+    #[test]
+    fn a_name_spec_needs_the_channel_roster() {
+        assert!(matches!(
+            classify_approver_spec("@release-manager"),
+            ApproverSpec::NeedsMembers(_)
+        ));
+    }
+
+    #[test]
+    fn a_named_approver_resolves_to_one_member() {
+        let members = vec![("Release Manager".to_owned(), pubkey('a'))];
+        assert_eq!(
+            resolve_named_approver("@Release Manager", &members).expect("resolves"),
+            pubkey('a')
+        );
+    }
+
+    #[test]
+    fn an_ambiguous_name_is_not_an_approver() {
+        // Two members share a display name: picking one of them to hold a veto
+        // is not a decision the relay may make on its own.
+        let members = vec![
+            ("Alex".to_owned(), pubkey('a')),
+            ("Alex".to_owned(), pubkey('b')),
+        ];
+        assert!(matches!(
+            resolve_named_approver("@Alex", &members),
+            Err(ActionSinkError::ApproverUnresolved(_))
+        ));
+    }
+
+    #[test]
+    fn two_named_people_are_not_an_approver() {
+        let members = vec![
+            ("Alex".to_owned(), pubkey('a')),
+            ("Robin".to_owned(), pubkey('b')),
+        ];
+        assert!(matches!(
+            resolve_named_approver("@Alex @Robin", &members),
+            Err(ActionSinkError::ApproverUnresolved(_))
+        ));
+    }
+
+    #[test]
+    fn an_unknown_name_is_not_an_approver() {
+        let members = vec![("Alex".to_owned(), pubkey('a'))];
+        assert!(matches!(
+            resolve_named_approver("@Nobody", &members),
+            Err(ActionSinkError::ApproverUnresolved(_))
+        ));
+    }
+
+    #[test]
+    fn approval_request_carries_its_reference_and_recipients() {
+        let workflow_id = Uuid::new_v4();
+        let run_id = Uuid::new_v4();
+        let channel_id = Uuid::new_v4();
+        let owner = pubkey('1');
+        let approver = pubkey('2');
+        let approval_ref: String = std::iter::repeat_n("ab", 32).collect();
+
+        let event = WorkflowEvent::new(
+            buzz_core::kind::KIND_WORKFLOW_APPROVAL_REQUESTED,
+            workflow_id,
+            run_id,
+            "Approve the deploy?".to_owned(),
+        )
+        .with_step("gate")
+        .with_approval_ref(&approval_ref)
+        .notifying(&approver);
+
+        let tags = workflow_event_tags(&event, channel_id, &owner).expect("tags");
+
+        assert_eq!(values(&tags, "d"), vec![workflow_id.to_string()]);
+        assert_eq!(values(&tags, "h"), vec![channel_id.to_string()]);
+        assert_eq!(values(&tags, "run"), vec![run_id.to_string()]);
+        assert_eq!(values(&tags, "step"), vec!["gate"]);
+        assert_eq!(values(&tags, "approval"), vec![approval_ref.as_str()]);
+        // Clients surface approvals by filtering `#p` against their own pubkey,
+        // so both the owner and the designated approver must be tagged.
+        assert_eq!(values(&tags, "p"), vec![owner.as_str(), approver.as_str()]);
+    }
+
+    #[test]
+    fn an_approver_who_is_the_owner_is_tagged_once() {
+        let owner = pubkey('1');
+        let event = WorkflowEvent::new(
+            buzz_core::kind::KIND_WORKFLOW_APPROVAL_REQUESTED,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "self-approve".to_owned(),
+        )
+        .notifying(&owner);
+        let tags = workflow_event_tags(&event, Uuid::new_v4(), &owner).expect("tags");
+        assert_eq!(values(&tags, "p"), vec![owner.as_str()]);
+    }
+
+    #[test]
+    fn step_events_carry_no_recipient() {
+        // 46002/46003/46004 are history, not notifications. A `p` tag on each
+        // would write one `event_mentions` row per step of every run.
+        for kind in [46002u32, 46003, 46004] {
+            let event = WorkflowEvent::new(kind, Uuid::new_v4(), Uuid::new_v4(), "{}".to_owned())
+                .with_step("s1");
+            let tags = workflow_event_tags(&event, Uuid::new_v4(), &pubkey('1')).expect("tags");
+            assert!(
+                values(&tags, "p").is_empty(),
+                "kind {kind} must not carry a p tag"
+            );
+            assert_eq!(values(&tags, "step"), vec!["s1"]);
+        }
+    }
+
+    #[test]
+    fn run_events_notify_the_owner() {
+        let owner = pubkey('1');
+        for kind in [46001u32, 46005, 46006, 46007] {
+            let event = WorkflowEvent::new(kind, Uuid::new_v4(), Uuid::new_v4(), "{}".to_owned());
+            let tags = workflow_event_tags(&event, Uuid::new_v4(), &owner).expect("tags");
+            assert_eq!(
+                values(&tags, "p"),
+                vec![owner.as_str()],
+                "kind {kind} must reach the workflow owner"
+            );
+            assert!(
+                values(&tags, "step").is_empty(),
+                "kind {kind} describes the run, not a step"
+            );
+        }
     }
 }
