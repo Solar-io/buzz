@@ -4,6 +4,7 @@
  */
 
 import { signNostrEvent } from "./nostr-signer";
+import { buildNip98Tags } from "./nip98Tags.ts";
 
 async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest(
@@ -19,20 +20,19 @@ async function sha256Hex(value: string): Promise<string> {
  * Build a NIP-98 Authorization header value.
  *
  * Signed POST bodies include the payload digest required by invite endpoints.
+ * Every request carries a nonce so repeats of the same URL stay distinct.
  */
 export async function makeNip98AuthHeader(
   url: string,
   method: string,
   options?: { body?: string; requireNip07?: boolean },
 ): Promise<string> {
-  const tags = [
-    ["u", url],
-    ["method", method],
-  ];
-  if (options?.body !== undefined) {
-    tags.push(["payload", await sha256Hex(options.body)]);
-    tags.push(["nonce", crypto.randomUUID()]);
-  }
+  const tags = buildNip98Tags(
+    url,
+    method,
+    options?.body === undefined ? undefined : await sha256Hex(options.body),
+    crypto.randomUUID(),
+  );
   const event = await signNostrEvent(
     {
       kind: 27235,

@@ -1,4 +1,12 @@
-import { Bell, Bot, Copy, Folder, Settings, Smile } from "lucide-react";
+import {
+  Bell,
+  Bot,
+  Copy,
+  Folder,
+  Settings,
+  Smile,
+  Workflow,
+} from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { npubEncode } from "nostr-tools/nip19";
 import { useMemo, useState } from "react";
@@ -206,6 +214,18 @@ export function SidebarProfileCard({
           >
             <Settings aria-hidden className="size-4" />
             Settings
+          </Link>
+          <Link
+            to="/repos"
+            search={{ view: "workflows" as const }}
+            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+            onClick={() => {
+              setOpen(false);
+              closeDrawer();
+            }}
+          >
+            <Workflow aria-hidden className="size-4" />
+            Workflows
           </Link>
           <Link
             to="/repos/agents"

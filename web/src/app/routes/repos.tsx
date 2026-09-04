@@ -55,6 +55,7 @@ import {
 import { channelMenuItems } from "@/features/sidebar/lib/channelMenuItems.ts";
 import { ChannelSidebar } from "@/features/sidebar/ui/ChannelSidebar";
 import { HomeInboxRoute } from "@/features/home/ui/HomeInboxRoute";
+import { WorkflowsPage } from "@/features/workflows/ui/WorkflowsPage";
 import { NotificationRuntime } from "@/features/notifications/ui/NotificationRuntime";
 import { ProfileActionsProvider } from "@/features/profile/ProfileActionsContext";
 import { FilesPanel } from "@/features/files/ui/FilesPanel";
@@ -70,14 +71,19 @@ import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 export const Route = createFileRoute("/repos")({
   validateSearch: (
     search: Record<string, unknown>,
-  ): { c?: string; m?: string; view?: "inbox" } => ({
+  ): { c?: string; m?: string; view?: "inbox" | "workflows" } => ({
     c: typeof search.c === "string" ? search.c : undefined,
     // Permalink target: scroll to and flash this message once it loads.
     m: typeof search.m === "string" ? search.m : undefined,
     // The inbox is a view of the same shell, not a separate route: a route
     // would unmount the sidebar, and the shell is what holds the channel
     // subscriptions every pane reads from.
-    view: search.view === "inbox" ? ("inbox" as const) : undefined,
+    view:
+      search.view === "inbox"
+        ? ("inbox" as const)
+        : search.view === "workflows"
+          ? ("workflows" as const)
+          : undefined,
   }),
   component: AppRoute,
 });
@@ -364,6 +370,14 @@ function ChannelBrowser() {
           void navigate({ to: "/repos", search: { view: "inbox" } }),
       },
       {
+        id: "action:workflows",
+        kind: "action" as const,
+        label: "Workflows",
+        keywords: ["workflow", "automation", "runs", "trigger"],
+        onSelect: () =>
+          void navigate({ to: "/repos", search: { view: "workflows" } }),
+      },
+      {
         id: "action:files",
         kind: "action" as const,
         label: "Files",
@@ -566,6 +580,8 @@ function ChannelBrowser() {
         >
           {filesOpen ? (
             <FilesPanel onClose={() => setFilesOpen(false)} />
+          ) : view === "workflows" ? (
+            <WorkflowsPage />
           ) : view === "inbox" ? (
             <HomeInboxRoute
               channels={channels}
