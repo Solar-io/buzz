@@ -11,6 +11,12 @@ import {
   setAuthTagJson,
 } from "@/shared/lib/key-store";
 import { type ParsedKey, parseSecretKeyInput } from "@/shared/lib/nsec";
+import { nsecEncode } from "nostr-tools/nip19";
+import { decryptNcryptsec } from "@/features/onboarding/keyBackup";
+import {
+  classifyKeyImportInput,
+  isPlausibleNcryptsec,
+} from "@/features/onboarding/lib/keyImportInput.ts";
 
 type Mode = "choose" | "paste" | "scan" | "set-pass" | "unlock";
 
@@ -28,6 +34,12 @@ export function LoginPage() {
   const [confirm, setConfirm] = useState("");
   const [tagInput, setTagInput] = useState("");
   const [busy, setBusy] = useState(false);
+  // Restore-from-backup: the passphrase that opens an `ncryptsec1…` blob. It
+  // is NOT this device's passphrase — the user still chooses one of those in
+  // the next step, exactly as a pasted nsec does.
+  const [backupPassphrase, setBackupPassphrase] = useState("");
+  const pastedKind = classifyKeyImportInput(keyInput);
+  const isBackupPaste = pastedKind === "ncryptsec";
 
   if (canSign) {
     void navigate({ to: "/repos" });
@@ -195,6 +207,35 @@ export function LoginPage() {
             className="space-y-3 rounded-lg border border-border bg-card p-4 shadow-sm"
             onSubmit={(event) => {
               event.preventDefault();
+              // An `ncryptsec1…` is a NIP-49 backup: decrypt it with its own
+              // passphrase first, then hand the raw key to the same
+              // choose-a-device-passphrase step a pasted nsec uses.
+              if (isBackupPaste) {
+                if (!isPlausibleNcryptsec(keyInput)) {
+                  toast.error("That does not look like a complete backup.");
+                  return;
+                }
+                try {
+                  const secretKey = decryptNcryptsec(
+                    keyInput,
+                    backupPassphrase,
+                  );
+                  setScanned({
+                    ok: true,
+                    secretKey,
+                    nsec: nsecEncode(secretKey),
+                  });
+                  setBackupPassphrase("");
+                  setMode("set-pass");
+                } catch (error) {
+                  toast.error(
+                    error instanceof Error
+                      ? error.message
+                      : "Could not open that backup.",
+                  );
+                }
+                return;
+              }
               const parsed = parseSecretKeyInput(keyInput);
               if (!parsed.ok) {
                 toast.error(parsed.error);
@@ -205,17 +246,32 @@ export function LoginPage() {
             }}
           >
             <p className="text-sm text-muted-foreground">
-              Paste your key (nsec1…). It is encrypted on this device and never
-              sent anywhere.
+              Paste your key (nsec1…) or an encrypted backup (ncryptsec1…). It
+              is encrypted on this device and never sent anywhere.
             </p>
             <Input
               type="password"
-              placeholder="nsec1…"
+              placeholder="nsec1… or ncryptsec1…"
               autoComplete="off"
               value={keyInput}
               onChange={(event) => setKeyInput(event.target.value)}
               autoFocus
             />
+            {isBackupPaste && (
+              <>
+                <p className="text-xs text-muted-foreground">
+                  That is an encrypted backup. Enter the passphrase you chose
+                  when you created it.
+                </p>
+                <Input
+                  type="password"
+                  placeholder="Backup passphrase"
+                  autoComplete="off"
+                  value={backupPassphrase}
+                  onChange={(event) => setBackupPassphrase(event.target.value)}
+                />
+              </>
+            )}
             <div className="flex gap-2">
               <Button
                 type="button"
@@ -224,8 +280,13 @@ export function LoginPage() {
               >
                 Back
               </Button>
-              <Button className="flex-1" disabled={!keyInput.trim()}>
-                Continue
+              <Button
+                className="flex-1"
+                disabled={
+                  !keyInput.trim() || (isBackupPaste && !backupPassphrase)
+                }
+              >
+                {isBackupPaste ? "Open backup" : "Continue"}
               </Button>
             </div>
           </form>
