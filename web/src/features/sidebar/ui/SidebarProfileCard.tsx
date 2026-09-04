@@ -1,9 +1,19 @@
-import { Bot, Copy, Folder, Settings } from "lucide-react";
+import { Bell, Bot, Copy, Folder, Settings, Smile } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { npubEncode } from "nostr-tools/nip19";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import type { Profile } from "@/features/channels/hooks";
+import { NotificationRuntime } from "@/features/notifications/ui/NotificationRuntime";
+import { NotificationSettingsDialog } from "@/features/notifications/ui/NotificationSettingsDialog";
+import {
+  publishUserStatus,
+  useUserStatuses,
+} from "@/features/user-status/hooks";
+import { statusLabel } from "@/features/user-status/lib/statusEvent.ts";
+import { SetStatusDialog } from "@/features/user-status/ui/SetStatusDialog";
+import { StatusEmoji } from "@/features/user-status/ui/StatusEmoji";
+import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { useDrawerClose } from "@/shared/layout/AppShell";
 import { cn } from "@/shared/lib/cn";
 import { truncatePubkey } from "@/shared/lib/pubkey";
@@ -34,8 +44,15 @@ export interface SidebarProfileCardProps {
  * The dot reports relay connection, not human availability. Buzz has a real
  * presence model for other people, but a client cannot meaningfully report
  * its own user's status from a socket — so this deliberately says "connected"
- * rather than implying "online", and a proper self-status control (the
- * desktop's emoji + text) is left for when the status feature lands.
+ * rather than implying "online". The human-authored half of that — the
+ * desktop's NIP-38 emoji + text — is the status line below the name, set from
+ * this menu.
+ *
+ * It is also where the notification runtime is mounted. That is a pragmatic
+ * home rather than a principled one: this card is the one piece of the
+ * signed-in shell that is always on screen, so mounting here makes
+ * notifications live without touching the app shell. See
+ * {@link NotificationRuntime} for where it belongs instead.
  */
 export function SidebarProfileCard({
   selfPubkey,
@@ -44,8 +61,16 @@ export function SidebarProfileCard({
   onOpenFiles,
 }: SidebarProfileCardProps) {
   const closeDrawer = useDrawerClose();
+  const { session } = useRelaySession();
   const [open, setOpen] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [savingStatus, setSavingStatus] = useState(false);
   const profile = selfPubkey ? profiles.get(selfPubkey) : undefined;
+
+  const statusAuthors = useMemo(() => [selfPubkey], [selfPubkey]);
+  const statuses = useUserStatuses(statusAuthors);
+  const selfStatus = selfPubkey ? (statuses.get(selfPubkey) ?? null) : null;
 
   const npub = useMemo(() => {
     if (!selfPubkey) return null;
@@ -72,8 +97,27 @@ export function SidebarProfileCard({
       .catch(() => toast.error("Could not copy — clipboard unavailable."));
   };
 
+  const saveStatus = (text: string, emoji: string) => {
+    setSavingStatus(true);
+    void publishUserStatus(session, { text, emoji, selfPubkey })
+      .then((result) => {
+        if (result.ok) {
+          toast.success(text || emoji ? "Status updated" : "Status cleared");
+        } else {
+          toast.error(result.message || "Could not publish your status.");
+        }
+      })
+      .catch((error: unknown) => {
+        toast.error(
+          error instanceof Error ? error.message : "Could not sign the status.",
+        );
+      })
+      .finally(() => setSavingStatus(false));
+  };
+
   return (
     <div className="border-t border-sidebar-border p-2">
+      <NotificationRuntime selfPubkey={selfPubkey} />
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <button
@@ -104,13 +148,56 @@ export function SidebarProfileCard({
               <span className="block truncate text-sm font-medium text-sidebar-foreground">
                 {label}
               </span>
-              <span className="block truncate text-2xs text-sidebar-foreground/60">
-                {connected ? "Connected" : "Connecting…"}
-              </span>
+              {/* A status the viewer wrote outranks the socket state: it is
+                  the only line here that carries human intent. The connection
+                  string stays available on the dot's tooltip. */}
+              {selfStatus ? (
+                <span
+                  className="block truncate text-2xs text-sidebar-foreground/60"
+                  data-testid="sidebar-self-status"
+                >
+                  {statusLabel(selfStatus)}
+                </span>
+              ) : (
+                <span className="block truncate text-2xs text-sidebar-foreground/60">
+                  {connected ? "Connected" : "Connecting…"}
+                </span>
+              )}
             </span>
           </button>
         </PopoverTrigger>
         <PopoverContent align="start" side="top" className="w-56 p-1">
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+            data-testid="open-set-status"
+            onClick={() => {
+              setOpen(false);
+              setStatusOpen(true);
+            }}
+          >
+            {selfStatus?.emoji ? (
+              <StatusEmoji
+                className="size-4 text-sm"
+                value={selfStatus.emoji}
+              />
+            ) : (
+              <Smile aria-hidden className="size-4" />
+            )}
+            {selfStatus ? "Change your status" : "Set a status"}
+          </button>
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+            data-testid="open-notification-settings"
+            onClick={() => {
+              setOpen(false);
+              setNotificationsOpen(true);
+            }}
+          >
+            <Bell aria-hidden className="size-4" />
+            Notifications
+          </button>
           <Link
             to="/repos/settings"
             className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
@@ -159,6 +246,20 @@ export function SidebarProfileCard({
           )}
         </PopoverContent>
       </Popover>
+      <SetStatusDialog
+        hasExistingStatus={selfStatus !== null}
+        initialEmoji={selfStatus?.emoji ?? ""}
+        initialText={selfStatus?.text ?? ""}
+        onClear={() => saveStatus("", "")}
+        onOpenChange={setStatusOpen}
+        onSave={saveStatus}
+        open={statusOpen}
+        saving={savingStatus}
+      />
+      <NotificationSettingsDialog
+        onOpenChange={setNotificationsOpen}
+        open={notificationsOpen}
+      />
     </div>
   );
 }
