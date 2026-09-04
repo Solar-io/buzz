@@ -21,6 +21,7 @@ import { shortKey } from "@/features/dms/lib/dmNaming.ts";
 import { replyCounts } from "@/features/channels/lib/messageBuffer.ts";
 import { timelineReplyCounts } from "@/features/channels/lib/threadSummaryEvent.ts";
 import { unreactToMessage } from "@/features/channels/lib/unreact.ts";
+import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
 import {
   loadReadState,
   markSeen,
@@ -72,7 +73,7 @@ import {
   JOIN_CHANNEL_KIND,
   joinChannelTags,
 } from "@/features/channels/lib/channelAdmin.ts";
-import { ownPubkey, signNostrEvent } from "@/shared/lib/nostr-signer";
+import { signNostrEvent } from "@/shared/lib/nostr-signer";
 import { AppShell } from "@/shared/layout/AppShell";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 
@@ -134,10 +135,7 @@ function ChannelBrowser() {
   // DMs ride the same kind:39000 list (relay `t` tag); they get their own
   // sidebar section and participant-based names.
   const { dms, channelsWithoutDms: unfilteredChannels } = useDms(channels);
-  const [selfPubkey, setSelfPubkey] = useState<string | null>(null);
-  useEffect(() => {
-    void ownPubkey().then(setSelfPubkey);
-  }, []);
+  const selfPubkey = useOwnPubkey();
   const dmParticipantPubkeys = useMemo(
     () =>
       dms.flatMap((dm) =>

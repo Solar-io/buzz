@@ -11,7 +11,7 @@ import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { makeNip98AuthHeader } from "@/shared/lib/nip98";
 import type { NostrFilter } from "@/shared/lib/nostr-client";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
-import { ownPubkey, signNostrEvent } from "@/shared/lib/nostr-signer";
+import { signNostrEvent } from "@/shared/lib/nostr-signer";
 import { relayHttpBaseUrl } from "@/shared/lib/relay-url";
 import {
   channelRoleFromAdminsEvent,
@@ -39,32 +39,21 @@ import type {
 import { restrictionFromRow } from "./lib/restrictions.ts";
 import { latestEvent, subscribeLatestEvent } from "./lib/sharedLatestEvent.ts";
 import { isTimeoutActive, parseTimeoutRejection } from "./lib/timeout.ts";
+import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
 
 const MEMBERSHIP_KEY = "relay-membership";
 
 /**
- * The viewer's own pubkey for the active signer. Resolved once per mount and
- * memoized at module scope, because the answer cannot change without a page
- * reload (the signer is chosen at unlock/extension time) and every message row
- * asks for it.
+ * The viewer's own pubkey.
+ *
+ * Was resolved once per mount and memoized at module scope, on the reasoning
+ * that "the answer cannot change without a page reload". It can: `ownPubkey()`
+ * reads module state `initKeyStore()` fills in asynchronously, so a null
+ * resolved early was cached permanently for every message row — and signing
+ * out and back in as someone else kept the previous account's key.
  */
-let cachedSelfPubkey: Promise<string | null> | null = null;
-
 export function useSelfPubkey(): string | null {
-  const [pubkey, setPubkey] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    cachedSelfPubkey ??= ownPubkey();
-    void cachedSelfPubkey.then((value) => {
-      if (!cancelled) {
-        setPubkey(value);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  return pubkey;
+  return useOwnPubkey();
 }
 
 function useSharedEvent(

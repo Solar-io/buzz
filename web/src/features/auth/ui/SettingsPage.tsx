@@ -17,7 +17,7 @@
  *   token, the pairing sidecar relay, the desktop updater).
  */
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 
 import { Button } from "@/shared/ui/button";
@@ -33,7 +33,7 @@ import { ExperimentsCard } from "@/features/settings/ui/ExperimentsCard";
 import { InvitesCard } from "@/features/settings/ui/InvitesCard";
 import { KeyboardShortcutsCard } from "@/features/settings/ui/KeyboardShortcutsCard";
 import { useFeatureEnabled } from "@/features/settings/useFeatureFlags";
-import { ownPubkey } from "@/shared/lib/nostr-signer";
+import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
 
 import { AppearanceSection } from "./AppearanceSection";
 import {
@@ -57,15 +57,11 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
 }
 
 export function SettingsPage() {
-  const [self, setSelf] = useState<string | null>(null);
+  const self = useOwnPubkey();
   const [profileOpen, setProfileOpen] = useState(false);
   // Mirrors the desktop, where the channel-templates section carries
   // `featureGate: "channel-templates"`.
   const templatesEnabled = useFeatureEnabled("channel-templates");
-
-  useEffect(() => {
-    void ownPubkey().then(setSelf);
-  }, []);
 
   return (
     <div className="mx-auto max-w-2xl space-y-4 p-4">
