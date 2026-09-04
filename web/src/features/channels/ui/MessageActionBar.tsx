@@ -2,13 +2,23 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Check,
   CornerUpLeft,
+  EllipsisVertical,
+  Flag,
   Link2,
   Pencil,
   SmilePlus,
   Trash2,
   X,
 } from "lucide-react";
+import { MessageModerationMenuItems } from "@/features/moderation/ui/MessageModerationMenuItems";
+import { ReportMessageDialog } from "@/features/moderation/ui/ReportMessageDialog";
 import { EmojiPicker } from "@/shared/ui/EmojiPicker";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/shared/ui/dropdown-menu";
 import { cn } from "@/shared/lib/cn";
 import { QUICK_REACTIONS } from "../lib/reactions.ts";
 
@@ -22,16 +32,16 @@ import { QUICK_REACTIONS } from "../lib/reactions.ts";
  * keyboard: tabbing into a button that is `opacity-0` and
  * `pointer-events-none` leaves the user operating an invisible control.
  *
- * Two deliberate differences from the desktop bar:
+ * The pill carries the frequent, one-click actions (react, reply, copy link).
+ * Everything rarer — edit, delete, report, and the moderator cluster — lives
+ * behind the overflow menu, matching the desktop's "More actions" dropdown.
+ * (This resolves the former `TODO(primitives)`: `shared/ui/dropdown-menu`
+ * has since landed in the web client.)
  *
- * 1. The desktop parks edit/delete inside a "More actions" dropdown. The web
- *    client has no dropdown primitive yet, so they sit inline.
- *    TODO(primitives): fold edit + delete into `shared/ui/dropdown-menu`
- *    behind an `EllipsisVertical` trigger once that primitive lands.
- * 2. The quick-reaction row is kept. It is existing web functionality (the
- *    old glyph stack rendered {@link QUICK_REACTIONS} inline) and the desktop
- *    has no equivalent, so dropping it while restyling would be a silent
- *    feature removal.
+ * One deliberate difference from the desktop bar remains: the quick-reaction
+ * row is kept. It is existing web functionality (the old glyph stack rendered
+ * {@link QUICK_REACTIONS} inline) and the desktop has no equivalent, so
+ * dropping it while restyling would be a silent feature removal.
  */
 
 const ACTION_BUTTON_CLASS = cn(
@@ -45,6 +55,8 @@ const ACTION_ICON_CLASS = "h-4 w-4";
 export function MessageActionBar({
   messageId,
   canModify,
+  channelId,
+  authorPubkey,
   onReact,
   onReply,
   onShare,
@@ -54,6 +66,17 @@ export function MessageActionBar({
   messageId: string;
   /** The viewer authored this message — gates edit and delete. */
   canModify?: boolean;
+  /**
+   * Channel the message lives in. Required by the channel-scoped moderator
+   * commands (kind:9005 remove, kind:9001 kick) — both carry it as the `h`
+   * tag, and the relay resolves the actor's channel role from it.
+   */
+  channelId?: string | null;
+  /**
+   * The message author's pubkey. The `p` target of a report and of every
+   * author-directed moderator command; without it neither can be offered.
+   */
+  authorPubkey?: string | null;
   onReact?: (emoji: string) => void;
   onReply: () => void;
   onShare?: () => void;
@@ -61,6 +84,8 @@ export function MessageActionBar({
   onDelete?: () => void;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const disarmTimer = useRef<number | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -125,7 +150,12 @@ export function MessageActionBar({
     };
   }, [confirmingDelete, disarm]);
 
+  const canEdit = Boolean(canModify && onEdit);
   const canDelete = Boolean(canModify && onDelete);
+  // A report needs both target ids the relay's `parse_report` demands. The
+  // moderator cluster gates itself and renders nothing when unauthorized, so
+  // it is always mounted (given an author) and never consulted here.
+  const canReport = Boolean(authorPubkey);
 
   return (
     <div
@@ -139,6 +169,7 @@ export function MessageActionBar({
       aria-orientation="horizontal"
       data-testid={`message-action-bar-${messageId}`}
       data-picker-open={pickerOpen ? "true" : undefined}
+      data-menu-open={menuOpen ? "true" : undefined}
       onMouseLeave={disarm}
       // A click on a sibling action closes the palette (EmojiPicker's own
       // outside-click rule counts it as outside), so drop the mirror too.
@@ -163,9 +194,12 @@ export function MessageActionBar({
         "bg-background/95 shadow-xs backdrop-blur-sm supports-[backdrop-filter]:bg-background/85",
         "transition-opacity duration-150 ease-out",
         // Hidden until the row is hovered or something inside it holds focus.
-        // Forced open while the emoji palette is up or a delete is armed, so
-        // the bar does not vanish out from under the interaction.
-        pickerOpen || confirmingDelete
+        // Forced open while the emoji palette or the overflow menu is up, or a
+        // delete is armed, so the bar does not vanish out from under the
+        // interaction. (The overflow menu portals out of this element, so
+        // without `menuOpen` the pointer leaving the row would fade the bar —
+        // and with it the trigger the open menu is anchored to.)
+        pickerOpen || menuOpen || confirmingDelete
           ? "pointer-events-auto opacity-100"
           : cn(
               "pointer-events-none opacity-0",
@@ -250,61 +284,107 @@ export function MessageActionBar({
         </button>
       )}
 
-      {canModify && onEdit && (
-        <button
-          type="button"
-          aria-label="Edit message"
-          title="Edit message"
-          data-testid={`edit-message-${messageId}`}
-          className={ACTION_BUTTON_CLASS}
-          onClick={onEdit}
+      {(canEdit || canDelete || canReport) && (
+        <DropdownMenu
+          open={menuOpen}
+          onOpenChange={(open) => {
+            setMenuOpen(open);
+            if (!open) {
+              disarm();
+            }
+          }}
         >
-          <Pencil className={ACTION_ICON_CLASS} aria-hidden="true" />
-        </button>
-      )}
-
-      {canDelete &&
-        (confirmingDelete ? (
-          <>
+          <DropdownMenuTrigger asChild>
             <button
               type="button"
-              aria-label="Confirm delete message"
-              title="Confirm delete"
-              data-testid={`confirm-delete-message-${messageId}`}
+              aria-label="More actions"
+              title="More actions"
+              data-testid={`more-actions-${messageId}`}
               className={cn(
                 ACTION_BUTTON_CLASS,
-                "bg-destructive text-destructive-foreground hover:bg-destructive/90 hover:text-destructive-foreground",
+                menuOpen && "bg-accent text-accent-foreground",
               )}
-              onClick={() => {
-                disarm();
-                onDelete?.();
-              }}
             >
-              <Check className={ACTION_ICON_CLASS} aria-hidden="true" />
+              <EllipsisVertical
+                className={ACTION_ICON_CLASS}
+                aria-hidden="true"
+              />
             </button>
-            <button
-              type="button"
-              aria-label="Cancel delete message"
-              title="Cancel"
-              data-testid={`cancel-delete-message-${messageId}`}
-              className={ACTION_BUTTON_CLASS}
-              onClick={disarm}
-            >
-              <X className={ACTION_ICON_CLASS} aria-hidden="true" />
-            </button>
-          </>
-        ) : (
-          <button
-            type="button"
-            aria-label="Delete message"
-            title="Delete message"
-            data-testid={`delete-message-${messageId}`}
-            className={cn(ACTION_BUTTON_CLASS, "hover:text-destructive")}
-            onClick={() => setConfirmingDelete(true)}
-          >
-            <Trash2 className={ACTION_ICON_CLASS} aria-hidden="true" />
-          </button>
-        ))}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {canEdit && (
+              <DropdownMenuItem
+                data-testid={`edit-message-${messageId}`}
+                onClick={() => onEdit?.()}
+              >
+                <Pencil className={ACTION_ICON_CLASS} aria-hidden="true" />
+                Edit message
+              </DropdownMenuItem>
+            )}
+
+            {canDelete &&
+              (confirmingDelete ? (
+                <>
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    data-testid={`confirm-delete-message-${messageId}`}
+                    onClick={() => {
+                      disarm();
+                      onDelete?.();
+                    }}
+                  >
+                    <Check className={ACTION_ICON_CLASS} aria-hidden="true" />
+                    Confirm delete
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    data-testid={`cancel-delete-message-${messageId}`}
+                    onClick={disarm}
+                  >
+                    <X className={ACTION_ICON_CLASS} aria-hidden="true" />
+                    Cancel
+                  </DropdownMenuItem>
+                </>
+              ) : (
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
+                  data-testid={`delete-message-${messageId}`}
+                  // Arming must not close the menu, or the confirm step it
+                  // arms would be unreachable.
+                  onSelect={(event) => event.preventDefault()}
+                  onClick={() => setConfirmingDelete(true)}
+                >
+                  <Trash2 className={ACTION_ICON_CLASS} aria-hidden="true" />
+                  Delete message
+                </DropdownMenuItem>
+              ))}
+
+            {canReport && (
+              <DropdownMenuItem
+                data-testid={`report-message-${messageId}`}
+                onClick={() => setReportOpen(true)}
+              >
+                <Flag className={ACTION_ICON_CLASS} aria-hidden="true" />
+                Report message
+              </DropdownMenuItem>
+            )}
+
+            <MessageModerationMenuItems
+              messageId={messageId}
+              channelId={channelId}
+              authorPubkey={authorPubkey}
+            />
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+
+      {authorPubkey && (
+        <ReportMessageDialog
+          open={reportOpen}
+          onOpenChange={setReportOpen}
+          authorPubkey={authorPubkey}
+          eventId={messageId}
+        />
+      )}
     </div>
   );
 }
