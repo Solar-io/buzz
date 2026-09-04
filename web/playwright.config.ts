@@ -39,6 +39,7 @@ export default defineConfig({
         "**/smoke.spec.ts",
         "**/shell-views.spec.ts",
         "**/settings.spec.ts",
+        "**/parity-surfaces.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],

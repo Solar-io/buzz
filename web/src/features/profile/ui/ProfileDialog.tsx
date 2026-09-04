@@ -1,5 +1,8 @@
 import { Globe, MessageSquare, Pencil } from "lucide-react";
 import { useEffect, useState } from "react";
+
+import { PresenceAvatarDot } from "@/features/presence/ui/PresenceBadge";
+import { usePresenceStatus } from "@/features/presence/hooks";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { Button } from "@/shared/ui/button";
 import {
@@ -11,20 +14,33 @@ import {
 } from "@/shared/ui/dialog";
 import { Separator } from "@/shared/ui/separator";
 import { Skeleton } from "@/shared/ui/skeleton";
+
 import { useProfileMetadata } from "../hooks.ts";
 import { profileLabel, type ProfileDraft } from "../lib/kind0.ts";
+import { labelledName } from "../lib/userLabels.ts";
 import { useProfileActions } from "../ProfileActionsContext.tsx";
+import { useFollow, useOwnContactList } from "../useContacts.ts";
+import { useUserLabels } from "../useUserLabels.ts";
 import { CopyableNpub } from "./CopyableNpub.tsx";
 import { EditProfileForm } from "./EditProfileForm.tsx";
 import { ProfileAvatar } from "./ProfileAvatar.tsx";
+import {
+  CommunityRoleRow,
+  FollowButton,
+  Nip05Row,
+  PresenceStatusRow,
+  RenameRow,
+} from "./ProfileIdentityRows.tsx";
+import { ProfileRecentActivity } from "./ProfileRecentActivity.tsx";
 
 /**
  * The fuller profile view — the popover's data at reading size.
  *
  * Reached from the card (its header, its "View profile" button, or its "Edit
  * profile" button when the subject is you). It is the same kind-0 read, so
- * nothing here can disagree with the card; the difference is layout and the
- * fields the card has no room for (`website`, the raw key), plus the edit
+ * nothing here can disagree with the card; the difference is layout, the
+ * fields the card has no room for (`website`, the raw key), the local
+ * nickname control, a list of what the person recently said, and the edit
  * form when the subject is the viewer.
  */
 export function ProfileDialog({
@@ -90,6 +106,10 @@ function ProfileDialogBody({
 }) {
   const { metadata, rawContent, loading } = useProfileMetadata(pubkey);
   const shellActions = useProfileActions();
+  const { labels } = useUserLabels();
+  const presence = usePresenceStatus(pubkey);
+  const contacts = useOwnContactList(selfPubkey);
+  const follow = useFollow(contacts, selfPubkey, pubkey);
   const openDm = onOpenDm ?? shellActions.onOpenDm;
 
   const isSelf =
@@ -107,11 +127,11 @@ function ProfileDialogBody({
     }
   }, [isSelf]);
 
-  const label = profileLabel(metadata, fallbackLabel);
+  const published = profileLabel(metadata, fallbackLabel);
+  const label = labelledName(labels, pubkey, published, fallbackLabel);
   const avatar = metadata.picture || picture;
   const about = metadata.about.trim();
   const website = metadata.website.trim();
-  const nip05 = metadata.nip05.trim();
 
   const initialDraft: ProfileDraft = {
     displayName: metadata.displayName.trim() || metadata.name.trim(),
@@ -123,25 +143,29 @@ function ProfileDialogBody({
     <>
       <DialogHeader>
         <div className="flex items-center gap-4">
-          <ProfileAvatar
-            className="h-16 w-16 text-base"
-            label={label}
-            picture={avatar}
-            testId="profile-dialog-avatar"
-          />
+          <span className="relative shrink-0">
+            <ProfileAvatar
+              className="size-16 text-base"
+              label={label}
+              picture={avatar}
+              testId="profile-dialog-avatar"
+            />
+            <PresenceAvatarDot className="ring-card" status={presence} />
+          </span>
           <div className="min-w-0 flex-1">
-            <DialogTitle
-              className="truncate text-lg"
-              data-testid="profile-dialog-name"
-            >
-              {label}
-            </DialogTitle>
+            <span className="flex min-w-0 items-center gap-2">
+              <DialogTitle
+                className="min-w-0 truncate text-lg"
+                data-testid="profile-dialog-name"
+              >
+                {label}
+              </DialogTitle>
+              <CommunityRoleRow pubkey={pubkey} />
+            </span>
             <DialogDescription className="sr-only">
               Profile details for {label}
             </DialogDescription>
-            {nip05 && (
-              <p className="truncate text-xs text-muted-foreground">{nip05}</p>
-            )}
+            <Nip05Row claim={metadata.nip05} pubkey={pubkey} />
             <CopyableNpub className="-ml-1 mt-0.5" pubkey={pubkey} />
           </div>
         </div>
@@ -173,6 +197,8 @@ function ProfileDialogBody({
         )
       ) : (
         <div className="flex flex-col gap-4">
+          <PresenceStatusRow pubkey={pubkey} />
+
           {loading && !about ? (
             <Skeleton className="h-10 w-full" />
           ) : (
@@ -198,6 +224,28 @@ function ProfileDialogBody({
             </a>
           )}
 
+          {!isSelf && <RenameRow publishedName={published} pubkey={pubkey} />}
+
+          <Separator />
+
+          <section className="space-y-1.5">
+            <h3 className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+              Recent
+            </h3>
+            <ProfileRecentActivity
+              channelName={shellActions.channelName ?? (() => "")}
+              onOpenMessage={
+                shellActions.onOpenMessage
+                  ? (channelId, messageId) => {
+                      onOpenChange(false);
+                      shellActions.onOpenMessage?.(channelId, messageId);
+                    }
+                  : undefined
+              }
+              pubkey={pubkey}
+            />
+          </section>
+
           <Separator />
 
           <div className="flex items-center justify-between gap-3">
@@ -220,21 +268,29 @@ function ProfileDialogBody({
                   Edit profile
                 </Button>
               ) : (
-                openDm && (
-                  <Button
-                    data-testid="profile-dialog-message"
-                    onClick={() => {
-                      onOpenChange(false);
-                      openDm(pubkey);
-                    }}
-                    size="sm"
-                    type="button"
-                    variant="outline"
-                  >
-                    <MessageSquare aria-hidden />
-                    Message
-                  </Button>
-                )
+                <>
+                  <FollowButton
+                    following={follow.following}
+                    onToggle={follow.toggle}
+                    pending={follow.pending}
+                    ready={follow.ready}
+                  />
+                  {openDm && (
+                    <Button
+                      data-testid="profile-dialog-message"
+                      onClick={() => {
+                        onOpenChange(false);
+                        openDm(pubkey);
+                      }}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      <MessageSquare aria-hidden />
+                      Message
+                    </Button>
+                  )}
+                </>
               )}
             </div>
           </div>

@@ -23,8 +23,10 @@ import { Link } from "@tanstack/react-router";
 import { Button } from "@/shared/ui/button";
 import { LocalArchiveSettingsCard } from "@/features/local-archive";
 import { ChannelTemplatesSettingsCard } from "@/features/channel-templates";
+import { CommunityMembersCard } from "@/features/community-members/ui/CommunityMembersCard";
 import { IdentityArchiveCard } from "@/features/identity-archive";
 import { KeyBackupCard, WelcomeChecklist } from "@/features/onboarding";
+import { PresenceSettingsCard } from "@/features/presence/ui/PresenceSettingsCard";
 import { ProfileDialog } from "@/features/profile/ui/ProfileDialog";
 import { ExperimentsCard } from "@/features/settings/ui/ExperimentsCard";
 import { InvitesCard } from "@/features/settings/ui/InvitesCard";
@@ -65,7 +67,7 @@ export function SettingsPage() {
   }, []);
 
   return (
-    <div className="mx-auto max-w-lg space-y-4 p-4">
+    <div className="mx-auto max-w-2xl space-y-4 p-4">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold">Settings</h1>
         <Button asChild variant="ghost" size="sm">
@@ -77,11 +79,13 @@ export function SettingsPage() {
 
       <SectionHeading>You</SectionHeading>
       <ProfileSection onOpen={() => setProfileOpen(true)} />
+      <PresenceSettingsCard />
       <NotificationsSection />
       <AppearanceSection />
       <KeyboardShortcutsCard />
 
       <SectionHeading>Community</SectionHeading>
+      <CommunityMembersCard />
       <InvitesCard />
       <IdentityArchiveCard />
       <AgentsSection />
