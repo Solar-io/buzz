@@ -2012,7 +2012,6 @@ mod tests {
 
     mod fanout_access {
         use std::collections::HashMap;
-        use std::sync::atomic::AtomicU8;
         use std::sync::Arc;
 
         use buzz_core::StoredEvent;
@@ -2424,7 +2423,6 @@ mod tests {
     // already needs. This module is the spec for "closed."
     mod redteam {
         use std::collections::HashMap;
-        use std::sync::atomic::AtomicU8;
         use std::sync::Arc;
 
         use buzz_core::kind::KIND_PRESENCE_UPDATE;

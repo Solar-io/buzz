@@ -281,24 +281,20 @@ pub async fn huddle_started_link_exists(
 /// batching to keep each statement's lock footprint small. Mention rows go
 /// first (no FK on `event_mentions`, so they are removed explicitly).
 /// Returns the number of event rows deleted.
-pub async fn prune_expired_observer_frames(
-    pool: &PgPool,
-    cutoff: DateTime<Utc>,
-) -> Result<u64> {
+pub async fn prune_expired_observer_frames(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<u64> {
     const BATCH: i64 = 5_000;
     let kind_i32 = event_kind_i32_for_observer();
     let mut total_deleted: u64 = 0;
     loop {
         let mut tx = pool.begin().await?;
         // ids as bytea, not uuid — events.id is the 32-byte event id.
-        let ids: Vec<(Vec<u8>,)> = sqlx::query_as(
-            "SELECT id FROM events WHERE kind = $1 AND created_at < $2 LIMIT $3",
-        )
-        .bind(kind_i32)
-        .bind(cutoff)
-        .bind(BATCH)
-        .fetch_all(&mut *tx)
-        .await?;
+        let ids: Vec<(Vec<u8>,)> =
+            sqlx::query_as("SELECT id FROM events WHERE kind = $1 AND created_at < $2 LIMIT $3")
+                .bind(kind_i32)
+                .bind(cutoff)
+                .bind(BATCH)
+                .fetch_all(&mut *tx)
+                .await?;
         if ids.is_empty() {
             tx.commit().await?;
             break;
@@ -2964,10 +2960,13 @@ mod tests {
             .await
             .expect("old observer frame insert");
         let cutoff = DateTime::from_timestamp(1_740_000_000, 0).expect("cutoff");
-        let deleted =
-            prune_expired_observer_frames(&pool, cutoff).await.expect("prune");
+        let deleted = prune_expired_observer_frames(&pool, cutoff)
+            .await
+            .expect("prune");
         assert!(deleted >= 1, "old observer frame must be pruned");
-        let after = query_events(&pool, &query).await.expect("query after prune");
+        let after = query_events(&pool, &query)
+            .await
+            .expect("query after prune");
         assert!(
             after.iter().any(|e| e.event.id == fresh.id),
             "fresh observer frame survives the prune"

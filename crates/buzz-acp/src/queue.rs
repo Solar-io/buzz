@@ -1125,13 +1125,13 @@ pub(crate) fn format_event_block(
     // owner's local time ("it's 3am your time" at 10:31pm CDT).
     let time = chrono::DateTime::from_timestamp(be.event.created_at.as_secs() as i64, 0)
         .map(|dt| match tz {
-        Some(tz) => format!(
-            "{} ({}, owner-local)",
-            dt.to_rfc3339(),
-            dt.with_timezone(&tz).format("%a %b %d, %I:%M%P %Z")
-        ),
-        None => dt.to_rfc3339(),
-    })
+            Some(tz) => format!(
+                "{} ({}, owner-local)",
+                dt.to_rfc3339(),
+                dt.with_timezone(&tz).format("%a %b %d, %I:%M%P %Z")
+            ),
+            None => dt.to_rfc3339(),
+        })
         .unwrap_or_else(|| be.event.created_at.as_secs().to_string());
 
     let kind = be.event.kind.as_u16() as u32;
@@ -2353,11 +2353,7 @@ mod tests {
             total: 1,
             truncated: false,
         };
-        let s = format_conversation_context(
-            &ctx,
-            None,
-            Some("America/Chicago".parse().unwrap()),
-        );
+        let s = format_conversation_context(&ctx, None, Some("America/Chicago".parse().unwrap()));
         assert!(
             s.contains("(2026-08-30 22:31 CDT): ping"),
             "conversation stamp not localized: {s}"
