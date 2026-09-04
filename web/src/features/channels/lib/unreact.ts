@@ -64,6 +64,19 @@ export function queryOnce(
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let unsubscribe: (() => void) | null = null;
+    // Closing exactly once. On a synchronous EOSE `finish` runs before
+    // `subscribe` returns, so it queues a microtask to close; the
+    // `if (settled)` check below then closes as soon as the handle exists, and
+    // the queued microtask would close a second time. Relay sessions reuse
+    // subscription ids, so the second close can land on somebody else's REQ.
+    let closed = false;
+    const close = () => {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      unsubscribe?.();
+    };
     const finish = () => {
       if (settled) {
         return;
@@ -75,9 +88,9 @@ export function queryOnce(
       // A synchronous EOSE from a fake (or a very fast relay) can land before
       // `subscribe` has returned its handle; close on the next tick then.
       if (unsubscribe) {
-        unsubscribe();
+        close();
       } else {
-        queueMicrotask(() => unsubscribe?.());
+        queueMicrotask(close);
       }
       resolve(collected);
     };
@@ -87,7 +100,7 @@ export function queryOnce(
       onEose: finish,
     });
     if (settled) {
-      unsubscribe();
+      close();
     }
   });
 }

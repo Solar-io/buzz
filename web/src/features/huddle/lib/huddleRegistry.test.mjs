@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   HUDDLE_ENDED_KIND,
+  HUDDLE_STARTED_KIND,
   huddleEndedTarget,
   huddleLinkFromEvent,
+  huddleRegistryFilters,
+  MAX_CHANNELS_PER_REQ,
 } from "./huddleRegistry.ts";
 
 function event(overrides = {}) {
@@ -59,4 +62,47 @@ test("48102 is a participant LEAVING, and does not end the huddle", () => {
 
 test("the end kind matches buzz-core's KIND_HUDDLE_ENDED", () => {
   assert.equal(HUDDLE_ENDED_KIND, 48103);
+});
+
+test("every huddle filter carries #h, or the subscription never goes live", () => {
+  // Scope is resolved per REQ, not per filter: one filter without #h makes the
+  // whole subscription global, and a channel-carrying event is then never a
+  // live fan-out candidate for it. The REQ would still return history, which
+  // is why this failed silently.
+  const filters = huddleRegistryFilters(["c1", "c2", "c3"]);
+  assert.equal(filters.length, 1);
+  for (const filter of filters) {
+    assert.ok(Array.isArray(filter["#h"]), "every filter must carry #h");
+    assert.ok(filter["#h"].length > 0, "#h must not be empty");
+  }
+});
+
+test("the filters ask for both the start and the end kind", () => {
+  const [filter] = huddleRegistryFilters(["c1"]);
+  assert.deepEqual(filter.kinds, [HUDDLE_STARTED_KIND, HUDDLE_ENDED_KIND]);
+});
+
+test("channels are chunked at the relay's explicit-#h cap", () => {
+  const ids = Array.from({ length: 300 }, (_, index) => `c${index}`);
+  const filters = huddleRegistryFilters(ids);
+  // Past the cap the relay answers CLOSED rather than truncating, so an
+  // unchunked REQ loses every huddle rather than merely the excess.
+  assert.equal(filters.length, 3);
+  assert.equal(filters[0]["#h"].length, 128);
+  assert.equal(filters[1]["#h"].length, 128);
+  assert.equal(filters[2]["#h"].length, 44);
+  for (const filter of filters) {
+    assert.ok(filter["#h"].length <= MAX_CHANNELS_PER_REQ);
+  }
+});
+
+test("every channel appears exactly once across the chunks", () => {
+  const ids = Array.from({ length: 300 }, (_, index) => `c${index}`);
+  const seen = huddleRegistryFilters(ids).flatMap((filter) => filter["#h"]);
+  assert.deepEqual(seen, ids);
+  assert.equal(new Set(seen).size, 300);
+});
+
+test("no channels means no REQ at all, rather than an unscoped one", () => {
+  assert.deepEqual(huddleRegistryFilters([]), []);
 });

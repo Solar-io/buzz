@@ -121,3 +121,40 @@ test("unreactToMessage reports a relay rejection instead of throwing", async () 
   assert.equal(result.ok, false);
   assert.equal(result.message, "invalid: must be event author");
 });
+
+test("a synchronous EOSE closes the subscription exactly once", async () => {
+  // `finish` runs before `subscribe` has returned its handle, so it queues a
+  // microtask to close; the settled-check then closes as soon as the handle
+  // exists. Without a guard both fire, and relay sessions reuse subscription
+  // ids — so the second close can land on somebody else's REQ.
+  let closes = 0;
+  const session = {
+    subscribe(_filters, handlers) {
+      handlers.onEose?.();
+      return () => {
+        closes += 1;
+      };
+    },
+  };
+  await queryOnce(session, { kinds: [7] });
+  // Let the queued close run before counting. Awaiting rather than asserting
+  // inside a microtask: a throw in there settles nothing and the test hangs
+  // instead of failing.
+  await new Promise((resolve) => queueMicrotask(resolve));
+  assert.equal(closes, 1);
+});
+
+test("an asynchronous EOSE also closes exactly once", async () => {
+  let closes = 0;
+  const session = {
+    subscribe(_filters, handlers) {
+      queueMicrotask(() => handlers.onEose?.());
+      return () => {
+        closes += 1;
+      };
+    },
+  };
+  await queryOnce(session, { kinds: [7] });
+  await new Promise((resolve) => queueMicrotask(resolve));
+  assert.equal(closes, 1);
+});

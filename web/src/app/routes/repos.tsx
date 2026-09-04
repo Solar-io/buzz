@@ -295,7 +295,13 @@ function ChannelBrowser() {
       ? null
       : `${channelId}:${lastMessageId}`;
 
-  const huddleLinks = useHuddleLinks();
+  // The huddle REQ must carry #h or it is a global subscription and never goes
+  // live; the shell owns the channel list it needs.
+  const huddleChannelIds = useMemo(
+    () => channels.map((channel) => channel.id),
+    [channels],
+  );
+  const huddleLinks = useHuddleLinks(huddleChannelIds);
   const currentHuddleParent =
     current && huddleLinks.has(current.id)
       ? (huddleLinks.get(current.id)?.parentId ?? null)

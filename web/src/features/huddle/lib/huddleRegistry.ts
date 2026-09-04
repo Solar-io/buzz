@@ -83,3 +83,36 @@ export function huddleEndedTarget(event: SignedNostrEvent): string | null {
   }
   return ephemeralId;
 }
+
+/**
+ * Explicit `#h` values the relay accepts in one REQ.
+ * `MAX_EXPLICIT_CHANNEL_VALUES` in `crates/buzz-relay/src/handlers/req.rs`.
+ */
+export const MAX_CHANNELS_PER_REQ = 128;
+
+/**
+ * REQ filters for the huddle registry, one per chunk of parent channels.
+ *
+ * `#h` is load-bearing, not an optimisation. The relay resolves subscription
+ * scope per REQ, not per filter: a filter carrying no `#h` registers the whole
+ * subscription as global, and a channel-carrying event is then matched only
+ * against the channel-keyed indexes. Without it the REQ gets the historical
+ * replay and never another event — a huddle starting after page load never
+ * appears, and one ending never clears.
+ *
+ * Past the cap the relay answers CLOSED rather than truncating, so an
+ * unchunked REQ loses every huddle, not merely the excess.
+ */
+export function huddleRegistryFilters(
+  channelIds: readonly string[],
+): { kinds: number[]; "#h": string[]; limit: number }[] {
+  const filters: { kinds: number[]; "#h": string[]; limit: number }[] = [];
+  for (let i = 0; i < channelIds.length; i += MAX_CHANNELS_PER_REQ) {
+    filters.push({
+      kinds: [HUDDLE_STARTED_KIND, HUDDLE_ENDED_KIND],
+      "#h": channelIds.slice(i, i + MAX_CHANNELS_PER_REQ),
+      limit: 200,
+    });
+  }
+  return filters;
+}
