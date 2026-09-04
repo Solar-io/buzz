@@ -20,6 +20,7 @@ import { relativeTime } from "@/shared/lib/relative-time";
 import { AuthorAvatar, authorLabel } from "./ChannelTimeline.tsx";
 import { Composer } from "./Composer.tsx";
 import { MarkdownContent } from "./MarkdownContent.tsx";
+import { DeletePostMenu } from "./DeletePostMenu.tsx";
 import type { ForumSend } from "./ForumView.tsx";
 
 /**
@@ -316,18 +317,11 @@ function ForumMessageCard({
           </button>
         )}
         {canDelete && (
-          <button
-            type="button"
-            aria-label={compact ? "Delete reply" : "Delete post"}
-            className="shrink-0 self-start rounded p-1 text-xs text-muted-foreground transition-opacity hover:bg-accent lg:opacity-0 lg:group-hover:opacity-100"
-            onClick={() => {
-              if (window.confirm("Delete this message?")) {
-                onDelete(message.id);
-              }
-            }}
-          >
-            🗑
-          </button>
+          <DeletePostMenu
+            label={compact ? "reply" : "post"}
+            onConfirm={() => onDelete(message.id)}
+            testId={`forum-message-menu-${message.id}`}
+          />
         )}
       </div>
     </div>

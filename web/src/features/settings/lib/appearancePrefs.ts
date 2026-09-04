@@ -35,6 +35,18 @@ export type LinkPreviewStyle = "compact" | "rich";
 export type ThreadLayout = "focus" | "split";
 
 /**
+ * Whether the selected sidebar entry gets the higher-contrast surface.
+ *
+ * A boolean preference expressed as the two strings the desktop client already
+ * writes into `localStorage` ("true" / "false"), so the two clients read and
+ * write the same key with the same values rather than each inventing a
+ * spelling. Everything else in this module is string-valued for the same
+ * reason: the value ends up verbatim in a DOM attribute the stylesheet matches
+ * on.
+ */
+export type ProminentActiveTab = "false" | "true";
+
+/**
  * One preference: where it is stored, which root attribute carries it, what a
  * fresh browser gets, and which values are legal.
  */
@@ -76,12 +88,27 @@ export const THREAD_LAYOUT_PREFERENCE: PreferenceSpec<ThreadLayout> = {
   values: ["focus", "split"],
 };
 
+/**
+ * The desktop client stores this one OUTSIDE the `buzz.appearance.*` family
+ * (`shared/theme/ThemeProvider.tsx`'s `PROMINENT_ACTIVE_TAB_STORAGE_KEY`), so
+ * the key here is deliberately its spelling and not the one this module's
+ * naming would suggest.
+ */
+export const PROMINENT_ACTIVE_TAB_PREFERENCE: PreferenceSpec<ProminentActiveTab> =
+  {
+    storageKey: "buzz-prominent-active-tab",
+    attribute: "data-prominent-active-tab",
+    defaultValue: "false",
+    values: ["false", "true"],
+  };
+
 /** Every preference this module owns, for bulk initialization. */
 export const APPEARANCE_PREFERENCES = [
   FONT_SIZE_PREFERENCE,
   CONVERSATION_DENSITY_PREFERENCE,
   LINK_PREVIEW_STYLE_PREFERENCE,
   THREAD_LAYOUT_PREFERENCE,
+  PROMINENT_ACTIVE_TAB_PREFERENCE,
 ] as const;
 
 /**

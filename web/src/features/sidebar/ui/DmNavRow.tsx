@@ -75,14 +75,17 @@ export function DmNavRow({
   const row = (
     <button
       type="button"
+      data-active={selected ? "true" : "false"}
       className={cn(
         // dm-list-spec.md §3: 32px rows, 8px-radius highlight inset 6px,
         // 24px avatar at 14px (8px inside the highlight), 8px avatar→label
         // gap, 4px badge inset on the right.
         "flex h-8 w-full items-center gap-2 rounded-[8px] pl-2 pr-1 text-left transition-colors",
         "hover:bg-white/5",
-        // §5: flat solid accent fill, no ring, contrasting label.
-        selected && "bg-sidebar-active",
+        // §5: flat solid accent fill, no ring, contrasting label. The class
+        // resolves to that same fill unless the Prominent active tab
+        // preference is on (shared/styles/globals.css).
+        selected && "buzz-sidebar-active-row",
       )}
       onClick={() => {
         onSelect();
@@ -118,7 +121,7 @@ export function DmNavRow({
           // Read / unread / selected, from the sidebar tokens rather than
           // the sampled literals they were pinned to.
           selected
-            ? "font-normal text-black"
+            ? "buzz-sidebar-active-label text-black"
             : unread
               ? "font-semibold text-sidebar-foreground"
               : "font-normal text-sidebar-foreground/70",

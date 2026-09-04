@@ -40,6 +40,9 @@ export default defineConfig({
         "**/shell-views.spec.ts",
         "**/settings.spec.ts",
         "**/parity-surfaces.spec.ts",
+        "**/forum.spec.ts",
+        "**/moderation-queue.spec.ts",
+        "**/sidebar-appearance.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],

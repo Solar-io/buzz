@@ -29,12 +29,14 @@ import {
   CONVERSATION_DENSITY_PREFERENCE,
   FONT_SIZE_PREFERENCE,
   LINK_PREVIEW_STYLE_PREFERENCE,
+  PROMINENT_ACTIVE_TAB_PREFERENCE,
   THREAD_LAYOUT_PREFERENCE,
   parsePreference,
   type ConversationDensity,
   type FontSize,
   type LinkPreviewStyle,
   type PreferenceSpec,
+  type ProminentActiveTab,
   type ThreadLayout,
 } from "./appearancePrefs.ts";
 
@@ -121,12 +123,16 @@ export const linkPreviewStyleStore = createPreferenceStore(
 export const threadLayoutStore = createPreferenceStore(
   THREAD_LAYOUT_PREFERENCE,
 );
+export const prominentActiveTabStore = createPreferenceStore(
+  PROMINENT_ACTIVE_TAB_PREFERENCE,
+);
 
 const STORES = {
   "data-font-size": fontSizeStore,
   "data-conversation-density": conversationDensityStore,
   "data-link-preview-style": linkPreviewStyleStore,
   "data-thread-layout": threadLayoutStore,
+  "data-prominent-active-tab": prominentActiveTabStore,
 } as const;
 
 /**
@@ -175,5 +181,28 @@ export function useThreadLayout(): ThreadLayout {
   return usePreference(
     threadLayoutStore,
     THREAD_LAYOUT_PREFERENCE.defaultValue,
+  );
+}
+
+/**
+ * The prominent-active-tab preference as the boolean a `Switch` wants.
+ *
+ * The store stays string-valued (that is what reaches the DOM attribute the
+ * stylesheet matches on); only this seam translates, and it translates in one
+ * place so "true" can never be compared against `true` somewhere else.
+ */
+export function useProminentActiveTab(): boolean {
+  return (
+    usePreference(
+      prominentActiveTabStore,
+      PROMINENT_ACTIVE_TAB_PREFERENCE.defaultValue,
+    ) === "true"
+  );
+}
+
+/** Set the prominent-active-tab preference from a boolean control. */
+export function setProminentActiveTab(enabled: boolean): void {
+  prominentActiveTabStore.set(
+    (enabled ? "true" : "false") satisfies ProminentActiveTab,
   );
 }

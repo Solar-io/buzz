@@ -110,6 +110,42 @@
     --conversation-paragraph-gap: 0.625rem;
     --conversation-list-item-gap: 0.5rem;
   }
+
+  /*
+   * Selected sidebar row — the surface, its shadow, and its label weight.
+   *
+   * The default is exactly what the row painted before these tokens existed
+   * (`bg-sidebar-active`, no shadow, normal weight), so the OFF state of the
+   * Prominent active tab preference is pixel-identical to the sidebar the DM
+   * list spec pinned (dm-list-spec.md §5: flat solid accent fill, no ring).
+   *
+   * ON mixes the accent toward `--sidebar-foreground`, which is dark in the
+   * light theme and light in the dark one — so the surface moves AWAY from the
+   * sidebar background in both, which is what "higher contrast" has to mean
+   * for a preference that is theme-independent. A shadow and a heavier label
+   * carry the rest. The desktop client does the same job with two hardcoded
+   * translucent whites (`--sidebar-row-subtle-active-surface` /
+   * `--sidebar-row-active-surface` in its theme.css) because its treatment is
+   * exclusive to the one theme that paints a gradient behind the sidebar; this
+   * client has no such theme, hence the mix rather than a literal.
+   */
+  :root {
+    --sidebar-row-active-surface: hsl(var(--sidebar-active));
+    --sidebar-row-active-shadow: none;
+    --sidebar-row-active-label-weight: 400;
+  }
+
+  :root[data-prominent-active-tab="true"] {
+    --sidebar-row-active-surface: color-mix(
+      in oklab,
+      hsl(var(--sidebar-active)) 76%,
+      hsl(var(--sidebar-foreground)) 24%
+    );
+    --sidebar-row-active-shadow:
+      inset 0 0 0 1px hsl(var(--sidebar-active-foreground) / 0.35),
+      0 1px 3px hsl(0 0% 0% / 0.32);
+    --sidebar-row-active-label-weight: 600;
+  }
 }
 
 /* JetBrains Mono (code blocks) — self-hosted from the desktop's bundle so the
@@ -493,6 +529,20 @@
   background-color: hsl(var(--sidebar-accent) / 0.8);
   color: hsl(var(--sidebar-foreground));
   @apply text-2xs;
+}
+
+/* Selected sidebar row surface, driven by the tokens above so the Prominent
+   active tab preference has something to move. Unlayered on purpose: these
+   have to beat the Tailwind utilities the rows would otherwise carry
+   (`bg-sidebar-active`, `font-normal`), and unlayered CSS wins over every
+   `@layer`. Same trick as `.dm-identicon` above. */
+.buzz-sidebar-active-row {
+  background-color: var(--sidebar-row-active-surface);
+  box-shadow: var(--sidebar-row-active-shadow);
+}
+
+.buzz-sidebar-active-label {
+  font-weight: var(--sidebar-row-active-label-weight);
 }
 
 /* DM list timer pill — dm-list-spec.md §6: whole-element pulse 0.8 → 1.0 →

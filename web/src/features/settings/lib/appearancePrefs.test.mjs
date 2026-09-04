@@ -8,6 +8,7 @@ import {
   CONVERSATION_DENSITY_PREFERENCE,
   FONT_SIZE_PREFERENCE,
   LINK_PREVIEW_STYLE_PREFERENCE,
+  PROMINENT_ACTIVE_TAB_PREFERENCE,
   THREAD_LAYOUT_PREFERENCE,
   parsePreference,
 } from "./appearancePrefs.ts";
@@ -33,6 +34,13 @@ test("storage keys match the desktop client's, character for character", () => {
     THREAD_LAYOUT_PREFERENCE.storageKey,
     "buzz.channels.threadViewMode",
   );
+  // Nor under "buzz.appearance.*": the desktop's ThemeProvider files this one
+  // as a theme preference, and matching its spelling is what lets the two
+  // clients read the same stored choice.
+  assert.equal(
+    PROMINENT_ACTIVE_TAB_PREFERENCE.storageKey,
+    "buzz-prominent-active-tab",
+  );
 });
 
 test("root attribute names match the ones the stylesheet selects on", () => {
@@ -46,6 +54,10 @@ test("root attribute names match the ones the stylesheet selects on", () => {
     "data-link-preview-style",
   );
   assert.equal(THREAD_LAYOUT_PREFERENCE.attribute, "data-thread-layout");
+  assert.equal(
+    PROMINENT_ACTIVE_TAB_PREFERENCE.attribute,
+    "data-prominent-active-tab",
+  );
 });
 
 /**
@@ -69,6 +81,7 @@ test("globals.css carries a rule for every non-default font-size and density", (
     ':root[data-font-size="larger"]',
     ':root[data-conversation-density="compact"]',
     ':root[data-conversation-density="spacious"]',
+    ':root[data-prominent-active-tab="true"]',
   ];
   for (const selector of expected) {
     assert.ok(css.includes(selector), `globals.css is missing ${selector}`);
@@ -113,6 +126,19 @@ test("parsePreference falls back for absent, corrupt, or foreign values", () => 
     "comfortable",
   );
   assert.equal(parsePreference(THREAD_LAYOUT_PREFERENCE, "rich"), "split");
+  // The boolean-shaped one is stored as the desktop's "true"/"false" strings,
+  // so anything else — including a real boolean that lost its quotes on the
+  // way through storage — falls back to off rather than reaching the DOM.
+  assert.equal(
+    parsePreference(PROMINENT_ACTIVE_TAB_PREFERENCE, "true"),
+    "true",
+  );
+  assert.equal(
+    parsePreference(PROMINENT_ACTIVE_TAB_PREFERENCE, "TRUE"),
+    "false",
+  );
+  assert.equal(parsePreference(PROMINENT_ACTIVE_TAB_PREFERENCE, "1"), "false");
+  assert.equal(parsePreference(PROMINENT_ACTIVE_TAB_PREFERENCE, null), "false");
 });
 
 /**
@@ -126,6 +152,8 @@ test("defaults are the desktop's, and are not merely the first option", () => {
   assert.equal(CONVERSATION_DENSITY_PREFERENCE.defaultValue, "comfortable");
   assert.equal(LINK_PREVIEW_STYLE_PREFERENCE.defaultValue, "compact");
   assert.equal(THREAD_LAYOUT_PREFERENCE.defaultValue, "split");
+  // Off by default, exactly as the desktop's DEFAULT_PROMINENT_ACTIVE_TAB.
+  assert.equal(PROMINENT_ACTIVE_TAB_PREFERENCE.defaultValue, "false");
 
   assert.notEqual(
     CONVERSATION_DENSITY_PREFERENCE.defaultValue,
@@ -138,7 +166,7 @@ test("defaults are the desktop's, and are not merely the first option", () => {
 });
 
 test("every default is one of its own legal values", () => {
-  assert.equal(APPEARANCE_PREFERENCES.length, 4);
+  assert.equal(APPEARANCE_PREFERENCES.length, 5);
   for (const spec of APPEARANCE_PREFERENCES) {
     assert.ok(
       spec.values.includes(spec.defaultValue),
@@ -150,14 +178,15 @@ test("every default is one of its own legal values", () => {
 test("the registry lists each preference once, with distinct keys", () => {
   const keys = APPEARANCE_PREFERENCES.map((spec) => spec.storageKey);
   const attributes = APPEARANCE_PREFERENCES.map((spec) => spec.attribute);
-  assert.equal(new Set(keys).size, 4);
-  assert.equal(new Set(attributes).size, 4);
+  assert.equal(new Set(keys).size, 5);
+  assert.equal(new Set(attributes).size, 5);
   // The store's initializer indexes by attribute; a preference missing from
   // the registry is a preference that is never applied at first paint.
   assert.deepEqual([...attributes].sort(), [
     "data-conversation-density",
     "data-font-size",
     "data-link-preview-style",
+    "data-prominent-active-tab",
     "data-thread-layout",
   ]);
 });

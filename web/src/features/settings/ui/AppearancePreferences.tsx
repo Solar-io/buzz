@@ -5,10 +5,12 @@ import {
   conversationDensityStore,
   fontSizeStore,
   linkPreviewStyleStore,
+  setProminentActiveTab,
   threadLayoutStore,
   useConversationDensity,
   useFontSize,
   useLinkPreviewStyle,
+  useProminentActiveTab,
   useThreadLayout,
 } from "../lib/appearanceStore.ts";
 import type {
@@ -17,6 +19,7 @@ import type {
   LinkPreviewStyle,
   ThreadLayout,
 } from "../lib/appearancePrefs.ts";
+import { Switch } from "@/shared/ui/switch";
 import { SegmentedControl } from "./SegmentedControl.tsx";
 
 /**
@@ -36,6 +39,10 @@ import { SegmentedControl } from "./SegmentedControl.tsx";
  *    reads to choose its presentation.
  *  - Thread layout sets `data-thread-layout`, which `ThreadPanel` reads to
  *    decide whether it docks beside the channel or covers it.
+ *  - Prominent active tab sets `data-prominent-active-tab`, which repaints the
+ *    `--sidebar-row-active-*` tokens the selected sidebar row is built from
+ *    (`SidebarNavButton`, `DmNavRow`). Port of the desktop's
+ *    `ProminentActiveTabSetting`, which carries the same label and subcopy.
  *
  * The conversation sample below the first two rows is the point of them: a
  * type scale cannot be judged from the word "Larger". It is built from the
@@ -180,6 +187,7 @@ export function AppearancePreferences() {
   const density = useConversationDensity();
   const linkPreviewStyle = useLinkPreviewStyle();
   const threadLayout = useThreadLayout();
+  const prominentActiveTab = useProminentActiveTab();
 
   return (
     <div
@@ -246,6 +254,20 @@ export function AppearancePreferences() {
         description={THREAD_LAYOUT_DESCRIPTIONS[threadLayout]}
         label="Thread layout"
         testId="thread-layout-row"
+      />
+      <PreferenceRow
+        control={
+          <Switch
+            aria-label="Prominent active tab"
+            checked={prominentActiveTab}
+            data-testid="prominent-active-tab-toggle"
+            id="prominent-active-tab-switch"
+            onCheckedChange={setProminentActiveTab}
+          />
+        }
+        description="Give the selected navigation item a higher-contrast background."
+        label="Prominent active tab"
+        testId="prominent-active-tab-row"
       />
     </div>
   );

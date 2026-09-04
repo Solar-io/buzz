@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { MessageSquareText } from "lucide-react";
+import { VList } from "virtua";
 import type { ChannelSummary } from "../lib/channelFromEvent.ts";
 import type { TimelineMessage } from "../lib/messageBuffer.ts";
 import { forumPosts, FORUM_POST_KIND } from "../lib/forum.ts";
@@ -22,6 +23,7 @@ import { AuthorAvatar, authorLabel } from "./ChannelTimeline.tsx";
 import { Composer } from "./Composer.tsx";
 import { MarkdownContent } from "./MarkdownContent.tsx";
 import { ThreadParticipantStack } from "./ThreadParticipantStack.tsx";
+import { DeletePostMenu } from "./DeletePostMenu.tsx";
 import { ForumThreadView } from "./ForumThreadView.tsx";
 
 /** Composer send, extended with the event kind the forum views publish. */
@@ -149,6 +151,48 @@ export function ForumView({
     );
   }
 
+  // The virtualized rows, built once per render. Each row carries its own
+  // max-width wrapper (see the VList comment below), and the paginator rides
+  // along as the last row so it scrolls with the list rather than pinning to
+  // the bottom of the pane.
+  const livePosts = posts.filter((post) => !post.deleted);
+  const items: ReactNode[] = livePosts.map((post) => (
+    <div className="mx-auto w-full max-w-3xl px-1 sm:px-3" key={post.id}>
+      <ForumPostCard
+        post={post}
+        profiles={profiles}
+        counts={postStats.get(post.id) ?? EMPTY_COUNTS}
+        reactionGroups={groupReactions(feedReactions, post.id)}
+        canDelete={selfPubkey === post.authorPubkey}
+        active={selectedPostId === post.id}
+        onReact={onReact}
+        onDelete={onDelete}
+        onSelect={() => onSelectPost(post.id)}
+      />
+    </div>
+  ));
+  if (!exhausted) {
+    // Desktop pages this list with the bridge's `next_cursor`; the web read
+    // side walks a NIP-01 `until` window instead. Either way the forum is not
+    // "the newest 100 posts" any more.
+    items.push(
+      <div
+        className="mx-auto flex w-full max-w-3xl justify-center px-1 py-4 sm:px-3"
+        key="forum-load-older"
+      >
+        <button
+          type="button"
+          data-testid="forum-load-older"
+          className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-60"
+          disabled={loadingOlder}
+          onClick={loadOlder}
+        >
+          {loadingOlder ? "Loading…" : "Load older posts"}
+        </button>
+      </div>,
+    );
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 border-b border-border p-4">
@@ -191,13 +235,17 @@ export function ForumView({
           )}
         </div>
       </div>
-      <div className="buzz-content-scrollbar min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-3xl px-1 py-2 sm:px-3">
-          {loading && posts.length === 0 ? (
+      {loading && livePosts.length === 0 ? (
+        <div className="buzz-content-scrollbar min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto w-full max-w-3xl px-1 py-2 sm:px-3">
             <p className="p-8 text-center text-sm text-muted-foreground">
               Loading posts…
             </p>
-          ) : posts.length === 0 ? (
+          </div>
+        </div>
+      ) : livePosts.length === 0 ? (
+        <div className="buzz-content-scrollbar min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto w-full max-w-3xl px-1 py-2 sm:px-3">
             <div className="flex flex-col items-center justify-center gap-2 px-4 py-16 text-center">
               <p className="text-sm font-medium text-foreground/70">
                 No posts yet
@@ -206,46 +254,30 @@ export function ForumView({
                 Start a discussion by creating the first post.
               </p>
             </div>
-          ) : (
-            <>
-              {posts
-                .filter((post) => !post.deleted)
-                .map((post) => (
-                  <ForumPostCard
-                    key={post.id}
-                    post={post}
-                    profiles={profiles}
-                    counts={postStats.get(post.id) ?? EMPTY_COUNTS}
-                    reactionGroups={groupReactions(feedReactions, post.id)}
-                    canDelete={selfPubkey === post.authorPubkey}
-                    active={selectedPostId === post.id}
-                    onReact={onReact}
-                    onDelete={onDelete}
-                    onSelect={() => onSelectPost(post.id)}
-                  />
-                ))}
-              {/*
-                Desktop pages this list with the bridge's `next_cursor`; the
-                web read side walks a NIP-01 `until` window instead. Either
-                way the forum is not "the newest 100 posts" any more.
-              */}
-              {!exhausted && (
-                <div className="flex justify-center py-4">
-                  <button
-                    type="button"
-                    data-testid="forum-load-older"
-                    className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-60"
-                    disabled={loadingOlder}
-                    onClick={loadOlder}
-                  >
-                    {loadingOlder ? "Loading…" : "Load older posts"}
-                  </button>
-                </div>
-              )}
-            </>
-          )}
+          </div>
         </div>
-      </div>
+      ) : (
+        /*
+         * Virtualized (virtua `VList` — the same virtualizer `ChannelTimeline`
+         * uses, and the web counterpart of the desktop's
+         * `shared/ui/VirtualizedList`). A forum that has been paged back a few
+         * times holds hundreds of cards, each carrying rendered Markdown, an
+         * avatar and a reaction row; mounting all of them made every keystroke
+         * in the composer restyle the whole list. Only the visible window
+         * mounts now.
+         *
+         * The VList IS the scroller, so the max-width centering that used to
+         * live on a single inner wrapper moves onto each row — otherwise the
+         * scroll container itself would be 48rem wide and the scrollbar would
+         * float in the middle of the pane.
+         */
+        <VList
+          className="buzz-content-scrollbar min-h-0 flex-1"
+          data-testid="forum-post-list"
+        >
+          {items}
+        </VList>
+      )}
     </div>
   );
 }
@@ -388,19 +420,11 @@ function ForumPostCard({
         </div>
         <div className="flex shrink-0 flex-col items-center gap-1 self-start">
           {canDelete && (
-            <button
-              type="button"
-              aria-label="Delete post"
-              className="rounded p-1 text-xs text-muted-foreground transition-opacity hover:bg-accent lg:opacity-0 lg:group-hover:opacity-100"
-              onClick={(event) => {
-                event.stopPropagation();
-                if (window.confirm("Delete this post?")) {
-                  onDelete(post.id);
-                }
-              }}
-            >
-              🗑
-            </button>
+            <DeletePostMenu
+              label="post"
+              onConfirm={() => onDelete(post.id)}
+              testId={`forum-post-menu-${post.id}`}
+            />
           )}
           {QUICK_REACTIONS.map((emoji) => (
             <button

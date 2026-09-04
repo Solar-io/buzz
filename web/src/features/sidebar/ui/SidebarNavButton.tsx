@@ -55,13 +55,19 @@ export function SidebarNavButton({
   const row = (
     <button
       type="button"
+      // The active row is the one thing the Prominent active tab preference
+      // repaints, so it has to be findable — by CSS, and by a test that has to
+      // prove the preference actually moved a pixel.
+      data-active={selected ? "true" : "false"}
       className={cn(
         // Same desktop row recipe as the DM list (SidebarMenuButton h-8
         // text-sm): the sections read as one surface.
         "group/row flex h-8 w-full items-center gap-2 truncate rounded-[8px] px-2 text-left text-sm transition-colors",
         "hover:bg-white/5 hover:text-foreground",
-        selected &&
-          "bg-sidebar-active font-normal text-sidebar-active-foreground",
+        // `buzz-sidebar-active-row` resolves to exactly what
+        // `bg-sidebar-active` painted before, unless the Prominent active tab
+        // preference is on (shared/styles/globals.css).
+        selected && "buzz-sidebar-active-row text-sidebar-active-foreground",
         // Desktop dims muted rows rather than hiding them.
         muted && !selected && "opacity-50",
       )}
@@ -75,7 +81,7 @@ export function SidebarNavButton({
         className={cn(
           "truncate",
           selected
-            ? "text-sidebar-active-foreground"
+            ? "buzz-sidebar-active-label text-sidebar-active-foreground"
             : unread
               ? "font-semibold text-sidebar-foreground"
               : "font-normal text-sidebar-foreground/70",
