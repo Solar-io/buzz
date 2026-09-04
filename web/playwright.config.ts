@@ -45,6 +45,29 @@ export default defineConfig({
         ...devices["Desktop Chrome"],
       },
     },
+    /**
+     * Huddle: needs a running relay AND a microphone.
+     *
+     * The in-call controls only exist once the audio room has admitted the
+     * viewer, so this project grants the mic permission up front and hands
+     * Chromium a fake capture device — a real grant prompt is not something
+     * an automated run can answer, and skipping the join would test nothing.
+     * The spec skips itself when `E2E_RELAY_WS` is unset.
+     */
+    {
+      name: "huddle",
+      testMatch: ["**/huddle.spec.ts"],
+      use: {
+        ...devices["Desktop Chrome"],
+        permissions: ["microphone"],
+        launchOptions: {
+          args: [
+            "--use-fake-ui-for-media-stream",
+            "--use-fake-device-for-media-stream",
+          ],
+        },
+      },
+    },
   ],
   webServer: {
     command: `pnpm exec vite preview --port ${PORT} --strictPort --host 127.0.0.1`,

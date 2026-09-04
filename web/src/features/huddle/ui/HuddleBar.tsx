@@ -1,14 +1,22 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { Mic, MicOff } from "lucide-react";
 import { useProfiles } from "@/features/channels/hooks";
 import {
   AuthorAvatar,
   authorLabel,
 } from "@/features/channels/ui/ChannelTimeline";
+import { useCustomEmoji } from "@/features/custom-emoji/hooks";
+import { reactionEmojiUrl } from "@/features/custom-emoji/lib/customEmoji.ts";
 import { cn } from "@/shared/lib/cn";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { isSpeaking } from "../lib/micMeter.ts";
+import { useHuddleAgentRoster } from "../useHuddleAgentRoster";
+import { useHuddleAgentSpeech } from "../useHuddleAgentSpeech";
 import { useHuddleAudio } from "../useHuddleAudio";
+import { useHuddleMemberSnapshot } from "../useHuddleMemberSnapshot";
+import { useHuddleReactions } from "../useHuddleReactions";
+import { HuddleCallControls } from "./HuddleCallControls.tsx";
+import { HuddleReactionBurst } from "./HuddleReactionBurst.tsx";
 import { MicMeter } from "./MicMeter.tsx";
 
 /**
@@ -24,6 +32,19 @@ import { MicMeter } from "./MicMeter.tsx";
  * A GLOBAL push-to-talk hotkey — the desktop's, bound through Tauri — is not
  * implementable in a browser at all: a page cannot observe keystrokes it
  * does not have focus for.
+ *
+ * Once connected it also carries the desktop's three in-call affordances:
+ * emoji reactions (kind 24810), adding an agent (kind 9000, role `bot`), and
+ * agent speech. Speech is the one that is NOT at parity and says so: the
+ * browser synthesizes locally for the viewer, where the desktop broadcasts
+ * pocket-tts audio into the room as the agent — see
+ * `lib/huddleAgentSpeech.ts` for why a browser cannot do the second.
+ *
+ * All three are gated on `connected` rather than on merely viewing the
+ * channel. Publishing to a huddle channel needs membership of it, and joining
+ * the audio room is what the relay auto-admits parent members through; a
+ * control that is present but rejected by the relay is worse than one that
+ * appears when it works.
  */
 export function HuddleBar({
   channelId,
@@ -46,6 +67,47 @@ export function HuddleBar({
   const pushToTalk = huddle.voiceInputMode === "push_to_talk";
   const { setPushToTalkActive } = huddle;
 
+  // The three in-call features hang off the SAME ephemeral channel the audio
+  // room uses, so they need no extra wiring from the route — `channelId` here
+  // already is the huddle's backing channel, and `parentChannelId` its link.
+  const customEmoji = useCustomEmoji();
+  const senderName = selfPubkey ? authorLabel(selfPubkey, profiles) : "Someone";
+  const resolveEmojiUrl = useCallback(
+    (emoji: string) => reactionEmojiUrl(emoji, customEmoji),
+    [customEmoji],
+  );
+  const reactions = useHuddleReactions({
+    channelId: connected ? channelId : null,
+    selfPubkey,
+    senderName,
+    resolveEmojiUrl,
+  });
+  const audioPeerPubkeys = useMemo(
+    () => huddle.peers.map((peer) => peer.pubkey),
+    [huddle.peers],
+  );
+  // ONE poller per channel, shared by the speech gate and the agent roster.
+  // Two pollers on the same channel doubled the REQ/CLOSE churn and could
+  // trip the relay's per-second write quota alongside a publish.
+  const ephemeralMembers = useHuddleMemberSnapshot(
+    connected ? channelId : null,
+  );
+  const parentMembers = useHuddleMemberSnapshot(
+    connected ? (parentChannelId ?? null) : null,
+  );
+  const speech = useHuddleAgentSpeech({
+    channelId: connected ? channelId : null,
+    selfPubkey,
+    audioPeerPubkeys,
+    snapshot: ephemeralMembers,
+  });
+  const agentRoster = useHuddleAgentRoster({
+    ephemeralChannelId: connected ? channelId : null,
+    parentChannelId: connected ? (parentChannelId ?? null) : null,
+    ephemeral: ephemeralMembers,
+    parent: parentMembers,
+  });
+
   // Space holds the mic open while the bar has focus. Bound on the bar, not
   // the document, so it cannot swallow the space bar out of a composer.
   useEffect(() => {
@@ -65,7 +127,7 @@ export function HuddleBar({
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: the bar is a key-hold surface for push-to-talk, not a control in its own right
     <div
-      className="flex flex-wrap items-center gap-3 border-b border-border bg-card/40 px-4 py-2 outline-none"
+      className="relative flex flex-wrap items-center gap-3 border-b border-border bg-card/40 px-4 py-2 outline-none"
       onKeyDown={(event) => {
         if (event.key === " " && connected && pushToTalk && !event.repeat) {
           event.preventDefault();
@@ -81,6 +143,7 @@ export function HuddleBar({
     >
       {connected ? (
         <>
+          <HuddleReactionBurst reactions={reactions.active} />
           <button
             type="button"
             data-testid="huddle-mute"
@@ -136,6 +199,13 @@ export function HuddleBar({
               <option value="push_to_talk">Push to talk</option>
             </select>
           </label>
+          <HuddleCallControls
+            agentPubkeys={agentRoster.agentPubkeys}
+            onAddAgent={agentRoster.addAgent}
+            onReact={reactions.send}
+            reactionError={reactions.error}
+            speech={speech}
+          />
           <button
             type="button"
             onClick={huddle.leave}
