@@ -72,6 +72,155 @@ pub struct MintedInvite {
     pub invite_id: uuid::Uuid,
 }
 
+/// One stored invite as an administrator sees it.
+///
+/// There is deliberately no `code` field. The table stores `SHA-256(code)` and
+/// nothing else (see the module docs), so the plaintext is unrecoverable after
+/// [`mint_relay_invite`] returns — a listing identifies an invite by its
+/// database id, which is not a bearer secret and grants nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InviteSummary {
+    /// The invite's database id. Safe to expose; it cannot be redeemed.
+    pub id: uuid::Uuid,
+    /// Role the invite grants. Pinned to `member` by a table constraint.
+    pub role: String,
+    /// Hex pubkey of the owner/admin who minted it.
+    pub created_by: String,
+    /// When it was minted (UTC).
+    pub created_at: DateTime<Utc>,
+    /// When it stops being redeemable (UTC).
+    pub expires_at: DateTime<Utc>,
+    /// `None` means unlimited.
+    pub max_uses: Option<i32>,
+    /// Successful claims so far.
+    pub use_count: i32,
+}
+
+impl InviteSummary {
+    /// Remaining claims, or `None` when the invite is unlimited.
+    ///
+    /// Saturates at zero: a row can only reach `use_count == max_uses` (a
+    /// table `CHECK` enforces it), but reporting a negative remainder if that
+    /// invariant ever broke would be worse than reporting exhaustion.
+    #[must_use]
+    pub fn uses_remaining(&self) -> Option<i32> {
+        self.max_uses.map(|max| (max - self.use_count).max(0))
+    }
+
+    /// Whether the invite can still be redeemed at `now`.
+    ///
+    /// Mirrors [`claim_relay_invite`]'s own precedence: expiry is checked
+    /// before the use budget, so an expired-and-exhausted invite reads as
+    /// expired in both places.
+    #[must_use]
+    pub fn status(&self, now: DateTime<Utc>) -> InviteStatus {
+        if self.expires_at <= now {
+            InviteStatus::Expired
+        } else if self.uses_remaining() == Some(0) {
+            InviteStatus::Exhausted
+        } else {
+            InviteStatus::Active
+        }
+    }
+}
+
+/// Redeemability of a stored invite, derived rather than columnar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InviteStatus {
+    /// Still redeemable.
+    Active,
+    /// Past `expires_at`.
+    Expired,
+    /// Use budget fully consumed.
+    Exhausted,
+}
+
+impl InviteStatus {
+    /// Stable wire name for this status.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            InviteStatus::Active => "active",
+            InviteStatus::Expired => "expired",
+            InviteStatus::Exhausted => "exhausted",
+        }
+    }
+}
+
+/// Largest page [`list_relay_invites`] will return.
+pub const MAX_INVITE_PAGE_LIMIT: i64 = 100;
+
+/// Keyset position of a listing page's last row: `(created_at, id)`.
+///
+/// The id half is not decoration. Several invites can share one `created_at`,
+/// and a timestamp-only cursor either re-reads that instant forever or skips
+/// the part of it the previous page did not reach.
+pub type InviteCursor = (DateTime<Utc>, uuid::Uuid);
+
+/// List a community's invites, newest first, one page at a time.
+///
+/// Ordering is `(created_at DESC, id ASC)` and `cursor` is the composite
+/// keyset `(created_at, id)` of the last row of the previous page: an invite
+/// is returned when `created_at < cursor.0 OR (created_at = cursor.0 AND id >
+/// cursor.1)`. The id tiebreak is what makes paging safe when several invites
+/// are minted in the same second — a timestamp-only cursor either re-reads
+/// that second or skips its unread half.
+///
+/// `limit` is clamped to `1..=`[`MAX_INVITE_PAGE_LIMIT`]. One extra row is
+/// fetched so the caller can report exhaustion exactly instead of inferring it
+/// from a short page; the returned `bool` is `has_more`.
+///
+/// Scoped to `community` like every other invite lookup: an invite minted on
+/// one tenant is invisible on another.
+pub async fn list_relay_invites(
+    pool: &PgPool,
+    community: CommunityId,
+    limit: i64,
+    cursor: Option<InviteCursor>,
+) -> Result<(Vec<InviteSummary>, bool)> {
+    let limit = limit.clamp(1, MAX_INVITE_PAGE_LIMIT);
+    let (cursor_created_at, cursor_id) = match cursor {
+        Some((created_at, id)) => (Some(created_at), Some(id)),
+        None => (None, None),
+    };
+
+    let rows = sqlx::query(
+        "SELECT id, role, created_by, created_at, expires_at, max_uses, use_count \
+         FROM relay_invites \
+         WHERE community_id = $1 \
+           AND ($2::timestamptz IS NULL \
+                OR created_at < $2 \
+                OR (created_at = $2 AND id > $3)) \
+         ORDER BY created_at DESC, id ASC \
+         LIMIT $4",
+    )
+    .bind(community.as_uuid())
+    .bind(cursor_created_at)
+    .bind(cursor_id)
+    .bind(limit + 1)
+    .fetch_all(pool)
+    .await?;
+
+    let has_more = rows.len() as i64 > limit;
+    let invites = rows
+        .into_iter()
+        .take(limit as usize)
+        .map(|row| {
+            Ok(InviteSummary {
+                id: row.try_get("id")?,
+                role: row.try_get("role")?,
+                created_by: row.try_get("created_by")?,
+                created_at: row.try_get("created_at")?,
+                expires_at: row.try_get("expires_at")?,
+                max_uses: row.try_get("max_uses")?,
+                use_count: row.try_get("use_count")?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok((invites, has_more))
+}
+
 fn validate_mint_inputs(ttl_secs: u64, max_uses: Option<i32>) -> Result<()> {
     if !(MIN_INVITE_TTL_SECS..=MAX_INVITE_TTL_SECS).contains(&ttl_secs) {
         return Err(crate::error::DbError::InvalidData(format!(
@@ -429,6 +578,153 @@ mod tests {
         .await
         .expect("drop scratch database");
         admin.close().await;
+    }
+
+    fn summary(max_uses: Option<i32>, use_count: i32, expires_at: DateTime<Utc>) -> InviteSummary {
+        InviteSummary {
+            id: Uuid::new_v4(),
+            role: "member".to_string(),
+            created_by: "owner".to_string(),
+            created_at: expires_at - chrono::Duration::hours(1),
+            expires_at,
+            max_uses,
+            use_count,
+        }
+    }
+
+    #[test]
+    fn invite_status_puts_expiry_ahead_of_the_use_budget() {
+        let now = Utc::now();
+        let future = now + chrono::Duration::hours(1);
+        let past = now - chrono::Duration::hours(1);
+
+        assert_eq!(
+            summary(Some(3), 0, future).status(now),
+            InviteStatus::Active
+        );
+        assert_eq!(summary(None, 99, future).status(now), InviteStatus::Active);
+        assert_eq!(
+            summary(Some(3), 3, future).status(now),
+            InviteStatus::Exhausted
+        );
+        // Expired wins over exhausted — the same precedence claim_relay_invite
+        // applies, so the listing cannot label a row differently from the
+        // reason a claim against it would be refused.
+        assert_eq!(
+            summary(Some(3), 3, past).status(now),
+            InviteStatus::Expired,
+            "an expired-and-exhausted invite must read as expired"
+        );
+        assert_eq!(summary(None, 0, past).status(now), InviteStatus::Expired);
+    }
+
+    #[test]
+    fn uses_remaining_is_none_when_unlimited_and_never_negative() {
+        let future = Utc::now() + chrono::Duration::hours(1);
+        assert_eq!(summary(None, 7, future).uses_remaining(), None);
+        assert_eq!(summary(Some(5), 2, future).uses_remaining(), Some(3));
+        assert_eq!(summary(Some(5), 5, future).uses_remaining(), Some(0));
+        assert_eq!(
+            summary(Some(5), 9, future).uses_remaining(),
+            Some(0),
+            "an over-consumed row must report zero, never a negative remainder"
+        );
+    }
+
+    /// The listing pages by its composite cursor without skipping or repeating
+    /// a row, reports `has_more` exactly, and never crosses tenants.
+    ///
+    /// Every invite in the fixture is forced to ONE `created_at`. That is the
+    /// case the id tiebreak exists for and the only fixture that can detect
+    /// its absence: minting back to back is not enough, because `now()` is
+    /// microsecond-resolution and the rows come out distinct, under which a
+    /// `created_at < cursor` keyset with no tiebreak pages correctly and the
+    /// test would pass while proving nothing.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn list_relay_invites_pages_by_cursor_and_stays_in_its_tenant() {
+        let pool = setup_pool().await;
+        let community = make_test_community(&pool).await;
+        let other = make_test_community(&pool).await;
+
+        let mut minted = Vec::new();
+        for _ in 0..5 {
+            let invite = mint_relay_invite(&pool, community, "owner", 3600, Some(2))
+                .await
+                .expect("mint");
+            minted.push(invite.invite_id);
+        }
+        let foreign = mint_relay_invite(&pool, other, "owner", 3600, None)
+            .await
+            .expect("mint on the other tenant");
+
+        // Collapse the whole page into one `created_at` bucket.
+        sqlx::query("UPDATE relay_invites SET created_at = $2 WHERE community_id = $1")
+            .bind(community.as_uuid())
+            .bind(Utc::now())
+            .execute(&pool)
+            .await
+            .expect("collapse created_at into one bucket");
+
+        // Page two at a time and collect the whole listing.
+        let mut seen = Vec::new();
+        let mut cursor = None;
+        let mut pages = 0;
+        loop {
+            let (page, has_more) = list_relay_invites(&pool, community, 2, cursor)
+                .await
+                .expect("list page");
+            pages += 1;
+            assert!(pages <= 10, "paging must terminate");
+            assert!(
+                !page.is_empty(),
+                "a page before exhaustion must not be empty"
+            );
+            for invite in &page {
+                assert_eq!(invite.role, "member");
+                assert_eq!(invite.created_by, "owner");
+                assert_eq!(invite.uses_remaining(), Some(2));
+                seen.push(invite.id);
+            }
+            let last = page.last().expect("non-empty page");
+            cursor = Some((last.created_at, last.id));
+            if !has_more {
+                break;
+            }
+        }
+
+        assert_eq!(pages, 3, "five rows at two per page is three pages");
+        let mut sorted_seen = seen.clone();
+        sorted_seen.sort();
+        sorted_seen.dedup();
+        assert_eq!(
+            sorted_seen.len(),
+            seen.len(),
+            "no row may be returned twice across pages"
+        );
+        let mut expected = minted.clone();
+        expected.sort();
+        assert_eq!(
+            sorted_seen, expected,
+            "every row must be reachable by paging"
+        );
+        assert!(
+            !seen.contains(&foreign.invite_id),
+            "an invite belonging to another community must never be listed"
+        );
+
+        // And the other tenant sees only its own.
+        let (page, has_more) = list_relay_invites(&pool, other, 50, None)
+            .await
+            .expect("list other tenant");
+        assert!(!has_more);
+        assert_eq!(
+            page.iter().map(|i| i.id).collect::<Vec<_>>(),
+            vec![foreign.invite_id]
+        );
+
+        delete_test_community(&pool, community).await;
+        delete_test_community(&pool, other).await;
     }
 
     async fn make_test_community(pool: &PgPool) -> CommunityId {

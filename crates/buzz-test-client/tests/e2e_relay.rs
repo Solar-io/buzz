@@ -71,6 +71,23 @@ fn nip98_post_header(keys: &Keys, url: &str, body: &str) -> String {
     )
 }
 
+/// NIP-98 header for a GET. The `u` tag covers the query string, so a request
+/// and the event authorising it cannot describe different pages.
+fn nip98_get_header(keys: &Keys, url: &str) -> String {
+    let event = EventBuilder::new(Kind::Custom(27_235), "")
+        .tags(vec![
+            Tag::parse(["u", url]).unwrap(),
+            Tag::parse(["method", "GET"]).unwrap(),
+            Tag::parse(["nonce", &uuid::Uuid::new_v4().to_string()]).unwrap(),
+        ])
+        .sign_with_keys(keys)
+        .expect("sign NIP-98 event");
+    format!(
+        "Nostr {}",
+        BASE64.encode(serde_json::to_string(&event).expect("serialize NIP-98 event"))
+    )
+}
+
 async fn e2e_db_pool() -> sqlx::Pool<sqlx::Postgres> {
     let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
         "postgres://buzz:buzz_dev@localhost:5432/buzz".to_string() // sadscan:disable np.postgres.1
@@ -353,6 +370,215 @@ async fn test_invite_code_minted_for_one_host_fails_on_another() {
     let claim_response =
         invite_post_with_host(&joiner, Some(&host_b), "/api/invites/claim", &claim_body).await;
     assert_eq!(claim_response.status(), reqwest::StatusCode::FORBIDDEN);
+}
+
+/// Mint one invite on `host`, returning `(code, invite_id)`.
+async fn mint_invite_on(keys: &Keys, host: &str, body: &str) -> (String, String) {
+    let response = invite_post_with_host(keys, Some(host), "/api/invites", body).await;
+    assert_eq!(
+        response.status(),
+        reqwest::StatusCode::OK,
+        "mint on {host} failed"
+    );
+    let json: serde_json::Value = response.json().await.expect("mint JSON");
+    let code = json["code"]
+        .as_str()
+        .expect("mint returns a code")
+        .to_string();
+    let invite_id = json["invite_id"]
+        .as_str()
+        .expect("mint returns the invite id so a client can correlate the code it holds")
+        .to_string();
+    (code, invite_id)
+}
+
+async fn invite_get_with_host(keys: &Keys, host: &str, path_and_query: &str) -> reqwest::Response {
+    let connection_url = format!("{}{}", relay_http_url(), path_and_query);
+    let signed_url = format!("{}{}", http_origin_for_host(host), path_and_query);
+    reqwest::Client::new()
+        .get(&connection_url)
+        .header("Authorization", nip98_get_header(keys, &signed_url))
+        .header(reqwest::header::HOST, host)
+        .send()
+        .await
+        .unwrap_or_else(|e| panic!("GET {path_and_query} failed: {e}"))
+}
+
+/// Listing invites must return enough to manage them and nothing that would
+/// let the reader redeem one.
+///
+/// The relay stores only `SHA-256(code)`, so a code can never reappear on a
+/// read — this test pins that as a contract rather than an implementation
+/// accident, and pins the tenant boundary the mint and claim routes already
+/// hold: an invite minted on one host must be invisible on another.
+#[tokio::test]
+#[ignore]
+async fn test_invite_list_returns_metadata_without_the_code() {
+    let host_a = format!("invites-list-a-{}.example", Uuid::new_v4().simple());
+    let host_b = format!("invites-list-b-{}.example", Uuid::new_v4().simple());
+    let owner = Keys::generate();
+    seed_relay_member(&host_a, &owner, "owner").await;
+    seed_relay_member(&host_b, &owner, "owner").await;
+
+    let (unlimited_code, unlimited_id) = mint_invite_on(&owner, &host_a, "{}").await;
+    let (bounded_code, bounded_id) = mint_invite_on(&owner, &host_a, r#"{"max_uses": 3}"#).await;
+    let (other_tenant_code, other_tenant_id) = mint_invite_on(&owner, &host_b, "{}").await;
+
+    let response = invite_get_with_host(&owner, &host_a, "/api/invites").await;
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let body = response.text().await.expect("list body");
+
+    // No code, in any field, ever. Checked against the raw body so a nested or
+    // renamed field cannot smuggle one past a structured assertion.
+    for code in [&unlimited_code, &bounded_code, &other_tenant_code] {
+        assert!(
+            !body.contains(code.as_str()),
+            "an invite code must never appear in a listing response"
+        );
+    }
+
+    let json: serde_json::Value = serde_json::from_str(&body).expect("list JSON");
+    let invites = json["invites"].as_array().expect("invites array");
+    let ids: Vec<&str> = invites.iter().filter_map(|i| i["id"].as_str()).collect();
+    assert_eq!(
+        ids.len(),
+        2,
+        "exactly the two invites minted on this host, got: {body}"
+    );
+    assert!(ids.contains(&unlimited_id.as_str()) && ids.contains(&bounded_id.as_str()));
+    assert!(
+        !ids.contains(&other_tenant_id.as_str()),
+        "an invite minted on another host must not be listed here"
+    );
+
+    let bounded = invites
+        .iter()
+        .find(|i| i["id"].as_str() == Some(bounded_id.as_str()))
+        .expect("bounded invite listed");
+    assert_eq!(bounded["max_uses"], serde_json::json!(3));
+    assert_eq!(bounded["uses_remaining"], serde_json::json!(3));
+    assert_eq!(bounded["use_count"], serde_json::json!(0));
+    assert_eq!(bounded["role"], serde_json::json!("member"));
+    assert_eq!(bounded["status"], serde_json::json!("active"));
+    assert_eq!(
+        bounded["created_by"],
+        serde_json::json!(owner.public_key().to_hex())
+    );
+    assert!(
+        bounded["expires_at"].as_i64().is_some() && bounded["created_at"].as_i64().is_some(),
+        "timestamps must be present: {bounded}"
+    );
+
+    let unlimited = invites
+        .iter()
+        .find(|i| i["id"].as_str() == Some(unlimited_id.as_str()))
+        .expect("unlimited invite listed");
+    assert_eq!(unlimited["max_uses"], serde_json::Value::Null);
+    assert_eq!(unlimited["uses_remaining"], serde_json::Value::Null);
+
+    // Cross-tenant listing: host B sees only its own invite.
+    let response = invite_get_with_host(&owner, &host_b, "/api/invites").await;
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let json: serde_json::Value = response.json().await.expect("host B list JSON");
+    let ids: Vec<&str> = json["invites"]
+        .as_array()
+        .expect("invites array")
+        .iter()
+        .filter_map(|i| i["id"].as_str())
+        .collect();
+    assert_eq!(ids, vec![other_tenant_id.as_str()]);
+}
+
+/// The listing pages by a composite `(created_at, id)` cursor and reports
+/// exhaustion exactly, rather than leaving the client to infer it from a short
+/// page.
+#[tokio::test]
+#[ignore]
+async fn test_invite_list_pages_by_cursor() {
+    let host = format!("invites-list-page-{}.example", Uuid::new_v4().simple());
+    let owner = Keys::generate();
+    seed_relay_member(&host, &owner, "owner").await;
+
+    let mut minted = Vec::new();
+    for _ in 0..3 {
+        let (_, id) = mint_invite_on(&owner, &host, "{}").await;
+        minted.push(id);
+    }
+
+    let mut seen: Vec<String> = Vec::new();
+    let mut path = "/api/invites?limit=1".to_string();
+    for page in 0..3 {
+        let response = invite_get_with_host(&owner, &host, &path).await;
+        assert_eq!(response.status(), reqwest::StatusCode::OK, "page {page}");
+        let json: serde_json::Value = response.json().await.expect("page JSON");
+        let invites = json["invites"].as_array().expect("invites array");
+        assert_eq!(invites.len(), 1, "limit=1 must return one row per page");
+        seen.push(invites[0]["id"].as_str().expect("id").to_string());
+
+        let cursor = &json["next_cursor"];
+        if page < 2 {
+            // Echoed verbatim — the cursor is the relay's to define, and it
+            // carries sub-second precision the client must not round off.
+            let before = cursor["before"].as_str().expect("cursor timestamp");
+            let before_id = cursor["before_id"].as_str().expect("cursor id");
+            path = format!("/api/invites?limit=1&before={before}&before_id={before_id}");
+        } else {
+            assert_eq!(
+                *cursor,
+                serde_json::Value::Null,
+                "the last page must report exhaustion rather than leave it to be guessed"
+            );
+        }
+    }
+
+    seen.sort();
+    let mut expected = minted.clone();
+    expected.sort();
+    assert_eq!(
+        seen, expected,
+        "paging must visit every invite exactly once, with no skips or repeats"
+    );
+
+    // Half a cursor is not a cursor.
+    let response = invite_get_with_host(&owner, &host, "/api/invites?before=1750000000").await;
+    assert_eq!(
+        response.status(),
+        reqwest::StatusCode::BAD_REQUEST,
+        "before without before_id must be refused, not silently ignored"
+    );
+}
+
+/// Reading the invite list is gated exactly as minting is.
+#[tokio::test]
+#[ignore]
+async fn test_invite_list_requires_owner_or_admin() {
+    let host = format!("invites-list-authz-{}.example", Uuid::new_v4().simple());
+    let owner = Keys::generate();
+    let admin = Keys::generate();
+    let member = Keys::generate();
+    let outsider = Keys::generate();
+    seed_relay_member(&host, &owner, "owner").await;
+    seed_relay_member(&host, &admin, "admin").await;
+    seed_relay_member(&host, &member, "member").await;
+
+    mint_invite_on(&owner, &host, "{}").await;
+
+    for (label, keys) in [("owner", &owner), ("admin", &admin)] {
+        let response = invite_get_with_host(keys, &host, "/api/invites").await;
+        assert_eq!(
+            response.status(),
+            reqwest::StatusCode::OK,
+            "{label} must be able to list invites"
+        );
+    }
+    for (label, keys) in [("member", &member), ("outsider", &outsider)] {
+        let response = invite_get_with_host(keys, &host, "/api/invites").await;
+        assert_eq!(
+            response.status(),
+            reqwest::StatusCode::FORBIDDEN,
+            "{label} must not be able to list invites"
+        );
+    }
 }
 
 #[tokio::test]

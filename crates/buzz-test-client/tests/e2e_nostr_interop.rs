@@ -1985,3 +1985,210 @@ async fn test_channel_window_rejects_half_cursor_and_client_overlay_kinds() {
     }
     ws.disconnect().await.expect("disconnect");
 }
+
+// ─── Composite `(until, before_id)` cursor on the websocket REQ path ─────────
+//
+// The relay's keyset is `created_at < until OR (created_at = until AND id >
+// before_id)`, resolving the sort to `(created_at DESC, id ASC)`. The HTTP
+// bridge has always honoured it. These tests pin the same behaviour on REQ:
+// a cursor a client sends must page, and a cursor the relay cannot honour must
+// be refused out loud. Silently discarding `before_id` is the worst of the
+// three outcomes — the client cannot distinguish "cursor applied" from
+// "cursor ignored", so it either re-reads the boundary second forever or
+// steps past it and drops every event tied on `created_at`.
+
+/// Publish a channel message at an exact `created_at`.
+async fn publish_at(
+    client: &mut BuzzTestClient,
+    keys: &Keys,
+    channel: &str,
+    content: &str,
+    created_at: u64,
+) -> nostr::Event {
+    let event = EventBuilder::new(Kind::Custom(9), content)
+        .tags([Tag::parse(["h", channel]).unwrap()])
+        .custom_created_at(nostr::Timestamp::from_secs(created_at))
+        .sign_with_keys(keys)
+        .expect("sign channel message");
+    let ok = client
+        .send_event(event.clone())
+        .await
+        .expect("send channel message");
+    assert!(ok.accepted, "relay rejected fixture event: {}", ok.message);
+    event
+}
+
+/// Drain a subscription until EOSE or CLOSED, returning both.
+async fn collect_or_closed(
+    client: &mut BuzzTestClient,
+    sid: &str,
+) -> (Vec<nostr::Event>, Option<String>) {
+    let mut events = Vec::new();
+    loop {
+        let msg = client
+            .recv_event(Duration::from_secs(5))
+            .await
+            .expect("recv message");
+        match msg {
+            RelayMessage::Event {
+                subscription_id,
+                event,
+            } if subscription_id == sid => events.push(*event),
+            RelayMessage::Eose { subscription_id } if subscription_id == sid => {
+                return (events, None)
+            }
+            RelayMessage::Closed {
+                subscription_id,
+                message,
+            } if subscription_id == sid => return (events, Some(message)),
+            _ => continue,
+        }
+    }
+}
+
+/// A `before_id` on a REQ filter must page the boundary second, not be dropped.
+///
+/// The fixture puts two events in the SAME `created_at` bucket, which is
+/// precisely where a `until`-only cursor cannot advance: paging by `until =
+/// oldest` re-reads the bucket and `until = oldest - 1` skips its unread half.
+/// Cursoring past the lower-id member must return the higher-id member and
+/// everything older, and must NOT return the member the cursor named.
+#[tokio::test]
+#[ignore]
+async fn test_ws_req_honors_composite_before_id_cursor() {
+    let url = relay_url();
+    let keys = Keys::generate();
+    let channel = create_test_channel(&keys).await;
+    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+
+    // Inside the relay's created_at fence, but old enough that the fixture is
+    // not racing wall-clock second boundaries.
+    let tied_at = nostr::Timestamp::now().as_secs() - 60;
+    let older = publish_at(&mut client, &keys, &channel, "older", tied_at - 100).await;
+    let a = publish_at(&mut client, &keys, &channel, "tied-a", tied_at).await;
+    let b = publish_at(&mut client, &keys, &channel, "tied-b", tied_at).await;
+
+    // `id ASC` is the tiebreak, so the cursor names the smaller id and the
+    // page must resume at the larger one.
+    let (cursor_event, expected_tied) = if a.id.to_hex() < b.id.to_hex() {
+        (&a, &b)
+    } else {
+        (&b, &a)
+    };
+
+    let sid = sub_id("ws-before-id");
+    client
+        .send_raw(&serde_json::json!([
+            "REQ",
+            sid,
+            {
+                "kinds": [9],
+                "#h": [channel],
+                "until": tied_at,
+                "before_id": cursor_event.id.to_hex(),
+                "limit": 50,
+            }
+        ]))
+        .await
+        .expect("send REQ with cursor");
+
+    let (events, closed) = collect_or_closed(&mut client, &sid).await;
+    assert!(
+        closed.is_none(),
+        "cursor REQ must not be refused: {closed:?}"
+    );
+
+    let ids: Vec<String> = events.iter().map(|e| e.id.to_hex()).collect();
+    assert!(
+        !ids.contains(&cursor_event.id.to_hex()),
+        "the event the cursor named must be behind the cursor, not in the page — \
+         it is still here, so `before_id` was dropped and only `until` applied"
+    );
+    assert!(
+        ids.contains(&expected_tied.id.to_hex()),
+        "the tied event with the larger id must be returned; without the id \
+         tiebreak it is unreachable by any `until`-only cursor"
+    );
+    assert!(
+        ids.contains(&older.id.to_hex()),
+        "events strictly older than the cursor must still be returned"
+    );
+
+    client.disconnect().await.expect("disconnect");
+}
+
+/// A malformed `before_id` must be refused, never demoted to a head request.
+#[tokio::test]
+#[ignore]
+async fn test_ws_req_rejects_malformed_before_id() {
+    let url = relay_url();
+    let keys = Keys::generate();
+    let channel = create_test_channel(&keys).await;
+    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+
+    let sid = sub_id("ws-before-id-bad");
+    client
+        .send_raw(&serde_json::json!([
+            "REQ",
+            sid,
+            {
+                "kinds": [9],
+                "#h": [channel],
+                "until": 1_750_100_000u64,
+                "before_id": "not-a-hex-event-id",
+            }
+        ]))
+        .await
+        .expect("send REQ with malformed cursor");
+
+    let (events, closed) = collect_or_closed(&mut client, &sid).await;
+    assert!(
+        events.is_empty(),
+        "a refused subscription must not deliver events first"
+    );
+    let message = closed.expect("malformed before_id must CLOSE the subscription, not EOSE it");
+    assert!(
+        message.contains("before_id"),
+        "the CLOSED reason must name the field that was wrong, got: {message}"
+    );
+
+    client.disconnect().await.expect("disconnect");
+}
+
+/// Half a cursor is not a cursor: `before_id` without `until` must be refused,
+/// matching the HTTP bridge's 400 rather than silently paging from the head.
+#[tokio::test]
+#[ignore]
+async fn test_ws_req_rejects_before_id_without_until() {
+    let url = relay_url();
+    let keys = Keys::generate();
+    let channel = create_test_channel(&keys).await;
+    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+
+    let sid = sub_id("ws-before-id-half");
+    client
+        .send_raw(&serde_json::json!([
+            "REQ",
+            sid,
+            {
+                "kinds": [9],
+                "#h": [channel],
+                "before_id": "aa".repeat(32),
+            }
+        ]))
+        .await
+        .expect("send REQ with half cursor");
+
+    let (events, closed) = collect_or_closed(&mut client, &sid).await;
+    assert!(
+        events.is_empty(),
+        "a refused subscription must not deliver events first"
+    );
+    let message = closed.expect("before_id without until must CLOSE the subscription");
+    assert!(
+        message.contains("before_id") && message.contains("until"),
+        "the CLOSED reason must name both halves of the cursor, got: {message}"
+    );
+
+    client.disconnect().await.expect("disconnect");
+}

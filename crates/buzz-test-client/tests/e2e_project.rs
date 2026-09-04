@@ -489,3 +489,81 @@ async fn test_project_malformed_envelope_rejected_by_relay() {
 
     client.disconnect().await.expect("disconnect");
 }
+
+/// `#a` must be applied in the query the relay issues, not after its `LIMIT`.
+///
+/// The fold in `docs/nips/NIP-MP.md` enumerates projects by the coordinates
+/// they list, so `{"#a": [coord], "limit": n}` is the natural query shape. If
+/// the relay matches `#a` only after the page is cut, a busy coordinate-less
+/// window silently starves every matching event out of the result: the client
+/// sees an empty page, which under the NIP's relay contract is an *exhaustion*
+/// signal, and stops. That is indistinguishable from "no project lists this
+/// repository".
+///
+/// The fixture makes the failure deterministic rather than load-dependent: the
+/// single matching project is the OLDEST event in the author's window and three
+/// newer non-matching projects sit ahead of it, so any page cut before the tag
+/// match returns only decoys.
+#[tokio::test]
+#[ignore]
+async fn test_a_tag_filter_is_applied_before_the_page_limit() {
+    let url = relay_url();
+    // A fresh author keeps the fixture independent of anything else on the
+    // relay: the `authors` constraint is pushed into SQL, so the candidate
+    // window is exactly the four events published below.
+    let owner = Keys::generate();
+    let coord = member_coord(&owner, &unique("repo"));
+    let now = Timestamp::now().as_secs();
+
+    let mut client = BuzzTestClient::connect(&url, &owner)
+        .await
+        .expect("connect");
+
+    // Oldest: the only project that lists the coordinate under test.
+    let matching = project_event(
+        &owner,
+        &unique("a-match"),
+        "Matching",
+        std::slice::from_ref(&coord),
+        Some(now - 300),
+    );
+    let ok = client
+        .send_event(matching.clone())
+        .await
+        .expect("send matching project");
+    assert!(ok.accepted, "relay rejected the match: {}", ok.message);
+
+    // Newer decoys listing nothing. Each one alone fills a `limit: 1` page.
+    for i in 0..3u64 {
+        let decoy = project_event(
+            &owner,
+            &unique("a-decoy"),
+            "Decoy",
+            &[],
+            Some(now - 100 + i),
+        );
+        let ok = client.send_event(decoy).await.expect("send decoy project");
+        assert!(ok.accepted, "relay rejected a decoy: {}", ok.message);
+    }
+
+    let filter = Filter::new()
+        .kind(Kind::Custom(PROJECT_KIND))
+        .author(owner.public_key())
+        .custom_tags(SingleLetterTag::lowercase(Alphabet::A), [coord.as_str()])
+        .limit(1);
+
+    let events = query(&mut client, "a-pushdown", filter).await;
+
+    assert_eq!(
+        events.len(),
+        1,
+        "a one-event page for a coordinate that IS listed must return that event; \
+         an empty page here means `#a` ran after the LIMIT and the decoys consumed it"
+    );
+    assert_eq!(
+        events[0].id, matching.id,
+        "the returned event must be the project that lists the coordinate"
+    );
+
+    client.disconnect().await.expect("disconnect");
+}
