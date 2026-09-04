@@ -52,6 +52,8 @@ import {
 } from "../lib/composerPlaceholder.ts";
 import { uploadBlob } from "@/shared/api/blossom";
 import { EmojiPicker } from "@/shared/ui/EmojiPicker";
+import { useCustomEmoji } from "@/features/custom-emoji/hooks";
+import { buildCustomEmojiTags } from "@/features/custom-emoji/lib/customEmojiTags";
 import {
   ComposerFormatToolbar,
   type FormatFn,
@@ -155,6 +157,8 @@ export function Composer({
   );
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // The community's NIP-30 palette, for the emoji tags a send has to carry.
+  const customEmoji = useCustomEmoji();
   // Current text without waiting for a re-render: the upload path appends
   // markdown from an async callback, and reading `text` there would capture
   // whatever the closure was created with.
@@ -362,6 +366,21 @@ export function Composer({
     focusAt(start + emoji.length);
   };
 
+  /**
+   * Insert a chosen GIF's markdown on its own line at the end.
+   *
+   * Not at the caret, unlike an emoji: a GIF is a block image, and dropping
+   * `![…](…)` mid-sentence would split the paragraph the author was typing.
+   * This matches how an uploaded attachment appends (see `attachFiles`).
+   */
+  const insertGif = (markdown: string) => {
+    const current = textRef.current;
+    const separator = current === "" || current.endsWith("\n") ? "" : "\n";
+    const next = `${current}${separator}${markdown}\n`;
+    applyText(next);
+    focusAt(next.length);
+  };
+
   // Rich-text toolbar: apply a format fn to the current selection and restore
   // the selection the fn computed.
   const applyFormat = (format: FormatFn) => {
@@ -507,9 +526,19 @@ export function Composer({
             content: trimmed,
             mentionPubkeys,
             threadRef,
-            mediaTags: uploadedDescriptors(attachments).map((descriptor) =>
-              buildImetaTag(descriptor),
-            ),
+            // `mediaTags` is appended verbatim to the event's tags by
+            // `sendChannelMessage`, so it is also where the NIP-30 `emoji`
+            // tags go. They are derived from the FINAL content, the same way
+            // @mentions become `p` tags: without them the event carries a
+            // bare `:shortcode:` and no other client can resolve the image.
+            // (The field would be better named `extraTags` — that rename
+            // touches files this change does not own.)
+            mediaTags: [
+              ...uploadedDescriptors(attachments).map((descriptor) =>
+                buildImetaTag(descriptor),
+              ),
+              ...buildCustomEmojiTags(trimmed, customEmoji),
+            ],
           });
       if (result.ok) {
         for (const item of attachments) {
@@ -767,7 +796,11 @@ export function Composer({
             >
               <AtSign aria-hidden className="h-5 w-5" />
             </button>
-            <EmojiPicker label="Insert emoji" onSelect={insertEmoji}>
+            <EmojiPicker
+              label="Insert emoji"
+              onSelect={insertEmoji}
+              onSelectGif={insertGif}
+            >
               {(props) => (
                 <button
                   type="button"
