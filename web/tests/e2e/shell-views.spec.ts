@@ -46,6 +46,7 @@ const PANES = [
   { view: "reminders", testId: "reminders-panel" },
   { view: "projects", testId: "projects-page" },
   { view: "workflows", testId: "workflows-page" },
+  { view: "onboarding", testId: "onboarding-pane" },
 ] as const;
 
 for (const pane of PANES) {

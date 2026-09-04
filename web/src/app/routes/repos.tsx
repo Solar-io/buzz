@@ -57,6 +57,7 @@ import { channelMenuItems } from "@/features/sidebar/lib/channelMenuItems.ts";
 import { ChannelSidebar } from "@/features/sidebar/ui/ChannelSidebar";
 import { HomeInboxRoute } from "@/features/home/ui/HomeInboxRoute";
 import { WorkflowsPage } from "@/features/workflows/ui/WorkflowsPage";
+import { OnboardingPane } from "@/features/onboarding";
 import { ProjectsScreen } from "@/features/projects/ui/ProjectsScreen";
 import { PulseScreen } from "@/features/pulse/ui/PulseScreen";
 import { useReminderSync } from "@/features/reminders/hooks";
@@ -93,6 +94,7 @@ const SHELL_VIEWS = [
   "pulse",
   "reminders",
   "projects",
+  "onboarding",
 ] as const;
 type ShellView = (typeof SHELL_VIEWS)[number];
 
@@ -399,6 +401,14 @@ function ChannelBrowser() {
           void navigate({ to: "/repos", search: { view: "inbox" } }),
       },
       {
+        id: "action:onboarding",
+        kind: "action" as const,
+        label: "Getting started",
+        keywords: ["onboarding", "welcome", "setup", "checklist", "backup"],
+        onSelect: () =>
+          void navigate({ to: "/repos", search: { view: "onboarding" } }),
+      },
+      {
         id: "action:projects",
         kind: "action" as const,
         label: "Projects",
@@ -644,6 +654,8 @@ function ChannelBrowser() {
           >
             {filesOpen ? (
               <FilesPanel onClose={() => setFilesOpen(false)} />
+            ) : view === "onboarding" ? (
+              <OnboardingPane />
             ) : view === "projects" ? (
               <ProjectsScreen />
             ) : view === "pulse" ? (
