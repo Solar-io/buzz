@@ -68,6 +68,8 @@ test("every settings card renders for a signed-in viewer", async ({ page }) => {
     "invites-card",
     "keyboard-shortcuts-card",
     "experiments-card",
+    "appearance-card",
+    "custom-emoji-card",
   ]) {
     await expect(page.getByTestId(testId)).toBeVisible();
   }
@@ -210,4 +212,160 @@ test("an encrypted backup restores the identity it was made from", async ({
 
   await page.goto("/repos/settings");
   await expect(page.getByText(expectedNpub)).toBeVisible();
+});
+
+/**
+ * Appearance preferences — the checks that would catch a control which looks
+ * right and changes nothing.
+ *
+ * Reading back the root attribute is not enough on its own: an attribute is
+ * only a claim about intent. So the font-size test MEASURES the rendered type
+ * of the same `text-message` token real message rows use, and asserts the
+ * 13 / 14 / 15px contract this repo's CLAUDE.md pins. A control wired to a
+ * store that no stylesheet reads passes the attribute assertion and fails
+ * this one.
+ */
+const conversationFontSize = (page: Page) =>
+  page
+    .getByTestId("conversation-preview-body")
+    .first()
+    .evaluate((element) => getComputedStyle(element).fontSize);
+
+test("font size drives the real conversation type scale, 13 / 14 / 15px", async ({
+  page,
+}) => {
+  await signIn(page);
+  const card = page.getByTestId("appearance-card");
+  await expect(card).toBeVisible();
+
+  // Default first, so the other two are compared against a known baseline
+  // rather than against whatever the browser happened to start with.
+  await expect(conversationFontSize(page)).resolves.toBe("14px");
+
+  await page.getByTestId("font-size-smaller").check();
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-font-size",
+    "smaller",
+  );
+  await expect(conversationFontSize(page)).resolves.toBe("13px");
+
+  await page.getByTestId("font-size-larger").check();
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-font-size",
+    "larger",
+  );
+  await expect(conversationFontSize(page)).resolves.toBe("15px");
+
+  // Persisted, and applied before first paint on the next load.
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-font-size",
+    "larger",
+  );
+  await expect(conversationFontSize(page)).resolves.toBe("15px");
+});
+
+test("conversation density changes real conversation spacing", async ({
+  page,
+}) => {
+  await signIn(page);
+  const rowPadding = () =>
+    page.evaluate(() =>
+      getComputedStyle(document.documentElement)
+        .getPropertyValue("--conversation-row-padding-block")
+        .trim(),
+    );
+
+  await page.getByTestId("conversation-density-spacious").check();
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-conversation-density",
+    "spacious",
+  );
+  const spacious = await rowPadding();
+
+  await page.getByTestId("conversation-density-compact").check();
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-conversation-density",
+    "compact",
+  );
+  const compact = await rowPadding();
+
+  // Both must be real values AND different — equal-on-both-sides would pass a
+  // stylesheet that declared the attribute and changed nothing.
+  expect(spacious).not.toBe("");
+  expect(compact).not.toBe("");
+  expect(spacious).not.toBe(compact);
+});
+
+test("link preview and thread layout choices persist across a reload", async ({
+  page,
+}) => {
+  await signIn(page);
+
+  // Defaults, asserted as literals so a changed default is caught here.
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-link-preview-style",
+    "compact",
+  );
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-thread-layout",
+    "split",
+  );
+
+  await page.getByTestId("link-preview-style-rich").check();
+  await page.getByTestId("thread-layout-focus").check();
+  await page.reload();
+
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-link-preview-style",
+    "rich",
+  );
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-thread-layout",
+    "focus",
+  );
+});
+
+test("the accent picker repaints the interface's primary colour", async ({
+  page,
+}) => {
+  await signIn(page);
+  const primary = () =>
+    page.evaluate(() =>
+      getComputedStyle(document.documentElement)
+        .getPropertyValue("--primary")
+        .trim(),
+    );
+
+  const themeDefault = await primary();
+  await page.getByTestId("accent-color-green").click();
+  const green = await primary();
+  await page.getByTestId("accent-color-red").click();
+  const red = await primary();
+
+  // Three distinct values. Asserting only "green !== default" would pass an
+  // implementation that wrote one hardcoded accent for every swatch.
+  expect(new Set([themeDefault, green, red]).size).toBe(3);
+
+  // And "theme default" must REMOVE the override rather than write another
+  // colour, or the stylesheet's own values could never come back.
+  await page.getByTestId("accent-color-theme-default").click();
+  await expect(primary()).resolves.toBe(themeDefault);
+});
+
+test("the custom emoji card offers add, and refuses an illegal name", async ({
+  page,
+}) => {
+  await signIn(page);
+  const card = page.getByTestId("custom-emoji-card");
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("My emoji");
+
+  const add = card.getByTestId("custom-emoji-add");
+  // Nothing uploaded yet, so there is nothing to save.
+  await expect(add).toBeDisabled();
+
+  await card.getByTestId("custom-emoji-name-input").fill("not a name");
+  await expect(card).toContainText("Use only letters, numbers");
+  await expect(add).toBeDisabled();
 });

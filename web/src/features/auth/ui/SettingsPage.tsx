@@ -24,6 +24,7 @@ import { Button } from "@/shared/ui/button";
 import { LocalArchiveSettingsCard } from "@/features/local-archive";
 import { ChannelTemplatesSettingsCard } from "@/features/channel-templates";
 import { CommunityMembersCard } from "@/features/community-members/ui/CommunityMembersCard";
+import { CustomEmojiSettingsCard } from "@/features/custom-emoji/ui/CustomEmojiSettingsCard";
 import { IdentityArchiveCard } from "@/features/identity-archive";
 import { KeyBackupCard, WelcomeChecklist } from "@/features/onboarding";
 import { PresenceSettingsCard } from "@/features/presence/ui/PresenceSettingsCard";
@@ -86,6 +87,7 @@ export function SettingsPage() {
 
       <SectionHeading>Community</SectionHeading>
       <CommunityMembersCard />
+      <CustomEmojiSettingsCard />
       <InvitesCard />
       <IdentityArchiveCard />
       <AgentsSection />

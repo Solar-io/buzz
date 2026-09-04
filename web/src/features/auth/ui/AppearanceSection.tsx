@@ -1,7 +1,10 @@
 import { useMemo } from "react";
-import { useTheme } from "@/shared/theme/ThemeProvider";
+import { useTheme, type ThemeMode } from "@/shared/theme/ThemeProvider";
 import { isLightTheme } from "@/shared/theme/theme-loader";
 import { cn } from "@/shared/lib/cn";
+import { AccentPicker } from "@/features/settings/ui/AccentPicker";
+import { AppearancePreferences } from "@/features/settings/ui/AppearancePreferences";
+import { SegmentedControl } from "@/features/settings/ui/SegmentedControl";
 
 /**
  * Human labels for the theme registry.
@@ -48,25 +51,52 @@ function themeLabel(name: string): string {
     .join(" ");
 }
 
+const COLOR_MODE_OPTIONS = [
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+  { value: "system", label: "System" },
+] as const satisfies readonly { value: ThemeMode; label: string }[];
+
 /**
  * Appearance settings.
  *
  * The whole interface palette is derived at runtime from the selected syntax
  * theme, so this picker is the only place the ported theme engine is reachable
  * from. Without it the engine ships and is never used.
+ *
+ * The same was true of two other things the provider already exposed and
+ * nothing rendered: `mode`/`setMode` (the Light / Dark / System control below,
+ * which replaced a "Match my system" checkbox — same state, but it also lets
+ * you pin the light or dark half of a paired family without hunting for its
+ * partner in the list) and `accent`/`setAccent` (the swatches). Code that
+ * works but is unreachable looks exactly like code that works, which is why
+ * `settings.spec.ts` renders this card rather than trusting a unit test.
+ *
+ * Below the theme controls sit the reading-comfort preferences —
+ * `AppearancePreferences` — kept in their own file so this one stays a
+ * composition root under the 1000-line ceiling.
+ *
+ * Not ported from the desktop, and why:
+ *   Glass background / Glass opacity — a native macOS window effect (Tauri's
+ *   `NSVisualEffectView`); a web page cannot blur what is behind the browser.
+ *   Prominent active tab — styles the navigation rail, which lives in
+ *   `features/sidebar/`; the preference is meaningful in a browser but the
+ *   control would be dead until the sidebar reads it.
  */
 export function AppearanceSection() {
   const {
     themeName,
     setThemeName,
-    followSystem,
-    setFollowSystem,
     availableThemes,
     isDark,
+    mode,
+    setMode,
+    accent,
+    setAccent,
   } = useTheme();
 
-  // Group by polarity so "follow the system" has an obvious meaning: the
-  // selection is the family, and the OS picks which half of it applies.
+  // Group by polarity so "System" has an obvious meaning: the selection is the
+  // family, and the OS picks which half of it applies.
   const { light, dark } = useMemo(() => {
     const light: string[] = [];
     const dark: string[] = [];
@@ -77,7 +107,10 @@ export function AppearanceSection() {
   }, [availableThemes]);
 
   return (
-    <section className="space-y-3 rounded-lg border border-border bg-card p-4">
+    <section
+      className="space-y-3 rounded-lg border border-border bg-card p-4"
+      data-testid="appearance-card"
+    >
       <div className="flex items-center justify-between gap-4">
         <h2 className="font-medium">Appearance</h2>
         <span className="text-xs text-muted-foreground">
@@ -85,21 +118,23 @@ export function AppearanceSection() {
         </span>
       </div>
 
-      <label className="flex items-start gap-3 text-sm">
-        <input
-          type="checkbox"
-          className="mt-1 size-4 shrink-0 accent-[hsl(var(--primary))]"
-          checked={followSystem}
-          onChange={(event) => setFollowSystem(event.target.checked)}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium">Colour mode</p>
+          <p className="text-xs text-muted-foreground">
+            System follows your device, swapping between the light and dark
+            halves of your chosen theme.
+          </p>
+        </div>
+        <SegmentedControl
+          legend="Colour mode"
+          onValueChange={setMode}
+          optionTestIdPrefix="color-mode"
+          options={COLOR_MODE_OPTIONS}
+          testId="color-mode-control"
+          value={mode}
         />
-        <span>
-          <span className="block">Match my system</span>
-          <span className="block text-xs text-muted-foreground">
-            Switches between the light and dark halves of your chosen theme as
-            your device changes.
-          </span>
-        </span>
-      </label>
+      </div>
 
       <div className="space-y-1.5">
         <label className="block text-sm font-medium" htmlFor="appearance-theme">
@@ -133,6 +168,10 @@ export function AppearanceSection() {
           Every colour in the interface is derived from the theme you pick.
         </p>
       </div>
+
+      <AccentPicker accent={accent} setAccent={setAccent} />
+
+      <AppearancePreferences />
     </section>
   );
 }

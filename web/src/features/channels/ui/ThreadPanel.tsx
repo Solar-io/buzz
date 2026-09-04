@@ -24,11 +24,27 @@ import {
   threadSeenAt,
   threadUnreadCount,
 } from "../lib/threadReadState.ts";
+import { useThreadLayout } from "@/features/settings/lib/appearanceStore.ts";
 import { authorLabel, ChannelTimeline } from "./ChannelTimeline.tsx";
 import { Composer } from "./Composer.tsx";
 import { ThreadParticipantStack } from "./ThreadParticipantStack.tsx";
 
 const EMPTY_SUMMARIES: RelayThreadSummaryMap = new Map();
+
+/**
+ * Below `lg` a thread is always a full-screen sheet: a third column at
+ * phone/tablet widths is what crushed the timeline. At `lg` and up the
+ * Thread layout preference decides.
+ *
+ * "Focus" is therefore not a new layout — it is this base overlay, kept at
+ * every width by simply not adding the docking classes. That is why the
+ * preference needs no change in the shell that renders this panel: the
+ * overlay covers the resize handle and the channel column behind it.
+ */
+const THREAD_OVERLAY_CLASSES =
+  "fixed inset-0 z-40 flex flex-col bg-background pt-[max(0.5rem,env(safe-area-inset-top))]";
+const THREAD_DOCK_CLASSES =
+  "lg:static lg:inset-auto lg:z-auto lg:w-[var(--thread-width)] lg:shrink-0 lg:border-l lg:border-border lg:pt-0";
 
 /**
  * Thread view in the desktop client's shape: a "Thread" header with the reply
@@ -83,6 +99,7 @@ export function ThreadPanel({
    */
   threadSummaries?: RelayThreadSummaryMap;
 }) {
+  const layoutMode = useThreadLayout();
   const rootId = root.id;
   /** Replies whose own sub-branch is expanded in place. */
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(
@@ -189,14 +206,19 @@ export function ThreadPanel({
 
   return (
     // Below lg the thread is a full-screen sheet (safe-area aware) — a third
-    // column at phone/tablet widths is what crushed the timeline. lg+: docked,
-    // unless mobileOnly (DM thinking-tab case: overlay on phones, hidden at lg).
+    // column at phone/tablet widths is what crushed the timeline. lg+: docked
+    // in Split layout, still an overlay in Focus, unless mobileOnly (DM
+    // thinking-tab case: overlay on phones, hidden at lg).
     <aside
       className={
         mobileOnly
-          ? "fixed inset-0 z-40 flex flex-col bg-background pt-[max(0.5rem,env(safe-area-inset-top))] lg:hidden"
-          : "fixed inset-0 z-40 flex flex-col bg-background pt-[max(0.5rem,env(safe-area-inset-top))] lg:static lg:inset-auto lg:z-auto lg:w-[var(--thread-width)] lg:shrink-0 lg:border-l lg:border-border lg:pt-0"
+          ? `${THREAD_OVERLAY_CLASSES} lg:hidden`
+          : layoutMode === "focus"
+            ? THREAD_OVERLAY_CLASSES
+            : `${THREAD_OVERLAY_CLASSES} ${THREAD_DOCK_CLASSES}`
       }
+      data-testid="thread-panel"
+      data-thread-layout={mobileOnly ? "focus" : layoutMode}
     >
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-secondary px-4">
         <div className="min-w-0 flex-1">

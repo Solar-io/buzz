@@ -7,6 +7,14 @@ import "@/shared/styles/globals.css";
 import { ThemeProvider } from "@/shared/theme/ThemeProvider";
 import { Toaster } from "@/shared/ui/sonner";
 import { TooltipProvider } from "@/shared/ui/tooltip";
+import { initializeAppearancePreferences } from "@/features/settings/lib/appearanceStore";
+
+// Font size, conversation density, link preview style and thread layout are
+// carried on `<html>` attributes that globals.css selects on. Apply them
+// BEFORE the first render, or the app paints one frame at the default type
+// scale and spacing and then snaps — the same first-paint problem the theme
+// cache solves for colours.
+initializeAppearancePreferences();
 
 const queryClient = new QueryClient({
   defaultOptions: {

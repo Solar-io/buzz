@@ -1,3 +1,4 @@
+import { useLinkPreviewStyle } from "@/features/settings/lib/appearanceStore.ts";
 import type { LinkPreview } from "../lib/linkPreview.ts";
 
 /**
@@ -11,34 +12,64 @@ import type { LinkPreview } from "../lib/linkPreview.ts";
  *
  * Because the sender resolved the page, the text is *their* view of it at
  * send time. It is deliberately not re-fetched or freshened.
+ *
+ * Two presentations, chosen by the Link previews preference in Appearance
+ * settings (the desktop client's `LinkPreviewStyleSetting`, ported):
+ *
+ *  - Compact — a thumbnail beside the text. Several links in a row stay
+ *    scannable and the timeline keeps its rhythm.
+ *  - Rich — the image above the text at card width, description unclipped to
+ *    three lines. Better for a single link worth looking at.
+ *
+ * Both keep a FIXED image box. The sender's image dimensions are not carried
+ * in the tag, so a fluid box would reflow the timeline as each card's image
+ * decodes — the same trap the attachment frames avoid.
  */
 export function LinkPreviewCards({
   previews,
 }: {
-  previews: readonly LinkPreview[];
+  previews: readonly LinkPreview[] | undefined;
 }) {
-  if (previews.length === 0) {
+  const style = useLinkPreviewStyle();
+
+  // `previews` is typed as required and can still arrive undefined: messages
+  // are persisted whole in IndexedDB (`lib/timelineCache.ts`), so an entry
+  // written before this field existed comes back without it and TypeScript
+  // never sees the gap. That crashed the whole app through the error boundary
+  // until `CACHE_VERSION` was bumped; this guard is the half that keeps
+  // working when the next added field's bump is forgotten.
+  if (!previews || previews.length === 0) {
     return null;
   }
+  const rich = style === "rich";
   return (
-    <div className="mt-1.5 flex flex-col gap-1.5">
+    <div
+      className="mt-1.5 flex flex-col gap-1.5"
+      data-link-preview-style={style}
+      data-testid="link-preview-cards"
+    >
       {previews.map((preview) => (
         <a
           key={preview.url}
           href={preview.url}
           target="_blank"
           rel="noreferrer noopener"
-          className="flex max-w-xl overflow-hidden rounded-md border border-border/70 bg-card/60 transition-colors hover:bg-accent/40"
+          className={
+            rich
+              ? "flex max-w-xl flex-col overflow-hidden rounded-md border border-border/70 bg-card/60 transition-colors hover:bg-accent/40"
+              : "flex max-w-xl overflow-hidden rounded-md border border-border/70 bg-card/60 transition-colors hover:bg-accent/40"
+          }
         >
           {preview.imageUrl && (
             <img
               src={preview.imageUrl}
               alt=""
               loading="lazy"
-              /* Fixed box: the sender's image dimensions are not carried in
-                 the tag, so a fluid one would reflow the timeline as cards
-                 load — the same trap the attachment frames avoid. */
-              className="h-20 w-20 shrink-0 object-cover"
+              className={
+                rich
+                  ? "h-44 w-full shrink-0 object-cover"
+                  : "h-20 w-20 shrink-0 object-cover"
+              }
             />
           )}
           <span className="min-w-0 flex-1 p-2.5">
@@ -58,12 +89,24 @@ export function LinkPreviewCards({
               )}
             </span>
             {preview.title && (
-              <span className="mt-0.5 block truncate text-sm font-medium">
+              <span
+                className={
+                  rich
+                    ? "mt-0.5 block text-sm font-medium"
+                    : "mt-0.5 block truncate text-sm font-medium"
+                }
+              >
                 {preview.title}
               </span>
             )}
             {preview.description && (
-              <span className="mt-0.5 line-clamp-2 block text-xs text-muted-foreground">
+              <span
+                className={
+                  rich
+                    ? "mt-0.5 line-clamp-3 block text-xs text-muted-foreground"
+                    : "mt-0.5 line-clamp-2 block text-xs text-muted-foreground"
+                }
+              >
                 {preview.description}
               </span>
             )}

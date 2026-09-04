@@ -5,6 +5,8 @@ import {
   INITIAL_PAGE,
   DELTA_CAP,
   applyOverlayToCache,
+  cacheKey,
+  healCachedEntry,
   initialSyncFilters,
   mergeCachedMessage,
   dropCachedReaction,
@@ -206,4 +208,88 @@ test("a merged reaction survives a drop by a different author", () => {
   entry = mergeCachedReaction(entry, { targetId: "m1", emoji: "👍" }, "bob");
   entry = dropCachedReaction(entry, { targetId: "m1", emoji: "👍" }, "bob");
   assert.deepEqual(entry.reactions.get("m1").get("👍"), ["alice"]);
+});
+
+/**
+ * Regression: a message stored before `linkPreviews` existed.
+ *
+ * `TimelineMessage` is persisted whole, so a build that adds a required field
+ * reads back entries without it — TypeScript cannot see the gap, and the
+ * renderer threw on `previews.length`, which the error boundary turned into a
+ * blank app for every returning user. Observed live against the dev relay on
+ * 2026-09-04: 34 of 34 cached messages lacked the field.
+ */
+const LEGACY_MESSAGE = {
+  id: "m-legacy",
+  pubkey: "abc",
+  content: "written before linkPreviews existed",
+  createdAt: 10,
+  kind: 40002,
+  rootId: null,
+  replyToId: null,
+  edited: false,
+  deleted: false,
+  // No linkPreviews, no mentionPubkeys, no imetaByUrl — exactly as an older
+  // build wrote it.
+};
+
+test("healCachedEntry fills collection fields an older build never wrote", () => {
+  const healed = healCachedEntry({
+    messages: [LEGACY_MESSAGE],
+    reactions: new Map(),
+    cursor: 10,
+    historyExhausted: false,
+  });
+  const message = healed.messages[0];
+  assert.deepEqual(message.linkPreviews, []);
+  assert.deepEqual(message.mentionPubkeys, []);
+  assert.ok(message.imetaByUrl instanceof Map);
+  assert.equal(message.imetaByUrl.size, 0);
+  // Everything the older build DID write survives untouched.
+  assert.equal(message.content, "written before linkPreviews existed");
+  assert.equal(message.createdAt, 10);
+  assert.equal(healed.cursor, 10);
+});
+
+test("healCachedEntry leaves a complete entry byte-for-byte alone", () => {
+  const previews = [{ url: "https://example.test", title: "t" }];
+  const imeta = new Map([["u", { m: "image/png" }]]);
+  const message = {
+    ...LEGACY_MESSAGE,
+    linkPreviews: previews,
+    mentionPubkeys: ["deadbeef"],
+    imetaByUrl: imeta,
+  };
+  const entry = {
+    messages: [message],
+    reactions: new Map(),
+    cursor: 10,
+    historyExhausted: false,
+  };
+  const healed = healCachedEntry(entry);
+  // Identity, not deep equality: repairing an intact entry would hand the
+  // timeline a new array of new objects on every load and defeat memoization.
+  assert.equal(healed, entry);
+  assert.equal(healed.messages[0], message);
+  assert.equal(healed.messages[0].linkPreviews, previews);
+  assert.equal(healed.messages[0].imetaByUrl, imeta);
+});
+
+test("healCachedEntry does not invent scalar fields", () => {
+  const healed = healCachedEntry({
+    messages: [LEGACY_MESSAGE],
+    reactions: new Map(),
+    cursor: 10,
+    historyExhausted: false,
+  });
+  // A missing `content` would mean this is not a message at all; defaulting it
+  // would hide that behind a plausible empty row.
+  assert.ok(!Object.hasOwn(healed.messages[0], "someFutureScalar"));
+  assert.equal(healed.messages[0].deleted, false);
+});
+
+test("the cache key carries a version, so a shape change can discard old entries", () => {
+  // Pinned to a literal: an expectation written as `timeline:${CACHE_VERSION}`
+  // would follow a bump instead of recording that one happened.
+  assert.equal(cacheKey("chan-1"), "timeline:v2:chan-1");
 });

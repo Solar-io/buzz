@@ -20,7 +20,24 @@ import type { ReactionIndex } from "./reactions.ts";
  * Deletes remove rows outright — a hidden row must not resurrect from cache.
  */
 
-const CACHE_VERSION = "v1";
+/**
+ * Bump this whenever `TimelineMessage` gains a field the renderer requires.
+ *
+ * The cache stores whole `TimelineMessage` objects, so an entry written by an
+ * older build deserializes with the new field simply ABSENT — and nothing in
+ * the read path notices, because a structured-clone read has no schema. That
+ * is not theoretical: `linkPreviews` was added to `TimelineMessage` without a
+ * bump, and every cached message came back with `linkPreviews === undefined`,
+ * so `LinkPreviewCards` threw on `previews.length` and the error boundary
+ * replaced the entire app with "Something went wrong" — on first load, for
+ * everyone who had ever opened a channel. Measured in a browser against the
+ * dev relay on 2026-09-04: 34 of 34 cached messages lacked the field.
+ *
+ * v2 discards those entries. Renderers should still tolerate a missing field
+ * (see `LinkPreviewCards`), because the bump only protects the release that
+ * remembers to make it.
+ */
+const CACHE_VERSION = "v2";
 /** Stored message cap — mirrors the in-memory upsertMessage cap. */
 export const CACHE_CAP = 500;
 /** Upper bound on a catch-up delta; beyond this, scroll-up fills the gap. */
@@ -53,6 +70,43 @@ export function cacheKey(channelId: string): string {
   return `timeline:${CACHE_VERSION}:${channelId}`;
 }
 
+/**
+ * Fill in collection fields a cached message may predate.
+ *
+ * A version bump discards stale entries, but only in the release that
+ * remembers to make one — and the failure mode when it is forgotten is not a
+ * degraded row, it is `undefined.length` inside a renderer, which the error
+ * boundary turns into a blank app. So the read path also repairs the shape it
+ * gets. Every field here is a collection the timeline iterates over, and an
+ * empty one is always the honest answer for a message stored before the field
+ * existed: it had none.
+ *
+ * Scalars are deliberately NOT defaulted. A missing `content` or `createdAt`
+ * means the entry is not a message at all, and inventing values would hide
+ * that behind a plausible-looking row.
+ */
+export function healCachedEntry(entry: TimelineCacheEntry): TimelineCacheEntry {
+  let repaired = false;
+  const messages = entry.messages.map((message) => {
+    const needsPreviews = !Array.isArray(message.linkPreviews);
+    const needsMentions = !Array.isArray(message.mentionPubkeys);
+    const needsImeta = !(message.imetaByUrl instanceof Map);
+    if (!needsPreviews && !needsMentions && !needsImeta) {
+      return message;
+    }
+    repaired = true;
+    return {
+      ...message,
+      linkPreviews: needsPreviews ? [] : message.linkPreviews,
+      mentionPubkeys: needsMentions ? [] : message.mentionPubkeys,
+      imetaByUrl: needsImeta ? new Map() : message.imetaByUrl,
+    };
+  });
+  // Identity is preserved when nothing needed repair, so the common path costs
+  // no new object and no re-render downstream.
+  return repaired ? { ...entry, messages } : entry;
+}
+
 export async function loadTimelineCache(
   channelId: string,
 ): Promise<TimelineCacheEntry | null> {
@@ -63,7 +117,7 @@ export async function loadTimelineCache(
     if (!entry || !Array.isArray(entry.messages)) {
       return null;
     }
-    return entry;
+    return healCachedEntry(entry);
   } catch {
     // Corrupt or unavailable storage: behave like a cold start.
     return null;
