@@ -608,3 +608,62 @@ test("subscribe with a filter array spreads the filters in one REQ frame", async
   assert.deepEqual(reqs[0].slice(2), filters);
   session.close();
 });
+
+test("a rate-limited NOTICE settles the publish instead of timing out", async () => {
+  // Admission refuses an EVENT with a bare NOTICE and drops it without
+  // processing, so no OK or FAILED ever follows. Waiting out the ack timeout
+  // reports a quota refusal as "timed out waiting for the relay", which reads
+  // as the relay being down.
+  const { session } = makeSession();
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  socket.serverSend(["AUTH", "chal-1"]);
+  await tick();
+
+  const published = session.publish({
+    id: "ab".repeat(32),
+    kind: 9,
+    pubkey: "cc".repeat(32),
+    created_at: 1,
+    tags: [],
+    content: "hello",
+    sig: "ff".repeat(64),
+  });
+  socket.serverSend(["NOTICE", "rate-limited: quota exceeded; retry in 1s"]);
+
+  const result = await published;
+  assert.equal(result.ok, false);
+  // The relay's own words, not a fabricated timeout.
+  assert.match(result.message, /rate-limited/);
+  session.close();
+});
+
+test("an unrelated NOTICE does not fail an in-flight publish", async () => {
+  const { session } = makeSession();
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  socket.serverSend(["AUTH", "chal-1"]);
+  await tick();
+
+  const id = "de".repeat(32);
+  const published = session.publish({
+    id,
+    kind: 9,
+    pubkey: "cc".repeat(32),
+    created_at: 1,
+    tags: [],
+    content: "hello",
+    sig: "ff".repeat(64),
+  });
+  socket.serverSend(["NOTICE", "server restarting shortly"]);
+  await tick();
+  // Still waiting — an informational notice is not a refusal.
+  socket.serverSend(["OK", id, true, "accepted"]);
+
+  const result = await published;
+  assert.equal(result.ok, true);
+  assert.equal(result.message, "accepted");
+  session.close();
+});

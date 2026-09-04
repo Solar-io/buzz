@@ -401,8 +401,47 @@ export class RelaySession {
       }
       return;
     }
-    // NOTICE / COUNT: nothing session-critical to do yet.
+    if (type === "NOTICE") {
+      this.settleRateLimitedPublishes(String(message[1] ?? ""));
+      return;
+    }
+    // COUNT: nothing session-critical to do yet.
   };
+
+  /**
+   * A rate-limited publish is dead, not slow — so stop waiting for it.
+   *
+   * When admission refuses an EVENT the relay sends a bare NOTICE and drops
+   * the event without processing it (`request_rejection_message` with no
+   * sub id, `crates/buzz-relay/src/connection.rs`). No OK or FAILED will ever
+   * follow, so the waiter used to sit out the full ack timeout and then
+   * resolve "timed out waiting for the relay" — reporting a quota refusal as
+   * a network fault. That misdiagnosis is expensive: it reads as the relay
+   * being down.
+   *
+   * A NOTICE carries no event id, so this settles every publish still in
+   * flight. That is sound rather than a guess: the relay answers each client
+   * message before reading the next, and a WebSocket preserves order, so an
+   * event that HAD been accepted would already have had its OK delivered
+   * ahead of this NOTICE. Anything still pending was refused by the same
+   * admission failure.
+   *
+   * Only the relay's own `rate-limited:` prefix triggers this; any other
+   * NOTICE is informational and must not fail a publish.
+   */
+  private settleRateLimitedPublishes(notice: string): void {
+    if (!notice.includes("rate-limited")) {
+      return;
+    }
+    if (this.publishWaiters.size === 0) {
+      return;
+    }
+    const waiters = [...this.publishWaiters.values()];
+    this.publishWaiters.clear();
+    for (const waiter of waiters) {
+      waiter.resolve(false, notice);
+    }
+  }
 
   private async handleAuthChallenge(challenge: string): Promise<void> {
     if (this.authedByRelay) {
