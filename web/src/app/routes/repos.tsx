@@ -634,6 +634,18 @@ function ChannelBrowser() {
       <NotificationRuntime selfPubkey={selfPubkey} channels={channels} />
       <RemindMeLaterProvider selfPubkey={selfPubkey}>
         <ProfileActionsProvider
+          // The profile dialog's "Recent" list knows event and channel ids but
+          // not names, and cannot route — the shell owns both. Without these it
+          // still renders, just unnamed and unclickable.
+          channelName={(channelId) =>
+            channels.find((channel) => channel.id === channelId)?.name ?? ""
+          }
+          onOpenMessage={(channelId, messageId) => {
+            void navigate({
+              to: "/repos",
+              search: { c: channelId, m: messageId },
+            });
+          }}
           onOpenDm={(pubkey) => {
             void openDm(session, [pubkey]).then((result) => {
               if (result.ok && result.channelId) {
