@@ -4,6 +4,10 @@
 //!
 //! - `POST /api/invites` — mint an invite code. Caller must hold the `owner`
 //!   or `admin` role in the tenant community (mirrors the kind:9030 authz).
+//! - `GET /api/invites` — list this community's invites. Same owner/admin gate
+//!   as minting. Returns metadata only: the code is unrecoverable after mint
+//!   because the table stores just its hash, and nothing in the response would
+//!   let a reader redeem an invite they could not already redeem.
 //! - `POST /api/invites/claim` — claim an invite code. Deliberately **exempt
 //!   from the relay-membership gate**: the whole point is that the caller is
 //!   not a member yet. NIP-98 proves control of the joining pubkey; the HMAC
@@ -233,6 +237,21 @@ async fn authenticate(
     path: &str,
     body: &[u8],
 ) -> Result<(buzz_core::TenantContext, nostr::PublicKey), (StatusCode, Json<Value>)> {
+    authenticate_request(state, headers, "POST", path, Some(body)).await
+}
+
+/// Bind the tenant and verify NIP-98 for any method.
+///
+/// `path` must include the query string when there is one: NIP-98's `u` tag
+/// covers the full URL, so signing the bare path would let a request and the
+/// event authorising it describe different pages.
+async fn authenticate_request(
+    state: &Arc<AppState>,
+    headers: &HeaderMap,
+    method: &str,
+    path: &str,
+    body: Option<&[u8]>,
+) -> Result<(buzz_core::TenantContext, nostr::PublicKey), (StatusCode, Json<Value>)> {
     let raw_host = headers
         .get(axum::http::header::HOST)
         .and_then(|v| v.to_str().ok())
@@ -249,15 +268,45 @@ async fn authenticate(
     let url = bridge::nip98_expected_url(&state.config.relay_url, &tenant, path);
     let (pubkey, event_id_bytes) = bridge::verify_bridge_auth_with_options(
         headers,
-        "POST",
+        method,
         &url,
-        Some(body),
+        body,
         true, // invites always require NIP-98; no X-Pubkey dev fallback
-        true, // POST bodies must be covered by a payload tag
+        // A request body must be covered by a payload tag. A GET has none, and
+        // demanding the tag anyway would reject every well-formed NIP-98 GET.
+        body.is_some(),
     )?;
     bridge::check_nip98_replay(state, &tenant, event_id_bytes).await?;
 
     Ok((tenant, pubkey))
+}
+
+/// Authorize an invite-administration request: owner or admin in this tenant.
+///
+/// Mint and list share this gate deliberately. Who may see the invites for a
+/// community is the same question as who may create them: the list names who
+/// minted each one and how much of its budget is spent, which is exactly the
+/// audit trail an administrator needs and an ordinary member has no claim to.
+/// `context` names the operation in server logs; `forbidden` is the message a
+/// refused caller sees, kept per-route because clients surface it verbatim.
+async fn require_invite_admin(
+    state: &Arc<AppState>,
+    tenant: &buzz_core::TenantContext,
+    pubkey: &nostr::PublicKey,
+    context: &'static str,
+    forbidden: &'static str,
+) -> Result<String, (StatusCode, Json<Value>)> {
+    let sender_hex = pubkey.to_hex();
+    let member = state
+        .db
+        .get_relay_member(tenant.community(), &sender_hex)
+        .await
+        .map_err(|e| internal_error(&format!("invite {context} role lookup: {e}")))?;
+    let role = member.map(|m| m.role).unwrap_or_default();
+    if role != "owner" && role != "admin" {
+        return Err(api_error(StatusCode::FORBIDDEN, forbidden));
+    }
+    Ok(sender_hex)
 }
 
 fn map_mint_error(error: buzz_db::DbError) -> (StatusCode, Json<Value>) {
@@ -285,19 +334,14 @@ pub async fn mint_invite(
     let (tenant, pubkey) = authenticate(&state, &headers, "/api/invites", &body).await?;
 
     // Authz mirrors kind:9030 (add member): owner or admin only.
-    let sender_hex = pubkey.to_hex();
-    let member = state
-        .db
-        .get_relay_member(tenant.community(), &sender_hex)
-        .await
-        .map_err(|e| internal_error(&format!("invite mint role lookup: {e}")))?;
-    let role = member.map(|m| m.role).unwrap_or_default();
-    if role != "owner" && role != "admin" {
-        return Err(api_error(
-            StatusCode::FORBIDDEN,
-            "only relay owners and admins can create invites",
-        ));
-    }
+    let sender_hex = require_invite_admin(
+        &state,
+        &tenant,
+        &pubkey,
+        "mint",
+        "only relay owners and admins can create invites",
+    )
+    .await?;
 
     let request: MintInviteRequest = if body.is_empty() {
         MintInviteRequest::default()
@@ -340,11 +384,165 @@ pub async fn mint_invite(
     let expires_at_unix = invite.expires_at.timestamp() as u64;
 
     Ok(Json(serde_json::json!({
+        // The invite's durable id. The code is returned exactly once and is
+        // never recoverable afterwards (only its hash is stored), so this is
+        // the only handle by which a caller can later recognise the invite it
+        // just minted in `GET /api/invites`.
+        "invite_id": invite.invite_id,
         "code": invite.code,
         "expires_at": expires_at_unix,
         "max_uses": invite.max_uses,
         "uses_remaining": invite.uses_remaining,
         "url": format!("{scheme}://{}/invite/{}", tenant.host(), invite.code),
+    })))
+}
+
+/// Query parameters for `GET /api/invites`.
+#[derive(Debug, Default, Deserialize)]
+pub struct ListInvitesQuery {
+    /// Page size, clamped to `1..=`[`buzz_db::relay_invite::MAX_INVITE_PAGE_LIMIT`].
+    #[serde(default)]
+    pub limit: Option<i64>,
+    /// Cursor timestamp: `created_at` of the last row of the previous page,
+    /// echoed verbatim from that page's `next_cursor`. Must be paired with
+    /// `before_id`.
+    ///
+    /// RFC 3339 with sub-second precision, not unix seconds: `relay_invites.
+    /// created_at` is a database `now()` at microsecond resolution, and a
+    /// cursor truncated to whole seconds skips every invite minted later in
+    /// the same second as the one it names.
+    #[serde(default)]
+    pub before: Option<String>,
+    /// Cursor tiebreak: `id` of the last row of the previous page. Must be
+    /// paired with `before`.
+    #[serde(default)]
+    pub before_id: Option<uuid::Uuid>,
+}
+
+/// Default page size when the caller does not ask for one.
+const DEFAULT_INVITE_PAGE_LIMIT: i64 = 50;
+
+/// Resolve the composite `(before, before_id)` cursor.
+///
+/// Both halves or neither. A timestamp without its tiebreak cannot page a
+/// second that holds more than one invite — it either re-reads that second
+/// forever or skips its unread half — so half a cursor is refused rather than
+/// silently treated as a head request.
+fn parse_invite_cursor(
+    query: &ListInvitesQuery,
+) -> Result<Option<buzz_db::relay_invite::InviteCursor>, (StatusCode, Json<Value>)> {
+    match (query.before.as_deref(), query.before_id) {
+        (None, None) => Ok(None),
+        (Some(before), Some(before_id)) => {
+            let created_at = chrono::DateTime::parse_from_rfc3339(before)
+                .map_err(|_| {
+                    api_error(
+                        StatusCode::BAD_REQUEST,
+                        "before must be an RFC 3339 timestamp, echoed from next_cursor",
+                    )
+                })?
+                .with_timezone(&chrono::Utc);
+            Ok(Some((created_at, before_id)))
+        }
+        _ => Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "before and before_id must be supplied together, or neither",
+        )),
+    }
+}
+
+/// Render one stored invite for the wire.
+fn invite_summary_json(
+    invite: &buzz_db::relay_invite::InviteSummary,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Value {
+    serde_json::json!({
+        "id": invite.id,
+        "role": invite.role,
+        "created_by": invite.created_by,
+        "created_at": invite.created_at.timestamp(),
+        "expires_at": invite.expires_at.timestamp(),
+        "max_uses": invite.max_uses,
+        "use_count": invite.use_count,
+        "uses_remaining": invite.uses_remaining(),
+        "status": invite.status(now).as_str(),
+    })
+}
+
+/// List this community's invites — `GET /api/invites`, NIP-98 signed by an
+/// owner/admin.
+///
+/// # What is deliberately absent
+///
+/// The invite **code**. `relay_invites` stores `SHA-256(code)` and never the
+/// code itself, so the relay could not return one if it wanted to; that is the
+/// property which keeps a leaked database from being a pile of working invite
+/// links, and a read endpoint that undid it would be a far worse bug than the
+/// missing listing it fixed. Nor is a prefix of the code or of its hash
+/// returned: a prefix is useless to a person (an opaque random string is not
+/// recognisable by its first characters) while being the one thing that turns
+/// offline guessing into a checkable game. An invite is identified instead by
+/// its database `id`, which grants nothing — `POST /api/invites/claim` accepts
+/// only a code, and looks it up by hash.
+///
+/// A client that has just minted an invite already holds the plaintext and can
+/// match it to a row by the `invite_id` the mint response returns.
+///
+/// Paginated newest-first by the composite `(created_at, id)` cursor; the
+/// response carries `next_cursor` when more rows follow and `null` when the
+/// listing is exhausted, so a client never has to infer exhaustion from a
+/// short page.
+pub async fn list_invites(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    axum::extract::RawQuery(raw_query): axum::extract::RawQuery,
+    axum::extract::Query(query): axum::extract::Query<ListInvitesQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    // NIP-98's `u` tag covers the query string, so the signed URL must carry
+    // the query exactly as received — otherwise one signature would authorise
+    // every page.
+    let path = match raw_query.as_deref() {
+        Some(q) if !q.is_empty() => format!("/api/invites?{q}"),
+        _ => "/api/invites".to_string(),
+    };
+    let (tenant, pubkey) = authenticate_request(&state, &headers, "GET", &path, None).await?;
+    require_invite_admin(
+        &state,
+        &tenant,
+        &pubkey,
+        "list",
+        "only relay owners and admins can list invites",
+    )
+    .await?;
+
+    let cursor = parse_invite_cursor(&query)?;
+    let limit = query.limit.unwrap_or(DEFAULT_INVITE_PAGE_LIMIT);
+
+    let (invites, has_more) = state
+        .db
+        .list_relay_invites(tenant.community(), limit, cursor)
+        .await
+        .map_err(|e| internal_error(&format!("invite list: {e}")))?;
+
+    let now = chrono::Utc::now();
+    // Microsecond precision, matching the column: a whole-second cursor would
+    // skip every invite minted later in the same second as the page boundary.
+    let next_cursor = match invites.last().filter(|_| has_more) {
+        Some(last) => serde_json::json!({
+            "before": last
+                .created_at
+                .to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
+            "before_id": last.id,
+        }),
+        None => Value::Null,
+    };
+
+    Ok(Json(serde_json::json!({
+        "invites": invites
+            .iter()
+            .map(|invite| invite_summary_json(invite, now))
+            .collect::<Vec<_>>(),
+        "next_cursor": next_cursor,
     })))
 }
 
@@ -541,7 +739,10 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use super::{claim_key_rate_limited, CLAIM_RATE_LIMIT, MAX_INVITE_USES, MIN_INVITE_TTL_SECS};
+    use super::{
+        claim_key_rate_limited, invite_summary_json, parse_invite_cursor, ListInvitesQuery,
+        CLAIM_RATE_LIMIT, MAX_INVITE_USES, MIN_INVITE_TTL_SECS,
+    };
     use axum::{
         body::{to_bytes, Body},
         http::{header, Request, StatusCode},
@@ -1808,5 +2009,117 @@ mod tests {
 
         let response = get_page(state, "/api/join-policy/privacy").await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    fn list_query(before: Option<&str>, before_id: Option<Uuid>) -> ListInvitesQuery {
+        ListInvitesQuery {
+            limit: None,
+            before: before.map(str::to_string),
+            before_id,
+        }
+    }
+
+    #[test]
+    fn invite_cursor_requires_both_halves() {
+        let id = Uuid::new_v4();
+
+        assert!(
+            parse_invite_cursor(&list_query(None, None))
+                .expect("no cursor is valid")
+                .is_none(),
+            "an absent cursor is a head request"
+        );
+
+        let resolved =
+            parse_invite_cursor(&list_query(Some("2026-01-02T03:04:05.123456Z"), Some(id)))
+                .expect("a complete cursor resolves")
+                .expect("cursor present");
+        assert_eq!(resolved.1, id);
+        // Sub-second precision must survive: `relay_invites.created_at` is a
+        // microsecond `now()`, and a cursor rounded to whole seconds skips
+        // every invite minted later in the same second.
+        assert_eq!(
+            resolved.0.timestamp_subsec_micros(),
+            123_456,
+            "the cursor must not be truncated to whole seconds"
+        );
+
+        assert_eq!(
+            parse_invite_cursor(&list_query(Some("2026-01-02T03:04:05Z"), None))
+                .expect_err("half a cursor must be refused")
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            parse_invite_cursor(&list_query(None, Some(id)))
+                .expect_err("half a cursor must be refused")
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            parse_invite_cursor(&list_query(Some("1750000000"), Some(id)))
+                .expect_err("a unix-seconds cursor is not RFC 3339 and must be refused")
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    /// The wire shape of a listed invite: metadata, no bearer secret.
+    #[test]
+    fn invite_summary_json_carries_metadata_and_no_secret() {
+        let created_at = chrono::DateTime::from_timestamp(1_750_000_000, 0).expect("created_at");
+        let now = created_at + chrono::Duration::minutes(1);
+        let invite = buzz_db::relay_invite::InviteSummary {
+            id: Uuid::new_v4(),
+            role: "member".to_string(),
+            created_by: "ab".repeat(32),
+            created_at,
+            expires_at: created_at + chrono::Duration::hours(2),
+            max_uses: Some(4),
+            use_count: 1,
+        };
+
+        let json = invite_summary_json(&invite, now);
+        assert_eq!(json["id"], serde_json::json!(invite.id));
+        assert_eq!(json["role"], serde_json::json!("member"));
+        assert_eq!(json["created_by"], serde_json::json!(invite.created_by));
+        assert_eq!(json["created_at"], serde_json::json!(1_750_000_000_i64));
+        assert_eq!(json["max_uses"], serde_json::json!(4));
+        assert_eq!(json["use_count"], serde_json::json!(1));
+        assert_eq!(json["uses_remaining"], serde_json::json!(3));
+        assert_eq!(json["status"], serde_json::json!("active"));
+
+        // The exhaustive key set is the security assertion: a future field
+        // that carried the code, a code prefix, or the stored token hash would
+        // fail here rather than ship.
+        let keys: std::collections::BTreeSet<&str> = json
+            .as_object()
+            .expect("object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "created_at",
+                "created_by",
+                "expires_at",
+                "id",
+                "max_uses",
+                "role",
+                "status",
+                "use_count",
+                "uses_remaining",
+            ]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>(),
+        );
+
+        // Status is derived per request, not frozen at read time.
+        let after_expiry = invite.expires_at + chrono::Duration::seconds(1);
+        assert_eq!(
+            invite_summary_json(&invite, after_expiry)["status"],
+            serde_json::json!("expired")
+        );
     }
 }

@@ -22,6 +22,17 @@ pub enum ClientMessage {
         sub_id: String,
         /// The filters that determine which events are delivered.
         filters: Vec<Filter>,
+        /// The filter objects exactly as they arrived, positionally aligned
+        /// with `filters`.
+        ///
+        /// `nostr::Filter`'s deserializer drops keys it does not know, so
+        /// extension fields — `before_id`, the composite pagination cursor —
+        /// exist only here. Handlers that support an extension read it from
+        /// this vector; a handler that does not must still be able to see that
+        /// the client sent one, because *silently* discarding a cursor is
+        /// indistinguishable from honouring it and is how a paging client
+        /// loops or loses events.
+        raw_filters: Vec<Value>,
     },
     /// A CLOSE message cancelling an active subscription.
     Close(String),
@@ -103,7 +114,11 @@ impl ClientMessage {
                             .map_err(|e| RelayError::InvalidMessage(format!("invalid filter: {e}")))
                     })
                     .collect::<Result<Vec<_>>>()?;
-                Ok(ClientMessage::Req { sub_id, filters })
+                Ok(ClientMessage::Req {
+                    sub_id,
+                    filters,
+                    raw_filters: filter_values.to_vec(),
+                })
             }
             "COUNT" => {
                 if arr.len() < 2 {
@@ -252,9 +267,14 @@ mod tests {
                 &serde_json::json!(["REQ", "sub1", serde_json::to_value(&filter).unwrap()])
                     .to_string(),
                 Box::new(|m| match m {
-                    ClientMessage::Req { sub_id, filters } => {
+                    ClientMessage::Req {
+                        sub_id,
+                        filters,
+                        raw_filters,
+                    } => {
                         assert_eq!(sub_id, "sub1");
                         assert_eq!(filters.len(), 1);
+                        assert_eq!(raw_filters.len(), 1);
                     }
                     _ => panic!("expected Req"),
                 }),
@@ -294,9 +314,61 @@ mod tests {
         ])
         .to_string();
         match ClientMessage::parse(&raw).unwrap() {
-            ClientMessage::Req { sub_id, filters } => {
+            ClientMessage::Req {
+                sub_id,
+                filters,
+                raw_filters,
+            } => {
                 assert_eq!(sub_id, "sub2");
                 assert_eq!(filters.len(), 2);
+                assert_eq!(raw_filters.len(), 2);
+            }
+            _ => panic!("expected Req"),
+        }
+    }
+
+    /// Extension fields survive REQ parsing on `raw_filters`, positionally
+    /// aligned with `filters`.
+    ///
+    /// `nostr::Filter` discards unknown keys, so without this vector the
+    /// composite pagination cursor is gone by the time any handler sees the
+    /// request — and gone *silently*, which is worse than refused: the client
+    /// cannot tell an ignored cursor from an applied one. The second filter is
+    /// cursor-less on purpose, so alignment is under test and not just length.
+    #[test]
+    fn parse_req_preserves_filter_extension_fields() {
+        let cursor_id = "a".repeat(64);
+        let raw = serde_json::json!([
+            "REQ",
+            "sub-ext",
+            { "kinds": [9], "until": 1_750_000_000u64, "before_id": cursor_id },
+            { "kinds": [9] },
+        ])
+        .to_string();
+
+        match ClientMessage::parse(&raw).unwrap() {
+            ClientMessage::Req {
+                filters,
+                raw_filters,
+                ..
+            } => {
+                assert_eq!(filters.len(), 2);
+                assert_eq!(raw_filters.len(), filters.len());
+                assert_eq!(
+                    raw_filters[0].get("before_id").and_then(|v| v.as_str()),
+                    Some(cursor_id.as_str()),
+                    "the cursor must survive parsing — nostr::Filter drops it"
+                );
+                assert!(
+                    raw_filters[1].get("before_id").is_none(),
+                    "a cursor must not leak onto a filter that did not carry one"
+                );
+                // The typed filter really has lost it — this is what makes the
+                // raw copy load-bearing rather than redundant.
+                assert!(serde_json::to_value(&filters[0])
+                    .expect("serialize filter")
+                    .get("before_id")
+                    .is_none());
             }
             _ => panic!("expected Req"),
         }

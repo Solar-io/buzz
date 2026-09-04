@@ -4011,6 +4011,20 @@ impl Db {
         relay_invite::mint_relay_invite(&self.pool, community, created_by, ttl_secs, max_uses).await
     }
 
+    /// List a community's invites, newest first, one page at a time.
+    ///
+    /// Returns the page and whether more rows follow it. Summaries never carry
+    /// the invite code — only its hash is stored.
+    #[datastore_span(name = "list_relay_invites", system = "postgresql")]
+    pub async fn list_relay_invites(
+        &self,
+        community: CommunityId,
+        limit: i64,
+        cursor: Option<relay_invite::InviteCursor>,
+    ) -> Result<(Vec<relay_invite::InviteSummary>, bool)> {
+        relay_invite::list_relay_invites(&self.pool, community, limit, cursor).await
+    }
+
     /// Delete one bounded batch of invites expired before `cutoff`.
     #[datastore_span(name = "reap_expired_relay_invites", system = "postgresql")]
     pub async fn reap_expired_relay_invites(

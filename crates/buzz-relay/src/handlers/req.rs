@@ -90,12 +90,23 @@ pub(crate) const MAX_EXPLICIT_CHANNEL_VALUES: usize = 128;
 const _: () = assert!(FILTER_QUERY_CONCURRENCY >= 2 && FILTER_QUERY_CONCURRENCY <= 8);
 
 /// Handle a REQ message: register the subscription, deliver historical events, then send EOSE.
+///
+/// `raw_filters` are the filter objects exactly as the client sent them,
+/// positionally aligned with `filters`. They carry the extension fields
+/// `nostr::Filter` discards during deserialization — currently the composite
+/// `before_id` pagination cursor.
 pub async fn handle_req(
     sub_id: String,
     filters: Vec<Filter>,
+    raw_filters: Vec<serde_json::Value>,
     conn: Arc<ConnectionState>,
     state: Arc<AppState>,
 ) {
+    debug_assert_eq!(
+        filters.len(),
+        raw_filters.len(),
+        "raw_filters must be positionally aligned with filters"
+    );
     let (conn_id, pubkey_bytes, token_channel_ids) = {
         let auth = conn.auth_state.read().await;
         match &*auth {
@@ -133,6 +144,34 @@ pub async fn handle_req(
                 return;
             }
         }
+    };
+
+    // Composite `(until, before_id)` pagination cursor. `nostr::Filter` drops
+    // unknown fields, so the cursor survives only on `raw_filters` and has to
+    // be read before any query is built. Validated here — ahead of channel
+    // resolution, subscription registration and every DB read — because a bad
+    // cursor is a deterministic client mistake and a subscription that will be
+    // refused should never be registered.
+    //
+    // Rejecting is the point. A relay that quietly ignores `before_id` looks
+    // to the client exactly like one that honoured it, so a mode-1 pager
+    // either re-reads its boundary second forever or steps past it and drops
+    // every event tied on `created_at`.
+    let filter_cursors: Vec<Option<Vec<u8>>> = {
+        let mut cursors = Vec::with_capacity(filters.len());
+        for (filter, raw) in filters.iter().zip(raw_filters.iter()) {
+            match crate::cursor::resolve_before_id(raw, filter.until.is_some()) {
+                Ok(cursor) => cursors.push(cursor),
+                Err(e) => {
+                    conn.send(RelayMessage::closed(
+                        &sub_id,
+                        &format!("invalid: {}", e.message()),
+                    ));
+                    return;
+                }
+            }
+        }
+        cursors
     };
 
     let channel_id = extract_channel_id_from_filters(&filters);
@@ -396,6 +435,9 @@ pub async fn handle_req(
             if filter_can_match_shared_gated_kinds(filter) {
                 params.shared_gated_reader = Some(pubkey_bytes.clone());
             }
+            // Composite keyset cursor, validated up front. `until` is already
+            // on `params`, which the DB layer requires alongside `before_id`.
+            params.before_id = filter_cursors.get(idx).cloned().flatten();
             (idx, per_filter_channel, params)
         })
         .collect();
@@ -889,9 +931,9 @@ pub(crate) fn count_fallback_exceeded(candidate_count: usize) -> bool {
 ///
 /// Pushed constraints: kinds, authors (single or multi), ids, since, until,
 /// authorized channel scope (#h single or multi, injected by caller), #p (single),
-/// #d (single, NIP-33-only kinds), #e (any).
+/// #d (single, NIP-33-only kinds), #e (any), #a (any).
 ///
-/// Anything else (multi-#p, #t, #a, search, #d on non-NIP-33) requires
+/// Anything else (multi-#p, #t, search, #d on non-NIP-33) requires
 /// post-filtering and cannot use the fast COUNT path.
 pub fn filter_fully_pushable(filter: &Filter) -> bool {
     // Check if filter exclusively targets NIP-33 kinds (needed for #d pushability).
@@ -925,8 +967,11 @@ pub fn filter_fully_pushable(filter: &Filter) -> bool {
             "e" => {
                 // #e is fully pushed (any count) via JSONB containment.
             }
+            "a" => {
+                // #a is fully pushed (any count) via JSONB containment.
+            }
             _ => {
-                // Any other generic tag (#t, #a, etc.) is not pushed.
+                // Any other generic tag (#t, etc.) is not pushed.
                 if !tag_values.is_empty() {
                     return false;
                 }
@@ -1042,6 +1087,24 @@ fn filter_to_query_params(
         }
     });
 
+    // Push #a tag filter into SQL via JSONB containment, exactly as #e above.
+    //
+    // `#a` names NIP-33 coordinates (`<kind>:<pubkey>:<d>`) and is the query
+    // shape for every addressable-event reference: NIP-09 coordinate deletes,
+    // NIP-51 lists, NIP-MP project membership. Left to the Rust post-filter it
+    // runs AFTER the SQL `LIMIT`, so a window of newer events carrying no `a`
+    // tag consumes the whole page and the request answers empty even though
+    // matching events exist. An empty page is also the client-side exhaustion
+    // signal, so the loss is silent.
+    let a_tag_key = nostr::SingleLetterTag::lowercase(nostr::Alphabet::A);
+    let a_tags = filter.generic_tags.get(&a_tag_key).and_then(|values| {
+        if values.is_empty() {
+            None
+        } else {
+            Some(values.iter().map(|v| v.to_string()).collect::<Vec<_>>())
+        }
+    });
+
     // Push single-value #p tag into SQL via event_mentions join.
     // This is critical for gift-wrap (kind:1059) and membership notification
     // queries where >500 events for other recipients would otherwise push
@@ -1100,6 +1163,7 @@ fn filter_to_query_params(
         authors,
         ids,
         e_tags,
+        a_tags,
         ..EventQuery::for_community(community)
     }
 }
@@ -2184,6 +2248,72 @@ mod tests {
             buzz_core::tenant::CommunityId::from_uuid(uuid::Uuid::nil()),
         );
         assert_eq!(q5.d_tag, None);
+    }
+
+    #[test]
+    fn a_tag_is_pushed_into_sql_like_e_tag() {
+        let community = buzz_core::tenant::CommunityId::from_uuid(uuid::Uuid::nil());
+        let a_tag = SingleLetterTag::lowercase(Alphabet::A);
+        let coord = format!("30617:{}:buzz", "ab".repeat(32));
+        let other = format!("30617:{}:infra", "cd".repeat(32));
+
+        // Single value.
+        let single = Filter::new()
+            .kind(nostr::Kind::Custom(30621))
+            .custom_tags(a_tag, [coord.as_str()]);
+        let q = filter_to_query_params(&single, None, community);
+        assert_eq!(
+            q.a_tags,
+            Some(vec![coord.clone()]),
+            "#a must reach the DB layer, or it is matched after the SQL LIMIT"
+        );
+
+        // Multiple values keep NIP-01 OR semantics — all of them are pushed.
+        let multi = Filter::new()
+            .kind(nostr::Kind::Custom(30621))
+            .custom_tags(a_tag, [coord.as_str(), other.as_str()]);
+        let q_multi = filter_to_query_params(&multi, None, community);
+        let mut pushed = q_multi.a_tags.expect("multi-value #a must be pushed");
+        pushed.sort();
+        let mut expected = vec![coord, other];
+        expected.sort();
+        assert_eq!(pushed, expected);
+
+        // No #a at all leaves the constraint unset rather than match-nothing.
+        let none = filter_to_query_params(
+            &Filter::new().kind(nostr::Kind::Custom(30621)),
+            None,
+            community,
+        );
+        assert_eq!(none.a_tags, None);
+    }
+
+    #[test]
+    fn a_tag_filters_are_exact_for_count() {
+        let a_tag = SingleLetterTag::lowercase(Alphabet::A);
+        let coord = format!("30617:{}:buzz", "ab".repeat(32));
+
+        assert!(
+            filter_fully_pushable(
+                &Filter::new()
+                    .kind(nostr::Kind::Custom(30621))
+                    .custom_tags(a_tag, [coord.as_str()])
+            ),
+            "#a is applied in SQL, so COUNT over it is exact"
+        );
+
+        // A tag that is still post-filtered must stay off the fast path — this
+        // is the discriminating half: if the arm were widened to every generic
+        // tag, COUNT would over-report for #t.
+        let t_tag = SingleLetterTag::lowercase(Alphabet::T);
+        assert!(
+            !filter_fully_pushable(
+                &Filter::new()
+                    .kind(nostr::Kind::Custom(30621))
+                    .custom_tags(t_tag, ["buzz"])
+            ),
+            "#t is not pushed, so COUNT over it must take the post-filter path"
+        );
     }
 
     #[test]

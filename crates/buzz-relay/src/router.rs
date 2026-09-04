@@ -109,8 +109,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/operator/communities/transfer",
             post(api::operator::transfer_community),
         )
-        // Relay invites: mint (owner/admin) + claim (membership-gate exempt)
-        .route("/api/invites", post(api::invites::mint_invite))
+        // Relay invites: mint + list (owner/admin) + claim (membership-gate exempt)
+        .route(
+            "/api/invites",
+            post(api::invites::mint_invite).get(api::invites::list_invites),
+        )
         .route("/api/join-policy", get(api::invites::join_policy))
         // Policy documents as standalone pages — desktop opens these in the
         // system browser instead of rendering the Markdown in-app.

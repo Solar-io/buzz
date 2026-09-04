@@ -657,7 +657,11 @@ async fn handle_text_message(text: String, conn: Arc<ConnectionState>, state: Ar
                 .instrument(span),
             );
         }
-        ClientMessage::Req { sub_id, filters } => {
+        ClientMessage::Req {
+            sub_id,
+            filters,
+            raw_filters,
+        } => {
             let conn = Arc::clone(&conn);
             let state = Arc::clone(&state);
             let span = tracing::info_span!("ws.req", conn_id = %conn.conn_id, sub_id = %sub_id);
@@ -685,7 +689,7 @@ async fn handle_text_message(text: String, conn: Arc<ConnectionState>, state: Ar
                             return;
                         }
                     };
-                    handlers::req::handle_req(sub_id, filters, conn, state).await;
+                    handlers::req::handle_req(sub_id, filters, raw_filters, conn, state).await;
                     drop(permit);
                 }
                 .instrument(span),

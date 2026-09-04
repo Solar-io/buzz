@@ -70,6 +70,15 @@ pub struct EventQuery {
     /// Restrict results to events with an `e` tag referencing any of these event IDs (hex).
     /// Uses JSONB containment (`tags @> ...`) against the `tags` column.
     pub e_tags: Option<Vec<String>>,
+    /// Restrict results to events with an `a` tag referencing any of these
+    /// NIP-33 coordinates (`<kind>:<pubkey-hex>:<d>`).
+    ///
+    /// Same JSONB containment mechanism as [`EventQuery::e_tags`], and pushed
+    /// for the same reason: `#a` is how addressable-event references are
+    /// queried (NIP-09 coordinate deletes, NIP-MP project membership), so a
+    /// post-`LIMIT` match lets a page of newer unrelated events starve every
+    /// matching row out of the result.
+    pub a_tags: Option<Vec<String>>,
     /// Restrict results to events in any of these channels. By default,
     /// channel-less global events are retained so this can enforce a viewer's
     /// accessible-channel scope without hiding global events. Set
@@ -128,6 +137,7 @@ impl EventQuery {
             authors: None,
             ids: None,
             e_tags: None,
+            a_tags: None,
             channel_ids: None,
             channel_ids_include_global: true,
             max_limit: None,
@@ -418,6 +428,38 @@ pub async fn query_events(pool: &PgPool, q: &EventQuery) -> Result<Vec<StoredEve
     query_events_on(&mut conn, q).await
 }
 
+/// Append a single-letter tag predicate to `qb` using JSONB containment:
+/// `AND (tags @> '[["<letter>","<v1>"]]' OR tags @> '[["<letter>","<v2>"]]' …)`.
+///
+/// NIP-01 tag filters are a set union over their values, hence the `OR`. An
+/// empty `values` slice appends nothing — callers short-circuit "match
+/// nothing" before reaching here, so an empty list must not narrow the query.
+///
+/// Served by `idx_events_tags_gin` (GIN, jsonb_path_ops — migrations/0004).
+/// The predicate is shared by [`query_events_on`] and [`count_events_on`] so
+/// the page and its count cannot drift apart.
+fn push_tag_containment(
+    qb: &mut QueryBuilder<Postgres>,
+    col_prefix: &str,
+    letter: &str,
+    values: &[String],
+) {
+    if values.is_empty() {
+        return;
+    }
+    qb.push(" AND (");
+    for (i, value) in values.iter().enumerate() {
+        if i > 0 {
+            qb.push(" OR ");
+        }
+        // Build the JSONB literal: [["<letter>","<value>"]]
+        let containment = serde_json::json!([[letter, value]]);
+        qb.push(format!("{col_prefix}tags @> "));
+        qb.push_bind(containment);
+    }
+    qb.push(")");
+}
+
 /// [`query_events`] on a specific session — the replica-routing path runs
 /// follow-up (aux) queries on the exact reader connection whose heartbeat
 /// observation proved coverage for the page they annotate.
@@ -450,6 +492,9 @@ pub(crate) async fn query_events_on(
         return Ok(vec![]);
     }
     if q.e_tags.as_deref().is_some_and(|e| e.is_empty()) {
+        return Ok(vec![]);
+    }
+    if q.a_tags.as_deref().is_some_and(|a| a.is_empty()) {
         return Ok(vec![]);
     }
 
@@ -563,19 +608,12 @@ pub(crate) async fn query_events_on(
     // fans this out once per retained row, which made unindexed containment
     // the dominant scroll-back cost (~1.7s/page on staging).
     if let Some(ref e_tags) = q.e_tags {
-        if !e_tags.is_empty() {
-            qb.push(" AND (");
-            for (i, hex_id) in e_tags.iter().enumerate() {
-                if i > 0 {
-                    qb.push(" OR ");
-                }
-                // Build the JSONB literal: [["e","<hex>"]]
-                let containment = serde_json::json!([["e", hex_id]]);
-                qb.push(format!("{col_prefix}tags @> "));
-                qb.push_bind(containment);
-            }
-            qb.push(")");
-        }
+        push_tag_containment(&mut qb, col_prefix, "e", e_tags);
+    }
+
+    // a-tag pushdown, identical mechanism: tags @> '[["a","<coordinate>"]]'.
+    if let Some(ref a_tags) = q.a_tags {
+        push_tag_containment(&mut qb, col_prefix, "a", a_tags);
     }
 
     if let Some(s) = q.since {
@@ -733,6 +771,9 @@ pub(crate) async fn count_events_on(conn: &mut sqlx::PgConnection, q: &EventQuer
     if q.e_tags.as_deref().is_some_and(|e| e.is_empty()) {
         return Ok(0);
     }
+    if q.a_tags.as_deref().is_some_and(|a| a.is_empty()) {
+        return Ok(0);
+    }
 
     let mut qb: QueryBuilder<sqlx::Postgres> = if let Some(ref p_hex) = q.p_tag_hex {
         let mut b = QueryBuilder::new(
@@ -823,18 +864,11 @@ pub(crate) async fn count_events_on(conn: &mut sqlx::PgConnection, q: &EventQuer
     }
 
     if let Some(ref e_tags) = q.e_tags {
-        if !e_tags.is_empty() {
-            qb.push(" AND (");
-            for (i, hex_id) in e_tags.iter().enumerate() {
-                if i > 0 {
-                    qb.push(" OR ");
-                }
-                let containment = serde_json::json!([["e", hex_id]]);
-                qb.push(format!("{col_prefix}tags @> "));
-                qb.push_bind(containment);
-            }
-            qb.push(")");
-        }
+        push_tag_containment(&mut qb, col_prefix, "e", e_tags);
+    }
+
+    if let Some(ref a_tags) = q.a_tags {
+        push_tag_containment(&mut qb, col_prefix, "a", a_tags);
     }
 
     if let Some(s) = q.since {
@@ -2116,6 +2150,90 @@ mod tests {
             events[1].event.id, older_accessible.id,
             "older accessible row must not be hidden behind newer inaccessible rows"
         );
+    }
+
+    /// Kind:9 event carrying an optional `a` tag, at an explicit `created_at`.
+    fn make_a_tagged_event(keys: &Keys, coord: Option<&str>, created_at: i64) -> nostr::Event {
+        let mut builder = EventBuilder::new(Kind::Custom(9), "a-tag fixture");
+        if let Some(coord) = coord {
+            builder = builder.tags(vec![Tag::parse(["a", coord]).expect("a tag")]);
+        }
+        builder
+            .custom_created_at(nostr::Timestamp::from_secs(created_at as u64))
+            .sign_with_keys(keys)
+            .expect("sign a-tag fixture")
+    }
+
+    /// `EventQuery::a_tags` must narrow the SQL, not merely ride along on the
+    /// struct. The one matching event is the OLDEST of four, so a query that
+    /// applies `LIMIT 1` without the `a` predicate returns a decoy instead —
+    /// which is the shape of the production bug: `#a` was matched in Rust only
+    /// after the page had already been cut.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_tag_filter_narrows_the_query_before_the_limit() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let author = Keys::generate();
+        let coord = format!("30617:{}:buzz", author.public_key().to_hex());
+
+        // Oldest event is the only one carrying the coordinate.
+        let matching = make_a_tagged_event(&author, Some(&coord), 1_750_000_000);
+        insert_event(&pool, community, &matching, None)
+            .await
+            .expect("insert matching");
+        // Newer decoys, each of which alone fills a one-row page.
+        for offset in 1..=3 {
+            let decoy = make_a_tagged_event(&author, None, 1_750_000_000 + offset);
+            insert_event(&pool, community, &decoy, None)
+                .await
+                .expect("insert decoy");
+        }
+
+        let query = EventQuery {
+            kinds: Some(vec![9]),
+            pubkey: Some(author.public_key().to_bytes().to_vec()),
+            a_tags: Some(vec![coord.clone()]),
+            limit: Some(1),
+            ..EventQuery::for_community(community)
+        };
+        let found = query_events(&pool, &query).await.expect("query by #a");
+
+        assert_eq!(
+            found.len(),
+            1,
+            "a one-row page must hold the matching event, not a newer decoy"
+        );
+        assert_eq!(found[0].event.id, matching.id);
+
+        // An unrelated coordinate must match nothing — proves the predicate is
+        // discriminating rather than inert.
+        let miss = EventQuery {
+            a_tags: Some(vec![format!(
+                "30617:{}:other",
+                author.public_key().to_hex()
+            )]),
+            ..query.clone()
+        };
+        assert!(
+            query_events(&pool, &miss)
+                .await
+                .expect("query by absent #a")
+                .is_empty(),
+            "a coordinate no event carries must return nothing"
+        );
+
+        // COUNT shares the predicate, so it must agree with the page.
+        let counted = count_events(
+            &pool,
+            &EventQuery {
+                limit: None,
+                ..query.clone()
+            },
+        )
+        .await
+        .expect("count by #a");
+        assert_eq!(counted, 1, "COUNT must apply #a exactly as the page does");
     }
 
     fn make_text_event(content: &str) -> nostr::Event {

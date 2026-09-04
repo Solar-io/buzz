@@ -16,6 +16,7 @@ use serde_json::Value;
 use buzz_auth::{LimitType, Nip98ReplayGuard, DEFAULT_REPLAY_TTL_SECS};
 use buzz_core::TenantContext;
 
+use crate::cursor::{extract_before_id, resolve_before_id, BeforeId};
 use crate::handlers::ingest::{IngestAuth, IngestError};
 use crate::state::AppState;
 
@@ -250,29 +251,6 @@ fn extract_channel_from_filter(filter: &nostr::Filter) -> Option<uuid::Uuid> {
 
 const BRIDGE_FEED_MAX_LIMIT: i64 = 100;
 const BRIDGE_THREAD_MAX_LIMIT: u32 = 500;
-
-/// The `before_id` extension field, with "present but malformed" kept distinct
-/// from "absent": NIP-CW's cursor grammar says a malformed value MUST reject
-/// the request, never silently demote it to a half cursor or a head request.
-enum BeforeId {
-    Absent,
-    Valid(Vec<u8>),
-    Malformed,
-}
-
-fn extract_before_id(raw: &Value) -> BeforeId {
-    let Some(value) = raw.get("before_id") else {
-        return BeforeId::Absent;
-    };
-    match value
-        .as_str()
-        .filter(|hex_str| hex_str.len() == 64)
-        .and_then(|hex_str| hex::decode(hex_str).ok())
-    {
-        Some(id) => BeforeId::Valid(id),
-        None => BeforeId::Malformed,
-    }
-}
 
 /// True when the raw filter opts into a bridge extension flag (`top_level`,
 /// `include_summaries`, `include_aux`). Absent or non-boolean = false.
@@ -1371,23 +1349,11 @@ async fn query_events_authed(
             query.shared_gated_reader = Some(pubkey_bytes.clone());
         }
 
-        match extract_before_id(raw) {
-            BeforeId::Malformed => {
-                return Err(api_error(
-                    StatusCode::BAD_REQUEST,
-                    "before_id must be a 64-char hex event id",
-                ));
-            }
-            BeforeId::Valid(bid) => {
-                if query.until.is_none() {
-                    return Err(api_error(
-                        StatusCode::BAD_REQUEST,
-                        "before_id requires until to be set",
-                    ));
-                }
-                query.before_id = Some(bid);
-            }
-            BeforeId::Absent => {}
+        // Same cursor grammar the websocket REQ path applies — one
+        // implementation, so a cursor that pages here pages there too.
+        match resolve_before_id(raw, query.until.is_some()) {
+            Ok(before_id) => query.before_id = before_id,
+            Err(e) => return Err(api_error(StatusCode::BAD_REQUEST, e.message())),
         }
 
         // Honor `page` on non-search general queries so offset paging works for
@@ -3246,46 +3212,6 @@ mod tests {
             search_hit_accepted(&filter, &stored, &[scoped_channel], &reader),
             "channel-scoped hit must be accepted when caller has access to that channel"
         );
-    }
-
-    #[test]
-    fn extract_before_id_valid_hex() {
-        let hex = "a".repeat(64);
-        let raw = serde_json::json!({ "before_id": hex });
-        match extract_before_id(&raw) {
-            BeforeId::Valid(id) => assert_eq!(id.len(), 32),
-            _ => panic!("64-char hex must parse as Valid"),
-        }
-    }
-
-    #[test]
-    fn extract_before_id_short_hex() {
-        let raw = serde_json::json!({ "before_id": "a".repeat(63) });
-        assert!(matches!(extract_before_id(&raw), BeforeId::Malformed));
-    }
-
-    #[test]
-    fn extract_before_id_long_hex() {
-        let raw = serde_json::json!({ "before_id": "a".repeat(65) });
-        assert!(matches!(extract_before_id(&raw), BeforeId::Malformed));
-    }
-
-    #[test]
-    fn extract_before_id_invalid_hex_chars() {
-        let raw = serde_json::json!({ "before_id": "z".repeat(64) });
-        assert!(matches!(extract_before_id(&raw), BeforeId::Malformed));
-    }
-
-    #[test]
-    fn extract_before_id_absent() {
-        let raw = serde_json::json!({});
-        assert!(matches!(extract_before_id(&raw), BeforeId::Absent));
-    }
-
-    #[test]
-    fn extract_before_id_non_string() {
-        let raw = serde_json::json!({ "before_id": 12345 });
-        assert!(matches!(extract_before_id(&raw), BeforeId::Malformed));
     }
 
     /// Extension flags opt in only on a literal JSON `true` — absent,
