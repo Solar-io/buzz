@@ -67,6 +67,22 @@ export function AgentsAdminPage() {
     () => roster.map((row) => row.pubkey),
     [roster],
   );
+  /**
+   * Agents the viewer owns. `useAgentRegistry` subscribes with
+   * `authors: [ownPubkey]`, so every kind-30177 in `registry` was signed by
+   * the viewer — membership here means "the viewer published this agent's
+   * managed-agent record", the web's counterpart to the desktop's local
+   * `managed_agents` store.
+   *
+   * Used only to decide whether to render the read-only memory section. It is
+   * a UX gate, not a security boundary: engrams are NIP-44 encrypted to the
+   * owner and the relay refuses an engram REQ whose `#p` is not the
+   * authenticated reader, so a non-owner learns nothing by defeating it.
+   */
+  const ownedAgentPubkeys = useMemo(
+    () => new Set(registry.map((entry) => entry.pubkey)),
+    [registry],
+  );
   const profiles = useProfiles(rosterPubkeys);
   const registryModels = useMemo(
     () =>
@@ -174,6 +190,7 @@ export function AgentsAdminPage() {
                   session={session}
                   catalogs={catalogs}
                   registryModels={registryModels}
+                  viewerIsOwner={ownedAgentPubkeys.has(selected.pubkey)}
                   onDeleted={() => setMode({ kind: "roster" })}
                 />
               </PaneShell>

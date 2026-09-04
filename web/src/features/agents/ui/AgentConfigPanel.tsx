@@ -31,6 +31,10 @@ import {
   TimeoutFields,
 } from "./AgentFormSections";
 import { AgentWorkingDot } from "./AgentRosterSidebar";
+import {
+  MemoryRefreshButton,
+  MemorySection,
+} from "@/features/agent-memory/ui/MemorySection";
 
 /**
  * The right pane for a selected agent — desktop-parity config surface. Edit
@@ -58,6 +62,7 @@ export function AgentConfigPanel({
   session,
   catalogs,
   registryModels,
+  viewerIsOwner,
   onDeleted,
 }: {
   row: RosterRow;
@@ -66,6 +71,12 @@ export function AgentConfigPanel({
   session: RelaySession;
   catalogs: DesktopCatalog[];
   registryModels: string[];
+  /**
+   * Does the viewer own this agent? Drives the read-only NIP-AE memory
+   * section only. See {@link MemorySectionBlock} — this is a UX gate, not a
+   * security boundary.
+   */
+  viewerIsOwner: boolean;
   onDeleted: () => void;
 }) {
   const prefill = useMemo(
@@ -232,6 +243,10 @@ export function AgentConfigPanel({
         />
       )}
       <LiveControlSection session={session} agentPubkey={row.pubkey} />
+      <MemorySectionBlock
+        agentPubkey={row.pubkey}
+        viewerIsOwner={viewerIsOwner}
+      />
       <ActionsRow
         busy={busy}
         pendingCount={pendingForAgent.length}
@@ -313,6 +328,47 @@ function IdentitySection({
  * Live owner→agent control for the SELECTED agent (no dropdown — the roster
  * is the picker). Same frames the desktop's model picker sends.
  */
+/**
+ * Read-only NIP-AE agent memory, mounted in the selected agent's detail pane.
+ *
+ * The desktop mounts `MemorySection` in its agent profile panel; the web
+ * client has no profile panel, and this pane is its closest analogue — the
+ * per-agent surface you reach by selecting an agent on /repos/agents.
+ *
+ * `viewerIsOwner` is a UX GATE, NOT A SECURITY BOUNDARY. The real boundary is
+ * that every engram is NIP-44 encrypted to the owner's pubkey (so only the
+ * owner's key opens it) and that the relay refuses an engram REQ whose `#p`
+ * is not the authenticated reader. This flag only decides whether we bother
+ * asking — exactly as the desktop's `isCurrentUserOwner || isOwner` does.
+ */
+function MemorySectionBlock({
+  agentPubkey,
+  viewerIsOwner,
+}: {
+  agentPubkey: string;
+  viewerIsOwner: boolean;
+}) {
+  if (!viewerIsOwner) {
+    return null;
+  }
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <SectionHeading>Memory</SectionHeading>
+        <MemoryRefreshButton
+          agentPubkey={agentPubkey}
+          viewerIsOwner={viewerIsOwner}
+        />
+      </div>
+      <MemorySection agentPubkey={agentPubkey} viewerIsOwner={viewerIsOwner} />
+      <p className="text-xs text-muted-foreground">
+        What this agent has remembered (NIP-AE). Read-only here — memories are
+        written by the agent itself.
+      </p>
+    </div>
+  );
+}
+
 function LiveControlSection({
   session,
   agentPubkey,
