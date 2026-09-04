@@ -23,3 +23,27 @@ export function renameChannelTags(channelId: string, name: string): string[][] {
 export function deleteChannelTags(channelId: string): string[][] {
   return [["h", channelId]];
 }
+
+/** NIP-29 join request. The relay accepts it only for OPEN channels. */
+export const JOIN_CHANNEL_KIND = 9021;
+/** NIP-29 leave request. */
+export const LEAVE_CHANNEL_KIND = 9022;
+
+/**
+ * Tags for a kind-9021 join request.
+ *
+ * The `h` tag is not optional decoration here: the relay rejects a join
+ * without one outright ("invalid: join request must include an h tag" —
+ * `handlers/ingest.rs`), and it is also what scopes the resulting membership
+ * change. A private channel refuses the join regardless; only `public`
+ * channels can be joined this way, which is why the header offers the button
+ * on open channels only.
+ */
+export function joinChannelTags(channelId: string): string[][] {
+  return [["h", channelId]];
+}
+
+/** Tags for a kind-9022 leave request. */
+export function leaveChannelTags(channelId: string): string[][] {
+  return [["h", channelId]];
+}

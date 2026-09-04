@@ -7,6 +7,7 @@ import {
   type MessageBuffer,
   type TimelineMessage,
 } from "./messageBuffer.ts";
+import { THREAD_SUMMARY_KIND } from "./threadSummaryEvent.ts";
 import type { ReactionIndex } from "./reactions.ts";
 
 /**
@@ -199,6 +200,26 @@ export function dropCachedReaction(
   return { ...entry, reactions: next };
 }
 
+/**
+ * Live kinds for a channel subscription.
+ *
+ * 39005 is the relay's thread-summary overlay. It is never stored, so it
+ * contributes nothing to a historical replay — it is here purely so the live
+ * push arrives on the SAME REQ as the messages. Giving it a filter of its
+ * own would be worse than useless: a filter without `#h` makes the relay
+ * register the whole subscription as global and stop delivering
+ * channel-scoped events to any of its filters
+ * (`extract_channel_ids_from_filters` in `handlers/req.rs`).
+ */
+const LIVE_KINDS = [
+  ...TIMELINE_KINDS,
+  7,
+  20002,
+  EDIT_KIND,
+  DELETE_KIND,
+  THREAD_SUMMARY_KIND,
+] as const;
+
 /** Initial sync filters: full first page on a cold start, delta afterwards. */
 export function initialSyncFilters(
   channelId: string,
@@ -207,7 +228,7 @@ export function initialSyncFilters(
   if (cursor === null || cursor <= 0) {
     return [
       {
-        kinds: [...TIMELINE_KINDS, 7, 20002, EDIT_KIND, DELETE_KIND],
+        kinds: [...LIVE_KINDS],
         "#h": [channelId],
         limit: INITIAL_PAGE,
       },
@@ -215,7 +236,7 @@ export function initialSyncFilters(
   }
   return [
     {
-      kinds: [...TIMELINE_KINDS, 7, 20002, EDIT_KIND, DELETE_KIND],
+      kinds: [...LIVE_KINDS],
       "#h": [channelId],
       since: cursor,
       limit: DELTA_CAP,

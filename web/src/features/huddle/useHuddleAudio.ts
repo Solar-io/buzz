@@ -27,6 +27,23 @@ export interface HuddlePeer {
 
 export type HuddleStatus = "idle" | "connecting" | "connected" | "error";
 
+/**
+ * Open mic or push-to-talk — the desktop's `VoiceInputMode`.
+ *
+ * The desktop binds PTT to a global hotkey through Tauri, which a web page
+ * cannot do: a browser has no access to keystrokes outside its own document,
+ * so a background PTT key is not implementable here at any effort. What IS
+ * implementable is a hold-to-talk control inside the page, and Space while
+ * the huddle bar itself has focus. Both are wired; the global hotkey is not,
+ * and cannot be.
+ */
+export type VoiceInputMode = "open" | "push_to_talk";
+
+export interface AudioInputDevice {
+  deviceId: string;
+  label: string;
+}
+
 /** µs per 48 kHz sample (WebCodecs timestamps are µs). */
 const US_PER_SAMPLE = 1_000_000 / 48_000;
 /** Playback lead-in: schedule audio this far ahead of now (jitter buffer). */
@@ -59,6 +76,15 @@ export function useHuddleAudio(
   const [peers, setPeers] = useState<HuddlePeer[]>([]);
   const [speaking, setSpeaking] = useState<Map<string, number>>(new Map());
   const [muted, setMuted] = useState(false);
+  /** The viewer's own mic level in dBov, for the meter. */
+  const [micLevel, setMicLevel] = useState(-127);
+  const [devices, setDevices] = useState<AudioInputDevice[]>([]);
+  const [deviceId, setDeviceId] = useState("");
+  const [voiceInputMode, setVoiceInputMode] = useState<VoiceInputMode>("open");
+  const [pttActive, setPttActive] = useState(false);
+  const voiceInputModeRef = useRef<VoiceInputMode>("open");
+  const pttActiveRef = useRef(false);
+  const trackRef = useRef<MediaStreamTrack | null>(null);
   const [supportsVoice] = useState(
     () =>
       typeof window !== "undefined" &&
@@ -81,6 +107,21 @@ export function useHuddleAudio(
   const rosterRef = useRef(new Map<number, string>());
   const recentLevelsRef = useRef(new Map<string, number>());
   const speakingTickRef = useRef(0);
+  const micLevelTickRef = useRef(0);
+
+  /**
+   * Is the mic live right now?
+   *
+   * Muted always wins. In push-to-talk the key/button must be held; in open
+   * mic it is always true. Read through refs because the encoder and worklet
+   * callbacks are created once and would otherwise close over stale state.
+   */
+  const transmitting = useCallback(
+    () =>
+      !mutedRef.current &&
+      (voiceInputModeRef.current === "open" || pttActiveRef.current),
+    [],
+  );
 
   const teardown = useCallback(() => {
     for (const { decoder } of playbackRef.current.values()) {
@@ -116,6 +157,41 @@ export function useHuddleAudio(
       teardown();
     };
   }, [teardown]);
+
+  /**
+   * Input devices. Labels are empty until the page holds a microphone grant
+   * (a privacy rule, not a bug), so this is refreshed again after join —
+   * before that, the list exists but reads as "Microphone 1", "Microphone 2".
+   */
+  const refreshDevices = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      return;
+    }
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices();
+      setDevices(
+        all
+          .filter((device) => device.kind === "audioinput")
+          .map((device, index) => ({
+            deviceId: device.deviceId,
+            label: device.label || `Microphone ${index + 1}`,
+          })),
+      );
+    } catch {
+      // Enumeration is a convenience; the default device still works.
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshDevices();
+    const media = navigator.mediaDevices;
+    if (!media?.addEventListener) {
+      return;
+    }
+    const onChange = () => void refreshDevices();
+    media.addEventListener("devicechange", onChange);
+    return () => media.removeEventListener("devicechange", onChange);
+  }, [refreshDevices]);
 
   /** Decode + jitter-schedule one downlink frame's Opus payload. */
   const playFrame = useCallback(
@@ -227,9 +303,17 @@ export function useHuddleAudio(
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
+          // A chosen device is a REQUIREMENT, not a hint: `exact` makes the
+          // browser fail loudly if the mic was unplugged, instead of quietly
+          // opening a different one and leaving the picker lying about it.
+          ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
         },
       });
       streamRef.current = stream;
+      trackRef.current = stream.getAudioTracks()[0] ?? null;
+      // Device labels are blank until a getUserMedia grant exists, so this is
+      // the first moment enumeration is worth anything.
+      void refreshDevices();
       const ctx = new AudioContext({ sampleRate: 48_000 });
       if (ctx.state === "suspended") {
         await ctx.resume();
@@ -257,21 +341,11 @@ export function useHuddleAudio(
       const encoder = new AudioEncoder({
         output: (chunk) => {
           const ws = wsRef.current;
-          if (!ws || ws.readyState !== WebSocket.OPEN || mutedRef.current) {
+          if (!ws || ws.readyState !== WebSocket.OPEN || !transmitting()) {
             return;
           }
           const opus = new Uint8Array(new ArrayBuffer(chunk.byteLength));
           chunk.copyTo(opus);
-          const bins = vuBinsRef.current;
-          const analyserNode = analyserRef.current;
-          if (bins && analyserNode) {
-            analyserNode.getFloatTimeDomainData(bins);
-            let sumSquares = 0;
-            for (const sample of bins) {
-              sumSquares += sample * sample;
-            }
-            levelRef.current = rmsToDbov(Math.sqrt(sumSquares / bins.length));
-          }
           ws.send(
             buildUplinkFrame(
               seqRef.current++,
@@ -294,7 +368,25 @@ export function useHuddleAudio(
 
       worklet.port.onmessage = (event: MessageEvent<Float32Array>) => {
         const current = encoderRef.current;
-        if (!current || mutedRef.current) {
+        if (!current) {
+          return;
+        }
+        // Level is measured from the raw capture, BEFORE the mute/PTT gate.
+        // A meter that goes flat when you are muted cannot answer the only
+        // question anyone asks it: "is my mic picking me up?"
+        let sumSquares = 0;
+        for (const sample of event.data) {
+          sumSquares += sample * sample;
+        }
+        levelRef.current = rmsToDbov(
+          Math.sqrt(sumSquares / Math.max(1, event.data.length)),
+        );
+        const now = Date.now();
+        if (now - micLevelTickRef.current > SPEAKING_TICK_MS) {
+          micLevelTickRef.current = now;
+          setMicLevel(levelRef.current);
+        }
+        if (!transmitting()) {
           return;
         }
         const frames = event.data.length;
@@ -425,14 +517,42 @@ export function useHuddleAudio(
     teardown,
     playFrame,
     applyRoster,
+    deviceId,
+    transmitting,
+    refreshDevices,
   ]);
 
   const toggleMute = useCallback(() => {
     setMuted((current) => {
       const next = !current;
       mutedRef.current = next;
+      // Disable the TRACK too, not just the uplink. Dropping encoded frames
+      // stops the relay hearing you, but the browser keeps the capture
+      // indicator lit — so the OS says "this page is listening" while the UI
+      // says "muted". `track.enabled = false` is what actually stops it.
+      if (trackRef.current) {
+        trackRef.current.enabled = !next;
+      }
       return next;
     });
+  }, []);
+
+  const selectDevice = useCallback((nextDeviceId: string) => {
+    setDeviceId(nextDeviceId);
+  }, []);
+
+  const setMode = useCallback((mode: VoiceInputMode) => {
+    voiceInputModeRef.current = mode;
+    setVoiceInputMode(mode);
+    if (mode === "push_to_talk") {
+      pttActiveRef.current = false;
+      setPttActive(false);
+    }
+  }, []);
+
+  const setPushToTalkActive = useCallback((active: boolean) => {
+    pttActiveRef.current = active;
+    setPttActive(active);
   }, []);
 
   return {
@@ -441,9 +561,17 @@ export function useHuddleAudio(
     peers,
     speaking,
     muted,
+    micLevel,
+    devices,
+    deviceId,
+    voiceInputMode,
+    pttActive,
     supportsVoice,
     join,
     leave,
     toggleMute,
+    selectDevice,
+    setVoiceInputMode: setMode,
+    setPushToTalkActive,
   };
 }

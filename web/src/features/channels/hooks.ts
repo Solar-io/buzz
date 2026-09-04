@@ -18,7 +18,6 @@ import {
   upsertMessage,
   DELETE_KIND,
   type MessageBuffer,
-  type TimelineMessage,
 } from "./lib/messageBuffer.ts";
 import {
   systemEventFromContent,
@@ -38,10 +37,11 @@ import {
   type TimelineCacheEntry,
 } from "./lib/timelineCache.ts";
 import {
-  FORUM_COMMENT_KIND,
-  FORUM_POST_KIND,
-  forumThreadReplies,
-} from "./lib/forum.ts";
+  mergeRelayThreadSummary,
+  relayThreadSummaryFromEvent,
+  THREAD_SUMMARY_KIND,
+  type RelayThreadSummaryMap,
+} from "./lib/threadSummaryEvent.ts";
 import {
   reactionFromEvent,
   removeReaction,
@@ -62,6 +62,14 @@ export interface ChannelFeed {
   messages: MessageBuffer;
   reactions: ReactionIndex;
   typing: TypingMap;
+  /**
+   * Relay-materialised thread counters (kind 39005), keyed by thread root.
+   * `reply_count` / `descendant_count` come from the relay's own
+   * `thread_metadata`, so a root whose replies fall outside this buffer
+   * still reports a truthful count. Empty until a reply lands while we are
+   * subscribed — the overlay is synthesized at write time, never stored.
+   */
+  threadSummaries: RelayThreadSummaryMap;
   /** Fetch one older-history page (scroll-up). No-op when exhausted/busy. */
   loadOlder: () => void;
   loadingOlder: boolean;
@@ -91,6 +99,9 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
   const [buffer, setBuffer] = useState<MessageBuffer>([]);
   const [reactions, setReactions] = useState<ReactionIndex>(() => new Map());
   const [typing, setTyping] = useState<TypingMap>(() => new Map());
+  const [threadSummaries, setThreadSummaries] = useState<RelayThreadSummaryMap>(
+    () => new Map(),
+  );
   const [historyExhausted, setHistoryExhausted] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   /** Cache state mirror — updated synchronously with every buffer change. */
@@ -158,6 +169,21 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
         }
         return;
       }
+      if (event.kind === THREAD_SUMMARY_KIND) {
+        // Routed BEFORE the message path on purpose: a 39005 carries an `h`
+        // tag, so `timelineMessageFromEvent` would happily build a row out
+        // of it and spill `{"reply_count":…}` into the conversation.
+        const summary = relayThreadSummaryFromEvent(event);
+        if (
+          summary &&
+          (summary.channelId === null || summary.channelId === channelId)
+        ) {
+          setThreadSummaries((previous) =>
+            mergeRelayThreadSummary(previous, summary),
+          );
+        }
+        return;
+      }
       if (event.kind === 20002) {
         const typed = typingFromEvent(event);
         if (typed) {
@@ -208,6 +234,7 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
     setBuffer([]);
     setReactions(new Map());
     setTyping(new Map());
+    setThreadSummaries(new Map());
     setHistoryExhausted(false);
     setLoadingOlder(false);
     loadingOlderRef.current = false;
@@ -344,6 +371,7 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
     messages: buffer,
     reactions,
     typing,
+    threadSummaries,
     loadOlder,
     loadingOlder,
     historyExhausted,
@@ -351,126 +379,17 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
   };
 }
 
-export interface ForumPostsFeed {
-  messages: MessageBuffer;
-  /** True until the relay has replayed the channel history (first EOSE). */
-  loading: boolean;
-}
-
 /**
- * Forum posts history for one channel: a dedicated roots-deep subscription.
- * Desktop's forum list REQs kind 45001 only; the read side here widens to
- * the chat root kinds (9, 40002, 40008) so live kind-9 thread traffic (the
- * #alerts engine) renders as posts while writes stay desktop-exact 45001.
- * Overlay kinds (5 delete, 40003 edit) ride along so deleting or editing a
- * post tombstones/patches it in this list, not just the main feed window.
+ * Forum reads live in `./useForum.ts` — this file hit the repository's
+ * 1000-line ceiling. Re-exported so every existing
+ * `from "@/features/channels/hooks"` import keeps working.
  */
-export function useForumPosts(channelId: string | null): ForumPostsFeed {
-  const { session } = useRelaySession();
-  const [buffer, setBuffer] = useState<MessageBuffer>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    setBuffer([]);
-    setLoading(true);
-    if (!channelId) {
-      return;
-    }
-    return session.subscribe(
-      {
-        kinds: [9, 40002, 40008, FORUM_POST_KIND, 5, 40003],
-        "#h": [channelId],
-        limit: 100,
-      },
-      {
-        onEose: () => setLoading(false),
-        onEvent: (event: SignedNostrEvent) => {
-          if (event.kind === 40003 || event.kind === 5) {
-            const targetId = editTargetFromEvent(event);
-            if (targetId) {
-              setBuffer((previous) =>
-                applyOverlay(
-                  previous,
-                  event.kind,
-                  targetId,
-                  event.kind === 40003 ? event.content : null,
-                ),
-              );
-            }
-            return;
-          }
-          const message = timelineMessageFromEvent(event);
-          if (!message || message.channelId !== channelId) {
-            return;
-          }
-          setBuffer((previous) => upsertMessage(previous, message));
-        },
-      },
-    );
-  }, [session, channelId]);
-
-  return { messages: buffer, loading };
-}
-
-export interface ForumThread {
-  root: TimelineMessage | null;
-  /** Replies in order — kind-9 appends and kind-45003 comments alike. */
-  replies: TimelineMessage[];
-}
-
-/**
- * One forum thread, fetched with desktop's two REQs (messages/forum.rs): the
- * root by id, then everything referencing it inside the channel. The #e
- * match catches both marker shapes — a nested reply's root marker names the
- * post, as does a first-level comment's reply marker.
- */
-export function useForumThread(
-  channelId: string | null,
-  postId: string | null,
-): ForumThread {
-  const { session } = useRelaySession();
-  const [buffer, setBuffer] = useState<MessageBuffer>([]);
-
-  useEffect(() => {
-    setBuffer([]);
-    if (!channelId || !postId) {
-      return;
-    }
-    const onEvent = (event: SignedNostrEvent) => {
-      const message = timelineMessageFromEvent(event);
-      if (!message || message.channelId !== channelId) {
-        return;
-      }
-      setBuffer((previous) => upsertMessage(previous, message));
-    };
-    const unsubscribeRoot = session.subscribe(
-      {
-        ids: [postId],
-        kinds: [9, 40002, FORUM_POST_KIND, FORUM_COMMENT_KIND],
-        limit: 1,
-      },
-      { onEvent },
-    );
-    const unsubscribeReplies = session.subscribe(
-      {
-        kinds: [9, FORUM_COMMENT_KIND],
-        "#e": [postId],
-        "#h": [channelId],
-        limit: 200,
-      },
-      { onEvent },
-    );
-    return () => {
-      unsubscribeRoot();
-      unsubscribeReplies();
-    };
-  }, [session, channelId, postId]);
-
-  return {
-    root: postId ? (buffer.find((m) => m.id === postId) ?? null) : null,
-    replies: postId ? forumThreadReplies(buffer, postId) : [],
-  };
-}
+export {
+  useForumPosts,
+  useForumThread,
+  type ForumPostsFeed,
+  type ForumThread,
+} from "./useForum.ts";
 
 export interface ChannelMember {
   pubkey: string;
