@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Link } from "@tanstack/react-router";
-import { Inbox, Search } from "lucide-react";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { Inbox, Search, ShieldAlert } from "lucide-react";
 import type { Profile } from "@/features/channels/hooks";
 import type { RelaySessionStatus } from "@/shared/api/relay-session";
 import {
@@ -12,6 +12,7 @@ import { isUnread, type ReadState } from "@/features/channels/lib/readState.ts";
 import { NewChannelDialog } from "@/features/channels/ui/NewChannelDialog";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import type { DmSummary } from "@/features/dms/hooks";
+import { useViewerCommunityRole } from "@/features/moderation/queueHooks.ts";
 import { NewDmDialog } from "@/features/dms/ui/NewDmDialog";
 import { shortDate } from "@/features/sidebar/lib/shortDate.ts";
 import { ChannelForum, ChannelGlyph } from "@/features/sidebar/ui/ChannelGlyph";
@@ -206,6 +207,7 @@ export function ChannelSidebar({
               onSelect={actions.onOpenInbox}
             />
           </li>
+          <ModerationNavItem />
         </ul>
         {channelCount === 0 && (
           <p className="px-2 py-4 text-sm text-muted-foreground">
@@ -382,5 +384,38 @@ export function ChannelSidebar({
         onOpenFiles={actions.onOpenFiles}
       />
     </div>
+  );
+}
+
+/**
+ * The moderation queue's entry point, shown only to community moderators.
+ *
+ * Gated on the viewer's NIP-43 role rather than rendered for everyone: the
+ * queue's reads are `ViewQueue`-gated and a member who followed this would get
+ * nothing but a refusal. The role read is the shared kind-13534 subscription
+ * the per-message moderation gate already opens, so this costs no extra REQ.
+ *
+ * It navigates itself rather than taking a callback, so adding it needed no
+ * new prop on `ChannelSidebarActions` — but it DOES depend on `?view=moderation`
+ * being listed in the shell's `SHELL_VIEWS`; without that the router drops the
+ * search param and this lands on the ordinary channel shell.
+ */
+function ModerationNavItem() {
+  const navigate = useNavigate();
+  const role = useViewerCommunityRole();
+  if (role !== "owner" && role !== "admin") {
+    return null;
+  }
+  return (
+    <li>
+      <SidebarNavButton
+        selected={false}
+        label="Moderation"
+        icon={<ShieldAlert aria-hidden className="h-4 w-4 shrink-0" />}
+        onSelect={() => {
+          void navigate({ to: "/repos", search: { view: "moderation" } });
+        }}
+      />
+    </li>
   );
 }

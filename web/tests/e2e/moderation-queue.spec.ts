@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-
 import { expect, type Page, test } from "@playwright/test";
 import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
 import { nsecEncode } from "nostr-tools/nip19";
@@ -34,31 +31,6 @@ import {
  * only appears for a browser with no enrolled key; re-running it in the same
  * page finds no form.
  */
-
-/**
- * PRECONDITION, NOT AN ASSERTION — delete this block once the wiring lands.
- *
- * The pane is reached as `?view=moderation`, and the shell drops any `view`
- * outside `SHELL_VIEWS` (`app/routes/repos.tsx`, `validateSearch`). That file
- * was deliberately left untouched by the change these tests cover, so until
- * three lines are added there every test below would fail for a reason that
- * has nothing to do with the code under test.
- *
- * This reads the route file to decide whether the wiring is present. It is a
- * source-text check and proves nothing about behaviour — that is exactly why
- * it gates the run rather than asserting anything. With the wiring applied,
- * all twelve tests here run and pass (measured, 2026-09-04); without it they
- * skip with the reason below instead of turning the suite red.
- */
-const SHELL_WIRED = readFileSync(
-  fileURLToPath(new URL("../../src/app/routes/repos.tsx", import.meta.url)),
-  "utf8",
-).includes('"moderation",');
-
-test.skip(
-  !SHELL_WIRED,
-  'the moderation pane is not wired into the shell yet: add "moderation" to SHELL_VIEWS in app/routes/repos.tsx, import ModerationQueueView, and add its branch',
-);
 
 const CHANNEL_ID = "7c2d3e45-1111-4222-8333-444455556666";
 /** The resolve menu's own test-id prefix for the spam group. */

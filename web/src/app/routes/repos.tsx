@@ -61,6 +61,7 @@ import { WorkflowsPage } from "@/features/workflows/ui/WorkflowsPage";
 import { OnboardingPane } from "@/features/onboarding";
 import { ProjectsScreen } from "@/features/projects/ui/ProjectsScreen";
 import { PulseScreen } from "@/features/pulse/ui/PulseScreen";
+import { ModerationQueueView } from "@/features/moderation/ui/ModerationQueueView";
 import { useReminderSync } from "@/features/reminders/hooks";
 import { useReminderNotifications } from "@/features/reminders/useReminderNotifications";
 import { RemindersPanel } from "@/features/reminders/ui/RemindersPanel";
@@ -96,6 +97,7 @@ const SHELL_VIEWS = [
   "reminders",
   "projects",
   "onboarding",
+  "moderation",
 ] as const;
 type ShellView = (typeof SHELL_VIEWS)[number];
 
@@ -672,6 +674,8 @@ function ChannelBrowser() {
               <FilesPanel onClose={() => setFilesOpen(false)} />
             ) : view === "onboarding" ? (
               <OnboardingPane />
+            ) : view === "moderation" ? (
+              <ModerationQueueView />
             ) : view === "projects" ? (
               <ProjectsScreen />
             ) : view === "pulse" ? (
