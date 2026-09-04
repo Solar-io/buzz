@@ -256,6 +256,7 @@ export function MessageRow({
         // against. Both already ride on TimelineMessage.
         channelId={message.channelId}
         authorPubkey={message.authorPubkey}
+        messagePreview={message.content}
         onReact={onReact ? (emoji) => onReact(message.id, emoji) : undefined}
         onReply={() => onOpenThread(message)}
         onShare={onShare ? () => onShare(message.id) : undefined}

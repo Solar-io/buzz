@@ -56,6 +56,12 @@ import { channelMenuItems } from "@/features/sidebar/lib/channelMenuItems.ts";
 import { ChannelSidebar } from "@/features/sidebar/ui/ChannelSidebar";
 import { HomeInboxRoute } from "@/features/home/ui/HomeInboxRoute";
 import { WorkflowsPage } from "@/features/workflows/ui/WorkflowsPage";
+import { ProjectsScreen } from "@/features/projects/ui/ProjectsScreen";
+import { PulseScreen } from "@/features/pulse/ui/PulseScreen";
+import { useReminderSync } from "@/features/reminders/hooks";
+import { useReminderNotifications } from "@/features/reminders/useReminderNotifications";
+import { RemindersPanel } from "@/features/reminders/ui/RemindersPanel";
+import { RemindMeLaterProvider } from "@/features/reminders/ui/RemindMeLaterProvider";
 import { NotificationRuntime } from "@/features/notifications/ui/NotificationRuntime";
 import { ProfileActionsProvider } from "@/features/profile/ProfileActionsContext";
 import { FilesPanel } from "@/features/files/ui/FilesPanel";
@@ -68,22 +74,35 @@ import { useRelaySession } from "@/shared/api/RelaySessionProvider";
  * public-bundle fallback guarantees on the stock image (with the git web GUI
  * flag on). Everything else is client-side navigation from here.
  */
+/**
+ * Panes the shell can show instead of a channel.
+ *
+ * These are `?view=` rather than routes because a route unmounts the sidebar,
+ * and the sidebar is what holds the channel subscriptions every pane reads
+ * from. It also keeps each pane linkable.
+ */
+const SHELL_VIEWS = [
+  "inbox",
+  "workflows",
+  "pulse",
+  "reminders",
+  "projects",
+] as const;
+type ShellView = (typeof SHELL_VIEWS)[number];
+
 export const Route = createFileRoute("/repos")({
   validateSearch: (
     search: Record<string, unknown>,
-  ): { c?: string; m?: string; view?: "inbox" | "workflows" } => ({
+  ): { c?: string; m?: string; view?: ShellView } => ({
     c: typeof search.c === "string" ? search.c : undefined,
     // Permalink target: scroll to and flash this message once it loads.
     m: typeof search.m === "string" ? search.m : undefined,
     // The inbox is a view of the same shell, not a separate route: a route
     // would unmount the sidebar, and the shell is what holds the channel
     // subscriptions every pane reads from.
-    view:
-      search.view === "inbox"
-        ? ("inbox" as const)
-        : search.view === "workflows"
-          ? ("workflows" as const)
-          : undefined,
+    view: SHELL_VIEWS.includes(search.view as ShellView)
+      ? (search.view as ShellView)
+      : undefined,
   }),
   component: AppRoute,
 });
@@ -370,6 +389,30 @@ function ChannelBrowser() {
           void navigate({ to: "/repos", search: { view: "inbox" } }),
       },
       {
+        id: "action:projects",
+        kind: "action" as const,
+        label: "Projects",
+        keywords: ["project", "issue", "board", "backlog", "repo"],
+        onSelect: () =>
+          void navigate({ to: "/repos", search: { view: "projects" } }),
+      },
+      {
+        id: "action:pulse",
+        kind: "action" as const,
+        label: "Pulse",
+        keywords: ["pulse", "notes", "feed", "social"],
+        onSelect: () =>
+          void navigate({ to: "/repos", search: { view: "pulse" } }),
+      },
+      {
+        id: "action:reminders",
+        kind: "action" as const,
+        label: "Reminders",
+        keywords: ["reminder", "remind", "later", "snooze", "due"],
+        onSelect: () =>
+          void navigate({ to: "/repos", search: { view: "reminders" } }),
+      },
+      {
         id: "action:workflows",
         kind: "action" as const,
         label: "Workflows",
@@ -550,6 +593,16 @@ function ChannelBrowser() {
   );
   useTick(working.working);
 
+  // Both belong at the shell and nowhere else: the sync keeps one kind:30300
+  // subscription for the whole app, and the notification hook is the sole
+  // due-detector — mounted per pane it would fire once per mounted copy.
+  useReminderSync(selfPubkey);
+  useReminderNotifications({
+    selfPubkey,
+    onOpenPanel: () =>
+      void navigate({ to: "/repos", search: { view: "reminders" } }),
+  });
+
   return (
     // Profile cards open DMs; DM creation is the shell's job, and the row that
     // raises the card renders under ChannelTimeline, so the callback reaches it
@@ -559,255 +612,285 @@ function ChannelBrowser() {
         be on; in the sidebar it died wherever the sidebar unmounted. It takes
         the shell's channel list rather than opening a second kind:39000 REQ. */}
       <NotificationRuntime selfPubkey={selfPubkey} channels={channels} />
-      <ProfileActionsProvider
-        onOpenDm={(pubkey) => {
-          void openDm(session, [pubkey]).then((result) => {
-            if (result.ok && result.channelId) {
-              onDmOpened(result.channelId);
-            }
-          });
-        }}
-      >
-        <AppShell
-          sidebar={sidebar}
-          title={
-            current
-              ? current.type === "dm"
-                ? dmName(current.participantPubkeys)
-                : `# ${current.name}`
-              : null
-          }
+      <RemindMeLaterProvider selfPubkey={selfPubkey}>
+        <ProfileActionsProvider
+          onOpenDm={(pubkey) => {
+            void openDm(session, [pubkey]).then((result) => {
+              if (result.ok && result.channelId) {
+                onDmOpened(result.channelId);
+              }
+            });
+          }}
         >
-          {filesOpen ? (
-            <FilesPanel onClose={() => setFilesOpen(false)} />
-          ) : view === "workflows" ? (
-            <WorkflowsPage />
-          ) : view === "inbox" ? (
-            <HomeInboxRoute
+          <AppShell
+            sidebar={sidebar}
+            title={
+              current
+                ? current.type === "dm"
+                  ? dmName(current.participantPubkeys)
+                  : `# ${current.name}`
+                : null
+            }
+          >
+            {filesOpen ? (
+              <FilesPanel onClose={() => setFilesOpen(false)} />
+            ) : view === "projects" ? (
+              <ProjectsScreen />
+            ) : view === "pulse" ? (
+              <PulseScreen
+                onClose={() => void navigate({ to: "/repos", search: {} })}
+                selfPubkey={selfPubkey}
+              />
+            ) : view === "reminders" ? (
+              <RemindersPanel
+                channels={channels}
+                onClose={() => void navigate({ to: "/repos", search: {} })}
+                onJump={(destination) => {
+                  void navigate({
+                    to: "/repos",
+                    search: {
+                      c: destination.channelId,
+                      m: destination.messageId,
+                    },
+                  });
+                }}
+                selfPubkey={selfPubkey}
+              />
+            ) : view === "workflows" ? (
+              <WorkflowsPage />
+            ) : view === "inbox" ? (
+              <HomeInboxRoute
+                channels={channels}
+                selfPubkey={selfPubkey}
+                onOpenChannel={(channelId, messageId) => {
+                  void navigate({
+                    to: "/repos",
+                    search: { c: channelId, m: messageId },
+                  });
+                }}
+              />
+            ) : current ? (
+              <div
+                className="flex h-full min-h-0"
+                style={{ ["--thread-width" as string]: `${threadWidth}px` }}
+              >
+                <section className="flex min-w-0 flex-1 flex-col">
+                  <ChannelHeader
+                    channel={current}
+                    title={
+                      current.type === "dm"
+                        ? dmName(current.participantPubkeys)
+                        : `# ${current.name}`
+                    }
+                    session={session}
+                    onHuddleStarted={onHuddleStarted}
+                    agentPubkey={dmAgentPubkey}
+                    onOpenThinking={() => {
+                      setRightTab("thinking");
+                      setDmPaneHidden(false);
+                      setThinkingOpen(true);
+                    }}
+                  />
+                  {current.ttlSeconds !== null && (
+                    <HuddleBar
+                      channelId={current.id}
+                      parentChannelId={currentHuddleParent}
+                      selfPubkey={selfPubkey}
+                    />
+                  )}
+                  {current.type === "forum" ? (
+                    <ForumView
+                      channel={current}
+                      selfPubkey={selfPubkey}
+                      profiles={profiles}
+                      members={members}
+                      feedReactions={reactions}
+                      replyCounts={counts}
+                      selectedPostId={forumPostId}
+                      onSelectPost={setForumPostId}
+                      onClosePost={() => setForumPostId(null)}
+                      onReact={messageActions.onReact}
+                      onDelete={messageActions.onDelete}
+                      send={send}
+                    />
+                  ) : (
+                    <>
+                      <ChannelTimeline
+                        messages={messages}
+                        profiles={profiles}
+                        replyCounts={counts}
+                        onOpenThread={(message) => {
+                          setThreadRootId(message.id);
+                          setRightTab("thread");
+                        }}
+                        activeRootId={threadRootId}
+                        reactions={reactions}
+                        onReact={messageActions.onReact}
+                        onUnreact={(messageId, emoji) => {
+                          if (!selfPubkey) return;
+                          // Drop it locally first: the relay's kind-5 acknowledgement
+                          // targets the reaction event, which the message-overlay
+                          // path cannot apply, so nothing would clear the chip.
+                          forgetOwnReaction(messageId, emoji, selfPubkey);
+                          void unreactToMessage(session, {
+                            targetEventId: messageId,
+                            emoji,
+                            selfPubkey,
+                          });
+                        }}
+                        onEdit={messageActions.onEdit}
+                        onDelete={messageActions.onDelete}
+                        onShare={messageActions.onShare}
+                        selfPubkey={selfPubkey}
+                        pendingIds={messageActions.pendingIds}
+                        agentPubkeys={agentPubkeys}
+                        highlightId={permalinkMessageId ?? null}
+                        typingNames={typingNames}
+                        tailKey={tailKey}
+                        onLoadOlder={loadOlder}
+                        loadingOlder={loadingOlder}
+                        historyExhausted={historyExhausted}
+                        workingAgent={
+                          working.working &&
+                          working.startedAt !== null &&
+                          dmAgentPubkey
+                            ? {
+                                name:
+                                  profiles.get(dmAgentPubkey)?.displayName ??
+                                  dmAgentPubkey,
+                                startedAt: working.startedAt,
+                              }
+                            : null
+                        }
+                      />
+                      <Composer
+                        members={members}
+                        onTextChange={messageActions.onComposerText}
+                        editing={messageActions.editing}
+                        onCancelEdit={() => messageActions.setEditing(null)}
+                        editSend={messageActions.editSend}
+                        profiles={profiles}
+                        threadRef={
+                          threadRoot
+                            ? {
+                                rootId: threadRoot.id,
+                                replyToId: threadRoot.id,
+                              }
+                            : null
+                        }
+                        onClearThread={() => setThreadRootId(null)}
+                        draftKey={current.id}
+                        send={send}
+                      />
+                    </>
+                  )}
+                </section>
+                {(threadRoot || dmAgentPubkey) && (
+                  // biome-ignore lint/a11y/useFocusableInteractive: pointer-only resize handle; keyboard resize is not implemented
+                  // biome-ignore lint/a11y/useSemanticElements: pointer-only resize handle; keyboard resize is not implemented
+                  <div
+                    aria-label="Resize side panel"
+                    // biome-ignore lint/a11y/useAriaPropsForRole: drag handle is not a value slider; aria-valuenow would be meaningless
+                    role="separator"
+                    aria-orientation="vertical"
+                    className="relative z-10 hidden w-1 shrink-0 cursor-col-resize border-r border-border bg-transparent transition-colors hover:bg-white/15 active:bg-white/25 lg:block lg:-ml-px"
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      event.currentTarget.setPointerCapture(event.pointerId);
+                    }}
+                    onPointerMove={(event) => {
+                      if (
+                        event.currentTarget.hasPointerCapture(event.pointerId)
+                      ) {
+                        setThreadWidth((previous) =>
+                          Math.min(
+                            640,
+                            Math.max(288, previous - event.movementX),
+                          ),
+                        );
+                      }
+                    }}
+                    onPointerUp={(event) => {
+                      event.currentTarget.releasePointerCapture(
+                        event.pointerId,
+                      );
+                    }}
+                  />
+                )}
+                {threadRoot && (!dmAgentPubkey || rightTab === "thread") && (
+                  <ThreadPanel
+                    root={threadRoot}
+                    buffer={messages}
+                    members={members}
+                    profiles={profiles}
+                    onClose={() => setThreadRootId(null)}
+                    send={send}
+                    onSelectThinkingTab={
+                      dmAgentPubkey ? () => setRightTab("thinking") : undefined
+                    }
+                  />
+                )}
+                {threadRoot && dmAgentPubkey && rightTab === "thinking" && (
+                  <ThreadPanel
+                    root={threadRoot}
+                    buffer={messages}
+                    members={members}
+                    profiles={profiles}
+                    onClose={() => setThreadRootId(null)}
+                    send={send}
+                    mobileOnly
+                  />
+                )}
+                {dmAgentPubkey &&
+                  !dmPaneHidden &&
+                  (!threadRoot || rightTab === "thinking") && (
+                    <AgentActivityPanel
+                      agentPubkey={dmAgentPubkey}
+                      agentName={
+                        profiles.get(dmAgentPubkey)?.displayName ??
+                        dmAgentPubkey
+                      }
+                      profile={dmProfiles.get(dmAgentPubkey)}
+                      frames={channelAgentFrames}
+                      lockedCount={observerStore?.lockedCount ?? 0}
+                      connected={connected}
+                      working={working}
+                      mobileOpen={thinkingOpen}
+                      onCloseMobile={() => setThinkingOpen(false)}
+                      onCloseDesktop={() => setDmPaneHidden(true)}
+                      onSelectThreadTab={
+                        threadRoot ? () => setRightTab("thread") : undefined
+                      }
+                    />
+                  )}
+              </div>
+            ) : (
+              <div className="flex h-full items-center justify-center p-8">
+                <p className="text-sm text-muted-foreground">
+                  Pick a channel to get started.
+                </p>
+              </div>
+            )}
+            <SearchPanel
+              open={searchOpen}
+              onClose={closeSearch}
+              initialQuery={sidebarQuery}
+              onJumpToChannel={(id) => selectChannel(id)}
+              actions={paletteActions}
               channels={channels}
-              selfPubkey={selfPubkey}
-              onOpenChannel={(channelId, messageId) => {
+              profiles={profiles}
+              defaultChannelId={current?.id ?? null}
+              onOpenResult={(channelId, messageId) => {
+                setFilesOpen(false);
                 void navigate({
                   to: "/repos",
                   search: { c: channelId, m: messageId },
                 });
               }}
             />
-          ) : current ? (
-            <div
-              className="flex h-full min-h-0"
-              style={{ ["--thread-width" as string]: `${threadWidth}px` }}
-            >
-              <section className="flex min-w-0 flex-1 flex-col">
-                <ChannelHeader
-                  channel={current}
-                  title={
-                    current.type === "dm"
-                      ? dmName(current.participantPubkeys)
-                      : `# ${current.name}`
-                  }
-                  session={session}
-                  onHuddleStarted={onHuddleStarted}
-                  agentPubkey={dmAgentPubkey}
-                  onOpenThinking={() => {
-                    setRightTab("thinking");
-                    setDmPaneHidden(false);
-                    setThinkingOpen(true);
-                  }}
-                />
-                {current.ttlSeconds !== null && (
-                  <HuddleBar
-                    channelId={current.id}
-                    parentChannelId={currentHuddleParent}
-                    selfPubkey={selfPubkey}
-                  />
-                )}
-                {current.type === "forum" ? (
-                  <ForumView
-                    channel={current}
-                    selfPubkey={selfPubkey}
-                    profiles={profiles}
-                    members={members}
-                    feedReactions={reactions}
-                    replyCounts={counts}
-                    selectedPostId={forumPostId}
-                    onSelectPost={setForumPostId}
-                    onClosePost={() => setForumPostId(null)}
-                    onReact={messageActions.onReact}
-                    onDelete={messageActions.onDelete}
-                    send={send}
-                  />
-                ) : (
-                  <>
-                    <ChannelTimeline
-                      messages={messages}
-                      profiles={profiles}
-                      replyCounts={counts}
-                      onOpenThread={(message) => {
-                        setThreadRootId(message.id);
-                        setRightTab("thread");
-                      }}
-                      activeRootId={threadRootId}
-                      reactions={reactions}
-                      onReact={messageActions.onReact}
-                      onUnreact={(messageId, emoji) => {
-                        if (!selfPubkey) return;
-                        // Drop it locally first: the relay's kind-5 acknowledgement
-                        // targets the reaction event, which the message-overlay
-                        // path cannot apply, so nothing would clear the chip.
-                        forgetOwnReaction(messageId, emoji, selfPubkey);
-                        void unreactToMessage(session, {
-                          targetEventId: messageId,
-                          emoji,
-                          selfPubkey,
-                        });
-                      }}
-                      onEdit={messageActions.onEdit}
-                      onDelete={messageActions.onDelete}
-                      onShare={messageActions.onShare}
-                      selfPubkey={selfPubkey}
-                      pendingIds={messageActions.pendingIds}
-                      agentPubkeys={agentPubkeys}
-                      highlightId={permalinkMessageId ?? null}
-                      typingNames={typingNames}
-                      tailKey={tailKey}
-                      onLoadOlder={loadOlder}
-                      loadingOlder={loadingOlder}
-                      historyExhausted={historyExhausted}
-                      workingAgent={
-                        working.working &&
-                        working.startedAt !== null &&
-                        dmAgentPubkey
-                          ? {
-                              name:
-                                profiles.get(dmAgentPubkey)?.displayName ??
-                                dmAgentPubkey,
-                              startedAt: working.startedAt,
-                            }
-                          : null
-                      }
-                    />
-                    <Composer
-                      members={members}
-                      onTextChange={messageActions.onComposerText}
-                      editing={messageActions.editing}
-                      onCancelEdit={() => messageActions.setEditing(null)}
-                      editSend={messageActions.editSend}
-                      profiles={profiles}
-                      threadRef={
-                        threadRoot
-                          ? { rootId: threadRoot.id, replyToId: threadRoot.id }
-                          : null
-                      }
-                      onClearThread={() => setThreadRootId(null)}
-                      draftKey={current.id}
-                      send={send}
-                    />
-                  </>
-                )}
-              </section>
-              {(threadRoot || dmAgentPubkey) && (
-                // biome-ignore lint/a11y/useFocusableInteractive: pointer-only resize handle; keyboard resize is not implemented
-                // biome-ignore lint/a11y/useSemanticElements: pointer-only resize handle; keyboard resize is not implemented
-                <div
-                  aria-label="Resize side panel"
-                  // biome-ignore lint/a11y/useAriaPropsForRole: drag handle is not a value slider; aria-valuenow would be meaningless
-                  role="separator"
-                  aria-orientation="vertical"
-                  className="relative z-10 hidden w-1 shrink-0 cursor-col-resize border-r border-border bg-transparent transition-colors hover:bg-white/15 active:bg-white/25 lg:block lg:-ml-px"
-                  onPointerDown={(event) => {
-                    event.preventDefault();
-                    event.currentTarget.setPointerCapture(event.pointerId);
-                  }}
-                  onPointerMove={(event) => {
-                    if (
-                      event.currentTarget.hasPointerCapture(event.pointerId)
-                    ) {
-                      setThreadWidth((previous) =>
-                        Math.min(
-                          640,
-                          Math.max(288, previous - event.movementX),
-                        ),
-                      );
-                    }
-                  }}
-                  onPointerUp={(event) => {
-                    event.currentTarget.releasePointerCapture(event.pointerId);
-                  }}
-                />
-              )}
-              {threadRoot && (!dmAgentPubkey || rightTab === "thread") && (
-                <ThreadPanel
-                  root={threadRoot}
-                  buffer={messages}
-                  members={members}
-                  profiles={profiles}
-                  onClose={() => setThreadRootId(null)}
-                  send={send}
-                  onSelectThinkingTab={
-                    dmAgentPubkey ? () => setRightTab("thinking") : undefined
-                  }
-                />
-              )}
-              {threadRoot && dmAgentPubkey && rightTab === "thinking" && (
-                <ThreadPanel
-                  root={threadRoot}
-                  buffer={messages}
-                  members={members}
-                  profiles={profiles}
-                  onClose={() => setThreadRootId(null)}
-                  send={send}
-                  mobileOnly
-                />
-              )}
-              {dmAgentPubkey &&
-                !dmPaneHidden &&
-                (!threadRoot || rightTab === "thinking") && (
-                  <AgentActivityPanel
-                    agentPubkey={dmAgentPubkey}
-                    agentName={
-                      profiles.get(dmAgentPubkey)?.displayName ?? dmAgentPubkey
-                    }
-                    profile={dmProfiles.get(dmAgentPubkey)}
-                    frames={channelAgentFrames}
-                    lockedCount={observerStore?.lockedCount ?? 0}
-                    connected={connected}
-                    working={working}
-                    mobileOpen={thinkingOpen}
-                    onCloseMobile={() => setThinkingOpen(false)}
-                    onCloseDesktop={() => setDmPaneHidden(true)}
-                    onSelectThreadTab={
-                      threadRoot ? () => setRightTab("thread") : undefined
-                    }
-                  />
-                )}
-            </div>
-          ) : (
-            <div className="flex h-full items-center justify-center p-8">
-              <p className="text-sm text-muted-foreground">
-                Pick a channel to get started.
-              </p>
-            </div>
-          )}
-          <SearchPanel
-            open={searchOpen}
-            onClose={closeSearch}
-            initialQuery={sidebarQuery}
-            onJumpToChannel={(id) => selectChannel(id)}
-            actions={paletteActions}
-            channels={channels}
-            profiles={profiles}
-            defaultChannelId={current?.id ?? null}
-            onOpenResult={(channelId, messageId) => {
-              setFilesOpen(false);
-              void navigate({
-                to: "/repos",
-                search: { c: channelId, m: messageId },
-              });
-            }}
-          />
-        </AppShell>
-      </ProfileActionsProvider>
+          </AppShell>
+        </ProfileActionsProvider>
+      </RemindMeLaterProvider>
     </>
   );
 }

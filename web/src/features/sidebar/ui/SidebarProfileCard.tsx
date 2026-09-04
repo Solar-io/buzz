@@ -1,7 +1,10 @@
 import {
+  Activity,
   Bell,
   Bot,
+  Clock,
   Copy,
+  FolderKanban,
   Folder,
   Settings,
   Smile,
@@ -21,6 +24,7 @@ import { statusLabel } from "@/features/user-status/lib/statusEvent.ts";
 import { SetStatusDialog } from "@/features/user-status/ui/SetStatusDialog";
 import { StatusEmoji } from "@/features/user-status/ui/StatusEmoji";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
+import { useDueReminderCount } from "@/features/reminders/hooks";
 import { useDrawerClose } from "@/shared/layout/AppShell";
 import { cn } from "@/shared/lib/cn";
 import { truncatePubkey } from "@/shared/lib/pubkey";
@@ -74,6 +78,7 @@ export function SidebarProfileCard({
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [savingStatus, setSavingStatus] = useState(false);
   const profile = selfPubkey ? profiles.get(selfPubkey) : undefined;
+  const dueReminders = useDueReminderCount(selfPubkey);
 
   const statusAuthors = useMemo(() => [selfPubkey], [selfPubkey]);
   const statuses = useUserStatuses(statusAuthors);
@@ -214,6 +219,50 @@ export function SidebarProfileCard({
           >
             <Settings aria-hidden className="size-4" />
             Settings
+          </Link>
+          <Link
+            to="/repos"
+            search={{ view: "projects" as const }}
+            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+            onClick={() => {
+              setOpen(false);
+              closeDrawer();
+            }}
+          >
+            <FolderKanban aria-hidden className="size-4" />
+            Projects
+          </Link>
+          <Link
+            to="/repos"
+            search={{ view: "pulse" as const }}
+            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+            onClick={() => {
+              setOpen(false);
+              closeDrawer();
+            }}
+          >
+            <Activity aria-hidden className="size-4" />
+            Pulse
+          </Link>
+          <Link
+            to="/repos"
+            search={{ view: "reminders" as const }}
+            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+            onClick={() => {
+              setOpen(false);
+              closeDrawer();
+            }}
+          >
+            <Clock aria-hidden className="size-4" />
+            Reminders
+            {dueReminders > 0 && (
+              <span
+                className="ml-auto rounded-full bg-primary px-1.5 text-2xs font-medium tabular-nums text-primary-foreground"
+                data-testid="sidebar-due-reminders"
+              >
+                {dueReminders}
+              </span>
+            )}
           </Link>
           <Link
             to="/repos"

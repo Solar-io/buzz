@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Check,
+  Clock,
   CornerUpLeft,
   EllipsisVertical,
   Flag,
@@ -11,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { MessageModerationMenuItems } from "@/features/moderation/ui/MessageModerationMenuItems";
+import { useRemindMeLater } from "@/features/reminders/ui/RemindMeLaterProvider";
 import { ReportMessageDialog } from "@/features/moderation/ui/ReportMessageDialog";
 import { EmojiPicker } from "@/shared/ui/EmojiPicker";
 import {
@@ -57,6 +59,7 @@ export function MessageActionBar({
   canModify,
   channelId,
   authorPubkey,
+  messagePreview,
   onReact,
   onReply,
   onShare,
@@ -77,12 +80,19 @@ export function MessageActionBar({
    * author-directed moderator command; without it neither can be offered.
    */
   authorPubkey?: string | null;
+  /**
+   * The message text, carried into a reminder so the row says what it is
+   * about. Optional: without it a reminder still works and still navigates,
+   * it just reads "Reminder" instead of the message.
+   */
+  messagePreview?: string;
   onReact?: (emoji: string) => void;
   onReply: () => void;
   onShare?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
 }) {
+  const { openReminder } = useRemindMeLater();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
@@ -312,6 +322,21 @@ export function MessageActionBar({
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              data-testid={`remind-message-${messageId}`}
+              onClick={() =>
+                openReminder({
+                  eventId: messageId,
+                  channelId: channelId ?? "",
+                  preview: messagePreview ?? "",
+                  authorPubkey: authorPubkey ?? "",
+                })
+              }
+            >
+              <Clock className={ACTION_ICON_CLASS} aria-hidden="true" />
+              Remind me later
+            </DropdownMenuItem>
+
             {canEdit && (
               <DropdownMenuItem
                 data-testid={`edit-message-${messageId}`}
