@@ -1,3 +1,5 @@
+import { buildReactionEmojiTag } from "@/features/custom-emoji/lib/customEmojiTags";
+import type { CustomEmoji } from "@/features/custom-emoji/lib/customEmoji";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RelaySession } from "@/shared/api/relay-session";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
@@ -623,14 +625,29 @@ export interface SendResult {
 /** Publish a kind 9 channel message (mirrors buzz-sdk build_message tags). */
 export async function sendReaction(
   session: RelaySession,
-  options: { targetEventId: string; emoji: string },
+  options: {
+    targetEventId: string;
+    emoji: string;
+    /**
+     * Community palette, when the reaction may be a custom `:shortcode:`.
+     * For a shortcode over 64 characters the relay admits the reaction ONLY
+     * when a matching NIP-30 emoji tag is present, so the tag is admission
+     * rather than decoration — and without it no other client can render it.
+     */
+    palette?: ReadonlyArray<CustomEmoji>;
+  },
 ): Promise<SendResult> {
   // NIP-25 / buzz-sdk build_reaction shape: kind 7, content = emoji,
   // one e tag naming the target. The relay persists it atomically with its
   // reaction row; a duplicate from the same author is a no-op server-side.
+  const emojiTag = options.palette
+    ? buildReactionEmojiTag(options.emoji, options.palette)
+    : null;
   const event = await signNostrEvent({
     kind: 7,
-    tags: [["e", options.targetEventId]],
+    tags: emojiTag
+      ? [["e", options.targetEventId], emojiTag]
+      : [["e", options.targetEventId]],
     content: options.emoji,
   });
   const result = await session.publish(event);

@@ -63,6 +63,8 @@ import {
   ComposerReplyBanner,
 } from "./ComposerReplyBanner.tsx";
 import { ComposerAttachmentTray } from "./ComposerAttachmentTray.tsx";
+import { useComposerTimeout } from "@/features/moderation/hooks";
+import { ComposerTimeoutBanner } from "@/features/moderation/ui/ComposerTimeoutBanner";
 import type { ChannelMember, Profile } from "../hooks.ts";
 
 export interface ThreadRef {
@@ -159,6 +161,10 @@ export function Composer({
   const fileInputRef = useRef<HTMLInputElement>(null);
   // The community's NIP-30 palette, for the emoji tags a send has to carry.
   const customEmoji = useCustomEmoji();
+  // Timeouts are detected from the relay's send rejection: /moderation/
+  // restricted is moderator-gated, so a timed-out member is exactly the
+  // person who cannot read their own restriction.
+  const composerTimeout = useComposerTimeout();
   // Current text without waiting for a re-render: the upload path appends
   // markdown from an async callback, and reading `text` there would capture
   // whatever the closure was created with.
@@ -540,6 +546,7 @@ export function Composer({
               ...buildCustomEmojiTags(trimmed, customEmoji),
             ],
           });
+      composerTimeout.noteSendResult(result);
       if (result.ok) {
         for (const item of attachments) {
           if (item.previewUrl) {
@@ -699,6 +706,9 @@ export function Composer({
             </li>
           ))}
         </ul>
+      )}
+      {composerTimeout.timedOut && (
+        <ComposerTimeoutBanner expiresAtMs={composerTimeout.expiresAtMs} />
       )}
       {editingActive ? (
         <ComposerEditBanner onCancel={() => onCancelEdit?.()} />

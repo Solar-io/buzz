@@ -1,3 +1,5 @@
+import { useCustomEmoji } from "@/features/custom-emoji/hooks";
+import { EmojiText } from "@/features/custom-emoji/ui/EmojiText";
 import { cn } from "@/shared/lib/cn";
 import { describeReactors, type ReactionGroup } from "../lib/reactions.ts";
 
@@ -38,6 +40,8 @@ export function ReactionChips({
    */
   onUnreact?: (messageId: string, emoji: string) => void;
 }) {
+  // Read before the early return: a hook cannot sit behind a conditional.
+  const palette = useCustomEmoji();
   if (groups.length === 0) {
     return null;
   }
@@ -82,7 +86,7 @@ export function ReactionChips({
               }
             }}
           >
-            <span>{group.emoji}</span>
+            <EmojiText text={group.emoji} palette={palette} />
             {group.pubkeys.length > 1 && (
               <span
                 className={cn(

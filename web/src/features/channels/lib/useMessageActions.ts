@@ -1,3 +1,4 @@
+import { useCustomEmoji } from "@/features/custom-emoji/hooks";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -74,11 +75,19 @@ export function useMessageActions({
   channelId,
   selfPubkey,
 }: MessageActionsInput): MessageActions {
+  const palette = useCustomEmoji();
   const onReact = useCallback(
     (messageId: string, emoji: string) => {
-      void sendReaction(session, { targetEventId: messageId, emoji });
+      // The palette rides along so a custom :shortcode: carries its NIP-30
+      // tag — without it the relay refuses any shortcode over 64 characters
+      // and no other client can render the ones it does accept.
+      void sendReaction(session, {
+        targetEventId: messageId,
+        emoji,
+        palette,
+      });
     },
-    [session],
+    [palette, session],
   );
   // Edit mode: ✎ prefills the composer with the original text; submit sends a
   // kind-40003 overlay. Cancelled/switching channels clears it.

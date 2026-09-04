@@ -1,16 +1,20 @@
 import {
   isValidElement,
   memo,
+  type ComponentProps,
+  type ReactElement,
+  type ReactNode,
   useCallback,
   useMemo,
   useRef,
   useState,
-  type ReactElement,
-  type ReactNode,
 } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkSpoilers from "@/shared/lib/remarkSpoilers";
+import remarkCustomEmoji from "@/features/custom-emoji/lib/remarkCustomEmoji";
+import { useCustomEmoji } from "@/features/custom-emoji/hooks";
+import { CustomEmojiImage } from "@/features/custom-emoji/ui/CustomEmojiImage";
 import { toast } from "sonner";
 import { fetchSignedMedia } from "@/shared/api/blossom";
 import { relayHttpBaseUrl } from "@/shared/lib/relay-url";
@@ -158,6 +162,7 @@ export const MarkdownContent = memo(
     snapshotSharedBy?: string;
   }) {
     const openSnapshotPreview = useSnapshotPreview();
+    const palette = useCustomEmoji();
     const rootRef = useRef<HTMLDivElement>(null);
     const [gallery, setGallery] = useState<{
       items: LightboxItem[];
@@ -201,6 +206,17 @@ export const MarkdownContent = memo(
      * lightbox has to return focus to, and re-running each attachment's load
      * effect. Caught in a live browser, 2026-09-03; unit tests cannot see it.
      */
+    // Memoised because react-markdown re-parses when the plugin array's
+    // identity changes; an inline array would do that on every render. The
+    // palette belongs here rather than in `components` — the emoji renderer
+    // reads the url straight off the tag the plugin emits.
+    const remarkPlugins = useMemo<
+      ComponentProps<typeof ReactMarkdown>["remarkPlugins"]
+    >(
+      () => [remarkGfm, remarkSpoilers, [remarkCustomEmoji, { palette }]],
+      [palette],
+    );
+
     const components = useMemo<Components>(
       () => ({
         p: ({ children }) => {
@@ -216,10 +232,20 @@ export const MarkdownContent = memo(
         // react-markdown drops the unknown tag and renders the hidden text
         // plainly — which is worse than not supporting spoilers at all,
         // because the author believes it is concealed.
-        // react-markdown's Components type has no key for a custom element,
-        // hence the cast — kept to this one entry rather than widening the
-        // whole map and losing inference on every other renderer.
+        // Both custom elements need a cast for the same reason as spoiler:
+        // react-markdown's Components type has no key for them. Dropping
+        // either entry makes the tag VANISH rather than degrade to text,
+        // which is worse than not supporting it at all.
         ...({
+          emoji: ({
+            src,
+            "data-shortcode": shortcode,
+          }: {
+            src?: string;
+            "data-shortcode"?: string;
+          }) => (
+            <CustomEmojiImage shortcode={shortcode ?? ""} url={src ?? ""} />
+          ),
           spoiler: ({ children }: { children?: ReactNode }) => (
             <Spoiler>{children}</Spoiler>
           ),
@@ -289,10 +315,7 @@ export const MarkdownContent = memo(
           ref={rootRef}
           className="message-prose prose dark:prose-invert max-w-none break-words prose-p:my-1 prose-pre:my-2 prose-pre:font-mono prose-code:before:content-none prose-code:after:content-none"
         >
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm, remarkSpoilers]}
-            components={components}
-          >
+          <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
             {content}
           </ReactMarkdown>
         </div>
