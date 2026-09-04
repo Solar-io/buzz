@@ -12,8 +12,8 @@ use std::path::Path;
 use tempfile::NamedTempFile;
 
 use super::{
-    agent_keyring_name, hydrate_keys_with, migrate_inline_key, persist_agent_keys_with,
-    KeyMigration, KeyStore, KeyringProbe, ManagedAgentRecord,
+    agent_keyring_name, backup_nsec_choice, hydrate_keys_with, migrate_inline_key,
+    persist_agent_keys_with, KeyMigration, KeyStore, KeyringProbe, ManagedAgentRecord,
 };
 
 /// In-memory [`KeyStore`] for testing the migrate decision without the OS
@@ -829,4 +829,32 @@ fn install_log_filename_accepts_ordinary_runtime_ids() {
             format!("install-{id}.log")
         );
     }
+}
+
+#[test]
+fn backup_nsec_choice_prefers_keyring_then_inline_then_none() {
+    let pk = "aa".repeat(32);
+    // Keyring present wins.
+    assert_eq!(
+        backup_nsec_choice(Ok(Some("nsec1keyring".into())), "nsec1inline", &pk).unwrap(),
+        Some("nsec1keyring".into())
+    );
+    // Keyring absent falls back to the inline nsec.
+    assert_eq!(
+        backup_nsec_choice(Ok(None), "nsec1inline", &pk).unwrap(),
+        Some("nsec1inline".into())
+    );
+    // No key anywhere: nothing for the wipe to destroy.
+    assert_eq!(backup_nsec_choice(Ok(None), "", &pk).unwrap(), None);
+}
+
+#[test]
+fn backup_nsec_choice_fails_closed_on_keyring_outage() {
+    // An Err is an OUTAGE, not absence — never proceed toward the keyring
+    // wipe on the way to a failed backup (the 9/2 lesson: wiped keys are
+    // unrecoverable).
+    let err = backup_nsec_choice(Err("keychain locked".into()), "", &"aa".repeat(32))
+        .unwrap_err();
+    assert!(err.contains("cannot back up key"), "error must say what failed: {err}");
+    assert!(err.contains("refusing to delete"), "error must fail closed: {err}");
 }

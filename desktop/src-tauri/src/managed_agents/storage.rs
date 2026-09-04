@@ -595,6 +595,71 @@ pub fn delete_agent_key(pubkey: &str) {
     }
 }
 
+/// Durable copy of an agent's nsec BEFORE the keyring key is wiped by a
+/// delete. The 9/2 rekey incident made this load-bearing: keyring keys have
+/// no software recovery path on Apple Silicon, so destroying one without a
+/// backup copy destroys the identity outright.
+///
+/// Writes `agents/deleted-keys/<pubkey>.json` (owner-only `0o600`, atomic)
+/// and returns its path. Returns `Ok(None)` when there is no key in the
+/// keyring or the record — nothing to back up, nothing the wipe can destroy.
+/// Any OTHER failure is an error the caller must surface BEFORE deleting:
+/// fail closed, never wipe on the way to a failed export.
+pub(crate) fn export_agent_key_backup(
+    app: &AppHandle,
+    record: &ManagedAgentRecord,
+) -> Result<Option<std::path::PathBuf>, String> {
+    // Keyringless builds have no store to read — model that as "keyring has
+    // no key" so backup_nsec_choice's inline fallback still fires: the
+    // registry save that follows the delete destroys the inline nsec, which
+    // makes the backup file the only surviving copy (review finding 2).
+    let keyring = agent_secret_store()
+        .map(|store| store.load(&agent_keyring_name(&record.pubkey)))
+        .unwrap_or(Ok(None));
+    let Some(nsec) = backup_nsec_choice(keyring, &record.private_key_nsec, &record.pubkey)?
+    else {
+        return Ok(None);
+    };
+
+    let dir = managed_agents_base_dir(app)?.join("deleted-keys");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
+    let path = dir.join(format!("{}.json", record.pubkey));
+    let payload = serde_json::json!({
+        "pubkey": record.pubkey,
+        "name": record.name,
+        "nsec": nsec,
+        "exported_at": crate::util::now_iso(),
+    });
+    atomic_write_json_restricted(&path, payload.to_string().as_bytes())?;
+    Ok(Some(path))
+}
+
+/// Which nsec a pre-delete backup should persist. Testable core of
+/// [`export_agent_key_backup`]: keyring first, inline fallback, and a keyring
+/// OUTAGE (an `Err`, distinct from `Ok(None)` absence) is a hard error —
+/// fail closed, never wipe a key we could not copy.
+pub(crate) fn backup_nsec_choice(
+    keyring: Result<Option<String>, String>,
+    inline_nsec: &str,
+    pubkey: &str,
+) -> Result<Option<String>, String> {
+    match keyring {
+        Ok(Some(nsec)) => Ok(Some(nsec)),
+        Ok(None) => {
+            if inline_nsec.is_empty() {
+                // No key anywhere — the wipe cannot destroy anything.
+                Ok(None)
+            } else {
+                Ok(Some(inline_nsec.to_string()))
+            }
+        }
+        Err(e) => Err(format!(
+            "cannot back up key for agent {pubkey} (keyring read failed: {e}) — refusing to delete"
+        )),
+    }
+}
+
 /// Atomic, symlink-preserving JSON write.
 /// Resolves symlinks so the tmp+rename happens at the real target path,
 /// preserving any symlink at `path`.

@@ -34,6 +34,12 @@ pub(crate) use pending::{
     archive_managed_agent_pending, retain_managed_agent_pending, tombstone_managed_agent_pending,
 };
 
+/// Destructive lifecycle verbs (delete/unregister) + their guards — split out
+/// after the file-size ratchet; see `agents_lifecycle.rs`.
+#[path = "agents_lifecycle.rs"]
+mod lifecycle;
+pub use lifecycle::{delete_managed_agent, unregister_managed_agent};
+
 /// Build a summary from fresh disk state (personas, teams, global config).
 /// For one-shot command paths only — the 5s list poll calls
 /// `build_managed_agent_summary` directly with stores loaded once per call,
@@ -1087,85 +1093,6 @@ pub async fn stop_managed_agent(
     .map_err(|e| format!("spawn_blocking failed: {e}"))?
 }
 
-// Async so the blocking body (disk reads/writes, process termination, keyring
-// delete, nest regeneration) runs off the main UI thread via spawn_blocking.
-#[tauri::command]
-pub async fn delete_managed_agent(
-    pubkey: String,
-    force_remote_delete: Option<bool>,
-    app: AppHandle,
-) -> Result<(), String> {
-    use tauri::Manager;
-    tokio::task::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        {
-            let _store_guard = state
-                .managed_agents_store_lock
-                .lock()
-                .map_err(|error| error.to_string())?;
-            let mut records = load_managed_agents(&app)?;
-            let mut runtimes = state
-                .managed_agent_processes
-                .lock()
-                .map_err(|error| error.to_string())?;
-
-            let (sync_changed, exited_pubkeys) = sync_managed_agent_processes(
-                &mut records,
-                &mut runtimes,
-                &current_instance_id(&app),
-            );
-            if sync_changed {
-                save_managed_agents(&app, &records)?;
-            }
-            for pubkey in &exited_pubkeys {
-                state.clear_agent_session_caches(pubkey);
-            }
-
-            // Guard: reject deletion of deployed remote agents unless explicitly forced.
-            // This turns "don't orphan remote infra" from a UI convention into a backend
-            // invariant — a buggy or compromised IPC caller cannot silently orphan a live
-            // remote deployment. The frontend sends force_remote_delete: true only after
-            // the user confirms the orphan warning.
-            if let Some(record) = records.iter().find(|r| r.pubkey == pubkey) {
-                if record.backend != BackendKind::Local
-                    && record.backend_agent_id.is_some()
-                    && !force_remote_delete.unwrap_or(false)
-                {
-                    return Err(
-                        "cannot delete a deployed remote agent without force_remote_delete: true"
-                            .to_string(),
-                    );
-                }
-            }
-
-            let persona_id = records
-                .iter()
-                .find(|record| record.pubkey == pubkey)
-                .and_then(|record| record.persona_id.clone());
-            if let Some(record) = records.iter_mut().find(|record| record.pubkey == pubkey) {
-                stop_managed_agent_process(&app, record, &mut runtimes)?;
-            }
-            state.clear_agent_session_caches(&pubkey);
-            let initial_len = records.len();
-            records.retain(|record| record.pubkey != pubkey);
-            if records.len() == initial_len {
-                return Err(format!("agent {pubkey} not found"));
-            }
-            save_managed_agents(&app, &records)?;
-            crate::managed_agents::delete_agent_key(&pubkey);
-            // Tombstone after confirmed removal (inside lock; every published agent tombstones).
-            tombstone_managed_agent_pending(&app, &state, &pubkey);
-            // NIP-IA: archive the deleted agent's identity on the relay so it
-            // stops appearing in member pickers and autocomplete. Same
-            // best-effort, inside-the-lock contract as the tombstone above.
-            archive_managed_agent_pending(&app, &state, &pubkey, persona_id.as_deref());
-        }
-        try_regenerate_nest(&app);
-        Ok(())
-    })
-    .await
-    .map_err(|e| format!("spawn_blocking failed: {e}"))?
-}
 
 // Remote agent shutdown is handled entirely by the frontend:
 // 1. Frontend sends "!shutdown" @mention via WebSocket (signed by user's key)

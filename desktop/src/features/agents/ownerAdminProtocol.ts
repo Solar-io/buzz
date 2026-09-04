@@ -67,6 +67,7 @@ export type OwnerAdminCommand = {
       pubkey: string;
       forceRemoteDelete?: boolean;
     }
+  | { action: "unregister"; requestId: string; pubkey: string }
   | { action: "start"; requestId: string; pubkey: string }
   | { action: "stop"; requestId: string; pubkey: string }
   | { action: "restart"; requestId: string; pubkey: string }
@@ -291,7 +292,12 @@ export function parseOwnerAdminCommand(
       };
     case "start":
     case "stop":
+<<<<<<< HEAD
     case "restart":
+||||||| 4273158dd
+=======
+    case "unregister":
+>>>>>>> nest/main
       if (!isText(request.pubkey) || !PUBKEY_RE.test(request.pubkey)) {
         return null;
       }

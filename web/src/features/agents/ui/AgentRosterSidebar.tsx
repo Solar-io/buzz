@@ -233,8 +233,14 @@ function AgentRosterRow({
 
 /**
  * Stale-registration cleanup: older duplicates from key re-mints and
- * registrations no published desktop reports. Every row is a delete command
- * (forceRemoteDelete) the owner confirms; nothing is removed automatically.
+ * registrations no published desktop reports. Every row is an UNREGISTER
+ * command the owner confirms; nothing is removed automatically.
+ *
+ * Unregister, never delete. This card used to send
+ * `delete` + `forceRemoteDelete`, which wipes the agent's key — unrecoverable,
+ * and far more than "this registration is stale" warrants. Unregister
+ * tombstones and archives the relay registration only: no process is stopped
+ * and no key is destroyed.
  */
 function StaleCleanupCard({
   registry,
@@ -271,10 +277,10 @@ function StaleCleanupCard({
     for (const entry of selected) {
       void admin.send(
         {
-          action: "delete",
-          request: { pubkey: entry.pubkey, forceRemoteDelete: true },
+          action: "unregister",
+          request: { pubkey: entry.pubkey },
         },
-        `Delete ${entry.name} (${entry.reason})`,
+        `Unregister ${entry.name} (${entry.reason})`,
       );
     }
     setOpen(false);
@@ -311,7 +317,7 @@ function StaleCleanupCard({
                   type="checkbox"
                   checked={checked.has(entry.pubkey)}
                   onChange={() => toggle(entry.pubkey)}
-                  aria-label={`Delete ${entry.name}`}
+                  aria-label={`Unregister ${entry.name}`}
                 />
                 <span className="min-w-0 flex-1 truncate">
                   <span className="font-medium">{entry.name}</span>{" "}
@@ -327,16 +333,16 @@ function StaleCleanupCard({
           </ul>
           <div className="flex items-center justify-between">
             <p className="text-xs text-muted-foreground">
-              Each row sends a delete command (tombstones the 30177 even if no
-              desktop has a local record).
+              Each row sends an unregister command — tombstones and archives the
+              relay registration only. No process is stopped, no key is deleted.
             </p>
             <Button
               size="sm"
-              variant="destructive"
+              variant="outline"
               disabled={selected.length === 0}
               onClick={runCleanup}
             >
-              Delete {selected.length} stale registration
+              Unregister {selected.length} stale registration
               {selected.length === 1 ? "" : "s"}
             </Button>
           </div>

@@ -39,7 +39,7 @@ export function buildRoster(
   personas: ReadonlyMap<string, PersonaDefinition>,
   catalogs: readonly DesktopCatalog[],
 ): RosterRow[] {
-  const duplicates = duplicatePubkeys([...registry]);
+  const duplicates = duplicatePubkeys([...registry], [...catalogs]);
   return registry
     .map((entry) => {
       const persona =

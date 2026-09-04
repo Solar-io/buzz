@@ -23,7 +23,6 @@ import {
 } from "@/shared/lib/useDocumentVisible";
 import {
   createManagedAgent,
-  deleteManagedAgent,
   deleteCustomHarness,
   discoverBackendProviders,
   discoverGitBashPrerequisite,
@@ -44,6 +43,7 @@ import {
 import type { HarnessDefinitionInput } from "@/shared/api/tauri";
 import { discoverAcpRuntimes } from "@/shared/api/tauriAcpDiscovery";
 import {
+  deleteManagedAgent,
   setManagedAgentAutoRestart,
   setManagedAgentStartOnAppLaunch,
   startManagedAgent,
@@ -655,10 +655,12 @@ export function useDeleteManagedAgentMutation() {
     mutationFn: ({
       pubkey,
       forceRemoteDelete,
+      forceRunningDelete,
     }: {
       pubkey: string;
       forceRemoteDelete?: boolean;
-    }) => deleteManagedAgent(pubkey, forceRemoteDelete),
+      forceRunningDelete?: boolean;
+    }) => deleteManagedAgent(pubkey, forceRemoteDelete, forceRunningDelete),
     onSettled: async () => {
       await queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
       await queryClient.invalidateQueries({ queryKey: relayAgentsQueryKey });

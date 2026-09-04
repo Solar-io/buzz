@@ -820,16 +820,6 @@ export async function createManagedAgent(input: CreateManagedAgentInput) {
   };
 }
 
-export async function deleteManagedAgent(
-  pubkey: string,
-  forceRemoteDelete?: boolean,
-): Promise<void> {
-  await invokeTauri("delete_managed_agent", {
-    pubkey,
-    forceRemoteDelete: forceRemoteDelete ?? null,
-  });
-}
-
 export async function getManagedAgentLog(pubkey: string, lineCount?: number) {
   const response = await invokeTauri<RawManagedAgentLog>(
     "get_managed_agent_log",

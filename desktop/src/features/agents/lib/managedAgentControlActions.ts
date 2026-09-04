@@ -10,6 +10,8 @@ import { normalizePubkey } from "@/shared/lib/pubkey";
 type DeleteManagedAgentInput = {
   pubkey: string;
   forceRemoteDelete?: boolean;
+  /** Explicit consent to delete a RUNNING local agent (backend guard). */
+  forceRunningDelete?: boolean;
 };
 
 type StartManagedAgent = (pubkey: string) => Promise<unknown>;
@@ -202,11 +204,33 @@ export async function deleteManagedAgentWithRules({
     }
   }
 
+  // Local agent with a live process: the backend refuses a running-agent
+  // delete unless explicitly forced (9/2 rekey incident guard). ONLY the
+  // confirm dialog authorizes the force — a caller that skips confirms
+  // (skipRemoteDeleteConfirm) gets the backend refusal surfaced instead, so
+  // an old skip preference can never silently authorize a running delete
+  // (review finding 3).
+  const localRunning =
+    agent.backend.type !== "provider" && agent.status === "running";
+  let forceRunningDelete: boolean | undefined;
+  if (localRunning && !skipRemoteDeleteConfirm) {
+    const confirmed = window.confirm(
+      `${agent.name} is running. Deleting stops it and permanently removes ` +
+        "its key — a backup copy is written to the agents directory first. " +
+        "Stop and delete?",
+    );
+    if (!confirmed) {
+      return { cancelled: true };
+    }
+    forceRunningDelete = true;
+  }
+
   const isDeployedRemote =
     agent.backend.type === "provider" && agent.backendAgentId;
   await deleteManagedAgent({
     pubkey: agent.pubkey,
     forceRemoteDelete: isDeployedRemote ? true : undefined,
+    forceRunningDelete,
   });
 
   return {};
