@@ -5,6 +5,7 @@ import {
   mergeThreadCounts,
   relayThreadSummaryFromEvent,
   THREAD_SUMMARY_KIND,
+  timelineReplyCounts,
 } from "./threadSummaryEvent.ts";
 
 function summaryEvent(overrides = {}) {
@@ -196,4 +197,35 @@ test("the participant list is capped, keeping the most recent end", () => {
     2,
   );
   assert.deepEqual(merged.participants, ["p3", "p4"]);
+});
+
+test("a timeline row prefers the relay descendant_count over the loaded buffer", () => {
+  const counts = timelineReplyCounts(
+    new Map([["root-a", 2]]),
+    new Map([["root-a", { descendantCount: 40 }]]),
+  );
+  assert.equal(counts.get("root-a"), 40);
+});
+
+test("a root the overlay has not materialised keeps its local count", () => {
+  const counts = timelineReplyCounts(new Map([["root-b", 3]]), new Map());
+  assert.equal(counts.get("root-b"), 3);
+});
+
+test("a just-arrived reply is not undone by a stale-low overlay", () => {
+  // The buffer sees a reply before the relay materialises it. A count that
+  // ticks up and then back down is worse than one that is briefly low.
+  const counts = timelineReplyCounts(
+    new Map([["root-c", 9]]),
+    new Map([["root-c", { descendantCount: 8 }]]),
+  );
+  assert.equal(counts.get("root-c"), 9);
+});
+
+test("a summary for a root with nothing loaded still shows its count", () => {
+  const counts = timelineReplyCounts(
+    new Map(),
+    new Map([["root-d", { descendantCount: 12 }]]),
+  );
+  assert.equal(counts.get("root-d"), 12);
 });

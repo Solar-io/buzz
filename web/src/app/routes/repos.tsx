@@ -19,6 +19,7 @@ import { sendPresence, usePresence } from "@/features/channels/hooks";
 import { shortKey } from "@/features/dms/lib/dmNaming.ts";
 
 import { replyCounts } from "@/features/channels/lib/messageBuffer.ts";
+import { timelineReplyCounts } from "@/features/channels/lib/threadSummaryEvent.ts";
 import { unreactToMessage } from "@/features/channels/lib/unreact.ts";
 import {
   loadReadState,
@@ -65,7 +66,12 @@ import { RemindMeLaterProvider } from "@/features/reminders/ui/RemindMeLaterProv
 import { NotificationRuntime } from "@/features/notifications/ui/NotificationRuntime";
 import { ProfileActionsProvider } from "@/features/profile/ProfileActionsContext";
 import { FilesPanel } from "@/features/files/ui/FilesPanel";
-import { ownPubkey } from "@/shared/lib/nostr-signer";
+import { toast } from "sonner";
+import {
+  JOIN_CHANNEL_KIND,
+  joinChannelTags,
+} from "@/features/channels/lib/channelAdmin.ts";
+import { ownPubkey, signNostrEvent } from "@/shared/lib/nostr-signer";
 import { AppShell } from "@/shared/layout/AppShell";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 
@@ -147,6 +153,7 @@ function ChannelBrowser() {
     messages,
     reactions,
     typing,
+    threadSummaries,
     loadOlder,
     loadingOlder,
     historyExhausted,
@@ -248,7 +255,10 @@ function ChannelBrowser() {
     selfPubkey,
     Date.now(),
   ).map((pk) => profiles.get(pk)?.displayName ?? pk);
-  const counts = useMemo(() => replyCounts(messages), [messages]);
+  const counts = useMemo(
+    () => timelineReplyCounts(replyCounts(messages), threadSummaries),
+    [messages, threadSummaries],
+  );
   const [threadRootId, setThreadRootId] = useState<string | null>(null);
   // Forum thread selection: picking a post swaps the posts list for the
   // thread view. Switching channels clears it (same reset pattern as the
@@ -684,6 +694,25 @@ function ChannelBrowser() {
                     }
                     session={session}
                     onHuddleStarted={onHuddleStarted}
+                    members={members}
+                    profiles={profiles}
+                    presence={presence}
+                    selfPubkey={selfPubkey}
+                    onJoinChannel={async () => {
+                      const event = await signNostrEvent({
+                        kind: JOIN_CHANNEL_KIND,
+                        tags: joinChannelTags(current.id),
+                        content: "",
+                      });
+                      const result = await session.publish(event);
+                      if (result.ok) {
+                        toast.success(`Joined #${current.name}`);
+                      } else {
+                        toast.error(
+                          result.message || "The relay refused the join.",
+                        );
+                      }
+                    }}
                     agentPubkey={dmAgentPubkey}
                     onOpenThinking={() => {
                       setRightTab("thinking");
@@ -823,6 +852,7 @@ function ChannelBrowser() {
                     buffer={messages}
                     members={members}
                     profiles={profiles}
+                    threadSummaries={threadSummaries}
                     onClose={() => setThreadRootId(null)}
                     send={send}
                     onSelectThinkingTab={
@@ -836,6 +866,7 @@ function ChannelBrowser() {
                     buffer={messages}
                     members={members}
                     profiles={profiles}
+                    threadSummaries={threadSummaries}
                     onClose={() => setThreadRootId(null)}
                     send={send}
                     mobileOnly

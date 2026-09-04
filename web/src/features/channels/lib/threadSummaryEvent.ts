@@ -184,3 +184,30 @@ export function mergeThreadCounts(
     participants: merged.slice(-participantLimit),
   };
 }
+
+/**
+ * The per-root reply count a timeline row should show.
+ *
+ * The relay's `descendant_count` is the real number; the buffer-local count is
+ * only ever what this client happens to have loaded, so on a thread with
+ * history it reads low — a root with 40 replies announcing "2 replies" because
+ * two of them are in the buffer.
+ *
+ * Local wins when it is HIGHER, which is not a tie-break but the point: the
+ * overlay is materialised asynchronously, so a reply that just arrived is in
+ * the buffer before it is in the summary. A count that ticks up and then back
+ * down is worse than one that is briefly conservative.
+ */
+export function timelineReplyCounts(
+  local: ReadonlyMap<string, number>,
+  summaries: ReadonlyMap<string, { descendantCount: number }>,
+): Map<string, number> {
+  const merged = new Map(local);
+  for (const [rootId, summary] of summaries) {
+    merged.set(
+      rootId,
+      Math.max(summary.descendantCount, local.get(rootId) ?? 0),
+    );
+  }
+  return merged;
+}
