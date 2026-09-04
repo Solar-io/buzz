@@ -19,7 +19,12 @@ import {
   type ReactionIndex,
 } from "../lib/reactions.ts";
 import { SYSTEM_MESSAGE_KIND } from "../lib/systemEvent.ts";
+import {
+  threadIndentRem,
+  type ThreadBranchSummary,
+} from "../lib/threadTree.ts";
 import { AuthorAvatar } from "./AuthorAvatar.tsx";
+import { ThreadBranchChip } from "./ThreadBranchChip.tsx";
 import { MessageRow } from "./MessageRow.tsx";
 import { DayDivider, UnreadDivider } from "./TimelineDividers.tsx";
 import {
@@ -35,6 +40,16 @@ export { authorLabel } from "../lib/authorLabel.ts";
 
 const EMPTY_REACTIONS: ReactionIndex = new Map();
 const EMPTY_PENDING: ReadonlySet<string> = new Set();
+
+/** Nested-thread rendering inputs — see the `threadLayout` prop. */
+export interface ThreadLayout {
+  /** Message id → tree depth. 0/absent renders flush, as before. */
+  depthById: ReadonlyMap<string, number>;
+  /** Message id → its hidden sub-branch, when collapsed. */
+  summaryById: ReadonlyMap<string, ThreadBranchSummary>;
+  /** Expand the branch under this message. */
+  onExpand: (parentId: string) => void;
+}
 
 export function ChannelTimeline({
   messages,
@@ -60,6 +75,7 @@ export function ChannelTimeline({
   onLoadOlder,
   loadingOlder,
   historyExhausted,
+  threadLayout,
 }: {
   messages: MessageBuffer;
   profiles: Map<string, Profile>;
@@ -127,6 +143,15 @@ export function ChannelTimeline({
   loadingOlder?: boolean;
   /** Older pagination already hit the channel start — stop offering it. */
   historyExhausted?: boolean;
+  /**
+   * Nested-thread rendering (thread panel only, alongside `flat`).
+   *
+   * `depthById` indents a reply by its position in the NIP-10 tree, and
+   * `summaryById` puts a collapsed-branch chip under any reply whose own
+   * sub-branch is hidden. Omit it and the list renders exactly as before —
+   * the channel timeline never nests, because its rows are thread ROOTS.
+   */
+  threadLayout?: ThreadLayout;
 }) {
   const listRef = useRef<VListHandle>(null);
   /**
@@ -150,6 +175,8 @@ export function ChannelTimeline({
   const pending = pendingIds ?? EMPTY_PENDING;
   let lastAuthor: string | null = null;
   let lastKind = 0;
+  /** Tree depth of the previously rendered row — a change breaks grouping. */
+  let lastDepth = 0;
   // createdAt (Unix seconds) of the previous RENDERED message — the anchor
   // for the grouping window. Chained like the desktop: each message compares
   // against its immediate predecessor, grouped or not.
@@ -226,15 +253,23 @@ export function ChannelTimeline({
     // 10-minute grouping window. The window is the fix for messages from
     // "earlier in the day" rendering merged into a prior block with no
     // timestamp of their own.
+    // Nested threads: a reply's own indent is part of how it is read, so a
+    // depth change always starts a fresh block. Grouping it into the row
+    // above would drop its avatar and leave an indented, unattributed
+    // paragraph hanging under someone else's reply.
+    const depth = threadLayout?.depthById.get(message.id) ?? 0;
     const grouped =
       message.authorPubkey === lastAuthor &&
       message.kind === lastKind &&
+      depth === lastDepth &&
       isWithinGroupingWindow(lastRenderedAt, message.createdAt);
     lastAuthor = message.authorPubkey;
     lastKind = message.kind;
+    lastDepth = depth;
     lastRenderedAt = message.createdAt;
     rowIndex.set(message.id, rows.length);
-    pushRow(
+    const branch = threadLayout?.summaryById.get(message.id) ?? null;
+    const row = (
       <MessageRow
         key={message.id}
         message={message}
@@ -267,8 +302,33 @@ export function ChannelTimeline({
             root={message}
           />
         )}
-      </MessageRow>,
+        {branch && threadLayout && (
+          <ThreadBranchChip
+            summary={branch}
+            profiles={profiles}
+            onExpand={threadLayout.onExpand}
+          />
+        )}
+      </MessageRow>
     );
+    if (depth > 0) {
+      // Indent the whole row, with a rail on its leading edge so the eye can
+      // follow a branch down the panel. `paddingInlineStart` (not a margin)
+      // keeps the rail flush against the row it belongs to.
+      pushRow(
+        <div
+          key={message.id}
+          data-testid="thread-reply-indent"
+          data-depth={depth}
+          className="border-l border-border/60"
+          style={{ marginInlineStart: `${threadIndentRem(depth)}rem` }}
+        >
+          {row}
+        </div>,
+      );
+      continue;
+    }
+    pushRow(row);
   }
   // Virtualized (virtua VList — the desktop's timeline virtualizer): only the
   // visible window of rows mounts, so a 500-message buffer scrolls smoothly.

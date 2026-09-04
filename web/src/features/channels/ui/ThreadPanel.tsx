@@ -1,12 +1,22 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { MessageBuffer, TimelineMessage } from "../lib/messageBuffer.ts";
 import type { ChannelMember, Profile } from "../hooks.ts";
 import {
   replyTargetMessage,
   resolveThreadReplyRef,
-  threadRepliesOf,
 } from "../lib/threadTarget.ts";
 import { threadParticipants, threadSummaryLine } from "../lib/threadSummary.ts";
+import {
+  branchSummary,
+  buildThreadEntries,
+  buildThreadIndex,
+  threadDescendants,
+  type ThreadBranchSummary,
+} from "../lib/threadTree.ts";
+import {
+  mergeThreadCounts,
+  type RelayThreadSummaryMap,
+} from "../lib/threadSummaryEvent.ts";
 import {
   loadThreadReadState,
   markThreadSeen,
@@ -18,23 +28,31 @@ import { authorLabel, ChannelTimeline } from "./ChannelTimeline.tsx";
 import { Composer } from "./Composer.tsx";
 import { ThreadParticipantStack } from "./ThreadParticipantStack.tsx";
 
+const EMPTY_SUMMARIES: RelayThreadSummaryMap = new Map();
+
 /**
  * Thread view in the desktop client's shape: a "Thread" header with the reply
- * count, the root message on a rounded card, every reply in the channel
- * buffer, and a composer that replies into the thread (NIP-10 root/reply
- * tags). At lg+ the panel docks right; its width comes from the shared
- * --thread-width CSS variable the shell maintains (drag handle there).
+ * count, the root message on a rounded card, the thread's replies, and a
+ * composer that replies into the thread (NIP-10 root/reply tags). At lg+ the
+ * panel docks right; its width comes from the shared --thread-width CSS
+ * variable the shell maintains (drag handle there).
  *
- * The header carries what the desktop's thread summary carries: the
- * participants as an overlapping avatar stack, the reply count, and when the
- * last reply landed. Threads here stay FLAT by an explicit decision — no
- * nesting, no depth guides, no collapse.
+ * THREADS NEST. Replies used to render as one flat list under the root,
+ * which threw away exactly the information the NIP-10 `reply` marker exists
+ * to carry: mid-thread answers looked like answers to the thread. The panel
+ * now renders the tree the markers describe — direct replies at the top
+ * level, a sub-branch collapsed behind a "N replies" chip until it is
+ * expanded, and depth as indent (lib/threadTree.ts, ported from the
+ * desktop's `threadPanel.ts` + `threadTreeLayout.ts`).
+ *
+ * The reply count in the header is the whole SUBTREE, and it is reconciled
+ * with the relay's materialised `descendant_count` when a kind-39005 overlay
+ * has arrived for this root — so a thread whose older replies are outside
+ * the loaded buffer still reports its real size.
  *
  * The composer's NIP-10 `reply` marker names the message the author chose to
  * respond to — the thread root by default, or whichever reply the reader
- * picked with its ↩ button. It is NOT the newest reply: that made every reply
- * claim the last message as its parent and made replying mid-thread
- * impossible. See lib/threadTarget.ts.
+ * picked with its ↩ button. See lib/threadTarget.ts.
  */
 export function ThreadPanel({
   root,
@@ -45,6 +63,7 @@ export function ThreadPanel({
   send,
   onSelectThinkingTab,
   mobileOnly,
+  threadSummaries = EMPTY_SUMMARIES,
 }: {
   root: TimelineMessage;
   buffer: MessageBuffer;
@@ -57,23 +76,85 @@ export function ThreadPanel({
   /** Overlay on small screens only — used when the DM right pane shows the
    *  thinking tab at lg but a thread was opened from the timeline. */
   mobileOnly?: boolean;
+  /**
+   * Relay thread counters (kind 39005) from the channel feed. Optional: with
+   * none, every count comes from the loaded buffer, which is a floor rather
+   * than a lie.
+   */
+  threadSummaries?: RelayThreadSummaryMap;
 }) {
-  const replies = threadRepliesOf(buffer, root.id);
-  const threadMessages = [root, ...replies];
-  const lastReply = replies[replies.length - 1] ?? root;
-  // Auto-tail (Sam 8/31): thread-heavy agents have long threads — the panel
-  // must open on the NEWEST reply, not the root. The timeline's tailKey
-  // handles it now that the list is virtualized.
-
+  const rootId = root.id;
+  /** Replies whose own sub-branch is expanded in place. */
+  const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   // Which message the composer is replying to. Null = the thread itself,
   // whose NIP-10 parent is the root. Cleared whenever a different thread
   // opens so a selection can never carry over to another root.
   const [selectedReplyId, setSelectedReplyId] = useState<string | null>(null);
-  const rootId = root.id;
   // biome-ignore lint/correctness/useExhaustiveDependencies: rootId is the reset trigger, not a value read inside the effect
   useEffect(() => {
     setSelectedReplyId(null);
+    setExpandedIds(new Set());
   }, [rootId]);
+
+  const index = useMemo(() => buildThreadIndex(buffer), [buffer]);
+  /** Every reply under this root, at any depth, oldest first. */
+  const replies = useMemo(
+    () => threadDescendants(index, rootId),
+    [index, rootId],
+  );
+  const entries = useMemo(
+    () => buildThreadEntries(index, rootId, expandedIds),
+    [index, rootId, expandedIds],
+  );
+  const threadMessages = useMemo(
+    () => [root, ...entries.map((entry) => entry.message)],
+    [root, entries],
+  );
+  const depthById = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const entry of entries) {
+      map.set(entry.message.id, entry.depth);
+    }
+    return map;
+  }, [entries]);
+  const summaryById = useMemo(() => {
+    const map = new Map<string, ThreadBranchSummary>();
+    for (const entry of entries) {
+      if (entry.summary) {
+        map.set(entry.message.id, entry.summary);
+      }
+    }
+    return map;
+  }, [entries]);
+  const onExpand = useCallback((parentId: string) => {
+    setExpandedIds((previous) => {
+      const next = new Set(previous);
+      next.add(parentId);
+      return next;
+    });
+  }, []);
+  const threadLayout = useMemo(
+    () => ({ depthById, summaryById, onExpand }),
+    [depthById, summaryById, onExpand],
+  );
+
+  const localSummary = branchSummary(index, rootId);
+  const counts = mergeThreadCounts(
+    {
+      replyCount: index.statsById.get(rootId)?.directReplyCount ?? 0,
+      descendantCount: localSummary?.replyCount ?? 0,
+      lastReplyAt: localSummary?.lastReplyAt ?? null,
+      participants: localSummary?.participants ?? [],
+    },
+    threadSummaries.get(rootId),
+  );
+
+  const lastReply = replies[replies.length - 1] ?? root;
+  // Auto-tail (Sam 8/31): thread-heavy agents have long threads — the panel
+  // must open on the NEWEST reply, not the root. The timeline's tailKey
+  // handles it now that the list is virtualized.
 
   // Unread replies since this thread was last open.
   //
@@ -100,10 +181,7 @@ export function ThreadPanel({
     () => threadParticipants(root, replies),
     [root, replies],
   );
-  const summary = threadSummaryLine(
-    replies.length,
-    replies.length > 0 ? lastReply.createdAt : null,
-  );
+  const summary = threadSummaryLine(counts.descendantCount, counts.lastReplyAt);
 
   const threadRef = resolveThreadReplyRef(rootId, replies, selectedReplyId);
   const target = replyTargetMessage(rootId, replies, selectedReplyId);
@@ -171,11 +249,12 @@ export function ThreadPanel({
         profiles={profiles}
         replyCounts={new Map()}
         // Inside a thread the row's ↩ button picks the reply TARGET rather
-        // than opening a nested thread — threads here are flat.
+        // than opening a nested panel — the nesting is rendered in place.
         onOpenThread={(message) => setSelectedReplyId(message.id)}
         activeRootId={threadRef.replyToId}
         flat
-        tailKey={`${rootId}:${lastReply.id}:${replies.length}`}
+        threadLayout={threadLayout}
+        tailKey={`${rootId}:${lastReply.id}:${threadMessages.length}`}
       />
       <Composer
         members={members}

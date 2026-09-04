@@ -16,6 +16,20 @@ export interface ChannelSummary {
   /** Relay `private` tag on the 39000 — drives the padlock glyph. */
   isPrivate: boolean;
   /**
+   * Relay `topic` tag. Separate from `about`: the relay stores topic,
+   * description and purpose as three columns and emits three tags. The
+   * header renders the first non-empty one — see lib/channelDescription.ts.
+   */
+  topic: string;
+  /** Relay `purpose` tag. */
+  purpose: string;
+  /**
+   * Relay `ttl_deadline` tag (RFC-3339) — when this ephemeral channel gets
+   * archived. `ttlSeconds` says a channel is temporary; only the deadline
+   * says when, so the countdown badge needs this one.
+   */
+  ttlDeadline: string | null;
+  /**
    * Ephemeral-channel TTL seconds from the relay's `ttl` tag; null = permanent.
    * Huddle backing channels carry 3600 — group them apart from real channels.
    */
@@ -69,6 +83,9 @@ export function channelFromEvent(
     type,
     archived,
     isPrivate,
+    topic: tags.find((tag) => tag[0] === "topic")?.[1] ?? "",
+    purpose: tags.find((tag) => tag[0] === "purpose")?.[1] ?? "",
+    ttlDeadline: tags.find((tag) => tag[0] === "ttl_deadline")?.[1] ?? null,
     ttlSeconds: parsedTtl,
     participantPubkeys,
   };

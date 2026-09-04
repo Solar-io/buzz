@@ -11,10 +11,17 @@ import {
 } from "../lib/reactions.ts";
 import type { ChannelMember, Profile } from "../hooks.ts";
 import { useForumPosts } from "../hooks.ts";
+import { branchSummary, buildThreadIndex } from "../lib/threadTree.ts";
+import {
+  mergeThreadCounts,
+  type MergedThreadCounts,
+} from "../lib/threadSummaryEvent.ts";
+import { cn } from "@/shared/lib/cn";
 import { relativeTime } from "@/shared/lib/relative-time";
 import { AuthorAvatar, authorLabel } from "./ChannelTimeline.tsx";
 import { Composer } from "./Composer.tsx";
 import { MarkdownContent } from "./MarkdownContent.tsx";
+import { ThreadParticipantStack } from "./ThreadParticipantStack.tsx";
 import { ForumThreadView } from "./ForumThreadView.tsx";
 
 /** Composer send, extended with the event kind the forum views publish. */
@@ -62,20 +69,54 @@ export function ForumView({
   onDelete: (messageId: string) => void;
   send: ForumSend;
 }) {
-  const { messages: forumBuffer, loading } = useForumPosts(channel.id);
+  const {
+    messages: forumBuffer,
+    loading,
+    threadSummaries,
+    loadOlder,
+    loadingOlder,
+    exhausted,
+  } = useForumPosts(channel.id);
   const posts = useMemo(() => forumPosts(forumBuffer), [forumBuffer]);
-  // The posts subscription's kind list also matches recent replies; use
-  // them for the "last reply" stamp without polluting the posts list.
-  const lastReplyAt = useMemo(() => {
-    const stamps = new Map<string, number>();
-    for (const message of forumBuffer) {
-      const root = message.rootId ?? message.replyToId;
-      if (root !== null && !message.deleted) {
-        stamps.set(root, Math.max(stamps.get(root) ?? 0, message.createdAt));
-      }
+  /**
+   * Per-post counters. Three sources, in increasing authority:
+   *
+   * - `replyCounts` from the channel feed — whatever the main timeline
+   *   buffer happens to hold.
+   * - the forum buffer's own tree — every reply this view has loaded, at any
+   *   depth, which is what `descendantCount` means.
+   * - the relay's kind-39005 overlay — the materialised `descendant_count`
+   *   on the thread root, which is true even for replies nobody fetched.
+   *
+   * `mergeThreadCounts` takes the max of each, because a disagreement always
+   * means one side is missing rows.
+   */
+  const postStats = useMemo(() => {
+    const index = buildThreadIndex(forumBuffer);
+    const stats = new Map<string, MergedThreadCounts>();
+    for (const post of posts) {
+      const local = branchSummary(index, post.id);
+      stats.set(
+        post.id,
+        mergeThreadCounts(
+          {
+            replyCount: Math.max(
+              index.statsById.get(post.id)?.directReplyCount ?? 0,
+              replyCounts.get(post.id) ?? 0,
+            ),
+            descendantCount: Math.max(
+              local?.replyCount ?? 0,
+              replyCounts.get(post.id) ?? 0,
+            ),
+            lastReplyAt: local?.lastReplyAt ?? null,
+            participants: local?.participants ?? [],
+          },
+          threadSummaries.get(post.id),
+        ),
+      );
     }
-    return stamps;
-  }, [forumBuffer]);
+    return stats;
+  }, [forumBuffer, posts, replyCounts, threadSummaries]);
   const [composerOpen, setComposerOpen] = useState(false);
   // Reset the composer card when the channel changes (the view stays mounted
   // while the browser steps between forum channels).
@@ -166,22 +207,42 @@ export function ForumView({
               </p>
             </div>
           ) : (
-            posts
-              .filter((post) => !post.deleted)
-              .map((post) => (
-                <ForumPostCard
-                  key={post.id}
-                  post={post}
-                  profiles={profiles}
-                  replyCount={replyCounts.get(post.id) ?? 0}
-                  lastReplyAt={lastReplyAt.get(post.id) ?? null}
-                  reactionGroups={groupReactions(feedReactions, post.id)}
-                  canDelete={selfPubkey === post.authorPubkey}
-                  onReact={onReact}
-                  onDelete={onDelete}
-                  onSelect={() => onSelectPost(post.id)}
-                />
-              ))
+            <>
+              {posts
+                .filter((post) => !post.deleted)
+                .map((post) => (
+                  <ForumPostCard
+                    key={post.id}
+                    post={post}
+                    profiles={profiles}
+                    counts={postStats.get(post.id) ?? EMPTY_COUNTS}
+                    reactionGroups={groupReactions(feedReactions, post.id)}
+                    canDelete={selfPubkey === post.authorPubkey}
+                    active={selectedPostId === post.id}
+                    onReact={onReact}
+                    onDelete={onDelete}
+                    onSelect={() => onSelectPost(post.id)}
+                  />
+                ))}
+              {/*
+                Desktop pages this list with the bridge's `next_cursor`; the
+                web read side walks a NIP-01 `until` window instead. Either
+                way the forum is not "the newest 100 posts" any more.
+              */}
+              {!exhausted && (
+                <div className="flex justify-center py-4">
+                  <button
+                    type="button"
+                    data-testid="forum-load-older"
+                    className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-60"
+                    disabled={loadingOlder}
+                    onClick={loadOlder}
+                  >
+                    {loadingOlder ? "Loading…" : "Load older posts"}
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -189,28 +250,40 @@ export function ForumView({
   );
 }
 
+/** A post with no replies anywhere — reference-stable so memoing stays cheap. */
+const EMPTY_COUNTS: MergedThreadCounts = {
+  replyCount: 0,
+  descendantCount: 0,
+  lastReplyAt: null,
+  participants: [],
+};
+
 /** One post in the list: full-card click opens the thread (desktop shape). */
 function ForumPostCard({
   post,
   profiles,
-  replyCount,
-  lastReplyAt,
+  counts,
   reactionGroups,
   canDelete,
+  active,
   onReact,
   onDelete,
   onSelect,
 }: {
   post: TimelineMessage;
   profiles: Map<string, Profile>;
-  replyCount: number;
-  lastReplyAt: number | null;
+  /** Reply counters, already reconciled with the relay's own. */
+  counts: MergedThreadCounts;
   reactionGroups: ReactionGroup[];
   canDelete: boolean;
+  /** This post's thread is the one open — the desktop's `isActive` card. */
+  active: boolean;
   onReact: (messageId: string, emoji: string) => void;
   onDelete: (messageId: string) => void;
   onSelect: () => void;
 }) {
+  const replyCount = counts.descendantCount;
+  const lastReplyAt = counts.lastReplyAt;
   const mentionNames = new Set(
     post.mentionPubkeys.map((pubkey) =>
       authorLabel(pubkey, profiles).toLowerCase(),
@@ -229,7 +302,12 @@ function ForumPostCard({
     <div
       role="button"
       tabIndex={0}
-      className="group mt-3 cursor-pointer rounded-2xl border border-border/60 bg-card p-4 text-left transition-colors hover:border-border hover:bg-accent/30"
+      data-testid="forum-post-card"
+      data-active={active ? "true" : "false"}
+      className={cn(
+        "group mt-3 cursor-pointer rounded-2xl border bg-card p-4 text-left transition-colors hover:border-border hover:bg-accent/30",
+        active ? "border-primary/40 bg-accent/60" : "border-border/60",
+      )}
       onClick={onSelect}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -257,8 +335,22 @@ function ForumPostCard({
             <MarkdownContent content={preview} mentionNames={mentionNames} />
           </div>
           {replyCount > 0 && (
-            <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-              <MessageSquareText className="h-3.5 w-3.5" aria-hidden="true" />
+            <div
+              data-testid="forum-post-replies"
+              className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground"
+            >
+              {counts.participants.length > 0 ? (
+                <ThreadParticipantStack
+                  participants={{
+                    shown: counts.participants,
+                    overflow: 0,
+                    total: counts.participants.length,
+                  }}
+                  profiles={profiles}
+                />
+              ) : (
+                <MessageSquareText className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
               <span>
                 {replyCount} {replyCount === 1 ? "reply" : "replies"}
               </span>
