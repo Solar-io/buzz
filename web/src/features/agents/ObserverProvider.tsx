@@ -5,12 +5,17 @@ import {
   useMemo,
   useState,
   type ReactNode,
+  useSyncExternalStore,
 } from "react";
 import * as nip44 from "nostr-tools/nip44";
 import { getPublicKey } from "nostr-tools";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
-import { getUnlockedSecretKey } from "@/shared/lib/key-store";
+import {
+  getAuthState,
+  getUnlockedSecretKey,
+  subscribeAuth,
+} from "@/shared/lib/key-store";
 import {
   capFrames,
   expandObserverFrame,
@@ -87,7 +92,27 @@ export function ObserverProvider({
     () => new Map(),
   );
   const [lockedCount, setLockedCount] = useState(0);
+  /**
+   * The auth store's own signal that the key situation changed.
+   *
+   * `enabled` is `canSign`, which is `unlocked || extensionAvailable` — so
+   * with a Nostr extension installed it is true from the first render, BEFORE
+   * `initKeyStore()` has restored the local key from IndexedDB. The effect
+   * below then reads a null secret, returns early, and never re-runs, because
+   * none of `session`/`status`/`enabled` change when the key finally arrives.
+   * The result is a session with no observer subscription at all: the thinking
+   * panel sits at "0 frames" forever, and it is intermittent, because a fast
+   * restore wins the race and a slow one does not.
+   *
+   * Subscribing here gives the effect a dependency that DOES change on unlock.
+   */
+  const authState = useSyncExternalStore(
+    subscribeAuth,
+    getAuthState,
+    getAuthState,
+  );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `authState` is a trigger, not a read — the body deliberately ignores its value and exists to re-run when the key store resolves. Dropping it, as the rule suggests, is exactly the bug this fixes: with an extension present `enabled` is true before the key is restored, the effect returns early, and no dependency ever changes again.
   useEffect(() => {
     if (!enabled || status === "idle") {
       return;
@@ -121,7 +146,7 @@ export function ObserverProvider({
         },
       },
     );
-  }, [session, status, enabled]);
+  }, [session, status, enabled, authState]);
 
   const value = useMemo<ObserverStore>(
     () => ({
