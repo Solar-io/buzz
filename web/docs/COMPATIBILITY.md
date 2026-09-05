@@ -171,12 +171,30 @@ custom-emoji bug, and fixed the same way: through `fetchSignedMedia`.
   first. At 600 an agent with 52 thought chunks in its page rendered zero of
   them while a less tool-heavy agent kept 138 of 234 — which presented as
   "thinking works for some agents but not others".
-- **Some agents genuinely have no thinking to show.** A harness that never
-  emits `agent_thought_chunk` produces a panel of tool rows and turn dividers,
-  which is indistinguishable from a broken feed. Measured: one agent's
-  500-envelope page carried 355 `tool_call_update`, 186 `usage_update` and 71
-  `agent_message_chunk` — and zero thought chunks. The panel now says so
-  rather than rendering an unexplained gap.
+- **Some agents genuinely have no thinking to show, and it is the ACP adapter
+  that decides.** A harness that never emits `agent_thought_chunk` produces a
+  panel of tool rows and turn dividers, which is indistinguishable from a
+  broken feed. Measured on 2026-09-05, same prompt, same ACP protocol, both
+  adapters probed directly over stdio (`initialize` → `session/new` →
+  `session/prompt`):
+
+  | adapter | model | `thought_level` | `agent_thought_chunk` |
+  |---|---|---|---|
+  | `claude-agent-acp` (stock) | `opus[1m]` | `medium` | **0** |
+  | `claude-agent-acp` (stock) | `opus[1m]` | forced `high` | **0** |
+  | `claude-glm-acp` (wrapper) | GLM-5.3 | `default` | **246** |
+
+  So this is not an effort setting. The stock Claude Code ACP adapter
+  advertises `thought_level` (configId `effort`, values
+  `default/low/medium/high/xhigh/max`) and buzz-acp can set it via
+  `BUZZ_ACP_EFFORT_LEVEL`, but with Opus behind it the adapter emits only
+  `agent_message_chunk` — the final answer, which belongs in the chat, not the
+  thinking pane. Raising the effort changes nothing on the wire.
+
+  Nothing in the client can recover frames that are never sent. Turning this
+  on for Anthropic-backed agents is an upstream change in the Claude Code ACP
+  adapter, not in Buzz. The panel now says what it observed rather than
+  rendering an unexplained gap.
 
 ### Remote agent admin (desktop)
 
