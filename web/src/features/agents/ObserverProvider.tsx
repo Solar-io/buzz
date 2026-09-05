@@ -38,14 +38,20 @@ import { agentHistoryFilter, liveObserverFilter } from "./lib/observerFilters";
  *
  * ## Two REQs, not one
  *
- * The live subscription is a bounded lookback covering every agent — what the
- * sidebar dots, the working timers and the current turn need. An agent's
- * EARLIER turns come from a separate, author-scoped history REQ opened by
- * `useAgentObserverHistory` when that agent's panel is on screen, so one
- * agent's past can never be displaced by a chattier neighbour's volume.
- * `lib/observerFilters.ts` carries both filters and the measurement that
- * forced the split. The desktop needs no equivalent: it replays its own local
- * Tauri archive, while the relay is the web client's only memory.
+ * The relay answers a kind-24200 REQ with ONE shared page across every agent,
+ * so a chatty agent starves the quiet ones: measured on the dev relay, the
+ * full 1000-event page covered four of the twenty-three agents with retained
+ * history, 714 of the slots going to one of them.
+ *
+ * So the live subscription is a bounded lookback covering every agent — what
+ * the sidebar dots and the working timers need, both of which only look back
+ * 180 seconds. An agent's EARLIER turns come from a separate, author-scoped
+ * history REQ opened by `useAgentObserverHistory` while that agent's panel is
+ * on screen, so its past can never be displaced by a neighbour's volume.
+ * `lib/observerFilters.ts` carries both filters and the measurement.
+ *
+ * The desktop needs no equivalent: it replays its own local Tauri archive,
+ * while the relay is the web client's only memory.
  */
 
 /**

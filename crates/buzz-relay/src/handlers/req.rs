@@ -2194,12 +2194,12 @@ mod tests {
 
     /// The web client's per-agent thinking-panel filter.
     ///
-    /// Observer frames are retained, and a REQ that omits `limit` is answered
-    /// with a 100-event page shared by every agent — seconds of whichever
-    /// agent is busiest. The client therefore narrows history with `authors`,
-    /// which `filter_to_query_params` pushes into SQL beside the `#p` join.
-    /// That must not read as a bypass attempt: the `#p` the gate authorizes
-    /// against is still the caller's own.
+    /// Observer frames are retained, and one REQ is answered with ONE page
+    /// shared by every agent the caller owns — 1000 events at the ceiling,
+    /// which a single busy agent can fill on its own. The client therefore
+    /// narrows history with `authors`, which `filter_to_query_params` pushes
+    /// into SQL beside the `#p` join. That must not read as a bypass attempt:
+    /// the `#p` the gate authorizes against is still the caller's own.
     #[test]
     fn observer_history_filter_may_narrow_by_author() {
         let p_tag = SingleLetterTag::lowercase(Alphabet::P);

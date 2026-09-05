@@ -18,13 +18,22 @@ export const HISTORY_LIMIT = 500;
 /**
  * The always-on subscription: every frame addressed to the viewer, bounded.
  *
- * The `limit` is not optional decoration. `query_events` uses
- * `q.limit.unwrap_or(100)` (`crates/buzz-db/src/event.rs`), so a filter that
- * omits it is answered with ONE HUNDRED events shared across every agent,
- * newest first — and a working agent emits 4-10 frames/sec. Measured against
- * the dev relay on 2026-09-05, with eight agents active over the preceding 30
- * hours, that page spanned twelve minutes and covered three agents, one of
- * which held 80 of the 100 slots.
+ * `limit` here is explicitness, not a behaviour change — a WS REQ that omits
+ * it already defaults to `DEFAULT_MAX_PAGE_LIMIT`
+ * (`crates/buzz-relay/src/handlers/req.rs:699`), which is this same 1000. The
+ * `since` is the part that bites, and it is deliberate: this REQ exists for
+ * the sidebar dots and the working timers, both of which read a 180-second
+ * freshness window (`WORKING_STALE_SECONDS`), so a five-minute lookback
+ * covers them with margin while leaving the shared page free of history that
+ * belongs to `agentHistoryFilter`.
+ *
+ * What it must NOT be is the only source of a panel's history. Measured
+ * against the dev relay on 2026-09-05, signed in as the owner: this filter
+ * without `since` returned the relay's full 1000-event page, and those 1000
+ * events covered FOUR agents — of twenty-three with retained history — with
+ * 714 of the 1000 slots taken by a single agent. Nineteen agents' panels were
+ * empty, not because their frames were missing but because a chattier
+ * neighbour had crowded them out of one shared page.
  */
 export function liveObserverFilter(
   ownerPubkey: string,
@@ -50,6 +59,11 @@ export function liveObserverFilter(
  * `#p` is still required: it is what the relay's p-gate authorizes the
  * subscription against (`p_gated_filters_authorized`). A filter carrying only
  * `authors` is refused.
+ *
+ * This is the load-bearing half of the fix. Verified against the dev relay:
+ * an agent whose 172 retained frames span Aug 31 - Sep 2 was entirely absent
+ * from the shared page and returns all 172 here, every one of them decrypting
+ * with the owner key.
  */
 export function agentHistoryFilter(
   ownerPubkey: string,

@@ -44,6 +44,7 @@ import {
   useAgentObserverHistory,
   useObserverStore,
 } from "@/features/agents/ObserverProvider";
+import { useAgentRegistry } from "@/features/agents/useAgentRegistry";
 import { agentWorkingState } from "@/features/agents/lib/observerEvents";
 import { useTick } from "@/features/agents/ui/WorkingBadge";
 import { AgentActivityPanel } from "@/features/agents/ui/AgentActivityPanel";
@@ -577,10 +578,20 @@ function ChannelBrowser() {
   // Agent identity: any pubkey that has emitted observer frames this session.
   // The desktop reads its local agents registry; the web's relay-native
   // equivalent is the observer store (agents active since page load).
-  const agentPubkeys = useMemo(
-    () => new Set(observerStore?.byAgent.keys() ?? []),
-    [observerStore],
-  );
+  // Who gets the "agent" badge on a message row. The registry is the
+  // authoritative answer and does not decay; the observer store adds anything
+  // currently emitting frames that the registry has not caught up with. Before
+  // the live REQ was bounded, the store alone happened to cover ~10 hours of
+  // activity — narrowing it to five minutes would otherwise have quietly
+  // un-badged any agent that had been quiet for longer.
+  const agentRegistry = useAgentRegistry();
+  const agentPubkeys = useMemo(() => {
+    const set = new Set(observerStore?.byAgent.keys() ?? []);
+    for (const entry of agentRegistry) {
+      set.add(entry.pubkey);
+    }
+    return set;
+  }, [observerStore, agentRegistry]);
   const agentFrames = useAgentFrames(dmAgentPubkey);
   // The live REQ only carries the last few minutes (see ObserverProvider), so
   // an agent's earlier turns come from its own retained history. Scoped to the

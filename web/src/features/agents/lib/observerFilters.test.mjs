@@ -8,16 +8,15 @@ const AGENT = "bb".repeat(32);
 const OTHER = "cc".repeat(32);
 
 /**
- * The whole bug in one assertion. `crates/buzz-db/src/event.rs` reads
- * `q.limit.unwrap_or(100)`, so a filter with no `limit` is answered with 100
- * events across ALL agents — seconds of one busy agent. The value is
- * hardcoded here rather than imported, so raising LIVE_LIMIT cannot raise its
- * own expectation.
+ * The live page stays at the relay's ceiling. A WS REQ that omits `limit`
+ * already defaults to DEFAULT_MAX_PAGE_LIMIT, so this pins the value rather
+ * than changing it — and pins it against a later "tidy-up" that trims the
+ * live page and silently starves the dots. Hardcoded rather than imported, so
+ * changing LIVE_LIMIT cannot change its own expectation.
  */
-test("the live filter asks for a page the relay will not silently shrink", () => {
+test("the live filter asks for the relay's full page, explicitly", () => {
   const filter = liveObserverFilter(OWNER, 1_000_000);
   assert.equal(filter.limit, 1000);
-  assert.notEqual(filter.limit, undefined, "no limit means a 100-event page");
 });
 
 test("the live filter is a bounded lookback, not all of history", () => {
@@ -30,6 +29,11 @@ test("the live filter is a bounded lookback, not all of history", () => {
   assert.equal(filter.authors, undefined);
 });
 
+/**
+ * The load-bearing assertion. One shared 1000-event page covered four of the
+ * twenty-three agents with retained history on the dev relay, 714 slots going
+ * to the busiest one. Author scoping is what gives a quiet agent its own page.
+ */
 test("history is scoped to one agent, so a chatty neighbour cannot crowd it out", () => {
   const filter = agentHistoryFilter(OWNER, AGENT);
   assert.deepEqual(filter.authors, [AGENT]);

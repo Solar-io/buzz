@@ -142,14 +142,15 @@ custom-emoji bug, and fixed the same way: through `fetchSignedMedia`.
 - **Where**: `crates/buzz-relay` retention path, commit `af996b981`.
 - **Upstream intent**: candidate for an upstream PR (config-gated retention).
 - **Client half — how the retained frames are actually read.** Retention alone
-  does not give a panel its history, because of the page size. `query_events`
-  reads `q.limit.unwrap_or(100)` (`crates/buzz-db/src/event.rs`), so a REQ that
-  omits `limit` is answered with ONE HUNDRED events shared across every agent,
-  newest first — and a working agent emits 4-10 frames/sec. Measured on the dev
-  relay 2026-09-05, with eight agents active over the preceding 30 hours: the
-  newest 100 owner-addressed frames spanned twelve minutes and covered three
-  agents, one holding 80 of the 100 slots. Every other panel read "0 frames"
-  while its frames sat in the database.
+  does not give a panel its history, because the relay answers a kind-24200 REQ
+  with ONE page shared across every agent, and a working agent emits 4-10
+  frames/sec. A REQ that omits `limit` gets `DEFAULT_MAX_PAGE_LIMIT`
+  (`crates/buzz-relay/src/handlers/req.rs:699`) — 1000 events, newest first,
+  for the whole fleet at once. Measured on the dev relay 2026-09-05, signed in
+  as the owner: those 1000 events covered FOUR agents of the twenty-three with
+  retained history, 714 of the slots going to a single agent. The other
+  nineteen panels read "0 frames" while their frames sat in the database
+  (100,866 rows of them).
   So the web client runs two REQs (`web/src/features/agents/lib/observerFilters.ts`):
   a bounded live one (`limit: 1000`, `since: now-300`) covering every agent for
   the dots and working timers, and a per-agent history one adding
