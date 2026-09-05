@@ -16,6 +16,24 @@ export const LIVE_LOOKBACK_SECONDS = 300;
 export const HISTORY_LIMIT = 500;
 
 /**
+ * Frames retained per agent, and it must be large enough to hold a whole
+ * fetched page — otherwise the panel silently throws away most of what it
+ * just asked the relay for.
+ *
+ * The unit mismatch is the trap: HISTORY_LIMIT counts ENVELOPES, this counts
+ * FRAMES, and the harness batches, so one envelope expands into several.
+ * Measured on the dev relay, a 500-envelope page expands to 895-1101 frames.
+ *
+ * Undersizing this does not degrade gracefully. `capFrames` keeps the newest
+ * frames, and the newest frames of a coding turn are tool_call_update and
+ * usage_update spam — so a cap that trims at all trims the THINKING first.
+ * At 600 an agent with 52 thought chunks in its page rendered zero of them,
+ * while a less tool-heavy agent kept 138 of 234 and therefore looked fine.
+ * That is why this read as "works for some agents, not others".
+ */
+export const FRAMES_PER_AGENT = 2000;
+
+/**
  * The always-on subscription: every frame addressed to the viewer, bounded.
  *
  * `limit` here is explicitness, not a behaviour change — a WS REQ that omits

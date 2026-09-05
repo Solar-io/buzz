@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { agentHistoryFilter, liveObserverFilter } from "./observerFilters.ts";
+import {
+  agentHistoryFilter,
+  FRAMES_PER_AGENT,
+  HISTORY_LIMIT,
+  liveObserverFilter,
+} from "./observerFilters.ts";
 
 // FIXED keys — expectations are hardcoded, never derived from the module.
 const OWNER = "aa".repeat(32);
@@ -55,4 +60,22 @@ test("history still carries #p, which is what the relay's p-gate authorizes", ()
 test("history has no `since` — its whole job is the past the live window drops", () => {
   const filter = agentHistoryFilter(OWNER, AGENT);
   assert.equal(filter.since, undefined);
+});
+
+/**
+ * The cap must hold a whole fetched page. HISTORY_LIMIT counts envelopes and
+ * FRAMES_PER_AGENT counts frames, and the harness batches — so the two are in
+ * different units and a "reasonable-looking" cap can silently discard half of
+ * every page. Both bounds are hardcoded from measurement rather than derived
+ * from the constant, so raising or lowering the cap cannot move its own
+ * expectation.
+ */
+test("the per-agent cap can hold a whole history page", () => {
+  assert.equal(FRAMES_PER_AGENT, 2000);
+  // Largest 500-envelope expansion measured on the dev relay: 1101 frames.
+  assert.ok(
+    FRAMES_PER_AGENT >= 1101,
+    `cap ${FRAMES_PER_AGENT} discards part of an observed 1101-frame page`,
+  );
+  assert.equal(HISTORY_LIMIT, 500);
 });

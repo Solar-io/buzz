@@ -24,7 +24,11 @@ import {
   parseObserverPayload,
   type ObserverFrame,
 } from "./lib/observerEvents";
-import { agentHistoryFilter, liveObserverFilter } from "./lib/observerFilters";
+import {
+  agentHistoryFilter,
+  FRAMES_PER_AGENT,
+  liveObserverFilter,
+} from "./lib/observerFilters";
 
 /**
  * Global observer store — the desktop's architecture, ported.
@@ -53,13 +57,6 @@ import { agentHistoryFilter, liveObserverFilter } from "./lib/observerFilters";
  * The desktop needs no equivalent: it replays its own local Tauri archive,
  * while the relay is the web client's only memory.
  */
-
-/**
- * Per-agent retained frames. A history page is 500 ENVELOPES and a batch
- * envelope expands into many frames, so a small cap would throw most of a
- * freshly-fetched page straight back out.
- */
-const FRAMES_PER_AGENT = 600;
 
 /**
  * Envelope ids remembered for de-duplication. History and the live window

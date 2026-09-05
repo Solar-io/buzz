@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { FRAMES_PER_AGENT } from "./observerFilters.ts";
 import {
   agentWorkingState,
   transcriptFromFrames,
@@ -460,5 +461,62 @@ test("capFrames returns frames in chronological order", () => {
   assert.deepEqual(
     capped.map((frame) => frame.id),
     ["a", "b", "c"],
+  );
+});
+
+/**
+ * A tool-heavy turn must not evict its own thinking.
+ *
+ * This is the shape that shipped broken: thought chunks arrive early in a
+ * turn, then tool_call_update and usage_update flood the tail. `capFrames`
+ * keeps the NEWEST frames, so an undersized cap trims the thoughts and leaves
+ * a panel of tool rows — which reads as "thinking is broken for this agent"
+ * rather than as a dropped buffer. Measured shape: 52 thought chunks in a
+ * 1101-frame page, zero surviving a 600-frame cap.
+ */
+test("a tool-heavy page keeps its thinking at the shipped cap", () => {
+  const update = (sessionUpdate, extra) => ({
+    method: "session/update",
+    params: { update: { sessionUpdate, ...extra } },
+  });
+  const page = [];
+  let at = 1000;
+  for (let i = 0; i < 52; i++) {
+    page.push({
+      kind: "acp_read",
+      createdAt: at++,
+      seq: page.length,
+      id: `t${i}`,
+      payload: update("agent_thought_chunk", { messageId: "m1", content: "x" }),
+    });
+  }
+  for (let i = 0; i < 1049; i++) {
+    page.push({
+      kind: "acp_read",
+      createdAt: at++,
+      seq: page.length,
+      id: `u${i}`,
+      payload: update("tool_call_update", {
+        toolCallId: `c${i}`,
+        status: "completed",
+      }),
+    });
+  }
+  assert.equal(page.length, 1101, "the page shape this test pins");
+
+  const capped = capFrames(page, FRAMES_PER_AGENT);
+  const thoughtsKept = capped.filter(
+    (f) => f.payload?.params?.update?.sessionUpdate === "agent_thought_chunk",
+  ).length;
+  assert.equal(
+    thoughtsKept,
+    52,
+    "every thought chunk in the page must survive",
+  );
+
+  const { entries } = transcriptFromFrames(capped);
+  assert.ok(
+    entries.some((e) => e.type === "thought" && e.text.length > 0),
+    "the panel must render thinking, not only tool rows",
   );
 });

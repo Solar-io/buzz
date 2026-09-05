@@ -162,6 +162,21 @@ custom-emoji bug, and fixed the same way: through `fetchSignedMedia`.
   The desktop needs no equivalent: it replays its own local Tauri archive
   (`ingestArchivedObserverEvents`), while the relay is the web client's only
   memory. That asymmetry is why this bug is web-only.
+- **The cap is in different units from the page, and that matters.**
+  `HISTORY_LIMIT` counts envelopes; `FRAMES_PER_AGENT` counts frames, and the
+  harness batches — a 500-envelope page expands to 895-1101 frames on the dev
+  relay. An undersized cap does not degrade gracefully: `capFrames` keeps the
+  NEWEST frames, and the newest frames of a coding turn are `tool_call_update`
+  and `usage_update` spam, so a cap that trims at all trims the THINKING
+  first. At 600 an agent with 52 thought chunks in its page rendered zero of
+  them while a less tool-heavy agent kept 138 of 234 — which presented as
+  "thinking works for some agents but not others".
+- **Some agents genuinely have no thinking to show.** A harness that never
+  emits `agent_thought_chunk` produces a panel of tool rows and turn dividers,
+  which is indistinguishable from a broken feed. Measured: one agent's
+  500-envelope page carried 355 `tool_call_update`, 186 `usage_update` and 71
+  `agent_message_chunk` — and zero thought chunks. The panel now says so
+  rather than rendering an unexplained gap.
 
 ### Remote agent admin (desktop)
 

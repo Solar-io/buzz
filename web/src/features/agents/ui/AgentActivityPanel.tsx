@@ -141,6 +141,10 @@ export function AgentActivityPanel({
   // freshly rendered rows, the second measures the final scrollHeight —
   // scrolling synchronously in the effect lands a render short. Tail scrolls
   // happen ONLY while following — a reader scrolled up is never yanked back.
+  const hasThinking = useMemo(
+    () => entries.some((entry) => entry.type === "thought"),
+    [entries],
+  );
   const lastId = frames[frames.length - 1]?.id ?? "";
   const agentKey = agentPubkey;
   const lastAgentKeyRef = useRef(agentKey);
@@ -262,6 +266,19 @@ export function AgentActivityPanel({
             <TranscriptRow key={entry.id} entry={entry} />
           ))}
         </ol>
+        {/*
+          An agent whose harness never emits `agent_thought_chunk` renders a
+          panel of tool rows and turn dividers with no thinking, which is
+          indistinguishable from a broken feed — it was reported as one. Say
+          so instead. The condition is a fact about what arrived, not a guess:
+          frames were received and rendered, and none of them were thoughts.
+        */}
+        {frames.length > 0 && entries.length > 0 && !hasThinking && (
+          <p className="pt-3 text-center text-xs text-muted-foreground/70">
+            This agent reports tool calls and turns but does not stream its
+            reasoning, so there is no thinking text to show.
+          </p>
+        )}
         {suppressed > 0 && (
           <p className="pt-2 text-center text-xs text-muted-foreground/50">
             {suppressed} internal event{suppressed === 1 ? "" : "s"} filtered
