@@ -292,12 +292,8 @@ export function parseOwnerAdminCommand(
       };
     case "start":
     case "stop":
-<<<<<<< HEAD
     case "restart":
-||||||| 4273158dd
-=======
     case "unregister":
->>>>>>> nest/main
       if (!isText(request.pubkey) || !PUBKEY_RE.test(request.pubkey)) {
         return null;
       }
