@@ -105,16 +105,17 @@ export function DmNavRow({
         )}
         {/* Presence dot at the avatar's 45° bottom-right, ringed in the page
             background (cut-out), 1:1 rows only.
-            Sized 10px, not the dm-list spec's 6px. The ring is a cut-out on
-            every side, so a 6px dot with a 1.5px ring left roughly 3px of
-            actual colour — reported as "so tiny it is barely viewable", and
-            the agent-live indicator is the one people look for. 10px with a
-            2px ring leaves 6px of colour: double, and still a dot. */}
+            12px, not the dm-list spec's 6px. The ring is a cut-out on every
+            side, so the original 6px dot with a 1.5px ring showed roughly 3px
+            of actual colour — reported as "barely viewable", and the
+            agent-live dot is the one people look for. 12px with a 2px ring
+            leaves 8px. Desktop's own bot presence dot is 18px, so 6px was
+            never the right parity target. */}
         {others.length <= 1 && presence && (
           <span
             title={presence.status}
             className={cn(
-              "absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full border-2 border-sidebar",
+              "absolute -bottom-[2px] -right-[2px] h-3 w-3 rounded-full border-2 border-sidebar",
               presenceDotClass(presence.status),
             )}
           />
