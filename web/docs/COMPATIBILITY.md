@@ -141,6 +141,26 @@ custom-emoji bug, and fixed the same way: through `fetchSignedMedia`.
   with capped per-agent history).
 - **Where**: `crates/buzz-relay` retention path, commit `af996b981`.
 - **Upstream intent**: candidate for an upstream PR (config-gated retention).
+- **Client half — how the retained frames are actually read.** Retention alone
+  does not give a panel its history, because of the page size. `query_events`
+  reads `q.limit.unwrap_or(100)` (`crates/buzz-db/src/event.rs`), so a REQ that
+  omits `limit` is answered with ONE HUNDRED events shared across every agent,
+  newest first — and a working agent emits 4-10 frames/sec. Measured on the dev
+  relay 2026-09-05, with eight agents active over the preceding 30 hours: the
+  newest 100 owner-addressed frames spanned twelve minutes and covered three
+  agents, one holding 80 of the 100 slots. Every other panel read "0 frames"
+  while its frames sat in the database.
+  So the web client runs two REQs (`web/src/features/agents/lib/observerFilters.ts`):
+  a bounded live one (`limit: 1000`, `since: now-300`) covering every agent for
+  the dots and working timers, and a per-agent history one adding
+  `authors:[agent]` (`limit: 500`) opened by `useAgentObserverHistory` while
+  that agent's panel is on screen. `authors` is exact — the relay requires an
+  observer frame's signer to be the agent it describes — and is pushed into SQL
+  beside the `#p` join (~11ms for a 500-row page), so one agent's history can no
+  longer be displaced by a chattier neighbour's volume.
+  The desktop needs no equivalent: it replays its own local Tauri archive
+  (`ingestArchivedObserverEvents`), while the relay is the web client's only
+  memory. That asymmetry is why this bug is web-only.
 
 ### Remote agent admin (desktop)
 

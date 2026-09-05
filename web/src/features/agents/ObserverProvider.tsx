@@ -1,8 +1,10 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
   useSyncExternalStore,
@@ -22,21 +24,45 @@ import {
   parseObserverPayload,
   type ObserverFrame,
 } from "./lib/observerEvents";
+import { agentHistoryFilter, liveObserverFilter } from "./lib/observerFilters";
 
 /**
  * Global observer store — the desktop's architecture, ported.
  *
- * ONE subscription for every kind-24200 frame addressed to the local user
- * (the relay's ephemeral fan-out delivers all of them anyway — authors
- * filters are not honored server-side). Each frame is decrypted once and
- * indexed under its AGENT identity: the ["agent", <pubkey>] tag buzz-core
- * puts on every frame, falling back to the signer pubkey. Consumers select
- * per agent (sidebar dots, the open DM's thinking pane, working state), so
- * several agents can be visibly working at once and one pane can never show
- * another agent's frames.
+ * ONE live subscription for every kind-24200 frame addressed to the local
+ * user. Each frame is decrypted once and indexed under its AGENT identity:
+ * the ["agent", <pubkey>] tag buzz-core puts on every frame, falling back to
+ * the signer pubkey. Consumers select per agent (sidebar dots, the open DM's
+ * thinking pane, working state), so several agents can be visibly working at
+ * once and one pane can never show another agent's frames.
+ *
+ * ## Two REQs, not one
+ *
+ * The live subscription is a bounded lookback covering every agent — what the
+ * sidebar dots, the working timers and the current turn need. An agent's
+ * EARLIER turns come from a separate, author-scoped history REQ opened by
+ * `useAgentObserverHistory` when that agent's panel is on screen, so one
+ * agent's past can never be displaced by a chattier neighbour's volume.
+ * `lib/observerFilters.ts` carries both filters and the measurement that
+ * forced the split. The desktop needs no equivalent: it replays its own local
+ * Tauri archive, while the relay is the web client's only memory.
  */
 
-const FRAMES_PER_AGENT = 200;
+/**
+ * Per-agent retained frames. A history page is 500 ENVELOPES and a batch
+ * envelope expands into many frames, so a small cap would throw most of a
+ * freshly-fetched page straight back out.
+ */
+const FRAMES_PER_AGENT = 600;
+
+/**
+ * Envelope ids remembered for de-duplication. History and the live window
+ * overlap by construction, and a reconnect replays the live REQ, so the same
+ * envelope arrives more than once. Ingesting it twice would double a
+ * thought's text: `transcriptFromFrames` CONCATENATES agent_thought_chunk
+ * content per message id, so a repeat is not idempotent.
+ */
+const SEEN_ENVELOPE_CAP = 4000;
 
 export interface ObserverStore {
   /** agent pubkey → decrypted frames (arrival order). */
@@ -44,6 +70,10 @@ export interface ObserverStore {
   /** Frames that failed to decrypt with the local key. */
   lockedCount: number;
   connected: boolean;
+  /** The viewer's own pubkey, or null before the key store resolves. */
+  ownerPubkey: string | null;
+  /** Decrypt one envelope and index it. Shared by the live and history REQs. */
+  ingest: (event: SignedNostrEvent) => void;
 }
 
 const ObserverContext = createContext<ObserverStore | null>(null);
@@ -92,6 +122,7 @@ export function ObserverProvider({
     () => new Map(),
   );
   const [lockedCount, setLockedCount] = useState(0);
+  const seenEnvelopes = useRef<Set<string>>(new Set());
   /**
    * The auth store's own signal that the key situation changed.
    *
@@ -112,49 +143,75 @@ export function ObserverProvider({
     getAuthState,
   );
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `authState` is a trigger, not a read — the body deliberately ignores its value and exists to re-run when the key store resolves. Dropping it, as the rule suggests, is exactly the bug this fixes: with an extension present `enabled` is true before the key is restored, the effect returns early, and no dependency ever changes again.
-  useEffect(() => {
-    if (!enabled || status === "idle") {
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `authState` is a trigger, not a read — the body deliberately ignores its value and re-derives the owner when the key store resolves.
+  const ownerPubkey = useMemo(() => {
+    if (!enabled) {
+      return null;
+    }
+    const secretKey = getUnlockedSecretKey();
+    if (!secretKey) {
+      return null;
+    }
+    try {
+      return getPublicKey(secretKey);
+    } catch {
+      return null;
+    }
+  }, [enabled, authState]);
+
+  /**
+   * Decrypt and index one envelope. Reads the secret key at call time rather
+   * than closing over it, so a key that arrives after a subscription opened
+   * is still used — and so the live REQ and every per-agent history REQ share
+   * exactly one code path, including de-duplication.
+   */
+  const ingest = useCallback((event: SignedNostrEvent) => {
+    if (seenEnvelopes.current.has(event.id)) {
       return;
     }
-    const secretKey = enabled ? getUnlockedSecretKey() : null;
+    const secretKey = getUnlockedSecretKey();
     if (!secretKey) {
       return;
     }
-    let ownerPubkey: string;
-    try {
-      ownerPubkey = getPublicKey(secretKey);
-    } catch {
+    seenEnvelopes.current.add(event.id);
+    if (seenEnvelopes.current.size > SEEN_ENVELOPE_CAP) {
+      seenEnvelopes.current = new Set(
+        Array.from(seenEnvelopes.current).slice(-SEEN_ENVELOPE_CAP / 2),
+      );
+    }
+    const frame = decodeFrame(event, secretKey);
+    if (!frame) {
+      setLockedCount((n) => n + 1);
+      return;
+    }
+    const agent = frameAgentPubkey(event);
+    setByAgent((previous) => {
+      const next = new Map(previous);
+      const frames = [...(next.get(agent) ?? []), ...frame];
+      next.set(agent, capFrames(frames, FRAMES_PER_AGENT));
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (status === "idle" || !ownerPubkey) {
       return;
     }
     return session.subscribe(
-      { kinds: [24200], "#p": [ownerPubkey] },
-      {
-        onEvent: (event) => {
-          const frame = decodeFrame(event, secretKey);
-          if (!frame) {
-            setLockedCount((n) => n + 1);
-            return;
-          }
-          const agent = frameAgentPubkey(event);
-          setByAgent((previous) => {
-            const next = new Map(previous);
-            const frames = [...(next.get(agent) ?? []), ...frame];
-            next.set(agent, capFrames(frames, FRAMES_PER_AGENT));
-            return next;
-          });
-        },
-      },
+      liveObserverFilter(ownerPubkey, Math.floor(Date.now() / 1000)),
+      { onEvent: ingest },
     );
-  }, [session, status, enabled, authState]);
+  }, [session, status, ownerPubkey, ingest]);
 
   const value = useMemo<ObserverStore>(
     () => ({
       byAgent,
       lockedCount,
       connected: status === "open",
+      ownerPubkey,
+      ingest,
     }),
-    [byAgent, lockedCount, status],
+    [byAgent, lockedCount, status, ownerPubkey, ingest],
   );
   return (
     <ObserverContext.Provider value={value}>
@@ -172,4 +229,51 @@ export function useAgentFrames(agentPubkey: string | null): ObserverFrame[] {
   const store = useObserverStore();
   const frames = store?.byAgent.get(agentPubkey ?? "") ?? [];
   return frames;
+}
+
+/**
+ * Load one agent's retained observer history into the store.
+ *
+ * Call this from a surface that shows an agent's PAST — the DM thinking
+ * panel — not from the sidebar rows, which only need the live window and
+ * would otherwise fetch a page per row.
+ *
+ * `authors:[agentPubkey]` is an exact discriminator: the relay requires the
+ * frame's signer to be the agent it is about (`agent_observer_route`), and
+ * all 100,893 retained frames on the dev relay satisfy signer == agent tag.
+ * The filter is pushed into SQL next to the `#p` join
+ * (`crates/buzz-db/src/event.rs`), measured at ~11ms for a 500-row page.
+ *
+ * The REQ closes itself at EOSE: the live subscription already carries this
+ * agent's new frames, so holding it open would only duplicate them.
+ */
+export function useAgentObserverHistory(agentPubkey: string | null): void {
+  const store = useObserverStore();
+  const { session, status } = useRelaySession();
+  const ownerPubkey = store?.ownerPubkey ?? null;
+  const ingest = store?.ingest;
+
+  useEffect(() => {
+    if (!agentPubkey || !ownerPubkey || !ingest || status === "idle") {
+      return;
+    }
+    let unsubscribe: (() => void) | null = null;
+    let closed = false;
+    const close = () => {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      unsubscribe?.();
+    };
+    unsubscribe = session.subscribe(
+      agentHistoryFilter(ownerPubkey, agentPubkey),
+      { onEvent: ingest, onEose: close },
+    );
+    // EOSE may already have fired synchronously inside subscribe().
+    if (closed) {
+      unsubscribe();
+    }
+    return close;
+  }, [session, status, agentPubkey, ownerPubkey, ingest]);
 }

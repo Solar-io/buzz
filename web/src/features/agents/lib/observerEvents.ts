@@ -452,16 +452,27 @@ const BOUNDARY_KINDS = new Set(["turn_started"]);
  * after which every timer derivation falls back to stale evidence and the
  * web/desktop clocks split again. Boundaries are rare and tiny; keeping
  * them all costs nothing.
+ *
+ * "Newest" is by (createdAt, seq), NOT by position in the array. Arrival
+ * order and chronological order agree for the live subscription, but a
+ * retained-history REQ answers newest-first (`ORDER BY created_at DESC` in
+ * `crates/buzz-db/src/event.rs`), so a positional slice of an appended
+ * history page keeps its OLDEST frames and discards the recent ones — the
+ * panel would fill with stale turns and drop the turn the reader opened it
+ * for. Output is chronological, which is also what every consumer wants.
  */
 export function capFrames(
   frames: ObserverFrame[],
   cap: number,
 ): ObserverFrame[] {
-  if (frames.length <= cap) {
-    return frames;
+  const chronological = [...frames].sort(
+    (a, b) => a.createdAt - b.createdAt || a.seq - b.seq,
+  );
+  if (chronological.length <= cap) {
+    return chronological;
   }
-  const evicted = frames.slice(0, frames.length - cap);
-  const kept = frames.slice(frames.length - cap);
+  const evicted = chronological.slice(0, chronological.length - cap);
+  const kept = chronological.slice(chronological.length - cap);
   const boundaries = evicted.filter((frame) => BOUNDARY_KINDS.has(frame.kind));
   return boundaries.length > 0 ? [...boundaries, ...kept] : kept;
 }

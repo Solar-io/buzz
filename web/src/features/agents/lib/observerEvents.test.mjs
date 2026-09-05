@@ -430,3 +430,35 @@ test("a busy turn's own boundary survives the cap and drives the timer", () => {
   const state = agentWorkingState(capped, 500, 1265);
   assert.equal(state.startedAt, 1000, "boundary start, not first flood frame");
 });
+
+test("capFrames keeps the newest frames when history arrives newest-first", () => {
+  // A retained-history REQ answers ORDER BY created_at DESC, so the store
+  // appends the page in REVERSE chronological order. A positional
+  // "last N of the array" slice would keep the OLDEST frames of that page.
+  const page = [];
+  for (let i = 299; i >= 0; i--) {
+    page.push({ kind: "tool_call", createdAt: 1000 + i, seq: i, id: `f${i}` });
+  }
+  const capped = capFrames(page, 200);
+  assert.equal(capped.length, 200);
+  // Hardcoded: the newest 200 of createdAt 1000..1299 are 1100..1299.
+  assert.equal(capped[0].createdAt, 1100, "oldest kept frame");
+  assert.equal(capped[capped.length - 1].createdAt, 1299, "newest kept frame");
+  assert.ok(
+    !capped.some((frame) => frame.createdAt < 1100),
+    "no frame older than the cut may survive",
+  );
+});
+
+test("capFrames returns frames in chronological order", () => {
+  const shuffled = [
+    { kind: "tool_call", createdAt: 300, seq: 3, id: "c" },
+    { kind: "tool_call", createdAt: 100, seq: 1, id: "a" },
+    { kind: "tool_call", createdAt: 200, seq: 2, id: "b" },
+  ];
+  const capped = capFrames(shuffled, 200);
+  assert.deepEqual(
+    capped.map((frame) => frame.id),
+    ["a", "b", "c"],
+  );
+});

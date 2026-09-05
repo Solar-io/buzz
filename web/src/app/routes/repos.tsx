@@ -41,6 +41,7 @@ import { useHuddleLinks } from "@/features/huddle/useHuddleLinks";
 import { ThreadPanel } from "@/features/channels/ui/ThreadPanel";
 import {
   useAgentFrames,
+  useAgentObserverHistory,
   useObserverStore,
 } from "@/features/agents/ObserverProvider";
 import { agentWorkingState } from "@/features/agents/lib/observerEvents";
@@ -581,6 +582,11 @@ function ChannelBrowser() {
     [observerStore],
   );
   const agentFrames = useAgentFrames(dmAgentPubkey);
+  // The live REQ only carries the last few minutes (see ObserverProvider), so
+  // an agent's earlier turns come from its own retained history. Scoped to the
+  // open DM's agent: the sidebar rows deliberately do NOT fetch, or every row
+  // would pull a page of its own.
+  useAgentObserverHistory(dmAgentPubkey);
   const channelAgentFrames = useMemo(
     () =>
       agentFrames.filter(

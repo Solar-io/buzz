@@ -2192,6 +2192,40 @@ mod tests {
         assert!(p_gated_filters_authorized(&[matching_p], authed));
     }
 
+    /// The web client's per-agent thinking-panel filter.
+    ///
+    /// Observer frames are retained, and a REQ that omits `limit` is answered
+    /// with a 100-event page shared by every agent — seconds of whichever
+    /// agent is busiest. The client therefore narrows history with `authors`,
+    /// which `filter_to_query_params` pushes into SQL beside the `#p` join.
+    /// That must not read as a bypass attempt: the `#p` the gate authorizes
+    /// against is still the caller's own.
+    #[test]
+    fn observer_history_filter_may_narrow_by_author() {
+        let p_tag = SingleLetterTag::lowercase(Alphabet::P);
+        let owner = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let agent = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+
+        let scoped = Filter::new()
+            .kind(nostr::Kind::Custom(
+                buzz_core::kind::KIND_AGENT_OBSERVER_FRAME as u16,
+            ))
+            .custom_tags(p_tag, [owner])
+            .author(nostr::PublicKey::from_hex(agent).unwrap())
+            .limit(500);
+        assert!(p_gated_filters_authorized(&[scoped], owner));
+
+        // Narrowing by author does NOT substitute for the p-tag: reading
+        // another owner's frames stays refused however the filter is shaped.
+        let no_p = Filter::new()
+            .kind(nostr::Kind::Custom(
+                buzz_core::kind::KIND_AGENT_OBSERVER_FRAME as u16,
+            ))
+            .author(nostr::PublicKey::from_hex(agent).unwrap())
+            .limit(500);
+        assert!(!p_gated_filters_authorized(&[no_p], owner));
+    }
+
     #[test]
     fn d_tag_pushdown_only_for_nip33_kinds() {
         let d_tag = SingleLetterTag::lowercase(Alphabet::D);
