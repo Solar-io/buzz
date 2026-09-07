@@ -55,7 +55,7 @@ function MessageLink({
       title={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-accent underline underline-offset-2"
+      className="text-primary underline underline-offset-2"
       onClick={(event) => {
         if (
           event.defaultPrevented ||
