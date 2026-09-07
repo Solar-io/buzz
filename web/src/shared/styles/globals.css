@@ -114,21 +114,19 @@
   /*
    * Selected sidebar row — the surface, its shadow, its label weight and color.
    *
-   * Sam 2026-09-06: the default selection is the hover family — a quiet gray
-   * one step above `hover:bg-white/5` — not the solid accent fill the DM list
-   * spec originally pinned (#9d5aef, dm-list-spec.md §5). The solid fill now
-   * lives behind the Prominent active tab preference, which finally gives the
-   * toggle a visible job: off = quiet gray, on = the classic solid mauve with
-   * its ring and bolder label.
+   * Sam 2026-09-06 (second pass): the selected row is EXACTLY the hover
+   * color — `rgb(255 255 255 / 0.05)`, the literal `hover:bg-white/5`
+   * compiles to — not a step stronger and not the solid accent fill the DM
+   * list spec originally pinned (#9d5aef, dm-list-spec.md §5). The solid
+   * fill lives behind the Prominent active tab preference: off = same gray
+   * as hover, on = the classic solid mauve with its ring and bolder label.
    *
-   * The quiet surface is `--sidebar-foreground` at 10% — foreground is light
-   * in dark and dark in light, so the tint lands in the hover family in both
-   * themes without a per-theme literal. Label color follows the surface so
-   * text never rides its own background's contrast cliff: foreground on the
-   * quiet tint, `--sidebar-active-foreground` on the solid fill.
+   * Label color follows the surface so text never rides its own background's
+   * contrast cliff: foreground on the quiet tint, `--sidebar-active-foreground`
+   * on the solid fill.
    */
   :root {
-    --sidebar-row-active-surface: hsl(var(--sidebar-foreground) / 0.1);
+    --sidebar-row-active-surface: rgb(255 255 255 / 0.05);
     --sidebar-row-active-shadow: none;
     --sidebar-row-active-label-weight: 400;
     --sidebar-row-active-color: hsl(var(--sidebar-foreground));
@@ -569,9 +567,12 @@
   animation: dm-timer-pulse 2.4s ease-in-out infinite;
 }
 
-.dm-timer-pill-selected {
-  /* On a selected row the pill sits on the active fill, so it takes the
-     active foreground rather than a frozen near-black. */
+/* Sam 2026-09-06: the timer pill looks the SAME selected or not — the
+   selected-row background is the quiet hover gray now, and the normal
+   purple-tint pill reads fine on it. The inversion only makes sense on the
+   solid accent fill, so it applies solely under the Prominent active tab
+   preference (dm-list-spec.md §6 wrote it against the original mauve row). */
+:root[data-prominent-active-tab="true"] .dm-timer-pill-selected {
   background: rgb(0 0 0 / 0.2);
   color: hsl(var(--sidebar-active-foreground));
 }

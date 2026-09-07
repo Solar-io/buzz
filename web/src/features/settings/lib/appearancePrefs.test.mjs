@@ -89,13 +89,14 @@ test("globals.css carries a rule for every non-default font-size and density", (
 });
 
 /**
- * Sam 2026-09-06: the selected sidebar row is the hover-family quiet gray by
- * default, and the solid accent fill is what the Prominent active tab
- * preference turns ON — the toggle's whole visible job. These pins catch the
- * two ways that contract silently regresses: the default flopping back to the
- * solid fill, or the prominent branch losing the fill it exists to provide.
+ * Sam 2026-09-06: the selected sidebar row paints EXACTLY the hover color by
+ * default (rgb 255 255 255 / 0.05 — the literal `hover:bg-white/5`), and the
+ * solid accent fill is what the Prominent active tab preference turns ON.
+ * The timer pill keeps its normal purple tint on selected rows unless the
+ * prominent fill is active. These pins catch the contract silently
+ * regressing in either direction.
  */
-test("selected-row tokens keep quiet-gray default and solid-accent prominent", () => {
+test("selected-row tokens keep hover-equal default and solid-accent prominent", () => {
   const css = readFileSync(
     fileURLToPath(
       new URL("../../../shared/styles/globals.css", import.meta.url),
@@ -107,8 +108,8 @@ test("selected-row tokens keep quiet-gray default and solid-accent prominent", (
     css.indexOf(':root[data-prominent-active-tab="true"]'),
   );
   assert.ok(
-    defaultBlock.includes("hsl(var(--sidebar-foreground) / 0.1)"),
-    "default selected surface must stay the quiet hover-family gray",
+    defaultBlock.includes("rgb(255 255 255 / 0.05)"),
+    "default selected surface must be exactly the hover color",
   );
   const prominentBlock = css.slice(
     css.indexOf(':root[data-prominent-active-tab="true"]'),
@@ -117,6 +118,10 @@ test("selected-row tokens keep quiet-gray default and solid-accent prominent", (
   assert.ok(
     prominentBlock.includes("hsl(var(--sidebar-active))"),
     "prominent selected surface must be the solid accent fill",
+  );
+  assert.ok(
+    css.includes(':root[data-prominent-active-tab="true"] .dm-timer-pill-selected'),
+    "timer-pill inversion must only apply under the prominent fill",
   );
 });
 
