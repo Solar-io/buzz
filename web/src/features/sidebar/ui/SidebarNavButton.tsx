@@ -64,10 +64,10 @@ export function SidebarNavButton({
         // text-sm): the sections read as one surface.
         "group/row flex h-8 w-full items-center gap-2 truncate rounded-[8px] px-2 text-left text-sm transition-colors",
         "hover:bg-white/5 hover:text-foreground",
-        // `buzz-sidebar-active-row` resolves to exactly what
-        // `bg-sidebar-active` painted before, unless the Prominent active tab
-        // preference is on (shared/styles/globals.css).
-        selected && "buzz-sidebar-active-row text-sidebar-active-foreground",
+        // `buzz-sidebar-active-row` paints the token-driven selection surface
+        // and color — quiet gray by default, solid mauve under the Prominent
+        // active tab preference (shared/styles/globals.css).
+        selected && "buzz-sidebar-active-row",
         // Desktop dims muted rows rather than hiding them.
         muted && !selected && "opacity-50",
       )}
@@ -81,7 +81,7 @@ export function SidebarNavButton({
         className={cn(
           "truncate",
           selected
-            ? "buzz-sidebar-active-label text-sidebar-active-foreground"
+            ? "buzz-sidebar-active-label"
             : unread
               ? "font-semibold text-sidebar-foreground"
               : "font-normal text-sidebar-foreground/70",
