@@ -285,97 +285,99 @@ export function MessageActionBar({
         </button>
       )}
 
-      {(canEdit || canDelete) && (
-        <DropdownMenu
-          open={menuOpen}
-          onOpenChange={(open) => {
-            setMenuOpen(open);
-            if (!open) {
-              disarm();
-            }
-          }}
-        >
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              aria-label="More actions"
-              title="More actions"
-              data-testid={`more-actions-${messageId}`}
-              className={cn(
-                ACTION_BUTTON_CLASS,
-                menuOpen && "bg-accent text-accent-foreground",
-              )}
-            >
-              <EllipsisVertical
-                className={ACTION_ICON_CLASS}
-                aria-hidden="true"
-              />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem
-              data-testid={`remind-message-${messageId}`}
-              onClick={() =>
-                openReminder({
-                  eventId: messageId,
-                  channelId: channelId ?? "",
-                  preview: messagePreview ?? "",
-                  authorPubkey: authorPubkey ?? "",
-                })
-              }
-            >
-              <Clock className={ACTION_ICON_CLASS} aria-hidden="true" />
-              Remind me later
-            </DropdownMenuItem>
-
-            {canEdit && (
-              <DropdownMenuItem
-                data-testid={`edit-message-${messageId}`}
-                onClick={() => onEdit?.()}
-              >
-                <Pencil className={ACTION_ICON_CLASS} aria-hidden="true" />
-                Edit message
-              </DropdownMenuItem>
+      {/* Always mounted: "Remind me later" is offered on every message,
+          authored by anyone — the rarer edit/delete items gate themselves
+          inside. Wrapping this menu in a condition would silently revoke
+          reminders on messages the viewer did not write. */}
+      <DropdownMenu
+        open={menuOpen}
+        onOpenChange={(open) => {
+          setMenuOpen(open);
+          if (!open) {
+            disarm();
+          }
+        }}
+      >
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label="More actions"
+            title="More actions"
+            data-testid={`more-actions-${messageId}`}
+            className={cn(
+              ACTION_BUTTON_CLASS,
+              menuOpen && "bg-accent text-accent-foreground",
             )}
+          >
+            <EllipsisVertical
+              className={ACTION_ICON_CLASS}
+              aria-hidden="true"
+            />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem
+            data-testid={`remind-message-${messageId}`}
+            onClick={() =>
+              openReminder({
+                eventId: messageId,
+                channelId: channelId ?? "",
+                preview: messagePreview ?? "",
+                authorPubkey: authorPubkey ?? "",
+              })
+            }
+          >
+            <Clock className={ACTION_ICON_CLASS} aria-hidden="true" />
+            Remind me later
+          </DropdownMenuItem>
 
-            {canDelete &&
-              (confirmingDelete ? (
-                <>
-                  <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    data-testid={`confirm-delete-message-${messageId}`}
-                    onClick={() => {
-                      disarm();
-                      onDelete?.();
-                    }}
-                  >
-                    <Check className={ACTION_ICON_CLASS} aria-hidden="true" />
-                    Confirm delete
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    data-testid={`cancel-delete-message-${messageId}`}
-                    onClick={disarm}
-                  >
-                    <X className={ACTION_ICON_CLASS} aria-hidden="true" />
-                    Cancel
-                  </DropdownMenuItem>
-                </>
-              ) : (
+          {canEdit && (
+            <DropdownMenuItem
+              data-testid={`edit-message-${messageId}`}
+              onClick={() => onEdit?.()}
+            >
+              <Pencil className={ACTION_ICON_CLASS} aria-hidden="true" />
+              Edit message
+            </DropdownMenuItem>
+          )}
+
+          {canDelete &&
+            (confirmingDelete ? (
+              <>
                 <DropdownMenuItem
                   className="text-destructive focus:text-destructive"
-                  data-testid={`delete-message-${messageId}`}
-                  // Arming must not close the menu, or the confirm step it
-                  // arms would be unreachable.
-                  onSelect={(event) => event.preventDefault()}
-                  onClick={() => setConfirmingDelete(true)}
+                  data-testid={`confirm-delete-message-${messageId}`}
+                  onClick={() => {
+                    disarm();
+                    onDelete?.();
+                  }}
                 >
-                  <Trash2 className={ACTION_ICON_CLASS} aria-hidden="true" />
-                  Delete message
+                  <Check className={ACTION_ICON_CLASS} aria-hidden="true" />
+                  Confirm delete
                 </DropdownMenuItem>
-              ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
+                <DropdownMenuItem
+                  data-testid={`cancel-delete-message-${messageId}`}
+                  onClick={disarm}
+                >
+                  <X className={ACTION_ICON_CLASS} aria-hidden="true" />
+                  Cancel
+                </DropdownMenuItem>
+              </>
+            ) : (
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                data-testid={`delete-message-${messageId}`}
+                // Arming must not close the menu, or the confirm step it
+                // arms would be unreachable.
+                onSelect={(event) => event.preventDefault()}
+                onClick={() => setConfirmingDelete(true)}
+              >
+                <Trash2 className={ACTION_ICON_CLASS} aria-hidden="true" />
+                Delete message
+              </DropdownMenuItem>
+            ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
