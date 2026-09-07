@@ -81,7 +81,7 @@ export function extractMentionTokens(text: string): MentionToken[] {
 export type MentionPicks = ReadonlyMap<string, string>;
 
 /** The reserved expansion token: everyone in the channel except the author. */
-const EVERYONE = "everyone";
+export const EVERYONE = "everyone";
 
 function normalizeName(name: string): string {
   return name.replace(/\s+/g, " ").trim().toLowerCase();
@@ -91,6 +91,52 @@ function normalizeName(name: string): string {
 function endsOnBoundary(masked: string, index: number): boolean {
   const ch = masked[index];
   return ch === undefined || /\s/.test(ch) || !NAME_SOURCE.test(ch);
+}
+
+/**
+ * The longest known name matching at an @ position, or null when nothing
+ * known boundary-matches there. THE matcher for mention semantics — the
+ * composer's resolver AND the message renderer both call it, so matching
+ * fixes cannot land in one and skip the other (which is exactly how
+ * multi-word names shipped broken: resolver and renderer tokenized
+ * differently). `names` are display names in any case; they are normalized
+ * before matching, and the match never crosses a code region.
+ */
+export function longestMentionMatch(
+  text: string,
+  at: number,
+  names: Iterable<string>,
+): string | null {
+  const masked = maskCodeRegions(text);
+  const maskedLower = masked.toLowerCase();
+  let best: string | null = null;
+  for (const raw of names) {
+    const candidate = normalizeName(raw);
+    if (!candidate || candidate.length <= (best?.length ?? 0)) {
+      continue;
+    }
+    if (!maskedLower.startsWith(candidate, at + 1)) {
+      continue;
+    }
+    if (!endsOnBoundary(masked, at + 1 + candidate.length)) {
+      continue;
+    }
+    best = candidate;
+  }
+  return best;
+}
+
+/**
+ * True when the reserved @everyone token sits (boundary-delimited) at this
+ * @: following prose does not defeat it, a run-on word does. Shared by the
+ * resolver (which expands it) and the renderer (which highlights it).
+ */
+export function isEveryoneMention(text: string, at: number): boolean {
+  const masked = maskCodeRegions(text);
+  return (
+    masked.toLowerCase().startsWith(EVERYONE, at + 1) &&
+    endsOnBoundary(masked, at + 1 + EVERYONE.length)
+  );
 }
 
 /**
@@ -161,16 +207,11 @@ export function resolveMentions(
     }
   };
 
-  const masked = maskCodeRegions(text);
-  const maskedLower = masked.toLowerCase();
   for (const token of extractMentionTokens(text)) {
     // The reserved @everyone: boundary-delimited, so following prose does not
     // defeat it ("@everyone stand up" still fires) but a run-on word does
     // ("@everyones" does not).
-    if (
-      maskedLower.startsWith(EVERYONE, token.at + 1) &&
-      endsOnBoundary(masked, token.at + 1 + EVERYONE.length)
-    ) {
+    if (isEveryoneMention(text, token.at)) {
       for (const member of members) {
         if (member.pubkey !== selfPubkey) {
           add(member.pubkey);
@@ -178,23 +219,9 @@ export function resolveMentions(
       }
       continue;
     }
-    // Longest known name that prefixes the span and ends on a boundary. A
-    // candidate can never cross a masked code region (code masks to runs of
-    // 2+ spaces / backticks, which break the prefix), so matching against
-    // the masked text is safe.
-    let best: string | null = null;
-    for (const candidate of candidates) {
-      if (candidate.length <= (best?.length ?? 0)) {
-        continue;
-      }
-      if (!maskedLower.startsWith(candidate, token.at + 1)) {
-        continue;
-      }
-      if (!endsOnBoundary(masked, token.at + 1 + candidate.length)) {
-        continue;
-      }
-      best = candidate;
-    }
+    // Longest known name that prefixes the span and ends on a boundary (the
+    // same matcher the renderer highlights with — see longestMentionMatch).
+    const best = longestMentionMatch(text, token.at, candidates);
     if (best === null) {
       unresolved.push(token.name);
       continue;
