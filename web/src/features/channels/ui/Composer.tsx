@@ -8,8 +8,9 @@ import {
   type KeyboardEvent,
 } from "react";
 import { toast } from "sonner";
-import { AtSign, Paperclip, Smile } from "lucide-react";
+import { AtSign, Paperclip, Smile, Users } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
+import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
 import { activeMentionQuery, resolveMentions } from "../lib/mentions.ts";
 import { applyWrap } from "../lib/composerFormat.ts";
 import {
@@ -86,6 +87,16 @@ interface Selection {
   start: number;
   end: number;
 }
+
+/**
+ * One row of the mention autocomplete: a channel member, or the reserved
+ * @everyone entry. The everyone row carries no pubkey — the token expands to
+ * every member at resolve time (minus the author), so there is nothing to
+ * pick and record in mentionPicks.
+ */
+type MentionSuggestion =
+  | { kind: "member"; name: string; pubkey: string }
+  | { kind: "everyone"; name: "everyone" };
 
 export function Composer({
   members,
@@ -167,6 +178,8 @@ export function Composer({
   // restricted is moderator-gated, so a timed-out member is exactly the
   // person who cannot read their own restriction.
   const composerTimeout = useComposerTimeout();
+  // The author's own key — @everyone expands to everyone EXCEPT them.
+  const selfPubkey = useOwnPubkey();
   // Current text without waiting for a re-render: the upload path appends
   // markdown from an async callback, and reading `text` there would capture
   // whatever the closure was created with.
@@ -326,14 +339,25 @@ export function Composer({
   useEffect(() => {
     setMentionDismissed(false);
   }, [query]);
-  const suggestions = useMemo(() => {
+  const suggestions = useMemo<MentionSuggestion[]>(() => {
     if (query === null || mentionDismissed) {
       return [];
     }
     const lower = query.toLowerCase();
-    return namedMembers
+    const matching: MentionSuggestion[] = namedMembers
       .filter((member) => member.name.toLowerCase().includes(lower))
-      .slice(0, 6);
+      .slice(0, 6)
+      .map((member) => ({
+        kind: "member",
+        name: member.name,
+        pubkey: member.pubkey,
+      }));
+    // The reserved @everyone rides first whenever the query could be typing
+    // it — including the empty query right after "@".
+    if ("everyone".includes(lower)) {
+      return [{ kind: "everyone", name: "everyone" }, ...matching];
+    }
+    return matching;
   }, [query, namedMembers, mentionDismissed]);
 
   // Which toolbar buttons render as pressed. Reading marks off the markdown
@@ -532,6 +556,7 @@ export function Composer({
       trimmed,
       namedMembers,
       mentionPicks,
+      selfPubkey ?? undefined,
     );
     setBusy(true);
     try {
@@ -609,9 +634,10 @@ export function Composer({
       }
       if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
         event.preventDefault();
+        const row = suggestions[popupIndex];
         applySuggestion(
-          suggestions[popupIndex]?.name ?? "",
-          suggestions[popupIndex]?.pubkey,
+          row?.name ?? "",
+          row?.kind === "member" ? row.pubkey : undefined,
         );
         return;
       }
@@ -689,17 +715,35 @@ export function Composer({
     <div className="relative border-t border-border p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-4">
       {suggestions.length > 0 && (
         <ul className="absolute bottom-full left-3 mb-1 w-64 overflow-hidden rounded-md border border-border bg-popover shadow-lg">
-          {suggestions.map((member, index) => (
-            <li key={member.pubkey}>
+          {suggestions.map((row, index) => (
+            <li key={row.kind === "member" ? row.pubkey : "everyone"}>
               <button
                 type="button"
                 className={cn(
                   "block w-full truncate px-3 py-1.5 text-left text-sm hover:bg-accent",
                   index === popupIndex && "bg-accent",
                 )}
-                onClick={() => applySuggestion(member.name, member.pubkey)}
+                onClick={() =>
+                  applySuggestion(
+                    row.name,
+                    row.kind === "member" ? row.pubkey : undefined,
+                  )
+                }
               >
-                @{member.name}
+                {row.kind === "member" ? (
+                  `@${row.name}`
+                ) : (
+                  <span className="flex items-center gap-1.5">
+                    <Users
+                      aria-hidden
+                      className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                    />
+                    @everyone
+                    <span className="text-muted-foreground">
+                      notify all members
+                    </span>
+                  </span>
+                )}
               </button>
             </li>
           ))}

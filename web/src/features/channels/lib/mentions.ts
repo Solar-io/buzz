@@ -3,10 +3,17 @@
  * @Name tokens inside CODE REGIONS do not mention (no code-region stripping
  * server-side — the relay counts p tags only, so this is a UI concern: which
  * tokens to offer, highlight, and emit as p tags).
+ *
+ * A token is a SPAN: name characters joined by SINGLE spaces, so multi-word
+ * display names ("Lord Nikon") tokenize whole. Double spaces end a span, and
+ * masked code regions can never extend one (they mask to runs of two or more
+ * spaces / backticks). Prose words after a completed mention glom onto the
+ * span ("@Sam and") — harmless, because resolution takes the longest KNOWN
+ * name inside the span, never the span itself.
  */
 
 export interface MentionToken {
-  /** The text after @, e.g. "Sam" in "hi @Sam!". */
+  /** The text after @, e.g. "Sam" in "hi @Sam!", "Lord Nikon" in "@Lord Nikon!". */
   name: string;
   /** Character index of the @ in the source string. */
   at: number;
@@ -25,16 +32,37 @@ function maskCodeRegions(text: string): string {
 
 const NAME_SOURCE = /[A-Za-z0-9_.-]/;
 
+function isNameChar(ch: string | undefined): boolean {
+  return ch !== undefined && NAME_SOURCE.test(ch);
+}
+
+/** Maximal run of name chars joined by single spaces, starting at `from`. */
+function scanMentionSpan(masked: string, from: number): number {
+  let end = from;
+  while (isNameChar(masked[end])) {
+    end += 1;
+  }
+  if (end === from) {
+    return from;
+  }
+  // A single space continues the span only when a name char follows; a double
+  // space (or any other character) ends it.
+  while (masked[end] === " " && isNameChar(masked[end + 1])) {
+    end += 1;
+    while (isNameChar(masked[end])) {
+      end += 1;
+    }
+  }
+  return end;
+}
+
 export function extractMentionTokens(text: string): MentionToken[] {
   const masked = maskCodeRegions(text);
   const tokens: MentionToken[] = [];
   let i = 0;
   while (i < masked.length) {
     if (masked[i] === "@") {
-      let end = i + 1;
-      while (end < masked.length && NAME_SOURCE.test(masked[end])) {
-        end += 1;
-      }
+      const end = scanMentionSpan(masked, i + 1);
       if (end > i + 1) {
         tokens.push({ name: text.slice(i + 1, end), at: i });
         i = end;
@@ -52,37 +80,77 @@ export function extractMentionTokens(text: string): MentionToken[] {
  */
 export type MentionPicks = ReadonlyMap<string, string>;
 
+/** The reserved expansion token: everyone in the channel except the author. */
+const EVERYONE = "everyone";
+
+function normalizeName(name: string): string {
+  return name.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/** True when a candidate name would legally end there: EOL, whitespace, or a non-name char. */
+function endsOnBoundary(masked: string, index: number): boolean {
+  const ch = masked[index];
+  return ch === undefined || /\s/.test(ch) || !NAME_SOURCE.test(ch);
+}
+
 /**
  * Resolve @Name tokens against channel members. Unique matches become
  * p-tags; ambiguous or unknown names are left alone (the caller decides
  * whether to block sending, matching the CLI's explicit-mention contract).
  *
- * `picks` carries the pubkeys the author chose from the autocomplete. They win
- * over name matching, which is what makes two members sharing a display name
- * distinguishable: without a pick, "@Sam" is ambiguous and correctly resolves
- * to nothing, but a picked "@Sam" carries the pubkey the author actually
- * clicked. Names typed by hand still fall back to member matching.
+ * Resolution matches by the LONGEST KNOWN NAME at each @ — member names and
+ * pick keys together, mirroring the desktop's extractMentionPubkeys — so a
+ * member named "Sam" does not swallow a mention of "Sam Smith", and the
+ * candidate must end on a boundary ("@Sam Smithson" is not "Sam Smith" run
+ * together). This is what makes multi-word display names ("Crash Override")
+ * tag: the span they tokenize into is matched as one name.
+ *
+ * `picks` carries the pubkeys the author chose from the autocomplete. On an
+ * equal-length match a pick wins over name matching, which is what makes two
+ * members sharing a display name distinguishable: without a pick, "@Sam" is
+ * ambiguous and correctly resolves to nothing, but a picked "@Sam" carries
+ * the pubkey the author actually clicked. Names typed by hand still fall
+ * back to member matching.
  *
  * A pick keeps applying while its name is still in the text, so deleting a
  * picked mention and retyping the same name reuses that pubkey. That is the
  * intended "last pick wins" behaviour; the alternative — silently dropping to
  * ambiguity on an edit — is harder to explain and easier to get wrong.
+ *
+ * `@everyone` (exact, boundary-delimited) expands to every member's pubkey
+ * except `selfPubkey`, the author's own. Without a self key the degenerate
+ * case still holds: all members, unfiltered.
  */
 export function resolveMentions(
   text: string,
   members: { pubkey: string; name: string }[],
   picks?: MentionPicks,
+  selfPubkey?: string,
 ): {
   mentionPubkeys: string[];
   unresolved: string[];
 } {
   const byLower = new Map<string, string[]>();
   for (const member of members) {
-    const key = member.name.trim().toLowerCase();
+    const key = normalizeName(member.name);
+    if (!key) {
+      continue;
+    }
     const list = byLower.get(key) ?? [];
     list.push(member.pubkey);
     byLower.set(key, list);
   }
+  const pickByKey = new Map<string, string>();
+  if (picks) {
+    for (const [name, pubkey] of picks) {
+      const key = normalizeName(name);
+      if (key) {
+        pickByKey.set(key, pubkey);
+      }
+    }
+  }
+  const candidates = [...new Set([...byLower.keys(), ...pickByKey.keys()])];
+
   const mentionPubkeys: string[] = [];
   const unresolved: string[] = [];
   const seen = new Set<string>();
@@ -92,20 +160,55 @@ export function resolveMentions(
       mentionPubkeys.push(pubkey);
     }
   };
+
+  const masked = maskCodeRegions(text);
+  const maskedLower = masked.toLowerCase();
   for (const token of extractMentionTokens(text)) {
-    const lower = token.name.toLowerCase();
-    const picked = picks?.get(lower);
-    if (picked) {
+    // The reserved @everyone: boundary-delimited, so following prose does not
+    // defeat it ("@everyone stand up" still fires) but a run-on word does
+    // ("@everyones" does not).
+    if (
+      maskedLower.startsWith(EVERYONE, token.at + 1) &&
+      endsOnBoundary(masked, token.at + 1 + EVERYONE.length)
+    ) {
+      for (const member of members) {
+        if (member.pubkey !== selfPubkey) {
+          add(member.pubkey);
+        }
+      }
+      continue;
+    }
+    // Longest known name that prefixes the span and ends on a boundary. A
+    // candidate can never cross a masked code region (code masks to runs of
+    // 2+ spaces / backticks, which break the prefix), so matching against
+    // the masked text is safe.
+    let best: string | null = null;
+    for (const candidate of candidates) {
+      if (candidate.length <= (best?.length ?? 0)) {
+        continue;
+      }
+      if (!maskedLower.startsWith(candidate, token.at + 1)) {
+        continue;
+      }
+      if (!endsOnBoundary(masked, token.at + 1 + candidate.length)) {
+        continue;
+      }
+      best = candidate;
+    }
+    if (best === null) {
+      unresolved.push(token.name);
+      continue;
+    }
+    const picked = pickByKey.get(best);
+    if (picked !== undefined) {
       add(picked);
       continue;
     }
-    const matches = byLower.get(lower);
-    if (!matches) {
-      unresolved.push(token.name);
-      continue;
-    }
-    if (matches.length > 1) {
-      unresolved.push(token.name);
+    const matches = byLower.get(best);
+    if (!matches || matches.length > 1) {
+      // Report the matched NAME, not the span — the span gloms trailing
+      // prose ("@Crash Override you in?"), the ambiguity is about the name.
+      unresolved.push(text.slice(token.at + 1, token.at + 1 + best.length));
       continue;
     }
     add(matches[0]);
@@ -119,6 +222,11 @@ export function activeMentionQuery(
   caretIndex: number,
 ): string | null {
   const upToCaret = text.slice(0, caretIndex);
-  const match = /(^|\s)@([A-Za-z0-9_.-]*)$/.exec(upToCaret);
+  // The query spans single spaces so the popup survives typing the middle of
+  // a multi-word name; the substring filter empties (and so closes it) as
+  // soon as the accumulated text stops matching any known name.
+  const match = /(^|\s)@([A-Za-z0-9_.-]+(?: [A-Za-z0-9_.-]+)*)$/.exec(
+    upToCaret,
+  );
   return match ? match[2] : null;
 }
