@@ -7,6 +7,9 @@ import { truncatePubkey } from "@/shared/lib/pubkey";
 import { useProfiles } from "@/features/channels/hooks";
 import type { Profile } from "@/features/channels/hooks";
 import { AuthorAvatar } from "@/features/channels/ui/ChannelTimeline";
+import { useUserStatuses } from "@/features/user-status/hooks";
+import { focusLine } from "@/features/user-status/lib/focusLine.ts";
+import type { UserStatus } from "@/features/user-status/lib/statusEvent.ts";
 import { findStaleAgents } from "../lib/staleAgents";
 import { publishOwnProfile } from "../lib/agentControl";
 import type { RosterRow } from "../lib/roster";
@@ -81,6 +84,9 @@ export function AgentRosterSidebar({
 }) {
   const pubkeys = useMemo(() => roster.map((row) => row.pubkey), [roster]);
   const profiles = useProfiles(pubkeys);
+  // ONE bulk kind-30315 REQ for the whole roster, on the same author-set memo
+  // the profiles fetch uses — never one subscription per row.
+  const statuses = useUserStatuses(pubkeys);
 
   return (
     <div className="space-y-4">
@@ -117,6 +123,7 @@ export function AgentRosterSidebar({
                         key={row.pubkey}
                         row={row}
                         profile={profiles.get(row.pubkey)}
+                        status={statuses.get(row.pubkey) ?? null}
                         teamNames={
                           row.entry.personaId !== null
                             ? (teamNamesByPersona.get(row.entry.personaId) ??
@@ -147,12 +154,15 @@ export function AgentRosterSidebar({
 function AgentRosterRow({
   row,
   profile,
+  status,
   teamNames,
   selected,
   onSelect,
 }: {
   row: RosterRow;
   profile?: Profile;
+  /** kind-30315 focus status from the roster-wide bulk fetch; null = none. */
+  status: UserStatus | null;
   teamNames: string[];
   selected: boolean;
   onSelect: () => void;
@@ -160,6 +170,11 @@ function AgentRosterRow({
   const subtitle =
     [row.model, row.provider].filter(Boolean).join(" @ ") ||
     `registered ${new Date(row.entry.updatedAt * 1000).toLocaleDateString([], { month: "short", day: "numeric" })}`;
+  // `now` is read here rather than inside focusLine (which stays pure and
+  // testable) — and the statuses hook's 30s expiry tick re-renders the roster
+  // often enough that the age suffix stays honest without a new timer. Same
+  // pattern as AgentWorkingDot above.
+  const focus = focusLine(status, Math.floor(Date.now() / 1000));
   return (
     <li>
       <button
@@ -208,6 +223,12 @@ function AgentRosterRow({
           </span>
           <span className="block truncate text-xs text-muted-foreground">
             {subtitle}
+            {focus !== null && (
+              <span title="Current project focus (self-reported status)">
+                {" · "}
+                {focus.label} · {focus.age}
+              </span>
+            )}
           </span>
         </span>
         <span className="flex shrink-0 flex-col items-end gap-1">
