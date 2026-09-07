@@ -145,7 +145,7 @@ export function DmNavRow({
           // Read / unread / selected, from the sidebar tokens rather than
           // the sampled literals they were pinned to.
           selected
-            ? "buzz-sidebar-active-label text-black"
+            ? "buzz-sidebar-active-label"
             : unread
               ? "font-semibold text-sidebar-foreground"
               : "font-normal text-sidebar-foreground/70",
