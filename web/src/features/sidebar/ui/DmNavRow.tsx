@@ -11,6 +11,8 @@ import {
 } from "@/features/channels/lib/presence.ts";
 import { AuthorAvatar } from "@/features/channels/ui/ChannelTimeline";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
+import { focusLine } from "@/features/user-status/lib/focusLine.ts";
+import type { UserStatus } from "@/features/user-status/lib/statusEvent.ts";
 import { useUnreadCount } from "@/features/sidebar/lib/useUnreadCount.ts";
 import { DmTimerPill } from "@/features/sidebar/ui/DmTimerPill";
 import { GroupAvatar } from "@/features/sidebar/ui/GroupAvatar";
@@ -34,6 +36,13 @@ export interface DmNavRowProps {
   participants: string[];
   selfPubkey: string | null;
   profiles: Map<string, Profile>;
+  /**
+   * kind-30315 focus status for the row's avatar pubkey, from the sidebar's
+   * ONE bulk fetch (ChannelSidebar). null/undefined = nothing current; the
+   * row then renders exactly as before — most rows until the fleet
+   * convention fans out.
+   */
+  status?: UserStatus | null;
   /** Latest presence entry for the row's avatar pubkey, when subscribed. */
   presence?: PresenceEntry;
   onSelect: () => void;
@@ -53,6 +62,7 @@ export function DmNavRow({
   participants,
   selfPubkey,
   profiles,
+  status,
   presence,
   onSelect,
   menuItems,
@@ -72,6 +82,13 @@ export function DmNavRow({
   const active = agentRecentlyActive(rowFrames, now);
   useTick(active);
   const unreadCount = useUnreadCount(channelId, lastSeenAt, selfPubkey);
+  // Focus label from the SAME helper the roster uses, so the 24h blank and
+  // age buckets have exactly one implementation. `now` is the row's existing
+  // per-render clock read (the statuses hook's 30s tick re-renders the
+  // section, and useTick refreshes working rows every second); null renders
+  // NOTHING below — the empty state is the common case and stays
+  // pixel-identical to before.
+  const focus = focusLine(status, now);
   const row = (
     <button
       type="button"
@@ -134,6 +151,24 @@ export function DmNavRow({
         )}
       >
         {name}
+        {/* Focus token rides the name line, inline inside the same
+            truncating span: the name keeps its left position and the badge /
+            timer pill are shrink-0 siblings, so the only thing a narrow row
+            can ever clip is the END of this combined line — never the pill
+            or badge. text-2xs matches the row's existing meta-text size
+            (unread badge, identicon), so the token reads as metadata rather
+            than competing with the name. */}
+        {focus !== null && (
+          <span
+            title="Current project focus (self-reported status)"
+            className={cn(
+              "ml-1.5 text-2xs font-normal",
+              selected ? "text-black/60" : "text-sidebar-foreground/50",
+            )}
+          >
+            {focus.label} · {focus.age}
+          </span>
+        )}
       </span>
       {(active || unread) && (
         <span className="flex shrink-0 items-center gap-2">

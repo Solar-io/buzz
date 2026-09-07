@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { Inbox, Search, ShieldAlert } from "lucide-react";
 import type { Profile } from "@/features/channels/hooks";
@@ -14,6 +14,7 @@ import type { ChannelSummary } from "@/features/channels/useChannels";
 import type { DmSummary } from "@/features/dms/hooks";
 import { useViewerCommunityRole } from "@/features/moderation/queueHooks.ts";
 import { NewDmDialog } from "@/features/dms/ui/NewDmDialog";
+import { useUserStatuses } from "@/features/user-status/hooks";
 import { shortDate } from "@/features/sidebar/lib/shortDate.ts";
 import { ChannelForum, ChannelGlyph } from "@/features/sidebar/ui/ChannelGlyph";
 import { DmNavRow } from "@/features/sidebar/ui/DmNavRow";
@@ -152,6 +153,20 @@ export function ChannelSidebar({
       return next;
     });
   };
+
+  // ONE bulk kind-30315 REQ for every DM partner — the same roster pattern
+  // (AgentRosterSidebar), never one subscription per row. The hook dedupes
+  // and set-keys the REQ itself, so the memo is for cleanliness; group DMs
+  // subscribe all partners, rows read only their avatar partner's status.
+  const dmPartnerPubkeys = useMemo(() => {
+    const partners = lists.visibleDms.flatMap(({ channel }) =>
+      channel.participantPubkeys.filter(
+        (pubkey) => pubkey !== dmIdentity.selfPubkey,
+      ),
+    );
+    return Array.from(new Set(partners));
+  }, [lists.visibleDms, dmIdentity.selfPubkey]);
+  const dmStatuses = useUserStatuses(dmPartnerPubkeys);
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="channel-sidebar">
@@ -341,39 +356,52 @@ export function ChannelSidebar({
         )}
         {!isCollapsed(collapsed, "dms") && lists.visibleDms.length > 0 && (
           <ul className="-mx-0.5 space-y-1">
-            {lists.visibleDms.map(({ channel, lastMessage }) => (
-              <li key={channel.id}>
-                <DmNavRow
-                  selected={channel.id === selectedId}
-                  channelId={channel.id}
-                  lastSeenAt={readState.read[channel.id] ?? null}
-                  unread={
-                    lastMessage
-                      ? isUnread(
-                          readState.read,
-                          channel.id,
-                          lastMessage.created_at,
-                        )
-                      : false
-                  }
-                  participants={channel.participantPubkeys}
-                  selfPubkey={dmIdentity.selfPubkey}
-                  profiles={dmIdentity.profiles}
-                  presence={channel.participantPubkeys
-                    .filter((pk) => pk !== dmIdentity.selfPubkey)
-                    .map((pk) => dmIdentity.presence.get(pk))
-                    .find((entry) => entry != null)}
-                  onSelect={() => actions.onSelectChannel(channel.id)}
-                  menuItems={[
-                    {
-                      label: "Remove from list",
-                      danger: true,
-                      onSelect: () => actions.onHideDm(channel.id),
-                    },
-                  ]}
-                />
-              </li>
-            ))}
+            {lists.visibleDms.map(({ channel, lastMessage }) => {
+              // The row's "about" agent: first non-self participant (its
+              // avatar/pulse pubkey — DmNavRow's `others[0]` picks the same
+              // one; dedupe never moves the FIRST non-self entry), falling
+              // back to participants[0] for a self-only DM.
+              const partnerPubkey =
+                channel.participantPubkeys.find(
+                  (pk) => pk !== dmIdentity.selfPubkey,
+                ) ??
+                channel.participantPubkeys[0] ??
+                "";
+              return (
+                <li key={channel.id}>
+                  <DmNavRow
+                    selected={channel.id === selectedId}
+                    channelId={channel.id}
+                    lastSeenAt={readState.read[channel.id] ?? null}
+                    unread={
+                      lastMessage
+                        ? isUnread(
+                            readState.read,
+                            channel.id,
+                            lastMessage.created_at,
+                          )
+                        : false
+                    }
+                    participants={channel.participantPubkeys}
+                    selfPubkey={dmIdentity.selfPubkey}
+                    profiles={dmIdentity.profiles}
+                    status={dmStatuses.get(partnerPubkey) ?? null}
+                    presence={channel.participantPubkeys
+                      .filter((pk) => pk !== dmIdentity.selfPubkey)
+                      .map((pk) => dmIdentity.presence.get(pk))
+                      .find((entry) => entry != null)}
+                    onSelect={() => actions.onSelectChannel(channel.id)}
+                    menuItems={[
+                      {
+                        label: "Remove from list",
+                        danger: true,
+                        onSelect: () => actions.onHideDm(channel.id),
+                      },
+                    ]}
+                  />
+                </li>
+              );
+            })}
           </ul>
         )}
       </nav>
