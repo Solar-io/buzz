@@ -11,7 +11,7 @@ import {
 } from "@/features/channels/lib/presence.ts";
 import { AuthorAvatar } from "@/features/channels/ui/ChannelTimeline";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
-import { focusLine } from "@/features/user-status/lib/focusLine.ts";
+import { focusToken } from "@/features/user-status/lib/focusLine.ts";
 import type { UserStatus } from "@/features/user-status/lib/statusEvent.ts";
 import { useUnreadCount } from "@/features/sidebar/lib/useUnreadCount.ts";
 import { DmTimerPill } from "@/features/sidebar/ui/DmTimerPill";
@@ -82,13 +82,14 @@ export function DmNavRow({
   const active = agentRecentlyActive(rowFrames, now);
   useTick(active);
   const unreadCount = useUnreadCount(channelId, lastSeenAt, selfPubkey);
-  // Focus label from the SAME helper the roster uses, so the 24h blank and
-  // age buckets have exactly one implementation. `now` is the row's existing
-  // per-render clock read (the statuses hook's 30s tick re-renders the
-  // section, and useTick refreshes working rows every second); null renders
-  // NOTHING below — the empty state is the common case and stays
-  // pixel-identical to before.
-  const focus = focusLine(status, now);
+  // Focus token from the same module the roster uses — text only, no emoji,
+  // no age (this row already carries its own times on the right; Sam,
+  // 2026-09-06). One staleness implementation for both surfaces. `now` is
+  // the row's existing per-render clock read (the statuses hook's 30s tick
+  // re-renders the section, and useTick refreshes working rows every
+  // second); null renders NOTHING below — the empty state is the common
+  // case and stays pixel-identical to before.
+  const focus = focusToken(status, now);
   const row = (
     <button
       type="button"
@@ -157,7 +158,7 @@ export function DmNavRow({
             can ever clip is the END of this combined line — never the pill
             or badge. text-2xs matches the row's existing meta-text size
             (unread badge, identicon), so the token reads as metadata rather
-            than competing with the name. */}
+            than competing with the name. Text-only: no emoji, no age. */}
         {focus !== null && (
           <span
             title="Current project focus (self-reported status)"
@@ -166,7 +167,7 @@ export function DmNavRow({
               selected ? "text-black/60" : "text-sidebar-foreground/50",
             )}
           >
-            {focus.label} · {focus.age}
+            {focus}
           </span>
         )}
       </span>

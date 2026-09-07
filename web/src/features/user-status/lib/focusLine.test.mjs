@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { focusLine, MAX_AGE_SECONDS } from "./focusLine.ts";
+import { focusLine, focusToken, MAX_AGE_SECONDS } from "./focusLine.ts";
 import { parseUserStatusEvent } from "./statusEvent.ts";
 
 // A literal kind-30315 event captured off the live relay on 2026-09-07
@@ -131,4 +131,41 @@ test("a text-only status labels as the bare text", () => {
     label: "noet",
     age: "1h",
   });
+});
+
+// ── focusToken: the DM row's text-only read ─────────────────────────────────
+// The DM row shows the bare project token — no emoji, no age suffix (the
+// row carries its own times on the right; Sam, 2026-09-06). The live
+// fixture HAS an emoji tag, so these tests prove the strip, not just the
+// pass-through.
+
+test("focusToken returns the bare text: no emoji, no age", () => {
+  assert.equal(focusToken(liveStatus(), SET_AT + 7_200), "buzz-ui");
+});
+
+test("focusToken keeps the same 24h window as focusLine", () => {
+  assert.equal(focusToken(liveStatus(), SET_AT + 86_400), null);
+  assert.equal(focusToken(liveStatus(), SET_AT + 86_399), "buzz-ui");
+});
+
+test("an emoji-only status parses but has no text token", () => {
+  // Blank text WITH an emoji is a valid status (only neither-at-once is the
+  // clear event) — the roster would show the emoji; a text-only surface has
+  // nothing to say.
+  const emojiOnly = parseUserStatusEvent({
+    ...LIVE_EVENT,
+    content: "",
+    tags: [
+      ["d", "general"],
+      ["emoji", "🔥"],
+    ],
+  }).status;
+  assert.ok(emojiOnly !== null);
+  assert.equal(emojiOnly.emoji, "🔥");
+  assert.equal(focusToken(emojiOnly, SET_AT + 60), null);
+});
+
+test("focusToken renders nothing for absent status", () => {
+  assert.equal(focusToken(null, SET_AT + 60), null);
+  assert.equal(focusToken(undefined, SET_AT + 60), null);
 });

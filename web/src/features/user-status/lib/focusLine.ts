@@ -59,3 +59,26 @@ export function focusLine(
   }
   return { label, age: ageBucket(ageSeconds) };
 }
+
+/**
+ * Text-only focus token for the DM row: the status text alone — no emoji,
+ * no age suffix (that row already carries its own times on the right;
+ * Sam, 2026-09-06). An emoji-only status therefore has no token. Same
+ * absence and staleness rules as focusLine; null renders NOTHING.
+ */
+export function focusToken(
+  status: UserStatus | null | undefined,
+  nowSeconds: number,
+): string | null {
+  if (status === null || status === undefined) {
+    return null;
+  }
+  if (status.text === "") {
+    return null;
+  }
+  const ageSeconds = Math.max(0, nowSeconds - status.updatedAt);
+  if (ageSeconds >= MAX_AGE_SECONDS) {
+    return null;
+  }
+  return status.text;
+}
