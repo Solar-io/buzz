@@ -288,6 +288,21 @@ test("@everyone expands to every member except the author", () => {
   assert.deepEqual(unresolved, []);
 });
 
+test("@everyone fires mid-prose, not only at the start of a line", () => {
+  // Sam's intent (2026-09-06) is a plain expansion token, so it must fire
+  // anywhere a boundary-delimited token can sit. Pinned because a future
+  // "desktop-style leading boundary" fix would otherwise pass the whole
+  // suite while silently changing this behavior.
+  const { mentionPubkeys, unresolved } = resolveMentions(
+    "can you email @everyone about the deploy",
+    fleet,
+    undefined,
+    SAM,
+  );
+  assert.deepEqual(mentionPubkeys, [EVIE, CRASH, BURN, NIKON, KILLER]);
+  assert.deepEqual(unresolved, []);
+});
+
 test("@everyone without a self key still includes all members", () => {
   // Degenerate caller (no session identity yet): expansion is still correct,
   // just unfiltered.
