@@ -113,14 +113,19 @@ test("selected-row tokens keep hover-equal default and solid-accent prominent", 
   );
   const prominentBlock = css.slice(
     css.indexOf(':root[data-prominent-active-tab="true"]'),
-    css.indexOf("--sidebar-row-active-surface", css.indexOf(':root[data-prominent-active-tab="true"]') + 1) + 200,
+    css.indexOf(
+      "--sidebar-row-active-surface",
+      css.indexOf(':root[data-prominent-active-tab="true"]') + 1,
+    ) + 200,
   );
   assert.ok(
     prominentBlock.includes("hsl(var(--sidebar-active))"),
     "prominent selected surface must be the solid accent fill",
   );
   assert.ok(
-    css.includes(':root[data-prominent-active-tab="true"] .dm-timer-pill-selected'),
+    css.includes(
+      ':root[data-prominent-active-tab="true"] .dm-timer-pill-selected',
+    ),
     "timer-pill inversion must only apply under the prominent fill",
   );
 });
