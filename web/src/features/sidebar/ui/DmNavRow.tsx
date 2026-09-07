@@ -164,7 +164,14 @@ export function DmNavRow({
             title="Current project focus (self-reported status)"
             className={cn(
               "ml-1.5 text-2xs font-normal",
-              selected ? "text-black/60" : "text-sidebar-foreground/50",
+              // Selected rows: INHERIT the active row's color (set by
+              // .buzz-sidebar-active-row from the theme tokens) and mute with
+              // opacity — correct on both surfaces the preference can produce
+              // (default dark fill, prominent solid accent) with no hardcoded
+              // literal. The previous text-black/60 assumed the prominent
+              // light fill and rendered black-on-black on the default dark
+              // one (Sam, 2026-09-07).
+              selected ? "opacity-60" : "text-sidebar-foreground/50",
             )}
           >
             {focus}
