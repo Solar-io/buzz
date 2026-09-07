@@ -7,7 +7,7 @@ import { SYSTEM_MESSAGE_KIND } from "./systemEvent.ts";
  * Kinds that render their own row in a channel timeline.
  *
  * 40099 is a system row, not a message row: joins, leaves and — the one that
- * matters — moderation tombstones. It renders through SystemMessageRow, never
+ * matters — deletion tombstones. It renders through SystemMessageRow, never
  * through the message row, so any consumer of this list that assumes
  * message-shaped content must exclude it (see MESSAGE_SEARCH_KINDS below).
  */

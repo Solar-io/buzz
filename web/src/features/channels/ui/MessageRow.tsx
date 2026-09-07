@@ -251,9 +251,8 @@ export function MessageRow({
       <MessageActionBar
         messageId={message.id}
         canModify={canModify}
-        // Moderation authority is two-axis and per-channel, so the bar needs
-        // both the channel it is judging within and the author it would act
-        // against. Both already ride on TimelineMessage.
+        // Reminders need the conversation and the author the row is about;
+        // both already ride on TimelineMessage.
         channelId={message.channelId}
         authorPubkey={message.authorPubkey}
         messagePreview={message.content}

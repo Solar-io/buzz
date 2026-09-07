@@ -221,7 +221,7 @@ export function ChannelTimeline({
       pushRow(<UnreadDivider key="unread" />);
     }
     // Kind 40099 is a SYSTEM row, not a message row: joins, leaves and
-    // moderation tombstones. It renders centered and muted with no author
+    // deletion tombstones. It renders centered and muted with no author
     // card, so it never participates in author grouping — reset the chain so
     // the next real message starts a fresh block instead of merging with the
     // one before the system row. A payload the row cannot describe (an event

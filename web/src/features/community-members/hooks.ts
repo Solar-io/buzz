@@ -44,10 +44,10 @@ const INVITE_TIMEOUT_MS = 15_000;
  * relay republishes it on every membership change, which is what makes an
  * add or a remove show up in this list without a refetch.
  *
- * Deliberately its own subscription rather than the shared one in
- * `features/moderation/lib/sharedLatestEvent.ts`: that cache drops its
- * snapshot with its last consumer *because* a stale role read is exactly what
- * a moderation gate must not have, and this screen is mounted alone.
+ * Deliberately its own subscription rather than any shared snapshot cache:
+ * a cache that drops its snapshot with its last consumer is wrong for a
+ * screen like this that is mounted alone, and a stale role read is exactly
+ * what an authority gate must not have.
  */
 export function useCommunityRoster(): CommunityRoster {
   const { session } = useRelaySession();

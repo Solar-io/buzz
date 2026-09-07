@@ -11,7 +11,7 @@ import test from "node:test";
  * the defect it guards is precisely an omission, and an omission has no
  * runtime to observe. On 2026-09-04 seven of ten callers built the header set
  * by hand and left out `x-auth-tag`; the relay reads it for membership AND for
- * the NIP-OA owner fallback, so the moderation queue 403'd for the very owner
+ * the NIP-OA owner fallback, so an owner-scoped route 403'd for the very owner
  * it was built for, with no hint which header was missing.
  *
  * A new caller that hand-rolls `Authorization` will fail here rather than in

@@ -54,7 +54,7 @@ export const KIND_GROUPS: readonly KindGroup[] = [
   {
     id: "system",
     label: "System messages",
-    description: "Joins, leaves and moderation tombstones.",
+    description: "Joins, leaves and deletion notices.",
     kinds: [SYSTEM_MESSAGE_KIND],
     defaultOn: false,
   },

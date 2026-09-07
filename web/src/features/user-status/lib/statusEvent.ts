@@ -21,7 +21,7 @@
  *    `{kinds:[30315], authors:[…], "#d":["general"]}`.
  *
  * Expiry: NIP-38 permits the NIP-40 `expiration` tag, and the relay does not
- * enforce it for 30315 (its `extract_expiration` is moderation-only). A
+ * enforce it for 30315 (`extract_expiration` runs only on the admin kinds). A
  * replaceable event with no expiry therefore shows forever, so a status
  * carrying one is treated as absent once it passes — honoured on READ. It is
  * deliberately not written: the desktop and CLI would ignore an expiration we

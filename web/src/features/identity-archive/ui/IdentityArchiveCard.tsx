@@ -3,7 +3,7 @@
  *
  * Archival is deliberately non-silent (NIP-IA §Self Requests): the point of
  * the design is that an archived identity can SEE that it is archived and undo
- * it. So the first thing this card shows is your own state — not a moderation
+ * it. So the first thing this card shows is your own state — not an admin
  * console with your own row buried in it.
  */
 

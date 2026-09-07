@@ -1,11 +1,10 @@
 /**
  * Kind 40099 system messages — relay-signed channel state changes.
  *
- * The relay emits these for membership changes and, critically, for moderation
- * removals: `handle_delete_event_side_effect` (buzz-relay side_effects.rs)
- * soft-deletes the target and publishes a `message_deleted` tombstone carrying
- * the sanitized `public_reason`. Without them the browser shows no trace at all
- * that a moderator removed a message.
+ * The relay emits these for membership changes and for message deletions:
+ * `handle_delete_event_side_effect` (buzz-relay side_effects.rs) soft-deletes
+ * the target and publishes a `message_deleted` tombstone. Without them the
+ * browser shows no trace at all that a message was removed.
  *
  * The event content is a JSON object. This module parses it and reduces it to
  * the two-part caption the timeline renders. It is deliberately pure — label
@@ -13,7 +12,7 @@
  * directly unit-testable (mirrors desktop `describeSystemEvent` and mobile
  * `SystemEvent.describe`).
  *
- * Scope: the moderation-tombstone path and the membership join/leave path.
+ * Scope: the deletion-tombstone path and the membership join/leave path.
  * Other 40099 types (topic_changed, channel_created, huddles, …) parse fine but
  * describe to `null` and render no row, exactly as the desktop's `default:`
  * branch does for a type it does not know.
@@ -29,31 +28,17 @@ export interface SystemEventPayload {
   /** Who it was performed on (hex pubkey) — membership events. */
   target?: string;
   /**
-   * Moderation tombstone ("message_deleted"): the id of the removed event.
+   * Deletion tombstone ("message_deleted"): the id of the removed event.
    * The relay soft-deleted it server-side, so the row must be hidden locally.
    */
   target_event_id?: string;
-  /**
-   * Sanitized, room-facing removal reason. Present only when a MODERATOR
-   * removed the message; a plain member self-delete carries none. The
-   * reporter's identity and the removed content never appear here.
-   */
-  public_reason?: string;
-  /** Machine-readable removal reason ("spam", "harassment", …). */
-  reason_code?: string;
-  /** Moderation action id, for operator correlation. Not rendered. */
-  action_id?: string;
 }
 
 export interface SystemEventDescription {
-  /** Lead of the caption — an actor/target name, or the moderation title. */
+  /** Lead of the caption — an actor/target name. */
   title: string;
-  /** Predicate — "joined the channel", or the moderator's public reason. */
+  /** Predicate — "joined the channel", "removed a message". */
   action: string;
-  /** Machine reason code, when the relay stamped one. */
-  reasonCode?: string;
-  /** True for a moderator-authored removal: rendered with more prominence. */
-  moderated?: boolean;
 }
 
 /** Resolve a hex pubkey to a display label. `undefined` → a generic stand-in. */
@@ -103,14 +88,11 @@ export function systemEventFromContent(
     actor: optionalString(source, "actor"),
     target: optionalString(source, "target"),
     target_event_id: optionalString(source, "target_event_id"),
-    public_reason: optionalString(source, "public_reason"),
-    reason_code: optionalString(source, "reason_code"),
-    action_id: optionalString(source, "action_id"),
   };
 }
 
 /**
- * The event id a moderation tombstone refers to, or null when the payload is
+ * The event id a deletion tombstone refers to, or null when the payload is
  * not a removal. Callers hide that row: the relay already soft-deleted it, so
  * a live client that keeps rendering it is showing content the community has
  * removed.
@@ -171,24 +153,14 @@ export function describeSystemEvent(
       };
     }
     case "message_deleted": {
-      // Room-facing tombstone. A moderator removal carries a sanitized
-      // public_reason; a member removing their own message carries none.
-      // Neither the removed content nor the reporter is ever disclosed.
-      if (payload.public_reason) {
-        return {
-          title: "Removed by community moderators",
-          action: payload.public_reason,
-          reasonCode: payload.reason_code,
-          moderated: true,
-        };
-      }
+      // Deletion tombstone: the relay soft-deleted the target server-side and
+      // this row is the room-facing trace. The removed content never appears.
       if (!payload.actor) {
         return null;
       }
       return {
         title: resolveLabel(payload.actor),
         action: "removed a message",
-        reasonCode: payload.reason_code,
       };
     }
     default:

@@ -261,7 +261,7 @@ test("a kind-40099 system event survives the buffer as its own row", () => {
   assert.equal(replyCounts(buffer).size, 0);
 });
 
-test("a moderation tombstone hides the message it names", () => {
+test("a deletion overlay hides the message it names", () => {
   const target = message({ id: "victim" });
   const hidden = applyOverlay([target], DELETE_KIND, "victim", null);
   assert.equal(hidden[0].deleted, true);

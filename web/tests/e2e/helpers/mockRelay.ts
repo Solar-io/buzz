@@ -6,9 +6,8 @@ import type { Page } from "@playwright/test";
  * The other specs in this directory run with no relay at all, which proves a
  * pane mounts but nothing about what it does with data. Several of the things
  * worth proving here only exist once data arrives — a virtualized list that
- * renders a WINDOW of its rows rather than all of them, a moderation queue
- * that offers different resolutions to a community owner depending on whether
- * they also hold a role in the reported channel. Those cannot be tested by
+ * renders a WINDOW of its rows rather than all of them, a roster whose
+ * available actions depend on the viewer's role. Those cannot be tested by
  * mounting an empty state, and they are exactly the shape of bug that ships
  * green: correct code that nothing ever reaches.
  *

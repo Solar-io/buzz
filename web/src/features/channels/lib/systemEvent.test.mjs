@@ -79,35 +79,16 @@ test("parses the relay's tombstone shape", () => {
       type: "message_deleted",
       actor: MOD,
       target_event_id: TARGET_EVENT,
-      reason_code: "spam",
-      public_reason: "Off-topic promotion.",
-      action_id: "act-1",
     }),
   );
   assert.equal(payload.type, "message_deleted");
   assert.equal(payload.actor, MOD);
   assert.equal(payload.target_event_id, TARGET_EVENT);
-  assert.equal(payload.reason_code, "spam");
-  assert.equal(payload.public_reason, "Off-topic promotion.");
 });
 
-// --- moderation tombstones -------------------------------------------------
+// --- deletion tombstones ---------------------------------------------------
 
-test("a moderator removal names the moderators, not the actor", () => {
-  const description = describe({
-    type: "message_deleted",
-    actor: MOD,
-    target_event_id: TARGET_EVENT,
-    reason_code: "harassment",
-    public_reason: "Violated the community code of conduct.",
-  });
-  assert.equal(description.title, "Removed by community moderators");
-  assert.equal(description.action, "Violated the community code of conduct.");
-  assert.equal(description.reasonCode, "harassment");
-  assert.equal(description.moderated, true);
-});
-
-test("a self-delete tombstone carries no public reason and no moderation styling", () => {
+test("a self-delete tombstone describes the actor", () => {
   const description = describe({
     type: "message_deleted",
     actor: ALICE,
@@ -115,7 +96,6 @@ test("a self-delete tombstone carries no public reason and no moderation styling
   });
   assert.equal(description.title, "Alice");
   assert.equal(description.action, "removed a message");
-  assert.notEqual(description.moderated, true);
 });
 
 test("the tombstone names the event to hide; other types name nothing", () => {

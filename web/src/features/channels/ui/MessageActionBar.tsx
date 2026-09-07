@@ -4,16 +4,13 @@ import {
   Clock,
   CornerUpLeft,
   EllipsisVertical,
-  Flag,
   Link2,
   Pencil,
   SmilePlus,
   Trash2,
   X,
 } from "lucide-react";
-import { MessageModerationMenuItems } from "@/features/moderation/ui/MessageModerationMenuItems";
 import { useRemindMeLater } from "@/features/reminders/ui/RemindMeLaterProvider";
-import { ReportMessageDialog } from "@/features/moderation/ui/ReportMessageDialog";
 import { EmojiPicker } from "@/shared/ui/EmojiPicker";
 import {
   DropdownMenu,
@@ -35,10 +32,10 @@ import { QUICK_REACTIONS } from "../lib/reactions.ts";
  * `pointer-events-none` leaves the user operating an invisible control.
  *
  * The pill carries the frequent, one-click actions (react, reply, copy link).
- * Everything rarer — edit, delete, report, and the moderator cluster — lives
- * behind the overflow menu, matching the desktop's "More actions" dropdown.
- * (This resolves the former `TODO(primitives)`: `shared/ui/dropdown-menu`
- * has since landed in the web client.)
+ * Everything rarer — edit, delete, remind — lives behind the overflow menu,
+ * matching the desktop's "More actions" dropdown. (This resolves the former
+ * `TODO(primitives)`: `shared/ui/dropdown-menu` has since landed in the web
+ * client.)
  *
  * One deliberate difference from the desktop bar remains: the quick-reaction
  * row is kept. It is existing web functionality (the old glyph stack rendered
@@ -70,14 +67,13 @@ export function MessageActionBar({
   /** The viewer authored this message — gates edit and delete. */
   canModify?: boolean;
   /**
-   * Channel the message lives in. Required by the channel-scoped moderator
-   * commands (kind:9005 remove, kind:9001 kick) — both carry it as the `h`
-   * tag, and the relay resolves the actor's channel role from it.
+   * Channel the message lives in. Carried into a reminder so it can navigate
+   * back to the conversation.
    */
   channelId?: string | null;
   /**
-   * The message author's pubkey. The `p` target of a report and of every
-   * author-directed moderator command; without it neither can be offered.
+   * The message author's pubkey. Carried into a reminder so the row can say
+   * who it is about.
    */
   authorPubkey?: string | null;
   /**
@@ -95,7 +91,6 @@ export function MessageActionBar({
   const { openReminder } = useRemindMeLater();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [reportOpen, setReportOpen] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const disarmTimer = useRef<number | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -162,10 +157,6 @@ export function MessageActionBar({
 
   const canEdit = Boolean(canModify && onEdit);
   const canDelete = Boolean(canModify && onDelete);
-  // A report needs both target ids the relay's `parse_report` demands. The
-  // moderator cluster gates itself and renders nothing when unauthorized, so
-  // it is always mounted (given an author) and never consulted here.
-  const canReport = Boolean(authorPubkey);
 
   return (
     <div
@@ -294,7 +285,7 @@ export function MessageActionBar({
         </button>
       )}
 
-      {(canEdit || canDelete || canReport) && (
+      {(canEdit || canDelete) && (
         <DropdownMenu
           open={menuOpen}
           onOpenChange={(open) => {
@@ -382,33 +373,8 @@ export function MessageActionBar({
                   Delete message
                 </DropdownMenuItem>
               ))}
-
-            {canReport && (
-              <DropdownMenuItem
-                data-testid={`report-message-${messageId}`}
-                onClick={() => setReportOpen(true)}
-              >
-                <Flag className={ACTION_ICON_CLASS} aria-hidden="true" />
-                Report message
-              </DropdownMenuItem>
-            )}
-
-            <MessageModerationMenuItems
-              messageId={messageId}
-              channelId={channelId}
-              authorPubkey={authorPubkey}
-            />
           </DropdownMenuContent>
         </DropdownMenu>
-      )}
-
-      {authorPubkey && (
-        <ReportMessageDialog
-          open={reportOpen}
-          onOpenChange={setReportOpen}
-          authorPubkey={authorPubkey}
-          eventId={messageId}
-        />
       )}
     </div>
   );

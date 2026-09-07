@@ -19,8 +19,11 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { utf8Encoder } from "nostr-tools/utils";
 import { getEventHash } from "nostr-tools/pure";
 
-import { communityRoleFromMembershipEvent } from "@/features/moderation/lib/capability.ts";
-import { useRelayMembershipEvent } from "@/features/moderation/hooks";
+import {
+  roleOf,
+  type CommunityRole,
+} from "@/features/community-members/lib/members.ts";
+import { useCommunityRoster } from "@/features/community-members/hooks";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { queryEvents } from "@/shared/lib/nostr-client";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
@@ -257,7 +260,7 @@ export function useIdentityArchive(
 ): IdentityArchiveActions {
   const { session } = useRelaySession();
   const { archived, loading, refresh } = useArchivedIdentities();
-  const membershipEvent = useRelayMembershipEvent();
+  const roster = useCommunityRoster();
   const [self, setSelf] = useState<string | null>(null);
   const [isPending, setIsPending] = useState(false);
 
@@ -271,10 +274,9 @@ export function useIdentityArchive(
   // archiving *other* identities you own.
   const oaOwner = useOaOwner(isSelf || target.length === 0 ? null : target);
 
-  const communityRole = useMemo(
-    () =>
-      self ? communityRoleFromMembershipEvent(membershipEvent, self) : null,
-    [membershipEvent, self],
+  const communityRole = useMemo<CommunityRole | null>(
+    () => roleOf(roster, self),
+    [roster, self],
   );
 
   const submit = useCallback(

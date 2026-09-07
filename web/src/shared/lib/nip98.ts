@@ -54,7 +54,7 @@ export async function makeNip98AuthHeader(
  * Prefer this over calling {@link makeNip98AuthHeader} directly. `x-auth-tag`
  * is not part of the NIP-98 event — it is a separate header the relay reads on
  * every bridge route, and it does two jobs: `enforce_relay_membership` uses it
- * to admit a member whose membership is tag-scoped, and the moderation routes
+ * to admit a member whose membership is tag-scoped, and owner-scoped routes
  * additionally use it for the NIP-OA **owner** fallback
  * (`extract_nip_oa_owner`). Omitting it therefore does not merely risk a 403 —
  * it can make the relay unable to see that the caller is the owner at all.

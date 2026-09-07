@@ -197,12 +197,11 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
       if (!message || message.channelId !== channelId) {
         return;
       }
-      // A kind-40099 moderation tombstone reports a removal the relay has
-      // ALREADY soft-deleted server-side. The removal itself travels as kind
-      // 9005, which this client does not subscribe to, so without this the
-      // tombstone would render directly above the message it says was
-      // removed. Hide the target through the same delete path kind 5 uses so
-      // the in-memory buffer and the on-disk cache agree.
+      // A kind-40099 deletion tombstone reports a removal the relay has
+      // ALREADY soft-deleted server-side, so without this the tombstone
+      // would render directly above the message it says was removed. Hide
+      // the target through the same delete path kind 5 uses so the
+      // in-memory buffer and the on-disk cache agree.
       if (message.kind === SYSTEM_MESSAGE_KIND) {
         const removedId = tombstoneTargetId(
           systemEventFromContent(message.content),
