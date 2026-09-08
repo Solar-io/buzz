@@ -108,6 +108,14 @@ export function useHuddleAudio(
   const recentLevelsRef = useRef(new Map<string, number>());
   const speakingTickRef = useRef(0);
   const micLevelTickRef = useRef(0);
+  /**
+   * Mic tap subscribers (voice mode's STT bridge). Refs, not state: the
+   * worklet port handler is installed once per join and fans out to
+   * whoever is subscribed at frame time.
+   */
+  const micSubscribersRef = useRef(
+    new Set<(frame: Float32Array, sampleRate: number) => void>(),
+  );
 
   /**
    * Is the mic live right now?
@@ -120,6 +128,21 @@ export function useHuddleAudio(
     () =>
       !mutedRef.current &&
       (voiceInputModeRef.current === "open" || pttActiveRef.current),
+    [],
+  );
+
+  /**
+   * Subscribe to the mic tap: every captured frame plus the capture rate.
+   * Fan-out from the uplink worklet's port — no second getUserMedia, no
+   * second AudioContext. Returns an unsubscribe function.
+   */
+  const subscribeMicFrames = useCallback(
+    (listener: (frame: Float32Array, sampleRate: number) => void) => {
+      micSubscribersRef.current.add(listener);
+      return () => {
+        micSubscribersRef.current.delete(listener);
+      };
+    },
     [],
   );
 
@@ -367,6 +390,13 @@ export function useHuddleAudio(
       encoderRef.current = encoder;
 
       worklet.port.onmessage = (event: MessageEvent<Float32Array>) => {
+        // Mic tap subscribers (voice mode's STT bridge) see every frame
+        // regardless of the mute/PTT gate — each subscriber applies its
+        // own, and the voice hook deliberately drains frames while dark.
+        const tapRate = ctxRef.current?.sampleRate ?? 48_000;
+        for (const listener of micSubscribersRef.current) {
+          listener(event.data, tapRate);
+        }
         const current = encoderRef.current;
         if (!current) {
           return;
@@ -555,6 +585,13 @@ export function useHuddleAudio(
     setPttActive(active);
   }, []);
 
+  /**
+   * Is the mic live for transmission right now — the same answer
+   * `transmitting()` gives the encoder callbacks, as state the bar can
+   * pass to voice mode so a dark mic never publishes transcripts.
+   */
+  const micLive = !muted && (voiceInputMode === "open" || pttActive);
+
   return {
     status,
     error,
@@ -566,6 +603,7 @@ export function useHuddleAudio(
     deviceId,
     voiceInputMode,
     pttActive,
+    micLive,
     supportsVoice,
     join,
     leave,
@@ -573,5 +611,6 @@ export function useHuddleAudio(
     selectDevice,
     setVoiceInputMode: setMode,
     setPushToTalkActive,
+    subscribeMicFrames,
   };
 }

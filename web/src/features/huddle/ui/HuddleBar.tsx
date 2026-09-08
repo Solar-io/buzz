@@ -47,10 +47,12 @@ import { MicMeter } from "./MicMeter.tsx";
  * `lib/huddleAgentSpeech.ts` for why a browser cannot do the second.
  *
  * Voice mode (`useHuddleVoiceMode`) closes the other direction: the
- * viewer's SPEECH becomes channel messages. Finals publish through `send`
- * — the same path the huddle's chat composer uses, signed by the viewer —
- * with the huddle's agents as `mentionPubkeys`, because a default-config
- * agent only receives channel messages that p-tag it (see
+ * viewer's SPEECH becomes channel messages, recognized by the server-side
+ * STT bridge from the same mic frames the huddle uplink captures — so a
+ * muted mic or an unheld push-to-talk publishes nothing. Finals publish
+ * through `send` — the same path the huddle's chat composer uses, signed
+ * by the viewer — with the huddle's agents as `mentionPubkeys`, because a
+ * default-config agent only receives channel messages that p-tag it (see
  * `lib/voiceTranscript.ts` for the wire evidence). Turning voice on also
  * forces agent speech on for the duration (the toggle is the user gesture
  * `speechSynthesis` needs); turning it off restores whatever speech state
@@ -156,6 +158,8 @@ export function HuddleBar({
   const voice = useHuddleVoiceMode({
     channelId: connected ? channelId : null,
     onFinalTranscript: publishTranscript,
+    subscribeMicFrames: huddle.subscribeMicFrames,
+    micLive: huddle.micLive,
   });
 
   // Voice ON also enables agent speech — the toggle is the user gesture
