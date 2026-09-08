@@ -256,6 +256,16 @@ export function useHuddleVoiceMode(options: {
         socket.onclose = null;
         socket.onerror = null;
         if (socket.readyState === WebSocket.OPEN) {
+          // Flush the sub-batch tail of a live utterance before ending the
+          // session — otherwise stopping mid-sentence clips the final <100 ms
+          // of speech the batcher is still holding. Only when the mic was
+          // live: frames captured while dark never leave the browser.
+          if (wasMicLive) {
+            const tail = batcher.flush();
+            if (tail) {
+              socket.send(tail);
+            }
+          }
           socket.send(JSON.stringify({ type: "stop" }));
         }
         socket.close();
