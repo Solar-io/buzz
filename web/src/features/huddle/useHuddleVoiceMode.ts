@@ -19,6 +19,7 @@ import {
   msSinceLastUtterance,
   nextVoiceStatus,
   shouldHoldFinal,
+  utterancesForHold,
   type AgentSpeechActivity,
   type VoiceModeStatus,
 } from "./lib/voiceTranscript.ts";
@@ -176,6 +177,13 @@ export function useHuddleVoiceMode(options: {
     let recentFinals: string[] = [];
     /** Finals held by the echo suppression, awaiting the quiet-past-tail drain. */
     let pendingEchoFinals: string[] = [];
+    /**
+     * When the earliest still-held final arrived. The drain compares held
+     * finals against everything the avatar said from one tail before this
+     * moment on (`utterancesForHold`) — a long reply is many short
+     * utterances, and the echo of an early sentence must still match.
+     */
+    let pendingHoldStartedAt: number | null = null;
     let echoDrainTimer: number | null = null;
 
     /** Layer 1's question: is the avatar speaking, or only just stopped? */
@@ -189,10 +197,10 @@ export function useHuddleVoiceMode(options: {
 
     /**
      * Drain held finals once the avatar has been quiet past the tail.
-     * Layer 2 decides each one: a close match to a recent utterance is an
-     * echo and is dropped silently; anything else is a barge-in — real
-     * speech that happened to overlap the avatar — and publishes, late
-     * but intact.
+     * Layer 2 decides each one: a close match to an utterance the avatar
+     * said during the hold window is an echo and is dropped silently;
+     * anything else is a barge-in — real speech that happened to overlap
+     * the avatar — and publishes, late but intact.
      */
     const drainEchoHolds = () => {
       echoDrainTimer = null;
@@ -203,10 +211,13 @@ export function useHuddleVoiceMode(options: {
         return;
       }
       const held = pendingEchoFinals;
+      const holdStartedAt = pendingHoldStartedAt ?? Date.now();
       pendingEchoFinals = [];
-      const utteranceTexts = avatarActivityRef.current.current.utterances.map(
-        (entry) => entry.text,
-      );
+      pendingHoldStartedAt = null;
+      const utteranceTexts = utterancesForHold(
+        avatarActivityRef.current.current.utterances,
+        holdStartedAt,
+      ).map((entry) => entry.text);
       for (const text of held) {
         if (!isEchoOfUtterances(text, utteranceTexts)) {
           onFinalRef.current(text);
@@ -254,6 +265,9 @@ export function useHuddleVoiceMode(options: {
             // after it stopped — the mic is probably hearing the browser's
             // own speechSynthesis. Hold the final; Layer 2 decides at drain.
             if (avatarNotQuiet()) {
+              if (pendingEchoFinals.length === 0) {
+                pendingHoldStartedAt = Date.now();
+              }
               pendingEchoFinals.push(gate.text);
               if (echoDrainTimer === null) {
                 echoDrainTimer = window.setTimeout(
@@ -348,6 +362,7 @@ export function useHuddleVoiceMode(options: {
         echoDrainTimer = null;
       }
       pendingEchoFinals = [];
+      pendingHoldStartedAt = null;
       unsubscribe();
       const socket = ws;
       ws = null;

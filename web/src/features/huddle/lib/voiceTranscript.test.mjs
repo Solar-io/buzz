@@ -12,9 +12,11 @@ import {
   nextVoiceStatus,
   normalizeForEcho,
   normalizeTranscript,
-  RECENT_UTTERANCE_WINDOW,
   recordUtterance,
   shouldHoldFinal,
+  utterancesForHold,
+  UTTERANCE_MAX_ENTRIES,
+  UTTERANCE_RETENTION_MS,
 } from "./voiceTranscript.ts";
 
 test("the gating constants are pinned, hardcoded", () => {
@@ -123,7 +125,8 @@ test("the echo-suppression constants are pinned, hardcoded", () => {
   assert.equal(ECHO_TAIL_MS, 1500);
   assert.equal(ECHO_OVERLAP_RATIO, 0.6);
   assert.equal(ECHO_SUBSTRING_MIN_CHARS, 15);
-  assert.equal(RECENT_UTTERANCE_WINDOW, 3);
+  assert.equal(UTTERANCE_RETENTION_MS, 120_000);
+  assert.equal(UTTERANCE_MAX_ENTRIES, 50);
 });
 
 test("normalizeForEcho lowercases, strips punctuation, and collapses whitespace", () => {
@@ -249,7 +252,7 @@ test("the clean path is unchanged: a final with no avatar speech publishes", () 
   );
 });
 
-test("recordUtterance appends newest-last and caps the ring at the window", () => {
+test("recordUtterance appends newest-last within the retention window", () => {
   assert.deepEqual(recordUtterance([], "hi", 100), [{ text: "hi", at: 100 }]);
   const two = recordUtterance([], "one", 1);
   const three = recordUtterance(recordUtterance(two, "two", 2), "three", 3);
@@ -258,12 +261,80 @@ test("recordUtterance appends newest-last and caps the ring at the window", () =
     { text: "two", at: 2 },
     { text: "three", at: 3 },
   ]);
-  // Appending past the window drops the OLDEST entry, keeping the newest 3.
-  assert.deepEqual(recordUtterance(three, "four", 4), [
-    { text: "two", at: 2 },
-    { text: "three", at: 3 },
-    { text: "four", at: 4 },
+});
+
+test("recordUtterance evicts utterances older than the retention window", () => {
+  // Newest lands at 200_000 → cutoff 80_000: entries at 10_000 and 79_999
+  // are outside (the latter by one ms), an entry at exactly 80_000 stays.
+  const fresh = recordUtterance([], "fresh morning", 10_000);
+  const nearlyStale = recordUtterance(fresh, "nearly stale", 79_999);
+  assert.deepEqual(recordUtterance(nearlyStale, "newest", 200_000), [
+    { text: "newest", at: 200_000 },
   ]);
+  const withEdge = recordUtterance([], "exactly retention old", 80_000);
+  assert.deepEqual(recordUtterance(withEdge, "newest", 200_000), [
+    { text: "exactly retention old", at: 80_000 },
+    { text: "newest", at: 200_000 },
+  ]);
+});
+
+test("recordUtterance keeps at most 50 entries however fast speech arrives", () => {
+  let ring = [];
+  for (let i = 0; i < 60; i++) {
+    ring = recordUtterance(ring, `u${i}`, i * 100);
+  }
+  assert.equal(ring.length, 50);
+  assert.deepEqual(ring.map((entry) => entry.text).slice(0, 2), ["u10", "u11"]);
+  assert.equal(ring[49].text, "u59");
+});
+
+test("a held final echoing sentence 1 of a 5-sentence reply is dropped", () => {
+  // A long agent reply is many short sentences (the voice guidelines push
+  // short conversational sentences), so the ring must remember them by
+  // TIME, not by a small count: the echo final of sentence 1 lands within
+  // the tail after sentence 1 ended, while sentences 2-5 are still being
+  // spoken and holds keep accumulating behind them.
+  const sentences = [
+    "my sweep is done and the digest went out",
+    "i also rebalanced the monitoring thresholds",
+    "lord nikon cleared the alert backlog overnight",
+    "the fleet directory picked up two new services",
+    "and thunk now has the report pinned to five pm",
+  ];
+  let ring = [];
+  sentences.forEach((text, index) => {
+    ring = recordUtterance(ring, text, 1_000 + index * 1_000);
+  });
+  assert.equal(ring.length, 5);
+  // The first held final arrives 400 ms after sentence 1 ended.
+  const holdStartedAt = 1_400;
+  const candidates = utterancesForHold(ring, holdStartedAt);
+  assert.equal(candidates.length, 5);
+  const texts = candidates.map((entry) => entry.text);
+  assert.equal(isEchoOfUtterances(sentences[0], texts), true);
+  // A barge-in mixed into the same sequence still publishes.
+  assert.equal(
+    isEchoOfUtterances("did you sleep okay last night", texts),
+    false,
+  );
+});
+
+test("utterancesForHold keeps what ended at or after the hold window start", () => {
+  // Hold starts at 10_000 → cutoff 8_500: an utterance that settled
+  // exactly at the cutoff is INCLUDED (an echo final can land a full tail
+  // after its utterance ended); anything earlier had stopped sounding too
+  // soon to echo into a final that arrived this late.
+  const ring = [
+    { text: "way before", at: 7_000 },
+    { text: "just before", at: 8_499 },
+    { text: "exactly at cutoff", at: 8_500 },
+    { text: "after", at: 9_000 },
+  ];
+  const kept = utterancesForHold(ring, 10_000);
+  assert.deepEqual(
+    kept.map((entry) => entry.text),
+    ["exactly at cutoff", "after"],
+  );
 });
 
 test("msSinceLastUtterance reads the newest entry and is infinite when empty", () => {

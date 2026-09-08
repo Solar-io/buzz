@@ -175,8 +175,21 @@ export const ECHO_OVERLAP_RATIO = 0.6;
  */
 export const ECHO_SUBSTRING_MIN_CHARS = 15;
 
-/** How many recent avatar utterances the echo ring remembers. */
-export const RECENT_UTTERANCE_WINDOW = 3;
+/**
+ * How long an utterance stays on the echo ring. A count cap was too small
+ * for long replies — the voice guidelines push short conversational
+ * sentences, so one reply can be MANY utterances, and the echo of an
+ * early sentence must still be comparable when the drain runs. Two
+ * minutes covers the longest plausible reply without retaining stale
+ * speech from an earlier conversation.
+ */
+export const UTTERANCE_RETENTION_MS = 120_000;
+
+/**
+ * Sanity cap on ring growth. With the time window above this only binds
+ * for pathologically fast synthesis, but a ring must never grow unbounded.
+ */
+export const UTTERANCE_MAX_ENTRIES = 50;
 
 /** One remembered avatar utterance: its text and when it stopped sounding. */
 export interface RecentUtterance {
@@ -194,7 +207,11 @@ export interface RecentUtterance {
 export interface AgentSpeechActivity {
   /** True while a local utterance is being synthesized right now. */
   speaking: boolean;
-  /** Newest-last ring of recent utterances, capped at the window above. */
+  /**
+   * Newest-last ring of recent utterances, time-windowed at
+   * {@link UTTERANCE_RETENTION_MS} and count-capped at
+   * {@link UTTERANCE_MAX_ENTRIES}.
+   */
   utterances: RecentUtterance[];
 }
 
@@ -281,16 +298,36 @@ export function shouldHoldFinal(
   return speaking || msSinceSpoke < ECHO_TAIL_MS;
 }
 
-/** Append one utterance to the echo ring, keeping the newest window entries. */
+/**
+ * Append one utterance to the echo ring, evicting entries older than the
+ * retention window (measured from the new entry's settle time) and
+ * keeping at most {@link UTTERANCE_MAX_ENTRIES} newest.
+ */
 export function recordUtterance(
   ring: readonly RecentUtterance[],
   text: string,
   at: number,
 ): RecentUtterance[] {
-  const next = [...ring, { text, at }];
-  return next.length > RECENT_UTTERANCE_WINDOW
-    ? next.slice(-RECENT_UTTERANCE_WINDOW)
-    : next;
+  const cutoff = at - UTTERANCE_RETENTION_MS;
+  return [...ring, { text, at }]
+    .filter((entry) => entry.at >= cutoff)
+    .slice(-UTTERANCE_MAX_ENTRIES);
+}
+
+/**
+ * The utterances a hold that started at `holdStartedAt` can plausibly be
+ * an echo of: everything that settled at or after the hold started minus
+ * one tail, because an echo final lands up to {@link ECHO_TAIL_MS} after
+ * its utterance stopped sounding. Anything that settled earlier had
+ * stopped too soon to still be echoing into a final that arrived this
+ * late — those are pre-hold utterances and are excluded.
+ */
+export function utterancesForHold(
+  utterances: readonly RecentUtterance[],
+  holdStartedAt: number,
+): RecentUtterance[] {
+  const cutoff = holdStartedAt - ECHO_TAIL_MS;
+  return utterances.filter((entry) => entry.at >= cutoff);
 }
 
 /**

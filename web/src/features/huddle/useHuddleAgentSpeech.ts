@@ -13,6 +13,7 @@ import {
   huddleAgentSpeechFilter,
   shouldSpeakLocally,
   SPEECH_REPLAY_WINDOW_SECONDS,
+  watchdogMs,
 } from "./lib/huddleAgentSpeech.ts";
 import { botPubkeys } from "./lib/huddleMembers.ts";
 import {
@@ -127,11 +128,26 @@ export function useHuddleAgentSpeech(options: {
             const utterance = new SpeechSynthesisUtterance(text);
             speechActivityRef.current.speaking = true;
             setSpeaking(true);
-            // Resolve on BOTH paths: a synthesizer that errors (no voice
-            // installed, tab throttled) must not wedge the queue behind it.
-            // Either way the utterance goes on the echo ring — whatever was
-            // audible ended here, and that is what an echo final matches.
+            // Settle on EVERY path, exactly once. A synthesizer that
+            // errors (no voice installed, tab throttled) must not wedge
+            // the queue behind it; a browser that fires NEITHER onend nor
+            // onerror (cancel() and synthesis-failure paths do this) would
+            // leave `speaking` stuck true and hold voice-mode finals
+            // forever — so a watchdog sized to the text force-settles the
+            // utterance if the events never come. Settling also records
+            // the utterance on the echo ring: whatever was audible ended
+            // here, and that is what an echo final matches.
+            let settled = false;
+            let watchdog: number | null = null;
             const finish = () => {
+              if (settled) {
+                return;
+              }
+              settled = true;
+              if (watchdog !== null) {
+                window.clearTimeout(watchdog);
+                watchdog = null;
+              }
               const activity = speechActivityRef.current;
               activity.speaking = false;
               activity.utterances = recordUtterance(
@@ -142,6 +158,7 @@ export function useHuddleAgentSpeech(options: {
               setSpeaking(false);
               resolve();
             };
+            watchdog = window.setTimeout(finish, watchdogMs(text));
             utterance.onend = finish;
             utterance.onerror = finish;
             window.speechSynthesis.speak(utterance);

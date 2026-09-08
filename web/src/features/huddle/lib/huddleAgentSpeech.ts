@@ -210,6 +210,23 @@ export function huddleAgentSpeechFilter(
   };
 }
 
+/** Watchdog estimate: an upper bound on spoken milliseconds per character. */
+export const WATCHDOG_MS_PER_CHAR = 90;
+/** Watchdog slack: engine warmup and pauses, added to the length estimate. */
+export const WATCHDOG_SLACK_MS = 5_000;
+
+/**
+ * How long to wait before force-settling an utterance whose end and error
+ * events never fired. Some browsers fire NEITHER `onend` nor `onerror` —
+ * `speechSynthesis.cancel()` and synthesis-failure paths are the known
+ * offenders — and without a backstop the caller's speaking flag sticks
+ * true forever. Sized so natural speech always finishes first: roughly
+ * 90 ms per character plus fixed slack.
+ */
+export function watchdogMs(text: string): number {
+  return text.length * WATCHDOG_MS_PER_CHAR + WATCHDOG_SLACK_MS;
+}
+
 export interface OrderedSpeaker {
   /** Queue one utterance. Returns whether it was accepted. */
   enqueue: (text: string, speakerPubkey: string) => "queued" | "disabled";
