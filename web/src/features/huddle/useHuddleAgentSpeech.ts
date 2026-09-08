@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import {
   classifySpeakableAgentText,
@@ -6,8 +13,13 @@ import {
   huddleAgentSpeechFilter,
   shouldSpeakLocally,
   SPEECH_REPLAY_WINDOW_SECONDS,
+  watchdogMs,
 } from "./lib/huddleAgentSpeech.ts";
 import { botPubkeys } from "./lib/huddleMembers.ts";
+import {
+  recordUtterance,
+  type AgentSpeechActivity,
+} from "./lib/voiceTranscript.ts";
 import type { HuddleMemberSnapshot } from "./useHuddleMemberSnapshot";
 
 /**
@@ -39,6 +51,16 @@ export interface HuddleAgentSpeech {
    * are deliberately NOT spoken here. Surfaced so the UI can say why.
    */
   suppressedAgents: string[];
+  /** True while a local utterance is being synthesized right now. */
+  speaking: boolean;
+  /**
+   * Live avatar-speech state for voice mode's echo suppression: a speaking
+   * flag plus the ring of recent utterance texts. A stable ref mutated at
+   * synthesis boundaries — same-task accurate, no re-render to wait for —
+   * because an STT final can land between the moment synthesis starts and
+   * the moment React flushes a state update.
+   */
+  speechActivity: RefObject<AgentSpeechActivity>;
 }
 
 function speechSynthesisSupported(): boolean {
@@ -83,6 +105,17 @@ export function useHuddleAgentSpeech(options: {
   const selfPubkeyRef = useRef(selfPubkey);
   selfPubkeyRef.current = selfPubkey;
 
+  // Echo-suppression state. The ref is the SOURCE OF TRUTH for "is the
+  // avatar audible right now": synthesis starts and stops update it in the
+  // same task, so an STT final arriving mid-utterance sees `speaking: true`
+  // even before React has re-rendered. `speaking` state below is the same
+  // information as a React-declared value for the UI and for wiring.
+  const speechActivityRef = useRef<AgentSpeechActivity>({
+    speaking: false,
+    utterances: [],
+  });
+  const [speaking, setSpeaking] = useState(false);
+
   const speaker = useMemo(
     () =>
       createOrderedSpeaker(
@@ -93,10 +126,41 @@ export function useHuddleAgentSpeech(options: {
               return;
             }
             const utterance = new SpeechSynthesisUtterance(text);
-            // Resolve on BOTH paths: a synthesizer that errors (no voice
-            // installed, tab throttled) must not wedge the queue behind it.
-            utterance.onend = () => resolve();
-            utterance.onerror = () => resolve();
+            speechActivityRef.current.speaking = true;
+            setSpeaking(true);
+            // Settle on EVERY path, exactly once. A synthesizer that
+            // errors (no voice installed, tab throttled) must not wedge
+            // the queue behind it; a browser that fires NEITHER onend nor
+            // onerror (cancel() and synthesis-failure paths do this) would
+            // leave `speaking` stuck true and hold voice-mode finals
+            // forever — so a watchdog sized to the text force-settles the
+            // utterance if the events never come. Settling also records
+            // the utterance on the echo ring: whatever was audible ended
+            // here, and that is what an echo final matches.
+            let settled = false;
+            let watchdog: number | null = null;
+            const finish = () => {
+              if (settled) {
+                return;
+              }
+              settled = true;
+              if (watchdog !== null) {
+                window.clearTimeout(watchdog);
+                watchdog = null;
+              }
+              const activity = speechActivityRef.current;
+              activity.speaking = false;
+              activity.utterances = recordUtterance(
+                activity.utterances,
+                text,
+                Date.now(),
+              );
+              setSpeaking(false);
+              resolve();
+            };
+            watchdog = window.setTimeout(finish, watchdogMs(text));
+            utterance.onend = finish;
+            utterance.onerror = finish;
             window.speechSynthesis.speak(utterance);
           }),
       ),
@@ -175,5 +239,7 @@ export function useHuddleAgentSpeech(options: {
     agentPubkeys,
     membershipKnown,
     suppressedAgents,
+    speaking,
+    speechActivity: speechActivityRef,
   };
 }

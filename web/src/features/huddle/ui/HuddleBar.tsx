@@ -53,7 +53,10 @@ import { MicMeter } from "./MicMeter.tsx";
  * through `send` — the same path the huddle's chat composer uses, signed
  * by the viewer — with the huddle's agents as `mentionPubkeys`, because a
  * default-config agent only receives channel messages that p-tag it (see
- * `lib/voiceTranscript.ts` for the wire evidence). Turning voice on also
+ * `lib/voiceTranscript.ts` for the wire evidence). Finals that arrive
+ * while the avatar is speaking are held and echo-checked against her
+ * recent utterances (she is read aloud locally, and on speakers the mic
+ * hears her too) before publishing. Turning voice on also
  * forces agent speech on for the duration (the toggle is the user gesture
  * `speechSynthesis` needs); turning it off restores whatever speech state
  * preceded it.
@@ -160,6 +163,12 @@ export function HuddleBar({
     onFinalTranscript: publishTranscript,
     subscribeMicFrames: huddle.subscribeMicFrames,
     micLive: huddle.micLive,
+    // Echo suppression: the avatar's local speechSynthesis voice comes out
+    // of the speakers into the same mic, so voice mode holds finals that
+    // land while she speaks (or just after) and drops the ones that match
+    // her own words — see lib/voiceTranscript.ts.
+    avatarSpeaking: speech.speaking,
+    avatarActivity: speech.speechActivity,
   });
 
   // Voice ON also enables agent speech — the toggle is the user gesture

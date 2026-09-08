@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import {
   bridgeErrorMessage,
   parseBridgeEvent,
@@ -7,8 +13,14 @@ import {
 } from "./lib/sttBridge.ts";
 import {
   DUPLICATE_WINDOW,
+  ECHO_TAIL_MS,
   gateFinalTranscript,
+  isEchoOfUtterances,
+  msSinceLastUtterance,
   nextVoiceStatus,
+  shouldHoldFinal,
+  utterancesForHold,
+  type AgentSpeechActivity,
   type VoiceModeStatus,
 } from "./lib/voiceTranscript.ts";
 
@@ -39,6 +51,16 @@ import {
  * owns the publish path and error surfacing. Partials surface as
  * `interimText` for display and never publish. The dedupe window survives
  * reconnects, because a resumed session can replay the previous final.
+ *
+ * Echo suppression sits between the gate and the publish (layer docs in
+ * `lib/voiceTranscript.ts`): the avatar's local speechSynthesis voice
+ * comes out of the speakers into this same mic, so a final landing while
+ * the avatar speaks — or within ECHO_TAIL_MS of it stopping — is HELD, and
+ * once the avatar is quiet past the tail, held finals that closely match
+ * one of its recent utterances are dropped as echoes while the rest
+ * publish as barge-ins. Finals on the clean path (avatar silent) publish
+ * exactly as before; teardown discards any holds still pending, so a
+ * stale hold can never publish.
  *
  * Drop handling: a close without a fatal error reconnects after 250 ms,
  * up to 3 attempts per incident (a successful `ready` resets the budget);
@@ -95,8 +117,22 @@ export function useHuddleVoiceMode(options: {
    * While false the hook drains frames but sends nothing to the bridge.
    */
   micLive: boolean;
+  /**
+   * Is the avatar (local speechSynthesis, `useHuddleAgentSpeech`) speaking
+   * right now? The React-declared view; the activity ref below carries the
+   * same-task view, and the echo hold checks both.
+   */
+  avatarSpeaking: boolean;
+  /**
+   * Live avatar-speech state (speaking flag + recent utterance ring) from
+   * `useHuddleAgentSpeech` — a stable ref read at final-arrival time, the
+   * same wiring pattern as `micLive`.
+   */
+  avatarActivity: RefObject<AgentSpeechActivity>;
 }): HuddleVoiceMode {
   const { channelId, onFinalTranscript, subscribeMicFrames, micLive } = options;
+  const avatarSpeaking = options.avatarSpeaking;
+  const avatarActivity = options.avatarActivity;
   const [enabled, setEnabledState] = useState(false);
   const [status, setStatus] = useState<VoiceModeStatus>("idle");
   const [interimText, setInterimText] = useState("");
@@ -109,6 +145,13 @@ export function useHuddleVoiceMode(options: {
   enabledRef.current = enabled;
   const micLiveRef = useRef(micLive);
   micLiveRef.current = micLive;
+  const avatarSpeakingRef = useRef(avatarSpeaking);
+  avatarSpeakingRef.current = avatarSpeaking;
+  // `avatarActivity` is one stable ref object for the speech hook's whole
+  // lifetime (useRef), so capturing it in the socket effect below is safe
+  // without listing it as a dependency — the same treatment as micLive.
+  const avatarActivityRef = useRef(avatarActivity);
+  avatarActivityRef.current = avatarActivity;
 
   const transition = useCallback(
     (event: Parameters<typeof nextVoiceStatus>[1]) => {
@@ -132,6 +175,55 @@ export function useHuddleVoiceMode(options: {
     let wasMicLive = micLiveRef.current;
     let ws: WebSocket | null = null;
     let recentFinals: string[] = [];
+    /** Finals held by the echo suppression, awaiting the quiet-past-tail drain. */
+    let pendingEchoFinals: string[] = [];
+    /**
+     * When the earliest still-held final arrived. The drain compares held
+     * finals against everything the avatar said from one tail before this
+     * moment on (`utterancesForHold`) — a long reply is many short
+     * utterances, and the echo of an early sentence must still match.
+     */
+    let pendingHoldStartedAt: number | null = null;
+    let echoDrainTimer: number | null = null;
+
+    /** Layer 1's question: is the avatar speaking, or only just stopped? */
+    const avatarNotQuiet = () => {
+      const activity = avatarActivityRef.current.current;
+      return shouldHoldFinal(
+        avatarSpeakingRef.current || activity.speaking,
+        msSinceLastUtterance(activity.utterances, Date.now()),
+      );
+    };
+
+    /**
+     * Drain held finals once the avatar has been quiet past the tail.
+     * Layer 2 decides each one: a close match to an utterance the avatar
+     * said during the hold window is an echo and is dropped silently;
+     * anything else is a barge-in — real speech that happened to overlap
+     * the avatar — and publishes, late but intact.
+     */
+    const drainEchoHolds = () => {
+      echoDrainTimer = null;
+      if (avatarNotQuiet()) {
+        // The avatar started again (or stopped inside the tail window):
+        // look again after another full tail.
+        echoDrainTimer = window.setTimeout(drainEchoHolds, ECHO_TAIL_MS);
+        return;
+      }
+      const held = pendingEchoFinals;
+      const holdStartedAt = pendingHoldStartedAt ?? Date.now();
+      pendingEchoFinals = [];
+      pendingHoldStartedAt = null;
+      const utteranceTexts = utterancesForHold(
+        avatarActivityRef.current.current.utterances,
+        holdStartedAt,
+      ).map((entry) => entry.text);
+      for (const text of held) {
+        if (!isEchoOfUtterances(text, utteranceTexts)) {
+          onFinalRef.current(text);
+        }
+      }
+    };
 
     const connect = () => {
       if (disposed) {
@@ -168,6 +260,22 @@ export function useHuddleVoiceMode(options: {
             recentFinals.push(gate.text);
             if (recentFinals.length > DUPLICATE_WINDOW) {
               recentFinals = recentFinals.slice(-DUPLICATE_WINDOW);
+            }
+            // Layer 1: while the avatar is speaking — or within the tail
+            // after it stopped — the mic is probably hearing the browser's
+            // own speechSynthesis. Hold the final; Layer 2 decides at drain.
+            if (avatarNotQuiet()) {
+              if (pendingEchoFinals.length === 0) {
+                pendingHoldStartedAt = Date.now();
+              }
+              pendingEchoFinals.push(gate.text);
+              if (echoDrainTimer === null) {
+                echoDrainTimer = window.setTimeout(
+                  drainEchoHolds,
+                  ECHO_TAIL_MS,
+                );
+              }
+              return;
             }
             onFinalRef.current(gate.text);
             return;
@@ -247,6 +355,14 @@ export function useHuddleVoiceMode(options: {
         window.clearTimeout(reconnectTimer);
         reconnectTimer = null;
       }
+      // Stale holds never publish: teardown (toggle-off, channel change,
+      // unmount) discards whatever the echo hold was still sitting on.
+      if (echoDrainTimer !== null) {
+        window.clearTimeout(echoDrainTimer);
+        echoDrainTimer = null;
+      }
+      pendingEchoFinals = [];
+      pendingHoldStartedAt = null;
       unsubscribe();
       const socket = ws;
       ws = null;

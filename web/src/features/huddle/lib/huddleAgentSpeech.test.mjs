@@ -11,6 +11,9 @@ import {
   SPEAKABLE_MESSAGE_KINDS,
   SPEECH_REPLAY_WINDOW_SECONDS,
   textWithoutAttachments,
+  watchdogMs,
+  WATCHDOG_MS_PER_CHAR,
+  WATCHDOG_SLACK_MS,
 } from "./huddleAgentSpeech.ts";
 
 const AGENT = "a".repeat(64);
@@ -366,4 +369,16 @@ test("a throwing speak call does not wedge the queue", async () => {
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(errors.length, 1);
   assert.deepEqual(spoken, ["two"]);
+});
+
+test("watchdogMs sizes the safety timer from the text, hardcoded", () => {
+  // Some browsers fire neither onend nor onerror (cancel() and synthesis
+  // failure paths); the watchdog force-settles the utterance after this
+  // long, so `speaking` cannot stick true and hold finals forever.
+  assert.equal(WATCHDOG_MS_PER_CHAR, 90);
+  assert.equal(WATCHDOG_SLACK_MS, 5_000);
+  assert.equal(watchdogMs(""), 5_000);
+  assert.equal(watchdogMs("abc"), 5_270);
+  assert.equal(watchdogMs("x".repeat(100)), 14_000);
+  assert.equal(watchdogMs("y".repeat(1000)), 95_000);
 });
