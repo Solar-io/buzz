@@ -1,13 +1,15 @@
 /**
  * Huddle start flow, mirroring the desktop's steps (desktop/src-tauri
  * huddle/mod.rs): create a private ephemeral stream channel (kind 9007,
- * ttl=3600), then link it to the parent with a kind-48100 event. Member
+ * ttl=3600), post voice-mode guidelines (kind 48106) BEFORE any agent is
+ * added, then link it to the parent with a kind-48100 event. Member
  * invites are unnecessary on the web path — the relay auto-adds any parent
  * member who joins the audio room.
  */
 
 import type { RelaySession } from "@/shared/api/relay-session";
 import { signNostrEvent } from "@/shared/lib/nostr-signer";
+import { buildHuddleGuidelinesEvent } from "./huddleGuidelines.ts";
 import { HUDDLE_BACKING_TTL_SECONDS } from "./huddleRegistry.ts";
 
 export async function startHuddle(
@@ -36,6 +38,21 @@ export async function startHuddle(
       ok: false,
       message: created.message || "The relay refused the huddle channel.",
     };
+  }
+
+  // Voice-mode guidelines on the ephemeral channel, at the desktop's
+  // lifecycle point: after creation, BEFORE any agent is added, so an agent
+  // that subscribes on its membership notification has them in the EOSE
+  // replay (desktop huddle/mod.rs:261-272). Best-effort by design — a
+  // refusal must not fail the huddle (the agents still wake; they only lack
+  // the spoken-reply protocol).
+  const guidelines = buildHuddleGuidelinesEvent({
+    ephemeralChannelId: channelId,
+    parentChannelId: options.parentChannelId,
+  });
+  if ("event" in guidelines) {
+    const signedGuidelines = await signNostrEvent(guidelines.event);
+    await session.publish(signedGuidelines);
   }
 
   const link = await signNostrEvent({
