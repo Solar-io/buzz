@@ -1,10 +1,15 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Mic, MicOff } from "lucide-react";
+import { toast } from "sonner";
 import { useProfiles } from "@/features/channels/hooks";
 import {
   AuthorAvatar,
   authorLabel,
 } from "@/features/channels/ui/ChannelTimeline";
+import type {
+  MessageSendOptions,
+  MessageSendResult,
+} from "@/features/channels/lib/useMessageActions";
 import { useCustomEmoji } from "@/features/custom-emoji/hooks";
 import { reactionEmojiUrl } from "@/features/custom-emoji/lib/customEmoji.ts";
 import { cn } from "@/shared/lib/cn";
@@ -15,6 +20,7 @@ import { useHuddleAgentSpeech } from "../useHuddleAgentSpeech";
 import { useHuddleAudio } from "../useHuddleAudio";
 import { useHuddleMemberSnapshot } from "../useHuddleMemberSnapshot";
 import { useHuddleReactions } from "../useHuddleReactions";
+import { useHuddleVoiceMode } from "../useHuddleVoiceMode";
 import { HuddleCallControls } from "./HuddleCallControls.tsx";
 import { HuddleReactionBurst } from "./HuddleReactionBurst.tsx";
 import { MicMeter } from "./MicMeter.tsx";
@@ -33,14 +39,24 @@ import { MicMeter } from "./MicMeter.tsx";
  * implementable in a browser at all: a page cannot observe keystrokes it
  * does not have focus for.
  *
- * Once connected it also carries the desktop's three in-call affordances:
- * emoji reactions (kind 24810), adding an agent (kind 9000, role `bot`), and
- * agent speech. Speech is the one that is NOT at parity and says so: the
- * browser synthesizes locally for the viewer, where the desktop broadcasts
- * pocket-tts audio into the room as the agent — see
+ * Once connected it also carries the desktop's in-call affordances: emoji
+ * reactions (kind 24810), adding an agent (kind 9000, role `bot`), agent
+ * speech, and voice mode. Speech is the one that is NOT at parity and says
+ * so: the browser synthesizes locally for the viewer, where the desktop
+ * broadcasts pocket-tts audio into the room as the agent — see
  * `lib/huddleAgentSpeech.ts` for why a browser cannot do the second.
  *
- * All three are gated on `connected` rather than on merely viewing the
+ * Voice mode (`useHuddleVoiceMode`) closes the other direction: the
+ * viewer's SPEECH becomes channel messages. Finals publish through `send`
+ * — the same path the huddle's chat composer uses, signed by the viewer —
+ * with the huddle's agents as `mentionPubkeys`, because a default-config
+ * agent only receives channel messages that p-tag it (see
+ * `lib/voiceTranscript.ts` for the wire evidence). Turning voice on also
+ * forces agent speech on for the duration (the toggle is the user gesture
+ * `speechSynthesis` needs); turning it off restores whatever speech state
+ * preceded it.
+ *
+ * All of these are gated on `connected` rather than on merely viewing the
  * channel. Publishing to a huddle channel needs membership of it, and joining
  * the audio room is what the relay auto-admits parent members through; a
  * control that is present but rejected by the relay is worse than one that
@@ -50,11 +66,18 @@ export function HuddleBar({
   channelId,
   parentChannelId,
   selfPubkey,
+  send,
 }: {
   channelId: string;
   /** Linked parent channel — required by the audio room for ephemeral joins. */
   parentChannelId?: string | null;
   selfPubkey: string | null;
+  /**
+   * The channel's ordinary message send — the same function the composer
+   * under this timeline uses. Voice transcripts ride it so they are signed,
+   * threaded and counted exactly like typed messages.
+   */
+  send: (options: MessageSendOptions) => Promise<MessageSendResult>;
 }) {
   const huddle = useHuddleAudio(channelId, parentChannelId);
   const pubkeys = useMemo(
@@ -107,6 +130,60 @@ export function HuddleBar({
     ephemeral: ephemeralMembers,
     parent: parentMembers,
   });
+
+  // Voice mode: publish each gated final transcript as an ordinary message
+  // on this huddle channel, mentioning the agents in the room. The p tags
+  // ARE the wake — a default-config agent's subscription filters on #p, so
+  // an untagged transcript never reaches it (lib/voiceTranscript.ts header).
+  // threadRef null = top-level, matching the desktop's STT publishes.
+  const agentPubkeys = agentRoster.agentPubkeys;
+  const publishTranscript = useCallback(
+    (text: string) => {
+      void send({
+        content: text,
+        mentionPubkeys: agentPubkeys,
+        threadRef: null,
+        mediaTags: [],
+      }).then((result) => {
+        if (!result.ok) {
+          // Speech that vanishes with no feedback reads as "it ignored me".
+          toast.error(result.message || "The transcript could not be sent.");
+        }
+      });
+    },
+    [send, agentPubkeys],
+  );
+  const voice = useHuddleVoiceMode({
+    channelId: connected ? channelId : null,
+    onFinalTranscript: publishTranscript,
+  });
+
+  // Voice ON also enables agent speech — the toggle is the user gesture
+  // speechSynthesis is gated on. Voice OFF restores the speech state that
+  // preceded it (its prior default), which is "off" unless the user had
+  // read-aloud on before speaking.
+  const speechEnabled = speech.enabled;
+  const speechSetEnabled = speech.setEnabled;
+  const speechBeforeVoiceRef = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (!speech.supported) {
+      return;
+    }
+    if (voice.enabled) {
+      if (speechBeforeVoiceRef.current === null) {
+        speechBeforeVoiceRef.current = speechEnabled;
+        if (!speechEnabled) {
+          speechSetEnabled(true);
+        }
+      }
+    } else if (speechBeforeVoiceRef.current !== null) {
+      const restore = speechBeforeVoiceRef.current;
+      speechBeforeVoiceRef.current = null;
+      if (speechEnabled !== restore) {
+        speechSetEnabled(restore);
+      }
+    }
+  }, [voice.enabled, speechEnabled, speechSetEnabled, speech.supported]);
 
   // Space holds the mic open while the bar has focus. Bound on the bar, not
   // the document, so it cannot swallow the space bar out of a composer.
@@ -205,7 +282,22 @@ export function HuddleBar({
             onReact={reactions.send}
             reactionError={reactions.error}
             speech={speech}
+            voice={voice}
           />
+          {voice.enabled && voice.interimText && (
+            <span
+              data-testid="huddle-voice-interim"
+              className="min-w-0 max-w-56 truncate text-xs italic text-muted-foreground/70"
+              title={voice.interimText}
+            >
+              {voice.interimText}
+            </span>
+          )}
+          {voice.error && (
+            <span className="text-2xs text-red-400" role="alert">
+              {voice.error}
+            </span>
+          )}
           <button
             type="button"
             onClick={huddle.leave}

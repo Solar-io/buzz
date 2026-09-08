@@ -770,6 +770,7 @@ function ChannelBrowser() {
                       channelId={current.id}
                       parentChannelId={currentHuddleParent}
                       selfPubkey={selfPubkey}
+                      send={send}
                     />
                   )}
                   {current.type === "forum" ? (

@@ -1,26 +1,29 @@
-import { Bot, SmilePlus, Volume2, VolumeX } from "lucide-react";
+import { AudioLines, Bot, SmilePlus, Volume2, VolumeX } from "lucide-react";
 import { useState } from "react";
 import { EmojiPicker } from "@/features/custom-emoji/ui/EmojiPicker";
 import { cn } from "@/shared/lib/cn";
 import type { HuddleAgentSpeech } from "../useHuddleAgentSpeech";
+import type { HuddleVoiceMode } from "../useHuddleVoiceMode";
 import { AddHuddleAgentDialog } from "./AddHuddleAgentDialog";
 
 /**
  * The in-call controls the desktop's huddle bar carries beyond mic and
- * leave: an emoji reaction, agent speech, and "add an agent".
+ * leave: an emoji reaction, voice mode, agent speech, and "add an agent".
  *
  * Split out of `HuddleBar` so that file stays a layout, and because these
- * three share nothing but a row.
+ * share nothing but a row.
  */
 export function HuddleCallControls({
   onReact,
   speech,
+  voice,
   agentPubkeys,
   onAddAgent,
   reactionError,
 }: {
   onReact: (emoji: string) => void;
   speech: HuddleAgentSpeech;
+  voice: HuddleVoiceMode;
   agentPubkeys: readonly string[];
   onAddAgent: (input: {
     agentPubkey: string;
@@ -46,6 +49,36 @@ export function HuddleCallControls({
           </button>
         )}
       </EmojiPicker>
+
+      <button
+        type="button"
+        data-testid="huddle-voice-mode"
+        aria-pressed={voice.enabled && voice.supported}
+        disabled={!voice.supported}
+        onClick={() => voice.setEnabled(!voice.enabled)}
+        title={
+          !voice.supported
+            ? "This browser has no speech recognition."
+            : voice.enabled
+              ? "Stop voice mode — speech stops posting to this huddle."
+              : "Voice mode — what you say posts to this huddle as your messages."
+        }
+        className={cn(
+          "flex items-center gap-1 rounded-full border px-2 py-1 text-xs font-medium disabled:opacity-50",
+          voice.enabled
+            ? "border-emerald-600/50 bg-emerald-600/20 text-emerald-400"
+            : "border-border text-muted-foreground",
+        )}
+      >
+        <AudioLines
+          aria-hidden
+          className={cn("h-3.5 w-3.5", voice.enabled && "animate-pulse")}
+        />
+        <span className="sr-only">
+          {voice.enabled ? "Stop voice mode" : "Start voice mode"}
+        </span>
+        {voice.enabled ? "Listening" : "Voice"}
+      </button>
 
       <button
         type="button"
