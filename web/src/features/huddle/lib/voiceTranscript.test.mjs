@@ -2,10 +2,19 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   DUPLICATE_WINDOW,
+  ECHO_OVERLAP_RATIO,
+  ECHO_SUBSTRING_MIN_CHARS,
+  ECHO_TAIL_MS,
   gateFinalTranscript,
+  isEchoOfUtterances,
   MIN_TRANSCRIPT_CHARS,
+  msSinceLastUtterance,
   nextVoiceStatus,
+  normalizeForEcho,
   normalizeTranscript,
+  RECENT_UTTERANCE_WINDOW,
+  recordUtterance,
+  shouldHoldFinal,
 } from "./voiceTranscript.ts";
 
 test("the gating constants are pinned, hardcoded", () => {
@@ -97,4 +106,177 @@ test("nextVoiceStatus ignores late events from a superseded state", () => {
   // start while already starting is a no-op.
   assert.equal(nextVoiceStatus("starting", { type: "start" }), "starting");
   assert.equal(nextVoiceStatus("listening", { type: "start" }), "listening");
+});
+
+// ---------------------------------------------------------------------------
+// Echo suppression. Voice mode publishes STT finals as the viewer's
+// messages, and the avatar's local speechSynthesis voice comes out of the
+// speakers into the same mic — so the avatar's own words can come back as
+// finals and publish as the viewer's, p-tagging the agent with its own text.
+// Layer 1 (the temporal hold) is `shouldHoldFinal`; Layer 2 (the similarity
+// gate) is `isEchoOfUtterances`. Both live here as pure logic; the hook
+// wiring in useHuddleVoiceMode is code-read covered, as the WebSocket wiring
+// already is.
+// ---------------------------------------------------------------------------
+
+test("the echo-suppression constants are pinned, hardcoded", () => {
+  assert.equal(ECHO_TAIL_MS, 1500);
+  assert.equal(ECHO_OVERLAP_RATIO, 0.6);
+  assert.equal(ECHO_SUBSTRING_MIN_CHARS, 15);
+  assert.equal(RECENT_UTTERANCE_WINDOW, 3);
+});
+
+test("normalizeForEcho lowercases, strips punctuation, and collapses whitespace", () => {
+  assert.equal(
+    normalizeForEcho("My sweep done, JUST been pottering around!"),
+    "my sweep done just been pottering around",
+  );
+  // Punctuation is removed without leaving a gap: "Don't" → "dont".
+  assert.equal(normalizeForEcho("  Don't\tstop.  "), "dont stop");
+  assert.equal(normalizeForEcho("..."), "");
+  assert.equal(normalizeForEcho(""), "");
+});
+
+test("a verbatim repeat of the avatar's utterance is an echo", () => {
+  const utterance = "my sweep done, just been pottering around";
+  assert.equal(
+    isEchoOfUtterances("my sweep done, just been pottering around", [
+      utterance,
+    ]),
+    true,
+  );
+});
+
+test("a near-verbatim repeat with one garbled word is still an echo", () => {
+  // "is" inserted, "around" heard as "round": 6 of 9 union words shared.
+  assert.equal(
+    isEchoOfUtterances("my sweep is done, just been pottering round", [
+      "my sweep done, just been pottering around",
+    ]),
+    true,
+  );
+});
+
+test("a real question spoken over the avatar's reply is not an echo", () => {
+  assert.equal(
+    isEchoOfUtterances("Did you sleep okay?", ["Good morning, I slept fine"]),
+    false,
+  );
+});
+
+test("a garbled short echo with disjoint tokens is not caught by Layer 2", () => {
+  // Accepted miss: Layer 1's temporal hold is the catch-all for these.
+  assert.equal(isEchoOfUtterances("You planet", ["New plan"]), false);
+});
+
+test("case and punctuation differences do not rescue an echo", () => {
+  assert.equal(
+    isEchoOfUtterances("MY SWEEP DONE, JUST BEEN POTTering AROUND.", [
+      "my sweep done, just been pottering around",
+    ]),
+    true,
+  );
+});
+
+test("token overlap exactly at 0.6 is an echo; just below is not", () => {
+  // 3 shared words, union of 5 → exactly ECHO_OVERLAP_RATIO (>= holds).
+  // Word order differs so no substring relation exists — this isolates the
+  // ratio comparison.
+  assert.equal(
+    isEchoOfUtterances("alpha beta gamma", ["gamma beta alpha delta epsilon"]),
+    true,
+  );
+  // Just above: 5 shared of a union of 8 = 0.625.
+  assert.equal(
+    isEchoOfUtterances("alpha beta gamma delta epsilon", [
+      "alpha beta epsilon gamma delta zeta eta theta",
+    ]),
+    true,
+  );
+  // Just below: 4 shared of a union of 7 ≈ 0.571.
+  assert.equal(
+    isEchoOfUtterances("alpha beta gamma delta", [
+      "alpha beta epsilon gamma delta zeta eta",
+    ]),
+    false,
+  );
+});
+
+test("a final containing, or contained in, a long-enough utterance is an echo", () => {
+  // Short final inside a 15-char normalized utterance ("sweep done just" =
+  // exactly 15) — caught by the substring rule, not the ratio (1/3 ≈ 0.33).
+  assert.equal(isEchoOfUtterances("sweep", ["Sweep done, just"]), true);
+  // At 14 normalized chars the substring rule no longer applies and the
+  // ratio (1/3) does not reach 0.6 — not an echo.
+  assert.equal(isEchoOfUtterances("sweep", ["Sweep done, jus"]), false);
+  // The other direction: a long final that contains the utterance verbatim,
+  // with enough extra words to keep the ratio at 7/15 ≈ 0.47.
+  assert.equal(
+    isEchoOfUtterances(
+      "so my sweep done just been pottering around and then we left the room quickly",
+      ["my sweep done, just been pottering around"],
+    ),
+    true,
+  );
+});
+
+test("empty finals or an empty utterance ring are never echoes", () => {
+  assert.equal(isEchoOfUtterances("", ["anything at all"]), false);
+  assert.equal(isEchoOfUtterances("anything at all", []), false);
+  assert.equal(isEchoOfUtterances("anything", ["", "..."]), false);
+});
+
+test("shouldHoldFinal holds while speaking and inside the tail, releases past it", () => {
+  // Speaking holds regardless of when the avatar last stopped.
+  assert.equal(shouldHoldFinal(true, Number.POSITIVE_INFINITY), true);
+  assert.equal(shouldHoldFinal(true, 0), true);
+  // Inside the tail window (VAD + model latency lands the echo final here).
+  assert.equal(shouldHoldFinal(false, 0), true);
+  assert.equal(shouldHoldFinal(false, 1499), true);
+  // Exactly at the tail is past it; beyond it certainly is.
+  assert.equal(shouldHoldFinal(false, 1500), false);
+  assert.equal(shouldHoldFinal(false, 60_000), false);
+});
+
+test("the clean path is unchanged: a final with no avatar speech publishes", () => {
+  // No recent utterances and not speaking → nothing to hold, and Layer 2
+  // (which only ever sees held finals) has nothing to match. This is the
+  // pure half of the proof; the hook wiring is code-read covered.
+  assert.equal(shouldHoldFinal(false, Number.POSITIVE_INFINITY), false);
+  assert.equal(
+    isEchoOfUtterances("anything spoken while she is silent", []),
+    false,
+  );
+});
+
+test("recordUtterance appends newest-last and caps the ring at the window", () => {
+  assert.deepEqual(recordUtterance([], "hi", 100), [{ text: "hi", at: 100 }]);
+  const two = recordUtterance([], "one", 1);
+  const three = recordUtterance(recordUtterance(two, "two", 2), "three", 3);
+  assert.deepEqual(three, [
+    { text: "one", at: 1 },
+    { text: "two", at: 2 },
+    { text: "three", at: 3 },
+  ]);
+  // Appending past the window drops the OLDEST entry, keeping the newest 3.
+  assert.deepEqual(recordUtterance(three, "four", 4), [
+    { text: "two", at: 2 },
+    { text: "three", at: 3 },
+    { text: "four", at: 4 },
+  ]);
+});
+
+test("msSinceLastUtterance reads the newest entry and is infinite when empty", () => {
+  assert.equal(msSinceLastUtterance([], 1_000), Number.POSITIVE_INFINITY);
+  assert.equal(msSinceLastUtterance([{ text: "a", at: 1_000 }], 2_500), 1_500);
+  assert.equal(
+    msSinceLastUtterance(
+      [
+        { text: "old", at: 1_000 },
+        { text: "new", at: 2_000 },
+      ],
+      3_500,
+    ),
+    1_500,
+  );
 });
