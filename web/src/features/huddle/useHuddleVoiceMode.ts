@@ -1,87 +1,77 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  bridgeErrorMessage,
+  parseBridgeEvent,
+  PcmBatcher,
+  sttBridgeUrl,
+} from "./lib/sttBridge.ts";
+import {
   DUPLICATE_WINDOW,
-  finalTranscriptsFromEvent,
   gateFinalTranscript,
-  isBenignRecognitionError,
-  latestInterimTranscript,
   nextVoiceStatus,
-  recognitionErrorMessage,
   type VoiceModeStatus,
 } from "./lib/voiceTranscript.ts";
 
 /**
  * Huddle voice mode: the viewer's speech becomes channel messages.
  *
- * Continuous `SpeechRecognition` (the `webkit`-prefixed constructor in
- * Chrome/Brave/Edge; unprefixed where implemented) runs while the toggle is
- * on. Each FINAL result, gated by `lib/voiceTranscript.ts` (trimmed, >= 3
- * chars, deduped), is handed to `onFinalTranscript` — whose caller
- * publishes it through the channel's ordinary `send`, p-tagging the huddle's
- * agents so their mention-filtered subscriptions deliver it. Interim
- * results are surfaced as `interimText` for display and never published.
+ * Engine: the server-side STT bridge (`lib/sttBridge.ts` holds the pure
+ * client logic — URL, PCM batching, event parsing, error mapping). One
+ * WebSocket per session carries mic PCM upstream — tapped from
+ * `useHuddleAudio`'s uplink worklet via `subscribeMicFrames` and batched
+ * to PCM16 16 kHz mono — and JSON transcript events downstream. The
+ * browser's SpeechRecognition this replaces failed fatally (`network`) on
+ * the target browser: Brave's speech engine cannot reach its backing
+ * service, so recognition moved server-side.
  *
- * Browser-API wiring is code-read covered (no component harness exists for
- * SpeechRecognition); the publish decisions live in the pure lib module and
- * are unit-tested there. This hook stays thin: construct, configure
- * (continuous, interimResults, lang en-US), restart on Chrome's
- * silence-triggered onend, clear state on fatal errors (no mic etc.), and
- * clean up on unmount/toggle-off/channel change.
+ * Outgoing audio is held until the bridge's first `{"type":"ready"}` (the
+ * upstream session ack) and is sent only while the huddle mic is live
+ * (`micLive`: not muted, and push-to-talk held in PTT mode). Frames that
+ * arrive while the mic is dark still flow through the batcher — that
+ * keeps batch boundaries aligned — but are never sent, and a rising
+ * mic-live edge starts a fresh batcher so nothing captured while dark can
+ * ride into the first live batch. Muted must never publish transcripts;
+ * the old browser engine ignored huddle mute, which was a latent privacy
+ * bug, not parity to preserve.
  *
- * Reachability note: verified live on the target browser (Brave) that
- * `typeof webkitSpeechRecognition === "function"`. Where the API is absent
- * the hook reports `supported: false` and does nothing — the UI shows a
- * disabled toggle instead of a broken one.
+ * Finals run through `gateFinalTranscript` + the DUPLICATE_WINDOW dedupe
+ * (`lib/voiceTranscript.ts`) and then `onFinalTranscript` — the caller
+ * owns the publish path and error surfacing. Partials surface as
+ * `interimText` for display and never publish. The dedupe window survives
+ * reconnects, because a resumed session can replay the previous final.
+ *
+ * Drop handling: a close without a fatal error reconnects after 250 ms,
+ * up to 3 attempts per incident (a successful `ready` resets the budget);
+ * beyond that the error is surfaced and the toggle latches off — the same
+ * UX as a fatal bridge error. A fatal `{"type":"error"}` is terminal: the
+ * server closes the connection itself.
+ *
+ * WebSocket wiring is code-read covered (no component harness exists for
+ * React hooks in this app); the batcher, parser, and error mapping are
+ * unit-tested in `lib/sttBridge.test.mjs` and the publish gate in
+ * `lib/voiceTranscript.test.mjs`. This hook stays thin: connect, gate,
+ * reconnect, and clean up on toggle-off/unmount/channel change.
  */
 
-/**
- * The controller half of the Web Speech API. TypeScript's DOM lib ships the
- * event/result interfaces but not this one, so it is restated minimally and
- * structurally; the values assigned below (`continuous`, `interimResults`,
- * `lang`, `maxAlternatives`) are the documented set the wiring relies on.
- */
-interface SpeechRecognitionLike {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  maxAlternatives: number;
-  start(): void;
-  stop(): void;
-  abort(): void;
-  onaudiostart: ((event: Event) => void) | null;
-  onresult: ((event: SpeechRecognitionEvent) => void) | null;
-  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
-  onend: (() => void) | null;
-}
-
-type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
-
-function speechRecognitionCtor(): SpeechRecognitionCtor | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  const scope = window as unknown as Record<string, unknown>;
-  const candidate =
-    scope.SpeechRecognition ?? scope.webkitSpeechRecognition ?? null;
-  return typeof candidate === "function"
-    ? (candidate as SpeechRecognitionCtor)
-    : null;
-}
-
-/** Chrome stops continuous recognition after a silence window; the restart
- * delay keeps the start() → onend → start() loop off a hot path. */
-const RESTART_DELAY_MS = 250;
+/** Delay before an unexpected drop reconnects (ms). */
+const RECONNECT_DELAY_MS = 250;
+/** Reconnect attempts per incident before the drop becomes fatal. */
+const RECONNECT_ATTEMPTS = 3;
 
 export interface HuddleVoiceMode {
-  /** Does this browser expose SpeechRecognition at all? */
+  /**
+   * Always true now — the bridge needs only a WebSocket and the huddle's
+   * existing mic capture. Kept (and kept honest) so the UI's toggle
+   * contract stays stable.
+   */
   supported: boolean;
-  /** The toggle. Turning it off stops recognition and clears interim text. */
+  /** The toggle. Turning it off stops the session and clears interim text. */
   enabled: boolean;
   setEnabled: (on: boolean) => void;
   status: VoiceModeStatus;
-  /** Latest interim recognition text, for display only. */
+  /** Latest interim transcript text, for display only. */
   interimText: string;
-  /** Human message for the last fatal recognition error, if any. */
+  /** Human message for the last fatal bridge error, if any. */
   error: string | null;
 }
 
@@ -93,19 +83,32 @@ export function useHuddleVoiceMode(options: {
    * caller owns the send path and error surfacing.
    */
   onFinalTranscript: (text: string) => void;
+  /**
+   * Subscribe to the huddle's mic tap (the uplink worklet's frames, with
+   * the capture sample rate). Supplied by `useHuddleAudio`.
+   */
+  subscribeMicFrames: (
+    listener: (frame: Float32Array, sampleRate: number) => void,
+  ) => () => void;
+  /**
+   * Is the huddle mic live (not muted, and push-to-talk held in PTT mode)?
+   * While false the hook drains frames but sends nothing to the bridge.
+   */
+  micLive: boolean;
 }): HuddleVoiceMode {
-  const { channelId, onFinalTranscript } = options;
-  const [supported] = useState(() => speechRecognitionCtor() !== null);
+  const { channelId, onFinalTranscript, subscribeMicFrames, micLive } = options;
   const [enabled, setEnabledState] = useState(false);
   const [status, setStatus] = useState<VoiceModeStatus>("idle");
   const [interimText, setInterimText] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  // Live values the recognition callbacks read without re-subscribing.
+  // Live values the socket callbacks read without re-subscribing.
   const onFinalRef = useRef(onFinalTranscript);
   onFinalRef.current = onFinalTranscript;
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
+  const micLiveRef = useRef(micLive);
+  micLiveRef.current = micLive;
 
   const transition = useCallback(
     (event: Parameters<typeof nextVoiceStatus>[1]) => {
@@ -118,103 +121,158 @@ export function useHuddleVoiceMode(options: {
     if (!channelId || !enabled) {
       return;
     }
-    const Ctor = speechRecognitionCtor();
-    if (!Ctor) {
-      return;
-    }
 
-    // Chrome resets the results list on every start(), so the seen-index set
-    // is per-session — but the duplicate window for finals SURVIVES
-    // restarts, because a restart can replay the previous final.
-    let seenIndices = new Set<number>();
-    let recentFinals: string[] = [];
+    let disposed = false;
     let fatal = false;
-    let restartTimer: number | null = null;
+    /** Audio flows only after the bridge acked the upstream session. */
+    let ready = false;
+    let attempts = 0;
+    let reconnectTimer: number | null = null;
+    let batcher = new PcmBatcher();
+    let wasMicLive = micLiveRef.current;
+    let ws: WebSocket | null = null;
+    let recentFinals: string[] = [];
 
-    const recognition = new Ctor();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = "en-US";
-    recognition.maxAlternatives = 1;
-
-    recognition.onaudiostart = () => {
-      transition({ type: "audio_started" });
-    };
-
-    recognition.onresult = (event) => {
-      for (const final of finalTranscriptsFromEvent(event, seenIndices)) {
-        seenIndices.add(final.index);
-        const gate = gateFinalTranscript(final.transcript, recentFinals);
-        if (!gate.ok) {
-          continue;
-        }
-        recentFinals.push(gate.text);
-        if (recentFinals.length > DUPLICATE_WINDOW) {
-          recentFinals = recentFinals.slice(-DUPLICATE_WINDOW);
-        }
-        onFinalRef.current(gate.text);
-      }
-      setInterimText(latestInterimTranscript(event));
-    };
-
-    recognition.onerror = (event) => {
-      if (isBenignRecognitionError(event.error)) {
+    const connect = () => {
+      if (disposed) {
         return;
       }
-      fatal = true;
-      setError(recognitionErrorMessage(event.error));
-      transition({ type: "errored", code: event.error });
-      // A fatal error means the mic is unusable — clear the UI state so the
-      // toggle stops claiming to listen, rather than auto-restarting into
-      // the same wall. This flips `enabled`, which runs the cleanup below.
-      setEnabledState(false);
+      transition({ type: "start" });
+      const socket = new WebSocket(sttBridgeUrl(window.location.hostname));
+      ws = socket;
+
+      socket.onmessage = (event: MessageEvent) => {
+        if (typeof event.data !== "string") {
+          return;
+        }
+        const bridgeEvent = parseBridgeEvent(event.data);
+        if (!bridgeEvent) {
+          return;
+        }
+        switch (bridgeEvent.type) {
+          case "ready":
+            ready = true;
+            // A live session resets the drop budget: a later drop is a new
+            // incident, not a continuation of the failed one.
+            attempts = 0;
+            transition({ type: "audio_started" });
+            return;
+          case "partial":
+            setInterimText(bridgeEvent.text);
+            return;
+          case "final": {
+            const gate = gateFinalTranscript(bridgeEvent.text, recentFinals);
+            if (!gate.ok) {
+              return;
+            }
+            recentFinals.push(gate.text);
+            if (recentFinals.length > DUPLICATE_WINDOW) {
+              recentFinals = recentFinals.slice(-DUPLICATE_WINDOW);
+            }
+            onFinalRef.current(gate.text);
+            return;
+          }
+          case "done":
+            // Clean end after our stop; the server closes next.
+            return;
+          case "error":
+            fatal = true;
+            setError(bridgeErrorMessage(bridgeEvent));
+            transition({ type: "errored", code: "bridge" });
+            // Fatal means the bridge is unusable — clear the UI state so
+            // the toggle stops claiming to listen, instead of reconnecting
+            // into the same wall. This flips `enabled`, running cleanup.
+            setEnabledState(false);
+            return;
+        }
+      };
+
+      socket.onclose = () => {
+        if (disposed || fatal || socket !== ws) {
+          return;
+        }
+        transition({ type: "ended" });
+        setInterimText("");
+        // One connection = one session: the next socket starts cold.
+        ready = false;
+        batcher = new PcmBatcher();
+        if (attempts >= RECONNECT_ATTEMPTS) {
+          fatal = true;
+          setError(
+            "Speech recognition could not reconnect — try turning voice mode on again.",
+          );
+          transition({ type: "errored", code: "reconnect" });
+          setEnabledState(false);
+          return;
+        }
+        attempts += 1;
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null;
+          if (disposed || !enabledRef.current) {
+            return;
+          }
+          connect();
+        }, RECONNECT_DELAY_MS);
+      };
+
+      socket.onerror = () => {
+        // A failed connection also fires onclose; the drop policy there is
+        // the single place reconnects are decided.
+      };
     };
 
-    recognition.onend = () => {
-      transition({ type: "ended" });
-      if (!enabledRef.current || fatal) {
+    const unsubscribe = subscribeMicFrames((frame, sampleRate) => {
+      // A rising mic-live edge starts a clean batcher, so nothing captured
+      // while the mic was dark can ride into the first live batch.
+      const live = micLiveRef.current;
+      if (live && !wasMicLive) {
+        batcher = new PcmBatcher();
+      }
+      wasMicLive = live;
+      const batch = batcher.push(frame, sampleRate);
+      if (!batch || !live || !ready) {
         return;
       }
-      restartTimer = window.setTimeout(() => {
-        restartTimer = null;
-        seenIndices = new Set<number>();
-        transition({ type: "start" });
-        try {
-          recognition.start();
-        } catch {
-          // start() on an instance that is still winding down throws
-          // InvalidStateError; the next onend (if any) re-arms the restart.
-        }
-      }, RESTART_DELAY_MS);
-    };
+      const socket = ws;
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(batch);
+      }
+    });
 
-    transition({ type: "start" });
-    try {
-      recognition.start();
-    } catch {
-      setError(recognitionErrorMessage("audio-capture"));
-      transition({ type: "errored", code: "audio-capture" });
-      setEnabledState(false);
-    }
+    connect();
 
     return () => {
-      if (restartTimer !== null) {
-        window.clearTimeout(restartTimer);
-        restartTimer = null;
+      disposed = true;
+      if (reconnectTimer !== null) {
+        window.clearTimeout(reconnectTimer);
+        reconnectTimer = null;
       }
-      // Drop handlers first so teardown cannot fire the restart path.
-      recognition.onresult = null;
-      recognition.onerror = null;
-      recognition.onend = null;
-      recognition.onaudiostart = null;
-      try {
-        recognition.abort();
-      } catch {
-        // Already stopped.
+      unsubscribe();
+      const socket = ws;
+      ws = null;
+      if (socket) {
+        // Drop handlers first so teardown cannot fire the reconnect path.
+        socket.onmessage = null;
+        socket.onclose = null;
+        socket.onerror = null;
+        if (socket.readyState === WebSocket.OPEN) {
+          // Flush the sub-batch tail of a live utterance before ending the
+          // session — otherwise stopping mid-sentence clips the final <100 ms
+          // of speech the batcher is still holding. Only when the mic was
+          // live: frames captured while dark never leave the browser.
+          if (wasMicLive) {
+            const tail = batcher.flush();
+            if (tail) {
+              socket.send(tail);
+            }
+          }
+          socket.send(JSON.stringify({ type: "stop" }));
+        }
+        socket.close();
       }
       setInterimText("");
     };
-  }, [channelId, enabled, transition]);
+  }, [channelId, enabled, transition, subscribeMicFrames]);
 
   const setEnabled = useCallback((on: boolean) => {
     if (on) {
@@ -235,5 +293,5 @@ export function useHuddleVoiceMode(options: {
     }
   }, [channelId]);
 
-  return { supported, enabled, setEnabled, status, interimText, error };
+  return { supported: true, enabled, setEnabled, status, interimText, error };
 }
