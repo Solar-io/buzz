@@ -1117,6 +1117,29 @@ impl BuzzClient {
             return Err(CliError::Usage(format!("unsupported file type: {mime}")));
         }
 
+        // 2b. Sanitize images before upload — the relay rejects metadata-bearing
+        // payloads (`MetadataForbidden`, the 422 that used to require an
+        // exiftool spell). Same client-side contract the desktop composer has
+        // always enforced: strip EXIF/XMP/ICC/comment channels, preserve
+        // animation structurally, refuse the rare cases where stripping would
+        // change what the viewer sees.
+        let bytes = if mime.starts_with("image/") {
+            let raw_len = bytes.len();
+            let sanitized = buzz_media::sanitize::sanitize_image_for_upload(bytes, &mime)
+                .map_err(CliError::Usage)?;
+            if sanitized.len() != raw_len {
+                eprintln!(
+                    "sanitized {} for upload: metadata stripped ({} -> {} bytes)",
+                    file_path,
+                    raw_len,
+                    sanitized.len()
+                );
+            }
+            sanitized
+        } else {
+            bytes
+        };
+
         // 3. Size check
         let max = if mime.starts_with("video/") {
             MAX_VIDEO_BYTES
@@ -2202,6 +2225,108 @@ mod retry_policy_tests {
         assert!(
             auths.iter().all(|a| a.contains("Nostr ")),
             "each attempt must carry Nostr auth"
+        );
+    }
+
+    /// `upload_file` must sanitize image payloads before hashing and upload:
+    /// an EXIF-carrying JPEG leaves the client metadata-free. Without the
+    /// sanitize step the relay answers 422 `MetadataForbidden` — this test
+    /// fails against any pass-through implementation by finding the APP1
+    /// EXIF marker in the captured request body.
+    #[tokio::test]
+    async fn upload_sanitizes_exif_jpeg_before_upload() {
+        use std::io::Write;
+        use tokio::io::AsyncReadExt;
+        use tokio::io::AsyncWriteExt;
+
+        // Real decodable JPEG (4x4) with a hand-injected APP1 EXIF segment —
+        // the shape of a phone photo that used to 422.
+        let mut clean = Vec::new();
+        {
+            let img = image::DynamicImage::new_rgb8(4, 4);
+            image::DynamicImage::write_to(
+                &img,
+                std::io::Cursor::new(&mut clean),
+                image::ImageFormat::Jpeg,
+            )
+            .unwrap();
+        }
+        let mut tiff = vec![
+            b'I', b'I', 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00,
+        ];
+        tiff.extend_from_slice(&0x0112u16.to_le_bytes());
+        tiff.extend_from_slice(&3u16.to_le_bytes());
+        tiff.extend_from_slice(&1u32.to_le_bytes());
+        tiff.extend_from_slice(&6u16.to_le_bytes());
+        tiff.extend_from_slice(&[0, 0]);
+        let mut exif = b"Exif\0\0".to_vec();
+        exif.extend_from_slice(&tiff);
+
+        let mut infected = vec![0xff, 0xd8, 0xff, 0xe1];
+        infected.extend_from_slice(&((exif.len() + 2) as u16).to_be_bytes());
+        infected.extend_from_slice(&exif);
+        infected.extend_from_slice(&clean[2..]);
+        assert!(
+            infected.windows(4).any(|w| w == b"Exif"),
+            "fixture must carry EXIF"
+        );
+
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(&infected).unwrap();
+        let file_path = tmp.path().to_str().unwrap().to_string();
+
+        let captured_body: Arc<std::sync::Mutex<Vec<u8>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured_body2 = captured_body.clone();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = vec![0u8; 1024 * 1024];
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                stream.read(&mut buf),
+            )
+            .await;
+            // Split headers from body at the first CRLFCRLF.
+            let req = buf;
+            if let Some(pos) = req.windows(4).position(|w| w == b"\r\n\r\n") {
+                captured_body2.lock().unwrap().extend_from_slice(&req[pos + 4..]);
+            }
+            let ok_body = r#"{"url":"https://relay.test/media/aabbcc.jpg","sha256":"aabbcc","size":12,"type":"image/jpeg","uploaded":0}"#;
+            let ok = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                ok_body.len(),
+                ok_body
+            );
+            let _ = stream.write_all(ok.as_bytes()).await;
+        });
+
+        let base = format!("http://{addr}");
+        let client = test_client(&base);
+        let result = client.upload_file(&file_path).await;
+        assert!(result.is_ok(), "upload must succeed, got {result:?}");
+
+        let body = captured_body.lock().unwrap().clone();
+        assert!(
+            !body.is_empty(),
+            "must have captured the uploaded request body"
+        );
+        assert_ne!(
+            body, infected,
+            "uploaded bytes must differ from the raw EXIF file"
+        );
+        assert!(
+            !body.windows(4).any(|w| w == b"Exif"),
+            "uploaded body must not contain EXIF payload"
+        );
+        assert!(
+            !body.windows(2).any(|w| w == [0xff, 0xe1]),
+            "uploaded body must not contain an APP1 marker"
         );
     }
 

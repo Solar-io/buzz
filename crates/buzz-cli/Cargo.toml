@@ -43,6 +43,10 @@ chrono = { workspace = true }
 
 # Typed event builders for all write operations
 buzz-sdk = { workspace = true }
+
+# Image sanitization on upload — the relay rejects metadata-bearing images
+# (MetadataForbidden). Same contract the desktop composer enforces client-side.
+buzz-media = { workspace = true }
 buzz-core = { workspace = true }
 
 # Base64 encoding — NIP-98 event serialization for Authorization header
@@ -87,6 +91,8 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rand = { workspace = true }
 
 [dev-dependencies]
+# Test fixture: encode a real JPEG to embed an EXIF segment in (sanitize round-trip).
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 # Scratch files for channel-templates.json fixtures in tests
 tempfile = "3"
 # Minimal HTTP test server for retry/policy integration tests
