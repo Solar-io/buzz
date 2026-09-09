@@ -10,6 +10,7 @@ import {
 import {
   isChannelRowUnread,
   type ChannelActivityMap,
+  type ChannelUnreadCounts,
 } from "@/features/channels/lib/channelActivity.ts";
 import type { PresenceEntry } from "@/features/channels/lib/presence.ts";
 import { isUnread, type ReadState } from "@/features/channels/lib/readState.ts";
@@ -64,6 +65,12 @@ export interface ChannelSidebarReadState {
    * falling back to metadata only for channels with no sample yet.
    */
   activity: ChannelActivityMap;
+  /**
+   * Live unread counts per channel (the counting activity feed). A count of
+   * 1+ upgrades the row's dot to a count badge; absent until the feed's EOSE
+   * derives the channel's window, and 0 there renders nothing unread.
+   */
+  unreadCounts: ChannelUnreadCounts;
 }
 
 /** Controlled state for the sidebar's ⌘K search field. */
@@ -191,6 +198,11 @@ export function ChannelSidebar({
       activity: readState.activity.get(channel.id),
       selfPubkey: dmIdentity.selfPubkey,
     });
+  // The counted form of the same signal, when the counting feed has derived
+  // the channel's window. Muted rows never reach the badge: `rowUnread`
+  // already folds mute in, and the badge renders only on an unread row.
+  const rowUnreadCount = (channel: ChannelSummary) =>
+    readState.unreadCounts.get(channel.id) ?? null;
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="channel-sidebar">
@@ -265,6 +277,7 @@ export function ChannelSidebar({
                     label={channel.name}
                     icon={<ChannelGlyph isPrivate={channel.isPrivate} />}
                     unread={rowUnread(channel)}
+                    unreadCount={rowUnreadCount(channel)}
                     muted={isMuted(readState.prefs, channel.id)}
                     onSelect={() => actions.onSelectChannel(channel.id)}
                     menuItems={actions.channelMenuItems(channel)}
@@ -298,6 +311,7 @@ export function ChannelSidebar({
                   label={channel.name}
                   icon={<ChannelGlyph isPrivate={channel.isPrivate} />}
                   unread={rowUnread(channel)}
+                  unreadCount={rowUnreadCount(channel)}
                   muted={isMuted(readState.prefs, channel.id)}
                   onSelect={() => actions.onSelectChannel(channel.id)}
                   menuItems={actions.channelMenuItems(channel)}
@@ -319,6 +333,7 @@ export function ChannelSidebar({
                     label={channel.name}
                     icon={<ChannelForum />}
                     unread={rowUnread(channel)}
+                    unreadCount={rowUnreadCount(channel)}
                     muted={isMuted(readState.prefs, channel.id)}
                     onSelect={() => actions.onSelectChannel(channel.id)}
                     menuItems={actions.channelMenuItems(channel)}
@@ -340,6 +355,7 @@ export function ChannelSidebar({
                     selected={channel.id === selectedId}
                     label={`${channel.name} · ${shortDate(channel.updatedAt)}`}
                     unread={rowUnread(channel)}
+                    unreadCount={rowUnreadCount(channel)}
                     muted={isMuted(readState.prefs, channel.id)}
                     onSelect={() => actions.onSelectChannel(channel.id)}
                   />

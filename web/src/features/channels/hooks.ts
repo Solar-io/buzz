@@ -56,13 +56,6 @@ import {
   presenceFromEvent,
   type PresenceEntry,
 } from "./lib/presence.ts";
-import {
-  applyChannelActivity,
-  channelActivityFilterBatches,
-  channelActivityFromEvent,
-  type ChannelActivity,
-  type ChannelActivityMap,
-} from "./lib/channelActivity.ts";
 
 /** Live timeline for one channel (kind 9 + channel event kinds, by #h tag). */
 export interface ChannelFeed {
@@ -396,6 +389,18 @@ export {
   type ForumPostsFeed,
   type ForumThread,
 } from "./useForum.ts";
+
+/**
+ * The activity feed lives in `./useChannelActivity.ts` (same ceiling; it
+ * grew a counting mode for the sidebar's live unread badges). Re-exported
+ * so every existing `from "@/features/channels/hooks"` import keeps working.
+ */
+export {
+  useChannelActivity,
+  type ChannelActivityCounting,
+  type ChannelActivityEvent,
+  type UseChannelActivityResult,
+} from "./useChannelActivity.ts";
 
 export interface ChannelMember {
   pubkey: string;
@@ -783,107 +788,4 @@ export function usePresence(pubkeys: string[]): Map<string, PresenceEntry> {
   }, [session, key]);
 
   return entries;
-}
-
-/** A live arrival from {@link useChannelActivity}'s feed. */
-export type ChannelActivityEvent = ChannelActivity;
-
-export interface UseChannelActivityResult {
-  /** Newest sampled message per channel id (stable ref until content changes). */
-  activity: ChannelActivityMap;
-  /**
-   * Register a handler for LIVE arrivals only — messages that beat a
-   * previously sampled entry for their channel. Returns an unregister fn.
-   */
-  onLiveEvent: (handler: (entry: ChannelActivityEvent) => void) => () => void;
-}
-
-/**
- * Newest-message feed across a set of channel ids: batched kind:9
- * subscriptions ({kinds:[9], #h:[id], limit:1} per channel, 10 filters per
- * REQ — the DM sampler's packing), one entry per channel, newest-wins, kept
- * live for the session. This is the feed the sidebar's unread dots read and
- * the message toasts toast from; DM rows keep their own feed (useDms).
- *
- * Resubscribes only when the id SET changes (joined key), like the DM hook.
- */
-export function useChannelActivity(
-  channelIds: string[],
-): UseChannelActivityResult {
-  const { session } = useRelaySession();
-  const [activity, setActivity] = useState<ChannelActivityMap>(() => new Map());
-  // Mirror of state the event handler reads synchronously: the decision
-  // "strictly newer than the stored sample" must not go through React's
-  // async commit, or two quick arrivals could both read as live.
-  const activityRef = useRef<ChannelActivityMap>(activity);
-  const handlersRef = useRef(new Set<(entry: ChannelActivityEvent) => void>());
-
-  const onLiveEvent = useCallback(
-    (handler: (entry: ChannelActivityEvent) => void) => {
-      handlersRef.current.add(handler);
-      return () => {
-        handlersRef.current.delete(handler);
-      };
-    },
-    [],
-  );
-
-  // Ids are UUIDs, so a sorted joined string is a lossless set key.
-  const idsKey = useMemo(
-    () => Array.from(new Set(channelIds)).sort().join(","),
-    [channelIds],
-  );
-
-  useEffect(() => {
-    const ids = idsKey ? idsKey.split(",") : [];
-    activityRef.current = new Map();
-    setActivity(activityRef.current);
-    if (ids.length === 0) {
-      return;
-    }
-    const unsubscribes = channelActivityFilterBatches(ids).map((filters) =>
-      session.subscribe(filters, {
-        onEvent: (event: SignedNostrEvent) => {
-          const entry = channelActivityFromEvent(event);
-          if (!entry) {
-            return;
-          }
-          const previous = activityRef.current.get(entry.channelId);
-          // Strictly newer wins: stale, duplicate and reconnect-replayed
-          // events (same created_at as the stored sample) are dropped here.
-          if (previous && previous.createdAt >= entry.createdAt) {
-            return;
-          }
-          // Replay guard: a handler fires only when a KNOWN sample is beaten.
-          // The FIRST sample per channel is the mount/reconnect backfill and
-          // is never treated as a live arrival, so opening the app or the id
-          // set changing never re-toasts history. Clock-skew note: created_at
-          // is the PUBLISHER's clock, not ours — a publisher whose clock lags
-          // its previous message can have a genuinely-new event land at or
-          // below the stored sample and be silently suppressed (a missed
-          // toast; a Date.now() gate would carry the same skew against a
-          // different clock, on top of breaking on relays that replay in
-          // order). Chosen because strictly-newer is already what the reducer
-          // enforces, so the guard cannot disagree with the feed.
-          if (previous) {
-            for (const handler of handlersRef.current) {
-              handler(entry);
-            }
-          }
-          activityRef.current = applyChannelActivity(
-            activityRef.current,
-            entry,
-          );
-          setActivity(activityRef.current);
-        },
-      }),
-    );
-    return () => {
-      for (const unsubscribe of unsubscribes) {
-        unsubscribe();
-      }
-    };
-  }, [session, idsKey]);
-
-  return { activity, onLiveEvent };
 }
