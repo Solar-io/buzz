@@ -7,6 +7,10 @@ import {
   isMuted,
   type ChannelPrefs,
 } from "@/features/channels/lib/channelPrefs.ts";
+import {
+  isChannelRowUnread,
+  type ChannelActivityMap,
+} from "@/features/channels/lib/channelActivity.ts";
 import type { PresenceEntry } from "@/features/channels/lib/presence.ts";
 import { isUnread, type ReadState } from "@/features/channels/lib/readState.ts";
 import { NewChannelDialog } from "@/features/channels/ui/NewChannelDialog";
@@ -53,6 +57,13 @@ export interface ChannelSidebarReadState {
   prefs: ChannelPrefs;
   /** Per-channel read markers. */
   read: ReadState;
+  /**
+   * Newest sampled kind:9 message per non-DM channel (useChannelActivity).
+   * New messages never bump `channel.updatedAt` (a 39000 metadata time), so
+   * the dot must compare the read marker against real message activity,
+   * falling back to metadata only for channels with no sample yet.
+   */
+  activity: ChannelActivityMap;
 }
 
 /** Controlled state for the sidebar's ⌘K search field. */
@@ -167,6 +178,20 @@ export function ChannelSidebar({
   }, [lists.visibleDms, dmIdentity.selfPubkey]);
   const dmStatuses = useUserStatuses(dmPartnerPubkeys);
 
+  // Unread dot for channel/forum/huddle rows: read marker vs the newest
+  // sampled MESSAGE (self-authored samples excluded — see
+  // channelUnreadSignal), falling back to metadata for unsampled channels.
+  // DM rows keep their own activity feed and stay on lastMessage logic.
+  const rowUnread = (channel: ChannelSummary) =>
+    !isMuted(readState.prefs, channel.id) &&
+    isChannelRowUnread({
+      read: readState.read,
+      channelId: channel.id,
+      updatedAt: channel.updatedAt,
+      activity: readState.activity.get(channel.id),
+      selfPubkey: dmIdentity.selfPubkey,
+    });
+
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="channel-sidebar">
       <div className="flex items-center justify-between px-3 py-2">
@@ -239,10 +264,7 @@ export function ChannelSidebar({
                     selected={channel.id === selectedId}
                     label={channel.name}
                     icon={<ChannelGlyph isPrivate={channel.isPrivate} />}
-                    unread={
-                      !isMuted(readState.prefs, channel.id) &&
-                      isUnread(readState.read, channel.id, channel.updatedAt)
-                    }
+                    unread={rowUnread(channel)}
                     muted={isMuted(readState.prefs, channel.id)}
                     onSelect={() => actions.onSelectChannel(channel.id)}
                     menuItems={actions.channelMenuItems(channel)}
@@ -275,10 +297,7 @@ export function ChannelSidebar({
                   selected={channel.id === selectedId}
                   label={channel.name}
                   icon={<ChannelGlyph isPrivate={channel.isPrivate} />}
-                  unread={
-                    !isMuted(readState.prefs, channel.id) &&
-                    isUnread(readState.read, channel.id, channel.updatedAt)
-                  }
+                  unread={rowUnread(channel)}
                   muted={isMuted(readState.prefs, channel.id)}
                   onSelect={() => actions.onSelectChannel(channel.id)}
                   menuItems={actions.channelMenuItems(channel)}
@@ -299,10 +318,7 @@ export function ChannelSidebar({
                     selected={channel.id === selectedId}
                     label={channel.name}
                     icon={<ChannelForum />}
-                    unread={
-                      !isMuted(readState.prefs, channel.id) &&
-                      isUnread(readState.read, channel.id, channel.updatedAt)
-                    }
+                    unread={rowUnread(channel)}
                     muted={isMuted(readState.prefs, channel.id)}
                     onSelect={() => actions.onSelectChannel(channel.id)}
                     menuItems={actions.channelMenuItems(channel)}
@@ -323,6 +339,8 @@ export function ChannelSidebar({
                   <SidebarNavButton
                     selected={channel.id === selectedId}
                     label={`${channel.name} · ${shortDate(channel.updatedAt)}`}
+                    unread={rowUnread(channel)}
+                    muted={isMuted(readState.prefs, channel.id)}
                     onSelect={() => actions.onSelectChannel(channel.id)}
                   />
                 </li>
