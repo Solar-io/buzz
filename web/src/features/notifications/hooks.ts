@@ -126,6 +126,8 @@ function readAuthorName(pubkey: string): string {
   return name || truncatePubkey(pubkey);
 }
 
+export { readAuthorName };
+
 /**
  * The whole browser-side notification job: one live kind:9 subscription, the
  * OS notification, and the tab-title badge.

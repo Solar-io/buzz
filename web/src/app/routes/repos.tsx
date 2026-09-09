@@ -3,6 +3,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/features/auth/ui/AuthProvider";
 import { LoginPage } from "@/features/auth/ui/LoginPage";
 import {
+  useChannelActivity,
   useChannelMembers,
   useChannelMessages,
   useProfiles,
@@ -31,10 +32,12 @@ import {
 import { activeTyping } from "@/features/channels/lib/typing.ts";
 import { useChannelLists } from "@/features/channels/lib/useChannelLists.ts";
 import { useMessageActions } from "@/features/channels/lib/useMessageActions.ts";
+import { paletteActions } from "@/features/channels/lib/paletteActions.ts";
 import { ChannelTimeline } from "@/features/channels/ui/ChannelTimeline";
 import { ChannelHeader } from "@/features/channels/ui/ChannelHeader";
 import { Composer } from "@/features/channels/ui/Composer";
 import { ForumView } from "@/features/channels/ui/ForumView";
+import { MessageToasts } from "@/features/channels/ui/MessageToasts";
 import { SearchPanel } from "@/features/channels/ui/SearchPanel";
 import { HuddleBar } from "@/features/huddle/ui/HuddleBar";
 import { useHuddleLinks } from "@/features/huddle/useHuddleLinks";
@@ -137,6 +140,22 @@ function ChannelBrowser() {
   // DMs ride the same kind:39000 list (relay `t` tag); they get their own
   // sidebar section and participant-based names.
   const { dms, channelsWithoutDms: unfilteredChannels } = useDms(channels);
+  // Newest-message feed over every non-DM channel the sidebar can show:
+  // the shell owns it ONCE so the unread dots and the message toasts read
+  // the same subscription (archived channels hide from the sidebar, so they
+  // stay out of the REQ — same filter NotificationRuntime applies).
+  const channelActivityIds = useMemo(
+    () =>
+      unfilteredChannels
+        .filter((channel) => !channel.archived)
+        .map((channel) => channel.id),
+    [unfilteredChannels],
+  );
+  const channelActivity = useChannelActivity(channelActivityIds);
+  const dmChannelIds = useMemo(
+    () => dms.map(({ channel }) => channel.id),
+    [dms],
+  );
   const selfPubkey = useOwnPubkey();
   const dmParticipantPubkeys = useMemo(
     () =>
@@ -378,96 +397,21 @@ function ChannelBrowser() {
   };
 
   /**
-   * Actions the ⌘K palette offers alongside channel jumps. Defined here
-   * rather than in the panel because every one of them is a shell concern —
-   * the panel ranks and renders, the shell decides what the app can do.
+   * Actions the ⌘K palette offers alongside channel jumps. Every one of them
+   * is a shell concern — the panel ranks and renders, the shell decides what
+   * the app can do. The list itself lives in features/channels/lib so this
+   * route file stays under the repo's file-size ceiling.
    */
-  const paletteActions = useMemo(
-    () => [
-      {
-        id: "action:new-channel",
-        kind: "action" as const,
-        label: "New channel",
-        keywords: ["create", "add", "channel"],
-        onSelect: () => setNewChannelOpen(true),
-      },
-      {
-        id: "action:new-dm",
-        kind: "action" as const,
-        label: "New message",
-        keywords: ["dm", "direct", "message", "person"],
-        onSelect: () => setNewDmOpen(true),
-      },
-      {
-        id: "action:inbox",
-        kind: "action" as const,
-        label: "Inbox",
-        keywords: ["inbox", "mentions", "unread", "home"],
-        onSelect: () =>
-          void navigate({ to: "/repos", search: { view: "inbox" } }),
-      },
-      {
-        id: "action:onboarding",
-        kind: "action" as const,
-        label: "Getting started",
-        keywords: ["onboarding", "welcome", "setup", "checklist", "backup"],
-        onSelect: () =>
-          void navigate({ to: "/repos", search: { view: "onboarding" } }),
-      },
-      {
-        id: "action:projects",
-        kind: "action" as const,
-        label: "Projects",
-        keywords: ["project", "issue", "board", "backlog", "repo"],
-        onSelect: () =>
-          void navigate({ to: "/repos", search: { view: "projects" } }),
-      },
-      {
-        id: "action:pulse",
-        kind: "action" as const,
-        label: "Pulse",
-        keywords: ["pulse", "notes", "feed", "social"],
-        onSelect: () =>
-          void navigate({ to: "/repos", search: { view: "pulse" } }),
-      },
-      {
-        id: "action:reminders",
-        kind: "action" as const,
-        label: "Reminders",
-        keywords: ["reminder", "remind", "later", "snooze", "due"],
-        onSelect: () =>
-          void navigate({ to: "/repos", search: { view: "reminders" } }),
-      },
-      {
-        id: "action:workflows",
-        kind: "action" as const,
-        label: "Workflows",
-        keywords: ["workflow", "automation", "runs", "trigger"],
-        onSelect: () =>
-          void navigate({ to: "/repos", search: { view: "workflows" } }),
-      },
-      {
-        id: "action:files",
-        kind: "action" as const,
-        label: "Files",
-        keywords: ["files", "browse"],
-        onSelect: () => setFilesOpen(true),
-      },
-      {
-        id: "action:settings",
-        kind: "action" as const,
-        label: "Settings",
-        keywords: ["settings", "preferences", "theme", "appearance"],
-        onSelect: () => void navigate({ to: "/repos/settings" }),
-      },
-      {
-        id: "action:agents",
-        kind: "action" as const,
-        label: "Agents",
-        keywords: ["agents", "bots"],
-        onSelect: () => void navigate({ to: "/repos/agents" }),
-      },
-    ],
+  const palette = useMemo(
+    () =>
+      paletteActions({
+        openView: (view) => void navigate({ to: "/repos", search: { view } }),
+        openSettings: () => void navigate({ to: "/repos/settings" }),
+        openAgents: () => void navigate({ to: "/repos/agents" }),
+        onNewChannel: () => setNewChannelOpen(true),
+        onNewDm: () => setNewDmOpen(true),
+        onOpenFiles: () => setFilesOpen(true),
+      }),
     [navigate],
   );
   const closeChannel = () => {
@@ -522,7 +466,11 @@ function ChannelBrowser() {
         dms,
         visibleDms: lists.visibleDms,
       }}
-      readState={{ prefs: channelPrefs, read: readState }}
+      readState={{
+        prefs: channelPrefs,
+        read: readState,
+        activity: channelActivity.activity,
+      }}
       search={{
         query: sidebarQuery,
         onQueryChange: openSearch,
@@ -653,6 +601,19 @@ function ChannelBrowser() {
         be on; in the sidebar it died wherever the sidebar unmounted. It takes
         the shell's channel list rather than opening a second kind:39000 REQ. */}
       <NotificationRuntime selfPubkey={selfPubkey} channels={channels} />
+      {/* Same mount discipline as NotificationRuntime: once at the shell, so
+        toasts survive every view. The channel side consumes the shell's
+        shared activity feed; the DM side opens the feed's DM-scoped twin. */}
+      <MessageToasts
+        selfPubkey={selfPubkey}
+        selectedId={selectedId ?? null}
+        channels={channels}
+        channelLiveEvents={channelActivity.onLiveEvent}
+        dmChannelIds={dmChannelIds}
+        channelPrefs={channelPrefs}
+        profiles={dmProfiles}
+        onOpenChannel={selectChannel}
+      />
       <RemindMeLaterProvider selfPubkey={selfPubkey}>
         <ProfileActionsProvider
           // The profile dialog's "Recent" list knows event and channel ids but
@@ -953,7 +914,7 @@ function ChannelBrowser() {
               onClose={closeSearch}
               initialQuery={sidebarQuery}
               onJumpToChannel={(id) => selectChannel(id)}
-              actions={paletteActions}
+              actions={palette}
               channels={channels}
               profiles={profiles}
               defaultChannelId={current?.id ?? null}
