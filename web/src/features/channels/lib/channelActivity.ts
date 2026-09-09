@@ -218,6 +218,150 @@ export function formatUnreadCount(count: number): string {
   return count > UNREAD_COUNT_CAP ? `${UNREAD_COUNT_CAP}+` : String(count);
 }
 
+/** Shared state one counting feed's sibling batch subscriptions mutate. */
+export interface ChannelActivityHandlerDeps {
+  /** Newest-wins sample map, shared across the feed's batch subscriptions. */
+  activityRef: { current: ChannelActivityMap };
+  /** Publish the mutated sample map (the hook's setActivity). */
+  onActivityChange: (map: ChannelActivityMap) => void;
+  /** A LIVE strictly-newer arrival that beat a known sample (toast path). */
+  onLiveArrival: (entry: ChannelActivity) => void;
+  /** Functional count update (the hook's setUnreadCounts). */
+  onUnreadCountsChange: (
+    updater: (previous: ChannelUnreadCounts) => ChannelUnreadCounts,
+  ) => void;
+  /** null readMarkers = sampling mode: newest-message samples, no counts. */
+  readMarkers: ReadState | null;
+  selfPubkey: string | null;
+}
+
+/** The SubscribeOptions-shaped pair the relay session calls into. */
+export interface ChannelActivitySubscriptionHandlers {
+  onEvent: (event: SignedNostrEvent) => void;
+  onEose: () => void;
+}
+
+/**
+ * One batch subscription's event/EOSE handlers — the counting feed's whole
+ * event chain as a unit the tests can drive directly (no React, no replica:
+ * this is the object the hook hands `session.subscribe`, and the object the
+ * relay's reconnect replay re-delivers through).
+ *
+ * Counting semantics across delivery rounds. The relay re-REQs a
+ * subscription after every reconnect and re-delivers its whole since-window,
+ * so an event can arrive any number of times over the subscription's life.
+ * Exactly-once counting therefore leans on the newest-wins sample map, which
+ * drops every arrival at-or-below the stored sample:
+ *
+ * - BACKFILL ROUND (subscription open until its first EOSE): arrivals
+ *   buffer per channel (bounded); the first EOSE derives each channel's
+ *   count from that window. Out-of-order arrivals that beat a surviving
+ *   sample can transiently bump the count first — the derivation replaces
+ *   it, which is what makes a mid-backfill bump self-correcting.
+ * - LIVE (after the first EOSE): strictly-newer foreign arrivals increment
+ *   only. They must NOT buffer: a later reconnect re-delivers them (they
+ *   still match `since`), they arrive at-or-below the sample by then, and
+ *   the replayed round must be able to ignore them — buffering them here
+ *   would make the next derivation count them twice.
+ * - REPLAY ROUNDS (every round after the first): re-delivered arrivals are
+ *   dropped by the sample map, and EOSEs derive nothing — the count keeps
+ *   its live-incremented value. An event the client MISSED while offline
+ *   still beats the sample, increments once, and is never double-counted.
+ *
+ * A marker change re-runs the owning effect with fresh handlers, so the new
+ * windows re-enter backfill and re-derive at their EOSE (see
+ * useChannelActivity).
+ */
+export function createChannelActivityHandlers(
+  deps: ChannelActivityHandlerDeps,
+): ChannelActivitySubscriptionHandlers {
+  const {
+    activityRef,
+    onActivityChange,
+    onLiveArrival,
+    onUnreadCountsChange,
+    readMarkers,
+    selfPubkey,
+  } = deps;
+  let window: Map<string, UnreadCountEvent[]> | null = readMarkers
+    ? new Map()
+    : null;
+  let backfillClosed = false;
+
+  return {
+    onEvent(event: SignedNostrEvent): void {
+      const entry = channelActivityFromEvent(event);
+      if (!entry) {
+        return;
+      }
+      // Buffer BEFORE the strictly-newer guard: the backfill derivation
+      // counts the delivered window, and most of that window is at-or-below
+      // the newest sample by definition. Stale/duplicate arrivals land here
+      // and are then dropped from the sample path below.
+      if (window && !backfillClosed) {
+        const samples = window.get(entry.channelId) ?? [];
+        samples.push(entry);
+        window.set(entry.channelId, samples.slice(-UNREAD_COUNT_BUFFER_MAX));
+      }
+      const previous = activityRef.current.get(entry.channelId);
+      // Strictly newer wins: stale, duplicate and reconnect-replayed
+      // events (same created_at as the stored sample) are dropped here.
+      if (previous && previous.createdAt >= entry.createdAt) {
+        return;
+      }
+      if (previous) {
+        if (readMarkers) {
+          // Live increment, same exclusion rules as the derivation.
+          onUnreadCountsChange((counts) => {
+            const next = new Map(counts);
+            next.set(
+              entry.channelId,
+              incrementUnreadCount(
+                counts.get(entry.channelId),
+                entry,
+                readMarkers[entry.channelId] ?? 0,
+                selfPubkey,
+              ),
+            );
+            return next;
+          });
+        }
+        onLiveArrival(entry);
+      }
+      activityRef.current = applyChannelActivity(activityRef.current, entry);
+      onActivityChange(activityRef.current);
+    },
+    onEose(): void {
+      if (!readMarkers || !window || backfillClosed) {
+        return;
+      }
+      // Derive each buffered channel's count from its backfill window.
+      // REPLACES any transiently-bumped value — the count is the window's
+      // truth, not the increments' sum.
+      const buffered = window;
+      onUnreadCountsChange((previous) => {
+        const next = new Map(previous);
+        for (const [channelId, samples] of buffered) {
+          next.set(
+            channelId,
+            countUnreadFromEvents(
+              samples,
+              readMarkers[channelId] ?? 0,
+              selfPubkey,
+            ),
+          );
+        }
+        return next;
+      });
+      // The backfill round ends here, for good: replay rounds re-deliver
+      // this same window and must find nothing left to derive, or every
+      // reconnect would re-add the round's events to the count.
+      backfillClosed = true;
+      window = new Map();
+    },
+  };
+}
+
 /**
  * The timestamp an unread dot compares against the read marker.
  *

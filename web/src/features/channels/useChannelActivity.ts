@@ -6,20 +6,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
-import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import type { ReadState } from "./lib/readState.ts";
 import {
-  UNREAD_COUNT_BUFFER_MAX,
-  applyChannelActivity,
   channelActivityFilterBatches,
-  channelActivityFromEvent,
-  countUnreadFromEvents,
-  incrementUnreadCount,
+  createChannelActivityHandlers,
   resetCountsForMarkerChanges,
   type ChannelActivity,
   type ChannelActivityMap,
   type ChannelUnreadCounts,
-  type UnreadCountEvent,
 } from "./lib/channelActivity.ts";
 
 /** A live arrival from {@link useChannelActivity}'s feed. */
@@ -67,13 +61,23 @@ export interface ChannelActivityCounting {
  * unread-count hook's bounded shape), so a marker move must re-open them at
  * the new `since` or the counts would keep growing against a stale marker.
  *
- * Counting (sidebar feed): counts are DERIVED at EOSE from the events each
- * subscription buffered since its markers (idempotent across reconnect
- * replays, which re-REQ and re-EOSE), then incremented by live strictly-newer
- * foreign arrivals riding the same newest-wins guard the toast handlers use.
- * A channel whose marker advanced is zeroed immediately, ahead of the re-REQ.
- * Sampling (toast-only feeds, no `counting` argument): limit:1 filters, no
- * count state — identical to the feed before counts existed.
+ * Counting (sidebar feed): event/EOSE handling lives in
+ * createChannelActivityHandlers (channelActivity.ts) — the backfill window
+ * derives counts at the subscription's first EOSE, live strictly-newer
+ * foreign arrivals increment after that, and reconnect replays stay
+ * exactly-once through the newest-wins sample map. A channel whose marker
+ * advanced is zeroed immediately, ahead of the re-REQ; its fresh handlers
+ * re-enter backfill and re-derive at EOSE. Sampling (toast-only feeds, no
+ * `counting` argument): limit:1 filters, no count state — identical to the
+ * feed before counts existed.
+ *
+ * SAMPLES SURVIVE marker-only re-runs: every message arriving in the VIEWED
+ * channel advances its marker and re-opens this feed, so wiping the sample
+ * map there would blank every other row's unread dot until the re-REQ's
+ * EOSE landed (a whole-sidebar flicker per arriving message on a busy
+ * channel). Samples reset only when the feed's own identity changes
+ * (session or id set); preserved samples also shield replayed backfill from
+ * the live-arrival path, exactly as they do across reconnects.
  */
 export function useChannelActivity(
   channelIds: string[],
@@ -91,6 +95,9 @@ export function useChannelActivity(
   const handlersRef = useRef(new Set<(entry: ChannelActivityEvent) => void>());
   // Markers the previous effect run saw, for the marker-move zeroing diff.
   const prevMarkersRef = useRef<ReadState | null>(null);
+  // The feed identity (session + id set) the previous run saw: samples reset
+  // only when THIS changes, not on marker-only re-runs.
+  const prevFeedRef = useRef<{ session: unknown; idsKey: string } | null>(null);
 
   const onLiveEvent = useCallback(
     (handler: (entry: ChannelActivityEvent) => void) => {
@@ -108,7 +115,7 @@ export function useChannelActivity(
     [channelIds],
   );
 
-  const readMarkers = counting?.readMarkers;
+  const readMarkers = counting?.readMarkers ?? null;
   const selfPubkey = counting?.selfPubkey ?? null;
 
   // Marker map restricted to the subscribed ids, as a string: unrelated
@@ -129,8 +136,16 @@ export function useChannelActivity(
   // biome-ignore lint/correctness/useExhaustiveDependencies: markersKey gates re-subscription; removing it would key the effect on the raw object and re-REQ on unrelated marker changes
   useEffect(() => {
     const ids = idsKey ? idsKey.split(",") : [];
-    activityRef.current = new Map();
-    setActivity(activityRef.current);
+    // Reset the sample map only when the feed's identity changes; a
+    // marker-only re-run keeps every sample (see the doc comment above).
+    const feedChanged =
+      prevFeedRef.current?.session !== session ||
+      prevFeedRef.current?.idsKey !== idsKey;
+    prevFeedRef.current = { session, idsKey };
+    if (feedChanged) {
+      activityRef.current = new Map();
+      setActivity(activityRef.current);
+    }
     if (ids.length === 0) {
       return;
     }
@@ -146,98 +161,26 @@ export function useChannelActivity(
       }
       prevMarkersRef.current = readMarkers;
     }
-    const unsubscribes = channelActivityFilterBatches(ids, readMarkers).map(
-      (filters) => {
-        // Counting state for THIS subscription: the sampled window since each
-        // channel's marker. Events buffer here until EOSE derives counts from
-        // them; reconnects replay the REQ and re-deliver the window, so the
-        // buffer stays bounded and the EOSE re-derivation stays idempotent.
-        const window = new Map<string, UnreadCountEvent[]>();
-        return session.subscribe(filters, {
-          onEvent: (event: SignedNostrEvent) => {
-            const entry = channelActivityFromEvent(event);
-            if (!entry) {
-              return;
-            }
-            if (readMarkers) {
-              const samples = window.get(entry.channelId) ?? [];
-              samples.push(entry);
-              window.set(
-                entry.channelId,
-                samples.slice(-UNREAD_COUNT_BUFFER_MAX),
-              );
-            }
-            const previous = activityRef.current.get(entry.channelId);
-            // Strictly newer wins: stale, duplicate and reconnect-replayed
-            // events (same created_at as the stored sample) are dropped here.
-            if (previous && previous.createdAt >= entry.createdAt) {
-              return;
-            }
-            // Replay guard: a handler fires only when a KNOWN sample is beaten.
-            // The FIRST sample per channel is the mount/reconnect backfill and
-            // is never treated as a live arrival, so opening the app or the id
-            // set changing never re-toasts history. Clock-skew note: created_at
-            // is the PUBLISHER's clock, not ours — a publisher whose clock lags
-            // its previous message can have a genuinely-new event land at or
-            // below the stored sample and be silently suppressed (a missed
-            // toast; a Date.now() gate would carry the same skew against a
-            // different clock, on top of breaking on relays that replay in
-            // order). Chosen because strictly-newer is already what the reducer
-            // enforces, so the guard cannot disagree with the feed.
-            if (previous) {
-              if (readMarkers) {
-                // Live increment, same exclusion rules as the derivation. A
-                // backfill arrival that beats a surviving sample (out-of-order
-                // replay) can transiently bump the count; the next EOSE
-                // re-derives it from the buffered window and corrects it.
-                setUnreadCounts((counts) => {
-                  const next = new Map(counts);
-                  next.set(
-                    entry.channelId,
-                    incrementUnreadCount(
-                      counts.get(entry.channelId),
-                      entry,
-                      readMarkers[entry.channelId] ?? 0,
-                      selfPubkey,
-                    ),
-                  );
-                  return next;
-                });
-              }
-              for (const handler of handlersRef.current) {
-                handler(entry);
-              }
-            }
-            activityRef.current = applyChannelActivity(
-              activityRef.current,
-              entry,
-            );
-            setActivity(activityRef.current);
-          },
-          onEose: () => {
-            if (!readMarkers) {
-              return;
-            }
-            // Derive each channel's count from its buffered window — the
-            // reconnect/re-REQ path too, which is what keeps replayed events
-            // from double-counting: derivation REPLACES the incremented value.
-            setUnreadCounts((previous) => {
-              const next = new Map(previous);
-              for (const [channelId, samples] of window) {
-                next.set(
-                  channelId,
-                  countUnreadFromEvents(
-                    samples,
-                    readMarkers[channelId] ?? 0,
-                    selfPubkey,
-                  ),
-                );
-              }
-              return next;
-            });
-          },
-        });
-      },
+    const fireLive = (entry: ChannelActivity) => {
+      for (const handler of handlersRef.current) {
+        handler(entry);
+      }
+    };
+    const unsubscribes = channelActivityFilterBatches(
+      ids,
+      readMarkers ?? undefined,
+    ).map((filters) =>
+      session.subscribe(
+        filters,
+        createChannelActivityHandlers({
+          activityRef,
+          onActivityChange: setActivity,
+          onLiveArrival: fireLive,
+          onUnreadCountsChange: setUnreadCounts,
+          readMarkers,
+          selfPubkey,
+        }),
+      ),
     );
     return () => {
       for (const unsubscribe of unsubscribes) {
