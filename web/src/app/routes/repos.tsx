@@ -151,7 +151,6 @@ function ChannelBrowser() {
         .map((channel) => channel.id),
     [unfilteredChannels],
   );
-  const channelActivity = useChannelActivity(channelActivityIds);
   const dmChannelIds = useMemo(
     () => dms.map(({ channel }) => channel.id),
     [dms],
@@ -183,6 +182,14 @@ function ChannelBrowser() {
   // Read state: opening a channel marks its newest message seen; badges and
   // the timeline unread divider derive from the marker.
   const [readState, setReadState] = useState<ReadState>(() => loadReadState());
+  // Counting activity feed: newest samples PLUS live unread counts. Lives
+  // after readState/selfPubkey because it consumes both — a marker move
+  // re-opens the counting windows at the new `since`, and a locked key
+  // (selfPubkey null) transiently over-counts until identity lands.
+  const channelActivity = useChannelActivity(channelActivityIds, {
+    readMarkers: readState,
+    selfPubkey,
+  });
   const newestMessageAt = messages[messages.length - 1]?.createdAt ?? 0;
   useEffect(() => {
     if (channelId === "" || newestMessageAt === 0) {
@@ -470,6 +477,7 @@ function ChannelBrowser() {
         prefs: channelPrefs,
         read: readState,
         activity: channelActivity.activity,
+        unreadCounts: channelActivity.unreadCounts,
       }}
       search={{
         query: sidebarQuery,

@@ -1,6 +1,7 @@
 import { BellOff } from "lucide-react";
 import type { ReactNode } from "react";
 import type { SidebarMenuItem } from "@/features/sidebar/lib/sidebarMenuItem";
+import { formatUnreadCount } from "@/features/channels/lib/channelActivity.ts";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -22,8 +23,16 @@ export interface SidebarNavButtonProps {
   label: string;
   /** Leading glyph — channels pass the desktop's Hash mark. */
   icon?: ReactNode;
-  /** Unread dot — newest activity newer than the read marker. */
+  /** Unread — newest activity newer than the read marker. */
   unread?: boolean;
+  /**
+   * Live unread message count for the row. 1+ renders the count badge
+   * (DmNavRow's badge, for one visual language across the sidebar); null or
+   * 0 keeps the metadata-fallback dot — the unread signal without a counted
+   * window yet, or a metadata-only change the count cannot express. Muted
+   * rows render neither (the caller's unread already folds mute in).
+   */
+  unreadCount?: number | null;
   /**
    * Muted rows dim and carry a bell-off glyph, matching the desktop.
    * Mute already suppresses the unread dot; without this the row looked
@@ -47,6 +56,7 @@ export function SidebarNavButton({
   label,
   icon,
   unread,
+  unreadCount,
   muted,
   onSelect,
   menuItems,
@@ -95,13 +105,27 @@ export function SidebarNavButton({
           aria-label="Muted"
         />
       )}
-      {unread && (
+      {unread && unreadCount != null && unreadCount >= 1 ? (
+        // Count badge — DmNavRow's badge classes verbatim (20px pill,
+        // bg-sidebar-active, tabular nums) so channels and DMs read as one
+        // design; the dot below remains the fallback while no count exists.
         <span
           className={cn(
-            "h-2 w-2 shrink-0 rounded-full bg-sidebar-active",
+            "flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-sidebar-active px-1 text-2xs font-semibold leading-none tabular-nums text-sidebar-active-foreground",
             !muted && "ml-auto",
           )}
-        />
+        >
+          {formatUnreadCount(unreadCount)}
+        </span>
+      ) : (
+        unread && (
+          <span
+            className={cn(
+              "h-2 w-2 shrink-0 rounded-full bg-sidebar-active",
+              !muted && "ml-auto",
+            )}
+          />
+        )
       )}
       {menuItems && (
         <DropdownMenu>
