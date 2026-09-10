@@ -13,10 +13,14 @@ channel's batch and calls `pool.try_claim(Some(channel_id))`:
 If the channel-holding slot is mid-turn (checked out, present in
 `pool.task_map`), Pass 1 misses and Pass 2 hands the mention to a cold boot
 slot with no conversation state. Observed 2026-09-10 18:07-18:14 (Sam DM):
-two agent replies inside a minute, and the boot answered an image question
-without opening the image. After the boot's turn it too holds a session for
-the channel, so future mentions flip-flop between holder and boot — this is
-the recurring "two of me" seam.
+two agent replies inside a minute. CORRECTED same night per Sam's reveal:
+the boot opened the image and identified it correctly (Tuck); the confident
+WRONG read was the room-holding session's. The fold fixes the RACE — two
+answers where only the room-holder should speak — not answer quality; a
+confident misread by the holder is a different defect with a different cure
+(the session's own second-signal rule). After the boot's turn it too holds a
+session for the channel, so future mentions flip-flop between holder and
+boot — this is the recurring "two of me" seam.
 
 ## The fix — two guards at one dispatch point
 
