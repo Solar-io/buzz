@@ -69,7 +69,12 @@ export function useUnreadCount(
       },
     );
     return () => {
+      // The key MUST go too: after unsubscribe, EOSE can never fire, so the
+      // only other cleanup path (onEose) will not run — a leaked key here
+      // reproduces the frozen-badge bug this commit fixes (systematically
+      // under StrictMode's double-invoke, narrowly in prod on fast unmount).
       clearTimeout(leakValve);
+      unreadCountInFlight.delete(key);
       unsubscribe();
     };
   }, [channelId, lastSeenAt, selfPubkey, session]);
