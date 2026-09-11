@@ -241,6 +241,38 @@ mod tests {
         assert_eq!(agent_slug("   "), "");
     }
 
+    /// Contract pin against the live writer shape (Evie's seat, 2026-09-10
+    /// 19:18): `watching_at` / `watching_note` extra keys, `composing` null
+    /// between replies, `convention` prose. The router must parse this exact
+    /// document — unknown keys ignored, null composing reading as no claim —
+    /// and fold on the `watching` array while mtime is fresh. If either side
+    /// of the 9/9 convention drifts, this test is what names it.
+    #[test]
+    fn live_writer_shape_parses_and_folds_on_watching() {
+        let sam_dm = Uuid::parse_str("c183da8e-b5e6-4521-8522-b45dac07e0ee").unwrap();
+        let group_dm = Uuid::parse_str("cbdb0795-1cbe-4c36-9c1e-4e5833187b24").unwrap();
+        let body = serde_json::json!({
+            "watching": [sam_dm.to_string(), group_dm.to_string()],
+            "watching_at": "2026-09-10T19:18:46-05:00",
+            "watching_note": "evening window seat; re-stamped each watch round",
+            "composing": null,
+            "convention": "9/9 split, my half"
+        })
+        .to_string();
+        let path = temp_claims(&body);
+        // Fresh mtime (just written) + watching membership → both channels fold.
+        assert!(claim_holds(&path, sam_dm), "live shape must fold a watched channel");
+        assert!(claim_holds(&path, group_dm), "live shape must fold the second watched channel");
+        // null composing contributes nothing; an unwatched channel never folds.
+        let other = Uuid::new_v4();
+        assert!(!claim_holds(&path, other), "unwatched channel must not fold");
+        // And the doc deserializes with the expected fields.
+        let doc: ClaimsDoc = serde_json::from_str(&body).expect("live shape must deserialize");
+        assert_eq!(doc.watching, vec![sam_dm, group_dm]);
+        assert!(doc.composing.is_none(), "null composing reads as no claim");
+        cleanup(&path);
+    }
+
     #[test]
     fn fresh_composing_claim_holds() {
         let channel = Uuid::new_v4();
