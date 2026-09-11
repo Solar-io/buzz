@@ -6,9 +6,9 @@ use std::sync::Arc;
 use axum::{
     body::Body,
     extract::{ConnectInfo, FromRequest, State, WebSocketUpgrade},
-    http::{HeaderMap, Request, StatusCode},
+    http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode},
     middleware,
-    response::{IntoResponse, Json},
+    response::{IntoResponse, Json, Redirect},
     routing::{get, post, put},
     Router,
 };
@@ -178,7 +178,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             let web_files = web_files.clone();
             let state = fallback_state.clone();
             async move {
-                let path = req.uri().path();
+                // Owned: the asset branch moves `req` into ServeDir while
+                // still needing `path` for the worker-scope header stamp.
+                let path = req.uri().path().to_owned();
                 let admin_host = api::admin::is_admin_host(&state, req.headers());
                 if admin_host {
                     if let (Some(index), Some(files)) = (admin_index, admin_files) {
@@ -188,7 +190,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                                 .map(IntoResponse::into_response)
                                 .map(|response| with_cache_control(response, ASSET_CACHE_CONTROL));
                         }
-                        if is_admin_spa_path(path) {
+                        if is_admin_spa_path(&path) {
                             return Ok(read_spa_index(&index).await);
                         }
                     }
@@ -196,14 +198,44 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 }
 
                 if let (Some(index), Some(files)) = (web_index, web_files) {
-                    if path.starts_with("/assets/") {
-                        let served = files.oneshot(req).await;
-                        return served
-                            .map(IntoResponse::into_response)
-                            .map(|response| with_cache_control(response, ASSET_CACHE_CONTROL));
-                    }
-                    if should_serve_spa(path, serve_git_web_gui) {
-                        return Ok(read_spa_index(&index).await);
+                    match classify_web_fallback(&path, serve_git_web_gui) {
+                        WebFallback::Asset => {
+                            let mut response = files
+                                .oneshot(req)
+                                .await
+                                .map(IntoResponse::into_response)
+                                .map(|response| {
+                                    with_cache_control(response, ASSET_CACHE_CONTROL)
+                                })?;
+                            // The web client registers its service worker at
+                            // root scope, but the script lives inside /assets/
+                            // with the bundle. A browser caps a worker's scope
+                            // at the script's own directory unless the response
+                            // opts out with this header — without it the worker
+                            // never controls the app page and its cache handler
+                            // is dead code (live finding 2026-09-10).
+                            if path == "/assets/sw.js" {
+                                response.headers_mut().insert(
+                                    HeaderName::from_static("service-worker-allowed"),
+                                    HeaderValue::from_static("/"),
+                                );
+                            }
+                            return Ok(response);
+                        }
+                        WebFallback::RedirectBareRepos => {
+                            // Keep the query: the client reads ?view= from the
+                            // URL, so a full-page load of /repos?view=inbox
+                            // must land on the same view, not a bare /repos/.
+                            let target = match req.uri().query() {
+                                Some(query) => format!("/repos/?{query}"),
+                                None => "/repos/".to_string(),
+                            };
+                            return Ok(Redirect::permanent(&target).into_response());
+                        }
+                        WebFallback::SpaIndex => {
+                            return Ok(read_spa_index(&index).await);
+                        }
+                        WebFallback::NotFound => {}
                     }
                 }
                 Ok(StatusCode::NOT_FOUND.into_response())
@@ -250,6 +282,39 @@ fn should_serve_spa(path: &str, serve_git_web_gui: bool) -> bool {
 
 fn is_git_web_gui_path(path: &str) -> bool {
     path == "/" || path == "/repos" || path.starts_with("/repos/")
+}
+
+/// What the public web-bundle fallback does with a request the explicit routes
+/// did not claim.
+enum WebFallback {
+    /// Serve the file from the bundle, stamped with the asset cache header
+    /// (and the service-worker scope opt-out for the worker script).
+    Asset,
+    /// Canonicalize the bare `/repos` to its trailing-slash form. The web
+    /// manifest scopes the installed app to `/repos/`; a page served at
+    /// `/repos` renders but sits outside that scope, so the browser offers no
+    /// install affordance on the exact URL people type (live finding
+    /// 2026-09-10).
+    RedirectBareRepos,
+    /// Serve the SPA index for a route the client router owns.
+    SpaIndex,
+    /// Not ours — 404.
+    NotFound,
+}
+
+fn classify_web_fallback(path: &str, serve_git_web_gui: bool) -> WebFallback {
+    if path.starts_with("/assets/") {
+        // Assets ship regardless of the GUI flag: the bundle is what asked
+        // for them, and withholding them only breaks partial deploys.
+        return WebFallback::Asset;
+    }
+    if serve_git_web_gui && path == "/repos" {
+        return WebFallback::RedirectBareRepos;
+    }
+    if should_serve_spa(path, serve_git_web_gui) {
+        return WebFallback::SpaIndex;
+    }
+    WebFallback::NotFound
 }
 
 /// `Cache-Control` for the SPA index: always revalidate. The index names the
@@ -559,6 +624,45 @@ mod tests {
         assert!(should_serve_spa("/", true));
         assert!(should_serve_spa("/repos/example", true));
         assert!(!should_serve_spa("/arbitrary", true));
+    }
+
+    #[test]
+    fn web_fallback_classification_pins_the_pwa_contract() {
+        use WebFallback::{Asset, NotFound, RedirectBareRepos, SpaIndex};
+
+        // Bundle assets answer whether or not the GUI flag is on.
+        assert!(matches!(
+            classify_web_fallback("/assets/x.js", false),
+            Asset
+        ));
+        assert!(matches!(classify_web_fallback("/assets/x.js", true), Asset));
+        // The bare root canonicalizes to the manifest's scope; a page served
+        // at /repos renders fine but sits outside scope, so the browser
+        // offers no install affordance on the URL people actually type.
+        assert!(matches!(
+            classify_web_fallback("/repos", true),
+            RedirectBareRepos
+        ));
+        // No trailing-slash churn anywhere else: deep links and the scoped
+        // root serve the SPA as before.
+        assert!(matches!(classify_web_fallback("/repos/", true), SpaIndex));
+        assert!(matches!(
+            classify_web_fallback("/repos/example", true),
+            SpaIndex
+        ));
+        assert!(matches!(classify_web_fallback("/", true), SpaIndex));
+        // GUI off keeps the old behavior: no SPA, no redirect, 404.
+        assert!(matches!(classify_web_fallback("/repos", false), NotFound));
+        assert!(matches!(classify_web_fallback("/", false), NotFound));
+        assert!(matches!(
+            classify_web_fallback("/arbitrary", true),
+            NotFound
+        ));
+        // Invite landing is orthogonal to the GUI flag.
+        assert!(matches!(
+            classify_web_fallback("/invite/payload.mac", false),
+            SpaIndex
+        ));
     }
 
     #[test]

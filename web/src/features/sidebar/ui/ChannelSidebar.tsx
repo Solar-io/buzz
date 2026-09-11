@@ -33,6 +33,7 @@ import { SectionHeader } from "@/features/sidebar/ui/SectionHeader";
 import { SidebarNavButton } from "@/features/sidebar/ui/SidebarNavButton";
 import { RelayConnectionCard } from "@/features/sidebar/ui/RelayConnectionCard";
 import { SidebarProfileCard } from "@/features/sidebar/ui/SidebarProfileCard";
+import { InstallAppButton } from "@/features/sidebar/ui/InstallAppButton";
 import type { SidebarMenuItem } from "@/features/sidebar/lib/sidebarMenuItem";
 import { cn } from "@/shared/lib/cn";
 
@@ -437,6 +438,7 @@ export function ChannelSidebar({
           </ul>
         )}
       </nav>
+      <InstallAppButton />
       <SidebarProfileCard
         selfPubkey={dmIdentity.selfPubkey}
         profiles={dmIdentity.profiles}

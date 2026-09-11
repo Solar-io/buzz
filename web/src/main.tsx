@@ -45,8 +45,13 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
 
 if ("serviceWorker" in navigator && import.meta.env.PROD) {
   window.addEventListener("load", () => {
-    void navigator.serviceWorker.register("/assets/sw.js").catch(() => {
-      // PWA installability is best-effort; the app works without the SW.
-    });
+    // Root scope: the worker must control the app page for its asset cache
+    // to run at all. The relay answers the script request with
+    // `Service-Worker-Allowed: /` to permit a scope wider than /assets/.
+    void navigator.serviceWorker
+      .register("/assets/sw.js", { scope: "/" })
+      .catch(() => {
+        // PWA installability is best-effort; the app works without the SW.
+      });
   });
 }
