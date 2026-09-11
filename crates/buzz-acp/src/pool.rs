@@ -725,6 +725,13 @@ impl AgentPool {
         })
     }
 
+    /// Whether any slot is checked out (mid-turn) on this channel.
+    pub fn is_channel_checked_out(&self, channel_id: Uuid) -> bool {
+        self.task_map
+            .values()
+            .any(|m| m.channel_id == Some(channel_id))
+    }
+
     /// Count of agents that are alive: idle OR checked out (have a task_map entry).
     ///
     /// Used to detect when all agents have exited so the caller can respawn.

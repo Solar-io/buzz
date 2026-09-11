@@ -1,6 +1,7 @@
 #![deny(unsafe_code)]
 
 mod acp;
+mod claims;
 mod config;
 mod engram_fetch;
 mod filter;
@@ -3739,6 +3740,52 @@ fn dispatch_pending(
             .map(|event| queue::parse_thread_tags(&event.event))
             .unwrap_or_default();
         let affinity_hit = pool.has_session_for(channel_id);
+
+        // Claim-router fold — the "two of me" seam (observed 2026-09-10):
+        // on an affinity miss, Pass 2 of `try_claim` would boot a cold slot
+        // with no conversation state into a channel another seat is already
+        // active in, and the boot then holds a session for the channel too,
+        // so future mentions flip-flop between holder and boot. When the
+        // channel is claimed elsewhere, decline instead:
+        //
+        // - Guard A (in-pool, no I/O): another slot is checked out mid-turn
+        //   on this channel (`task_map`).
+        // - Guard B (cross-process, fail-open): a claims file per the 9/9
+        //   convention (`~/.buzz/WORKING_STATE/<slug>.claims.json` or
+        //   `BUZZ_ACP_CLAIMS_FILE`) holds a live composing/watching claim.
+        //
+        // Both decline by mirroring the `pool_exhausted` path: requeue,
+        // mark_complete, break. `continue` would live-loop — flush_next
+        // re-picks the same oldest batch — so the held batch waits for the
+        // next dispatch_pending call, which the main loop fires on holder
+        // completion, any relay event, or a heartbeat tick with flushable
+        // work. Neither guard fires on an affinity hit (the idle in-pool
+        // holder wins over any claim) or on the heartbeat path, which
+        // bypasses dispatch_pending entirely.
+        if !affinity_hit {
+            let fold_reason = if pool.is_channel_checked_out(channel_id) {
+                Some("in_pool_holder")
+            } else if let Some(claims_path) = claims::resolve_claims_file() {
+                if claims::claim_holds(&claims_path, channel_id) {
+                    Some("claims_file")
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            if let Some(reason) = fold_reason {
+                tracing::debug!(
+                    channel = %channel_id,
+                    reason,
+                    "claim_router: channel held — folding batch back to queue"
+                );
+                queue.requeue_preserve_timestamps(batch);
+                queue.mark_complete(channel_id);
+                break;
+            }
+        }
+
         let mut agent = match pool.try_claim(Some(channel_id)) {
             Some(a) => a,
             None => {
@@ -3813,6 +3860,498 @@ fn dispatch_pending(
         "dispatch_pending"
     );
     dispatched_channels
+}
+
+#[cfg(test)]
+mod claim_router_tests {
+    use super::*;
+    use nostr::{EventBuilder, Keys, Kind};
+    use std::sync::Mutex;
+
+    /// Env-var-touching tests must run serially — env vars are process-global
+    /// (same discipline as `build_mcp_servers_tests`). Only
+    /// `BUZZ_ACP_CLAIMS_FILE` is mutated here; no other test module reads it.
+    static CLAIMS_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Lock the claims env mutex, tolerating poison: a sibling test that
+    /// panicked while holding the lock (a deliberately broken mutation under
+    /// test) must not cascade `PoisonError` failures into unrelated tests.
+    fn claims_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        CLAIMS_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Minimal context for dispatch tests — no owner, no memory, no REST
+    /// backend. The spawned `run_prompt_task` calls against this context are
+    /// irrelevant to the assertions, which read pool/queue state immediately
+    /// after the synchronous `dispatch_pending` return.
+    fn dispatch_test_context() -> PromptContext {
+        let agent_keys = nostr::Keys::generate();
+        let dead_rest = || relay::RestClient {
+            http: reqwest::Client::new(),
+            base_url: "http://127.0.0.1:0".to_string(),
+            keys: agent_keys.clone(),
+            auth_tag_json: None,
+        };
+        PromptContext {
+            mcp_servers: vec![],
+            initial_message: None,
+            idle_timeout: Duration::from_secs(60),
+            max_turn_duration: Duration::from_secs(120),
+            prompt_timezone: chrono_tz::UTC,
+            turn_liveness_interval: Duration::ZERO,
+            dedup_mode: DedupMode::Queue,
+            system_prompt: None,
+            session_title: None,
+            team_instructions: None,
+            shared_instructions: None,
+            heartbeat_prompt: None,
+            base_prompt: None,
+            cwd: ".".to_string(),
+            rest_client: dead_rest(),
+            channel_info: pool::ChannelInfoResolver::new(HashMap::new(), dead_rest()),
+            context_message_limit: 0,
+            max_turns_per_session: 0,
+            permission_mode: config::PermissionMode::Default,
+            agent_keys,
+            agent_owner_pubkey: None,
+            memory_enabled: false,
+            harness_name: "claim-router-test".to_string(),
+            relay_url: "ws://127.0.0.1:3000".to_string(),
+        }
+    }
+
+    /// An idle pool slot whose subprocess never answers. `dispatch_pending`
+    /// only needs the AcpClient to exist for `install_steer_rx` and the
+    /// spawned prompt task; nothing asserts on the child's behavior.
+    async fn idle_agent(index: usize) -> OwnedAgent {
+        let acp = AcpClient::spawn("bash", &["-c".into(), "sleep 60".into()], &[], false)
+            .await
+            .expect("spawn dummy ACP agent");
+        OwnedAgent {
+            index,
+            acp,
+            state: SessionState::default(),
+            model_capabilities: None,
+            desired_model: None,
+            model_overridden: false,
+            desired_model_request_id: None,
+            desired_model_pending_ack: false,
+            startup_effort: None,
+            agent_name: "claim-router-test".into(),
+            goose_system_prompt_supported: None,
+            protocol_version: 1,
+        }
+    }
+
+    fn make_event(content: &str) -> nostr::Event {
+        let keys = Keys::generate();
+        EventBuilder::new(Kind::Custom(9), content)
+            .tags([])
+            .sign_with_keys(&keys)
+            .unwrap()
+    }
+
+    fn queued_at(channel_id: Uuid, content: &str, age: Duration) -> QueuedEvent {
+        QueuedEvent {
+            channel_id,
+            event: make_event(content),
+            received_at: std::time::Instant::now() - age,
+            prompt_tag: "test".into(),
+        }
+    }
+
+    fn queued(channel_id: Uuid, content: &str) -> QueuedEvent {
+        queued_at(channel_id, content, Duration::ZERO)
+    }
+
+    /// Write `body` to a unique temp claims file and return its path.
+    fn write_temp_claims(body: &str) -> std::path::PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("buzz-acp-claim-router-{}.json", Uuid::new_v4()));
+        std::fs::write(&path, body).expect("write temp claims file");
+        path
+    }
+
+    fn composing_body(channel_id: Uuid, age_secs: i64) -> String {
+        let at = (chrono::Utc::now() - chrono::Duration::seconds(age_secs)).to_rfc3339();
+        serde_json::json!({
+            "composing": {"channel": channel_id.to_string(), "at": at}
+        })
+        .to_string()
+    }
+
+    fn watching_body(channel_id: Uuid) -> String {
+        serde_json::json!({"watching": [channel_id.to_string()]}).to_string()
+    }
+
+    /// Backdate a file's mtime by `age` (std `File::set_times`, stable since
+    /// Rust 1.75 — no extra dependency needed for mtime control).
+    fn backdate_mtime(path: &std::path::Path, age: Duration) {
+        let modified = std::time::SystemTime::now() - age;
+        let file = std::fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("open claims file for mtime");
+        file.set_times(std::fs::FileTimes::new().set_modified(modified))
+            .expect("backdate claims file mtime");
+    }
+
+    /// Check out `slot` of `pool` as a mid-turn holder on `channel_id`,
+    /// mirroring what dispatch does for a live task. Returns the held agent
+    /// (kept out of the pool, like a real checked-out slot) and the task id
+    /// registered for it.
+    async fn check_out_holder(
+        pool: &mut AgentPool,
+        channel_id: Uuid,
+    ) -> (OwnedAgent, tokio::task::Id) {
+        let mut holder = pool
+            .try_claim(None)
+            .expect("claim a slot for the holder simulation");
+        holder
+            .state
+            .sessions
+            .insert(channel_id, "holder-session".into());
+        let handle = pool.join_set.spawn(std::future::pending::<()>());
+        let task_id = handle.id();
+        pool.task_map_mut().insert(
+            task_id,
+            pool::TaskMeta {
+                agent_index: holder.index,
+                channel_id: Some(channel_id),
+                turn_id: "holder-turn".into(),
+                recoverable_batch: None,
+                control_tx: None,
+                steer_tx: None,
+                successful_steer_deliveries: HashSet::new(),
+            },
+        );
+        (holder, task_id)
+    }
+
+    fn fresh_queue() -> EventQueue {
+        EventQueue::new(DedupMode::Queue)
+    }
+
+    // ── Guard A ────────────────────────────────────────────────────────────
+
+    /// Spec test 1: Guard A holds the batch. Slot 0 mid-turn on channel C
+    /// (present in task_map, holding C's session), slot 1 idle, batch queued
+    /// for C → the batch must NOT go to slot 1.
+    #[tokio::test]
+    async fn guard_a_holds_batch_while_channel_holder_mid_turn() {
+        let channel_c = Uuid::new_v4();
+        let mut pool =
+            AgentPool::from_slots(vec![Some(idle_agent(0).await), Some(idle_agent(1).await)]);
+        let (_holder, _holder_task) = check_out_holder(&mut pool, channel_c).await;
+
+        // Async setup done — the env lock guards only synchronous code.
+        let _guard = claims_env_lock();
+        std::env::remove_var("BUZZ_ACP_CLAIMS_FILE");
+
+        let mut queue = fresh_queue();
+        assert!(queue.push(queued(channel_c, "hello @agent")));
+
+        let ctx = Arc::new(dispatch_test_context());
+        let mut last_activity = tokio::time::Instant::now();
+        let dispatched = dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity);
+
+        assert!(
+            dispatched.is_empty(),
+            "the held channel must not dispatch to a boot slot"
+        );
+        assert_eq!(
+            pool.task_map().len(),
+            1,
+            "no new task may be spawned — only the holder's"
+        );
+        assert!(pool.any_idle(), "slot 1 must stay idle in its slot");
+        assert_eq!(
+            queue.queued_event_count(&channel_c),
+            1,
+            "the batch must still be queued"
+        );
+        assert!(
+            !queue.is_channel_in_flight(channel_c),
+            "the held channel must not be left marked in-flight"
+        );
+    }
+
+    /// Spec test 2: Guard A releases after the holder returns. Same setup,
+    /// then the holder completes (task_map entry removed, agent returned) →
+    /// the next dispatch claims the returned holder slot (Pass 1 affinity),
+    /// not a boot.
+    #[tokio::test]
+    async fn guard_a_releases_batch_when_holder_returns() {
+        let channel_c = Uuid::new_v4();
+        let mut pool =
+            AgentPool::from_slots(vec![Some(idle_agent(0).await), Some(idle_agent(1).await)]);
+        let (holder, holder_task) = check_out_holder(&mut pool, channel_c).await;
+
+        // Async setup done — the env lock guards only synchronous code.
+        let _guard = claims_env_lock();
+        std::env::remove_var("BUZZ_ACP_CLAIMS_FILE");
+
+        let mut queue = fresh_queue();
+        assert!(queue.push(queued(channel_c, "hello @agent")));
+
+        let ctx = Arc::new(dispatch_test_context());
+        let mut last_activity = tokio::time::Instant::now();
+
+        // Holder mid-turn: batch folds.
+        let dispatched = dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity);
+        assert!(dispatched.is_empty(), "held while the holder is mid-turn");
+
+        // Holder completes: task retires, agent returns to its slot with its
+        // session for C (sessions live on the OwnedAgent, not the pool —
+        // check_out_holder seeded it before checkout).
+        pool.task_map_mut().remove(&holder_task);
+        pool.return_agent(holder);
+
+        let dispatched = dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity);
+        assert_eq!(dispatched.len(), 1, "the batch dispatches after release");
+        assert_eq!(
+            queue.queued_event_count(&channel_c),
+            0,
+            "queue drains after release"
+        );
+        assert_eq!(pool.task_map().len(), 1, "exactly one prompt task now");
+        let claimed_index = pool
+            .task_map()
+            .values()
+            .next()
+            .expect("prompt task present")
+            .agent_index;
+        assert_eq!(
+            claimed_index, 0,
+            "Pass 1 affinity must claim the returned holder (slot 0), not the boot (slot 1)"
+        );
+    }
+
+    /// Spec test 3: other channels are not starved. C held mid-turn, D free
+    /// with an idle slot → D dispatches in the same `dispatch_pending` call.
+    /// flush_next picks the channel with the oldest head event, so D is aged
+    /// older than C — this is the ordering in which a held channel can never
+    /// precede a dispatchable one in the fairness queue.
+    #[tokio::test]
+    async fn guard_a_does_not_starve_other_channels() {
+        let channel_c = Uuid::new_v4();
+        let channel_d = Uuid::new_v4();
+        let mut pool =
+            AgentPool::from_slots(vec![Some(idle_agent(0).await), Some(idle_agent(1).await)]);
+        let (_holder, _holder_task) = check_out_holder(&mut pool, channel_c).await;
+
+        // Async setup done — the env lock guards only synchronous code.
+        let _guard = claims_env_lock();
+        std::env::remove_var("BUZZ_ACP_CLAIMS_FILE");
+
+        let mut queue = fresh_queue();
+        assert!(queue.push(queued_at(
+            channel_d,
+            "older event for D",
+            Duration::from_secs(120)
+        )));
+        assert!(queue.push(queued(channel_c, "newer event for C")));
+
+        let ctx = Arc::new(dispatch_test_context());
+        let mut last_activity = tokio::time::Instant::now();
+        let dispatched = dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity);
+
+        assert_eq!(dispatched.len(), 1, "exactly D dispatches");
+        assert_eq!(dispatched[0].0, channel_d, "D dispatches in the same call");
+        assert_eq!(queue.queued_event_count(&channel_d), 0, "D's queue drains");
+        assert_eq!(
+            queue.queued_event_count(&channel_c),
+            1,
+            "C's batch stays queued, not dropped, while held"
+        );
+        assert!(
+            !queue.is_channel_in_flight(channel_c),
+            "held C must not be left in-flight"
+        );
+        assert_eq!(pool.task_map().len(), 2, "holder task + D's prompt task");
+    }
+
+    // ── Guard B ────────────────────────────────────────────────────────────
+
+    /// Spec test 4: Guard B composing fold. Fresh `composing` on C (affinity
+    /// miss, pool idle) → held; same file with `at` 11 minutes old →
+    /// dispatches.
+    #[tokio::test]
+    async fn guard_b_folds_on_fresh_composing_claim() {
+        let channel_c = Uuid::new_v4();
+        let agent = idle_agent(0).await;
+
+        // Async setup done — the env lock guards only synchronous code.
+        let _guard = claims_env_lock();
+        let claims_path = write_temp_claims(&composing_body(channel_c, 60));
+        std::env::set_var("BUZZ_ACP_CLAIMS_FILE", &claims_path);
+
+        let mut pool = AgentPool::from_slots(vec![Some(agent)]);
+        let mut queue = fresh_queue();
+        assert!(queue.push(queued(channel_c, "hello @agent")));
+        let ctx = Arc::new(dispatch_test_context());
+        let mut last_activity = tokio::time::Instant::now();
+
+        let dispatched = dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity);
+        assert!(dispatched.is_empty(), "fresh composing claim must hold");
+        assert!(pool.any_idle(), "the idle slot must not be claimed");
+        assert_eq!(
+            queue.queued_event_count(&channel_c),
+            1,
+            "batch still queued"
+        );
+
+        // Stale composing (11 minutes): no claim, dispatch normally.
+        std::fs::write(&claims_path, composing_body(channel_c, 11 * 60))
+            .expect("rewrite claims file with stale composing");
+        let dispatched = dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity);
+        assert_eq!(dispatched.len(), 1, "stale composing claim must not hold");
+        assert_eq!(queue.queued_event_count(&channel_c), 0, "queue drains");
+
+        std::env::remove_var("BUZZ_ACP_CLAIMS_FILE");
+        let _ = std::fs::remove_file(&claims_path);
+    }
+
+    /// Spec test 5: Guard B watching fold + staleness. `watching` contains C,
+    /// file mtime now → held; mtime 16 minutes old → dispatches.
+    #[tokio::test]
+    async fn guard_b_watching_fold_and_staleness() {
+        let channel_c = Uuid::new_v4();
+        let agent = idle_agent(0).await;
+
+        // Async setup done — the env lock guards only synchronous code.
+        let _guard = claims_env_lock();
+        let claims_path = write_temp_claims(&watching_body(channel_c));
+        std::env::set_var("BUZZ_ACP_CLAIMS_FILE", &claims_path);
+
+        let mut pool = AgentPool::from_slots(vec![Some(agent)]);
+        let mut queue = fresh_queue();
+        assert!(queue.push(queued(channel_c, "hello @agent")));
+        let ctx = Arc::new(dispatch_test_context());
+        let mut last_activity = tokio::time::Instant::now();
+
+        let dispatched = dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity);
+        assert!(dispatched.is_empty(), "watching with fresh mtime must hold");
+        assert_eq!(
+            queue.queued_event_count(&channel_c),
+            1,
+            "batch still queued"
+        );
+
+        // Stale heartbeat (mtime 16 minutes): the claim went dead.
+        backdate_mtime(&claims_path, Duration::from_secs(16 * 60));
+        let dispatched = dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity);
+        assert_eq!(
+            dispatched.len(),
+            1,
+            "watching claim with stale mtime must not hold"
+        );
+        assert_eq!(queue.queued_event_count(&channel_c), 0, "queue drains");
+
+        std::env::remove_var("BUZZ_ACP_CLAIMS_FILE");
+        let _ = std::fs::remove_file(&claims_path);
+    }
+
+    /// Spec test 6: Guard B fails open. Malformed JSON → dispatches, no
+    /// panic; missing file → dispatches.
+    #[tokio::test]
+    async fn guard_b_fails_open_on_malformed_and_missing_files() {
+        let channel_c = Uuid::new_v4();
+        let agent_a = idle_agent(0).await;
+        let agent_b = idle_agent(0).await;
+
+        // Async setup done — the env lock guards only synchronous code.
+        let _guard = claims_env_lock();
+        let claims_path = write_temp_claims("{ this is not json ");
+        std::env::set_var("BUZZ_ACP_CLAIMS_FILE", &claims_path);
+
+        let mut pool = AgentPool::from_slots(vec![Some(agent_a)]);
+        let mut queue = fresh_queue();
+        assert!(queue.push(queued(channel_c, "hello @agent")));
+        let ctx = Arc::new(dispatch_test_context());
+        let mut last_activity = tokio::time::Instant::now();
+
+        let dispatched = dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity);
+        assert_eq!(
+            dispatched.len(),
+            1,
+            "malformed claims file must read as no claim"
+        );
+        assert_eq!(queue.queued_event_count(&channel_c), 0, "queue drains");
+
+        // Missing file: same fail-open, on a fresh pool.
+        let missing = std::env::temp_dir().join(format!(
+            "buzz-acp-claim-router-missing-{}.json",
+            Uuid::new_v4()
+        ));
+        std::env::set_var("BUZZ_ACP_CLAIMS_FILE", &missing);
+        let mut pool = AgentPool::from_slots(vec![Some(agent_b)]);
+        let mut queue = fresh_queue();
+        assert!(queue.push(queued(channel_c, "hello again @agent")));
+        let dispatched = dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity);
+        assert_eq!(
+            dispatched.len(),
+            1,
+            "missing claims file must read as no claim"
+        );
+        assert_eq!(queue.queued_event_count(&channel_c), 0, "queue drains");
+
+        std::env::remove_var("BUZZ_ACP_CLAIMS_FILE");
+        let _ = std::fs::remove_file(&claims_path);
+    }
+
+    /// Spec test 7: an affinity hit bypasses Guard B. A fresh composing claim
+    /// on C AND an idle in-pool slot already holding C's session → dispatch
+    /// to that slot immediately; the file must not delay it.
+    #[tokio::test]
+    async fn affinity_hit_bypasses_guard_b() {
+        let channel_c = Uuid::new_v4();
+        let mut holder = idle_agent(0).await;
+        holder
+            .state
+            .sessions
+            .insert(channel_c, "holder-session".into());
+
+        // Async setup done — the env lock guards only synchronous code.
+        let _guard = claims_env_lock();
+        let claims_path = write_temp_claims(&composing_body(channel_c, 30));
+        std::env::set_var("BUZZ_ACP_CLAIMS_FILE", &claims_path);
+
+        let mut pool = AgentPool::from_slots(vec![Some(holder)]);
+
+        let mut queue = fresh_queue();
+        assert!(queue.push(queued(channel_c, "hello @agent")));
+        let ctx = Arc::new(dispatch_test_context());
+        let mut last_activity = tokio::time::Instant::now();
+
+        let dispatched = dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity);
+        assert_eq!(
+            dispatched.len(),
+            1,
+            "an in-pool affinity hit must beat a live file claim"
+        );
+        assert_eq!(queue.queued_event_count(&channel_c), 0, "queue drains");
+        assert_eq!(
+            pool.task_map().len(),
+            1,
+            "the holder slot's task is spawned"
+        );
+        let claimed_index = pool
+            .task_map()
+            .values()
+            .next()
+            .expect("prompt task present")
+            .agent_index;
+        assert_eq!(
+            claimed_index, 0,
+            "dispatch goes to the session-holding slot"
+        );
+
+        std::env::remove_var("BUZZ_ACP_CLAIMS_FILE");
+        let _ = std::fs::remove_file(&claims_path);
+    }
 }
 
 /// Returns `true` when `error` is a non-retryable authentication failure.
