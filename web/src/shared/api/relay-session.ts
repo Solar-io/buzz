@@ -52,6 +52,11 @@ export interface RelaySessionOptions {
    * visibility/online wake triggers still apply). Default 30s.
    */
   livenessIntervalMs?: number;
+  /**
+   * Cadence of the subscription health sweep — re-REQs active subscriptions
+   * that are not open on a live socket. 0 disables. Default 60s.
+   */
+  healthSweepIntervalMs?: number;
   /** Delay before auth-race retry N (1-based). Default: exponential backoff. */
   authRetryDelayMs?: (attempt: number) => number;
   onStatusChange?: (status: RelaySessionStatus) => void;
@@ -96,6 +101,18 @@ const UNPACED_REPLAY_MAX = 8;
  * they were published).
  */
 const DEFAULT_LIVENESS_INTERVAL_MS = 30_000;
+/**
+ * Subscription health sweep: a sub can die WITHOUT the socket dying — a
+ * transient CLOSED (auth race / rate-limit) that exhausts its retry budget,
+ * or any other death that leaves the sub closed while the connection stays
+ * up. The liveness probe never fires in that state: it only watches socket
+ * silence, and steady traffic keeps the socket fed, so nothing replays the
+ * dead sub until a manual reload (live incident 2026-09-11: a days-old
+ * backgrounded PWA showed "Connected" while unread badges and status tags
+ * went stale until refreshed). The sweep reconciles activeSubs against
+ * openSubs on a live socket and re-REQs the dead ones.
+ */
+const DEFAULT_HEALTH_SWEEP_INTERVAL_MS = 60_000;
 /** Visible tab: reconnect after this much total silence. */
 const VISIBLE_STALE_MS = 60_000;
 /**
@@ -200,12 +217,20 @@ export class RelaySession {
   private readonly livenessIntervalMs: number;
   private readonly authRetryDelayMsFn: (attempt: number) => number;
   private livenessTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly healthSweepIntervalMs: number;
+  private healthSweepTimer: ReturnType<typeof setInterval> | null = null;
   /** Wall-clock of the last frame received on the CURRENT socket. */
   private lastMessageAt: number | null = null;
   private wakeListenersAttached = false;
   private onlineListenerAttached = false;
   /** Auth-race retry attempt count per subId (reset on socket teardown). */
   private readonly authRetryAttempts = new Map<string, number>();
+  /**
+   * SubIds the relay closed for a NON-transient reason (policy etc.) — the
+   * health sweep must not fight a deliberate close by re-REQing forever.
+   * Cleared per-socket like the rest of the close-path state.
+   */
+  private readonly policyClosedSubs = new Set<string>();
   /** Resolvers for EVENTs awaiting OK, by event id. */
   private readonly publishWaiters = new Map<
     string,
@@ -228,6 +253,8 @@ export class RelaySession {
     this.nowMs = options.nowMs ?? (() => Date.now());
     this.livenessIntervalMs =
       options.livenessIntervalMs ?? DEFAULT_LIVENESS_INTERVAL_MS;
+    this.healthSweepIntervalMs =
+      options.healthSweepIntervalMs ?? DEFAULT_HEALTH_SWEEP_INTERVAL_MS;
     this.authRetryDelayMsFn = options.authRetryDelayMs ?? authRetryDelayMs;
     this.onStatusChange = options.onStatusChange;
   }
@@ -264,6 +291,12 @@ export class RelaySession {
         this.livenessIntervalMs,
       );
     }
+    if (this.healthSweepIntervalMs > 0 && !this.healthSweepTimer) {
+      this.healthSweepTimer = setInterval(
+        () => this.sweepSubscriptions(),
+        this.healthSweepIntervalMs,
+      );
+    }
     if (!this.wakeListenersAttached && typeof document !== "undefined") {
       document.addEventListener("visibilitychange", this.handleWake);
       this.wakeListenersAttached = true;
@@ -279,6 +312,10 @@ export class RelaySession {
       clearInterval(this.livenessTimer);
       this.livenessTimer = null;
     }
+    if (this.healthSweepTimer) {
+      clearInterval(this.healthSweepTimer);
+      this.healthSweepTimer = null;
+    }
     if (this.wakeListenersAttached && typeof document !== "undefined") {
       document.removeEventListener("visibilitychange", this.handleWake);
       this.wakeListenersAttached = false;
@@ -291,7 +328,44 @@ export class RelaySession {
 
   private readonly handleWake = (): void => {
     this.probeLiveness();
+    // Waking (tab visible again / network online) is also the moment a
+    // long-backgrounded page is finally LOOKED at — reconcile subscriptions
+    // immediately instead of making the user wait out the sweep interval
+    // (the 2026-09-11 PWA incident: stale-on-open even though "Connected").
+    this.sweepSubscriptions();
   };
+
+  /**
+   * Re-REQ every active subscription that is not open on the current socket.
+   * Covers subs killed by a transient CLOSED whose retry budget ran out (and
+   * the budget entry itself — a fresh REQ gets a fresh budget) and any other
+   * active-but-closed state, WITHOUT needing the socket to die first. Skips
+   * subs the relay deliberately closed for policy reasons, and stands down
+   * while a paced replay is mid-flight so the sweep cannot burst-open what
+   * the pacing means to stagger (the slow-client protection).
+   */
+  private sweepSubscriptions(): void {
+    // Pre-auth, the auth handshake + its paced replay own the opening
+    // schedule — sweeping here would bypass both (and eat auth-race
+    // CLOSEDs for nothing).
+    if (!this.socket || !this.authenticated || this.manualClose) {
+      return;
+    }
+    if (this.replayPaceTimers.size > 0) {
+      return;
+    }
+    for (const [subId, sub] of this.activeSubs) {
+      if (this.openSubs.has(subId) || this.policyClosedSubs.has(subId)) {
+        continue;
+      }
+      // A pending auth-race retry may also fire; a duplicate REQ under the
+      // same sub id just replaces the filter, and the retry's own send is
+      // guarded by openSubs — so at most one REQ lands either way.
+      this.openSubs.set(subId, sub);
+      this.authRetryAttempts.delete(subId);
+      this.socket.send(reqFrame(subId, sub.filter));
+    }
+  }
 
   private probeLiveness(): void {
     if (this.manualClose || !this.socket) {
@@ -397,6 +471,9 @@ export class RelaySession {
           reason.includes("auth-required") || reason.includes("rate-limited");
         if (this.authenticated && transient) {
           this.scheduleAuthRetry(subId);
+        } else if (!transient) {
+          // Deliberate close — the health sweep must not re-open it forever.
+          this.policyClosedSubs.add(subId);
         }
       }
       return;
@@ -613,6 +690,7 @@ export class RelaySession {
     this.lastMessageAt = null;
     this.openSubs.clear();
     this.authRetryAttempts.clear();
+    this.policyClosedSubs.clear();
     for (const timer of this.replayPaceTimers) {
       clearTimeout(timer);
     }
@@ -671,6 +749,7 @@ export class RelaySession {
     return () => {
       this.activeSubs.delete(subId);
       this.authRetryAttempts.delete(subId);
+      this.policyClosedSubs.delete(subId);
       if (this.openSubs.delete(subId)) {
         this.socket?.send(JSON.stringify(["CLOSE", subId]));
       }

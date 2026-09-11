@@ -13,6 +13,16 @@ import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 const unreadCountInFlight = new Set<string>();
 
 /**
+ * Safety valve for the in-flight guard: a REQ that dies before its EOSE
+ * (socket dropped mid-query) must not leave its key in the set forever — a
+ * leaked key makes every future run for the same (channel, marker) skip
+ * re-subscribing, freezing the badge at its last value until a full page
+ * reload (live incident 2026-09-11: days-old backgrounded PWA, badges
+ * frozen though the socket showed Connected).
+ */
+const IN_FLIGHT_TIMEOUT_MS = 15_000;
+
+/**
  * Count the peer's unseen messages in one DM.
  *
  * @param channelId - DM channel to count in; null skips the REQ.
@@ -38,6 +48,10 @@ export function useUnreadCount(
     }
     unreadCountInFlight.add(key);
     let seen = 0;
+    const leakValve = setTimeout(
+      () => unreadCountInFlight.delete(key),
+      IN_FLIGHT_TIMEOUT_MS,
+    );
     const unsubscribe = session.subscribe(
       { kinds: [9], "#h": [channelId], since: lastSeenAt, limit: 200 },
       {
@@ -48,11 +62,16 @@ export function useUnreadCount(
           }
         },
         onEose: () => {
+          clearTimeout(leakValve);
           unreadCountInFlight.delete(key);
           unsubscribe();
         },
       },
     );
+    return () => {
+      clearTimeout(leakValve);
+      unsubscribe();
+    };
   }, [channelId, lastSeenAt, selfPubkey, session]);
   return count;
 }

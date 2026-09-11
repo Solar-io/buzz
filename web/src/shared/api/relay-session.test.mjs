@@ -667,3 +667,114 @@ test("an unrelated NOTICE does not fail an in-flight publish", async () => {
   assert.equal(result.message, "accepted");
   session.close();
 });
+
+test("health sweep: a retry-exhausted sub on a live socket is re-REQd without a reconnect (2026-09-11 PWA incident)", async () => {
+  // The incident shape: the socket stays Connected (steady traffic keeps the
+  // liveness probe fed), but a transient CLOSED burned the sub's whole retry
+  // budget. Old behavior: the sub stayed dead until a manual reload — the
+  // sweep must heal it within one interval.
+  const { session } = makeSession({
+    authRetryDelayMs: () => 1,
+    healthSweepIntervalMs: 50,
+    livenessIntervalMs: 0,
+  });
+  const events = [];
+  const unsub = session.subscribe({ kinds: [9] }, { onEvent: (e) => events.push(e) });
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  await tick(10);
+  socket.serverSend(["AUTH", "c1"]);
+  await tick(10);
+  // Burn the whole retry budget FAST (6 CLOSEDs > AUTH_RETRY_MAX_ATTEMPTS,
+  // ~1ms retry delays) so the burn completes inside one 50ms sweep interval
+  // and the end state is deterministic: dead sub, budget exhausted, socket alive.
+  for (let i = 0; i < 6; i++) {
+    socket.serverSend(["CLOSED", "s0", "auth-required: raced"]);
+    await tick(1);
+  }
+  await tick(10); // settle the final 1ms retry timers
+  // ...and keep the socket visibly ALIVE so the liveness probe would never fire:
+  socket.serverSend(["NOTICE", "fleet chatter keeps this socket fed"]);
+  const marker = socket.sentOf("REQ").length;
+  await tick(200); // ≥3 sweep intervals
+  assert.ok(
+    socket.sentOf("REQ").length > marker,
+    `sweep must re-REQ a retry-exhausted sub (marker=${marker}, now=${socket.sentOf("REQ").length})`,
+  );
+  // And the healed sub delivers again.
+  socket.serverSend(["EVENT", "s0", { id: "e1", kind: 9, pubkey: "aa".repeat(32), created_at: 2, tags: [], content: "healed", sig: "ff".repeat(64) }]);
+  assert.equal(events.length, 1);
+  unsub();
+  session.close();
+});
+
+test("health sweep: a policy-closed sub is NOT resurrected", async () => {
+  const { session } = makeSession({
+    authRetryDelayMs: () => 1,
+    healthSweepIntervalMs: 15,
+    livenessIntervalMs: 0,
+  });
+  const unsub = session.subscribe({ kinds: [9] }, { onEvent: () => {} });
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  await tick(10);
+  socket.serverSend(["AUTH", "c1"]);
+  await tick(10);
+  const afterAuth = socket.sentOf("REQ").length;
+  socket.serverSend(["CLOSED", "s0", "restricted: not a channel member"]);
+  await tick(80);
+  assert.equal(
+    socket.sentOf("REQ").length,
+    afterAuth,
+    "a deliberate (policy) close must stay closed across sweeps",
+  );
+  unsub();
+  session.close();
+});
+
+test("health sweep stands down while a paced replay is in flight", async () => {
+  // >UNPACED_REPLAY_MAX subs on (re)connect ⇒ paced opens; a sweep firing
+  // mid-replay must not burst-open the not-yet-opened remainder. A long auth
+  // grace keeps the pre-AUTH window free of the grace flush, so the only
+  // thing that COULD open subs there is an overzealous sweep.
+  const { session } = makeSession({
+    healthSweepIntervalMs: 5,
+    livenessIntervalMs: 0,
+    authGraceMs: 10_000,
+  });
+  const unsubs = [];
+  for (let i = 0; i < 12; i++) {
+    unsubs.push(session.subscribe({ kinds: [9], "#h": [`ch${i}`] }, { onEvent: () => {} }));
+  }
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  try {
+    // Before AUTH: subs are queued for the post-auth replay (paced). Sweeps
+    // fire during this window (every 5ms) and must send NOTHING.
+    await tick(60);
+    assert.equal(
+      socket.sentOf("REQ").length,
+      0,
+      "sweep must not bypass the auth handshake or replay pacing",
+    );
+    socket.serverSend(["AUTH", "c1"]);
+    // Post-auth: the paced replay opens subs at 120ms intervals. 50ms in,
+    // ONLY the first has opened — a sweep that ignores pacing would have
+    // burst-opened all 12 by then (5ms sweep cadence vs 1.4s of pacing).
+    await tick(50);
+    assert.equal(
+      socket.sentOf("REQ").length,
+      1,
+      "sweep must not burst-open subs the replay pacing means to stagger",
+    );
+    // ...and the paced replay opens all 12 (12 × 120ms pacing ≈ 1.4s).
+    await tick(2_000);
+    assert.equal(socket.sentOf("REQ").length, 12);
+  } finally {
+    for (const u of unsubs) u();
+    session.close();
+  }
+});
