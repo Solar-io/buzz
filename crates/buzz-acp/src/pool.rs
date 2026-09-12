@@ -77,6 +77,13 @@ pub struct TaskMeta {
     /// live session. The session ID prevents a late ack from contaminating a
     /// replacement session after task return.
     pub successful_steer_deliveries: HashSet<SuccessfulSteerDelivery>,
+    /// When this turn was dispatched — the `started_at` stamp in the claims
+    /// writer's `managed.turns` entry (see `claims_writer`).
+    pub started_at: std::time::SystemTime,
+    /// The ACP session id the slot held for this channel at dispatch time, if
+    /// any (cold boots have none yet). Carried into the turn claim so
+    /// cross-session arbitration can name the exact session.
+    pub acp_session: Option<String>,
 }
 
 /// Agent-level model capabilities. Populated on first session creation.

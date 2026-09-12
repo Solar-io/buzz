@@ -2,6 +2,7 @@
 
 mod acp;
 mod claims;
+mod claims_writer;
 mod config;
 mod engram_fetch;
 mod filter;
@@ -2324,6 +2325,15 @@ async fn tokio_main() -> Result<()> {
     let maintenance_interval = Duration::from_secs(30);
     let mut last_maintenance = std::time::Instant::now();
 
+    // Claims-writer state (send-path gate ground truth): change-detected sync
+    // at the top of each iteration plus a 60 s pulse that re-stamps
+    // `last_seen_at` for live turns. All on this loop's thread of control.
+    let mut claims_sync = claims_writer::ClaimsSyncState::new();
+    let mut claims_pulse = tokio::time::interval_at(
+        tokio::time::Instant::now() + Duration::from_secs(claims_writer::PULSE_SECS),
+        Duration::from_secs(claims_writer::PULSE_SECS),
+    );
+
     // Channel for background respawn tasks to return completed agents.
     // Bounded to agent count — at most one respawn per slot in flight.
     let (respawn_tx, mut respawn_rx) = mpsc::channel::<RespawnResult>(config.agents as usize);
@@ -2421,6 +2431,13 @@ async fn tokio_main() -> Result<()> {
     }
 
     loop {
+        // Claims-writer sync point: every `task_map` mutation in this loop
+        // (dispatch insert in dispatch_pending, turn-end removal in
+        // handle_prompt_result, panic recovery) happened in a previous
+        // iteration's select arm, so one fingerprint-compared write here
+        // covers all of them without touching those pinned functions.
+        claims_sync.sync_on_change(&pool);
+
         // Whether buffered work is waiting on a lazy pool. Also gates the
         // retry-deadline sleep arm below: a `Failed` lifecycle keeps its
         // (possibly past) `retry_at` until the next wake, so sleeping on it
@@ -2475,7 +2492,10 @@ async fn tokio_main() -> Result<()> {
                 tracing::info!(agent = idx, "slot refill: spawning background respawn");
                 let cmd = config.agent_command.clone();
                 let args = config.agent_args.clone();
-                let env = config.persona_env_vars.clone();
+                // Harness-owned slot pin: the child's `buzz` CLI sends carry
+                // `BUZZ_ACP_SESSION_ID` so the send-path gate can tell this
+                // slot from a sibling pool's.
+                let env = claims_writer::session_env(config.persona_env_vars.clone(), idx);
                 let has_codex = config.has_generated_codex_config;
                 let observer = observer.clone();
                 let guard = RespawnGuard::new(idx, respawn_tx.clone());
@@ -3154,6 +3174,14 @@ async fn tokio_main() -> Result<()> {
                     }
                     None
                 }
+                // Claims-writer pulse: keep `last_seen_at` fresh for every
+                // live turn so a long-running one never decays out of the
+                // CLI's send-path gate. No-op on an idle pool (no churn).
+                _ = claims_pulse.tick() => {
+                    let _ = result_rx;
+                    claims_sync.pulse(&pool);
+                    None
+                }
                 _ = shutdown_rx.changed() => {
                     tracing::info!("shutting down");
                     break;
@@ -3822,6 +3850,11 @@ fn dispatch_pending(
         let result_tx = pool.result_tx();
         let ctx_clone = Arc::clone(ctx);
         let agent_index = agent.index;
+        // The ACP session this slot already holds for the channel, if any —
+        // captured before the agent moves into the prompt task (a cold boot
+        // has none yet). Carried into the turn claim for arbitration.
+        let acp_session = agent.state.sessions.get(&channel_id).cloned();
+        let started_at = std::time::SystemTime::now();
 
         // Mid-turn non-cancelling steer seam: install the per-turn steer
         // receiver on the read loop so the main loop's mode-gate fork
@@ -3865,6 +3898,8 @@ fn dispatch_pending(
                 control_tx: Some(control_tx),
                 steer_tx,
                 successful_steer_deliveries: HashSet::new(),
+                started_at,
+                acp_session,
             },
         );
         dispatched_channels.push((channel_id, typing_scope));
@@ -3878,16 +3913,18 @@ fn dispatch_pending(
     dispatched_channels
 }
 
+/// Serializes every test module that touches claims-file env vars
+/// (`BUZZ_ACP_CLAIMS_FILE`, `BUZZ_ACP_CLAIMS_WRITER`) — env vars are
+/// process-global, so `claim_router_tests` and `claims_writer::tests` take
+/// this one shared lock rather than each holding a private one that cannot
+/// exclude the other.
+#[cfg(test)]
+pub(crate) static CLAIMS_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod claim_router_tests {
     use super::*;
     use nostr::{EventBuilder, Keys, Kind};
-    use std::sync::Mutex;
-
-    /// Env-var-touching tests must run serially — env vars are process-global
-    /// (same discipline as `build_mcp_servers_tests`). Only
-    /// `BUZZ_ACP_CLAIMS_FILE` is mutated here; no other test module reads it.
-    static CLAIMS_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// Lock the claims env mutex, tolerating poison: a sibling test that
     /// panicked while holding the lock (a deliberately broken mutation under
@@ -4041,6 +4078,8 @@ mod claim_router_tests {
                 control_tx: None,
                 steer_tx: None,
                 successful_steer_deliveries: HashSet::new(),
+                started_at: std::time::SystemTime::now(),
+                acp_session: None,
             },
         );
         (holder, task_id)
@@ -4898,7 +4937,8 @@ fn recover_panicked_agent(
     slot.respawn_in_flight = true;
     let cmd = config.agent_command.clone();
     let args = config.agent_args.clone();
-    let env = config.persona_env_vars.clone();
+    // Harness-owned slot pin — see the slot-refill path for why.
+    let env = claims_writer::session_env(config.persona_env_vars.clone(), i);
     let has_codex = config.has_generated_codex_config;
     let guard = RespawnGuard::new(i, respawn_tx.clone());
     respawn_tasks.spawn(async move {
@@ -4993,6 +5033,9 @@ fn dispatch_heartbeat(
             control_tx: None,
             steer_tx: None,
             successful_steer_deliveries: HashSet::new(),
+            started_at: std::time::SystemTime::now(),
+            // Heartbeat turns gate no channel — no session to name.
+            acp_session: None,
         },
     );
     *heartbeat_in_flight = true;
@@ -5139,7 +5182,8 @@ fn spawn_respawn_task(
     // Spawn the actual work (shutdown + sleep + spawn + init) off the main loop.
     let cmd = config.agent_command.clone();
     let args = config.agent_args.clone();
-    let env = config.persona_env_vars.clone();
+    // Harness-owned slot pin — see the slot-refill path for why.
+    let env = claims_writer::session_env(config.persona_env_vars.clone(), index);
     let has_codex = config.has_generated_codex_config;
     let guard = RespawnGuard::new(index, respawn_tx.clone());
     respawn_tasks.spawn(async move {
@@ -5224,10 +5268,13 @@ async fn initialize_agent_pool(
     // Attempt each spawn under a 60-second timeout; a partial pool is valid.
     let mut agent_slots: Vec<Option<OwnedAgent>> = Vec::with_capacity(startup.agents as usize);
     for i in 0..startup.agents as usize {
+        // Harness-owned slot pin (BUZZ_ACP_SESSION_ID), per slot — see
+        // claims_writer::session_env.
+        let extra_env = claims_writer::session_env(startup.extra_env.clone(), i);
         let spawn_result = AcpClient::spawn(
             &startup.command,
             &startup.args,
-            &startup.extra_env,
+            &extra_env,
             startup.has_generated_codex_config,
         )
         .await;
@@ -5819,6 +5866,8 @@ mod owner_control_command_tests {
                 control_tx: Some(control_tx),
                 steer_tx: None,
                 successful_steer_deliveries: HashSet::new(),
+                started_at: std::time::SystemTime::now(),
+                acp_session: None,
             },
         );
 
@@ -7687,6 +7736,8 @@ mod error_outcome_emission_tests {
                         session_id: "live-session".into(),
                     },
                 ]),
+                started_at: std::time::SystemTime::now(),
+                acp_session: None,
             },
         );
 
@@ -7759,6 +7810,8 @@ mod error_outcome_emission_tests {
                         session_id: "old-session".into(),
                     },
                 ]),
+                started_at: std::time::SystemTime::now(),
+                acp_session: None,
             },
         );
 
@@ -7874,6 +7927,8 @@ mod error_outcome_emission_tests {
                         session_id: "invalidated-session".into(),
                     },
                 ]),
+                started_at: std::time::SystemTime::now(),
+                acp_session: None,
             },
         );
         let mut queue = EventQueue::new(config::DedupMode::Queue);
@@ -7934,6 +7989,8 @@ mod error_outcome_emission_tests {
                 control_tx: None,
                 steer_tx: None,
                 successful_steer_deliveries: HashSet::new(),
+                started_at: std::time::SystemTime::now(),
+                acp_session: None,
             },
         );
 
@@ -8011,6 +8068,8 @@ mod error_outcome_emission_tests {
                 control_tx: None,
                 steer_tx: None,
                 successful_steer_deliveries: HashSet::new(),
+                started_at: std::time::SystemTime::now(),
+                acp_session: None,
             },
         );
         started_rx.await.unwrap();
@@ -8104,6 +8163,8 @@ mod error_outcome_emission_tests {
                     control_tx: None,
                     steer_tx: None,
                     successful_steer_deliveries: HashSet::new(),
+                    started_at: std::time::SystemTime::now(),
+                    acp_session: None,
                 },
             );
             let mut queue = EventQueue::new(config::DedupMode::Queue);
@@ -8196,6 +8257,8 @@ mod error_outcome_emission_tests {
                     control_tx: None,
                     steer_tx: None,
                     successful_steer_deliveries: HashSet::new(),
+                    started_at: std::time::SystemTime::now(),
+                    acp_session: None,
                 },
             );
             let mut queue = EventQueue::new(config::DedupMode::Queue);
@@ -8302,6 +8365,8 @@ mod error_outcome_emission_tests {
                     control_tx: None,
                     steer_tx: None,
                     successful_steer_deliveries: HashSet::new(),
+                    started_at: std::time::SystemTime::now(),
+                    acp_session: None,
                 },
             );
             let mut queue = EventQueue::new(config::DedupMode::Queue);
@@ -8379,6 +8444,8 @@ mod error_outcome_emission_tests {
                 control_tx: None,
                 steer_tx: None,
                 successful_steer_deliveries: HashSet::new(),
+                started_at: std::time::SystemTime::now(),
+                acp_session: None,
             },
         );
         let mut queue = EventQueue::new(config::DedupMode::Queue);
@@ -8474,6 +8541,8 @@ mod error_outcome_emission_tests {
                 control_tx: None,
                 steer_tx: None,
                 successful_steer_deliveries: HashSet::new(),
+                started_at: std::time::SystemTime::now(),
+                acp_session: None,
             },
         );
         let config = test_config();
@@ -8591,6 +8660,8 @@ mod error_outcome_emission_tests {
                 control_tx: None,
                 steer_tx: None,
                 successful_steer_deliveries: HashSet::new(),
+                started_at: std::time::SystemTime::now(),
+                acp_session: None,
             },
         );
         let mut queue = EventQueue::new(config::DedupMode::Queue);
@@ -8731,6 +8802,8 @@ mod error_outcome_emission_tests {
                 control_tx: None,
                 steer_tx: None,
                 successful_steer_deliveries: HashSet::new(),
+                started_at: std::time::SystemTime::now(),
+                acp_session: None,
             },
         );
         let mut queue = EventQueue::new(config::DedupMode::Queue);
@@ -8920,6 +8993,8 @@ mod error_outcome_emission_tests {
                 control_tx: None,
                 steer_tx: None,
                 successful_steer_deliveries: HashSet::new(),
+                started_at: std::time::SystemTime::now(),
+                acp_session: None,
             },
         );
         let mut queue = EventQueue::new(config::DedupMode::Queue);
@@ -9006,6 +9081,8 @@ mod error_outcome_emission_tests {
                 control_tx: None,
                 steer_tx: None,
                 successful_steer_deliveries: HashSet::new(),
+                started_at: std::time::SystemTime::now(),
+                acp_session: None,
             },
         );
         let mut queue = EventQueue::new(config::DedupMode::Queue);
