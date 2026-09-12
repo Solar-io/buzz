@@ -516,6 +516,16 @@ impl AcpClient {
             cmd.env("CODEX_CONFIG", merged);
         }
 
+        // Session identity for the one-voice send gate: each agent process
+        // self-identifies so the CLI can bounce a second session's sends into
+        // a channel another live session of this agent just spoke in (the
+        // 2026-09-11 duet shape — two legally-dispatched sessions, one voice
+        // each, racing 15s apart). A pinned value in `extra_env` (tests) or
+        // the parent environment wins over the generated id.
+        if let Some(session_id) = session_env_injection(extra_env) {
+            cmd.env("BUZZ_ACP_SESSION_ID", session_id);
+        }
+
         // Spawn the agent in its own process group so SIGKILL doesn't propagate
         // to the harness's own process group on Unix.
         // tokio::process::Command::process_group is a stable tokio API (no extra imports needed).
@@ -2348,9 +2358,43 @@ fn configure_no_window(cmd: &mut tokio::process::Command) {
     let _ = cmd;
 }
 
+/// Session-id env for a freshly spawned agent process: a generated UUID
+/// unless the caller pinned one in `extra_env` or the parent environment
+/// already carries one (operator-wins, matching the env loop above).
+fn session_env_injection(extra_env: &[(String, String)]) -> Option<String> {
+    if extra_env.iter().any(|(k, _)| k == "BUZZ_ACP_SESSION_ID") {
+        return None; // pinned by the caller; the env loop above sets it
+    }
+    if std::env::var_os("BUZZ_ACP_SESSION_ID").is_some() {
+        return None; // inherited from the parent
+    }
+    Some(uuid::Uuid::new_v4().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The generated session id must be a real UUID (the CLI treats it as an
+    /// opaque string, but a parseable UUID keeps it inspectable in logs and
+    /// lock files), and a pinned value in `extra_env` must suppress injection.
+    #[test]
+    fn session_env_injection_generates_uuid_unless_pinned() {
+        let generated = session_env_injection(&[])
+            .expect("no pin, no parent value → generate");
+        assert!(
+            uuid::Uuid::parse_str(&generated).is_ok(),
+            "generated session id must be a UUID, got {generated:?}"
+        );
+        let pinned = vec![(
+            "BUZZ_ACP_SESSION_ID".to_string(),
+            "test-session".to_string(),
+        )];
+        assert!(
+            session_env_injection(&pinned).is_none(),
+            "a pinned session id must suppress generation"
+        );
+    }
 
     #[test]
     fn stop_reason_parses_all_known_values() {

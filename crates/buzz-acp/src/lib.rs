@@ -7,6 +7,7 @@ mod engram_fetch;
 mod filter;
 mod observer;
 mod pool;
+mod pool_guard;
 mod pool_lifecycle;
 mod queue;
 mod relay;
@@ -1956,6 +1957,21 @@ async fn tokio_main() -> Result<()> {
         tracing::info!("buzz-acp: setup payload present, entering setup-listener mode");
         return setup_mode::run_setup_listener(config, payload).await;
     }
+
+    // ── One pool per agent identity ──────────────────────────────────────────
+    //
+    // The fleet's "two of me" duets (2026-09-10 pool survivor; the class the
+    // desktop sweeps miss when receipts or exe paths drift) start here: two
+    // pools under one key both answering mentions. Refuse a same-era
+    // duplicate, adopt the identity from a superseded survivor. Fails open on
+    // infrastructure trouble — an agent without the lock still beats no agent.
+    let _pool_lock_guard = {
+        let display_name = std::env::var("BUZZ_ACP_DISPLAY_NAME").unwrap_or_default();
+        match pool_guard::acquire_pool_lock(&config.keys, &display_name) {
+            Ok(outcome) => outcome,
+            Err(error) => return Err(anyhow::anyhow!("pool guard refused: {error}")),
+        }
+    };
 
     tracing::info!("buzz-acp starting: {}", config.summary());
 
