@@ -8,6 +8,7 @@ import { cn } from "@/shared/lib/cn";
 
 import { describeAnamError, startAnamSession } from "../lib/anam";
 import { useVideoChatConfig } from "../lib/config";
+import { useBargeDuck } from "../lib/useBargeDuck";
 
 /**
  * The video-chat panel: an Anam-rendered persona whose brain is the Buzz
@@ -40,6 +41,15 @@ export function VideoChatPanel(props: {
   const [micOn, setMicOn] = React.useState(true);
   const [showSettings, setShowSettings] = React.useState(false);
   const [relayToken, setRelayToken] = React.useState<string | null>(null);
+  // Barge-in auto-duck: while live, the persona's own TTS momentarily mutes
+  // the mic input at the SDK layer so open speakers cannot feed her voice
+  // back into her ASR. Manual mute below stays the floor over the gate.
+  const ducked = useBargeDuck({
+    enabled: state === "live",
+    micOn,
+    audioElement: audioRef.current,
+    client: clientRef.current,
+  });
 
   // Refresh the relay token whenever the settings sheet opens, so the
   // copyable token shown for Anam Lab wiring is current.
@@ -258,6 +268,14 @@ export function VideoChatPanel(props: {
                 )}
                 {micOn ? "Mute" : "Unmute"}
               </Button>
+              {ducked && (
+                <span
+                  className="text-xs text-muted-foreground"
+                  title="Mic ducked while the persona is speaking"
+                >
+                  ducked
+                </span>
+              )}
               <Button variant="destructive" size="sm" onClick={stop}>
                 <PhoneOff className="size-4" />
                 End
