@@ -261,11 +261,19 @@ fn write_turn_snapshot(snapshot: &[TurnEntry]) -> std::io::Result<()> {
 ///   document is preserved under `_unparseable_before` rather than destroyed.
 fn write_managed_turns(path: &Path, snapshot: &[TurnEntry]) -> std::io::Result<()> {
     with_claims_lock(path, |raw| {
-        let mut doc = match raw {
-            Some(raw) => serde_json::from_str::<Value>(&raw)
-                .unwrap_or_else(|_| json!({ "_unparseable_before": raw })),
+        let mut doc: Value = match raw {
+            Some(raw) => {
+                serde_json::from_str(&raw).unwrap_or_else(|_| json!({ "_unparseable_before": raw }))
+            }
             None => json!({}),
         };
+        // A doc that parses but is not an object (a bare JSON array) cannot
+        // host `managed` without destroying it — preserve it instead, same
+        // as malformed text.
+        if !doc.is_object() {
+            let preserved = serde_json::to_string(&doc).unwrap_or_else(|_| doc.to_string());
+            doc = json!({ "_unparseable_before": preserved });
+        }
         let now = chrono::Utc::now();
         let previous = doc.get("managed").cloned().unwrap_or(Value::Null);
         let foreign_fresh: Vec<Value> = previous
