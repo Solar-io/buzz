@@ -1612,11 +1612,23 @@ impl AcpClient {
             // Determine which deadline fires first BEFORE sleeping — this is
             // the classification we'll use on timeout, immune to scheduler jitter.
             let idle_fires_first = idle_deadline < hard_deadline;
-            let next_deadline = if idle_fires_first {
+            let classified_deadline = if idle_fires_first {
                 idle_deadline
             } else {
                 hard_deadline
             };
+            // A pending steer-boundary effort RPC bounds the wait by its OWN
+            // budget — the same `MODEL_SWITCH_TIMEOUT` every config-option
+            // RPC in this crate answers within. Baking it into the wakeup
+            // deadline (not just checking it when an iteration happens to
+            // run) is what makes the no-wedge guarantee hold for a SILENT
+            // adapter: otherwise the classified turn deadline fires first
+            // and releases the held steer undelivered.
+            let effort_deadline = pending_effort_set
+                .as_ref()
+                .map(|pending| pending.started_at + crate::pool::MODEL_SWITCH_TIMEOUT);
+            let next_deadline =
+                effort_deadline.map_or(classified_deadline, |d| d.min(classified_deadline));
 
             // Pre-select deadline check — required by Max's review. Under
             // `biased`, a continuously-ready reader arm wins every poll and
@@ -1626,6 +1638,27 @@ impl AcpClient {
             // exists). Check the classified deadline here so a steady-
             // stream agent is still bounded.
             if Instant::now() >= next_deadline {
+                // An expired effort budget is not a turn deadline: expire
+                // the override — no state change, nothing was applied — and
+                // deliver the held steer at current config, then keep
+                // reading. The steer is never wedged behind an unanswered
+                // RPC, and never lost to a deadline it did not cause.
+                if let Some(deadline) = effort_deadline {
+                    if Instant::now() >= deadline {
+                        let pending = pending_effort_set
+                            .take()
+                            .expect("effort deadline implies pending");
+                        tracing::warn!(
+                            target: "pool::voice",
+                            value = %pending.desired,
+                            "steer-boundary effort override timed out ({:?}) — delivering steer at current effort",
+                            crate::pool::MODEL_SWITCH_TIMEOUT,
+                        );
+                        self.write_steer_request(session_id, pending.steer, &mut pending_steer)
+                            .await;
+                        continue;
+                    }
+                }
                 drain_pending_steer_writes(&mut pending_steer, &mut pending_effort_set);
                 if idle_fires_first {
                     tracing::warn!("idle timeout ({idle_timeout:?}) — no agent activity");
@@ -1634,26 +1667,6 @@ impl AcpClient {
                     let silence = Instant::now().saturating_duration_since(last_activity_at);
                     tracing::warn!("hard turn timeout exceeded (silence {silence:?})");
                     return Err(AcpError::HardTimeout { silence });
-                }
-            }
-
-            // The steer-boundary effort change is bounded by the same budget
-            // as every other config-option RPC: an adapter that never answers
-            // it must not park a held steer indefinitely. Expire the override
-            // (no state change — nothing was applied) and deliver the steer
-            // at current config.
-            if let Some(pending) = pending_effort_set.as_ref() {
-                if pending.started_at.elapsed() >= crate::pool::MODEL_SWITCH_TIMEOUT {
-                    let pending = pending_effort_set.take().expect("just checked");
-                    tracing::warn!(
-                        target: "pool::voice",
-                        value = %pending.desired,
-                        "steer-boundary effort override timed out ({:?}) — delivering steer at current effort",
-                        crate::pool::MODEL_SWITCH_TIMEOUT,
-                    );
-                    self.write_steer_request(session_id, pending.steer, &mut pending_steer)
-                        .await;
-                    continue;
                 }
             }
 
@@ -1747,18 +1760,33 @@ impl AcpClient {
                     None
                 }
                 _ = tokio::time::sleep_until(next_deadline) => {
-                    // The pre-select check at the top of the next iteration
-                    // would catch this anyway, but firing the deadline arm
-                    // here makes the wakeup immediate (no extra reader poll
-                    // round-trip when stdout is idle).
-                    drain_pending_steer_writes(&mut pending_steer, &mut pending_effort_set);
-                    if idle_fires_first {
-                        tracing::warn!("idle timeout ({idle_timeout:?}) — no agent activity");
-                        return Err(AcpError::IdleTimeout(idle_timeout));
+                    // Effort-budget wake: not a turn deadline — loop back so
+                    // the pre-select check at the top of the next iteration
+                    // expires the override and delivers the held steer.
+                    if effort_deadline.is_some_and(|d| Instant::now() >= d) {
+                        None
                     } else {
-                        let silence = Instant::now().saturating_duration_since(last_activity_at);
-                        tracing::warn!("hard turn timeout exceeded (silence {silence:?})");
-                        return Err(AcpError::HardTimeout { silence });
+                        // The pre-select check at the top of the next
+                        // iteration would catch this anyway, but firing the
+                        // deadline arm here makes the wakeup immediate (no
+                        // extra reader poll round-trip when stdout is idle).
+                        drain_pending_steer_writes(
+                            &mut pending_steer,
+                            &mut pending_effort_set,
+                        );
+                        if idle_fires_first {
+                            tracing::warn!(
+                                "idle timeout ({idle_timeout:?}) — no agent activity"
+                            );
+                            return Err(AcpError::IdleTimeout(idle_timeout));
+                        } else {
+                            let silence =
+                                Instant::now().saturating_duration_since(last_activity_at);
+                            tracing::warn!(
+                                "hard turn timeout exceeded (silence {silence:?})"
+                            );
+                            return Err(AcpError::HardTimeout { silence });
+                        }
                     }
                 }
             };
@@ -4904,6 +4932,99 @@ done
         assert_eq!(calls[1].0, "_goose/unstable/session/steer");
 
         // Warn-and-proceed left the knob exactly where it was.
+        let state = client.thought_level.as_ref().expect("knob state seeded");
+        assert_eq!(state.current_value, "default");
+        assert!(state.override_baseline.is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An effort RPC the adapter NEVER answers must not wedge — or lose —
+    /// the held steer. The effort budget is baked into the loop's wakeup
+    /// deadline, so even a fully silent adapter expires the override at
+    /// `MODEL_SWITCH_TIMEOUT` and delivers the steer at current config:
+    /// exactly one effort attempt on the wire, exactly one steer write,
+    /// nothing else, and no second effort RPC pending afterwards.
+    ///
+    /// Real-time (not paused) because the expiry is measured against real
+    /// wire activity; the ~5s wait is the price of pinning the production
+    /// budget literally.
+    #[tokio::test]
+    async fn unanswered_effort_rpc_expires_and_still_delivers_the_steer() {
+        let (dir, log) = voice_steer_log_dir("effort-expiry");
+        // Script: log everything; answer ONLY the steer method, then emit
+        // the prompt response (id=999) so the loop returns promptly after
+        // the delivery instead of burning the full idle window.
+        let mut script = String::new();
+        script.push_str(&format!("LOG=\"{}\"\n", log.display()));
+        script.push_str(
+            r#"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG"
+  rid=$(printf '%s' "$line" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+  case "$line" in
+    *set_config_option*)
+      : ;;
+    *session/steer*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"outcome":"injected"}}\n' "$rid"
+      printf '{"jsonrpc":"2.0","id":999,"result":{"done":true}}\n' ;;
+  esac
+done
+"#,
+        );
+        let mut client = spawn_script(&script).await;
+
+        let update = session_info_update_msg(Some(serde_json::json!("run-42")));
+        let _ = client.handle_session_update(&update);
+        client.seed_thought_level("effort".to_string(), "default".to_string());
+
+        let (steer_tx, steer_rx) = tokio::sync::mpsc::channel::<crate::pool::SteerRequest>(1);
+        client.install_steer_rx(steer_rx);
+
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<crate::pool::SteerAck>();
+        let send_task = tokio::spawn(async move {
+            steer_tx
+                .send(crate::pool::SteerRequest {
+                    prompt_blocks: vec!["[voice] hello".into()],
+                    voice_effort: Some("low".to_string()),
+                    ack_tx,
+                })
+                .await
+                .expect("steer send should succeed");
+        });
+
+        // Both turn deadlines must exceed the effort budget (production
+        // idle timeouts are minutes); otherwise the classified deadline
+        // legitimately fires first.
+        let idle = std::time::Duration::from_secs(8);
+        let max_dur = std::time::Duration::from_secs(30);
+        let hard_deadline = tokio::time::Instant::now() + max_dur;
+        let read_result = client
+            .read_until_response_with_idle_timeout("sess-expire", 999, idle, hard_deadline, max_dur)
+            .await;
+        send_task.await.expect("send_task should complete");
+
+        assert!(
+            read_result.is_ok(),
+            "the loop returns via the prompt response that follows delivery, got {read_result:?}"
+        );
+        assert!(
+            matches!(ack_rx.await, Ok(crate::pool::SteerAck::Success { .. })),
+            "the held steer must be delivered once the effort budget expires"
+        );
+
+        let calls = logged_wire_requests(&log);
+        assert_eq!(
+            calls.len(),
+            2,
+            "exactly one unanswered effort attempt plus exactly one steer write, got {calls:?}"
+        );
+        assert_eq!(calls[0].0, "session/set_config_option");
+        assert_eq!(calls[0].1["value"], serde_json::json!("low"));
+        assert_eq!(calls[1].0, "_goose/unstable/session/steer");
+
+        // Expiry changes nothing on the knob: nothing was applied, so no
+        // baseline was captured and no second effort RPC is pending.
         let state = client.thought_level.as_ref().expect("knob state seeded");
         assert_eq!(state.current_value, "default");
         assert!(state.override_baseline.is_none());
