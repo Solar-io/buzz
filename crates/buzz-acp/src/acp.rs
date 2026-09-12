@@ -573,12 +573,17 @@ impl AcpClient {
             }
         }
 
+        // A desktop-managed pool (`BUZZ_MANAGED_AGENT` is set by the app's
+        // pool spawn) may carry a stale `BUZZ_ACP_SESSION_ID` inherited from
+        // whoever launched the app itself (the 2026-09-12 poisoned-app-env
+        // bounce storm). The harness-owned pin must win in that world.
+        let managed_pool = std::env::var_os("BUZZ_MANAGED_AGENT").is_some();
         for (key, value) in extra_env {
             if key == "CODEX_CONFIG" && codex_merge_active {
                 // Handled by build_codex_config_env; skip here to avoid double-setting.
                 continue;
             }
-            if std::env::var_os(key).is_none() {
+            if extra_env_entry_applies(key, std::env::var_os(key).is_some(), managed_pool) {
                 cmd.env(key, value);
             }
         }
@@ -2750,15 +2755,47 @@ fn configure_no_window(cmd: &mut tokio::process::Command) {
 
 /// Session-id env for a freshly spawned agent process: a generated UUID
 /// unless the caller pinned one in `extra_env` or the parent environment
-/// already carries one (operator-wins, matching the env loop above).
+/// already carries one (operator-wins, matching the env loop above). A
+/// desktop-managed pool never inherits: with no caller pin a fresh id is
+/// generated, so a stale parent value cannot stamp every managed session
+/// with one foreign sender id.
 fn session_env_injection(extra_env: &[(String, String)]) -> Option<String> {
+    session_env_decision(
+        extra_env,
+        std::env::var_os("BUZZ_ACP_SESSION_ID").is_some(),
+        std::env::var_os("BUZZ_MANAGED_AGENT").is_some(),
+    )
+}
+
+/// The decision core of [`session_env_injection`] with the parent
+/// environment passed explicitly, so tests pin every combination without
+/// mutating process env.
+fn session_env_decision(
+    extra_env: &[(String, String)],
+    parent_carries_session_id: bool,
+    managed_pool: bool,
+) -> Option<String> {
     if extra_env.iter().any(|(k, _)| k == "BUZZ_ACP_SESSION_ID") {
         return None; // pinned by the caller; the env loop above sets it
     }
-    if std::env::var_os("BUZZ_ACP_SESSION_ID").is_some() {
-        return None; // inherited from the parent
+    if parent_carries_session_id && !managed_pool {
+        return None; // inherited from the parent (operator-wins, bare runs)
     }
     Some(uuid::Uuid::new_v4().to_string())
+}
+
+/// Whether an `extra_env` entry is applied to the child command.
+/// Operator-wins by default — a key already present in the parent
+/// environment shadows the configured value — except the harness-owned
+/// session pin under a desktop-managed pool, which must always apply so an
+/// inherited stale id cannot shadow the per-slot pin that
+/// `claims_writer::session_env` appends ("the caller's pin wins … by
+/// construction", claims_writer.rs).
+fn extra_env_entry_applies(key: &str, parent_has_key: bool, managed_pool: bool) -> bool {
+    if key == "BUZZ_ACP_SESSION_ID" && managed_pool {
+        return true;
+    }
+    !parent_has_key
 }
 
 #[cfg(test)]
@@ -2768,9 +2805,11 @@ mod tests {
     /// The generated session id must be a real UUID (the CLI treats it as an
     /// opaque string, but a parseable UUID keeps it inspectable in logs and
     /// lock files), and a pinned value in `extra_env` must suppress injection.
+    /// Deterministic via `session_env_decision` — no process-env reads.
     #[test]
-    fn session_env_injection_generates_uuid_unless_pinned() {
-        let generated = session_env_injection(&[]).expect("no pin, no parent value → generate");
+    fn session_env_decision_generates_uuid_unless_pinned() {
+        let generated =
+            session_env_decision(&[], false, false).expect("no pin, clean parent → generate");
         assert!(
             uuid::Uuid::parse_str(&generated).is_ok(),
             "generated session id must be a UUID, got {generated:?}"
@@ -2780,8 +2819,69 @@ mod tests {
             "test-session".to_string(),
         )];
         assert!(
-            session_env_injection(&pinned).is_none(),
+            session_env_decision(&pinned, false, false).is_none(),
             "a pinned session id must suppress generation"
+        );
+    }
+
+    /// Operator-wins is preserved for bare (non-managed) runs: a parent env
+    /// carrying a session id suppresses generation, so a human running the
+    /// harness inside an agent session keeps that session's identity.
+    #[test]
+    fn session_env_decision_inherits_parent_id_in_bare_runs() {
+        assert!(
+            session_env_decision(&[], true, false).is_none(),
+            "bare runs keep operator-wins: an inherited session id suppresses generation"
+        );
+    }
+
+    /// The 2026-09-12 poisoned-app-env regression: a desktop-managed pool
+    /// must not inherit the parent's session id — with no caller pin it
+    /// generates a fresh one (a caller pin still wins, via the env loop).
+    #[test]
+    fn session_env_decision_ignores_inherited_id_in_managed_pools() {
+        let generated = session_env_decision(&[], true, true)
+            .expect("managed pool must generate despite inherited parent id");
+        assert!(
+            uuid::Uuid::parse_str(&generated).is_ok(),
+            "generated session id must be a UUID, got {generated:?}"
+        );
+        let pinned = vec![(
+            "BUZZ_ACP_SESSION_ID".to_string(),
+            "test-session".to_string(),
+        )];
+        assert!(
+            session_env_decision(&pinned, true, true).is_none(),
+            "a caller pin still suppresses generation in a managed pool"
+        );
+    }
+
+    /// The production kill in the 2026-09-12 bounce storm: the operator-wins
+    /// guard in the `extra_env` loop skipped the harness's per-slot pin
+    /// (`claims_writer::session_env`) when the pool env already carried the
+    /// stale id. Under a managed pool the pin must win; every other key
+    /// keeps operator-wins.
+    #[test]
+    fn managed_session_pin_wins_over_inherited_parent_value() {
+        assert!(
+            extra_env_entry_applies("BUZZ_ACP_SESSION_ID", true, true),
+            "managed pool: the session pin applies even when the parent carries the key"
+        );
+        assert!(
+            !extra_env_entry_applies("BUZZ_ACP_SESSION_ID", true, false),
+            "bare run: operator-wins — a parent value shadows the pin"
+        );
+        assert!(
+            extra_env_entry_applies("BUZZ_ACP_SESSION_ID", false, false),
+            "clean parent: the pin applies as before"
+        );
+        assert!(
+            !extra_env_entry_applies("BUZZ_ACP_MODEL", true, true),
+            "the pin exception is scoped to the session key — other keys keep operator-wins"
+        );
+        assert!(
+            extra_env_entry_applies("BUZZ_ACP_MODEL", false, false),
+            "other keys apply when the parent lacks them"
         );
     }
 
