@@ -35,7 +35,7 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use nostr::Keys;
@@ -66,23 +66,21 @@ const LOCK_DIR_ENV: &str = "BUZZ_ACP_POOL_LOCK_DIR";
 #[derive(Debug)]
 pub(crate) enum GuardOutcome {
     /// The lock is held for the process lifetime. Dropping the guard closes
-    /// the fd and releases the kernel lock.
-    Held(PoolLockGuard),
+    /// the fd and releases the kernel lock. The payload is never read —
+    /// possession IS the lock: keeping the guard alive is the mechanism.
+    Held(#[allow(dead_code)] PoolLockGuard),
     /// The guard could not run (disabled, no home, unwritable dir) and the
-    /// pool proceeds unprotected. Never an error by itself.
+    /// pool proceeds unprotected. Never an error by itself. The reason is
+    /// for the caller's log.
     Bypassed(&'static str),
 }
 
 #[derive(Debug)]
 pub(crate) struct PoolLockGuard {
+    /// Held open for the guard's lifetime: dropping it releases the kernel
+    /// lock. Read access is deliberately not exposed — possession IS the
+    /// lock.
     _file: File,
-    path: PathBuf,
-}
-
-impl PoolLockGuard {
-    pub(crate) fn path(&self) -> &std::path::Path {
-        &self.path
-    }
 }
 
 #[derive(Debug)]
@@ -113,9 +111,8 @@ pub(crate) fn acquire_pool_lock(keys: &Keys, display_name: &str) -> Result<Guard
     let path = dir.join(format!("{}.lock", keys.public_key().to_hex()));
 
     // Fast path: a dead holder (or a first launch) releases at the kernel.
-    match try_lock(&path, display_name) {
-        Ok(guard) => return Ok(GuardOutcome::Held(guard)),
-        Err(()) => {}
+    if let Ok(guard) = try_lock(&path, display_name) {
+        return Ok(GuardOutcome::Held(guard));
     }
 
     // Someone holds it. Decide refuse vs adopt from the stamp's age.
@@ -134,7 +131,7 @@ pub(crate) fn acquire_pool_lock(keys: &Keys, display_name: &str) -> Result<Guard
                 lock = %path.display(),
                 "pool-guard: adopting the identity from a superseded pool"
             );
-            adopt(path, pid, display_name)
+            adopt(&path, pid, display_name)
         }
         Stamp::Unreadable => {
             // Busy but unreadable: give a dying writer a moment, then fail
@@ -156,7 +153,7 @@ pub(crate) fn acquire_pool_lock(keys: &Keys, display_name: &str) -> Result<Guard
 
 /// SIGTERM → wait out the grace → SIGKILL → wait out the kill grace → take
 /// the lock. Fails open (never blocks startup) if the holder never dies.
-fn adopt(path: PathBuf, pid: u32, display_name: &str) -> Result<GuardOutcome, String> {
+fn adopt(path: &Path, pid: u32, display_name: &str) -> Result<GuardOutcome, String> {
     if pid == std::process::id() || pid == 0 {
         // A stamp naming OUR pid while we do not hold the lock is corruption
         // (or pid reuse): signalling it would be killing ourselves. Wait out
@@ -169,10 +166,10 @@ fn adopt(path: PathBuf, pid: u32, display_name: &str) -> Result<GuardOutcome, St
     } else {
         send_signal(pid, Signal::Term);
     }
-    if !wait_for_lock(&path, TERM_GRACE_SECS) {
+    if !wait_for_lock(path, TERM_GRACE_SECS) {
         tracing::warn!(pid, "pool-guard: holder survived SIGTERM — SIGKILL");
         send_signal(pid, Signal::Kill);
-        if !wait_for_lock(&path, KILL_GRACE_SECS) {
+        if !wait_for_lock(path, KILL_GRACE_SECS) {
             tracing::error!(
                 pid,
                 lock = %path.display(),
@@ -181,16 +178,16 @@ fn adopt(path: PathBuf, pid: u32, display_name: &str) -> Result<GuardOutcome, St
             return Ok(GuardOutcome::Bypassed("holder survived SIGKILL"));
         }
     }
-    match try_lock(&path, display_name) {
+    match try_lock(path, display_name) {
         Ok(guard) => Ok(GuardOutcome::Held(guard)),
         // The lock freed but someone else raced us onto it: that winner is a
         // same-machine pool for this identity, which is the invariant —
         // re-read and recurse rather than proceed duplicate.
-        Err(()) => acquire_by_recheck(&path, display_name),
+        Err(()) => acquire_by_recheck(path, display_name),
     }
 }
 
-fn acquire_by_recheck(path: &PathBuf, display_name: &str) -> Result<GuardOutcome, String> {
+fn acquire_by_recheck(path: &Path, display_name: &str) -> Result<GuardOutcome, String> {
     match read_stamp(path) {
         Stamp::Live { pid, age_secs } => {
             if age_secs < REFUSE_WINDOW_SECS {
@@ -200,7 +197,7 @@ fn acquire_by_recheck(path: &PathBuf, display_name: &str) -> Result<GuardOutcome
                     path.display()
                 ))
             } else {
-                adopt(path.clone(), pid, display_name)
+                adopt(path, pid, display_name)
             }
         }
         Stamp::Unreadable => Ok(GuardOutcome::Bypassed("raced lock stamp unreadable")),
@@ -226,11 +223,9 @@ fn try_lock(path: &std::path::Path, display_name: &str) -> Result<PoolLockGuard,
     });
     let mut file = file;
     file.set_len(0).map_err(|_| ())?;
-    file.write_all(stamp.to_string().as_bytes()).map_err(|_| ())?;
-    Ok(PoolLockGuard {
-        _file: file,
-        path: path.to_path_buf(),
-    })
+    file.write_all(stamp.to_string().as_bytes())
+        .map_err(|_| ())?;
+    Ok(PoolLockGuard { _file: file })
 }
 
 /// Poll `try_lock` without stamping mismatches — used while a dying holder
@@ -384,7 +379,10 @@ mod tests {
         let _dir = temp_dir();
         let keys = keys();
         let first = acquire_pool_lock(&keys, "Evie").expect("first acquire");
-        assert!(matches!(first, GuardOutcome::Held(_)), "first acquire must hold");
+        assert!(
+            matches!(first, GuardOutcome::Held(_)),
+            "first acquire must hold"
+        );
         let second = acquire_pool_lock(&keys, "Evie");
         assert!(
             second.is_err(),
@@ -414,8 +412,18 @@ mod tests {
         .expect("write ghost stamp");
         let outcome = acquire_pool_lock(&keys, "Evie").expect("ghost holder must not error");
         assert!(
-            matches!(outcome, GuardOutcome::Held(ref guard) if guard.path() == path),
+            matches!(outcome, GuardOutcome::Held(_)),
             "ghost holder must be adopted, got {outcome:?}"
+        );
+        // Adoption re-stamped the lock file with OUR pid — prove the guard
+        // holds THIS file and took ownership of it.
+        let stamp: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("read restamped lock"))
+                .expect("lock file must still parse as a stamp");
+        assert_eq!(
+            stamp.get("pid").and_then(|v| v.as_u64()),
+            Some(u64::from(std::process::id())),
+            "adopted lock must be restamped with the adopting pid"
         );
     }
 

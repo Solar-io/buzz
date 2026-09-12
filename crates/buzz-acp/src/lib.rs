@@ -1968,10 +1968,20 @@ async fn tokio_main() -> Result<()> {
     // infrastructure trouble — an agent without the lock still beats no agent.
     let _pool_lock_guard = {
         let display_name = std::env::var("BUZZ_ACP_DISPLAY_NAME").unwrap_or_default();
-        match pool_guard::acquire_pool_lock(&config.keys, &display_name) {
-            Ok(outcome) => outcome,
+        let outcome = pool_guard::acquire_pool_lock(&config.keys, &display_name);
+        match &outcome {
+            Ok(pool_guard::GuardOutcome::Held(_)) => {
+                tracing::debug!("pool-guard: identity lock held for this pool");
+            }
+            Ok(pool_guard::GuardOutcome::Bypassed(reason)) => {
+                tracing::info!(
+                    reason,
+                    "pool-guard: bypassed — proceeding WITHOUT one-pool enforcement"
+                );
+            }
             Err(error) => return Err(anyhow::anyhow!("pool guard refused: {error}")),
         }
+        outcome
     };
 
     tracing::info!("buzz-acp starting: {}", config.summary());

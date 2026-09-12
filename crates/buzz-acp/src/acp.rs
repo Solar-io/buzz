@@ -2380,8 +2380,7 @@ mod tests {
     /// lock files), and a pinned value in `extra_env` must suppress injection.
     #[test]
     fn session_env_injection_generates_uuid_unless_pinned() {
-        let generated = session_env_injection(&[])
-            .expect("no pin, no parent value → generate");
+        let generated = session_env_injection(&[]).expect("no pin, no parent value → generate");
         assert!(
             uuid::Uuid::parse_str(&generated).is_ok(),
             "generated session id must be a UUID, got {generated:?}"
