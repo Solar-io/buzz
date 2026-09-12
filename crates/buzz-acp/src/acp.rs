@@ -2214,6 +2214,28 @@ pub fn extract_thought_level_config_id(result: &serde_json::Value) -> Option<Str
     None
 }
 
+/// Extract the `currentValue` of the `thought_level` category option from a
+/// `session/new` (or post-switch) result, if the adapter reported one.
+///
+/// This is the value the session is actually running — the restore baseline a
+/// transient effort override must return the session to (the voice-turn path
+/// in `pool`). `None` when the option is absent or the adapter sent no
+/// usable `currentValue`; callers must treat `None` as "do not override",
+/// since an override whose baseline is unknown cannot be undone.
+pub fn extract_thought_level_current_value(result: &serde_json::Value) -> Option<String> {
+    let arr = result["configOptions"].as_array()?;
+    for opt in arr {
+        if opt.get("category").and_then(|c| c.as_str()) == Some("thought_level") {
+            return opt
+                .get("currentValue")
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.is_empty())
+                .map(str::to_string);
+        }
+    }
+    None
+}
+
 /// Match a desired model ID against a fresh `session/new` response.
 ///
 /// Returns the correct ACP method to call, or `None` if no match.
@@ -2269,7 +2291,7 @@ pub fn resolve_model_switch_method(
 
 /// Whether `desired_model` appears in pre-extracted catalog halves.
 ///
-/// Mirrors [`resolve_model_switch_method`]'s match, but operates on the
+/// Delegates to [`resolve_model_switch_method_from_catalog`] on the
 /// already-extracted `configOptions` (model category) and `models` state that
 /// [`AgentModelCapabilities`](crate::pool::AgentModelCapabilities) caches — the
 /// idle-path pre-cancel guard has those halves, not the full `session/new` JSON.
@@ -2278,28 +2300,63 @@ pub fn model_in_catalog(
     available_models: Option<&serde_json::Value>,
     desired_model: &str,
 ) -> bool {
-    let in_config_options = config_options.iter().any(|config_opt| {
-        config_opt
-            .get("options")
-            .and_then(|v| v.as_array())
-            .is_some_and(|options| {
-                options
-                    .iter()
-                    .any(|opt| opt.get("value").and_then(|v| v.as_str()) == Some(desired_model))
-            })
-    });
-    if in_config_options {
-        return true;
+    resolve_model_switch_method_from_catalog(config_options, available_models, desired_model)
+        .is_some()
+}
+
+/// Match a desired model against ALREADY-EXTRACTED catalog halves and return
+/// the ACP method to switch to it, or `None` on no match.
+///
+/// [`resolve_model_switch_method`] operates on a fresh `session/new` response;
+/// this operates on the halves [`AgentModelCapabilities`](crate::pool::AgentModelCapabilities)
+/// caches after session creation — same precedence (stable `configOptions`
+/// first, then unstable `availableModels`), same `configId`/`id` acceptance —
+/// so a transient mid-session switch (the voice-turn model override) resolves
+/// identically to a session-time one without holding the raw response.
+pub fn resolve_model_switch_method_from_catalog(
+    config_options: &[serde_json::Value],
+    available_models: Option<&serde_json::Value>,
+    desired_model: &str,
+) -> Option<ModelSwitchMethod> {
+    // 1. Stable configOptions: a "model"-category entry whose options contain
+    //    the desired value. (`config_options` is already the extracted
+    //    model-category half, so no category filter here.)
+    for config_opt in config_options {
+        let config_id = config_opt
+            .get("configId")
+            .or_else(|| config_opt.get("id"))
+            .and_then(|v| v.as_str());
+        let Some(config_id) = config_id else {
+            continue;
+        };
+        if let Some(options) = config_opt.get("options").and_then(|v| v.as_array()) {
+            for opt in options {
+                if opt.get("value").and_then(|v| v.as_str()) == Some(desired_model) {
+                    return Some(ModelSwitchMethod::ConfigOption {
+                        config_id: config_id.to_string(),
+                        option_value: desired_model.to_string(),
+                    });
+                }
+            }
+        }
     }
 
-    available_models
+    // 2. Unstable availableModels for a matching modelId.
+    let available = available_models
         .and_then(|models| models.get("availableModels"))
-        .and_then(|v| v.as_array())
-        .is_some_and(|available| {
-            available
-                .iter()
-                .any(|model| model.get("modelId").and_then(|v| v.as_str()) == Some(desired_model))
-        })
+        .and_then(|v| v.as_array());
+    if let Some(available) = available {
+        for model in available {
+            if model.get("modelId").and_then(|v| v.as_str()) == Some(desired_model) {
+                return Some(ModelSwitchMethod::SetModel {
+                    model_id: desired_model.to_string(),
+                });
+            }
+        }
+    }
+
+    // 3. No match.
+    None
 }
 
 // ─── Drop: kill child process ─────────────────────────────────────────────────
@@ -3040,6 +3097,84 @@ mod tests {
     #[test]
     fn model_in_catalog_false_when_both_halves_empty() {
         assert!(!super::model_in_catalog(&[], None, "anything"));
+    }
+
+    #[test]
+    fn extract_thought_level_current_value_reads_running_value() {
+        let result = serde_json::json!({
+            "configOptions": [
+                { "configId": "effort", "category": "thought_level", "currentValue": "max" },
+                { "configId": "model", "category": "model", "currentValue": "glm-5.3" }
+            ]
+        });
+        assert_eq!(
+            super::extract_thought_level_current_value(&result).as_deref(),
+            Some("max")
+        );
+    }
+
+    #[test]
+    fn extract_thought_level_current_value_none_when_absent_or_blank() {
+        let no_option = serde_json::json!({
+            "configOptions": [
+                { "configId": "model", "category": "model", "currentValue": "glm-5.3" }
+            ]
+        });
+        assert!(super::extract_thought_level_current_value(&no_option).is_none());
+        let blank = serde_json::json!({
+            "configOptions": [
+                { "id": "effort", "category": "thought_level", "currentValue": "" }
+            ]
+        });
+        assert!(
+            super::extract_thought_level_current_value(&blank).is_none(),
+            "a blank currentValue is no baseline to restore to"
+        );
+        assert!(super::extract_thought_level_current_value(&serde_json::json!({})).is_none());
+    }
+
+    #[test]
+    fn catalog_resolver_mirrors_full_response_resolver() {
+        // The cached-halves resolver must agree with the session/new resolver
+        // on both halves — a transient (voice-turn) switch resolves identically
+        // to a session-time one.
+        let config_options = vec![serde_json::json!({
+            "configId": "model",
+            "category": "model",
+            "options": [{ "value": "m-a" }, { "value": "m-b" }]
+        })];
+        assert_eq!(
+            super::resolve_model_switch_method_from_catalog(&config_options, None, "m-b"),
+            Some(super::ModelSwitchMethod::ConfigOption {
+                config_id: "model".to_string(),
+                option_value: "m-b".to_string(),
+            })
+        );
+        let available = serde_json::json!({
+            "currentModelId": "m-a",
+            "availableModels": [{ "modelId": "m-a" }, { "modelId": "o3-pro" }]
+        });
+        assert_eq!(
+            super::resolve_model_switch_method_from_catalog(&[], Some(&available), "o3-pro"),
+            Some(super::ModelSwitchMethod::SetModel {
+                model_id: "o3-pro".to_string(),
+            })
+        );
+        assert_eq!(
+            super::resolve_model_switch_method_from_catalog(
+                &config_options,
+                Some(&available),
+                "nope"
+            ),
+            None
+        );
+        // The `id` key (claude-agent-acp) must match, not just `configId`.
+        let id_keyed = vec![serde_json::json!({
+            "id": "model",
+            "category": "model",
+            "options": [{ "value": "m-a" }]
+        })];
+        assert!(super::resolve_model_switch_method_from_catalog(&id_keyed, None, "m-a").is_some());
     }
 
     // ── Error variant display ─────────────────────────────────────────────

@@ -7,6 +7,7 @@ import {
   ECHO_TAIL_MS,
   gateFinalTranscript,
   isEchoOfUtterances,
+  markVoiceFinal,
   MIN_TRANSCRIPT_CHARS,
   msSinceLastUtterance,
   nextVoiceStatus,
@@ -17,11 +18,55 @@ import {
   utterancesForHold,
   UTTERANCE_MAX_ENTRIES,
   UTTERANCE_RETENTION_MS,
+  VOICE_TURN_MARKER,
 } from "./voiceTranscript.ts";
 
 test("the gating constants are pinned, hardcoded", () => {
   assert.equal(MIN_TRANSCRIPT_CHARS, 3);
   assert.equal(DUPLICATE_WINDOW, 3);
+});
+
+test("the voice marker matches the desktop bridge's [video] shape", () => {
+  // buzz-acp's voice_turn.rs detects exactly these two prefixes; the marker
+  // must keep the trailing space or the harness will not see the turn.
+  assert.equal(VOICE_TURN_MARKER, "[voice] ");
+});
+
+test("markVoiceFinal prefixes the gated text with the voice marker", () => {
+  assert.equal(
+    markVoiceFinal("evie are you there"),
+    "[voice] evie are you there",
+  );
+});
+
+test("markVoiceFinal prefixes the gated text with the voice marker", () => {
+  assert.equal(
+    markVoiceFinal("evie are you there"),
+    "[voice] evie are you there",
+  );
+});
+
+test("dedupe matches raw text — the marker is added only after gating", () => {
+  // The hook pushes gate.text (raw) into the duplicate window and the echo
+  // suppressor, NEVER the marked form; if the marker rode inside either,
+  // replays would no longer dedupe and echo matching would never hit.
+  const gate = gateFinalTranscript("evie are you there", []);
+  assert.equal(gate.ok, true);
+  const raw = gate.ok ? gate.text : "";
+  const marked = markVoiceFinal(raw);
+  assert.ok(marked.startsWith(VOICE_TURN_MARKER));
+  assert.deepEqual(gateFinalTranscript(raw, [raw]), {
+    ok: false,
+    reason: "duplicate",
+  });
+});
+
+test("gate → mark composes: the marker rides on the normalized text", () => {
+  const gate = gateFinalTranscript("  what's  the weather ", []);
+  assert.equal(gate.ok, true);
+  if (gate.ok) {
+    assert.equal(markVoiceFinal(gate.text), "[voice] what's the weather");
+  }
 });
 
 test("normalizeTranscript collapses whitespace runs and trims", () => {

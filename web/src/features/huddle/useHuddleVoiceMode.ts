@@ -16,6 +16,7 @@ import {
   ECHO_TAIL_MS,
   gateFinalTranscript,
   isEchoOfUtterances,
+  markVoiceFinal,
   msSinceLastUtterance,
   nextVoiceStatus,
   shouldHoldFinal,
@@ -47,8 +48,9 @@ import {
  * bug, not parity to preserve.
  *
  * Finals run through `gateFinalTranscript` + the DUPLICATE_WINDOW dedupe
- * (`lib/voiceTranscript.ts`) and then `onFinalTranscript` — the caller
- * owns the publish path and error surfacing. Partials surface as
+ * (`lib/voiceTranscript.ts`), get the `[voice] ` marker added at the moment
+ * of publication (`publishFinal` below), and then reach `onFinalTranscript`
+ * — the caller owns the publish path and error surfacing. Partials surface as
  * `interimText` for display and never publish. The dedupe window survives
  * reconnects, because a resumed session can replay the previous final.
  *
@@ -196,6 +198,16 @@ export function useHuddleVoiceMode(options: {
     };
 
     /**
+     * Publish one gated final — the ONLY path any final takes out of this
+     * hook. The `[voice] ` marker goes on here, at the last moment, so the
+     * duplicate window and the echo suppressor above keep matching raw
+     * spoken text (lib/voiceTranscript.ts header).
+     */
+    const publishFinal = (text: string) => {
+      onFinalRef.current(markVoiceFinal(text));
+    };
+
+    /**
      * Drain held finals once the avatar has been quiet past the tail.
      * Layer 2 decides each one: a close match to an utterance the avatar
      * said during the hold window is an echo and is dropped silently;
@@ -220,7 +232,7 @@ export function useHuddleVoiceMode(options: {
       ).map((entry) => entry.text);
       for (const text of held) {
         if (!isEchoOfUtterances(text, utteranceTexts)) {
-          onFinalRef.current(text);
+          publishFinal(text);
         }
       }
     };
@@ -277,7 +289,7 @@ export function useHuddleVoiceMode(options: {
               }
               return;
             }
-            onFinalRef.current(gate.text);
+            publishFinal(gate.text);
             return;
           }
           case "done":

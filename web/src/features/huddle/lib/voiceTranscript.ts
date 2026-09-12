@@ -17,15 +17,38 @@
  *
  * So the publish path in `useHuddleVoiceMode`'s caller passes the huddle's
  * bot roster as `mentionPubkeys` through the channel's ordinary `send`.
- * The transcript text itself carries no prefix and no decoration — the
- * p tags are addressing, not content, and do not render as mention chips
+ * The p tags are addressing, not content, and do not render as mention chips
  * (highlighting comes from @tokens in the text, lib/mentions.ts:4-5; every
  * DM message proves a bare p tag renders as an ordinary message).
+ *
+ * The transcript text carries exactly one piece of decoration, added at
+ * publish time (after gating, dedupe, and echo matching — none of which may
+ * see it): the `[voice] ` marker. It mirrors the `[video] ` prefix the
+ * desktop video-chat bridge puts on its relayed spoken turns, and the agent
+ * harness (crates/buzz-acp/src/voice_turn.rs) reads it to run that turn at
+ * reduced reasoning effort so first spoken audio stays fast.
  *
  * Interim results are collected (for live display) but never published.
  *
  * Import-free, so `node --test` loads it.
  */
+
+/**
+ * Prefix marking a published transcript as a spoken turn, matching the
+ * desktop bridge's `[video] ` marker. Applied ONLY at publish time: the
+ * duplicate window and the echo suppressor compare raw spoken text, and a
+ * marker riding inside either would break both.
+ */
+export const VOICE_TURN_MARKER = "[voice] ";
+
+/**
+ * Mark one gated final for publication. Pure and total — the hook calls this
+ * at its two publish sites (clean path and echo-hold drain) so no final can
+ * slip out unmarked.
+ */
+export function markVoiceFinal(text: string): string {
+  return `${VOICE_TURN_MARKER}${text}`;
+}
 
 /** Finals shorter than this are noise ("ok", "hm") and are not published. */
 export const MIN_TRANSCRIPT_CHARS = 3;

@@ -31,7 +31,8 @@ use uuid::Uuid;
 
 use crate::acp::{
     extract_model_config_options, extract_model_state, extract_thought_level_config_id,
-    model_in_catalog, resolve_model_switch_method, AcpClient, AcpError, EnvVar, McpServer,
+    extract_thought_level_current_value, model_in_catalog, resolve_model_switch_method,
+    resolve_model_switch_method_from_catalog, AcpClient, AcpError, EnvVar, McpServer,
     ModelSwitchMethod, StopReason, SystemPromptTransport,
 };
 use crate::config::{compose_session_title, DedupMode, PermissionMode};
@@ -101,6 +102,15 @@ pub struct AgentModelCapabilities {
     /// instead of hardcoding it. `None` when the adapter advertises no
     /// `thought_level` option.
     pub thought_level_config_id: Option<String>,
+    /// The `thought_level` option's `currentValue` as the adapter reported it
+    /// at session creation — the value the session is actually running, kept
+    /// truthful through a startup-effort application (see the patch after
+    /// `apply_startup_effort`). This is the restore baseline for the
+    /// voice-turn effort override: a transient per-turn override is only
+    /// attempted when this baseline is known, because an override whose
+    /// baseline is unknown cannot be undone. `None` when the adapter
+    /// advertises no thought_level option or no usable currentValue.
+    pub thought_level_current_value: Option<String>,
 }
 
 /// Successful deliveries associated with one live channel session.
@@ -1095,6 +1105,7 @@ async fn create_session_and_apply_model(
             config_options_raw: extract_model_config_options(&resp.raw),
             available_models_raw: extract_model_state(&resp.raw),
             thought_level_config_id: extract_thought_level_config_id(&resp.raw),
+            thought_level_current_value: extract_thought_level_current_value(&resp.raw),
         });
     }
 
@@ -1137,6 +1148,9 @@ async fn create_session_and_apply_model(
                                 config_options_raw: extract_model_config_options(&switch_result),
                                 available_models_raw: extract_model_state(&switch_result),
                                 thought_level_config_id: extract_thought_level_config_id(
+                                    &switch_result,
+                                ),
+                                thought_level_current_value: extract_thought_level_current_value(
                                     &switch_result,
                                 ),
                             });
@@ -1220,6 +1234,17 @@ async fn create_session_and_apply_model(
     // the cached configOptions tell the truth about the running session.
     let effort_snapshot = post_switch_snapshot.as_ref().unwrap_or(&resp.raw);
     let effort_outcome = apply_startup_effort(agent, effort_snapshot, &resp.session_id).await?;
+
+    // Truthful capture for the voice-turn restore baseline: after an APPLIED
+    // startup effort the session's live thought_level is the applied value,
+    // not the snapshot's pre-set one — mirror `patch_config_option_current_value`
+    // into the cached capabilities so a later transient override restores to
+    // what is actually running.
+    if let Some(StartupEffortOutcome::Applied { value, .. }) = &effort_outcome {
+        if let Some(caps) = agent.model_capabilities.as_mut() {
+            caps.thought_level_current_value = Some(value.clone());
+        }
+    }
 
     // Emit session config for desktop consumption (config bridge tier 1b).
     // Emitted AFTER desired_model resolution so the desktop caches the
@@ -1513,6 +1538,315 @@ fn patch_config_option_current_value(
         if matches {
             opt["currentValue"] = serde_json::Value::String(value.to_string());
             return;
+        }
+    }
+}
+
+/// What a voice turn changed on the live session, and how to undo it.
+///
+/// Built by [`apply_voice_turn_overrides`] and consumed by
+/// [`restore_voice_turn_overrides`]. A default (no-op) guard — what an
+/// unmarked turn always produces, before any RPC is attempted — records
+/// nothing and restores nothing, which is exactly why the unmarked path is
+/// byte-identical to the pre-routing behavior.
+struct VoiceTurnOverrideGuard {
+    /// `(configId, value)` to re-apply after the turn: the session's pre-turn
+    /// `thought_level` value as the adapter last reported it.
+    effort_restore: Option<(String, String)>,
+    /// Model id to switch back to after the turn: the session's pre-turn
+    /// `currentModelId`.
+    model_restore: Option<String>,
+}
+
+impl VoiceTurnOverrideGuard {
+    fn noop() -> Self {
+        Self {
+            effort_restore: None,
+            model_restore: None,
+        }
+    }
+
+    fn is_noop(&self) -> bool {
+        self.effort_restore.is_none() && self.model_restore.is_none()
+    }
+}
+
+/// Apply the per-turn voice-turn overrides (`crate::voice_turn`) to the live
+/// session, before the turn's prompt is sent.
+///
+/// Returns the guard describing what must be restored after the turn. The
+/// no-op default (no marker, or both knobs unset) performs ZERO ACP RPCs.
+///
+/// Fail-safe by construction: an override is applied only when the session's
+/// pre-turn value is known (`thought_level_current_value` / `currentModelId`),
+/// because an override whose baseline is unknown cannot be undone — and a
+/// voice turn must never permanently change the config later turns run at.
+/// An override that fails to apply is a warn-and-proceed at normal config,
+/// which IS the spec's fallback posture (the turn still runs; nothing is
+/// retried at a second config).
+async fn apply_voice_turn_overrides(
+    agent: &mut OwnedAgent,
+    overrides: &crate::voice_turn::VoiceTurnOverrides,
+    session_id: &str,
+) -> VoiceTurnOverrideGuard {
+    if overrides.is_noop() {
+        return VoiceTurnOverrideGuard::noop();
+    }
+    let Some(caps) = agent.model_capabilities.as_ref() else {
+        tracing::warn!(
+            target: "pool::voice",
+            "voice-turn overrides resolved but no model capabilities are cached — proceeding at normal config"
+        );
+        return VoiceTurnOverrideGuard::noop();
+    };
+    let thought_config_id = caps.thought_level_config_id.clone();
+    let thought_current = caps.thought_level_current_value.clone();
+
+    let mut guard = VoiceTurnOverrideGuard::noop();
+
+    if let Some(effort) = &overrides.effort {
+        match (thought_config_id, thought_current) {
+            (Some(config_id), Some(current)) if current != *effort => {
+                let result = tokio::time::timeout(
+                    MODEL_SWITCH_TIMEOUT,
+                    agent
+                        .acp
+                        .session_set_config_option(session_id, &config_id, effort),
+                )
+                .await;
+                match result {
+                    Ok(Ok(_)) => {
+                        tracing::info!(
+                            target: "pool::voice",
+                            effort = %effort,
+                            config_id = %config_id,
+                            "voice turn: applied effort override on session {session_id}"
+                        );
+                        guard.effort_restore = Some((config_id, current));
+                    }
+                    // Transport-class errors may have corrupted the stdio stream.
+                    // Do not attempt further override RPCs — the prompt itself will
+                    // surface the failure through the normal turn error path.
+                    Ok(Err(e)) => {
+                        tracing::warn!(
+                            target: "pool::voice",
+                            "voice turn: effort override rejected ({e}) — proceeding at normal config"
+                        );
+                        return guard;
+                    }
+                    Err(_) => {
+                        tracing::warn!(
+                            target: "pool::voice",
+                            "voice turn: effort override timed out ({MODEL_SWITCH_TIMEOUT:?}) — proceeding at normal config"
+                        );
+                        return guard;
+                    }
+                }
+            }
+            (Some(_), None) => {
+                tracing::warn!(
+                    target: "pool::voice",
+                    "voice turn: adapter reports no current thought_level value — cannot restore, skipping effort override"
+                );
+            }
+            (None, _) => {
+                tracing::info!(
+                    target: "pool::voice",
+                    "voice turn: model advertises no thought_level option — skipping effort override"
+                );
+            }
+            // Already at the target effort: nothing to apply, nothing to restore.
+            (Some(_), Some(_)) => {}
+        }
+    }
+
+    if let Some(model) = &overrides.model {
+        let (config_options, available_models, current_model) = agent
+            .model_capabilities
+            .as_ref()
+            .map(|caps| {
+                (
+                    caps.config_options_raw.clone(),
+                    caps.available_models_raw.clone(),
+                    caps.available_models_raw
+                        .as_ref()
+                        .and_then(|m| m.get("currentModelId"))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string),
+                )
+            })
+            .unwrap_or((Vec::new(), None, None));
+        match resolve_model_switch_method_from_catalog(
+            &config_options,
+            available_models.as_ref(),
+            model,
+        ) {
+            Some(method) => {
+                let result = tokio::time::timeout(
+                    MODEL_SWITCH_TIMEOUT,
+                    apply_model_switch(&mut agent.acp, session_id, model, &method),
+                )
+                .await;
+                match result {
+                    Ok(Ok(ModelSwitchOutcome::Applied(_))) => {
+                        tracing::info!(
+                            target: "pool::voice",
+                            model = %model,
+                            "voice turn: applied model override on session {session_id}"
+                        );
+                        if let Some(current) = current_model {
+                            if current != *model {
+                                guard.model_restore = Some(current);
+                            }
+                        }
+                    }
+                    Ok(Ok(ModelSwitchOutcome::Rejected)) => {
+                        tracing::warn!(
+                            target: "pool::voice",
+                            "voice turn: adapter rejected model override to {model} — proceeding with current model"
+                        );
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!(
+                            target: "pool::voice",
+                            "voice turn: model override failed ({e}) — proceeding with current model"
+                        );
+                    }
+                    Err(_) => {
+                        tracing::warn!(
+                            target: "pool::voice",
+                            "voice turn: model override timed out ({MODEL_SWITCH_TIMEOUT:?}) — proceeding with current model"
+                        );
+                    }
+                }
+            }
+            None => {
+                tracing::info!(
+                    target: "pool::voice",
+                    model = %model,
+                    "voice turn: model not in agent's catalog — skipping model override"
+                );
+            }
+        }
+    }
+
+    if !guard.is_noop() {
+        agent.acp.observe(
+            "voice_turn_override",
+            serde_json::json!({
+                "sessionId": session_id,
+                "effort": overrides.effort,
+                "model": overrides.model,
+                "willRestoreEffort": guard.effort_restore.is_some(),
+                "willRestoreModel": guard.model_restore.is_some(),
+            }),
+        );
+    }
+    guard
+}
+
+/// Restore the session's pre-turn config after a voice turn, best-effort.
+///
+/// Restore failures are warns, not errors: the turn has already happened, and
+/// both baselines are re-applied by ordinary machinery when the session is
+/// next recreated (startup effort via `apply_startup_effort`, model via
+/// `desired_model`) — a failed restore degrades only the current session's
+/// lifetime, and says so in the log.
+async fn restore_voice_turn_overrides(
+    agent: &mut OwnedAgent,
+    guard: &VoiceTurnOverrideGuard,
+    session_id: &str,
+) {
+    if guard.is_noop() {
+        return;
+    }
+    if let Some((config_id, value)) = &guard.effort_restore {
+        let result = tokio::time::timeout(
+            MODEL_SWITCH_TIMEOUT,
+            agent
+                .acp
+                .session_set_config_option(session_id, config_id, value),
+        )
+        .await;
+        match result {
+            Ok(Ok(_)) => {
+                tracing::info!(
+                    target: "pool::voice",
+                    value = %value,
+                    "voice turn: restored effort via configId={config_id} on session {session_id}"
+                );
+            }
+            Ok(Err(e)) => {
+                tracing::warn!(
+                    target: "pool::voice",
+                    "voice turn: effort restore to {value} failed ({e}) — the value reapplies at next session creation"
+                );
+            }
+            Err(_) => {
+                tracing::warn!(
+                    target: "pool::voice",
+                    "voice turn: effort restore timed out ({MODEL_SWITCH_TIMEOUT:?}) — the value reapplies at next session creation"
+                );
+            }
+        }
+    }
+    if let Some(model) = &guard.model_restore {
+        let (config_options, available_models) = agent
+            .model_capabilities
+            .as_ref()
+            .map(|caps| {
+                (
+                    caps.config_options_raw.clone(),
+                    caps.available_models_raw.clone(),
+                )
+            })
+            .unwrap_or((Vec::new(), None));
+        let method = match resolve_model_switch_method_from_catalog(
+            &config_options,
+            available_models.as_ref(),
+            model,
+        ) {
+            Some(method) => method,
+            None => {
+                tracing::warn!(
+                    target: "pool::voice",
+                    model = %model,
+                    "voice turn: previous model left the catalog — it reapplies at next session creation"
+                );
+                return;
+            }
+        };
+        let result = tokio::time::timeout(
+            MODEL_SWITCH_TIMEOUT,
+            apply_model_switch(&mut agent.acp, session_id, model, &method),
+        )
+        .await;
+        match result {
+            Ok(Ok(ModelSwitchOutcome::Applied(_))) => {
+                tracing::info!(
+                    target: "pool::voice",
+                    model = %model,
+                    "voice turn: restored model on session {session_id}"
+                );
+            }
+            Ok(Ok(ModelSwitchOutcome::Rejected)) => {
+                tracing::warn!(
+                    target: "pool::voice",
+                    "voice turn: adapter rejected model restore to {model} — it reapplies at next session creation"
+                );
+            }
+            Ok(Err(e)) => {
+                tracing::warn!(
+                    target: "pool::voice",
+                    "voice turn: model restore to {model} failed ({e}) — it reapplies at next session creation"
+                );
+            }
+            Err(_) => {
+                tracing::warn!(
+                    target: "pool::voice",
+                    "voice turn: model restore timed out ({MODEL_SWITCH_TIMEOUT:?}) — it reapplies at next session creation"
+                );
+            }
         }
     }
 }
@@ -2471,6 +2805,21 @@ pub async fn run_prompt_task(
         return;
     };
 
+    // Voice-turn routing (spec: EVIE_VOICE_TURN_ROUTING): a turn whose
+    // triggering content arrived marked `[video] `/`[voice] ` may run with
+    // per-turn inference overrides so spoken-latency turns don't pay
+    // full-effort thinking. Detection is a pure prefix check on the LAST
+    // batch event's content — the same event `format_prompt` derives the
+    // turn's scope from — and an unmarked turn resolves to the no-op default
+    // before any ACP RPC is attempted, so the unmarked path is byte-identical
+    // to the pre-routing behavior. Heartbeats (batch = None) never mark.
+    let voice_turn_overrides = crate::voice_turn::VoiceTurnOverrides::from_env_for_turn(
+        batch
+            .as_ref()
+            .and_then(|b| b.events.last())
+            .map(|be| be.event.content.as_str()),
+    );
+
     // 💬 — fire-and-forget so the prompt fires immediately.
     // The guard's cleanup (spawned on drop) removes 💬 after the turn completes.
     // A brief race where 💬 appears slightly after the agent starts is acceptable.
@@ -2527,6 +2876,16 @@ pub async fn run_prompt_task(
         "turn starting for {}",
         prompt_label(&source)
     );
+
+    // Per-turn voice overrides must land on the wire BEFORE the prompt so the
+    // agent's first token is produced under the override. The returned guard
+    // is restored on every path where the session survives the turn — the
+    // prompt-ran-to-completion path below, and the Race-1 arm (turn completed
+    // before the control signal landed) inside the select. The other
+    // control-signal arms invalidate the session, and both baselines re-apply
+    // at its recreation, so no restore is needed there.
+    let voice_override_guard =
+        apply_voice_turn_overrides(&mut agent, &voice_turn_overrides, &session_id).await;
 
     // When control_rx is Some (channel tasks), wrap the prompt in select! so
     // the main loop can cancel, interrupt, or rotate it. Heartbeats
@@ -2686,6 +3045,12 @@ pub async fn run_prompt_task(
                             &source,
                             &control_signal,
                         );
+                        // The turn completed under voice overrides before the
+                        // control signal landed, and this session SURVIVES (it is
+                        // not invalidated here) — restore its pre-turn config the
+                        // same way the prompt-completed path does.
+                        restore_voice_turn_overrides(&mut agent, &voice_override_guard, &session_id)
+                            .await;
                         let usage = agent.acp.take_turn_usage();
                         publish_agent_turn_metric(
                             &ctx,
@@ -2710,6 +3075,11 @@ pub async fn run_prompt_task(
             }
         }
     };
+
+    // The prompt ran to completion on this path — success, error, or timeout —
+    // so the session survives and its pre-turn config must come back before
+    // any later turn on the same session.
+    restore_voice_turn_overrides(&mut agent, &voice_override_guard, &session_id).await;
 
     match prompt_result {
         Ok(stop_reason) => {
@@ -8901,6 +9271,243 @@ exit 0"#
         let mut opts = serde_json::Value::Null;
         patch_config_option_current_value(&mut opts, "effort", "high");
         assert!(opts.is_null(), "a null snapshot must stay null");
+    }
+}
+
+#[cfg(test)]
+mod voice_turn_tests {
+    use super::*;
+    use crate::acp::AcpClient;
+    use crate::voice_turn::VoiceTurnOverrides;
+
+    /// Build an agent whose cached capabilities mirror a session created
+    /// against a claude-agent-acp-style `session/new`: a thought_level option
+    /// and a model option, with `thought_level_current` as the running effort.
+    fn voice_agent(acp: AcpClient, thought_level_current: Option<&str>) -> OwnedAgent {
+        OwnedAgent {
+            index: 0,
+            acp,
+            state: SessionState::default(),
+            model_capabilities: Some(AgentModelCapabilities {
+                config_options_raw: vec![serde_json::json!({
+                    "configId": "model",
+                    "category": "model",
+                    "currentValue": "m-a",
+                    "options": [{ "value": "m-a" }, { "value": "m-b" }]
+                })],
+                available_models_raw: Some(serde_json::json!({
+                    "currentModelId": "m-a",
+                    "availableModels": [{ "modelId": "m-a" }, { "modelId": "m-b" }]
+                })),
+                thought_level_config_id: Some("effort".to_string()),
+                thought_level_current_value: thought_level_current.map(str::to_string),
+            }),
+            desired_model: None,
+            model_overridden: false,
+            desired_model_request_id: None,
+            desired_model_pending_ack: false,
+            startup_effort: None,
+            agent_name: "voice-test-agent".into(),
+            goose_system_prompt_supported: None,
+            protocol_version: 2,
+        }
+    }
+
+    /// Spawn a scripted ACP that appends EVERY incoming request line to the
+    /// `$CAPTURE` file and answers each with a generic ok result — so the
+    /// test asserts on the exact RPCs the override path put on the wire.
+    async fn spawn_capture_acp(capture: &std::path::Path) -> AcpClient {
+        let script = r#"count=0
+while IFS= read -r line; do
+  count=$((count + 1))
+  id=$((count - 1))
+  printf '%s\n' "$line" >> "$CAPTURE"
+  printf '%s\n' '{"jsonrpc":"2.0","id":'"$id"',"result":{"ok":true}}'
+done"#;
+        AcpClient::spawn(
+            "bash",
+            &["-c".to_string(), script.to_string()],
+            &[("CAPTURE".to_string(), capture.display().to_string())],
+            false,
+        )
+        .await
+        .expect("spawn capture ACP script")
+    }
+
+    fn capture_path(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join("buzz-acp-voice-turn-capture");
+        std::fs::create_dir_all(&dir).expect("create capture dir");
+        let path = dir.join(format!("{name}.jsonl"));
+        let _ = std::fs::remove_file(&path);
+        path
+    }
+
+    fn captured_lines(path: &std::path::Path) -> Vec<String> {
+        std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn test_voice_effort_override_sets_then_restores() {
+        let capture = capture_path("effort_apply_restore");
+        let acp = spawn_capture_acp(&capture).await;
+        let mut agent = voice_agent(acp, Some("max"));
+
+        let overrides = VoiceTurnOverrides {
+            effort: Some("low".to_string()),
+            model: None,
+        };
+        let guard = apply_voice_turn_overrides(&mut agent, &overrides, "sess-voice").await;
+        assert_eq!(
+            guard.effort_restore,
+            Some(("effort".to_string(), "max".to_string())),
+            "the pre-turn baseline must be captured for restore"
+        );
+        assert!(guard.model_restore.is_none());
+
+        restore_voice_turn_overrides(&mut agent, &guard, "sess-voice").await;
+
+        let lines = captured_lines(&capture);
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|l| l.contains("session/set_config_option"))
+                .count(),
+            2,
+            "exactly one set + one restore on the wire, got {lines:?}"
+        );
+        assert!(
+            lines[0].contains(r#""configId":"effort""#) && lines[0].contains(r#""value":"low""#),
+            "first RPC must set effort=low, got {}",
+            lines[0]
+        );
+        assert!(
+            lines[1].contains(r#""configId":"effort""#) && lines[1].contains(r#""value":"max""#),
+            "second RPC must restore effort=max, got {}",
+            lines[1]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_unmarked_turn_issues_no_rpc() {
+        // THE no-marker requirement, at the wire layer: the default (no
+        // marker / no resolved knob) overrides must not put ANYTHING on the
+        // wire, on either the apply or the restore side.
+        let capture = capture_path("unmarked_noop");
+        let acp = spawn_capture_acp(&capture).await;
+        let mut agent = voice_agent(acp, Some("max"));
+
+        let overrides = VoiceTurnOverrides::default();
+        assert!(overrides.is_noop());
+        let guard = apply_voice_turn_overrides(&mut agent, &overrides, "sess-voice").await;
+        assert!(guard.is_noop());
+        restore_voice_turn_overrides(&mut agent, &guard, "sess-voice").await;
+
+        assert!(
+            !capture.exists() || captured_lines(&capture).is_empty(),
+            "an unmarked turn must perform zero ACP RPCs"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_voice_effort_skipped_without_restore_baseline() {
+        // Fail-safe: with no known pre-turn value the override cannot be
+        // undone, so it must not be attempted at all.
+        let capture = capture_path("no_baseline_skip");
+        let acp = spawn_capture_acp(&capture).await;
+        let mut agent = voice_agent(acp, None);
+
+        let overrides = VoiceTurnOverrides {
+            effort: Some("low".to_string()),
+            model: None,
+        };
+        let guard = apply_voice_turn_overrides(&mut agent, &overrides, "sess-voice").await;
+        assert!(guard.is_noop(), "nothing applied → nothing to restore");
+        assert!(captured_lines(&capture).is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_voice_effort_already_at_target_is_noop() {
+        let capture = capture_path("already_at_target");
+        let acp = spawn_capture_acp(&capture).await;
+        let mut agent = voice_agent(acp, Some("low"));
+
+        let overrides = VoiceTurnOverrides {
+            effort: Some("low".to_string()),
+            model: None,
+        };
+        let guard = apply_voice_turn_overrides(&mut agent, &overrides, "sess-voice").await;
+        assert!(guard.is_noop());
+        assert!(captured_lines(&capture).is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_voice_model_override_switches_then_restores() {
+        let capture = capture_path("model_apply_restore");
+        let acp = spawn_capture_acp(&capture).await;
+        let mut agent = voice_agent(acp, Some("max"));
+
+        let overrides = VoiceTurnOverrides {
+            effort: None,
+            model: Some("m-b".to_string()),
+        };
+        let guard = apply_voice_turn_overrides(&mut agent, &overrides, "sess-voice").await;
+        assert_eq!(
+            guard.model_restore,
+            Some("m-a".to_string()),
+            "the pre-turn currentModelId must be captured for restore"
+        );
+
+        restore_voice_turn_overrides(&mut agent, &guard, "sess-voice").await;
+
+        let lines = captured_lines(&capture);
+        assert_eq!(lines.len(), 2, "one model set + one restore, got {lines:?}");
+        assert!(
+            lines[0].contains(r#""configId":"model""#) && lines[0].contains(r#""value":"m-b""#),
+            "first RPC must switch to m-b, got {}",
+            lines[0]
+        );
+        assert!(
+            lines[1].contains(r#""value":"m-a""#),
+            "second RPC must restore m-a, got {}",
+            lines[1]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_voice_model_not_in_catalog_skips() {
+        let capture = capture_path("model_not_in_catalog");
+        let acp = spawn_capture_acp(&capture).await;
+        let mut agent = voice_agent(acp, Some("max"));
+
+        let overrides = VoiceTurnOverrides {
+            effort: None,
+            model: Some("model-not-offered".to_string()),
+        };
+        let guard = apply_voice_turn_overrides(&mut agent, &overrides, "sess-voice").await;
+        assert!(guard.is_noop());
+        assert!(captured_lines(&capture).is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_voice_model_equal_to_current_needs_no_restore() {
+        let capture = capture_path("model_equal_current");
+        let acp = spawn_capture_acp(&capture).await;
+        let mut agent = voice_agent(acp, Some("max"));
+
+        let overrides = VoiceTurnOverrides {
+            effort: None,
+            model: Some("m-a".to_string()),
+        };
+        let guard = apply_voice_turn_overrides(&mut agent, &overrides, "sess-voice").await;
+        assert!(
+            guard.model_restore.is_none(),
+            "switching to the model already running records no restore"
+        );
+        assert_eq!(captured_lines(&capture).len(), 1);
     }
 }
 
