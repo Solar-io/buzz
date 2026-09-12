@@ -214,6 +214,37 @@ pub struct AcpClient {
     standard_usage: StandardUsageTracker,
     /// Known adapter identity for prompt-response usage mapping.
     standard_adapter: Option<StandardAdapterKind>,
+    /// The session's live `thought_level` knob, tracked for the steer-boundary
+    /// voice-turn effort override (see [`ThoughtLevelState`]). `None` when the
+    /// adapter advertises no usable knob — then every effort override at the
+    /// steer boundary is skipped without an RPC, exactly like the prompt path.
+    thought_level: Option<ThoughtLevelState>,
+}
+
+/// The session's live `thought_level` knob, as last touched through this
+/// connection.
+///
+/// Owned by `AcpClient` (not the pool's `AgentModelCapabilities`) because its
+/// ONLY mutator during a turn is the read loop — the pool cannot reach in to
+/// apply a mid-turn config change on a connection the loop is reading. It is
+/// seeded from the cached capabilities at session creation (pool.rs, after the
+/// startup-effort truthfulness patch) so both sides start from the same
+/// adapter-reported value, and the prompt path's own apply/restore is left
+/// untouched. A steer landing mid-marked-prompt-turn can therefore see a
+/// slightly stale `current_value` (the prompt's applied effort is not
+/// reflected here); every divergence is benign — the redundant RPC is
+/// idempotent and the prompt path restores at turn end.
+#[derive(Debug, Clone)]
+pub(crate) struct ThoughtLevelState {
+    /// The adapter's configId for the `thought_level` option (e.g. `effort`
+    /// on claude-agent-acp). Discovered at session time, never hardcoded.
+    pub(crate) config_id: String,
+    /// The value the session is running at right now, as last known here.
+    pub(crate) current_value: String,
+    /// The session default an active override must return to — the
+    /// pre-override value, captured when the first override is applied.
+    /// `None` while the session runs at its default (the steady state).
+    pub(crate) override_baseline: Option<String>,
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -388,6 +419,45 @@ enum SteerTransport {
     /// [`ACP_STEER_METHOD`] — success carries an `outcome` that must be
     /// positively recognized before the steer counts as delivered.
     AcpExtension,
+}
+
+/// What the steer arm must do about the voice-turn effort before it may
+/// write the steer itself. Produced by
+/// [`AcpClient::plan_steer_effort`](AcpClient::plan_steer_effort).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SteerEffortPlan {
+    /// Deliver the steer now — no effort RPC is needed. Covers the no-knob
+    /// adapter, the already-at-target case, and the no-active-override
+    /// unmarked case (the byte-identical default).
+    DeliverAsIs,
+    /// Issue one `session/set_config_option` to this value BEFORE writing
+    /// the steer, so the model call that processes the steered content runs
+    /// at the desired effort.
+    SetEffort { value: String },
+}
+
+/// A steer-boundary `session/set_config_option` that has been written to the
+/// wire and whose response has not yet been routed, together with the steer
+/// request it is holding back.
+///
+/// While this is `Some`, the steer arm is gated off (one wire write at a
+/// time, mirroring `pending_steer`), and the held steer's ack is drained as
+/// `PromptCompletedNeutral` on every read-loop return path — the override
+/// must never wedge the steer. If the config RPC fails, is rejected, or
+/// outlives [`crate::pool::MODEL_SWITCH_TIMEOUT`], the override is abandoned
+/// with a warn and the held steer is delivered at current config anyway.
+struct PendingEffortSet {
+    /// The JSON-RPC id the request was written under.
+    request_id: u64,
+    /// The effort value the request asked for.
+    desired: String,
+    /// `true` = an override (capture the baseline on success); `false` = a
+    /// restore (consume the baseline on success).
+    is_apply: bool,
+    /// When the request was written — drives the no-wedge timeout.
+    started_at: tokio::time::Instant,
+    /// The steer held back until the effort change settles.
+    steer: crate::pool::SteerRequest,
 }
 
 fn build_client_capabilities() -> serde_json::Value {
@@ -573,6 +643,7 @@ impl AcpClient {
             goose_usage: UsageTracker::default(),
             standard_usage: StandardUsageTracker::default(),
             standard_adapter,
+            thought_level: None,
         })
     }
 
@@ -952,6 +1023,75 @@ impl AcpClient {
         self.steer_rx.is_none()
     }
 
+    /// Seed the live thought-level knob from a session snapshot. Called once
+    /// per session creation by the pool, from the same post-patch snapshot the
+    /// voice-turn restore baseline is derived from. Overwrites any previous
+    /// session's state (and drops its override tracking — the old knob died
+    /// with the old session).
+    pub(crate) fn seed_thought_level(&mut self, config_id: String, current_value: String) {
+        self.thought_level = Some(ThoughtLevelState {
+            config_id,
+            current_value,
+            override_baseline: None,
+        });
+    }
+
+    /// Clear the live thought-level knob. Called when the fresh session
+    /// snapshot advertises no usable knob, so a stale configId from an
+    /// earlier session/model can never reach the wire.
+    pub(crate) fn clear_thought_level(&mut self) {
+        self.thought_level = None;
+    }
+
+    /// Decide what the steer arm must do about effort before delivering a
+    /// steer whose voice-turn resolution is `voice_effort`.
+    ///
+    /// Pure against [`Self::thought_level`] — no wire, no env, testable
+    /// without a process:
+    ///
+    /// - No usable knob (`thought_level` `None`) → skip, zero RPCs.
+    /// - Marked steer (`Some(value)`): desired is the override. Same as the
+    ///   current value → no RPC (consecutive marked steers are free).
+    /// - Unmarked steer (`None`): desired is the session default, i.e. the
+    ///   captured baseline when an override is active. No active override →
+    ///   no RPC — an unmarked steer on an never-overridden session is
+    ///   wire-identical to the pre-feature behavior.
+    pub(crate) fn plan_steer_effort(&self, voice_effort: Option<&str>) -> SteerEffortPlan {
+        let Some(state) = self.thought_level.as_ref() else {
+            return SteerEffortPlan::DeliverAsIs;
+        };
+        let desired = match voice_effort {
+            Some(value) => value.to_string(),
+            None => match &state.override_baseline {
+                Some(baseline) => baseline.clone(),
+                None => return SteerEffortPlan::DeliverAsIs,
+            },
+        };
+        if desired == state.current_value {
+            return SteerEffortPlan::DeliverAsIs;
+        }
+        SteerEffortPlan::SetEffort { value: desired }
+    }
+
+    /// Record a successful steer-boundary effort change on the live knob.
+    ///
+    /// `is_apply` distinguishes an override (`true` — capture the pre-override
+    /// value as the restore baseline, once) from a restore (`false` — the
+    /// baseline is consumed; the session is back at its default).
+    pub(crate) fn record_steer_effort_applied(&mut self, value: String, is_apply: bool) {
+        let Some(state) = self.thought_level.as_mut() else {
+            return;
+        };
+        if is_apply {
+            if state.override_baseline.is_none() {
+                state.override_baseline = Some(state.current_value.clone());
+            }
+        } else {
+            state.override_baseline = None;
+        }
+        state.current_value = value;
+    }
+
     /// Cancel a turn cleanly, handling any pending permission request first.
     ///
     /// Steps:
@@ -1291,6 +1431,101 @@ impl AcpClient {
         }
     }
 
+    /// Choose the steer transport and write one steer request to the wire,
+    /// arming `pending_steer` (or acking the failure). Shared by the steer
+    /// arm and the steer-boundary effort-response arm so a held steer is
+    /// delivered by exactly the same code path that delivers an immediate
+    /// one — the wording, transport choice, and failure semantics cannot
+    /// drift between the two.
+    async fn write_steer_request(
+        &mut self,
+        session_id: &str,
+        req: crate::pool::SteerRequest,
+        pending_steer: &mut Option<(
+            u64,
+            SteerTransport,
+            tokio::sync::oneshot::Sender<crate::pool::SteerAck>,
+        )>,
+    ) {
+        // Choose the steer transport and build its params at write time using
+        // the lexical `session_id` and the freshest `active_run_id`.
+        //
+        // `active_run_id` is updated by `session/update` notifications inside
+        // the read loop; reading it here (rather than snapshotting at
+        // dispatch) guarantees the value matches what goose's run-id check
+        // will compare against.
+        //
+        // Transport precedence:
+        //   Some(run_id)              → GOOSE_STEER_METHOD. goose
+        //     wins whenever a run id exists: `expectedRunId` is
+        //     strictly more precise about *which* run is steered.
+        //   None + steering_supported → ACP_STEER_METHOD, the
+        //     cross-adapter extension (claude-agent-acp, codex-acp),
+        //     which takes no run id.
+        //   None + !steering_supported → write nothing and ack
+        //     `ExpectedRunIdMissing`; the main loop maps this to
+        //     the universal cancel+merge `Steer` fallback.
+        //
+        // The capability flag is the ONLY gate on writing
+        // ACP_STEER_METHOD. Probing an unknown method is unsafe:
+        // codex-acp answers unrecognized extension methods with
+        // `{}` — a JSON-RPC success — which would be read as a
+        // delivered steer and silently drop the user's message.
+        let prompt_block_refs: Vec<&str> = req.prompt_blocks.iter().map(String::as_str).collect();
+        let selected = match (&self.active_run_id, self.steering_supported) {
+            (Some(run_id), _) => Some((
+                SteerTransport::Goose,
+                GOOSE_STEER_METHOD,
+                build_goose_steer_params(session_id, run_id, &prompt_block_refs),
+            )),
+            (None, true) => Some((
+                SteerTransport::AcpExtension,
+                ACP_STEER_METHOD,
+                build_acp_steer_params(session_id, &prompt_block_refs),
+            )),
+            (None, false) => None,
+        };
+        match selected {
+            None => {
+                tracing::warn!(
+                    "steer: no active_run_id and agent did not advertise \
+                     {ACP_STEER_METHOD} — falling back to cancel+merge"
+                );
+                let _ = req.ack_tx.send(crate::pool::SteerAck::Err(
+                    crate::pool::SteerError::ExpectedRunIdMissing,
+                ));
+            }
+            Some((transport, method, params)) => {
+                let id = self.next_id;
+                self.next_id += 1;
+                let msg = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "method": method,
+                    "params": params,
+                });
+                tracing::debug!(
+                    target: "acp::wire",
+                    "→ {}",
+                    serde_json::to_string(&msg).unwrap_or_default()
+                );
+                match self.write_ndjson(&msg).await {
+                    Ok(()) => {
+                        *pending_steer = Some((id, transport, req.ack_tx));
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "steer write failed ({method}): {e} — releasing withheld event"
+                        );
+                        let _ = req.ack_tx.send(crate::pool::SteerAck::Err(
+                            crate::pool::SteerError::Transport(e.to_string()),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     /// Idle-aware message loop: like [`read_until_response`] but resets an idle
     /// deadline on every stdout line. Fires [`AcpError::IdleTimeout`] on silence
     /// or [`AcpError::HardTimeout`] on absolute wall-clock cap.
@@ -1316,6 +1551,13 @@ impl AcpClient {
     /// guarded by `pending_steer.is_none()` so at most one steer is in
     /// flight at a time; a successful steer response is routed to the
     /// caller's oneshot ack instead of being returned as the prompt result.
+    ///
+    /// A steer whose [`SteerRequest::voice_effort`] needs a config change
+    /// first writes one `session/set_config_option` and parks the steer in
+    /// `pending_effort_set` until the response routes — still at most one
+    /// wire write in flight at a time. The override phase is bounded by
+    /// `MODEL_SWITCH_TIMEOUT`; failure, rejection, and expiry all
+    /// warn-and-proceed to delivering the steer at current config.
     ///
     /// `session_id` is threaded in lexically by callers so the goose-native
     /// steer arm can complete `sessionId` in the steer JSON-RPC params at
@@ -1351,6 +1593,16 @@ impl AcpClient {
             tokio::sync::oneshot::Sender<crate::pool::SteerAck>,
         )> = None;
 
+        // Voice-turn effort override at the steer boundary: a steer-boundary
+        // `session/set_config_option` written ahead of its held steer request
+        // (`PendingEffortSet`). While `Some`, the steer arm is gated off (one
+        // write at a time, like `pending_steer`); the held steer's ack is
+        // drained as `PromptCompletedNeutral` on every return path and the
+        // phase itself is bounded by `MODEL_SWITCH_TIMEOUT`, so an override
+        // that fails, is rejected, or is never answered NEVER wedges the
+        // steer — it is delivered at current config with a warn.
+        let mut pending_effort_set: Option<PendingEffortSet> = None;
+
         let now = Instant::now();
         let mut idle_deadline = now + idle_timeout;
         let mut hard_deadline = hard_deadline;
@@ -1374,13 +1626,7 @@ impl AcpClient {
             // exists). Check the classified deadline here so a steady-
             // stream agent is still bounded.
             if Instant::now() >= next_deadline {
-                if let Some((_, _, ack_tx)) = pending_steer.take() {
-                    // Prompt is timing out — release the withheld event via
-                    // PromptCompletedNeutral (no fallback signal: there is
-                    // no in-flight turn to signal once we return, and
-                    // normal dispatch handles redelivery).
-                    let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
-                }
+                drain_pending_steer_writes(&mut pending_steer, &mut pending_effort_set);
                 if idle_fires_first {
                     tracing::warn!("idle timeout ({idle_timeout:?}) — no agent activity");
                     return Err(AcpError::IdleTimeout(idle_timeout));
@@ -1391,83 +1637,74 @@ impl AcpClient {
                 }
             }
 
+            // The steer-boundary effort change is bounded by the same budget
+            // as every other config-option RPC: an adapter that never answers
+            // it must not park a held steer indefinitely. Expire the override
+            // (no state change — nothing was applied) and deliver the steer
+            // at current config.
+            if let Some(pending) = pending_effort_set.as_ref() {
+                if pending.started_at.elapsed() >= crate::pool::MODEL_SWITCH_TIMEOUT {
+                    let pending = pending_effort_set.take().expect("just checked");
+                    tracing::warn!(
+                        target: "pool::voice",
+                        value = %pending.desired,
+                        "steer-boundary effort override timed out ({:?}) — delivering steer at current effort",
+                        crate::pool::MODEL_SWITCH_TIMEOUT,
+                    );
+                    self.write_steer_request(session_id, pending.steer, &mut pending_steer)
+                        .await;
+                    continue;
+                }
+            }
+
             // LinesCodec::new_with_max_length enforces MAX_LINE_SIZE at the
             // read level — the buffer never grows beyond the limit.
             let read_result = tokio::select! {
                 biased;
                 read_result = self.reader.next() => Some(read_result),
-                // Steer arm: gated off whenever a steer write is already in
-                // flight so we don't stack two writes against the same
-                // process. The `async { steer_rx.as_mut()?.recv().await }`
-                // wrapper produces `None` when no receiver is installed,
-                // which mismatches the `Some(req)` pattern and disables the
-                // branch for that iteration (no busy loop). Cancel-safe:
+                // Steer arm: gated off whenever a steer or steer-boundary
+                // effort write is already in flight so we don't stack writes
+                // against the same process. The
+                // `async { steer_rx.as_mut()?.recv().await }` wrapper
+                // produces `None` when no receiver is installed, which
+                // mismatches the `Some(req)` pattern and disables the branch
+                // for that iteration (no busy loop). Cancel-safe:
                 // `mpsc::Receiver::recv` does not lose messages on drop.
                 Some(req) = async {
                     match steer_rx.as_mut() {
                         Some(rx) => rx.recv().await,
                         None => None,
                     }
-                }, if pending_steer.is_none() => {
-                    // Selected: choose the steer transport and build its
-                    // params at write time using the lexical `session_id`
-                    // and the freshest `active_run_id`.
-                    //
-                    // `active_run_id` is updated by `session/update`
-                    // notifications inside this very loop; reading it here
-                    // (rather than snapshotting at dispatch) guarantees the
-                    // value matches what goose's run-id check will compare
-                    // against.
-                    //
-                    // Transport precedence:
-                    //   Some(run_id)              → GOOSE_STEER_METHOD. goose
-                    //     wins whenever a run id exists: `expectedRunId` is
-                    //     strictly more precise about *which* run is steered.
-                    //   None + steering_supported → ACP_STEER_METHOD, the
-                    //     cross-adapter extension (claude-agent-acp,
-                    //     codex-acp), which takes no run id.
-                    //   None + !steering_supported → write nothing and ack
-                    //     `ExpectedRunIdMissing`; the main loop maps this to
-                    //     the universal cancel+merge `Steer` fallback.
-                    //
-                    // The capability flag is the ONLY gate on writing
-                    // ACP_STEER_METHOD. Probing an unknown method is unsafe:
-                    // codex-acp answers unrecognized extension methods with
-                    // `{}` — a JSON-RPC success — which would be read as a
-                    // delivered steer and silently drop the user's message.
-                    let prompt_block_refs: Vec<&str> =
-                        req.prompt_blocks.iter().map(String::as_str).collect();
-                    let selected = match (&self.active_run_id, self.steering_supported) {
-                        (Some(run_id), _) => Some((
-                            SteerTransport::Goose,
-                            GOOSE_STEER_METHOD,
-                            build_goose_steer_params(session_id, run_id, &prompt_block_refs),
-                        )),
-                        (None, true) => Some((
-                            SteerTransport::AcpExtension,
-                            ACP_STEER_METHOD,
-                            build_acp_steer_params(session_id, &prompt_block_refs),
-                        )),
-                        (None, false) => None,
-                    };
-                    match selected {
-                        None => {
-                            tracing::warn!(
-                                "steer: no active_run_id and agent did not advertise \
-                                 {ACP_STEER_METHOD} — falling back to cancel+merge"
-                            );
-                            let _ = req.ack_tx.send(crate::pool::SteerAck::Err(
-                                crate::pool::SteerError::ExpectedRunIdMissing,
-                            ));
+                }, if pending_steer.is_none() && pending_effort_set.is_none() => {
+                    // Voice-turn effort at the steer boundary: decide whether
+                    // the steered content must run at a different effort than
+                    // the session is at, and land that config change on the
+                    // wire BEFORE the steer so the model call that processes
+                    // the steered content runs at the desired effort.
+                    // Production turns live here — buzz sessions are
+                    // long-lived and every new event arrives as a steer — so
+                    // this, not the session_prompt hook, is where the
+                    // per-turn override actually takes effect.
+                    match self.plan_steer_effort(req.voice_effort.as_deref()) {
+                        SteerEffortPlan::DeliverAsIs => {
+                            self.write_steer_request(session_id, req, &mut pending_steer)
+                                .await;
                         }
-                        Some((transport, method, params)) => {
+                        SteerEffortPlan::SetEffort { value } => {
+                            // Unwrap is safe: plan_steer_effort only returns
+                            // SetEffort when a usable knob is present.
+                            let state = self.thought_level.clone().expect("plan returned SetEffort without knob state");
                             let id = self.next_id;
                             self.next_id += 1;
                             let msg = serde_json::json!({
                                 "jsonrpc": "2.0",
                                 "id": id,
-                                "method": method,
-                                "params": params,
+                                "method": "session/set_config_option",
+                                "params": {
+                                    "sessionId": session_id,
+                                    "configId": state.config_id,
+                                    "value": value,
+                                },
                             });
                             tracing::debug!(
                                 target: "acp::wire",
@@ -1476,22 +1713,37 @@ impl AcpClient {
                             );
                             match self.write_ndjson(&msg).await {
                                 Ok(()) => {
-                                    pending_steer = Some((id, transport, req.ack_tx));
+                                    pending_effort_set = Some(PendingEffortSet {
+                                        request_id: id,
+                                        desired: value,
+                                        is_apply: req.voice_effort.is_some(),
+                                        started_at: Instant::now(),
+                                        steer: req,
+                                    });
                                 }
                                 Err(e) => {
+                                    // Failed to even write the override —
+                                    // warn-and-proceed: the steer is still
+                                    // delivered, at current config.
                                     tracing::warn!(
-                                        "steer write failed ({method}): {e} — releasing withheld event"
+                                        target: "pool::voice",
+                                        error = %e,
+                                        "steer-boundary effort override write failed — delivering steer at current effort"
                                     );
-                                    let _ = req.ack_tx.send(crate::pool::SteerAck::Err(
-                                        crate::pool::SteerError::Transport(e.to_string()),
-                                    ));
+                                    self.write_steer_request(
+                                        session_id,
+                                        req,
+                                        &mut pending_steer,
+                                    )
+                                    .await;
                                 }
                             }
                         }
                     }
                     // Loop back to the next iteration without consuming a
                     // reader line; we'll wait for either the prompt
-                    // response or the steer response next.
+                    // response, the effort-set response, or the steer
+                    // response next.
                     None
                 }
                 _ = tokio::time::sleep_until(next_deadline) => {
@@ -1499,9 +1751,7 @@ impl AcpClient {
                     // would catch this anyway, but firing the deadline arm
                     // here makes the wakeup immediate (no extra reader poll
                     // round-trip when stdout is idle).
-                    if let Some((_, _, ack_tx)) = pending_steer.take() {
-                        let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
-                    }
+                    drain_pending_steer_writes(&mut pending_steer, &mut pending_effort_set);
                     if idle_fires_first {
                         tracing::warn!("idle timeout ({idle_timeout:?}) — no agent activity");
                         return Err(AcpError::IdleTimeout(idle_timeout));
@@ -1523,23 +1773,17 @@ impl AcpClient {
 
             match read_result {
                 None => {
-                    if let Some((_, _, ack_tx)) = pending_steer.take() {
-                        let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
-                    }
+                    drain_pending_steer_writes(&mut pending_steer, &mut pending_effort_set);
                     return Err(AcpError::AgentExited);
                 }
                 Some(Err(LinesCodecError::MaxLineLengthExceeded)) => {
-                    if let Some((_, _, ack_tx)) = pending_steer.take() {
-                        let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
-                    }
+                    drain_pending_steer_writes(&mut pending_steer, &mut pending_effort_set);
                     return Err(AcpError::Protocol(
                         "agent stdout line exceeded 10MB limit".into(),
                     ));
                 }
                 Some(Err(e)) => {
-                    if let Some((_, _, ack_tx)) = pending_steer.take() {
-                        let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
-                    }
+                    drain_pending_steer_writes(&mut pending_steer, &mut pending_effort_set);
                     return Err(AcpError::Io(std::io::Error::other(e)));
                 }
                 Some(Ok(line)) => {
@@ -1580,6 +1824,41 @@ impl AcpClient {
                     // share the `no method` guard.
                     if let Some(id) = msg.get("id") {
                         if msg.get("method").is_none() {
+                            // Steer-boundary effort response: whatever the
+                            // adapter said, the held steer MUST still be
+                            // delivered. Success records the change on the
+                            // live knob; a rejection is a warn-and-proceed at
+                            // current config (the shipped failure posture).
+                            if let Some(pending) = pending_effort_set.as_ref() {
+                                if *id == serde_json::json!(pending.request_id) {
+                                    let pending = pending_effort_set.take().expect("just checked");
+                                    if let Some(error) = msg.get("error") {
+                                        tracing::warn!(
+                                            target: "pool::voice",
+                                            value = %pending.desired,
+                                            error = %error,
+                                            "steer-boundary effort override rejected — delivering steer at current effort"
+                                        );
+                                    } else {
+                                        self.record_steer_effort_applied(
+                                            pending.desired.clone(),
+                                            pending.is_apply,
+                                        );
+                                        tracing::info!(
+                                            target: "pool::voice",
+                                            value = %pending.desired,
+                                            "steer-boundary effort override applied — delivering steer"
+                                        );
+                                    }
+                                    self.write_steer_request(
+                                        session_id,
+                                        pending.steer,
+                                        &mut pending_steer,
+                                    )
+                                    .await;
+                                    continue;
+                                }
+                            }
                             if let Some((steer_id, _, _)) = pending_steer.as_ref() {
                                 if *id == serde_json::json!(*steer_id) {
                                     // Take the ack_tx out and route the
@@ -1686,16 +1965,16 @@ impl AcpClient {
                             }
                             if *id == serde_json::json!(expected_id) {
                                 if let Some(error) = msg.get("error") {
-                                    if let Some((_, _, ack_tx)) = pending_steer.take() {
-                                        let _ = ack_tx
-                                            .send(crate::pool::SteerAck::PromptCompletedNeutral);
-                                    }
+                                    drain_pending_steer_writes(
+                                        &mut pending_steer,
+                                        &mut pending_effort_set,
+                                    );
                                     return Err(agent_error_from_json(error));
                                 }
-                                if let Some((_, _, ack_tx)) = pending_steer.take() {
-                                    let _ =
-                                        ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
-                                }
+                                drain_pending_steer_writes(
+                                    &mut pending_steer,
+                                    &mut pending_effort_set,
+                                );
                                 return Ok(msg["result"].clone());
                             }
                         }
@@ -2101,6 +2380,32 @@ fn build_acp_steer_params(session_id: &str, prompt_blocks: &[&str]) -> serde_jso
         "sessionId": session_id,
         "prompt": steer_prompt_blocks(prompt_blocks),
     })
+}
+
+/// Release any in-flight steer machinery with `PromptCompletedNeutral`.
+///
+/// Called on every read-loop return path: the prompt is ending (or dying), so
+/// an acknowledged-but-unwritten steer — and a steer parked behind a
+/// steer-boundary effort change — must release its withheld event for normal
+/// dispatch. No fallback signal: there is no in-flight turn to signal once we
+/// return, and normal dispatch handles redelivery.
+fn drain_pending_steer_writes(
+    pending_steer: &mut Option<(
+        u64,
+        SteerTransport,
+        tokio::sync::oneshot::Sender<crate::pool::SteerAck>,
+    )>,
+    pending_effort_set: &mut Option<PendingEffortSet>,
+) {
+    if let Some((_, _, ack_tx)) = pending_steer.take() {
+        let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
+    }
+    if let Some(pending) = pending_effort_set.take() {
+        let _ = pending
+            .steer
+            .ack_tx
+            .send(crate::pool::SteerAck::PromptCompletedNeutral);
+    }
 }
 
 /// Render steer body strings as ACP `text` content blocks. Shared by both
@@ -4031,6 +4336,7 @@ mod tests {
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["test steer body".into()],
+                    voice_effort: None,
                     ack_tx,
                 })
                 .await
@@ -4100,6 +4406,7 @@ mod tests {
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["test steer body".into()],
+                    voice_effort: None,
                     ack_tx,
                 })
                 .await
@@ -4140,6 +4447,470 @@ mod tests {
         }
     }
 
+    // ── Voice-turn effort at the steer boundary ───────────────────────────
+    //
+    // Production turns arrive as steers into a long-lived in-flight turn —
+    // the session_prompt hook almost never fires — so the per-turn effort
+    // override lives here. These tests drive the real read loop against a
+    // scripted fake agent that logs every line it receives to a file, so the
+    // assertions are on the actual wire sequence (literal methods and
+    // values), never derived from the constants under test.
+
+    /// Spawn a scripted fake agent that appends every received line to `log`
+    /// and answers the two wire methods the voice-turn steer tests care
+    /// about: `session/set_config_option` with `set_config_response` (a raw
+    /// JSON `"result":{...}` or `"error":{...}` fragment) and the goose steer
+    /// method with an `injected` outcome.
+    async fn spawn_logging_steer_echo_client(
+        log: &std::path::Path,
+        set_config_response: &str,
+    ) -> AcpClient {
+        let mut script = String::new();
+        script.push_str(&format!("LOG=\"{}\"\n", log.display()));
+        script.push_str(&format!("SET_CONFIG_RESPONSE='{}'\n", set_config_response));
+        script.push_str(
+            r#"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG"
+  rid=$(printf '%s' "$line" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+  case "$line" in
+    *set_config_option*)
+      printf '{"jsonrpc":"2.0","id":%s,%s}\n' "$rid" "$SET_CONFIG_RESPONSE" ;;
+    *session/steer*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"outcome":"injected"}}\n' "$rid" ;;
+  esac
+done
+"#,
+        );
+        spawn_script(&script).await
+    }
+
+    /// Every request line the fake agent received, as `(method, params)`.
+    fn logged_wire_requests(log: &std::path::Path) -> Vec<(String, serde_json::Value)> {
+        let text = std::fs::read_to_string(log).expect("read fake agent wire log");
+        text.lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                let value: serde_json::Value =
+                    serde_json::from_str(line).expect("logged line is JSON");
+                (
+                    value["method"].as_str().unwrap_or("").to_string(),
+                    value["params"].clone(),
+                )
+            })
+            .collect()
+    }
+
+    /// Unique temp dir for a test's wire log, plus its log path.
+    fn voice_steer_log_dir(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "buzz-acp-voice-steer-{name}-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir for wire log");
+        let log = dir.join("wire.log");
+        (dir, log)
+    }
+
+    /// The single exit shape every test in this section tolerates: the loop
+    /// ended on the idle clock after all traffic settled (or the fake
+    /// exited). What matters is the wire log and the acks, not the exit.
+    fn assert_settled_exit(read_result: &Result<serde_json::Value, AcpError>) {
+        assert!(
+            matches!(
+                read_result,
+                Err(AcpError::IdleTimeout(_)) | Err(AcpError::AgentExited)
+            ),
+            "expected a settled loop exit (IdleTimeout/AgentExited), got {read_result:?}"
+        );
+    }
+
+    /// THE byte-identical guarantee, for the steer path: unmarked steers
+    /// (voice_effort = None, the shape every ordinary event gets) issue
+    /// ZERO effort RPCs — even with a usable knob seeded — and both steers
+    /// deliver as plain `Success`. Literal expectations: no
+    /// `session/set_config_option` appears in the wire log at all.
+    #[tokio::test]
+    async fn unmarked_steer_issues_zero_new_rpcs() {
+        let (dir, log) = voice_steer_log_dir("unmarked-zero");
+        let mut client = spawn_logging_steer_echo_client(&log, "\"result\":{}").await;
+
+        let update = session_info_update_msg(Some(serde_json::json!("run-42")));
+        let _ = client.handle_session_update(&update);
+        client.seed_thought_level("effort".to_string(), "default".to_string());
+
+        let (steer_tx, steer_rx) = tokio::sync::mpsc::channel::<crate::pool::SteerRequest>(1);
+        client.install_steer_rx(steer_rx);
+
+        let (ack_tx1, ack_rx1) = tokio::sync::oneshot::channel::<crate::pool::SteerAck>();
+        let (ack_tx2, ack_rx2) = tokio::sync::oneshot::channel::<crate::pool::SteerAck>();
+        let send_task = tokio::spawn(async move {
+            for ack_tx in [ack_tx1, ack_tx2] {
+                steer_tx
+                    .send(crate::pool::SteerRequest {
+                        prompt_blocks: vec!["ordinary typed message".into()],
+                        voice_effort: None,
+                        ack_tx,
+                    })
+                    .await
+                    .expect("steer send should succeed");
+            }
+        });
+
+        let idle = std::time::Duration::from_millis(900);
+        let max_dur = std::time::Duration::from_secs(10);
+        let hard_deadline = tokio::time::Instant::now() + max_dur;
+        let read_result = client
+            .read_until_response_with_idle_timeout(
+                "sess-unmarked",
+                999,
+                idle,
+                hard_deadline,
+                max_dur,
+            )
+            .await;
+        send_task.await.expect("send_task should complete");
+        assert_settled_exit(&read_result);
+
+        assert!(
+            matches!(ack_rx1.await, Ok(crate::pool::SteerAck::Success { .. })),
+            "first unmarked steer must deliver"
+        );
+        assert!(
+            matches!(ack_rx2.await, Ok(crate::pool::SteerAck::Success { .. })),
+            "second unmarked steer must deliver"
+        );
+
+        let calls = logged_wire_requests(&log);
+        assert!(
+            calls
+                .iter()
+                .all(|(method, _)| method != "session/set_config_option"),
+            "unmarked steers must issue zero effort RPCs, got {calls:?}"
+        );
+        assert_eq!(
+            calls.len(),
+            2,
+            "exactly the two steer writes, got {calls:?}"
+        );
+
+        // State untouched: still the seeded default, no override tracking.
+        let state = client.thought_level.as_ref().expect("knob state seeded");
+        assert_eq!(state.current_value, "default");
+        assert!(state.override_baseline.is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A voice-marked steer applies EXACTLY ONE effort RPC — ahead of the
+    /// first steer, with the literal override value — and a consecutive
+    /// marked steer adds none (desired == current short-circuits). Literal
+    /// expectations: wire sequence `set_config_option(low), steer, steer`.
+    #[tokio::test]
+    async fn marked_steer_applies_exactly_one_effort_rpc() {
+        let (dir, log) = voice_steer_log_dir("marked-once");
+        let mut client = spawn_logging_steer_echo_client(&log, "\"result\":{}").await;
+
+        let update = session_info_update_msg(Some(serde_json::json!("run-42")));
+        let _ = client.handle_session_update(&update);
+        client.seed_thought_level("effort".to_string(), "default".to_string());
+
+        let (steer_tx, steer_rx) = tokio::sync::mpsc::channel::<crate::pool::SteerRequest>(1);
+        client.install_steer_rx(steer_rx);
+
+        let (ack_tx1, ack_rx1) = tokio::sync::oneshot::channel::<crate::pool::SteerAck>();
+        let (ack_tx2, ack_rx2) = tokio::sync::oneshot::channel::<crate::pool::SteerAck>();
+        let send_task = tokio::spawn(async move {
+            for ack_tx in [ack_tx1, ack_tx2] {
+                steer_tx
+                    .send(crate::pool::SteerRequest {
+                        prompt_blocks: vec!["[voice] what's the weather".into()],
+                        voice_effort: Some("low".to_string()),
+                        ack_tx,
+                    })
+                    .await
+                    .expect("steer send should succeed");
+            }
+        });
+
+        let idle = std::time::Duration::from_millis(900);
+        let max_dur = std::time::Duration::from_secs(10);
+        let hard_deadline = tokio::time::Instant::now() + max_dur;
+        let read_result = client
+            .read_until_response_with_idle_timeout("sess-marked", 999, idle, hard_deadline, max_dur)
+            .await;
+        send_task.await.expect("send_task should complete");
+        assert_settled_exit(&read_result);
+
+        assert!(
+            matches!(ack_rx1.await, Ok(crate::pool::SteerAck::Success { .. })),
+            "first marked steer must deliver"
+        );
+        assert!(
+            matches!(ack_rx2.await, Ok(crate::pool::SteerAck::Success { .. })),
+            "consecutive marked steer must deliver"
+        );
+
+        let calls = logged_wire_requests(&log);
+        assert_eq!(
+            calls,
+            vec![
+                (
+                    "session/set_config_option".to_string(),
+                    serde_json::json!({
+                        "sessionId": "sess-marked",
+                        "configId": "effort",
+                        "value": "low",
+                    }),
+                ),
+                (
+                    "_goose/unstable/session/steer".to_string(),
+                    calls
+                        .get(1)
+                        .map(|c| c.1.clone())
+                        .unwrap_or(serde_json::Value::Null)
+                ),
+                (
+                    "_goose/unstable/session/steer".to_string(),
+                    calls
+                        .get(2)
+                        .map(|c| c.1.clone())
+                        .unwrap_or(serde_json::Value::Null)
+                ),
+            ],
+            "exactly one effort RPC before the first steer, none for the second, got {calls:?}"
+        );
+
+        // Live knob moved to the override, baseline captured for the restore.
+        let state = client.thought_level.as_ref().expect("knob state seeded");
+        assert_eq!(state.current_value, "low");
+        assert_eq!(state.override_baseline.as_deref(), Some("default"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// After a marked steer, the FIRST unmarked steer restores the session
+    /// default with EXACTLY ONE effort RPC — and following unmarked steers
+    /// add none (the baseline is consumed by the restore). Literal
+    /// expectations: wire sequence `set_config_option(low), steer,
+    /// set_config_option(default), steer, steer`.
+    #[tokio::test]
+    async fn unmarked_steer_after_marked_restores_exactly_once() {
+        let (dir, log) = voice_steer_log_dir("restore-once");
+        let mut client = spawn_logging_steer_echo_client(&log, "\"result\":{}").await;
+
+        let update = session_info_update_msg(Some(serde_json::json!("run-42")));
+        let _ = client.handle_session_update(&update);
+        client.seed_thought_level("effort".to_string(), "default".to_string());
+
+        let (steer_tx, steer_rx) = tokio::sync::mpsc::channel::<crate::pool::SteerRequest>(1);
+        client.install_steer_rx(steer_rx);
+
+        let (ack_tx1, ack_rx1) = tokio::sync::oneshot::channel::<crate::pool::SteerAck>();
+        let (ack_tx2, ack_rx2) = tokio::sync::oneshot::channel::<crate::pool::SteerAck>();
+        let (ack_tx3, ack_rx3) = tokio::sync::oneshot::channel::<crate::pool::SteerAck>();
+        let send_task = tokio::spawn(async move {
+            steer_tx
+                .send(crate::pool::SteerRequest {
+                    prompt_blocks: vec!["[voice] read me the thing".into()],
+                    voice_effort: Some("low".to_string()),
+                    ack_tx: ack_tx1,
+                })
+                .await
+                .expect("marked steer send should succeed");
+            for ack_tx in [ack_tx2, ack_tx3] {
+                steer_tx
+                    .send(crate::pool::SteerRequest {
+                        prompt_blocks: vec!["ordinary typed message".into()],
+                        voice_effort: None,
+                        ack_tx,
+                    })
+                    .await
+                    .expect("unmarked steer send should succeed");
+            }
+        });
+
+        let idle = std::time::Duration::from_millis(900);
+        let max_dur = std::time::Duration::from_secs(10);
+        let hard_deadline = tokio::time::Instant::now() + max_dur;
+        let read_result = client
+            .read_until_response_with_idle_timeout(
+                "sess-restore",
+                999,
+                idle,
+                hard_deadline,
+                max_dur,
+            )
+            .await;
+        send_task.await.expect("send_task should complete");
+        assert_settled_exit(&read_result);
+
+        assert!(
+            matches!(ack_rx1.await, Ok(crate::pool::SteerAck::Success { .. })),
+            "marked steer must deliver"
+        );
+        assert!(
+            matches!(ack_rx2.await, Ok(crate::pool::SteerAck::Success { .. })),
+            "first unmarked steer must deliver"
+        );
+        assert!(
+            matches!(ack_rx3.await, Ok(crate::pool::SteerAck::Success { .. })),
+            "second unmarked steer must deliver"
+        );
+
+        let calls = logged_wire_requests(&log);
+        let effort_values: Vec<&str> = calls
+            .iter()
+            .filter(|(method, _)| method == "session/set_config_option")
+            .map(|(_, params)| params["value"].as_str().unwrap_or("<absent>"))
+            .collect();
+        assert_eq!(
+            effort_values,
+            vec!["low", "default"],
+            "exactly one apply then exactly one restore, got {calls:?}"
+        );
+        assert_eq!(
+            calls.len(),
+            5,
+            "apply, steer, restore, steer, steer — got {calls:?}"
+        );
+        assert_eq!(calls[0].0, "session/set_config_option");
+        assert_eq!(calls[1].0, "_goose/unstable/session/steer");
+        assert_eq!(calls[2].0, "session/set_config_option");
+        assert_eq!(calls[3].0, "_goose/unstable/session/steer");
+        assert_eq!(calls[4].0, "_goose/unstable/session/steer");
+
+        // Back at the default, override consumed.
+        let state = client.thought_level.as_ref().expect("knob state seeded");
+        assert_eq!(state.current_value, "default");
+        assert!(state.override_baseline.is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An adapter whose session reports no usable thought_level knob (state
+    /// never seeded — the `currentValue`-absent shape) issues NO effort RPC
+    /// even for a marked steer; the steer still delivers.
+    #[tokio::test]
+    async fn adapter_without_thought_level_caps_issues_no_rpc() {
+        let (dir, log) = voice_steer_log_dir("no-caps");
+        let mut client = spawn_logging_steer_echo_client(&log, "\"result\":{}").await;
+
+        let update = session_info_update_msg(Some(serde_json::json!("run-42")));
+        let _ = client.handle_session_update(&update);
+        // No seed_thought_level: the adapter advertised no usable knob.
+        assert!(
+            client.thought_level.is_none(),
+            "precondition: knob state starts None"
+        );
+
+        let (steer_tx, steer_rx) = tokio::sync::mpsc::channel::<crate::pool::SteerRequest>(1);
+        client.install_steer_rx(steer_rx);
+
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<crate::pool::SteerAck>();
+        let send_task = tokio::spawn(async move {
+            steer_tx
+                .send(crate::pool::SteerRequest {
+                    prompt_blocks: vec!["[voice] hello".into()],
+                    voice_effort: Some("low".to_string()),
+                    ack_tx,
+                })
+                .await
+                .expect("steer send should succeed");
+        });
+
+        let idle = std::time::Duration::from_millis(900);
+        let max_dur = std::time::Duration::from_secs(10);
+        let hard_deadline = tokio::time::Instant::now() + max_dur;
+        let read_result = client
+            .read_until_response_with_idle_timeout("sess-nocaps", 999, idle, hard_deadline, max_dur)
+            .await;
+        send_task.await.expect("send_task should complete");
+        assert_settled_exit(&read_result);
+
+        assert!(
+            matches!(ack_rx.await, Ok(crate::pool::SteerAck::Success { .. })),
+            "marked steer must still deliver without a knob"
+        );
+
+        let calls = logged_wire_requests(&log);
+        assert_eq!(
+            calls,
+            vec![(
+                "_goose/unstable/session/steer".to_string(),
+                calls[0].1.clone()
+            )],
+            "skip path: the steer write and nothing else, got {calls:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A rejected effort override never wedges the steer: the adapter gets
+    /// its config RPC answered with a JSON-RPC error, the loop warns and
+    /// delivers the steer anyway (Success ack), and the live knob stays
+    /// untouched (no phantom baseline from a failed apply).
+    #[tokio::test]
+    async fn override_failure_delivers_the_steer_anyway() {
+        let (dir, log) = voice_steer_log_dir("override-failure");
+        let mut client = spawn_logging_steer_echo_client(
+            &log,
+            "\"error\":{\"code\":-32000,\"message\":\"rejected\"}",
+        )
+        .await;
+
+        let update = session_info_update_msg(Some(serde_json::json!("run-42")));
+        let _ = client.handle_session_update(&update);
+        client.seed_thought_level("effort".to_string(), "default".to_string());
+
+        let (steer_tx, steer_rx) = tokio::sync::mpsc::channel::<crate::pool::SteerRequest>(1);
+        client.install_steer_rx(steer_rx);
+
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<crate::pool::SteerAck>();
+        let send_task = tokio::spawn(async move {
+            steer_tx
+                .send(crate::pool::SteerRequest {
+                    prompt_blocks: vec!["[voice] hello".into()],
+                    voice_effort: Some("low".to_string()),
+                    ack_tx,
+                })
+                .await
+                .expect("steer send should succeed");
+        });
+
+        let idle = std::time::Duration::from_millis(900);
+        let max_dur = std::time::Duration::from_secs(10);
+        let hard_deadline = tokio::time::Instant::now() + max_dur;
+        let read_result = client
+            .read_until_response_with_idle_timeout("sess-fail", 999, idle, hard_deadline, max_dur)
+            .await;
+        send_task.await.expect("send_task should complete");
+        assert_settled_exit(&read_result);
+
+        // THE assertion: the steer was delivered despite the failed override.
+        assert!(
+            matches!(ack_rx.await, Ok(crate::pool::SteerAck::Success { .. })),
+            "the steer must still be delivered when the override fails"
+        );
+
+        let calls = logged_wire_requests(&log);
+        assert_eq!(
+            calls.len(),
+            2,
+            "the failed effort attempt plus the steer, got {calls:?}"
+        );
+        assert_eq!(calls[0].0, "session/set_config_option");
+        assert_eq!(calls[1].0, "_goose/unstable/session/steer");
+
+        // Warn-and-proceed left the knob exactly where it was.
+        let state = client.thought_level.as_ref().expect("knob state seeded");
+        assert_eq!(state.current_value, "default");
+        assert!(state.override_baseline.is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Steer-success renewal keeps the turn alive past the original hard
     /// deadline. This is the red-on-old/green-on-new test for the core bug
     /// fix (acp.rs:1440-1444): without renewal, the read loop returns
@@ -4172,6 +4943,7 @@ mod tests {
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["steer body".into()],
+                    voice_effort: None,
                     ack_tx,
                 })
                 .await
@@ -4246,6 +5018,7 @@ mod tests {
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["steer body".into()],
+                    voice_effort: None,
                     ack_tx,
                 })
                 .await
@@ -4496,6 +5269,7 @@ mod tests {
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["steer body".into()],
+                    voice_effort: None,
                     ack_tx,
                 })
                 .await
@@ -4549,6 +5323,7 @@ mod tests {
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["steer body".into()],
+                    voice_effort: None,
                     ack_tx,
                 })
                 .await

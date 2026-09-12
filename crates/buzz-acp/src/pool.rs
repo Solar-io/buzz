@@ -432,6 +432,24 @@ pub struct SteerRequest {
     /// `queue::native_steer_framing()` + `queue::format_event_block` so
     /// the wording cannot drift from the cancel+merge fallback path.
     pub prompt_blocks: Vec<String>,
+    /// Per-turn reasoning effort the steered content must run at, when the
+    /// steered event is voice-marked and `BUZZ_VOICE_TURN_EFFORT` resolves.
+    ///
+    /// Resolved by the producer (`try_native_steer`) with the SAME
+    /// detection and env resolution as the session_prompt path
+    /// (`VoiceTurnOverrides::from_env_for_turn` on the steered event's raw
+    /// content), because production turns arrive as steers into a
+    /// long-lived in-flight turn — the prompt-path hook almost never
+    /// fires. `None` for an unmarked steer, an unresolved/invalid knob, or
+    /// both knobs unset: the read loop then targets the session default
+    /// (its lazily-tracked restore baseline), which for a never-overridden
+    /// session issues zero RPCs — the byte-identical default posture.
+    ///
+    /// Only the EFFORT knob crosses the steer boundary. The optional
+    /// per-turn model swap is a prompt-turn concept; a mid-turn model
+    /// switch is a different RPC surface with its own capability
+    /// invalidation and is deliberately out of scope here.
+    pub voice_effort: Option<String>,
     /// Oneshot for the read loop to report the outcome.
     pub ack_tx: tokio::sync::oneshot::Sender<SteerAck>,
 }
@@ -969,7 +987,14 @@ const CONTEXT_COUNT_TIMEOUT: Duration = Duration::from_millis(500);
 const CONTEXT_FETCH_RETRY_DELAY: Duration = Duration::from_millis(500);
 
 /// Timeout for model-switch requests (`session/set_config_option`, `session/set_model`).
-const MODEL_SWITCH_TIMEOUT: Duration = Duration::from_secs(5);
+///
+/// `pub(crate)` because the read loop reuses the same budget for the
+/// steer-boundary effort override (`pending_effort_set` in
+/// `read_until_response_with_idle_timeout`) — every config-option RPC in
+/// this crate answers within one budget, so a pending effort set that
+/// outlives it means the adapter never will, and the held steer is
+/// delivered at current config rather than wedged.
+pub(crate) const MODEL_SWITCH_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Bounded grace window for the post-cancel drain after a control-signal
 /// cancellation (steer fallback, interrupt, or explicit stop). This is a
@@ -1243,6 +1268,31 @@ async fn create_session_and_apply_model(
     if let Some(StartupEffortOutcome::Applied { value, .. }) = &effort_outcome {
         if let Some(caps) = agent.model_capabilities.as_mut() {
             caps.thought_level_current_value = Some(value.clone());
+        }
+    }
+
+    // Seed the live thought-level knob the steer boundary reads. The read
+    // loop cannot reach `model_capabilities` (the agent is owned by the turn
+    // task while it runs), so the effort state it applies/restores against
+    // lives on `AcpClient` and is seeded HERE from the same post-patch
+    // snapshot the voice-turn restore baseline uses — one source of truth at
+    // the only point both sides can see it. Both fields present = the
+    // adapter advertises a usable knob (claude-agent-acp: category
+    // `thought_level`, configId `effort`, non-empty `currentValue` —
+    // captured live 2026-09-12); either absent = no state, and the steer
+    // path skips every effort RPC exactly like the prompt path does. A
+    // fresh session also resets any override tracking: the old session's
+    // knob died with it, and the new one starts at its own default.
+    {
+        let caps = agent.model_capabilities.as_ref();
+        match (
+            caps.and_then(|c| c.thought_level_config_id.clone()),
+            caps.and_then(|c| c.thought_level_current_value.clone()),
+        ) {
+            (Some(config_id), Some(value)) => {
+                agent.acp.seed_thought_level(config_id, value);
+            }
+            _ => agent.acp.clear_thought_level(),
         }
     }
 

@@ -3713,6 +3713,23 @@ fn try_native_steer(
     // steering (which is to inject only what's new).
     let (header, closing) = queue::native_steer_framing();
     let event_id_hex = event.id.to_hex();
+    // Voice-turn routing at the steer boundary. Production turns arrive
+    // HERE — buzz sessions are long-lived and every new event for a channel
+    // with an in-flight turn is delivered as a steer into the running turn,
+    // so the session_prompt hook (run_prompt_task) almost never fires for
+    // them. Resolve the same per-turn overrides the prompt path resolves,
+    // with the same detection (`is_voice_turn_content`, prefix-only) on the
+    // steered event's raw content — NOT the framed body, whose framing
+    // header would break the prefix contract. Both knobs unset (the default
+    // deployment) resolves to the no-op default without touching the env at
+    // all for unmarked steers, so the unmarked path is byte-identical to
+    // pre-routing behavior. Only `.effort` crosses the boundary: the
+    // optional per-turn model swap is a prompt-turn concept (a mid-turn
+    // model switch is a different RPC surface) and is deliberately
+    // unresolved here. Resolved before `event` moves into the batch event.
+    let voice_effort =
+        crate::voice_turn::VoiceTurnOverrides::from_env_for_turn(Some(event.content.as_str()))
+            .effort;
     let be = queue::BatchEvent {
         event,
         prompt_tag: prompt_tag.clone(),
@@ -3724,6 +3741,7 @@ fn try_native_steer(
     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<pool::SteerAck>();
     let request = pool::SteerRequest {
         prompt_blocks: vec![body],
+        voice_effort,
         ack_tx,
     };
 
