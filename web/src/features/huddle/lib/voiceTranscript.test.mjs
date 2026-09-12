@@ -39,13 +39,6 @@ test("markVoiceFinal prefixes the gated text with the voice marker", () => {
   );
 });
 
-test("markVoiceFinal prefixes the gated text with the voice marker", () => {
-  assert.equal(
-    markVoiceFinal("evie are you there"),
-    "[voice] evie are you there",
-  );
-});
-
 test("dedupe matches raw text — the marker is added only after gating", () => {
   // The hook pushes gate.text (raw) into the duplicate window and the echo
   // suppressor, NEVER the marked form; if the marker rode inside either,
