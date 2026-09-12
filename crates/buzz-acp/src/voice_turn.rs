@@ -13,9 +13,13 @@
 //! Knobs (read from the harness process environment, so they are per-worker
 //! config rather than compiled constants):
 //!
-//! - `BUZZ_VOICE_TURN_EFFORT` = `low` | `off` | `minimal` — the effort the
-//!   marked turn runs at. `unset` (or unset/blank) means no override, which
-//!   is the default: unmarked AND marked turns behave exactly as before.
+//! - `BUZZ_VOICE_TURN_EFFORT` = `low` | `medium` | `high` | `xhigh` | `max`
+//!   | `default` — the effort the marked turn runs at, overriding whatever
+//!   the session's config had. This is the adapter's own `thought_level`
+//!   vocabulary (`supportedEffortLevels` in the SDK model catalog); `default`
+//!   resolves to the model's default effort. `unset` (or unset/blank) means
+//!   no override, which is the default: unmarked AND marked turns behave
+//!   exactly as before.
 //! - `BUZZ_VOICE_TURN_MODEL` = `<model-id>` — optional per-turn engine swap.
 //!   Unset/blank/`unset` means never override (the default); a configured id
 //!   that the agent's catalog does not list is ignored for that turn.
@@ -84,11 +88,13 @@ impl EffortOverride {
 
 /// Resolve the effort override from an env value.
 ///
-/// Recognized values are the effort floors an ACP adapter's `thought_level`
-/// option can be expected to carry: `low`, `off`, `minimal` (case
-///-insensitive; the normalized lowercase form is what reaches the wire).
-/// `unset` — and unset or blank — mean no override. Anything else is
-/// [`EffortOverride::Invalid`].
+/// Recognized values are the adapter's `thought_level` vocabulary — the
+/// SDK model catalog's `supportedEffortLevels`: `low`, `medium`, `high`,
+/// `xhigh`, `max`, plus `default` for the model default (case-insensitive;
+/// the normalized lowercase form is what reaches the wire). Anything else
+/// an operator types is a typo and must invalidate rather than guess — the
+/// caller warns and the turn proceeds at normal config. `unset` — and unset
+/// or blank — mean no override.
 pub fn resolve_effort_override(value: Option<&str>) -> EffortOverride {
     let Some(value) = value.map(str::trim).filter(|v| !v.is_empty()) else {
         return EffortOverride::Unset;
@@ -98,7 +104,9 @@ pub fn resolve_effort_override(value: Option<&str>) -> EffortOverride {
     }
     let normalized = value.to_ascii_lowercase();
     match normalized.as_str() {
-        "low" | "off" | "minimal" => EffortOverride::Apply(normalized),
+        "low" | "medium" | "high" | "xhigh" | "max" | "default" => {
+            EffortOverride::Apply(normalized)
+        }
         _ => EffortOverride::Invalid(value.to_string()),
     }
 }
@@ -228,39 +236,62 @@ mod tests {
 
     #[test]
     fn effort_applies_recognized_values_normalized() {
+        // The full adapter vocabulary (SDK supportedEffortLevels + default):
+        // every level Sam can name must reach the wire normalized lowercase.
         assert_eq!(
             resolve_effort_override(Some("low")),
             EffortOverride::Apply("low".into())
         );
         assert_eq!(
-            resolve_effort_override(Some("off")),
-            EffortOverride::Apply("off".into())
+            resolve_effort_override(Some("medium")),
+            EffortOverride::Apply("medium".into())
         );
         assert_eq!(
-            resolve_effort_override(Some("minimal")),
-            EffortOverride::Apply("minimal".into())
+            resolve_effort_override(Some("high")),
+            EffortOverride::Apply("high".into())
+        );
+        assert_eq!(
+            resolve_effort_override(Some("xhigh")),
+            EffortOverride::Apply("xhigh".into())
+        );
+        assert_eq!(
+            resolve_effort_override(Some("max")),
+            EffortOverride::Apply("max".into())
+        );
+        assert_eq!(
+            resolve_effort_override(Some("default")),
+            EffortOverride::Apply("default".into())
         );
         assert_eq!(
             resolve_effort_override(Some(" LOW ")),
             EffortOverride::Apply("low".into())
         );
+        assert_eq!(
+            resolve_effort_override(Some("Max")),
+            EffortOverride::Apply("max".into())
+        );
     }
 
     #[test]
     fn effort_rejects_unrecognized_values() {
-        // "high" would be a no-op anyway but is not a voice floor; a typo
-        // must invalidate rather than guess.
+        // Values the adapter cannot honor (the SDK catalog has no "off" or
+        // "minimal" effort) must invalidate rather than silently no-op — a
+        // knob that looks set but does nothing is worse than a loud warning.
         assert_eq!(
-            resolve_effort_override(Some("high")),
-            EffortOverride::Invalid("high".into())
+            resolve_effort_override(Some("off")),
+            EffortOverride::Invalid("off".into())
+        );
+        assert_eq!(
+            resolve_effort_override(Some("minimal")),
+            EffortOverride::Invalid("minimal".into())
         );
         assert_eq!(
             resolve_effort_override(Some("loww")),
             EffortOverride::Invalid("loww".into())
         );
         assert_eq!(
-            resolve_effort_override(Some("max")),
-            EffortOverride::Invalid("max".into())
+            resolve_effort_override(Some("maximum")),
+            EffortOverride::Invalid("maximum".into())
         );
     }
 
