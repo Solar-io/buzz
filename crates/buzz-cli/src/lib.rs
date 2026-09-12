@@ -1,4 +1,5 @@
 pub mod agent_management;
+mod claims_gate;
 mod client;
 mod commands;
 mod error;
@@ -74,7 +75,7 @@ Configuration (flags override env vars):
 
 The 'pack' subcommand runs locally and does not require a relay connection.
 
-Exit codes: 0=ok  1=bad input  2=relay/network error  3=auth error  4=other  5=write conflict
+Exit codes: 0=ok  1=bad input  2=relay/network error  3=auth error  4=other  5=write conflict  6=held (send gate)
 Errors are JSON on stderr: {\"error\": \"<category>\", \"message\": \"<detail>\"}"
 )]
 struct Cli {
@@ -371,7 +372,18 @@ buzz agents archived"
 pub enum MessagesCmd {
     /// Send a message to a channel
     #[command(
-        after_help = "Examples:\n  buzz messages send --channel <UUID> --content \"hello\"\n  buzz messages send --channel <UUID> --content \"@alice check this\"\n  echo \"hello from stdin\" | buzz messages send --channel <UUID> --content -"
+        after_help = "Examples:\n  buzz messages send --channel <UUID> --content \"hello\"\n  buzz messages send --channel <UUID> --content \"@alice check this\"\n  echo \"hello from stdin\" | buzz messages send --channel <UUID> --content -",
+        long_about = "Send a message to a channel.
+
+Send-path hold gate (managed sessions only): when BUZZ_ACP_SESSION_ID is set
+and the harness's claims file shows another slot of you mid-turn in this
+channel (fresh within 10 minutes), the send is HELD — exit code 6, with the
+holder's slot id, the claim age, and the channel in the error JSON. This is
+the 'two of me' guard: a hold is not a failure. Stand down — a bounce answers
+'should I speak?' and no is a complete reply. To override a dead holder,
+resend with --supersede: it skips the check for this send and records who was
+superseded (and by which slot) in the claims file's managed.superseded
+annex, so the arbitration is inspectable from any client."
     )]
     Send {
         /// Channel UUID (from 'buzz channels list')
@@ -395,6 +407,10 @@ pub enum MessagesCmd {
         /// Pubkey to mention (hex or npub; repeatable). Supplying any explicit identity permits unresolved or ambiguous @Name text as presentation-only; uniquely resolved member names still notify.
         #[arg(long = "mention")]
         mentions: Vec<String>,
+        /// Skip the send-path hold check for THIS send and record the superseded
+        /// holder in the claims file (documented escape for a dead holder)
+        #[arg(long)]
+        supersede: bool,
     },
     /// Send a code diff / patch to a channel
     SendDiff {

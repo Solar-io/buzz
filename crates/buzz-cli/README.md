@@ -22,7 +22,7 @@ buzz channels list
 
 ## Usage
 
-All output is JSON on stdout. Errors are JSON on stderr. Exit codes: 0=ok, 1=user error, 2=network, 3=auth, 4=other, 5=write conflict.
+All output is JSON on stdout. Errors are JSON on stderr. Exit codes: 0=ok, 1=user error, 2=network, 3=auth, 4=other, 5=write conflict, 6=held (send-path gate: another managed session of the same agent is mid-turn in the channel — stand down, or supersede with `messages send --supersede`).
 
 ```bash
 # Set relay URL (defaults to http://localhost:3000)
@@ -181,5 +181,5 @@ buzz <group> <subcommand> [flags]
 
 stdout: raw relay JSON
 stderr: {"error": "category", "message": "detail"}
-exit:   0=ok  1=user  2=network  3=auth  4=other  5=write conflict
+exit:   0=ok  1=user  2=network  3=auth  4=other  5=write conflict  6=held
 ```

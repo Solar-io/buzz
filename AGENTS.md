@@ -228,7 +228,8 @@ accepted only when it matches that derived root. The explicit
 
 All reads return sig-stripped JSON arrays; all writes return
 `{event_id, accepted, message}`; creates add the entity ID. Exit codes:
-0=ok, 1=input error, 2=network/relay, 3=auth, 4=other, 5=write conflict (NIP-33 LWW).
+0=ok, 1=input error, 2=network/relay, 3=auth, 4=other, 5=write conflict (NIP-33 LWW),
+6=held (send-path gate — another managed session of the same agent is mid-turn in the channel; stand down or resend with `--supersede`).
 
 `--format compact` is a **global** flag — it goes before the subcommand:
 `buzz --format compact channels list`, NOT `buzz channels list --format compact`.

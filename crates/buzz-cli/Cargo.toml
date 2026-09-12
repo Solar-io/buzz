@@ -90,6 +90,14 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 # Random number generation — full jitter for exponential backoff in with_retry
 rand = { workspace = true }
 
+# Advisory flock for the send-path hold gate's claims-file protocol
+# (`nix::fcntl::Flock` — the safe wrapper over the same BSD flock(2) syscall
+# the buzz-acp claims writer uses). One lock discipline, both sides; nix over
+# raw libc keeps the repo's no-unsafe rule. Unix-only: off unix the gate
+# degrades to lock-less (fail-open) by contract.
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", default-features = false, features = ["fs"] }
+
 [dev-dependencies]
 # Test fixture: encode a real JPEG to embed an EXIF segment in (sanitize round-trip).
 image = { version = "0.25", default-features = false, features = ["jpeg"] }

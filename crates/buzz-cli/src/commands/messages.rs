@@ -606,6 +606,16 @@ pub struct SendMessageParams {
     pub broadcast: bool,
     pub files: Vec<String>,
     pub mentions: Vec<String>,
+    /// Skip the send-path hold check for THIS send and record the superseded
+    /// holder in the claims file (dead-holder escape; unmanaged sends ignore
+    /// it).
+    pub supersede: bool,
+}
+
+/// The message kinds the send-path hold gate and the identity stamp apply
+/// to — exactly the kinds `cmd_send_message` can publish.
+fn is_agent_message_kind(kind: Option<u16>) -> bool {
+    matches!(kind, None | Some(9) | Some(45001) | Some(45003))
 }
 
 pub async fn cmd_send_message(
@@ -622,6 +632,24 @@ pub async fn cmd_send_message(
         validate_hex64(r)?;
     }
     let channel_uuid = parse_uuid(&p.channel_id)?;
+
+    // Send-path hold gate (managed sessions only). Before ANY network I/O:
+    // a held session must not burn mention preflights or uploads on a send
+    // it is not allowed to make. With BUZZ_ACP_SESSION_ID absent this whole
+    // block is skipped — humans and ad-hoc shells are never gated.
+    let session_slot = crate::claims_gate::session_slot().filter(|_| is_agent_message_kind(p.kind));
+    if let Some(slot) = &session_slot {
+        if p.supersede {
+            crate::claims_gate::record_supersedes(&channel_uuid, slot);
+        } else if let Some(hold) = crate::claims_gate::check_hold(&channel_uuid, slot) {
+            return Err(CliError::Held {
+                holder: hold.holder_slot,
+                channel: hold.channel.to_string(),
+                age: hold.claim_age_secs,
+                ttl: hold.ttl_secs,
+            });
+        }
+    }
 
     let explicit_mentions = normalize_explicit_mentions(&p.mentions)?;
     let stripped = strip_code_regions(&p.content);
@@ -669,6 +697,17 @@ pub async fn cmd_send_message(
     } else {
         format!("{}{media_content}", p.content)
     };
+
+    // Identity stamp (managed sessions): `["session", "<slot>"]` rides the
+    // outgoing event's tags for kinds 9 / 45001 / 45003, so any client can
+    // tell which pool slot of the identity spoke. `build_message` (and the
+    // forum builders) take `media_tags` as their last slice param and pass
+    // raw tags through (`allow_self_tagging`; the relay's verify_event checks
+    // id + signature only — arbitrary tags store fine), so the stamp is
+    // appended here rather than by changing the SDK signatures.
+    if let Some(slot) = &session_slot {
+        media_tags.push(crate::claims_gate::session_tag(slot));
+    }
 
     // Build thread ref if replying. `--reply-to` is the immediate parent; the
     // thread root is derived from the parent's NIP-10 tags via the relay.
@@ -724,6 +763,9 @@ pub async fn cmd_send_message(
             "mention_pubkeys".into(),
             serde_json::json!(emitted_mentions),
         );
+        if let Some(slot) = &session_slot {
+            object.insert("session_slot".into(), serde_json::json!(slot));
+        }
     }
     println!("{output}");
     Ok(())
@@ -917,6 +959,7 @@ pub async fn dispatch(
             broadcast,
             files,
             mentions,
+            supersede,
         } => {
             cmd_send_message(
                 client,
@@ -928,6 +971,7 @@ pub async fn dispatch(
                     broadcast,
                     files,
                     mentions,
+                    supersede,
                 },
             )
             .await

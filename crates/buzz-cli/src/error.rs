@@ -32,6 +32,24 @@ pub enum CliError {
     #[error("{0}")]
     NotFound(String),
 
+    /// The send-path hold gate stopped this send: another managed session of
+    /// the same agent identity is mid-turn in the target channel. Terminal,
+    /// not transient — never retryable. Exit code 6.
+    #[error(
+        "held: another session of you ({holder}) is mid-turn in channel {channel} \
+         (claim age {age}s, ttl {ttl}s) — stand down or supersede with --supersede"
+    )]
+    Held {
+        /// Boot-scoped slot id of the holding session.
+        holder: String,
+        /// Channel the hold gates.
+        channel: String,
+        /// Seconds since the holder's claim was last seen.
+        age: i64,
+        /// The freshness window the claim is inside.
+        ttl: i64,
+    },
+
     /// A non-idempotent command's outcome is unknown: the request may have
     /// reached the relay, but the response was lost. Never auto-retried and
     /// never labeled retryable — the relay executes these commands before any
@@ -66,9 +84,10 @@ fn fmt_reqwest_error(e: &reqwest::Error) -> String {
 /// Transport-level network errors (connect failure, timeout, mid-request,
 /// mid-body transfer, or body decode failure) and relay overload responses
 /// (429 / 502 / 503 / 504) are retryable.  `DeliveryUnknown` is never
-/// retryable: the operation may already have executed.  All other errors
-/// indicate a permanent failure: auth, bad input, builder errors, or logic
-/// errors.
+/// retryable: the operation may already have executed.  `Held` is never
+/// retryable: a hold is terminal — standing down is a complete reply.  All
+/// other errors indicate a permanent failure: auth, bad input, builder
+/// errors, or logic errors.
 pub fn is_retryable_error(e: &CliError) -> bool {
     match e {
         CliError::Network(ref net_err) => {
@@ -80,13 +99,15 @@ pub fn is_retryable_error(e: &CliError) -> bool {
         }
         CliError::Relay { status, .. } => matches!(status, 429 | 502 | 503 | 504),
         CliError::DeliveryUnknown(_) => false,
+        CliError::Held { .. } => false,
         _ => false,
     }
 }
 
 /// Map CliError to process exit code.
 /// 0=success (not an error), 1=user/not-found, 2=network/relay, 3=auth,
-/// 4=other, 5=write conflict (NIP-33 dominated head).
+/// 4=other, 5=write conflict (NIP-33 dominated head), 6=held (send-path
+/// gate: another managed session of you is mid-turn in the channel).
 pub fn exit_code(e: &CliError) -> i32 {
     match e {
         CliError::Usage(_) => 1,
@@ -103,14 +124,21 @@ pub fn exit_code(e: &CliError) -> i32 {
         CliError::Conflict(_) => 5,
         CliError::NotFound(_) => 1,
         CliError::DeliveryUnknown(_) => 2,
+        CliError::Held { .. } => 6,
         CliError::Other(_) => 4,
     }
 }
 
 /// Serialize error to JSON and write to stderr.
 /// Format: {"error": "<category>", "message": "<human-readable detail>", "retryable": <bool>}
+///
+/// A `Held` error carries the hold's structured facts instead of (well,
+/// alongside) the generic shape: `held`, `channel`, `holder_slot`,
+/// `claim_age_secs`, `ttl_secs`, `supersede_command`, and `advice` — the
+/// agent-side convention, self-describing at the point of failure.
 pub fn print_error(e: &CliError) {
     let category = match e {
+        CliError::Held { .. } => "held",
         CliError::Usage(_) => "user_error",
         CliError::Relay { status, .. } => {
             if *status == 401 || *status == 403 {
@@ -127,12 +155,44 @@ pub fn print_error(e: &CliError) {
         CliError::DeliveryUnknown(_) => "delivery_unknown",
         CliError::Other(_) => "error",
     };
-    let obj = serde_json::json!({
+    let mut obj = serde_json::json!({
         "error": category,
         "message": e.to_string(),
         "retryable": is_retryable_error(e),
     });
-    eprintln!("{}", obj);
+    // A hold carries its structured facts on the same object: everything an
+    // agent needs to answer "should I stand down or supersede?" in one read.
+    let hold_fields: Option<Vec<(String, serde_json::Value)>> = match e {
+        CliError::Held {
+            holder,
+            channel,
+            age,
+            ttl,
+        } => Some(vec![
+            ("held".into(), serde_json::json!(true)),
+            ("channel".into(), serde_json::json!(channel)),
+            ("holder_slot".into(), serde_json::json!(holder)),
+            ("claim_age_secs".into(), serde_json::json!(age)),
+            ("ttl_secs".into(), serde_json::json!(ttl)),
+            (
+                "supersede_command".into(),
+                serde_json::json!(format!(
+                    "buzz messages send --channel {channel} --content <text> --supersede"
+                )),
+            ),
+            (
+                "advice".into(),
+                serde_json::json!(crate::claims_gate::HELD_ADVICE),
+            ),
+        ]),
+        _ => None,
+    };
+    if let (Some(fields), Some(object)) = (hold_fields, obj.as_object_mut()) {
+        for (key, value) in fields {
+            object.insert(key, value);
+        }
+    }
+    eprintln!("{obj}");
 }
 
 #[cfg(test)]
@@ -188,6 +248,29 @@ mod tests {
         )));
         assert!(!is_retryable_error(&CliError::NotFound("gone".into())));
         assert!(!is_retryable_error(&CliError::Other("unexpected".into())));
+    }
+
+    // ---- Held (send-path gate) ----
+
+    /// A hold is terminal (exit 6, never retry-shaped): no reasonable agent
+    /// should read it as "retry later".
+    #[test]
+    fn held_maps_to_exit_code_6_and_is_never_retryable() {
+        let e = CliError::Held {
+            holder: "boot-1:0".into(),
+            channel: "c183da8e-b5e6-4521-8522-b45dac07e0ee".into(),
+            age: 42,
+            ttl: 600,
+        };
+        assert_eq!(exit_code(&e), 6, "held is exit code 6");
+        assert!(!is_retryable_error(&e), "a hold must not read as retryable");
+        let display = e.to_string();
+        assert!(
+            display.contains("boot-1:0")
+                && display.contains("c183da8e-b5e6-4521-8522-b45dac07e0ee")
+                && display.contains("42"),
+            "the human-readable line carries holder slot, channel, and claim age: {display}"
+        );
     }
 
     // ---- print_error "retryable" field ----
