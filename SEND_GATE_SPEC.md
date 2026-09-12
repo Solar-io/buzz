@@ -80,6 +80,13 @@ is pinned).
   ONLY `managed` plus the original raw text under `"_unparseable_before"` —
   never silently destroy policy text. `yielded` / `blackout_log` /
   `convention` must survive every write (this is tested).
+- **`managed.superseded` is preserved by the writer** (shape-check fix, Evie
+  2026-09-11 23:43): the writer owns `managed` and rebuilds
+  `pool`/`pid`/`updated_at`/`turns` on every pulse, but it MUST carry
+  `managed.superseded` forward verbatim from the doc it read. Pruning is
+  CLI-side at append time ONLY — the writer never prunes. Without this, a
+  legitimate supersede un-arms within one 60 s pulse and the bounce returns
+  mid-conversation. Tested (test 2b below).
 - **Atomicity** (Evie's pin #1): write to `.<name>.tmp` in the same
   directory + `std::fs::rename` (atomic on macOS/Linux). Around the full
   read-modify-write cycle take an advisory `flock` on a sidecar
@@ -185,10 +192,19 @@ checked). Also surface `session_slot` in the CLI's success JSON output.
    the fixture), run a write → all pre-existing keys byte-for-value intact,
    `managed` added. Mutation: replace read-modify-write with fresh-doc
    overwrite → test fails.
-2. Writer atomicity: concurrent writes (two tasks racing through the flock)
-   never interleave — file always parses, last writer wins. Mutation: drop
-   the flock → torn/interleaved doc possible (assert parse-after-every-write
-   in a loop).
+2. Writer atomicity — LOST-UPDATE shape (shape-check fix 2, Evie
+   2026-09-11 23:43): tmp+rename alone already prevents torn docs, so a
+   "parse after every write" assertion CANNOT fail without the flock — do
+   not write that test. Assert what the flock actually protects: two
+   concurrent read-modify-write cycles each append a DISTINCT superseded
+   record; with the flock both records survive, without it one write
+   clobbers the other's append and one record vanishes. Mutation: drop the
+   flock → one record lost → test fails.
+2b. Supersede survives writer cycles: pre-seed `managed.superseded` with an
+   entry, run N (≥3) writer write-cycles (pulse + dispatch + turn-end
+   shapes) → the entry survives every one. Mutations: (a) writer rebuilds
+   `managed` without carrying `superseded` → entry vanishes → fails;
+   (b) writer prunes superseded → fails.
 3. Pulse re-stamp keeps a live turn fresh and clears it after turn end:
    claim present while task in `task_map`, `last_seen_at` advancing; gone
    after `handle_prompt_result`. Mutation: remove the turn-end write →
@@ -231,6 +247,24 @@ pool restart (Sam's go) → writer activates. The writer must therefore be
 SAFE to run alongside voluntary writers from day one (it is:
 read-modify-write + preserve + atomic rename), and the CLI must be safe
 BEFORE any writer exists (it is: no `managed` key → no-op).
+
+**Two Sam-gos, not one** (shape-check note 2, Evie 2026-09-11 23:43): the
+fleet's `buzz` resolves to the app bundle
+(`~/.local/bin/buzz` → `/Applications/Buzz.app/Contents/MacOS/buzz` —
+verified), so "CLI ships" = a Buzz app-bundle update = SAM GO 1 (hard rule:
+no app swap without it). Then I flip seats read-only, then SAM GO 2 = pool
+restart, which activates the writer (pools run from the checkout target
+dir). Sequence: spec merge → SAM GO 1 app-bundle CLI update → voluntary
+writers stand down → SAM GO 2 pool restart → writer activates.
+
+**mtime retirement, named** (shape-check note 1): the writer's 60 s pulse
+ends file-mtime as a freshness carrier. At activation, Guard B's mtime read
+and the voluntary poll-loop touch are RETIRED — `managed.turns` subsumes
+watching's protective function (every duet was overlapping TURNS; an idle
+window seat needs no exclusivity). Voluntary annex writes become
+event-only. Nothing in this change removes Guard B — that is a separate,
+later cleanup — but nobody should expect the mtime signal to keep meaning
+anything once a writer is live.
 
 ## Infra context
 
