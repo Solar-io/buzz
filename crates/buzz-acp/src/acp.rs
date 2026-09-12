@@ -1044,23 +1044,27 @@ impl AcpClient {
     }
 
     /// Decide what the steer arm must do about effort before delivering a
-    /// steer whose voice-turn resolution is `voice_effort`.
+    /// steer whose turn-class resolution is `desired_effort` — the voice
+    /// knob's value on a marked steer, the text knob's on an unmarked one
+    /// (exactly one is ever set; `None` = the steer's class knob is unset).
     ///
     /// Pure against [`Self::thought_level`] — no wire, no env, testable
     /// without a process:
     ///
     /// - No usable knob (`thought_level` `None`) → skip, zero RPCs.
-    /// - Marked steer (`Some(value)`): desired is the override. Same as the
-    ///   current value → no RPC (consecutive marked steers are free).
-    /// - Unmarked steer (`None`): desired is the session default, i.e. the
+    /// - Resolved steer (`Some(value)`): desired is that value — whichever
+    ///   knob the steer's class resolves, it IS the target. Same as the
+    ///   current value → no RPC (consecutive steers of the same class are
+    ///   free; a class switch re-targets in one RPC).
+    /// - Unresolved steer (`None`): desired is the session default, i.e. the
     ///   captured baseline when an override is active. No active override →
-    ///   no RPC — an unmarked steer on an never-overridden session is
-    ///   wire-identical to the pre-feature behavior.
-    pub(crate) fn plan_steer_effort(&self, voice_effort: Option<&str>) -> SteerEffortPlan {
+    ///   no RPC — a steer on a never-overridden session is wire-identical
+    ///   to the pre-feature behavior.
+    pub(crate) fn plan_steer_effort(&self, desired_effort: Option<&str>) -> SteerEffortPlan {
         let Some(state) = self.thought_level.as_ref() else {
             return SteerEffortPlan::DeliverAsIs;
         };
-        let desired = match voice_effort {
+        let desired = match desired_effort {
             Some(value) => value.to_string(),
             None => match &state.override_baseline {
                 Some(baseline) => baseline.clone(),
@@ -1552,7 +1556,7 @@ impl AcpClient {
     /// flight at a time; a successful steer response is routed to the
     /// caller's oneshot ack instead of being returned as the prompt result.
     ///
-    /// A steer whose [`SteerRequest::voice_effort`] needs a config change
+    /// A steer whose [`SteerRequest::effort_override`] needs a config change
     /// first writes one `session/set_config_option` and parks the steer in
     /// `pending_effort_set` until the response routes — still at most one
     /// wire write in flight at a time. The override phase is bounded by
@@ -1698,7 +1702,7 @@ impl AcpClient {
                     // long-lived and every new event arrives as a steer — so
                     // this, not the session_prompt hook, is where the
                     // per-turn override actually takes effect.
-                    match self.plan_steer_effort(req.voice_effort.as_deref()) {
+                    match self.plan_steer_effort(req.effort_override.as_deref()) {
                         SteerEffortPlan::DeliverAsIs => {
                             self.write_steer_request(session_id, req, &mut pending_steer)
                                 .await;
@@ -1729,7 +1733,7 @@ impl AcpClient {
                                     pending_effort_set = Some(PendingEffortSet {
                                         request_id: id,
                                         desired: value,
-                                        is_apply: req.voice_effort.is_some(),
+                                        is_apply: req.effort_override.is_some(),
                                         started_at: Instant::now(),
                                         steer: req,
                                     });
@@ -4364,7 +4368,7 @@ mod tests {
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["test steer body".into()],
-                    voice_effort: None,
+                    effort_override: None,
                     ack_tx,
                 })
                 .await
@@ -4434,7 +4438,7 @@ mod tests {
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["test steer body".into()],
-                    voice_effort: None,
+                    effort_override: None,
                     ack_tx,
                 })
                 .await
@@ -4555,7 +4559,7 @@ done
     }
 
     /// THE byte-identical guarantee, for the steer path: unmarked steers
-    /// (voice_effort = None, the shape every ordinary event gets) issue
+    /// (effort_override = None, the shape every ordinary event gets) issue
     /// ZERO effort RPCs — even with a usable knob seeded — and both steers
     /// deliver as plain `Success`. Literal expectations: no
     /// `session/set_config_option` appears in the wire log at all.
@@ -4578,7 +4582,7 @@ done
                 steer_tx
                     .send(crate::pool::SteerRequest {
                         prompt_blocks: vec!["ordinary typed message".into()],
-                        voice_effort: None,
+                        effort_override: None,
                         ack_tx,
                     })
                     .await
@@ -4654,7 +4658,7 @@ done
                 steer_tx
                     .send(crate::pool::SteerRequest {
                         prompt_blocks: vec!["[voice] what's the weather".into()],
-                        voice_effort: Some("low".to_string()),
+                        effort_override: Some("low".to_string()),
                         ack_tx,
                     })
                     .await
@@ -4742,7 +4746,7 @@ done
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["[voice] read me the thing".into()],
-                    voice_effort: Some("low".to_string()),
+                    effort_override: Some("low".to_string()),
                     ack_tx: ack_tx1,
                 })
                 .await
@@ -4751,7 +4755,7 @@ done
                 steer_tx
                     .send(crate::pool::SteerRequest {
                         prompt_blocks: vec!["ordinary typed message".into()],
-                        voice_effort: None,
+                        effort_override: None,
                         ack_tx,
                     })
                     .await
@@ -4841,7 +4845,7 @@ done
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["[voice] hello".into()],
-                    voice_effort: Some("low".to_string()),
+                    effort_override: Some("low".to_string()),
                     ack_tx,
                 })
                 .await
@@ -4900,7 +4904,7 @@ done
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["[voice] hello".into()],
-                    voice_effort: Some("low".to_string()),
+                    effort_override: Some("low".to_string()),
                     ack_tx,
                 })
                 .await
@@ -4986,7 +4990,7 @@ done
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["[voice] hello".into()],
-                    voice_effort: Some("low".to_string()),
+                    effort_override: Some("low".to_string()),
                     ack_tx,
                 })
                 .await
@@ -5064,7 +5068,7 @@ done
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["steer body".into()],
-                    voice_effort: None,
+                    effort_override: None,
                     ack_tx,
                 })
                 .await
@@ -5139,7 +5143,7 @@ done
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["steer body".into()],
-                    voice_effort: None,
+                    effort_override: None,
                     ack_tx,
                 })
                 .await
@@ -5390,7 +5394,7 @@ done
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["steer body".into()],
-                    voice_effort: None,
+                    effort_override: None,
                     ack_tx,
                 })
                 .await
@@ -5444,7 +5448,7 @@ done
             steer_tx
                 .send(crate::pool::SteerRequest {
                     prompt_blocks: vec!["steer body".into()],
-                    voice_effort: None,
+                    effort_override: None,
                     ack_tx,
                 })
                 .await

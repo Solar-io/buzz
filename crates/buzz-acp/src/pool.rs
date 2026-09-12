@@ -433,23 +433,27 @@ pub struct SteerRequest {
     /// the wording cannot drift from the cancel+merge fallback path.
     pub prompt_blocks: Vec<String>,
     /// Per-turn reasoning effort the steered content must run at, when the
-    /// steered event is voice-marked and `BUZZ_VOICE_TURN_EFFORT` resolves.
+    /// steered event's turn class resolves an effort knob.
+    ///
+    /// The two knobs partition all turns: a voice-marked steer carries the
+    /// `BUZZ_VOICE_TURN_EFFORT` resolution here, an unmarked (text) steer
+    /// the `BUZZ_TEXT_TURN_EFFORT` resolution — exactly one is ever set.
     ///
     /// Resolved by the producer (`try_native_steer`) with the SAME
-    /// detection and env resolution as the session_prompt path
+    /// detection and layered resolution as the session_prompt path
     /// (`VoiceTurnOverrides::from_env_for_turn` on the steered event's raw
     /// content), because production turns arrive as steers into a
     /// long-lived in-flight turn — the prompt-path hook almost never
-    /// fires. `None` for an unmarked steer, an unresolved/invalid knob, or
-    /// both knobs unset: the read loop then targets the session default
+    /// fires. `None` for a steer whose class knob is unset, unresolved, or
+    /// invalid: the read loop then targets the session default
     /// (its lazily-tracked restore baseline), which for a never-overridden
     /// session issues zero RPCs — the byte-identical default posture.
     ///
-    /// Only the EFFORT knob crosses the steer boundary. The optional
+    /// Only the EFFORT knobs cross the steer boundary. The optional
     /// per-turn model swap is a prompt-turn concept; a mid-turn model
     /// switch is a different RPC surface with its own capability
     /// invalidation and is deliberately out of scope here.
-    pub voice_effort: Option<String>,
+    pub effort_override: Option<String>,
     /// Oneshot for the read loop to report the outcome.
     pub ack_tx: tokio::sync::oneshot::Sender<SteerAck>,
 }
@@ -1621,16 +1625,20 @@ impl VoiceTurnOverrideGuard {
     }
 }
 
-/// Apply the per-turn voice-turn overrides (`crate::voice_turn`) to the live
-/// session, before the turn's prompt is sent.
+/// Apply the per-turn overrides (`crate::voice_turn`) to the live session,
+/// before the turn's prompt is sent.
 ///
-/// Returns the guard describing what must be restored after the turn. The
-/// no-op default (no marker, or both knobs unset) performs ZERO ACP RPCs.
+/// The turn's desired effort is [`VoiceTurnOverrides::effective_effort`] —
+/// the voice knob's value on a marked turn, the text knob's on an unmarked
+/// one; the marker partition guarantees at most one resolves. Returns the
+/// guard describing what must be restored after the turn. The no-op default
+/// (no resolved knob on the turn's class, or no knob at all) performs ZERO
+/// ACP RPCs.
 ///
 /// Fail-safe by construction: an override is applied only when the session's
 /// pre-turn value is known (`thought_level_current_value` / `currentModelId`),
 /// because an override whose baseline is unknown cannot be undone — and a
-/// voice turn must never permanently change the config later turns run at.
+/// turn must never permanently change the config later turns run at.
 /// An override that fails to apply is a warn-and-proceed at normal config,
 /// which IS the spec's fallback posture (the turn still runs; nothing is
 /// retried at a second config).
@@ -1645,7 +1653,7 @@ async fn apply_voice_turn_overrides(
     let Some(caps) = agent.model_capabilities.as_ref() else {
         tracing::warn!(
             target: "pool::voice",
-            "voice-turn overrides resolved but no model capabilities are cached — proceeding at normal config"
+            "turn overrides resolved but no model capabilities are cached — proceeding at normal config"
         );
         return VoiceTurnOverrideGuard::noop();
     };
@@ -1654,7 +1662,7 @@ async fn apply_voice_turn_overrides(
 
     let mut guard = VoiceTurnOverrideGuard::noop();
 
-    if let Some(effort) = &overrides.effort {
+    if let Some(effort) = overrides.effective_effort() {
         match (thought_config_id, thought_current) {
             (Some(config_id), Some(current)) if current != *effort => {
                 let result = tokio::time::timeout(
@@ -1786,6 +1794,7 @@ async fn apply_voice_turn_overrides(
             serde_json::json!({
                 "sessionId": session_id,
                 "effort": overrides.effort,
+                "textEffort": overrides.text_effort,
                 "model": overrides.model,
                 "willRestoreEffort": guard.effort_restore.is_some(),
                 "willRestoreModel": guard.model_restore.is_some(),
@@ -2855,14 +2864,18 @@ pub async fn run_prompt_task(
         return;
     };
 
-    // Voice-turn routing (spec: EVIE_VOICE_TURN_ROUTING): a turn whose
+    // Turn-class routing (spec: EVIE_VOICE_TURN_ROUTING): a turn whose
     // triggering content arrived marked `[video] `/`[voice] ` may run with
     // per-turn inference overrides so spoken-latency turns don't pay
-    // full-effort thinking. Detection is a pure prefix check on the LAST
-    // batch event's content — the same event `format_prompt` derives the
-    // turn's scope from — and an unmarked turn resolves to the no-op default
-    // before any ACP RPC is attempted, so the unmarked path is byte-identical
-    // to the pre-routing behavior. Heartbeats (batch = None) never mark.
+    // full-effort thinking; an UNMARKED turn resolves the complementary
+    // text knob (`BUZZ_TEXT_TURN_EFFORT` + the per-agent config file) the
+    // same way. Detection is a pure prefix check on the LAST batch event's
+    // content — the same event `format_prompt` derives the turn's scope
+    // from — and a turn whose class knob is unset resolves to the no-op
+    // default before any ACP RPC is attempted, so the deployment with no
+    // knobs and no config file is byte-identical to the pre-routing
+    // behavior. Heartbeats (batch = None) are unmarked and ride the text
+    // knob.
     let voice_turn_overrides = crate::voice_turn::VoiceTurnOverrides::from_env_for_turn(
         batch
             .as_ref()
@@ -9408,6 +9421,7 @@ done"#;
 
         let overrides = VoiceTurnOverrides {
             effort: Some("low".to_string()),
+            text_effort: None,
             model: None,
         };
         let guard = apply_voice_turn_overrides(&mut agent, &overrides, "sess-voice").await;
@@ -9472,6 +9486,7 @@ done"#;
 
         let overrides = VoiceTurnOverrides {
             effort: Some("low".to_string()),
+            text_effort: None,
             model: None,
         };
         let guard = apply_voice_turn_overrides(&mut agent, &overrides, "sess-voice").await;
@@ -9487,11 +9502,60 @@ done"#;
 
         let overrides = VoiceTurnOverrides {
             effort: Some("low".to_string()),
+            text_effort: None,
             model: None,
         };
         let guard = apply_voice_turn_overrides(&mut agent, &overrides, "sess-voice").await;
         assert!(guard.is_noop());
         assert!(captured_lines(&capture).is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_text_effort_override_sets_then_restores() {
+        // The unmarked half of the partition rides the SAME apply/restore
+        // wire path: the text knob's value sits in `text_effort` and
+        // `effective_effort` must surface it, or an unmarked turn configured
+        // via BUZZ_TEXT_TURN_EFFORT / the config file ships as a silent
+        // no-op (the dead-wiring shape the prompt-path hook once shipped).
+        let capture = capture_path("text_effort_apply_restore");
+        let acp = spawn_capture_acp(&capture).await;
+        let mut agent = voice_agent(acp, Some("high"));
+
+        let overrides = VoiceTurnOverrides {
+            effort: None,
+            text_effort: Some("max".to_string()),
+            model: None,
+        };
+        assert_eq!(overrides.effective_effort(), Some("max"));
+        let guard = apply_voice_turn_overrides(&mut agent, &overrides, "sess-voice").await;
+        assert_eq!(
+            guard.effort_restore,
+            Some(("effort".to_string(), "high".to_string())),
+            "the pre-turn baseline must be captured for restore"
+        );
+        assert!(guard.model_restore.is_none());
+
+        restore_voice_turn_overrides(&mut agent, &guard, "sess-voice").await;
+
+        let lines = captured_lines(&capture);
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|l| l.contains("session/set_config_option"))
+                .count(),
+            2,
+            "exactly one set + one restore on the wire, got {lines:?}"
+        );
+        assert!(
+            lines[0].contains(r#""configId":"effort""#) && lines[0].contains(r#""value":"max""#),
+            "first RPC must set effort=max, got {}",
+            lines[0]
+        );
+        assert!(
+            lines[1].contains(r#""configId":"effort""#) && lines[1].contains(r#""value":"high""#),
+            "second RPC must restore effort=high, got {}",
+            lines[1]
+        );
     }
 
     #[tokio::test]
@@ -9502,6 +9566,7 @@ done"#;
 
         let overrides = VoiceTurnOverrides {
             effort: None,
+            text_effort: None,
             model: Some("m-b".to_string()),
         };
         let guard = apply_voice_turn_overrides(&mut agent, &overrides, "sess-voice").await;
@@ -9535,6 +9600,7 @@ done"#;
 
         let overrides = VoiceTurnOverrides {
             effort: None,
+            text_effort: None,
             model: Some("model-not-offered".to_string()),
         };
         let guard = apply_voice_turn_overrides(&mut agent, &overrides, "sess-voice").await;
@@ -9550,6 +9616,7 @@ done"#;
 
         let overrides = VoiceTurnOverrides {
             effort: None,
+            text_effort: None,
             model: Some("m-a".to_string()),
         };
         let guard = apply_voice_turn_overrides(&mut agent, &overrides, "sess-voice").await;

@@ -3713,25 +3713,28 @@ fn try_native_steer(
     // steering (which is to inject only what's new).
     let (header, closing) = queue::native_steer_framing();
     let event_id_hex = event.id.to_hex();
-    // Voice-turn routing at the steer boundary. Production turns arrive
+    // Turn-class routing at the steer boundary. Production turns arrive
     // HERE — buzz sessions are long-lived and every new event for a channel
     // with an in-flight turn is delivered as a steer into the running turn,
     // so the session_prompt hook (run_prompt_task) almost never fires for
     // them. Resolve the same per-turn overrides the prompt path resolves,
     // with the same detection (`is_voice_turn_content`, prefix-only) on the
     // steered event's raw content — NOT the framed body, whose framing
-    // header would break the prefix contract. For an unmarked steer the
-    // marker short-circuit in `for_turn` yields the no-op default — the env
-    // read in `from_env_for_turn` is unconditional but its result is unused
-    // there — so the unmarked path resolves to zero overrides and the read
-    // loop issues zero RPCs, byte-identical to pre-routing behavior. Only
-    // `.effort` crosses the boundary: the optional per-turn model swap is a
-    // prompt-turn concept (a mid-turn model switch is a different RPC
-    // surface) and is deliberately unresolved here. Resolved before `event`
-    // moves into the batch event.
-    let voice_effort =
+    // header would break the prefix contract. The marker partition routes
+    // the knob: a marked steer resolves the voice tiers, an unmarked steer
+    // the text tiers — `effective_effort` is whichever resolved, and a steer
+    // whose class knob is unset yields None (the env + config-file read in
+    // `from_env_for_turn` is unconditional but an all-unset stack still
+    // resolves to the no-op default), so the unconfigured deployment issues
+    // zero RPCs at the steer boundary, byte-identical to pre-routing
+    // behavior. Only the EFFORT knobs cross the boundary: the optional
+    // per-turn model swap is a prompt-turn concept (a mid-turn model switch
+    // is a different RPC surface) and is deliberately unresolved here.
+    // Resolved before `event` moves into the batch event.
+    let effort_override =
         crate::voice_turn::VoiceTurnOverrides::from_env_for_turn(Some(event.content.as_str()))
-            .effort;
+            .effective_effort()
+            .map(str::to_string);
     let be = queue::BatchEvent {
         event,
         prompt_tag: prompt_tag.clone(),
@@ -3743,7 +3746,7 @@ fn try_native_steer(
     let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<pool::SteerAck>();
     let request = pool::SteerRequest {
         prompt_blocks: vec![body],
-        voice_effort,
+        effort_override,
         ack_tx,
     };
 
@@ -9234,10 +9237,25 @@ mod native_steer_voice_effort_tests {
     /// the lock is released.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    /// Pin the config-file layer to a path that does not exist, so these
+    /// seam tests resolve env knobs only regardless of what a developer's
+    /// real `~/.buzz/agent-effort.json` contains. Callers hold `ENV_LOCK`.
+    fn pin_config_file_absent() {
+        std::env::set_var(
+            crate::voice_turn::ENV_CONFIG_PATH,
+            "/nonexistent/buzz-acp-steer-seam/agent-effort.json",
+        );
+    }
+
+    fn unpin_config_file() {
+        std::env::remove_var(crate::voice_turn::ENV_CONFIG_PATH);
+    }
+
     #[tokio::test]
     async fn voice_marked_event_resolves_effort_override_into_steer_request() {
         let request = {
             let _env = ENV_LOCK.lock().expect("env lock poisoned");
+            pin_config_file_absent();
             std::env::set_var(crate::voice_turn::ENV_EFFORT, "low");
 
             let channel_id = Uuid::new_v4();
@@ -9260,11 +9278,12 @@ mod native_steer_voice_effort_tests {
                 "an in-flight task with a free steer_tx must accept the native steer"
             );
             std::env::remove_var(crate::voice_turn::ENV_EFFORT);
+            unpin_config_file();
             steer_rx.try_recv().expect("steer request captured")
         };
 
         assert_eq!(
-            request.voice_effort.as_deref(),
+            request.effort_override.as_deref(),
             Some("low"),
             "the raw voice-marked event content must resolve BUZZ_VOICE_TURN_EFFORT \
              into the steer request — resolve from None here and this fails"
@@ -9275,6 +9294,7 @@ mod native_steer_voice_effort_tests {
     async fn unmarked_event_resolves_no_effort_override() {
         let request = {
             let _env = ENV_LOCK.lock().expect("env lock poisoned");
+            pin_config_file_absent();
             std::env::set_var(crate::voice_turn::ENV_EFFORT, "low");
 
             let channel_id = Uuid::new_v4();
@@ -9294,12 +9314,89 @@ mod native_steer_voice_effort_tests {
             );
             assert!(accepted, "unmarked steers take the same accepted path");
             std::env::remove_var(crate::voice_turn::ENV_EFFORT);
+            unpin_config_file();
             steer_rx.try_recv().expect("steer request captured")
         };
 
         assert_eq!(
-            request.voice_effort, None,
-            "an unmarked event must carry no effort intent even with the knob set"
+            request.effort_override, None,
+            "an unmarked event must carry no VOICE effort intent even with the voice knob set"
+        );
+    }
+
+    #[tokio::test]
+    async fn unmarked_event_resolves_text_effort_override_into_steer_request() {
+        // The complementary half: an UNMARKED steer resolves the TEXT knob
+        // at the production seam. `from_env_for_turn` resolving nothing here
+        // would ship the text knob dead in production while every read-loop
+        // test stays green.
+        let request = {
+            let _env = ENV_LOCK.lock().expect("env lock poisoned");
+            pin_config_file_absent();
+            std::env::set_var(crate::voice_turn::ENV_TEXT_EFFORT, "high");
+
+            let channel_id = Uuid::new_v4();
+            let event = event_with_content("ordinary typed message");
+            let (mut pool, mut steer_rx) = pool_with_in_flight_steer(channel_id);
+            let mut queue = EventQueue::new(config::DedupMode::Queue);
+            queue_event(&mut queue, channel_id, &event);
+            let (steer_ack_tx, _steer_ack_rx) = mpsc::unbounded_channel::<SteerAckEvent>();
+
+            let accepted = try_native_steer(
+                &mut pool,
+                &mut queue,
+                channel_id,
+                event,
+                "voice-seam".into(),
+                &steer_ack_tx,
+            );
+            assert!(accepted, "unmarked steers take the same accepted path");
+            std::env::remove_var(crate::voice_turn::ENV_TEXT_EFFORT);
+            unpin_config_file();
+            steer_rx.try_recv().expect("steer request captured")
+        };
+
+        assert_eq!(
+            request.effort_override.as_deref(),
+            Some("high"),
+            "the raw unmarked event content must resolve BUZZ_TEXT_TURN_EFFORT \
+             into the steer request"
+        );
+    }
+
+    #[tokio::test]
+    async fn voice_marked_event_ignores_text_knob() {
+        // Partition at the seam: a marked steer resolves ONLY the voice
+        // tiers, so a set text knob must not leak into it.
+        let request = {
+            let _env = ENV_LOCK.lock().expect("env lock poisoned");
+            pin_config_file_absent();
+            std::env::set_var(crate::voice_turn::ENV_TEXT_EFFORT, "high");
+
+            let channel_id = Uuid::new_v4();
+            let event = event_with_content("[voice] what's the weather");
+            let (mut pool, mut steer_rx) = pool_with_in_flight_steer(channel_id);
+            let mut queue = EventQueue::new(config::DedupMode::Queue);
+            queue_event(&mut queue, channel_id, &event);
+            let (steer_ack_tx, _steer_ack_rx) = mpsc::unbounded_channel::<SteerAckEvent>();
+
+            let accepted = try_native_steer(
+                &mut pool,
+                &mut queue,
+                channel_id,
+                event,
+                "voice-seam".into(),
+                &steer_ack_tx,
+            );
+            assert!(accepted);
+            std::env::remove_var(crate::voice_turn::ENV_TEXT_EFFORT);
+            unpin_config_file();
+            steer_rx.try_recv().expect("steer request captured")
+        };
+
+        assert_eq!(
+            request.effort_override, None,
+            "a voice-marked steer must ignore BUZZ_TEXT_TURN_EFFORT entirely"
         );
     }
 }
