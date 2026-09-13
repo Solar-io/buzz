@@ -5,7 +5,6 @@ import {
   useState,
   type ReactElement,
   type ReactNode,
-  type UIEvent,
 } from "react";
 import { VList, type VListHandle } from "virtua";
 import type { MessageBuffer, TimelineMessage } from "../lib/messageBuffer.ts";
@@ -160,6 +159,7 @@ export function ChannelTimeline({
   threadLayout?: ThreadLayout;
 }) {
   const listRef = useRef<VListHandle>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   /**
    * Follow-the-tail state (see features/agents/lib/scrollFollow.ts): the
    * timeline tails new messages ONLY while following. ANY upward scroll
@@ -488,12 +488,15 @@ export function ChannelTimeline({
     };
   }, [tailKey]);
 
-  // Follow tick: capture-phase scroll events from the VList's scroller
-  // (scroll does not bubble, but it does capture), read off the wrapper.
-  // Native metrics only — see the followRef doc above for why the virtua
-  // handle is not trusted here. Inner per-message scrollers (horizontal
+  // Follow tick: a NATIVE capture-phase scroll listener on the wrapper div,
+  // attached in an effect — not a React prop. Measured live: native capture
+  // delivery to the wrapper works, but React's onScrollCapture never fires
+  // for descendant scroll events (React does not delegate or direct-attach
+  // capture listeners for non-bubbling events). Reads the scroller's own
+  // metrics off event.target — see the followRef doc above for why the
+  // virtua handle is not trusted. Inner per-message scrollers (horizontal
   // code blocks) are skipped: they have no vertical extent.
-  const handleFollowScroll = useCallback((event: UIEvent<HTMLElement>) => {
+  const handleFollowScroll = useCallback((event: Event) => {
     const el = event.target as HTMLElement;
     if (!el || el === event.currentTarget) {
       return;
@@ -510,6 +513,22 @@ export function ChannelTimeline({
     );
     lastScrollTopRef.current = el.scrollTop;
   }, []);
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) {
+      return;
+    }
+    wrap.addEventListener("scroll", handleFollowScroll, {
+      capture: true,
+      passive: true,
+    });
+    return () =>
+      wrap.removeEventListener("scroll", handleFollowScroll, {
+        capture: true,
+      } as EventListenerOptions);
+    // isEmpty: the empty state renders BEFORE the wrapper div exists, so the
+    // 0 → N message transition must re-attach.
+  }, [handleFollowScroll, isEmpty]);
 
   // Top reached → request one older page (once per flight). Also the pinned
   // day-divider tick: it is the only scroll signal virtua gives us.
@@ -583,10 +602,7 @@ export function ChannelTimeline({
     );
   }
   return (
-    <div
-      className="relative flex min-h-0 flex-1 flex-col"
-      onScrollCapture={handleFollowScroll}
-    >
+    <div ref={wrapRef} className="relative flex min-h-0 flex-1 flex-col">
       {pinnedDay && (
         <div className="pointer-events-none absolute inset-x-0 top-0 z-20">
           <div className="mx-auto w-full max-w-3xl px-1 sm:px-3">
