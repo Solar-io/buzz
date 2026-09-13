@@ -30,6 +30,11 @@ function rafPending() {
 
 const audioContexts = [];
 
+// The turn handlers stamp `performance.now()` (in a browser that IS the rAF
+// clock); pin it to the fake rAF clock so the failsafe window runs on the
+// same synthetic timeline the pumped frames do.
+let originalPerfNow = null;
+
 class FakeAnalyser {
   constructor(ctx) {
     this.ctx = ctx;
@@ -103,9 +108,12 @@ before(() => {
     rafCallbacks.delete(id);
   };
   globalThis.AudioContext = FakeAudioContext;
+  originalPerfNow = performance.now;
+  performance.now = () => rafNow;
 });
 
 after(() => {
+  performance.now = originalPerfNow;
   dom.window.close();
 });
 
@@ -116,11 +124,15 @@ const CONFIG = {
   offThreshold: 0.012,
   attackMs: 100,
   holdMs: 200,
+  // Mirrors the shipped default; the turn tests rely on the window being
+  // live (the turn-failsafe tests override it with a shorter value).
+  turnFailsafeMs: 4000,
 };
 
 function makeClient() {
   const calls = [];
-  return {
+  const subscriptions = [];
+  const client = {
     calls,
     muteInputAudio() {
       calls.push("mute");
@@ -128,8 +140,33 @@ function makeClient() {
     unmuteInputAudio() {
       calls.push("unmute");
     },
+    addListener(event, cb) {
+      subscriptions.push({ event, cb });
+    },
+    removeListener(event, cb) {
+      const at = subscriptions.findIndex(
+        (s) => s.event === event && s.cb === cb,
+      );
+      if (at !== -1) subscriptions.splice(at, 1);
+    },
   };
+  // Fire an SDK event at every current subscriber, like the real emitter.
+  client.fire = (event, payload) => {
+    for (const { event: e, cb } of [...subscriptions]) {
+      if (e === event) cb(payload);
+    }
+  };
+  return client;
 }
+
+// Shape-matched to the SDK's MessageStreamEvent.
+const personaEvent = (endOfSpeech) => ({
+  id: "m-turn",
+  content: "hello there",
+  role: "persona",
+  endOfSpeech,
+  interrupted: false,
+});
 
 function makeProps(overrides = {}) {
   return {
@@ -172,6 +209,10 @@ async function mountHook(props) {
 }
 
 // --- Wiring behaviour --------------------------------------------------------
+
+const { PERSONA_TURN_STREAM_EVENT, PERSONA_INTERRUPTED_EVENT } = await import(
+  "./useBargeDuck.ts"
+);
 
 test("gate close calls muteInputAudio and the gate opening calls unmuteInputAudio", async () => {
   audioContexts.length = 0;
@@ -353,6 +394,161 @@ test("setting off on an open mic builds nothing; the manual floor still works", 
   assert.equal(hook.ducked, false);
 
   hook.unmount();
+});
+
+// --- Turn-keyed ducking ------------------------------------------------------
+
+test("a persona turn event closes the mic with zero loudness", async () => {
+  audioContexts.length = 0;
+  const props = makeProps();
+  const hook = await mountHook(props);
+  const ctx = audioContexts.at(-1);
+
+  // Only ever-silent frames are scripted — no loud frame exists at any
+  // point in this test. The turn event alone must mute (this is the 300ms
+  // attack-window leak, fixed: the first 300ms of her speech used to play
+  // into an open mic).
+  ctx.analyser.levels = [0.0005, 0.0005, 0.0005, 0.0005];
+  props.client.fire(PERSONA_TURN_STREAM_EVENT, personaEvent(false));
+  hook.pump(1);
+
+  assert.deepEqual(props.client.calls, ["mute"], "the turn alone mutes");
+  assert.equal(hook.ducked, true);
+
+  hook.unmount();
+  assert.deepEqual(
+    props.client.calls,
+    ["mute"],
+    "unmount issues no further calls",
+  );
+});
+
+test("endOfSpeech reopens the mic", async () => {
+  audioContexts.length = 0;
+  const props = makeProps();
+  const hook = await mountHook(props);
+
+  props.client.fire(PERSONA_TURN_STREAM_EVENT, personaEvent(false));
+  hook.pump(1);
+  assert.deepEqual(props.client.calls, ["mute"]);
+
+  props.client.fire(PERSONA_TURN_STREAM_EVENT, personaEvent(true));
+  hook.pump(1);
+  assert.deepEqual(
+    props.client.calls,
+    ["mute", "unmute"],
+    "endOfSpeech closes her turn and reopens the mic",
+  );
+  assert.equal(hook.ducked, false);
+
+  hook.unmount();
+});
+
+test("an interrupted talk stream reopens the mic", async () => {
+  audioContexts.length = 0;
+  const props = makeProps();
+  const hook = await mountHook(props);
+
+  props.client.fire(PERSONA_TURN_STREAM_EVENT, personaEvent(false));
+  hook.pump(1);
+  assert.deepEqual(props.client.calls, ["mute"]);
+
+  // Payload is the SDK's correlationId string; the handler ignores it.
+  props.client.fire(PERSONA_INTERRUPTED_EVENT, "corr-1");
+  hook.pump(1);
+  assert.deepEqual(
+    props.client.calls,
+    ["mute", "unmute"],
+    "the interruption reopens the mic",
+  );
+  assert.equal(hook.ducked, false);
+
+  hook.unmount();
+});
+
+test("the failsafe reopens a turn whose endOfSpeech never came", async () => {
+  audioContexts.length = 0;
+  const props = makeProps({ config: { ...CONFIG, turnFailsafeMs: 1000 } });
+  const hook = await mountHook(props);
+
+  props.client.fire(PERSONA_TURN_STREAM_EVENT, personaEvent(false));
+  hook.pump(1); // t+50ms: turn open, mic muted
+  assert.deepEqual(props.client.calls, ["mute"]);
+
+  hook.pump(18); // t+950ms: still inside the window
+  assert.deepEqual(
+    props.client.calls,
+    ["mute"],
+    "the failsafe is not due before turnFailsafeMs",
+  );
+
+  hook.pump(1); // t+1000ms: the window expires with no event in sight
+  assert.deepEqual(
+    props.client.calls,
+    ["mute", "unmute"],
+    "the failsafe reopens the mic",
+  );
+  assert.equal(hook.ducked, false);
+
+  hook.unmount();
+});
+
+test("a persona event inside the failsafe window extends the deadline", async () => {
+  audioContexts.length = 0;
+  const props = makeProps({ config: { ...CONFIG, turnFailsafeMs: 1000 } });
+  const hook = await mountHook(props);
+
+  props.client.fire(PERSONA_TURN_STREAM_EVENT, personaEvent(false));
+  hook.pump(10); // t+500ms: she is mid-turn, mic muted
+  assert.deepEqual(props.client.calls, ["mute"]);
+
+  // A second persona event re-stamps the window: the original deadline at
+  // t+1000ms must now pass with the mic still held.
+  props.client.fire(PERSONA_TURN_STREAM_EVENT, personaEvent(false));
+  hook.pump(10); // t+1000ms: 500ms past the SECOND event
+  assert.deepEqual(
+    props.client.calls,
+    ["mute"],
+    "still muted at the original deadline — the window extended",
+  );
+  hook.pump(9); // t+1450ms: 950ms past the second event
+  assert.deepEqual(props.client.calls, ["mute"]);
+
+  hook.pump(1); // t+1500ms: 1000ms past the second event — opens
+  assert.deepEqual(props.client.calls, ["mute", "unmute"]);
+  assert.equal(hook.ducked, false);
+
+  hook.unmount();
+});
+
+test("turn ducking works with no analyser", async () => {
+  audioContexts.length = 0;
+  const realCreateAnalyser = FakeAudioContext.prototype.createAnalyser;
+  FakeAudioContext.prototype.createAnalyser = () => {
+    throw new Error("no analyser in this webview");
+  };
+  try {
+    const props = makeProps();
+    const hook = await mountHook(props);
+    const ctx = audioContexts.at(-1);
+
+    assert.equal(ctx.closed, true, "the half-built graph is torn down");
+    assert.equal(rafPending(), 1, "the loop still runs, turn-only");
+
+    props.client.fire(PERSONA_TURN_STREAM_EVENT, personaEvent(false));
+    hook.pump(1);
+    assert.deepEqual(
+      props.client.calls,
+      ["mute"],
+      "turn events mute without an analyser",
+    );
+    assert.equal(hook.ducked, true);
+
+    hook.unmount();
+    assert.equal(rafPending(), 0, "no timer leak from the degraded loop");
+  } finally {
+    FakeAudioContext.prototype.createAnalyser = realCreateAnalyser;
+  }
 });
 
 test("manual mute survives the mid-call setting-off restore", async () => {

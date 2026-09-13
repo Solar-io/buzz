@@ -23,7 +23,13 @@ test("default config is the shipped tuning", () => {
     holdMs: 1500,
     offThreshold: 0.012,
     onThreshold: 0.02,
+    turnFailsafeMs: 4000,
   });
+});
+
+test("turn failsafe is 4000ms — a dropped endOfSpeech must never strand the mic", () => {
+  // Hardcoded literal, never derived from the constant under test.
+  assert.equal(DEFAULT_DUCK_GATE_CONFIG.turnFailsafeMs, 4000);
 });
 
 test("silence never transitions the gate", () => {

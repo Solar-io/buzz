@@ -24,6 +24,11 @@ export interface DuckGateConfig {
   /** ms the gate stays closed after the level drops below offThreshold —
    * covers the TTS echo tail so the gate does not reopen mid-decay. */
   holdMs: number;
+  /** If no persona stream event arrives for this long while the turn is
+   * open, the gate reopens anyway — a dropped endOfSpeech event must never
+   * strand the mic closed. Consumed by `useBargeDuck`'s turn signal, not by
+   * the pure RMS machine below. */
+  turnFailsafeMs: number;
 }
 
 export const DEFAULT_DUCK_GATE_CONFIG: DuckGateConfig = {
@@ -31,6 +36,7 @@ export const DEFAULT_DUCK_GATE_CONFIG: DuckGateConfig = {
   holdMs: 1500,
   offThreshold: 0.012,
   onThreshold: 0.02,
+  turnFailsafeMs: 4000,
 };
 
 /** `listening` = mic open, `ducked` = mic input muted. */
