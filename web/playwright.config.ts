@@ -42,6 +42,7 @@ export default defineConfig({
         "**/parity-surfaces.spec.ts",
         "**/forum.spec.ts",
         "**/sidebar-appearance.spec.ts",
+        "**/shortcut-bar.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],

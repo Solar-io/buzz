@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   Brain,
   CircleDot,
@@ -46,6 +46,12 @@ export interface ChannelHeaderProps {
   selfPubkey?: string | null;
   /** Publish a NIP-29 kind-9021 join for this channel. */
   onJoinChannel?: () => Promise<void> | void;
+  /**
+   * Feature-owned controls pinned ahead of Join/Members/Huddle (the
+   * shortcut bar). The header does not import the feature — it renders
+   * whatever the shell passes.
+   */
+  actions?: ReactNode;
 }
 
 const NO_MEMBERS: ChannelMember[] = [];
@@ -92,6 +98,7 @@ export function ChannelHeader({
   presence,
   selfPubkey,
   onJoinChannel,
+  actions,
 }: ChannelHeaderProps) {
   const [startingHuddle, setStartingHuddle] = useState(false);
   const [joining, setJoining] = useState(false);
@@ -175,6 +182,7 @@ export function ChannelHeader({
         </p>
       )}
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
+        {actions}
         {showJoin && (
           <button
             type="button"
