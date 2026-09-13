@@ -4,6 +4,7 @@ import * as React from "react";
 
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
+import { Switch } from "@/shared/ui/switch";
 import { cn } from "@/shared/lib/cn";
 
 import { describeAnamError, startAnamSession } from "../lib/anam";
@@ -44,8 +45,9 @@ export function VideoChatPanel(props: {
   // Barge-in auto-duck: while live, the persona's own TTS momentarily mutes
   // the mic input at the SDK layer so open speakers cannot feed her voice
   // back into her ASR. Manual mute below stays the floor over the gate.
+  // Off in settings disables ducking entirely (barge-in passes through).
   const ducked = useBargeDuck({
-    enabled: state === "live",
+    enabled: state === "live" && config.autoDuck,
     micOn,
     audioElement: audioRef.current,
     client: clientRef.current,
@@ -230,6 +232,25 @@ export function VideoChatPanel(props: {
               value={config.llmId}
               onChange={(v) => update({ llmId: v })}
             />
+            <div className="mt-1 flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <label
+                  className="text-sm font-medium"
+                  htmlFor="video-chat-auto-duck-switch"
+                >
+                  Auto-duck mic while she speaks
+                </label>
+                <p className="text-muted-foreground">
+                  While she speaks, your mic input is muted so she cannot hear
+                  her own voice or be talked over. Off lets barge-in through.
+                </p>
+              </div>
+              <Switch
+                checked={config.autoDuck}
+                id="video-chat-auto-duck-switch"
+                onCheckedChange={(next) => update({ autoDuck: next })}
+              />
+            </div>
             <div className="mt-1 flex items-center gap-2">
               <span className="w-32 shrink-0 text-muted-foreground">
                 Relay token

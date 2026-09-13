@@ -16,6 +16,8 @@ export interface VideoChatConfig {
   avatarModel: string;
   voiceId: string;
   llmId: string;
+  /** Barge-in auto-duck: while she speaks, mute the mic at the SDK layer. */
+  autoDuck: boolean;
 }
 
 const STORAGE_KEY = "buzz.videoChat.config.v1";
@@ -28,6 +30,7 @@ const EMPTY: VideoChatConfig = {
   avatarModel: "",
   voiceId: "",
   llmId: "",
+  autoDuck: true,
 };
 
 export function loadVideoChatConfig(): VideoChatConfig {
