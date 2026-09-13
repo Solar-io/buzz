@@ -73,3 +73,67 @@ test("agent DM header shows the video chat trigger", async ({ page }) => {
     )
     .toBeGreaterThanOrEqual(1);
 });
+
+/**
+ * The auto-duck setting: on by default, flippable in the panel's settings
+ * sheet, and persisted across an app restart (localStorage). This is the
+ * user-facing surface of the barge-in toggle — the unit tests cover the
+ * gate logic, this covers that the control is reachable and actually wired.
+ */
+test("auto-duck toggle: on by default, flips off, persists across reload", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    searchProfiles: [
+      {
+        pubkey: TEST_IDENTITIES.alice.pubkey,
+        displayName: "Alice",
+        isAgent: true,
+      },
+    ],
+  });
+
+  await page.goto("/");
+  await page.getByTestId("channel-alice-tyler").click();
+  await page.getByTestId("video-chat-trigger").click();
+  await expect(page.getByRole("button", { name: "Start call" })).toBeVisible();
+
+  // The panel's own Settings button: a sibling of the "Video chat — …"
+  // header text, so sidebar/settings-view buttons cannot collide with it.
+  const panelSettingsButton = page
+    .getByText(/Video chat — /)
+    .locator("xpath=../button");
+  await panelSettingsButton.click();
+  await page.screenshot({ path: "logs/auto-duck-settings-sheet.png", fullPage: false });
+
+  const autoDuckSwitch = page.locator("#video-chat-auto-duck-switch");
+  await expect(autoDuckSwitch).toBeChecked();
+
+  // Flipping it off persists through the panel's update().
+  await autoDuckSwitch.click();
+  await expect(autoDuckSwitch).not.toBeChecked();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const raw = window.localStorage.getItem("buzz.videoChat.config.v1");
+        return raw ? (JSON.parse(raw).autoDuck as boolean) : undefined;
+      }),
+    )
+    .toBe(false);
+
+  // Reload simulates an app restart: the off state must survive.
+  await page.reload();
+  await page.getByTestId("channel-alice-tyler").click();
+  await page.getByTestId("video-chat-trigger").click();
+  await expect(page.getByRole("button", { name: "Start call" })).toBeVisible();
+  await page
+    .getByText(/Video chat — /)
+    .locator("xpath=../button")
+    .click();
+  const reloadedSwitch = page.locator("#video-chat-auto-duck-switch");
+  await expect(reloadedSwitch).not.toBeChecked();
+
+  // Restore the default for anything sharing this browser profile.
+  await reloadedSwitch.click();
+  await expect(reloadedSwitch).toBeChecked();
+});
