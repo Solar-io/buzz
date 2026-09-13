@@ -17,6 +17,7 @@ import {
 } from "../lib/threadTarget.ts";
 import { cn } from "@/shared/lib/cn";
 import { relativeTime } from "@/shared/lib/relative-time";
+import { nextFollowState } from "@/features/agents/lib/scrollFollow";
 import { AuthorAvatar, authorLabel } from "./ChannelTimeline.tsx";
 import { Composer } from "./Composer.tsx";
 import { MarkdownContent } from "./MarkdownContent.tsx";
@@ -64,16 +65,43 @@ export function ForumThreadView({
   const { root: fetchedRoot, replies } = useForumThread(channel.id, postId);
   const root = fetchedRoot ?? fallbackRoot;
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Follow-the-tail state (see features/agents/lib/scrollFollow.ts): the
+  // panel tails new replies only while the reader is at the bottom. Any
+  // upward scroll pauses the tail; scrolling back to the bottom resumes it.
+  const followRef = useRef(true);
+  const lastScrollTopRef = useRef(0);
   const lastReplyId = replies.length > 0 ? replies[replies.length - 1].id : "";
-  // Open (and keep) the thread on the newest reply — long alert threads read
-  // from the bottom (same intent as the stream ThreadPanel's auto-tail).
+  // A different post opening always re-lands on its newest reply.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: postId is the reset trigger, not a value read inside the effect
+  useEffect(() => {
+    followRef.current = true;
+    lastScrollTopRef.current = 0;
+  }, [postId]);
+  // Keep the thread on the newest reply while following — long alert threads
+  // read from the bottom (same intent as the stream ThreadPanel's
+  // auto-tail). A reader scrolled up to read is never yanked down.
   // biome-ignore lint/correctness/useExhaustiveDependencies: lastReplyId/root id are the re-tail triggers by design
   useEffect(() => {
     const node = scrollRef.current;
-    if (node) {
+    if (node && followRef.current) {
       node.scrollTo({ top: node.scrollHeight });
     }
   }, [lastReplyId, root?.id]);
+  const handleFollowScroll = () => {
+    const node = scrollRef.current;
+    if (!node) {
+      return;
+    }
+    const prev = lastScrollTopRef.current;
+    lastScrollTopRef.current = node.scrollTop;
+    followRef.current = nextFollowState(
+      followRef.current,
+      prev,
+      node.scrollTop,
+      node.scrollHeight,
+      node.clientHeight,
+    );
+  };
 
   // Which reply the comment is a reply TO. Null = the post itself, whose
   // NIP-10 parent is the post id. Cleared when a different post opens.
@@ -119,6 +147,7 @@ export function ForumThreadView({
       <div
         className="buzz-content-scrollbar min-h-0 flex-1 overflow-y-auto"
         ref={scrollRef}
+        onScroll={handleFollowScroll}
       >
         <div className="mx-auto w-full max-w-3xl px-1 sm:px-3">
           {root ? (

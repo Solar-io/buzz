@@ -11,6 +11,7 @@ import type { MessageBuffer, TimelineMessage } from "../lib/messageBuffer.ts";
 export type { ChannelMember, Profile } from "../hooks.ts";
 import type { Profile } from "../hooks.ts";
 import { formatElapsed } from "@/features/agents/ui/WorkingBadge";
+import { nextFollowState } from "@/features/agents/lib/scrollFollow";
 import { isWithinGroupingWindow } from "@/features/channels/lib/messageGrouping";
 import { authorLabel } from "../lib/authorLabel.ts";
 import { formatDayLabel } from "../lib/dateFormatters.ts";
@@ -132,9 +133,13 @@ export function ChannelTimeline({
   pendingIds?: ReadonlySet<string>;
   /**
    * Auto-tail trigger: every change scrolls the list to its bottom (the
-   * desktop's VList pattern). Compose it from the channel + newest message id
-   * (`${channelId}:${lastMessageId}`) so both new messages and channel
-   * switches re-tail. Null disables tailing.
+   * desktop's VList pattern) — but only while the reader is FOLLOWING (at
+   * the bottom; any upward scroll pauses, returning to the bottom resumes —
+   * see lib/scrollFollow.ts). Compose it from the view + newest message id
+   * (`${channelId}:${lastMessageId}` in the timeline,
+   * `${rootId}:${lastReply.id}:${count}` in a thread panel): the FIRST
+   * segment identifies the view, and a change of it (channel/thread switch)
+   * always re-lands on the newest row. Null disables tailing.
    */
   tailKey?: string | null;
   /** Scroll-up pagination: called when the viewport reaches the top. */
@@ -154,6 +159,20 @@ export function ChannelTimeline({
   threadLayout?: ThreadLayout;
 }) {
   const listRef = useRef<VListHandle>(null);
+  /**
+   * Follow-the-tail state (see features/agents/lib/scrollFollow.ts): the
+   * timeline tails new messages ONLY while following. ANY upward scroll
+   * pauses the tail — position alone lets a fast stream re-pin the bottom
+   * between the reader's small upward deltas and erase them before they
+   * add up to an escape ("it stops for a second, then it just keeps
+   * scrolling on by" — Sam, 2026-09-13). Scrolling back to the very
+   * bottom resumes. The offset is tracked for direction; at-bottom comes
+   * from the handle's own scrollSize/viewportSize.
+   */
+  const followRef = useRef(true);
+  const lastOffsetRef = useRef(0);
+  /** View identity (tailKey's first segment: channel id / thread root). */
+  const viewKeyRef = useRef<string | null>(null);
   /**
    * Pagination scroll anchor: when an older page lands, the list must not
    * jump to the NEW top — it re-pins to the row the user was reading. The
@@ -430,15 +449,30 @@ export function ChannelTimeline({
   // media. (Same pattern the timeline used before virtualization.) Tailing is
   // keyed on tailKey ONLY — an older-history page growing the list must not
   // yank the reader to the bottom — and never fires while a pagination
-  // restore is pinning the viewport to its anchor row.
+  // restore is pinning the viewport to its anchor row. And it fires only
+  // WHILE FOLLOWING (followRef): a reader scrolled up to read is never
+  // yanked to the bottom by a new message; the tail resumes when they
+  // scroll back to the bottom (see handleScroll). A view switch (channel /
+  // thread change — tailKey's first segment) always re-lands on the newest
+  // row, resetting the pause.
   // items.length is read for the bottom index only; tailKey is the trigger.
   // biome-ignore lint/correctness/useExhaustiveDependencies: pagination pages must not re-tail
   useEffect(() => {
     if (!tailKey || pagePhase.current !== "idle") {
       return;
     }
-    const toBottom = () =>
+    const viewKey = tailKey.split(":")[0];
+    if (viewKeyRef.current !== viewKey) {
+      viewKeyRef.current = viewKey;
+      followRef.current = true;
+      lastOffsetRef.current = 0;
+    }
+    const toBottom = () => {
+      if (!followRef.current) {
+        return;
+      }
       listRef.current?.scrollToIndex(items.length - 1, { align: "end" });
+    };
     const raf = requestAnimationFrame(() => requestAnimationFrame(toBottom));
     const settle = window.setTimeout(toBottom, 250);
     return () => {
@@ -448,10 +482,23 @@ export function ChannelTimeline({
   }, [tailKey]);
 
   // Top reached → request one older page (once per flight). Also the pinned
-  // day-divider tick: it is the only scroll signal virtua gives us.
+  // day-divider tick — and the follow tick: it is the only scroll signal
+  // virtua gives us. Direction from the tracked offset, at-bottom from the
+  // handle's own scrollSize/viewportSize (see lib/scrollFollow.ts).
   const handleScroll = useCallback(
     (offset: number) => {
       resolvePinnedDay(offset);
+      const list = listRef.current;
+      if (list) {
+        followRef.current = nextFollowState(
+          followRef.current,
+          lastOffsetRef.current,
+          list.scrollOffset,
+          list.scrollSize,
+          list.viewportSize,
+        );
+      }
+      lastOffsetRef.current = offset;
       if (
         offset > 4 ||
         pagePhase.current !== "idle" ||

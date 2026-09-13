@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { BarChart3, Brain } from "lucide-react";
 import type { Profile } from "@/features/channels/hooks";
 import { AuthorAvatar } from "@/features/channels/ui/ChannelTimeline";
-import { isScrolledToBottom } from "@/features/agents/lib/scrollFollow";
+import { nextFollowState } from "@/features/agents/lib/scrollFollow";
 import {
   transcriptFromFrames,
   type AgentWorkingState,
@@ -126,11 +126,14 @@ export function AgentActivityPanel({
   onSelectThreadTab?: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Follow-the-tail state. Geometry-driven (see lib/scrollFollow.ts): the
-  // user scrolling up pauses tailing; scrolling back to the bottom resumes
-  // it. No user-vs-programmatic disambiguation — both just set follow from
-  // where the scroller ended up.
+  // Follow-the-tail state (see lib/scrollFollow.ts): ANY upward scroll
+  // pauses tailing — position alone was not enough, because during a fast
+  // stream the tail re-pins the bottom between the reader's small upward
+  // deltas and erases them before they add up to an escape (Sam 2026-09-13).
+  // Scrolling back to the bottom resumes. No user-vs-programmatic
+  // disambiguation beyond direction — both just move the scroller.
   const followRef = useRef(true);
+  const lastScrollTopRef = useRef(0);
   const { entries, suppressed } = useMemo(
     () => transcriptFromFrames(frames),
     [frames],
@@ -159,6 +162,7 @@ export function AgentActivityPanel({
     if (lastAgentKeyRef.current !== agentKey) {
       lastAgentKeyRef.current = agentKey;
       followRef.current = true;
+      lastScrollTopRef.current = 0;
     }
     const scroller = scrollRef.current;
     if (!scroller) {
@@ -173,14 +177,19 @@ export function AgentActivityPanel({
     const raf = requestAnimationFrame(() => requestAnimationFrame(scrollToEnd));
     return () => cancelAnimationFrame(raf);
   }, [lastId, entries.length, agentKey]);
-  // Follow updates from scroll position only: up = paused, back at the
-  // bottom = following again (and the next frame re-tails).
+  // Follow updates from position AND direction (see lib/scrollFollow.ts):
+  // any real upward move = paused, back at the bottom = following again
+  // (and the next frame re-tails).
   const handleScroll = () => {
     const scroller = scrollRef.current;
     if (!scroller) {
       return;
     }
-    followRef.current = isScrolledToBottom(
+    const prev = lastScrollTopRef.current;
+    lastScrollTopRef.current = scroller.scrollTop;
+    followRef.current = nextFollowState(
+      followRef.current,
+      prev,
       scroller.scrollTop,
       scroller.scrollHeight,
       scroller.clientHeight,
