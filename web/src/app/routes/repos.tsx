@@ -30,6 +30,12 @@ import {
   type ReadState,
 } from "@/features/channels/lib/readState.ts";
 import { activeTyping } from "@/features/channels/lib/typing.ts";
+import {
+  THREAD_WIDTH_DEFAULT,
+  THREAD_WIDTH_STORAGE_KEY,
+  clampThreadWidth,
+  parseStoredThreadWidth,
+} from "@/features/channels/lib/threadPanelWidth.ts";
 import { useChannelLists } from "@/features/channels/lib/useChannelLists.ts";
 import { useMessageActions } from "@/features/channels/lib/useMessageActions.ts";
 import { paletteActions } from "@/features/channels/lib/paletteActions.ts";
@@ -300,20 +306,38 @@ function ChannelBrowser() {
     ? (messages.find((m) => m.id === threadRootId) ?? null)
     : null;
   // Right-pane width (thread + agent activity share it), drag-resizable.
+  // Ceiling is relative to the layout ROW (window minus the app sidebar) so
+  // the pane can take nearly the whole row instead of the old 640px cap,
+  // without starving the timeline while the sidebar is open; a width
+  // persisted on a big window re-clamps on a smaller one.
+  const shellRowRef = useRef<HTMLDivElement | null>(null);
+  const shellRowWidth = () =>
+    shellRowRef.current?.clientWidth ?? globalThis.innerWidth;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: channelId is the re-run trigger (the row mounts per channel); shellRowWidth reads a ref, not reactive state
   const [threadWidth, setThreadWidth] = useState<number>(() => {
-    const stored = Number.parseFloat(
-      globalThis.localStorage?.getItem("buzz.thread-width.v1") ?? "",
+    const stored = parseStoredThreadWidth(
+      globalThis.localStorage?.getItem(THREAD_WIDTH_STORAGE_KEY) ?? null,
     );
-    return Number.isFinite(stored) && stored >= 288 && stored <= 640
-      ? stored
-      : 384;
+    return stored === null
+      ? THREAD_WIDTH_DEFAULT
+      : clampThreadWidth(stored, globalThis.innerWidth);
   });
   useEffect(() => {
     globalThis.localStorage?.setItem(
-      "buzz.thread-width.v1",
+      THREAD_WIDTH_STORAGE_KEY,
       String(Math.round(threadWidth)),
     );
   }, [threadWidth]);
+  // Clamp on mount/channel-change and on window resizes against the live
+  // row width — the initializer only sees the window (before mount), and
+  // the sidebar's width is part of the ceiling's budget.
+  useEffect(() => {
+    const clampToRow = () =>
+      setThreadWidth((previous) => clampThreadWidth(previous, shellRowWidth()));
+    clampToRow();
+    globalThis.addEventListener("resize", clampToRow);
+    return () => globalThis.removeEventListener("resize", clampToRow);
+  }, [channelId]);
   // Auto-tail now lives INSIDE the virtualized timeline (tailKey) — the VList
   // owns its scroll node. The key covers both new messages and channel
   // switches (two channels share a last-message id only in the empty case).
@@ -695,6 +719,7 @@ function ChannelBrowser() {
               />
             ) : current ? (
               <div
+                ref={shellRowRef}
                 className="flex h-full min-h-0"
                 style={{ ["--thread-width" as string]: `${threadWidth}px` }}
               >
@@ -847,9 +872,9 @@ function ChannelBrowser() {
                         event.currentTarget.hasPointerCapture(event.pointerId)
                       ) {
                         setThreadWidth((previous) =>
-                          Math.min(
-                            640,
-                            Math.max(288, previous - event.movementX),
+                          clampThreadWidth(
+                            previous - event.movementX,
+                            shellRowWidth(),
                           ),
                         );
                       }
