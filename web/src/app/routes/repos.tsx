@@ -712,6 +712,7 @@ function ChannelBrowser() {
                     profiles={profiles}
                     presence={presence}
                     selfPubkey={selfPubkey}
+                    contacts={dmParticipantPubkeys}
                     onJoinChannel={async () => {
                       const event = await signNostrEvent({
                         kind: JOIN_CHANNEL_KIND,

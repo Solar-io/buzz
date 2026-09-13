@@ -46,6 +46,8 @@ export interface ChannelHeaderProps {
   selfPubkey?: string | null;
   /** Publish a NIP-29 kind-9021 join for this channel. */
   onJoinChannel?: () => Promise<void> | void;
+  /** DM counterparty pubkeys, for the roster's add-member suggestions. */
+  contacts?: string[];
 }
 
 const NO_MEMBERS: ChannelMember[] = [];
@@ -92,6 +94,7 @@ export function ChannelHeader({
   presence,
   selfPubkey,
   onJoinChannel,
+  contacts,
 }: ChannelHeaderProps) {
   const [startingHuddle, setStartingHuddle] = useState(false);
   const [joining, setJoining] = useState(false);
@@ -194,9 +197,12 @@ export function ChannelHeader({
         )}
         {channel.type !== "dm" && (
           <ChannelMembersButton
+            channelId={channel.id}
             members={members}
             profiles={profiles}
             presence={presence}
+            contacts={contacts}
+            selfPubkey={selfPubkey}
           />
         )}
         {/*
