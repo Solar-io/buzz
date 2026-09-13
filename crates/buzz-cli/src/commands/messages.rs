@@ -5,8 +5,8 @@ use uuid::Uuid;
 use crate::client::{normalize_events, normalize_write_response, BuzzClient};
 use crate::error::CliError;
 use crate::validate::{
-    infer_language, parse_event_id, parse_uuid, read_or_stdin, truncate_diff,
-    validate_content_size, validate_hex64, validate_uuid, MAX_DIFF_BYTES,
+    infer_language, parse_event_id, read_or_stdin, truncate_diff, validate_content_size,
+    validate_hex64, MAX_DIFF_BYTES,
 };
 use buzz_sdk::mentions::{
     extract_at_mentions_with_known, extract_nostr_uris, strip_code_regions, MENTION_CAP,
@@ -362,7 +362,9 @@ pub async fn cmd_get_messages(
     kinds: Option<&str>,
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
-    validate_uuid(channel_id)?;
+    let channel_id = crate::channel_ref::resolve_channel_uuid(client, channel_id)
+        .await?
+        .to_string();
     let limit = limit.unwrap_or(50).min(200);
 
     let mut filter = serde_json::json!({
@@ -426,7 +428,8 @@ pub async fn cmd_get_thread(
     depth_limit: Option<u32>,
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
-    let expected_channel_id = parse_uuid(channel_id)?;
+    let expected_channel_id = crate::channel_ref::resolve_channel_uuid(client, channel_id).await?;
+    let channel_id = expected_channel_id.to_string();
     validate_hex64(event_id)?;
     let selected_event = fetch_event(client, event_id).await?;
     let root_event_id = resolve_thread_target(
@@ -631,7 +634,12 @@ pub async fn cmd_send_message(
     if let Some(ref r) = p.reply_to {
         validate_hex64(r)?;
     }
-    let channel_uuid = parse_uuid(&p.channel_id)?;
+    // Channel addressing: UUID fast path (no network), else name/#slug
+    // resolution against visible channel metadata. Rewriting p.channel_id to
+    // the canonical UUID keeps every downstream consumer (hold gate, mention
+    // preflight, error strings) on the resolved identity.
+    let channel_uuid = crate::channel_ref::resolve_channel_uuid(client, &p.channel_id).await?;
+    p.channel_id = channel_uuid.to_string();
 
     // Send-path hold gate (managed sessions only). Before ANY network I/O:
     // a held session must not burn mention preflights or uploads on a send
@@ -786,7 +794,10 @@ pub struct SendDiffParams {
     pub reply_to: Option<String>,
 }
 
-pub async fn cmd_send_diff_message(client: &BuzzClient, p: SendDiffParams) -> Result<(), CliError> {
+pub async fn cmd_send_diff_message(
+    client: &BuzzClient,
+    mut p: SendDiffParams,
+) -> Result<(), CliError> {
     if let Some(r) = &p.reply_to {
         validate_hex64(r)?;
     }
@@ -801,7 +812,8 @@ pub async fn cmd_send_diff_message(client: &BuzzClient, p: SendDiffParams) -> Re
         _ => {}
     }
 
-    let channel_uuid = parse_uuid(&p.channel_id)?;
+    let channel_uuid = crate::channel_ref::resolve_channel_uuid(client, &p.channel_id).await?;
+    p.channel_id = channel_uuid.to_string();
 
     // Read diff from stdin if "--diff -"
     let diff_content = read_or_stdin(&p.diff)?;
@@ -891,6 +903,112 @@ pub async fn cmd_delete_message(
 }
 
 /// Edit a message you previously sent.
+/// The emoji that marks a work claim. A claim is a signed kind:7 reaction
+/// with this content on the task event — visible in every client and owned
+/// by the claiming key. Chosen to be unambiguous in normal channel traffic:
+/// nobody locks a message to say "nice".
+pub(crate) const CLAIM_EMOJI: &str = "🔒";
+
+/// What the 🔒 reactions on an event say about its claim state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ClaimState {
+    /// Unclaimed — no 🔒 reactions at all.
+    Unclaimed,
+    /// Claimed by the caller's own key (re-claiming is an idempotent no-op).
+    Ours,
+    /// Claimed by another key: holder's pubkey, and when the claim was made.
+    Foreign { pubkey: String, created_at: u64 },
+}
+
+/// Classify the claim state of an event from its kind:7 reactions.
+///
+/// Pure function over the reaction query result so the arbitration logic is
+/// unit-testable without a relay. When multiple 🔒 reactions exist, the
+/// EARLIEST one wins — first writer wins, and a later lock from the same or
+/// another key never displaces the original holder. Our own claim only
+/// shields us when no earlier foreign claim exists.
+pub(crate) fn classify_claim(reactions: &[serde_json::Value], my_pubkey: &str) -> ClaimState {
+    let mut locks: Vec<(&str, u64)> = reactions
+        .iter()
+        // Only kind:7 events are reactions; anything else in the input
+        // (e.g. a kind:9 message that happens to contain the emoji) is not
+        // a claim and must not read as one.
+        .filter(|r| r.get("kind").and_then(|k| k.as_u64()) == Some(7))
+        .filter(|r| r.get("content").and_then(|c| c.as_str()) == Some(CLAIM_EMOJI))
+        .filter_map(|r| {
+            let pubkey = r.get("pubkey").and_then(|p| p.as_str())?;
+            // A malformed/absent created_at reads as 0 — the reaction still
+            // counts as a claim, conservatively the earliest.
+            let created_at = r.get("created_at").and_then(|c| c.as_u64()).unwrap_or(0);
+            Some((pubkey, created_at))
+        })
+        .collect();
+    locks.sort_by_key(|(_, at)| *at);
+    match locks.first() {
+        None => ClaimState::Unclaimed,
+        Some((pubkey, at)) if *pubkey == my_pubkey => ClaimState::Ours,
+        Some((pubkey, at)) => ClaimState::Foreign {
+            pubkey: pubkey.to_string(),
+            created_at: *at,
+        },
+    }
+}
+
+/// Claim the work attached to a message — cross-agent, first writer wins.
+///
+/// Queries the event's reactions; a foreign 🔒 refuses with the holder named
+/// (exit 1, `already_claimed`), our own 🔒 is an idempotent success, and no
+/// 🔒 publishes one. The check-then-claim window is sub-second and
+/// client-side — see the command docs for the honest limits.
+pub async fn cmd_claim_work(client: &BuzzClient, event_id: &str) -> Result<(), CliError> {
+    validate_hex64(event_id)?;
+    let my_pubkey = client.keys().public_key().to_hex();
+
+    let filter = serde_json::json!({ "kinds": [7], "#e": [event_id] });
+    let raw = client.query(&filter).await?;
+    let reactions: Vec<serde_json::Value> = serde_json::from_str(&raw)
+        .map_err(|e| CliError::Other(format!("failed to parse reactions query: {e}")))?;
+
+    match classify_claim(&reactions, &my_pubkey) {
+        ClaimState::Foreign { pubkey, created_at } => Err(CliError::Usage(
+            serde_json::json!({
+                "message": "already claimed",
+                "claimed_by": pubkey,
+                "claimed_at": created_at,
+                "advice": "First claim wins — stand down or coordinate with the holder. A stale claim can be checked with 'buzz reactions get --event' and released by its holder with 'buzz reactions remove --emoji 🔒'.",
+            })
+            .to_string(),
+        )),
+        ClaimState::Ours => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "claimed": true,
+                    "already_claimed_by_you": true,
+                    "event": event_id,
+                })
+            );
+            Ok(())
+        }
+        ClaimState::Unclaimed => {
+            let target_eid = nostr::EventId::parse(event_id)
+                .map_err(|e| CliError::Usage(format!("invalid event ID: {e}")))?;
+            let builder = buzz_sdk::build_reaction(target_eid, CLAIM_EMOJI)
+                .map_err(|e| CliError::Other(format!("build_reaction failed: {e}")))?;
+            let event = client.sign_event(builder)?;
+            let resp = client.submit_event(event).await?;
+            let mut out: serde_json::Value =
+                serde_json::from_str(&normalize_write_response(&resp))
+                    .unwrap_or_else(|_| serde_json::json!({}));
+            out["claimed"] = serde_json::json!(true);
+            out["claim_emoji"] = serde_json::json!(CLAIM_EMOJI);
+            out["event"] = serde_json::json!(event_id);
+            println!("{out}");
+            Ok(())
+        }
+    }
+}
+
 pub async fn cmd_edit_message(
     client: &BuzzClient,
     event_id: &str,
@@ -1009,6 +1127,7 @@ pub async fn dispatch(
             )
             .await
         }
+        MessagesCmd::Claim { event } => cmd_claim_work(client, &event).await,
         MessagesCmd::Edit { event, content } => cmd_edit_message(client, &event, &content).await,
         MessagesCmd::Delete {
             event,
@@ -1100,11 +1219,11 @@ pub async fn dispatch(
 #[cfg(test)]
 mod tests {
     use super::{
-        channel_id_from_event, cmd_get_thread, event_mention_pubkeys, find_root_from_tags,
-        match_profiles_by_name, merge_message_mentions, missing_members,
+        channel_id_from_event, classify_claim, cmd_get_thread, event_mention_pubkeys,
+        find_root_from_tags, match_profiles_by_name, merge_message_mentions, missing_members,
         normalize_explicit_mentions, parse_member_pubkeys, resolve_names_to_pubkeys,
         resolve_thread_target, thread_ref_from_event, thread_ref_from_parent_tags, BuzzClient,
-        CliError, Uuid,
+        ClaimState, CliError, Uuid, CLAIM_EMOJI,
     };
     use buzz_sdk::mentions::{
         extract_at_mentions_with_known, extract_at_names, match_names_to_profiles, MentionProfile,
@@ -1116,6 +1235,74 @@ mod tests {
     const ID_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const PUBKEY: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
+    fn lock_reaction(pubkey: &str, created_at: u64) -> serde_json::Value {
+        json!({ "kind": 7, "pubkey": pubkey, "content": CLAIM_EMOJI, "created_at": created_at })
+    }
+
+    #[test]
+    fn claim_unclaimed_when_no_lock_reactions() {
+        // Other emoji reactions must NOT read as claims.
+        let reactions = vec![
+            json!({ "kind": 7, "pubkey": PUBKEY, "content": "👍", "created_at": 50 }),
+            json!({ "kind": 9, "pubkey": PUBKEY, "content": CLAIM_EMOJI, "created_at": 60 }),
+        ];
+        assert_eq!(classify_claim(&reactions, "mykey"), ClaimState::Unclaimed);
+    }
+
+    #[test]
+    fn claim_foreign_lock_blocks() {
+        let reactions = vec![lock_reaction(PUBKEY, 100)];
+        assert_eq!(
+            classify_claim(&reactions, "mykey"),
+            ClaimState::Foreign {
+                pubkey: PUBKEY.to_string(),
+                created_at: 100
+            }
+        );
+    }
+
+    #[test]
+    fn claim_own_lock_is_idempotent_success() {
+        let reactions = vec![lock_reaction("mykey", 100)];
+        assert_eq!(classify_claim(&reactions, "mykey"), ClaimState::Ours);
+    }
+
+    #[test]
+    fn claim_earliest_lock_wins_even_if_mine_is_earlier() {
+        // Two agents raced and both published; the EARLIER one is the holder.
+        // Here mine was later, so the event reads as foreign-held.
+        let reactions = vec![lock_reaction("mykey", 200), lock_reaction(PUBKEY, 100)];
+        assert_eq!(
+            classify_claim(&reactions, "mykey"),
+            ClaimState::Foreign {
+                pubkey: PUBKEY.to_string(),
+                created_at: 100
+            }
+        );
+    }
+
+    #[test]
+    fn claim_earliest_lock_wins_when_mine_is_first() {
+        // And symmetrically: my earlier lock makes a later foreign reaction
+        // irrelevant — re-running claim reports Ours, not Foreign.
+        let reactions = vec![lock_reaction(PUBKEY, 200), lock_reaction("mykey", 100)];
+        assert_eq!(classify_claim(&reactions, "mykey"), ClaimState::Ours);
+    }
+
+    #[test]
+    fn claim_missing_created_at_reads_as_epoch() {
+        // A malformed reaction event still counts as a claim — the earliest
+        // possible one — rather than being silently ignored.
+        let reactions = vec![json!({ "kind": 7, "pubkey": PUBKEY, "content": CLAIM_EMOJI })];
+        assert_eq!(
+            classify_claim(&reactions, "mykey"),
+            ClaimState::Foreign {
+                pubkey: PUBKEY.to_string(),
+                created_at: 0
+            }
+        );
+    }
+
     // Three real pubkeys (lowercase 64-char hex) used by parse_member_pubkeys tests.
     // See the test's own comment on what `PublicKey::from_hex` actually validates.
     const PK_VALID_A: &str = "35c18ae273fccfaf80d629e20e7f8721b90499379addff533054acc2504c12b4";
@@ -1123,7 +1310,32 @@ mod tests {
     const PK_VALID_C: &str = "f4a42a97e594b77bdbd8ee35191c8b28a94a4cb871d96f32921558275421fb68";
 
     #[tokio::test]
-    async fn malformed_channel_is_rejected_before_thread_fetch() {
+    async fn contentless_channel_is_rejected_before_any_network() {
+        // A channel ref with no alphanumeric content cannot be a UUID and
+        // cannot be a name — rejected locally, no query burned.
+        let client =
+            BuzzClient::new("http://127.0.0.1:1".into(), Keys::generate(), None, None).unwrap();
+        let error = cmd_get_thread(
+            &client,
+            "###",
+            ID_A,
+            None,
+            None,
+            None,
+            &crate::OutputFormat::Json,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, CliError::Usage(_)));
+        assert!(!error.to_string().contains("invalid UUID"));
+    }
+
+    #[tokio::test]
+    async fn name_channel_resolves_before_thread_fetch() {
+        // A plausible NAME (not a UUID) is resolved against channel metadata
+        // first — one metadata query, never the thread/event fetch. Against
+        // an unroutable relay that surfaces as a network error, not Usage.
         let client =
             BuzzClient::new("http://127.0.0.1:1".into(), Keys::generate(), None, None).unwrap();
         let error = cmd_get_thread(
@@ -1138,8 +1350,7 @@ mod tests {
         .await
         .unwrap_err();
 
-        assert!(matches!(error, CliError::Usage(_)));
-        assert!(error.to_string().contains("invalid UUID"));
+        assert!(matches!(error, CliError::Network(_)));
     }
 
     #[test]

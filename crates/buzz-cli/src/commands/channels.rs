@@ -11,7 +11,7 @@ use crate::client::{
 use crate::commands::agents::fetch_archived_snapshot;
 use crate::commands::channel_templates::{self, ChannelTemplateRecord, TemplateAgentRoster};
 use crate::error::CliError;
-use crate::validate::{parse_uuid, read_or_stdin, validate_hex64, validate_uuid};
+use crate::validate::{read_or_stdin, validate_hex64};
 
 fn extract_channel_metadata(e: &serde_json::Value) -> serde_json::Value {
     serde_json::json!({
@@ -226,7 +226,9 @@ fn name_matches(name: &str, needle_lower: &str, exact: bool) -> bool {
 }
 
 pub async fn cmd_get_channel(client: &BuzzClient, channel_id: &str) -> Result<(), CliError> {
-    validate_uuid(channel_id)?;
+    let channel_id = crate::channel_ref::resolve_channel_uuid(client, channel_id)
+        .await?
+        .to_string();
     let filter = serde_json::json!({
         "kinds": [39000],
         "#d": [channel_id],
@@ -249,7 +251,9 @@ pub async fn cmd_list_channel_members(
     client: &BuzzClient,
     channel_id: &str,
 ) -> Result<(), CliError> {
-    validate_uuid(channel_id)?;
+    let channel_id = crate::channel_ref::resolve_channel_uuid(client, channel_id)
+        .await?
+        .to_string();
     let filter = serde_json::json!({
         "kinds": [39002],
         "#d": [channel_id],
@@ -264,7 +268,9 @@ pub async fn cmd_list_channel_members(
 }
 
 pub async fn cmd_get_canvas(client: &BuzzClient, channel_id: &str) -> Result<(), CliError> {
-    validate_uuid(channel_id)?;
+    let channel_id = crate::channel_ref::resolve_channel_uuid(client, channel_id)
+        .await?
+        .to_string();
     let filter = serde_json::json!({
         "kinds": [40100],
         "#h": [channel_id]
@@ -309,6 +315,12 @@ pub async fn cmd_create_channel(
     }
 
     let ttl = ttl.map(validate_ttl_seconds).transpose()?;
+
+    // Name-addressing guard: refuse names that collide (after normalization)
+    // with a visible existing channel, so `--channel <name>` resolution stays
+    // unambiguous going forward. Best-effort client-side check — scoped to
+    // what this identity can see.
+    crate::channel_ref::assert_slug_available(client, name).await?;
 
     let channel_uuid = Uuid::new_v4();
 
@@ -866,7 +878,7 @@ pub async fn cmd_update_channel(
     };
 
     validate_update_channel_fields(name, description, visibility, ttl_change)?;
-    let channel_uuid = parse_uuid(channel_id)?;
+    let channel_uuid = crate::channel_ref::resolve_channel_uuid(client, channel_id).await?;
 
     let builder =
         buzz_sdk::build_update_channel(channel_uuid, name, description, visibility, ttl_change)
@@ -883,7 +895,7 @@ pub async fn cmd_set_channel_topic(
     channel_id: &str,
     topic: &str,
 ) -> Result<(), CliError> {
-    let channel_uuid = parse_uuid(channel_id)?;
+    let channel_uuid = crate::channel_ref::resolve_channel_uuid(client, channel_id).await?;
 
     let builder = buzz_sdk::build_set_topic(channel_uuid, topic)
         .map_err(|e| CliError::Other(format!("build_set_topic failed: {e}")))?;
@@ -899,7 +911,7 @@ pub async fn cmd_set_channel_purpose(
     channel_id: &str,
     purpose: &str,
 ) -> Result<(), CliError> {
-    let channel_uuid = parse_uuid(channel_id)?;
+    let channel_uuid = crate::channel_ref::resolve_channel_uuid(client, channel_id).await?;
 
     let builder = buzz_sdk::build_set_purpose(channel_uuid, purpose)
         .map_err(|e| CliError::Other(format!("build_set_purpose failed: {e}")))?;
@@ -911,7 +923,7 @@ pub async fn cmd_set_channel_purpose(
 }
 
 pub async fn cmd_join_channel(client: &BuzzClient, channel_id: &str) -> Result<(), CliError> {
-    let channel_uuid = parse_uuid(channel_id)?;
+    let channel_uuid = crate::channel_ref::resolve_channel_uuid(client, channel_id).await?;
 
     let builder = buzz_sdk::build_join(channel_uuid)
         .map_err(|e| CliError::Other(format!("build_join failed: {e}")))?;
@@ -923,7 +935,7 @@ pub async fn cmd_join_channel(client: &BuzzClient, channel_id: &str) -> Result<(
 }
 
 pub async fn cmd_leave_channel(client: &BuzzClient, channel_id: &str) -> Result<(), CliError> {
-    let channel_uuid = parse_uuid(channel_id)?;
+    let channel_uuid = crate::channel_ref::resolve_channel_uuid(client, channel_id).await?;
 
     let builder = buzz_sdk::build_leave(channel_uuid)
         .map_err(|e| CliError::Other(format!("build_leave failed: {e}")))?;
@@ -935,7 +947,7 @@ pub async fn cmd_leave_channel(client: &BuzzClient, channel_id: &str) -> Result<
 }
 
 pub async fn cmd_archive_channel(client: &BuzzClient, channel_id: &str) -> Result<(), CliError> {
-    let channel_uuid = parse_uuid(channel_id)?;
+    let channel_uuid = crate::channel_ref::resolve_channel_uuid(client, channel_id).await?;
 
     let builder = buzz_sdk::build_archive(channel_uuid)
         .map_err(|e| CliError::Other(format!("build_archive failed: {e}")))?;
@@ -947,7 +959,7 @@ pub async fn cmd_archive_channel(client: &BuzzClient, channel_id: &str) -> Resul
 }
 
 pub async fn cmd_unarchive_channel(client: &BuzzClient, channel_id: &str) -> Result<(), CliError> {
-    let channel_uuid = parse_uuid(channel_id)?;
+    let channel_uuid = crate::channel_ref::resolve_channel_uuid(client, channel_id).await?;
 
     let builder = buzz_sdk::build_unarchive(channel_uuid)
         .map_err(|e| CliError::Other(format!("build_unarchive failed: {e}")))?;
@@ -959,7 +971,7 @@ pub async fn cmd_unarchive_channel(client: &BuzzClient, channel_id: &str) -> Res
 }
 
 pub async fn cmd_delete_channel(client: &BuzzClient, channel_id: &str) -> Result<(), CliError> {
-    let channel_uuid = parse_uuid(channel_id)?;
+    let channel_uuid = crate::channel_ref::resolve_channel_uuid(client, channel_id).await?;
 
     let builder = buzz_sdk::build_delete_channel(channel_uuid)
         .map_err(|e| CliError::Other(format!("build_delete_channel failed: {e}")))?;
@@ -977,7 +989,7 @@ pub async fn cmd_add_channel_member(
     role: Option<&str>,
 ) -> Result<(), CliError> {
     validate_hex64(pubkey)?;
-    let channel_uuid = parse_uuid(channel_id)?;
+    let channel_uuid = crate::channel_ref::resolve_channel_uuid(client, channel_id).await?;
 
     let typed_role = match role {
         None => None,
@@ -1007,7 +1019,7 @@ pub async fn cmd_remove_channel_member(
     pubkey: &str,
 ) -> Result<(), CliError> {
     validate_hex64(pubkey)?;
-    let channel_uuid = parse_uuid(channel_id)?;
+    let channel_uuid = crate::channel_ref::resolve_channel_uuid(client, channel_id).await?;
 
     let builder = buzz_sdk::build_remove_member(channel_uuid, pubkey)
         .map_err(|e| CliError::Other(format!("build_remove_member failed: {e}")))?;
@@ -1069,7 +1081,7 @@ pub async fn cmd_set_canvas(
     content: &str,
 ) -> Result<(), CliError> {
     let content = read_or_stdin(content)?;
-    let channel_uuid = parse_uuid(channel_id)?;
+    let channel_uuid = crate::channel_ref::resolve_channel_uuid(client, channel_id).await?;
 
     let builder = buzz_sdk::build_set_canvas(channel_uuid, &content)
         .map_err(|e| CliError::Other(format!("build_set_canvas failed: {e}")))?;

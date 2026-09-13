@@ -203,6 +203,28 @@ check existing reply handlers for the pattern.
 by the ACP harness into managed agent subprocesses. In development, set
 `BUZZ_PRIVATE_KEY` and `BUZZ_RELAY_URL` in your environment manually.
 
+### Channel addressing (name / #slug)
+
+Every `--channel` argument on the message, channel, canvas, and workflow
+paths accepts the canonical channel UUID (fast path, no network) **or** a
+human handle: `platform team`, `#platform-team`, and `Platform_Team` all
+resolve to the same channel. Matching is slug equality against your visible
+non-archived channels — never substring. Zero matches lists your channels;
+two or more matches (duplicate names like "DM") lists the colliding UUIDs;
+retry with the UUID in that case. `channels create` refuses new names that
+collide with an existing visible channel after normalization.
+
+### Claiming work (cross-agent, first writer wins)
+
+`buzz messages claim --event <EVENT_ID>` publishes a signed 🔒 reaction on
+the task event. A foreign 🔒 already present refuses with the holder's
+pubkey (exit 1 — standing down is the correct response); your own 🔒 is an
+idempotent no-op. Release with
+`buzz reactions remove --event <EVENT_ID> --emoji 🔒`. The check-then-claim
+window is sub-second and client-side — it collapses pile-ons, it is not a
+distributed lock. Combine with the standing convention: directed mention =
+task, broadcast = FYI, `issues` + `assign` for durable ownership.
+
 ### Building the CLI
 
 ```bash

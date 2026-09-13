@@ -1,4 +1,5 @@
 pub mod agent_management;
+mod channel_ref;
 mod claims_gate;
 mod client;
 mod commands;
@@ -372,7 +373,7 @@ buzz agents archived"
 pub enum MessagesCmd {
     /// Send a message to a channel
     #[command(
-        after_help = "Examples:\n  buzz messages send --channel <UUID> --content \"hello\"\n  buzz messages send --channel <UUID> --content \"@alice check this\"\n  echo \"hello from stdin\" | buzz messages send --channel <UUID> --content -",
+        after_help = "Examples:\n  buzz messages send --channel <UUID> --content \"hello\"\n  buzz messages send --channel \"platform team\" --content \"@alice check this\"  # name/#slug addressing\n  echo \"hello from stdin\" | buzz messages send --channel '#platform-team' --content -",
         long_about = "Send a message to a channel.
 
 Send-path hold gate (managed sessions only): when BUZZ_ACP_SESSION_ID is set
@@ -386,7 +387,7 @@ superseded (and by which slot) in the claims file's managed.superseded
 annex, so the arbitration is inspectable from any client."
     )]
     Send {
-        /// Channel UUID (from 'buzz channels list')
+        /// Channel UUID, or a name/#slug resolved against your visible channels (unique match required)
         #[arg(long)]
         channel: String,
         /// Message text — supports @mentions and markdown. Use '-' to read from stdin.
@@ -414,7 +415,7 @@ annex, so the arbitration is inspectable from any client."
     },
     /// Send a code diff / patch to a channel
     SendDiff {
-        /// Channel UUID
+        /// Channel UUID, or a name/#slug resolved against your visible channels
         #[arg(long)]
         channel: String,
         /// Diff/patch content (use '-' to read from stdin)
@@ -451,6 +452,30 @@ annex, so the arbitration is inspectable from any client."
         #[arg(long)]
         reply_to: Option<String>,
     },
+    /// Claim the work attached to a message (cross-agent, first writer wins)
+    #[command(
+        after_help = "Examples:\n  buzz messages claim --event <EVENT_ID>\n  # release a claim you hold:\n  buzz reactions remove --event <EVENT_ID> --emoji 🔒",
+        long_about = "Claim the work attached to a message.
+
+The claim is a signed 🔒 reaction on the event — visible in every client,
+queryable by anyone, and owned by the claiming key. First writer wins: if a
+different agent's 🔒 is already on the event, this command refuses with the
+holder's pubkey and exits 1 — standing down IS the correct response. Claiming
+again with the same key is an idempotent no-op success.
+
+This is the client-side arbitration layer: the check-then-claim window is
+sub-second (two agents claiming inside the same instant can both see no
+prior claim), which is a dramatic narrowing of the pile-on window — not a
+distributed lock. Server-side first-writer-wins is the follow-up on the
+relay path.
+
+Release a claim with: buzz reactions remove --event <EVENT_ID> --emoji 🔒"
+    )]
+    Claim {
+        /// Event ID of the message carrying the work to claim (64-char hex)
+        #[arg(long)]
+        event: String,
+    },
     /// Edit a previously sent message
     Edit {
         /// Event ID of the message to edit (64-char hex)
@@ -480,7 +505,7 @@ annex, so the arbitration is inspectable from any client."
         after_help = "Examples:\n  buzz messages get --channel <UUID>\n  buzz messages get --channel <UUID> --limit 50 --kinds 1,1984"
     )]
     Get {
-        /// Channel UUID
+        /// Channel UUID, or a name/#slug resolved against your visible channels
         #[arg(long)]
         channel: String,
         /// Maximum number of results to return
@@ -501,7 +526,7 @@ annex, so the arbitration is inspectable from any client."
         after_help = "Examples:\n  buzz messages thread --channel <UUID> --event <EVENT_ID>\n  buzz messages thread --link 'buzz://message?channel=<UUID>&id=<EVENT_ID>&thread=<ROOT_ID>'"
     )]
     Thread {
-        /// Channel UUID; required unless --link is supplied
+        /// Channel UUID or name/#slug; required unless --link is supplied
         #[arg(long, required_unless_present = "link", conflicts_with = "link")]
         channel: Option<String>,
         /// Message event ID (64-char hex); required unless --link is supplied
@@ -565,7 +590,7 @@ pub enum ChannelsCmd {
     },
     /// Get details for a single channel
     Get {
-        /// Channel UUID
+        /// Channel UUID, or a name/#slug resolved against your visible channels
         #[arg(long)]
         channel: String,
     },
@@ -624,7 +649,7 @@ pub enum ChannelsCmd {
         after_help = "Examples:\n  buzz channels update --channel <uuid> --name general\n  buzz channels update --channel <uuid> --visibility open\n  buzz channels update --channel <uuid> --visibility private"
     )]
     Update {
-        /// Channel UUID
+        /// Channel UUID, or a name/#slug resolved against your visible channels
         #[arg(long)]
         channel: String,
         /// New channel name
@@ -646,7 +671,7 @@ pub enum ChannelsCmd {
     },
     /// Set the channel topic
     Topic {
-        /// Channel UUID
+        /// Channel UUID, or a name/#slug resolved against your visible channels
         #[arg(long)]
         channel: String,
         /// New topic text
@@ -655,7 +680,7 @@ pub enum ChannelsCmd {
     },
     /// Set the channel purpose
     Purpose {
-        /// Channel UUID
+        /// Channel UUID, or a name/#slug resolved against your visible channels
         #[arg(long)]
         channel: String,
         /// New purpose text
@@ -664,44 +689,44 @@ pub enum ChannelsCmd {
     },
     /// Join a channel
     Join {
-        /// Channel UUID
+        /// Channel UUID, or a name/#slug resolved against your visible channels
         #[arg(long)]
         channel: String,
     },
     /// Leave a channel
     Leave {
-        /// Channel UUID
+        /// Channel UUID, or a name/#slug resolved against your visible channels
         #[arg(long)]
         channel: String,
     },
     /// Archive a channel
     Archive {
-        /// Channel UUID
+        /// Channel UUID, or a name/#slug resolved against your visible channels
         #[arg(long)]
         channel: String,
     },
     /// Unarchive a channel
     Unarchive {
-        /// Channel UUID
+        /// Channel UUID, or a name/#slug resolved against your visible channels
         #[arg(long)]
         channel: String,
     },
     /// Delete a channel permanently
     Delete {
-        /// Channel UUID
+        /// Channel UUID, or a name/#slug resolved against your visible channels
         #[arg(long)]
         channel: String,
     },
     /// List members of a channel
     Members {
-        /// Channel UUID
+        /// Channel UUID, or a name/#slug resolved against your visible channels
         #[arg(long)]
         channel: String,
     },
     /// Add a member to a channel
     #[command(name = "add-member")]
     AddMember {
-        /// Channel UUID
+        /// Channel UUID, or a name/#slug resolved against your visible channels
         #[arg(long)]
         channel: String,
         /// Member pubkey (64-char hex)
@@ -714,7 +739,7 @@ pub enum ChannelsCmd {
     /// Remove a member from a channel
     #[command(name = "remove-member")]
     RemoveMember {
-        /// Channel UUID
+        /// Channel UUID, or a name/#slug resolved against your visible channels
         #[arg(long)]
         channel: String,
         /// Member pubkey (64-char hex)
@@ -734,13 +759,13 @@ pub enum ChannelsCmd {
 pub enum CanvasCmd {
     /// Get the canvas document for a channel
     Get {
-        /// Channel UUID
+        /// Channel UUID, or a name/#slug resolved against your visible channels
         #[arg(long)]
         channel: String,
     },
     /// Set (replace) the canvas document for a channel
     Set {
-        /// Channel UUID
+        /// Channel UUID, or a name/#slug resolved against your visible channels
         #[arg(long)]
         channel: String,
         /// Canvas content (markdown; use '-' to read from stdin)
@@ -915,7 +940,7 @@ pub enum UsersCmd {
 pub enum WorkflowsCmd {
     /// List workflows in a channel
     List {
-        /// Channel UUID
+        /// Channel UUID, or a name/#slug resolved against your visible channels
         #[arg(long)]
         channel: String,
     },
@@ -927,7 +952,7 @@ pub enum WorkflowsCmd {
     },
     /// Create a workflow from a YAML definition
     Create {
-        /// Channel UUID
+        /// Channel UUID, or a name/#slug resolved against your visible channels
         #[arg(long)]
         channel: String,
         /// Workflow YAML definition
@@ -936,7 +961,7 @@ pub enum WorkflowsCmd {
     },
     /// Update a workflow's YAML definition
     Update {
-        /// Channel UUID the workflow belongs to
+        /// Channel UUID or name/#slug the workflow belongs to
         #[arg(long)]
         channel: String,
         /// Workflow UUID
@@ -2299,6 +2324,7 @@ mod tests {
         assert_eq!(
             names(&cmd, "messages"),
             vec![
+                "claim",
                 "delete",
                 "edit",
                 "get",
@@ -2449,7 +2475,7 @@ mod tests {
             ("feed", 1),
             ("issues", 6),
             ("media", 1),
-            ("messages", 8),
+            ("messages", 9),
             ("pack", 2),
             ("patches", 4),
             ("pr", 5),
