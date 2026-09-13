@@ -4073,18 +4073,6 @@ mod claim_router_tests {
         serde_json::json!({"watching": [channel_id.to_string()]}).to_string()
     }
 
-    /// Backdate a file's mtime by `age` (std `File::set_times`, stable since
-    /// Rust 1.75 — no extra dependency needed for mtime control).
-    fn backdate_mtime(path: &std::path::Path, age: Duration) {
-        let modified = std::time::SystemTime::now() - age;
-        let file = std::fs::File::options()
-            .write(true)
-            .open(path)
-            .expect("open claims file for mtime");
-        file.set_times(std::fs::FileTimes::new().set_modified(modified))
-            .expect("backdate claims file mtime");
-    }
-
     /// Check out `slot` of `pool` as a mid-turn holder on `channel_id`,
     /// mirroring what dispatch does for a live task. Returns the held agent
     /// (kept out of the pool, like a real checked-out slot) and the task id
@@ -4303,10 +4291,13 @@ mod claim_router_tests {
         let _ = std::fs::remove_file(&claims_path);
     }
 
-    /// Spec test 5: Guard B watching fold + staleness. `watching` contains C,
-    /// file mtime now → held; mtime 16 minutes old → dispatches.
+    /// Spec test 5, rewritten 2026-09-13: the watching fold is RETIRED. A
+    /// stale `watching` entry kept fresh by the claims writer's pulse folded
+    /// its own channel across a restart (cbdb0795, 13-minute first-mention
+    /// starvation), so Guard B no longer consults `watching` at all — a live
+    /// watching claim with a just-written file must dispatch normally.
     #[tokio::test]
-    async fn guard_b_watching_fold_and_staleness() {
+    async fn guard_b_ignores_watching_claims() {
         let channel_c = Uuid::new_v4();
         let agent = idle_agent(0).await;
 
@@ -4322,20 +4313,10 @@ mod claim_router_tests {
         let mut last_activity = tokio::time::Instant::now();
 
         let dispatched = dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity);
-        assert!(dispatched.is_empty(), "watching with fresh mtime must hold");
-        assert_eq!(
-            queue.queued_event_count(&channel_c),
-            1,
-            "batch still queued"
-        );
-
-        // Stale heartbeat (mtime 16 minutes): the claim went dead.
-        backdate_mtime(&claims_path, Duration::from_secs(16 * 60));
-        let dispatched = dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity);
         assert_eq!(
             dispatched.len(),
             1,
-            "watching claim with stale mtime must not hold"
+            "watching claim (even with fresh mtime) must not hold"
         );
         assert_eq!(queue.queued_event_count(&channel_c), 0, "queue drains");
 

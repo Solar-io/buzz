@@ -10,6 +10,17 @@
 //! the queue while the claim is live, so a cold-boot slot never bifurcates a
 //! conversation another seat is already in.
 //!
+//! Only the `composing` claim is read. The convention's `watching` half is
+//! RETIRED here (2026-09-13): its freshness carrier was the claims file's
+//! mtime, and once the harness claims-writer took over the file the writer's
+//! own pulse kept that mtime fresh on every live turn anywhere — so a stale
+//! `watching` entry could fold its own channel forever across restarts,
+//! starving the first mention until a full TTL of total pool idlety elapsed
+//! (the 2026-09-12 cbdb0795 incident). The voluntary writers that produced
+//! `watching` entries were retired on 2026-09-11, making the key write-never
+//! legacy data; the router no longer consults it, and the writer-side
+//! key-preservation contract in `claims_writer` keeps old files round-tripping.
+//!
 //! Everything here fails open: a missing, unreadable, or malformed claims
 //! file must never wedge a DM — it reads as "no claim" and dispatch proceeds.
 
@@ -21,11 +32,6 @@ use uuid::Uuid;
 /// after its `at` timestamp. A slightly future `at` (clock skew between
 /// sessions) still counts as live.
 pub(crate) const COMPOSING_TTL_SECS: i64 = 10 * 60;
-
-/// A `watching` claim folds dispatch for at most this many seconds after the
-/// claims file's mtime. The mtime is the heartbeat: the holder rewrites the
-/// file on each mark, so a dead session's claim goes stale and stops folding.
-pub(crate) const WATCHING_TTL_SECS: u64 = 15 * 60;
 
 /// Env override pointing at the claims file, bypassing the derived path.
 /// Used verbatim when set — a missing file at the override simply reads as
@@ -86,8 +92,6 @@ pub(crate) fn resolve_claims_file() -> Option<PathBuf> {
 #[derive(Debug, serde::Deserialize)]
 struct ClaimsDoc {
     #[serde(default)]
-    watching: Vec<Uuid>,
-    #[serde(default)]
     composing: Option<ComposingClaim>,
 }
 
@@ -99,18 +103,15 @@ struct ComposingClaim {
 
 /// Whether a live claim in `path` holds `channel_id`.
 ///
-/// Folds when either branch is live:
-///
-/// - `composing.channel` is `channel_id` and `composing.at` parsed within the
-///   last [`COMPOSING_TTL_SECS`] seconds, or
-/// - `watching` contains `channel_id` and the file's mtime is within the last
-///   [`WATCHING_TTL_SECS`] seconds (a future mtime — skew — counts as fresh).
+/// Folds when `composing.channel` is `channel_id` and `composing.at` parsed
+/// within the last [`COMPOSING_TTL_SECS`] seconds. The convention's legacy
+/// `watching` key is deliberately not consulted — see the module docs.
 ///
 /// Fail-open by contract: a missing file, unreadable file, malformed JSON, an
 /// unparseable timestamp, or any I/O error reads as "no claim" and is logged
 /// at `debug` (this can be probed per dispatch, so never louder). A branch
-/// that cannot be evaluated simply contributes nothing; the other branch is
-/// still consulted. Stale claim = no claim.
+/// that cannot be evaluated simply contributes nothing. Stale claim = no
+/// claim.
 pub(crate) fn claim_holds(path: &Path, channel_id: Uuid) -> bool {
     let raw = match std::fs::read_to_string(path) {
         Ok(raw) => raw,
@@ -155,40 +156,12 @@ pub(crate) fn claim_holds(path: &Path, channel_id: Uuid) -> bool {
         }
     }
 
-    if doc.watching.contains(&channel_id) {
-        match metadata_modified(path) {
-            Ok(mtime) => match std::time::SystemTime::now().duration_since(mtime) {
-                Ok(elapsed) => {
-                    if elapsed.as_secs() <= WATCHING_TTL_SECS {
-                        return true;
-                    }
-                }
-                // mtime in the future (clock skew) counts as fresh.
-                Err(_) => return true,
-            },
-            Err(error) => {
-                tracing::debug!(
-                    claims_file = %path.display(),
-                    %error,
-                    "claims file mtime unreadable — ignoring watching claim"
-                );
-            }
-        }
-    }
-
     false
-}
-
-/// mtime of `path`, or the I/O error that prevented reading it.
-fn metadata_modified(path: &Path) -> std::io::Result<std::time::SystemTime> {
-    std::fs::metadata(path).and_then(|metadata| metadata.modified())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::File;
-    use std::time::Duration;
 
     /// Write `body` to a unique temp claims file and return its path.
     fn temp_claims(body: &str) -> PathBuf {
@@ -219,18 +192,6 @@ mod tests {
         serde_json::json!({"watching": [channel.to_string()]}).to_string()
     }
 
-    /// Backdate a file's mtime by `age` using `File::set_times` (stable since
-    /// Rust 1.75 — no extra dependency needed for mtime control).
-    fn backdate_mtime(path: &Path, age: Duration) {
-        let modified = std::time::SystemTime::now() - age;
-        let file = File::options()
-            .write(true)
-            .open(path)
-            .expect("open claims file for mtime");
-        file.set_times(std::fs::FileTimes::new().set_modified(modified))
-            .expect("backdate claims file mtime");
-    }
-
     #[test]
     fn agent_slug_lowercases_and_dashes_whitespace() {
         assert_eq!(agent_slug("Evie"), "evie");
@@ -243,12 +204,14 @@ mod tests {
 
     /// Contract pin against the live writer shape (Evie's seat, 2026-09-10
     /// 19:18): `watching_at` / `watching_note` extra keys, `composing` null
-    /// between replies, `convention` prose. The router must parse this exact
-    /// document — unknown keys ignored, null composing reading as no claim —
-    /// and fold on the `watching` array while mtime is fresh. If either side
-    /// of the 9/9 convention drifts, this test is what names it.
+    /// between replies, `convention` prose. The router must still parse this
+    /// exact document — unknown keys ignored, null composing reading as no
+    /// claim — but the `watching` fold itself is RETIRED (2026-09-13: a stale
+    /// `watching` entry kept fresh by the claims writer's pulse folded its own
+    /// channel across a restart and starved the first mention for 13 minutes).
+    /// If either side of the 9/9 convention drifts, this test is what names it.
     #[test]
-    fn live_writer_shape_parses_and_folds_on_watching() {
+    fn live_writer_shape_parses_and_ignores_watching() {
         let sam_dm = Uuid::parse_str("c183da8e-b5e6-4521-8522-b45dac07e0ee").unwrap();
         let group_dm = Uuid::parse_str("cbdb0795-1cbe-4c36-9c1e-4e5833187b24").unwrap();
         let body = serde_json::json!({
@@ -260,15 +223,15 @@ mod tests {
         })
         .to_string();
         let path = temp_claims(&body);
-        // Fresh mtime (just written) + watching membership → both channels fold.
-        assert!(claim_holds(&path, sam_dm), "live shape must fold a watched channel");
-        assert!(claim_holds(&path, group_dm), "live shape must fold the second watched channel");
+        // Fresh mtime + watching membership → NO channel folds: the watching
+        // fold is retired, and the legacy keys must be inert.
+        assert!(!claim_holds(&path, sam_dm), "retired watching claim must not fold");
+        assert!(!claim_holds(&path, group_dm), "retired watching claim must not fold");
         // null composing contributes nothing; an unwatched channel never folds.
         let other = Uuid::new_v4();
         assert!(!claim_holds(&path, other), "unwatched channel must not fold");
-        // And the doc deserializes with the expected fields.
+        // And the doc still deserializes (unknown keys ignored, not an error).
         let doc: ClaimsDoc = serde_json::from_str(&body).expect("live shape must deserialize");
-        assert_eq!(doc.watching, vec![sam_dm, group_dm]);
         assert!(doc.composing.is_none(), "null composing reads as no claim");
         cleanup(&path);
     }
@@ -305,24 +268,12 @@ mod tests {
     }
 
     #[test]
-    fn watching_with_fresh_mtime_holds() {
+    fn watching_is_no_longer_read_even_with_a_fresh_mtime() {
         let channel = Uuid::new_v4();
         let path = temp_claims(&watching_body(channel));
-        assert!(
-            claim_holds(&path, channel),
-            "watching with a just-written file must fold"
-        );
-        cleanup(&path);
-    }
-
-    #[test]
-    fn watching_with_stale_mtime_does_not_hold() {
-        let channel = Uuid::new_v4();
-        let path = temp_claims(&watching_body(channel));
-        backdate_mtime(&path, Duration::from_secs(16 * 60));
         assert!(
             !claim_holds(&path, channel),
-            "watching with a 16-minute-old file must not fold"
+            "watching is retired: even a just-written file must not fold"
         );
         cleanup(&path);
     }
@@ -346,7 +297,7 @@ mod tests {
     }
 
     #[test]
-    fn unparseable_composing_at_does_not_kill_watching_branch() {
+    fn unparseable_composing_at_reads_as_no_claim() {
         let channel = Uuid::new_v4();
         let body = serde_json::json!({
             "watching": [channel.to_string()],
@@ -355,8 +306,8 @@ mod tests {
         .to_string();
         let path = temp_claims(&body);
         assert!(
-            claim_holds(&path, channel),
-            "bad composing.at must not mask a live watching claim"
+            !claim_holds(&path, channel),
+            "bad composing.at must fail open (legacy watching key stays inert)"
         );
         cleanup(&path);
     }
