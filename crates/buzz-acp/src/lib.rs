@@ -3830,7 +3830,7 @@ fn dispatch_pending(
         //   on this channel (`task_map`).
         // - Guard B (cross-process, fail-open): a claims file per the 9/9
         //   convention (`~/.buzz/WORKING_STATE/<slug>.claims.json` or
-        //   `BUZZ_ACP_CLAIMS_FILE`) holds a live composing/watching claim.
+        //   `BUZZ_ACP_CLAIMS_FILE`) holds a live composing claim.
         //
         // Both decline by mirroring the `pool_exhausted` path: requeue,
         // mark_complete, break. `continue` would live-loop — flush_next

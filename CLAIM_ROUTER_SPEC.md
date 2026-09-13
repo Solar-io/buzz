@@ -79,13 +79,25 @@ Shape (live example, `~/.buzz/WORKING_STATE/evie.claims.json`):
 
 Fold rule — in `dispatch_pending`, only on an affinity miss for `channel_id`:
 
-- Fold (decline, same path as Guard A) if EITHER:
+- Fold (decline, same path as Guard A) if:
   - `composing.channel == channel_id` and `composing.at` parsed within the
-    last **10 minutes**, OR
-  - `watching` contains `channel_id` and the claims **file mtime** is within
-    the last **15 minutes** (mtime is the heartbeat: the holder rewrites the
-    file on each mark; a dead session's claim goes stale and stops folding).
+    last **10 minutes**.
 - Otherwise dispatch normally. **Stale claim = no claim.**
+
+**`watching` is NOT consulted (retired 2026-09-13).** The original rule —
+"`watching` contains `channel_id` and the claims file mtime is within the
+last 15 minutes (mtime is the heartbeat)" — is the bug that starved
+cbdb0795's first post-restart mention for 13 minutes on 2026-09-12: the
+harness claims-writer took over the file on 2026-09-11 and its 60s pulse
+re-stamps the mtime whenever any turn is live, so a stale `watching` entry
+stayed "fresh" forever and the fold held until a full TTL of total pool
+idlety elapsed. The voluntary writers that produced `watching` entries were
+retired on 2026-09-11; the key is write-never legacy data that the router
+must not read, and the claims writer preserves it round-trip so old files
+stay intact. Do not reintroduce a `watching` fold without giving the claim
+its own timestamp that is independent of the file mtime — and note
+`claim_holds` compiles without the `watching` field, so a typed-field
+reintroduction is a deliberate act.
 
 **Fail-open is mandatory:** missing file, unreadable file, malformed JSON,
 unparseable timestamp, any I/O error → treat as no claim, dispatch normally,
