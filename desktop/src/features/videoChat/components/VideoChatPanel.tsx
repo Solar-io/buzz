@@ -45,9 +45,11 @@ export function VideoChatPanel(props: {
   // Barge-in auto-duck: while live, the persona's own TTS momentarily mutes
   // the mic input at the SDK layer so open speakers cannot feed her voice
   // back into her ASR. Manual mute below stays the floor over the gate.
-  // Off in settings disables ducking entirely (barge-in passes through).
+  // The settings toggle rides duckingEnabled — not enabled — so turning it
+  // off mid-call actively restores the mic instead of stranding the mute.
   const ducked = useBargeDuck({
-    enabled: state === "live" && config.autoDuck,
+    enabled: state === "live",
+    duckingEnabled: config.autoDuck,
     micOn,
     audioElement: audioRef.current,
     client: clientRef.current,

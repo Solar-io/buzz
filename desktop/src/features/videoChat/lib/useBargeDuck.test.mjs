@@ -284,3 +284,96 @@ test("no_client_calls_when_not_live", async () => {
 
   hook.unmount();
 });
+
+test("turning the setting off mid-duck restores the mic, then re-arming ducks again", async () => {
+  audioContexts.length = 0;
+  const props = makeProps();
+  const hook = await mountHook(props);
+  const ctx = audioContexts.at(-1);
+
+  // She speaks: gate closes, SDK muted.
+  ctx.analyser.levels = [0.0005, 0.05, 0.05, 0.05];
+  hook.pump(4);
+  assert.deepEqual(props.client.calls, ["mute"]);
+  assert.equal(hook.ducked, true);
+
+  // Setting off mid-duck: the restore must issue the unmute HERE — the
+  // stranded-mute bug this pins would clear the chip but leave the mic
+  // SDK-muted with no loop left to reopen it.
+  hook.rerender({ duckingEnabled: false });
+  assert.deepEqual(
+    props.client.calls,
+    ["mute", "unmute"],
+    "setting off mid-call must actively unmute the gate's mute",
+  );
+  assert.equal(hook.ducked, false);
+  assert.equal(rafPending(), 0, "sampling loop stood down");
+  assert.equal(ctx.closed, true, "analyser context torn down");
+
+  // Time passes with the setting off: nothing further is driven or built.
+  pumpFrames(10);
+  assert.deepEqual(props.client.calls, ["mute", "unmute"]);
+  assert.equal(audioContexts.length, 1, "no new analyser while off");
+
+  // Setting back on mid-call: fresh analyser, gate re-arms and ducks.
+  hook.rerender({ duckingEnabled: true });
+  assert.equal(audioContexts.length, 2, "analyser rebuilt on re-enable");
+  assert.equal(rafPending(), 1, "sampling loop re-armed");
+  const ctx2 = audioContexts.at(-1);
+  assert.notEqual(ctx2, ctx, "a fresh graph, not the torn-down one");
+  ctx2.analyser.levels = [0.0005, 0.05, 0.05, 0.05];
+  hook.pump(4);
+  assert.deepEqual(props.client.calls, ["mute", "unmute", "mute"]);
+  assert.equal(hook.ducked, true);
+
+  hook.unmount();
+});
+
+test("setting off on an open mic builds nothing; the manual floor still works", async () => {
+  audioContexts.length = 0;
+  const props = makeProps({ duckingEnabled: false });
+  const hook = await mountHook(props);
+
+  assert.equal(audioContexts.length, 0, "no analyser for a disabled setting");
+  assert.equal(rafPending(), 0, "no sampling loop for a disabled setting");
+  assert.deepEqual(props.client.calls, [], "an open mic needs no SDK call");
+
+  pumpFrames(6);
+
+  // Ducking being off does NOT disable the manual floor: muting the mic
+  // while live still converges the SDK to muted.
+  hook.rerender({ micOn: false });
+  assert.deepEqual(
+    props.client.calls,
+    ["mute"],
+    "manual mute applies even with ducking off",
+  );
+  pumpFrames(6);
+  assert.deepEqual(props.client.calls, ["mute"]);
+  assert.equal(hook.ducked, false);
+
+  hook.unmount();
+});
+
+test("manual mute survives the mid-call setting-off restore", async () => {
+  audioContexts.length = 0;
+  const props = makeProps({ micOn: false });
+  const hook = await mountHook(props);
+  const ctx = audioContexts.at(-1);
+
+  assert.deepEqual(props.client.calls, ["mute"], "live entry honours manual mute");
+  ctx.analyser.levels = [0.0005, 0.05, 0.05, 0.05];
+  hook.pump(4);
+  assert.deepEqual(props.client.calls, ["mute"], "gate adds nothing to a muted mic");
+
+  // Turning the setting off converges to !micOn — still muted. An unmute
+  // here would break the manual floor.
+  hook.rerender({ duckingEnabled: false });
+  assert.deepEqual(
+    props.client.calls,
+    ["mute"],
+    "the restore must NOT unmute a manually muted mic",
+  );
+
+  hook.unmount();
+});

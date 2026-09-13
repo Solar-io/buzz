@@ -38,12 +38,19 @@ export interface DuckMuteClient {
  * unmuted by the gate. The SDK client's real mute state always converges to
  * `!micOn || gateDucked` — see `applyDesiredMute`, the single writer.
  *
+ * `duckingEnabled` is the user's setting and is deliberately separate from
+ * `enabled` (whose false means "no live call", a state where client calls
+ * are pointless): turning ducking off mid-call must actively restore the
+ * mic, which a settings flip inside `enabled` would never do.
+ *
  * Outside a live call this hook does nothing: no loop, no AudioContext, no
  * client calls.
  */
 export function useBargeDuck(params: {
   /** True only while the call is live. */
   enabled: boolean;
+  /** The user's auto-duck setting; false stands the gate down mid-call. */
+  duckingEnabled?: boolean;
   /** Manual mute state — false is the user's floor over the gate. */
   micOn: boolean;
   /** The persona audio element to analyse. */
@@ -52,7 +59,8 @@ export function useBargeDuck(params: {
   client: DuckMuteClient | null;
   config?: DuckGateConfig;
 }): boolean {
-  const { enabled, micOn, audioElement, client } = params;
+  const { enabled, duckingEnabled = true, micOn, audioElement, client } =
+    params;
   const [ducked, setDucked] = React.useState(false);
 
   // Ref mirrors so the rAF loop and the mute writer never run against a
@@ -87,9 +95,23 @@ export function useBargeDuck(params: {
     [client],
   );
 
-  // The duck loop — mounted only for a live call.
+  // The duck loop — mounted only for a live call with the setting on.
   React.useEffect(() => {
     if (!enabled) return;
+
+    if (!duckingEnabled) {
+      // Setting off mid-call: undo the gate's mute NOW (a settings flip
+      // inside `enabled` would leave the mic SDK-muted with no loop left
+      // to reopen it) and stand down. Converges to `!micOn` THROUGH the
+      // dedupe guard — resetting it here would re-issue a mute the SDK
+      // is already in, and the guard is also what keeps a manual mute
+      // from being unmuted by this restore.
+      gateRef.current = createDuckGate();
+      gateDuckedRef.current = false;
+      setDucked(false);
+      applyDesiredMute(micOnRef.current, false);
+      return;
+    }
 
     // A fresh session means a fresh SDK client (input unmuted) and a
     // fresh gate. Reconcile both up front: this is what restores mute
@@ -160,7 +182,7 @@ export function useBargeDuck(params: {
       }
       void ctx?.close().catch(() => undefined);
     };
-  }, [enabled, audioElement, applyDesiredMute]);
+  }, [enabled, duckingEnabled, audioElement, applyDesiredMute]);
 
   // Manual mute is the floor: whenever it flips during a live call,
   // re-apply the (unchanged) gate decision through the new micOn.
