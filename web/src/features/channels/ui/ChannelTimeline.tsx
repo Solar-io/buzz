@@ -5,6 +5,7 @@ import {
   useState,
   type ReactElement,
   type ReactNode,
+  type UIEvent,
 } from "react";
 import { VList, type VListHandle } from "virtua";
 import type { MessageBuffer, TimelineMessage } from "../lib/messageBuffer.ts";
@@ -166,11 +167,17 @@ export function ChannelTimeline({
    * between the reader's small upward deltas and erase them before they
    * add up to an escape ("it stops for a second, then it just keeps
    * scrolling on by" — Sam, 2026-09-13). Scrolling back to the very
-   * bottom resumes. The offset is tracked for direction; at-bottom comes
-   * from the handle's own scrollSize/viewportSize.
+   * bottom resumes.
+   *
+   * Tracked in a CAPTURE-phase scroll listener on the wrapper div, reading
+   * the scroller's NATIVE metrics (scrollTop/scrollHeight/clientHeight off
+   * event.target) — NOT through virtua's handle, whose scrollOffset/
+   * scrollSize can still hold the pre-event values when the handler runs
+   * (measured live: a reader 275px up was yanked to the bottom because the
+   * handler computed at-bottom from stale handle metrics).
    */
   const followRef = useRef(true);
-  const lastOffsetRef = useRef(0);
+  const lastScrollTopRef = useRef(0);
   /** View identity (tailKey's first segment: channel id / thread root). */
   const viewKeyRef = useRef<string | null>(null);
   /**
@@ -465,7 +472,7 @@ export function ChannelTimeline({
     if (viewKeyRef.current !== viewKey) {
       viewKeyRef.current = viewKey;
       followRef.current = true;
-      lastOffsetRef.current = 0;
+      lastScrollTopRef.current = 0;
     }
     const toBottom = () => {
       if (!followRef.current) {
@@ -481,24 +488,34 @@ export function ChannelTimeline({
     };
   }, [tailKey]);
 
+  // Follow tick: capture-phase scroll events from the VList's scroller
+  // (scroll does not bubble, but it does capture), read off the wrapper.
+  // Native metrics only — see the followRef doc above for why the virtua
+  // handle is not trusted here. Inner per-message scrollers (horizontal
+  // code blocks) are skipped: they have no vertical extent.
+  const handleFollowScroll = useCallback((event: UIEvent<HTMLElement>) => {
+    const el = event.target as HTMLElement;
+    if (!el || el === event.currentTarget) {
+      return;
+    }
+    if (el.scrollHeight - el.clientHeight < 2) {
+      return;
+    }
+    followRef.current = nextFollowState(
+      followRef.current,
+      lastScrollTopRef.current,
+      el.scrollTop,
+      el.scrollHeight,
+      el.clientHeight,
+    );
+    lastScrollTopRef.current = el.scrollTop;
+  }, []);
+
   // Top reached → request one older page (once per flight). Also the pinned
-  // day-divider tick — and the follow tick: it is the only scroll signal
-  // virtua gives us. Direction from the tracked offset, at-bottom from the
-  // handle's own scrollSize/viewportSize (see lib/scrollFollow.ts).
+  // day-divider tick: it is the only scroll signal virtua gives us.
   const handleScroll = useCallback(
     (offset: number) => {
       resolvePinnedDay(offset);
-      const list = listRef.current;
-      if (list) {
-        followRef.current = nextFollowState(
-          followRef.current,
-          lastOffsetRef.current,
-          list.scrollOffset,
-          list.scrollSize,
-          list.viewportSize,
-        );
-      }
-      lastOffsetRef.current = offset;
       if (
         offset > 4 ||
         pagePhase.current !== "idle" ||
@@ -566,7 +583,10 @@ export function ChannelTimeline({
     );
   }
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div
+      className="relative flex min-h-0 flex-1 flex-col"
+      onScrollCapture={handleFollowScroll}
+    >
       {pinnedDay && (
         <div className="pointer-events-none absolute inset-x-0 top-0 z-20">
           <div className="mx-auto w-full max-w-3xl px-1 sm:px-3">
