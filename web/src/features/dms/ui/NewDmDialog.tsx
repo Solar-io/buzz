@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
@@ -6,7 +6,11 @@ import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { ownPubkey } from "@/shared/lib/nostr-signer";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { buildOtherParticipants, parsePubkeyInput } from "../lib/dmInput.ts";
-import { buildDmSuggestions, recipientLabel } from "../lib/dmPicker.ts";
+import {
+  buildDmSuggestions,
+  recipientLabel,
+  resolveSuggestionQuery,
+} from "../lib/dmPicker.ts";
 import { openDm } from "../hooks";
 import { useAgentRegistry } from "@/features/agents/useAgentRegistry";
 import { useDesktopCatalogs } from "@/features/agents/useDesktopCatalogs";
@@ -46,6 +50,9 @@ export function NewDmDialog({
   const [recipients, setRecipients] = useState<string[]>([]);
   const [entryError, setEntryError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Row clicks land focus on the clicked button; handing it back to the
+  // entry lets the next name be typed without a mouse round-trip.
+  const entryRef = useRef<HTMLInputElement>(null);
   // A closed dialog is a CANCELLED dialog: clear the filter text and the
   // pending recipients so a reopen starts clean (QA: stale filter made the
   // reopened list look empty).
@@ -115,14 +122,34 @@ export function NewDmDialog({
     );
     setEntry("");
     setEntryError(null);
+    entryRef.current?.focus();
   };
 
   const addFromEntry = () => {
+    const text = entry.trim();
+    if (text.length === 0) {
+      return;
+    }
     const parsed = parsePubkeyInput(entry);
     if (!parsed.ok) {
+      // A wrong-kind key (nsec, nprofile) is unambiguous — surface the
+      // parser's specific error unchanged. Plain non-key text may still be a
+      // display name the user typed: resolve it against the filtered list
+      // (exact label first, then a single match) before giving up.
+      if (parsed.reason === "wrong-type") {
+        setEntryError(parsed.error);
+        return;
+      }
+      const resolved = resolveSuggestionQuery(entry, filtered);
+      if (resolved) {
+        addRecipient(resolved.pubkey);
+        return;
+      }
       // Inline, next to the input: a corner toast is easy to miss while the
       // user's eyes are on the field (QA: invalid paste looked silent).
-      setEntryError(parsed.error);
+      setEntryError(
+        `No one here matches "${text}" — pick someone from the list below, or paste an npub / 64-hex key.`,
+      );
       return;
     }
     addRecipient(parsed.pubkey);
@@ -204,6 +231,7 @@ export function NewDmDialog({
       )}
       <div className="flex gap-2">
         <Input
+          ref={entryRef}
           placeholder="Pick below or paste npub… / 64-hex key"
           value={entry}
           onChange={(event) => {

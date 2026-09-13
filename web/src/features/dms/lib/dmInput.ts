@@ -2,7 +2,18 @@ import { decode as nip19Decode } from "nostr-tools/nip19";
 
 export type PubkeyParseResult =
   | { ok: true; pubkey: string }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      error: string;
+      /**
+       * Why the parse failed. Absent for the generic "not a key" failure —
+       * text that is plainly NOT key-shaped may still be a display name the
+       * caller can resolve against a suggestion list, so it must be able to
+       * tell "definitely a key, wrong kind" (nsec, nprofile: surface the
+       * specific error verbatim) from "not key-shaped at all" (try names).
+       */
+      reason?: "wrong-type";
+    };
 
 const HEX64 = /^[0-9a-fA-F]{64}$/;
 
@@ -27,11 +38,13 @@ export function parsePubkeyInput(raw: string): PubkeyParseResult {
         return {
           ok: false,
           error: "That is a SECRET key (nsec), not a public key.",
+          reason: "wrong-type",
         };
       }
       return {
         ok: false,
         error: `That is a ${decoded.type} address, not a public key (npub).`,
+        reason: "wrong-type",
       };
     } catch {
       // malformed bech32 — fall through to the generic error
