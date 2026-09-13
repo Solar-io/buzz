@@ -132,6 +132,16 @@ test("parsePubkeyInput rejects nsec with a specific message", () => {
   assert.match(!result.ok && result.error, /SECRET key/);
 });
 
+test("parsePubkeyInput classifies failures: wrong-type keys vs plain non-key text", () => {
+  // The dialogs use this to decide between surfacing the parser's specific
+  // error (a key of the wrong kind is unambiguous) and trying typed-name
+  // resolution first (plain text may be a display name).
+  const nsec = parsePubkeyInput(nsecEncode(new Uint8Array(32).fill(7)));
+  assert.equal(!nsec.ok && nsec.reason, "wrong-type");
+  const junk = parsePubkeyInput("gilfoyle");
+  assert.equal(!junk.ok && junk.reason, undefined);
+});
+
 test("buildOtherParticipants dedupes, drops self, enforces 1-8", () => {
   const ok = buildOtherParticipants([SAM, SAM, SELF, EVIE], SELF);
   assert.equal(ok.ok, true);

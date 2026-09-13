@@ -119,3 +119,46 @@ export function recipientLabel(
   const suggestion = suggestions.find((s) => s.pubkey === pubkey);
   return suggestion?.label ?? profileLabel(pubkey, profiles);
 }
+
+const HEX64 = /^[0-9a-fA-F]{64}$/;
+// The bech32 prefix shape `parsePubkeyInput` treats as a key attempt (npub,
+// nsec, note…). Mirrors the regex in dmInput.ts — kept in sync by its test.
+const BECH32_LIKE = /^[a-z0-9]+1[02-9ac-hj-np-z]+$/;
+
+/**
+ * Turn free text someone typed into a suggestion, or null when nothing
+ * conclusive matches.
+ *
+ * This is the fallback for text that failed `parsePubkeyInput` — the common
+ * case being a display name typed into a field labelled "npub or 64-hex".
+ * The caller passes the ALREADY-FILTERED suggestion list (buildDmSuggestions
+ * with the text as filter), so "unique match" here means "the filter narrowed
+ * to one". Resolution order:
+ *
+ * 1. an exact (case-insensitive) label match — typing "gilfoyle" with two
+ *    partial matches present still means the one they spelled in full;
+ * 2. otherwise, exactly one suggestion survived the filter.
+ *
+ * Key-shaped text returns null on purpose: a full key takes the parse path
+ * before this runs, and anything key-SHAPED that failed parse (an nsec, a
+ * truncated key) must surface the parser's specific error rather than
+ * silently add a member whose hex happens to contain the substring.
+ */
+export function resolveSuggestionQuery(
+  raw: string,
+  suggestions: DmSuggestion[],
+): DmSuggestion | null {
+  const text = raw.trim();
+  if (text.length === 0) {
+    return null;
+  }
+  const lowered = text.toLowerCase();
+  if (HEX64.test(text) || BECH32_LIKE.test(lowered)) {
+    return null;
+  }
+  const exact = suggestions.find((s) => s.label.toLowerCase() === lowered);
+  if (exact) {
+    return exact;
+  }
+  return suggestions.length === 1 ? suggestions[0] : null;
+}

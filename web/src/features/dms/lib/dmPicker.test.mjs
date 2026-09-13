@@ -4,6 +4,7 @@ import {
   buildDmSuggestions,
   profileLabel,
   recipientLabel,
+  resolveSuggestionQuery,
 } from "./dmPicker.ts";
 
 const SELF = "aa".repeat(32);
@@ -176,4 +177,49 @@ test("buildDmSuggestions: duplicate-name keeper stays live, only older keys demo
       ["Acid Burn", OLD_ACID, true],
     ],
   );
+});
+
+// ── resolveSuggestionQuery ───────────────────────────────────────────────────
+//
+// The caller passes the ALREADY-FILTERED list (buildDmSuggestions with the
+// typed text as filter), so each test builds its input through the real
+// filter rather than hand-assembling arrays.
+
+test("resolveSuggestionQuery: exact label match wins, case-insensitively", () => {
+  // "lord" also matches only NIKON, but "Lord Nikon" spelled in full must hit
+  // the exact-label branch even with partial matches around it.
+  const filtered = build({ filter: "lord nikon" });
+  const resolved = resolveSuggestionQuery("LORD NIKON", filtered);
+  assert.equal(resolved?.pubkey, NIKON);
+});
+
+test("resolveSuggestionQuery: a unique partial match resolves to it", () => {
+  const filtered = build({ filter: "crash" });
+  assert.equal(filtered.length, 1);
+  assert.equal(resolveSuggestionQuery("crash", filtered)?.pubkey, CRASH);
+  // Partial + different case: the filter already matched, resolution agrees.
+  assert.equal(resolveSuggestionQuery("Crash", filtered)?.pubkey, CRASH);
+});
+
+test("resolveSuggestionQuery: ambiguous text returns null", () => {
+  // "o" matches both agents but neither label exactly — unresolvable.
+  const filtered = build({ filter: "o" });
+  assert.ok(filtered.length > 1);
+  assert.equal(resolveSuggestionQuery("o", filtered), null);
+});
+
+test("resolveSuggestionQuery: key-shaped text is never resolved as a name", () => {
+  // A full key takes the parse path in the caller; a key-shaped failure
+  // (nsec, truncated key) must surface the parser's error, not silently add
+  // a member whose hex contains the substring.
+  assert.equal(resolveSuggestionQuery(SAM, build({ filter: SAM })), null);
+  assert.equal(
+    resolveSuggestionQuery(`npub1${SAM.slice(0, 20)}`, build({ filter: "" })),
+    null,
+  );
+});
+
+test("resolveSuggestionQuery: empty text returns null", () => {
+  assert.equal(resolveSuggestionQuery("", build({ filter: "" })), null);
+  assert.equal(resolveSuggestionQuery("   ", build({ filter: "" })), null);
 });
