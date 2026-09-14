@@ -453,6 +453,12 @@ export interface Profile {
   name: string;
   displayName: string;
   avatar?: string;
+  /**
+   * `created_at` (epoch seconds) of the kind-0 event this profile came from;
+   * seeded (localStorage) profiles carry 0. Latest-wins ordering between a
+   * stored profile and a freshly delivered one.
+   */
+  updatedAt?: number;
 }
 
 /** kind 0 profile metadata for a set of authors, fetched once per author. */
@@ -465,12 +471,14 @@ export function useProfiles(pubkeys: string[]): Map<string, Profile> {
   const [profiles, setProfiles] = useState<Map<string, Profile>>(() => {
     const seed = new Map<string, Profile>();
     for (const [pubkey, value] of Object.entries(loadSeed(PROFILE_SEED_KEY))) {
-      if (
-        value &&
-        typeof value === "object" &&
-        typeof (value as Profile).name === "string"
-      ) {
-        seed.set(pubkey, value as Profile);
+      const stored = value as Profile;
+      if (value && typeof value === "object" && typeof stored.name === "string") {
+        // Seeded entries default to updatedAt 0 so any real kind-0 event —
+        // however old — still outranks them.
+        seed.set(pubkey, {
+          ...stored,
+          updatedAt: typeof stored.updatedAt === "number" ? stored.updatedAt : 0,
+        });
       }
     }
     return seed;
@@ -514,10 +522,15 @@ export function useProfiles(pubkeys: string[]): Map<string, Profile> {
             name: name || displayName || shortKey(event.pubkey),
             displayName: displayName || name || shortKey(event.pubkey),
             avatar,
+            updatedAt: event.created_at,
           };
           setProfiles((previous) => {
             const existing = previous.get(event.pubkey);
-            if (existing) {
+            // Latest-wins by the kind-0 event's own created_at (missing
+            // reads as 0, so a seeded profile loses to any real event).
+            // First-seen-wins silently dropped republished profiles — an
+            // agent's avatar swap never rendered until reload.
+            if (existing && (existing.updatedAt ?? 0) >= event.created_at) {
               return previous;
             }
             const next = new Map(previous);
@@ -527,8 +540,9 @@ export function useProfiles(pubkeys: string[]): Map<string, Profile> {
         },
       },
     );
-    // The profiles themselves are replaceable events; latest-wins by created_at
-    // would need ordering, but first-seen is acceptable for Phase 1 display.
+    // Profiles are replaceable (NIP-01 kind 0): the created_at comparison
+    // above orders them, including when the relay delivers the older event
+    // after the newer one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, key.length, key]);
 
