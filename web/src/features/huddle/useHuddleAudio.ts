@@ -476,6 +476,10 @@ export function useHuddleAudio(
         }
         if (message.type === "joined") {
           reconnectAttemptRef.current = 0;
+          // A reconnect that succeeds must clear any transient error the
+          // drop itself surfaced (QA F1: "lost connection" outliving the
+          // recovery reads as a fault the bar never retracted).
+          setError(null);
           setStatus("connected");
           applyRoster(message.peers ?? []);
           return;
@@ -600,6 +604,9 @@ export function useHuddleAudio(
     trackRef.current = track;
     if (track) {
       track.onended = () => recoverMicRef.current();
+      // A fresh track captures by default; honor the mute state so the OS
+      // mic indicator matches the UI after recovery (QA F2).
+      track.enabled = !mutedRef.current;
     }
     if (fellBackToDefault) {
       deviceIdRef.current = "";
