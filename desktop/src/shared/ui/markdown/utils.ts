@@ -80,8 +80,10 @@ export function getDecodedImageDimensions(
 }
 
 // Fixed box for a dim-less image whose real size isn't known yet — reserves a
-// stable height (matching the inline max-h-64 cap) so a late decode letterboxes
-// inside it instead of growing the row. Width is the inline display cap.
+// stable height (matching the ProgressiveImage inline cap) so a late decode
+// letterboxes inside it instead of growing the row. Width is the inline
+// display caps. Deliberately NOT the 720x540 display caps: a 720x540 hole
+// for a legacy event that turns out small is worse than letterboxing.
 const DEFAULT_IMAGE_RESERVE = { height: 256, width: 384 } as const;
 
 /**

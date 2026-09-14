@@ -19,9 +19,13 @@ import { parseImetaTags } from "@/shared/ui/markdown/parseImeta";
  * jump we're killing.
  */
 
-// Visual caps mirror the inline image/markdown styles.
-const MEDIA_MAX_WIDTH = 384; // max-w-[min(24rem,100%)]
-const MEDIA_MAX_HEIGHT = 256; // max-h-64
+// Visual caps mirror the inline image/markdown styles (ProgressiveImage's
+// 720x540 scale cap — photos fill the message column, 9/13). The dim-less
+// reserve stays decoupled at the old box: a 720x540 hole for a legacy event
+// that turns out small is worse than letterboxing.
+const MEDIA_MAX_WIDTH = 720;
+const MEDIA_MAX_HEIGHT = 540;
+const UNKNOWN_MEDIA_RESERVE_HEIGHT = 256;
 const TEXT_LINE_HEIGHT = 20;
 const CODE_LINE_HEIGHT = 19;
 const CHARS_PER_LINE = 64; // rough wrap width at the timeline column
@@ -36,7 +40,7 @@ const CONTINUATION_MIN_ESTIMATE = 28;
 
 function mediaHeightFromDim(dim: string | undefined): number {
   const dimensions = dimensionsFromDim(dim);
-  if (!dimensions) return MEDIA_MAX_HEIGHT; // unknown shape: reserve full box
+  if (!dimensions) return UNKNOWN_MEDIA_RESERVE_HEIGHT; // unknown shape: reserve the small box
   const scale = Math.min(
     1,
     MEDIA_MAX_WIDTH / dimensions.width,

@@ -53,7 +53,7 @@ test("estimateRowHeight: imeta image with dim reserves bounded media height", ()
       tags: [["imeta", "url http://x/a.png", "m image/png", "dim 320x240"]],
     }),
   );
-  // 320x240 -> 4:3, width-bound 384/(4/3)=288 capped at 256, plus chrome+text.
+  // 320x240 fits inside the 560 cap unscaled -> 240 tall, plus chrome+text.
   assert.ok(tagged >= 256 && tagged <= 360, `got ${tagged}`);
 });
 
