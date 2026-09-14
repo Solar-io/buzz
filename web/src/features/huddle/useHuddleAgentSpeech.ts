@@ -8,10 +8,13 @@ import {
 } from "react";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import {
+  chunkSpeakableText,
   classifySpeakableAgentText,
   createOrderedSpeaker,
   huddleAgentSpeechFilter,
+  rankVoices,
   shouldSpeakLocally,
+  speechVoiceProfile,
   SPEECH_REPLAY_WINDOW_SECONDS,
   watchdogMs,
 } from "./lib/huddleAgentSpeech.ts";
@@ -116,54 +119,121 @@ export function useHuddleAgentSpeech(options: {
   });
   const [speaking, setSpeaking] = useState(false);
 
+  /**
+   * The engine's voice list, RANKED (`rankVoices`) and loaded
+   * asynchronously — `getVoices()` returns [] until `voiceschanged` fires.
+   * A ref, not state: only the speak closure reads it, at utterance time.
+   * Selection is deterministic from the agent pubkey
+   * (`speechVoiceProfile`), so the same agent is the same voice on every
+   * call — the fix for "one voice said it, half the time it was another".
+   */
+  const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
+  useEffect(() => {
+    if (!supported) {
+      return;
+    }
+    const synth = window.speechSynthesis;
+    const load = () => {
+      voicesRef.current = rankVoices(synth.getVoices());
+    };
+    load();
+    synth.addEventListener?.("voiceschanged", load);
+    return () => {
+      synth.removeEventListener?.("voiceschanged", load);
+    };
+  }, [supported]);
+
+  /**
+   * Mid-reply stop. Bumped by every disable/teardown; a running reply's
+   * chunk loop checks it before each sentence, and the in-flight chunk's
+   * settle is invoked immediately through `activeSettleRef` — so
+   * "stop reading" stops NOW, not when the watchdog gives up on an engine
+   * that fires neither onend nor onerror after `cancel()`.
+   */
+  const stopTokenRef = useRef(0);
+  const activeSettleRef = useRef<(() => void) | null>(null);
+  const stopSpeechNow = useCallback(() => {
+    stopTokenRef.current += 1;
+    activeSettleRef.current?.();
+    activeSettleRef.current = null;
+    if (speechSynthesisSupported()) {
+      window.speechSynthesis.cancel();
+    }
+  }, []);
+
   const speaker = useMemo(
     () =>
-      createOrderedSpeaker(
-        (text) =>
-          new Promise<void>((resolve) => {
-            if (!speechSynthesisSupported()) {
-              resolve();
-              return;
+      createOrderedSpeaker(async (text, speakerPubkey) => {
+        if (!speechSynthesisSupported()) {
+          return;
+        }
+        const stopAt = stopTokenRef.current;
+        const profile = speechVoiceProfile(speakerPubkey, voicesRef.current);
+        const voice =
+          profile.voiceURI === null || voicesRef.current.length === 0
+            ? undefined
+            : (voicesRef.current[profile.voiceIndex] ??
+              voicesRef.current[profile.voiceIndex % voicesRef.current.length]);
+        // Sentence-sized chunks: Chromium stalls single utterances past
+        // ~15 s, so a long reply must never be ONE utterance. Chunks also
+        // bound the watchdog and make cancellation land between sentences.
+        const chunks = chunkSpeakableText(text);
+        const utterances = chunks.length > 0 ? chunks : [text];
+        speechActivityRef.current.speaking = true;
+        setSpeaking(true);
+        try {
+          for (const chunk of utterances) {
+            if (stopTokenRef.current !== stopAt) {
+              break;
             }
-            const utterance = new SpeechSynthesisUtterance(text);
-            speechActivityRef.current.speaking = true;
-            setSpeaking(true);
-            // Settle on EVERY path, exactly once. A synthesizer that
-            // errors (no voice installed, tab throttled) must not wedge
-            // the queue behind it; a browser that fires NEITHER onend nor
-            // onerror (cancel() and synthesis-failure paths do this) would
-            // leave `speaking` stuck true and hold voice-mode finals
-            // forever — so a watchdog sized to the text force-settles the
-            // utterance if the events never come. Settling also records
-            // the utterance on the echo ring: whatever was audible ended
-            // here, and that is what an echo final matches.
-            let settled = false;
-            let watchdog: number | null = null;
-            const finish = () => {
-              if (settled) {
-                return;
+            // One chunk = one utterance, settling on EVERY path exactly
+            // once: onend, onerror, its own watchdog, or a forced stop —
+            // a browser that fires neither event (cancel() and
+            // synthesis-failure paths do this) must not wedge the reply.
+            await new Promise<void>((resolve) => {
+              const utterance = new SpeechSynthesisUtterance(chunk);
+              if (voice) {
+                utterance.voice = voice;
               }
-              settled = true;
-              if (watchdog !== null) {
-                window.clearTimeout(watchdog);
-                watchdog = null;
-              }
-              const activity = speechActivityRef.current;
-              activity.speaking = false;
-              activity.utterances = recordUtterance(
-                activity.utterances,
-                text,
-                Date.now(),
-              );
-              setSpeaking(false);
-              resolve();
-            };
-            watchdog = window.setTimeout(finish, watchdogMs(text));
-            utterance.onend = finish;
-            utterance.onerror = finish;
-            window.speechSynthesis.speak(utterance);
-          }),
-      ),
+              utterance.rate = profile.rate;
+              utterance.pitch = profile.pitch;
+              utterance.volume = 1;
+              let settled = false;
+              let watchdog: number | null = null;
+              const finish = () => {
+                if (settled) {
+                  return;
+                }
+                settled = true;
+                if (watchdog !== null) {
+                  window.clearTimeout(watchdog);
+                  watchdog = null;
+                }
+                if (activeSettleRef.current === finish) {
+                  activeSettleRef.current = null;
+                }
+                resolve();
+              };
+              watchdog = window.setTimeout(finish, watchdogMs(chunk));
+              utterance.onend = finish;
+              utterance.onerror = finish;
+              activeSettleRef.current = finish;
+              window.speechSynthesis.speak(utterance);
+            });
+            // Chunk-level echo records: a sentence settles when it stops
+            // sounding, which is exactly the timing the echo-hold drain
+            // compares against — better than one settle time per reply.
+            speechActivityRef.current.utterances = recordUtterance(
+              speechActivityRef.current.utterances,
+              chunk,
+              Date.now(),
+            );
+          }
+        } finally {
+          speechActivityRef.current.speaking = false;
+          setSpeaking(false);
+        }
+      }),
     [],
   );
 
@@ -171,13 +241,13 @@ export function useHuddleAgentSpeech(options: {
     (next: boolean) => {
       setEnabledState(next);
       speaker.setEnabled(next);
-      if (!next && speechSynthesisSupported()) {
+      if (!next) {
         // Stop mid-sentence: leaving the utterance running after the user
         // switched speech off is the whole complaint the toggle answers.
-        window.speechSynthesis.cancel();
+        stopSpeechNow();
       }
     },
-    [speaker],
+    [speaker, stopSpeechNow],
   );
 
   useEffect(() => {
@@ -220,11 +290,9 @@ export function useHuddleAgentSpeech(options: {
     return () => {
       unsubscribe();
       speaker.cancel();
-      if (speechSynthesisSupported()) {
-        window.speechSynthesis.cancel();
-      }
+      stopSpeechNow();
     };
-  }, [session, channelId, speaker]);
+  }, [session, channelId, speaker, stopSpeechNow]);
 
   const suppressedAgents = useMemo(
     () =>

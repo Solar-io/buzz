@@ -25,7 +25,12 @@ export interface HuddlePeer {
   epoch: number;
 }
 
-export type HuddleStatus = "idle" | "connecting" | "connected" | "error";
+export type HuddleStatus =
+  | "idle"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "error";
 
 /**
  * Open mic or push-to-talk — the desktop's `VoiceInputMode`.
@@ -50,6 +55,16 @@ const US_PER_SAMPLE = 1_000_000 / 48_000;
 const PLAYBACK_LEAD_S = 0.12;
 /** Speaking-indicator refresh cadence. */
 const SPEAKING_TICK_MS = 250;
+/**
+ * Redial delays after an unexpected audio-socket drop, in ms. The DESKTOP's
+ * ladder exactly (desktop/src/features/huddle/HuddleContext.tsx — the list
+ * `[0, 100, 250, 500, 1_000, 2_000, 2_000]`, sized for endpoint-drain
+ * handoff): early retries catch a blip fast, the 2s tail covers a relay
+ * restart. Only the SOCKET is redialed — mic, context, and encoder stay
+ * live, so a successful reconnect is a short audio gap, not a rejoin. When
+ * the ladder runs out the call ends with the reason on screen.
+ */
+const RECONNECT_DELAYS_MS = [0, 100, 250, 500, 1_000, 2_000, 2_000];
 
 const WORKLET_SOURCE = `
   class UplinkTap extends AudioWorkletProcessor {
@@ -65,6 +80,14 @@ const WORKLET_SOURCE = `
 interface PeerPlayback {
   decoder: AudioDecoder;
   nextStart: number;
+  /**
+   * The occupancy epoch this decoder was created for. The relay bumps a
+   * slot's epoch when a peer_index is reused
+   * (crates/buzz-relay/src/audio/room.rs `index_epochs`); a frame whose
+   * epoch differs from the entry's belongs to a DIFFERENT occupant of that
+   * index, and an Opus decoder must never carry state across speakers.
+   */
+  epoch: number;
 }
 
 export function useHuddleAudio(
@@ -95,6 +118,7 @@ export function useHuddleAudio(
   const wsRef = useRef<WebSocket | null>(null);
   const ctxRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const encoderRef = useRef<AudioEncoder | null>(null);
   const workletRef = useRef<AudioWorkletNode | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -108,6 +132,17 @@ export function useHuddleAudio(
   const recentLevelsRef = useRef(new Map<string, number>());
   const speakingTickRef = useRef(0);
   const micLevelTickRef = useRef(0);
+  /**
+   * Does the USER consider themselves in the call? True from join() until
+   * leave()/teardown — across socket drops and the reconnect ladder. It is
+   * what separates "the network hiccuped, redial" from "the call is over":
+   * ws.onclose checks it to decide between reconnecting and going idle.
+   */
+  const wantConnectedRef = useRef(false);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  /** deviceId mirror the recovery path reads without re-creating join(). */
+  const deviceIdRef = useRef("");
   /**
    * Mic tap subscribers (voice mode's STT bridge). Refs, not state: the
    * worklet port handler is installed once per join and fans out to
@@ -146,11 +181,49 @@ export function useHuddleAudio(
     [],
   );
 
-  const teardown = useCallback(() => {
+  const stopReconnectTimer = useCallback(() => {
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  }, []);
+
+  /**
+   * Tear down the audio SOCKET and everything derived from it (per-peer
+   * decoders, roster, level telemetry) while keeping the mic, context,
+   * encoder, and worklet alive. This is the socket-redial half of the
+   * desktop's `reconnect_huddle_audio` contract: a recovered connection is
+   * an audio blip, not a leave. Handlers are nulled BEFORE close so the
+   * in-flight teardown cannot re-enter the reconnect path.
+   */
+  const teardownSocket = useCallback(() => {
+    stopReconnectTimer();
+    const ws = wsRef.current;
+    if (ws) {
+      ws.onclose = null;
+      ws.onerror = null;
+      ws.onmessage = null;
+      ws.close();
+      wsRef.current = null;
+    }
     for (const { decoder } of playbackRef.current.values()) {
-      decoder.close();
+      if (decoder.state !== "closed") {
+        decoder.close();
+      }
     }
     playbackRef.current.clear();
+    rosterRef.current.clear();
+    recentLevelsRef.current.clear();
+    setPeers([]);
+    setSpeaking(new Map());
+    seqRef.current = 0;
+    samplesSentRef.current = 0;
+  }, [stopReconnectTimer]);
+
+  const teardown = useCallback(() => {
+    wantConnectedRef.current = false;
+    stopReconnectTimer();
+    teardownSocket();
     workletRef.current?.port.close();
     workletRef.current?.disconnect();
     workletRef.current = null;
@@ -159,21 +232,16 @@ export function useHuddleAudio(
     analyserRef.current?.disconnect();
     analyserRef.current = null;
     vuBinsRef.current = null;
+    sourceRef.current?.disconnect();
+    sourceRef.current = null;
     void ctxRef.current?.close();
     ctxRef.current = null;
     for (const track of streamRef.current?.getTracks() ?? []) {
       track.stop();
     }
     streamRef.current = null;
-    wsRef.current?.close();
-    wsRef.current = null;
-    seqRef.current = 0;
-    samplesSentRef.current = 0;
-    recentLevelsRef.current.clear();
-    setPeers([]);
-    setSpeaking(new Map());
-    rosterRef.current.clear();
-  }, []);
+    trackRef.current = null;
+  }, [stopReconnectTimer, teardownSocket]);
 
   useEffect(() => {
     return () => {
@@ -218,13 +286,24 @@ export function useHuddleAudio(
 
   /** Decode + jitter-schedule one downlink frame's Opus payload. */
   const playFrame = useCallback(
-    (peerIndex: number, opus: Uint8Array, ts48k: number, dtx: boolean) => {
+    (
+      peerIndex: number,
+      epoch: number,
+      opus: Uint8Array,
+      ts48k: number,
+      dtx: boolean,
+    ) => {
       const ctx = ctxRef.current;
       if (!ctx || dtx || opus.length === 0) {
         return;
       }
       let entry = playbackRef.current.get(peerIndex);
-      if (!entry || entry.decoder.state === "closed") {
+      if (!entry || entry.decoder.state === "closed" || entry.epoch !== epoch) {
+        // A reused peer_index with a bumped epoch is a DIFFERENT occupant:
+        // close the old decoder so no Opus state carries across speakers.
+        if (entry && entry.decoder.state !== "closed") {
+          entry.decoder.close();
+        }
         const decoder = new AudioDecoder({
           output: (audioData: AudioData) => {
             const sink = playbackRef.current.get(peerIndex);
@@ -259,7 +338,7 @@ export function useHuddleAudio(
           sampleRate: 48_000,
           numberOfChannels: 1,
         });
-        entry = { decoder, nextStart: 0 };
+        entry = { decoder, nextStart: 0, epoch };
         playbackRef.current.set(peerIndex, entry);
       }
       entry.decoder.decode(
@@ -301,12 +380,271 @@ export function useHuddleAudio(
     [],
   );
 
+  // Mutual-recursion breakers: the socket's onclose schedules a redial,
+  // and the redial opens a socket whose onclose schedules again. Both
+  // live behind refs so neither callback captures the other.
+  const scheduleReconnectRef = useRef<(attempt: number) => void>(() => {});
+  const connectSocketRef = useRef<() => void>(() => {});
+  const recoverMicRef = useRef<() => void>(() => {});
+
+  /**
+   * One rung of the redial ladder. `attempt` is the number of FAILED dials
+   * so far (0 = first retry). Exhausting the ladder ends the call with the
+   * reason visible — the old behavior silently flipped the bar back to the
+   * join screen, which is precisely the "call died on a hiccup" complaint.
+   */
+  const scheduleReconnect = useCallback(
+    (attempt: number) => {
+      if (attempt >= RECONNECT_DELAYS_MS.length) {
+        wantConnectedRef.current = false;
+        teardown();
+        setError(
+          "Connection to the huddle was lost — rejoin when you're back online.",
+        );
+        setStatus("idle");
+        return;
+      }
+      reconnectAttemptRef.current = attempt;
+      reconnectTimerRef.current = window.setTimeout(() => {
+        reconnectTimerRef.current = null;
+        if (!wantConnectedRef.current) {
+          return;
+        }
+        connectSocketRef.current();
+      }, RECONNECT_DELAYS_MS[attempt]);
+    },
+    [teardown],
+  );
+
+  /**
+   * Open (or redial) the audio WebSocket: challenge → signed auth → join.
+   * Split out of join() so the reconnect ladder can redial JUST this —
+   * the mic graph it took a permission grant to build stays alive, which
+   * is the desktop's `reconnect_huddle_audio` contract in browser form.
+   */
+  const connectSocket = useCallback(() => {
+    const base = new URL(relayWsUrl());
+    const socketUrl = `${base.protocol === "wss:" ? "wss" : "ws"}://${base.host}/huddle/${channelId}/audio`;
+    const ws = new WebSocket(socketUrl);
+    ws.binaryType = "arraybuffer";
+    wsRef.current = ws;
+
+    ws.onmessage = (event) => {
+      if (typeof event.data === "string") {
+        let message: {
+          type: string;
+          challenge?: string;
+          message?: string;
+          peers?: {
+            pubkey: string;
+            peer_index?: number;
+            peerIndex?: number;
+            epoch?: number;
+          }[];
+        };
+        try {
+          message = JSON.parse(event.data);
+        } catch {
+          return;
+        }
+        if (message.type === "challenge" && message.challenge) {
+          void signNostrEvent(
+            authEventTemplate(
+              message.challenge,
+              relayWsUrl(),
+              getAuthTagJson(),
+            ),
+          )
+            .then((authEvent) => {
+              ws.send(
+                JSON.stringify({
+                  type: "auth",
+                  event: authEvent,
+                  protocol_version: 3,
+                  ...(parentChannelId
+                    ? { parent_channel_id: parentChannelId }
+                    : {}),
+                }),
+              );
+            })
+            .catch(() => {
+              setError("Could not sign the huddle auth challenge.");
+              teardown();
+              setStatus("error");
+            });
+          return;
+        }
+        if (message.type === "joined") {
+          reconnectAttemptRef.current = 0;
+          setStatus("connected");
+          applyRoster(message.peers ?? []);
+          return;
+        }
+        if (message.type === "left") {
+          applyRoster(message.peers ?? []);
+          return;
+        }
+        if (message.type === "error") {
+          // The relay refused us (room ended, membership, capacity). Not a
+          // transient drop — redialing would hit the same wall.
+          setError(message.message ?? "The huddle rejected the connection.");
+          teardown();
+          setStatus("error");
+        }
+        return;
+      }
+      const frame = parseDownlinkFrame(event.data as ArrayBuffer);
+      if (!frame) {
+        return;
+      }
+      playFrame(
+        frame.peerIndex,
+        frame.epoch,
+        frame.opus,
+        frame.ts48k,
+        frame.dtx,
+      );
+      const pubkey = rosterRef.current.get(frame.peerIndex);
+      if (pubkey) {
+        recentLevelsRef.current.set(pubkey, frame.levelDbov);
+      }
+      const now = Date.now();
+      if (now - speakingTickRef.current > SPEAKING_TICK_MS) {
+        speakingTickRef.current = now;
+        setSpeaking(new Map(recentLevelsRef.current));
+      }
+    };
+    ws.onclose = () => {
+      if (wsRef.current !== ws) {
+        // A newer dial owns the refs; this close is stale.
+        return;
+      }
+      // The socket is dead and its roster with it. Keep the mic, context,
+      // encoder, and worklet alive — a recovered redial is an audio blip,
+      // not a leave — and either redial or land on idle, never silently.
+      for (const { decoder } of playbackRef.current.values()) {
+        if (decoder.state !== "closed") {
+          decoder.close();
+        }
+      }
+      playbackRef.current.clear();
+      rosterRef.current.clear();
+      recentLevelsRef.current.clear();
+      setPeers([]);
+      setSpeaking(new Map());
+      seqRef.current = 0;
+      samplesSentRef.current = 0;
+      wsRef.current = null;
+      if (!wantConnectedRef.current) {
+        setStatus("idle");
+        return;
+      }
+      setStatus("reconnecting");
+      scheduleReconnectRef.current(reconnectAttemptRef.current + 1);
+    };
+    ws.onerror = () => {
+      setError("Could not reach the huddle audio service.");
+    };
+  }, [channelId, parentChannelId, playFrame, applyRoster, teardown]);
+
+  /**
+   * The mic track died mid-call (unplug, OS reclaim). Try the configured
+   * device, then the system default; on success swap the fresh capture
+   * into the LIVE graph — analyser, worklet, encoder, and socket all stay
+   * up, so recovery is a gap in uplink, not a dropped call. On total
+   * failure end the call with the reason on screen.
+   */
+  const recoverMic = useCallback(async () => {
+    if (!wantConnectedRef.current) {
+      return;
+    }
+    const constraints = (id: string): MediaTrackConstraints => ({
+      channelCount: 1,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      ...(id ? { deviceId: { exact: id } } : {}),
+    });
+    let stream: MediaStream | null = null;
+    let fellBackToDefault = false;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: constraints(deviceIdRef.current),
+      });
+    } catch {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: constraints(""),
+        });
+        fellBackToDefault = deviceIdRef.current !== "";
+      } catch {
+        wantConnectedRef.current = false;
+        teardown();
+        setError("The microphone was disconnected and could not be restarted.");
+        setStatus("error");
+        return;
+      }
+    }
+    const ctx = ctxRef.current;
+    const analyser = analyserRef.current;
+    const worklet = workletRef.current;
+    if (!ctx || !analyser || !worklet) {
+      for (const track of stream.getTracks()) {
+        track.stop();
+      }
+      return;
+    }
+    const oldStream = streamRef.current;
+    streamRef.current = stream;
+    const track = stream.getAudioTracks()[0] ?? null;
+    trackRef.current = track;
+    if (track) {
+      track.onended = () => recoverMicRef.current();
+    }
+    if (fellBackToDefault) {
+      deviceIdRef.current = "";
+      setDeviceId("");
+    }
+    const source = ctx.createMediaStreamSource(stream);
+    source.connect(analyser);
+    source.connect(worklet);
+    sourceRef.current?.disconnect();
+    sourceRef.current = source;
+    for (const old of oldStream?.getTracks() ?? []) {
+      old.stop();
+    }
+    void refreshDevices();
+  }, [teardown, refreshDevices]);
+
+  /**
+   * Resume a browser-suspended AudioContext. Called from the bar's
+   * pointerdown — a gesture — because a context suspended by the system
+   * (device change, OS pause) cannot be resumed without one. No-op when
+   * running.
+   */
+  const resumeAudio = useCallback(async () => {
+    const ctx = ctxRef.current;
+    if (ctx?.state !== "suspended") {
+      return;
+    }
+    try {
+      await ctx.resume();
+      setError(null);
+    } catch {
+      // Still gesture-blocked; the banner stays until a click succeeds.
+    }
+  }, []);
+
   const leave = useCallback(() => {
     teardown();
     setStatus("idle");
     setMuted(false);
     mutedRef.current = false;
   }, [teardown]);
+
+  scheduleReconnectRef.current = scheduleReconnect;
+  connectSocketRef.current = connectSocket;
+  recoverMicRef.current = () => void recoverMic();
 
   const join = useCallback(async () => {
     if (!channelId || !supportsVoice) {
@@ -317,8 +655,15 @@ export function useHuddleAudio(
       );
       return;
     }
+    if (wantConnectedRef.current || wsRef.current || ctxRef.current) {
+      // Already in a call or mid-join (the button disables during
+      // "connecting", but a fast double event can still land here).
+      return;
+    }
     setError(null);
     setStatus("connecting");
+    deviceIdRef.current = deviceId;
+    wantConnectedRef.current = true;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -333,7 +678,13 @@ export function useHuddleAudio(
         },
       });
       streamRef.current = stream;
-      trackRef.current = stream.getAudioTracks()[0] ?? null;
+      const track = stream.getAudioTracks()[0] ?? null;
+      trackRef.current = track;
+      // A track that ends mid-call (unplug, OS reclaim) is recoverable:
+      // recoverMic swaps a fresh capture into the live graph.
+      if (track) {
+        track.onended = () => recoverMicRef.current();
+      }
       // Device labels are blank until a getUserMedia grant exists, so this is
       // the first moment enumeration is worth anything.
       void refreshDevices();
@@ -341,8 +692,30 @@ export function useHuddleAudio(
       if (ctx.state === "suspended") {
         await ctx.resume();
       }
+      // A context the SYSTEM suspends mid-call (device change, OS pause)
+      // kills capture AND playback silently. Try to resume; if the browser
+      // insists on a gesture, say so — resumeAudio() runs on the bar's
+      // next pointerdown.
+      ctx.onstatechange = () => {
+        if (ctx.state !== "suspended" || !wantConnectedRef.current) {
+          return;
+        }
+        void ctx
+          .resume()
+          .then(() => {
+            if (ctxRef.current === ctx) {
+              setError(null);
+            }
+          })
+          .catch(() => {
+            setError(
+              "Audio was paused by the browser — click the huddle bar to resume.",
+            );
+          });
+      };
       ctxRef.current = ctx;
       const source = ctx.createMediaStreamSource(stream);
+      sourceRef.current = source;
 
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 512;
@@ -438,97 +811,9 @@ export function useHuddleAudio(
         );
       };
 
-      const base = new URL(relayWsUrl());
-      const socketUrl = `${base.protocol === "wss:" ? "wss" : "ws"}://${base.host}/huddle/${channelId}/audio`;
-      const ws = new WebSocket(socketUrl);
-      ws.binaryType = "arraybuffer";
-      wsRef.current = ws;
-
-      ws.onmessage = (event) => {
-        if (typeof event.data === "string") {
-          let message: {
-            type: string;
-            challenge?: string;
-            message?: string;
-            peers?: {
-              pubkey: string;
-              peer_index?: number;
-              peerIndex?: number;
-              epoch?: number;
-            }[];
-          };
-          try {
-            message = JSON.parse(event.data);
-          } catch {
-            return;
-          }
-          if (message.type === "challenge" && message.challenge) {
-            void signNostrEvent(
-              authEventTemplate(
-                message.challenge,
-                relayWsUrl(),
-                getAuthTagJson(),
-              ),
-            )
-              .then((authEvent) => {
-                ws.send(
-                  JSON.stringify({
-                    type: "auth",
-                    event: authEvent,
-                    protocol_version: 3,
-                    ...(parentChannelId
-                      ? { parent_channel_id: parentChannelId }
-                      : {}),
-                  }),
-                );
-              })
-              .catch(() => {
-                setError("Could not sign the huddle auth challenge.");
-                teardown();
-                setStatus("error");
-              });
-            return;
-          }
-          if (message.type === "joined") {
-            setStatus("connected");
-            applyRoster(message.peers ?? []);
-            return;
-          }
-          if (message.type === "left") {
-            applyRoster(message.peers ?? []);
-            return;
-          }
-          if (message.type === "error") {
-            setError(message.message ?? "The huddle rejected the connection.");
-            teardown();
-            setStatus("error");
-          }
-          return;
-        }
-        const frame = parseDownlinkFrame(event.data as ArrayBuffer);
-        if (!frame) {
-          return;
-        }
-        playFrame(frame.peerIndex, frame.opus, frame.ts48k, frame.dtx);
-        const pubkey = rosterRef.current.get(frame.peerIndex);
-        if (pubkey) {
-          recentLevelsRef.current.set(pubkey, frame.levelDbov);
-        }
-        const now = Date.now();
-        if (now - speakingTickRef.current > SPEAKING_TICK_MS) {
-          speakingTickRef.current = now;
-          setSpeaking(new Map(recentLevelsRef.current));
-        }
-      };
-      ws.onclose = () => {
-        if (wsRef.current === ws) {
-          teardown();
-          setStatus("idle");
-        }
-      };
-      ws.onerror = () => {
-        setError("Could not reach the huddle audio service.");
-      };
+      // Socket + auth + roster handling live in connectSocket so the
+      // reconnect ladder redials exactly this half.
+      connectSocketRef.current();
     } catch (mediaError) {
       teardown();
       setStatus("error");
@@ -542,11 +827,8 @@ export function useHuddleAudio(
     }
   }, [
     channelId,
-    parentChannelId,
     supportsVoice,
     teardown,
-    playFrame,
-    applyRoster,
     deviceId,
     transmitting,
     refreshDevices,
@@ -568,6 +850,7 @@ export function useHuddleAudio(
   }, []);
 
   const selectDevice = useCallback((nextDeviceId: string) => {
+    deviceIdRef.current = nextDeviceId;
     setDeviceId(nextDeviceId);
   }, []);
 
@@ -612,5 +895,6 @@ export function useHuddleAudio(
     setVoiceInputMode: setMode,
     setPushToTalkActive,
     subscribeMicFrames,
+    resumeAudio,
   };
 }

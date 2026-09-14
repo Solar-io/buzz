@@ -2,15 +2,21 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   botPubkeysFromMemberEvent,
+  chunkSpeakableText,
   classifySpeakableAgentText,
+  CHUNK_MAX_CHARS,
   createOrderedSpeaker,
+  fnv1a,
   GROUP_MEMBERS_KIND,
   huddleAgentSpeechFilter,
   huddleMemberSnapshotFilter,
+  rankVoices,
   shouldSpeakLocally,
+  speechVoiceProfile,
   SPEAKABLE_MESSAGE_KINDS,
   SPEECH_REPLAY_WINDOW_SECONDS,
   textWithoutAttachments,
+  VOICE_PITCH_SPREAD_BELOW,
   watchdogMs,
   WATCHDOG_MS_PER_CHAR,
   WATCHDOG_SLACK_MS,
@@ -381,4 +387,169 @@ test("watchdogMs sizes the safety timer from the text, hardcoded", () => {
   assert.equal(watchdogMs("abc"), 5_270);
   assert.equal(watchdogMs("x".repeat(100)), 14_000);
   assert.equal(watchdogMs("y".repeat(1000)), 95_000);
+});
+
+// --- deterministic per-agent voice selection ---
+
+const voice = (name, { lang = "en-US", localService = true } = {}) => ({
+  name,
+  lang,
+  localService,
+  voiceURI: `uri:${name}`,
+});
+
+test("fnv1a matches the published FNV-1a 32-bit test vectors", () => {
+  // 0x811c9dc5 is the offset basis; 0xe40c292c is the canonical hash of
+  // "a". A "hash" that misses these is not FNV-1a and the profile pins
+  // below change meaning.
+  assert.equal(fnv1a(""), 2166136261);
+  assert.equal(fnv1a("a"), 3826002220);
+});
+
+test("rankVoices puts local English voices first, then stable name order", () => {
+  const ranked = rankVoices([
+    voice("Zeta", { localService: false }),
+    voice("Beta", { localService: true }),
+    voice("Delta", { lang: "de-DE", localService: true }),
+    voice("Alpha", { localService: true }),
+    voice("Gamma", { localService: false }),
+  ]);
+  // Classes: local+en (Alpha, Beta) → local+non-en (Delta) → network+en
+  // (Gamma, Zeta). Within a class, alphabetical by name.
+  assert.deepEqual(
+    ranked.map((entry) => entry.name),
+    ["Alpha", "Beta", "Delta", "Gamma", "Zeta"],
+  );
+});
+
+test("rankVoices does not mutate its input", () => {
+  const input = [
+    voice("B", { localService: false }),
+    voice("A", { localService: true }),
+  ];
+  rankVoices(input);
+  assert.equal(input[0].name, "B");
+});
+
+test("profiles are pinned: the same pubkey is the same voice, hardcoded", () => {
+  // Measured outputs of the pure function, pinned so any drift in ranking
+  // or hashing that would silently reassign every agent's voice is caught.
+  const ranked = rankVoices([
+    voice("Samantha"),
+    voice("Ava"),
+    voice("Daniel"),
+    voice("Google UK English Female", { localService: false }),
+    voice("Google US English", { localService: false }),
+  ]);
+  assert.deepEqual(speechVoiceProfile(AGENT, ranked), {
+    voiceIndex: 1,
+    rate: 1,
+    pitch: 1,
+    voiceURI: "uri:Daniel",
+  });
+  assert.deepEqual(speechVoiceProfile(OTHER_AGENT, ranked), {
+    voiceIndex: 0,
+    rate: 1,
+    pitch: 1,
+    voiceURI: "uri:Ava",
+  });
+});
+
+test("profile derivation is case-insensitive on the pubkey", () => {
+  const ranked = rankVoices([voice("A"), voice("B"), voice("C")]);
+  assert.deepEqual(
+    speechVoiceProfile(AGENT.toUpperCase(), ranked),
+    speechVoiceProfile(AGENT, ranked),
+  );
+});
+
+test("ten agents spread across at least four of five ranked voices", () => {
+  const ranked = rankVoices([
+    voice("V0"),
+    voice("V1"),
+    voice("V2"),
+    voice("V3"),
+    voice("V4"),
+  ]);
+  const picked = new Set(
+    Array.from({ length: 10 }, (_, i) =>
+      speechVoiceProfile(String.fromCharCode(97 + i).repeat(64), ranked),
+    ).map((profile) => profile.voiceIndex),
+  );
+  // A broken hash (constant, or colliding on one bucket) lands everything
+  // on one voice; a real spread over 10 keys reaches most of the list.
+  assert.ok(picked.size >= 4, `spread too thin: ${[...picked].join(",")}`);
+});
+
+test("a rich voice list keeps every agent at natural pitch", () => {
+  const ranked = rankVoices([voice("A"), voice("B"), voice("C")]);
+  assert.equal(ranked.length >= VOICE_PITCH_SPREAD_BELOW, true);
+  assert.equal(speechVoiceProfile(AGENT, ranked).pitch, 1);
+});
+
+test("a scarce voice list differentiates agents by stable pitch", () => {
+  const ranked = rankVoices([voice("Only")]);
+  const first = speechVoiceProfile(AGENT, ranked);
+  const second = speechVoiceProfile(OTHER_AGENT, ranked);
+  // Same single voice, different pitch — pinned measured values.
+  assert.equal(first.voiceURI, "uri:Only");
+  assert.equal(first.pitch, 0.89);
+  assert.equal(second.pitch, 1.04);
+  for (const profile of [first, second]) {
+    assert.ok(profile.pitch >= 0.85 && profile.pitch <= 1.15);
+  }
+});
+
+test("an empty voice list degrades to engine defaults, not a crash", () => {
+  assert.deepEqual(speechVoiceProfile(AGENT, []), {
+    voiceIndex: 0,
+    rate: 1,
+    pitch: 1,
+    voiceURI: null,
+  });
+});
+
+// --- utterance chunking ---
+
+test("empty text chunks to nothing", () => {
+  assert.deepEqual(chunkSpeakableText("   \n "), []);
+});
+
+test("a short reply is one chunk", () => {
+  assert.deepEqual(chunkSpeakableText("Ready when you are."), [
+    "Ready when you are.",
+  ]);
+});
+
+test("short sentences pack together under the cap", () => {
+  const text = "One sentence here. And another one follows it up.";
+  assert.deepEqual(chunkSpeakableText(text), [text]);
+});
+
+test("long sentence runs split at word boundaries, every chunk under the cap", () => {
+  const chunks = chunkSpeakableText("word ".repeat(60).trim());
+  assert.ok(chunks.length > 1);
+  assert.ok(chunks.every((chunk) => chunk.length <= CHUNK_MAX_CHARS));
+  // No words lost or reordered: the joined chunks are the original words.
+  const original = "word ".repeat(60).trim().split(" ");
+  const rejoined = chunks.join(" ").split(" ");
+  assert.deepEqual(rejoined, original);
+});
+
+test("a single unpunctuated monster word hard-splits under the cap", () => {
+  const chunks = chunkSpeakableText("x".repeat(450));
+  assert.deepEqual(
+    chunks.map((chunk) => chunk.length),
+    [200, 200, 50],
+  );
+});
+
+test("sentence boundaries are respected when packing", () => {
+  const sentence = "A reasonably long sentence with some words in it. ";
+  const chunks = chunkSpeakableText(sentence.repeat(6).trim());
+  // Two packed chunks, both under the cap, no sentence torn in half at a
+  // non-boundary while a boundary would have fit.
+  assert.equal(chunks.length, 2);
+  assert.ok(chunks.every((chunk) => chunk.length <= CHUNK_MAX_CHARS));
+  assert.ok(chunks.every((chunk) => chunk.endsWith(".")));
 });
