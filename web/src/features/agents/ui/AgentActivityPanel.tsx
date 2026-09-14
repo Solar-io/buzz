@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { BarChart3, Brain } from "lucide-react";
 import type { Profile } from "@/features/channels/hooks";
-import { AuthorAvatar } from "@/features/channels/ui/ChannelTimeline";
+import { AuthorAvatar } from "@/features/channels/ui/AuthorAvatar";
 import { nextFollowState } from "@/features/agents/lib/scrollFollow";
 import {
   transcriptFromFrames,
@@ -256,6 +256,21 @@ export function AgentActivityPanel({
         onScroll={handleScroll}
         className="buzz-channel-activity-scrollbar min-h-0 flex-1 overflow-y-auto p-3"
       >
+        {/* Stationary portrait, chosen by the agent itself: it renders the
+            same `profile.avatar` the header chip uses, and a republished
+            kind-0 repaints it live — nothing schedules or rotates it. */}
+        <div className="mb-3" data-testid="agent-portrait">
+          <AuthorAvatar
+            pubkey={agentPubkey}
+            label={agentName}
+            picture={profile?.avatar}
+            shape="portrait"
+          />
+          <div className="mt-2 text-sm font-medium">{agentName}</div>
+          <p className="text-xs text-muted-foreground">
+            Who they want you to see — they can change it anytime.
+          </p>
+        </div>
         {frames.length === 0 && lockedCount === 0 && (
           <p className="p-6 text-center text-sm text-muted-foreground">
             {connected

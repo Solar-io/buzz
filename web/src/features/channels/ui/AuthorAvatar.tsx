@@ -4,6 +4,13 @@ import { cn } from "@/shared/lib/cn";
 import { avatarPaletteClass, getInitials } from "../lib/avatar.ts";
 
 /**
+ * Portrait-frame box: a short banner crop below lg (a full-height 3:4 photo
+ * would push the transcript off a phone screen) and a true 3:4 frame at lg.
+ */
+const PORTRAIT_FRAME_CLASSES =
+  "h-44 w-full rounded-xl border border-border object-cover lg:aspect-[3/4] lg:h-auto";
+
+/**
  * Author avatar: the profile picture when one is published (relay media is
  * auth-gated, so it goes through the signed fetch), else an initials circle
  * in the desktop client's identicon style — real word initials on one of the
@@ -18,11 +25,18 @@ export function AuthorAvatar({
   label,
   picture,
   size = "md",
+  shape = "circle",
 }: {
   pubkey: string;
   label: string;
   picture?: string;
   size?: "sm" | "dm" | "md" | "md-sm";
+  /**
+   * "portrait" renders the same picture/fallback logic as a rectangular
+   * hero frame (agent activity pane) instead of a circle; `size` is
+   * ignored there — the frame is full-width and responsive.
+   */
+  shape?: "circle" | "portrait";
 }) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   useEffect(() => {
@@ -54,6 +68,24 @@ export function AuthorAvatar({
         : size === "md-sm"
           ? "h-7 w-7 text-xs"
           : "h-9 w-9 text-sm";
+  if (shape === "portrait") {
+    if (objectUrl) {
+      return <img src={objectUrl} alt="" className={PORTRAIT_FRAME_CLASSES} />;
+    }
+    // Same frame box, palette fill and initials as the circle fallback.
+    return (
+      <div
+        data-pubkey={pubkey}
+        className={cn(
+          "flex select-none items-center justify-center font-semibold shadow-xs",
+          PORTRAIT_FRAME_CLASSES,
+          avatarPaletteClass(label),
+        )}
+      >
+        {getInitials(label)}
+      </div>
+    );
+  }
   if (objectUrl) {
     return (
       <img
