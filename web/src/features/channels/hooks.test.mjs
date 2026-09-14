@@ -258,6 +258,39 @@ test("a seeded stale profile loses to any real kind-0 event", async () => {
   );
 });
 
+test("a legacy seed written before latest-wins (no updatedAt) loses to any real kind-0 event", async () => {
+  // Every profile in localStorage today was written by the first-seen build
+  // and carries NO updatedAt. It must read as 0 — otherwise the seed holds
+  // each avatar hostage across reloads forever, which is exactly the
+  // portrait-that-lies this fix exists to prevent.
+  await withProfileSession(
+    {
+      [PUBKEY]: {
+        name: "LegacyName",
+        displayName: "LegacyName",
+        avatar: "https://pic/legacy-seed",
+      },
+    },
+    async ({ probe, socket, subId }) => {
+      // The seed paints the first frame…
+      assert.equal(
+        probe.seen[0].get(PUBKEY)?.avatar,
+        "https://pic/legacy-seed",
+      );
+      // …and the first real delivery takes over.
+      await act(async () => {
+        socket.serverSend([
+          "EVENT",
+          subId,
+          kind0(PUBKEY, 100, "https://pic/live"),
+        ]);
+      });
+      assert.equal(probe.seen.at(-1).get(PUBKEY)?.avatar, "https://pic/live");
+      assert.equal(probe.seen.at(-1).get(PUBKEY)?.updatedAt, 100);
+    },
+  );
+});
+
 test("a seeded fresh profile survives a re-delivered older event", async () => {
   // Reconnect replay re-REQs from scratch, so the pre-reload profile can
   // arrive again with its OLD created_at — it must not clobber the seed.
