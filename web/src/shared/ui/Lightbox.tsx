@@ -207,6 +207,18 @@ export function Lightbox({
         nudgeZoom(-event.deltaY * WHEEL_ZOOM_SPEED);
       }}
     >
+      {/* Cover-fill of the same image behind the fitted photo, so
+          letterboxed edges carry the photo's own blurred colors instead of
+          bare black bars (report 9/14). Same src as the sharp image —
+          cached, no second fetch. Negative z keeps it above the container's
+          own scrim background but below the in-flow content. */}
+      <img
+        aria-hidden="true"
+        alt=""
+        draggable={false}
+        className="pointer-events-none absolute inset-0 -z-10 h-full w-full scale-125 select-none object-cover opacity-60 blur-2xl"
+        src={item.src}
+      />
       <img
         data-testid="lightbox-image"
         src={item.src}

@@ -204,7 +204,9 @@ test("image bundle lightbox navigates as a gallery", async ({ page }) => {
 
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
-  await expect(dialog.locator(`img[src*="${IMAGE_SHAS[0]}"]`)).toBeVisible();
+  await expect(
+    dialog.locator(`img[src*="${IMAGE_SHAS[0]}"]:not([aria-hidden="true"])`),
+  ).toBeVisible();
   const lightboxSurface = page
     .locator("[data-image-lightbox-frame] > div > div")
     .first();
@@ -216,7 +218,9 @@ test("image bundle lightbox navigates as a gallery", async ({ page }) => {
   // Clicking the image zooms to the secondary level instead of dismissing the
   // dialog, and the clicked image point remains under the cursor.
   await waitForAnimations(page);
-  const lightboxImage = dialog.locator(`img[src*="${IMAGE_SHAS[0]}"]`);
+  const lightboxImage = dialog.locator(
+    `img[src*="${IMAGE_SHAS[0]}"]:not([aria-hidden="true"])`,
+  );
   const initialImageBox = await lightboxImage.boundingBox();
   if (!initialImageBox) {
     throw new Error("Expected lightbox image to have a layout box");
@@ -277,13 +281,17 @@ test("image bundle lightbox navigates as a gallery", async ({ page }) => {
   ).toHaveCount(0);
 
   await page.getByRole("button", { name: "Next image" }).click();
-  await expect(dialog.locator(`img[src*="${IMAGE_SHAS[1]}"]`)).toBeVisible();
+  await expect(
+    dialog.locator(`img[src*="${IMAGE_SHAS[1]}"]:not([aria-hidden="true"])`),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Previous image" }),
   ).toBeVisible();
 
   await page.keyboard.press("ArrowRight");
-  const currentLightboxImage = dialog.locator(`img[src*="${IMAGE_SHAS[2]}"]`);
+  const currentLightboxImage = dialog.locator(
+    `img[src*="${IMAGE_SHAS[2]}"]:not([aria-hidden="true"])`,
+  );
   const lightboxFrame = page.locator("[data-image-lightbox-frame]");
   await expect(currentLightboxImage).toBeVisible();
   await expect(currentLightboxImage).toHaveCSS("object-fit", "contain");
@@ -399,7 +407,9 @@ test("thread lightbox navigates images across messages", async ({ page }) => {
 
   const dialog = page.getByRole("dialog");
   const position = dialog.getByRole("status");
-  await expect(dialog.locator(`img[src="${NO_DIM_SECOND_URL}"]`)).toBeVisible();
+  await expect(
+    dialog.locator(`img[src="${NO_DIM_SECOND_URL}"]:not([aria-hidden="true"])`),
+  ).toBeVisible();
   await expect(position).toHaveText("3 / 3");
   await expect(position).toHaveAttribute("aria-label", "Image 3 of 3");
   await expect(dialog.getByRole("button", { name: "Next image" })).toHaveCount(
@@ -854,14 +864,18 @@ test("gallery items without imeta dimensions keep their thumbnail aspect ratio",
   await row.locator(`img[src="${NO_DIM_WIDE_URL}"]`).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
-  await expect(dialog.locator(`img[src="${NO_DIM_WIDE_URL}"]`)).toBeVisible();
+  await expect(
+    dialog.locator(`img[src="${NO_DIM_WIDE_URL}"]:not([aria-hidden="true"])`),
+  ).toBeVisible();
   await page.waitForTimeout(350);
   const wideFrameBox = await getLightboxFrameBox(page);
   expect(wideFrameBox.width / wideFrameBox.height).toBeGreaterThan(2);
 
   await page.getByRole("button", { name: "Next image" }).click();
   await expect(
-    dialog.locator(`img[src="${NO_DIM_PORTRAIT_URL}"]`),
+    dialog.locator(
+      `img[src="${NO_DIM_PORTRAIT_URL}"]:not([aria-hidden="true"])`,
+    ),
   ).toBeVisible();
   await page.waitForTimeout(350);
   const portraitFrameBox = await getLightboxFrameBox(page);
@@ -939,7 +953,9 @@ test("forum markdown images use the markdown root as their gallery scope", async
   await triggers.first().click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
-  await expect(dialog.locator(`img[src="${NO_DIM_WIDE_URL}"]`)).toBeVisible();
+  await expect(
+    dialog.locator(`img[src="${NO_DIM_WIDE_URL}"]:not([aria-hidden="true"])`),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Previous image" }),
   ).toHaveCount(0);
@@ -947,7 +963,9 @@ test("forum markdown images use the markdown root as their gallery scope", async
 
   await page.getByRole("button", { name: "Next image" }).click();
   await expect(
-    dialog.locator(`img[src="${NO_DIM_PORTRAIT_URL}"]`),
+    dialog.locator(
+      `img[src="${NO_DIM_PORTRAIT_URL}"]:not([aria-hidden="true"])`,
+    ),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Previous image" }),
@@ -1121,7 +1139,9 @@ test("lightbox image context menu stays inside the dialog focus scope", async ({
   await row.getByTestId("message-image-lightbox-trigger").first().click();
 
   const dialog = page.getByRole("dialog");
-  const lightboxImage = dialog.locator(`img[src*="${IMAGE_SHAS[0]}"]`);
+  const lightboxImage = dialog.locator(
+    `img[src*="${IMAGE_SHAS[0]}"]:not([aria-hidden="true"])`,
+  );
   await expect(lightboxImage).toBeVisible();
   await lightboxImage.click({ button: "right" });
 
@@ -1190,4 +1210,163 @@ test("right-click image shows Copy image and invokes copy command", async ({
       ),
     )
     .toContain("copy_image_to_clipboard");
+});
+
+// ── Full-bleed viewer (report 9/14: "drop the black bars, I want to see the
+// photo full size") ─────────────────────────────────────────────────────────
+// The contract: the fitted photo fills ~92% of the constrained viewport
+// side; the letterbox area carries the photo's own blurred cover-fill
+// behind the frame instead of bare black; a viewport change after open
+// re-fits the frame — including when the window `resize` event never
+// arrives (WKWebView maximize/Spaces gap, covered by the root-element
+// ResizeObserver).
+test("portrait photo fills the viewport and letterbox shows the blurred cover-fill", async ({
+  page,
+}) => {
+  await installNoDimImageRoutes(page);
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+  await waitForMockLiveSubscription(page, "general");
+
+  await emitMockMessage(
+    page,
+    ["fullbleed portrait", `![portrait](${NO_DIM_PORTRAIT_URL})`].join("\n"),
+  );
+
+  const row = page
+    .getByTestId("message-row")
+    .filter({ hasText: "fullbleed portrait" })
+    .last();
+  await expect(row).toBeVisible();
+  await row.locator(`img[src="${NO_DIM_PORTRAIT_URL}"]`).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(
+    dialog.locator(
+      `img[src="${NO_DIM_PORTRAIT_URL}"]:not([aria-hidden="true"])`,
+    ),
+  ).toBeVisible();
+  await waitForAnimations(page);
+  await page.waitForTimeout(400);
+
+  // 92% of the constrained side (Playwright default viewport 1280x720 →
+  // height-capped at 662.4px). Hardcoded: an assertion derived from the
+  // ratio constant cannot fail when the constant regresses.
+  const frame = page.locator("[data-image-lightbox-frame]");
+  const box = await frame.boundingBox();
+  if (!box) throw new Error("Expected lightbox frame box");
+  expect(Math.abs(box.height - 662.4)).toBeLessThan(4);
+  expect(box.height / 720).toBeGreaterThanOrEqual(0.9);
+  expect(box.y + box.height).toBeLessThanOrEqual(720);
+
+  // The blurred cover-fill: full-viewport, cover-fit, blurred, painted
+  // behind the photo frame and non-interactive.
+  const fill = dialog.locator('img[aria-hidden="true"]');
+  await expect(fill).toHaveCount(1);
+  const fillBox = await fill.boundingBox();
+  expect(fillBox?.width).toBeGreaterThanOrEqual(1279);
+  expect(fillBox?.height).toBeGreaterThanOrEqual(719);
+  const fillStyle = await fill.evaluate((node) => {
+    const style = window.getComputedStyle(node);
+    return {
+      filter: style.filter,
+      objectFit: style.objectFit,
+      pointerEvents: style.pointerEvents,
+      zIndex: style.zIndex,
+    };
+  });
+  expect(fillStyle.objectFit).toBe("cover");
+  expect(fillStyle.filter).toContain("blur");
+  expect(fillStyle.pointerEvents).toBe("none");
+  const frameZ = await frame.evaluate(
+    (node) => window.getComputedStyle(node).zIndex,
+  );
+  expect(Number(frameZ)).toBeGreaterThan(Number(fillStyle.zIndex));
+
+  if (process.env.BUZZ_E2E_SHOT_DIR) {
+    await page.screenshot({
+      path: `${process.env.BUZZ_E2E_SHOT_DIR}/lightbox-fullbleed-portrait.png`,
+    });
+  }
+});
+
+test("a viewport change after open re-fits the photo frame", async ({
+  page,
+}) => {
+  await installNoDimImageRoutes(page);
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+  await waitForMockLiveSubscription(page, "general");
+  await emitMockMessage(
+    page,
+    ["fullbleed resize", `![portrait](${NO_DIM_PORTRAIT_URL})`].join("\n"),
+  );
+  const row = page
+    .getByTestId("message-row")
+    .filter({ hasText: "fullbleed resize" })
+    .last();
+  await expect(row).toBeVisible();
+  await row.locator(`img[src="${NO_DIM_PORTRAIT_URL}"]`).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await waitForAnimations(page);
+  await page.waitForTimeout(400);
+
+  const frame = page.locator("[data-image-lightbox-frame]");
+  const before = await frame.boundingBox();
+  if (!before) throw new Error("Expected lightbox frame box");
+  expect(before.height).toBeGreaterThan(600);
+
+  await page.setViewportSize({ width: 900, height: 1000 });
+  await waitForAnimations(page);
+  await page.waitForTimeout(400);
+  const after = await frame.boundingBox();
+  if (!after) throw new Error("Expected lightbox frame box");
+  expect(Math.abs(after.height - 920)).toBeLessThan(4);
+  expect(after.height).toBeGreaterThan(before.height);
+});
+
+test("the frame re-fits even when no window resize event arrives", async ({
+  page,
+}) => {
+  // WKWebView can skip `resize` across maximize and Spaces transitions —
+  // the report-9/14 stale-box bug. Silence every app `resize` listener, then
+  // grow the viewport: only the root-element ResizeObserver can resize the
+  // frame, so this test discriminates the observer from the resize listener.
+  await page.addInitScript(() => {
+    const nativeAddEventListener = window.addEventListener.bind(window);
+    window.addEventListener = (type, listener, options) => {
+      if (type === "resize") {
+        return;
+      }
+      return nativeAddEventListener(type, listener, options);
+    };
+  });
+  await installNoDimImageRoutes(page);
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+  await waitForMockLiveSubscription(page, "general");
+  await emitMockMessage(
+    page,
+    ["fullbleed noresize", `![portrait](${NO_DIM_PORTRAIT_URL})`].join("\n"),
+  );
+  const row = page
+    .getByTestId("message-row")
+    .filter({ hasText: "fullbleed noresize" })
+    .last();
+  await expect(row).toBeVisible();
+  await row.locator(`img[src="${NO_DIM_PORTRAIT_URL}"]`).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await waitForAnimations(page);
+  await page.waitForTimeout(400);
+
+  await page.setViewportSize({ width: 900, height: 1000 });
+  await waitForAnimations(page);
+  await page.waitForTimeout(600);
+  const frame = page.locator("[data-image-lightbox-frame]");
+  const after = await frame.boundingBox();
+  if (!after) throw new Error("Expected lightbox frame box");
+  expect(Math.abs(after.height - 920)).toBeLessThan(4);
 });
