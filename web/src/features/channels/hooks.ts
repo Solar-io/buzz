@@ -555,6 +555,17 @@ export function useProfiles(pubkeys: string[]): Map<string, Profile> {
                 existing?.eventId !== undefined &&
                 event.id >= existing.eventId);
             if (existing && dominated) {
+              // A REAL loss (different id, not a replay of the stored event)
+              // is the one case where this client keeps its own answer while
+              // the relay may keep another; if that ever diverges, the
+              // symptom is two clients quietly disagreeing, not an error
+              // (Evie 2026-09-14) — so make it observable. Same-id replays
+              // are dominated on every re-subscription and stay silent.
+              if (event.id !== existing?.eventId) {
+                console.debug(
+                  `[profiles] dominated delivery dropped: author=${shortKey(event.pubkey)} incoming=${event.id.slice(0, 8)}@${event.created_at} stored=${existing.eventId?.slice(0, 8)}@${existing.updatedAt}`,
+                );
+              }
               return previous;
             }
             const next = new Map(previous);
