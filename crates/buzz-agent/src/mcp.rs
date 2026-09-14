@@ -91,6 +91,20 @@ const PASSTHROUGH_ENV: &[&str] = &[
     // (which wins here anyway); the allowlist entry covers ACP clients that
     // spawn buzz-agent without declaring it.
     "BUZZ_ACP_DISPLAY_NAME",
+    // Managed-session pin — the buzz CLI derives `session_slot()` from this
+    // var alone, and both halves of the duet guard hang off it: the
+    // `["session", slot]` identity stamp on outgoing events and the send-path
+    // hold gate that bounces a second slot of the same identity. Stripped
+    // here, a managed session's sends go out unstamped and ungated, and the
+    // failure is silent because the gate fails open (observed 2026-09-14:
+    // identities on this runtime lost the stamp while the harness-side
+    // claims writer kept publishing correct holds nothing ever read).
+    "BUZZ_ACP_SESSION_ID",
+    // Claims-file override — the CLI gate must resolve the SAME document the
+    // harness writer publishes to. The display-name-derived default covers
+    // the fleet norm, but an operator-set override that dies here would point
+    // the writer and the gate at different files.
+    "BUZZ_ACP_CLAIMS_FILE",
 ];
 
 // Windows has no $TMPDIR/$HOME. TMP/TEMP/USERPROFILE are what
@@ -727,6 +741,20 @@ impl McpRegistry {
     }
 }
 
+/// Env var carrying the managed-session slot pin the harness injects — the
+/// same contract `claims_gate` reads on the CLI send path. Allowlisted in
+/// [`PASSTHROUGH_ENV`]; this constant exists so the drop check below cannot
+/// drift from the name the CLI actually reads.
+const SESSION_PIN_ENV: &str = "BUZZ_ACP_SESSION_ID";
+
+/// Whether a spawn dropped the managed-session pin its parent carried — the
+/// one silent-disarm shape worth saying out loud. `parent_has_pin` false
+/// means nothing injected a pin (human, ad-hoc runtime): the send gate's
+/// fail-open contract says that shape stays quiet.
+fn session_pin_dropped(parent_has_pin: bool, child_has_pin: bool) -> bool {
+    parent_has_pin && !child_has_pin
+}
+
 async fn spawn_one(
     spec: &ServerSpec,
     timeout: Duration,
@@ -747,6 +775,22 @@ async fn spawn_one(
     }
     for (k, v) in &spec.env {
         cmd.env(k, v);
+    }
+    if session_pin_dropped(
+        std::env::var(SESSION_PIN_ENV).is_ok(),
+        spec.env.iter().any(|(k, _)| k == SESSION_PIN_ENV)
+            || PASSTHROUGH_ENV.contains(&SESSION_PIN_ENV),
+    ) {
+        // The allowlist test pins the list; this is the runtime tripwire for
+        // the same failure. Everything downstream of a dropped pin is silent
+        // by design (unstamped sends, fail-open gate), so if nobody logs it
+        // here, the first signal is a human watching two of us talk.
+        tracing::warn!(
+            server = %spec.name,
+            "managed-session pin {SESSION_PIN_ENV} did not survive env_clear() — \
+             CLI sends from this server's tools run unstamped and ungated \
+             (send-path hold gate disarmed)"
+        );
     }
     cmd.current_dir(&spec.cwd);
     cmd.stderr(std::process::Stdio::inherit());
@@ -1054,6 +1098,37 @@ mod content_tests {
     #[test]
     fn passthrough_includes_buzz_owner_attestation() {
         assert!(PASSTHROUGH_ENV.contains(&"BUZZ_AUTH_TAG"));
+    }
+
+    #[test]
+    fn passthrough_carries_managed_session_pin_to_tools() {
+        // The buzz CLI reads `session_slot()` from BUZZ_ACP_SESSION_ID alone.
+        // Stripped here, a managed session's sends carry no `["session", slot]`
+        // stamp and the send-path hold gate never fires — it fails open, so
+        // nothing bounds a second slot of the same identity in a shared room,
+        // and the harness-side claims writer keeps publishing correct holds
+        // that nothing on the send path ever reads. Same class as the proxy
+        // and TLS entries: the parent was configured correctly and the child
+        // could not see it.
+        for var in ["BUZZ_ACP_SESSION_ID", "BUZZ_ACP_DISPLAY_NAME", "BUZZ_ACP_CLAIMS_FILE"] {
+            assert!(
+                PASSTHROUGH_ENV.contains(&var),
+                "{var} must survive env_clear() or the CLI send gate is silently disarmed"
+            );
+        }
+    }
+
+    #[test]
+    fn dropped_pin_warns_only_when_parent_had_one() {
+        // The runtime signal for the failure the allowlist test pins: a
+        // managed session (parent carries the pin) whose child env lost it
+        // must say so, because every downstream effect is silent by design.
+        // An unmanaged parent (no pin anywhere) is the human/ad-hoc shape and
+        // must stay quiet — that is the gate's standing fail-open contract.
+        assert!(session_pin_dropped(true, false), "parent had the pin and the child lost it — warn");
+        assert!(!session_pin_dropped(true, true), "pin survived — quiet");
+        assert!(!session_pin_dropped(false, false), "unmanaged parent — the gate never applied, stay quiet");
+        assert!(!session_pin_dropped(false, true), "child invented a pin — not ours to police");
     }
 
     #[test]

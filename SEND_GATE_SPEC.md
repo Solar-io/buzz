@@ -266,6 +266,29 @@ event-only. Nothing in this change removes Guard B — that is a separate,
 later cleanup — but nobody should expect the mtime signal to keep meaning
 anything once a writer is live.
 
+## Known boundary — the gate is a chokepoint, and only the CLI is a chokepoint
+
+The gate and the `["session", slot]` stamp both live in the `buzz` CLI and key
+on `BUZZ_ACP_SESSION_ID` reaching that CLI's environment. Anything that
+publishes without transiting `buzz messages send` is invisible to both. That
+is not hypothetical (2026-09-14): a runtime whose tool MCP servers sanitize
+their child environments dropped the pin, every managed send went out
+unstamped and ungated for hours, and nothing complained — the gate fails open,
+so disarming it looks identical to a quiet room.
+
+Two standing rules fall out of it:
+
+1. Any new agent runtime or publisher path MUST carry the pin through to the
+   CLI process (or its own equivalent gate). The runtime-side tripwire —
+   "parent had the pin, child env lost it" — exists to catch this class; keep
+   it wired when refactoring spawn paths.
+2. **Named follow-up, deliberately NOT done in the fix:** move (or duplicate)
+   enforcement relay-side, keyed on the stamp, so the invariant — one
+   identity, one speaker per room — holds no matter which binary signs the
+   event. Until that lands, the gate is best-effort by construction, and any
+   new seat type is one missing env var away from a silent duet. Decide it as
+   its own change; do not grow it onto a bugfix.
+
 ## Infra context
 
 Read first:
