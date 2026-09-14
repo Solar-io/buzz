@@ -19,21 +19,32 @@ export interface MediaDimensions {
 }
 
 /**
- * Inline display caps, matching the desktop's ProgressiveImage frame
- * (`Math.min(1, 384 / width, 256 / height)`). An image is scaled down to fit
- * inside this box; it is never scaled up.
+ * Inline display caps. An image is scaled down to fit inside this box; it is
+ * never scaled up.
+ *
+ * Raised from the desktop's 384x256 ProgressiveImage frame on 2026-09-13:
+ * Sam's standing rule is that photos are sent at full resolution ("do it in
+ * 2k"), and a 2048x2048 photo displayed at 256x256 reads as a broken
+ * thumbnail — Evie's DM-image report. The frame still reserves its exact box
+ * from the NIP-92 `dim` before the bytes arrive, so nothing here reflows;
+ * only the box got bigger. The DESKTOP still caps at 384x256
+ * (shared/ui/markdown/ProgressiveImage.tsx), so the two clients deliberately
+ * diverge until the desktop makes the same move.
  */
-export const MEDIA_MAX_WIDTH = 384;
-export const MEDIA_MAX_HEIGHT = 256;
+export const MEDIA_MAX_WIDTH = 720;
+export const MEDIA_MAX_HEIGHT = 540;
 
 /**
  * Box reserved for an image whose real size is unknown (no NIP-92 `dim`).
- * The desktop reserves the same 384x256 so a late decode letterboxes inside a
- * stable box instead of growing the row.
+ * Deliberately NOT derived from the display caps above: unknown-dim
+ * attachments are legacy events, and reserving a 720x540 hole for one that
+ * turns out small is worse than letterboxing it into a modest box. Known-dim
+ * images always carry `dim` (the CLI writes it on upload), so this only
+ * affects old events.
  */
 export const DEFAULT_MEDIA_RESERVE: MediaDimensions = {
-  width: MEDIA_MAX_WIDTH,
-  height: MEDIA_MAX_HEIGHT,
+  width: 384,
+  height: 256,
 };
 
 /**

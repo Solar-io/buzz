@@ -47,15 +47,30 @@ test("mediaFrame keeps the source aspect ratio so the row cannot reflow", () => 
   assert.equal(frame.reserved, false);
 });
 
-test("mediaFrame caps a wide image at the 384px inline width", () => {
-  // 1200x800 scaled by min(1, 384/1200, 256/800) = 0.32 -> 384 wide.
-  assert.equal(mediaFrame("1200x800").width, 384);
+test("mediaFrame caps a wide image at the 720px inline width", () => {
+  // 1200x800 scaled by min(1, 720/1200, 540/800) = 0.6 -> 720 wide.
+  assert.equal(mediaFrame("1200x800").width, 720);
 });
 
 test("mediaFrame caps a tall image by HEIGHT, not width", () => {
-  // 800x1600 scaled by min(1, 384/800, 256/1600) = 0.16 -> 128 wide.
-  // A width-only cap would give 384 here, and a 768px-tall row.
-  assert.equal(mediaFrame("800x1600").width, 128);
+  // 800x1600 scaled by min(1, 720/800, 540/1600) = 0.3375 -> 270 wide.
+  // A width-only cap would give 720 here, and a 1440px-tall row.
+  assert.equal(mediaFrame("800x1600").width, 270);
+});
+
+test("mediaFrame renders a 2048x2048 photo as a 540px square, not a thumbnail", () => {
+  // Evie's DM-image report: full-res photos displayed at 256x256 read as
+  // broken thumbnails. The height cap binds for squares.
+  const frame = mediaFrame("2048x2048");
+  assert.equal(frame.width, 540);
+  assert.equal(frame.aspectRatio, "2048 / 2048");
+  assert.equal(frame.reserved, false);
+});
+
+test("the unknown-dim reserve stays small even though display caps grew", () => {
+  // Decoupled on purpose: a legacy event with no dim must not reserve a
+  // 720x540 hole for an image that turns out to be an icon.
+  assert.deepEqual(DEFAULT_MEDIA_RESERVE, { width: 384, height: 256 });
 });
 
 test("mediaFrame never upscales a small image", () => {
