@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, X, ZoomIn, ZoomOut } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 
@@ -40,6 +41,15 @@ function focusableWithin(container: HTMLElement): HTMLElement[] {
  * The overlay is a real modal: body scroll is locked, Tab is trapped inside
  * the dialog, focus lands on the close button on open, and focus returns to
  * whatever opened it on close.
+ *
+ * The overlay is PORTALED to document.body: it renders from inside the
+ * virtualized message list, whose scroller ancestors carry `contain: layout`
+ * / `contain: strict` — and `contain: layout` makes that ancestor the
+ * containing block for `position: fixed` descendants. Without the portal,
+ * `fixed inset-0` resolves against a ~message-column box and the "fullscreen"
+ * viewer renders as a band trapped in the list (live-caught 9/14: 2523x798
+ * fill in a 2278x1332 viewport, photo at 45% of viewport height). The
+ * desktop's ImageZoomOverlay portals for the same reason.
  */
 export function Lightbox({
   items,
@@ -190,7 +200,7 @@ export function Lightbox({
     return null;
   }
 
-  return (
+  return createPortal(
     // biome-ignore lint/a11y/useKeyWithClickEvents: Escape closes via the window listener above
     <div
       ref={dialogRef}
@@ -329,6 +339,7 @@ export function Lightbox({
       >
         <X className="h-5 w-5" aria-hidden="true" />
       </button>
-    </div>
+    </div>,
+    document.body,
   );
 }
