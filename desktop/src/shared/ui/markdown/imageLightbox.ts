@@ -58,7 +58,11 @@ export const IMAGE_LIGHTBOX_GALLERY_SLIDE_DISTANCE_PX = 48;
 export const IMAGE_LIGHTBOX_GALLERY_BLUR_PX = 4;
 export const IMAGE_LIGHTBOX_REDUCED_MOTION_MS = 100;
 export const IMAGE_LIGHTBOX_ZOOM_TRANSITION_MS = 80;
-export const IMAGE_LIGHTBOX_BASE_VIEWPORT_RATIO = 0.8;
+// 0.8 left a wide letterboxed margin that read as "photo in a box" (report
+// 9/14: "drop the black bars, I want to see the photo full size"). 0.92 plus
+// the blurred cover-fill backdrop in ImageZoomOverlay keeps the whole photo
+// visible while the edges carry its own colors.
+export const IMAGE_LIGHTBOX_BASE_VIEWPORT_RATIO = 0.92;
 export const IMAGE_LIGHTBOX_CONTROL_SUPPRESS_CLOSE_MS = 450;
 export const IMAGE_LIGHTBOX_TRACKPAD_ZOOM_IDLE_MS = 120;
 export const IMAGE_LIGHTBOX_WHEEL_ZOOM_SPEED = 0.002;
@@ -89,7 +93,7 @@ export function imageLightboxTargetBox(
 ): ImageLightboxBox {
   const viewportWidth = window.innerWidth;
   const viewportHeight = window.innerHeight;
-  const horizontalPadding = Math.min(80, Math.max(16, viewportWidth * 0.0625));
+  const horizontalPadding = Math.min(48, Math.max(24, viewportWidth * 0.03));
   const verticalPadding = Math.min(24, Math.max(16, viewportHeight * 0.033));
   const maxWidth = Math.max(
     1,

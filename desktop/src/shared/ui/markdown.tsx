@@ -486,7 +486,17 @@ function ImageZoomOverlay({
   React.useEffect(() => {
     const handleResize = () => setTargetBox(imageLightboxTargetBox(basisBox));
     window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
+    // WKWebView can swallow the window `resize` event across maximize and
+    // Spaces transitions, which left the fit box frozen at the pre-transition
+    // window size — photo small in a sea of backdrop (report 9/14). The root
+    // element's box tracks the viewport regardless of event delivery, and
+    // ResizeObserver fires once on observe, healing a stale open-time box.
+    const viewportObserver = new ResizeObserver(handleResize);
+    viewportObserver.observe(document.documentElement);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      viewportObserver.disconnect();
+    };
   }, [basisBox]);
 
   React.useEffect(() => {
@@ -802,6 +812,25 @@ function ImageZoomOverlay({
           "absolute inset-0 bg-[#08090a] transition-opacity",
           isOpen || isClosing ? "opacity-100" : "opacity-0",
         )}
+        style={{
+          transitionDuration: `${backgroundTransitionDuration}ms`,
+          transitionTimingFunction: IMAGE_LIGHTBOX_EASE_OUT,
+        }}
+      />
+      {/* Cover-fill of the same image behind the fitted photo, so
+          letterboxed edges carry the photo's own blurred colors instead of
+          bare black bars (report 9/14). Same resolvedSrc as the sharp frame
+          — cached, no second fetch. Sits above the opaque backdrop, below
+          the z-10 photo frame and the z-20 controls. */}
+      <img
+        alt=""
+        aria-hidden="true"
+        className={cn(
+          "pointer-events-none absolute inset-0 z-[1] h-full w-full scale-125 select-none object-cover blur-2xl transition-opacity",
+          isOpen || isClosing ? "opacity-60" : "opacity-0",
+        )}
+        draggable={false}
+        src={currentItem.resolvedSrc}
         style={{
           transitionDuration: `${backgroundTransitionDuration}ms`,
           transitionTimingFunction: IMAGE_LIGHTBOX_EASE_OUT,
