@@ -157,9 +157,9 @@ async function connectAndOpen(session) {
   return socket;
 }
 
-function kind0(pubkey, createdAt, picture, name = "Grumpy") {
+function kind0(pubkey, createdAt, picture, name = "Grumpy", id) {
   return {
-    id: `ev-${pubkey.slice(0, 8)}-${createdAt}`,
+    id: id ?? `ev-${pubkey.slice(0, 8)}-${createdAt}`,
     kind: 0,
     pubkey,
     created_at: createdAt,
@@ -289,6 +289,91 @@ test("a legacy seed written before latest-wins (no updatedAt) loses to any real 
       assert.equal(probe.seen.at(-1).get(PUBKEY)?.updatedAt, 100);
     },
   );
+});
+
+test("two same-second profiles resolve to the lowest event id, whichever arrives first", async () => {
+  // The relay keeps the LOWEST id on a same-second tie (replaceable.rs).
+  // The client must mirror that, or a double swap inside one second leaves
+  // the pane and `users get` defending different portraits — and the seed
+  // would entrench the loser across reloads.
+  await withProfileSession(null, async ({ probe, socket, subId }) => {
+    await act(async () => {
+      socket.serverSend([
+        "EVENT",
+        subId,
+        kind0(PUBKEY, 100, "https://pic/high-id", "High", "ev-zzz"),
+      ]);
+      socket.serverSend([
+        "EVENT",
+        subId,
+        kind0(PUBKEY, 100, "https://pic/low-id", "Low", "ev-aaa"),
+      ]);
+    });
+    assert.equal(probe.seen.at(-1).get(PUBKEY)?.avatar, "https://pic/low-id");
+    assert.equal(probe.seen.at(-1).get(PUBKEY)?.eventId, "ev-aaa");
+  });
+  await withProfileSession(null, async ({ probe, socket, subId }) => {
+    // Reverse arrival order: same winner.
+    await act(async () => {
+      socket.serverSend([
+        "EVENT",
+        subId,
+        kind0(PUBKEY, 100, "https://pic/low-id", "Low", "ev-aaa"),
+      ]);
+      socket.serverSend([
+        "EVENT",
+        subId,
+        kind0(PUBKEY, 100, "https://pic/high-id", "High", "ev-zzz"),
+      ]);
+    });
+    assert.equal(probe.seen.at(-1).get(PUBKEY)?.avatar, "https://pic/low-id");
+    assert.equal(probe.seen.at(-1).get(PUBKEY)?.eventId, "ev-aaa");
+  });
+});
+
+test("a seeded profile with no eventId loses a same-second tie to any real event", async () => {
+  // Seeds carry updatedAt but predate eventId — they are render state, not
+  // stored events, so nothing seeded can win a tie at its own second.
+  await withProfileSession(
+    {
+      [PUBKEY]: {
+        name: "Seedy",
+        displayName: "Seedy",
+        avatar: "https://pic/seed",
+        updatedAt: 100,
+      },
+    },
+    async ({ probe, socket, subId }) => {
+      await act(async () => {
+        socket.serverSend([
+          "EVENT",
+          subId,
+          kind0(PUBKEY, 100, "https://pic/live", "Live", "ev-aaa"),
+        ]);
+      });
+      assert.equal(probe.seen.at(-1).get(PUBKEY)?.avatar, "https://pic/live");
+      assert.equal(probe.seen.at(-1).get(PUBKEY)?.eventId, "ev-aaa");
+    },
+  );
+});
+
+test("an identical replay (same id, same second) does not disturb the stored profile", async () => {
+  await withProfileSession(null, async ({ probe, socket, subId }) => {
+    await act(async () => {
+      socket.serverSend([
+        "EVENT",
+        subId,
+        kind0(PUBKEY, 100, "https://pic/live", "Live", "ev-aaa"),
+      ]);
+      socket.serverSend([
+        "EVENT",
+        subId,
+        kind0(PUBKEY, 100, "https://pic/live", "Live", "ev-aaa"),
+      ]);
+    });
+    assert.equal(probe.seen.at(-1).get(PUBKEY)?.avatar, "https://pic/live");
+    assert.equal(probe.seen.at(-1).get(PUBKEY)?.eventId, "ev-aaa");
+  });
 });
 
 test("a seeded fresh profile survives a re-delivered older event", async () => {

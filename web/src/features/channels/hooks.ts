@@ -459,10 +459,16 @@ export interface Profile {
    * stored profile and a freshly delivered one.
    */
   updatedAt?: number;
+  /**
+   * `id` of that kind-0 event; absent on seeded entries. Breaks same-second
+   * ties in the relay's direction (lowest id wins — see replaceable.rs), so
+   * the client and the store can never defend different portraits.
+   */
+  eventId?: string;
 }
 
 /** kind 0 profile metadata for a set of authors, fetched once per author. */
-const PROFILE_SEED_KEY = "profiles:v1";
+export const PROFILE_SEED_KEY = "profiles:v1";
 
 export function useProfiles(pubkeys: string[]): Map<string, Profile> {
   const { session } = useRelaySession();
@@ -472,12 +478,19 @@ export function useProfiles(pubkeys: string[]): Map<string, Profile> {
     const seed = new Map<string, Profile>();
     for (const [pubkey, value] of Object.entries(loadSeed(PROFILE_SEED_KEY))) {
       const stored = value as Profile;
-      if (value && typeof value === "object" && typeof stored.name === "string") {
+      if (
+        value &&
+        typeof value === "object" &&
+        typeof stored.name === "string"
+      ) {
         // Seeded entries default to updatedAt 0 so any real kind-0 event —
         // however old — still outranks them.
         seed.set(pubkey, {
           ...stored,
-          updatedAt: typeof stored.updatedAt === "number" ? stored.updatedAt : 0,
+          updatedAt:
+            typeof stored.updatedAt === "number" ? stored.updatedAt : 0,
+          eventId:
+            typeof stored.eventId === "string" ? stored.eventId : undefined,
         });
       }
     }
@@ -523,14 +536,25 @@ export function useProfiles(pubkeys: string[]): Map<string, Profile> {
             displayName: displayName || name || shortKey(event.pubkey),
             avatar,
             updatedAt: event.created_at,
+            eventId: event.id,
           };
           setProfiles((previous) => {
             const existing = previous.get(event.pubkey);
             // Latest-wins by the kind-0 event's own created_at (missing
             // reads as 0, so a seeded profile loses to any real event).
             // First-seen-wins silently dropped republished profiles — an
-            // agent's avatar swap never rendered until reload.
-            if (existing && (existing.updatedAt ?? 0) >= event.created_at) {
+            // agent's avatar swap never rendered until reload. Same-second
+            // ties follow the relay's rule (lowest event id wins), so a
+            // double swap inside one second can never leave the pane and
+            // `users get` defending different pictures — and the seed,
+            // which carries both fields, can't entrench the loser.
+            const existingTs = existing?.updatedAt ?? 0;
+            const dominated =
+              event.created_at < existingTs ||
+              (event.created_at === existingTs &&
+                existing?.eventId !== undefined &&
+                event.id >= existing.eventId);
+            if (existing && dominated) {
               return previous;
             }
             const next = new Map(previous);

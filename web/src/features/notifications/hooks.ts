@@ -11,6 +11,7 @@ import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { loadSeed } from "@/shared/lib/localSeed";
 import { loadChannelPrefs } from "@/features/channels/lib/channelPrefs.ts";
 import type { Profile } from "@/features/channels/hooks";
+import { PROFILE_SEED_KEY } from "@/features/channels/hooks";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { classifyMessage } from "./lib/classifyMessage.ts";
@@ -35,8 +36,10 @@ import { formatTitleBadge, stripTitleBadge } from "./lib/titleBadge.ts";
 /** Chat messages. Reactions, typing and system rows never notify. */
 const KIND_CHAT_MESSAGE = 9;
 
-/** Profile display names for the notification title; written by `useProfiles`. */
-const PROFILE_SEED_KEY = "profiles:v1";
+// PROFILE_SEED_KEY ("profiles:v1") is imported from channels/hooks — this
+// file only reads the seed for notification names, and the storage contract
+// (updatedAt/eventId) is owned by useProfiles. A second literal here would
+// arm itself the day this file writes a profile.
 
 /** Live per-device settings, shared by the runtime and the settings dialog. */
 export function useNotificationSettings(): NotificationSettings {
