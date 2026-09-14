@@ -47,13 +47,17 @@ Dropped 2026-08-24: one auto-commit noise commit and a stray `logs/verification.
 
 Every build we install gets an annotated tag: `nest-<upstream-version>-<yyyymmdd>`
 (suffixed `-2`, `-3`… for additional same-day builds).
-Current installed build: **`nest-0.5.20-20260828`** (upstream 0.5.20, incl.
-web panels, custom sites + nav controls, 12h turn cap, and the per-turn
-temporal stamp). mv-swapped into `/Applications/Buzz.app` on crichton and
-aeryn 2026-08-28 ~20:15 UTC — takes effect on each machine's next Buzz
-relaunch; `buzz-acp` sha256 `5984458a…f388b653` and `buzz-desktop`
-`446b8d24…dfecb61` verified identical on both hosts. Previous build kept
-at `Buzz.app.old-nest-0.5.20-20260826-2` (rollback: mv both dirs back).
+Current installed build: **`nest-0.5.20-20260914-1`** (upstream 0.5.20 + the
+carried series; renderer work: 9/13 media-frame fill caps via 25855a03e
+(interim, untagged), then the full-bleed photo viewer — 92% fit, blurred
+cover-fill backdrop, root-element ResizeObserver refit). mv-swapped into
+`/Applications/Buzz.app` on crichton (backup
+`Buzz.app.bak-20260914-120003-pre-fullbleed`) and
+`/Applications/Buzz-desktop.app` on aeryn (backup
+`Buzz-desktop.app.bak-20260914-120800-pre-fullbleed`) 2026-09-14 ~17:00
+UTC — takes effect on each machine's next Buzz relaunch; `buzz-desktop`
+sha256 `1d173e6a…` verified identical on both hosts. Rollback: mv both
+backup dirs back over the installs.
 The tag always marks what the installed app contains; `main` is the series
 head.
 
