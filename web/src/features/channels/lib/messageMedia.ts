@@ -20,11 +20,14 @@ export interface MediaDimensions {
 
 /**
  * Inline display caps, matching the desktop's ProgressiveImage frame
- * (`Math.min(1, 384 / width, 256 / height)`). An image is scaled down to fit
- * inside this box; it is never scaled up.
+ * (`Math.min(1, 560 / width, 560 / height)`). An image is scaled down to fit
+ * inside this box; it is never scaled up. 560px lets a photo FILL the message
+ * column (Sam 9/13, via the DM-image report in Platform Team): under the old
+ * 384x256 caps a 2048x2048 attachment displayed at 256x256 — the frame was
+ * the defect, not the file or the thumb URL.
  */
-export const MEDIA_MAX_WIDTH = 384;
-export const MEDIA_MAX_HEIGHT = 256;
+export const MEDIA_MAX_WIDTH = 560;
+export const MEDIA_MAX_HEIGHT = 560;
 
 /**
  * Box reserved for an image whose real size is unknown (no NIP-92 `dim`).

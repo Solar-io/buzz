@@ -47,15 +47,23 @@ test("mediaFrame keeps the source aspect ratio so the row cannot reflow", () => 
   assert.equal(frame.reserved, false);
 });
 
-test("mediaFrame caps a wide image at the 384px inline width", () => {
-  // 1200x800 scaled by min(1, 384/1200, 256/800) = 0.32 -> 384 wide.
-  assert.equal(mediaFrame("1200x800").width, 384);
+test("mediaFrame caps a wide image at the 560px inline width", () => {
+  // 1200x800 scaled by min(1, 560/1200, 560/800) = 0.4667 -> 560 wide.
+  assert.equal(mediaFrame("1200x800").width, 560);
+});
+
+test("mediaFrame lets a 2k photo FILL the message area, not thumbnail", () => {
+  // The DM-image regression (Platform Team 9/13): a 2048x2048 attachment
+  // displayed at 256px under the old 384x256 caps. 560/2048 = 0.2734.
+  const frame = mediaFrame("2048x2048");
+  assert.equal(frame.width, 560);
+  assert.equal(frame.aspectRatio, "2048 / 2048");
 });
 
 test("mediaFrame caps a tall image by HEIGHT, not width", () => {
-  // 800x1600 scaled by min(1, 384/800, 256/1600) = 0.16 -> 128 wide.
-  // A width-only cap would give 384 here, and a 768px-tall row.
-  assert.equal(mediaFrame("800x1600").width, 128);
+  // 800x1600 scaled by min(1, 560/800, 560/1600) = 0.35 -> 280 wide.
+  // A width-only cap would give 560 here, and a 1120px-tall row.
+  assert.equal(mediaFrame("800x1600").width, 280);
 });
 
 test("mediaFrame never upscales a small image", () => {

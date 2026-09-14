@@ -83,7 +83,10 @@ export function ProgressiveImage({
   );
 
   const frameStyle = React.useMemo<React.CSSProperties>(() => {
-    const scale = Math.min(1, 384 / width, 256 / height);
+    // 560x560 inline cap — a photo fills the message column instead of
+    // rendering thumbnail-sized (DM-image report, Platform Team 9/13; keep
+    // in sync with the web's MEDIA_MAX_* in channels/lib/messageMedia.ts).
+    const scale = Math.min(1, 560 / width, 560 / height);
     return {
       ...style,
       aspectRatio: `${width} / ${height}`,
