@@ -9,7 +9,6 @@ import {
   createInputFollowState,
   forceInputFollow,
   isScrolledToBottom,
-  nextFollowState,
 } from "./scrollFollow.ts";
 
 // Scroller fixture: 800px viewport over 50000px of content, so the bottom
@@ -26,17 +25,11 @@ test("isScrolledToBottom pins the band edges", () => {
   assert.equal(isScrolledToBottom(BOTTOM - 33, CONTENT, VIEWPORT), false);
 });
 
-test("nextFollowState keeps the delta-pause semantics its other callers rely on", () => {
-  // AgentActivityPanel / ForumThreadView still use the delta engine: any
-  // upward movement beyond noise pauses, at-bottom resumes.
-  assert.equal(nextFollowState(true, BOTTOM, READING, CONTENT, VIEWPORT), false);
-  assert.equal(nextFollowState(false, READING, BOTTOM, CONTENT, VIEWPORT), true);
-  // Sub-pixel upward drift is noise, not intent.
-  assert.equal(
-    nextFollowState(true, BOTTOM, BOTTOM - 1, CONTENT, VIEWPORT),
-    true,
-  );
-});
+// The delta engine (nextFollowState) was removed 2026-09-15 (D-027): with
+// AgentActivityPanel and ForumThreadView ported onto InputFollowState, no
+// caller remained, and a dead export lies about the contract. The 9/13
+// pause-when-reading semantics it encoded survive inside
+// applyInputFollowScroll (armed + upward movement → paused).
 
 //
 // InputFollowState — the engine the virtualized timeline uses.
