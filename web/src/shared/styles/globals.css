@@ -112,6 +112,29 @@
   }
 
   /*
+   * Phone floor (D-025): the desktop conversation contract is 13/14/15px,
+   * which reads small on a phone held at reading distance. On viewports
+   * narrower than the md breakpoint (768px), floor the conversation text
+   * at 1rem (16px) — `max()` keeps the preference working (it still raises;
+   * its "smaller" just stops mattering on phones) and leaves every desktop
+   * width on the existing contract. Message prose reads this variable via
+   * `text-message`; the composer is already `text-base`, so nothing there
+   * changes.
+   */
+  @media (max-width: 767px) {
+    :root {
+      --conversation-message-font-size: max(
+        calc(var(--buzz-type-rem) * 0.875),
+        1rem
+      );
+      --conversation-message-line-height: max(
+        calc(var(--buzz-type-rem) * 1.25),
+        calc(1rem * 1.3)
+      );
+    }
+  }
+
+  /*
    * Selected sidebar row — the surface, its shadow, its label weight and color.
    *
    * Sam 2026-09-06 (second pass): the selected row is EXACTLY the hover
