@@ -269,6 +269,8 @@ export function ChannelTimeline({
   };
   const rowIndex = new Map<string, number>();
   rowIndexRef.current = rowIndex;
+  /** Which roots the buffer can actually render under — see the orphan branch. */
+  const bufferedIds = new Set(messages.map((message) => message.id));
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index];
     // Deleted messages disappear from the timeline entirely (desktop parity:
@@ -313,10 +315,21 @@ export function ChannelTimeline({
       continue;
     }
     // Replies render INLINE under their root (desktop pattern: indented
-    // previews with a connector rail, click opens the full thread panel).
+    // previews with a connector rail, click opens the full thread panel) —
+    // but only when the root is in the buffer to render under. An orphan
+    // (root older than the fetched page, deleted, or pruned) used to
+    // `continue` into nothing while its day divider still rendered above
+    // it: the timeline claimed the day's activity and refused to show it
+    // (D-025 follow-up, reproduced on the CK DM — divider, zero rows). It
+    // now falls through as a top-level row, so the newest message is always
+    // visible somewhere.
     if (!flat && (message.rootId || message.replyToId)) {
+      const rootId = message.rootId ?? message.replyToId ?? "";
+      if (bufferedIds.has(rootId)) {
+        lastAuthor = null;
+        continue;
+      }
       lastAuthor = null;
-      continue;
     }
     const replies = flat
       ? []
