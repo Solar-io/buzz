@@ -189,9 +189,13 @@ export function buildTrackerIndex(
   }
 
   for (const { dtag, name } of registry ?? []) {
-    const canonical = entryFor(dtag);
-    const island =
-      byProject.get(name) ?? byProject.get(name.toLowerCase());
+    // Existence, not entryFor: creating an entry here would put a phantom
+    // "Primary: unassigned" on every card the sidecar never mentions. The
+    // registry pairs fuse islands; they do not speak for the sidecar.
+    const canonical =
+      byProject.get(dtag) ?? byProject.get(dtag.toLowerCase());
+    if (!canonical) continue;
+    const island = byProject.get(name) ?? byProject.get(name.toLowerCase());
     if (island && island !== canonical) {
       if (!canonical.owner) canonical.owner = island.owner;
       canonical.openItems.push(...island.openItems);

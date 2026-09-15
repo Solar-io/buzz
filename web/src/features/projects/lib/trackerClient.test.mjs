@@ -233,3 +233,23 @@ test("no browser location and no override env means no URL, not a crash", () => 
   // must yield null rather than "https://undefined:6451/...".
   assert.equal(trackerJsonUrl(), null);
 });
+
+test("a registry pair the sidecar never mentions answers null, not an empty entry", () => {
+  // The projects page passes every card's dtag/name through the fusion loop;
+  // an entry created there would put a false "Primary: unassigned" on cards
+  // the ledger says nothing about. Caught in the live DOM 9/15: all 31 cards
+  // rendered Primary before this rule existed.
+  const doc = parseTrackerDocument({
+    projects: [{ slug: "buzz", owner: "Gilfoyle" }],
+    items: [],
+  });
+  const index = buildTrackerIndex(doc, [
+    { dtag: "buzz", name: "Buzz" },
+    { dtag: "warranty", name: "Warranty" },
+  ]);
+  assert.ok(lookupTrackerEntry(index, { dtag: "buzz", name: "Buzz" }));
+  assert.equal(
+    lookupTrackerEntry(index, { dtag: "warranty", name: "Warranty" }),
+    null,
+  );
+});
