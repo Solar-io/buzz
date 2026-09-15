@@ -91,7 +91,13 @@ export function HuddleBar({
   );
   const profiles = useProfiles(pubkeys);
 
-  const connected = huddle.status === "connected";
+  // "reconnecting" keeps the in-call controls mounted (the mic graph is
+  // alive and the socket is redialing); the chip below is the only visual
+  // difference — the call must not flip back to the join screen over a
+  // hiccup the client is actively recovering from.
+  const connected =
+    huddle.status === "connected" || huddle.status === "reconnecting";
+  const reconnecting = huddle.status === "reconnecting";
   const pushToTalk = huddle.voiceInputMode === "push_to_talk";
   const { setPushToTalkActive } = huddle;
 
@@ -218,6 +224,13 @@ export function HuddleBar({
     // biome-ignore lint/a11y/noStaticElementInteractions: the bar is a key-hold surface for push-to-talk, not a control in its own right
     <div
       className="relative flex flex-wrap items-center gap-3 border-b border-border bg-card/40 px-4 py-2 outline-none"
+      onPointerDown={() => {
+        // A system-suspended AudioContext can only be resumed from a
+        // gesture; every press on the bar is one. No-op while running.
+        if (connected) {
+          void huddle.resumeAudio();
+        }
+      }}
       onKeyDown={(event) => {
         if (event.key === " " && connected && pushToTalk && !event.repeat) {
           event.preventDefault();
@@ -234,6 +247,20 @@ export function HuddleBar({
       {connected ? (
         <>
           <HuddleReactionBurst reactions={reactions.active} />
+          {reconnecting && (
+            <span
+              data-testid="huddle-reconnecting"
+              className="animate-pulse rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-0.5 text-2xs text-amber-400"
+              role="status"
+            >
+              Reconnecting…
+            </span>
+          )}
+          {huddle.error && (
+            <span className="text-2xs text-red-400" role="alert">
+              {huddle.error}
+            </span>
+          )}
           <button
             type="button"
             data-testid="huddle-mute"
