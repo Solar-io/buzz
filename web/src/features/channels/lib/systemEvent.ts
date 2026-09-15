@@ -163,6 +163,19 @@ export function describeSystemEvent(
         action: "removed a message",
       };
     }
+    case "dm_created": {
+      // A DM's first event is often its ONLY durable row for a while, so an
+      // undescribed dm_created rendered nothing while its day divider still
+      // rendered — a blank conversation with "Yesterday" hanging over it
+      // (D-025 follow-up, reproduced on the CK DM 2026-09-15).
+      if (!payload.actor) {
+        return null;
+      }
+      return {
+        title: resolveLabel(payload.actor),
+        action: "started this conversation",
+      };
+    }
     default:
       return null;
   }

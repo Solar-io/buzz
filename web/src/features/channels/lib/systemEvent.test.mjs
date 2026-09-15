@@ -181,3 +181,19 @@ test("out-of-scope and malformed payloads describe to null (never raw JSON)", ()
   assert.equal(describe({ type: "member_left" }), null);
   assert.equal(describeSystemEvent(null, resolve), null);
 });
+
+// --- dm_created (D-025 follow-up) -----------------------------------------
+
+test("dm_created describes as the actor starting the conversation", () => {
+  const description = describe({
+    type: "dm_created",
+    actor: ALICE,
+    participants: [ALICE, BOB],
+  });
+  assert.equal(description.title, "Alice");
+  assert.equal(description.action, "started this conversation");
+});
+
+test("dm_created without an actor stays null like every other system row", () => {
+  assert.equal(describe({ type: "dm_created", participants: [ALICE] }), null);
+});
