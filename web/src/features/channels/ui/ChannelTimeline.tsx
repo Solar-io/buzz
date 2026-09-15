@@ -610,7 +610,11 @@ export function ChannelTimeline({
           </div>
         </div>
       )}
-      <VList ref={listRef} className="min-h-0 flex-1" onScroll={handleScroll}>
+      <VList
+        ref={listRef}
+        className="buzz-timeline-scrollbar min-h-0 flex-1"
+        onScroll={handleScroll}
+      >
         {items}
       </VList>
     </div>

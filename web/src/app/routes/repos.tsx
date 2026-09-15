@@ -889,7 +889,11 @@ function ChannelBrowser() {
                     // biome-ignore lint/a11y/useAriaPropsForRole: drag handle is not a value slider; aria-valuenow would be meaningless
                     role="separator"
                     aria-orientation="vertical"
-                    className="relative z-10 hidden w-1 shrink-0 cursor-col-resize border-r border-border bg-transparent transition-colors hover:bg-white/15 active:bg-white/25 lg:block lg:-ml-px"
+                    // No border of its own: the pane's border-l is the one
+                    // divider line. The handle used to add a second 1px
+                    // border 4px beside it — under always-on OS scrollbars
+                    // that stack read as "two scrollbars and a sliver".
+                    className="relative z-10 hidden w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-white/15 active:bg-white/25 lg:block lg:-ml-px"
                     onPointerDown={(event) => {
                       event.preventDefault();
                       event.currentTarget.setPointerCapture(event.pointerId);
