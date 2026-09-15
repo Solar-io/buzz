@@ -168,7 +168,8 @@ mod tests {
                 preset.key
             );
             assert!(
-                preset.upstream_vctk_file.starts_with('p') && preset.upstream_vctk_file.ends_with(".wav"),
+                preset.upstream_vctk_file.starts_with('p')
+                    && preset.upstream_vctk_file.ends_with(".wav"),
                 "preset {} upstream file must be a VCTK wav",
                 preset.key
             );
@@ -187,7 +188,9 @@ mod tests {
             "pocket:eve must never be publishable (identity-test ban)"
         );
         assert!(
-            POCKET_PRESETS.iter().any(|preset| preset.key == EVE_VOICE_KEY),
+            POCKET_PRESETS
+                .iter()
+                .any(|preset| preset.key == EVE_VOICE_KEY),
             "eve stays in the bundled table — only its publication is banned"
         );
     }
