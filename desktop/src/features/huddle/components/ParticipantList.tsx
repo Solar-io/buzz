@@ -180,7 +180,7 @@ export function HuddleParticipantsControl({
       invokeTauri<Record<string, HuddleAgentVoiceSettings>>(
         "ensure_huddle_agent_voice_settings",
       ),
-      invokeTauri<VoiceRegistryEntry[]>("list_voice_registry"),
+      invokeTauri<VoiceRegistryEntry[]>("list_voice_catalog"),
     ])
       .then(([settings, registry]) => {
         if (!disposed) {

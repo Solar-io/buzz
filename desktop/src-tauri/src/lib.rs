@@ -824,6 +824,7 @@ pub fn run() {
             set_tts_enabled,
             huddle::tts_settings::get_tts_settings,
             huddle::tts_settings::list_voice_registry,
+            huddle::voice_catalog::list_voice_catalog,
             huddle::tts_settings::set_pocket_voice,
             huddle::tts_settings::preview_pocket_voice,
             huddle::tts_settings::import_pocket_voice,

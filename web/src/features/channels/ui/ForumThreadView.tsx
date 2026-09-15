@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MessageSquareText } from "lucide-react";
 import type { ChannelSummary } from "../lib/channelFromEvent.ts";
 import type { TimelineMessage } from "../lib/messageBuffer.ts";
@@ -17,7 +17,12 @@ import {
 } from "../lib/threadTarget.ts";
 import { cn } from "@/shared/lib/cn";
 import { relativeTime } from "@/shared/lib/relative-time";
-import { nextFollowState } from "@/features/agents/lib/scrollFollow";
+import {
+  applyInputFollowScroll,
+  armFollowInput,
+  createInputFollowState,
+  forceInputFollow,
+} from "@/features/agents/lib/scrollFollow";
 import { AuthorAvatar, authorLabel } from "./ChannelTimeline.tsx";
 import { Composer } from "./Composer.tsx";
 import { MarkdownContent } from "./MarkdownContent.tsx";
@@ -65,43 +70,159 @@ export function ForumThreadView({
   const { root: fetchedRoot, replies } = useForumThread(channel.id, postId);
   const root = fetchedRoot ?? fallbackRoot;
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Follow-the-tail state (see features/agents/lib/scrollFollow.ts): the
-  // panel tails new replies only while the reader is at the bottom. Any
-  // upward scroll pauses the tail; scrolling back to the bottom resumes it.
-  const followRef = useRef(true);
-  const lastScrollTopRef = useRef(0);
+  // Follow-the-tail state (see features/agents/lib/scrollFollow.ts — the
+  // InputFollowState engine the timeline uses, ported here 2026-09-15,
+  // D-027): tailing pauses on a reader's upward INPUT (armed by the
+  // capture-phase listeners below), never on scroll deltas, so the tail's
+  // own settling and late-sizing content cannot pause it. Scrolling back to
+  // the bottom resumes.
+  const followRef = useRef(createInputFollowState(true));
+  /** Pending rAF of the geometry re-pin (coalesced like the timeline's). */
+  const pinRafRef = useRef<number | null>(null);
   const lastReplyId = replies.length > 0 ? replies[replies.length - 1].id : "";
   // A different post opening always re-lands on its newest reply.
   // biome-ignore lint/correctness/useExhaustiveDependencies: postId is the reset trigger, not a value read inside the effect
   useEffect(() => {
-    followRef.current = true;
-    lastScrollTopRef.current = 0;
+    forceInputFollow(followRef.current);
+    followRef.current.prevScrollTop = 0;
   }, [postId]);
   // Keep the thread on the newest reply while following — long alert threads
   // read from the bottom (same intent as the stream ThreadPanel's
-  // auto-tail). A reader scrolled up to read is never yanked down.
+  // auto-tail). A reader scrolled up to read is never yanked down — with the
+  // one desktop-parity exception: the reader's OWN comment force-follows so
+  // it is never left below the fold (prepareForOwnMessage: a send is the
+  // clearest show-me-the-bottom signal there is).
   // biome-ignore lint/correctness/useExhaustiveDependencies: lastReplyId/root id are the re-tail triggers by design
   useEffect(() => {
-    const node = scrollRef.current;
-    if (node && followRef.current) {
-      node.scrollTo({ top: node.scrollHeight });
+    if (
+      selfPubkey != null &&
+      replies.length > 0 &&
+      replies[replies.length - 1].authorPubkey === selfPubkey
+    ) {
+      forceInputFollow(followRef.current);
     }
+    const toBottom = () => {
+      const node = scrollRef.current;
+      if (node && followRef.current.follow) {
+        node.scrollTo({ top: node.scrollHeight });
+      }
+    };
+    const raf = requestAnimationFrame(() => requestAnimationFrame(toBottom));
+    return () => cancelAnimationFrame(raf);
   }, [lastReplyId, root?.id]);
-  const handleFollowScroll = () => {
-    const node = scrollRef.current;
-    if (!node) {
+  // Follow tick + reader-input arm (the timeline's pattern, D-027): native
+  // CAPTURE-phase listeners on the pane scroller (its own wrapper), reading
+  // event.target's native metrics. Inner scrollers (horizontal code blocks
+  // inside replies) are not pane scrolls and are skipped.
+  const handleFollowScroll = useCallback((event: Event) => {
+    const el = event.target as HTMLElement | null;
+    if (!el || el !== scrollRef.current) {
       return;
     }
-    const prev = lastScrollTopRef.current;
-    lastScrollTopRef.current = node.scrollTop;
-    followRef.current = nextFollowState(
+    applyInputFollowScroll(
       followRef.current,
-      prev,
-      node.scrollTop,
-      node.scrollHeight,
-      node.clientHeight,
+      el.scrollTop,
+      el.scrollHeight,
+      el.clientHeight,
+      performance.now(),
     );
-  };
+  }, []);
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) {
+      return;
+    }
+    const arm = () => armFollowInput(followRef.current, performance.now());
+    const armForPointer = (event: PointerEvent) => {
+      if (event.target === scroller) {
+        arm();
+      }
+    };
+    const armForScrollKey = (event: KeyboardEvent) => {
+      if (
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        !(event.target instanceof Node) ||
+        !scroller.contains(event.target) ||
+        (event.target instanceof HTMLElement &&
+          (event.target.isContentEditable ||
+            event.target.closest(
+              "input, textarea, select, [contenteditable='true']",
+            ) !== null))
+      ) {
+        return;
+      }
+      if (
+        event.key === "ArrowDown" ||
+        event.key === "ArrowUp" ||
+        event.key === "End" ||
+        event.key === "Home" ||
+        event.key === "PageDown" ||
+        event.key === "PageUp" ||
+        event.key === " "
+      ) {
+        arm();
+      }
+    };
+    scroller.addEventListener("touchmove", arm, { capture: true, passive: true });
+    scroller.addEventListener("wheel", arm, { capture: true, passive: true });
+    scroller.addEventListener("pointerdown", armForPointer, {
+      capture: true,
+      passive: true,
+    });
+    window.addEventListener("keydown", armForScrollKey, true);
+    scroller.addEventListener("scroll", handleFollowScroll, {
+      capture: true,
+      passive: true,
+    });
+    return () => {
+      scroller.removeEventListener("touchmove", arm, { capture: true });
+      scroller.removeEventListener("wheel", arm, { capture: true });
+      scroller.removeEventListener("pointerdown", armForPointer, {
+        capture: true,
+      } as EventListenerOptions);
+      window.removeEventListener("keydown", armForScrollKey, true);
+      scroller.removeEventListener("scroll", handleFollowScroll, {
+        capture: true,
+      } as EventListenerOptions);
+    };
+  }, [handleFollowScroll]);
+  // Geometry settle (the timeline's pattern, D-027): while following, ANY
+  // geometry change re-pins the bottom — replies with late-sizing media land
+  // seconds after the double-rAF tail. The rAF coalesces the observer burst.
+  // Not following → no pin, so a reader scrolled up is never yanked.
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) {
+      return;
+    }
+    const pin = () => {
+      if (!followRef.current.follow || pinRafRef.current !== null) {
+        return;
+      }
+      pinRafRef.current = requestAnimationFrame(() => {
+        pinRafRef.current = null;
+        const el = scrollRef.current;
+        if (el && followRef.current.follow) {
+          el.scrollTo({ top: el.scrollHeight });
+        }
+      });
+    };
+    const observer = new ResizeObserver(pin);
+    observer.observe(scroller);
+    const content = scroller.firstElementChild;
+    if (content instanceof HTMLElement) {
+      observer.observe(content);
+    }
+    return () => {
+      observer.disconnect();
+      if (pinRafRef.current !== null) {
+        cancelAnimationFrame(pinRafRef.current);
+        pinRafRef.current = null;
+      }
+    };
+  }, []);
 
   // Which reply the comment is a reply TO. Null = the post itself, whose
   // NIP-10 parent is the post id. Cleared when a different post opens.
@@ -147,7 +268,6 @@ export function ForumThreadView({
       <div
         className="buzz-content-scrollbar min-h-0 flex-1 overflow-y-auto"
         ref={scrollRef}
-        onScroll={handleFollowScroll}
       >
         <div className="mx-auto w-full max-w-3xl px-1 sm:px-3">
           {root ? (

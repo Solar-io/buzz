@@ -50,6 +50,7 @@ mod tts_playback;
 pub mod tts_settings;
 mod tts_voice_import;
 mod tts_voice_registry;
+pub mod voice_catalog;
 mod window;
 pub mod wire;
 

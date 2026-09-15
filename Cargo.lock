@@ -980,6 +980,7 @@ dependencies = [
  "buzz-media",
  "buzz-persona",
  "buzz-sdk",
+ "buzz-voice",
  "buzz-ws-client",
  "bytes",
  "chrono",

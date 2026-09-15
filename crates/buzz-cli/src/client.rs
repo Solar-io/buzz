@@ -61,12 +61,19 @@ pub fn build_imeta_tag(d: &BlobDescriptor) -> Vec<String> {
 }
 
 /// MIME types accepted for upload.
+///
+/// `audio/wav` is the voice-catalog asset format (`buzz voices publish`
+/// canonicalizes through `PocketVoiceLibrary::import_path` first); the relay's
+/// generic file path runs it through the structural voice-reference WAV
+/// validator, so anything but header-only PCM/float audio is rejected
+/// server-side.
 const ALLOWED_MIMES: &[&str] = &[
     "image/jpeg",
     "image/png",
     "image/gif",
     "image/webp",
     "video/mp4",
+    "audio/wav",
 ];
 
 /// Maximum file size for image uploads (50 MB).
@@ -2251,9 +2258,7 @@ mod retry_policy_tests {
             )
             .unwrap();
         }
-        let mut tiff = vec![
-            b'I', b'I', 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00,
-        ];
+        let mut tiff = vec![b'I', b'I', 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00];
         tiff.extend_from_slice(&0x0112u16.to_le_bytes());
         tiff.extend_from_slice(&3u16.to_le_bytes());
         tiff.extend_from_slice(&1u32.to_le_bytes());
@@ -2287,15 +2292,16 @@ mod retry_policy_tests {
                 return;
             };
             let mut buf = vec![0u8; 1024 * 1024];
-            let _ = tokio::time::timeout(
-                std::time::Duration::from_millis(500),
-                stream.read(&mut buf),
-            )
-            .await;
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_millis(500), stream.read(&mut buf))
+                    .await;
             // Split headers from body at the first CRLFCRLF.
             let req = buf;
             if let Some(pos) = req.windows(4).position(|w| w == b"\r\n\r\n") {
-                captured_body2.lock().unwrap().extend_from_slice(&req[pos + 4..]);
+                captured_body2
+                    .lock()
+                    .unwrap()
+                    .extend_from_slice(&req[pos + 4..]);
             }
             let ok_body = r#"{"url":"https://relay.test/media/aabbcc.jpg","sha256":"aabbcc","size":12,"type":"image/jpeg","uploaded":0}"#;
             let ok = format!(

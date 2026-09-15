@@ -1,8 +1,13 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { BarChart3, Brain } from "lucide-react";
 import type { Profile } from "@/features/channels/hooks";
 import { AuthorAvatar } from "@/features/channels/ui/AuthorAvatar";
-import { nextFollowState } from "@/features/agents/lib/scrollFollow";
+import {
+  applyInputFollowScroll,
+  armFollowInput,
+  createInputFollowState,
+  forceInputFollow,
+} from "@/features/agents/lib/scrollFollow";
 import {
   transcriptFromFrames,
   type AgentWorkingState,
@@ -126,14 +131,16 @@ export function AgentActivityPanel({
   onSelectThreadTab?: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Follow-the-tail state (see lib/scrollFollow.ts): ANY upward scroll
-  // pauses tailing — position alone was not enough, because during a fast
-  // stream the tail re-pins the bottom between the reader's small upward
-  // deltas and erases them before they add up to an escape (Sam 2026-09-13).
-  // Scrolling back to the bottom resumes. No user-vs-programmatic
-  // disambiguation beyond direction — both just move the scroller.
-  const followRef = useRef(true);
-  const lastScrollTopRef = useRef(0);
+  // Follow-the-tail state (see lib/scrollFollow.ts — the InputFollowState
+  // engine the timeline uses, ported here 2026-09-15, D-027): tailing pauses
+  // on a reader's upward INPUT (touch/wheel/scrollbar/scroll keys — armed by
+  // the capture-phase listeners below), never on scroll deltas, so the pane's
+  // own settling (the double-rAF tail, the ResizeObserver re-pin, late-sizing
+  // content) cannot pause the tail the way the old delta engine did.
+  // Scrolling back to the bottom resumes.
+  const followRef = useRef(createInputFollowState(true));
+  /** Pending rAF of the geometry re-pin (coalesced like the timeline's). */
+  const pinRafRef = useRef<number | null>(null);
   const { entries, suppressed } = useMemo(
     () => transcriptFromFrames(frames),
     [frames],
@@ -161,15 +168,15 @@ export function AgentActivityPanel({
     // the pause).
     if (lastAgentKeyRef.current !== agentKey) {
       lastAgentKeyRef.current = agentKey;
-      followRef.current = true;
-      lastScrollTopRef.current = 0;
+      forceInputFollow(followRef.current);
+      followRef.current.prevScrollTop = 0;
     }
     const scroller = scrollRef.current;
     if (!scroller) {
       return;
     }
     const scrollToEnd = () => {
-      if (!followRef.current) {
+      if (!followRef.current.follow) {
         return;
       }
       scroller.scrollTo({ top: scroller.scrollHeight });
@@ -177,24 +184,126 @@ export function AgentActivityPanel({
     const raf = requestAnimationFrame(() => requestAnimationFrame(scrollToEnd));
     return () => cancelAnimationFrame(raf);
   }, [lastId, entries.length, agentKey]);
-  // Follow updates from position AND direction (see lib/scrollFollow.ts):
-  // any real upward move = paused, back at the bottom = following again
-  // (and the next frame re-tails).
-  const handleScroll = () => {
+  // Follow tick + reader-input arm (the timeline's pattern, D-027): the
+  // scroller div is its own wrapper — native CAPTURE-phase listeners attached
+  // in an effect, not React props (React's onScroll cannot capture-listen for
+  // descendant scroll events, and a prop re-attach churns on every render).
+  // The scroll handler processes ONLY the pane scroller's own events, read
+  // off event.target's native metrics; inner scrollers (a horizontal code
+  // block inside a thinking entry) are not pane scrolls and are skipped —
+  // the pane equivalent of the timeline's scrollHeight-clientHeight<2 rule,
+  // stricter because a plain-div pane has exactly one scroller that matters.
+  const handleFollowScroll = useCallback((event: Event) => {
+    const el = event.target as HTMLElement | null;
+    if (!el || el !== scrollRef.current) {
+      return;
+    }
+    applyInputFollowScroll(
+      followRef.current,
+      el.scrollTop,
+      el.scrollHeight,
+      el.clientHeight,
+      performance.now(),
+    );
+  }, []);
+  useEffect(() => {
     const scroller = scrollRef.current;
     if (!scroller) {
       return;
     }
-    const prev = lastScrollTopRef.current;
-    lastScrollTopRef.current = scroller.scrollTop;
-    followRef.current = nextFollowState(
-      followRef.current,
-      prev,
-      scroller.scrollTop,
-      scroller.scrollHeight,
-      scroller.clientHeight,
-    );
-  };
+    const arm = () => armFollowInput(followRef.current, performance.now());
+    const armForPointer = (event: PointerEvent) => {
+      if (event.target === scroller) {
+        arm();
+      }
+    };
+    const armForScrollKey = (event: KeyboardEvent) => {
+      if (
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        !(event.target instanceof Node) ||
+        !scroller.contains(event.target) ||
+        (event.target instanceof HTMLElement &&
+          (event.target.isContentEditable ||
+            event.target.closest(
+              "input, textarea, select, [contenteditable='true']",
+            ) !== null))
+      ) {
+        return;
+      }
+      if (
+        event.key === "ArrowDown" ||
+        event.key === "ArrowUp" ||
+        event.key === "End" ||
+        event.key === "Home" ||
+        event.key === "PageDown" ||
+        event.key === "PageUp" ||
+        event.key === " "
+      ) {
+        arm();
+      }
+    };
+    scroller.addEventListener("touchmove", arm, { capture: true, passive: true });
+    scroller.addEventListener("wheel", arm, { capture: true, passive: true });
+    scroller.addEventListener("pointerdown", armForPointer, {
+      capture: true,
+      passive: true,
+    });
+    window.addEventListener("keydown", armForScrollKey, true);
+    scroller.addEventListener("scroll", handleFollowScroll, {
+      capture: true,
+      passive: true,
+    });
+    return () => {
+      scroller.removeEventListener("touchmove", arm, { capture: true });
+      scroller.removeEventListener("wheel", arm, { capture: true });
+      scroller.removeEventListener("pointerdown", armForPointer, {
+        capture: true,
+      } as EventListenerOptions);
+      window.removeEventListener("keydown", armForScrollKey, true);
+      scroller.removeEventListener("scroll", handleFollowScroll, {
+        capture: true,
+      } as EventListenerOptions);
+    };
+  }, [handleFollowScroll]);
+  // Geometry settle (the timeline's pattern, D-027): while following, ANY
+  // geometry change re-pins the bottom — the panel's frames stream in like
+  // the timeline's did, and late-sizing content (media, wrapped code) lands
+  // seconds after the double-rAF tail. The rAF coalesces the burst of
+  // observer callbacks. Not following → no pin, so a reader scrolled up is
+  // never yanked by a resize.
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) {
+      return;
+    }
+    const pin = () => {
+      if (!followRef.current.follow || pinRafRef.current !== null) {
+        return;
+      }
+      pinRafRef.current = requestAnimationFrame(() => {
+        pinRafRef.current = null;
+        const el = scrollRef.current;
+        if (el && followRef.current.follow) {
+          el.scrollTo({ top: el.scrollHeight });
+        }
+      });
+    };
+    const observer = new ResizeObserver(pin);
+    observer.observe(scroller);
+    const content = scroller.firstElementChild;
+    if (content instanceof HTMLElement) {
+      observer.observe(content);
+    }
+    return () => {
+      observer.disconnect();
+      if (pinRafRef.current !== null) {
+        cancelAnimationFrame(pinRafRef.current);
+        pinRafRef.current = null;
+      }
+    };
+  }, []);
   useTick(working.working);
 
   return (
@@ -253,7 +362,6 @@ export function AgentActivityPanel({
       </header>
       <div
         ref={scrollRef}
-        onScroll={handleScroll}
         className="buzz-channel-activity-scrollbar min-h-0 flex-1 overflow-y-auto p-3"
       >
         {/* The portrait lives over the CHAT column now (AgentPortraitOverlay,

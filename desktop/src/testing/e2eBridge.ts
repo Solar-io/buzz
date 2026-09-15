@@ -11430,6 +11430,9 @@ export function maybeInstallE2eTauriMocks() {
           }
         );
       case "list_voice_registry":
+      // The catalog command overlays relay rows on the registry; in mock mode
+      // there is no relay, so it answers with the same bundled registry.
+      case "list_voice_catalog":
         return [
           ...[
             [

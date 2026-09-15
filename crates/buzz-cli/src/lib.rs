@@ -242,6 +242,53 @@ enum Cmd {
     /// Community moderation — reports queue, bans, timeouts, audit trail
     #[command(subcommand)]
     Moderation(ModerationCmd),
+    /// Publish and query the community voice catalog (kind 30181)
+    #[command(subcommand)]
+    Voices(VoicesCmd),
+}
+
+#[derive(Subcommand)]
+pub enum VoicesCmd {
+    /// List voice-catalog rows (community-wide, or one author's)
+    #[command(after_help = "Examples:\n  buzz voices list\n  buzz voices list --author <HEX>")]
+    List {
+        /// Restrict to one author's pubkey (hex); defaults to all authors
+        #[arg(long)]
+        author: Option<String>,
+    },
+    /// Canonicalize, upload, and publish one imported voice (kind 30181)
+    #[command(
+        after_help = "Examples:\n  buzz voices publish --file voice.wav --name \"Azelma studio take\" --license CC-BY-4.0 --source \"Sam's own recording\""
+    )]
+    Publish {
+        /// Source audio file (WAV, M4A, MP3, FLAC, OGG, or AIFF); canonicalized to 32 kHz PCM16 mono before upload
+        #[arg(long)]
+        file: String,
+        /// Display label (max 80 chars)
+        #[arg(long)]
+        name: String,
+        /// License of the recording (required attribution)
+        #[arg(long)]
+        license: String,
+        /// Source attribution (required)
+        #[arg(long)]
+        source: String,
+        /// Optional upstream URL
+        #[arg(long)]
+        source_url: Option<String>,
+    },
+    /// Publish all bundled Pocket presets as asset-less catalog rows
+    ///
+    /// Skips pocket:eve (banned from catalog publication) and says so.
+    #[command(after_help = "Examples:\n  buzz voices publish-bundled")]
+    PublishBundled,
+    /// Remove one of your catalog rows (kind 5 coordinate delete)
+    #[command(after_help = "Examples:\n  buzz voices remove --key pocket:imported:<64-hex>")]
+    Remove {
+        /// Voice key of the row to remove (your own rows only)
+        #[arg(long)]
+        key: String,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -2120,6 +2167,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Upload(sub) => commands::upload::dispatch(sub, &client).await,
         Cmd::Mem(sub) => commands::mem::dispatch(sub, &client).await,
         Cmd::Moderation(sub) => commands::moderation::dispatch(sub, &client, &cli.format).await,
+        Cmd::Voices(sub) => commands::voices::dispatch(sub, &client).await,
         Cmd::Pack(_) => unreachable!("handled above"),
     }
 }
@@ -2269,6 +2317,9 @@ mod tests {
             "social",
             "upload",
             "users",
+            // Voice-catalog group (kind 30181): list / publish /
+            // publish-bundled / remove.
+            "voices",
             "workflows",
         ];
 
