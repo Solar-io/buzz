@@ -23,6 +23,9 @@ import {
   decideTimelineRecovery,
   LIST_COLLAPSED_MAX,
 } from "@/features/channels/lib/timelineRecovery";
+import { decideGeometryDiagnostic } from "@/features/channels/lib/geometryDiagnostic";
+import { chainEntry } from "@/features/channels/lib/geometryDiagnostic";
+import { GeometryDiagnosticOverlay } from "./GeometryDiagnosticOverlay.tsx";
 import { authorLabel } from "../lib/authorLabel.ts";
 import { formatDayLabel } from "../lib/dateFormatters.ts";
 import {
@@ -204,6 +207,67 @@ export function ChannelTimeline({
   const [recoveryNonce, bumpRecovery] = useReducer((x: number) => x + 1, 0);
   const collapsedBeatsRef = useRef(0);
   const recoveriesRef = useRef(0);
+  const [diagLines, setDiagLines] = useState<string[] | null>(null);
+  /**
+   * Geometry self-diagnostic (D-025 criterion 1): every rig fills; only a
+   * real device has shown the squeeze, so when the on-screen geometry is
+   * wrong the phone reports its own DOM (see lib/geometryDiagnostic.ts for
+   * the trigger and the named healthy exclusions). Debounced two beats so
+   * mount flicker cannot arm it; fires once per mount.
+   */
+  const diagBeatsRef = useRef(0);
+  const diagFiredRef = useRef(false);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (diagFiredRef.current) { window.clearInterval(timer); return; }
+      const wrap = wrapRef.current;
+      if (!wrap) return;
+      const list = wrap.querySelector<HTMLElement>(".buzz-timeline-scrollbar");
+      if (!list) return;
+      const composer = [...document.querySelectorAll("textarea")].find(
+        (t) => t.getBoundingClientRect().height > 10,
+      );
+      const decision = decideGeometryDiagnostic({
+        timelineMounted: true,
+        timelineRows: list.children.length,
+        composerPresent: Boolean(composer),
+        timelineHeight: Math.round(list.getBoundingClientRect().height),
+        wrapperHeight: Math.round(wrap.getBoundingClientRect().height),
+      });
+      if (!decision.fire) { diagBeatsRef.current = 0; return; }
+      diagBeatsRef.current += 1;
+      if (diagBeatsRef.current < 2) return;
+      diagFiredRef.current = true;
+      window.clearInterval(timer);
+      const scriptTag = document.querySelector<HTMLScriptElement>('script[src*="index-"]');
+      const lines = [
+        `buzz-geometry-diag trigger=${decision.trigger} vh=${window.innerHeight} vw=${window.innerWidth}`,
+        `bundle=${scriptTag ? scriptTag.src.split("/").pop() : "unknown"}`,
+        `rows=${list.children.length} listH=${Math.round(list.getBoundingClientRect().height)} wrapH=${Math.round(wrap.getBoundingClientRect().height)}`,
+        "chain:",
+      ];
+      let el: HTMLElement | null = list;
+      for (let depth = 0; el && depth < 14; depth++) {
+        const cs = getComputedStyle(el);
+        const r = el.getBoundingClientRect();
+        lines.push(
+          chainEntry(
+            depth,
+            el.tagName.toLowerCase(),
+            typeof el.className === "string" ? el.className : "",
+            Math.round(r.top),
+            Math.round(r.height),
+            `${cs.flexGrow}/${cs.flexShrink}/${cs.flexBasis}`,
+            cs.alignItems,
+            cs.justifyContent,
+          ),
+        );
+        el = el.parentElement;
+      }
+      setDiagLines(lines);
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, []);
   useEffect(() => {
     collapsedBeatsRef.current = 0;
     const startedAt = Date.now();
@@ -837,6 +901,7 @@ export function ChannelTimeline({
           </div>
         </div>
       )}
+      {diagLines && <GeometryDiagnosticOverlay lines={diagLines} />}
       <VList
         key={recoveryNonce}
         ref={listRef}
