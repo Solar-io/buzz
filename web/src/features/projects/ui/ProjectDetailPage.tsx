@@ -21,6 +21,8 @@ import { Button } from "@/shared/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
 import type { Project, Repository } from "../lib/projectModels.ts";
 import { selectProjectRepository } from "../lib/projectModels.ts";
+import { lookupTrackerEntry } from "../lib/trackerClient.ts";
+import { useTrackerIndex } from "../hooks.ts";
 import { IssuesPanel } from "./IssuesPanel.tsx";
 import { ProjectConversationPanel } from "./ProjectConversationPanel.tsx";
 
@@ -86,6 +88,66 @@ function UnavailableMembers({ addresses }: { addresses: string[] }) {
   );
 }
 
+/**
+ * Open work items from the tracker sidecar. Renders only when the sidecar
+ * knows the project — a project the ledger has never mentioned keeps its
+ * pre-tracker shape, and a dead sidecar removes the section rather than the
+ * page.
+ */
+function TrackerPanel({
+  entry,
+}: {
+  entry: ReturnType<typeof lookupTrackerEntry>;
+}) {
+  if (!entry) return null;
+  const generatedEpoch = entry.generated
+    ? Date.parse(entry.generated) / 1_000
+    : Number.NaN;
+  return (
+    <section
+      className="flex flex-col gap-2 rounded-xl border border-border/60 bg-card p-4"
+      data-testid="project-tracker"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold text-foreground">Tracker</h2>
+        <span className="text-2xs text-muted-foreground">
+          Primary: {entry.owner || "unassigned"}
+          {Number.isFinite(generatedEpoch)
+            ? ` · updated ${relativeTime(generatedEpoch)}`
+            : null}
+        </span>
+      </div>
+      {entry.openItems.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No open items.</p>
+      ) : (
+        <ul className="flex flex-col gap-1.5">
+          {entry.openItems.map((item) => (
+            <li
+              className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm"
+              data-testid={`tracker-item-${item.id}`}
+              key={item.id}
+            >
+              <span className="font-mono text-2xs text-muted-foreground">
+                {item.id}
+              </span>
+              <Badge variant="outline">{item.kind}</Badge>
+              <span className="text-2xs text-muted-foreground">
+                {item.status}
+              </span>
+              <span className="text-foreground">{item.summary}</span>
+              {item.owner ? (
+                <span className="text-2xs text-muted-foreground">
+                  · {item.owner}
+                </span>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export function ProjectDetailPage({
   onBack,
   project,
@@ -100,6 +162,8 @@ export function ProjectDetailPage({
   const profiles = useProfiles(useMemo(() => [project.owner], [project.owner]));
   const ownerLabel =
     profiles.get(project.owner)?.displayName ?? truncatePubkey(project.owner);
+  const trackerIndex = useTrackerIndex([project]);
+  const trackerEntry = lookupTrackerEntry(trackerIndex, project);
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6">
@@ -133,12 +197,20 @@ export function ProjectDetailPage({
           <p className="text-sm text-muted-foreground">{project.description}</p>
         ) : null}
         <p className="text-2xs text-muted-foreground">
-          {ownerLabel} · created {relativeTime(project.createdAt)} ·{" "}
+          {/* The announcer's identity says who published the pointer, not who
+              answers for the work — the sidecar is the only place that fact
+              lives. */}
+          {trackerEntry
+            ? `Primary: ${trackerEntry.owner || "unassigned"}`
+            : ownerLabel}{" "}
+          · created {relativeTime(project.createdAt)} ·{" "}
           <span className="font-mono">{project.dtag}</span>
         </p>
       </header>
 
       <UnavailableMembers addresses={project.unavailableRepositoryAddresses} />
+
+      <TrackerPanel entry={trackerEntry} />
 
       <RepositoryPicker
         onSelect={(next) => setSelectedId(next.id)}
