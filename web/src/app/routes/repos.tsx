@@ -57,6 +57,7 @@ import { useAgentRegistry } from "@/features/agents/useAgentRegistry";
 import { agentWorkingState } from "@/features/agents/lib/observerEvents";
 import { useTick } from "@/features/agents/ui/WorkingBadge";
 import { AgentActivityPanel } from "@/features/agents/ui/AgentActivityPanel";
+import { AgentPortraitOverlay } from "@/features/agents/ui/AgentPortraitOverlay";
 import { openDm, useDms } from "@/features/dms/hooks";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
 import {
@@ -723,7 +724,24 @@ function ChannelBrowser() {
                 className="flex h-full min-h-0"
                 style={{ ["--thread-width" as string]: `${threadWidth}px` }}
               >
-                <section className="flex min-w-0 flex-1 flex-col">
+                <section className="relative flex min-w-0 flex-1 flex-col">
+                  {dmAgentPubkey && (
+                    // Stationary portrait over the chat column (Sam's
+                    // placement verdict, 2026-09-14): anchored top-right, it
+                    // never scrolls with the transcript, and its fluid width
+                    // reflows as the thinking pane is dragged. The matching
+                    // gutter on the timeline below keeps the text clear of
+                    // it. Same agent-chosen kind-0 avatar as the panel chip;
+                    // a swap repaints it in place.
+                    <AgentPortraitOverlay
+                      pubkey={dmAgentPubkey}
+                      name={
+                        profiles.get(dmAgentPubkey)?.displayName ??
+                        dmAgentPubkey
+                      }
+                      picture={dmProfiles.get(dmAgentPubkey)?.avatar}
+                    />
+                  )}
                   <ChannelHeader
                     channel={current}
                     title={
@@ -785,54 +803,62 @@ function ChannelBrowser() {
                     />
                   ) : (
                     <>
-                      <ChannelTimeline
-                        messages={messages}
-                        profiles={profiles}
-                        replyCounts={counts}
-                        onOpenThread={(message) => {
-                          setThreadRootId(message.id);
-                          setRightTab("thread");
-                        }}
-                        activeRootId={threadRootId}
-                        reactions={reactions}
-                        onReact={messageActions.onReact}
-                        onUnreact={(messageId, emoji) => {
-                          if (!selfPubkey) return;
-                          // Drop it locally first: the relay's kind-5 acknowledgement
-                          // targets the reaction event, which the message-overlay
-                          // path cannot apply, so nothing would clear the chip.
-                          forgetOwnReaction(messageId, emoji, selfPubkey);
-                          void unreactToMessage(session, {
-                            targetEventId: messageId,
-                            emoji,
-                            selfPubkey,
-                          });
-                        }}
-                        onEdit={messageActions.onEdit}
-                        onDelete={messageActions.onDelete}
-                        onShare={messageActions.onShare}
-                        selfPubkey={selfPubkey}
-                        pendingIds={messageActions.pendingIds}
-                        agentPubkeys={agentPubkeys}
-                        highlightId={permalinkMessageId ?? null}
-                        typingNames={typingNames}
-                        tailKey={tailKey}
-                        onLoadOlder={loadOlder}
-                        loadingOlder={loadingOlder}
-                        historyExhausted={historyExhausted}
-                        workingAgent={
-                          working.working &&
-                          working.startedAt !== null &&
-                          dmAgentPubkey
-                            ? {
-                                name:
-                                  profiles.get(dmAgentPubkey)?.displayName ??
-                                  dmAgentPubkey,
-                                startedAt: working.startedAt,
-                              }
-                            : null
-                        }
-                      />
+                      {/* Gutter for the portrait overlay: the same fluid
+                          width the overlay uses, so transcript text shifts
+                          left of it and stays clear at every thinking-pane
+                          width (the pair is the resize requirement). The
+                          extra half-row keeps a visible seam between
+                          full-width content and the frame. */}
+                      <div className="flex min-h-0 flex-1 flex-col lg:pr-[calc(min(12rem,24%)+1.25rem)]">
+                        <ChannelTimeline
+                          messages={messages}
+                          profiles={profiles}
+                          replyCounts={counts}
+                          onOpenThread={(message) => {
+                            setThreadRootId(message.id);
+                            setRightTab("thread");
+                          }}
+                          activeRootId={threadRootId}
+                          reactions={reactions}
+                          onReact={messageActions.onReact}
+                          onUnreact={(messageId, emoji) => {
+                            if (!selfPubkey) return;
+                            // Drop it locally first: the relay's kind-5 acknowledgement
+                            // targets the reaction event, which the message-overlay
+                            // path cannot apply, so nothing would clear the chip.
+                            forgetOwnReaction(messageId, emoji, selfPubkey);
+                            void unreactToMessage(session, {
+                              targetEventId: messageId,
+                              emoji,
+                              selfPubkey,
+                            });
+                          }}
+                          onEdit={messageActions.onEdit}
+                          onDelete={messageActions.onDelete}
+                          onShare={messageActions.onShare}
+                          selfPubkey={selfPubkey}
+                          pendingIds={messageActions.pendingIds}
+                          agentPubkeys={agentPubkeys}
+                          highlightId={permalinkMessageId ?? null}
+                          typingNames={typingNames}
+                          tailKey={tailKey}
+                          onLoadOlder={loadOlder}
+                          loadingOlder={loadingOlder}
+                          historyExhausted={historyExhausted}
+                          workingAgent={
+                            working.working &&
+                            working.startedAt !== null &&
+                            dmAgentPubkey
+                              ? {
+                                  name:
+                                    profiles.get(dmAgentPubkey)?.displayName ??
+                                    dmAgentPubkey,
+                                  startedAt: working.startedAt,
+                                }
+                              : null
+                          }
+                        />
+                      </div>
                       <Composer
                         members={members}
                         onTextChange={messageActions.onComposerText}
@@ -863,7 +889,11 @@ function ChannelBrowser() {
                     // biome-ignore lint/a11y/useAriaPropsForRole: drag handle is not a value slider; aria-valuenow would be meaningless
                     role="separator"
                     aria-orientation="vertical"
-                    className="relative z-10 hidden w-1 shrink-0 cursor-col-resize border-r border-border bg-transparent transition-colors hover:bg-white/15 active:bg-white/25 lg:block lg:-ml-px"
+                    // No border of its own: the pane's border-l is the one
+                    // divider line. The handle used to add a second 1px
+                    // border 4px beside it — under always-on OS scrollbars
+                    // that stack read as "two scrollbars and a sliver".
+                    className="relative z-10 hidden w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-white/15 active:bg-white/25 lg:block lg:-ml-px"
                     onPointerDown={(event) => {
                       event.preventDefault();
                       event.currentTarget.setPointerCapture(event.pointerId);

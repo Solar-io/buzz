@@ -231,25 +231,41 @@
   );
 }
 
-/* Channel activity keeps its chrome outside the scrolling surface. The slim,
- * low-contrast thumb belongs only to the activity list beneath the header. */
-.buzz-channel-activity-scrollbar {
+/*
+ * Scroll areas that flank the pane divider (the transcript and the thinking
+ * feed): the thumb is a hover citizen, not permanent chrome. With an OS set
+ * to always-show scrollbars, two always-on bars stacked either side of the
+ * resize handle read as a double-scrollbar sliver — the "from the '80s" look
+ * (Sam, 2026-09-14). At rest the gutter is empty; pointing at the pane (or
+ * scrolling it) reveals a slim rounded thumb. `scrollbar-gutter: stable`
+ * keeps the hover reveal from shifting layout.
+ */
+.buzz-channel-activity-scrollbar,
+.buzz-timeline-scrollbar {
   scrollbar-gutter: stable;
 }
 
-.buzz-channel-activity-scrollbar::-webkit-scrollbar {
+.buzz-channel-activity-scrollbar::-webkit-scrollbar,
+.buzz-timeline-scrollbar::-webkit-scrollbar {
   width: 8px;
 }
 
-.buzz-channel-activity-scrollbar::-webkit-scrollbar-track {
+.buzz-channel-activity-scrollbar::-webkit-scrollbar-track,
+.buzz-timeline-scrollbar::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.buzz-channel-activity-scrollbar::-webkit-scrollbar-thumb {
+.buzz-channel-activity-scrollbar::-webkit-scrollbar-thumb,
+.buzz-timeline-scrollbar::-webkit-scrollbar-thumb {
   background-clip: content-box;
-  background-color: hsl(var(--foreground) / 0.15);
+  background-color: transparent;
   border: 2px solid transparent;
   border-radius: 999px;
+}
+
+.buzz-channel-activity-scrollbar:hover::-webkit-scrollbar-thumb,
+.buzz-timeline-scrollbar:hover::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--foreground) / 0.22);
 }
 
 /*
