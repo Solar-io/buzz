@@ -8,7 +8,18 @@
 #
 # Deploy cadence: content updates need ONLY an rsync (ServeDir reads
 # per-request). Only BUZZ_WEB_DIR/.env or volume changes recreate the relay.
+#
+# extra_hosts (D-005 voice consolidation, 2026-09-15, Evie's review condition):
+# the web voice proxy (D4) reaches the pocket-tts server on the HOST
+# (127.0.0.1:6300, launchd com.dev.pocket-tts) — but the relay runs in a
+# container, where 127.0.0.1 is the container's own loopback (verified refused
+# from inside buzz-dev-relay-1; host.docker.internal:6300 answered
+# {"status":"healthy"}). host-gateway maps host.docker.internal to the host.
+# NOTE: applying this line RECREATES the relay container — ride a sanctioned
+# restart window, do not apply mid-session.
 services:
   relay:
     volumes:
       - ${BUZZ_WEB_DIST_HOST:-./web-dist}:/app/web-dist:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
