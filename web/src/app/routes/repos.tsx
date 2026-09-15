@@ -445,7 +445,16 @@ function ChannelBrowser() {
       return;
     }
     defaultConversationHandled.current = true;
-    const target = lists.visibleDms[0];
+    // "The last DM that was sent" needs a sent DM: a message-bearing
+    // conversation, not the newest-opened one. A freshly created but
+    // never-messaged DM sorts #1 on metadata recency — landing there showed
+    // a creation row where Sam expected his conversation (D-025). Prefer
+    // the most recent DM with real message activity; if none has any, a
+    // lone visible DM still opens (it is the only conversation there is),
+    // otherwise the empty state stands.
+    const target =
+      lists.visibleDms.find((dm) => dm.lastActivity > 0) ??
+      (lists.visibleDms.length === 1 ? lists.visibleDms[0] : undefined);
     if (target) {
       void navigate({
         to: "/repos",
