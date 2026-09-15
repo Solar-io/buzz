@@ -747,6 +747,17 @@ impl McpRegistry {
 /// drift from the name the CLI actually reads.
 const SESSION_PIN_ENV: &str = "BUZZ_ACP_SESSION_ID";
 
+/// Whether a pin value is LIVE — present and non-blank. The CLI's
+/// `session_slot()` trims and treats a blank value as unset (gate off, stamp
+/// off), so "the var exists but is empty" is the disarmed state, not the
+/// armed one. An exported-but-empty var from a shell or harness that sets it
+/// on the way through is exactly that shape; `is_ok()` alone would call it
+/// armed and stay silent while the gate is off (found in review,
+/// 2026-09-14).
+fn pin_is_live(value: Option<String>) -> bool {
+    value.map(|v| !v.trim().is_empty()).unwrap_or(false)
+}
+
 /// Whether a spawn dropped the managed-session pin its parent carried — the
 /// one silent-disarm shape worth saying out loud. `parent_has_pin` false
 /// means nothing injected a pin (human, ad-hoc runtime): the send gate's
@@ -777,7 +788,7 @@ async fn spawn_one(
         cmd.env(k, v);
     }
     if session_pin_dropped(
-        std::env::var(SESSION_PIN_ENV).is_ok(),
+        pin_is_live(std::env::var(SESSION_PIN_ENV).ok()),
         spec.env.iter().any(|(k, _)| k == SESSION_PIN_ENV)
             || PASSTHROUGH_ENV.contains(&SESSION_PIN_ENV),
     ) {
@@ -1129,6 +1140,19 @@ mod content_tests {
         assert!(!session_pin_dropped(true, true), "pin survived — quiet");
         assert!(!session_pin_dropped(false, false), "unmanaged parent — the gate never applied, stay quiet");
         assert!(!session_pin_dropped(false, true), "child invented a pin — not ours to police");
+    }
+
+    #[test]
+    fn blank_pin_reads_as_disarmed_not_armed() {
+        // The CLI's session_slot() trims and treats a blank pin as unset, so
+        // a present-but-empty var is the DISARMED state. The parent-side
+        // check must agree: `is_ok()` alone is true for `""`, which would
+        // keep the tripwire silent through exactly the shape it exists to
+        // catch (an exported-but-empty pin riding through a shell).
+        assert!(!pin_is_live(Some(String::new())), "empty string is not a live pin");
+        assert!(!pin_is_live(Some("   ".to_string())), "whitespace is not a live pin");
+        assert!(!pin_is_live(None), "absent is not a live pin");
+        assert!(pin_is_live(Some("boot-uuid:0".to_string())), "a real slot id is live");
     }
 
     #[test]
