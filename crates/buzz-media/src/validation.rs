@@ -346,12 +346,7 @@ pub fn validate_voice_reference_wav(bytes: &[u8]) -> Result<(), MediaError> {
     let block_align = usize::from(le_u16(12)?);
     let bits = usize::from(le_u16(14)?);
     // PCM allows 8/16/24/32-bit; IEEE float is 32-bit only.
-    let encoding_bits_ok = match (encoding, bits) {
-        (1, 8 | 16 | 24 | 32) => true,
-        (3, 32) => true,
-        _ => false,
-    };
-    if !encoding_bits_ok {
+    if !matches!((encoding, bits), (1, 8 | 16 | 24 | 32) | (3, 32)) {
         return Err(MediaError::WrongCodec);
     }
     let bytes_per_sample = bits.div_ceil(8);
@@ -1748,9 +1743,7 @@ mod tests {
             b.extend_from_slice(&encoding.to_le_bytes());
             b.extend_from_slice(&channels.to_le_bytes());
             b.extend_from_slice(&sample_rate.to_le_bytes());
-            b.extend_from_slice(
-                &((sample_rate * u32::from(block_align as u16)) as u32).to_le_bytes(),
-            );
+            b.extend_from_slice(&(sample_rate * u32::from(block_align as u16)).to_le_bytes());
             b.extend_from_slice(&(block_align as u16).to_le_bytes());
             b.extend_from_slice(&bits.to_le_bytes());
             b
@@ -1762,7 +1755,8 @@ mod tests {
             b.extend_from_slice(payload);
             b
         };
-        let body = [chunk(b"fmt ", &fmt), chunk(b"data", &vec![0u8; data_len])].concat();
+        let zeros = vec![0u8; data_len];
+        let body = [chunk(b"fmt ", &fmt), chunk(b"data", &zeros)].concat();
         let mut out = b"RIFF".to_vec();
         // RIFF size covers everything after the size field: the 4-byte WAVE
         // form plus the chunk bodies.
@@ -1830,7 +1824,7 @@ mod tests {
         ] {
             let mut body = fmt_only.clone();
             body.extend_from_slice(&chunk);
-            body.extend_from_slice(&wav_chunk(b"data", &vec![0u8; 64]));
+            body.extend_from_slice(&wav_chunk(b"data", &[0u8; 64]));
             let bytes = rebuild(body);
             assert!(
                 matches!(
@@ -1938,7 +1932,7 @@ mod tests {
             f
         }));
         body.extend_from_slice(&list);
-        body.extend_from_slice(&wav_chunk(b"data", &vec![0u8; 8]));
+        body.extend_from_slice(&wav_chunk(b"data", &[0u8; 8]));
         let mut bytes = b"RIFF".to_vec();
         bytes.extend_from_slice(&((body.len() + 4) as u32).to_le_bytes());
         bytes.extend_from_slice(b"WAVE");
