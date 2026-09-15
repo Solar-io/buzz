@@ -16,6 +16,7 @@ const originals = {
   navigator: Object.getOwnPropertyDescriptor(globalThis, "navigator"),
   actEnv: globalThis.IS_REACT_ACT_ENVIRONMENT,
   innerHeight: globalThis.innerHeight,
+  innerWidth: globalThis.innerWidth,
   resizeObserver: globalThis.ResizeObserver,
   addEventListener: globalThis.addEventListener,
   removeEventListener: globalThis.removeEventListener,
@@ -28,6 +29,11 @@ Object.defineProperty(globalThis, "navigator", {
 });
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 globalThis.innerHeight = 800;
+// jsdom's WINDOW has innerWidth (1024); node's global has nothing. The hook
+// falls back to globalThis.innerWidth in its initializer and whenever the
+// row is null — unset, width assertions pass by NaN accident (Evie
+// 2026-09-14). Pin it so every width below is a real number.
+globalThis.innerWidth = 1440;
 // The hook targets globalThis.* (=== window in the app); node's global has
 // no listener API, so bridge to the jsdom window.
 globalThis.addEventListener = dom.window.addEventListener.bind(dom.window);
@@ -63,11 +69,20 @@ function Harness({
   railVisible = false,
   rowVisible = true,
 }) {
-  const { setRowEl } = useThreadPaneWidth(channelId, railVisible);
+  const { setRowEl, threadWidth, setThreadWidth } = useThreadPaneWidth(
+    channelId,
+    railVisible,
+  );
+  // Exposed for the callback-fire test below (Evie's probe pattern).
+  lastPaneWidth = threadWidth;
+  paneWidthSetter = setThreadWidth;
   return rowVisible
     ? React.createElement("div", { ref: setRowEl, "data-testid": "row" })
     : null;
 }
+
+let lastPaneWidth = null;
+let paneWidthSetter = null;
 
 async function mountHarness(props) {
   const container = dom.window.document.createElement("div");
@@ -131,12 +146,52 @@ test("the observer attaches when the row mounts LATER (view → channel)", async
   await harness.unmount();
 });
 
+test("the observer's CALLBACK re-clamps a too-wide pane (the 77px path)", async () => {
+  // Attach/observe/disconnect only pin the WIRING; this test fires the
+  // mechanism — Evie 2026-09-14: a passing test that never fires it is a
+  // claim about wiring, not behaviour. Shape: a pane persisted wide on a
+  // big row (2000px, cap 1640 → pane set to 1200), then ONLY the row
+  // narrows to 660 — a sidebar drag, no window resize — and the observer
+  // fires. The pane must land on the narrowed row's cap (660 − 360 = 300):
+  // pane === cap, not a chat-pixel constant (the divider's -ml-px makes
+  // rendered chat 3px under the floor; cap assertions are the stable form).
+  ResizeObserverStub.instances = [];
+  const harness = await mountHarness({});
+  const observer = ResizeObserverStub.instances[0];
+  const row = observer.observed[0];
+
+  Object.defineProperty(row, "clientWidth", {
+    configurable: true,
+    value: 2000,
+  });
+  await act(async () => {
+    paneWidthSetter(1200);
+  });
+  assert.equal(lastPaneWidth, 1200, "the wide pane is set");
+
+  Object.defineProperty(row, "clientWidth", {
+    configurable: true,
+    value: 660,
+  });
+  await act(async () => {
+    observer.callback([{ target: row }]);
+  });
+  assert.equal(
+    lastPaneWidth,
+    300,
+    "the fired observer re-clamps the pane to the narrowed row's cap",
+  );
+
+  await harness.unmount();
+});
+
 after(() => {
   Object.assign(globalThis, {
     window: originals.window,
     document: originals.document,
     IS_REACT_ACT_ENVIRONMENT: originals.actEnv,
     innerHeight: originals.innerHeight,
+    innerWidth: originals.innerWidth,
     ResizeObserver: originals.resizeObserver,
     addEventListener: originals.addEventListener,
     removeEventListener: originals.removeEventListener,
