@@ -697,8 +697,9 @@ pub async fn validate_admin_event(
                 // Not a member and channel is private — fall through to owner/admin/owner-of-agent check.
             }
 
-            // Not the author, or author who is no longer a member of a private channel —
-            // must be owner/admin or the owning human of the message's agent-author.
+            // Not the author (or the author carrying moderation-only tags), or an
+            // author who is no longer a member of a private channel — must be
+            // owner/admin or the owning human of the message's agent-author.
             let members = state.db.get_members(tenant.community(), channel_id).await?;
             if actor_is_channel_owner_or_admin(&members, &actor_bytes) {
                 Ok(())
@@ -711,6 +712,13 @@ pub async fn validate_admin_event(
                     .await?
                 {
                     Ok(())
+                } else if author == actor_bytes && has_moderation_only_delete_metadata(event) {
+                    // The actor IS the author; only the moderation-only tags blocked the
+                    // self-delete path. Name the actual rule instead of the misleading
+                    // generic message.
+                    Err(anyhow::anyhow!(
+                        "author deletes may not carry action_id or reason_code (moderation-only); use --public-reason or a plain delete"
+                    ))
                 } else {
                     Err(anyhow::anyhow!(
                         "must be event author or channel owner/admin"
@@ -2508,14 +2516,18 @@ fn copy_optional_string_value(object: &mut serde_json::Value, field_name: &str, 
     }
 }
 
-fn has_moderation_delete_metadata(event: &Event) -> bool {
-    ["action_id", "reason_code", "public_reason"]
+/// Tags that mark a delete as a moderation action and are reserved to channel
+/// owner/admin. `public_reason` is deliberately absent: an author explaining
+/// their own deletion on their own tombstone is display-only and needs no
+/// elevated rights, so it keeps the self-delete path.
+fn has_moderation_only_delete_metadata(event: &Event) -> bool {
+    ["action_id", "reason_code"]
         .iter()
         .any(|tag_name| extract_tag_value(event, tag_name).is_some())
 }
 
 fn author_delete_can_use_self_delete_path(author: &[u8], actor: &[u8], event: &Event) -> bool {
-    author == actor && !has_moderation_delete_metadata(event)
+    author == actor && !has_moderation_only_delete_metadata(event)
 }
 
 fn actor_is_channel_owner_or_admin(members: &[MemberRecord], actor: &[u8]) -> bool {
@@ -3714,16 +3726,57 @@ mod tests {
     }
 
     #[test]
-    fn author_self_delete_with_moderation_metadata_skips_self_delete_path() {
+    fn author_self_delete_with_action_id_skips_self_delete_path() {
         let keys = nostr::Keys::generate();
         let actor = keys.public_key().to_bytes();
         let event = EventBuilder::new(Kind::Custom(9005), "")
-            .tags([Tag::parse(["public_reason", "Removed for spam."]).unwrap()])
+            .tags([Tag::parse(["action_id", "550e8400-e29b-41d4-a716-446655440000"]).unwrap()])
             .sign_with_keys(&keys)
             .expect("sign");
 
         assert!(!author_delete_can_use_self_delete_path(
             &actor, &actor, &event
+        ));
+    }
+
+    #[test]
+    fn author_self_delete_with_reason_code_skips_self_delete_path() {
+        let keys = nostr::Keys::generate();
+        let actor = keys.public_key().to_bytes();
+        let event = EventBuilder::new(Kind::Custom(9005), "")
+            .tags([Tag::parse(["reason_code", "spam"]).unwrap()])
+            .sign_with_keys(&keys)
+            .expect("sign");
+
+        assert!(!author_delete_can_use_self_delete_path(
+            &actor, &actor, &event
+        ));
+    }
+
+    #[test]
+    fn author_self_delete_with_public_reason_keeps_self_delete_path() {
+        let keys = nostr::Keys::generate();
+        let actor = keys.public_key().to_bytes();
+        let event = EventBuilder::new(Kind::Custom(9005), "")
+            .tags([Tag::parse(["public_reason", "duplicate of my earlier reply"]).unwrap()])
+            .sign_with_keys(&keys)
+            .expect("sign");
+
+        assert!(author_delete_can_use_self_delete_path(&actor, &actor, &event));
+    }
+
+    #[test]
+    fn non_author_delete_with_public_reason_skips_self_delete_path() {
+        let keys = nostr::Keys::generate();
+        let author = keys.public_key().to_bytes();
+        let actor = nostr::Keys::generate().public_key().to_bytes();
+        let event = EventBuilder::new(Kind::Custom(9005), "")
+            .tags([Tag::parse(["public_reason", "duplicate"]).unwrap()])
+            .sign_with_keys(&keys)
+            .expect("sign");
+
+        assert!(!author_delete_can_use_self_delete_path(
+            &author, &actor, &event
         ));
     }
 
