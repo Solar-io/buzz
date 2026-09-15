@@ -2337,13 +2337,14 @@ async fn tokio_main() -> Result<()> {
     let mut last_maintenance = std::time::Instant::now();
 
     // Claims-writer state (send-path gate ground truth): change-detected sync
-    // at the top of each iteration plus a 60 s pulse that re-stamps
-    // `last_seen_at` for live turns. All on this loop's thread of control.
+    // plus a 60 s pulse that re-stamps `last_seen_at` for live turns, BOTH
+    // evaluated at the top of every iteration via the maintenance tick's
+    // Instant-check shape — a select arm could be starved by the biased
+    // select under sustained inbound traffic, and a delayed pulse on a live
+    // holder is exactly what STALE_HOLD_SECS must never see. All on this
+    // loop's thread of control.
     let mut claims_sync = claims_writer::ClaimsSyncState::new();
-    let mut claims_pulse = tokio::time::interval_at(
-        tokio::time::Instant::now() + Duration::from_secs(claims_writer::PULSE_SECS),
-        Duration::from_secs(claims_writer::PULSE_SECS),
-    );
+    let mut last_claims_pulse = std::time::Instant::now();
 
     // Channel for background respawn tasks to return completed agents.
     // Bounded to agent count — at most one respawn per slot in flight.
@@ -2448,6 +2449,15 @@ async fn tokio_main() -> Result<()> {
         // iteration's select arm, so one fingerprint-compared write here
         // covers all of them without touching those pinned functions.
         claims_sync.sync_on_change(&pool);
+
+        // Claims-writer pulse, in the starve-proof top-of-loop shape (same
+        // guarantee as the maintenance tick below): re-stamps `last_seen_at`
+        // for live turns every PULSE_SECS. Cannot be delayed by a saturated
+        // biased select — the send gate's stale window depends on it.
+        if last_claims_pulse.elapsed() >= Duration::from_secs(claims_writer::PULSE_SECS) {
+            last_claims_pulse = std::time::Instant::now();
+            claims_sync.pulse(&pool);
+        }
 
         // Whether buffered work is waiting on a lazy pool. Also gates the
         // retry-deadline sleep arm below: a `Failed` lifecycle keeps its
@@ -3183,14 +3193,6 @@ async fn tokio_main() -> Result<()> {
                             }
                         }
                     }
-                    None
-                }
-                // Claims-writer pulse: keep `last_seen_at` fresh for every
-                // live turn so a long-running one never decays out of the
-                // CLI's send-path gate. No-op on an idle pool (no churn).
-                _ = claims_pulse.tick() => {
-                    let _ = result_rx;
-                    claims_sync.pulse(&pool);
                     None
                 }
                 _ = shutdown_rx.changed() => {
