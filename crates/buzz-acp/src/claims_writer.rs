@@ -19,7 +19,8 @@
 //!
 //! Entries from OTHER boots (a second live pool for the same identity — the
 //! exact failure this guards against) are preserved while fresh and decay by
-//! [`TURN_TTL_SECS`] when their writer dies; no mtime heuristics anywhere.
+//! [`STALE_HOLD_SECS`] once their writer dies or wedges; no mtime heuristics
+//! anywhere.
 //!
 //! Writes are read-modify-write under an advisory `flock` on a `<name>.lock`
 //! sidecar, published via tmp-file + `rename` (atomic on macOS/Linux). The
@@ -35,24 +36,23 @@ use nix::fcntl::{Flock, FlockArg};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-/// How long a turn claim stays live after its `last_seen_at`. Mirrors the
-/// reader-side `claims::COMPOSING_TTL_SECS` so a live turn restamped by the
-/// pulse never decays mid-flight while a dead harness's claims do, on both
-/// the writer and the CLI gate side, on the same clock.
-pub(crate) const TURN_TTL_SECS: i64 = 10 * 60;
-
 /// Cadence of the pulse that re-stamps `last_seen_at` for live turns. Short
-/// enough that a live turn never approaches the TTL between pulses; long
-/// enough to be noise next to the rest of the loop's timers.
+/// enough that a live turn never approaches the stale window between
+/// pulses; long enough to be noise next to the rest of the loop's timers.
+/// (The 600s record-decay TTL lives in the CLI's `claims_gate` now — it
+/// governs only supersede-record freshness there.)
 pub(crate) const PULSE_SECS: u64 = 60;
 
 /// How old a foreign turn claim may be and still count as fresh. A live
 /// harness pulses every [`PULSE_SECS`]; 150s = two missed pulses plus
-/// margin, which a live tokio loop does not miss — the pulse fires from the
-/// select loop regardless of turn activity. Past this window a foreign
-/// holder is dead or wedged and its entries decay here, exactly as the
-/// CLI gate stops holding on them. Mirrored in `buzz-cli`'s `claims_gate`
-/// (`STALE_HOLD_SECS`) — one window, both sides, same as the TTL.
+/// margin. The pulse runs at the TOP of the main loop via an Instant-due
+/// check — the same starve-proof shape as the maintenance tick, NOT a
+/// biased-select arm — so sustained inbound relay traffic cannot delay it;
+/// only a dead or wedged loop stops the stamps, and a wedged loop can't
+/// finish its turn either. Past this window a foreign holder is dead or
+/// wedged and its entries decay here, exactly as the CLI gate stops holding
+/// on them. Mirrored in `buzz-cli`'s `claims_gate` (`STALE_HOLD_SECS`) —
+/// one window, both sides, same as the TTL.
 pub(crate) const STALE_HOLD_SECS: i64 = 150;
 
 /// Set to `0` to disable the writer entirely (ops escape hatch). Anything
@@ -694,7 +694,9 @@ mod tests {
         // assertion below would fail. Under the 150s window 400s decays.
         let incident_seen = (chrono::Utc::now() - chrono::Duration::seconds(400))
             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        let stale_seen = (chrono::Utc::now() - chrono::Duration::seconds(TURN_TTL_SECS + 60))
+        // Literal 660s: dead even under the CLI's old 600s record TTL —
+        // kept a literal so this fixture never drifts with any constant.
+        let stale_seen = (chrono::Utc::now() - chrono::Duration::seconds(660))
             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         std::fs::write(
             &path,

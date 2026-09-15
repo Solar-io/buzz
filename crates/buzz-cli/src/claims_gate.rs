@@ -51,11 +51,12 @@ use uuid::Uuid;
 pub(crate) const TURN_TTL_SECS: i64 = 10 * 60;
 
 /// How old a foreign claim may be and still hold a send. The harness pulses
-/// `last_seen_at` every 60s (`buzz-acp`'s `PULSE_SECS`); 150s = two missed
-/// pulses plus margin, which a live harness's tokio loop does not miss —
-/// the pulse fires from the select loop regardless of turn activity. Past
-/// this window the holder is dead or wedged (a wedged loop can't finish its
-/// turn either), and the claim stops gating: the sender proceeds without
+/// `last_seen_at` every 60s (`buzz-acp`'s `PULSE_SECS`), from the TOP of
+/// its main loop via an Instant-due check — the starve-proof maintenance-
+/// tick shape, not a biased-select arm — so sustained inbound relay traffic
+/// cannot delay the stamps. 150s = two missed pulses plus margin; past it
+/// the holder is dead or wedged (a wedged loop can't finish its turn
+/// either), and the claim stops gating: the sender proceeds without
 /// `--supersede`. Mirrored in `buzz-acp`'s `claims_writer` — one window,
 /// both sides, same as the TTL.
 pub(crate) const STALE_HOLD_SECS: i64 = 150;
