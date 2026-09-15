@@ -76,6 +76,8 @@ import { RemindMeLaterProvider } from "@/features/reminders/ui/RemindMeLaterProv
 import { NotificationRuntime } from "@/features/notifications/ui/NotificationRuntime";
 import { ProfileActionsProvider } from "@/features/profile/ProfileActionsContext";
 import { FilesPanel } from "@/features/files/ui/FilesPanel";
+import { ShortcutBar } from "@/features/shortcut-bar/ui/ShortcutBar";
+import { ShortcutOverlay } from "@/features/shortcut-bar/ui/ShortcutOverlay";
 import { toast } from "sonner";
 import {
   JOIN_CHANNEL_KIND,
@@ -383,6 +385,9 @@ function ChannelBrowser() {
   };
   // Files overlay — the desktop's docked Files panel as an iframe layer.
   const [filesOpen, setFilesOpen] = useState(false);
+  // Shortcut-bar overlay — the clicked overlay-mode pill's id, or null. A
+  // channel switch closes it: an overlay is a view OF a channel.
+  const [shortcutOverlay, setShortcutOverlay] = useState<string | null>(null);
   // Sidebar + buttons: section-header plus buttons open the create dialogs.
   const [newChannelOpen, setNewChannelOpen] = useState(false);
   const [newDmOpen, setNewDmOpen] = useState(false);
@@ -405,6 +410,7 @@ function ChannelBrowser() {
 
   const selectChannel = (channelId: string) => {
     setThreadRootId(null);
+    setShortcutOverlay(null);
     void navigate({ to: "/repos", search: { c: channelId } });
   };
 
@@ -661,6 +667,12 @@ function ChannelBrowser() {
           >
             {filesOpen ? (
               <FilesPanel onClose={() => setFilesOpen(false)} />
+            ) : shortcutOverlay !== null && current ? (
+              <ShortcutOverlay
+                channelId={current.id}
+                initialPanelId={shortcutOverlay}
+                onClose={() => setShortcutOverlay(null)}
+              />
             ) : view === "onboarding" ? (
               <OnboardingPane />
             ) : view === "projects" ? (
@@ -757,6 +769,13 @@ function ChannelBrowser() {
                       setDmPaneHidden(false);
                       setThinkingOpen(true);
                     }}
+                    actions={
+                      <ShortcutBar
+                        channelId={current.id}
+                        ephemeral={current.ttlSeconds !== null}
+                        onOpenOverlay={setShortcutOverlay}
+                      />
+                    }
                   />
                   {current.ttlSeconds !== null && (
                     <HuddleBar

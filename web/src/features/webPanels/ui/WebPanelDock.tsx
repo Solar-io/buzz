@@ -6,7 +6,7 @@ import { useTheme } from "@/shared/theme/ThemeProvider";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 
-import { useWebPanelDock } from "../hooks.ts";
+import { useWebPanelDock, type WebPanelDockApi } from "../hooks.ts";
 import { findPanel, withThemeParam } from "../lib/panelRegistry.ts";
 import { MAX_PANEL_INSTANCES } from "../lib/panelSession.ts";
 import { AddSiteDialog } from "./AddSiteDialog.tsx";
@@ -29,19 +29,54 @@ const EMBED_STALL_MS = 8_000;
  * that never fires `load` and offers to open it in a real tab instead of
  * leaving the user staring at white space. (The desktop has no equivalent
  * problem: its panels are native child webviews, not frames.)
+ *
+ * The dock is host-agnostic: `dock` defaults to the Files store, and the
+ * shortcut-bar overlay passes its own per-channel dock. Site management
+ * (`addSite`/`removeSite`) is optional — a dock whose panels come from
+ * somewhere else shows no add/remove affordances.
  */
-export function WebPanelDock({ onClose }: { onClose: () => void }) {
-  const dock = useWebPanelDock();
+export function WebPanelDock({
+  onClose,
+  dock: dockProp,
+  initialPanelId,
+}: {
+  onClose: () => void;
+  dock?: WebPanelDockApi;
+  /** Panel to open (or focus, if a tab for it survives) on first show. */
+  initialPanelId?: string;
+}) {
+  // Called unconditionally (a conditional hook call is both a rules-of-hooks
+  // violation and a render-order hazard); the result is simply unused when
+  // the host passes its own dock.
+  const filesDock = useWebPanelDock();
+  const dock = dockProp ?? filesDock;
   const { isDark } = useTheme();
   const [addOpen, setAddOpen] = useState(false);
   const [stalled, setStalled] = useState<Record<string, boolean>>({});
   const loadedRef = useRef<Set<string>>(new Set());
 
-  // Open the first available site the first time the dock is shown, so the
-  // panel is never an empty frame with a tab bar above it.
+  // Open a panel the first time the dock is shown, so it is never an empty
+  // frame with a tab bar above it. A host that names `initialPanelId` gets
+  // focus-or-open semantics for THAT panel (a restored per-scope session may
+  // already hold a tab for it) — but only once its registry has actually
+  // arrived: a shortcut dock's panels resolve asynchronously (pubkey →
+  // subscribe → decrypt), and deciding against an empty registry would both
+  // fail the open and pin `openedOnce` forever. The default Files behaviour
+  // is unchanged: only when no tabs survive does the first entry open.
   const openedOnce = useRef(false);
   useEffect(() => {
-    if (openedOnce.current || dock.instances.length > 0) {
+    if (openedOnce.current) {
+      return;
+    }
+    if (initialPanelId !== undefined) {
+      if (dock.panels.length === 0) {
+        return;
+      }
+      openedOnce.current = true;
+      dock.focusOrOpen(initialPanelId);
+      return;
+    }
+    if (dock.instances.length > 0) {
       openedOnce.current = true;
       return;
     }
@@ -50,7 +85,7 @@ export function WebPanelDock({ onClose }: { onClose: () => void }) {
       openedOnce.current = true;
       dock.open(first.id);
     }
-  }, [dock]);
+  }, [dock, initialPanelId]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -147,7 +182,7 @@ export function WebPanelDock({ onClose }: { onClose: () => void }) {
         <PanelOpener
           atCap={atCap}
           dock={dock}
-          onAddSite={() => setAddOpen(true)}
+          onAddSite={dock.addSite ? () => setAddOpen(true) : undefined}
         />
 
         {activePanel ? (
@@ -231,11 +266,13 @@ export function WebPanelDock({ onClose }: { onClose: () => void }) {
         ) : null}
       </div>
 
-      <AddSiteDialog
-        onAdd={dock.addSite}
-        onOpenChange={setAddOpen}
-        open={addOpen}
-      />
+      {dock.addSite ? (
+        <AddSiteDialog
+          onAdd={dock.addSite}
+          onOpenChange={setAddOpen}
+          open={addOpen}
+        />
+      ) : null}
     </div>
   );
 }
@@ -245,10 +282,13 @@ function PanelOpener({
   atCap,
   onAddSite,
 }: {
-  dock: ReturnType<typeof useWebPanelDock>;
+  dock: WebPanelDockApi;
   atCap: boolean;
-  onAddSite: () => void;
+  onAddSite?: () => void;
 }) {
+  // Narrowed once: TS will not carry the `!== undefined` guard on
+  // `dock.removeSite` into the JSX callback below.
+  const removeSite = dock.removeSite;
   return (
     <div className="flex shrink-0 items-center gap-1">
       {dock.panels.map((panel) => (
@@ -263,12 +303,12 @@ function PanelOpener({
           >
             {panel.label}
           </button>
-          {panel.custom ? (
+          {panel.custom && removeSite ? (
             <button
               aria-label={`Remove ${panel.label} from the dock`}
               className="rounded-xs p-0.5 text-muted-foreground opacity-0 transition-opacity group-hover/site:opacity-100"
               data-testid={`web-panel-remove-${panel.id}`}
-              onClick={() => dock.removeSite(panel.id)}
+              onClick={() => removeSite(panel.id)}
               type="button"
             >
               <Trash2 aria-hidden className="size-3" />
@@ -276,15 +316,17 @@ function PanelOpener({
           ) : null}
         </span>
       ))}
-      <button
-        aria-label="Add a site"
-        className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-        data-testid="web-panel-add-site"
-        onClick={onAddSite}
-        type="button"
-      >
-        <Plus aria-hidden className="size-4" />
-      </button>
+      {onAddSite ? (
+        <button
+          aria-label="Add a site"
+          className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+          data-testid="web-panel-add-site"
+          onClick={onAddSite}
+          type="button"
+        >
+          <Plus aria-hidden className="size-4" />
+        </button>
+      ) : null}
     </div>
   );
 }
