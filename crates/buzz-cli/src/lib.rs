@@ -2317,6 +2317,9 @@ mod tests {
             "social",
             "upload",
             "users",
+            // Voice-catalog group (kind 30181): list / publish /
+            // publish-bundled / remove.
+            "voices",
             "workflows",
         ];
 
