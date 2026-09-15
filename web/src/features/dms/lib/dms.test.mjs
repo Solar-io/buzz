@@ -280,3 +280,34 @@ test("dmActivityFilterBatches: empty and small inputs", () => {
     [{ kinds: [9], "#h": ["only"], limit: 1 }],
   ]);
 });
+
+// --- activity kind discipline (D-025 phantom DM, 2026-09-15) --------------
+
+import { DM_ACTIVITY_KIND } from "./dmActivity.ts";
+
+const H = (id) => [["h", id]];
+
+test("only kind-9 events count as DM activity, whatever the sub delivered", () => {
+  // The phantom: a non-message event carrying the DM's own h tag — status
+  // text as content, workflow-run output, anything — used to become the
+  // DM's ordering key AND its sidebar preview. The sampler's filter asks
+  // for kind 9; the reader must not trust the delivery to have honored it.
+  const map = dmActivityFromEvents([
+    { kind: 30315, created_at: 200, content: "status flip", tags: H("dm-a") },
+    { kind: 44100, created_at: 300, content: "workflow run text", tags: H("dm-a") },
+    { kind: 9, created_at: 100, content: "real message", tags: H("dm-a") },
+    { kind: 9, created_at: 250, content: "newest real", tags: H("dm-b") },
+  ]);
+  assert.equal(map.size, 2);
+  assert.equal(map.get("dm-a").excerpt, "real message");
+  assert.equal(map.get("dm-a").created_at, 100);
+  assert.equal(map.get("dm-b").excerpt, "newest real");
+  assert.equal(DM_ACTIVITY_KIND, 9);
+});
+
+test("an event with no h tag never lands on any DM", () => {
+  const map = dmActivityFromEvents([
+    { kind: 9, created_at: 10, content: "no channel", tags: [["p", "x"]] },
+  ]);
+  assert.equal(map.size, 0);
+});

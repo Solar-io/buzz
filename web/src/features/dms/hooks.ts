@@ -8,6 +8,7 @@ import {
   dmActivityFromEvents,
   compareDmRecency,
   dmActivityFilterBatches,
+  DM_ACTIVITY_KIND,
   type DmLastMessage,
 } from "./lib/dmActivity.ts";
 import { extractOpenDmChannelId } from "./lib/dmInput.ts";
@@ -95,6 +96,7 @@ function useDmActivity(dmIds: string[]): Map<string, DmLastMessage> {
     const unsubscribes = dmActivityFilterBatches(ids).map((filters) =>
       session.subscribe(filters, {
         onEvent: (event) => {
+          if (event.kind !== DM_ACTIVITY_KIND) return;
           setEvents((previous) => {
             const id = event.tags.find((tag) => tag[0] === "h")?.[1];
             if (!id) {
