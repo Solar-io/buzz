@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { RelaySession } from "@/shared/api/relay-session";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
@@ -77,6 +77,19 @@ export function useDms(channels: ChannelSummary[]): {
 function useDmActivity(dmIds: string[]): Map<string, DmLastMessage> {
   const { session } = useRelaySession();
   const [events, setEvents] = useState<SignedNostrEvent[]>([]);
+  /**
+   * Durable-only window. The relay's DM fan-out demonstrably delivers
+   * participant-related, cross-channel kind 9s onto #h-scoped subs (captured
+   * frame-level 2026-09-15: Platform Team messages arriving on per-DM
+   * filters), and the phantom-DM incident showed those deliveries becoming
+   * ordering keys and previews for conversations whose transcripts never
+   * contained them. Events accepted AFTER the stored window closes (EOSE
+   * across every batch) are ignored: a preview must never promise a message
+   * the channel's own history will not show. Cost, taken deliberately: a
+   * genuinely new DM message does not re-sort the sidebar until the next
+   * reload or DM-set change — recency freshness trades for truthfulness.
+   */
+  const durableWindowClosedRef = useRef(false);
   // Pubkeys are comma-free, so the join is a lossless set key.
   const idsKey = useMemo(
     () => Array.from(new Set(dmIds)).sort().join(","),
@@ -88,14 +101,18 @@ function useDmActivity(dmIds: string[]): Map<string, DmLastMessage> {
       setEvents([]);
       return;
     }
+    durableWindowClosedRef.current = false;
     setEvents([]);
     // Exact per-DM sampling (a shared limit starves quiet DMs) packed into
     // multi-filter REQs so mount does not fire one REQ per DM — the burst
     // tripped the relay's concurrency limiter and sibling subs (profiles!)
     // got refused, blanking sidebar names/photos.
-    const unsubscribes = dmActivityFilterBatches(ids).map((filters) =>
+    const batches = dmActivityFilterBatches(ids);
+    let awaitingEose = batches.length;
+    const unsubscribes = batches.map((filters) =>
       session.subscribe(filters, {
         onEvent: (event) => {
+          if (durableWindowClosedRef.current) return;
           if (event.kind !== DM_ACTIVITY_KIND) return;
           setEvents((previous) => {
             const id = event.tags.find((tag) => tag[0] === "h")?.[1];
@@ -117,6 +134,12 @@ function useDmActivity(dmIds: string[]): Map<string, DmLastMessage> {
               event,
             ];
           });
+        },
+        onEose: () => {
+          awaitingEose -= 1;
+          if (awaitingEose <= 0) {
+            durableWindowClosedRef.current = true;
+          }
         },
       }),
     );
