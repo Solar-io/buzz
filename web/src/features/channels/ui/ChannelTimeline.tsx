@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useReducer,
   useRef,
   useState,
   type ReactElement,
@@ -18,6 +19,10 @@ import {
   forceInputFollow,
 } from "@/features/agents/lib/scrollFollow";
 import { isWithinGroupingWindow } from "@/features/channels/lib/messageGrouping";
+import {
+  decideTimelineRecovery,
+  LIST_COLLAPSED_MAX,
+} from "@/features/channels/lib/timelineRecovery";
 import { authorLabel } from "../lib/authorLabel.ts";
 import { formatDayLabel } from "../lib/dateFormatters.ts";
 import {
@@ -184,6 +189,53 @@ export function ChannelTimeline({
 }) {
   const listRef = useRef<VListHandle>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  /**
+   * Zero-height recovery (D-025 height leg, 2026-09-15): WebKit can drop
+   * the VList's size notification inside a ResizeObserver cycle that its
+   * own row churn trips (see lib/timelineRecovery.ts for the traced
+   * mechanism), freezing the list at height 0 while the wrapper stays
+   * tall. The wrapper can't lose its height — the shell reserves it — so
+   * "wrapper tall, list near zero, sustained" means the race was lost and
+   * a remount is the recovery (no reader position exists at height 0 to
+   * preserve; a HEALTHY list must never hit this path — the guard fires
+   * only near zero, CO's constraint). Bounded: MAX_RECOVERIES remounts,
+   * watcher stands down once the list measures tall.
+   */
+  const [recoveryNonce, bumpRecovery] = useReducer((x: number) => x + 1, 0);
+  const collapsedBeatsRef = useRef(0);
+  const recoveriesRef = useRef(0);
+  useEffect(() => {
+    collapsedBeatsRef.current = 0;
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      const wrap = wrapRef.current;
+      if (!wrap) return;
+      const list = wrap.querySelector<HTMLElement>(".buzz-timeline-scrollbar");
+      const wrapperHeight = wrap.getBoundingClientRect().height;
+      const listHeight = list ? list.getBoundingClientRect().height : 0;
+      if (listHeight > LIST_COLLAPSED_MAX) {
+        // Genuinely tall: stand down for this mount lineage.
+        window.clearInterval(timer);
+        return;
+      }
+      const decision = decideTimelineRecovery({
+        wrapperHeight,
+        listHeight,
+        collapsedBeats: collapsedBeatsRef.current,
+        recoveries: recoveriesRef.current,
+      });
+      collapsedBeatsRef.current = decision.collapsedBeats;
+      if (decision.action === "recover") {
+        recoveriesRef.current += 1;
+        window.clearInterval(timer);
+        bumpRecovery();
+      } else if (Date.now() - startedAt > 12_000) {
+        // Cold-start budget exhausted without a collapse: stop watching.
+        window.clearInterval(timer);
+      }
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [recoveryNonce]);
   /**
    * Follow-the-tail state (see features/agents/lib/scrollFollow.ts — the
    * InputFollowState engine): the timeline tails new messages ONLY while
@@ -786,6 +838,7 @@ export function ChannelTimeline({
         </div>
       )}
       <VList
+        key={recoveryNonce}
         ref={listRef}
         className="buzz-timeline-scrollbar min-h-0 flex-1"
         onScroll={handleScroll}
