@@ -113,7 +113,7 @@ function TrackerPanel({
         <span className="text-2xs text-muted-foreground">
           Primary: {entry.owner || "unassigned"}
           {Number.isFinite(generatedEpoch)
-            ? ` · updated ${relativeTime(generatedEpoch)}`
+            ? ` · generated ${relativeTime(generatedEpoch)}`
             : null}
         </span>
       </div>
