@@ -33,8 +33,8 @@ use buzz_core::kind::{
     KIND_STREAM_MESSAGE_BOOKMARKED, KIND_STREAM_MESSAGE_DIFF, KIND_STREAM_MESSAGE_EDIT,
     KIND_STREAM_MESSAGE_PINNED, KIND_STREAM_MESSAGE_SCHEDULED, KIND_STREAM_MESSAGE_V2,
     KIND_STREAM_REMINDER, KIND_TEAM, KIND_TEAM_CATALOG, KIND_TEXT_NOTE, KIND_USER_STATUS,
-    KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER, RELAY_ADMIN_ADD_MEMBER, RELAY_ADMIN_CHANGE_ROLE,
-    RELAY_ADMIN_REMOVE_MEMBER, RELAY_ADMIN_SET_WORKSPACE_PROFILE,
+    KIND_VOICE_CATALOG, KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER, RELAY_ADMIN_ADD_MEMBER,
+    RELAY_ADMIN_CHANGE_ROLE, RELAY_ADMIN_REMOVE_MEMBER, RELAY_ADMIN_SET_WORKSPACE_PROFILE,
 };
 use buzz_core::tenant::TenantContext;
 use buzz_core::verification::verify_event;
@@ -441,7 +441,7 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         KIND_CONTACT_LIST | KIND_READ_STATE | KIND_USER_STATUS | KIND_AGENT_ENGRAM
         | KIND_EVENT_REMINDER | KIND_PERSONA | KIND_TEAM | KIND_MANAGED_AGENT
         | KIND_DESKTOP_CATALOG | KIND_PRIVATE_MANAGED_AGENT | KIND_TEAM_CATALOG
-        | super::push_lease::KIND_PUSH_LEASE => { Ok(Scope::UsersWrite) }
+        | KIND_VOICE_CATALOG | super::push_lease::KIND_PUSH_LEASE => { Ok(Scope::UsersWrite) }
         // NIP-AM: agent turn metrics are agent-authored global events (encrypted to owner).
         KIND_AGENT_TURN_METRIC => Ok(Scope::MessagesWrite),
         // NIP-56 reports are ordinary member writes into the mod-only queue.
@@ -661,6 +661,10 @@ pub(crate) fn is_global_only_kind(kind: u32) -> bool {
             | KIND_PRIVATE_MANAGED_AGENT
             | KIND_TEAM_CATALOG
             | KIND_DESKTOP_CATALOG
+            // Buzz voice catalog (30181): one row per voice, keyed by
+            // (pubkey, kind, d = voice key). Readable community-wide by
+            // design, so a stray `h` tag must not channel-scope it.
+            | KIND_VOICE_CATALOG
             // NIP-34: git events use `a` tags (repo reference), not `h` tags (channel scope).
             // Parameterized replaceable kinds are keyed by (pubkey, kind, d_tag).
             | KIND_GIT_REPO_ANNOUNCEMENT
@@ -1525,6 +1529,76 @@ fn validate_team_catalog_envelope(event: &Event) -> Result<(), String> {
     validate_shared_tag(event, LABEL)?;
     single_bounded_d_tag(event, LABEL)?;
     Ok(())
+}
+
+/// Maximum `d` tag length for a kind:30181 voice-catalog event.
+///
+/// The longest legal voice key is `pocket:imported:` (16 chars) + a 64-char
+/// content hash = 80 characters, which the generic 64-char bound of
+/// [`single_bounded_d_tag`] would reject and make every imported row
+/// unpublishable. 96 leaves headroom above that without opening the gate
+/// arbitrarily wide.
+const VOICE_CATALOG_D_TAG_MAX: usize = 96;
+
+/// Validate the envelope of a kind:30181 voice-catalog event.
+///
+/// Exactly one `d` tag (the voice key), non-empty, at most 96 characters, free
+/// of control characters and whitespace. This mirrors the
+/// [`single_bounded_d_tag`] rules with one deliberate difference — the widened
+/// [`VOICE_CATALOG_D_TAG_MAX`] bound — because reusing the generic validator
+/// verbatim would reject the 80-character `pocket:imported:<64-hex>` keys the
+/// kind exists to address (`crates/buzz-voice/src/imported.rs`, the
+/// `pocket:imported:{content_hash}` key rule).
+///
+/// Envelope-only, matching house style: the persona and team-catalog
+/// validators check tags, never content — the JSON body is the readers'
+/// contract.
+fn validate_voice_catalog_envelope(event: &Event) -> Result<(), String> {
+    const LABEL: &str = "voice-catalog event";
+    single_bounded_d_tag_max(event, LABEL, VOICE_CATALOG_D_TAG_MAX)?;
+    Ok(())
+}
+
+/// [`single_bounded_d_tag`] generalized over the character bound. Same rules —
+/// exactly one tag, non-empty, no control characters or whitespace — with the
+/// bound supplied by the caller so the voice catalog can widen it without a
+/// second copy of the counting logic.
+fn single_bounded_d_tag_max<'a>(
+    event: &'a Event,
+    label: &str,
+    max_chars: usize,
+) -> Result<&'a str, String> {
+    let d_tags: Vec<Option<&str>> = event
+        .tags
+        .iter()
+        .filter_map(|tag| {
+            let parts = tag.as_slice();
+            (parts.first().map(|name| name.as_str()) == Some("d"))
+                .then(|| parts.get(1).map(|value| value.as_str()))
+        })
+        .collect();
+    if d_tags.len() != 1 {
+        return Err(format!(
+            "{label} must have exactly one `d` tag (got {})",
+            d_tags.len()
+        ));
+    }
+    let d = d_tags[0].unwrap_or_default();
+    if d.is_empty() {
+        return Err(format!("{label} `d` tag must not be empty"));
+    }
+    let char_count = d.chars().count();
+    if char_count > max_chars {
+        return Err(format!(
+            "{label} `d` tag too long ({char_count} chars, max {max_chars})"
+        ));
+    }
+    if d.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err(format!(
+            "{label} `d` tag must not contain control characters or whitespace"
+        ));
+    }
+    Ok(d)
 }
 
 /// Maximum number of member `a` tags on a kind:30621 project.
@@ -2785,6 +2859,11 @@ async fn ingest_event_inner(
 
     if kind_u32 == KIND_TEAM_CATALOG {
         validate_team_catalog_envelope(&event)
+            .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+    }
+
+    if kind_u32 == KIND_VOICE_CATALOG {
+        validate_voice_catalog_envelope(&event)
             .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
     }
 
@@ -4976,6 +5055,110 @@ mod tests {
     fn team_catalog_is_global_only() {
         assert!(is_global_only_kind(KIND_TEAM_CATALOG));
         assert!(!requires_h_channel_scope(KIND_TEAM_CATALOG));
+    }
+
+    // ─── voice-catalog (30181) envelope + scope tests ────────────────────────
+
+    /// A full imported voice key: `pocket:imported:` + 64 hex = 80 chars.
+    fn imported_voice_key() -> String {
+        format!("pocket:imported:{}", "a".repeat(64))
+    }
+
+    fn make_voice_catalog(tags: &[&[&str]]) -> Event {
+        make_event_with_tags(
+            KIND_VOICE_CATALOG,
+            r#"{"version":1,"key":"pocket:azelma","displayName":"Azelma","backend":"pocket","contentHash":"60e3d26cdf2efdec5df712152c839928f4d5522821e6554ae11fd96c57ab1026","bundled":true,"license":"CC-BY-4.0","source":"VCTK p303_023_enhanced.wav"}"#,
+            tags,
+        )
+    }
+
+    #[test]
+    fn voice_catalog_requires_users_write_and_is_global_only() {
+        let dummy = make_dummy_event();
+        assert_eq!(
+            required_scope_for_kind(KIND_VOICE_CATALOG, &dummy).unwrap(),
+            Scope::UsersWrite,
+            "voice catalog rows are any-member writes (UsersWrite), not admin"
+        );
+        assert!(
+            is_global_only_kind(KIND_VOICE_CATALOG),
+            "voice catalog rows must be community-global — a stray `h` tag must not channel-scope them"
+        );
+        assert!(
+            !requires_h_channel_scope(KIND_VOICE_CATALOG),
+            "voice catalog rows must not require an h-tag channel scope"
+        );
+    }
+
+    #[test]
+    fn voice_catalog_envelope_accepts_slug_d_tag() {
+        let ev = make_voice_catalog(&[&["d", "pocket:azelma"]]);
+        assert!(validate_voice_catalog_envelope(&ev).is_ok());
+    }
+
+    #[test]
+    fn voice_catalog_accepts_full_imported_key_d() {
+        // The 80-character imported key is the whole reason the voice-catalog
+        // validator widens the generic 64-char bound; it must be accepted.
+        let d = imported_voice_key();
+        assert_eq!(
+            d.chars().count(),
+            80,
+            "fixture must be the full 80-char key"
+        );
+        let ev = make_voice_catalog(&[&["d", d.as_str()]]);
+        assert!(validate_voice_catalog_envelope(&ev).is_ok());
+    }
+
+    #[test]
+    fn voice_catalog_envelope_rejects_duplicate_empty_overlong_d() {
+        // Duplicate d tags — ambiguous NIP-33 coordinate.
+        let ev = make_voice_catalog(&[&["d", "pocket:anna"], &["d", "pocket:eve"]]);
+        let err = validate_voice_catalog_envelope(&ev).unwrap_err();
+        assert!(err.contains("exactly one `d` tag"), "got: {err}");
+
+        // Empty d tag — collapses every voice into one (pubkey, 30181, "") slot.
+        let ev = make_voice_catalog(&[&["d", ""]]);
+        let err = validate_voice_catalog_envelope(&ev).unwrap_err();
+        assert!(err.contains("must not be empty"), "got: {err}");
+
+        // Valueless ["d"] counts toward the exactly-one rule.
+        let ev = make_voice_catalog(&[&["d"]]);
+        let err = validate_voice_catalog_envelope(&ev).unwrap_err();
+        assert!(err.contains("must not be empty"), "got: {err}");
+
+        // Overlong: 97 chars exceeds the widened 96-char bound.
+        let d = "a".repeat(97);
+        let ev = make_voice_catalog(&[&["d", d.as_str()]]);
+        let err = validate_voice_catalog_envelope(&ev).unwrap_err();
+        assert!(err.contains("too long"), "got: {err}");
+        assert!(
+            err.contains("96"),
+            "error must name the widened bound: {err}"
+        );
+
+        // Whitespace/control characters break the NIP-33 coordinate.
+        let ev = make_voice_catalog(&[&["d", "pocket:anna\n"]]);
+        let err = validate_voice_catalog_envelope(&ev).unwrap_err();
+        assert!(err.contains("control characters"), "got: {err}");
+    }
+
+    #[test]
+    fn voice_catalog_envelope_bounds_d_tag_by_chars_not_bytes() {
+        // 96 multi-byte characters is 288 bytes; the documented bound is
+        // characters, so this must be accepted — same rule as the generic
+        // validator.
+        let d = "é".repeat(96);
+        assert!(d.len() > 96, "fixture must exceed the bound in bytes");
+        let ev = make_voice_catalog(&[&["d", &d]]);
+        assert!(validate_voice_catalog_envelope(&ev).is_ok());
+    }
+
+    #[test]
+    fn voice_catalog_envelope_accepts_96_char_bound() {
+        let d = "a".repeat(96);
+        let ev = make_voice_catalog(&[&["d", &d]]);
+        assert!(validate_voice_catalog_envelope(&ev).is_ok());
     }
 
     // ─── project (NIP-MP kind:30621) envelope tests ──────────────────────────

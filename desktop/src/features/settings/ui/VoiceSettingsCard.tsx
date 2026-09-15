@@ -59,7 +59,7 @@ export function VoiceSettingsCard() {
     let disposed = false;
     Promise.all([
       invokeTauri<TtsSettings>("get_tts_settings"),
-      invokeTauri<VoiceRegistryEntry[]>("list_voice_registry"),
+      invokeTauri<VoiceRegistryEntry[]>("list_voice_catalog"),
     ])
       .then(([nextSettings, nextRegistry]) => {
         if (!disposed) {

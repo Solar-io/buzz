@@ -86,6 +86,11 @@ pub enum MediaError {
     /// MP4 metadata could not be parsed.
     #[error("invalid video data")]
     InvalidVideo,
+    /// A WAV that claimed to be a voice reference failed the structural
+    /// RIFF/WAVE check (bad header, non-PCM/float encoding, truncated chunk,
+    /// misaligned samples).
+    #[error("invalid audio data")]
+    InvalidAudio,
     /// I/O error during streaming upload.
     #[error("io error: {0}")]
     Io(String),
@@ -158,6 +163,7 @@ impl IntoResponse for MediaError {
             | Self::ResolutionTooHigh
             | Self::MoovNotAtFront
             | Self::InvalidVideo
+            | Self::InvalidAudio
             | Self::InvalidImage
             | Self::MetadataForbidden => (StatusCode::UNPROCESSABLE_ENTITY, self.to_string()),
             Self::Io(_) | Self::StorageError(_) | Self::Internal => {
