@@ -50,7 +50,10 @@ test("QA: duplicate d tags with different created_at resolve by LWW in both deli
     content: JSON.stringify(importedBody({ displayName: "Newer" })),
     created_at: 900,
   });
-  for (const order of [[older, newer], [newer, older]]) {
+  for (const order of [
+    [older, newer],
+    [newer, older],
+  ]) {
     const folded = reduceVoiceCatalogEvents(order);
     assert.equal(folded.size, 1);
     assert.equal(
@@ -102,9 +105,7 @@ test("QA: a version 2 body is dropped", () => {
 
 test("QA: an imported row whose key hash differs from contentHash is dropped", () => {
   const lying = event({
-    content: JSON.stringify(
-      importedBody({ contentHash: "8".repeat(64) }),
-    ),
+    content: JSON.stringify(importedBody({ contentHash: "8".repeat(64) })),
   });
   assert.equal(parseVoiceCatalogEvent(lying), null);
 });
@@ -115,9 +116,7 @@ test("QA: mixed authors and keys fold independently", () => {
   const theirs = event({
     pubkey: other,
     created_at: 200,
-    content: JSON.stringify(
-      importedBody({ displayName: "Foreign same key" }),
-    ),
+    content: JSON.stringify(importedBody({ displayName: "Foreign same key" })),
   });
   const folded = reduceVoiceCatalogEvents([mine, theirs]);
   assert.equal(folded.size, 1, "same key across authors folds to one slot");

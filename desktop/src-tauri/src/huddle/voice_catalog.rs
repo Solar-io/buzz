@@ -24,7 +24,7 @@ use buzz_core_pkg::kind::KIND_VOICE_CATALOG;
 
 use crate::app_state::AppState;
 
-use super::tts_settings::{POCKET_BACKEND_ID, VoiceProvenance, VoiceRegistryEntry, voice_registry};
+use super::tts_settings::{voice_registry, VoiceProvenance, VoiceRegistryEntry, POCKET_BACKEND_ID};
 
 /// How long a fetched catalog stays fresh. A stale cache is still served
 /// (better than a flicker to local-only); only the refresh cadence depends
@@ -437,30 +437,24 @@ mod tests {
         let mut content = bundled_content("pocket:azelma");
         content.version = 2;
         let event = voice_event(&keys, "pocket:azelma", &content, 100);
-        assert!(
-            catalog_content_from_event(&event)
-                .expect_err("future version")
-                .contains("newer than this Buzz build supports")
-        );
+        assert!(catalog_content_from_event(&event)
+            .expect_err("future version")
+            .contains("newer than this Buzz build supports"));
 
         let content = bundled_content("pocket:azelma");
         let event = voice_event(&keys, "pocket:eponine", &content, 100);
-        assert!(
-            catalog_content_from_event(&event)
-                .expect_err("key/d mismatch")
-                .contains("does not match its `d` tag")
-        );
+        assert!(catalog_content_from_event(&event)
+            .expect_err("key/d mismatch")
+            .contains("does not match its `d` tag"));
 
         // An imported key whose hash does not match contentHash is invalid.
         let mut imported = bundled_content(&format!("pocket:imported:{}", "a".repeat(64)));
         imported.bundled = false;
         imported.content_hash = azelma_hash();
         let event = voice_event(&keys, imported.key.as_str(), &imported, 100);
-        assert!(
-            catalog_content_from_event(&event)
-                .expect_err("hash mismatch")
-                .contains("pocket:imported: + contentHash")
-        );
+        assert!(catalog_content_from_event(&event)
+            .expect_err("hash mismatch")
+            .contains("pocket:imported: + contentHash"));
 
         // Uppercase hash, and a non-pocket backend prefix, are bad grammar.
         for key in [

@@ -140,7 +140,10 @@ fn qa_list_info_chunk_is_rejected_by_both_gates() {
 #[test]
 fn qa_lying_data_chunk_size_is_rejected() {
     // data declares 8 bytes but only 4 follow: chunk end runs past the file.
-    let mut wav = riff(&[chunk(b"fmt ", &fmt_pcm(1, 32_000, 16)), chunk(b"data", &[0u8; 4])]);
+    let mut wav = riff(&[
+        chunk(b"fmt ", &fmt_pcm(1, 32_000, 16)),
+        chunk(b"data", &[0u8; 4]),
+    ]);
     // Layout: RIFF hdr 12 bytes, fmt chunk 24 bytes (8 hdr + 16 payload),
     // then the data chunk header — its size field lives at offset 12+24+4.
     let data_size_at = 12 + 24 + 4;
