@@ -176,7 +176,7 @@ async fn resolve_content_mentions(
     let member_pubkeys = fetch_member_pubkeys(client, &members_filter)
         .await
         .ok_or_else(|| {
-            CliError::Other("could not load channel membership for mention preflight".into())
+            CliError::Indeterminate("could not load channel membership for mention preflight — the read failed or came back empty; retry before concluding the channel is gone".into())
         })?;
 
     if !stripped.contains('@') {

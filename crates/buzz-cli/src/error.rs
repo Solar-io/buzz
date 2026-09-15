@@ -57,6 +57,15 @@ pub enum CliError {
     #[error("delivery unknown: {0}")]
     DeliveryUnknown(String),
 
+    /// A read the command depends on came back empty or failed, and the
+    /// two cases cannot be distinguished from where we sit (e.g. the
+    /// channel-membership event query for mention preflight: absent event vs
+    /// transient unreadable read — live channels blip this and recover, dead
+    /// ones never do; table evidence: reminder row 121, 2026-09-15). The
+    /// outcome is UNKNOWN, not deterministic — retryable, network-class exit.
+    #[error("indeterminate read: {0}")]
+    Indeterminate(String),
+
     /// Catch-all for unexpected failures
     #[error("{0}")]
     Other(String),
@@ -100,6 +109,9 @@ pub fn is_retryable_error(e: &CliError) -> bool {
         CliError::Relay { status, .. } => matches!(status, 429 | 502 | 503 | 504),
         CliError::DeliveryUnknown(_) => false,
         CliError::Held { .. } => false,
+        // An indeterminate read is unknown, not failed — a live channel
+        // blips the membership query and recovers on retry (row 121).
+        CliError::Indeterminate(_) => true,
         _ => false,
     }
 }
@@ -124,6 +136,7 @@ pub fn exit_code(e: &CliError) -> i32 {
         CliError::Conflict(_) => 5,
         CliError::NotFound(_) => 1,
         CliError::DeliveryUnknown(_) => 2,
+        CliError::Indeterminate(_) => 2,
         CliError::Held { .. } => 6,
         CliError::Other(_) => 4,
     }
@@ -153,6 +166,7 @@ pub fn print_error(e: &CliError) {
         CliError::Conflict(_) => "conflict",
         CliError::NotFound(_) => "not_found",
         CliError::DeliveryUnknown(_) => "delivery_unknown",
+        CliError::Indeterminate(_) => "indeterminate",
         CliError::Other(_) => "error",
     };
     let mut obj = serde_json::json!({
@@ -200,6 +214,20 @@ mod tests {
     use super::*;
 
     // ---- is_retryable_error ----
+
+    /// The membership-preflight read (row 121, 9/15: a LIVE channel's kind-39002
+    /// query came back empty once and recovered on retry) must classify as
+    /// retryable — the sweep's retryable:false short-circuit dead-letters on
+    /// attempt one, and an indeterminate read is unknown, not dead. Mutating
+    /// `Indeterminate => true` back to false (or the site back to Other) fails
+    /// this test.
+    #[test]
+    fn indeterminate_reads_are_retryable_and_exit_2() {
+        let e = CliError::Indeterminate("could not load channel membership".into());
+        assert!(is_retryable_error(&e), "an indeterminate read must retry — absence of a read is not proof of absence");
+        assert_eq!(exit_code(&e), 2);
+    }
+
 
     #[test]
     fn network_builder_errors_are_not_retryable() {
