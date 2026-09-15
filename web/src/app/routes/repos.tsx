@@ -408,6 +408,62 @@ function ChannelBrowser() {
     huddleLinks,
   });
 
+  // Default conversation (D-025): opening the app with nothing selected
+  // lands in the most recently active DM instead of the empty state. The DM
+  // list is activity-sorted by useDms — latest message either direction —
+  // and visibleDms already excludes locally hidden DMs. Runs at most once
+  // per app load: a deep link (?c= / ?view=) or any user selection retires
+  // it, so closing a conversation later never bounces anyone back, and a
+  // user with zero visible DMs keeps the empty state.
+  const defaultConversationHandled = useRef(false);
+  const [defaultConversationWaitElapsed, setDefaultConversationWaitElapsed] =
+    useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setDefaultConversationWaitElapsed(true),
+      1200,
+    );
+    return () => window.clearTimeout(timer);
+  }, []);
+  useEffect(() => {
+    if (defaultConversationHandled.current) return;
+    if (selectedId !== undefined || view !== undefined) {
+      // Someone already chose — deep link, restored PWA state, or the user
+      // got there first inside the wait window. Never override a choice.
+      defaultConversationHandled.current = true;
+      return;
+    }
+    if (!connected || channels.length === 0) return;
+    // Activity samples stream in with no settled signal; give them a beat
+    // (first sample or 1.2s, whichever first) so "most recent" means most
+    // recent, not first-loaded. Past the timer the metadata-recency sort
+    // is the best answer available.
+    if (
+      !dms.some((dm) => dm.lastActivity > 0) &&
+      !defaultConversationWaitElapsed
+    ) {
+      return;
+    }
+    defaultConversationHandled.current = true;
+    const target = lists.visibleDms[0];
+    if (target) {
+      void navigate({
+        to: "/repos",
+        search: { c: target.channel.id },
+        replace: true,
+      });
+    }
+  }, [
+    connected,
+    channels.length,
+    dms,
+    lists.visibleDms,
+    defaultConversationWaitElapsed,
+    selectedId,
+    view,
+    navigate,
+  ]);
+
   const selectChannel = (channelId: string) => {
     setThreadRootId(null);
     setShortcutOverlay(null);

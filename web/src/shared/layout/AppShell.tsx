@@ -139,7 +139,7 @@ export function AppShell({
 
       {/* Mobile top bar + drawer */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-2 border-b border-border px-3 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-[max(0.5rem,env(safe-area-inset-top))] md:hidden">
+        <header className="flex items-center gap-2 border-b border-border px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))] md:hidden">
           <button
             type="button"
             aria-label="Open channels"
