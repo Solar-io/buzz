@@ -904,6 +904,7 @@ function ChannelBrowser() {
                     members={members}
                     profiles={profiles}
                     threadSummaries={threadSummaries}
+                    selfPubkey={selfPubkey}
                     onClose={() => setThreadRootId(null)}
                     send={send}
                     onSelectThinkingTab={
@@ -918,6 +919,7 @@ function ChannelBrowser() {
                     members={members}
                     profiles={profiles}
                     threadSummaries={threadSummaries}
+                    selfPubkey={selfPubkey}
                     onClose={() => setThreadRootId(null)}
                     send={send}
                     mobileOnly

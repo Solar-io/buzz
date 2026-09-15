@@ -11,7 +11,12 @@ import type { MessageBuffer, TimelineMessage } from "../lib/messageBuffer.ts";
 export type { ChannelMember, Profile } from "../hooks.ts";
 import type { Profile } from "../hooks.ts";
 import { formatElapsed } from "@/features/agents/ui/WorkingBadge";
-import { nextFollowState } from "@/features/agents/lib/scrollFollow";
+import {
+  applyInputFollowScroll,
+  armFollowInput,
+  createInputFollowState,
+  forceInputFollow,
+} from "@/features/agents/lib/scrollFollow";
 import { isWithinGroupingWindow } from "@/features/channels/lib/messageGrouping";
 import { authorLabel } from "../lib/authorLabel.ts";
 import { formatDayLabel } from "../lib/dateFormatters.ts";
@@ -41,6 +46,25 @@ export { authorLabel } from "../lib/authorLabel.ts";
 
 const EMPTY_REACTIONS: ReactionIndex = new Map();
 const EMPTY_PENDING: ReadonlySet<string> = new Set();
+
+/** Keys whose default action scrolls the scroller (desktop parity set). */
+const SCROLL_INTENT_KEYS = new Set([
+  "ArrowDown",
+  "ArrowUp",
+  "End",
+  "Home",
+  "PageDown",
+  "PageUp",
+  " ",
+]);
+
+function isEditableKeyboardTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  return (
+    target.closest("input, textarea, select, [contenteditable='true']") !== null
+  );
+}
 
 /** Nested-thread rendering inputs — see the `threadLayout` prop. */
 export interface ThreadLayout {
@@ -161,23 +185,47 @@ export function ChannelTimeline({
   const listRef = useRef<VListHandle>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   /**
-   * Follow-the-tail state (see features/agents/lib/scrollFollow.ts): the
-   * timeline tails new messages ONLY while following. ANY upward scroll
-   * pauses the tail — position alone lets a fast stream re-pin the bottom
-   * between the reader's small upward deltas and erase them before they
-   * add up to an escape ("it stops for a second, then it just keeps
-   * scrolling on by" — Sam, 2026-09-13). Scrolling back to the very
-   * bottom resumes.
+   * Follow-the-tail state (see features/agents/lib/scrollFollow.ts — the
+   * InputFollowState engine): the timeline tails new messages ONLY while
+   * following. Tailing pauses on a reader's upward INPUT (touch, wheel,
+   * scrollbar, scroll keys — armed by the input listeners below, paused by
+   * the first upward movement that input produces) so a fast stream cannot
+   * re-pin the bottom between the reader's small upward deltas and erase
+   * them before they add up to an escape ("it stops for a second, then it
+   * just keeps scrolling on by" — Sam, 2026-09-13). Scrolling back to the
+   * very bottom resumes.
    *
-   * Tracked in a CAPTURE-phase scroll listener on the wrapper div, reading
-   * the scroller's NATIVE metrics (scrollTop/scrollHeight/clientHeight off
-   * event.target) — NOT through virtua's handle, whose scrollOffset/
-   * scrollSize can still hold the pre-event values when the handler runs
-   * (measured live: a reader 275px up was yanked to the bottom because the
-   * handler computed at-bottom from stale handle metrics).
+   * Pause is keyed on INPUT, not on scroll deltas (the engine ported from
+   * the desktop's useVirtualizedBottomSettle, 2026-09-14): a virtualizer
+   * emits plenty of upward scroll EVENTS of its own while converging on a
+   * programmatic scrollToIndex, and on iOS WKWebView they arrive detached
+   * from the jump that caused them — a delta-paused engine then pauses its
+   * own tail mid-settle, and every later send lands below the fold (live
+   * incident, Sam 2026-09-14). Scroll events are still read — in a
+   * CAPTURE-phase listener on the wrapper div, reading the scroller's
+   * NATIVE metrics (scrollTop/scrollHeight/clientHeight off event.target) —
+   * but only to consume armed inputs and to detect the at-bottom resume,
+   * never through virtua's handle, whose scrollOffset/scrollSize can still
+   * hold the pre-event values when the handler runs (measured live: a
+   * reader 275px up was yanked to the bottom because the handler computed
+   * at-bottom from stale handle metrics).
    */
-  const followRef = useRef(true);
-  const lastScrollTopRef = useRef(0);
+  const followRef = useRef(createInputFollowState(true));
+  /**
+   * Has this view completed its FIRST auto-tail to the newest row? The
+   * older-history pagination trigger must not fire before it: on mount the
+   * scroller sits at offset 0 and iOS emits a spurious top-reached scroll
+   * during first layout / URL-bar settle (dvh) — firing loadOlder there
+   * pins the viewport to the OLDEST row via the pagination restore and
+   * suppresses the tail outright (pagePhase never returns to idle before
+   * it), which is exactly "I enter the channel and it starts at the very
+   * first message" (Sam, 2026-09-14, iPhone).
+   */
+  const tailedRef = useRef(false);
+  /** Newest row index, refreshed every render for the geometry re-pin. */
+  const itemsLengthRef = useRef(0);
+  /** Pending rAF of the geometry re-pin (coalesced like the desktop's). */
+  const pinRafRef = useRef<number | null>(null);
   /** View identity (tailKey's first segment: channel id / thread root). */
   const viewKeyRef = useRef<string | null>(null);
   /**
@@ -431,6 +479,9 @@ export function ChannelTimeline({
   }
   itemDaysRef.current = itemDays;
   itemIsDividerRef.current = itemIsDivider;
+  // Newest row index for the geometry-driven re-pin below (kept in a ref so
+  // the ResizeObserver callback never closes over a stale render).
+  itemsLengthRef.current = items.length;
 
   /**
    * Which day the row at the top of the viewport belongs to. Null while that
@@ -453,15 +504,20 @@ export function ChannelTimeline({
 
   // Auto-tail: tailKey changes → scroll to the newest row. Double-rAF lets
   // virtua measure freshly mounted rows; the settle pass catches late-sizing
-  // media. (Same pattern the timeline used before virtualization.) Tailing is
-  // keyed on tailKey ONLY — an older-history page growing the list must not
-  // yank the reader to the bottom — and never fires while a pagination
-  // restore is pinning the viewport to its anchor row. And it fires only
-  // WHILE FOLLOWING (followRef): a reader scrolled up to read is never
-  // yanked to the bottom by a new message; the tail resumes when they
-  // scroll back to the bottom (see handleScroll). A view switch (channel /
-  // thread change — tailKey's first segment) always re-lands on the newest
-  // row, resetting the pause.
+  // media, and the ResizeObserver settle below catches it even later (iOS
+  // images size in seconds after the jump — a 250ms guess is not a
+  // mechanism). Tailing is keyed on tailKey ONLY — an older-history page
+  // growing the list must not yank the reader to the bottom — and never
+  // fires while a pagination restore is pinning the viewport to its anchor
+  // row. And it fires only WHILE FOLLOWING (followRef): a reader scrolled up
+  // to read is never yanked to the bottom by a new message; the tail resumes
+  // when they scroll back to the bottom (see handleScroll). Two always-follow
+  // exceptions, both desktop parity: a view switch (channel / thread change —
+  // tailKey's first segment) re-lands on the newest row, and the reader's
+  // OWN send force-follows so their message is never left below the fold
+  // (desktop `prepareForOwnMessage`: "the user's own send is the deliberate
+  // Zulip exception" — a send is the clearest possible show-me-the-bottom
+  // signal, even when the reader had scrolled up).
   // items.length is read for the bottom index only; tailKey is the trigger.
   // biome-ignore lint/correctness/useExhaustiveDependencies: pagination pages must not re-tail
   useEffect(() => {
@@ -471,14 +527,27 @@ export function ChannelTimeline({
     const viewKey = tailKey.split(":")[0];
     if (viewKeyRef.current !== viewKey) {
       viewKeyRef.current = viewKey;
-      followRef.current = true;
-      lastScrollTopRef.current = 0;
+      forceInputFollow(followRef.current);
+      followRef.current.prevScrollTop = 0;
+      tailedRef.current = false;
+    }
+    // The own-send exception: the tailKey that just changed named THIS
+    // message as the newest row, and it is the viewer's own.
+    if (
+      selfPubkey != null &&
+      messages.length > 0 &&
+      messages[messages.length - 1].authorPubkey === selfPubkey
+    ) {
+      forceInputFollow(followRef.current);
     }
     const toBottom = () => {
-      if (!followRef.current) {
+      if (!followRef.current.follow) {
         return;
       }
-      listRef.current?.scrollToIndex(items.length - 1, { align: "end" });
+      tailedRef.current = true;
+      listRef.current?.scrollToIndex(itemsLengthRef.current - 1, {
+        align: "end",
+      });
     };
     const raf = requestAnimationFrame(() => requestAnimationFrame(toBottom));
     const settle = window.setTimeout(toBottom, 250);
@@ -504,38 +573,131 @@ export function ChannelTimeline({
     if (el.scrollHeight - el.clientHeight < 2) {
       return;
     }
-    followRef.current = nextFollowState(
+    applyInputFollowScroll(
       followRef.current,
-      lastScrollTopRef.current,
       el.scrollTop,
       el.scrollHeight,
       el.clientHeight,
+      performance.now(),
     );
-    lastScrollTopRef.current = el.scrollTop;
   }, []);
+
+  // Reader-input arm: the pause signal for the follow engine. touchmove /
+  // wheel / a direct scroller pointerdown (scrollbar or background drag) /
+  // scroll-intent keys — the desktop useVirtualizedBottomSettle retire set,
+  // here as ARMS: the engine pauses only when an armed input is followed by
+  // actual upward movement (see scrollFollow.ts). A descendant pointerdown
+  // is ordinary row interaction and deliberately does not arm.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: isEmpty re-attaches on the 0 → N mount
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) {
       return;
     }
+    const scroller = wrap.firstElementChild;
+    const arm = () => armFollowInput(followRef.current, performance.now());
+    const armForPointer = (event: PointerEvent) => {
+      if (event.target === scroller) {
+        arm();
+      }
+    };
+    const armForScrollKey = (event: KeyboardEvent) => {
+      if (
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        !(event.target instanceof Node) ||
+        !(scroller instanceof Node) ||
+        !scroller.contains(event.target) ||
+        isEditableKeyboardTarget(event.target)
+      ) {
+        return;
+      }
+      if (SCROLL_INTENT_KEYS.has(event.key)) {
+        arm();
+      }
+    };
+    wrap.addEventListener("touchmove", arm, { capture: true, passive: true });
+    wrap.addEventListener("wheel", arm, { capture: true, passive: true });
+    wrap.addEventListener("pointerdown", armForPointer, {
+      capture: true,
+      passive: true,
+    });
+    window.addEventListener("keydown", armForScrollKey, true);
     wrap.addEventListener("scroll", handleFollowScroll, {
       capture: true,
       passive: true,
     });
-    return () =>
+    return () => {
+      wrap.removeEventListener("touchmove", arm, { capture: true });
+      wrap.removeEventListener("wheel", arm, { capture: true });
+      wrap.removeEventListener("pointerdown", armForPointer, {
+        capture: true,
+      } as EventListenerOptions);
+      window.removeEventListener("keydown", armForScrollKey, true);
       wrap.removeEventListener("scroll", handleFollowScroll, {
         capture: true,
       } as EventListenerOptions);
+    };
     // isEmpty: the empty state renders BEFORE the wrapper div exists, so the
     // 0 → N message transition must re-attach.
   }, [handleFollowScroll, isEmpty]);
 
+  // Geometry settle (desktop parity, useVirtualizedBottomSettle): while
+  // following, ANY geometry change re-pins the newest row — virtua measuring
+  // freshly mounted rows, inline media sizing in after the jump (frames grew
+  // 384x256 → 720x540 on 2026-09-13, so this is no longer sub-pixel), the
+  // iOS keyboard collapsing the scroller. The rAF coalesces the burst of
+  // observer callbacks a virtualized remount produces. Not following → no
+  // pin, so a reader scrolled up is never yanked by a resize.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: isEmpty re-attaches on the 0 → N mount
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    const scroller = wrap?.firstElementChild;
+    if (!(scroller instanceof HTMLElement)) {
+      return;
+    }
+    const pin = () => {
+      if (!followRef.current.follow || pinRafRef.current !== null) {
+        return;
+      }
+      pinRafRef.current = requestAnimationFrame(() => {
+        pinRafRef.current = null;
+        listRef.current?.scrollToIndex(itemsLengthRef.current - 1, {
+          align: "end",
+        });
+      });
+    };
+    const observer = new ResizeObserver(pin);
+    observer.observe(scroller);
+    const content = scroller.firstElementChild;
+    if (content instanceof HTMLElement) {
+      observer.observe(content);
+    }
+    return () => {
+      observer.disconnect();
+      if (pinRafRef.current !== null) {
+        cancelAnimationFrame(pinRafRef.current);
+        pinRafRef.current = null;
+      }
+    };
+    // isEmpty: same re-attach reason as the listener effect above.
+  }, [isEmpty]);
+
   // Top reached → request one older page (once per flight). Also the pinned
-  // day-divider tick: it is the only scroll signal virtua gives us.
+  // day-divider tick: it is the only scroll signal virtua gives us. The
+  // pagination trigger is gated on the FIRST auto-tail having landed: before
+  // it, offset 0 means "just mounted", not "the reader reached the top" —
+  // iOS emits a spurious top-reached scroll during first layout / URL-bar
+  // settle, and an un-gated loadOlder there pins the view to the oldest row
+  // (the pagination restore) while suppressing the tail — the enter-at-top
+  // bug. A short channel whose whole history fits (top === bottom) still
+  // paginates: the tail lands instantly there, then offset 0 counts.
   const handleScroll = useCallback(
     (offset: number) => {
       resolvePinnedDay(offset);
       if (
+        !tailedRef.current ||
         offset > 4 ||
         pagePhase.current !== "idle" ||
         loadingOlder ||

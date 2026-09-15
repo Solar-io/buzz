@@ -75,6 +75,7 @@ export function ThreadPanel({
   buffer,
   members,
   profiles,
+  selfPubkey,
   onClose,
   send,
   onSelectThinkingTab,
@@ -85,6 +86,8 @@ export function ThreadPanel({
   buffer: MessageBuffer;
   members: ChannelMember[];
   profiles: Map<string, Profile>;
+  /** Viewer's pubkey — drives the timeline's own-send force-follow. */
+  selfPubkey?: string | null;
   onClose: () => void;
   send: ComposerProps["send"];
   /** DMs offer a Replies ↔ Thinking switch in the header. */
@@ -274,6 +277,7 @@ export function ThreadPanel({
         // than opening a nested panel — the nesting is rendered in place.
         onOpenThread={(message) => setSelectedReplyId(message.id)}
         activeRootId={threadRef.replyToId}
+        selfPubkey={selfPubkey}
         flat
         threadLayout={threadLayout}
         tailKey={`${rootId}:${lastReply.id}:${threadMessages.length}`}
