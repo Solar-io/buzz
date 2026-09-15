@@ -806,8 +806,10 @@ function ChannelBrowser() {
                       {/* Gutter for the portrait overlay: the same fluid
                           width the overlay uses, so transcript text shifts
                           left of it and stays clear at every thinking-pane
-                          width (the pair is the resize requirement). */}
-                      <div className="flex min-h-0 flex-1 flex-col lg:pr-[calc(min(12rem,24%)+0.75rem)]">
+                          width (the pair is the resize requirement). The
+                          extra half-row keeps a visible seam between
+                          full-width content and the frame. */}
+                      <div className="flex min-h-0 flex-1 flex-col lg:pr-[calc(min(12rem,24%)+1.25rem)]">
                         <ChannelTimeline
                           messages={messages}
                           profiles={profiles}
