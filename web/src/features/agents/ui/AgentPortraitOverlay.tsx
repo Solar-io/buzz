@@ -29,7 +29,7 @@ export function AgentPortraitOverlay({
   return (
     <div
       data-testid="agent-portrait"
-      className="pointer-events-none absolute top-16 right-3 z-10 hidden w-[min(12rem,24%)] flex-col lg:flex"
+      className="pointer-events-none absolute top-16 right-3 z-10 hidden w-[min(12rem,24%)] lg:block"
     >
       <AuthorAvatar
         pubkey={pubkey}
@@ -37,10 +37,6 @@ export function AgentPortraitOverlay({
         picture={picture}
         shape="portrait"
       />
-      <div className="mt-2 text-sm font-medium">{name}</div>
-      <p className="text-xs text-muted-foreground">
-        Who they want you to see — they can change it anytime.
-      </p>
     </div>
   );
 }

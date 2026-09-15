@@ -79,7 +79,7 @@ after(() => {
   globalThis.__BUZZ_TEST_FETCH_SIGNED_MEDIA__ = originals.media;
 });
 
-test("renders the agent-chosen picture as a 3:4 frame with name and caption", async () => {
+test("renders only the frame — no name or caption under it (Sam, 2026-09-14)", async () => {
   globalThis.__BUZZ_TEST_FETCH_SIGNED_MEDIA__ = async () => "blob:mock-overlay";
   const { container, unmount } = await mountOverlay({
     picture: "https://media.test/pic",
@@ -90,15 +90,10 @@ test("renders the agent-chosen picture as a 3:4 frame with name and caption", as
   const img = portrait.querySelector("img");
   assert.ok(img, "profile.avatar resolves to an img");
   assert.match(img.getAttribute("class") ?? "", /lg:aspect-\[3\/4\]/);
-  assert.ok(
-    portrait.textContent?.includes("Richard"),
-    "agent name shown under the frame",
-  );
-  assert.ok(
-    portrait.textContent?.includes(
-      "Who they want you to see — they can change it anytime.",
-    ),
-    "caption line present",
+  assert.equal(
+    portrait.textContent?.trim(),
+    "",
+    "the overlay is the bare picture — name and caption removed by request",
   );
   await unmount();
 });
