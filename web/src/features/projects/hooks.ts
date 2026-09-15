@@ -16,7 +16,7 @@
  */
 
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
@@ -48,6 +48,12 @@ import {
   enumerateWithBestTransport,
   wsQueryPage,
 } from "./lib/relayTransport.ts";
+import type { TrackerDocument, TrackerIndex } from "./lib/trackerClient.ts";
+import {
+  buildTrackerIndex,
+  fetchTrackerDocument,
+  trackerJsonUrl,
+} from "./lib/trackerClient.ts";
 
 export const PROJECTS_QUERY_KEY = ["projects", "collection"] as const;
 
@@ -162,6 +168,42 @@ export function useProject(projectId: string | undefined): {
     isLoading,
     possiblyIncomplete: data?.possiblyIncomplete ?? false,
   };
+}
+
+const TRACKER_QUERY_KEY = ["projects", "tracker"] as const;
+
+/**
+ * The tracker sidecar document, or null when it is unreachable or malformed.
+ * Deliberately uncorrelated with the relay session: ownership is a sidecar
+ * fact, and its absence must never surface as a page error.
+ */
+function useTrackerDocument(): TrackerDocument | null {
+  const url = trackerJsonUrl();
+  const query = useQuery<TrackerDocument | null>({
+    queryKey: TRACKER_QUERY_KEY,
+    enabled: url !== null,
+    staleTime: 60_000,
+    retry: false,
+    queryFn: ({ signal }) => fetchTrackerDocument(url as string, signal),
+  });
+  return query.data ?? null;
+}
+
+/**
+ * The sidecar fused with a registry's dtag/name pairs, so a project cited by
+ * either key resolves to one entry. Pass the projects being rendered.
+ */
+export function useTrackerIndex(
+  registry: ReadonlyArray<Project>,
+): TrackerIndex | null {
+  const doc = useTrackerDocument();
+  return useMemo(() => {
+    if (!doc) return null;
+    return buildTrackerIndex(
+      doc,
+      registry.map((project) => ({ dtag: project.dtag, name: project.name })),
+    );
+  }, [doc, registry]);
 }
 
 export function issuesQueryKey(repoAddress: string | undefined) {

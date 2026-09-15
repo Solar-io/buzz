@@ -8,7 +8,7 @@
  * matters when you look at what is inside.
  */
 
-import { FolderGit2, Plus, Search } from "lucide-react";
+import { ExternalLink, FolderGit2, Plus, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { useProfiles } from "@/features/channels/hooks";
@@ -18,8 +18,9 @@ import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { Skeleton } from "@/shared/ui/skeleton";
-import { useProjectCollection } from "../hooks.ts";
+import { useProjectCollection, useTrackerIndex } from "../hooks.ts";
 import type { Project } from "../lib/projectModels.ts";
+import { changelogUrl, lookupTrackerEntry } from "../lib/trackerClient.ts";
 import { CreateProjectDialog } from "./CreateProjectDialog.tsx";
 import { IncompleteCollectionNotice } from "./projectPresentation.tsx";
 
@@ -27,13 +28,16 @@ function ProjectCard({
   authorLabel,
   onOpen,
   project,
+  trackerEntry,
 }: {
   authorLabel: string;
   onOpen: (project: Project) => void;
   project: Project;
+  trackerEntry: ReturnType<typeof lookupTrackerEntry>;
 }) {
   const memberCount = project.repositories.length;
   const missingCount = project.unavailableRepositoryAddresses.length;
+  const openCount = trackerEntry?.openItems.length ?? 0;
   return (
     <button
       className="flex w-full flex-col gap-2 rounded-xl border border-border/60 bg-card p-4 text-left transition-colors hover:border-border hover:bg-muted/40"
@@ -48,13 +52,24 @@ function ProjectCard({
             {project.name}
           </span>
         </div>
-        {project.implicit ? (
-          <Badge variant="outline">Repository</Badge>
-        ) : (
-          <Badge variant="secondary">
-            {memberCount === 1 ? "1 repo" : `${memberCount} repos`}
-          </Badge>
-        )}
+        <div className="flex shrink-0 items-center gap-1.5">
+          {openCount > 0 ? (
+            <Badge
+              className="border-warning/50 text-warning"
+              data-testid={`project-open-count-${project.dtag}`}
+              variant="outline"
+            >
+              {openCount === 1 ? "1 open item" : `${openCount} open items`}
+            </Badge>
+          ) : null}
+          {project.implicit ? (
+            <Badge variant="outline">Repository</Badge>
+          ) : (
+            <Badge variant="secondary">
+              {memberCount === 1 ? "1 repo" : `${memberCount} repos`}
+            </Badge>
+          )}
+        </div>
       </div>
 
       {project.description ? (
@@ -64,7 +79,17 @@ function ProjectCard({
       ) : null}
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-muted-foreground">
-        <span>{authorLabel}</span>
+        {trackerEntry ? (
+          // The registry knows only pubkeys; the sidecar is where "who is
+          // primary" lives. An empty owner renders as unassigned rather than
+          // falling back to the announcer, who is not the answer to the
+          // question being asked.
+          <span className="font-medium text-foreground">
+            Primary: {trackerEntry.owner || "unassigned"}
+          </span>
+        ) : (
+          <span>{authorLabel}</span>
+        )}
         <span>{relativeTime(project.createdAt)}</span>
         {missingCount > 0 ? (
           <span className="text-warning">
@@ -90,6 +115,8 @@ export function ProjectsPage({
   const [creating, setCreating] = useState(false);
 
   const projects = data?.projects ?? [];
+  const trackerIndex = useTrackerIndex(projects);
+  const changelogHref = changelogUrl();
   const owners = useMemo(
     () => [...new Set(projects.map((project) => project.owner))],
     [projects],
@@ -119,15 +146,29 @@ export function ProjectsPage({
             Repositories and the groupings that span them.
           </p>
         </div>
-        <Button
-          data-testid="new-project"
-          disabled={!ownerPubkey}
-          onClick={() => setCreating(true)}
-          type="button"
-        >
-          <Plus />
-          New project
-        </Button>
+        <div className="flex items-center gap-3">
+          {changelogHref ? (
+            <a
+              className="flex items-center gap-1 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+              data-testid="changelog-link"
+              href={changelogHref}
+              rel="noreferrer"
+              target="_blank"
+            >
+              Changelog
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          ) : null}
+          <Button
+            data-testid="new-project"
+            disabled={!ownerPubkey}
+            onClick={() => setCreating(true)}
+            type="button"
+          >
+            <Plus />
+            New project
+          </Button>
+        </div>
       </div>
 
       <div className="relative">
@@ -182,6 +223,7 @@ export function ProjectsPage({
               key={project.id}
               onOpen={onOpenProject}
               project={project}
+              trackerEntry={lookupTrackerEntry(trackerIndex, project)}
             />
           ))}
         </div>
