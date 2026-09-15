@@ -22,8 +22,17 @@
 //!   voluntary `watching` / `composing` / annex keys are coordination policy
 //!   the gate never reads — the watcher+composer room-sharing pattern is
 //!   preserved.
+//! - **A stale claim is not a hold.** The harness re-stamps live turns every
+//!   60s (`buzz-acp`'s `PULSE_SECS`), so a foreign claim whose
+//!   `last_seen_at` is older than [`STALE_HOLD_SECS`] belongs to a dead or
+//!   wedged holder — it does not gate, and the sender proceeds without
+//!   `--supersede`. A killed harness cannot clear its own claims, so this
+//!   staleness window IS the release path for unclean death; clean exits
+//!   already release via the writer's on-change sync.
 //! - **A hold is terminal, not transient.** It must not read as a retryable
-//!   failure; standing down IS a complete reply.
+//!   failure; standing down IS a complete reply. Every hold that fires is
+//!   backed by a claim pulsed within [`STALE_HOLD_SECS`] — a plausibly-live
+//!   holder — so the stand-down advice is never a lie.
 //!
 //! The lock/atomicity protocol (advisory `flock` on a `<name>.lock` sidecar
 //! around the whole read-modify-write, published via tmp+rename) is the same
@@ -37,7 +46,19 @@ use uuid::Uuid;
 /// How long a turn claim stays live after its `last_seen_at`. Mirrors
 /// buzz-acp's `claims::COMPOSING_TTL_SECS` (the Guard B dispatch-time reader)
 /// so both gates answer "is a session of me active?" on the same clock.
+/// Governs record decay (supersede-record freshness), NOT the hold window —
+/// see [`STALE_HOLD_SECS`].
 pub(crate) const TURN_TTL_SECS: i64 = 10 * 60;
+
+/// How old a foreign claim may be and still hold a send. The harness pulses
+/// `last_seen_at` every 60s (`buzz-acp`'s `PULSE_SECS`); 150s = two missed
+/// pulses plus margin, which a live harness's tokio loop does not miss —
+/// the pulse fires from the select loop regardless of turn activity. Past
+/// this window the holder is dead or wedged (a wedged loop can't finish its
+/// turn either), and the claim stops gating: the sender proceeds without
+/// `--supersede`. Mirrored in `buzz-acp`'s `claims_writer` — one window,
+/// both sides, same as the TTL.
+pub(crate) const STALE_HOLD_SECS: i64 = 150;
 
 /// `managed.superseded` is pruned to this many most-recent records at append
 /// time — the only place pruning ever happens (the harness writer carries the
@@ -56,8 +77,12 @@ const CLAIMS_FILE_ENV: &str = "BUZZ_ACP_CLAIMS_FILE";
 const DISPLAY_NAME_ENV: &str = "BUZZ_ACP_DISPLAY_NAME";
 
 /// Agent-side convention, self-describing at the point of failure. Emitted in
-/// the `Held` error's JSON as `advice`.
-pub(crate) const HELD_ADVICE: &str = "This is a hold, not a failure. Another session of you is mid-turn in this channel. Stand down — a bounce answers 'should I speak?' and no is a complete reply.";
+/// the `Held` error's JSON as `advice`. Every hold that fires is backed by a
+/// claim pulsed within the stale window — a plausibly-live holder — so
+/// standing down is the right default; the self-clearing note is for the
+/// rare sender holding finished work against a holder they have positive
+/// evidence is dead.
+pub(crate) const HELD_ADVICE: &str = "This is a hold, not a failure. Another session of you is mid-turn in this channel and its claim was pulsed within the last 150s. Stand down — a bounce answers 'should I speak?' and no is a complete reply. Holds self-clear: a claim whose heartbeat stalls past 150s never holds, so a deliberate retry after ~3 minutes will pass without --supersede.";
 
 /// A surviving foreign turn claim: the reason a send would be held.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,7 +94,8 @@ pub(crate) struct Hold {
     /// Seconds since the claim's `last_seen_at` (clamped at zero — a slightly
     /// future stamp is clock skew, not a negative age).
     pub(crate) claim_age_secs: i64,
-    /// The freshness window, for the agent's decision-making: [`TURN_TTL_SECS`].
+    /// The freshness window, for the agent's decision-making:
+    /// [`STALE_HOLD_SECS`] — past it the claim stops holding entirely.
     pub(crate) ttl_secs: i64,
 }
 
@@ -142,7 +168,7 @@ pub(crate) fn check_hold(channel: &Uuid, self_slot: &str) -> Option<Hold> {
 ///
 /// A claim survives — and produces a [`Hold`] — when it targets `channel`,
 /// belongs to a different slot, has a parseable `last_seen_at` within
-/// [`TURN_TTL_SECS`], and is not voided by a matching `managed.superseded`
+/// [`STALE_HOLD_SECS`], and is not voided by a matching `managed.superseded`
 /// record (same channel + holder, recorded at or after the claim started).
 pub fn evaluate_hold(
     claims_json: &str,
@@ -157,7 +183,10 @@ pub fn evaluate_hold(
 
 /// All foreign turn claims on `channel` that survive the same rules
 /// [`evaluate_hold`] applies — the supersede path needs every holder, not
-/// just the first.
+/// just the first. (Under the stale window, a claim past
+/// [`STALE_HOLD_SECS`] no longer survives — so a `--supersede` send finds no
+/// holders to void against stale claims, which is correct: they do not hold
+/// in the first place, and the send proceeds regardless.)
 pub fn surviving_claims(
     claims_json: &str,
     channel: &Uuid,
@@ -205,7 +234,12 @@ pub fn surviving_claims(
         // A slightly future stamp (clock skew between sessions) counts as
         // live, mirroring the harness reader's composing rule.
         let age_secs = (now - last_seen_at).num_seconds();
-        if age_secs > TURN_TTL_SECS {
+        // The stale window, not the TTL, bounds a hold: the harness pulses
+        // live turns every 60s, so a claim older than STALE_HOLD_SECS is a
+        // dead or wedged holder — it does not gate. This is the release path
+        // for unclean death (kill/restart/crash), which cannot clear its own
+        // claims; clean exits release via the writer's on-change sync.
+        if age_secs > STALE_HOLD_SECS {
             continue;
         }
         if is_voided_by_supersede(superseded, channel, slot, turn.get("started_at"), now) {
@@ -215,7 +249,7 @@ pub fn surviving_claims(
             channel: *channel,
             holder_slot: slot.to_string(),
             claim_age_secs: age_secs.max(0),
-            ttl_secs: TURN_TTL_SECS,
+            ttl_secs: STALE_HOLD_SECS,
         });
     }
     holds
@@ -537,7 +571,7 @@ mod tests {
         .expect("a fresh foreign claim must hold");
         assert_eq!(hold.channel, channel);
         assert_eq!(hold.holder_slot, "other-boot:0");
-        assert_eq!(hold.ttl_secs, 600);
+        assert_eq!(hold.ttl_secs, 150);
         assert!(
             (30..=42).contains(&hold.claim_age_secs),
             "claim age ~42s, got {}",
@@ -559,6 +593,56 @@ mod tests {
             )
             .is_none(),
             "a claim 11 minutes stale must not hold"
+        );
+    }
+
+    /// The incident band (9/14 Evie lockout, live repro claim_age 589s): a
+    /// claim older than the stale window but inside the old TTL must NOT
+    /// hold. Before the stale tier this held for the full 600s while the
+    /// holder's harness was dead — the mutation this test detects is
+    /// reverting the hold window to TURN_TTL_SECS.
+    #[test]
+    fn incident_band_claim_does_not_hold() {
+        let channel = channel_c();
+        for age in [151, 200, 366, 425, 589, 599] {
+            assert!(
+                evaluate_hold(&doc_with_turn(&channel, age), &channel, "me-boot:7", Utc::now())
+                    .is_none(),
+                "a claim {age}s stale (dead holder, inside old 600s TTL) must not hold"
+            );
+        }
+    }
+
+    /// The stale boundary is exact: STALE_HOLD_SECS still holds (the holder
+    /// may be one pulse away), STALE_HOLD_SECS + 1 does not. The claim's
+    /// stamp and the evaluation `now` are derived from one `seen` — no
+    /// wall-clock drift between the two.
+    #[test]
+    fn stale_boundary_is_exact() {
+        let channel = channel_c();
+        let seen = Utc::now();
+        let doc = serde_json::json!({
+            "managed": {
+                "pool": "other-boot",
+                "turns": [
+                    {"slot": "other-boot:0", "channel": channel.to_string(),
+                     "started_at": seen.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                     "last_seen_at": seen.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                     "acp_session": "s-1"}
+                ],
+                "superseded": []
+            }
+        })
+        .to_string();
+        let at_window = seen + chrono::Duration::seconds(STALE_HOLD_SECS);
+        let past_window = seen + chrono::Duration::seconds(STALE_HOLD_SECS + 1);
+        assert!(
+            evaluate_hold(&doc, &channel, "me-boot:7", at_window).is_some(),
+            "a claim exactly at the stale window still holds"
+        );
+        assert!(
+            evaluate_hold(&doc, &channel, "me-boot:7", past_window).is_none(),
+            "a claim one second past the stale window does not hold"
         );
     }
 

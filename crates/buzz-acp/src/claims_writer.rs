@@ -46,6 +46,15 @@ pub(crate) const TURN_TTL_SECS: i64 = 10 * 60;
 /// enough to be noise next to the rest of the loop's timers.
 pub(crate) const PULSE_SECS: u64 = 60;
 
+/// How old a foreign turn claim may be and still count as fresh. A live
+/// harness pulses every [`PULSE_SECS`]; 150s = two missed pulses plus
+/// margin, which a live tokio loop does not miss — the pulse fires from the
+/// select loop regardless of turn activity. Past this window a foreign
+/// holder is dead or wedged and its entries decay here, exactly as the
+/// CLI gate stops holding on them. Mirrored in `buzz-cli`'s `claims_gate`
+/// (`STALE_HOLD_SECS`) — one window, both sides, same as the TTL.
+pub(crate) const STALE_HOLD_SECS: i64 = 150;
+
 /// Set to `0` to disable the writer entirely (ops escape hatch). Anything
 /// else — including unset — leaves it on. The CLI gate keys on the file, not
 /// on this flag.
@@ -249,9 +258,10 @@ fn write_turn_snapshot(snapshot: &[TurnEntry]) -> std::io::Result<()> {
 /// Read-modify-write the `managed` key under the sidecar flock.
 ///
 /// - Foreign-boot turns (slot not prefixed with this boot's id) survive while
-///   fresh and are dropped once past [`TURN_TTL_SECS`] — a dead second pool's
-///   claims decay without any mtime heuristics, while a live one keeps its
-///   own entries fresh via its pulse.
+///   fresh and are dropped once past [`STALE_HOLD_SECS`] — a dead second
+///   pool's claims decay without any mtime heuristics (a wedged loop can't
+///   finish its turn either), while a live one keeps its own entries fresh
+///   via its pulse.
 /// - Own-boot turns are replaced by `snapshot` wholesale — this is what makes
 ///   a turn-end write clear the entry.
 /// - `managed.superseded` (the CLI's arbitration annex) passes through
@@ -308,9 +318,10 @@ fn write_managed_turns(path: &Path, snapshot: &[TurnEntry]) -> std::io::Result<(
 }
 
 /// Whether a turn claim from the claims file belongs to another boot and is
-/// still inside the TTL. Own-boot entries are never carried (the snapshot is
-/// authoritative for this process); foreign entries that cannot prove
-/// freshness (missing or unparseable `last_seen_at`) are dropped.
+/// still inside the stale window ([`STALE_HOLD_SECS`]). Own-boot entries are
+/// never carried (the snapshot is authoritative for this process); foreign
+/// entries that cannot prove freshness (missing or unparseable
+/// `last_seen_at`) are dropped.
 fn foreign_turn_is_fresh(turn: &Value, now: chrono::DateTime<chrono::Utc>) -> bool {
     let Some(slot) = turn.get("slot").and_then(Value::as_str) else {
         return false;
@@ -325,7 +336,7 @@ fn foreign_turn_is_fresh(turn: &Value, now: chrono::DateTime<chrono::Utc>) -> bo
     else {
         return false;
     };
-    (now - last_seen_at.with_timezone(&chrono::Utc)) <= chrono::Duration::seconds(TURN_TTL_SECS)
+    (now - last_seen_at.with_timezone(&chrono::Utc)) <= chrono::Duration::seconds(STALE_HOLD_SECS)
 }
 
 /// Run `f` while holding an exclusive advisory flock on the `<name>.lock`
@@ -667,14 +678,22 @@ mod tests {
 
     /// A foreign boot's FRESH turn survives this writer's sync (two live
     /// pools must see each other — that is the bug being guarded); a foreign
-    /// STALE turn decays by TTL. Own-boot entries are always replaced by the
-    /// snapshot.
+    /// STALE turn decays once past [`STALE_HOLD_SECS`] — including the
+    /// incident band (9/14: a corpse claim sat 366–589s inside the old
+    /// 600s TTL holding a live session out; that band must decay too).
+    /// Own-boot entries are always replaced by the snapshot.
     #[tokio::test]
     async fn foreign_fresh_turn_survives_and_stale_one_decays() {
         let _guard = env_lock();
         let channel = Uuid::new_v4();
         let path = temp_path("foreign");
         let fresh_seen = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        // Literal 400s, deliberately NOT derived from STALE_HOLD_SECS: this
+        // is the mutation detector — if the preserve window were widened
+        // back toward TURN_TTL_SECS this entry would survive and the count
+        // assertion below would fail. Under the 150s window 400s decays.
+        let incident_seen = (chrono::Utc::now() - chrono::Duration::seconds(400))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         let stale_seen = (chrono::Utc::now() - chrono::Duration::seconds(TURN_TTL_SECS + 60))
             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         std::fs::write(
@@ -683,6 +702,9 @@ mod tests {
                 "managed": {"turns": [
                     {"slot": "other-boot:0", "channel": channel.to_string(),
                      "started_at": fresh_seen, "last_seen_at": fresh_seen,
+                     "acp_session": null},
+                    {"slot": "corpse-boot:1", "channel": channel.to_string(),
+                     "started_at": incident_seen, "last_seen_at": incident_seen,
                      "acp_session": null},
                     {"slot": "dead-boot:1", "channel": channel.to_string(),
                      "started_at": stale_seen, "last_seen_at": stale_seen,
@@ -713,8 +735,12 @@ mod tests {
             "foreign fresh turn must survive the merge"
         );
         assert!(
+            !slots.iter().any(|s| s.starts_with("corpse-boot:")),
+            "foreign turn in the incident band (stale window < age < TTL) must decay"
+        );
+        assert!(
             !slots.iter().any(|s| s.starts_with("dead-boot:")),
-            "foreign stale turn must decay by TTL"
+            "foreign stale turn must decay past the stale window"
         );
 
         cleanup(&path);
