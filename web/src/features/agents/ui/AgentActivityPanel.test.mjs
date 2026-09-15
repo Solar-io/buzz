@@ -98,7 +98,11 @@ async function mountPanel({ profile, frames = [turnFrame()] }) {
   };
 }
 
-test("the portrait block renders above the transcript; the header chip is unchanged", async () => {
+test("the portrait no longer renders inside the thinking pane", async () => {
+  // Sam's placement verdict (2026-09-14): a portrait at the top of this
+  // scroll area is only visible at one scroll position — it moved to the
+  // chat column as AgentPortraitOverlay. Pin the removal here so the block
+  // cannot quietly come back; the header chip is unchanged.
   globalThis.__BUZZ_TEST_FETCH_SIGNED_MEDIA__ = async () => "blob:mock-panel";
   const { container, unmount } = await mountPanel({
     profile: {
@@ -108,35 +112,10 @@ test("the portrait block renders above the transcript; the header chip is unchan
     },
   });
 
-  const portrait = container.querySelector('[data-testid="agent-portrait"]');
-  assert.ok(portrait, "portrait block renders");
-  const portraitImg = portrait.querySelector("img");
-  assert.ok(portraitImg, "profile.avatar resolves to an img");
-  assert.match(portraitImg.getAttribute("class") ?? "", /lg:aspect-\[3\/4\]/);
-  assert.match(
-    portraitImg.getAttribute("class") ?? "",
-    /h-44/,
-    "short banner crop below lg",
-  );
-  assert.ok(
-    portrait.textContent?.includes("Richard"),
-    "agent name shown under the frame",
-  );
-  assert.ok(
-    portrait.textContent?.includes(
-      "Who they want you to see — they can change it anytime.",
-    ),
-    "muted caption line present",
-  );
-
-  // Portrait sits ABOVE the transcript in document order.
-  const transcript = container.querySelector("ol");
-  assert.ok(transcript, "transcript list renders");
-  assert.notEqual(
-    portrait.compareDocumentPosition(transcript) &
-      globalThis.window.Node.DOCUMENT_POSITION_FOLLOWING,
-    0,
-    "transcript follows the portrait block",
+  assert.equal(
+    container.querySelector('[data-testid="agent-portrait"]'),
+    null,
+    "the thinking pane must not render the portrait block",
   );
 
   // Header chip: same picture, still the small circular size.
@@ -150,32 +129,12 @@ test("the portrait block renders above the transcript; the header chip is unchan
   assert.doesNotMatch(chipClass, /lg:aspect-\[3\/4\]/);
 
   // The transcript still gets its rows (the turn divider from the frame).
+  const transcript = container.querySelector("ol");
+  assert.ok(transcript, "transcript list renders");
   assert.ok(
     transcript?.textContent?.includes("Turn"),
     "transcript rows still render",
   );
-  await unmount();
-});
-
-test("a profile without an avatar renders the initials frame, not a broken img", async () => {
-  globalThis.__BUZZ_TEST_FETCH_SIGNED_MEDIA__ = async () => "blob:unused";
-  const { container, unmount } = await mountPanel({
-    profile: { name: "Richard", displayName: "Richard" },
-  });
-
-  const portrait = container.querySelector('[data-testid="agent-portrait"]');
-  assert.ok(portrait, "portrait block still renders without an avatar");
-  assert.equal(
-    portrait.querySelector("img"),
-    null,
-    "no img element without a picture",
-  );
-  const frame = portrait.firstElementChild;
-  assert.equal(frame?.tagName, "DIV");
-  assert.equal(frame?.getAttribute("data-pubkey"), PUBKEY);
-  assert.match(frame?.getAttribute("class") ?? "", /lg:aspect-\[3\/4\]/);
-  assert.match(frame?.getAttribute("class") ?? "", /bg-/);
-  assert.equal(frame?.textContent, "R");
   await unmount();
 });
 

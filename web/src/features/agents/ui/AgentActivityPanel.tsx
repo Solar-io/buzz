@@ -256,21 +256,11 @@ export function AgentActivityPanel({
         onScroll={handleScroll}
         className="buzz-channel-activity-scrollbar min-h-0 flex-1 overflow-y-auto p-3"
       >
-        {/* Stationary portrait, chosen by the agent itself: it renders the
-            same `profile.avatar` the header chip uses, and a republished
-            kind-0 repaints it live — nothing schedules or rotates it. */}
-        <div className="mb-3" data-testid="agent-portrait">
-          <AuthorAvatar
-            pubkey={agentPubkey}
-            label={agentName}
-            picture={profile?.avatar}
-            shape="portrait"
-          />
-          <div className="mt-2 text-sm font-medium">{agentName}</div>
-          <p className="text-xs text-muted-foreground">
-            Who they want you to see — they can change it anytime.
-          </p>
-        </div>
+        {/* The portrait lives over the CHAT column now (AgentPortraitOverlay,
+            rendered by the DM route): a stationary overlay, not a block at
+            the top of this scroll area, where it was only visible at one
+            scroll position (Sam's placement verdict, 2026-09-14). The small
+            header chip stays as the in-pane identity anchor. */}
         {frames.length === 0 && lockedCount === 0 && (
           <p className="p-6 text-center text-sm text-muted-foreground">
             {connected
