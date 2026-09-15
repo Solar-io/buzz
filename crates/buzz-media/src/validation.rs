@@ -195,10 +195,22 @@ pub fn validate_file_content(
     match infer::get(bytes) {
         Some(kind) => {
             let mime = kind.mime_type().to_string();
+            // A sniffed RIFF/WAVE container is accepted only through the
+            // voice-reference structural validator — the one audio format
+            // Buzz stores, for voice-catalog assets. The rejection rationale
+            // for audio was container metadata and location tags; a
+            // header-only PCM WAV has none, and the validator's chunk walk
+            // rejects any that appear. Every other audio container stays
+            // rejected until Buzz has an equivalent sanitizer for it.
+            // `infer` reports RIFF/WAVE as `audio/wav` or the legacy alias
+            // `audio/x-wav`; both are stored under the canonical `audio/wav`.
+            if mime == "audio/wav" || mime == "audio/x-wav" {
+                validate_voice_reference_wav(bytes)?;
+                return Ok(("audio/wav".to_string(), "wav".to_string()));
+            }
             // Recognized media must never fall through exact-byte attachment
             // storage. Images and video use their canonical media validators;
-            // audio is rejected until Buzz has an explicit sanitizer and
-            // location-metadata validator for its container.
+            // all other audio is rejected.
             if mime.starts_with("image/")
                 || mime.starts_with("video/")
                 || mime.starts_with("audio/")
@@ -216,6 +228,141 @@ pub fn validate_file_content(
         }
         None => Ok(("application/octet-stream".to_string(), "bin".to_string())),
     }
+}
+
+/// Validate the structural envelope of a **voice-reference WAV**.
+///
+/// This is the sanitizer-equivalent for the one audio format Buzz accepts on
+/// the generic upload path: voice-catalog assets (`docs/plans/
+/// 2026-09-15-voice-repository-v1.md` §4). The generic path rejects `audio/*`
+/// because audio containers carry metadata and location tags; a canonical PCM
+/// WAV produced by `buzz-voice`'s canonicalizer has none, and this validator
+/// enforces exactly that shape — structural checks only, no decoding:
+///
+/// 1. `RIFF`/`WAVE` magic, with the declared RIFF size matching the byte
+///    length exactly (trailing bytes are a hidden channel).
+/// 2. A chunk walk over an **allowlist**: exactly one `fmt ` chunk and exactly
+///    one `data` chunk. Any other chunk — `LIST`/`INFO` (RIFF metadata),
+///    `ID3`, `bext` (broadcast metadata with originator and timestamp), `cue
+///    `, `fact`, `JUNK`, `umid`, `iXML` — is forbidden, matching the image
+///    validators' allowlist philosophy rather than trying to enumerate
+///    metadata formats.
+/// 3. The `fmt ` chunk declares PCM (1) or IEEE-float (3) encoding, 1–8
+///    channels, a non-zero sample rate, and a block align consistent with the
+///    channel count and bit depth; the data chunk is a whole number of
+///    frames.
+///
+/// The size cap is enforced by the caller ([`validate_file_content`] checks
+/// `config.max_file_bytes` before sniffing). Content silence/duration rules
+/// are deliberately absent — those are the client's import gate
+/// (`buzz-voice::imported`); the relay is a structural backstop.
+pub fn validate_voice_reference_wav(bytes: &[u8]) -> Result<(), MediaError> {
+    // 1. RIFF/WAVE magic + declared-size consistency.
+    if bytes.len() < 12 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return Err(MediaError::InvalidAudio);
+    }
+    let declared = u32::from_le_bytes(
+        bytes[4..8]
+            .try_into()
+            .map_err(|_| MediaError::InvalidAudio)?,
+    ) as usize;
+    if declared.checked_add(8) != Some(bytes.len()) {
+        return Err(MediaError::InvalidAudio);
+    }
+
+    // 2. Chunk walk over the {fmt , data} allowlist.
+    let mut format: Option<&[u8]> = None;
+    let mut data_len: Option<usize> = None;
+    let mut offset = 12usize;
+    while offset < bytes.len() {
+        if offset + 8 > bytes.len() {
+            return Err(MediaError::InvalidAudio);
+        }
+        let id: [u8; 4] = bytes[offset..offset + 4]
+            .try_into()
+            .map_err(|_| MediaError::InvalidAudio)?;
+        let size = u32::from_le_bytes(
+            bytes[offset + 4..offset + 8]
+                .try_into()
+                .map_err(|_| MediaError::InvalidAudio)?,
+        ) as usize;
+        let start = offset + 8;
+        let end = start
+            .checked_add(size)
+            .filter(|&end| end <= bytes.len())
+            .ok_or(MediaError::InvalidAudio)?;
+        match &id {
+            b"fmt " => {
+                if format.is_some() {
+                    return Err(MediaError::InvalidAudio);
+                }
+                format = Some(&bytes[start..end]);
+            }
+            b"data" => {
+                if data_len.is_some() {
+                    return Err(MediaError::InvalidAudio);
+                }
+                data_len = Some(size);
+            }
+            // Allowlist: every other chunk is a metadata channel.
+            _ => return Err(MediaError::MetadataForbidden),
+        }
+        offset = end
+            .checked_add(size & 1) // chunks are word-aligned; odd sizes pad one byte
+            .ok_or(MediaError::InvalidAudio)?;
+    }
+
+    // 3. Format chunk: encoding, channels, rate, alignment.
+    let format = format.ok_or(MediaError::InvalidAudio)?;
+    if format.len() < 16 {
+        return Err(MediaError::InvalidAudio);
+    }
+    let le_u16 = |at: usize| -> Result<u16, MediaError> {
+        Ok(u16::from_le_bytes(
+            format[at..at + 2]
+                .try_into()
+                .map_err(|_| MediaError::InvalidAudio)?,
+        ))
+    };
+    let encoding = le_u16(0)?;
+    if !matches!(encoding, 1 | 3) {
+        // 1 = PCM, 3 = IEEE float. WAVE_FORMAT_EXTENSIBLE (0xFFFE) and every
+        // compressed encoding stay out: uploads are the canonical PCM output
+        // of the client's own canonicalizer.
+        return Err(MediaError::WrongCodec);
+    }
+    let channels = usize::from(le_u16(2)?);
+    if channels == 0 || channels > 8 {
+        return Err(MediaError::InvalidAudio);
+    }
+    let sample_rate = u32::from_le_bytes(
+        format[4..8]
+            .try_into()
+            .map_err(|_| MediaError::InvalidAudio)?,
+    );
+    if sample_rate == 0 {
+        return Err(MediaError::InvalidAudio);
+    }
+    let block_align = usize::from(le_u16(12)?);
+    let bits = usize::from(le_u16(14)?);
+    // PCM allows 8/16/24/32-bit; IEEE float is 32-bit only.
+    let encoding_bits_ok = match (encoding, bits) {
+        (1, 8 | 16 | 24 | 32) => true,
+        (3, 32) => true,
+        _ => false,
+    };
+    if !encoding_bits_ok {
+        return Err(MediaError::WrongCodec);
+    }
+    let bytes_per_sample = bits.div_ceil(8);
+    if block_align != bytes_per_sample * channels || block_align == 0 {
+        return Err(MediaError::InvalidAudio);
+    }
+    let data_len = data_len.ok_or(MediaError::InvalidAudio)?;
+    if data_len % block_align != 0 {
+        return Err(MediaError::InvalidAudio);
+    }
+    Ok(())
 }
 
 /// Whether a stored blob should be served inline (rendered in the client) or as
@@ -1541,11 +1688,14 @@ mod tests {
     }
 
     #[test]
-    fn test_generic_file_path_rejects_recognized_audio() {
+    fn validate_file_content_still_rejects_mp3_and_other_audio() {
         let config = test_config();
         let fixtures: &[(&str, &[u8])] = &[
             ("mp3", b"ID3\x04\x00\x00\x00\x00\x00\x00"),
             ("flac", b"fLaC\x00\x00\x00\x22"),
+            // A truncated RIFF/WAVE header is NOT the accepted canonical shape —
+            // the voice-reference validator rejects it (declared size != length),
+            // so a broken WAV still never lands as an attachment.
             ("wav", b"RIFF\x24\x00\x00\x00WAVEfmt "),
             ("ogg", b"OggS\x00\x02\x00\x00\x00\x00\x00\x00"),
             ("m4a", b"\x00\x00\x00\x18ftypM4A \x00\x00\x00\x00M4A "),
@@ -1560,14 +1710,248 @@ mod tests {
                 "{name} fixture detected as {}",
                 detected.mime_type()
             );
+            let result = validate_file_content(bytes, &config);
+            if *name == "wav" {
+                // The one exception: WAV goes through the voice-reference
+                // validator, so this fixture is rejected as structurally
+                // invalid audio rather than as a disallowed content type.
+                assert!(
+                    matches!(result, Err(MediaError::InvalidAudio)),
+                    "truncated wav must fail the structural validator, got {result:?}"
+                );
+            } else {
+                assert!(
+                    matches!(
+                        result,
+                        Err(MediaError::DisallowedContentType(mime)) if mime.starts_with("audio/")
+                    ),
+                    "generic path accepted {name}"
+                );
+            }
+        }
+    }
+
+    // --- Voice-reference WAV (kind:30181 asset path) ---
+
+    /// Build a minimal canonical WAV: RIFF/WAVE + `fmt ` + `data`.
+    fn pcm_wav(
+        encoding: u16,
+        channels: u16,
+        sample_rate: u32,
+        bits: u16,
+        data_len: usize,
+    ) -> Vec<u8> {
+        let bytes_per_sample = (bits as usize).div_ceil(8);
+        let block_align = channels as usize * bytes_per_sample;
+        let fmt = {
+            let mut b = Vec::with_capacity(16);
+            b.extend_from_slice(&encoding.to_le_bytes());
+            b.extend_from_slice(&channels.to_le_bytes());
+            b.extend_from_slice(&sample_rate.to_le_bytes());
+            b.extend_from_slice(
+                &((sample_rate * u32::from(block_align as u16)) as u32).to_le_bytes(),
+            );
+            b.extend_from_slice(&(block_align as u16).to_le_bytes());
+            b.extend_from_slice(&bits.to_le_bytes());
+            b
+        };
+        let chunk = |id: &[u8; 4], payload: &[u8]| {
+            let mut b = Vec::with_capacity(8 + payload.len());
+            b.extend_from_slice(id);
+            b.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            b.extend_from_slice(payload);
+            b
+        };
+        let body = [chunk(b"fmt ", &fmt), chunk(b"data", &vec![0u8; data_len])].concat();
+        let mut out = b"RIFF".to_vec();
+        // RIFF size covers everything after the size field: the 4-byte WAVE
+        // form plus the chunk bodies.
+        out.extend_from_slice(&((body.len() + 4) as u32).to_le_bytes());
+        out.extend_from_slice(b"WAVE");
+        out.extend_from_slice(&body);
+        out
+    }
+
+    /// Append a RIFF chunk to a WAV body.
+    fn wav_chunk(id: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+        let mut b = Vec::with_capacity(8 + payload.len());
+        b.extend_from_slice(id);
+        b.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        b.extend_from_slice(payload);
+        b
+    }
+
+    #[test]
+    fn voice_reference_wav_accepts_header_only_pcm() {
+        // The exact shape buzz-voice's canonicalizer emits: 32 kHz PCM16 mono,
+        // fmt + data, no other chunks.
+        let canonical = pcm_wav(1, 1, 32_000, 16, 32_000 * 2);
+        assert!(validate_voice_reference_wav(&canonical).is_ok());
+        // 8/24-bit PCM and 32-bit float are also structurally legal.
+        assert!(validate_voice_reference_wav(&pcm_wav(1, 2, 44_100, 8, 4)).is_ok());
+        assert!(validate_voice_reference_wav(&pcm_wav(1, 1, 48_000, 24, 6)).is_ok());
+        assert!(validate_voice_reference_wav(&pcm_wav(3, 1, 48_000, 32, 8)).is_ok());
+    }
+
+    #[test]
+    fn voice_reference_wav_rejects_metadata_chunks() {
+        let base = pcm_wav(1, 1, 32_000, 16, 64);
+        // Split the canonical file into header (through the data chunk) so a
+        // forbidden chunk can be appended and the RIFF size rewritten.
+        let rebuild = |mut body: Vec<u8>| {
+            let mut out = b"RIFF".to_vec();
+            out.extend_from_slice(&((body.len() + 4) as u32).to_le_bytes());
+            out.extend_from_slice(b"WAVE");
+            out.append(&mut body);
+            out
+        };
+        // Strip the trailing data chunk (last 8+64 bytes), keep fmt.
+        let fmt_only = base[..base.len() - 8 - 64].to_vec();
+
+        // RIFF LIST/INFO metadata block.
+        let list = {
+            let mut info = b"INFO".to_vec();
+            info.extend_from_slice(&wav_chunk(b"ICMT", b"recorded at home"));
+            wav_chunk(b"LIST", &info)
+        };
+        // Broadcast audio extension: originator, timestamp, history.
+        let bext_payload = {
+            let mut b = vec![0u8; 602];
+            b[..13].copy_from_slice(b"location-mic\0");
+            b
+        };
+        for (name, chunk) in [
+            ("LIST", list),
+            ("ID3", wav_chunk(b"ID3 ", b"\x03\x00fake-id3")),
+            ("bext", wav_chunk(b"bext", &bext_payload)),
+            ("cue ", wav_chunk(b"cue ", &[0u8; 4])),
+            ("JUNK", wav_chunk(b"JUNK", b"padding")),
+            ("iXML", wav_chunk(b"iXML", b"<BWFXML/>")),
+        ] {
+            let mut body = fmt_only.clone();
+            body.extend_from_slice(&chunk);
+            body.extend_from_slice(&wav_chunk(b"data", &vec![0u8; 64]));
+            let bytes = rebuild(body);
             assert!(
                 matches!(
-                    validate_file_content(bytes, &config),
-                    Err(MediaError::DisallowedContentType(mime)) if mime.starts_with("audio/")
+                    validate_voice_reference_wav(&bytes),
+                    Err(MediaError::MetadataForbidden)
                 ),
-                "generic path accepted {name}"
+                "voice-reference WAV accepted a {name} metadata chunk"
             );
         }
+    }
+
+    #[test]
+    fn voice_reference_wav_rejects_structurally_broken_containers() {
+        let mut trailing = pcm_wav(1, 1, 32_000, 16, 8);
+        trailing.extend_from_slice(b"hidden");
+        assert!(matches!(
+            validate_voice_reference_wav(&trailing),
+            Err(MediaError::InvalidAudio)
+        ));
+
+        // Declared RIFF size shorter than the file.
+        let mut short_size = pcm_wav(1, 1, 32_000, 16, 8);
+        short_size[4..8].copy_from_slice(&4u32.to_le_bytes());
+        assert!(matches!(
+            validate_voice_reference_wav(&short_size),
+            Err(MediaError::InvalidAudio)
+        ));
+
+        // Not RIFF/WAVE at all.
+        assert!(validate_voice_reference_wav(b"not a wave").is_err());
+        // Empty and truncated inputs fail closed.
+        assert!(validate_voice_reference_wav(&[]).is_err());
+        assert!(validate_voice_reference_wav(b"RIFF\x24\x00\x00\x00WAVEfmt ").is_err());
+        // Missing fmt chunk.
+        let mut no_fmt = b"RIFF".to_vec();
+        let body = wav_chunk(b"data", &[0u8; 8]);
+        no_fmt.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        no_fmt.extend_from_slice(b"WAVE");
+        no_fmt.extend_from_slice(&body);
+        assert!(matches!(
+            validate_voice_reference_wav(&no_fmt),
+            Err(MediaError::InvalidAudio)
+        ));
+        // Non-PCM/float encoding (a-law = 6), the same mutation the imported.rs
+        // decoder rejects.
+        assert!(matches!(
+            validate_voice_reference_wav(&pcm_wav(6, 1, 32_000, 16, 2)),
+            Err(MediaError::WrongCodec)
+        ));
+        // Float at a non-32-bit depth is incoherent.
+        assert!(matches!(
+            validate_voice_reference_wav(&pcm_wav(3, 1, 32_000, 16, 2)),
+            Err(MediaError::WrongCodec)
+        ));
+        // Block align inconsistent with channels * bytes-per-sample.
+        let mut bad_align = pcm_wav(1, 2, 44_100, 16, 8);
+        bad_align[32..34].copy_from_slice(&3u16.to_le_bytes()); // fmt blockAlign field
+        assert!(matches!(
+            validate_voice_reference_wav(&bad_align),
+            Err(MediaError::InvalidAudio)
+        ));
+        // Data not a whole number of frames.
+        assert!(matches!(
+            validate_voice_reference_wav(&pcm_wav(1, 1, 32_000, 16, 3)),
+            Err(MediaError::InvalidAudio)
+        ));
+    }
+
+    #[test]
+    fn validate_file_content_accepts_voice_reference_wav() {
+        let config = test_config();
+        let bytes = pcm_wav(1, 1, 32_000, 16, 64);
+        let sniffed = infer::get(&bytes).map(|k| k.mime_type().to_string());
+        assert!(
+            sniffed.as_deref() == Some("audio/wav") || sniffed.as_deref() == Some("audio/x-wav"),
+            "fixture must sniff as RIFF/WAVE audio, got {sniffed:?}"
+        );
+        let (mime, ext) = validate_file_content(&bytes, &config).expect("canonical WAV accepted");
+        assert_eq!(mime, "audio/wav");
+        assert_eq!(ext, "wav");
+        // Reference WAVs stay attachment-only — never a render target.
+        assert!(!serve_inline(&mime));
+    }
+
+    #[test]
+    fn validate_file_content_rejects_noncanonical_wav_rather_than_storing_it() {
+        let config = test_config();
+        // A LIST-bearing WAV still sniffs as audio/wav (the RIFF magic is all
+        // `infer` checks), so the chunk walk is what keeps the metadata
+        // channel out of storage.
+        let list = {
+            let mut info = b"INFO".to_vec();
+            info.extend_from_slice(&wav_chunk(b"ICMT", b"GPS=37.7,-122.4"));
+            wav_chunk(b"LIST", &info)
+        };
+        let mut body = Vec::new();
+        body.extend_from_slice(&wav_chunk(b"fmt ", &{
+            let mut f = Vec::new();
+            f.extend_from_slice(&1u16.to_le_bytes());
+            f.extend_from_slice(&1u16.to_le_bytes());
+            f.extend_from_slice(&32_000u32.to_le_bytes());
+            f.extend_from_slice(&64_000u32.to_le_bytes());
+            f.extend_from_slice(&2u16.to_le_bytes());
+            f.extend_from_slice(&16u16.to_le_bytes());
+            f
+        }));
+        body.extend_from_slice(&list);
+        body.extend_from_slice(&wav_chunk(b"data", &vec![0u8; 8]));
+        let mut bytes = b"RIFF".to_vec();
+        bytes.extend_from_slice(&((body.len() + 4) as u32).to_le_bytes());
+        bytes.extend_from_slice(b"WAVE");
+        bytes.extend_from_slice(&body);
+        let sniffed = infer::get(&bytes).map(|k| k.mime_type().to_string());
+        assert!(
+            sniffed.as_deref() == Some("audio/wav") || sniffed.as_deref() == Some("audio/x-wav"),
+            "LIST-bearing fixture must still sniff as RIFF/WAVE audio, got {sniffed:?}"
+        );
+        assert!(matches!(
+            validate_file_content(&bytes, &config),
+            Err(MediaError::MetadataForbidden)
+        ));
     }
 
     #[test]
