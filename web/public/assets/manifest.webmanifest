@@ -4,7 +4,7 @@
   "description": "Buzz web client",
   "start_url": "/repos/",
   "display": "standalone",
-  "scope": "/repos/",
+  "scope": "/",
   "background_color": "#0a0a0a",
   "theme_color": "#0a0a0a",
   "icons": [
