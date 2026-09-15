@@ -45,6 +45,9 @@ pub struct HuddleAudioSettingsState {
     pub tts_transition: tokio::sync::Mutex<()>,
     /// Selected huddle output device. `None` uses the system default.
     pub output_device: Mutex<Option<String>>,
+    /// Relay-fetched community voice catalog (kind:30181), keyed by relay
+    /// base — see `super::voice_catalog`.
+    pub voice_catalog: Mutex<super::voice_catalog::VoiceCatalogCache>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
