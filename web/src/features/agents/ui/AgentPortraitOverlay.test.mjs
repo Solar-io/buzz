@@ -127,6 +127,6 @@ test("placement pins: stationary in the chat column and fluid with the pane widt
   assert.match(cls, /\bw-\[min\(12rem,24%\)\]/, "width is fluid, not fixed");
   assert.match(cls, /\bpointer-events-none\b/, "never blocks the chat");
   assert.match(cls, /\bhidden\b/, "not rendered on phones");
-  assert.match(cls, /\blg:flex\b/, "desktop overlay, not a mobile cover");
+  assert.match(cls, /\blg:block\b/, "desktop overlay, not a mobile cover");
   await unmount();
 });
