@@ -30,12 +30,8 @@ import {
   type ReadState,
 } from "@/features/channels/lib/readState.ts";
 import { activeTyping } from "@/features/channels/lib/typing.ts";
-import {
-  THREAD_WIDTH_DEFAULT,
-  THREAD_WIDTH_STORAGE_KEY,
-  clampThreadWidth,
-  parseStoredThreadWidth,
-} from "@/features/channels/lib/threadPanelWidth.ts";
+import { clampThreadWidth } from "@/features/channels/lib/threadPanelWidth.ts";
+import { useThreadPaneWidth } from "@/features/channels/lib/useThreadPaneWidth.ts";
 import { useChannelLists } from "@/features/channels/lib/useChannelLists.ts";
 import { useMessageActions } from "@/features/channels/lib/useMessageActions.ts";
 import { paletteActions } from "@/features/channels/lib/paletteActions.ts";
@@ -311,34 +307,18 @@ function ChannelBrowser() {
   // the pane can take nearly the whole row instead of the old 640px cap,
   // without starving the timeline while the sidebar is open; a width
   // persisted on a big window re-clamps on a smaller one.
-  const shellRowRef = useRef<HTMLDivElement | null>(null);
-  const shellRowWidth = () =>
-    shellRowRef.current?.clientWidth ?? globalThis.innerWidth;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: channelId is the re-run trigger (the row mounts per channel); shellRowWidth reads a ref, not reactive state
-  const [threadWidth, setThreadWidth] = useState<number>(() => {
-    const stored = parseStoredThreadWidth(
-      globalThis.localStorage?.getItem(THREAD_WIDTH_STORAGE_KEY) ?? null,
-    );
-    return stored === null
-      ? THREAD_WIDTH_DEFAULT
-      : clampThreadWidth(stored, globalThis.innerWidth);
-  });
-  useEffect(() => {
-    globalThis.localStorage?.setItem(
-      THREAD_WIDTH_STORAGE_KEY,
-      String(Math.round(threadWidth)),
-    );
-  }, [threadWidth]);
-  // Clamp on mount/channel-change and on window resizes against the live
-  // row width — the initializer only sees the window (before mount), and
-  // the sidebar's width is part of the ceiling's budget.
-  useEffect(() => {
-    const clampToRow = () =>
-      setThreadWidth((previous) => clampThreadWidth(previous, shellRowWidth()));
-    clampToRow();
-    globalThis.addEventListener("resize", clampToRow);
-    return () => globalThis.removeEventListener("resize", clampToRow);
-  }, [channelId]);
+  // Pane width state machine (persist, clamps on mount / channel change /
+  // window resize) — extracted from this file for the size ratchet. The
+  // ResizeObserver inside it closes a PRE-EXISTING breach: the app sidebar's
+  // width is AppShell local state, so a sidebar drag resizes the layout row
+  // without any window resize, and a pane width persisted on a wide row
+  // quietly starved the channel column (reproduced 2026-09-14: chat at 77px
+  // after min-sidebar → max-pane → max-sidebar). The row element arrives via
+  // ref callback so the observer attaches whenever the row mounts, whatever
+  // the navigation path. Rail reservation inactive here — no portrait rail
+  // on this surface.
+  const { setRowEl, shellRowWidth, threadWidth, setThreadWidth } =
+    useThreadPaneWidth(channelId, false);
   // Auto-tail now lives INSIDE the virtualized timeline (tailKey) — the VList
   // owns its scroll node. The key covers both new messages and channel
   // switches (two channels share a last-message id only in the empty case).
@@ -720,7 +700,7 @@ function ChannelBrowser() {
               />
             ) : current ? (
               <div
-                ref={shellRowRef}
+                ref={setRowEl}
                 className="flex h-full min-h-0"
                 style={{ ["--thread-width" as string]: `${threadWidth}px` }}
               >

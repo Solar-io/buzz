@@ -9,7 +9,12 @@
  * lets the pane starve the timeline whenever the sidebar is open (QA
  * 9/13: 56px of timeline at max width). The floor keeps the pane usable;
  * on rows too narrow for both columns, the floor wins.
+ *
+ * Everything here is pure math; only `paneRowStyle`'s SHAPE is React's (the
+ * row's inline style) — a type-only import, no runtime dependency.
  */
+import type { CSSProperties } from "react";
+
 export const THREAD_WIDTH_STORAGE_KEY = "buzz.thread-width.v1";
 export const THREAD_WIDTH_MIN = 288;
 export const THREAD_WIDTH_DEFAULT = 384;
@@ -17,15 +22,91 @@ export const THREAD_WIDTH_DEFAULT = 384;
  * never crushes the timeline to a sliver. */
 const CHANNEL_COLUMN_FLOOR = 360;
 
-export function threadWidthMax(rowWidth: number): number {
-  return Math.max(THREAD_WIDTH_MIN, rowWidth - CHANNEL_COLUMN_FLOOR);
+/** The portrait rail never shrinks below this (readability floor). */
+export const PORTRAIT_RAIL_MIN_WIDTH = 160;
+/** …never grows above this, whatever the pane is doing. */
+export const PORTRAIT_RAIL_MAX_WIDTH = 300;
+/** Chrome above/below the portrait frame (app header + paddings). */
+export const PORTRAIT_FRAME_CHROME_PX = 176;
+
+/**
+ * The stationary portrait rail's width, in JS — ONE source of truth for
+ * both the rendered rail (repos.tsx sets it as the row's
+ * `--portrait-rail-w` var) and the width-cap reservation.
+ *
+ * Two competing terms: the rail wants 38% of the pane's width (it grows
+ * with the pane the user drags), but it must also stay a 3:4 frame that
+ * FITS the viewport height — so it is capped at 0.75× the space between
+ * the app chrome, which makes the frame's height ≤ viewport − chrome and
+ * means the frame never needs a max-height or crop of its own. The result
+ * is clamped to [PORTRAIT_RAIL_MIN_WIDTH, PORTRAIT_RAIL_MAX_WIDTH].
+ */
+export function portraitRailWidth(
+  threadWidthPx: number,
+  viewportHeightPx: number,
+): number {
+  return Math.min(
+    PORTRAIT_RAIL_MAX_WIDTH,
+    Math.max(
+      PORTRAIT_RAIL_MIN_WIDTH,
+      Math.min(
+        threadWidthPx * 0.38,
+        (viewportHeightPx - PORTRAIT_FRAME_CHROME_PX) * 0.75,
+      ),
+    ),
+  );
 }
 
-export function clampThreadWidth(value: number, rowWidth: number): number {
+/**
+ * Ceiling for the pane width on a layout row of `rowWidth` px.
+ *
+ * `reservedPx` carves space out of the row budget first: the stationary
+ * portrait rail is part of the pane's column at lg, so while it is up the
+ * reservation (`portraitRailWidth` of the candidate being clamped) must
+ * come off the budget BEFORE the channel column's floor is applied —
+ * otherwise the pane + rail pair can crush the timeline below its livable
+ * floor even while every clamp is "passing". `reservedPx = 0` (the
+ * default) is exactly the pre-reservation math; the floor still wins on
+ * rows too narrow for everything.
+ */
+export function threadWidthMax(rowWidth: number, reservedPx = 0): number {
+  return Math.max(
+    THREAD_WIDTH_MIN,
+    rowWidth - CHANNEL_COLUMN_FLOOR - reservedPx,
+  );
+}
+
+export function clampThreadWidth(
+  value: number,
+  rowWidth: number,
+  reservedPx = 0,
+): number {
   return Math.min(
-    threadWidthMax(rowWidth),
+    threadWidthMax(rowWidth, reservedPx),
     Math.max(THREAD_WIDTH_MIN, value),
   );
+}
+
+/**
+ * The DM layout row's inline style: the pane width and the portrait rail's
+ * computed width (the output of `portraitRailWidth`, so the rendered rail
+ * and the width-cap reservation can never disagree). The rail var reads
+ * 0px while the rail is hidden — nothing consumes it then (the rail is not
+ * mounted). Extracted pure so the row's style WIRING is unit-testable
+ * without mounting the whole route (QA 2026-09-14: deleting the style prop
+ * left every other test green).
+ */
+export function paneRowStyle(
+  threadWidthPx: number,
+  viewportHeightPx: number,
+  railVisible: boolean,
+): CSSProperties {
+  return {
+    ["--thread-width" as string]: `${threadWidthPx}px`,
+    ["--portrait-rail-w" as string]: railVisible
+      ? `${portraitRailWidth(threadWidthPx, viewportHeightPx)}px`
+      : "0px",
+  };
 }
 
 /**
