@@ -68,11 +68,26 @@ export function dmActivityFilterBatches(dmIds: string[]): DmActivityFilter[][] {
  * within a tag). The subscription is capped (limit ~100) so this is a recency
  * sample for sidebar ordering and previews, not a message cache.
  */
+/**
+ * The only kind that counts as DM activity: a durable channel message. The
+ * sampler's filters ask for exactly this, but the reader must not TRUST the
+ * delivery to have honored the filter — on 2026-09-15 a status flip from a
+ * DM participant re-sorted their idle DM to #1 with the status text as the
+ * preview (the "phantom DM" that made the default-open land on a blank
+ * conversation). Any other kind arriving on this subscription — statuses,
+ * workflow runs, whatever the fan-out delivers — is ignored here by
+ * construction.
+ */
+export const DM_ACTIVITY_KIND = 9;
+
 export function dmActivityFromEvents(
   events: SignedNostrEvent[],
 ): Map<string, DmLastMessage> {
   const activity = new Map<string, DmLastMessage>();
   for (const event of events) {
+    if (event.kind !== DM_ACTIVITY_KIND) {
+      continue;
+    }
     const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
     if (typeof channelId !== "string" || channelId.length === 0) {
       continue;
