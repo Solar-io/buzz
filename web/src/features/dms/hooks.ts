@@ -29,12 +29,14 @@ export interface DmSummary {
 export function useDms(channels: ChannelSummary[]): {
   dms: DmSummary[];
   channelsWithoutDms: ChannelSummary[];
+  /** True when every per-DM sampling batch hit EOSE (or no DMs exist). */
+  dmSamplingSettled: boolean;
 } {
   const dmIds = useMemo(
     () => channels.filter((c) => c.type === "dm").map((c) => c.id),
     [channels],
   );
-  const activity = useDmActivity(dmIds);
+  const { activity, settled } = useDmActivity(dmIds);
   const dms = useMemo(() => {
     const list = channels
       .filter((c) => c.type === "dm")
@@ -66,28 +68,39 @@ export function useDms(channels: ChannelSummary[]): {
     () => channels.filter((c) => c.type !== "dm"),
     [channels],
   );
-  return { dms, channelsWithoutDms };
+  return { dms, channelsWithoutDms, dmSamplingSettled: settled };
 }
 
 /**
  * Recency sample across every known DM: ONE kind:9 subscription with an
  * #h filter over all DM ids. Resubscribes only when the DM id SET changes
- * (joined key), so a growing DM list stays cheap.
+ * (joined key), so a growing DM list stays cheap. Also reports when the
+ * durable window has settled (EOSE across every batch) — the default-open
+ * pick waits on that signal so a cold start does not decide before the
+ * samples exist (D-025 round 3).
  */
-function useDmActivity(dmIds: string[]): Map<string, DmLastMessage> {
+function useDmActivity(dmIds: string[]): {
+  activity: Map<string, DmLastMessage>;
+  settled: boolean;
+} {
   const { session } = useRelaySession();
   const [events, setEvents] = useState<SignedNostrEvent[]>([]);
+  const [settled, setSettled] = useState(false);
   /**
-   * Durable-only window. The relay's DM fan-out demonstrably delivers
-   * participant-related, cross-channel kind 9s onto #h-scoped subs (captured
-   * frame-level 2026-09-15: Platform Team messages arriving on per-DM
-   * filters), and the phantom-DM incident showed those deliveries becoming
-   * ordering keys and previews for conversations whose transcripts never
-   * contained them. Events accepted AFTER the stored window closes (EOSE
-   * across every batch) are ignored: a preview must never promise a message
-   * the channel's own history will not show. Cost, taken deliberately: a
-   * genuinely new DM message does not re-sort the sidebar until the next
-   * reload or DM-set change — recency freshness trades for truthfulness.
+   * Durable-only window. The phantom-DM incident: the sidebar consumed
+   * kind 9s from channel-scoped subscriptions (which legitimately include
+   * cross-channel traffic the app also subscribes to) as DM ordering keys
+   * and previews, so conversations surfaced rows their own transcripts
+   * never contained. The wire was later verified clean end to end
+   * (2026-09-15 frame-level capture with literal sub prefixes: per-DM
+   * filters never received foreign events; the earlier "relay fan-out"
+   * claim was an instrument artifact and is retracted) — the defect was
+   * app-side consumption, which this window contains. Events accepted
+   * AFTER the stored window closes (EOSE across every batch) are ignored:
+   * a preview must never promise a message the channel's own history will
+   * not show. Cost, taken deliberately: a genuinely new DM message does
+   * not re-sort the sidebar until the next reload or DM-set change —
+   * recency freshness trades for truthfulness.
    */
   const durableWindowClosedRef = useRef(false);
   // Pubkeys are comma-free, so the join is a lossless set key.
@@ -99,10 +112,12 @@ function useDmActivity(dmIds: string[]): Map<string, DmLastMessage> {
     const ids = idsKey ? idsKey.split(",") : [];
     if (ids.length === 0) {
       setEvents([]);
+      setSettled(true);
       return;
     }
     durableWindowClosedRef.current = false;
     setEvents([]);
+    setSettled(false);
     // Exact per-DM sampling (a shared limit starves quiet DMs) packed into
     // multi-filter REQs so mount does not fire one REQ per DM — the burst
     // tripped the relay's concurrency limiter and sibling subs (profiles!)
@@ -139,6 +154,7 @@ function useDmActivity(dmIds: string[]): Map<string, DmLastMessage> {
           awaitingEose -= 1;
           if (awaitingEose <= 0) {
             durableWindowClosedRef.current = true;
+            setSettled(true);
           }
         },
       }),
@@ -149,7 +165,8 @@ function useDmActivity(dmIds: string[]): Map<string, DmLastMessage> {
       }
     };
   }, [session, idsKey]);
-  return useMemo(() => dmActivityFromEvents(events), [events]);
+  const activity = useMemo(() => dmActivityFromEvents(events), [events]);
+  return { activity, settled };
 }
 
 export interface OpenDmResult {

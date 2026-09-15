@@ -55,6 +55,7 @@ import { useTick } from "@/features/agents/ui/WorkingBadge";
 import { AgentActivityPanel } from "@/features/agents/ui/AgentActivityPanel";
 import { AgentPortraitOverlay } from "@/features/agents/ui/AgentPortraitOverlay";
 import { openDm, useDms } from "@/features/dms/hooks";
+import { decideDefaultConversation } from "@/features/dms/lib/defaultConversation";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
 import {
   hideDm,
@@ -144,7 +145,8 @@ function ChannelBrowser() {
 
   // DMs ride the same kind:39000 list (relay `t` tag); they get their own
   // sidebar section and participant-based names.
-  const { dms, channelsWithoutDms: unfilteredChannels } = useDms(channels);
+  const { dms, channelsWithoutDms: unfilteredChannels, dmSamplingSettled } =
+    useDms(channels);
   // Newest-message feed over every non-DM channel the sidebar can show:
   // the shell owns it ONCE so the unread dots and the message toasts read
   // the same subscription (archived channels hide from the sidebar, so they
@@ -409,65 +411,59 @@ function ChannelBrowser() {
   });
 
   // Default conversation (D-025): opening the app with nothing selected
-  // lands in the most recently active DM instead of the empty state. The DM
-  // list is activity-sorted by useDms — latest message either direction —
+  // lands in the most recently active DM instead of the empty state. The
+  // DM list is activity-sorted by useDms — latest message either direction —
   // and visibleDms already excludes locally hidden DMs. Runs at most once
   // per app load: a deep link (?c= / ?view=) or any user selection retires
   // it, so closing a conversation later never bounces anyone back, and a
   // user with zero visible DMs keeps the empty state.
+  //
+  // Round 3: the pick waits for the durable sampling window to settle
+  // (EOSE across every per-DM batch) before deciding — a cold PWA start
+  // must not run "most recent" before the samples exist. A 5s hard cap is
+  // the dead-relay escape hatch: past it the decision runs on whatever is
+  // loaded. There is deliberately NO early-fire on the first sample
+  // (first-loaded-wins was the original roulette).
   const defaultConversationHandled = useRef(false);
-  const [defaultConversationWaitElapsed, setDefaultConversationWaitElapsed] =
+  const [defaultConversationHardCapElapsed, setDefaultConversationHardCap] =
     useState(false);
   useEffect(() => {
     const timer = window.setTimeout(
-      () => setDefaultConversationWaitElapsed(true),
-      1200,
+      () => setDefaultConversationHardCap(true),
+      5000,
     );
     return () => window.clearTimeout(timer);
   }, []);
   useEffect(() => {
     if (defaultConversationHandled.current) return;
-    if (selectedId !== undefined || view !== undefined) {
+    const decision = decideDefaultConversation({
+      handled: false,
+      userAlreadySelected: selectedId !== undefined || view !== undefined,
+      connected,
+      channelCount: channels.length,
+      samplingSettled: dmSamplingSettled,
+      hardCapElapsed: defaultConversationHardCapElapsed,
+      visibleDms: lists.visibleDms,
+    });
+    if (decision.action === "handled") {
       // Someone already chose — deep link, restored PWA state, or the user
       // got there first inside the wait window. Never override a choice.
       defaultConversationHandled.current = true;
       return;
     }
-    if (!connected || channels.length === 0) return;
-    // Activity samples stream in with no settled signal; give them a beat
-    // (first sample or 1.2s, whichever first) so "most recent" means most
-    // recent, not first-loaded. Past the timer the metadata-recency sort
-    // is the best answer available.
-    if (
-      !dms.some((dm) => dm.lastActivity > 0) &&
-      !defaultConversationWaitElapsed
-    ) {
-      return;
-    }
+    if (decision.action !== "open") return;
     defaultConversationHandled.current = true;
-    // "The last DM that was sent" needs a sent DM: a message-bearing
-    // conversation, not the newest-opened one. A freshly created but
-    // never-messaged DM sorts #1 on metadata recency — landing there showed
-    // a creation row where Sam expected his conversation (D-025). Prefer
-    // the most recent DM with real message activity; if none has any, a
-    // lone visible DM still opens (it is the only conversation there is),
-    // otherwise the empty state stands.
-    const target =
-      lists.visibleDms.find((dm) => dm.lastActivity > 0) ??
-      (lists.visibleDms.length === 1 ? lists.visibleDms[0] : undefined);
-    if (target) {
-      void navigate({
-        to: "/repos",
-        search: { c: target.channel.id },
-        replace: true,
-      });
-    }
+    void navigate({
+      to: "/repos",
+      search: { c: lists.visibleDms[decision.index].channel.id },
+      replace: true,
+    });
   }, [
     connected,
     channels.length,
-    dms,
+    dmSamplingSettled,
+    defaultConversationHardCapElapsed,
     lists.visibleDms,
-    defaultConversationWaitElapsed,
     selectedId,
     view,
     navigate,
