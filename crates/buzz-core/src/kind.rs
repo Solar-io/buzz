@@ -335,6 +335,32 @@ pub const KIND_DESKTOP_CATALOG: u32 = 30180;
 /// allowlist pubkeys, no source or local ids, no filesystem paths, no secrets.
 pub const KIND_TEAM_CATALOG: u32 = 30178;
 
+/// Buzz: Voice Catalog entry (parameterized replaceable, any-member authored).
+///
+/// One event per voice, addressed by `(pubkey, kind, d_tag)` where `d_tag` is
+/// the voice key verbatim (`pocket:<slug>` for a bundled preset,
+/// `pocket:imported:<audio-content-sha256>` for an imported clip). Content is
+/// a versioned JSON body mirroring the desktop's `VoiceRegistryEntry` shape:
+/// display label, backend, content hash, bundled flag, license/source
+/// attribution, and an optional `{sha256, size, mimeType}` asset locator (the
+/// URL is derivable as `{relay-http-base}/media/{sha256}.wav`). Bundled
+/// presets are published as asset-less rows so a client without local voice
+/// knowledge can still enumerate the stock keys and match them against its own
+/// registry.
+///
+/// # Access control: public-read by design
+///
+/// Community-global (stored with `channel_id = NULL`; a stray `h` tag cannot
+/// channel-scope it) and readable by any authenticated member — the same read
+/// model as [`KIND_MANAGED_AGENT`] and [`KIND_DESKTOP_CATALOG`], and
+/// deliberately NOT in any gated set. Ingest requires [`Scope::UsersWrite`] and
+/// exactly one non-empty `d` tag bounded at 96 characters (the imported key
+/// `pocket:imported:` + 64 hex is 80 chars, which the generic 64-char bound
+/// would reject). Per-voice NIP-33 LWW means concurrent fleet-agent publishes
+/// compose, and a voice is removable with the generic kind:5 `a`-tag
+/// coordinate delete. Design: `docs/plans/2026-09-15-voice-repository-v1.md`.
+pub const KIND_VOICE_CATALOG: u32 = 30181;
+
 // NIP-56 reporting
 /// NIP-56: Report an event, pubkey, or blob to relay moderators (kind:1984).
 ///
@@ -725,6 +751,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_MANAGED_AGENT,
     KIND_DESKTOP_CATALOG,
     KIND_TEAM_CATALOG,
+    KIND_VOICE_CATALOG,
     KIND_PRIVATE_MANAGED_AGENT,
     KIND_REPORT,
     KIND_PRODUCT_FEEDBACK,
@@ -947,6 +974,7 @@ const _: () = assert!(is_parameterized_replaceable(KIND_TEAM)); // 30176 ∈ 300
 const _: () = assert!(is_parameterized_replaceable(KIND_MANAGED_AGENT)); // 30177 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_DESKTOP_CATALOG)); // 30180 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_TEAM_CATALOG)); // 30178 ∈ 30000–39999
+const _: () = assert!(is_parameterized_replaceable(KIND_VOICE_CATALOG)); // 30181 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_PRIVATE_MANAGED_AGENT)); // 30179 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_WORKFLOW_DEF)); // 30620 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_EVENT_REMINDER)); // 30300 ∈ 30000–39999
@@ -1204,5 +1232,22 @@ mod tests {
         // 30180 is public-read by design (harness labels + agent pubkeys only)
         // — same read model as 30177, no `shared` opt-in.
         assert!(!is_shared_gated_kind(KIND_DESKTOP_CATALOG));
+    }
+
+    /// Kind 30181 is a public-read, parameterized-replaceable catalog kind.
+    /// It must stay in the NIP-33 range, out of the relay-only set, and out of
+    /// every gated read set — adding it to any of them would hide community
+    /// voice rows that are public by design. Hardcodes 30181 rather than
+    /// naming the constant so a value change cannot silently move the
+    /// expectation with the code it pins.
+    #[test]
+    fn voice_catalog_is_public_parameterized_replaceable() {
+        assert_eq!(KIND_VOICE_CATALOG, 30181);
+        assert!(is_parameterized_replaceable(KIND_VOICE_CATALOG));
+        assert!(!is_relay_only_kind(KIND_VOICE_CATALOG));
+        assert!(!AUTHOR_ONLY_KINDS.contains(&KIND_VOICE_CATALOG));
+        assert!(!P_GATED_KINDS.contains(&KIND_VOICE_CATALOG));
+        assert!(!RESULT_GATED_KINDS.contains(&KIND_VOICE_CATALOG));
+        assert!(!SHARED_GATED_KINDS.contains(&KIND_VOICE_CATALOG));
     }
 }
