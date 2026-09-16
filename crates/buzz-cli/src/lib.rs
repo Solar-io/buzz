@@ -425,7 +425,7 @@ pub enum MessagesCmd {
 
 Send-path hold gate (managed sessions only): when BUZZ_ACP_SESSION_ID is set
 and the harness's claims file shows another slot of you mid-turn in this
-channel (fresh within 10 minutes), the send is HELD — exit code 6, with the
+channel (claim pulsed within the last 150s), the send is HELD — exit code 6, with the
 holder's slot id, the claim age, and the channel in the error JSON. This is
 the 'two of me' guard: a hold is not a failure. Stand down — a bounce answers
 'should I speak?' and no is a complete reply. To override a dead holder,
@@ -438,8 +438,9 @@ annex, so the arbitration is inspectable from any client."
         #[arg(long)]
         channel: String,
         /// Message text — supports @mentions and markdown. Use '-' to read from stdin.
+        /// Optional when --card is given (the fallback text is generated from the card).
         #[arg(long)]
-        content: String,
+        content: Option<String>,
         /// Nostr event kind (default: channel default)
         #[arg(long)]
         kind: Option<u16>,
@@ -459,6 +460,14 @@ annex, so the arbitration is inspectable from any client."
         /// holder in the claims file (documented escape for a dead holder)
         #[arg(long)]
         supersede: bool,
+        /// Decision card payload (D-035), JSON:
+        /// {"title":…,"body"?:…,"options":[{"id"?:…,"label":…,"recommended"?:true},…]}.
+        /// Sends a kind 9 whose tag carries the card for the web client's tappable
+        /// rendering and whose content carries readable fallback text for plain
+        /// clients. '@file.json' reads the payload from a file, '-' from stdin.
+        /// With no --content, the fallback text is generated from the card.
+        #[arg(long)]
+        card: Option<String>,
     },
     /// Send a code diff / patch to a channel
     SendDiff {

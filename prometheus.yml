@@ -1,5 +1,7 @@
 # Local dev Prometheus config — scrapes buzz-relay metrics.
-# The relay runs on the host (not in Docker), so we use host.docker.internal.
+# The relay runs containerized (deploy/compose, compose project `buzz-dev`,
+# network buzz-dev_buzz-net) and never publishes its metrics port to the
+# host, so this bundle joins that network and scrapes the container by name.
 # Default metrics port is 9102; override with BUZZ_METRICS_PORT.
 global:
   scrape_interval: 5s
@@ -7,4 +9,4 @@ global:
 scrape_configs:
   - job_name: buzz-relay
     static_configs:
-      - targets: ["host.docker.internal:9102"]
+      - targets: ["buzz-dev-relay-1:9102"]

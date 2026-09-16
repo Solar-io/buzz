@@ -15,6 +15,7 @@ import { reactionEmojiUrl } from "@/features/custom-emoji/lib/customEmoji.ts";
 import { cn } from "@/shared/lib/cn";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { isSpeaking } from "../lib/micMeter.ts";
+import { shouldRestoreSpeechOnVoiceOff } from "../lib/voiceTranscript.ts";
 import { useHuddleAgentRoster } from "../useHuddleAgentRoster";
 import { useHuddleAgentSpeech } from "../useHuddleAgentSpeech";
 import { useHuddleAudio } from "../useHuddleAudio";
@@ -59,7 +60,10 @@ import { MicMeter } from "./MicMeter.tsx";
  * hears her too) before publishing. Turning voice on also
  * forces agent speech on for the duration (the toggle is the user gesture
  * `speechSynthesis` needs); turning it off restores whatever speech state
- * preceded it.
+ * preceded it — but ONLY when the user turned it off. A forced drop
+ * (bridge error, reconnect cap) restores nothing and toasts, so an armed
+ * reader is never silently disarmed (the SILENT DISARM class,
+ * `shouldRestoreSpeechOnVoiceOff`).
  *
  * All of these are gated on `connected` rather than on merely viewing the
  * channel. Publishing to a huddle channel needs membership of it, and joining
@@ -179,11 +183,30 @@ export function HuddleBar({
 
   // Voice ON also enables agent speech — the toggle is the user gesture
   // speechSynthesis is gated on. Voice OFF restores the speech state that
-  // preceded it (its prior default), which is "off" unless the user had
-  // read-aloud on before speaking.
+  // preceded it ONLY on a deliberate off: a forced drop (bridge error,
+  // reconnect cap, leaving) restores nothing, and an explicit speech
+  // toggle made during voice mode outranks the pre-voice snapshot — the
+  // SILENT DISARM class (2026-09-16 e2e: a latched-off voice toggle
+  // silently reverted an armed reader while the room looked healthy).
   const speechEnabled = speech.enabled;
   const speechSetEnabled = speech.setEnabled;
   const speechBeforeVoiceRef = useRef<boolean | null>(null);
+  const speechUserToggledRef = useRef(false);
+  // Controls get a wrapped setEnabled so an explicit press on "Read agent
+  // replies" is distinguishable from the borrowed on this component forces
+  // at voice start. The coupling effect above deliberately calls the RAW
+  // setter — its own writes are not user choices.
+  const speechSetEnabledFromControls = useCallback(
+    (on: boolean) => {
+      speechUserToggledRef.current = true;
+      speechSetEnabled(on);
+    },
+    [speechSetEnabled],
+  );
+  const speechForControls = useMemo(
+    () => ({ ...speech, setEnabled: speechSetEnabledFromControls }),
+    [speech, speechSetEnabledFromControls],
+  );
   useEffect(() => {
     if (!speech.supported) {
       return;
@@ -191,6 +214,7 @@ export function HuddleBar({
     if (voice.enabled) {
       if (speechBeforeVoiceRef.current === null) {
         speechBeforeVoiceRef.current = speechEnabled;
+        speechUserToggledRef.current = false;
         if (!speechEnabled) {
           speechSetEnabled(true);
         }
@@ -198,11 +222,43 @@ export function HuddleBar({
     } else if (speechBeforeVoiceRef.current !== null) {
       const restore = speechBeforeVoiceRef.current;
       speechBeforeVoiceRef.current = null;
-      if (speechEnabled !== restore) {
+      const userToggled = speechUserToggledRef.current;
+      speechUserToggledRef.current = false;
+      if (
+        speechEnabled !== restore &&
+        shouldRestoreSpeechOnVoiceOff({
+          offReason: voice.offReason,
+          userToggledSpeechDuringVoice: userToggled,
+        })
+      ) {
         speechSetEnabled(restore);
       }
     }
-  }, [voice.enabled, speechEnabled, speechSetEnabled, speech.supported]);
+  }, [
+    voice.enabled,
+    voice.offReason,
+    speechEnabled,
+    speechSetEnabled,
+    speech.supported,
+  ]);
+
+  // A forced latch-off must be unmissable, not a text-2xs span a busy room
+  // can scroll past: toast once per drop, naming what still works.
+  const prevVoiceEnabledRef = useRef(false);
+  useEffect(() => {
+    const wasEnabled = prevVoiceEnabledRef.current;
+    prevVoiceEnabledRef.current = voice.enabled;
+    if (
+      wasEnabled &&
+      !voice.enabled &&
+      (voice.offReason === "bridge_error" ||
+        voice.offReason === "reconnect_cap")
+    ) {
+      toast.error(voice.error ?? "Voice mode dropped.", {
+        description: "Agent reading is unchanged.",
+      });
+    }
+  }, [voice.enabled, voice.offReason, voice.error]);
 
   // Space holds the mic open while the bar has focus. Bound on the bar, not
   // the document, so it cannot swallow the space bar out of a composer.
@@ -321,7 +377,7 @@ export function HuddleBar({
             onAddAgent={agentRoster.addAgent}
             onReact={reactions.send}
             reactionError={reactions.error}
-            speech={speech}
+            speech={speechForControls}
             voice={voice}
           />
           {voice.enabled && voice.interimText && (
@@ -376,11 +432,25 @@ export function HuddleBar({
         </>
       ) : (
         <>
+          {/* The relay denies audio auth on an ephemeral channel with no
+              parent link — "ephemeral channel requires parent linkage"
+              (crates/buzz-relay/src/audio/handler.rs) — so a TTL channel the
+              registry has no kind-48100 link for is a dead end, not a join.
+              Disable with the reason instead of letting the relay refuse. */}
           <button
             type="button"
             data-testid="huddle-join-audio"
             onClick={() => void huddle.join()}
-            disabled={huddle.status === "connecting" || !huddle.supportsVoice}
+            disabled={
+              huddle.status === "connecting" ||
+              !huddle.supportsVoice ||
+              !parentChannelId
+            }
+            title={
+              !parentChannelId
+                ? "Huddles need a permanent (non-TTL) channel"
+                : undefined
+            }
             className="rounded-full border border-emerald-600/50 bg-emerald-600/20 px-3 py-1 text-xs font-medium text-emerald-400 disabled:opacity-50"
           >
             {huddle.status === "connecting" ? "Joining…" : "🎧 Join huddle"}

@@ -367,3 +367,41 @@ export function msSinceLastUtterance(
   }
   return now - ring[ring.length - 1].at;
 }
+
+/**
+ * Why voice mode turned off. `user` is the deliberate toggle; the rest are
+ * forced drops where the session died on its own (`useHuddleVoiceMode`
+ * sets these alongside flipping `enabled` false).
+ */
+export type VoiceOffReason = "user" | "bridge_error" | "reconnect_cap" | "left";
+
+/**
+ * SILENT DISARM guard — decides whether agent reading ("Read agent
+ * replies") may be restored to its pre-voice state when voice mode turns
+ * off.
+ *
+ * Voice mode borrows the speech toggle as its user gesture (it forces
+ * reading on for the duration). Unwinding that borrow was originally
+ * unconditional: ANY off — including a bridge failure latching the toggle
+ * off on its own — restored reading to whatever preceded voice mode, so a
+ * forced drop silently reverted an armed reader while the room looked
+ * healthy, observationally identical to "no messages delivered" (named as
+ * its own defect class from the 2026-09-16 e2e, event 18:57 leg).
+ *
+ * Two rules close it:
+ * 1. Only a DELIBERATE off (`offReason === "user"`) unwinds the borrow.
+ *    A forced drop (`bridge_error`, `reconnect_cap`, `left`) restores
+ *    nothing — reading stays exactly as it is, visible in the controls.
+ * 2. Even a deliberate off never overrides an explicit speech toggle the
+ *    user made while voice mode was on — their choice outranks the
+ *    pre-voice snapshot.
+ */
+export function shouldRestoreSpeechOnVoiceOff(options: {
+  offReason: VoiceOffReason | null;
+  userToggledSpeechDuringVoice: boolean;
+}): boolean {
+  if (options.offReason !== "user") {
+    return false;
+  }
+  return !options.userToggledSpeechDuringVoice;
+}

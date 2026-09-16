@@ -43,6 +43,10 @@ export interface RelaySessionOptions {
   reconnectDelayMs?: (attempt: number) => number;
   /** How long to wait for an AUTH challenge before proceeding unauthenticated. */
   authGraceMs?: number;
+  /** Wait for OK/FAILED before parking a publish for reconnect retry. */
+  publishAckTimeoutMs?: number;
+  /** Wait after parking before a publish resolves as failed. */
+  publishRetryBackstopMs?: number;
   /**
    * Clock for liveness bookkeeping (injectable for tests). Default Date.now.
    */
@@ -79,6 +83,13 @@ export interface MinimalWebSocket {
 const DEFAULT_AUTH_GRACE_MS = 1_000;
 /** A publish fails with a timeout if the relay answers no OK/FAILED by then. */
 const PUBLISH_ACK_TIMEOUT_MS = 15_000;
+/**
+ * D-042: an un-acked publish is parked for ONE reconnect flush rather than
+ * failed on the spot. This backstop bounds the parked wait — one flush cycle
+ * (reconnect backoff is capped at 15s, so 30s covers it with margin) — so a
+ * relay that never comes back still yields an honest failure, not a hang.
+ */
+const PUBLISH_RETRY_BACKSTOP_MS = 30_000;
 /**
  * Pace between REQ opens during (re)connect replay. The relay closes a
  * connection as a slow client after sustained send-buffer backpressure
@@ -179,7 +190,15 @@ function reqFrame(subId: string, filter: NostrFilter | NostrFilter[]): string {
   ]);
 }
 
-type PendingMessage = string;
+/** A publish awaiting its relay verdict; see {@link RelaySession.publish}. */
+type PublishWaiter = {
+  resolve: (ok: boolean, message: string) => void;
+  /** Wire form, kept so a dropped or un-acked publish can be re-sent. */
+  wire: string;
+  /** True once the event is parked for (or awaiting) a reconnect flush. */
+  retried: boolean;
+  timer: ReturnType<typeof setTimeout> | null;
+};
 
 export class RelaySession {
   readonly wsUrl: string;
@@ -189,6 +208,8 @@ export class RelaySession {
   >;
   private readonly reconnectDelayMs: (attempt: number) => number;
   private readonly authGraceMs: number;
+  private readonly publishAckTimeoutMs: number;
+  private readonly publishRetryBackstopMs: number;
   private readonly onStatusChange?: (status: RelaySessionStatus) => void;
 
   private socket: MinimalWebSocket | null = null;
@@ -198,8 +219,6 @@ export class RelaySession {
   private readonly openSubs = new Map<string, ActiveSubscription>();
   /** User-facing handles: subId per unsubscribe token (stable across replays). */
   private readonly activeSubs = new Map<string, ActiveSubscription>();
-  /** Messages waiting for AUTH completion on the current socket. */
-  private pending: PendingMessage[] = [];
   private authenticated = false;
   /**
    * True only when the RELAY accepted our AUTH — the auth-grace path sets
@@ -232,10 +251,15 @@ export class RelaySession {
    */
   private readonly policyClosedSubs = new Set<string>();
   /** Resolvers for EVENTs awaiting OK, by event id. */
-  private readonly publishWaiters = new Map<
-    string,
-    { resolve: (ok: boolean, message: string) => void }
-  >();
+  private readonly publishWaiters = new Map<string, PublishWaiter>();
+  /**
+   * D-042: EVENT wire messages parked until the next authenticated flush.
+   * Deliberately NOT `pending` — openSocket() clears that array on every
+   * reconnect (REQs are replayed by replaySubscriptions anyway), which is
+   * exactly how a one-tap reply sent into a dying socket used to evaporate
+   * (live 9/16 20:50: framesent observed, never ingested, no OK, no NOTICE).
+   */
+  private readonly publishRetryQueue = new Map<string, string>();
 
   constructor(options: RelaySessionOptions) {
     this.wsUrl = options.wsUrl;
@@ -250,6 +274,10 @@ export class RelaySession {
         ));
     this.reconnectDelayMs = options.reconnectDelayMs ?? defaultReconnectDelay;
     this.authGraceMs = options.authGraceMs ?? DEFAULT_AUTH_GRACE_MS;
+    this.publishAckTimeoutMs =
+      options.publishAckTimeoutMs ?? PUBLISH_ACK_TIMEOUT_MS;
+    this.publishRetryBackstopMs =
+      options.publishRetryBackstopMs ?? PUBLISH_RETRY_BACKSTOP_MS;
     this.nowMs = options.nowMs ?? (() => Date.now());
     this.livenessIntervalMs =
       options.livenessIntervalMs ?? DEFAULT_LIVENESS_INTERVAL_MS;
@@ -390,7 +418,6 @@ export class RelaySession {
     this.socket = socket;
     this.authenticated = false;
     this.authedByRelay = false;
-    this.pending = [];
     socket.addEventListener("open", this.handleOpen);
     socket.addEventListener("message", this.handleMessage);
     socket.addEventListener("close", this.handleClose);
@@ -445,8 +472,7 @@ export class RelaySession {
       );
       const waiter = this.publishWaiters.get(id);
       if (waiter) {
-        this.publishWaiters.delete(id);
-        waiter.resolve(ok, messageText);
+        this.settlePublish(id, waiter, ok, messageText);
       }
       return;
     }
@@ -513,11 +539,55 @@ export class RelaySession {
     if (this.publishWaiters.size === 0) {
       return;
     }
-    const waiters = [...this.publishWaiters.values()];
-    this.publishWaiters.clear();
-    for (const waiter of waiters) {
-      waiter.resolve(false, notice);
+    for (const [id, waiter] of this.publishWaiters) {
+      this.settlePublish(id, waiter, false, notice);
     }
+  }
+
+  /** Resolve a publish and clear everything parked for its retry. */
+  private settlePublish(
+    id: string,
+    waiter: PublishWaiter,
+    ok: boolean,
+    message: string,
+  ): void {
+    if (waiter.timer) {
+      clearTimeout(waiter.timer);
+      waiter.timer = null;
+    }
+    this.publishWaiters.delete(id);
+    this.publishRetryQueue.delete(id);
+    waiter.resolve(ok, message);
+  }
+
+  /**
+   * Park an un-acked publish for the next authenticated flush. Nostr event
+   * ids are content-addressed, so the re-send is idempotent server-side — a
+   * relay that already stored the event answers OK(duplicate) and the waiter
+   * resolves true; one that never saw it takes the reply it was owed.
+   */
+  private parkForRetry(id: string, waiter: PublishWaiter): void {
+    waiter.retried = true;
+    this.publishRetryQueue.set(id, waiter.wire);
+  }
+
+  /**
+   * Timer per phase: the first expiry parks the publish (see
+   * {@link parkForRetry}) and re-arms as the backstop; a backstop expiry
+   * settles as a failure so nothing hangs on a relay that never reconnects.
+   */
+  private armPublishTimer(id: string, waiter: PublishWaiter, ms: number): void {
+    if (waiter.timer) {
+      clearTimeout(waiter.timer);
+    }
+    waiter.timer = setTimeout(() => {
+      if (!waiter.retried) {
+        this.parkForRetry(id, waiter);
+        this.armPublishTimer(id, waiter, this.publishRetryBackstopMs);
+        return;
+      }
+      this.settlePublish(id, waiter, false, "timed out waiting for the relay");
+    }, ms);
   }
 
   private async handleAuthChallenge(challenge: string): Promise<void> {
@@ -559,10 +629,13 @@ export class RelaySession {
       this.authenticated = true;
     }
     this.setStatus("open");
-    const queued = this.pending;
-    this.pending = [];
-    for (const message of queued) {
-      this.socket?.send(message);
+    // D-042: parked publishes ride the authenticated flush. Deleted on
+    // send — if this socket dies before the OK, teardown re-parks from the
+    // still-armed waiter, so the event keeps its bounded retry rather than
+    // double-sending on a double flush (auth grace + late challenge).
+    for (const [id, wire] of this.publishRetryQueue) {
+      this.publishRetryQueue.delete(id);
+      this.socket?.send(wire);
     }
     this.replaySubscriptions();
   }
@@ -695,15 +768,25 @@ export class RelaySession {
       clearTimeout(timer);
     }
     this.replayPaceTimers.clear();
-    // A publish in flight when the socket drops would otherwise hang forever:
-    // the EVENT is not in `pending` (it was sent), so the reconnect never
-    // re-sends it and the relay's OK — if it even comes — finds no waiter.
-    // Fail fast so callers can surface the error and the user can retry
-    // (kind 41010 is idempotent server-side; kind 9 dedups by event id).
-    for (const waiter of this.publishWaiters.values()) {
-      waiter.resolve(false, "connection lost while sending");
+    // D-042: a publish in flight when the socket drops used to fail fast and
+    // LOSE the event — the tap at 20:50 9/16 sent into a dying socket and
+    // evaporated. The relay answers each client message before reading the
+    // next, so an event it HAD accepted would already have had its OK before
+    // the drop; anything still un-acked never landed. Park each one for the
+    // post-reconnect flush instead, and give it a fresh backstop clock (the
+    // reconnect cycle restarts the wait). Re-parking a flushed-but-un-acked
+    // event is the same idempotent re-send as the first park.
+    for (const [id, waiter] of this.publishWaiters) {
+      const alreadyParked = waiter.retried;
+      this.parkForRetry(id, waiter);
+      if (!alreadyParked) {
+        // Fresh park: start the backstop clock.
+        this.armPublishTimer(id, waiter, this.publishRetryBackstopMs);
+      }
+      // Already parked: the running backstop keeps its deadline — a flapping
+      // socket re-offers the wire to the next flush but can never extend the
+      // publish's total lifetime.
     }
-    this.publishWaiters.clear();
   }
 
   close(): void {
@@ -715,10 +798,11 @@ export class RelaySession {
     }
     this.teardownSocket();
     this.socket?.close();
-    for (const waiter of this.publishWaiters.values()) {
-      waiter.resolve(false, "connection closed");
+    for (const [id, waiter] of this.publishWaiters) {
+      this.settlePublish(id, waiter, false, "connection closed");
     }
     this.publishWaiters.clear();
+    this.publishRetryQueue.clear();
     this.activeSubs.clear();
     this.setStatus("closed");
   }
@@ -757,8 +841,11 @@ export class RelaySession {
   }
 
   /**
-   * Publish a signed event; resolves when the relay answers OK/FAILED.
-   * Rejects only when the connection is closed and not reconnecting.
+   * Publish a signed event; resolves when the relay answers OK/FAILED —
+   * possibly after ONE reconnect-flush retry: a publish whose ack never
+   * arrives (dying socket, half-open TCP) is parked and re-sent on the next
+   * authenticated socket, so a one-tap reply survives a dropped connection
+   * instead of evaporating (D-042). Rejects only when the session is closed.
    */
   publish(event: SignedNostrEvent): Promise<{ ok: boolean; message: string }> {
     return new Promise((resolve, reject) => {
@@ -767,28 +854,28 @@ export class RelaySession {
         return;
       }
       const id = event.id;
+      const wire = JSON.stringify(["EVENT", event]);
+      const waiter: PublishWaiter = {
+        resolve: (ok, message) => resolve({ ok, message }),
+        wire,
+        retried: false,
+        timer: null,
+      };
       // Belt-and-braces with teardown settling waiters: a relay that stays
       // open but never answers OK/FAILED must not hang the caller forever.
-      const timer = setTimeout(() => {
-        this.publishWaiters.delete(id);
-        resolve({ ok: false, message: "timed out waiting for the relay" });
-      }, PUBLISH_ACK_TIMEOUT_MS);
-      this.publishWaiters.set(id, {
-        resolve: (ok, message) => {
-          clearTimeout(timer);
-          resolve({ ok, message });
-        },
-      });
-      this.sendWhenReady(JSON.stringify(["EVENT", event]));
+      this.publishWaiters.set(id, waiter);
+      if (this.authenticated && this.socket) {
+        this.armPublishTimer(id, waiter, this.publishAckTimeoutMs);
+        this.socket.send(wire);
+      } else {
+        // Not `pending`: openSocket clears it on every reconnect, and this
+        // queue must survive to the authenticated flush. Already parked, so
+        // the timer is the backstop — there is no ack to wait for until the
+        // flush sends the wire.
+        this.parkForRetry(id, waiter);
+        this.armPublishTimer(id, waiter, this.publishRetryBackstopMs);
+      }
     });
-  }
-
-  private sendWhenReady(message: string): void {
-    if (this.authenticated && this.socket) {
-      this.socket.send(message);
-    } else {
-      this.pending.push(message);
-    }
   }
 }
 

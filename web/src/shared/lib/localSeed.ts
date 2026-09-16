@@ -51,3 +51,21 @@ export function mergeSeed(key: string, entries: Record<string, unknown>): void {
     // Quota exceeded or storage blocked: the seed is best-effort.
   }
 }
+
+/**
+ * Remove one entry from a seed — the delete-flow eviction path. Without this
+ * a deleted channel would repaint in the sidebar on every reload forever:
+ * `mergeSeed` only unions, so nothing else ever takes an entry out.
+ */
+export function dropSeedEntry(key: string, id: string): void {
+  try {
+    const existing = readSeed(key);
+    if (!(id in existing)) {
+      return;
+    }
+    delete existing[id];
+    window.localStorage.setItem(key, JSON.stringify(existing));
+  } catch {
+    // Storage blocked: the seed is best-effort, same as mergeSeed.
+  }
+}

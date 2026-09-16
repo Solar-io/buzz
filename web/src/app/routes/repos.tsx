@@ -136,7 +136,12 @@ function AppRoute() {
 }
 
 function ChannelBrowser() {
-  const { channels, connected, refresh: refreshChannels } = useChannels();
+  const {
+    channels,
+    connected,
+    refresh: refreshChannels,
+    forgetChannel: forgetChannelFromList,
+  } = useChannels();
   const navigate = useNavigate({ from: "/repos" });
   const selectedId = Route.useSearch({ select: (s) => s.c });
   const permalinkMessageId = Route.useSearch({ select: (s) => s.m });
@@ -145,8 +150,11 @@ function ChannelBrowser() {
 
   // DMs ride the same kind:39000 list (relay `t` tag); they get their own
   // sidebar section and participant-based names.
-  const { dms, channelsWithoutDms: unfilteredChannels, dmSamplingSettled } =
-    useDms(channels);
+  const {
+    dms,
+    channelsWithoutDms: unfilteredChannels,
+    dmSamplingSettled,
+  } = useDms(channels);
   // Newest-message feed over every non-DM channel the sidebar can show:
   // the shell owns it ONCE so the unread dots and the message toasts read
   // the same subscription (archived channels hide from the sidebar, so they
@@ -577,6 +585,7 @@ function ChannelBrowser() {
             setChannelPrefs,
             setReadState,
             refreshChannels,
+            onChannelDeleted: forgetChannelFromList,
             selectedId,
             onCloseChannel: closeChannel,
           }),

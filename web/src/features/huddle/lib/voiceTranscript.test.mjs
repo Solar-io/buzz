@@ -15,6 +15,7 @@ import {
   normalizeTranscript,
   recordUtterance,
   shouldHoldFinal,
+  shouldRestoreSpeechOnVoiceOff,
   utterancesForHold,
   UTTERANCE_MAX_ENTRIES,
   UTTERANCE_RETENTION_MS,
@@ -387,5 +388,59 @@ test("msSinceLastUtterance reads the newest entry and is infinite when empty", (
       3_500,
     ),
     1_500,
+  );
+});
+
+test("shouldRestoreSpeechOnVoiceOff unwinds the borrowed gesture only on a deliberate off", () => {
+  // The user turned voice off themselves and never touched the speech
+  // toggle during voice mode — the pre-voice snapshot is restored.
+  assert.equal(
+    shouldRestoreSpeechOnVoiceOff({
+      offReason: "user",
+      userToggledSpeechDuringVoice: false,
+    }),
+    true,
+  );
+});
+
+test("shouldRestoreSpeechOnVoiceOff never restores on a forced drop (SILENT DISARM)", () => {
+  // Bridge error, reconnect-budget exhaustion, and leaving the huddle are
+  // not user choices — restoring the pre-voice snapshot on any of them
+  // silently disarms an armed reader (2026-09-16 e2e, 18:57 leg).
+  for (const offReason of ["bridge_error", "reconnect_cap", "left"]) {
+    assert.equal(
+      shouldRestoreSpeechOnVoiceOff({
+        offReason,
+        userToggledSpeechDuringVoice: false,
+      }),
+      false,
+      `${offReason} must not restore`,
+    );
+  }
+});
+
+test("shouldRestoreSpeechOnVoiceOff keeps an explicit speech toggle made during voice mode", () => {
+  // The user pressed "Read agent replies" (in either direction) while
+  // voice mode was on; their choice outranks the pre-voice snapshot even
+  // on a deliberate off.
+  assert.equal(
+    shouldRestoreSpeechOnVoiceOff({
+      offReason: "user",
+      userToggledSpeechDuringVoice: true,
+    }),
+    false,
+  );
+});
+
+test("shouldRestoreSpeechOnVoiceOff restores nothing when no off reason was recorded", () => {
+  // offReason null at the moment enabled reads false (no recorded cause —
+  // e.g. the very first render with voice off) must be inert, not a
+  // restore-by-default.
+  assert.equal(
+    shouldRestoreSpeechOnVoiceOff({
+      offReason: null,
+      userToggledSpeechDuringVoice: false,
+    }),
+    false,
   );
 });

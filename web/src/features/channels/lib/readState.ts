@@ -45,6 +45,20 @@ export function markSeen(
 }
 
 /**
+ * Drop one channel's marker — the delete-flow eviction path (a deleted
+ * channel must not leave a stale unread reference behind). Pure, matching
+ * `markSeen`; the caller persists the returned state.
+ */
+export function forgetChannel(state: ReadState, channelId: string): ReadState {
+  if (!(channelId in state)) {
+    return state;
+  }
+  const next = { ...state };
+  delete next[channelId];
+  return next;
+}
+
+/**
  * Count unread messages given a channel's newest message timestamp and its
  * read marker. This is the cheap badge form: unread when newest > marker.
  * Returns 0 or 1 (a dot) rather than a count — counts need the full buffer,

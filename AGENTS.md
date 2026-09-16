@@ -668,3 +668,9 @@ usage.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — system design and component relationships
 - [RELEASING.md](RELEASING.md) — release process: `release-desktop`, `release-relay`, `scripts/mobile-release.sh`, candidate tags, internal builds
 - [README.md](README.md) — project overview and quick start
+
+## Web send-path traps (earned live, D-035 e2e, 2026-09-16)
+
+- `RelaySession.publish()` **resolves `{ok:false}` on a relay FAILED or ack timeout — it does not throw.** Callers that treat resolution as success render a false sent state. Always check `result.ok` and surface `result.message` (it carries the relay's verdict verbatim).
+- **Thread ancestry:** a reply to a message that is itself a reply must carry the THREAD ROOT, not the parent's id — the relay rejects a self-rooted reply with `invalid: root tag does not match thread ancestry`. The client-side chain that satisfies it: `rootId: message.rootId ?? message.replyToId ?? message.id` (a plain reply event carries only a reply marker, so its rootId is null and the parent IS the root).
+- Neither rule is reachable from the unit suite — both were caught only by the live relay. New send-path UI: run one real send against the live relay before calling it done.

@@ -792,9 +792,16 @@ export function ChannelTimeline({
       }
       pinRafRef.current = requestAnimationFrame(() => {
         pinRafRef.current = null;
-        listRef.current?.scrollToIndex(itemsLengthRef.current - 1, {
-          align: "end",
-        });
+        // Re-check inside the frame: reader input can pause follow between the
+        // ResizeObserver callback and this frame. The reader's pause wins — a
+        // pin scheduled one frame earlier must not yank them back to the tail
+        // (both panels already re-check here; D-027 parity, measured live as a
+        // ~580px post-pause jump in Platform Team 2026-09-16).
+        if (followRef.current.follow) {
+          listRef.current?.scrollToIndex(itemsLengthRef.current - 1, {
+            align: "end",
+          });
+        }
       });
     };
     const observer = new ResizeObserver(pin);

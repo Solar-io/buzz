@@ -23,6 +23,7 @@ import {
   utterancesForHold,
   type AgentSpeechActivity,
   type VoiceModeStatus,
+  type VoiceOffReason,
 } from "./lib/voiceTranscript.ts";
 
 /**
@@ -70,6 +71,14 @@ import {
  * UX as a fatal bridge error. A fatal `{"type":"error"}` is terminal: the
  * server closes the connection itself.
  *
+ * WHY it turned off is reported, not just THAT it did (`offReason`): a
+ * deliberate toggle is `"user"`; the forced drops are `"bridge_error"`,
+ * `"reconnect_cap"`, and `"left"` (huddle teardown). Callers that couple
+ * other state to voice mode (the bar couples agent reading) must treat a
+ * forced drop as "nothing was chosen" — unwinding a borrowed gesture on a
+ * forced drop is the SILENT DISARM class
+ * (`shouldRestoreSpeechOnVoiceOff` in lib/voiceTranscript.ts).
+ *
  * WebSocket wiring is code-read covered (no component harness exists for
  * React hooks in this app); the batcher, parser, and error mapping are
  * unit-tested in `lib/sttBridge.test.mjs` and the publish gate in
@@ -92,6 +101,12 @@ export interface HuddleVoiceMode {
   /** The toggle. Turning it off stops the session and clears interim text. */
   enabled: boolean;
   setEnabled: (on: boolean) => void;
+  /**
+   * Why voice mode last turned off: `"user"` for the deliberate toggle,
+   * `"bridge_error"` / `"reconnect_cap"` for forced drops, `"left"` when
+   * the huddle went away. Null while enabled (or before any off).
+   */
+  offReason: VoiceOffReason | null;
   status: VoiceModeStatus;
   /** Latest interim transcript text, for display only. */
   interimText: string;
@@ -136,6 +151,7 @@ export function useHuddleVoiceMode(options: {
   const avatarSpeaking = options.avatarSpeaking;
   const avatarActivity = options.avatarActivity;
   const [enabled, setEnabledState] = useState(false);
+  const [offReason, setOffReason] = useState<VoiceOffReason | null>(null);
   const [status, setStatus] = useState<VoiceModeStatus>("idle");
   const [interimText, setInterimText] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -302,6 +318,10 @@ export function useHuddleVoiceMode(options: {
             // Fatal means the bridge is unusable — clear the UI state so
             // the toggle stops claiming to listen, instead of reconnecting
             // into the same wall. This flips `enabled`, running cleanup.
+            // Forced drop: record the cause so coupled state (agent
+            // reading) is not silently unwound as if the user had chosen
+            // this (SILENT DISARM).
+            setOffReason("bridge_error");
             setEnabledState(false);
             return;
         }
@@ -322,6 +342,8 @@ export function useHuddleVoiceMode(options: {
             "Speech recognition could not reconnect — try turning voice mode on again.",
           );
           transition({ type: "errored", code: "reconnect" });
+          // Forced drop, same SILENT DISARM contract as the bridge error.
+          setOffReason("reconnect_cap");
           setEnabledState(false);
           return;
         }
@@ -405,21 +427,32 @@ export function useHuddleVoiceMode(options: {
   const setEnabled = useCallback((on: boolean) => {
     if (on) {
       setError(null);
+      setOffReason(null);
     } else {
       setStatus((current) => nextVoiceStatus(current, { type: "stop" }));
+      setOffReason("user");
     }
     setEnabledState(on);
   }, []);
 
   // Leaving the huddle (channelId → null) must latch voice mode off: the
   // toggle unmounts with the call controls, and a rejoin must not resume
-  // listening on its own.
+  // listening on its own. A forced drop, not a user choice.
   useEffect(() => {
     if (channelId === null) {
+      setOffReason((current) => (current === null ? "left" : current));
       setEnabledState(false);
       setStatus("idle");
     }
   }, [channelId]);
 
-  return { supported: true, enabled, setEnabled, status, interimText, error };
+  return {
+    supported: true,
+    enabled,
+    setEnabled,
+    offReason,
+    status,
+    interimText,
+    error,
+  };
 }

@@ -613,12 +613,205 @@ pub struct SendMessageParams {
     /// holder in the claims file (dead-holder escape; unmanaged sends ignore
     /// it).
     pub supersede: bool,
+    /// D-035 decision card payload spec: inline JSON, '@file.json', or '-' for
+    /// stdin. When set, the outgoing kind 9 carries `["card", …]` for the web
+    /// client's tappable rendering; empty content falls back to text generated
+    /// from the card.
+    pub card: Option<String>,
 }
 
 /// The message kinds the send-path hold gate and the identity stamp apply
 /// to — exactly the kinds `cmd_send_message` can publish.
 fn is_agent_message_kind(kind: Option<u16>) -> bool {
     matches!(kind, None | Some(9) | Some(45001) | Some(45003))
+}
+
+// D-035 decision card: limits and helpers. These MIRROR the web client's
+// `web/src/features/channels/lib/decisionCard.ts` (CARD_LIMITS +
+// buildCardTag/cardFallbackText) — the two validators were built in one
+// head and reviewed together precisely so they cannot drift; changing one
+// side without the other is a client contract break.
+const CARD_MAX_TAG_UNITS: usize = 4096;
+const CARD_MAX_TITLE_CHARS: usize = 120;
+const CARD_MAX_BODY_CHARS: usize = 4000;
+const CARD_MAX_OPTIONS: usize = 8;
+const CARD_MAX_LABEL_CHARS: usize = 200;
+const CARD_MAX_ID_CHARS: usize = 40;
+
+/// JS `.length` parity: the web validator bounds every string by UTF-16
+/// code units, so this side measures the same way. A Rust `chars().count()`
+/// is smaller for astral characters (emoji count 1 there, 2 here), which
+/// would let the CLI emit a card the web parser then rejects — the exact
+/// drift this builder exists to prevent.
+fn utf16_len(value: &str) -> usize {
+    value.encode_utf16().count()
+}
+
+fn bounded_utf16(value: &str, max_chars: usize) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || utf16_len(trimmed) > max_chars {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// Validate a D-035 `--card` payload (JSON per the flag help) and build both
+/// halves of the outgoing kind 9: the `["card", …]` tag the web client
+/// renders as a tappable question, and the human-readable fallback content
+/// every plain client (including the desktop app) shows on its own.
+///
+/// Authoring is deliberately STRICTER than the web parse (which tolerates
+/// e.g. two recommended options by keeping the first): this side refuses the
+/// send, so self-contradicting cards never reach the wire.
+fn build_card_tag(raw: &str) -> Result<(Vec<String>, String), CliError> {
+    let parsed: serde_json::Value = serde_json::from_str(raw)
+        .map_err(|e| CliError::Usage(format!("--card: invalid JSON: {e}")))?;
+    let obj = parsed
+        .as_object()
+        .ok_or_else(|| CliError::Usage("--card: payload must be a JSON object".into()))?;
+    if let Some(v) = obj.get("v") {
+        if v.as_u64() != Some(1) {
+            return Err(CliError::Usage("--card: only v=1 is supported".into()));
+        }
+    }
+    let title = bounded_utf16(
+        obj.get("title").and_then(|t| t.as_str()).unwrap_or(""),
+        CARD_MAX_TITLE_CHARS,
+    )
+    .ok_or_else(|| {
+        CliError::Usage(format!(
+            "--card: title must be 1-{CARD_MAX_TITLE_CHARS} characters"
+        ))
+    })?;
+    let body = match obj.get("body") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(b) => {
+            let text = b
+                .as_str()
+                .ok_or_else(|| CliError::Usage("--card: body must be a string".into()))?;
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                None
+            } else if utf16_len(trimmed) > CARD_MAX_BODY_CHARS {
+                return Err(CliError::Usage(format!(
+                    "--card: body must be at most {CARD_MAX_BODY_CHARS} characters"
+                )));
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+    };
+    let raw_options = obj
+        .get("options")
+        .and_then(|o| o.as_array())
+        .ok_or_else(|| CliError::Usage("--card: options must be an array".into()))?;
+    if raw_options.len() < 2 || raw_options.len() > CARD_MAX_OPTIONS {
+        return Err(CliError::Usage(format!(
+            "--card: needs 2-{CARD_MAX_OPTIONS} options (got {})",
+            raw_options.len()
+        )));
+    }
+    let mut recommended_count = 0usize;
+    let mut options_out: Vec<serde_json::Value> = Vec::with_capacity(raw_options.len());
+    for (index, candidate) in raw_options.iter().enumerate() {
+        let option = candidate.as_object().ok_or_else(|| {
+            CliError::Usage(format!("--card: option {} must be an object", index + 1))
+        })?;
+        let label = bounded_utf16(
+            option.get("label").and_then(|l| l.as_str()).unwrap_or(""),
+            CARD_MAX_LABEL_CHARS,
+        )
+        .ok_or_else(|| {
+            CliError::Usage(format!(
+                "--card: option {} label must be 1-{CARD_MAX_LABEL_CHARS} characters",
+                index + 1
+            ))
+        })?;
+        // Mirror of the web builder: an explicit bounded id rides the wire,
+        // an absent one is omitted entirely (the web parse derives
+        // positional ids — ids are render keys, not identity promises).
+        let mut entry = serde_json::Map::new();
+        if let Some(id_value) = option.get("id") {
+            if let Some(id) = id_value.as_str() {
+                let trimmed = id.trim();
+                if !trimmed.is_empty() {
+                    if utf16_len(trimmed) > CARD_MAX_ID_CHARS {
+                        return Err(CliError::Usage(format!(
+                            "--card: option {} id must be at most {CARD_MAX_ID_CHARS} characters",
+                            index + 1
+                        )));
+                    }
+                    entry.insert(
+                        "id".to_string(),
+                        serde_json::Value::String(trimmed.to_string()),
+                    );
+                }
+            } else {
+                return Err(CliError::Usage(format!(
+                    "--card: option {} id must be a string",
+                    index + 1
+                )));
+            }
+        }
+        entry.insert("label".to_string(), serde_json::Value::String(label));
+        if option.get("recommended").and_then(|r| r.as_bool()) == Some(true) {
+            recommended_count += 1;
+            entry.insert(
+                "recommended".to_string(),
+                serde_json::Value::Bool(true),
+            );
+        }
+        options_out.push(serde_json::Value::Object(entry));
+    }
+    if recommended_count > 1 {
+        return Err(CliError::Usage(format!(
+            "--card: at most one option may be recommended ({recommended_count} marked)"
+        )));
+    }
+
+    let mut payload = serde_json::Map::new();
+    payload.insert("v".to_string(), serde_json::Value::Number(1.into()));
+    payload.insert(
+        "title".to_string(),
+        serde_json::Value::String(title.clone()),
+    );
+    if let Some(ref body_text) = body {
+        payload.insert(
+            "body".to_string(),
+            serde_json::Value::String(body_text.clone()),
+        );
+    }
+    payload.insert(
+        "options".to_string(),
+        serde_json::Value::Array(options_out.clone()),
+    );
+    let json = serde_json::to_string(&serde_json::Value::Object(payload))
+        .map_err(|e| CliError::Other(format!("--card: serialization failed: {e}")))?;
+    if utf16_len(&json) > CARD_MAX_TAG_UNITS {
+        return Err(CliError::Usage(format!(
+            "--card: payload exceeds {CARD_MAX_TAG_UNITS} characters after serialization"
+        )));
+    }
+    let tag = vec!["card".to_string(), json];
+
+    // Fallback content, mirroring the web's cardFallbackText so a plain
+    // client and the web card render the SAME question, not two variants.
+    let mut fallback = format!("**{title}**");
+    if let Some(ref body_text) = body {
+        fallback.push_str("\n\n");
+        fallback.push_str(body_text);
+    }
+    fallback.push_str("\n");
+    for option in &options_out {
+        fallback.push_str("\n- ");
+        fallback.push_str(option.get("label").and_then(|l| l.as_str()).unwrap_or(""));
+        if option.get("recommended").and_then(|r| r.as_bool()) == Some(true) {
+            fallback.push_str(" *(Recommended)*");
+        }
+    }
+    fallback.push_str("\n\n_Reply with an option or your own answer._");
+    Ok((tag, fallback))
 }
 
 pub async fn cmd_send_message(
@@ -630,6 +823,33 @@ pub async fn cmd_send_message(
     // quoting — the source of countless self-inflicted command-substitution
     // bugs for agent and human users alike.
     p.content = read_or_stdin(&p.content)?;
+
+    // D-035 decision card: resolve the payload spec ('@file.json' / '-' /
+    // inline JSON), validate it strictly (the web parse tolerates, the
+    // authoring path refuses), and derive the readable fallback content when
+    // the caller did not supply one.
+    let card_tag: Option<Vec<String>> = match p.card.take() {
+        Some(spec) => {
+            let raw = if let Some(path) = spec.strip_prefix('@') {
+                std::fs::read_to_string(path).map_err(|e| {
+                    CliError::Usage(format!("--card: cannot read {path}: {e}"))
+                })?
+            } else {
+                read_or_stdin(&spec)?
+            };
+            let (tag, fallback) = build_card_tag(&raw)?;
+            if p.content.trim().is_empty() {
+                p.content = fallback;
+            }
+            Some(tag)
+        }
+        None => None,
+    };
+    if card_tag.is_none() && p.content.trim().is_empty() {
+        return Err(CliError::Usage(
+            "--content is required (or pass --card, which generates it)".into(),
+        ));
+    }
     validate_content_size(&p.content)?;
     if let Some(ref r) = p.reply_to {
         validate_hex64(r)?;
@@ -705,6 +925,13 @@ pub async fn cmd_send_message(
     } else {
         format!("{}{media_content}", p.content)
     };
+
+    // D-035 card tag rides AFTER imeta attachments and BEFORE the session
+    // stamp (send-gate review criterion, CK 9/16) — one validated extra
+    // tag, no arbitrary passthrough opened alongside it.
+    if let Some(tag) = card_tag {
+        media_tags.push(tag);
+    }
 
     // Identity stamp (managed sessions): `["session", "<slot>"]` rides the
     // outgoing event's tags for kinds 9 / 45001 / 45003, so any client can
@@ -1078,18 +1305,20 @@ pub async fn dispatch(
             files,
             mentions,
             supersede,
+            card,
         } => {
             cmd_send_message(
                 client,
                 SendMessageParams {
                     channel_id: channel,
-                    content,
+                    content: content.unwrap_or_default(),
                     kind,
                     reply_to,
                     broadcast,
                     files,
                     mentions,
                     supersede,
+                    card,
                 },
             )
             .await
@@ -1219,11 +1448,12 @@ pub async fn dispatch(
 #[cfg(test)]
 mod tests {
     use super::{
-        channel_id_from_event, classify_claim, cmd_get_thread, event_mention_pubkeys,
-        find_root_from_tags, match_profiles_by_name, merge_message_mentions, missing_members,
-        normalize_explicit_mentions, parse_member_pubkeys, resolve_names_to_pubkeys,
-        resolve_thread_target, thread_ref_from_event, thread_ref_from_parent_tags, BuzzClient,
-        ClaimState, CliError, Uuid, CLAIM_EMOJI,
+        build_card_tag, channel_id_from_event, classify_claim, cmd_get_thread,
+        event_mention_pubkeys, find_root_from_tags, match_profiles_by_name,
+        merge_message_mentions, missing_members, normalize_explicit_mentions,
+        parse_member_pubkeys, resolve_names_to_pubkeys, resolve_thread_target,
+        thread_ref_from_event, thread_ref_from_parent_tags, BuzzClient, ClaimState, CliError,
+        Uuid, CLAIM_EMOJI,
     };
     use buzz_sdk::mentions::{
         extract_at_mentions_with_known, extract_at_names, match_names_to_profiles, MentionProfile,
@@ -1288,6 +1518,112 @@ mod tests {
         let reactions = vec![lock_reaction(PUBKEY, 200), lock_reaction("mykey", 100)];
         assert_eq!(classify_claim(&reactions, "mykey"), ClaimState::Ours);
     }
+
+    // ---- D-035 decision card builder ----
+
+    #[test]
+    fn card_builds_tag_and_fallback_content() {
+        let (tag, fallback) = build_card_tag(
+            r#"{"title":"Ship the claims fix?","body":"Second bounce needed.",
+                "options":[{"id":"now","label":"Relaunch now"},{"label":"Let it ride","recommended":true}]}"#,
+        )
+        .expect("valid card builds");
+        assert_eq!(tag[0], "card");
+        let payload: serde_json::Value = serde_json::from_str(&tag[1]).unwrap();
+        assert_eq!(payload["v"], 1);
+        assert_eq!(payload["title"], "Ship the claims fix?");
+        assert_eq!(payload["body"], "Second bounce needed.");
+        // Explicit id rides, absent id is omitted (web parse derives positional).
+        assert_eq!(payload["options"][0]["id"], "now");
+        assert!(payload["options"][1].get("id").is_none());
+        assert_eq!(payload["options"][1]["recommended"], true);
+        // Fallback mirrors the web generator byte-for-byte.
+        assert_eq!(
+            fallback,
+            "**Ship the claims fix?**\n\nSecond bounce needed.\n\n- Relaunch now\n- Let it ride *(Recommended)*\n\n_Reply with an option or your own answer._"
+        );
+    }
+
+    #[test]
+    fn card_fallback_without_body_matches_web_shape() {
+        let (_, fallback) = build_card_tag(
+            r#"{"title":"Q","options":[{"label":"A"},{"label":"B"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            fallback,
+            "**Q**\n\n- A\n- B\n\n_Reply with an option or your own answer._"
+        );
+    }
+
+    #[test]
+    fn card_rejects_two_recommended_options() {
+        let err = build_card_tag(
+            r#"{"title":"Q","options":[{"label":"A","recommended":true},{"label":"B","recommended":true}]}"#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("at most one option may be recommended"));
+    }
+
+    #[test]
+    fn card_rejects_under_two_and_over_eight_options() {
+        let one = build_card_tag(r#"{"title":"Q","options":[{"label":"A"}]}"#).unwrap_err();
+        assert!(one.to_string().contains("needs 2-8 options (got 1)"));
+        let labels: Vec<String> = (0..9).map(|i| format!("{{\"label\":\"o{i}\"}}")).collect();
+        let nine = format!(r#"{{"title":"Q","options":[{}]}}"#, labels.join(","));
+        let err = build_card_tag(&nine).unwrap_err();
+        assert!(err.to_string().contains("needs 2-8 options (got 9)"));
+    }
+
+    #[test]
+    fn card_rejects_unknown_version_and_oversized_title() {
+        let v2 = build_card_tag(r#"{"v":2,"title":"Q","options":[{"label":"A"},{"label":"B"}]}"#)
+            .unwrap_err();
+        assert!(v2.to_string().contains("only v=1"));
+        let long = "x".repeat(121);
+        let err = build_card_tag(&format!(
+            r#"{{"title":"{long}","options":[{{"label":"A"}},{{"label":"B"}}]}}"#
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("title must be 1-120"));
+    }
+
+    #[test]
+    fn card_bounds_measure_utf16_units_not_rust_chars() {
+        // The drift proof: 101 rocket emoji are 101 Rust chars (under a naive
+        // 200 bound) but 202 UTF-16 units — the web's JS `.length` rejects
+        // that label, so this side must too or the CLI ships cards the web
+        // renders as fallback text.
+        let emoji_ok: String = "🚀".repeat(99); // 198 UTF-16 units — passes
+        let emoji_over: String = "🚀".repeat(101); // 202 UTF-16 units — rejects
+        let ok = format!(
+            r#"{{"title":"Q","options":[{{"label":"{emoji_ok}"}},{{"label":"B"}}]}}"#
+        );
+        assert!(build_card_tag(&ok).is_ok());
+        let over = format!(
+            r#"{{"title":"Q","options":[{{"label":"{emoji_over}"}},{{"label":"B"}}]}}"#
+        );
+        let err = build_card_tag(&over).unwrap_err();
+        assert!(err.to_string().contains("label must be 1-200"));
+    }
+
+    #[test]
+    fn card_rejects_oversized_serialized_payload() {
+        // The reachable fat-tag path: a legal 4000-char body plus 8
+        // max-length labels serialize past the 4096-unit tag cap — this is
+        // the authoring mistake the cap exists to catch (labels alone can
+        // never reach it).
+        let label = "y".repeat(200);
+        let labels: Vec<String> = (0..8).map(|_| format!("{{\"label\":\"{label}\"}}")).collect();
+        let fat = format!(
+            r#"{{"title":"Q","body":"{}","options":[{}]}}"#,
+            "b".repeat(4000),
+            labels.join(",")
+        );
+        let err = build_card_tag(&fat).unwrap_err();
+        assert!(err.to_string().contains("exceeds 4096"));
+    }
+
 
     #[test]
     fn claim_missing_created_at_reads_as_epoch() {

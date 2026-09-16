@@ -13,6 +13,7 @@ import {
 import type { ReactionGroup } from "../lib/reactions.ts";
 import { UserProfilePopover } from "@/features/profile/ui/UserProfilePopover";
 import { AuthorAvatar } from "./AuthorAvatar.tsx";
+import { DecisionCard } from "./DecisionCard.tsx";
 import { LinkPreviewCards } from "./LinkPreviewCards.tsx";
 import { MarkdownContent } from "./MarkdownContent.tsx";
 import { MessageActionBar } from "./MessageActionBar.tsx";
@@ -217,12 +218,19 @@ export function MessageRow({
             Sending…
           </span>
         )}
-        <MarkdownContent
-          content={message.content}
-          mentionNames={mentionNames}
-          imetaByUrl={message.imetaByUrl}
-          snapshotSharedBy={label}
-        />
+        {message.card ? (
+          // D-035: a well-formed card tag replaces the fallback markdown —
+          // the content field stays the plain-client rendering of the same
+          // question, not something the card view should repeat.
+          <DecisionCard message={message} />
+        ) : (
+          <MarkdownContent
+            content={message.content}
+            mentionNames={mentionNames}
+            imetaByUrl={message.imetaByUrl}
+            snapshotSharedBy={label}
+          />
+        )}
         {message.edited && (
           <span className="ml-1 align-baseline text-xs text-muted-foreground/70">
             (edited)
