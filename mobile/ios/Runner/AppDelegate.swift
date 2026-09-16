@@ -1,4 +1,5 @@
 import AVFoundation
+import DeviceCheck
 import Flutter
 import UIKit
 import UserNotifications
@@ -14,19 +15,58 @@ import UserNotifications
   private var nativeProfileTextEditorCoordinator: NativeProfileTextEditorCoordinator?
   private var nativeMessageActionSurfaceSupportChannel: FlutterMethodChannel?
   private var huddleMediaPlugin: HuddleMediaPlugin?
+  private var pushAttestPlugin: PushAttestPlugin?
 
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    UNUserNotificationCenter.current().requestAuthorization(options: [.badge]) { _, _ in }
+    // D-029 native push: banners require alert+sound authorization, which the
+    // previous badge-only request could never produce. The center delegate
+    // surfaces foreground banners (willPresent below).
+    UNUserNotificationCenter.current().delegate = self
+    UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) {
+      _, _ in
+    }
+    application.registerForRemoteNotifications()
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  override func application(
+    _ application: UIApplication,
+    didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+  ) {
+    // APNs tokens arrive as raw bytes; the gateway expects lowercase hex.
+    let token = deviceToken.map { String(format: "%02x", $0) }.joined()
+    pushAttestPlugin?.deviceTokenArrived(token)
+  }
+
+  override func application(
+    _ application: UIApplication,
+    didFailToRegisterForRemoteNotificationsWithError error: Error
+  ) {
+    pushAttestPlugin?.deviceTokenArrived(nil)
+  }
+
+  override func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    // Show banners while the app is foregrounded; the Friday hardware gate
+    // proves both this and the lock-screen presentation.
+    if #available(iOS 14.0, *) {
+      completionHandler([.banner, .list, .sound])
+    } else {
+      completionHandler([.alert, .sound])
+    }
   }
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     let messenger = engineBridge.applicationRegistrar.messenger()
     huddleMediaPlugin = HuddleMediaPlugin(messenger: messenger)
+    pushAttestPlugin = PushAttestPlugin(messenger: messenger)
     mediaUploadChannel = FlutterMethodChannel(
       name: "buzz/media_upload",
       binaryMessenger: messenger
@@ -668,5 +708,142 @@ import UserNotifications
       code: 1,
       userInfo: [NSLocalizedDescriptionKey: "Invalid MP4 box structure."]
     )
+  }
+}
+
+/// D-029 native push bridge: APNs token delivery + App Attest operations
+/// over the `buzz/push_attest` method channel. The Dart side
+/// (mobile/lib/shared/push/) drives enrollment; this class only exposes the
+/// hardware-bound primitives.
+final class PushAttestPlugin {
+  private let channel: FlutterMethodChannel
+  private var lastTokenHex: String?
+
+  init(messenger: FlutterBinaryMessenger) {
+    channel = FlutterMethodChannel(name: "buzz/push_attest", binaryMessenger: messenger)
+    channel.setMethodCallHandler { [weak self] call, result in
+      self?.handle(call, result: result)
+    }
+  }
+
+  /// Called by AppDelegate on both token success and failure. A nil token
+  /// leaves the Dart-side future empty without caching a stale value.
+  func deviceTokenArrived(_ tokenHex: String?) {
+    lastTokenHex = tokenHex
+    guard let tokenHex, !tokenHex.isEmpty else { return }
+    channel.invokeMethod("apnsToken", arguments: tokenHex)
+  }
+
+  private func pushError(_ code: String, _ message: String) -> FlutterError {
+    FlutterError(code: code, message: message, details: nil)
+  }
+
+  private func onMain(_ result: @escaping FlutterResult, _ body: @escaping () -> Void) {
+    if Thread.isMainThread {
+      body()
+    } else {
+      DispatchQueue.main.async(execute: body)
+    }
+  }
+
+  private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    switch call.method {
+    case "requestAuthorizationAndRegister":
+      let options: UNAuthorizationOptions = [.alert, .sound, .badge]
+      UNUserNotificationCenter.current().requestAuthorization(options: options) {
+        granted, error in
+        self.onMain(result) {
+          if let error {
+            result(self.pushError("push_attest/auth_failed", error.localizedDescription))
+          } else {
+            UIApplication.shared.registerForRemoteNotifications()
+            result(granted)
+          }
+        }
+      }
+    case "apnsToken":
+      result(lastTokenHex)
+    case "isSupported":
+      if #available(iOS 14.0, *) {
+        result(DCAppAttestService.shared.isSupported)
+      } else {
+        result(false)
+      }
+    case "generateKey":
+      guard #available(iOS 14.0, *) else {
+        result(pushError("unsupported", "App Attest requires iOS 14"))
+        return
+      }
+      DCAppAttestService.shared.generateKey { keyId, error in
+        self.onMain(result) {
+          if let keyId {
+            result(keyId)
+          } else {
+            result(
+              self.pushError(
+                "generate_key_failed",
+                error?.localizedDescription ?? "App Attest key generation failed"
+              ))
+          }
+        }
+      }
+    case "attest":
+      guard
+        let arguments = call.arguments as? [String: Any],
+        let keyId = arguments["keyId"] as? String,
+        let hash = arguments["clientDataHash"] as? FlutterStandardTypedData
+      else {
+        result(pushError("invalid_arguments", "attest requires keyId and clientDataHash"))
+        return
+      }
+      guard #available(iOS 14.0, *) else {
+        result(pushError("unsupported", "App Attest requires iOS 14"))
+        return
+      }
+      DCAppAttestService.shared.attestKey(keyId, clientDataHash: hash.data) {
+        attestation, error in
+        self.onMain(result) {
+          if let attestation {
+            result(attestation.base64EncodedString())
+          } else {
+            result(
+              self.pushError(
+                "attestation_failed",
+                error?.localizedDescription ?? "attestKey failed"
+              ))
+          }
+        }
+      }
+    case "assertKey":
+      guard
+        let arguments = call.arguments as? [String: Any],
+        let keyId = arguments["keyId"] as? String,
+        let hash = arguments["clientDataHash"] as? FlutterStandardTypedData,
+        let challenge = arguments["challenge"] as? String
+      else {
+        result(pushError("invalid_arguments", "assertKey requires keyId, clientDataHash, challenge"))
+        return
+      }
+      guard #available(iOS 14.0, *) else {
+        result(pushError("unsupported", "App Attest requires iOS 14"))
+        return
+      }
+      DCAppAttestService.shared.generateAssertion(keyId, clientDataHash: hash.data, challenge: challenge) {
+        assertion, error in
+        self.onMain(result) {
+          if let assertion {
+            result(assertion.base64EncodedString())
+          } else {
+            result(
+              self.pushError(
+                "assertion_failed",
+                error?.localizedDescription ?? "generateAssertion failed"
+              ))
+          }
+        }
+      }
+    default:
+      result(FlutterMethodNotImplemented)
+    }
   }
 }
