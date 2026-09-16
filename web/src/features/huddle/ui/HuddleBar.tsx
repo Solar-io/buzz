@@ -376,11 +376,25 @@ export function HuddleBar({
         </>
       ) : (
         <>
+          {/* The relay denies audio auth on an ephemeral channel with no
+              parent link — "ephemeral channel requires parent linkage"
+              (crates/buzz-relay/src/audio/handler.rs) — so a TTL channel the
+              registry has no kind-48100 link for is a dead end, not a join.
+              Disable with the reason instead of letting the relay refuse. */}
           <button
             type="button"
             data-testid="huddle-join-audio"
             onClick={() => void huddle.join()}
-            disabled={huddle.status === "connecting" || !huddle.supportsVoice}
+            disabled={
+              huddle.status === "connecting" ||
+              !huddle.supportsVoice ||
+              !parentChannelId
+            }
+            title={
+              !parentChannelId
+                ? "Huddles need a permanent (non-TTL) channel"
+                : undefined
+            }
             className="rounded-full border border-emerald-600/50 bg-emerald-600/20 px-3 py-1 text-xs font-medium text-emerald-400 disabled:opacity-50"
           >
             {huddle.status === "connecting" ? "Joining…" : "🎧 Join huddle"}

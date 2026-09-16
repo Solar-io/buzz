@@ -8,25 +8,32 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/shared/ui/dialog";
+import { Input } from "@/shared/ui/input";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import {
   MAX_HUDDLE_AGENTS,
   selectableHuddleAgents,
 } from "../lib/huddleAgents.ts";
+import { rawHuddleAgentEntry } from "../lib/huddleRawEntry.ts";
 
 /**
  * Pick an agent to add to this huddle.
  *
  * The desktop's dialog reads `list_managed_agents` over Tauri and can also
  * start a stopped agent before adding it. Neither is available in a browser,
- * so this differs in two stated ways rather than pretending parity:
+ * so this differs in three stated ways rather than pretending parity:
  *
  *  - the list is the OWNER'S kind-30177 registry (the published projection of
- *    the same agents), not the desktop's local managed-agent store, and
+ *    the same agents), not the desktop's local managed-agent store,
  *  - there is no start step and no running/stopped column, because no
  *    running-state signal exists on the wire. An agent whose process is down
  *    is added to the huddle and joins when it next runs; the membership event
- *    is what it subscribes on.
+ *    is what it subscribes on, and
+ *  - the dialog offers raw-key entry (paste an npub / 64-hex key) beside the
+ *    registry list, because a non-owner identity has no kind-30177 rows of
+ *    its own — for them the list is empty and the registry alone is a dead
+ *    end. The add itself is pubkey-based, so the key is all that is needed;
+ *    see `lib/huddleRawEntry.ts` for the parse/duplicate half.
  *
  * The add itself is identical to the desktop's: kind-9000 add-member events,
  * role `bot`. See `lib/huddleAgents.ts`.
@@ -50,12 +57,14 @@ export function AddHuddleAgentDialog({
   const [adding, setAdding] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [entry, setEntry] = useState("");
 
   useEffect(() => {
     if (open) {
       setAdding(null);
       setError(null);
       setNotice(null);
+      setEntry("");
     }
   }, [open]);
 
@@ -90,6 +99,7 @@ export function AddHuddleAgentDialog({
         // open with its message, exactly as the desktop's does.
         if (result.message.includes("but the channel add failed")) {
           setNotice(result.message);
+          setEntry("");
         } else {
           onOpenChange(false);
         }
@@ -105,14 +115,33 @@ export function AddHuddleAgentDialog({
     }
   }
 
+  // The raw-key path: parse and duplicate-check BEFORE anything is published
+  // (lib/huddleRawEntry.ts), so a bad paste costs a message, not a round-trip.
+  // An empty field is a no-op rather than an error — Enter in a blank input
+  // should not lecture. A relay-side refusal (duplicate racing in, capacity)
+  // still surfaces through `add`'s `onAdd` error path; the text stays in the
+  // field so it can be corrected or retried.
+  function addFromEntry() {
+    if (adding !== null || entry.trim().length === 0) {
+      return;
+    }
+    const result = rawHuddleAgentEntry(entry, currentAgentPubkeys);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    void add({ pubkey: result.pubkey, name: result.name });
+  }
+
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className="max-w-md" data-testid="add-huddle-agent-dialog">
         <DialogHeader>
           <DialogTitle>Add an agent</DialogTitle>
           <DialogDescription>
-            Agents from your registry. Adding one publishes a huddle membership
-            event; the agent joins when it sees it.
+            Agents from your registry, or paste an npub / 64-hex key. Adding one
+            publishes a huddle membership event; the agent joins when it sees
+            it.
           </DialogDescription>
         </DialogHeader>
 
@@ -137,8 +166,8 @@ export function AddHuddleAgentDialog({
         ) : available.length === 0 ? (
           <p className="py-4 text-center text-sm text-muted-foreground">
             {registry.length === 0
-              ? "No agents in your registry yet."
-              : "Every agent you have is already in this huddle."}
+              ? "No agents in your registry yet — paste an npub / 64-hex key to add any agent."
+              : "Every agent you have is already in this huddle — paste an npub / 64-hex key to add another."}
           </p>
         ) : (
           <ul className="flex max-h-72 flex-col gap-1 overflow-y-auto">
@@ -165,6 +194,38 @@ export function AddHuddleAgentDialog({
             ))}
           </ul>
         )}
+
+        {/* Raw-key entry, offered ALWAYS — the registry list is owner-only
+            state, so for any other member this field is the whole dialog. */}
+        <div className="flex gap-2">
+          <Input
+            aria-label="Add an agent by public key"
+            data-testid="add-huddle-agent-input"
+            disabled={adding !== null}
+            placeholder="Paste npub… / 64-hex key"
+            value={entry}
+            onChange={(event) => {
+              setEntry(event.target.value);
+              setError(null);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                addFromEntry();
+              }
+            }}
+          />
+          <Button
+            data-testid="add-huddle-agent-add"
+            disabled={adding !== null}
+            onClick={addFromEntry}
+            size="sm"
+            type="button"
+            variant="secondary"
+          >
+            Add
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
   );
