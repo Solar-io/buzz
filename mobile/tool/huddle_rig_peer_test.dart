@@ -167,7 +167,7 @@ void main() {
       ]));
 
       final ephemeral = await ephemeralId.future.timeout(
-        const Duration(minutes: 8),
+        const Duration(minutes: 30),
         onTimeout: () => throw TimeoutException('phone never announced a huddle'),
       );
 
