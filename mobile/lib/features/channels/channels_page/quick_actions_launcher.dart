@@ -91,7 +91,7 @@ class ChannelQuickActionsLauncher extends HookConsumerWidget {
             constraints: _quickActionSheetConstraints(context),
             isScrollControlled: true,
             showDragHandle: true,
-            builder: (_) => const _CreateChannelSheet(channelType: 'stream'),
+            builder: (_) => const _CreateChannelSheet(),
           );
           if (created != null && context.mounted) {
             await openChannel(created);

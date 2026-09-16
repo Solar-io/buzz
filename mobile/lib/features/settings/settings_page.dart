@@ -14,6 +14,7 @@ import '../../shared/community/community_membership_provider.dart';
 import '../../shared/relay/relay.dart';
 import '../pairing/pairing_provider.dart';
 import '../../shared/theme/theme.dart';
+import 'thinking_visibility.dart';
 import '../../shared/widgets/app_list.dart';
 import '../../shared/widgets/app_list_card.dart';
 import '../../shared/widgets/frosted_app_bar.dart';
@@ -25,6 +26,7 @@ import '../../shared/widgets/modal_presentation.dart';
 import 'accent_picker_page.dart';
 import 'theme_picker_page.dart';
 
+part 'settings_page/activity_section.dart';
 part 'settings_page/appearance_section.dart';
 part 'settings_page/community_section.dart';
 part 'settings_page/connection_section.dart';
@@ -215,6 +217,7 @@ class SettingsPage extends HookConsumerWidget {
                 profileHeader,
                 _CommunitySection(invitePageBuilder: invitePageBuilder),
                 const _AppearanceSection(),
+                const _ActivitySection(),
                 _ConnectionSection(
                   identityRecoveryPageBuilder: identityRecoveryPageBuilder,
                 ),

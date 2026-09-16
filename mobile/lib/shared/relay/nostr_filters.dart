@@ -101,13 +101,17 @@ abstract final class NostrFilters {
     limit: 1,
   );
 
-  /// Forum posts (kind:45001) in a channel.
+  /// Forum feed in a channel: kind-45001 posts PLUS kind-9 thread roots —
+  /// the web ForumView read-superset, so legacy/pre-forum-signing history
+  /// and live #alerts traffic render as post cards. Kind-9 replies (they
+  /// carry root e-tags) are filtered out client-side; they render inside
+  /// their threads.
   static NostrFilter forumPosts(
     String channelId, {
     int limit = 50,
     int? until,
   }) => NostrFilter(
-    kinds: [45001],
+    kinds: [9, 45001],
     tags: {
       '#h': [channelId],
     },

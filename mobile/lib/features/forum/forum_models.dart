@@ -179,9 +179,18 @@ class ForumPostsResponse {
     );
   }
 
-  /// Build from a list of kind:45001 events. Posts are sorted newest-first.
+  /// Build from the forum feed (kind:45001 posts + kind:9 ROOTS — the web
+  /// read-superset). Kind-9 events carrying a thread reference are replies,
+  /// not roots: they render inside their threads and are dropped here.
+  /// Posts are sorted newest-first.
   factory ForumPostsResponse.fromEvents(List<NostrEvent> events) {
-    final posts = events.map(ForumPost.fromEvent).toList()
+    final roots = events.where((event) {
+      if (event.kind == 45001) return true;
+      if (event.kind != 9) return false;
+      final ref = event.threadReference;
+      return ref.rootId == null && ref.parentId == null;
+    });
+    final posts = roots.map(ForumPost.fromEvent).toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return ForumPostsResponse(posts: posts, nextCursor: null);
   }

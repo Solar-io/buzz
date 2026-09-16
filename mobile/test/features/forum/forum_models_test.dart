@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:buzz/features/forum/forum_models.dart';
+import 'package:buzz/shared/relay/nostr_models.dart';
 
 Map<String, dynamic> _postJson({
   String eventId = 'evt1',
@@ -63,6 +64,52 @@ Map<String, dynamic> _summaryJson({
 };
 
 void main() {
+
+  group('ForumPostsResponse.fromEvents (kind-9 read-superset)', () {
+    NostrEvent ev(String id, int kind, int createdAt, List<List<String>> tags) =>
+        NostrEvent(
+          id: id,
+          pubkey: 'pk',
+          createdAt: createdAt,
+          kind: kind,
+          tags: tags,
+          content: 'c-$id',
+          sig: 's',
+        );
+
+    test('kind-9 ROOTS render as posts; marked replies are dropped', () {
+      final response = ForumPostsResponse.fromEvents([
+        ev('post', 45001, 100, [
+          ['h', 'ch1'],
+        ]),
+        ev('legacy-root', 9, 90, [
+          ['h', 'ch1'],
+        ]),
+        ev('legacy-reply', 9, 95, [
+          ['h', 'ch1'],
+          ['e', 'legacy-root', '', 'reply'],
+        ]),
+      ]);
+      expect(
+        response.posts.map((p) => p.eventId),
+        containsAll(['post', 'legacy-root']),
+      );
+      expect(response.posts.map((p) => p.eventId), isNot(contains('legacy-reply')));
+    });
+
+    test('newest-first across kinds', () {
+      final response = ForumPostsResponse.fromEvents([
+        ev('older-post', 45001, 10, [
+          ['h', 'ch1'],
+        ]),
+        ev('newer-root', 9, 20, [
+          ['h', 'ch1'],
+        ]),
+      ]);
+      expect(response.posts.first.eventId, 'newer-root');
+    });
+  });
+
   group('ForumPost.fromJson', () {
     test('parses complete post with thread summary', () {
       final json = _postJson(

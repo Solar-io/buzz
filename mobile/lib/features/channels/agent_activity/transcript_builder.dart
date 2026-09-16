@@ -398,7 +398,12 @@ String _safeJsonEncode(dynamic value) {
   }
 }
 
-List<TranscriptItem> buildTranscript(List<ObserverFrame> events) {
+/// [showThinking] gates `agent_thought_chunk` items — the D-029 §5
+/// visibility toggle. Default false: hidden, matching the web's default.
+List<TranscriptItem> buildTranscript(
+  List<ObserverFrame> events, {
+  bool showThinking = false,
+}) {
   final items = <TranscriptItem>[];
   final itemsById = <String, TranscriptItem>{};
 
@@ -650,7 +655,7 @@ List<TranscriptItem> buildTranscript(List<ObserverFrame> events) {
       continue;
     }
 
-    if (updateType == 'agent_thought_chunk') {
+    if (showThinking && updateType == 'agent_thought_chunk') {
       upsertTextItem(
         'thinking:${messageId ?? turnKey}',
         'thought',

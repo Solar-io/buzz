@@ -621,6 +621,19 @@ final class HuddleAudioEngine {
     }
 
     do {
+      // D-029 §1 (audio that survives backgrounding): the call-shaped
+      // session. Without an explicit category iOS runs .soloAmbient, which
+      // suspends audio the moment the app backgrounds or the screen locks.
+      // .playAndRecord + .voiceChat keeps full-duplex alive with the
+      // background-audio entitlement (Info.plist UIBackgroundModes).
+      let session = AVAudioSession.sharedInstance()
+      try session.setCategory(
+        .playAndRecord,
+        mode: .voiceChat,
+        options: [.defaultToSpeaker, .allowBluetooth]
+      )
+      try session.setActive(true)
+
       let input = audioEngine.inputNode
       try input.setVoiceProcessingEnabled(true)
       let inputFormat = input.outputFormat(forBus: 0)

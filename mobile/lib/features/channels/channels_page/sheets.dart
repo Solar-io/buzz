@@ -30,22 +30,26 @@ const _createChannelTtlOptions = [
 ];
 
 class _CreateChannelSheet extends HookConsumerWidget {
-  final String channelType;
+  /// Type pre-selected when the sheet opens ('stream' or 'forum'); the
+  /// in-sheet Type selector can still change it — forum channels are
+  /// creatable from mobile now, matching the web palette's channel types.
+  final String initialChannelType;
 
-  const _CreateChannelSheet({required this.channelType});
+  const _CreateChannelSheet({this.initialChannelType = 'stream'});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final nameController = useTextEditingController();
     final descriptionController = useTextEditingController();
     final visibility = useState('open');
+    final channelType = useState(initialChannelType);
     final temporary = useState(false);
     final ttlSeconds = useState(_defaultCreateChannelTtlSeconds);
     final isSubmitting = useState(false);
     final errorMessage = useState<String?>(null);
     useListenable(nameController);
 
-    final kindLabel = channelType == 'forum' ? 'forum' : 'channel';
+    final kindLabel = channelType.value == 'forum' ? 'forum' : 'channel';
     final canSubmit =
         nameController.text.trim().isNotEmpty && !isSubmitting.value;
 
@@ -62,7 +66,7 @@ class _CreateChannelSheet extends HookConsumerWidget {
             .read(channelActionsProvider)
             .createChannel(
               name: name,
-              channelType: channelType,
+              channelType: channelType.value,
               visibility: visibility.value,
               description: descriptionController.text.trim(),
               ttlSeconds: temporary.value ? ttlSeconds.value : null,
@@ -103,7 +107,7 @@ class _CreateChannelSheet extends HookConsumerWidget {
                   enableSuggestions: false,
                   textCapitalization: TextCapitalization.none,
                   decoration: InputDecoration(
-                    hintText: channelType == 'forum'
+                    hintText: channelType.value == 'forum'
                         ? 'design-discussions'
                         : 'release-notes',
                     border: InputBorder.none,
@@ -187,6 +191,25 @@ class _CreateChannelSheet extends HookConsumerWidget {
                 ),
               ],
               const SizedBox(height: Grid.sm),
+              _CreateChannelRadioGroup<String>(
+                enabled: !isSubmitting.value,
+                label: 'Format',
+                onSelected: (value) => channelType.value = value,
+                options: const [
+                  _CreateChannelMenuOption(
+                    key: Key('create-channel-format-stream'),
+                    label: 'Stream',
+                    value: 'stream',
+                  ),
+                  _CreateChannelMenuOption(
+                    key: Key('create-channel-format-forum'),
+                    label: 'Forum',
+                    value: 'forum',
+                  ),
+                ],
+                value: channelType.value,
+              ),
+              const SizedBox(height: Grid.xs),
               _CreateChannelRadioGroup<String>(
                 enabled: !isSubmitting.value,
                 label: 'Visibility',

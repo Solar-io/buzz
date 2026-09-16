@@ -1,3 +1,4 @@
+import '../../settings/thinking_visibility.dart';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -357,6 +358,7 @@ final observerRelayProvider =
 final observerSubscriptionProvider =
     Provider.family<ObserverState, ObserverKey>((ref, key) {
       final relayState = ref.watch(observerRelayProvider);
+      final showThinking = ref.watch(thinkingVisibilityProvider);
       final normalizedAgent = key.agentPubkey.toLowerCase();
       final frames = relayState.framesByAgent[normalizedAgent] ?? const [];
       final channelFrames = [
@@ -367,7 +369,10 @@ final observerSubscriptionProvider =
 
       return ObserverState(
         connection: relayState.connection,
-        transcript: buildTranscript(channelFrames),
+        transcript: buildTranscript(
+          channelFrames,
+          showThinking: showThinking,
+        ),
         errorMessage: relayState.errorMessage,
       );
     });

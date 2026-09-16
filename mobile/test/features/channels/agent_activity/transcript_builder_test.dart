@@ -122,6 +122,24 @@ void main() {
     expect(items[1], isA<MetadataItem>());
     expect((items[1] as MetadataItem).sections, hasLength(2));
   });
+
+
+  test('thought chunks hidden by default, shown when enabled (D-029 §5)', () {
+    final thought = _updateFrame(
+      seq: 1,
+      update: {
+        'sessionUpdate': 'agent_thought_chunk',
+        'content': 'reasoning about the request',
+      },
+    );
+
+    final hidden = buildTranscript([thought]);
+    expect(hidden, isEmpty);
+
+    final shown = buildTranscript([thought], showThinking: true);
+    expect(shown, hasLength(1));
+    expect((shown.first as ThoughtItem).title, 'Thinking');
+  });
 }
 
 ObserverFrame _updateFrame({
