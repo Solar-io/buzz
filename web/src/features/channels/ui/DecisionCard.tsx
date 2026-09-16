@@ -39,12 +39,24 @@ export function DecisionCard({ message }: { message: TimelineMessage }) {
     }
     setState({ phase: "sending" });
     try {
-      await sendChannelMessage(session, {
+      // publish() RESOLVES {ok:false} on a relay FAILED or ack timeout —
+      // it does not throw. Treating resolution as success rendered a false
+      // "You replied" for sends the relay rejected (caught live 9/16); the
+      // ok check is what makes the sent state honest.
+      const result = await sendChannelMessage(session, {
         channelId: message.channelId,
         content: trimmed,
         mentionPubkeys: [message.authorPubkey],
         threadRef: { rootId: message.id, replyToId: message.id },
       });
+      if (!result.ok) {
+        setState({
+          phase: "error",
+          answer: trimmed,
+          message: result.message || "relay rejected the reply",
+        });
+        return;
+      }
       setState({ phase: "sent", answer: trimmed });
     } catch (error) {
       setState({
