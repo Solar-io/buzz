@@ -425,7 +425,7 @@ pub enum MessagesCmd {
 
 Send-path hold gate (managed sessions only): when BUZZ_ACP_SESSION_ID is set
 and the harness's claims file shows another slot of you mid-turn in this
-channel (fresh within 10 minutes), the send is HELD — exit code 6, with the
+channel (claim pulsed within the last 150s), the send is HELD — exit code 6, with the
 holder's slot id, the claim age, and the channel in the error JSON. This is
 the 'two of me' guard: a hold is not a failure. Stand down — a bounce answers
 'should I speak?' and no is a complete reply. To override a dead holder,
