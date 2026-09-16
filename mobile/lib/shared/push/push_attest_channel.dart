@@ -89,7 +89,11 @@ class PushAttestChannel implements PushAttestApi {
       await _guard(
         () => _channel.invokeMethod<String>('attest', {
           'keyId': keyId,
-          'clientDataHash': clientDataHash,
+          // Must cross the channel as Uint8List (FlutterStandardTypedData on
+          // the Swift side). A plain List<int> encodes as a number array and
+          // fails the Swift `as? FlutterStandardTypedData` cast — enrollment
+          // dead-on-arrival on hardware. Found by QA codec probe 9/16.
+          'clientDataHash': Uint8List.fromList(clientDataHash),
         }),
       ),
       'attest',
@@ -102,7 +106,7 @@ class PushAttestChannel implements PushAttestApi {
       await _guard(
         () => _channel.invokeMethod<String>('assertKey', {
           'keyId': keyId,
-          'clientDataHash': clientDataHash,
+          'clientDataHash': Uint8List.fromList(clientDataHash),
         }),
       ),
       'assertKey',
