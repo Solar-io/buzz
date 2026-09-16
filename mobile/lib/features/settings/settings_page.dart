@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,10 +8,13 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:nostr/nostr.dart' as nostr;
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../shared/auth/auth.dart';
 import '../../shared/clipboard_utils.dart';
 import '../../shared/community/community_membership_provider.dart';
+import '../../shared/push/push_attest_channel.dart';
+import '../../shared/push/push_enrollment_service.dart';
 import '../../shared/relay/relay.dart';
 import '../pairing/pairing_provider.dart';
 import '../../shared/theme/theme.dart';
@@ -30,6 +34,7 @@ part 'settings_page/activity_section.dart';
 part 'settings_page/appearance_section.dart';
 part 'settings_page/community_section.dart';
 part 'settings_page/connection_section.dart';
+part 'settings_page/push_section.dart';
 
 Widget _emptyProfileEditPage(BuildContext context) => const SizedBox.shrink();
 
@@ -221,6 +226,7 @@ class SettingsPage extends HookConsumerWidget {
                 _ConnectionSection(
                   identityRecoveryPageBuilder: identityRecoveryPageBuilder,
                 ),
+                const _PushSection(),
                 const _RemoveCommunitySection(),
               ],
             ),
