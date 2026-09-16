@@ -1,6 +1,7 @@
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { imetaByUrl, type ImetaEntry } from "./imetaEntries.ts";
 import { linkPreviewsFromTags, type LinkPreview } from "./linkPreview.ts";
+import { parseCardTags, type DecisionCard } from "./decisionCard.ts";
 import { SYSTEM_MESSAGE_KIND } from "./systemEvent.ts";
 
 /**
@@ -64,6 +65,13 @@ export interface TimelineMessage {
    * A construction-time constant, like imetaByUrl: edits replace content only.
    */
   linkPreviews: LinkPreview[];
+  /**
+   * D-035 decision card parsed from the event's `["card", …]` tag, when
+   * present and well-formed — null renders the fallback content as ordinary
+   * markdown. A construction-time constant, like imetaByUrl: edits replace
+   * content only and can never mutate the card the tag froze at send time.
+   */
+  card: DecisionCard | null;
   /** Edit overlay present (renders the "(edited)" marker). */
   edited: boolean;
   /** Deleted via kind 5 — rows hide rather than render. */
@@ -118,6 +126,9 @@ export function timelineMessageFromEvent(
     linkPreviews: event.tags.some((tag) => tag[0] === "link-preview")
       ? linkPreviewsFromTags(event.tags).previews
       : EMPTY_PREVIEWS,
+    card: event.tags.some((tag) => tag[0] === "card")
+      ? parseCardTags(event.tags)
+      : null,
     edited: false,
     deleted: false,
   };

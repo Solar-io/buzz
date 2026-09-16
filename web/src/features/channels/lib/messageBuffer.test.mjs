@@ -225,6 +225,40 @@ test("imeta tags parse into a per-message url map; edits never touch it", () => 
   assert.equal(edited[0].imetaByUrl, withImeta.imetaByUrl);
 });
 
+test("card tag parses onto the message; malformed degrades to null (D-035)", () => {
+  const payload = {
+    v: 1,
+    title: "Ship the claims fix?",
+    options: [
+      { id: "now", label: "Relaunch now" },
+      { label: "Let it ride", recommended: true },
+    ],
+  };
+  const withCard = timelineMessageFromEvent(
+    event({
+      content: "**Ship the claims fix?**\n\n- Relaunch now\n- Let it ride",
+      tags: [["h", "chan-1"], ["card", JSON.stringify(payload)]],
+    }),
+  );
+  assert.equal(withCard.card.title, "Ship the claims fix?");
+  assert.equal(withCard.card.options[1].recommended, true);
+  // The fallback content stays intact — the card REPLACES its rendering,
+  // not its data.
+  assert.ok(withCard.content.startsWith("**Ship"));
+
+  // Malformed card tag: null card, plain markdown rendering.
+  const malformed = timelineMessageFromEvent(
+    event({
+      tags: [["h", "chan-1"], ["card", "not json"]],
+    }),
+  );
+  assert.equal(malformed.card, null);
+
+  // No card tag at all: null, same as malformed.
+  const plain = timelineMessageFromEvent(event({ id: "plain1" }));
+  assert.equal(plain.card, null);
+});
+
 test("a kind-40099 system event survives the buffer as its own row", () => {
   // 40099 is hardcoded — deriving it from TIMELINE_KINDS would make this
   // assertion agree with whatever the constant happens to say.

@@ -438,8 +438,9 @@ annex, so the arbitration is inspectable from any client."
         #[arg(long)]
         channel: String,
         /// Message text — supports @mentions and markdown. Use '-' to read from stdin.
+        /// Optional when --card is given (the fallback text is generated from the card).
         #[arg(long)]
-        content: String,
+        content: Option<String>,
         /// Nostr event kind (default: channel default)
         #[arg(long)]
         kind: Option<u16>,
@@ -459,6 +460,14 @@ annex, so the arbitration is inspectable from any client."
         /// holder in the claims file (documented escape for a dead holder)
         #[arg(long)]
         supersede: bool,
+        /// Decision card payload (D-035), JSON:
+        /// {"title":…,"body"?:…,"options":[{"id"?:…,"label":…,"recommended"?:true},…]}.
+        /// Sends a kind 9 whose tag carries the card for the web client's tappable
+        /// rendering and whose content carries readable fallback text for plain
+        /// clients. '@file.json' reads the payload from a file, '-' from stdin.
+        /// With no --content, the fallback text is generated from the card.
+        #[arg(long)]
+        card: Option<String>,
     },
     /// Send a code diff / patch to a channel
     SendDiff {
