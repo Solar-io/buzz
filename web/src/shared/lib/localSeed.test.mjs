@@ -11,7 +11,7 @@ globalThis.window = {
     removeItem: (k) => store.delete(k),
   },
 };
-const { loadSeed, mergeSeed } = await import("./localSeed.ts");
+const { loadSeed, mergeSeed, dropSeedEntry } = await import("./localSeed.ts");
 
 test("mergeSeed unions across writers instead of clobbering", () => {
   mergeSeed("profiles:v1", { aa: { name: "A" } });
@@ -37,4 +37,24 @@ test("empty merges are no-ops", () => {
   const before = store.get("profiles:v1");
   mergeSeed("profiles:v1", {});
   assert.equal(store.get("profiles:v1"), before);
+});
+
+test("dropSeedEntry removes exactly one entry — the delete-flow eviction", () => {
+  mergeSeed("channels:v1", {
+    keep: { id: "keep", name: "general" },
+    gone: { id: "gone", name: "deleted" },
+  });
+  dropSeedEntry("channels:v1", "gone");
+  const seed = loadSeed("channels:v1");
+  assert.equal(seed.gone, undefined, "deleted channel must not repaint");
+  assert.equal(seed.keep?.name, "general", "siblings survive the eviction");
+});
+
+test("dropSeedEntry on a missing id is a no-op", () => {
+  mergeSeed("drop-noop:v1", { a: { id: "a" } });
+  const before = store.get("drop-noop:v1");
+  dropSeedEntry("drop-noop:v1", "missing");
+  dropSeedEntry("drop-unknown-key:v1", "a");
+  assert.equal(store.get("drop-noop:v1"), before);
+  assert.equal(store.get("drop-unknown-key:v1"), undefined);
 });

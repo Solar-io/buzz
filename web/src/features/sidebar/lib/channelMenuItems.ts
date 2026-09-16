@@ -5,7 +5,11 @@ import {
   leaveChannel,
   renameChannel,
 } from "@/features/channels/hooks";
-import { canonicalChannelName } from "@/features/channels/lib/channelAdmin.ts";
+import {
+  canonicalChannelName,
+  deleteChannelVerdict,
+} from "@/features/channels/lib/channelAdmin.ts";
+import { clearDraft } from "@/features/channels/lib/drafts.ts";
 import {
   forgetChannel,
   toggleMuted,
@@ -13,10 +17,12 @@ import {
   type ChannelPrefs,
 } from "@/features/channels/lib/channelPrefs.ts";
 import {
+  forgetChannel as forgetChannelRead,
   markSeen,
   saveReadState,
   type ReadState,
 } from "@/features/channels/lib/readState.ts";
+import { evictTimelineCache } from "@/features/channels/lib/timelineCache.ts";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import type { RelaySession } from "@/shared/api/relay-session";
 import type { SidebarMenuItem } from "@/features/sidebar/lib/sidebarMenuItem";
@@ -32,6 +38,8 @@ export interface ChannelMenuDeps {
   setReadState: Dispatch<SetStateAction<ReadState>>;
   /** Re-REQ the channel list after a relay mutation lands. */
   refreshChannels: () => void;
+  /** Evict a relay-confirmed deleted channel from the list state + seed. */
+  onChannelDeleted: (channelId: string) => void;
   /** Channel currently open (?c=), so a delete can navigate away from it. */
   selectedId: string | undefined;
   /** Clear ?c= — called when the channel being deleted is the open one. */
@@ -47,6 +55,7 @@ export function channelMenuItems(
     setChannelPrefs,
     setReadState,
     refreshChannels,
+    onChannelDeleted,
     selectedId,
     onCloseChannel,
   }: ChannelMenuDeps,
@@ -111,22 +120,52 @@ export function channelMenuItems(
         ) {
           return;
         }
-        void deleteChannel(session, channel.id).then((result) => {
-          if (result.ok) {
+        void deleteChannel(session, channel.id)
+          .then((result) => {
+            // Evictions run on the relay-CONFIRMED path only — the verdict
+            // (not a bare result.ok check) is what decides, and the failure
+            // verdict carries the relay's own refusal message.
+            const verdict = deleteChannelVerdict(channel.id, result);
+            if (verdict.outcome !== "deleted") {
+              toast.error(
+                verdict.message ||
+                  "The relay refused the delete (owners only). Try Leave instead.",
+              );
+              return;
+            }
             toast.success(`Deleted #${channel.name}`);
+            // Evict every per-channel trace: viewer prefs, read marker,
+            // composer draft, the timeline cache (IndexedDB) and the
+            // sidebar list + its seed. Without the list eviction the row
+            // stays clickable and re-opens the deleted channel from its
+            // timeline cache — a successful delete read as a failed one.
             setChannelPrefs((prefs) => forgetChannel(prefs, channel.id));
+            setReadState((previous) => {
+              const next = forgetChannelRead(previous, channel.id);
+              if (next !== previous) {
+                saveReadState(next);
+              }
+              return next;
+            });
+            clearDraft(channel.id);
+            evictTimelineCache(channel.id);
+            onChannelDeleted(channel.id);
             if (selectedId === channel.id) {
               onCloseChannel();
             }
             window.setTimeout(refreshChannels, 500);
             window.setTimeout(refreshChannels, 2000);
-          } else {
+          })
+          .catch((error: unknown) => {
+            // publish REJECTS (session closed mid-flight, signer failure)
+            // instead of resolving ok:false — without this the refused
+            // delete is a silent no-op, indistinguishable from success.
             toast.error(
-              result.message ||
-                "The relay refused the delete (owners only). Try Leave instead.",
+              error instanceof Error
+                ? error.message
+                : "Could not delete the channel.",
             );
-          }
-        });
+          });
       },
     },
     {
