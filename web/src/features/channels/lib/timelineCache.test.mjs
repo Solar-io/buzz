@@ -6,8 +6,10 @@ import {
   DELTA_CAP,
   applyOverlayToCache,
   cacheKey,
+  evictTimelineCache,
   healCachedEntry,
   initialSyncFilters,
+  isTimelineCacheEvicted,
   mergeCachedMessage,
   dropCachedReaction,
   mergeCachedReaction,
@@ -292,4 +294,18 @@ test("the cache key carries a version, so a shape change can discard old entries
   // Pinned to a literal: an expectation written as `timeline:${CACHE_VERSION}`
   // would follow a bump instead of recording that one happened.
   assert.equal(cacheKey("chan-1"), "timeline:v2:chan-1");
+});
+
+test("evictTimelineCache marks exactly the deleted channel for this session", () => {
+  // Unique ids: the evicted set is module state shared across tests.
+  const deleted = `chan-del-${Math.random().toString(36).slice(2)}`;
+  const other = `chan-keep-${Math.random().toString(36).slice(2)}`;
+  assert.equal(isTimelineCacheEvicted(deleted), false, "starts live");
+  evictTimelineCache(deleted);
+  assert.equal(isTimelineCacheEvicted(deleted), true, "evicted after delete");
+  assert.equal(
+    isTimelineCacheEvicted(other),
+    false,
+    "eviction must not leak to other channels",
+  );
 });

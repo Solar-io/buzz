@@ -110,6 +110,11 @@ export function healCachedEntry(entry: TimelineCacheEntry): TimelineCacheEntry {
 export async function loadTimelineCache(
   channelId: string,
 ): Promise<TimelineCacheEntry | null> {
+  // An evicted (deleted) channel never paints from cache, even if a write
+  // raced the eviction — a deleted channel must cold-start, not ghost-open.
+  if (evictedChannelIds.has(channelId)) {
+    return null;
+  }
   try {
     const entry = (await get(cacheKey(channelId))) as
       | TimelineCacheEntry
@@ -128,6 +133,11 @@ export async function saveTimelineCache(
   channelId: string,
   entry: TimelineCacheEntry,
 ): Promise<void> {
+  // The open timeline's unmount flush lands here after a delete's eviction —
+  // writing it back would resurrect the entry (see evictedChannelIds).
+  if (evictedChannelIds.has(channelId)) {
+    return;
+  }
   try {
     await set(cacheKey(channelId), entry);
   } catch {
@@ -141,6 +151,37 @@ export async function clearTimelineCache(channelId: string): Promise<void> {
   } catch {
     // Best effort.
   }
+}
+
+/**
+ * Channel ids whose timeline cache this session has evicted (the delete flow).
+ * The point is ordering: deleting a channel that is CURRENTLY OPEN races its
+ * own unmount flush, which writes `cacheRef` back to disk — a plain `del`
+ * issued before that flush loses, and the deleted channel's full history
+ * resurfaces on the next visit (the ghost-open path). Marking the id BEFORE
+ * the `del` makes both guards below deterministic: a late writer is skipped,
+ * and a late reader cold-starts instead of painting from the evicted entry.
+ *
+ * Session-scoped by design. If a channel id is recycled (delete `#general`,
+ * re-create `#general`) the new channel syncs cold and its cache warms again
+ * after a reload; a stale read marker is the worst case, never a wrong one.
+ */
+const evictedChannelIds = new Set<string>();
+
+/** True once {@link evictTimelineCache} has run for this channel this session. */
+export function isTimelineCacheEvicted(channelId: string): boolean {
+  return evictedChannelIds.has(channelId);
+}
+
+/**
+ * Evict one channel's timeline cache — the relay-confirmed delete path.
+ * Marks the id first (see the set's doc) so the in-flight unmount flush of an
+ * open timeline can never re-persist what we are deleting, then drops the
+ * entry from IndexedDB.
+ */
+export function evictTimelineCache(channelId: string): void {
+  evictedChannelIds.add(channelId);
+  void clearTimelineCache(channelId);
 }
 
 /** Upsert one message into a cache entry, advancing the watermark. Pure. */

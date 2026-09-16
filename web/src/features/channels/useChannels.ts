@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
-import { loadSeed, mergeSeed } from "@/shared/lib/localSeed.ts";
+import { dropSeedEntry, loadSeed, mergeSeed } from "@/shared/lib/localSeed.ts";
+import { withoutChannel } from "./lib/channelAdmin.ts";
 import {
   type ChannelSummary,
   channelFromEvent,
@@ -22,6 +23,10 @@ export function useChannels(): {
   /** Re-REQ the channel list — the relay has no live 39000 fan-out, so a
    *  freshly created channel only appears via a new historical replay. */
   refresh: () => void;
+  /** Evict one channel from the list AND the localStorage seed — the
+   *  relay-confirmed delete path. A stale in-flight 39000 from the old REQ
+   *  is ignored too, so the row cannot resurrect and re-persist. */
+  forgetChannel: (channelId: string) => void;
 } {
   const { session, status } = useRelaySession();
   const [channels, setChannels] = useState<ChannelSummary[]>(() => {
@@ -41,12 +46,24 @@ export function useChannels(): {
   });
   const [refreshKey, setRefreshKey] = useState(0);
   const refresh = useCallback(() => setRefreshKey((key) => key + 1), []);
+  /** Channels evicted this session — the 39000 upsert path must skip them. */
+  const forgottenIds = useRef(new Set<string>());
+  const forgetChannel = useCallback((channelId: string) => {
+    forgottenIds.current.add(channelId);
+    setChannels((previous) => withoutChannel(previous, channelId));
+    // The write-through below only unions what is in state, so dropping the
+    // seed entry here is what actually keeps the row off the next reload.
+    dropSeedEntry(CHANNEL_SEED_KEY, channelId);
+  }, []);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is the re-REQ trigger by design
   useEffect(() => {
     const apply = (event: SignedNostrEvent) => {
       const channel = channelFromEvent(event);
       if (!channel) {
+        return;
+      }
+      if (forgottenIds.current.has(channel.id)) {
         return;
       }
       setChannels((previous) => {
@@ -83,5 +100,5 @@ export function useChannels(): {
     return () => clearTimeout(timer);
   }, [channels]);
 
-  return { channels, connected: status === "open", refresh };
+  return { channels, connected: status === "open", refresh, forgetChannel };
 }
