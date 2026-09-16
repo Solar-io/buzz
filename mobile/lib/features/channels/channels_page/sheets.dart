@@ -30,19 +30,19 @@ const _createChannelTtlOptions = [
 ];
 
 class _CreateChannelSheet extends HookConsumerWidget {
-  /// Type pre-selected when the sheet opens ('stream' or 'forum'); the
-  /// in-sheet Type selector can still change it — forum channels are
-  /// creatable from mobile now, matching the web palette's channel types.
-  final String initialChannelType;
-
-  const _CreateChannelSheet({this.initialChannelType = 'stream'});
+  /// NOTE (review 9/15): the in-sheet Format selector EXCEEDS web creation
+  /// parity deliberately — the web create dialog has no forum selector (web
+  /// parity is read-side only: channelFromEvent maps the t tag, ForumView
+  /// renders). The checklist's requirement-4 dependency is why the selector
+  /// exists here first. Streams open pre-selected; the selector can flip it.
+  const _CreateChannelSheet();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final nameController = useTextEditingController();
     final descriptionController = useTextEditingController();
     final visibility = useState('open');
-    final channelType = useState(initialChannelType);
+    final channelType = useState('stream');
     final temporary = useState(false);
     final ttlSeconds = useState(_defaultCreateChannelTtlSeconds);
     final isSubmitting = useState(false);
