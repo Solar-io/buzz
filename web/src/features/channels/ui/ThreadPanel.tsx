@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MessageBuffer, TimelineMessage } from "../lib/messageBuffer.ts";
 import type { ChannelMember, Profile } from "../hooks.ts";
 import {
@@ -7,9 +7,11 @@ import {
 } from "../lib/threadTarget.ts";
 import { threadParticipants, threadSummaryLine } from "../lib/threadSummary.ts";
 import {
+  ancestorsOfMessage,
   branchSummary,
   buildThreadEntries,
   buildThreadIndex,
+  initialExpandedIds,
   threadDescendants,
   type ThreadBranchSummary,
 } from "../lib/threadTree.ts";
@@ -108,6 +110,11 @@ export function ThreadPanel({
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  /**
+   * Replies already accounted for by the auto-expand below — seeded on open
+   * so only arrivals WHILE THIS PANEL IS OPEN trigger expansion.
+   */
+  const seenReplyIds = useRef<Set<string>>(new Set());
   // Which message the composer is replying to. Null = the thread itself,
   // whose NIP-10 parent is the root. Cleared whenever a different thread
   // opens so a selection can never carry over to another root.
@@ -115,7 +122,12 @@ export function ThreadPanel({
   // biome-ignore lint/correctness/useExhaustiveDependencies: rootId is the reset trigger, not a value read inside the effect
   useEffect(() => {
     setSelectedReplyId(null);
-    setExpandedIds(new Set());
+    // D-041: a decision card's answers are the point of the card — its
+    // branch opens expanded, not behind an "N replies" chip.
+    setExpandedIds(initialExpandedIds(buffer, rootId));
+    seenReplyIds.current = new Set(
+      threadDescendants(buildThreadIndex(buffer), rootId).map((m) => m.id),
+    );
   }, [rootId]);
 
   const index = useMemo(() => buildThreadIndex(buffer), [buffer]);
@@ -124,6 +136,41 @@ export function ThreadPanel({
     () => threadDescendants(index, rootId),
     [index, rootId],
   );
+  /**
+   * D-041: a reply that arrives under a collapsed branch while this panel
+   * is open expands that branch — otherwise the panel visibly does nothing
+   * with a nested answer (the exact misread that filed D-041 as data loss:
+   * three observers watched card answers land "invisible"). Expansion of an
+   * already-expanded id is a no-op, so this only ever opens what a new
+   * arrival actually needs.
+   */
+  useEffect(() => {
+    const fresh = replies.filter((m) => !seenReplyIds.current.has(m.id));
+    if (fresh.length === 0) {
+      return;
+    }
+    for (const message of fresh) {
+      seenReplyIds.current.add(message.id);
+    }
+    setExpandedIds((previous) => {
+      const additions = new Set<string>();
+      for (const message of fresh) {
+        for (const ancestor of ancestorsOfMessage(index, message.id)) {
+          if (!previous.has(ancestor)) {
+            additions.add(ancestor);
+          }
+        }
+      }
+      if (additions.size === 0) {
+        return previous;
+      }
+      const next = new Set(previous);
+      for (const id of additions) {
+        next.add(id);
+      }
+      return next;
+    });
+  }, [replies, index]);
   const entries = useMemo(
     () => buildThreadEntries(index, rootId, expandedIds),
     [index, rootId, expandedIds],

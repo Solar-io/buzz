@@ -5,6 +5,8 @@ import {
   buildThreadEntries,
   buildThreadIndex,
   parentIdOf,
+  ancestorsOfMessage,
+  initialExpandedIds,
   threadDescendants,
   threadIndentRem,
   THREAD_DEPTH_STEP_REM,
@@ -243,5 +245,95 @@ test("threadDescendants returns the whole subtree oldest-first", () => {
   assert.deepEqual(
     threadDescendants(index, "a1").map((m) => m.id),
     ["a2", "a3"],
+  );
+});
+
+// --- D-041: card branches open expanded; new replies open their branch ---
+
+test("initialExpandedIds seeds exactly the card-carrying branches (D-041)", () => {
+  const buffer = [
+    message("root", { at: 10 }),
+    // A decision card hanging off the root, one plain nested reply elsewhere.
+    {
+      ...message("card1", { at: 20, replyToId: "root" }),
+      card: { v: 1, title: "t", options: [] },
+    },
+    message("card1-answer", { at: 30, rootId: "root", replyToId: "card1" }),
+    message("plain", { at: 40, replyToId: "root" }),
+    message("plain-nested", { at: 50, rootId: "root", replyToId: "plain" }),
+    // A card in a DIFFERENT thread must not seed.
+    {
+      ...message("other-root", { at: 60 }),
+      card: { v: 1, title: "x", options: [] },
+    },
+    message("other-reply", { at: 70, replyToId: "other-root" }),
+  ];
+  assert.deepEqual([...initialExpandedIds(buffer, "root")], ["card1"]);
+});
+
+test("initialExpandedIds + buildThreadEntries renders card answers inline, not behind the chip (D-041)", () => {
+  const buffer = [
+    message("root", { at: 10 }),
+    {
+      ...message("card1", { at: 20, replyToId: "root" }),
+      card: { v: 1, title: "t", options: [] },
+    },
+    message("answer1", { at: 30, rootId: "root", replyToId: "card1" }),
+    message("answer2", { at: 40, rootId: "root", replyToId: "card1" }),
+  ];
+  // Without the seed the answers sit collapsed behind the card's chip…
+  const collapsed = buildThreadEntries(buildThreadIndex(buffer), "root");
+  assert.deepEqual(
+    collapsed.filter((e) => e.message.id.startsWith("answer")).length,
+    0,
+    "answers are hidden without expansion",
+  );
+  // …with it, the answers render.
+  const expanded = buildThreadEntries(
+    buildThreadIndex(buffer),
+    "root",
+    initialExpandedIds(buffer, "root"),
+  );
+  assert.deepEqual(
+    expanded
+      .filter((e) => e.message.id.startsWith("answer"))
+      .map((e) => e.message.id),
+    ["answer1", "answer2"],
+  );
+});
+
+test("ancestorsOfMessage walks the chain nearest-first and stops at a missing parent", () => {
+  const index = buildThreadIndex(sampleBuffer());
+  assert.deepEqual(ancestorsOfMessage(index, "a3"), ["a2", "a1", "root"]);
+  assert.deepEqual(ancestorsOfMessage(index, "root"), []);
+  // A reply whose parent is outside the buffer: chain stops at the orphan.
+  const orphanIndex = buildThreadIndex([
+    ...sampleBuffer(),
+    message("orphan", { at: 60, rootId: "ghost", replyToId: "ghost" }),
+  ]);
+  assert.deepEqual(ancestorsOfMessage(orphanIndex, "orphan"), ["ghost"]);
+});
+
+test("ancestorsOfMessage of a new nested reply expands its whole collapsed chain (D-041 live path)", () => {
+  // The D-041 live case: a2 and a3 arrive while the panel is open with
+  // everything collapsed. Expanding the ancestors of the new reply makes it
+  // render.
+  const buffer = sampleBuffer();
+  const index = buildThreadIndex(buffer);
+  const collapsed = buildThreadEntries(index, "root", new Set());
+  assert.equal(
+    collapsed.some((e) => e.message.id === "a3"),
+    false,
+    "a3 is collapsed away",
+  );
+  const expanded = buildThreadEntries(
+    index,
+    "root",
+    new Set(ancestorsOfMessage(index, "a3")),
+  );
+  assert.equal(
+    expanded.some((e) => e.message.id === "a3"),
+    true,
+    "a3 renders after expanding its ancestors",
   );
 });

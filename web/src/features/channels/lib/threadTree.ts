@@ -272,3 +272,47 @@ export function threadDescendants(
   walk(rootId);
   return out.sort((a, b) => a.createdAt - b.createdAt);
 }
+
+/**
+ * Branches the thread panel renders expanded on open (D-041).
+ *
+ * A decision card's answers are the point of the card: they must not sit
+ * behind a collapsed "N replies" chip where nobody looking at the thread
+ * ever sees them. Every card-carrying message in the thread seeds the
+ * expansion set, so card answers are visible immediately on open.
+ */
+export function initialExpandedIds(
+  buffer: MessageBuffer,
+  rootId: string,
+): Set<string> {
+  const index = buildThreadIndex(buffer);
+  const expanded = new Set<string>();
+  for (const message of threadDescendants(index, rootId)) {
+    if (message.card) {
+      expanded.add(message.id);
+    }
+  }
+  return expanded;
+}
+
+/**
+ * The ancestor chain above a message, nearest first, stopping at the first
+ * missing parent (a reply whose parent fell outside the buffer attaches
+ * nothing further up). The message itself is not included.
+ */
+export function ancestorsOfMessage(
+  index: ThreadTreeIndex,
+  messageId: string,
+): string[] {
+  const ancestors: string[] = [];
+  const visited = new Set<string>([messageId]);
+  let current = index.messageById.get(messageId);
+  let parentId = current ? parentIdOf(current) : null;
+  while (parentId && !visited.has(parentId)) {
+    visited.add(parentId);
+    ancestors.push(parentId);
+    current = index.messageById.get(parentId);
+    parentId = current ? parentIdOf(current) : null;
+  }
+  return ancestors;
+}
