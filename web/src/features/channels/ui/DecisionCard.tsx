@@ -47,7 +47,15 @@ export function DecisionCard({ message }: { message: TimelineMessage }) {
         channelId: message.channelId,
         content: trimmed,
         mentionPubkeys: [message.authorPubkey],
-        threadRef: { rootId: message.id, replyToId: message.id },
+        // A card that is itself a reply keeps ITS thread root — tagging the
+        // card as root made the relay reject the reply ("root tag does not
+        // match thread ancestry", caught live 9/16). Root messages
+        // (rootId null) become their own root, the ordinary first-reply
+        // case.
+        threadRef: {
+          rootId: message.rootId ?? message.id,
+          replyToId: message.id,
+        },
       });
       if (!result.ok) {
         setState({
