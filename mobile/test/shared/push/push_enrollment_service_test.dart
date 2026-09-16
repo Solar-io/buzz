@@ -69,7 +69,6 @@ List<int> sha256Bytes(String input) => crypto.sha256.convert(utf8.encode(input))
 class FakeAttest implements PushAttestApi {
   final List<List<int>> attestHashes = [];
   final List<List<int>> assertHashes = [];
-  final List<String> assertChallenges = [];
   bool supported = true;
   String? token = tokenHex;
 
@@ -80,9 +79,8 @@ class FakeAttest implements PushAttestApi {
   }
 
   @override
-  Future<String> assertKey(String keyId, List<int> clientDataHash, String challenge) async {
+  Future<String> assertKey(String keyId, List<int> clientDataHash) async {
     assertHashes.add(clientDataHash);
-    assertChallenges.add(challenge);
     return assertionB64;
   }
 
@@ -151,7 +149,6 @@ void main() {
       if (request.url.path == '/v1/delegations') {
         delegateBody = jsonDecode(request.body) as Map<String, dynamic>;
         expect(attest.assertHashes.single, sha256Bytes(expectedDelegateTranscript));
-        expect(attest.assertChallenges.single, delegateChallenge);
         return http.Response(jsonEncode({'endpoint_grant': endpointGrant}), 201);
       }
       fail('unexpected gateway request: ${request.url.path}');
@@ -265,7 +262,9 @@ void main() {
     );
     await service.enable(userPubkey: userPubkey);
     expect(challengeCall, 2);
-    expect(attest.assertChallenges.single, delegateChallenge);
+    // The delegate transcript hash carries the second challenge, proving the
+    // fresh challenge reached the signed bytes.
+    expect(attest.assertHashes.single, sha256Bytes(expectedDelegateTranscript));
   });
 
   test('enable surfaces gateway rejections without publishing a lease', () async {

@@ -163,11 +163,7 @@ class PushEnrollmentService {
       notBefore: now,
       expiresAt: now + grantTtl,
     );
-    final assertion = await attest.assertKey(
-      keyId,
-      _sha256Bytes(delegateTranscriptText),
-      delegateChallenge.value,
-    );
+    final assertion = await attest.assertKey(keyId, _sha256Bytes(delegateTranscriptText));
     final delegation = await _postJson(
       '/v1/delegations',
       {

@@ -818,17 +818,20 @@ final class PushAttestPlugin {
       guard
         let arguments = call.arguments as? [String: Any],
         let keyId = arguments["keyId"] as? String,
-        let hash = arguments["clientDataHash"] as? FlutterStandardTypedData,
-        let challenge = arguments["challenge"] as? String
+        let hash = arguments["clientDataHash"] as? FlutterStandardTypedData
       else {
-        result(pushError("invalid_arguments", "assertKey requires keyId, clientDataHash, challenge"))
+        result(pushError("invalid_arguments", "assertKey requires keyId and clientDataHash"))
         return
       }
       guard #available(iOS 14.0, *) else {
         result(pushError("unsupported", "App Attest requires iOS 14"))
         return
       }
-      DCAppAttestService.shared.generateAssertion(keyId, clientDataHash: hash.data, challenge: challenge) {
+      // Apple has no challenge parameter here: the gateway binds the
+      // challenge through clientDataHash = sha256(transcript), which the
+      // device signs over. The server checks its stored challenge against
+      // the request's transcript-covered hash.
+      DCAppAttestService.shared.generateAssertion(keyId, clientDataHash: hash.data) {
         assertion, error in
         self.onMain(result) {
           if let assertion {

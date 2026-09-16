@@ -31,8 +31,9 @@ abstract class PushAttestApi {
   Future<String> attest(String keyId, List<int> clientDataHash);
 
   /// Produces a base64 assertion over the sha256 of a delegation transcript.
-  /// [challenge] is the gateway challenge string, embedded verbatim.
-  Future<String> assertKey(String keyId, List<int> clientDataHash, String challenge);
+  /// Apple's API takes no challenge: the gateway binds its challenge through
+  /// the transcript hash the device signs.
+  Future<String> assertKey(String keyId, List<int> clientDataHash);
 }
 
 class PushAttestChannel implements PushAttestApi {
@@ -96,13 +97,12 @@ class PushAttestChannel implements PushAttestApi {
   }
 
   @override
-  Future<String> assertKey(String keyId, List<int> clientDataHash, String challenge) async {
+  Future<String> assertKey(String keyId, List<int> clientDataHash) async {
     return _requireString(
       await _guard(
         () => _channel.invokeMethod<String>('assertKey', {
           'keyId': keyId,
           'clientDataHash': clientDataHash,
-          'challenge': challenge,
         }),
       ),
       'assertKey',
