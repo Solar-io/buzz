@@ -96,17 +96,26 @@ export function channelMenuItems(
         if (!canonical || canonical === channel.name) {
           return;
         }
-        void renameChannel(session, channel.id, canonical).then((result) => {
-          if (result.ok) {
-            toast.success(`Renamed to #${canonical}`);
-            // The relay re-emits the 39000 after the edit; staggered re-REQs
-            // cover a missed live fan-out.
-            window.setTimeout(refreshChannels, 500);
-            window.setTimeout(refreshChannels, 2000);
-          } else {
-            toast.error(result.message || "The relay refused the rename.");
-          }
-        });
+        void renameChannel(session, channel.id, canonical)
+          .then((result) => {
+            if (result.ok) {
+              toast.success(`Renamed to #${canonical}`);
+              // The relay re-emits the 39000 after the edit; staggered re-REQs
+              // cover a missed live fan-out.
+              window.setTimeout(refreshChannels, 500);
+              window.setTimeout(refreshChannels, 2000);
+            } else {
+              toast.error(result.message || "The relay refused the rename.");
+            }
+          })
+          .catch((error: unknown) => {
+            // publish REJECTS rather than resolving ok:false (see Delete).
+            toast.error(
+              error instanceof Error
+                ? error.message
+                : "Could not rename the channel.",
+            );
+          });
       },
     },
     {
@@ -175,15 +184,24 @@ export function channelMenuItems(
         if (!window.confirm(`Leave #${channel.name}?`)) {
           return;
         }
-        void leaveChannel(session, channel.id).then((result) => {
-          if (result.ok) {
-            setChannelPrefs((prefs) => forgetChannel(prefs, channel.id));
-            window.setTimeout(refreshChannels, 500);
-            window.setTimeout(refreshChannels, 2000);
-          } else {
-            toast.error(result.message || "Could not leave the channel.");
-          }
-        });
+        void leaveChannel(session, channel.id)
+          .then((result) => {
+            if (result.ok) {
+              setChannelPrefs((prefs) => forgetChannel(prefs, channel.id));
+              window.setTimeout(refreshChannels, 500);
+              window.setTimeout(refreshChannels, 2000);
+            } else {
+              toast.error(result.message || "Could not leave the channel.");
+            }
+          })
+          .catch((error: unknown) => {
+            // publish REJECTS rather than resolving ok:false (see Delete).
+            toast.error(
+              error instanceof Error
+                ? error.message
+                : "Could not leave the channel.",
+            );
+          });
       },
     },
   ];
