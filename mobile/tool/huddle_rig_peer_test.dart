@@ -98,23 +98,50 @@ void main() {
 
       var ephemeralId = Completer<String>();
       final mainSub = mainWs.stream.listen((rawMessage) async {
-        final message = rawMessage as List<dynamic>;
+        final decoded = jsonDecode(rawMessage as String);
+        if (decoded is! List) return;
+        final message = decoded as List<dynamic>;
         if (message.isEmpty) return;
         switch (message[0]) {
           case 'AUTH':
-            final secretKey = _nsec.startsWith('nsec')
-                ? nostr.Nip19.decode(payload: _nsec).data
-                : _nsec;
-            final event = nostr.Event.from(
-              kind: 22242,
-              content: '',
-              tags: [
-                ['relay', _wsBase],
-                ['challenge', message[1].toString()],
-              ],
-              secretKey: secretKey,
-            );
-            mainWs.sink.add(jsonEncode(['EVENT', event.toMap()]));
+            logLine({'kind': 'auth-challenge-seen'});
+            try {
+              final secretKey = _nsec.startsWith('nsec')
+                  ? nostr.Nip19.decode(payload: _nsec).data
+                  : _nsec;
+              final event = nostr.Event.from(
+                kind: 22242,
+                content: '',
+                tags: [
+                  ['relay', _wsBase],
+                  ['challenge', message[1].toString()],
+                ],
+                secretKey: secretKey,
+              );
+              mainWs.sink.add(jsonEncode(['AUTH', event.toMap()]));
+              logLine({'kind': 'auth-sent'});
+              // REQs raced ahead of the auth event are closed with a notice;
+              // re-subscribe until the relay accepts the connection as
+              // authenticated (the watch fires on 'EVENT' below).
+              var retries = 0;
+              Timer.periodic(const Duration(seconds: 2), (timer) {
+                if (ephemeralId.isCompleted || retries++ > 15) {
+                  timer.cancel();
+                  return;
+                }
+                mainWs.sink.add(jsonEncode([
+                  'REQ',
+                  'rig-watch',
+                  {
+                    'kinds': [48100],
+                    '#h': [_parent],
+                    'limit': 1,
+                  },
+                ]));
+              });
+            } catch (error) {
+              logLine({'kind': 'auth-error', 'error': error.toString()});
+            }
           case 'EVENT':
             final event = message[2] as Map<String, dynamic>;
             if (event['kind'] == 48100 && !ephemeralId.isCompleted) {
