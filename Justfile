@@ -420,6 +420,26 @@ desktop-screenshot *ARGS:
 
 # ─── Run ──────────────────────────────────────────────────────────────────────
 
+# Bring up Prometheus attached to the dev relay's network, then gate on the
+# buzz-relay scrape target actually reaching health=up (60s budget).
+monitoring-up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    docker compose up -d --no-deps prometheus
+    echo "Waiting for buzz-relay scrape target to come UP..."
+    for _ in $(seq 1 30); do
+        state=$(curl -s --max-time 2 'http://127.0.0.1:9090/api/v1/targets?state=active' \
+            | jq -r '.data.activeTargets[]? | select(.labels.job=="buzz-relay") | .health' || true)
+        if [ "${state:-}" = "up" ]; then
+            echo "buzz-relay scrape target is UP."
+            exit 0
+        fi
+        sleep 2
+    done
+    echo "buzz-relay scrape target did not come UP within 60s" >&2
+    exit 1
+
 # Start the relay server (auto-starts Docker services if needed)
 relay: bootstrap _ensure-migrations
     #!/usr/bin/env bash

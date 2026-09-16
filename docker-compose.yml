@@ -158,6 +158,7 @@ services:
       - prometheus-data:/prometheus
     networks:
       - buzz-net
+      - relay-net
     extra_hosts:
       - "host.docker.internal:host-gateway"
     deploy:
@@ -189,3 +190,10 @@ networks:
     driver: bridge
     labels:
       com.buzz.network: "dev"
+  # The dev relay runs containerized under compose project `buzz-dev`
+  # (deploy/compose) and never publishes its metrics port to the host, so
+  # Prometheus joins the relay's own network and scrapes the container
+  # directly. External: if that stack is renamed, update the name here.
+  relay-net:
+    name: buzz-dev_buzz-net
+    external: true
