@@ -160,7 +160,7 @@ test("publish waits for AUTH and resolves on OK/FAILED", async () => {
   session.close();
 });
 
-test("publish fails fast when the socket drops mid-send (no infinite hang)", async () => {
+test("a dropped socket re-sends an in-flight publish after reconnect (D-042)", async () => {
   const { session } = makeSession();
   session.connect();
   const socket = firstSocket();
@@ -170,8 +170,19 @@ test("publish fails fast when the socket drops mid-send (no infinite hang)", asy
   const pending = session.publish({ id: "dm-open-1", kind: 41010, sig: "s" });
   await tick();
   assert.equal(socket.sentOf("EVENT").length, 1, "EVENT was sent");
-  // Relay drops the connection without OK/FAILED — the waiter must settle.
+  // Relay drops the connection without OK/FAILED — the publish must not be
+  // lost: it parks and rides the next socket's authenticated flush.
   socket.emit("close");
+  await tick(20);
+  const second = FakeSocket.instances[1];
+  assert.ok(second, "expected a second socket after close");
+  second.emit("open");
+  second.serverSend(["AUTH", "c2"]);
+  await tick();
+  const resent = second.sentOf("EVENT");
+  assert.equal(resent.length, 1, "EVENT re-sent after reconnect");
+  assert.equal(resent[0][1].id, "dm-open-1", "same event id re-sent");
+  second.serverSend(["OK", "dm-open-1", true, ""]);
   // Race a sentinel: a regression (waiter leak) surfaces as a clean FAIL,
   // not a hung runner.
   const result = await Promise.race([
@@ -180,10 +191,87 @@ test("publish fails fast when the socket drops mid-send (no infinite hang)", asy
       setTimeout(() => resolve({ ok: "HUNG", message: "" }), 1_000),
     ),
   ]);
-  assert.deepEqual(result, {
-    ok: false,
-    message: "connection lost while sending",
+  assert.deepEqual(result, { ok: true, message: "" });
+  session.close();
+});
+
+test("ack timeout parks the publish; a later reconnect flush lands it (D-042)", async () => {
+  const { session } = makeSession({
+    publishAckTimeoutMs: 10,
+    publishRetryBackstopMs: 5_000,
   });
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  socket.serverSend(["AUTH", "c"]);
+  await tick();
+  const pending = session.publish({ id: "tap-1", kind: 9, sig: "s" });
+  await tick();
+  assert.equal(socket.sentOf("EVENT").length, 1, "EVENT was sent");
+  // No OK ever arrives on this socket (half-open): the ack timeout fires and
+  // must PARK the publish, not resolve it as failed.
+  await tick(30);
+  socket.emit("close");
+  await tick(20);
+  const second = FakeSocket.instances[1];
+  second.emit("open");
+  second.serverSend(["AUTH", "c2"]);
+  await tick();
+  assert.equal(
+    second.sentOf("EVENT").length,
+    1,
+    "parked publish flushed on reconnect",
+  );
+  second.serverSend(["OK", "tap-1", true, "duplicate"]);
+  const result = await Promise.race([
+    pending,
+    new Promise((resolve) =>
+      setTimeout(() => resolve({ ok: "HUNG", message: "" }), 1_000),
+    ),
+  ]);
+  assert.deepEqual(result, { ok: true, message: "duplicate" });
+  session.close();
+});
+
+test("backstop resolves an honest failure when no relay ever answers (D-042)", async () => {
+  const { session } = makeSession({
+    publishAckTimeoutMs: 10,
+    publishRetryBackstopMs: 30,
+  });
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  socket.serverSend(["AUTH", "c"]);
+  await tick();
+  const pending = session.publish({ id: "gone-1", kind: 9, sig: "s" });
+  await tick();
+  // Socket stays "up", relay never answers, no reconnect ever happens.
+  const result = await Promise.race([
+    pending,
+    new Promise((resolve) =>
+      setTimeout(() => resolve({ ok: "HUNG", message: "" }), 2_000),
+    ),
+  ]);
+  assert.equal(result.ok, false);
+  assert.match(result.message, /timed out waiting for the relay/);
+  session.close();
+});
+
+test("publish while disconnected rides the authenticated flush (D-042)", async () => {
+  const { session } = makeSession();
+  session.connect();
+  const socket = firstSocket();
+  // Socket exists but has not opened/authed yet — the publish must queue in
+  // the durable retry queue (NOT `pending`, which openSocket clears).
+  const pending = session.publish({ id: "offline-1", kind: 9, sig: "s" });
+  socket.emit("open");
+  socket.serverSend(["AUTH", "c"]);
+  await tick();
+  const sent = socket.sentOf("EVENT");
+  assert.equal(sent.length, 1, "queued publish flushed on auth");
+  assert.equal(sent[0][1].id, "offline-1");
+  socket.serverSend(["OK", "offline-1", true, ""]);
+  assert.deepEqual(await pending, { ok: true, message: "" });
   session.close();
 });
 
@@ -679,7 +767,10 @@ test("health sweep: a retry-exhausted sub on a live socket is re-REQd without a 
     livenessIntervalMs: 0,
   });
   const events = [];
-  const unsub = session.subscribe({ kinds: [9] }, { onEvent: (e) => events.push(e) });
+  const unsub = session.subscribe(
+    { kinds: [9] },
+    { onEvent: (e) => events.push(e) },
+  );
   session.connect();
   const socket = firstSocket();
   socket.emit("open");
@@ -703,7 +794,19 @@ test("health sweep: a retry-exhausted sub on a live socket is re-REQd without a 
     `sweep must re-REQ a retry-exhausted sub (marker=${marker}, now=${socket.sentOf("REQ").length})`,
   );
   // And the healed sub delivers again.
-  socket.serverSend(["EVENT", "s0", { id: "e1", kind: 9, pubkey: "aa".repeat(32), created_at: 2, tags: [], content: "healed", sig: "ff".repeat(64) }]);
+  socket.serverSend([
+    "EVENT",
+    "s0",
+    {
+      id: "e1",
+      kind: 9,
+      pubkey: "aa".repeat(32),
+      created_at: 2,
+      tags: [],
+      content: "healed",
+      sig: "ff".repeat(64),
+    },
+  ]);
   assert.equal(events.length, 1);
   unsub();
   session.close();
@@ -746,7 +849,12 @@ test("health sweep stands down while a paced replay is in flight", async () => {
   });
   const unsubs = [];
   for (let i = 0; i < 12; i++) {
-    unsubs.push(session.subscribe({ kinds: [9], "#h": [`ch${i}`] }, { onEvent: () => {} }));
+    unsubs.push(
+      session.subscribe(
+        { kinds: [9], "#h": [`ch${i}`] },
+        { onEvent: () => {} },
+      ),
+    );
   }
   session.connect();
   const socket = firstSocket();
