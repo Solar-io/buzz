@@ -134,6 +134,12 @@ export interface ChannelSidebarProps {
   selectedId: string | undefined;
   /** The inbox view is the active pane. */
   inboxSelected: boolean;
+  /**
+   * Unanswered asks for the viewer — the Inbox row's count badge (D-035
+   * follow-on). 0 renders nothing; the shell-level AsksProvider owns the
+   * number so it is live on every view, not just inside the inbox.
+   */
+  asksCount: number;
   lists: ChannelSidebarLists;
   readState: ChannelSidebarReadState;
   search: ChannelSidebarSearch;
@@ -152,6 +158,7 @@ export function ChannelSidebar({
   channelCount,
   selectedId,
   inboxSelected,
+  asksCount,
   lists,
   readState,
   search,
@@ -256,6 +263,8 @@ export function ChannelSidebar({
               selected={inboxSelected}
               label="Inbox"
               icon={<Inbox aria-hidden className="h-4 w-4 shrink-0" />}
+              unread={asksCount > 0}
+              unreadCount={asksCount}
               onSelect={actions.onOpenInbox}
             />
           </li>

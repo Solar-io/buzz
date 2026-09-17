@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Check, CornerDownLeft, TriangleAlert } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
-import { sendChannelMessage } from "../hooks.ts";
+import { sendCardAnswer } from "../lib/cardAnswer.ts";
 import type { TimelineMessage } from "../lib/messageBuffer.ts";
 
 /**
@@ -39,25 +39,11 @@ export function DecisionCard({ message }: { message: TimelineMessage }) {
     }
     setState({ phase: "sending" });
     try {
-      // publish() RESOLVES {ok:false} on a relay FAILED or ack timeout —
-      // it does not throw. Treating resolution as success rendered a false
-      // "You replied" for sends the relay rejected (caught live 9/16); the
-      // ok check is what makes the sent state honest.
-      const result = await sendChannelMessage(session, {
-        channelId: message.channelId,
-        content: trimmed,
-        mentionPubkeys: [message.authorPubkey],
-        // A card that is itself a reply keeps ITS thread root — tagging the
-        // card as root made the relay reject the reply ("root tag does not
-        // match thread ancestry", caught live 9/16). A card sent as a plain
-        // reply carries no root marker, only replyTo — and THAT parent is
-        // the root the relay derived for the card. Root messages (both null)
-        // become their own root, the ordinary first-reply case.
-        threadRef: {
-          rootId: message.rootId ?? message.replyToId ?? message.id,
-          replyToId: message.id,
-        },
-      });
+      // The tag/threadRef rules live in sendCardAnswer (shared with the
+      // Asks inbox row); the ok check here is what makes the sent state
+      // honest — publish() RESOLVES {ok:false} on a relay FAILED or ack
+      // timeout rather than throwing (caught live 9/16).
+      const result = await sendCardAnswer(session, message, trimmed);
       if (!result.ok) {
         setState({
           phase: "error",
@@ -152,9 +138,7 @@ export function DecisionCard({ message }: { message: TimelineMessage }) {
             <button
               type="submit"
               data-testid="decision-card-send"
-              disabled={
-                state.phase === "sending" || draft.trim().length === 0
-              }
+              disabled={state.phase === "sending" || draft.trim().length === 0}
               aria-label="Send your own answer"
               className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
             >
@@ -172,9 +156,7 @@ export function DecisionCard({ message }: { message: TimelineMessage }) {
             </p>
           )}
           {state.phase === "sending" && (
-            <p className="mt-1.5 text-xs text-muted-foreground/70">
-              Sending…
-            </p>
+            <p className="mt-1.5 text-xs text-muted-foreground/70">Sending…</p>
           )}
         </>
       )}
