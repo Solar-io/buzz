@@ -13,20 +13,20 @@ use buzz_auth::Scope;
 use buzz_core::kind::{
     event_kind_u32, is_identity_archive_request_kind, is_parameterized_replaceable,
     is_relay_admin_kind, KIND_AGENT_ENGRAM, KIND_AGENT_PROFILE, KIND_AGENT_TURN_METRIC,
-    KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_AUTH, KIND_BOOKMARK_LIST, KIND_BOOKMARK_SET,
-    KIND_CANVAS, KIND_CONTACT_LIST, KIND_DELETION, KIND_DESKTOP_CATALOG, KIND_DM_ADD_MEMBER,
-    KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET, KIND_EVENT_REMINDER,
-    KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE, KIND_GIFT_WRAP,
-    KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
-    KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_REPO_STATE, KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT,
-    KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_HUDDLE_ENDED, KIND_HUDDLE_GUIDELINES,
-    KIND_HUDDLE_PARTICIPANT_JOINED, KIND_HUDDLE_PARTICIPANT_LEFT, KIND_HUDDLE_STARTED,
-    KIND_IA_ARCHIVE_REQUEST, KIND_IA_UNARCHIVE_REQUEST, KIND_LONG_FORM, KIND_MANAGED_AGENT,
-    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_MODERATION_BAN,
-    KIND_MODERATION_RESOLVE_REPORT, KIND_MODERATION_TIMEOUT, KIND_MODERATION_UNBAN,
-    KIND_MODERATION_UNTIMEOUT, KIND_MUTE_LIST, KIND_NIP29_CREATE_GROUP, KIND_NIP29_DELETE_EVENT,
-    KIND_NIP29_DELETE_GROUP, KIND_NIP29_EDIT_METADATA, KIND_NIP29_JOIN_REQUEST,
-    KIND_NIP29_LEAVE_REQUEST, KIND_NIP29_PUT_USER, KIND_NIP29_REMOVE_USER,
+    KIND_AGENT_VOICE, KIND_AGENT_VOICE_D_TAG, KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_AUTH,
+    KIND_BOOKMARK_LIST, KIND_BOOKMARK_SET, KIND_CANVAS, KIND_CONTACT_LIST, KIND_DELETION,
+    KIND_DESKTOP_CATALOG, KIND_DM_ADD_MEMBER, KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST,
+    KIND_EMOJI_SET, KIND_EVENT_REMINDER, KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST,
+    KIND_FORUM_VOTE, KIND_GIFT_WRAP, KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE,
+    KIND_GIT_PULL_REQUEST, KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_REPO_STATE, KIND_GIT_STATUS_CLOSED,
+    KIND_GIT_STATUS_DRAFT, KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_HUDDLE_ENDED,
+    KIND_HUDDLE_GUIDELINES, KIND_HUDDLE_PARTICIPANT_JOINED, KIND_HUDDLE_PARTICIPANT_LEFT,
+    KIND_HUDDLE_STARTED, KIND_IA_ARCHIVE_REQUEST, KIND_IA_UNARCHIVE_REQUEST, KIND_LONG_FORM,
+    KIND_MANAGED_AGENT, KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION,
+    KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT, KIND_MODERATION_TIMEOUT,
+    KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT, KIND_MUTE_LIST, KIND_NIP29_CREATE_GROUP,
+    KIND_NIP29_DELETE_EVENT, KIND_NIP29_DELETE_GROUP, KIND_NIP29_EDIT_METADATA,
+    KIND_NIP29_JOIN_REQUEST, KIND_NIP29_LEAVE_REQUEST, KIND_NIP29_PUT_USER, KIND_NIP29_REMOVE_USER,
     KIND_NIP43_LEAVE_REQUEST, KIND_NIP65_RELAY_LIST_METADATA, KIND_PERSONA, KIND_PIN_LIST,
     KIND_PRESENCE_UPDATE, KIND_PRIVATE_MANAGED_AGENT, KIND_PRODUCT_FEEDBACK, KIND_PROFILE,
     KIND_PROJECT, KIND_REACTION, KIND_READ_STATE, KIND_REPORT, KIND_STREAM_MESSAGE,
@@ -441,7 +441,7 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         KIND_CONTACT_LIST | KIND_READ_STATE | KIND_USER_STATUS | KIND_AGENT_ENGRAM
         | KIND_EVENT_REMINDER | KIND_PERSONA | KIND_TEAM | KIND_MANAGED_AGENT
         | KIND_DESKTOP_CATALOG | KIND_PRIVATE_MANAGED_AGENT | KIND_TEAM_CATALOG
-        | KIND_VOICE_CATALOG | super::push_lease::KIND_PUSH_LEASE => { Ok(Scope::UsersWrite) }
+        | KIND_VOICE_CATALOG | KIND_AGENT_VOICE | super::push_lease::KIND_PUSH_LEASE => { Ok(Scope::UsersWrite) }
         // NIP-AM: agent turn metrics are agent-authored global events (encrypted to owner).
         KIND_AGENT_TURN_METRIC => Ok(Scope::MessagesWrite),
         // NIP-56 reports are ordinary member writes into the mod-only queue.
@@ -665,6 +665,11 @@ pub(crate) fn is_global_only_kind(kind: u32) -> bool {
             // (pubkey, kind, d = voice key). Readable community-wide by
             // design, so a stray `h` tag must not channel-scope it.
             | KIND_VOICE_CATALOG
+            // Buzz agent-voice selection (30182): ONE row per author at the
+            // fixed `d` tag. Every participant's browser reads it to honor an
+            // agent's chosen huddle voice, so a stray `h` tag must not
+            // channel-scope it either.
+            | KIND_AGENT_VOICE
             // NIP-34: git events use `a` tags (repo reference), not `h` tags (channel scope).
             // Parameterized replaceable kinds are keyed by (pubkey, kind, d_tag).
             | KIND_GIT_REPO_ANNOUNCEMENT
@@ -1599,6 +1604,192 @@ fn single_bounded_d_tag_max<'a>(
         ));
     }
     Ok(d)
+}
+
+/// Maximum `voiceURI` length on a kind:30182 agent-voice selection.
+///
+/// `speechSynthesis` voice URIs are opaque strings of platform-dependent
+/// length (Chromium's include OS bundle paths); 256 covers every observed
+/// shape with headroom while keeping the store free of unbounded strings.
+const AGENT_VOICE_URI_MAX: usize = 256;
+
+/// Maximum `label` length on a kind:30182 agent-voice selection.
+const AGENT_VOICE_LABEL_MAX: usize = 128;
+
+/// Maximum `key` length for the pocket half of a kind:30182 selection.
+///
+/// A selection must be able to name any real catalog row, and a kind:30181
+/// `d` tag is bounded at [`VOICE_CATALOG_D_TAG_MAX`] (96) — so a longer key
+/// here names nothing that can exist.
+const AGENT_VOICE_KEY_MAX: usize = 96;
+
+/// Validate the payload half of a kind:30182 agent-voice selection.
+///
+/// Unlike 30181 — envelope-only at ingest, the JSON body being the readers'
+/// contract — a malformed selection binding would silently shadow the
+/// deterministic pubkey-derived voice mapping on every client that trusts the
+/// row, so the selection grammar is enforced HERE, once, for every reader:
+///
+/// - `version` is exactly 1 (the store never mixes body formats),
+/// - `engine` is `local-synth` or `pocket`,
+/// - `local-synth` requires a non-empty, bounded, control-free `voiceURI`,
+/// - `pocket` requires a `key` in the catalog's own key grammar
+///   (`pocket:<slug>`, or the full `pocket:imported:<64 lowercase hex>` form)
+///   — the same shapes [`crate::handlers`] accepts for 30181 on the wire and
+///   `web/src/features/voice/lib/voiceCatalog.ts` accepts at parse — minus
+///   the identity-test-banned `pocket:eve`, which must not be selectable any
+///   more than it is publishable,
+/// - `label` is a non-empty, bounded, control-free human string.
+///
+/// Unknown additional fields are allowed: a v1 body may grow optional fields
+/// without a kind bump, and readers ignore what they do not know.
+fn validate_agent_voice_payload(content: &str) -> Result<(), String> {
+    const LABEL: &str = "agent-voice selection";
+    let value: serde_json::Value = serde_json::from_str(content)
+        .map_err(|_| format!("{LABEL} content must be a JSON object"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| format!("{LABEL} content must be a JSON object"))?;
+
+    let version = object
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| format!("{LABEL} requires a numeric `version`"))?;
+    if version != 1 {
+        return Err(format!("{LABEL} `version` must be 1 (got {version})"));
+    }
+
+    let engine = object
+        .get("engine")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("{LABEL} requires a string `engine`"))?;
+    match engine {
+        "local-synth" => {
+            let uri = object
+                .get("voiceURI")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    format!("{LABEL} engine `local-synth` requires a string `voiceURI`")
+                })?;
+            validate_agent_voice_text(uri, AGENT_VOICE_URI_MAX, "`voiceURI`", LABEL)?;
+        }
+        "pocket" => {
+            let key = object
+                .get("key")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| format!("{LABEL} engine `pocket` requires a string `key`"))?;
+            if key.chars().count() > AGENT_VOICE_KEY_MAX {
+                return Err(format!(
+                    "{LABEL} `key` too long (max {AGENT_VOICE_KEY_MAX} chars)"
+                ));
+            }
+            if key == "pocket:eve" {
+                return Err(format!("{LABEL} `key` must not be `pocket:eve`"));
+            }
+            if !valid_catalog_voice_key(key) {
+                return Err(format!(
+                    "{LABEL} `key` must match a voice-catalog key (`pocket:<slug>` or \
+                     `pocket:imported:<64 lowercase hex>`)"
+                ));
+            }
+        }
+        other => {
+            return Err(format!(
+                "{LABEL} `engine` must be `local-synth` or `pocket` (got `{other}`)"
+            ));
+        }
+    }
+
+    let label = object
+        .get("label")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("{LABEL} requires a string `label`"))?;
+    validate_agent_voice_text(label, AGENT_VOICE_LABEL_MAX, "`label`", LABEL)
+}
+
+/// Non-empty, char-bounded, control-free text within an agent-voice payload.
+fn validate_agent_voice_text(
+    value: &str,
+    max_chars: usize,
+    field: &str,
+    label: &str,
+) -> Result<(), String> {
+    if value.is_empty() {
+        return Err(format!("{label} {field} must not be empty"));
+    }
+    let count = value.chars().count();
+    if count > max_chars {
+        return Err(format!(
+            "{label} {field} too long ({count} chars, max {max_chars})"
+        ));
+    }
+    if value.chars().any(|c| c.is_control()) {
+        return Err(format!(
+            "{label} {field} must not contain control characters"
+        ));
+    }
+    Ok(())
+}
+
+/// The voice-catalog key grammar, at the same strictness as the web reader
+/// (`isValidVoiceKey` in `web/src/features/voice/lib/voiceCatalog.ts`): the
+/// imported form is `pocket:imported:` + exactly 64 lowercase hex, and a
+/// bundled key is `pocket:` + a non-empty slug of `[a-z0-9_-]`.
+fn valid_catalog_voice_key(key: &str) -> bool {
+    const IMPORTED_PREFIX: &str = "pocket:imported:";
+    if let Some(hash) = key.strip_prefix(IMPORTED_PREFIX) {
+        return hash.len() == 64
+            && hash
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase());
+    }
+    match key.strip_prefix("pocket:") {
+        Some(slug) => {
+            !slug.is_empty()
+                && slug
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+        }
+        None => false,
+    }
+}
+
+/// Validate the envelope of a kind:30182 agent-voice selection.
+///
+/// Exactly one `d` tag equal to [`KIND_AGENT_VOICE_D_TAG`] — the one-row-per-
+/// author addressing contract — plus the engine-tagged payload grammar
+/// ([`validate_agent_voice_payload`]). The equality check deliberately
+/// precedes any length rule: a 30181-style key pasted into the `d` tag should
+/// be told it is the WRONG tag, not lectured about a character bound.
+fn validate_agent_voice_envelope(event: &Event) -> Result<(), String> {
+    const LABEL: &str = "agent-voice event";
+    // Same counting rule as [`single_bounded_d_tag_max`]: a valueless `["d"]`
+    // tag counts, so exactly-one covers duplicates and absence alike.
+    let d_values: Vec<Option<&str>> = event
+        .tags
+        .iter()
+        .filter_map(|tag| {
+            let parts = tag.as_slice();
+            (parts.first().map(|name| name.as_str()) == Some("d"))
+                .then(|| parts.get(1).map(|value| value.as_str()))
+        })
+        .collect();
+    if d_values.len() != 1 {
+        return Err(format!(
+            "{LABEL} must have exactly one `d` tag (got {})",
+            d_values.len()
+        ));
+    }
+    let d = d_values[0].unwrap_or_default();
+    if d.is_empty() {
+        return Err(format!("{LABEL} `d` tag must not be empty"));
+    }
+    if d != KIND_AGENT_VOICE_D_TAG {
+        return Err(format!(
+            "{LABEL} `d` tag must be exactly `{KIND_AGENT_VOICE_D_TAG}` (got `{d}`)"
+        ));
+    }
+    validate_agent_voice_payload(&event.content)
 }
 
 /// Maximum number of member `a` tags on a kind:30621 project.
@@ -2864,6 +3055,11 @@ async fn ingest_event_inner(
 
     if kind_u32 == KIND_VOICE_CATALOG {
         validate_voice_catalog_envelope(&event)
+            .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+    }
+
+    if kind_u32 == KIND_AGENT_VOICE {
+        validate_agent_voice_envelope(&event)
             .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
     }
 
@@ -5159,6 +5355,233 @@ mod tests {
         let d = "a".repeat(96);
         let ev = make_voice_catalog(&[&["d", &d]]);
         assert!(validate_voice_catalog_envelope(&ev).is_ok());
+    }
+
+    // ─── agent-voice (30182) envelope + payload + scope tests ─────────────────
+
+    fn local_synth_content(uri: &str) -> String {
+        serde_json::json!({
+            "version": 1,
+            "engine": "local-synth",
+            "voiceURI": uri,
+            "label": "Samantha",
+        })
+        .to_string()
+    }
+
+    fn pocket_content(key: &str) -> String {
+        serde_json::json!({
+            "version": 1,
+            "engine": "pocket",
+            "key": key,
+            "label": "Azelma",
+        })
+        .to_string()
+    }
+
+    fn make_agent_voice_content(content: &str, d_tag: &str) -> Event {
+        make_event_with_tags(KIND_AGENT_VOICE, content, &[&["d", d_tag]])
+    }
+
+    fn make_agent_voice(tags: &[&[&str]]) -> Event {
+        make_event_with_tags(
+            KIND_AGENT_VOICE,
+            &local_synth_content("com.apple.speech.synthesis.voice.Samantha"),
+            tags,
+        )
+    }
+
+    #[test]
+    fn agent_voice_requires_users_write_and_is_global_only() {
+        let dummy = make_dummy_event();
+        assert_eq!(
+            required_scope_for_kind(KIND_AGENT_VOICE, &dummy).unwrap(),
+            Scope::UsersWrite,
+            "agent-voice rows are any-member writes (UsersWrite), not admin"
+        );
+        assert!(
+            is_global_only_kind(KIND_AGENT_VOICE),
+            "agent-voice rows must be community-global — a stray `h` tag must not channel-scope them"
+        );
+        assert!(
+            !requires_h_channel_scope(KIND_AGENT_VOICE),
+            "agent-voice rows must not require an h-tag channel scope"
+        );
+    }
+
+    #[test]
+    fn agent_voice_envelope_accepts_both_engines() {
+        let local = make_agent_voice_content(
+            &local_synth_content("com.apple.speech.synthesis.voice.Samantha"),
+            KIND_AGENT_VOICE_D_TAG,
+        );
+        assert!(validate_agent_voice_envelope(&local).is_ok());
+
+        let pocket =
+            make_agent_voice_content(&pocket_content("pocket:azelma"), KIND_AGENT_VOICE_D_TAG);
+        assert!(validate_agent_voice_envelope(&pocket).is_ok());
+
+        let imported = make_agent_voice_content(
+            &pocket_content(&format!("pocket:imported:{}", "a".repeat(64))),
+            KIND_AGENT_VOICE_D_TAG,
+        );
+        assert!(validate_agent_voice_envelope(&imported).is_ok());
+    }
+
+    #[test]
+    fn agent_voice_envelope_rejects_wrong_d_tag() {
+        // One row per author means the coordinate is FIXED — anything else
+        // would fork the author's selection into a second, unread slot.
+        let ev = make_agent_voice(&[&["d", "pocket:azelma"]]);
+        let err = validate_agent_voice_envelope(&ev).unwrap_err();
+        assert!(err.contains("exactly `agent-voice`"), "got: {err}");
+
+        let ev = make_agent_voice(&[&["d", ""]]);
+        let err = validate_agent_voice_envelope(&ev).unwrap_err();
+        assert!(err.contains("must not be empty"), "got: {err}");
+
+        let ev = make_agent_voice(&[
+            &["d", KIND_AGENT_VOICE_D_TAG],
+            &["d", KIND_AGENT_VOICE_D_TAG],
+        ]);
+        let err = validate_agent_voice_envelope(&ev).unwrap_err();
+        assert!(err.contains("exactly one `d` tag"), "got: {err}");
+
+        let ev = make_agent_voice(&[]);
+        let err = validate_agent_voice_envelope(&ev).unwrap_err();
+        assert!(err.contains("exactly one `d` tag"), "got: {err}");
+    }
+
+    #[test]
+    fn agent_voice_payload_rejects_unknown_engine() {
+        let content = serde_json::json!({
+            "version": 1,
+            "engine": "siri",
+            "label": "x",
+        })
+        .to_string();
+        let ev = make_agent_voice_content(&content, KIND_AGENT_VOICE_D_TAG);
+        let err = validate_agent_voice_envelope(&ev).unwrap_err();
+        assert!(err.contains("`local-synth` or `pocket`"), "got: {err}");
+    }
+
+    #[test]
+    fn agent_voice_payload_local_synth_requires_voice_uri() {
+        let content = serde_json::json!({
+            "version": 1,
+            "engine": "local-synth",
+            "label": "Samantha",
+        })
+        .to_string();
+        let ev = make_agent_voice_content(&content, KIND_AGENT_VOICE_D_TAG);
+        let err = validate_agent_voice_envelope(&ev).unwrap_err();
+        assert!(err.contains("requires a string `voiceURI`"), "got: {err}");
+
+        let empty = make_agent_voice_content(&local_synth_content(""), KIND_AGENT_VOICE_D_TAG);
+        let err = validate_agent_voice_envelope(&empty).unwrap_err();
+        assert!(err.contains("`voiceURI` must not be empty"), "got: {err}");
+    }
+
+    #[test]
+    fn agent_voice_payload_pocket_requires_catalog_key_shape() {
+        for bad in [
+            "siri:aaron",
+            "pocket:",
+            "pocket:Imported",
+            "pocket:azelma extra",
+            "pocket:imported:",
+            // 63 hex — one short of the imported form.
+            "pocket:imported:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            // Uppercase hex is not the catalog's key grammar.
+            "pocket:imported:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        ] {
+            let ev = make_agent_voice_content(&pocket_content(bad), KIND_AGENT_VOICE_D_TAG);
+            let err =
+                validate_agent_voice_envelope(&ev).expect_err(&format!("`{bad}` must be refused"));
+            assert!(
+                err.contains("must match a voice-catalog key"),
+                "key `{bad}`: got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn agent_voice_payload_refuses_eve_key() {
+        let ev = make_agent_voice_content(&pocket_content("pocket:eve"), KIND_AGENT_VOICE_D_TAG);
+        let err = validate_agent_voice_envelope(&ev).unwrap_err();
+        assert!(err.contains("pocket:eve"), "got: {err}");
+    }
+
+    #[test]
+    fn agent_voice_payload_requires_version_and_label() {
+        let no_version = serde_json::json!({
+            "engine": "local-synth",
+            "voiceURI": "v",
+            "label": "x",
+        })
+        .to_string();
+        let ev = make_agent_voice_content(&no_version, KIND_AGENT_VOICE_D_TAG);
+        let err = validate_agent_voice_envelope(&ev).unwrap_err();
+        assert!(err.contains("numeric `version`"), "got: {err}");
+
+        let future = serde_json::json!({
+            "version": 2,
+            "engine": "local-synth",
+            "voiceURI": "v",
+            "label": "x",
+        })
+        .to_string();
+        let ev = make_agent_voice_content(&future, KIND_AGENT_VOICE_D_TAG);
+        let err = validate_agent_voice_envelope(&ev).unwrap_err();
+        assert!(err.contains("`version` must be 1"), "got: {err}");
+
+        let no_label = serde_json::json!({
+            "version": 1,
+            "engine": "local-synth",
+            "voiceURI": "v",
+        })
+        .to_string();
+        let ev = make_agent_voice_content(&no_label, KIND_AGENT_VOICE_D_TAG);
+        let err = validate_agent_voice_envelope(&ev).unwrap_err();
+        assert!(err.contains("string `label`"), "got: {err}");
+
+        let ev = make_agent_voice_content("not json", KIND_AGENT_VOICE_D_TAG);
+        let err = validate_agent_voice_envelope(&ev).unwrap_err();
+        assert!(err.contains("JSON object"), "got: {err}");
+    }
+
+    #[test]
+    fn agent_voice_payload_bounds_uri_and_label() {
+        // 256 chars is the voiceURI ceiling; 257 is refused. Char-counted,
+        // not byte-counted, matching the d-tag rule.
+        let at_bound = "v".repeat(256);
+        let ev = make_agent_voice_content(&local_synth_content(&at_bound), KIND_AGENT_VOICE_D_TAG);
+        assert!(validate_agent_voice_envelope(&ev).is_ok());
+
+        let over = "v".repeat(257);
+        let ev = make_agent_voice_content(&local_synth_content(&over), KIND_AGENT_VOICE_D_TAG);
+        let err = validate_agent_voice_envelope(&ev).unwrap_err();
+        assert!(err.contains("`voiceURI` too long"), "got: {err}");
+
+        let label_over = "l".repeat(129);
+        let content = serde_json::json!({
+            "version": 1,
+            "engine": "local-synth",
+            "voiceURI": "v",
+            "label": label_over,
+        })
+        .to_string();
+        let ev = make_agent_voice_content(&content, KIND_AGENT_VOICE_D_TAG);
+        let err = validate_agent_voice_envelope(&ev).unwrap_err();
+        assert!(err.contains("`label` too long"), "got: {err}");
+
+        let control = "tab\turi";
+        let ev = make_agent_voice_content(&local_synth_content(control), KIND_AGENT_VOICE_D_TAG);
+        let err = validate_agent_voice_envelope(&ev).unwrap_err();
+        assert!(
+            err.contains("`voiceURI` must not contain control"),
+            "got: {err}"
+        );
     }
 
     // ─── project (NIP-MP kind:30621) envelope tests ──────────────────────────

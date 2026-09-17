@@ -361,6 +361,43 @@ pub const KIND_TEAM_CATALOG: u32 = 30178;
 /// coordinate delete. Design: `docs/plans/2026-09-15-voice-repository-v1.md`.
 pub const KIND_VOICE_CATALOG: u32 = 30181;
 
+/// Buzz: Agent Voice selection (parameterized replaceable, one row per author).
+///
+/// An agent's own speaking-voice binding for the web huddle: the author pubkey
+/// IS the agent identity, and the row overrides the deterministic
+/// pubkey-derived voice mapping wherever that agent speaks. Content is a
+/// versioned JSON body with an engine-tagged selection —
+/// `{"engine":"local-synth","voiceURI":…}` for a `speechSynthesis` voice from
+/// the caller's local English pool, or `{"engine":"pocket","key":…}` for a
+/// kind:30181 catalog row synthesized server-side — plus a human `label`.
+///
+/// # Addressing: ONE row per author, fixed `d` tag
+///
+/// Deliberately NOT the 30181 pattern (where `d` is the voice key): here the
+/// selection REPLACES whatever voice was chosen before, so keying the
+/// coordinate on the selected key would strand the old row on every change
+/// and force readers to fold several heads per author. The `d` tag is the
+/// fixed constant [`KIND_AGENT_VOICE_D_TAG`], giving exactly one live row per
+/// author under plain NIP-33 LWW; the generic kind:5 `a`-tag coordinate
+/// delete composes as usual.
+///
+/// # Access control: public-read by design
+///
+/// Community-global (stored with `channel_id = NULL`; a stray `h` tag cannot
+/// channel-scope it) and readable by any authenticated member — the same read
+/// model as [`KIND_VOICE_CATALOG`], and deliberately NOT in any gated set:
+/// every participant's browser must read an agent's selection to honor it.
+/// Ingest requires [`Scope::UsersWrite`], the fixed `d` tag, and a valid
+/// engine-tagged payload (unlike 30181, whose JSON body is the readers'
+/// contract, the selection grammar is enforced at ingest so a malformed
+/// binding can never shadow the deterministic mapping).
+pub const KIND_AGENT_VOICE: u32 = 30182;
+
+/// The fixed NIP-33 `d` tag of every kind:30182 agent-voice selection.
+///
+/// One row per author is the whole point — see [`KIND_AGENT_VOICE`].
+pub const KIND_AGENT_VOICE_D_TAG: &str = "agent-voice";
+
 // NIP-56 reporting
 /// NIP-56: Report an event, pubkey, or blob to relay moderators (kind:1984).
 ///
@@ -752,6 +789,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_DESKTOP_CATALOG,
     KIND_TEAM_CATALOG,
     KIND_VOICE_CATALOG,
+    KIND_AGENT_VOICE,
     KIND_PRIVATE_MANAGED_AGENT,
     KIND_REPORT,
     KIND_PRODUCT_FEEDBACK,
@@ -975,6 +1013,7 @@ const _: () = assert!(is_parameterized_replaceable(KIND_MANAGED_AGENT)); // 3017
 const _: () = assert!(is_parameterized_replaceable(KIND_DESKTOP_CATALOG)); // 30180 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_TEAM_CATALOG)); // 30178 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_VOICE_CATALOG)); // 30181 ∈ 30000–39999
+const _: () = assert!(is_parameterized_replaceable(KIND_AGENT_VOICE)); // 30182 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_PRIVATE_MANAGED_AGENT)); // 30179 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_WORKFLOW_DEF)); // 30620 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_EVENT_REMINDER)); // 30300 ∈ 30000–39999
@@ -1249,5 +1288,23 @@ mod tests {
         assert!(!P_GATED_KINDS.contains(&KIND_VOICE_CATALOG));
         assert!(!RESULT_GATED_KINDS.contains(&KIND_VOICE_CATALOG));
         assert!(!SHARED_GATED_KINDS.contains(&KIND_VOICE_CATALOG));
+    }
+
+    /// Kind 30182 is a public-read, parameterized-replaceable selection kind —
+    /// same gate pattern as 30181: NIP-33 range, out of the relay-only set,
+    /// out of every gated read set. Every participant's browser must read an
+    /// agent's selection, so hiding it behind any gate would break the feature
+    /// silently. Hardcodes 30182 rather than naming the constant so a value
+    /// change cannot silently move the expectation with the code it pins.
+    #[test]
+    fn agent_voice_is_public_parameterized_replaceable() {
+        assert_eq!(KIND_AGENT_VOICE, 30182);
+        assert_eq!(KIND_AGENT_VOICE_D_TAG, "agent-voice");
+        assert!(is_parameterized_replaceable(KIND_AGENT_VOICE));
+        assert!(!is_relay_only_kind(KIND_AGENT_VOICE));
+        assert!(!AUTHOR_ONLY_KINDS.contains(&KIND_AGENT_VOICE));
+        assert!(!P_GATED_KINDS.contains(&KIND_AGENT_VOICE));
+        assert!(!RESULT_GATED_KINDS.contains(&KIND_AGENT_VOICE));
+        assert!(!SHARED_GATED_KINDS.contains(&KIND_AGENT_VOICE));
     }
 }
