@@ -11,6 +11,7 @@ import {
   huddleAgentSpeechFilter,
   huddleMemberSnapshotFilter,
   rankVoices,
+  resolveProfileVoice,
   shouldSpeakLocally,
   speechVoiceProfile,
   SPEAKABLE_MESSAGE_KINDS,
@@ -507,6 +508,116 @@ test("an empty voice list degrades to engine defaults, not a crash", () => {
     pitch: 1,
     voiceURI: null,
   });
+});
+
+// --- English-pool selection ---
+//
+// Huddle speech is English text; a non-English voice reads it
+// unintelligibly. These tests exist because a green e2e once logged a
+// Cantonese voice (Sinji, yue-HK) as "a named deterministic voice" —
+// named was asserted, English never was (2026-09-16).
+
+const agentNo = (i) =>
+  (i.toString(16).padStart(2, "0") + "0".repeat(64)).slice(0, 64);
+
+test("every agent lands on an English voice when the ranked list is mixed", () => {
+  const ranked = rankVoices([
+    voice("Samantha"),
+    voice("Ava"),
+    voice("Daniel"),
+    voice("Tina", { lang: "sl-SI" }),
+    voice("Rocko", { lang: "es-MX" }),
+    voice("Grandma", { lang: "fr-CA" }),
+    voice("Google US English", { localService: false }),
+    voice("Reed", { lang: "ko-KR", localService: false }),
+  ]);
+  for (let i = 0; i < 200; i++) {
+    const profile = speechVoiceProfile(agentNo(i), ranked);
+    const chosen = resolveProfileVoice(profile, ranked);
+    assert.ok(chosen, `agent ${i}: ${profile.voiceURI} not in list`);
+    assert.ok(
+      chosen.lang.toLowerCase().startsWith("en"),
+      `agent ${i} landed on ${chosen.name} (${chosen.lang})`,
+    );
+  }
+});
+
+test("a local non-English voice outranking remote English ones is never picked", () => {
+  // rankVoices tiers local non-English (1) ahead of remote English (2),
+  // so the ranked list interleaves: Tina first, English after. A
+  // head-slice "English block" of the first englishCount entries
+  // CONTAINS Tina — this test is the filter-vs-slice discriminator.
+  const ranked = rankVoices([
+    voice("Tina", { lang: "sl-SI" }),
+    voice("GEn1", { localService: false }),
+    voice("GEn2", { localService: false }),
+    voice("GEn3", { localService: false }),
+  ]);
+  assert.deepEqual(
+    ranked.map((entry) => entry.name),
+    ["Tina", "GEn1", "GEn2", "GEn3"],
+  );
+  for (let i = 0; i < 200; i++) {
+    const profile = speechVoiceProfile(agentNo(i), ranked);
+    assert.notEqual(profile.voiceURI, "uri:Tina");
+    assert.match(profile.voiceURI ?? "", /^uri:GEn/);
+  }
+});
+
+test("a system with no English voices degrades to the engine default", () => {
+  const ranked = rankVoices([
+    voice("Tina", { lang: "sl-SI" }),
+    voice("Rocko", { lang: "es-MX" }),
+  ]);
+  assert.deepEqual(speechVoiceProfile(AGENT, ranked), {
+    voiceIndex: 0,
+    rate: 1,
+    pitch: 1,
+    voiceURI: null,
+  });
+});
+
+test("determinism holds inside the English pool", () => {
+  const ranked = rankVoices([
+    voice("Ava"),
+    voice("Daniel"),
+    voice("Tina", { lang: "sl-SI" }),
+    voice("Google US English", { localService: false }),
+  ]);
+  const first = speechVoiceProfile(AGENT, ranked);
+  const second = speechVoiceProfile(AGENT, ranked);
+  assert.deepEqual(first, second);
+  assert.deepEqual(first, speechVoiceProfile(AGENT.toUpperCase(), ranked));
+});
+
+test("a vanished voiceURI resolves to no voice, never an index fallback", () => {
+  const ranked = rankVoices([voice("A"), voice("B"), voice("C")]);
+  const profile = speechVoiceProfile(AGENT, ranked);
+  const shrunk = [voice("X"), voice("Y"), voice("Z")];
+  assert.equal(resolveProfileVoice(profile, shrunk), undefined);
+  assert.equal(resolveProfileVoice(profile, []), undefined);
+  assert.equal(
+    resolveProfileVoice(profile, ranked)?.voiceURI,
+    profile.voiceURI,
+  );
+});
+
+test("a rich list with a scarce English pool still differentiates by pitch", () => {
+  const voices = [voice("En1"), voice("En2")];
+  for (let i = 0; i < 100; i++) {
+    voices.push(voice(`Nl${i}`, { lang: "sl-SI" }));
+  }
+  const ranked = rankVoices(voices);
+  assert.equal(ranked.length, 102);
+  const first = speechVoiceProfile(AGENT, ranked);
+  const second = speechVoiceProfile(OTHER_AGENT, ranked);
+  // Both landed on English voices, and the two-voice pool spread their
+  // pitch rather than leaving them indistinguishable.
+  assert.match(first.voiceURI ?? "", /^uri:En/);
+  assert.match(second.voiceURI ?? "", /^uri:En/);
+  assert.ok(first.pitch >= 0.85 && first.pitch <= 1.15);
+  assert.ok(second.pitch >= 0.85 && second.pitch <= 1.15);
+  assert.notEqual(first.pitch, second.pitch);
 });
 
 // --- utterance chunking ---
