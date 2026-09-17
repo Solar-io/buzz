@@ -39,6 +39,7 @@ import 'channel_detail_page.dart';
 import 'channel_management_provider.dart';
 import 'dm_channel_labels.dart';
 import 'ephemeral_channel_display.dart';
+import 'new_dm_sheet.dart';
 import 'channel_mutes/channel_mutes_provider.dart';
 import 'channel_sections/channel_sections_provider.dart';
 import 'channel_sections/channel_sections_storage.dart';

@@ -1,27 +1,27 @@
 /// iOS parity smoke: adding members to a channel by key, not just by search.
 ///
-/// The AddChannelMembersSheet submits its selected users through
-/// [ChannelActions.addMembers], which emits a kind:9000 join per pubkey with
-/// `h`/`p`/`role` tags. These tests drive the REAL action (real signing via a
-/// test nsec, real pubkey normalization and tag building) against a recording
-/// relay session, covering:
+/// The AddChannelMembersSheet accepts a pasted hex pubkey OR npub in its
+/// search field: the paste decodes at entry through the invites flow's single
+/// bech32 decode path (`directoryUserFromPastedKey`), surfaces a selectable
+/// row for a person who has no kind:0 profile on the relay, and submits the
+/// clean hex key to [ChannelActions.addMembers], which emits a kind:9000 join
+/// per pubkey with `h`/`p`/`role` tags — a pasted npub never reaches the
+/// relay un-decoded.
 ///
-/// (a) the search-select path — the pubkeys the sheet's directory search
-///     returns and the user multi-selects;
-/// (b) the pasted-key path — an npub and a hex pubkey of a person who is NOT
-///     in the directory.
-///
-/// NOTE: the widget-level Add-members tests (channel_detail_page_test.dart)
-/// are in the known-failing D-032 baseline (buzz-sheet-surface ListTile
-/// assert), so per the parity-smoke brief these target the provider/action
-/// layer instead of pumping the broken sheet harness.
+/// Coverage spans both layers: the sheet widget itself (paste row, decode at
+/// entry, validation) driven against a recording relay session, and the REAL
+/// action (real signing via a test nsec, real pubkey normalization and tag
+/// building) for the search-select and pasted-key payloads.
 library;
 
 import 'dart:convert';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:buzz/features/channels/add_members_sheet.dart';
 import 'package:buzz/features/channels/channel_management_provider.dart';
 import 'package:buzz/shared/relay/relay.dart';
+import 'package:buzz/shared/theme/theme.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:nostr/nostr.dart' as nostr;
 
@@ -42,6 +42,9 @@ final _pastedNpub = nostr.Nip19.encode(
   prefix: nostr.Nip19Prefix.npub,
   data: _pastedHexPubkey.toLowerCase(),
 );
+
+/// A malformed npub-shaped paste — valid bech32 charset, broken checksum.
+const _malformedNpub = 'npub1zzzzzzzz';
 
 NostrEvent _profileEvent({required String pubkey, required String name}) =>
     NostrEvent(
@@ -168,6 +171,146 @@ void main() {
       },
     );
   });
+
+  group('AddChannelMembersSheet paste affordance', () {
+    testWidgets(
+      'pasting an npub surfaces the decoded key and joins with clean hex',
+      (tester) async {
+        await _pumpSheet(tester, session);
+
+        await tester.enterText(
+          find.byKey(const ValueKey('add-channel-members-search')),
+          _pastedNpub,
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.pumpAndSettle();
+
+        // The non-directory person becomes selectable by key, keyed by the
+        // DECODED hex identity…
+        final pasteRow = find.byKey(
+          ValueKey('add-channel-member-${_pastedHexPubkey.toLowerCase()}'),
+        );
+        expect(pasteRow, findsOneWidget);
+
+        await tester.tap(pasteRow);
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(
+            ValueKey(
+              'add-channel-member-selected-${_pastedHexPubkey.toLowerCase()}',
+            ),
+          ),
+          findsOneWidget,
+        );
+
+        // …and the join event carries the decoded hex key, never the raw
+        // bech32 npub.
+        await tester.tap(
+          find.byKey(const ValueKey('add-channel-members-submit')),
+        );
+        await tester.pumpAndSettle();
+
+        expect(session.published, hasLength(1));
+        expect(session.published.single.kind, 9000);
+        expect(
+          session.published.single.getTagValue('p'),
+          _pastedHexPubkey.toLowerCase(),
+        );
+      },
+    );
+
+    testWidgets(
+      'pasting a hex pubkey surfaces the normalized key and joins with it',
+      (tester) async {
+        await _pumpSheet(tester, session);
+
+        await tester.enterText(
+          find.byKey(const ValueKey('add-channel-members-search')),
+          _pastedHexPubkey,
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.pumpAndSettle();
+
+        final pasteRow = find.byKey(
+          ValueKey('add-channel-member-${_pastedHexPubkey.toLowerCase()}'),
+        );
+        expect(pasteRow, findsOneWidget);
+        await tester.tap(pasteRow);
+        await tester.pumpAndSettle();
+
+        await tester.tap(
+          find.byKey(const ValueKey('add-channel-members-submit')),
+        );
+        await tester.pumpAndSettle();
+
+        expect(session.published, hasLength(1));
+        expect(session.published.single.kind, 9000);
+        expect(
+          session.published.single.getTagValue('p'),
+          _pastedHexPubkey.toLowerCase(),
+        );
+      },
+    );
+
+    testWidgets(
+      'a malformed npub paste is rejected with a validation message',
+      (tester) async {
+        await _pumpSheet(tester, session);
+
+        await tester.enterText(
+          find.byKey(const ValueKey('add-channel-members-search')),
+          _malformedNpub,
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Paste a valid npub or hex pubkey.'), findsOneWidget);
+        expect(
+          find.byKey(ValueKey('add-channel-member-$_malformedNpub')),
+          findsNothing,
+        );
+      },
+    );
+  });
+}
+
+/// Pumps the REAL AddChannelMembersSheet against a recording relay session.
+/// The sheet's channel-detail harness is in the known-failing D-032 baseline
+/// (buzz-sheet-surface ListTile assert), so the sheet content is pumped
+/// directly under a plain MaterialApp instead.
+Future<void> _pumpSheet(
+  WidgetTester tester,
+  _RecordingRelaySession session,
+) async {
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        relaySessionProvider.overrideWith(() => session),
+        currentPubkeyProvider.overrideWith((ref) => 'self-pubkey'),
+        channelActionsProvider.overrideWith(
+          (ref) => ChannelActions(
+            ref: ref,
+            session: session,
+            signedEventRelay: SignedEventRelay(
+              session: session,
+              nsec: _testNsec,
+            ),
+            currentPubkey: 'self-pubkey',
+          ),
+        ),
+      ],
+      child: MaterialApp(
+        theme: AppTheme.light(),
+        home: const Scaffold(
+          body: AddChannelMembersSheet(
+            channelId: _channelId,
+            existingPubkeys: {},
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
 }
 
 /// Relay session stub that records every signed event handed to [publish].
