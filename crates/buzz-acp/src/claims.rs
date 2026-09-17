@@ -10,16 +10,26 @@
 //! the queue while the claim is live, so a cold-boot slot never bifurcates a
 //! conversation another seat is already in.
 //!
-//! Only the `composing` claim is read. The convention's `watching` half is
-//! RETIRED here (2026-09-13): its freshness carrier was the claims file's
-//! mtime, and once the harness claims-writer took over the file the writer's
-//! own pulse kept that mtime fresh on every live turn anywhere — so a stale
-//! `watching` entry could fold its own channel forever across restarts,
-//! starving the first mention until a full TTL of total pool idlety elapsed
-//! (the 2026-09-12 cbdb0795 incident). The voluntary writers that produced
-//! `watching` entries were retired on 2026-09-11, making the key write-never
-//! legacy data; the router no longer consults it, and the writer-side
-//! key-preservation contract in `claims_writer` keeps old files round-tripping.
+//! Two keys are read. The live half is `managed.turns` (D-040, 2026-09-17):
+//! the harness claims-writer publishes one entry per in-flight turn there
+//! and pulses `last_seen_at` every 60s — since the 9/11 writer flip it is
+//! the only key any writer emits, and until this rewrite the guard read
+//! only the legacy `composing` shape, making it inert in production (the
+//! "two of me" seam carried by the CLI send gate alone). The legacy half is
+//! `composing` (the 9/9 voluntary convention for sessions outside this
+//! harness): write-never since the flip, still read so a future voluntary
+//! writer's claim folds without a router change.
+//!
+//! The convention's `watching` half is RETIRED here (2026-09-13): its
+//! freshness carrier was the claims file's mtime, and once the harness
+//! claims-writer took over the file the writer's own pulse kept that mtime
+//! fresh on every live turn anywhere — so a stale `watching` entry could
+//! fold its own channel forever across restarts, starving the first mention
+//! until a full TTL of total pool idlety elapsed (the 2026-09-12 cbdb0795
+//! incident). The voluntary writers that produced `watching` entries were
+//! retired on 2026-09-11, making the key write-never legacy data; the
+//! router no longer consults it, and the writer-side key-preservation
+//! contract in `claims_writer` keeps old files round-tripping.
 //!
 //! Everything here fails open: a missing, unreadable, or malformed claims
 //! file must never wedge a DM — it reads as "no claim" and dispatch proceeds.
@@ -32,6 +42,14 @@ use uuid::Uuid;
 /// after its `at` timestamp. A slightly future `at` (clock skew between
 /// sessions) still counts as live.
 pub(crate) const COMPOSING_TTL_SECS: i64 = 10 * 60;
+
+/// A live `managed.turns` entry folds dispatch for at most this many seconds
+/// after its `last_seen_at` pulse. This is the writer's own freshness window
+/// — one window on all three sides (writer prune, CLI send gate, this fold)
+/// so they cannot drift apart. See [`crate::claims_writer::STALE_HOLD_SECS`]
+/// for the arithmetic: a 60s pulse, so 150s = two missed pulses plus margin,
+/// and past it the foreign holder is dead or wedged.
+use crate::claims_writer::STALE_HOLD_SECS;
 
 /// Env override pointing at the claims file, bypassing the derived path.
 /// Used verbatim when set — a missing file at the override simply reads as
@@ -93,6 +111,11 @@ pub(crate) fn resolve_claims_file() -> Option<PathBuf> {
 struct ClaimsDoc {
     #[serde(default)]
     composing: Option<ComposingClaim>,
+    /// The harness claims-writer's live section (since the 9/11 flip, the
+    /// only key any writer emits). Absent in old-convention files — reads as
+    /// no managed claim, and the legacy `composing` half still applies.
+    #[serde(default)]
+    managed: Option<ManagedSection>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -101,11 +124,40 @@ struct ComposingClaim {
     at: String,
 }
 
+/// `managed.turns` — one entry per in-flight harness turn. Channels and
+/// timestamps stay strings here and are parsed per-entry inside
+/// [`claim_holds`], so one corrupt foreign entry contributes nothing without
+/// blinding the guard to the others (or to `composing`).
+///
+/// `acp_session` is deliberately not a field. It is attribution-only, and
+/// second-slot rows carry `null` (observed live 2026-09-16: a `null` slot-1
+/// row and a stamped slot-0 row pulsing in the same file) — a real live
+/// turn either way. Liveness is `last_seen_at` alone; leaving the field
+/// undeclared makes a `Some`-filter on it impossible to write by accident.
+/// The D-040 scope ruling: null-session rows fold.
+#[derive(Debug, serde::Deserialize)]
+struct ManagedSection {
+    #[serde(default)]
+    turns: Vec<ManagedTurn>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ManagedTurn {
+    channel: String,
+    last_seen_at: String,
+}
+
 /// Whether a live claim in `path` holds `channel_id`.
 ///
-/// Folds when `composing.channel` is `channel_id` and `composing.at` parsed
-/// within the last [`COMPOSING_TTL_SECS`] seconds. The convention's legacy
-/// `watching` key is deliberately not consulted — see the module docs.
+/// Folds when a `managed.turns` entry's `channel` is `channel_id` and its
+/// `last_seen_at` pulse parsed within the last [`STALE_HOLD_SECS`] seconds
+/// (the live convention), or when `composing.channel` is `channel_id` and
+/// `composing.at` parsed within the last [`COMPOSING_TTL_SECS`] seconds (the
+/// legacy voluntary convention). The convention's `watching` key and the
+/// `managed.superseded` annex are deliberately not consulted — watching for
+/// the reasons in the module docs, superseded because arbitration is
+/// enforced at the CLI send gate; this fold answers only "is a turn live,"
+/// and a superseded holder's entry decays with its pulse.
 ///
 /// Fail-open by contract: a missing file, unreadable file, malformed JSON, an
 /// unparseable timestamp, or any I/O error reads as "no claim" and is logged
@@ -136,12 +188,46 @@ pub(crate) fn claim_holds(path: &Path, channel_id: Uuid) -> bool {
         }
     };
 
+    if let Some(managed) = &doc.managed {
+        for turn in &managed.turns {
+            let channel = match Uuid::parse_str(&turn.channel) {
+                Ok(channel) => channel,
+                Err(error) => {
+                    tracing::debug!(
+                        claims_file = %path.display(),
+                        %error,
+                        "managed turn channel unparseable — ignoring entry"
+                    );
+                    continue;
+                }
+            };
+            if channel != channel_id {
+                continue;
+            }
+            match chrono::DateTime::parse_from_rfc3339(&turn.last_seen_at) {
+                Ok(last_seen) => {
+                    let age = chrono::Utc::now() - last_seen.with_timezone(&chrono::Utc);
+                    if age <= chrono::Duration::seconds(STALE_HOLD_SECS) {
+                        return true;
+                    }
+                }
+                Err(error) => {
+                    tracing::debug!(
+                        claims_file = %path.display(),
+                        %error,
+                        "managed turn last_seen_at unparseable — ignoring entry"
+                    );
+                }
+            }
+        }
+    }
+
     if let Some(composing) = &doc.composing {
         if composing.channel == channel_id {
             match chrono::DateTime::parse_from_rfc3339(&composing.at) {
                 Ok(at) => {
                     let age = chrono::Utc::now() - at.with_timezone(&chrono::Utc);
-                    if age <= chrono::Duration::seconds(COMPOSING_TTL_SECS) {
+                    if age <= chrono::Duration::seconds(STALE_HOLD_SECS) {
                         return true;
                     }
                 }
@@ -263,6 +349,164 @@ mod tests {
         assert!(
             !claim_holds(&path, asked),
             "a claim on another channel must not fold this one"
+        );
+        cleanup(&path);
+    }
+
+    /// Claims-file body with a `managed.turns` entry on `channel` stamped
+    /// `age_secs` in the past, in the writer's real field shape.
+    fn managed_body(channel: Uuid, age_secs: i64) -> String {
+        let now = chrono::Utc::now();
+        let stamp = |delta: i64| (now - chrono::Duration::seconds(delta)).to_rfc3339();
+        serde_json::json!({
+            "managed": {
+                "pid": 4242,
+                "pool": "11111111-2222-3333-4444-555555555555",
+                "superseded": [{
+                    "at": stamp(600),
+                    "by": "11111111-2222-3333-4444-555555555555:0",
+                    "channel": channel.to_string(),
+                    "holder": "99999999-8888-7777-6666-555555555555:0"
+                }],
+                "turns": [{
+                    "slot": "11111111-2222-3333-4444-555555555555:1",
+                    "channel": channel.to_string(),
+                    "started_at": stamp(age_secs + 30),
+                    "last_seen_at": stamp(age_secs),
+                    "acp_session": null
+                }],
+                "updated_at": stamp(age_secs)
+            }
+        })
+        .to_string()
+    }
+
+    /// The D-040 rewrite's core: a fresh `managed.turns` pulse on the asked
+    /// channel folds. `acp_session: null` is in the fixture on purpose — see
+    /// `managed_turn_with_null_session_folds`.
+    #[test]
+    fn fresh_managed_turn_holds() {
+        let channel = Uuid::new_v4();
+        let path = temp_claims(&managed_body(channel, 60));
+        assert!(claim_holds(&path, channel), "fresh managed turn must fold");
+        cleanup(&path);
+    }
+
+    /// Past the 150s window (two missed pulses plus margin) the foreign
+    /// holder is dead or wedged and must not fold.
+    #[test]
+    fn stale_managed_turn_does_not_hold() {
+        let channel = Uuid::new_v4();
+        let path = temp_claims(&managed_body(channel, 200));
+        assert!(
+            !claim_holds(&path, channel),
+            "managed turn older than the 150s stale window must not fold"
+        );
+        cleanup(&path);
+    }
+
+    /// The null-scope ruling as a pin (D-040, Dwight's 2026-09-16 16:04
+    /// live-row finding): second-slot rows carry `acp_session: null` and are
+    /// real live turns — liveness is `last_seen_at` alone. If a future typed
+    /// reintroduction grows a `Some`-filter on the session field, this is
+    /// the test that names the regression: the fixture's entry is null and
+    /// fresh, and it must fold.
+    #[test]
+    fn managed_turn_with_null_session_folds() {
+        let channel = Uuid::new_v4();
+        let path = temp_claims(&managed_body(channel, 30));
+        assert!(
+            claim_holds(&path, channel),
+            "a null-acp_session turn is a live turn and must fold"
+        );
+        cleanup(&path);
+    }
+
+    #[test]
+    fn managed_turn_for_other_channel_does_not_hold() {
+        let claimed = Uuid::new_v4();
+        let asked = Uuid::new_v4();
+        let path = temp_claims(&managed_body(claimed, 30));
+        assert!(
+            !claim_holds(&path, asked),
+            "a managed turn on another channel must not fold this one"
+        );
+        cleanup(&path);
+    }
+
+    /// Per-entry tolerance: one corrupt channel uuid must blind the guard
+    /// neither to a live sibling entry nor to the legacy composing half.
+    #[test]
+    fn corrupt_managed_entry_does_not_blind_the_rest() {
+        let channel = Uuid::new_v4();
+        let now = chrono::Utc::now();
+        let at = (now - chrono::Duration::seconds(10)).to_rfc3339();
+        let body = serde_json::json!({
+            "managed": {"turns": [
+                {"channel": "not-a-uuid", "last_seen_at": at, "slot": "x:0"},
+                {"channel": channel.to_string(), "last_seen_at": at, "slot": "x:1"}
+            ]}
+        })
+        .to_string();
+        let path = temp_claims(&body);
+        assert!(
+            claim_holds(&path, channel),
+            "a corrupt sibling entry must not hide the live one"
+        );
+        cleanup(&path);
+    }
+
+    #[test]
+    fn unparseable_managed_last_seen_fails_open() {
+        let channel = Uuid::new_v4();
+        let body = serde_json::json!({
+            "managed": {"turns": [
+                {"channel": channel.to_string(), "last_seen_at": "not-a-timestamp", "slot": "x:0"}
+            ]}
+        })
+        .to_string();
+        let path = temp_claims(&body);
+        assert!(
+            !claim_holds(&path, channel),
+            "bad managed last_seen_at must fail open"
+        );
+        cleanup(&path);
+    }
+
+    /// Contract pin against the live writer's full document (Cereal Killer's
+    /// seat, 2026-09-17 12:17Z): `pid`/`pool`/`updated_at` keys alongside
+    /// `turns`, a populated `superseded` annex, one pulsing turn. The turn's
+    /// channel folds; a channel named only in `superseded` does NOT —
+    /// arbitration belongs to the CLI send gate, this fold answers only "is
+    /// a turn live."
+    #[test]
+    fn live_writer_managed_shape_parses_and_folds() {
+        let turn_channel = Uuid::parse_str("d624b034-36a3-4a2f-b2e7-d170908d7e66").unwrap();
+        let superseded_channel = Uuid::parse_str("c3309d9d-3ee5-52c1-8309-e6738b177a19").unwrap();
+        let body = r#"{"managed":{"pid":57783,"pool":"2ce08fea-7145-4552-9e7e-4117f16f5afc","superseded":[{"at":"2026-09-12T23:10:36.069Z","by":"e3b5e133-1cb4-4f45-9f95-40d6fd7412f1:1","channel":"c3309d9d-3ee5-52c1-8309-e6738b177a19","holder":"2cd470ce-8131-4c20-9911-392afa372826:0"}],"turns":[{"acp_session":"140d4a20-cba2-4f8d-8ab2-051057f36911","channel":"d624b034-36a3-4a2f-b2e7-d170908d7e66","last_seen_at":"RECENT","slot":"2ce08fea-7145-4552-9e7e-4117f16f5afc:1","started_at":"2026-09-17T12:15:46.519Z"}],"updated_at":"2026-09-17T12:17:16.838Z"}}"#;
+        let recent = (chrono::Utc::now() - chrono::Duration::seconds(45)).to_rfc3339();
+        let body = body.replace("RECENT", &recent);
+        let path = temp_claims(&body);
+        assert!(
+            claim_holds(&path, turn_channel),
+            "the live turn's channel must fold"
+        );
+        assert!(
+            !claim_holds(&path, superseded_channel),
+            "a superseded-record channel is not a live turn and must not fold"
+        );
+        cleanup(&path);
+    }
+
+    /// Old-convention files (pre-writer, no `managed` key) keep their
+    /// `composing` fold — the voluntary half regresses nothing.
+    #[test]
+    fn managed_absent_legacy_composing_still_holds() {
+        let channel = Uuid::new_v4();
+        let path = temp_claims(&composing_body(channel, 60));
+        assert!(
+            claim_holds(&path, channel),
+            "composing must still fold when managed is absent"
         );
         cleanup(&path);
     }
