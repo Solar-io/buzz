@@ -110,9 +110,22 @@ final class MobileHuddleController extends Notifier<bool> {
     // Leaving on `paused` made that unreachable — the app tore down a
     // healthy session one second after lock. Teardown now happens only on
     // terminal detachment (or explicit user leave/transition/failure).
+    //
+    // One pause-path obligation remains: a FAILED session's async cleanup
+    // (leave events, archival) must still be awaited before the relay
+    // session pauses, so the app never suspends with cleanup half-done. A
+    // live session blocks nothing — it rides the lock.
+    final unregisterBeforePause = ref
+        .read(relaySessionProvider.notifier)
+        .registerBeforePause(() async {
+          if (ref.read(huddleSessionProvider).isInSession) return;
+          final cleanup = _failureCleanup;
+          if (cleanup != null) await cleanup;
+        });
     final unregisterBeforeCommunityTransition = ref
         .read(communityTransitionProvider)
         .register(_leaveForTransition);
+    ref.onDispose(unregisterBeforePause);
     ref.onDispose(unregisterBeforeCommunityTransition);
     ref.listen(huddleSessionProvider, (previous, next) {
       if (previous?.wasAdmitted == true &&
