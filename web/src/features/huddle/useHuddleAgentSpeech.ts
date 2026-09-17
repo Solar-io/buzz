@@ -13,6 +13,7 @@ import {
   createOrderedSpeaker,
   huddleAgentSpeechFilter,
   rankVoices,
+  resolveProfileVoice,
   shouldSpeakLocally,
   speechVoiceProfile,
   SPEECH_REPLAY_WINDOW_SECONDS,
@@ -169,11 +170,7 @@ export function useHuddleAgentSpeech(options: {
         }
         const stopAt = stopTokenRef.current;
         const profile = speechVoiceProfile(speakerPubkey, voicesRef.current);
-        const voice =
-          profile.voiceURI === null || voicesRef.current.length === 0
-            ? undefined
-            : (voicesRef.current[profile.voiceIndex] ??
-              voicesRef.current[profile.voiceIndex % voicesRef.current.length]);
+        const voice = resolveProfileVoice(profile, voicesRef.current);
         // Sentence-sized chunks: Chromium stalls single utterances past
         // ~15 s, so a long reply must never be ONE utterance. Chunks also
         // bound the watchdog and make cancellation land between sentences.
@@ -194,6 +191,13 @@ export function useHuddleAgentSpeech(options: {
               const utterance = new SpeechSynthesisUtterance(chunk);
               if (voice) {
                 utterance.voice = voice;
+              } else {
+                // Voiceless path — no English voice on this system, or the
+                // profile's voice vanished from the live list. Tag the text
+                // English so the engine's default machinery matches the
+                // words, rather than reading English through whatever
+                // locale the default voice carries.
+                utterance.lang = "en";
               }
               utterance.rate = profile.rate;
               utterance.pitch = profile.pitch;

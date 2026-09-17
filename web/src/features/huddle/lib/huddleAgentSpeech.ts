@@ -301,7 +301,11 @@ export const VOICE_PITCH_SPREAD_BELOW = 3;
 const PITCH_SPREAD_MIN = 0.85;
 
 export interface AgentVoiceProfile {
-  /** Index into the RANKED voice list this profile was derived from. */
+  /**
+   * Index into the ENGLISH selection pool this profile was derived from —
+   * diagnostic only. Live voice resolution goes through
+   * {@link resolveProfileVoice} and never indexes the list.
+   */
   voiceIndex: number;
   /** Spoken rate, pinned so OS/browser defaults cannot drift per machine. */
   rate: number;
@@ -316,9 +320,20 @@ export interface AgentVoiceProfile {
 
 /**
  * Deterministically derive one agent's speaking profile from its pubkey
- * and the RANKED available voices (`rankVoices` output). An empty voice
- * list returns rate/pitch defaults with `voiceURI: null` — the engine
- * default speaks, but chunking and watchdogs still apply.
+ * and the RANKED available voices (`rankVoices` output), drawing only
+ * from the English voices: huddle speech is English text, and a
+ * non-English voice reads it as the unintelligible murmur this function
+ * exists to prevent. The English set is a FILTER of the ranked list, not
+ * a head slice — `rankVoices` ranks local non-English voices (tier 1)
+ * ahead of remote English ones (tier 2), so the English block is
+ * contiguous only by accident of the machine's voice list.
+ *
+ * With no English voice at all, or an empty list, returns rate/pitch
+ * defaults with `voiceURI: null` — the engine default speaks (the hook
+ * tags that utterance `lang="en"`), but chunking and watchdogs still
+ * apply. Pitch spread keys on the POOL size, not the list size: a
+ * machine with 180 voices and 2 English ones is voice-poor for exactly
+ * this purpose.
  */
 export function speechVoiceProfile(
   pubkey: string,
@@ -328,10 +343,16 @@ export function speechVoiceProfile(
   if (rankedVoices.length === 0) {
     return { voiceIndex: 0, rate: 1, pitch: 1, voiceURI: null };
   }
-  const voiceIndex = seed % rankedVoices.length;
-  const voice = rankedVoices[voiceIndex];
+  const pool = rankedVoices.filter((voice) =>
+    voice.lang.toLowerCase().startsWith("en"),
+  );
+  if (pool.length === 0) {
+    return { voiceIndex: 0, rate: 1, pitch: 1, voiceURI: null };
+  }
+  const voiceIndex = seed % pool.length;
+  const voice = pool[voiceIndex];
   const pitch =
-    rankedVoices.length < VOICE_PITCH_SPREAD_BELOW
+    pool.length < VOICE_PITCH_SPREAD_BELOW
       ? PITCH_SPREAD_MIN + ((seed >>> 8) % 31) / 100
       : 1;
   return {
@@ -340,6 +361,28 @@ export function speechVoiceProfile(
     pitch,
     voiceURI: voice.voiceURI || voice.name,
   };
+}
+
+/**
+ * Resolve a derived profile against the LIVE voice list. One
+ * implementation of one selection: the profile's `voiceURI` is the only
+ * key, so a voice that vanished between sessions (user uninstalls it,
+ * engine reshuffles) degrades to the voiceless path deliberately — it
+ * can never silently fall back to `voices[voiceIndex]`, which would
+ * select an unrelated, possibly non-English voice. That index fallback
+ * is the drift class that gave agents Slovenian voices while the
+ * profile said otherwise.
+ */
+export function resolveProfileVoice<T extends SpeechVoiceLike>(
+  profile: AgentVoiceProfile,
+  voices: readonly T[],
+): T | undefined {
+  if (profile.voiceURI === null) {
+    return undefined;
+  }
+  return voices.find(
+    (entry) => (entry.voiceURI || entry.name) === profile.voiceURI,
+  );
 }
 
 /**
