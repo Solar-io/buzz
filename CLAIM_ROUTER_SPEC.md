@@ -79,9 +79,20 @@ Shape (live example, `~/.buzz/WORKING_STATE/evie.claims.json`):
 
 Fold rule — in `dispatch_pending`, only on an affinity miss for `channel_id`:
 
-- Fold (decline, same path as Guard A) if:
-  - `composing.channel == channel_id` and `composing.at` parsed within the
-    last **10 minutes**.
+- Fold (decline, same path as Guard A) if EITHER half is live:
+  - **`managed.turns`** (the live half, D-040 rewrite 2026-09-17): any entry
+    with `channel == channel_id` and `last_seen_at` pulsed within the last
+    **150 seconds** (`claims_writer::STALE_HOLD_SECS` — the same window the
+    writer prunes on and the CLI send gate holds on; a live harness pulses
+    every 60s, so 150s = two missed pulses plus margin). `acp_session` is
+    attribution-only and may be `null` on second-slot rows — null rows are
+    live turns and fold (D-040 scope ruling, live-row evidence 2026-09-16).
+    `managed.superseded` is not consulted here: arbitration is the send
+    gate's job; this fold answers only "is a turn live."
+  - **`composing`** (the legacy voluntary half, pre-writer convention):
+    `composing.channel == channel_id` and `composing.at` parsed within the
+    last **10 minutes**. Write-never since the 9/11 writer flip, still read
+    so a future voluntary writer folds without a router change.
 - Otherwise dispatch normally. **Stale claim = no claim.**
 
 **`watching` is NOT consulted (retired 2026-09-13).** The original rule —
