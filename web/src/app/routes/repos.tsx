@@ -909,6 +909,7 @@ function ChannelBrowser() {
                           pendingIds={messageActions.pendingIds}
                           agentPubkeys={agentPubkeys}
                           highlightId={permalinkMessageId ?? null}
+                          scrollToMessageId={permalinkMessageId ?? null}
                           typingNames={typingNames}
                           tailKey={tailKey}
                           onLoadOlder={loadOlder}

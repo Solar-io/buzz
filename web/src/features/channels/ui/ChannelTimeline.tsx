@@ -101,6 +101,7 @@ export function ChannelTimeline({
   selfPubkey,
   agentPubkeys,
   highlightId,
+  scrollToMessageId,
   unreadBefore,
   typingNames,
   pendingIds,
@@ -152,6 +153,16 @@ export function ChannelTimeline({
   agentPubkeys?: ReadonlySet<string>;
   /** Permalink target — the row scrolls into view and flashes once. */
   highlightId?: string | null;
+  /**
+   * Permalink target the LIST must jump to (D-043). The row's own
+   * scrollIntoView effect only fires on mount — and in a virtualized list a
+   * row far from the viewport is never mounted, so the highlight alone could
+   * not carry a search-result jump: the list has to scroll first. Fires once
+   * per distinct id; follow disarms for the jump (a deliberate "take me
+   * there" is reader intent — it resumes when the reader returns to the
+   * bottom).
+   */
+  scrollToMessageId?: string | null;
   /** createdAt of the first UNSEEN message — renders the unread divider. */
   unreadBefore?: number | null;
   /** Display names of people typing in this channel (footer row). */
@@ -219,7 +230,10 @@ export function ChannelTimeline({
   const diagFiredRef = useRef(false);
   useEffect(() => {
     const timer = window.setInterval(() => {
-      if (diagFiredRef.current) { window.clearInterval(timer); return; }
+      if (diagFiredRef.current) {
+        window.clearInterval(timer);
+        return;
+      }
       const wrap = wrapRef.current;
       if (!wrap) return;
       const list = wrap.querySelector<HTMLElement>(".buzz-timeline-scrollbar");
@@ -234,12 +248,17 @@ export function ChannelTimeline({
         timelineHeight: Math.round(list.getBoundingClientRect().height),
         wrapperHeight: Math.round(wrap.getBoundingClientRect().height),
       });
-      if (!decision.fire) { diagBeatsRef.current = 0; return; }
+      if (!decision.fire) {
+        diagBeatsRef.current = 0;
+        return;
+      }
       diagBeatsRef.current += 1;
       if (diagBeatsRef.current < 2) return;
       diagFiredRef.current = true;
       window.clearInterval(timer);
-      const scriptTag = document.querySelector<HTMLScriptElement>('script[src*="index-"]');
+      const scriptTag = document.querySelector<HTMLScriptElement>(
+        'script[src*="index-"]',
+      );
       const lines = [
         `buzz-geometry-diag trigger=${decision.trigger} vh=${window.innerHeight} vw=${window.innerWidth}`,
         `bundle=${scriptTag ? scriptTag.src.split("/").pop() : "unknown"}`,
@@ -685,6 +704,37 @@ export function ChannelTimeline({
       window.clearTimeout(settle);
     };
   }, [tailKey]);
+
+  // Permalink jump (D-043): see the `scrollToMessageId` prop. Same
+  // double-rAF + settle passes as the auto-tail — freshly mounted rows must
+  // be measured before the align lands. The loadingOlder row, when present,
+  // is prepended and shifts every row index by one.
+  const lastJumpRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      !scrollToMessageId ||
+      lastJumpRef.current === scrollToMessageId ||
+      pagePhase.current !== "idle"
+    ) {
+      return;
+    }
+    const base = rowIndexRef.current?.get(scrollToMessageId);
+    if (base === undefined) {
+      return;
+    }
+    lastJumpRef.current = scrollToMessageId;
+    followRef.current.follow = false;
+    const index = base + (loadingOlder ? 1 : 0);
+    const jump = () => {
+      listRef.current?.scrollToIndex(index, { align: "center" });
+    };
+    const raf = requestAnimationFrame(() => requestAnimationFrame(jump));
+    const settle = window.setTimeout(jump, 250);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(settle);
+    };
+  }, [scrollToMessageId, loadingOlder]);
 
   // Follow tick: a NATIVE capture-phase scroll listener on the wrapper div,
   // attached in an effect — not a React prop. Measured live: native capture
