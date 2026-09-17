@@ -233,6 +233,40 @@ function ChannelBrowser() {
   const permalinkReady =
     permalinkMessageId != null &&
     messages.some((m) => m.id === permalinkMessageId);
+  /**
+   * Reply targets have no row in the channel timeline (replies collapse
+   * under their roots), so a permalink to one lands on its ROOT row and
+   * opens the thread panel — where replies render as full rows (D-043). A
+   * reply whose root fell outside the buffer needs neither: the timeline
+   * renders it as an orphan top-level row, so it jumps directly.
+   */
+  const permalinkJump = useMemo(() => {
+    if (!permalinkMessageId) {
+      return null;
+    }
+    const byId = new Map(messages.map((m) => [m.id, m]));
+    let current = byId.get(permalinkMessageId);
+    if (!current) {
+      return null;
+    }
+    let topLevelId = current.id;
+    for (let hops = 0; hops < 100; hops += 1) {
+      const parentId = current.rootId ?? current.replyToId;
+      if (!parentId) {
+        break;
+      }
+      const parent = byId.get(parentId);
+      if (!parent) {
+        break;
+      }
+      topLevelId = parent.id;
+      current = parent;
+    }
+    return {
+      isReply: topLevelId !== permalinkMessageId,
+      topLevelId,
+    };
+  }, [permalinkMessageId, messages]);
   useEffect(() => {
     if (!permalinkReady) {
       return;
@@ -303,6 +337,22 @@ function ChannelBrowser() {
     [messages, threadSummaries],
   );
   const [threadRootId, setThreadRootId] = useState<string | null>(null);
+  /**
+   * D-043: a permalink to a REPLY opens the thread on its root (the effect)
+   * and, once that thread is the one open, names the reply so the panel's
+   * list jumps to it (the derived id below).
+   */
+  useEffect(() => {
+    if (permalinkJump?.isReply) {
+      setThreadRootId(permalinkJump.topLevelId);
+    }
+  }, [permalinkJump]);
+  const threadPermalinkId =
+    permalinkMessageId != null &&
+    permalinkJump?.isReply &&
+    permalinkJump.topLevelId === threadRootId
+      ? permalinkMessageId
+      : null;
   // Forum thread selection: picking a post swaps the posts list for the
   // thread view. Switching channels clears it (same reset pattern as the
   // stream thread/editing state above).
@@ -908,8 +958,8 @@ function ChannelBrowser() {
                           selfPubkey={selfPubkey}
                           pendingIds={messageActions.pendingIds}
                           agentPubkeys={agentPubkeys}
-                          highlightId={permalinkMessageId ?? null}
-                          scrollToMessageId={permalinkMessageId ?? null}
+                          highlightId={permalinkJump?.topLevelId ?? null}
+                          scrollToMessageId={permalinkJump?.topLevelId ?? null}
                           typingNames={typingNames}
                           tailKey={tailKey}
                           onLoadOlder={loadOlder}
@@ -995,6 +1045,7 @@ function ChannelBrowser() {
                     profiles={profiles}
                     threadSummaries={threadSummaries}
                     selfPubkey={selfPubkey}
+                    permalinkMessageId={threadPermalinkId}
                     onClose={() => setThreadRootId(null)}
                     send={send}
                     onSelectThinkingTab={

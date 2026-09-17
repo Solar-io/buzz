@@ -83,6 +83,7 @@ export function ThreadPanel({
   onSelectThinkingTab,
   mobileOnly,
   threadSummaries = EMPTY_SUMMARIES,
+  permalinkMessageId = null,
 }: {
   root: TimelineMessage;
   buffer: MessageBuffer;
@@ -103,6 +104,13 @@ export function ThreadPanel({
    * than a lie.
    */
   threadSummaries?: RelayThreadSummaryMap;
+  /**
+   * Permalink (?m) target inside THIS thread (D-043): a search jump to a
+   * reply opens the thread on its root; this id scrolls the panel's flat
+   * list to the reply itself and flashes it. Null when the permalink points
+   * elsewhere.
+   */
+  permalinkMessageId?: string | null;
 }) {
   const layoutMode = useThreadLayout();
   const rootId = root.id;
@@ -328,6 +336,8 @@ export function ThreadPanel({
         flat
         threadLayout={threadLayout}
         tailKey={`${rootId}:${lastReply.id}:${threadMessages.length}`}
+        highlightId={permalinkMessageId}
+        scrollToMessageId={permalinkMessageId}
       />
       <Composer
         members={members}
