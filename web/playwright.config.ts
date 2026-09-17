@@ -59,7 +59,9 @@ export default defineConfig({
      */
     {
       name: "huddle",
-      testMatch: ["**/huddle.spec.ts"],
+      // relay-backed specs: huddle audio + the wake-collapse timeline spec
+      // (no mic use, but same E2E_RELAY_WS skip-when-unset contract).
+      testMatch: ["**/huddle.spec.ts", "**/wake-collapse.spec.ts"],
       use: {
         ...devices["Desktop Chrome"],
         permissions: ["microphone"],

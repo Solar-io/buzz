@@ -18,6 +18,8 @@ import { LinkPreviewCards } from "./LinkPreviewCards.tsx";
 import { MarkdownContent } from "./MarkdownContent.tsx";
 import { MessageActionBar } from "./MessageActionBar.tsx";
 import { ReactionChips } from "./ReactionChips.tsx";
+import { ScheduledWakeRow } from "./ScheduledWakeRow.tsx";
+import { isScheduledWake } from "../lib/wakeMessage.ts";
 
 /** Desktop parity: the timestamp tooltip waits half a second before opening. */
 const TIMESTAMP_TOOLTIP_DELAY_MS = 500;
@@ -126,6 +128,11 @@ export function MessageRow({
     rowRef.current?.scrollIntoView({ block: "center" });
   }, [highlighted]);
   const label = authorLabel(message.authorPubkey, profiles);
+  // Scheduled wakes (reminder firings from the services identity) render as
+  // one collapsed line — see lib/wakeMessage.ts. The shell above (ref,
+  // testid, highlight flash, permalink scroll) stays theirs so a jump to a
+  // wake row behaves like a jump to any message.
+  const wake = isScheduledWake(message);
   // Avatar and author name are the two things a reader points at to ask "who
   // is this?", and until now both were inert. They share one card so the two
   // answers cannot drift.
@@ -159,48 +166,62 @@ export function MessageRow({
           "bg-primary/10 ring-1 ring-primary/40 [animation:pingFlash_1.2s_ease-out_1]",
       )}
     >
-      <div className="w-9 shrink-0">
-        {grouped ? (
-          // Continuation rows borrow the avatar column for a right-aligned
-          // clock that fades in on hover/focus — otherwise a grouped message
-          // carries no time of its own at all.
-          <div className="flex justify-end pt-0.5 opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100">
-            <MessageTimestamp createdAt={message.createdAt} gutter />
+      {wake ? (
+        <ScheduledWakeRow message={message} label={label} />
+      ) : (
+        <>
+          <div className="w-9 shrink-0">
+            {grouped ? (
+              // Continuation rows borrow the avatar column for a right-aligned
+              // clock that fades in on hover/focus — otherwise a grouped message
+              // carries no time of its own at all.
+              <div className="flex justify-end pt-0.5 opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100">
+                <MessageTimestamp createdAt={message.createdAt} gutter />
+              </div>
+            ) : (
+              profileCard(
+                <AuthorAvatar
+                  pubkey={message.authorPubkey}
+                  label={label}
+                  picture={profiles.get(message.authorPubkey)?.avatar}
+                />,
+                "rounded-full",
+              )
+            )}
           </div>
-        ) : (
-          profileCard(
-            <AuthorAvatar
-              pubkey={message.authorPubkey}
-              label={label}
-              picture={profiles.get(message.authorPubkey)?.avatar}
-            />,
-            "rounded-full",
-          )
-        )}
-      </div>
-      <div className="min-w-0 flex-1">
-        {!grouped && (
-          <div className="flex items-baseline gap-2">
-            {profileCard(
-              <span className="text-sm font-semibold hover:underline">
-                {label}
-              </span>,
+          <div className="min-w-0 flex-1">
+            {!grouped && (
+              <div className="flex items-baseline gap-2">
+                {profileCard(
+                  <span className="text-sm font-semibold hover:underline">
+                    {label}
+                  </span>,
+                )}
+                {isAgent && (
+                  <>
+                    <span className="rounded bg-accent/50 px-1 text-badge font-medium uppercase tracking-wide text-accent-foreground/80">
+                      agent
+                    </span>
+                    <span
+                      className="hidden font-mono text-badge text-muted-foreground/60 sm:inline"
+                      title={message.authorPubkey}
+                    >
+                      {truncatePubkey(message.authorPubkey)}
+                    </span>
+                  </>
+                )}
+                <MessageTimestamp createdAt={message.createdAt} />
+                {pending && (
+                  <span
+                    data-testid="message-send-status"
+                    className="text-xs font-normal text-muted-foreground/70"
+                  >
+                    Sending…
+                  </span>
+                )}
+              </div>
             )}
-            {isAgent && (
-              <>
-                <span className="rounded bg-accent/50 px-1 text-badge font-medium uppercase tracking-wide text-accent-foreground/80">
-                  agent
-                </span>
-                <span
-                  className="hidden font-mono text-badge text-muted-foreground/60 sm:inline"
-                  title={message.authorPubkey}
-                >
-                  {truncatePubkey(message.authorPubkey)}
-                </span>
-              </>
-            )}
-            <MessageTimestamp createdAt={message.createdAt} />
-            {pending && (
+            {grouped && pending && (
               <span
                 data-testid="message-send-status"
                 className="text-xs font-normal text-muted-foreground/70"
@@ -208,68 +229,62 @@ export function MessageRow({
                 Sending…
               </span>
             )}
+            {message.card ? (
+              // D-035: a well-formed card tag replaces the fallback markdown —
+              // the content field stays the plain-client rendering of the same
+              // question, not something the card view should repeat.
+              <DecisionCard message={message} />
+            ) : (
+              <MarkdownContent
+                content={message.content}
+                mentionNames={mentionNames}
+                imetaByUrl={message.imetaByUrl}
+                snapshotSharedBy={label}
+              />
+            )}
+            {message.edited && (
+              <span className="ml-1 align-baseline text-xs text-muted-foreground/70">
+                (edited)
+              </span>
+            )}
+            <LinkPreviewCards previews={message.linkPreviews} />
+            {replyCount > 2 && (
+              <button
+                type="button"
+                className="mt-0.5 text-sm font-medium text-primary hover:underline"
+                onClick={() => onOpenThread(message)}
+              >
+                View all {replyCount} {replyCount === 1 ? "reply" : "replies"} →
+              </button>
+            )}
+            <ReactionChips
+              messageId={message.id}
+              groups={reactionGroups}
+              nameOf={(pubkey) => authorLabel(pubkey, profiles)}
+              selfPubkey={selfPubkey}
+              onReact={onReact}
+              onUnreact={onUnreact}
+            />
+            {children}
           </div>
-        )}
-        {grouped && pending && (
-          <span
-            data-testid="message-send-status"
-            className="text-xs font-normal text-muted-foreground/70"
-          >
-            Sending…
-          </span>
-        )}
-        {message.card ? (
-          // D-035: a well-formed card tag replaces the fallback markdown —
-          // the content field stays the plain-client rendering of the same
-          // question, not something the card view should repeat.
-          <DecisionCard message={message} />
-        ) : (
-          <MarkdownContent
-            content={message.content}
-            mentionNames={mentionNames}
-            imetaByUrl={message.imetaByUrl}
-            snapshotSharedBy={label}
+          <MessageActionBar
+            messageId={message.id}
+            canModify={canModify}
+            // Reminders need the conversation and the author the row is about;
+            // both already ride on TimelineMessage.
+            channelId={message.channelId}
+            authorPubkey={message.authorPubkey}
+            messagePreview={message.content}
+            onReact={
+              onReact ? (emoji) => onReact(message.id, emoji) : undefined
+            }
+            onReply={() => onOpenThread(message)}
+            onShare={onShare ? () => onShare(message.id) : undefined}
+            onEdit={onEdit ? () => onEdit(message) : undefined}
+            onDelete={onDelete ? () => onDelete(message.id) : undefined}
           />
-        )}
-        {message.edited && (
-          <span className="ml-1 align-baseline text-xs text-muted-foreground/70">
-            (edited)
-          </span>
-        )}
-        <LinkPreviewCards previews={message.linkPreviews} />
-        {replyCount > 2 && (
-          <button
-            type="button"
-            className="mt-0.5 text-sm font-medium text-primary hover:underline"
-            onClick={() => onOpenThread(message)}
-          >
-            View all {replyCount} {replyCount === 1 ? "reply" : "replies"} →
-          </button>
-        )}
-        <ReactionChips
-          messageId={message.id}
-          groups={reactionGroups}
-          nameOf={(pubkey) => authorLabel(pubkey, profiles)}
-          selfPubkey={selfPubkey}
-          onReact={onReact}
-          onUnreact={onUnreact}
-        />
-        {children}
-      </div>
-      <MessageActionBar
-        messageId={message.id}
-        canModify={canModify}
-        // Reminders need the conversation and the author the row is about;
-        // both already ride on TimelineMessage.
-        channelId={message.channelId}
-        authorPubkey={message.authorPubkey}
-        messagePreview={message.content}
-        onReact={onReact ? (emoji) => onReact(message.id, emoji) : undefined}
-        onReply={() => onOpenThread(message)}
-        onShare={onShare ? () => onShare(message.id) : undefined}
-        onEdit={onEdit ? () => onEdit(message) : undefined}
-        onDelete={onDelete ? () => onDelete(message.id) : undefined}
-      />
+        </>
+      )}
     </div>
   );
 }
