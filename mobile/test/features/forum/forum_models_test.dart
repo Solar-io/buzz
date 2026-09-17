@@ -64,18 +64,21 @@ Map<String, dynamic> _summaryJson({
 };
 
 void main() {
-
   group('ForumPostsResponse.fromEvents (kind-9 read-superset)', () {
-    NostrEvent ev(String id, int kind, int createdAt, List<List<String>> tags) =>
-        NostrEvent(
-          id: id,
-          pubkey: 'pk',
-          createdAt: createdAt,
-          kind: kind,
-          tags: tags,
-          content: 'c-$id',
-          sig: 's',
-        );
+    NostrEvent ev(
+      String id,
+      int kind,
+      int createdAt,
+      List<List<String>> tags,
+    ) => NostrEvent(
+      id: id,
+      pubkey: 'pk',
+      createdAt: createdAt,
+      kind: kind,
+      tags: tags,
+      content: 'c-$id',
+      sig: 's',
+    );
 
     test('kind-9 ROOTS render as posts; marked replies are dropped', () {
       final response = ForumPostsResponse.fromEvents([
@@ -94,7 +97,10 @@ void main() {
         response.posts.map((p) => p.eventId),
         containsAll(['post', 'legacy-root']),
       );
-      expect(response.posts.map((p) => p.eventId), isNot(contains('legacy-reply')));
+      expect(
+        response.posts.map((p) => p.eventId),
+        isNot(contains('legacy-reply')),
+      );
     });
 
     test('newest-first across kinds', () {
@@ -107,6 +113,26 @@ void main() {
         ]),
       ]);
       expect(response.posts.first.eventId, 'newer-root');
+    });
+
+    test('bare-e kind-9 replies are dropped (web fallback semantics)', () {
+      // Web messageBuffer: marked root/reply e-tags win; with no markers a
+      // bare single e tag falls back to the reply marker — so a kind-9 with
+      // ANY e tag lives inside a thread and never opens one on the feed.
+      final response = ForumPostsResponse.fromEvents([
+        ev('root', 45001, 100, [
+          ['h', 'ch1'],
+        ]),
+        ev('bare-e-reply', 9, 90, [
+          ['h', 'ch1'],
+          ['e', 'root'],
+        ]),
+        ev('marker-root-only', 9, 95, [
+          ['h', 'ch1'],
+          ['e', 'root', '', 'root'],
+        ]),
+      ]);
+      expect(response.posts.map((p) => p.eventId), ['root']);
     });
   });
 

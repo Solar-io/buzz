@@ -2,8 +2,9 @@
 ///
 /// buzz-services signs digest/alert threads into the #alerts channel (a
 /// forum-typed channel, kind:39000 t=forum) as kind:45001 posts and
-/// kind:45003 replies. These tests feed the real forum providers fake relay
-/// events — the kind:45001 content must flow through
+/// kind:45003 replies, and the channel carries kind-9 legacy thread roots
+/// from the pre-forum-signing era. These tests feed the real forum providers
+/// fake relay events — the 45001 content and kind-9 roots must flow through
 /// [ForumPostsResponse.fromEvents] into rendered post cards. If it ever stops
 /// flowing, these tests fail: that is their whole point.
 library;
@@ -89,6 +90,29 @@ final _alertReply = _forumEvent(
   tags: const [
     ['h', _channelId],
     ['e', 'alert-root-1', '', 'reply'],
+  ],
+);
+
+/// kind:9 legacy thread root (pre-forum-signing history — must render).
+final _legacyRoot = _forumEvent(
+  id: 'legacy-root-1',
+  pubkey: _replyAuthor,
+  kind: 9,
+  createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000 - 1800,
+  content: 'legacy thread: relay migration postmortem, pre-forum-signing era',
+);
+
+/// kind:9 reply with a BARE e tag — the legacy append shape. Web read
+/// semantics treat any e tag as in-thread, so it must NOT surface as a root.
+final _legacyBareReply = _forumEvent(
+  id: 'legacy-reply-1',
+  pubkey: _digestAuthor,
+  kind: 9,
+  createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000 - 1750,
+  content: 'ack on the legacy thread',
+  tags: const [
+    ['h', _channelId],
+    ['e', 'legacy-root-1'],
   ],
 );
 
@@ -197,6 +221,41 @@ void main() {
           .dy;
       expect(replyTop, greaterThan(rootTop));
     });
+
+    testWidgets(
+      'renders kind-9 legacy roots alongside 45001 posts, newest first',
+      (tester) async {
+        await tester.pumpWidget(
+          _buildApp(
+            events: [_legacyBareReply, _legacyRoot, _digestRoot, _alertRoot],
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // The kind-9 legacy root renders as a post card alongside BOTH
+        // kind:45001 roots — the web read-superset — while the bare-e kind-9
+        // reply stays inside its thread and never surfaces as a card.
+        expect(find.byType(ForumPostCard), findsNWidgets(3));
+        expect(
+          find.textContaining('relay migration postmortem'),
+          findsOneWidget,
+        );
+
+        // Newest-first across kinds: alert (45001, -300s) above digest
+        // (45001, -900s) above the kind-9 legacy root (-1800s).
+        final alertTop = tester
+            .getTopLeft(find.textContaining('watcher: buzz-services'))
+            .dy;
+        final digestTop = tester
+            .getTopLeft(find.textContaining('Daily digest 2026-09-16'))
+            .dy;
+        final legacyTop = tester
+            .getTopLeft(find.textContaining('relay migration postmortem'))
+            .dy;
+        expect(alertTop, lessThan(digestTop));
+        expect(digestTop, lessThan(legacyTop));
+      },
+    );
   });
 }
 

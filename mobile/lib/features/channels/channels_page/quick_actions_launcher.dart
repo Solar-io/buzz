@@ -103,8 +103,7 @@ class ChannelQuickActionsLauncher extends HookConsumerWidget {
             constraints: _quickActionSheetConstraints(context),
             isScrollControlled: true,
             showDragHandle: true,
-            builder: (_) =>
-                _NewDirectMessageSheet(currentPubkey: currentPubkey),
+            builder: (_) => NewDirectMessageSheet(currentPubkey: currentPubkey),
           );
           if (opened != null && context.mounted) {
             await openChannel(opened);

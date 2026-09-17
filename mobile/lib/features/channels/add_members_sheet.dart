@@ -49,10 +49,31 @@ class AddChannelMembersSheet extends HookConsumerWidget {
         .toSet();
     final successfulPubkeys = useState<Set<String>>(<String>{});
     final excludedPubkeys = {...normalizedExisting, ...successfulPubkeys.value};
+
+    // Paste affordance: a query that parses as a 64-char hex pubkey or npub
+    // surfaces a selectable member directly from the raw search text —
+    // decoded to clean hex at entry so addMembers never receives a bech32
+    // npub, and visible even while the directory search for the same text is
+    // still in flight, comes back empty, or fails. A malformed npub-shaped
+    // paste is rejected with a validation message.
+    final rawQuery = query.value.trim();
+    final pastedKeyUser = directoryUserFromPastedKey(rawQuery);
+    final pasteKeyMalformed =
+        rawQuery.startsWith('npub') && pastedKeyUser == null;
+    final pasteKeyEntry =
+        pastedKeyUser != null &&
+            !selectedPubkeys.contains(pastedKeyUser.pubkey) &&
+            !excludedPubkeys.contains(pastedKeyUser.pubkey)
+        ? pastedKeyUser
+        : null;
+    final pastedPubkey = pastedKeyUser?.pubkey.toLowerCase();
+
     final availableUsers =
         directoryAsync.asData?.value
             .where(
-              (user) => !excludedPubkeys.contains(user.pubkey.toLowerCase()),
+              (user) =>
+                  !excludedPubkeys.contains(user.pubkey.toLowerCase()) &&
+                  user.pubkey.toLowerCase() != pastedPubkey,
             )
             .toList() ??
         const <DirectoryUser>[];
@@ -103,6 +124,47 @@ class AddChannelMembersSheet extends HookConsumerWidget {
         isSubmitting.value = false;
       }
     }
+
+    Widget memberList(List<DirectoryUser> users) => ListView.builder(
+      key: const ValueKey('add-channel-members-results'),
+      itemCount: users.length,
+      itemBuilder: (context, index) {
+        final user = users[index];
+        final selected = selectedPubkeys.contains(user.pubkey.toLowerCase());
+        return Semantics(
+          key: ValueKey('add-channel-member-${user.pubkey}'),
+          button: true,
+          selected: selected,
+          label: selected ? '${user.label}, selected' : user.label,
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: AvatarImage(
+              imageUrl: user.avatarUrl,
+              radius: 20,
+              backgroundColor: context.colors.primaryContainer,
+              fallback: Text(user.initial),
+            ),
+            title: Text(
+              user.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: Text(
+              user.secondaryLabel,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            trailing: Icon(
+              selected ? LucideIcons.circleCheck : LucideIcons.plus,
+              color: selected
+                  ? context.colors.primary
+                  : context.colors.onSurfaceVariant,
+            ),
+            onTap: () => toggleUser(user),
+          ),
+        );
+      },
+    );
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
@@ -155,83 +217,52 @@ class AddChannelMembersSheet extends HookConsumerWidget {
                 ),
               ],
               const SizedBox(height: Grid.xxs),
+              // A pasted key stays selectable even while the directory is
+              // loading or unreachable — by-key addressing must not depend
+              // on a healthy directory.
               Expanded(
-                child: directoryAsync.when(
-                  data: (_) => availableUsers.isEmpty
-                      ? Center(
+                child: pasteKeyEntry != null
+                    ? memberList([pasteKeyEntry, ...availableUsers])
+                    : directoryAsync.when(
+                        data: (_) => availableUsers.isEmpty
+                            ? Center(
+                                child: Text(
+                                  normalizedQuery.isEmpty
+                                      ? 'Everyone available is already in this channel.'
+                                      : 'No matching people or agents.',
+                                  textAlign: TextAlign.center,
+                                ),
+                              )
+                            : memberList(availableUsers),
+                        loading: () => const Center(
+                          child: BuzzLoadingIndicator(
+                            size: 44,
+                            semanticLabel: 'Loading people and agents',
+                          ),
+                        ),
+                        error: (error, _) => Center(
                           child: Text(
-                            normalizedQuery.isEmpty
-                                ? 'Everyone available is already in this channel.'
-                                : 'No matching people or agents.',
+                            'Couldn’t load people or agents. Try again.',
+                            style: context.textTheme.bodyMedium?.copyWith(
+                              color: context.colors.error,
+                            ),
                             textAlign: TextAlign.center,
                           ),
-                        )
-                      : ListView.builder(
-                          key: const ValueKey('add-channel-members-results'),
-                          itemCount: availableUsers.length,
-                          itemBuilder: (context, index) {
-                            final user = availableUsers[index];
-                            final selected = selectedPubkeys.contains(
-                              user.pubkey.toLowerCase(),
-                            );
-                            return Semantics(
-                              key: ValueKey(
-                                'add-channel-member-${user.pubkey}',
-                              ),
-                              button: true,
-                              selected: selected,
-                              label: selected
-                                  ? '${user.label}, selected'
-                                  : user.label,
-                              child: ListTile(
-                                contentPadding: EdgeInsets.zero,
-                                leading: AvatarImage(
-                                  imageUrl: user.avatarUrl,
-                                  radius: 20,
-                                  backgroundColor:
-                                      context.colors.primaryContainer,
-                                  fallback: Text(user.initial),
-                                ),
-                                title: Text(
-                                  user.label,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                subtitle: Text(
-                                  user.secondaryLabel,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                trailing: Icon(
-                                  selected
-                                      ? LucideIcons.circleCheck
-                                      : LucideIcons.plus,
-                                  color: selected
-                                      ? context.colors.primary
-                                      : context.colors.onSurfaceVariant,
-                                ),
-                                onTap: () => toggleUser(user),
-                              ),
-                            );
-                          },
                         ),
-                  loading: () => const Center(
-                    child: BuzzLoadingIndicator(
-                      size: 44,
-                      semanticLabel: 'Loading people and agents',
-                    ),
-                  ),
-                  error: (error, _) => Center(
-                    child: Text(
-                      'Couldn’t load people or agents. Try again.',
-                      style: context.textTheme.bodyMedium?.copyWith(
-                        color: context.colors.error,
                       ),
-                      textAlign: TextAlign.center,
+              ),
+              if (pasteKeyMalformed) ...[
+                const SizedBox(height: Grid.xxs),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Paste a valid npub or hex pubkey.',
+                    style: context.textTheme.bodySmall?.copyWith(
+                      color: context.colors.error,
                     ),
                   ),
                 ),
-              ),
+              ],
               if (submitError.value case final error?) ...[
                 const SizedBox(height: Grid.xxs),
                 Text(

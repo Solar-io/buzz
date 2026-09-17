@@ -180,15 +180,17 @@ class ForumPostsResponse {
   }
 
   /// Build from the forum feed (kind:45001 posts + kind:9 ROOTS — the web
-  /// read-superset). Kind-9 events carrying a thread reference are replies,
-  /// not roots: they render inside their threads and are dropped here.
+  /// read-superset). Kind-9 events carrying an e tag are replies, not roots:
+  /// they render inside their threads and are dropped here. This matches the
+  /// web read semantics (`messageBuffer.ts`): marked root/reply e-tags win,
+  /// and a bare single e tag — the legacy kind-9 append shape — falls back to
+  /// the reply marker, so ANY e tag means the event lives inside a thread.
   /// Posts are sorted newest-first.
   factory ForumPostsResponse.fromEvents(List<NostrEvent> events) {
     final roots = events.where((event) {
       if (event.kind == 45001) return true;
       if (event.kind != 9) return false;
-      final ref = event.threadReference;
-      return ref.rootId == null && ref.parentId == null;
+      return !event.tags.any((tag) => tag.length >= 2 && tag[0] == 'e');
     });
     final posts = roots.map(ForumPost.fromEvent).toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));

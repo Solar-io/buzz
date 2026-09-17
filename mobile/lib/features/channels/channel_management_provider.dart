@@ -9,6 +9,7 @@ import '../../shared/custom_emoji/custom_emoji.dart';
 import '../../shared/custom_emoji/custom_emoji_provider.dart';
 import '../../shared/mentions/agent_identity_provider.dart';
 import '../../shared/relay/relay.dart';
+import '../invites/invite_create_provider.dart' show parseCommunityInvitePubkey;
 import '../profile/profile_provider.dart';
 import 'channel.dart';
 import 'channel_metadata_updates.dart';
@@ -185,6 +186,22 @@ class DirectoryUser {
 
   /// First visible character used when no avatar image is available.
   String get initial => label.isNotEmpty ? label[0].toUpperCase() : '?';
+}
+
+/// Parses pasted key material — a 64-char hex pubkey or a bech32 npub — into
+/// a selectable [DirectoryUser] carrying the decoded lowercase-hex key.
+///
+/// Decoding reuses the invites flow's [parseCommunityInvitePubkey] (single
+/// bech32 decode path) so the New-DM and Add-members sheets feed clean hex
+/// keys downstream to [ChannelActions.openDm] and [ChannelActions.addMembers]
+/// — a pasted npub never reaches the relay un-decoded. The paste path exists
+/// for people who have no kind:0 profile and are therefore unreachable
+/// through directory search. Returns null for anything that is not valid key
+/// material.
+DirectoryUser? directoryUserFromPastedKey(String input) {
+  final pubkey = parseCommunityInvitePubkey(input);
+  if (pubkey == null) return null;
+  return DirectoryUser(pubkey: pubkey);
 }
 
 /// Whether the mobile DM directory should show local preview identities.
