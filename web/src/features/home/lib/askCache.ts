@@ -158,7 +158,7 @@ function pruneAnswered(entry: AsksCacheEntry): AsksCacheEntry {
 }
 
 /** Content equality for two entries — identity would lie, merges rebuild. */
-function sameEntry(a: AsksCacheEntry, b: AsksCacheEntry): boolean {
+export function sameEntry(a: AsksCacheEntry, b: AsksCacheEntry): boolean {
   if (a.cursor !== b.cursor || a.asks.length !== b.asks.length) {
     return false;
   }
@@ -235,5 +235,44 @@ export function markCachedAnswered(
   return {
     ...entry,
     answered: { ...entry.answered, [cardId]: answerId },
+  };
+}
+
+/** What the provider's persist step should do with one merge candidate. */
+export interface PersistDecision {
+  /** The entry to hold in provider state (may equal `current` by content). */
+  entry: AsksCacheEntry;
+  /** True when disk content differs — the entry must be written. */
+  persist: boolean;
+  /** True when provider state differs — the entry must replace it. */
+  stateChanges: boolean;
+}
+
+/**
+ * Merge discovered asks into the provider's current entry and decide, by
+ * CONTENT against the last written entry, whether the result goes to disk.
+ *
+ * The comparison basis is load-bearing. The natural-looking gate — compare
+ * `asks`/`answered` object identity inside the merged candidate — cannot see
+ * an answered-only fold: the candidate is built by spreading the CURRENT
+ * state, so its `answered` map is the folded one by construction and the
+ * comparison reads the map against itself. Every answer that did not happen
+ * to co-fire with a discovery change was then silently dropped from disk,
+ * and the badge resurrected on reload (the e2e defect: a card answered from
+ * the web client came back as unread one reload later).
+ */
+export function nextPersistedEntry(
+  current: AsksCacheEntry | null,
+  saved: AsksCacheEntry | null,
+  asks: readonly AskItem[],
+): PersistDecision | null {
+  if (!current) {
+    return null;
+  }
+  const merged = mergeCachedAsks(current, asks);
+  return {
+    entry: merged,
+    persist: saved === null || !sameEntry(saved, merged),
+    stateChanges: !sameEntry(current, merged),
   };
 }
