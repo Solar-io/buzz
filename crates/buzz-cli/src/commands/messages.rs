@@ -647,6 +647,21 @@ fn utf16_len(value: &str) -> usize {
     value.encode_utf16().count()
 }
 
+/// The stderr guidance for a decision card sent with no `--mention`.
+///
+/// The web Asks inbox (D-035 follow-on) treats a card as an ASK only when it
+/// p-tags the viewer — outside a 2-party DM there is no leniency to infer the
+/// askee. An unmentioned card is therefore invisible to every Asks inbox; the
+/// agent-side author should know that at send time. A WARNING, not a refusal:
+/// broadcast cards (channel polls) are legitimate and common.
+fn card_without_mention_notice(has_card: bool, mention_count: usize) -> Option<String> {
+    if has_card && mention_count == 0 {
+        Some("note: card has no --mention; it will not appear in any Asks inbox".to_string())
+    } else {
+        None
+    }
+}
+
 fn bounded_utf16(value: &str, max_chars: usize) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() || utf16_len(trimmed) > max_chars {
@@ -757,10 +772,7 @@ fn build_card_tag(raw: &str) -> Result<(Vec<String>, String), CliError> {
         entry.insert("label".to_string(), serde_json::Value::String(label));
         if option.get("recommended").and_then(|r| r.as_bool()) == Some(true) {
             recommended_count += 1;
-            entry.insert(
-                "recommended".to_string(),
-                serde_json::Value::Bool(true),
-            );
+            entry.insert("recommended".to_string(), serde_json::Value::Bool(true));
         }
         options_out.push(serde_json::Value::Object(entry));
     }
@@ -831,9 +843,8 @@ pub async fn cmd_send_message(
     let card_tag: Option<Vec<String>> = match p.card.take() {
         Some(spec) => {
             let raw = if let Some(path) = spec.strip_prefix('@') {
-                std::fs::read_to_string(path).map_err(|e| {
-                    CliError::Usage(format!("--card: cannot read {path}: {e}"))
-                })?
+                std::fs::read_to_string(path)
+                    .map_err(|e| CliError::Usage(format!("--card: cannot read {path}: {e}")))?
             } else {
                 read_or_stdin(&spec)?
             };
@@ -901,6 +912,13 @@ pub async fn cmd_send_message(
             })
             .to_string(),
         ));
+    }
+
+    // D-035 asks inbox guardrail: only fires on the send path (after the
+    // member check), so a doomed send is not double-noised. stderr keeps
+    // stdout JSON-clean for `--format json` consumers.
+    if let Some(notice) = card_without_mention_notice(card_tag.is_some(), mention_pubkeys.len()) {
+        eprintln!("{notice}");
     }
 
     // Upload files and build imeta tags
@@ -1448,12 +1466,11 @@ pub async fn dispatch(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_card_tag, channel_id_from_event, classify_claim, cmd_get_thread,
-        event_mention_pubkeys, find_root_from_tags, match_profiles_by_name,
-        merge_message_mentions, missing_members, normalize_explicit_mentions,
-        parse_member_pubkeys, resolve_names_to_pubkeys, resolve_thread_target,
-        thread_ref_from_event, thread_ref_from_parent_tags, BuzzClient, ClaimState, CliError,
-        Uuid, CLAIM_EMOJI,
+        build_card_tag, card_without_mention_notice, channel_id_from_event, classify_claim,
+        cmd_get_thread, event_mention_pubkeys, find_root_from_tags, match_profiles_by_name,
+        merge_message_mentions, missing_members, normalize_explicit_mentions, parse_member_pubkeys,
+        resolve_names_to_pubkeys, resolve_thread_target, thread_ref_from_event,
+        thread_ref_from_parent_tags, BuzzClient, ClaimState, CliError, Uuid, CLAIM_EMOJI,
     };
     use buzz_sdk::mentions::{
         extract_at_mentions_with_known, extract_at_names, match_names_to_profiles, MentionProfile,
@@ -1521,6 +1538,26 @@ mod tests {
 
     // ---- D-035 decision card builder ----
 
+    // ---- Asks inbox authoring guardrail (D-035 follow-on) ----
+
+    #[test]
+    fn send_card_without_mention_warns() {
+        // A card with zero mentions never lands in an Asks inbox (the web's
+        // askForMe requires the p-tag outside 2-party DMs) — the author must
+        // hear that at send time. Warning, not refusal.
+        let notice = card_without_mention_notice(true, 0)
+            .expect("card without mention must produce a notice");
+        assert!(notice.contains("note: card has no --mention"));
+        assert!(notice.contains("Asks inbox"));
+    }
+
+    #[test]
+    fn send_card_with_mention_or_without_card_does_not_warn() {
+        // Any mention addresses the ask; no card means nothing to warn about.
+        assert!(card_without_mention_notice(true, 1).is_none());
+        assert!(card_without_mention_notice(false, 0).is_none());
+    }
+
     #[test]
     fn card_builds_tag_and_fallback_content() {
         let (tag, fallback) = build_card_tag(
@@ -1546,10 +1583,8 @@ mod tests {
 
     #[test]
     fn card_fallback_without_body_matches_web_shape() {
-        let (_, fallback) = build_card_tag(
-            r#"{"title":"Q","options":[{"label":"A"},{"label":"B"}]}"#,
-        )
-        .unwrap();
+        let (_, fallback) =
+            build_card_tag(r#"{"title":"Q","options":[{"label":"A"},{"label":"B"}]}"#).unwrap();
         assert_eq!(
             fallback,
             "**Q**\n\n- A\n- B\n\n_Reply with an option or your own answer._"
@@ -1562,7 +1597,9 @@ mod tests {
             r#"{"title":"Q","options":[{"label":"A","recommended":true},{"label":"B","recommended":true}]}"#,
         )
         .unwrap_err();
-        assert!(err.to_string().contains("at most one option may be recommended"));
+        assert!(err
+            .to_string()
+            .contains("at most one option may be recommended"));
     }
 
     #[test]
@@ -1596,13 +1633,10 @@ mod tests {
         // renders as fallback text.
         let emoji_ok: String = "🚀".repeat(99); // 198 UTF-16 units — passes
         let emoji_over: String = "🚀".repeat(101); // 202 UTF-16 units — rejects
-        let ok = format!(
-            r#"{{"title":"Q","options":[{{"label":"{emoji_ok}"}},{{"label":"B"}}]}}"#
-        );
+        let ok = format!(r#"{{"title":"Q","options":[{{"label":"{emoji_ok}"}},{{"label":"B"}}]}}"#);
         assert!(build_card_tag(&ok).is_ok());
-        let over = format!(
-            r#"{{"title":"Q","options":[{{"label":"{emoji_over}"}},{{"label":"B"}}]}}"#
-        );
+        let over =
+            format!(r#"{{"title":"Q","options":[{{"label":"{emoji_over}"}},{{"label":"B"}}]}}"#);
         let err = build_card_tag(&over).unwrap_err();
         assert!(err.to_string().contains("label must be 1-200"));
     }
@@ -1614,7 +1648,9 @@ mod tests {
         // the authoring mistake the cap exists to catch (labels alone can
         // never reach it).
         let label = "y".repeat(200);
-        let labels: Vec<String> = (0..8).map(|_| format!("{{\"label\":\"{label}\"}}")).collect();
+        let labels: Vec<String> = (0..8)
+            .map(|_| format!("{{\"label\":\"{label}\"}}"))
+            .collect();
         let fat = format!(
             r#"{{"title":"Q","body":"{}","options":[{}]}}"#,
             "b".repeat(4000),
@@ -1623,7 +1659,6 @@ mod tests {
         let err = build_card_tag(&fat).unwrap_err();
         assert!(err.to_string().contains("exceeds 4096"));
     }
-
 
     #[test]
     fn claim_missing_created_at_reads_as_epoch() {

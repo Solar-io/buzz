@@ -466,6 +466,7 @@ annex, so the arbitration is inspectable from any client."
         /// rendering and whose content carries readable fallback text for plain
         /// clients. '@file.json' reads the payload from a file, '-' from stdin.
         /// With no --content, the fallback text is generated from the card.
+        /// Address the card with `--mention <pubkey>` so it lands in the askee's Asks inbox.
         #[arg(long)]
         card: Option<String>,
     },
