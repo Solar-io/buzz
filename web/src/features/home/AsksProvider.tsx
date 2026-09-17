@@ -35,7 +35,7 @@ import {
   fromCachedAsk,
   loadAsksCache,
   markCachedAnswered,
-  mergeCachedAsks,
+  nextPersistedEntry,
   saveAsksCache,
   type AsksCacheEntry,
 } from "./lib/askCache.ts";
@@ -71,6 +71,17 @@ import {
  */
 
 const ANSWER_HEARTBEAT_MS = 5 * 60 * 1_000;
+/**
+ * One early re-run of the answer-history REQs after the settled set opens
+ * them. A REQ that races the relay's AUTH processing is served an EMPTY EOSE
+ * (scoped to zero accessible channels) rather than `CLOSED("auth-required")`,
+ * so the session's auth-race retry never fires — measured on the live relay
+ * 2026-09-17: mount REQ answered `EOSE` with zero events in 17ms while the
+ * answer existed; the same filter post-auth returned it. The second shot
+ * closes the reload-resurrect window to seconds instead of the heartbeat's
+ * five minutes.
+ */
+const ANSWER_SECOND_SHOT_MS = 10_000;
 /** Burst coalescing: many asks arriving together re-open the REQs once. */
 const TRACKED_SET_DEBOUNCE_MS = 2_000;
 
@@ -132,6 +143,8 @@ export function AsksProvider({
 
   // ---- persisted state (paint before discovery reconciles) ----------------
   const [cache, setCache] = useState<AsksCacheEntry | null>(null);
+  /** Content of the last entry actually written to disk (null = never). */
+  const savedEntryRef = useRef<AsksCacheEntry | null>(null);
   useEffect(() => {
     let cancelled = false;
     void loadAsksCache().then((entry) => {
@@ -143,6 +156,9 @@ export function AsksProvider({
       // answered map wins over the older snapshot.
       setCache((previous) => {
         if (!previous) {
+          // The loaded entry IS the disk content — record it as such so the
+          // persist step does not write identical bytes back on every load.
+          savedEntryRef.current = entry;
           return entry;
         }
         return {
@@ -244,8 +260,10 @@ export function AsksProvider({
       }
     };
     run();
+    const secondShot = setTimeout(run, ANSWER_SECOND_SHOT_MS);
     const heartbeat = setInterval(run, ANSWER_HEARTBEAT_MS);
     return () => {
+      clearTimeout(secondShot);
       clearInterval(heartbeat);
       for (const unsubscribe of active) {
         unsubscribe();
@@ -303,19 +321,26 @@ export function AsksProvider({
   );
 
   // ---- persist: asks snapshot + answered map + cursor ----------------------
+  // Content-gated through nextPersistedEntry (see its doc for why identity
+  // cannot work here): every fold that changes what disk holds gets written,
+  // including answered-only folds, and state only updates when the merged
+  // content actually moved so the effect cannot feed itself.
   useEffect(() => {
     if (!cache) {
       return;
     }
-    const next = mergeCachedAsks({ ...cache, answered }, asks);
-    if (
-      next !== cache &&
-      (next.asks !== cache.asks || next.answered !== cache.answered)
-    ) {
-      void saveAsksCache(next);
-      setCache(next);
+    const decision = nextPersistedEntry(cache, savedEntryRef.current, asks);
+    if (!decision) {
+      return;
     }
-  }, [asks, answered, cache]);
+    if (decision.persist) {
+      savedEntryRef.current = decision.entry;
+      void saveAsksCache(decision.entry);
+    }
+    if (decision.stateChanges) {
+      setCache(decision.entry);
+    }
+  }, [asks, cache]);
 
   const value = useMemo(
     () => ({ feed, loading, asks: unanswered, badge, probeAsk }),

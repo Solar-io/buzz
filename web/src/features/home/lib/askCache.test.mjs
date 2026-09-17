@@ -6,6 +6,7 @@ import {
   fromCachedAsk,
   markCachedAnswered,
   mergeCachedAsks,
+  nextPersistedEntry,
   toCachedAsk,
 } from "./askCache.ts";
 import { loadAsksCache, saveAsksCache } from "./askCache.ts";
@@ -130,4 +131,52 @@ test("unavailable storage cold-starts instead of throwing", async () => {
   // an optimization, never fatal.
   assert.equal(await loadAsksCache(), null);
   await saveAsksCache(empty());
+});
+
+test("nextPersistedEntry: an answered-only fold is written to disk", () => {
+  // The reload-resurrect regression: the ask set is settled on disk, then a
+  // live answer folds into provider state. The merged candidate carries the
+  // fold in the very `answered` ref it would be compared against — only a
+  // CONTENT comparison against the last SAVED entry can see it.
+  const disk = mergeCachedAsks(empty(), [ask("a", 100)]);
+  const folded = markCachedAnswered(disk, "a", "answer-for-a");
+  const decision = nextPersistedEntry(folded, disk, [ask("a", 100)]);
+  assert.ok(decision, "a decision must come back");
+  assert.equal(decision.persist, true, "the fold must reach disk");
+  assert.equal(
+    decision.stateChanges,
+    false,
+    "provider state already holds the fold",
+  );
+});
+
+test("nextPersistedEntry: unchanged content writes nothing", () => {
+  const disk = mergeCachedAsks(empty(), [ask("a", 100)]);
+  const decision = nextPersistedEntry(disk, disk, [ask("a", 100)]);
+  assert.equal(decision.persist, false);
+  assert.equal(decision.stateChanges, false);
+});
+
+test("nextPersistedEntry: a new ask both writes and updates state", () => {
+  const disk = mergeCachedAsks(empty(), [ask("a", 100)]);
+  const decision = nextPersistedEntry(disk, disk, [
+    ask("a", 100),
+    ask("b", 200),
+  ]);
+  assert.equal(decision.persist, true);
+  assert.equal(decision.stateChanges, true);
+  assert.deepEqual(
+    decision.entry.asks.map((a) => a.id),
+    ["b", "a"],
+  );
+});
+
+test("nextPersistedEntry: first-ever write (no saved entry) persists", () => {
+  const current = mergeCachedAsks(empty(), [ask("a", 1)]);
+  const decision = nextPersistedEntry(current, null, [ask("a", 1)]);
+  assert.equal(decision.persist, true);
+});
+
+test("nextPersistedEntry: null current state decides nothing", () => {
+  assert.equal(nextPersistedEntry(null, null, []), null);
 });
