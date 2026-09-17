@@ -135,9 +135,21 @@ export function AsksProvider({
   useEffect(() => {
     let cancelled = false;
     void loadAsksCache().then((entry) => {
-      if (!cancelled) {
-        setCache(entry);
+      if (cancelled || !entry) {
+        return;
       }
+      // If an answer landed before the disk read resolved (fast live REQ,
+      // slow idb), the fresh load must not clobber it — the in-memory
+      // answered map wins over the older snapshot.
+      setCache((previous) => {
+        if (!previous) {
+          return entry;
+        }
+        return {
+          ...entry,
+          answered: { ...entry.answered, ...previous.answered },
+        };
+      });
     });
     return () => {
       cancelled = true;

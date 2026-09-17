@@ -157,10 +157,49 @@ function pruneAnswered(entry: AsksCacheEntry): AsksCacheEntry {
   return changed ? { ...entry, answered } : entry;
 }
 
+/** Content equality for two entries — identity would lie, merges rebuild. */
+function sameEntry(a: AsksCacheEntry, b: AsksCacheEntry): boolean {
+  if (a.cursor !== b.cursor || a.asks.length !== b.asks.length) {
+    return false;
+  }
+  const aAnswers = Object.entries(a.answered);
+  const bAnswers = Object.entries(b.answered);
+  if (aAnswers.length !== bAnswers.length) {
+    return false;
+  }
+  for (const [cardId, answerId] of aAnswers) {
+    if (b.answered[cardId] !== answerId) {
+      return false;
+    }
+  }
+  for (let i = 0; i < a.asks.length; i += 1) {
+    const x = a.asks[i];
+    const y = b.asks[i];
+    if (
+      x.id !== y.id ||
+      x.channelId !== y.channelId ||
+      x.channelType !== y.channelType ||
+      x.authorPubkey !== y.authorPubkey ||
+      x.createdAt !== y.createdAt ||
+      x.cardJson !== y.cardJson ||
+      x.cardRootId !== y.cardRootId ||
+      x.cardReplyToId !== y.cardReplyToId
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /**
  * Fold one discovery result into the entry. Pure. Dedupes by id, keeps
  * newest-first order, caps at ASKS_CACHE_CAP, advances the cursor, prunes
  * `answered` when the cap evicted a card.
+ *
+ * Returns the SAME entry when nothing content-changed. This is load-bearing,
+ * not tidiness: the provider's persist effect re-merges on every render whose
+ * deps moved — a merge that kept returning a fresh object would feed its own
+ * state update back into the effect and loop forever.
  */
 export function mergeCachedAsks(
   entry: AsksCacheEntry,
@@ -180,7 +219,8 @@ export function mergeCachedAsks(
     (max, ask) => Math.max(max, ask.createdAt),
     entry.cursor,
   );
-  return pruneAnswered({ ...entry, asks: merged, cursor });
+  const candidate = pruneAnswered({ ...entry, asks: merged, cursor });
+  return sameEntry(entry, candidate) ? entry : candidate;
 }
 
 /** Record my answer to one card. Pure; idempotent per (cardId, answerId). */

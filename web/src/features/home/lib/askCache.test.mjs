@@ -62,6 +62,19 @@ test("merging nothing is a no-op returning the same reference", () => {
   assert.equal(mergeCachedAsks(entry, []), entry);
 });
 
+test("re-merging the same asks returns the SAME entry, not a fresh copy", () => {
+  // Identity-stability is load-bearing: the provider's persist effect
+  // re-merges on every render whose deps moved — a merge that kept returning
+  // a fresh object would feed its own setCache back into the effect and loop
+  // forever. Content-equal merge MUST return the input entry.
+  const first = mergeCachedAsks(empty(), [ask("a", 300), ask("b", 200)]);
+  const again = mergeCachedAsks(first, [ask("a", 300), ask("b", 200)]);
+  assert.equal(again, first);
+  // A content change still produces a new entry.
+  const changed = mergeCachedAsks(first, [ask("c", 500)]);
+  assert.notEqual(changed, first);
+});
+
 test("markCachedAnswered records cardId → answerId and is idempotent", () => {
   let entry = mergeCachedAsks(empty(), [ask("a", 1), ask("b", 2)]);
   entry = markCachedAnswered(entry, "a", "answer-1");
