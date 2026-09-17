@@ -3,12 +3,15 @@ import { useEffect, useMemo, useState } from "react";
 import { useChannelMessages, useProfiles } from "@/features/channels/hooks";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
-import { useInboxMessages, useInboxReadState } from "../hooks.ts";
+import { useAsks } from "../AsksProvider.tsx";
+import { useInboxReadState } from "../hooks.ts";
 import {
-  filterInboxItems,
+  filterInboxRows,
   inboxFilterCounts,
+  inboxRowSortAt,
   parseInboxFilter,
   type InboxFilter,
+  type InboxListRow,
 } from "../lib/inboxFilter.ts";
 import { buildInboxItems, type InboxChannelInfo } from "../lib/inboxItem.ts";
 import { inboxReadPredicate } from "../lib/inboxReadState.ts";
@@ -24,6 +27,11 @@ const FILTER_KEY = "buzz.inbox-filter.v1";
  * `channels` and `selfPubkey` are passed in rather than fetched so this
  * mounts inside the existing shell (`app/routes/repos.tsx`) without opening a
  * second kind:39000 subscription alongside the sidebar's.
+ *
+ * The mention+DM feed is the shell-level {@link useAsks} provider's, not this
+ * route's own `useInboxMessages`: the provider owns the subscriptions once
+ * for the whole app (the badge needs them on every view), and the inbox view
+ * simply reads the same feed — net subscriptions unchanged while open.
  */
 export function HomeInboxRoute({
   channels,
@@ -42,7 +50,7 @@ export function HomeInboxRoute({
     string | null
   >(null);
 
-  const { messages, loading } = useInboxMessages({ selfPubkey, channels });
+  const { feed, loading, asks, probeAsk } = useAsks();
   const { channelRead, inboxRead, markRead, markUnread } = useInboxReadState();
 
   // DM channels are all named "DM" by the relay; the participants are what a
@@ -57,8 +65,8 @@ export function HomeInboxRoute({
     [channels, selfPubkey],
   );
   const authorPubkeys = useMemo(
-    () => messages.map((message) => message.authorPubkey),
-    [messages],
+    () => feed.map((message) => message.authorPubkey),
+    [feed],
   );
   const profiles = useProfiles(
     useMemo(
@@ -91,17 +99,47 @@ export function HomeInboxRoute({
   const items = useMemo(
     () =>
       buildInboxItems({
-        messages,
+        messages: feed,
         channels: inboxChannels,
         selfPubkey,
         isRead,
       }),
-    [messages, inboxChannels, selfPubkey, isRead],
+    [feed, inboxChannels, selfPubkey, isRead],
   );
-  const counts = useMemo(() => inboxFilterCounts(items), [items]);
-  const visibleItems = useMemo(
-    () => filterInboxItems(items, filter),
-    [items, filter],
+
+  // The list interleaves conversations and asks, newest activity first. Ask
+  // rows carry their resolved channel label (DMs display by participant).
+  const channelNameById = useMemo(
+    () => new Map(inboxChannels.map((channel) => [channel.id, channel])),
+    [inboxChannels],
+  );
+  const rows = useMemo<InboxListRow[]>(
+    () =>
+      [
+        ...items.map((item) => ({ kind: "conversation" as const, item })),
+        ...asks.map((ask) => {
+          const channel = channelNameById.get(ask.channelId);
+          const name = channel?.name ?? ask.channelId;
+          return {
+            kind: "ask" as const,
+            ask,
+            channelLabel: channel?.type === "dm" ? name : `#${name}`,
+          };
+        }),
+      ].sort(
+        (a, b) =>
+          inboxRowSortAt(b) - inboxRowSortAt(a) ||
+          (a.kind === "ask" ? a.ask.id : a.item.conversationId).localeCompare(
+            b.kind === "ask" ? b.ask.id : b.item.conversationId,
+          ),
+      ),
+    [items, asks, channelNameById],
+  );
+
+  const counts = useMemo(() => inboxFilterCounts(rows), [rows]);
+  const visibleRows = useMemo(
+    () => filterInboxRows(rows, filter),
+    [rows, filter],
   );
 
   const selectedItem =
@@ -113,13 +151,15 @@ export function HomeInboxRoute({
   useEffect(() => {
     if (
       selectedConversationId !== null &&
-      !visibleItems.some(
-        (item) => item.conversationId === selectedConversationId,
+      !visibleRows.some(
+        (row) =>
+          row.kind === "conversation" &&
+          row.item.conversationId === selectedConversationId,
       )
     ) {
       setSelectedConversationId(null);
     }
-  }, [visibleItems, selectedConversationId]);
+  }, [visibleRows, selectedConversationId]);
 
   // The live channel timeline behind the selection supplies the surrounding
   // thread. Reusing `useChannelMessages` means the detail pane reads the same
@@ -143,7 +183,7 @@ export function HomeInboxRoute({
 
   return (
     <HomeInbox
-      items={visibleItems}
+      rows={visibleRows}
       profiles={profiles}
       filter={filter}
       counts={counts}
@@ -160,6 +200,13 @@ export function HomeInboxRoute({
       // "Mark read" action, or opening the channel (which advances the channel
       // marker the way it always has).
       onSelect={(item) => setSelectedConversationId(item.conversationId)}
+      onOpenAsk={(ask) => {
+        // The cheap correctness patch rides the tap: one targeted answer REQ
+        // for this card, so a missed historical answer still clears the badge
+        // at the moment of attention. The provider outlives the view switch.
+        probeAsk(ask.id);
+        onOpenChannel(ask.channelId, ask.id);
+      }}
       onClearSelection={() => setSelectedConversationId(null)}
       onMarkRead={() => {
         if (selectedItem) {

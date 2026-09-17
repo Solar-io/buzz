@@ -1,8 +1,9 @@
 import type { Profile } from "@/features/channels/hooks";
 import type { TimelineMessage } from "@/features/channels/lib/messageBuffer.ts";
 import { cn } from "@/shared/lib/cn";
-import type { InboxFilter } from "../lib/inboxFilter.ts";
+import type { InboxFilter, InboxListRow } from "../lib/inboxFilter.ts";
 import type { InboxItem } from "../lib/inboxItem.ts";
+import type { AskItem } from "../lib/askDetection.ts";
 import { InboxDetailPane } from "./InboxDetailPane.tsx";
 import { InboxListPane } from "./InboxListPane.tsx";
 
@@ -17,7 +18,7 @@ import { InboxListPane } from "./InboxListPane.tsx";
  * screen actually mounts and reacts, rather than that it compiles.
  */
 export function HomeInbox({
-  items,
+  rows,
   profiles,
   filter,
   counts,
@@ -28,12 +29,14 @@ export function HomeInbox({
   isRead,
   onFilterChange,
   onSelect,
+  onOpenAsk,
   onClearSelection,
   onMarkRead,
   onMarkUnread,
   onOpenInChannel,
 }: {
-  items: InboxItem[];
+  /** Conversations + asks, interleaved, newest first. */
+  rows: InboxListRow[];
   profiles: Map<string, Profile>;
   filter: InboxFilter;
   counts: Record<InboxFilter, number>;
@@ -44,6 +47,8 @@ export function HomeInbox({
   isRead: (message: TimelineMessage) => boolean;
   onFilterChange: (filter: InboxFilter) => void;
   onSelect: (item: InboxItem) => void;
+  /** An ask row's action: jump to the card where answering happens. */
+  onOpenAsk: (ask: AskItem) => void;
   onClearSelection: () => void;
   onMarkRead: () => void;
   onMarkUnread: () => void;
@@ -56,7 +61,7 @@ export function HomeInbox({
       className="flex min-h-0 flex-1 bg-background text-foreground"
     >
       <InboxListPane
-        items={items}
+        rows={rows}
         profiles={profiles}
         filter={filter}
         counts={counts}
@@ -64,6 +69,7 @@ export function HomeInbox({
         selectedConversationId={selectedItem?.conversationId ?? null}
         onFilterChange={onFilterChange}
         onSelect={onSelect}
+        onOpenAsk={onOpenAsk}
         className={cn(
           "w-full shrink-0 md:w-88 md:border-r md:border-border",
           hasSelection && "hidden md:flex",
