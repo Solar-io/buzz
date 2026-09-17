@@ -17,7 +17,14 @@ import type { CSSProperties } from "react";
 
 export const THREAD_WIDTH_STORAGE_KEY = "buzz.thread-width.v1";
 export const THREAD_WIDTH_MIN = 288;
-export const THREAD_WIDTH_DEFAULT = 384;
+/**
+ * The width a pane opens at, and the floor it can never sit below on a row
+ * that can afford it (Sam 9/17: "at least 600px" — a 384 default read as
+ * "very small" on every DM/channel open). Rows too narrow for 600 plus a
+ * livable channel column keep the responsive `THREAD_WIDTH_MIN` behavior.
+ */
+export const THREAD_WIDTH_COMFORT_MIN = 600;
+export const THREAD_WIDTH_DEFAULT = THREAD_WIDTH_COMFORT_MIN;
 /** The channel column keeps at least this much, so widening the thread
  * never crushes the timeline to a sliver. */
 const CHANNEL_COLUMN_FLOOR = 360;
@@ -76,6 +83,20 @@ export function threadWidthMax(rowWidth: number, reservedPx = 0): number {
   );
 }
 
+/**
+ * The floor `clampThreadWidth` enforces: 600 wherever the row affords it,
+ * degrading to the responsive minimum only on rows too narrow for a 600 pane
+ * plus a livable channel column. A stale persisted width from before the
+ * comfort floor (a 288 min-drag, the old 384 default) is resurrected to 600
+ * by this — on wide rows — instead of replaying "very small" on every open.
+ */
+export function threadWidthFloor(rowWidth: number, reservedPx = 0): number {
+  return Math.min(
+    THREAD_WIDTH_COMFORT_MIN,
+    threadWidthMax(rowWidth, reservedPx),
+  );
+}
+
 export function clampThreadWidth(
   value: number,
   rowWidth: number,
@@ -83,7 +104,7 @@ export function clampThreadWidth(
 ): number {
   return Math.min(
     threadWidthMax(rowWidth, reservedPx),
-    Math.max(THREAD_WIDTH_MIN, value),
+    Math.max(threadWidthFloor(rowWidth, reservedPx), value),
   );
 }
 
