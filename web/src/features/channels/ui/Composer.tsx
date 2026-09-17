@@ -312,7 +312,12 @@ export function Composer({
     }
     if (editingIdRef.current !== null) {
       editingIdRef.current = null;
-      restoreText(draftKey ? loadDraftState(draftKey).text : "");
+      // Third and last draft-restore path (initial load, channel switch,
+      // edit exit) — same old-draft migration as the other two.
+      const draft = draftKey ? loadDraftState(draftKey) : null;
+      restoreText(
+        stripAttachmentsMarkdown(draft?.text ?? "", draft?.media ?? []),
+      );
     }
   }, [editing]);
   const editingActive = editing != null;
