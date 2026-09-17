@@ -32,6 +32,7 @@ import {
 import { activeTyping } from "@/features/channels/lib/typing.ts";
 import { clampThreadWidth } from "@/features/channels/lib/threadPanelWidth.ts";
 import { useThreadPaneWidth } from "@/features/channels/lib/useThreadPaneWidth.ts";
+import { usePermalinkCleanup } from "@/features/channels/lib/usePermalinkCleanup.ts";
 import { useChannelLists } from "@/features/channels/lib/useChannelLists.ts";
 import { useMessageActions } from "@/features/channels/lib/useMessageActions.ts";
 import { paletteActions } from "@/features/channels/lib/paletteActions.ts";
@@ -65,6 +66,8 @@ import {
 } from "@/features/dms/lib/hiddenDms.ts";
 import { channelMenuItems } from "@/features/sidebar/lib/channelMenuItems.ts";
 import { ChannelSidebar } from "@/features/sidebar/ui/ChannelSidebar";
+import type { ChannelSidebarProps } from "@/features/sidebar/ui/ChannelSidebar";
+import { AsksProvider, useAsks } from "@/features/home/AsksProvider";
 import { HomeInboxRoute } from "@/features/home/ui/HomeInboxRoute";
 import { WorkflowsPage } from "@/features/workflows/ui/WorkflowsPage";
 import { OnboardingPane } from "@/features/onboarding";
@@ -133,6 +136,15 @@ function AppRoute() {
     return <LoginPage />;
   }
   return <ChannelBrowser />;
+}
+
+/**
+ * The sidebar's asks badge comes from the shell-level AsksProvider context;
+ * the sidebar itself stays context-free (every other input arrives by prop).
+ */
+function SidebarWithAsks(props: Omit<ChannelSidebarProps, "asksCount">) {
+  const { badge } = useAsks();
+  return <ChannelSidebar {...props} asksCount={badge} />;
 }
 
 function ChannelBrowser() {
@@ -267,32 +279,14 @@ function ChannelBrowser() {
       topLevelId,
     };
   }, [permalinkMessageId, messages]);
-  useEffect(() => {
-    if (!permalinkReady) {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      void navigate({
-        to: "/repos",
-        search: { c: selectedId },
-        replace: true,
-      });
-    }, 800);
-    return () => window.clearTimeout(timer);
-  }, [permalinkReady, navigate, selectedId]);
-  useEffect(() => {
-    if (permalinkMessageId == null || permalinkReady) {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      void navigate({
-        to: "/repos",
-        search: { c: selectedId },
-        replace: true,
-      });
-    }, 4000);
-    return () => window.clearTimeout(timer);
-  }, [permalinkMessageId, permalinkReady, navigate, selectedId]);
+  // Drop ?m= from the URL once the jump has landed (or 4s in, if the target
+  // never enters the buffer) — see the extracted hook for the two timers.
+  usePermalinkCleanup({
+    permalinkMessageId,
+    permalinkReady,
+    selectedId,
+    navigate,
+  });
   // Typing row: re-derive every few seconds so entries expire visibly.
   const [, forceTick] = useState(0);
   useEffect(() => {
@@ -589,7 +583,7 @@ function ChannelBrowser() {
   };
 
   const sidebar = (
-    <ChannelSidebar
+    <SidebarWithAsks
       connected={connected}
       relayStatus={relayStatus}
       inboxSelected={view === "inbox"}
@@ -735,7 +729,9 @@ function ChannelBrowser() {
     // Profile cards open DMs; DM creation is the shell's job, and the row that
     // raises the card renders under ChannelTimeline, so the callback reaches it
     // by context rather than through two files the shell does not own.
-    <>
+    // AsksProvider owns the always-on asks badge + answer detection; once at
+    // the shell, same discipline as NotificationRuntime.
+    <AsksProvider channels={channels} selfPubkey={selfPubkey}>
       {/* Mounted at the shell so it outlives every route the signed-in app can
         be on; in the sidebar it died wherever the sidebar unmounted. It takes
         the shell's channel list rather than opening a second kind:39000 REQ. */}
@@ -1116,6 +1112,6 @@ function ChannelBrowser() {
           </AppShell>
         </ProfileActionsProvider>
       </RemindMeLaterProvider>
-    </>
+    </AsksProvider>
   );
 }
