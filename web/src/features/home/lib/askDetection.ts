@@ -37,6 +37,14 @@ export interface AskItem {
   authorPubkey: string;
   createdAt: number;
   card: DecisionCard;
+  /**
+   * The card event's NIP-10 placement — an inline answer needs the card's
+   * thread root to satisfy the relay's ancestry check (`cardAnswer.ts`).
+   * Together with id/channelId/authorPubkey these make AskItem a
+   * `CardAnswerTarget`.
+   */
+  rootId: string | null;
+  replyToId: string | null;
 }
 
 /**
@@ -133,6 +141,8 @@ export function extractAsks(
       authorPubkey: message.authorPubkey,
       createdAt: message.createdAt,
       card: message.card,
+      rootId: message.rootId,
+      replyToId: message.replyToId,
     });
   }
   return asks.sort(

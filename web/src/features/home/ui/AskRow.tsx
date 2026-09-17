@@ -1,9 +1,18 @@
-import { HelpCircle, MessageSquare, AtSign } from "lucide-react";
+import { useState } from "react";
+import {
+  Check,
+  HelpCircle,
+  MessageSquare,
+  AtSign,
+  TriangleAlert,
+} from "lucide-react";
 
 import { AuthorAvatar } from "@/features/channels/ui/AuthorAvatar";
 import type { Profile } from "@/features/channels/hooks";
 import { authorLabel } from "@/features/channels/lib/authorLabel.ts";
 import { formatTime } from "@/features/channels/lib/dateFormatters.ts";
+import { sendCardAnswer } from "@/features/channels/lib/cardAnswer.ts";
+import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { cn } from "@/shared/lib/cn";
 import type { AskItem } from "../lib/askDetection.ts";
 
@@ -15,8 +24,19 @@ import type { AskItem } from "../lib/askDetection.ts";
  * so each carries the unread-dot treatment.
  *
  * Tapping the row is the existing permalink jump (`?c=&m=`), NOT a detail
- * selection: the card lives in its channel timeline (or thread panel), which
- * is where answering happens.
+ * selection: the card lives in its channel timeline (or thread panel), where
+ * the full card — options, type-your-own, error states — renders.
+ *
+ * ## Inline one-tap answers
+ *
+ * The option buttons answer right from the list via `sendCardAnswer`, the
+ * same builder the timeline card uses (one implementation of the thread-ref
+ * and publish-verdict rules). The state machine mirrors DecisionCard's,
+ * including the honest `result.ok` check — publish() RESOLVES `{ok:false}`
+ * on a relay rejection. The badge is deliberately NOT cleared here: it clears
+ * when the relay echo arrives through the answer REQ and the answered
+ * predicate matches, so a badge can never claim less than the relay agreed to
+ * store.
  */
 export function AskRow({
   ask,
@@ -32,6 +52,13 @@ export function AskRow({
   profiles: Map<string, Profile>;
   onOpen: () => void;
 }) {
+  const { session } = useRelaySession();
+  const [state, setState] = useState<
+    | { phase: "idle" }
+    | { phase: "sending" }
+    | { phase: "sent"; answer: string }
+    | { phase: "error"; answer: string; message: string }
+  >({ phase: "idle" });
   const label = authorLabel(ask.authorPubkey, profiles);
   const isDm = channelType === "dm";
   // Preview: the recommended option when one is marked, else the first
@@ -40,6 +67,32 @@ export function AskRow({
     (option) => option.recommended === true,
   );
   const preview = recommended ?? ask.card.options[0];
+
+  async function answer(optionLabel: string) {
+    if (state.phase === "sending" || state.phase === "sent") {
+      return;
+    }
+    setState({ phase: "sending" });
+    try {
+      const result = await sendCardAnswer(session, ask, optionLabel);
+      if (!result.ok) {
+        setState({
+          phase: "error",
+          answer: optionLabel,
+          message: result.message || "relay rejected the reply",
+        });
+        return;
+      }
+      setState({ phase: "sent", answer: optionLabel });
+    } catch (error) {
+      setState({
+        phase: "error",
+        answer: optionLabel,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   return (
     <div
       data-testid={`ask-row-${ask.id}`}
@@ -109,6 +162,54 @@ export function AskRow({
           </p>
         </div>
       </button>
+      {state.phase === "sent" ? (
+        <p
+          data-testid={`ask-row-answered-${ask.id}`}
+          className="mb-2 flex items-center gap-1.5 px-3 text-xs font-medium text-primary"
+        >
+          <Check className="size-3" aria-hidden />
+          You replied: {state.answer}
+        </p>
+      ) : (
+        <div className="mb-2 flex flex-wrap gap-1.5 px-3">
+          {ask.card.options.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              data-testid={`ask-row-answer-${ask.id}-${option.id}`}
+              disabled={state.phase === "sending"}
+              onClick={() => answer(option.label)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-full border bg-background px-2.5 py-1 text-xs",
+                "transition-colors hover:border-primary/50 hover:bg-primary/5",
+                "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+                "disabled:cursor-not-allowed disabled:opacity-60",
+              )}
+            >
+              {option.label}
+              {option.recommended === true && (
+                <span className="text-2xs font-medium uppercase tracking-wide text-accent-foreground/80">
+                  ★
+                </span>
+              )}
+            </button>
+          ))}
+          {state.phase === "sending" && (
+            <span className="self-center text-xs text-muted-foreground/70">
+              Sending…
+            </span>
+          )}
+          {state.phase === "error" && (
+            <span
+              data-testid={`ask-row-error-${ask.id}`}
+              className="flex items-center gap-1 text-xs text-destructive"
+            >
+              <TriangleAlert className="size-3 shrink-0" aria-hidden />
+              {state.message || "Reply failed"} — try again
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -40,6 +40,12 @@ export interface CachedAsk {
   authorPubkey: string;
   createdAt: number;
   cardJson: string;
+  /**
+   * The card's NIP-10 placement, so an answer fired from a cache-painted row
+   * still carries the correct thread root (relay ancestry check).
+   */
+  cardRootId: string | null;
+  cardReplyToId: string | null;
 }
 
 export interface AsksCacheEntry {
@@ -101,6 +107,8 @@ export function toCachedAsk(ask: AskItem): CachedAsk {
     // Re-tagged as a v=1 card payload: the parse demands the version field,
     // so storing the bare parsed shape would fail its own replay.
     cardJson: JSON.stringify({ v: 1, ...ask.card }),
+    cardRootId: ask.rootId,
+    cardReplyToId: ask.replyToId,
   };
 }
 
@@ -122,6 +130,10 @@ export function fromCachedAsk(cached: CachedAsk): AskItem | null {
     authorPubkey: cached.authorPubkey,
     createdAt: cached.createdAt,
     card,
+    // Entries written before these fields existed (a v1 cache from an
+    // intermediate build) degrade to a top-level card, the common shape.
+    rootId: cached.cardRootId ?? null,
+    replyToId: cached.cardReplyToId ?? null,
   };
 }
 
