@@ -179,6 +179,28 @@ export function ThreadPanel({
       return next;
     });
   }, [replies, index]);
+  /**
+   * D-050: a permalink to a reply nested in a still-collapsed branch needs
+   * that branch expanded BEFORE its row exists for the list's jump — the
+   * card seeding above covers card branches; this covers every other
+   * nested target.
+   */
+  useEffect(() => {
+    if (!permalinkMessageId) {
+      return;
+    }
+    setExpandedIds((previous) => {
+      const ancestors = ancestorsOfMessage(index, permalinkMessageId);
+      if (ancestors.every((id) => previous.has(id))) {
+        return previous;
+      }
+      const next = new Set(previous);
+      for (const id of ancestors) {
+        next.add(id);
+      }
+      return next;
+    });
+  }, [permalinkMessageId, index]);
   const entries = useMemo(
     () => buildThreadEntries(index, rootId, expandedIds),
     [index, rootId, expandedIds],

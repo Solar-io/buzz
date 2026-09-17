@@ -709,7 +709,15 @@ export function ChannelTimeline({
   // double-rAF + settle passes as the auto-tail — freshly mounted rows must
   // be measured before the align lands. The loadingOlder row, when present,
   // is prepended and shifts every row index by one.
+  //
+  // D-050: the target's row may not exist on the FIRST render after the id
+  // arrives — a thread panel seeds its expansion set in an effect that lands
+  // after the first paint, and a cross-channel permalink waits on cache
+  // hydration. Bailing then was a silent no-op (live: a card-answer hit
+  // opened the right thread and stayed tail-anchored). Retry briefly until
+  // the row materializes; give up after the window below.
   const lastJumpRef = useRef<string | null>(null);
+  const JUMP_ROW_RETRY_MS = 1_500;
   useEffect(() => {
     if (
       !scrollToMessageId ||
@@ -718,21 +726,37 @@ export function ChannelTimeline({
     ) {
       return;
     }
-    const base = rowIndexRef.current?.get(scrollToMessageId);
-    if (base === undefined) {
-      return;
-    }
-    lastJumpRef.current = scrollToMessageId;
-    followRef.current.follow = false;
-    const index = base + (loadingOlder ? 1 : 0);
-    const jump = () => {
-      listRef.current?.scrollToIndex(index, { align: "center" });
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let attempts = 0;
+    const attempt = () => {
+      const base = rowIndexRef.current?.get(scrollToMessageId);
+      if (base === undefined) {
+        attempts += 1;
+        if (attempts * 50 <= JUMP_ROW_RETRY_MS) {
+          timer = setTimeout(attempt, 50);
+        }
+        return;
+      }
+      lastJumpRef.current = scrollToMessageId;
+      followRef.current.follow = false;
+      const index = base + (loadingOlder ? 1 : 0);
+      const jump = () => {
+        listRef.current?.scrollToIndex(index, { align: "center" });
+      };
+      const raf = requestAnimationFrame(() => requestAnimationFrame(jump));
+      const settle = window.setTimeout(jump, 250);
+      cleanup = () => {
+        cancelAnimationFrame(raf);
+        window.clearTimeout(settle);
+      };
     };
-    const raf = requestAnimationFrame(() => requestAnimationFrame(jump));
-    const settle = window.setTimeout(jump, 250);
+    let cleanup: (() => void) | null = null;
+    attempt();
     return () => {
-      cancelAnimationFrame(raf);
-      window.clearTimeout(settle);
+      if (timer) {
+        clearTimeout(timer);
+      }
+      cleanup?.();
     };
   }, [scrollToMessageId, loadingOlder]);
 
