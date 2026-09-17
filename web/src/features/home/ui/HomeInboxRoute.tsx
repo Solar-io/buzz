@@ -6,9 +6,9 @@ import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
 import { useAsks } from "../AsksProvider.tsx";
 import { useInboxReadState } from "../hooks.ts";
 import {
+  compareInboxRows,
   filterInboxRows,
   inboxFilterCounts,
-  inboxRowSortAt,
   parseInboxFilter,
   type InboxFilter,
   type InboxListRow,
@@ -107,8 +107,9 @@ export function HomeInboxRoute({
     [feed, inboxChannels, selfPubkey, isRead],
   );
 
-  // The list interleaves conversations and asks, newest activity first. Ask
-  // rows carry their resolved channel label (DMs display by participant).
+  // The list interleaves conversations and asks — asks pinned above, newest
+  // activity first (see compareInboxRows for why asks pin). Ask rows carry
+  // their resolved channel label (DMs display by participant).
   const channelNameById = useMemo(
     () => new Map(inboxChannels.map((channel) => [channel.id, channel])),
     [inboxChannels],
@@ -126,13 +127,7 @@ export function HomeInboxRoute({
             channelLabel: channel?.type === "dm" ? name : `#${name}`,
           };
         }),
-      ].sort(
-        (a, b) =>
-          inboxRowSortAt(b) - inboxRowSortAt(a) ||
-          (a.kind === "ask" ? a.ask.id : a.item.conversationId).localeCompare(
-            b.kind === "ask" ? b.ask.id : b.item.conversationId,
-          ),
-      ),
+      ].sort(compareInboxRows),
     [items, asks, channelNameById],
   );
 

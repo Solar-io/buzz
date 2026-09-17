@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   INBOX_FILTER_OPTIONS,
+  compareInboxRows,
   filterInboxItems,
   filterInboxRows,
   inboxFilterCounts,
@@ -88,13 +89,21 @@ test("matchesInboxFilter is exact about a row in two categories", () => {
   assert.equal(matchesInboxFilter(readDm, "unread"), false);
 });
 
-test("asks show under all/asks/unread and never pose as mention or dm rows", () => {
+test("asks show under all/asks/unread, and dm/mention classify by where the ask lives", () => {
   for (const filter of ["all", "asks", "unread"]) {
     assert.equal(matchesRowFilter(askRow, filter), true, filter);
   }
-  for (const filter of ["mention", "dm"]) {
-    assert.equal(matchesRowFilter(askRow, filter), false, filter);
-  }
+  // A channel ask (always p-tagged) surfaces under Mentions, never DMs.
+  assert.equal(matchesRowFilter(askRow, "mention"), true);
+  assert.equal(matchesRowFilter(askRow, "dm"), false);
+  // A DM ask surfaces under DMs, never Mentions.
+  const dmAskRow = {
+    kind: "ask",
+    ask: { ...askRow.ask, id: "ask-dm", channelType: "dm" },
+    channelLabel: "someone",
+  };
+  assert.equal(matchesRowFilter(dmAskRow, "dm"), true);
+  assert.equal(matchesRowFilter(dmAskRow, "mention"), false);
   // And no conversation ever appears under the asks filter.
   assert.equal(matchesRowFilter(rows[0], "asks"), false);
   assert.deepEqual(
@@ -103,24 +112,43 @@ test("asks show under all/asks/unread and never pose as mention or dm rows", () 
   );
 });
 
-test("inboxRowSortAt interleaves asks and conversations on one clock", () => {
+test("compareInboxRows pins asks above conversations, newest first within each", () => {
+  // The newest thing in this set is a CONVERSATION (400) and the ask is
+  // older (250): the pin must still put the ask first — this is exactly the
+  // "one unread item I can't find" shape when the badge counts a buried ask.
   const mixed = [rows[0], askRowLatest, rows[2], askRow];
-  const sorted = [...mixed].sort(
-    (a, b) => inboxRowSortAt(b) - inboxRowSortAt(a),
-  );
+  const sorted = [...mixed].sort(compareInboxRows);
   assert.deepEqual(
     sorted.map((row) => row.kind),
-    ["ask", "conversation", "ask", "conversation"],
+    ["ask", "ask", "conversation", "conversation"],
   );
+  // Newest-first within the asks…
   assert.equal(sorted[0].ask.id, "ask-2");
+  assert.equal(sorted[1].ask.id, "ask-1");
+  // …and within the conversations.
+  assert.deepEqual(
+    sorted.slice(2).map((row) => row.item.conversationId),
+    ["a", "c"],
+  );
+  // Recency alone would have interleaved them — the pin is the rule under
+  // test, so prove the plain-recency order differs.
+  const byRecency = [...mixed].sort(
+    (a, b) => inboxRowSortAt(b) - inboxRowSortAt(a),
+  );
+  assert.notDeepEqual(
+    sorted.map((row) => (row.kind === "ask" ? row.ask.id : row.item.conversationId)),
+    byRecency.map((row) => (row.kind === "ask" ? row.ask.id : row.item.conversationId)),
+  );
 });
 
 test("counts are per filter, not per row", () => {
+  // askRow is a stream ask, so it lifts "mention" (where it now appears)
+  // and leaves "dm" untouched.
   assert.deepEqual(inboxFilterCounts(rows), {
     all: 4,
     unread: 3,
     asks: 1,
-    mention: 2,
+    mention: 3,
     dm: 2,
   });
 });
