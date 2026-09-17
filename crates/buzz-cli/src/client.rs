@@ -76,6 +76,18 @@ const ALLOWED_MIMES: &[&str] = &[
     "audio/wav",
 ];
 
+/// Canonicalize a sniffed MIME for the upload allow-list and wire
+/// content-type. `infer` reports RIFF/WAVE as the legacy alias
+/// `audio/x-wav`; the relay's validator (`buzz-media/src/validation.rs`)
+/// accepts both spellings and stores the canonical `audio/wav` — the CLI
+/// matches that contract so the voice-catalog asset format is uploadable.
+fn canonical_upload_mime(detected: &str) -> &str {
+    match detected {
+        "audio/x-wav" => "audio/wav",
+        other => other,
+    }
+}
+
 /// Maximum file size for image uploads (50 MB).
 const MAX_IMAGE_BYTES: u64 = 50 * 1024 * 1024;
 
@@ -1115,9 +1127,12 @@ impl BuzzClient {
         let bytes = std::fs::read(file_path)
             .map_err(|e| CliError::Other(format!("failed to read {file_path}: {e}")))?;
 
-        // 2. Detect MIME from magic bytes
+        // 2. Detect MIME from magic bytes, canonicalized through the same
+        // alias contract the relay stores under (`buzz-media` validation):
+        // `infer` reports RIFF/WAVE as `audio/x-wav`, the allow-list and
+        // the wire content-type carry the canonical `audio/wav`.
         let mime = infer::get(&bytes)
-            .map(|t| t.mime_type().to_string())
+            .map(|t| canonical_upload_mime(t.mime_type()).to_string())
             .unwrap_or_else(|| "application/octet-stream".to_string());
 
         if !ALLOWED_MIMES.contains(&mime.as_str()) {
@@ -2435,9 +2450,30 @@ mod retry_policy_tests {
 mod tests {
     use super::{
         advance_query_cursor, create_response_with_id_if_accepted, extract_relay_response_field,
-        BuzzClient,
+        BuzzClient, ALLOWED_MIMES, canonical_upload_mime,
     };
     use nostr::{EventBuilder, Keys, Kind, Tag};
+
+
+    #[test]
+    fn wav_magic_passes_the_upload_allow_list() {
+        // RIFF/WAVE header — what `buzz upload file` sniffs on any WAV.
+        // `infer` reports the legacy alias `audio/x-wav` for it (pinned
+        // so the canonicalizer below can never silently go unused).
+        let wav: &[u8] = b"RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x44\xac\x00\x00\x88\x58\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00";
+        let detected = infer::get(wav).expect("wav magic must be recognized").mime_type();
+        assert_eq!(detected, "audio/x-wav");
+        let canonical = canonical_upload_mime(detected);
+        assert_eq!(canonical, "audio/wav");
+        assert!(ALLOWED_MIMES.contains(&canonical));
+    }
+
+    #[test]
+    fn canonical_upload_mime_is_identity_for_allowed_types() {
+        for mime in ALLOWED_MIMES {
+            assert_eq!(canonical_upload_mime(mime), *mime);
+        }
+    }
 
     #[test]
     fn query_cursor_uses_last_events_composite_sort_key() {
