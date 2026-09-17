@@ -1,6 +1,8 @@
 /**
- * Markdown the composer appends for an uploaded attachment, and the inverse
- * used by the tray's remove control.
+ * Markdown for an uploaded attachment, composed into the wire content at send
+ * (Sam, 2026-09-17: the URL must not show in the composer's text box), and
+ * the inverse used to migrate drafts saved with markdown baked into their
+ * text.
  *
  * `imeta.ts` already builds the image/video form (`![image](url)`), which the
  * renderer turns into a signed-fetch `<img>`/`<video>`. Now that the relay's
@@ -67,6 +69,48 @@ export function removeAttachmentMarkdown(text: string, url: string): string {
   const escaped = escapeForRegExp(url);
   const pattern = new RegExp(`\\n?!?\\[[^\\]\\n]*\\]\\(${escaped}\\)`, "g");
   return text.replace(pattern, "");
+}
+
+/**
+ * The wire content for a send: the typed text with each queued attachment's
+ * markdown appended, in queue order. The composer's text box never shows the
+ * markdown (2026-09-17) — it exists only here, at send time, because the
+ * renderer still resolves attachments from the content body.
+ *
+ * A descriptor whose link already appears in the text is skipped: drafts
+ * saved before the hide-the-URL change carry their markdown in the stored
+ * text, and re-appending would duplicate the link on the wire.
+ */
+export function composeSendContent(
+  text: string,
+  descriptors: readonly BlobDescriptor[],
+  filenames: Readonly<{ [url: string]: string }> = {},
+): string {
+  let out = text.trim();
+  for (const descriptor of descriptors) {
+    if (out.includes(`](${descriptor.url})`)) {
+      continue;
+    }
+    out += attachmentMarkdown(descriptor, filenames[descriptor.url]);
+  }
+  return out;
+}
+
+/**
+ * Strip the markdown of exactly these descriptors from a draft's stored text
+ * when it is restored — the migration half of the same old-draft case the
+ * send-time dedupe above guards. URLs the author typed themselves (no
+ * matching descriptor) are untouched.
+ */
+export function stripAttachmentsMarkdown(
+  text: string,
+  descriptors: readonly BlobDescriptor[],
+): string {
+  let out = text;
+  for (const descriptor of descriptors) {
+    out = removeAttachmentMarkdown(out, descriptor.url);
+  }
+  return out;
 }
 
 /** Human-readable size for the attachment tray. */

@@ -27,8 +27,8 @@ import { imageFilesFromClipboard } from "../lib/composerPaste.ts";
 import { loadDraftState, saveDraftState } from "../lib/drafts.ts";
 import { buildImetaTag } from "../lib/imeta.ts";
 import {
-  attachmentMarkdown,
-  removeAttachmentMarkdown,
+  composeSendContent,
+  stripAttachmentsMarkdown,
 } from "../lib/attachmentMarkdown.ts";
 import {
   ATTACHMENT_ACCEPT,
@@ -148,7 +148,15 @@ export function Composer({
   }) => Promise<{ ok: boolean; message: string }>;
 }) {
   const initialDraft = useRef(draftKey ? loadDraftState(draftKey) : null);
-  const [text, setText] = useState(() => initialDraft.current?.text ?? "");
+  // Drafts saved before attachments stopped showing their markdown in the
+  // box (2026-09-17) carry it in `text` — strip it on load so the tray chip
+  // is the attachment's only visible presence.
+  const [text, setText] = useState(() =>
+    stripAttachmentsMarkdown(
+      initialDraft.current?.text ?? "",
+      initialDraft.current?.media ?? [],
+    ),
+  );
   const [busy, setBusy] = useState(false);
   const [popupIndex, setPopupIndex] = useState(0);
   // The caret/selection, mirrored into React state. The textarea is
@@ -174,9 +182,9 @@ export function Composer({
   const customEmoji = useCustomEmoji();
   // The author's own key — @everyone expands to everyone EXCEPT them.
   const selfPubkey = useOwnPubkey();
-  // Current text without waiting for a re-render: the upload path appends
-  // markdown from an async callback, and reading `text` there would capture
-  // whatever the closure was created with.
+  // Current text without waiting for a re-render: async paths (draft
+  // persistence, GIF inserts) read text between renders, and reading `text`
+  // there would capture whatever the closure was created with.
   const textRef = useRef(text);
   const onTextChangeRef = useRef(onTextChange);
   onTextChangeRef.current = onTextChange;
@@ -256,7 +264,11 @@ export function Composer({
     }
     restoringDraft.current = true;
     const draft = draftKey ? loadDraftState(draftKey) : null;
-    restoreText(draft?.text ?? "");
+    // Same old-draft migration as the initial state: strip markdown that
+    // belongs to the draft's own attachments (the tray shows them).
+    restoreText(
+      stripAttachmentsMarkdown(draft?.text ?? "", draft?.media ?? []),
+    );
     setMentionPicks(new Map(Object.entries(draft?.mentionPicks ?? {})));
     setAttachments(
       queueFromDescriptors(draft?.media ?? [], draft?.filenames ?? {}),
@@ -399,7 +411,8 @@ export function Composer({
    *
    * Not at the caret, unlike an emoji: a GIF is a block image, and dropping
    * `![…](…)` mid-sentence would split the paragraph the author was typing.
-   * This matches how an uploaded attachment appends (see `attachFiles`).
+   * GIFs remain visible markdown in the box — unlike uploaded attachments,
+   * whose markdown is composed invisibly at send (`composeSendContent`).
    */
   const insertGif = (markdown: string) => {
     const current = textRef.current;
@@ -492,9 +505,9 @@ export function Composer({
         setAttachments((previous) =>
           markUploaded(previous, row.id, descriptor),
         );
-        applyText(
-          `${textRef.current}${attachmentMarkdown(descriptor, file.name)}`,
-        );
+        // No text mutation: the markdown is composed at send time
+        // (`composeSendContent` in submit) — the box shows only what the
+        // author typed (Sam, 2026-09-17: hide attachment URLs in the box).
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Upload failed.";
@@ -504,18 +517,13 @@ export function Composer({
     }
   };
 
-  /** Drop one attachment, its preview, and the markdown that referenced it. */
+  /** Drop one attachment and its preview. No text to unwind — the box never
+   *  carried the attachment's markdown; dropping the chip drops the wire. */
   const removeQueued = (id: string) => {
     const item = attachments.find((entry) => entry.id === id);
     setAttachments((previous) => removeAttachment(previous, id));
-    if (!item) {
-      return;
-    }
-    if (item.previewUrl) {
+    if (item?.previewUrl) {
       URL.revokeObjectURL(item.previewUrl);
-    }
-    if (item.descriptor) {
-      applyText(removeAttachmentMarkdown(textRef.current, item.descriptor.url));
     }
   };
 
@@ -535,6 +543,10 @@ export function Composer({
   };
 
   const uploadsPending = hasPendingUploads(attachments);
+  // An uploaded attachment alone is a sendable message — the markdown that
+  // makes it non-empty is composed at send, so the button cannot key on the
+  // visible text alone.
+  const hasUploaded = attachments.some((item) => item.descriptor != null);
 
   // Sender-authored link previews. Editing an existing message never
   // re-resolves: the snapshot belongs to the original send, and an edit that
@@ -543,7 +555,18 @@ export function Composer({
 
   const submit = async () => {
     const trimmed = text.trim();
-    if (!trimmed || busy || uploadsPending) {
+    // The wire content: typed text plus each uploaded attachment's markdown,
+    // composed here and never shown in the box. An edit keeps the raw text
+    // as-is — the composer is editing the original body, and the tray's
+    // attachments belong to the channel draft, not the message under edit.
+    const finalContent = editingActive
+      ? trimmed
+      : composeSendContent(
+          trimmed,
+          uploadedDescriptors(attachments),
+          filenamesByUrl(attachments),
+        );
+    if (!finalContent || busy || uploadsPending) {
       return;
     }
     const { mentionPubkeys, unresolved } = resolveMentions(
@@ -557,7 +580,7 @@ export function Composer({
       const result = editingActive
         ? ((await editSend?.(trimmed)) ?? { ok: false, message: "" })
         : await send({
-            content: trimmed,
+            content: finalContent,
             mentionPubkeys,
             threadRef,
             // `mediaTags` is appended verbatim to the event's tags by
@@ -571,13 +594,13 @@ export function Composer({
               ...uploadedDescriptors(attachments).map((descriptor) =>
                 buildImetaTag(descriptor),
               ),
-              ...buildCustomEmojiTags(trimmed, customEmoji),
+              ...buildCustomEmojiTags(finalContent, customEmoji),
               // Link-preview snapshots, or the `["link-preview","none"]`
               // marker when the author dismissed the tray. Derived from the
               // FINAL content, like the emoji tags above: a snapshot whose
               // canonical URL is not in the body is rejected by the relay,
               // and it would take the whole message with it.
-              ...linkPreviews.tagsFor(trimmed),
+              ...linkPreviews.tagsFor(finalContent),
             ],
           });
       if (result.ok) {
@@ -888,7 +911,7 @@ export function Composer({
           type="button"
           aria-label={editingActive ? "Save" : "Send"}
           title={uploadsPending ? "Waiting for uploads to finish" : undefined}
-          disabled={busy || uploadsPending || !text.trim()}
+          disabled={busy || uploadsPending || (!text.trim() && !hasUploaded)}
           className="mb-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
           onClick={() => void submit()}
         >

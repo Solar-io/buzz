@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   attachmentMarkdown,
+  composeSendContent,
   formatAttachmentSize,
   isInlineMedia,
   removeAttachmentMarkdown,
+  stripAttachmentsMarkdown,
 } from "./attachmentMarkdown.ts";
 
 const descriptor = (mime, url) => ({
@@ -87,4 +89,65 @@ test("attachment sizes render in the unit that fits", () => {
   assert.equal(formatAttachmentSize(2048), "2.0 KB");
   assert.equal(formatAttachmentSize(5 * 1024 * 1024), "5.0 MB");
   assert.equal(formatAttachmentSize(Number.NaN), "");
+});
+
+test("composeSendContent appends each attachment after the typed text", () => {
+  const image = descriptor("image/png", "https://r/1.png");
+  const pdf = descriptor("application/pdf", "https://r/3.pdf");
+  assert.equal(
+    composeSendContent(
+      "look at this",
+      [image, pdf],
+      { "https://r/3.pdf": "Q3 report.pdf" },
+    ),
+    "look at this\n![image](https://r/1.png)\n[Q3 report.pdf](https://r/3.pdf)",
+  );
+});
+
+test("composeSendContent works with nothing typed — the attachment alone is the message", () => {
+  const image = descriptor("image/png", "https://r/1.png");
+  assert.equal(
+    composeSendContent("  ", [image], {}),
+    "\n![image](https://r/1.png)",
+    "whitespace-only text still sends as attachment-only",
+  );
+  assert.equal(composeSendContent("", [], {}), "", "empty stays empty");
+});
+
+test("composeSendContent never duplicates markdown an old draft already carries", () => {
+  const pdf = descriptor("application/pdf", "https://r/3.pdf");
+  const staleDraftText = "here\n[Q3 report.pdf](https://r/3.pdf)";
+  assert.equal(
+    composeSendContent(staleDraftText, [pdf], { "https://r/3.pdf": "Q3 report.pdf" }),
+    "here\n[Q3 report.pdf](https://r/3.pdf)",
+    "the link already in the text must not be appended a second time",
+  );
+});
+
+test("composeSendContent trims trailing whitespace off the typed text", () => {
+  const image = descriptor("image/png", "https://r/1.png");
+  assert.equal(
+    composeSendContent("hi\n\n", [image], {}),
+    "hi\n![image](https://r/1.png)",
+  );
+});
+
+test("stripAttachmentsMarkdown migrates an old draft's text to the tray-only shape", () => {
+  const image = descriptor("image/png", "https://r/1.png");
+  const pdf = descriptor("application/pdf", "https://r/3.pdf");
+  const stale = "see this\n![image](https://r/1.png)\n[report.pdf](https://r/3.pdf)\nand that";
+  assert.equal(
+    stripAttachmentsMarkdown(stale, [image, pdf]),
+    "see this\nand that",
+  );
+});
+
+test("stripAttachmentsMarkdown leaves links the author typed themselves", () => {
+  const image = descriptor("image/png", "https://r/1.png");
+  const text = "see\n![image](https://r/other.png)";
+  assert.equal(
+    stripAttachmentsMarkdown(text, [image]),
+    text,
+    "no descriptor, no strip — an unrelated link survives",
+  );
 });
