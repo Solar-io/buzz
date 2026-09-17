@@ -10,9 +10,19 @@ import {
   threadWidthMax,
 } from "./threadPanelWidth.ts";
 
-test("floor: too-narrow values clamp up to the minimum", () => {
-  assert.equal(clampThreadWidth(0, 1920), THREAD_WIDTH_MIN);
-  assert.equal(clampThreadWidth(100, 1920), THREAD_WIDTH_MIN);
+test("floor: too-narrow values clamp up to the comfort minimum on wide rows", () => {
+  // 600 is Sam's ask (9/17), hardcoded per the pin rule — never derived from
+  // the constant it tests.
+  assert.equal(clampThreadWidth(0, 1920), 600);
+  assert.equal(clampThreadWidth(100, 1920), 600);
+  // The resurrection case: a stale small persisted width (min-drag 288, the
+  // old 384 default) reopens at 600 on a row that can afford it.
+  assert.equal(clampThreadWidth(288, 1920), 600);
+  assert.equal(clampThreadWidth(384, 1920), 600);
+  // …but on a row too narrow for 600 + a livable channel column, the
+  // responsive minimum still governs.
+  assert.equal(clampThreadWidth(288, 700), 340);
+  assert.equal(clampThreadWidth(2000, 500), THREAD_WIDTH_MIN);
 });
 
 test("ceiling is viewport-relative, not the old fixed 640 cap", () => {
@@ -25,8 +35,8 @@ test("ceiling is viewport-relative, not the old fixed 640 cap", () => {
 });
 
 test("in-range values pass through unchanged", () => {
-  assert.equal(clampThreadWidth(384, 1920), 384);
   assert.equal(clampThreadWidth(640, 1920), 640);
+  assert.equal(clampThreadWidth(800, 1920), 800);
 });
 
 test("floor wins on windows too narrow for both columns", () => {
@@ -42,10 +52,9 @@ test("stored widths parse: valid passes, junk and sub-floor reject", () => {
   assert.equal(parseStoredThreadWidth(null), null);
   assert.equal(parseStoredThreadWidth(`${THREAD_WIDTH_MIN - 1}`), null);
   assert.equal(parseStoredThreadWidth("384.7"), 384.7);
-  // The fallback default is a real pane width, within [floor, old cap].
-  assert.ok(
-    THREAD_WIDTH_DEFAULT >= THREAD_WIDTH_MIN && THREAD_WIDTH_DEFAULT <= 640,
-  );
+  // The fallback default is Sam's comfort floor, exactly (9/17: "at least
+  // 600px") — not a derived range check.
+  assert.equal(THREAD_WIDTH_DEFAULT, 600);
 });
 
 test("portraitRailWidth: the 0.38 pane term binds on tall viewports", () => {
