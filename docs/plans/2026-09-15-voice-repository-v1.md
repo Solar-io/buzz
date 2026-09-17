@@ -289,3 +289,53 @@ Fleet rule: each test below is paired with the mutation that must make it fail. 
 2. **Any-member publish (`UsersWrite`)** is recommended — it is what every comparable kind actually enforces, and fleet agents need it. If Sam wants owner-only rows, that is a NEW role check in `validate_voice_catalog_envelope`'s call path (precedent: the 44200 ownership check, `ingest.rs:2740-2773`) — cheap to add now, impossible to add later without an orphaned-row policy.
 3. **buzz-media WAV allowance (§4)** widens a deliberate deny-list; it is the one security-review-worthy change. Alternative if Sam prefers zero media changes: v1 ships bundled rows only and imported-voice assets wait — but that defers the plan's "asset path on media" out of step 1.
 4. **Bundled-preset table home** (§8): shared `buzz-voice::bundled` + a desktop drift-guard test (recommended), versus duplicating the table in the CLI.
+
+## 13. Addendum (2026-09-17): kind 30182 — agent voice SELECTION (web v1)
+
+§11 deferred the web picker; this addendum records the store it publishes to.
+The design is a direct sibling of §2, with one deliberate divergence.
+
+**Kind: `KIND_AGENT_VOICE = 30182`** (parameterized-replaceable, NIP-33).
+An agent's own speaking-voice binding: the author pubkey IS the agent
+identity, and the row overrides the deterministic pubkey-derived mapping
+wherever that agent speaks.
+
+**Addressing: fixed `d` tag `agent-voice` (`KIND_AGENT_VOICE_D_TAG`) — NOT
+the §2.1 pattern.** In §2 the coordinate key IS the product (one row per
+voice, many live rows); here the selection REPLACES its predecessor, so
+keying on the selected voice would strand the old row on every change and
+force readers to fold several heads per author. The fixed tag gives exactly
+one row per author under plain NIP-33 LWW; the generic kind:5 `a`-tag
+coordinate delete composes as usual.
+
+**Content (v1):** `{"version":1,"engine":…,"label":…,…}` where the body is
+an engine-tagged selection — `{engine:"local-synth",voiceURI}` (a
+`speechSynthesis` voiceURI from the caller's local English pool) or
+`{engine:"pocket",key}` (a §3 catalog-row key, synthesized server-side).
+Unlike 30181, whose JSON body is the readers' contract, the selection
+grammar is enforced at ingest (`validate_agent_voice_payload`,
+`crates/buzz-relay/src/handlers/ingest.rs`): a malformed binding would
+silently shadow the derived mapping on every trusting client. Validation
+mirrors the web reader exactly: engine allow-list, non-empty bounded
+`voiceURI`, catalog key grammar of §3.3, `pocket:eve` refused (the §3
+identity-test ban extends to selecting, not just publishing).
+
+**Access:** identical to §2.4 — `UsersWrite`, community-global, public-read,
+no gated set (every participant's browser must read it).
+
+**English constraint (ruled for v1, Evie 2026-09-17):** the utterance text
+is English, so the voice must be an English voice. The picker surfaces only
+English `speechSynthesis` voices (`ENGLISH_ONLY`, one predicate — the
+generalization is "voice locale matches utterance locale", not a teardown).
+The speak-time module enforces the same invariant independently: a
+non-English selection is rejected there and marked `selected-rejected`
+rather than silently falling back, so a wiring assertion can check WHICH
+path (selected / selected-rejected / derived) spoke.
+
+**Seams:** `web/src/features/voice/` owns the reader (`agentVoiceSelection.ts`),
+publisher (`agentVoiceApi.ts`), hooks (`useAgentVoiceSelections`) and the
+picker (`ui/VoicePickerDialog.tsx`, entered from a Settings card). The
+call-site wiring into `useHuddleAgentSpeech` is a separate, one-line change
+that passes `agentVoiceSelectionFor(pubkey)` as the future `selected?`
+parameter of `speechVoiceProfile` — §11's "untouched" constraint still holds
+until that seat lands.
