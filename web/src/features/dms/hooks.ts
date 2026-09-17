@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { RelaySession } from "@/shared/api/relay-session";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
@@ -87,22 +87,22 @@ function useDmActivity(dmIds: string[]): {
   const [events, setEvents] = useState<SignedNostrEvent[]>([]);
   const [settled, setSettled] = useState(false);
   /**
-   * Durable-only window. The phantom-DM incident: the sidebar consumed
-   * kind 9s from channel-scoped subscriptions (which legitimately include
-   * cross-channel traffic the app also subscribes to) as DM ordering keys
-   * and previews, so conversations surfaced rows their own transcripts
-   * never contained. The wire was later verified clean end to end
-   * (2026-09-15 frame-level capture with literal sub prefixes: per-DM
-   * filters never received foreign events; the earlier "relay fan-out"
-   * claim was an instrument artifact and is retracted) — the defect was
-   * app-side consumption, which this window contains. Events accepted
-   * AFTER the stored window closes (EOSE across every batch) are ignored:
-   * a preview must never promise a message the channel's own history will
-   * not show. Cost, taken deliberately: a genuinely new DM message does
-   * not re-sort the sidebar until the next reload or DM-set change —
-   * recency freshness trades for truthfulness.
+   * Live-updating recency. History (pre-EOSE) and live arrivals share one
+   * path: both come from THIS hook's own per-DM `#h`-scoped subscriptions,
+   * and that wire was verified clean end to end on 2026-09-15 (frame-level
+   * capture with literal sub prefixes: per-DM filters never received
+   * foreign events), so every event here is the DM's own traffic and will
+   * appear in that DM's own history. The phantom-DM incident's app-side
+   * consumption defect was consuming a DIFFERENT feed's channel-scoped
+   * events as DM keys — nothing here reads those.
+   *
+   * (Until 2026-09-17 events after EOSE were dropped wholesale — a
+   * containment whose deliberate cost, "a new DM message does not re-sort
+   * the sidebar until reload", read as a live defect: the toast feed still
+   * fired, so messages arrived with no re-sort AND no unread dot on the
+   * row, both of which derive from this map. The freeze is lifted; the
+   * settled signal remains EOSE-based for the default-open gate.)
    */
-  const durableWindowClosedRef = useRef(false);
   // Pubkeys are comma-free, so the join is a lossless set key.
   const idsKey = useMemo(
     () => Array.from(new Set(dmIds)).sort().join(","),
@@ -115,7 +115,6 @@ function useDmActivity(dmIds: string[]): {
       setSettled(true);
       return;
     }
-    durableWindowClosedRef.current = false;
     setEvents([]);
     setSettled(false);
     // Exact per-DM sampling (a shared limit starves quiet DMs) packed into
@@ -127,7 +126,6 @@ function useDmActivity(dmIds: string[]): {
     const unsubscribes = batches.map((filters) =>
       session.subscribe(filters, {
         onEvent: (event) => {
-          if (durableWindowClosedRef.current) return;
           if (event.kind !== DM_ACTIVITY_KIND) return;
           setEvents((previous) => {
             const id = event.tags.find((tag) => tag[0] === "h")?.[1];
@@ -153,7 +151,6 @@ function useDmActivity(dmIds: string[]): {
         onEose: () => {
           awaitingEose -= 1;
           if (awaitingEose <= 0) {
-            durableWindowClosedRef.current = true;
             setSettled(true);
           }
         },

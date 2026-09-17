@@ -407,7 +407,11 @@ export function ChannelSidebar({
                     channelId={channel.id}
                     lastSeenAt={readState.read[channel.id] ?? null}
                     unread={
-                      lastMessage
+                      // Own messages (e.g. sent from another device) never
+                      // dot your row — parity with channel rows, whose
+                      // channelUnreadSignal ignores self-authored activity.
+                      lastMessage &&
+                      lastMessage.authorPubkey !== dmIdentity.selfPubkey
                         ? isUnread(
                             readState.read,
                             channel.id,
