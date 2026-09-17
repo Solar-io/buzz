@@ -17,7 +17,9 @@ import '../shared/relay/relay_provider.dart';
 /// Debug-only audio-pass rig for the D-029 hardware gate.
 ///
 /// Active only when all three `--dart-define` values are set AND the build is
-/// a debug build:
+/// a debug or profile build (never release). Profile is the standalone-
+/// launchable shape: debug builds refuse to create a FlutterEngine without
+/// flutter-tooling attach, so a device-launched rig must be profile.
 ///
 /// - `BUZZ_SELFTEST_NSEC` — scratch rig identity (never a real account key).
 /// - `BUZZ_SELFTEST_RELAY_URL` — relay origin the device can reach.
@@ -44,7 +46,7 @@ abstract final class AudioSelftestConfig {
   );
 
   static bool get enabled =>
-      kDebugMode && nsec.isNotEmpty && relayUrl.isNotEmpty && parentChannel.isNotEmpty;
+      !kReleaseMode && nsec.isNotEmpty && relayUrl.isNotEmpty && parentChannel.isNotEmpty;
 }
 
 /// Writes the rig identity as the active community. Called from `main()`
