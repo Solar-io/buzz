@@ -174,7 +174,11 @@ final huddleSessionProvider =
     );
 
 /// Owns one foreground mobile Huddle and wires native Opus media to its socket.
-final class HuddleSessionNotifier extends Notifier<HuddleSessionState> {
+///
+/// Deliberately not `final`: tests subclass it to spy on `leave()` without
+/// running the real transport teardown (see
+/// test/features/channels/mobile_huddle_controller_test.dart).
+class HuddleSessionNotifier extends Notifier<HuddleSessionState> {
   HuddleMedia? _media;
   HuddleTransportClient? _transport;
   StreamSubscription<HuddleMediaState>? _mediaStateSubscription;

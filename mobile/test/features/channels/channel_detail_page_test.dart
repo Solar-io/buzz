@@ -7513,18 +7513,15 @@ void main() {
     );
 
     testWidgets(
-      'community transition leaves a newer call after background cleanup',
+      'community transition leaves the live call after a backgrounded pause survives it',
       (tester) async {
         final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-        final oldMedia = _HuddleTestMedia();
         final currentMedia = _HuddleTestMedia();
-        final media = Queue<_HuddleTestMedia>.of([oldMedia, currentMedia]);
+        final media = Queue<_HuddleTestMedia>.of([currentMedia]);
         final transports = Queue<_HuddleTestTransport>.of([
           _HuddleTestTransport(),
-          _HuddleTestTransport(),
         ]);
-        final oldHumanCount = Completer<int>();
-        var humanCountCalls = 0;
+        final humanCount = Completer<int>();
 
         await tester.pumpWidget(
           _buildTestable(
@@ -7543,12 +7540,7 @@ void main() {
             relayConfigNotifier: _HuddleRelayConfigNotifier(),
             relaySessionNotifier: _ReconnectingRelaySession(),
             huddleCurrentPubkey: 'self',
-            huddleHumanCountLoader: (_) {
-              humanCountCalls++;
-              return humanCountCalls == 1
-                  ? oldHumanCount.future
-                  : Future.value(2);
-            },
+            huddleHumanCountLoader: (_) => humanCount.future,
             huddleMediaFactory: media.removeFirst,
             huddleTransportFactory: (_) => transports.removeFirst(),
           ),
@@ -7562,19 +7554,15 @@ void main() {
         );
         final lifecycle = container.read(appLifecycleProvider.notifier);
         expect(lifecycle, isA<_TestAppLifecycleNotifier>());
+
+        // The D-029 contract: locking/backgrounding (paused) must NOT stop
+        // the call — audio survives the lock. The media keeps running.
         (lifecycle as _TestAppLifecycleNotifier).setLifecycle(
           AppLifecycleState.paused,
         );
-        await oldMedia.stopStarted.future;
         await tester.pump();
-        await container
-            .read(mobileHuddleControllerProvider.notifier)
-            .join(
-              parentChannelId: _channelId,
-              ephemeralChannelId: _huddleChannelId,
-              startedBy: 'desktop',
-              startedEventId: 'background-transition-call',
-            );
+        expect(currentMedia.stopStarted, isNot(completes));
+        expect(container.read(huddleSessionProvider).isInSession, isTrue);
 
         var transitionCompleted = false;
         final transition = container
@@ -7584,7 +7572,7 @@ void main() {
         await tester.pump();
         expect(transitionCompleted, isFalse);
 
-        oldHumanCount.complete(2);
+        humanCount.complete(2);
         await transition;
 
         expect(currentMedia.state.phase, HuddleMediaPhase.stopped);

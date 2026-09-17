@@ -103,9 +103,25 @@ final class MobileHuddleController extends Notifier<bool> {
 
   @override
   bool build() {
+    // The Huddle session intentionally SURVIVES app backgrounding/lock: the
+    // audio session category (.playAndRecord/.voiceChat) plus the `audio`
+    // background mode keep both the audio room and the mic alive, which is
+    // the D-029 capability line ("audio that survives backgrounding").
+    // Leaving on `paused` made that unreachable — the app tore down a
+    // healthy session one second after lock. Teardown now happens only on
+    // terminal detachment (or explicit user leave/transition/failure).
+    //
+    // One pause-path obligation remains: a FAILED session's async cleanup
+    // (leave events, archival) must still be awaited before the relay
+    // session pauses, so the app never suspends with cleanup half-done. A
+    // live session blocks nothing — it rides the lock.
     final unregisterBeforePause = ref
         .read(relaySessionProvider.notifier)
-        .registerBeforePause(_leaveForBackground);
+        .registerBeforePause(() async {
+          if (ref.read(huddleSessionProvider).isInSession) return;
+          final cleanup = _failureCleanup;
+          if (cleanup != null) await cleanup;
+        });
     final unregisterBeforeCommunityTransition = ref
         .read(communityTransitionProvider)
         .register(_leaveForTransition);
@@ -118,8 +134,7 @@ final class MobileHuddleController extends Notifier<bool> {
       }
     });
     ref.listen(appLifecycleProvider, (_, next) {
-      if (next == AppLifecycleState.paused ||
-          next == AppLifecycleState.detached) {
+      if (next == AppLifecycleState.detached) {
         unawaited(_leaveForBackground());
       }
     });
