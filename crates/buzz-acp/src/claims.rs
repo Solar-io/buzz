@@ -143,7 +143,13 @@ struct ManagedSection {
 
 #[derive(Debug, serde::Deserialize)]
 struct ManagedTurn {
+    /// Both fields default to empty when a foreign writer omits them, so a
+    /// shape-corrupt entry parses as an entry and then fails per-entry
+    /// (empty strings parse as neither uuid nor timestamp) — it must not
+    /// fail the whole document and blind the guard to its siblings.
+    #[serde(default)]
     channel: String,
+    #[serde(default)]
     last_seen_at: String,
 }
 
@@ -227,7 +233,7 @@ pub(crate) fn claim_holds(path: &Path, channel_id: Uuid) -> bool {
             match chrono::DateTime::parse_from_rfc3339(&composing.at) {
                 Ok(at) => {
                     let age = chrono::Utc::now() - at.with_timezone(&chrono::Utc);
-                    if age <= chrono::Duration::seconds(STALE_HOLD_SECS) {
+                    if age <= chrono::Duration::seconds(COMPOSING_TTL_SECS) {
                         return true;
                     }
                 }
@@ -507,6 +513,52 @@ mod tests {
         assert!(
             claim_holds(&path, channel),
             "composing must still fold when managed is absent"
+        );
+        cleanup(&path);
+    }
+
+    /// Window pin for the two halves having DIFFERENT windows: 300s is stale
+    /// for `managed.turns` (150s) but fresh for `composing` (600s). Catches
+    /// the exact regression the first cut shipped and QA caught (2026-09-17):
+    /// a broad text revert collapsed the composing window onto the managed
+    /// one and nothing in the suite noticed — this test is the guard that
+    /// would have.
+    #[test]
+    fn composing_between_the_two_windows_still_holds() {
+        let channel = Uuid::new_v4();
+        let path = temp_claims(&composing_body(channel, 300));
+        assert!(
+            claim_holds(&path, channel),
+            "a 300s-old composing claim is inside its own 600s window and must fold"
+        );
+        // And the mirror: 300s is past the managed window.
+        let path = temp_claims(&managed_body(channel, 300));
+        assert!(
+            !claim_holds(&path, channel),
+            "a 300s-old managed pulse is past the 150s window and must not fold"
+        );
+        cleanup(&path);
+    }
+
+    /// Shape-corrupt entry (keys missing entirely) is tolerated per-entry —
+    /// it neither folds nor blinds the guard to a live sibling. Without the
+    /// `#[serde(default)]` on the turn fields this shape fails the whole
+    /// document's deserialization and kills the entire guard incl. composing.
+    #[test]
+    fn shape_corrupt_managed_entry_is_tolerated_per_entry() {
+        let channel = Uuid::new_v4();
+        let at = (chrono::Utc::now() - chrono::Duration::seconds(10)).to_rfc3339();
+        let body = serde_json::json!({
+            "managed": {"turns": [
+                {"slot": "x:0", "channel": channel.to_string()},
+                {"slot": "x:1", "channel": channel.to_string(), "last_seen_at": at}
+            ]}
+        })
+        .to_string();
+        let path = temp_claims(&body);
+        assert!(
+            claim_holds(&path, channel),
+            "an entry with a missing last_seen_at must not hide the live sibling"
         );
         cleanup(&path);
     }
