@@ -145,15 +145,19 @@ async fn test_agent_voice_replace_leaves_one_head() {
     let now = Timestamp::now().as_secs();
 
     let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
-    for content in [
+    // Distinct created_at per publish — the replacement MUST be newer. At
+    // equal created_at the relay's NIP-33 tie-break keeps the lower event ID
+    // (replaceable.rs), so sharing a timestamp makes the asserted winner
+    // depend on random signing keys — a coin flip, not a test.
+    for (index, content) in [
         pocket_content("pocket:azelma"),
         local_synth_content("com.apple.speech.synthesis.voice.Samantha"),
-    ] {
-        let ok = client_send(
-            &mut client,
-            agent_voice_event(&keys, &content, now.saturating_sub(1)),
-        )
-        .await;
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let created_at = now.saturating_sub(1) + index as u64;
+        let ok = client_send(&mut client, agent_voice_event(&keys, &content, created_at)).await;
         assert!(ok.accepted, "publish rejected: {}", ok.message);
     }
 
