@@ -86,7 +86,7 @@ function isLowercaseHex(value: string, length: number): boolean {
  * `pocket:imported:<64 lowercase hex>` with the imported form required to
  * equal `pocket:imported:` + `contentHash` (the Rust `valid_identity` rule).
  */
-function isValidVoiceKey(content: VoiceCatalogContent): boolean {
+export function isValidVoiceKey(content: VoiceCatalogContent): boolean {
   const importedPrefix = "pocket:imported:";
   if (content.key.startsWith(importedPrefix)) {
     const hash = content.key.slice(importedPrefix.length);

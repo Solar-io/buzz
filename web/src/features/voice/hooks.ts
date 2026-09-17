@@ -1,6 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
+import {
+  KIND_AGENT_VOICE,
+  reduceAgentVoiceEvents,
+  type AgentVoiceEventLike,
+  type AgentVoiceSelection,
+  type AgentVoiceSelectionRow,
+} from "./lib/agentVoiceSelection.ts";
 import {
   KIND_VOICE_CATALOG,
   reduceVoiceCatalogEvents,
@@ -48,4 +55,55 @@ export function useVoiceCatalog(): {
     [events],
   );
   return { rows, ready };
+}
+
+/**
+ * Live community agent-voice selections (kind 30182).
+ *
+ * Same subscription shape as {@link useVoiceCatalog}: one REQ names `kinds`
+ * explicitly (the relay's p-gate requires it), no module-level caches, and
+ * `ready` flips on EOSE. The fold is LWW per agent pubkey — the author IS
+ * the agent identity, and NIP-33 keeps exactly one head at the fixed
+ * `agent-voice` coordinate server-side.
+ *
+ * `agentVoiceSelectionFor(pubkey)` is the thin adapter the speak-time seam
+ * consumes: it is the future `selected?` input of `speechVoiceProfile`
+ * (CK's seat wires the one-line call site; this side deliberately does not
+ * touch `useHuddleAgentSpeech`). When that seam lands, the profile it builds
+ * carries `source: "selected" | "selected-rejected" | "derived"` — the
+ * module rejects non-English selections and marks the source rather than
+ * silently falling back — so the wiring assertion can check WHICH path
+ * spoke, not just that a voice came out.
+ */
+export function useAgentVoiceSelections(): {
+  byPubkey: Map<string, AgentVoiceSelectionRow>;
+  ready: boolean;
+  agentVoiceSelectionFor: (
+    agentPubkey: string,
+  ) => AgentVoiceSelection | undefined;
+} {
+  const { session } = useRelaySession();
+  const [events, setEvents] = useState<AgentVoiceEventLike[]>([]);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    setEvents([]);
+    setReady(false);
+    return session.subscribe(
+      { kinds: [KIND_AGENT_VOICE], limit: 500 },
+      {
+        onEvent: (event: SignedNostrEvent) => {
+          setEvents((previous) => [...previous, event]);
+        },
+        onEose: () => setReady(true),
+      },
+    );
+  }, [session]);
+
+  const byPubkey = useMemo(() => reduceAgentVoiceEvents(events), [events]);
+  const agentVoiceSelectionFor = useCallback(
+    (agentPubkey: string) => byPubkey.get(agentPubkey)?.selection,
+    [byPubkey],
+  );
+  return { byPubkey, ready, agentVoiceSelectionFor };
 }
