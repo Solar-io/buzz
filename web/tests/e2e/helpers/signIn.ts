@@ -17,10 +17,16 @@ import { nsecEncode } from "nostr-tools/nip19";
  * with no gate at all, so signing in "at" that path finds no form. Use
  * {@link signInAndOpenShell} and navigate inside the app instead.
  */
-export async function signIn(page: Page, path = "/repos"): Promise<void> {
+export async function signIn(
+  page: Page,
+  path = "/repos",
+  secretKey?: Uint8Array,
+): Promise<void> {
   await page.goto(path);
   await page.getByRole("button", { name: "Enter key manually" }).click();
-  await page.getByPlaceholder("nsec1…").fill(nsecEncode(generateSecretKey()));
+  await page.getByPlaceholder("nsec1…").fill(
+    nsecEncode(secretKey ?? generateSecretKey()),
+  );
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByPlaceholder("New passphrase").fill("e2e-passphrase");
   await page.getByPlaceholder("Confirm passphrase").fill("e2e-passphrase");
