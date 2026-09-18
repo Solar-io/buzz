@@ -75,3 +75,23 @@ export function resolveDocHref(href: string, relayBase: string): string | null {
   }
   return url.pathname;
 }
+
+/**
+ * The URL the viewer should actually load: the rewritten doc path made
+ * ABSOLUTE against the relay base. The docs proxy lives on the relay, while
+ * the SPA can run on any origin (relay-served web, the Tauri desktop shell,
+ * a mobile front door) — a bare path resolves against `location.origin`, so
+ * it only worked by accident on the relay-served SPA and rendered nothing
+ * everywhere else.
+ */
+export function absoluteDocHref(href: string, relayBase: string): string | null {
+  const path = resolveDocHref(href, relayBase);
+  if (path === null) {
+    return null;
+  }
+  try {
+    return new URL(path, relayBase).href;
+  } catch {
+    return null;
+  }
+}

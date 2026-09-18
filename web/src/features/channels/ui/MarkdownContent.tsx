@@ -16,7 +16,7 @@ import remarkCustomEmoji from "@/features/custom-emoji/lib/remarkCustomEmoji";
 import { useCustomEmoji } from "@/features/custom-emoji/hooks";
 import { CustomEmojiImage } from "@/features/custom-emoji/ui/CustomEmojiImage";
 import { linkDisposition, openLink } from "@/shared/lib/linkOpen";
-import { resolveDocHref } from "@/shared/lib/docLinks";
+import { absoluteDocHref } from "@/shared/lib/docLinks";
 import { relayHttpBaseUrl } from "@/shared/lib/relay-url";
 import { useFileViewer } from "@/shared/ui/FileViewerDialog";
 import { Lightbox, type LightboxItem } from "@/shared/ui/Lightbox";
@@ -76,12 +76,15 @@ function MessageLink({
         }
         event.preventDefault();
         if (openViewer) {
-          // Already-posted upstream doc links (:6451/:6450) become same-
-          // origin relay paths first — the relay's docs proxy mirrors those
-          // paths, so they render in the viewer like any other overlay link
+          // Already-posted upstream doc links (:6451/:6450) become relay-
+          // origin URLs first — the relay's docs proxy mirrors those paths,
+          // so they render in the viewer like any other overlay link
           // instead of opening a cross-origin tab (browser chrome in the
-          // installed app).
-          const rewritten = resolveDocHref(target, relayHttpBaseUrl());
+          // installed app). ABSOLUTE against the relay base because the
+          // SPA runs on other origins too (Tauri desktop shell, mobile
+          // doors): a bare path would resolve against the wrong origin
+          // and render nothing there.
+          const rewritten = absoluteDocHref(target, relayHttpBaseUrl());
           if (rewritten !== null) {
             openViewer(rewritten);
             return;

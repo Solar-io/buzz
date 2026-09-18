@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { resolveDocHref } from "./docLinks.ts";
+import { absoluteDocHref, resolveDocHref } from "./docLinks.ts";
 
 const RELAY = "https://crichton.tailb3d4b8.ts.net:6351";
 
@@ -92,4 +92,32 @@ test("resolveDocHref handles relative and unparsable hrefs", () => {
   // Relative hrefs have no upstream port — null, not a crash.
   assert.equal(resolveDocHref("/changelog.md", RELAY), null);
   assert.equal(resolveDocHref("not a url", RELAY), null);
+});
+
+test("absoluteDocHref returns the ABSOLUTE relay URL, not a bare path", () => {
+  // The viewer loads its iframe/fetch src in whatever origin the SPA runs
+  // on. A bare "/edition/latest.html" only worked when that origin was the
+  // relay itself; on the Tauri desktop shell or a mobile door it resolved
+  // against the wrong origin and rendered nothing. The absolute URL is the
+  // contract.
+  assert.equal(
+    absoluteDocHref(
+      "https://crichton.tailb3d4b8.ts.net:6450/edition/latest.html",
+      RELAY,
+    ),
+    "https://crichton.tailb3d4b8.ts.net:6351/edition/latest.html",
+  );
+  assert.equal(
+    absoluteDocHref(
+      "http://crichton.tailb3d4b8.ts.net:6451/changelog.md",
+      RELAY,
+    ),
+    "https://crichton.tailb3d4b8.ts.net:6351/changelog.md",
+  );
+});
+
+test("absoluteDocHref is null exactly where resolveDocHref is", () => {
+  assert.equal(absoluteDocHref("https://other.host:6451/changelog.md", RELAY), null);
+  assert.equal(absoluteDocHref("/changelog.md", RELAY), null);
+  assert.equal(absoluteDocHref("not a url", RELAY), null);
 });
