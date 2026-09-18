@@ -394,6 +394,31 @@ export interface ThemeInfo {
   modified: string | null;
 }
 
+/**
+ * The Buzz aliases' *interface* palette — the fleet colours `globals.css`
+ * ships as its `.dark` / `:root` baseline (Sam, 2026-09-02/03: body #1e1e2d,
+ * left nav #101117; the light side is the Catppuccin Latte base).
+ *
+ * Without this, the aliases borrow github-dark / github-light wholesale, so
+ * the engine's derived chrome (#24292e github gray) *replaces* the fleet
+ * palette at runtime — invisible in a browser tab, but the installed PWA
+ * paints its status-bar strip with `--background`, showing a ~95px slab of
+ * github gray between the black status bar and the dark timeline (reported
+ * 2026-09-17). Syntax highlighting still uses the GitHub bundles via
+ * `resolveShikiThemeName` — only the chrome derivation is re-seeded here.
+ */
+const BUZZ_FLEET_DARK: Pick<ThemeInfo, "bg" | "fg" | "comment"> = {
+  bg: "#1e1e2d",
+  fg: "#cad3f5",
+  comment: "#b8c0e0",
+};
+
+const BUZZ_FLEET_LIGHT: Pick<ThemeInfo, "bg" | "fg" | "comment"> = {
+  bg: "#eff1f5",
+  fg: "#4c4f69",
+  comment: "#5c5f77",
+};
+
 export function extractThemeInfo(
   themeName: string,
   theme: ThemeRegistrationRaw,
@@ -405,11 +430,19 @@ export function extractThemeInfo(
   const gitColors = extractGitColors(
     theme.colors as Record<string, string> | undefined,
   );
+  // The Buzz aliases keep the base theme's git colours (identical to the
+  // fleet status tokens) but seed bg/fg/comment from the fleet palette.
+  const fleet =
+    themeName === BUZZ_DARK_THEME_NAME
+      ? BUZZ_FLEET_DARK
+      : themeName === BUZZ_THEME_NAME
+        ? BUZZ_FLEET_LIGHT
+        : null;
   return {
     name: themeName,
-    bg,
-    fg,
-    comment: extractCommentColor(
+    bg: fleet?.bg ?? bg,
+    fg: fleet?.fg ?? fg,
+    comment: fleet?.comment ?? extractCommentColor(
       theme.settings as ReadonlyArray<ThemeSetting> | undefined,
       fg,
     ),
