@@ -150,9 +150,11 @@ export function useHuddleAgentSpeech(options: {
    * The engine's voice list, RANKED (`rankVoices`) and loaded
    * asynchronously — `getVoices()` returns [] until `voiceschanged` fires.
    * A ref, not state: only the speak closure reads it, at utterance time.
-   * Selection is deterministic from the agent pubkey
-   * (`speechVoiceProfile`), so the same agent is the same voice on every
-   * call — the fix for "one voice said it, half the time it was another".
+   * Selection is deterministic from the agent pubkey when the agent has
+   * published no voice selection; a published selection (kind 30182)
+   * overrides it at speak time (`speechVoiceProfile`'s selected input),
+   * so the same agent is the same voice on every call — the fix for
+   * "one voice said it, half the time it was another".
    */
   const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
   useEffect(() => {
