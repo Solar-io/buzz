@@ -390,11 +390,19 @@ function ChannelBrowser() {
     () => channels.map((channel) => channel.id),
     [channels],
   );
-  const huddleLinks = useHuddleLinks(huddleChannelIds);
+  const { links: huddleLinks, ended: huddleEndedIds, resolved } =
+    useHuddleLinks(huddleChannelIds);
   const currentHuddleParent =
     current && huddleLinks.has(current.id)
       ? (huddleLinks.get(current.id)?.parentId ?? null)
       : null;
+  // A huddle is over when the registry saw its 48103 (replay or live — the
+  // replay arrives end-first, which the ended set exists to survive), or
+  // the backing channel's own 39000 says archived. Either way the bar must
+  // stop presenting a live room.
+  const currentHuddleEnded =
+    Boolean(current?.archived) ||
+    (current ? huddleEndedIds.has(current.id) : false);
 
   // Viewer-side channel prefs (starred / muted), local like the desktop's DB.
   const [channelPrefs, setChannelPrefs] = useState<ChannelPrefs>(() =>
@@ -897,6 +905,8 @@ function ChannelBrowser() {
                     <HuddleBar
                       channelId={current.id}
                       parentChannelId={currentHuddleParent}
+                      huddleEnded={currentHuddleEnded}
+                      huddleLinksResolved={resolved}
                       selfPubkey={selfPubkey}
                       send={send}
                     />

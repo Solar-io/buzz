@@ -109,3 +109,34 @@ test("seconds remaining read as seconds", () => {
   );
   assert.equal(display.label, "20s left");
 });
+
+test("an archived channel reads as ended, never as time still left", () => {
+  // VOICE_E2E_2026-09-17 V1b: a huddle the relay had auto-ended still
+  // showed "57m left" after reload. The archived tag outranks the deadline:
+  // the relay has already ended the channel, so counting down is the lie
+  // this test pins shut. (Deadline well in the future ON PURPOSE — that is
+  // exactly the stale case.)
+  const display = ephemeralDisplay(
+    {
+      ttlSeconds: 3600,
+      ttlDeadline: new Date((NOW + 57 * 60) * 1000).toISOString(),
+      archived: true,
+    },
+    NOW,
+  );
+  assert.equal(display.label, "ended");
+  assert.equal(display.secondsRemaining, 0);
+  assert.equal(display.urgency, "expired");
+});
+
+test("an unarchived channel still counts down", () => {
+  const display = ephemeralDisplay(
+    {
+      ttlSeconds: 3600,
+      ttlDeadline: new Date((NOW + 57 * 60) * 1000).toISOString(),
+      archived: false,
+    },
+    NOW,
+  );
+  assert.equal(display.label, "57m left");
+});

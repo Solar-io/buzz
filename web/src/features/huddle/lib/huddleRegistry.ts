@@ -85,6 +85,69 @@ export function huddleEndedTarget(event: SignedNostrEvent): string | null {
 }
 
 /**
+ * The full registry state the live event feed folds into: the joinable
+ * links, plus the ephemeral ids a kind-48103 has retired.
+ *
+ * The ENDED set is what makes cold load correct, and it exists because the
+ * relay's historical replay is NEWEST FIRST (`ORDER BY created_at DESC` in
+ * `crates/buzz-db/src/event.rs`). A replayed huddle therefore delivers its
+ * 48103 before its 48100, and a reducer that only deletes links it already
+ * has ("ignore an end for an unknown id") resurrects every auto-ended
+ * huddle as live on every page load — the exact V1b defect: an enabled
+ * Join on a room the relay had already ended, whose click then dead-ends
+ * against the relay's "channel is archived" refusal. Recording the end
+ * FIRST and suppressing the later start makes the fold order-insensitive:
+ * whichever order the replay (or live traffic) delivers, a ended huddle
+ * stays ended.
+ */
+export interface HuddleRegistryState {
+  /** Live links: ephemeral channel id → its kind-48100 link. */
+  links: Map<string, HuddleLink>;
+  /** Ephemeral channel ids a kind-48103 has retired (replay or live). */
+  ended: Set<string>;
+}
+
+export function emptyHuddleRegistryState(): HuddleRegistryState {
+  return { links: new Map(), ended: new Set() };
+}
+
+/**
+ * Fold one registry event into the state. Order-insensitive — see the
+ * struct docs. Returns the SAME object when the event changes nothing, so
+ * a React setState consumer can bail out of a re-render by identity.
+ */
+export function applyRegistryEvent(
+  state: HuddleRegistryState,
+  event: SignedNostrEvent,
+): HuddleRegistryState {
+  const link = huddleLinkFromEvent(event);
+  if (link) {
+    if (
+      state.ended.has(link.ephemeralId) ||
+      state.links.has(link.ephemeralId)
+    ) {
+      // Already retired (the replay's end arrived first), or a duplicate
+      // delivery of a link we hold. Either way the state stands.
+      return state;
+    }
+    const next = { links: new Map(state.links), ended: new Set(state.ended) };
+    next.links.set(link.ephemeralId, link);
+    return next;
+  }
+  const ended = huddleEndedTarget(event);
+  if (ended) {
+    if (state.ended.has(ended) && !state.links.has(ended)) {
+      return state;
+    }
+    const next = { links: new Map(state.links), ended: new Set(state.ended) };
+    next.ended.add(ended);
+    next.links.delete(ended);
+    return next;
+  }
+  return state;
+}
+
+/**
  * Explicit `#h` values the relay accepts in one REQ.
  * `MAX_EXPLICIT_CHANNEL_VALUES` in `crates/buzz-relay/src/handlers/req.rs`.
  */

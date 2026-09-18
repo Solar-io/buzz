@@ -14,7 +14,7 @@
 export type EphemeralUrgency = "normal" | "soon" | "expired";
 
 export interface EphemeralDisplay {
-  /** Short badge text: "3m left", "1h 5m left", "expired". */
+  /** Short badge text: "3m left", "1h 5m left", "expired", "ended". */
   label: string;
   /** Full sentence for the title/aria attribute. */
   title: string;
@@ -54,13 +54,30 @@ function humanize(seconds: number): string {
  *
  * A channel with a `ttl` but no parsable deadline still gets a badge — it IS
  * ephemeral, and saying so without a countdown beats saying nothing.
+ *
+ * An ARCHIVED channel never shows a countdown: the relay has already ended
+ * it, and "57m left" on a dead huddle is exactly the stale-room lie the
+ * reload-survival work exists to kill (VOICE_E2E_2026-09-17 V1b). The
+ * deadline is moot once `archived_at` is set.
  */
 export function ephemeralDisplay(
-  channel: { ttlSeconds: number | null; ttlDeadline: string | null },
+  channel: {
+    ttlSeconds: number | null;
+    ttlDeadline: string | null;
+    archived?: boolean;
+  },
   nowSeconds: number = Date.now() / 1000,
 ): EphemeralDisplay | null {
   if (channel.ttlSeconds === null) {
     return null;
+  }
+  if (channel.archived) {
+    return {
+      label: "ended",
+      title: "This channel has ended — the relay archived it.",
+      secondsRemaining: 0,
+      urgency: "expired",
+    };
   }
   const deadline = parseTtlDeadline(channel.ttlDeadline);
   if (deadline === null) {

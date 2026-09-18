@@ -40,6 +40,38 @@
 /** `KIND_HUDDLE_GUIDELINES` — crates/buzz-core/src/kind.rs:666. */
 export const HUDDLE_GUIDELINES_KIND = 48106;
 
+/**
+ * The phrase `voiceModeGuidelines` uses to name the parent channel, with
+ * the id captured. Anchoring to the phrase (rather than "first UUID in the
+ * content") keeps the extraction tied to the same contract the desktop
+ * replicates (`build_huddle_guidelines`), so a future guidelines edit that
+ * mentions another UUID cannot silently move the link.
+ */
+const PARENT_PHRASE =
+  /attached main channel is\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+
+/**
+ * The parent channel id a kind-48106 guidelines event carries, or null.
+ *
+ * The guidelines text is the only linkage data that lives ON the huddle
+ * channel's own timeline (`#h` = the ephemeral id — the kind-48100 link
+ * itself is stored under the PARENT), which is what makes a cold-loaded
+ * client able to query it with a targeted one-shot REQ when the ambient
+ * registry feed has not produced the link. The desktop's agent harness
+ * fetches this same event the same way (`fetch_huddle_instructions` in
+ * `crates/buzz-acp/src/pool.rs`), so the shape is a cross-client contract,
+ * not a web-only convention.
+ */
+export function parentChannelFromGuidelines(
+  content: string | null | undefined,
+): string | null {
+  if (!content) {
+    return null;
+  }
+  const match = PARENT_PHRASE.exec(content);
+  return match ? (match[1].toLowerCase() as string) : null;
+}
+
 export interface UnsignedHuddleGuidelinesEvent {
   kind: number;
   tags: string[][];

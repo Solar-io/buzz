@@ -14,17 +14,33 @@ import { useCustomEmoji } from "@/features/custom-emoji/hooks";
 import { reactionEmojiUrl } from "@/features/custom-emoji/lib/customEmoji.ts";
 import { cn } from "@/shared/lib/cn";
 import { truncatePubkey } from "@/shared/lib/pubkey";
+import {
+  clearHuddleVoiceState,
+  loadHuddleVoiceState,
+  saveHuddleVoiceState,
+  voiceRestoreAnnouncement,
+  VOICE_RESTORE_FAILED,
+  type VoiceStateStore,
+} from "../lib/huddleVoicePersistence.ts";
+import { huddleJoinGate } from "../lib/huddleJoinGate.ts";
 import { isSpeaking } from "../lib/micMeter.ts";
 import { shouldRestoreSpeechOnVoiceOff } from "../lib/voiceTranscript.ts";
 import { useHuddleAgentRoster } from "../useHuddleAgentRoster";
 import { useHuddleAgentSpeech } from "../useHuddleAgentSpeech";
 import { useHuddleAudio } from "../useHuddleAudio";
 import { useHuddleMemberSnapshot } from "../useHuddleMemberSnapshot";
+import { useHuddleParentFallback } from "../useHuddleParentFallback";
 import { useHuddleReactions } from "../useHuddleReactions";
 import { useHuddleVoiceMode } from "../useHuddleVoiceMode";
 import { HuddleCallControls } from "./HuddleCallControls.tsx";
 import { HuddleReactionBurst } from "./HuddleReactionBurst.tsx";
 import { MicMeter } from "./MicMeter.tsx";
+
+/** The browser store the armed voice state persists to (injected for tests). */
+const voiceStateStore: VoiceStateStore | null =
+  typeof window !== "undefined" && window.sessionStorage
+    ? window.sessionStorage
+    : null;
 
 /**
  * Join/leave bar for huddle channels (ttl channels). Voice rides the relay's
@@ -70,16 +86,40 @@ import { MicMeter } from "./MicMeter.tsx";
  * the audio room is what the relay auto-admits parent members through; a
  * control that is present but rejected by the relay is worse than one that
  * appears when it works.
+ *
+ * Reload survival (VOICE_E2E_2026-09-17 V1b/V2): the parent link is
+ * re-resolved from the wire on a cold load — ambient registry first, then a
+ * targeted query against the huddle's own kind-48106 guidelines — so a
+ * reload can rejoin; an ended huddle renders no live Join; and the armed
+ * voice state (voice mode, agent reading) persists in sessionStorage and is
+ * restored with a toast on rejoin. See `lib/huddleJoinGate.ts` and
+ * `lib/huddleVoicePersistence.ts`.
  */
 export function HuddleBar({
   channelId,
   parentChannelId,
+  huddleEnded = false,
+  huddleLinksResolved = false,
   selfPubkey,
   send,
 }: {
   channelId: string;
   /** Linked parent channel — required by the audio room for ephemeral joins. */
   parentChannelId?: string | null;
+  /**
+   * The relay has retired this huddle: a kind-48103 was seen (live or in
+   * the replay) or the backing channel's kind-39000 says archived. A dead
+   * huddle renders no live Join at all — an enabled Join on an ended room
+   * was the V1b dead-join defect (VOICE_E2E_2026-09-17).
+   */
+  huddleEnded?: boolean;
+  /**
+   * The ambient registry feed has replayed at least once (every chunk REQ
+   * EOSE'd). The unlinked verdict waits for this AND the targeted query,
+   * so a slow replay cannot flash a false "no parent link" before its
+   * 48100 lands.
+   */
+  huddleLinksResolved?: boolean;
   selfPubkey: string | null;
   /**
    * The channel's ordinary message send — the same function the composer
@@ -88,7 +128,23 @@ export function HuddleBar({
    */
   send: (options: MessageSendOptions) => Promise<MessageSendResult>;
 }) {
-  const huddle = useHuddleAudio(channelId, parentChannelId);
+  // Cold-load parent resolution: when the ambient registry has not handed
+  // us the link, ask the relay directly — the huddle's own kind-48106
+  // guidelines name the parent (useHuddleParentFallback for why). The
+  // merged id is what the audio auth presents, so a reload that lost the
+  // sidebar context can still rejoin a live room instead of being gated
+  // out with a false "needs a permanent channel" message.
+  const fallback = useHuddleParentFallback({
+    channelId,
+    enabled: !huddleEnded && !parentChannelId,
+  });
+  const resolvedParentId = parentChannelId ?? fallback.parentId ?? null;
+  const gate = huddleJoinGate({
+    parentChannelId: resolvedParentId,
+    huddleEnded,
+    resolutionSettled: fallback.done && huddleLinksResolved,
+  });
+  const huddle = useHuddleAudio(channelId, resolvedParentId);
   const pubkeys = useMemo(
     () => huddle.peers.map((peer) => peer.pubkey).concat(selfPubkey ?? []),
     [huddle.peers, selfPubkey],
@@ -131,7 +187,7 @@ export function HuddleBar({
     connected ? channelId : null,
   );
   const parentMembers = useHuddleMemberSnapshot(
-    connected ? (parentChannelId ?? null) : null,
+    connected ? resolvedParentId : null,
   );
   const speech = useHuddleAgentSpeech({
     channelId: connected ? channelId : null,
@@ -141,7 +197,7 @@ export function HuddleBar({
   });
   const agentRoster = useHuddleAgentRoster({
     ephemeralChannelId: connected ? channelId : null,
-    parentChannelId: connected ? (parentChannelId ?? null) : null,
+    parentChannelId: connected ? resolvedParentId : null,
     ephemeral: ephemeralMembers,
     parent: parentMembers,
   });
@@ -190,22 +246,66 @@ export function HuddleBar({
   // silently reverted an armed reader while the room looked healthy).
   const speechEnabled = speech.enabled;
   const speechSetEnabled = speech.setEnabled;
+  const voiceSetEnabledRaw = voice.setEnabled;
   const speechBeforeVoiceRef = useRef<boolean | null>(null);
   const speechUserToggledRef = useRef(false);
   // Controls get a wrapped setEnabled so an explicit press on "Read agent
   // replies" is distinguishable from the borrowed on this component forces
   // at voice start. The coupling effect above deliberately calls the RAW
-  // setter — its own writes are not user choices.
+  // setter — its own writes are not user choices. The wrappers also persist
+  // the armed state (reload survival): an explicit choice is exactly what
+  // should come back after a reload, and a forced drop or a restore must
+  // never masquerade as one.
   const speechSetEnabledFromControls = useCallback(
     (on: boolean) => {
       speechUserToggledRef.current = true;
+      if (voiceStateStore) {
+        if (on || voice.enabled) {
+          saveHuddleVoiceState(voiceStateStore, channelId, {
+            voiceMode: voice.enabled,
+            readAgentReplies: on,
+          });
+        } else {
+          clearHuddleVoiceState(voiceStateStore, channelId);
+        }
+      }
       speechSetEnabled(on);
     },
-    [speechSetEnabled],
+    [speechSetEnabled, voice.enabled, channelId],
   );
   const speechForControls = useMemo(
     () => ({ ...speech, setEnabled: speechSetEnabledFromControls }),
     [speech, speechSetEnabledFromControls],
+  );
+  const voiceSetEnabledFromControls = useCallback(
+    (on: boolean) => {
+      if (voiceStateStore) {
+        // Persist the state the toggle LEAVES the call in, not the moment's
+        // raw flag: on forces reading on (the coupling below); off restores
+        // the pre-voice snapshot — UNLESS the user explicitly toggled
+        // reading during voice, which outranks the snapshot (the same rule
+        // the off-restore path applies).
+        const readAgentReplies = on
+          ? true
+          : speechUserToggledRef.current
+            ? speechEnabled
+            : (speechBeforeVoiceRef.current ?? speechEnabled);
+        if (on || readAgentReplies) {
+          saveHuddleVoiceState(voiceStateStore, channelId, {
+            voiceMode: on,
+            readAgentReplies,
+          });
+        } else {
+          clearHuddleVoiceState(voiceStateStore, channelId);
+        }
+      }
+      voiceSetEnabledRaw(on);
+    },
+    [voiceSetEnabledRaw, speechEnabled, channelId],
+  );
+  const voiceForControls = useMemo(
+    () => ({ ...voice, setEnabled: voiceSetEnabledFromControls }),
+    [voice, voiceSetEnabledFromControls],
   );
   useEffect(() => {
     if (!speech.supported) {
@@ -259,6 +359,90 @@ export function HuddleBar({
       });
     }
   }, [voice.enabled, voice.offReason, voice.error]);
+
+  // V2 — armed voice state survives a reload, visibly. The entry in
+  // sessionStorage was written by a previous page session (explicit
+  // disarm and Leave clear it), so on the FIRST connected edge of this
+  // mount, apply it: voice mode, agent reading, both, or the saved-off
+  // states. Restore is never silent — the toast names what came back —
+  // and never masquerades as a fresh user gesture: the borrow snapshot is
+  // pre-seeded so the voice-on coupling cannot force reading on over an
+  // explicitly-off reader (the SILENT DISARM class again).
+  const voiceRestoredRef = useRef(false);
+  useEffect(() => {
+    if (!connected || voiceRestoredRef.current || !voiceStateStore) {
+      return;
+    }
+    voiceRestoredRef.current = true;
+    const saved = loadHuddleVoiceState(voiceStateStore, channelId);
+    if (!saved || (!saved.voiceMode && !saved.readAgentReplies)) {
+      return;
+    }
+    const applyReading = saved.readAgentReplies && speech.supported;
+    if (saved.voiceMode && !voice.enabled) {
+      speechBeforeVoiceRef.current = applyReading;
+      speechUserToggledRef.current = true;
+      if (speech.supported) {
+        speechSetEnabled(applyReading);
+      }
+      voiceSetEnabledRaw(true);
+    } else if (!saved.voiceMode && applyReading && !speech.enabled) {
+      speechSetEnabled(true);
+    }
+    const announcement = voiceRestoreAnnouncement({
+      voiceMode: saved.voiceMode,
+      readAgentReplies: applyReading,
+    });
+    if (announcement) {
+      toast.success(announcement.title, {
+        description: announcement.description,
+      });
+    }
+  }, [
+    connected,
+    channelId,
+    voice.enabled,
+    voiceSetEnabledRaw,
+    speech.supported,
+    speech.enabled,
+    speechSetEnabled,
+  ]);
+
+  // The honest failure leg of the same contract: if this huddle is dead,
+  // there is no rejoin that could bring the armed state back, so say so
+  // once — and stop offering to restore it. Pretending otherwise (or
+  // dropping the state with no signal) is the silent failure the reload
+  // work exists to kill.
+  const failedRestoreSurfacedRef = useRef(false);
+  useEffect(() => {
+    if (
+      !huddleEnded ||
+      connected ||
+      failedRestoreSurfacedRef.current ||
+      !voiceStateStore
+    ) {
+      return;
+    }
+    const saved = loadHuddleVoiceState(voiceStateStore, channelId);
+    if (!saved || (!saved.voiceMode && !saved.readAgentReplies)) {
+      return;
+    }
+    failedRestoreSurfacedRef.current = true;
+    clearHuddleVoiceState(voiceStateStore, channelId);
+    toast.error(VOICE_RESTORE_FAILED.title, {
+      description: VOICE_RESTORE_FAILED.description,
+    });
+  }, [huddleEnded, connected, channelId]);
+
+  // An explicit Leave is a disarm: the user chose to end the call, so the
+  // armed state must not come back after a reload of a room they walked
+  // out of. (A reload mid-call never reaches this — it is not a click.)
+  const leaveFromControls = useCallback(() => {
+    if (voiceStateStore) {
+      clearHuddleVoiceState(voiceStateStore, channelId);
+    }
+    huddle.leave();
+  }, [huddle.leave, channelId]);
 
   // Space holds the mic open while the bar has focus. Bound on the bar, not
   // the document, so it cannot swallow the space bar out of a composer.
@@ -378,7 +562,7 @@ export function HuddleBar({
             onReact={reactions.send}
             reactionError={reactions.error}
             speech={speechForControls}
-            voice={voice}
+            voice={voiceForControls}
           />
           {voice.enabled && voice.interimText && (
             <span
@@ -396,7 +580,7 @@ export function HuddleBar({
           )}
           <button
             type="button"
-            onClick={huddle.leave}
+            onClick={leaveFromControls}
             className="rounded-full border border-red-500/40 px-3 py-1 text-xs font-medium text-red-400 hover:bg-red-500/10"
           >
             Leave
@@ -432,29 +616,39 @@ export function HuddleBar({
         </>
       ) : (
         <>
-          {/* The relay denies audio auth on an ephemeral channel with no
-              parent link — "ephemeral channel requires parent linkage"
-              (crates/buzz-relay/src/audio/handler.rs) — so a TTL channel the
-              registry has no kind-48100 link for is a dead end, not a join.
-              Disable with the reason instead of letting the relay refuse. */}
-          <button
-            type="button"
-            data-testid="huddle-join-audio"
-            onClick={() => void huddle.join()}
-            disabled={
-              huddle.status === "connecting" ||
-              !huddle.supportsVoice ||
-              !parentChannelId
-            }
-            title={
-              !parentChannelId
-                ? "Huddles need a permanent (non-TTL) channel"
-                : undefined
-            }
-            className="rounded-full border border-emerald-600/50 bg-emerald-600/20 px-3 py-1 text-xs font-medium text-emerald-400 disabled:opacity-50"
-          >
-            {huddle.status === "connecting" ? "Joining…" : "🎧 Join huddle"}
-          </button>
+          {/* Join gating is the join gate's three states, not one blunt
+              rule. The relay denies audio auth on an ephemeral channel with
+              no parent link ("ephemeral channel requires parent linkage",
+              crates/buzz-relay/src/audio/handler.rs), so a genuinely
+              unlinked room is disabled WITH that reason; a room whose
+              linkage query is still in flight shows no failure reason; and
+              an ENDED huddle renders no Join at all — an enabled Join that
+              dead-ends against the relay's "channel is archived" refusal
+              was the V1b dead-join defect. */}
+          {gate.state === "ended" ? (
+            <span
+              data-testid="huddle-ended"
+              role="status"
+              className="rounded-full border border-red-500/40 bg-red-500/10 px-3 py-1 text-xs font-medium text-red-400"
+            >
+              {gate.reason}
+            </span>
+          ) : (
+            <button
+              type="button"
+              data-testid="huddle-join-audio"
+              onClick={() => void huddle.join()}
+              disabled={
+                huddle.status === "connecting" ||
+                !huddle.supportsVoice ||
+                !gate.joinable
+              }
+              title={gate.reason ?? gate.hint ?? undefined}
+              className="rounded-full border border-emerald-600/50 bg-emerald-600/20 px-3 py-1 text-xs font-medium text-emerald-400 disabled:opacity-50"
+            >
+              {huddle.status === "connecting" ? "Joining…" : "🎧 Join huddle"}
+            </button>
+          )}
           {huddle.devices.length > 1 && (
             <label className="flex items-center gap-1 text-xs text-muted-foreground">
               <span className="sr-only">Microphone</span>
