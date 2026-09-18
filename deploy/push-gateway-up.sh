@@ -28,9 +28,11 @@ docker run --rm --network buzz-dev_buzz-net \
   "$IMAGE" --migrate-only
 
 docker rm -f buzz-push-gateway 2>/dev/null || true
+# Ports per infra/port-registry.json: 6359 loopback-only (tailscale serve fronts it
+# on the tailnet — a 0.0.0.0 publish collides); metrics on 6362 (6360 = live stt-bridge).
 docker run -d --name buzz-push-gateway \
   --network buzz-dev_buzz-net \
-  -p 6359:8080 -p 127.0.0.1:6360:8081 \
+  -p 127.0.0.1:6359:8080 -p 127.0.0.1:6362:8081 \
   -v "$STAGING:/secrets:ro" \
   --restart unless-stopped \
   -e BUZZ_PUSH_GRANT_KEYS="$GRANT" \
@@ -49,4 +51,4 @@ docker run -d --name buzz-push-gateway \
 
 sleep 3
 docker logs --tail 20 buzz-push-gateway
-curl -sf -m 5 http://127.0.0.1:6360/health >/dev/null && echo "HEALTH-OK on :6360"
+curl -sf -m 5 http://127.0.0.1:6362/health >/dev/null && echo "HEALTH-OK on :6362"
