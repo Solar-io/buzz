@@ -20,6 +20,12 @@ import {
   type SpeakRoute,
   watchdogMs,
 } from "./lib/huddleAgentSpeech.ts";
+import {
+  playBridgeResponse,
+  selectionToBridgeRequest,
+  ttsBridgeUrl,
+  type BridgeAudioContextLike,
+} from "./lib/bridgeSpeech.ts";
 import { botPubkeys } from "./lib/huddleMembers.ts";
 import {
   recordUtterance,
@@ -190,6 +196,28 @@ export function useHuddleAgentSpeech(options: {
     }
   }, []);
 
+  // The bridge engine's AudioContext, created on first bridge speech (the
+  // enable toggle is the user gesture that unlocks audio). 24 kHz preferred
+  // — matching the bridge PCM — with the browser default as fallback:
+  // buffers carry their own rate and are resampled either way.
+  const bridgeCtxRef = useRef<BridgeAudioContextLike | null>(null);
+  const bridgeContext = useCallback((): BridgeAudioContextLike | null => {
+    if (typeof window === "undefined" || typeof window.AudioContext === "undefined") {
+      return null;
+    }
+    if (bridgeCtxRef.current === null) {
+      try {
+        bridgeCtxRef.current = new window.AudioContext({
+          sampleRate: 24_000,
+        }) as unknown as BridgeAudioContextLike;
+      } catch {
+        bridgeCtxRef.current = new window.AudioContext() as unknown as BridgeAudioContextLike;
+      }
+    }
+    void (bridgeCtxRef.current as unknown as AudioContext).resume?.();
+    return bridgeCtxRef.current;
+  }, []);
+
   const speaker = useMemo(
     () =>
       createOrderedSpeaker(async (text, speakerPubkey) => {
@@ -216,6 +244,75 @@ export function useHuddleAgentSpeech(options: {
         const utterances = chunks.length > 0 ? chunks : [text];
         speechActivityRef.current.speaking = true;
         setSpeaking(true);
+
+        // Bridge engines (pocket presets, ElevenLabs): synthesize
+        // server-side and stream the PCM in. A bridge failure must not
+        // mute the reply — the local-synth path below speaks it with the
+        // derived profile and the disposition is corrected to say so.
+        const bridgeRequest =
+          selected !== undefined ? selectionToBridgeRequest(selected) : null;
+        if (
+          bridgeRequest !== null &&
+          (route.disposition === "pocket-bridge" || route.disposition === "eleven-bridge")
+        ) {
+          const ctx = bridgeContext();
+          if (ctx !== null) {
+            let bridgeFailed = false;
+            try {
+              for (const chunk of utterances) {
+                if (stopTokenRef.current !== stopAt) {
+                  break;
+                }
+                const bridgeUrl = ttsBridgeUrl(window.location.hostname);
+                const bridgePromise = fetch(bridgeUrl, {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({
+                    engine: bridgeRequest.engine,
+                    voice: bridgeRequest.voice,
+                    text: chunk,
+                  }),
+                });
+                // Same watchdog family as the synth path: a hung bridge
+                // must not wedge the speaker queue.
+                const raced = await Promise.race([
+                  bridgePromise,
+                  new Promise<never>((_, reject) => {
+                    window.setTimeout(
+                      () => reject(new Error("bridge fetch watchdog")),
+                      watchdogMs(chunk),
+                    );
+                  }),
+                ]);
+                if (!raced.ok) {
+                  throw new Error(`bridge ${raced.status}`);
+                }
+                await playBridgeResponse(raced, ctx, {
+                  shouldStop: () => stopTokenRef.current !== stopAt,
+                });
+                speechActivityRef.current.utterances = recordUtterance(
+                  speechActivityRef.current.utterances,
+                  chunk,
+                  Date.now(),
+                );
+              }
+            } catch (err) {
+              bridgeFailed = true;
+              console.warn("[huddle-agent-speech] bridge failed, speaking locally", err);
+            }
+            if (!bridgeFailed) {
+              speechActivityRef.current.speaking = false;
+              setSpeaking(false);
+              return;
+            }
+            speakRoutesRef.current.set(speakerPubkey.toLowerCase(), {
+              disposition: "bridge-error-fallback",
+              profile,
+            });
+            // fall through: the local-synth loop below speaks this reply
+          }
+        }
+
         try {
           for (const chunk of utterances) {
             if (stopTokenRef.current !== stopAt) {

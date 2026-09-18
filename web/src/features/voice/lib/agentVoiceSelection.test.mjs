@@ -61,6 +61,47 @@ test("a pocket selection with a bundled catalog key parses", () => {
   assert.deepEqual(row.selection, { engine: "pocket", key: "pocket:azelma" });
 });
 
+test("an eleven selection parses with its voice-id key", () => {
+  const row = parseAgentVoiceEvent(
+    selectionEvent({
+      content: JSON.stringify({
+        version: 1,
+        engine: "eleven",
+        key: "eleven:T720RsqorTx4ZZWohrNN",
+        label: "Roger",
+      }),
+    }),
+  );
+  assert.deepEqual(row.selection, {
+    engine: "eleven",
+    key: "eleven:T720RsqorTx4ZZWohrNN",
+  });
+});
+
+test("parse rejects malformed eleven keys", () => {
+  for (const bad of [
+    "T720RsqorTx4ZZWohrNN", // no engine prefix
+    "eleven:", // empty id
+    "eleven:short", // under the 10-char floor
+    "eleven:my favorite voice", // prose, not an id
+  ]) {
+    assert.equal(
+      parseAgentVoiceEvent(
+        selectionEvent({
+          content: JSON.stringify({
+            version: 1,
+            engine: "eleven",
+            key: bad,
+            label: "x",
+          }),
+        }),
+      ),
+      null,
+      `key \`${bad}\` must be refused`,
+    );
+  }
+});
+
 test("a pocket selection with a full imported catalog key parses", () => {
   const hash = "6".repeat(64);
   const row = parseAgentVoiceEvent(
@@ -282,14 +323,25 @@ test("wiring: a selection routed at speak time names its source — selected, re
   assert.equal(selected.disposition, "selected");
   assert.equal(selected.profile.source, "selected");
   assert.equal(selected.profile.voiceURI, "uri:samantha");
-  // A pocket selection is a VISIBLE pending state, never a silently
-  // honored voice: derived synthesis, pocket disposition.
+  // A pocket PRESET selection routes to the server-side tts bridge.
   const pocket = speakRoute(AGENT, voices, {
     engine: "pocket",
     key: "pocket:azelma",
   });
-  assert.equal(pocket.disposition, "pocket-selected-pending-engine");
+  assert.equal(pocket.disposition, "pocket-bridge");
   assert.equal(pocket.profile.source, "derived");
+  // An IMPORTED pocket key is still pending — the bridge cannot run it.
+  const imported = speakRoute(AGENT, voices, {
+    engine: "pocket",
+    key: "pocket:imported:" + "a".repeat(64),
+  });
+  assert.equal(imported.disposition, "pocket-selected-pending-engine");
+  // An eleven selection routes to the same bridge, its own disposition.
+  const eleven = speakRoute(AGENT, voices, {
+    engine: "eleven",
+    key: "eleven:T720RsqorTx4ZZWohrNN",
+  });
+  assert.equal(eleven.disposition, "eleven-bridge");
   // An unspeakable selection (here: non-English) is REJECTED and marked,
   // never silently derived.
   const rejected = speakRoute(AGENT, voices, {

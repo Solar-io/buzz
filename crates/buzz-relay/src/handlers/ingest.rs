@@ -1623,6 +1623,21 @@ const AGENT_VOICE_LABEL_MAX: usize = 128;
 /// here names nothing that can exist.
 const AGENT_VOICE_KEY_MAX: usize = 96;
 
+/// Maximum `key` length for the eleven half of a kind:30182 selection.
+///
+/// `eleven:<voice id>` where the id is ElevenLabs' alphanumeric voice
+/// identifier (observed 20 chars); 48 bounds it with headroom.
+const AGENT_VOICE_ELEVEN_KEY_MAX: usize = 48;
+
+/// The eleven key grammar: `eleven:<alphanumeric id>`, 10-36 id chars.
+fn valid_eleven_voice_key(key: &str) -> bool {
+    let Some(id) = key.strip_prefix("eleven:") else {
+        return false;
+    };
+    let len = id.chars().count();
+    (10..=36).contains(&len) && id.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
 /// Validate the payload half of a kind:30182 agent-voice selection.
 ///
 /// Unlike 30181 — envelope-only at ingest, the JSON body being the readers'
@@ -1631,7 +1646,7 @@ const AGENT_VOICE_KEY_MAX: usize = 96;
 /// row, so the selection grammar is enforced HERE, once, for every reader:
 ///
 /// - `version` is exactly 1 (the store never mixes body formats),
-/// - `engine` is `local-synth` or `pocket`,
+/// - `engine` is `local-synth`, `pocket`, or `eleven`,
 /// - `local-synth` requires a non-empty, bounded, control-free `voiceURI`,
 /// - `pocket` requires a `key` in the catalog's own key grammar
 ///   (`pocket:<slug>`, or the full `pocket:imported:<64 lowercase hex>` form)
@@ -1639,6 +1654,8 @@ const AGENT_VOICE_KEY_MAX: usize = 96;
 ///   `web/src/features/voice/lib/voiceCatalog.ts` accepts at parse — minus
 ///   the identity-test-banned `pocket:eve`, which must not be selectable any
 ///   more than it is publishable,
+/// - `eleven` requires a key in the tts-bridge's ElevenLabs grammar
+///   (`eleven:<alphanumeric voice id>`, synthesized server-side),
 /// - `label` is a non-empty, bounded, control-free human string.
 ///
 /// Unknown additional fields are allowed: a v1 body may grow optional fields
@@ -1693,9 +1710,25 @@ fn validate_agent_voice_payload(content: &str) -> Result<(), String> {
                 ));
             }
         }
+        "eleven" => {
+            let key = object
+                .get("key")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| format!("{LABEL} engine `eleven` requires a string `key`"))?;
+            if key.chars().count() > AGENT_VOICE_ELEVEN_KEY_MAX {
+                return Err(format!(
+                    "{LABEL} `key` too long (max {AGENT_VOICE_ELEVEN_KEY_MAX} chars)"
+                ));
+            }
+            if !valid_eleven_voice_key(key) {
+                return Err(format!(
+                    "{LABEL} `key` must be an ElevenLabs voice key (`eleven:<voice id>`)"
+                ));
+            }
+        }
         other => {
             return Err(format!(
-                "{LABEL} `engine` must be `local-synth` or `pocket` (got `{other}`)"
+                "{LABEL} `engine` must be `local-synth`, `pocket`, or `eleven` (got `{other}`)"
             ));
         }
     }
@@ -5379,6 +5412,16 @@ mod tests {
         .to_string()
     }
 
+    fn eleven_content(key: &str) -> String {
+        serde_json::json!({
+            "version": 1,
+            "engine": "eleven",
+            "key": key,
+            "label": "Eleven voice",
+        })
+        .to_string()
+    }
+
     fn make_agent_voice_content(content: &str, d_tag: &str) -> Event {
         make_event_with_tags(KIND_AGENT_VOICE, content, &[&["d", d_tag]])
     }
@@ -5462,7 +5505,36 @@ mod tests {
         .to_string();
         let ev = make_agent_voice_content(&content, KIND_AGENT_VOICE_D_TAG);
         let err = validate_agent_voice_envelope(&ev).unwrap_err();
-        assert!(err.contains("`local-synth` or `pocket`"), "got: {err}");
+        assert!(err.contains("`local-synth`, `pocket`, or `eleven`"), "got: {err}");
+    }
+
+    #[test]
+    fn agent_voice_payload_eleven_requires_voice_id_key() {
+        // The real shape: `eleven:<20-char alphanumeric voice id>`.
+        let ok = make_agent_voice_content(
+            &eleven_content("eleven:T720RsqorTx4ZZWohrNN"),
+            KIND_AGENT_VOICE_D_TAG,
+        );
+        assert!(validate_agent_voice_envelope(&ok).is_ok());
+
+        for bad in [
+            // Not prefixed with the engine name.
+            "T720RsqorTx4ZZWohrNN",
+            // Empty / too-short / too-long ids.
+            "eleven:",
+            "eleven:short",
+            &format!("eleven:{}", "a".repeat(37)),
+            // Prose is not a voice id.
+            "eleven:my favorite voice",
+        ] {
+            let ev = make_agent_voice_content(&eleven_content(bad), KIND_AGENT_VOICE_D_TAG);
+            let err =
+                validate_agent_voice_envelope(&ev).expect_err(&format!("`{bad}` must be refused"));
+            assert!(
+                err.contains("ElevenLabs voice key"),
+                "key `{bad}`: got: {err}"
+            );
+        }
     }
 
     #[test]

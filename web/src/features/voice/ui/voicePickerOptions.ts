@@ -32,6 +32,7 @@ export const ENGLISH_ONLY = true;
 /** One selectable row in the picker, engine-tagged like the store. */
 export type VoicePickerOption =
   | { engine: "pocket"; key: string; label: string }
+  | { engine: "eleven"; key: string; label: string }
   | { engine: "local-synth"; voiceURI: string; label: string };
 
 /**
@@ -71,6 +72,20 @@ export function pocketVoiceOptions(
 }
 
 /**
+ * The ElevenLabs half: bridge-served voice-library rows, keyed exactly as
+ * the selection store expects (`eleven:<voice id>`).
+ */
+export function elevenVoiceOptions(
+  voices: readonly { id: string; label: string }[],
+): VoicePickerOption[] {
+  return voices.map((voice) => ({
+    engine: "eleven" as const,
+    key: `eleven:${voice.id}`,
+    label: voice.label,
+  }));
+}
+
+/**
  * Compare an option against a stored selection — same engine AND same
  * target. Takes the selection's structural shape (no `label`), so the
  * dialog can ask "is this row the one I already speak with?".
@@ -85,7 +100,7 @@ export function sameOption(
   if (a.engine === "local-synth") {
     return a.voiceURI === b.voiceURI;
   }
-  return a.engine === "pocket" && a.key === b.key;
+  return (a.engine === "pocket" || a.engine === "eleven") && a.key === b.key;
 }
 
 /**

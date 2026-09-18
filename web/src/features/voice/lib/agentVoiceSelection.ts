@@ -37,11 +37,14 @@ export const AGENT_VOICE_D_TAG = "agent-voice";
  * An engine-tagged voice selection — the agreed contract between the
  * selection store, the picker, and the speak-time seam. `local-synth` is a
  * `speechSynthesis` voiceURI from the caller's local English pool; `pocket`
- * is a kind:30181 catalog row key synthesized server-side.
+ * is a kind:30181 catalog row key synthesized server-side by the tts bridge
+ * (preset slug keys); `eleven` is an ElevenLabs voice id synthesized
+ * server-side by the same bridge.
  */
 export type AgentVoiceSelection =
   | { engine: "local-synth"; voiceURI: string }
-  | { engine: "pocket"; key: string };
+  | { engine: "pocket"; key: string }
+  | { engine: "eleven"; key: string };
 
 /** The JSON body of a kind:30182 event. */
 export interface AgentVoiceSelectionContent {
@@ -118,6 +121,15 @@ function isValidSelectionKey(key: string): boolean {
 }
 
 /**
+ * ElevenLabs key grammar: `eleven:<voice id>` where the id is the vendor's
+ * alphanumeric voice identifier (observed 20 chars; bounded 10-40 so a
+ * future id shape still fits without accepting arbitrary prose).
+ */
+function isValidElevenKey(key: string): boolean {
+  return /^eleven:[A-Za-z0-9]{10,40}$/.test(key);
+}
+
+/**
  * Read one kind:30182 event. Returns `null` for anything the reader refuses:
  * unparseable content, a `version` other than 1, an unknown engine, a
  * `local-synth` body without a usable `voiceURI`, a `pocket` body whose key
@@ -171,6 +183,17 @@ export function parseAgentVoiceEvent(
       pubkey: event.pubkey,
       createdAt: event.created_at,
       selection: { engine: "pocket", key: content.key },
+      label: content.label,
+    };
+  }
+  if (content.engine === "eleven") {
+    if (typeof content.key !== "string" || !isValidElevenKey(content.key)) {
+      return null;
+    }
+    return {
+      pubkey: event.pubkey,
+      createdAt: event.created_at,
+      selection: { engine: "eleven", key: content.key },
       label: content.label,
     };
   }

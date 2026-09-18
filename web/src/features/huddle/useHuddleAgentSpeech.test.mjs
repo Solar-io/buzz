@@ -125,9 +125,9 @@ function speechSelectionEvent(selection, overrides = {}) {
       version: 1,
       label: "fixture",
       engine: selection.engine,
-      ...(selection.engine === "pocket"
-        ? { key: selection.key }
-        : { voiceURI: selection.voiceURI }),
+      ...(selection.engine === "local-synth"
+        ? { voiceURI: selection.voiceURI }
+        : { key: selection.key }),
     }),
     ...overrides,
   };
@@ -232,19 +232,31 @@ test("wiring: no selection speaks the derived draw, disposition derived", async 
   await harness.unmount();
 });
 
-test("wiring: a pocket selection synthesizes derived, disposition pocket-selected-pending-engine", async () => {
+test("wiring: a pocket selection routes to the bridge, disposition pocket-bridge", async () => {
   const harness = await mountEnabledAndSpeak({
     engine: "pocket",
     key: "pocket:azelma",
   });
   const expected = speechVoiceProfile(AGENT, rankVoices(FIXTURE_VOICES));
   assert.equal(spoken.length, 1);
-  // A browser cannot run pocket-tts: the UTTERANCE is the derived draw,
-  // never a pocket-named voice.
+  // In jsdom there is no AudioContext, so no bridge playback happens and
+  // the UTTERANCE still falls to the derived draw — but the disposition
+  // records the bridge route, not a pocket-named local voice.
   assert.equal(spoken[0].voice?.voiceURI, expected.voiceURI);
   const route = harness.captured.current.speakRoutes.current.get(AGENT);
-  assert.equal(route.disposition, "pocket-selected-pending-engine");
+  assert.equal(route.disposition, "pocket-bridge");
   assert.equal(route.profile.source, "derived");
+  await harness.unmount();
+});
+
+test("wiring: an eleven selection routes to the bridge, disposition eleven-bridge", async () => {
+  const harness = await mountEnabledAndSpeak({
+    engine: "eleven",
+    key: "eleven:T720RsqorTx4ZZWohrNN",
+  });
+  assert.equal(spoken.length, 1);
+  const route = harness.captured.current.speakRoutes.current.get(AGENT);
+  assert.equal(route.disposition, "eleven-bridge");
   await harness.unmount();
 });
 

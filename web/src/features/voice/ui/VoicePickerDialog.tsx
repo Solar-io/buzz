@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/shared/ui/button";
 import {
@@ -9,11 +9,17 @@ import {
   DialogTitle,
 } from "@/shared/ui/dialog";
 
-import { useVoiceCatalog } from "../hooks.ts";
+import { useElevenVoices, useVoiceCatalog } from "../hooks.ts";
 import type { AgentVoiceSelection } from "../lib/agentVoiceSelection.ts";
 import {
+  playBridgeResponse,
+  ttsBridgeUrl,
+} from "../../huddle/lib/bridgeSpeech.ts";
+import {
+  elevenVoiceOptions,
   localVoiceOptions,
   pocketVoiceOptions,
+  PREVIEW_SAMPLE_TEXT,
   sameOption,
   speakPreview,
   type PickerVoiceLike,
@@ -54,7 +60,7 @@ export function VoicePickerList({
         const selected = sameOption(option, current);
         return (
           <li
-            key={`${option.engine}:${option.engine === "pocket" ? option.key : option.voiceURI}`}
+            key={`${option.engine}:${option.key ?? option.voiceURI}`}
           >
             <div
               className="flex w-full items-center gap-2 rounded-md px-2 py-1 hover:bg-accent"
@@ -63,7 +69,11 @@ export function VoicePickerList({
               <span className="min-w-0 flex-1 truncate text-left text-sm">
                 {option.label}
                 <span className="ml-2 shrink-0 text-2xs text-muted-foreground">
-                  {option.engine === "pocket" ? "pocket" : "on-device"}
+                  {option.engine === "pocket"
+                    ? "pocket"
+                    : option.engine === "eleven"
+                      ? "elevenlabs"
+                      : "on-device"}
                 </span>
               </span>
               <Button
@@ -119,6 +129,7 @@ export function VoicePickerDialog({
   onConfirm: (selection: AgentVoiceSelection, label: string) => Promise<void>;
 }) {
   const { rows, ready } = useVoiceCatalog();
+  const { voices: elevenVoices } = useElevenVoices();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The option staged for "Confirm" — clicking Select stages; confirming
@@ -134,12 +145,57 @@ export function VoicePickerDialog({
   }, [open]);
 
   const options = useMemo(
-    () => [...pocketVoiceOptions(rows), ...localVoiceOptions(localVoices)],
-    [rows, localVoices],
+    () => [
+      ...pocketVoiceOptions(rows),
+      ...elevenVoiceOptions(elevenVoices),
+      ...localVoiceOptions(localVoices),
+    ],
+    [rows, elevenVoices, localVoices],
   );
 
+  // One lazily-created AudioContext for bridge previews — created inside a
+  // click handler, which is the user gesture browsers require.
+  const previewCtxRef = useRef<AudioContext | null>(null);
+
   function preview(option: VoicePickerOption) {
-    if (typeof window === "undefined" || !window.speechSynthesis) {
+    if (typeof window === "undefined") {
+      return;
+    }
+    // Bridge engines preview through the REAL synthesis path — the silent
+    // stub era ended with the bridge.
+    if (option.engine === "pocket" || option.engine === "eleven") {
+      const voice =
+        option.engine === "pocket" ? option.key.slice("pocket:".length) : option.key.slice("eleven:".length);
+      if (previewCtxRef.current === null) {
+        try {
+          previewCtxRef.current = new AudioContext({ sampleRate: 24_000 });
+        } catch {
+          previewCtxRef.current = new AudioContext();
+        }
+      }
+      void previewCtxRef.current.resume?.();
+      void (async () => {
+        try {
+          const res = await fetch(ttsBridgeUrl(window.location.hostname), {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              engine: option.engine,
+              voice,
+              text: PREVIEW_SAMPLE_TEXT,
+            }),
+          });
+          if (!res.ok) {
+            return;
+          }
+          await playBridgeResponse(res, previewCtxRef.current!);
+        } catch {
+          // A failed preview must never wedge the dialog.
+        }
+      })();
+      return;
+    }
+    if (!window.speechSynthesis) {
       return;
     }
     speakPreview(option, {
@@ -170,7 +226,9 @@ export function VoicePickerDialog({
       await onConfirm(
         staged.engine === "pocket"
           ? { engine: "pocket", key: staged.key }
-          : { engine: "local-synth", voiceURI: staged.voiceURI },
+          : staged.engine === "eleven"
+            ? { engine: "eleven", key: staged.key }
+            : { engine: "local-synth", voiceURI: staged.voiceURI },
         staged.label,
       );
       onOpenChange(false);

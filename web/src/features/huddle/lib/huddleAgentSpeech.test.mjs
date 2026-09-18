@@ -699,19 +699,25 @@ test("a selected non-English voice is rejected even though it resolves", () => {
   assert.notEqual(route.profile.voiceURI, "uri:Amelie");
 });
 
-test("a pocket selection is a visible disposition, never a silently honored voice", () => {
-  // MUTATION GATE: pretend the pocket selection was honored (route it to
-  // "selected") and this fails on the disposition.
+test("a pocket selection routes to the bridge as a visible disposition", () => {
+  // MUTATION GATE: pretend the pocket selection was honored locally (route
+  // it to "selected") and this fails on the disposition.
   const ranked = rankVoices([voice("Samantha"), voice("Ava"), voice("Daniel")]);
   const route = speakRoute(AGENT, ranked, {
     engine: "pocket",
     key: "pocket:azelma",
   });
-  assert.equal(route.disposition, "pocket-selected-pending-engine");
-  // A browser cannot run pocket-tts today; what actually speaks is the
-  // derived profile, and the profile itself SAYS derived.
+  assert.equal(route.disposition, "pocket-bridge");
+  // The bridge synthesizes server-side; the LOCAL profile (unused for
+  // bridge playback) is the derived draw.
   assert.equal(route.profile.source, "derived");
   assert.deepEqual(route.profile, speechVoiceProfile(AGENT, ranked));
+  // An IMPORTED key stays pending — the bridge cannot run it today.
+  const imported = speakRoute(AGENT, ranked, {
+    engine: "pocket",
+    key: "pocket:imported:" + "a".repeat(64),
+  });
+  assert.equal(imported.disposition, "pocket-selected-pending-engine");
 });
 
 test("selection routing is case-insensitive on the pubkey and deterministic", () => {

@@ -419,26 +419,30 @@ function deriveVoiceProfile(
 
 /**
  * Why one utterance is being voiced the way it is — the speak-time seam's
- * full disposition. `profile` is ALWAYS the profile to synthesize; the
- * disposition says where it came from.
+ * full disposition. `profile` is the profile for LOCAL synthesis; the
+ * disposition says what actually speaks.
  *
  *  - `selected`: the published local-synth voice resolved and speaks.
  *  - `selected-rejected`: the selection is unusable here (voiceURI not in
  *    the live list, or it names a non-English voice) and the derived
  *    profile speaks instead. The rejection is recorded, never silent.
  *  - `derived`: no selection; the deterministic pubkey draw.
- *  - `pocket-selected-pending-engine`: the agent published a POCKET voice
- *    — synthesized server-side, where the desktop runs pocket-tts. A
- *    browser has no path to that engine today (the server-side bridge is
- *    unbuilt), so the derived profile speaks, but the disposition is its
- *    own visible state: a pocket selection must never masquerade as an
- *    honored one.
+ *  - `pocket-bridge` / `eleven-bridge`: the agent's selection names a
+ *    server-side engine the tts bridge runs — the utterance synthesizes
+ *    through `bridgeSpeech.ts`, NOT through speechSynthesis, and the
+ *    local profile is irrelevant (kept for interface stability).
+ *  - `pocket-selected-pending-engine`: an IMPORTED pocket key
+ *    (`pocket:imported:<hash>`), which the bridge cannot synthesize yet —
+ *    the derived profile speaks, visibly marked rather than honored.
  */
 export type SpeakDisposition =
   | "selected"
   | "selected-rejected"
   | "derived"
-  | "pocket-selected-pending-engine";
+  | "pocket-bridge"
+  | "eleven-bridge"
+  | "pocket-selected-pending-engine"
+  | "bridge-error-fallback";
 
 export interface SpeakRoute {
   disposition: SpeakDisposition;
@@ -479,7 +483,15 @@ export function speakRoute(
   }
   if (selected.engine === "pocket") {
     return {
-      disposition: "pocket-selected-pending-engine",
+      disposition: selected.key.startsWith("pocket:imported:")
+        ? "pocket-selected-pending-engine"
+        : "pocket-bridge",
+      profile: derived(),
+    };
+  }
+  if (selected.engine === "eleven") {
+    return {
+      disposition: "eleven-bridge",
       profile: derived(),
     };
   }

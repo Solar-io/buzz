@@ -16,9 +16,13 @@ function describeSelection(selection: AgentVoiceSelection | undefined): string {
   if (selection === undefined) {
     return "Derived from your key — every English agent gets its own stable voice.";
   }
-  return selection.engine === "pocket"
-    ? `Pocket voice ${selection.key}`
-    : `On-device voice ${selection.voiceURI}`;
+  if (selection.engine === "pocket") {
+    return `Pocket voice ${selection.key}`;
+  }
+  if (selection.engine === "eleven") {
+    return `ElevenLabs voice ${selection.key}`;
+  }
+  return `On-device voice ${selection.voiceURI}`;
 }
 
 /**

@@ -107,3 +107,39 @@ export function useAgentVoiceSelections(): {
   );
   return { byPubkey, ready, agentVoiceSelectionFor };
 }
+
+/**
+ * The tts bridge's ElevenLabs voice library — the third engine family the
+ * picker offers. Plain fetch of the bridge's `/voices/eleven` (the key never
+ * leaves the server), built from the serving hostname exactly like the STT
+ * bridge URL. No subscription: the library changes rarely and the bridge
+ * caches upstream for ten minutes.
+ */
+export function useElevenVoices(): {
+  voices: { id: string; label: string }[];
+  ready: boolean;
+} {
+  const [voices, setVoices] = useState<{ id: string; label: string }[]>([]);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const controller = new AbortController();
+    fetch(
+      `https://${window.location.hostname}:6366/voices/eleven`,
+      { signal: controller.signal },
+    )
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`bridge ${res.status}`))))
+      .then((body: { voices?: { id: string; label: string }[] }) => {
+        setVoices(Array.isArray(body.voices) ? body.voices : []);
+      })
+      .catch(() => {
+        // Keyless or unreachable: the picker simply shows the other engines.
+        setVoices([]);
+      })
+      .finally(() => setReady(true));
+    return () => controller.abort();
+  }, []);
+  return { voices, ready };
+}
