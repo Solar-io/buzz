@@ -51,4 +51,4 @@ docker run -d --name buzz-push-gateway \
 
 sleep 3
 docker logs --tail 20 buzz-push-gateway
-curl -sf -m 5 http://127.0.0.1:6362/health >/dev/null && echo "HEALTH-OK on :6362"
+curl -sf -m 5 http://127.0.0.1:6362/_readiness >/dev/null && echo "READY-OK on :6362"
