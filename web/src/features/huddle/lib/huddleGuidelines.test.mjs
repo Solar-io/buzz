@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   buildHuddleGuidelinesEvent,
   HUDDLE_GUIDELINES_KIND,
+  parentChannelFromGuidelines,
   voiceModeGuidelines,
 } from "./huddleGuidelines.ts";
 
@@ -85,4 +86,35 @@ test("the builder refuses empty ids instead of planning a broken event", () => {
     }),
     { error: "parent channel id is required" },
   );
+});
+
+/*
+ * The cold-load linkage leg (VOICE_E2E_2026-09-17 V1b): the guidelines are
+ * the only linkage data on the huddle channel's OWN timeline, so the parent
+ * a reload lost must be recoverable from the content the desktop replicates.
+ */
+
+test("the parent is extractable from the real guidelines content", () => {
+  // From the actual template, not a hand summary — the parser and the
+  // template are one contract; either drifting fails here.
+  assert.equal(
+    parentChannelFromGuidelines(voiceModeGuidelines(PARENT)),
+    PARENT,
+  );
+});
+
+test("a UUID outside the linkage phrase is not a parent", () => {
+  // "First UUID in the content" would resolve this; the phrase anchor must
+  // not. A guidelines rewrite that mentions another UUID cannot move the
+  // link.
+  const decoy = `The channel UUID 12345678-1234-5678-1234-567812345678 is the live huddle channel. Stay silent.`;
+  assert.equal(parentChannelFromGuidelines(decoy), null);
+});
+
+test("garbage, empty, and missing content read as no parent", () => {
+  assert.equal(parentChannelFromGuidelines(""), null);
+  assert.equal(parentChannelFromGuidelines(null), null);
+  assert.equal(parentChannelFromGuidelines(undefined), null);
+  assert.equal(parentChannelFromGuidelines("no ids in here"), null);
+  assert.equal(parentChannelFromGuidelines("{not json"), null);
 });

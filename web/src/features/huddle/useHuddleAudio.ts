@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { authEventTemplate } from "@/shared/api/relay-session";
 import { relayWsUrl } from "@/shared/lib/relay-url";
 import { getAuthTagJson } from "@/shared/lib/key-store";
@@ -491,7 +492,14 @@ export function useHuddleAudio(
         if (message.type === "error") {
           // The relay refused us (room ended, membership, capacity). Not a
           // transient drop — redialing would hit the same wall.
-          setError(message.message ?? "The huddle rejected the connection.");
+          const reason =
+            message.message ?? "The huddle rejected the connection.";
+          // Never a silent no-op: an inline span a busy bar can scroll past
+          // is how a dead-room join read as "the button does nothing" (the
+          // V1b repro). The toast says the call did not start, the span
+          // carries the relay's verdict.
+          toast.error("Could not join the huddle", { description: reason });
+          setError(reason);
           teardown();
           setStatus("error");
         }

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  applyRegistryEvent,
+  emptyHuddleRegistryState,
   HUDDLE_ENDED_KIND,
   HUDDLE_STARTED_KIND,
   huddleEndedTarget,
@@ -105,4 +107,86 @@ test("every channel appears exactly once across the chunks", () => {
 
 test("no channels means no REQ at all, rather than an unscoped one", () => {
   assert.deepEqual(huddleRegistryFilters([]), []);
+});
+
+/*
+ * The registry fold (VOICE_E2E_2026-09-17 V1b). The relay's historical
+ * replay is NEWEST FIRST (ORDER BY created_at DESC in buzz-db/event.rs), so
+ * a cold load delivers each ended huddle's 48103 before its 48100. The old
+ * per-event handler ignored an end for an id it had not yet linked, so the
+ * later 48100 resurrected every auto-ended huddle as live on every reload —
+ * the enabled Join on a dead room. The fold below must be order-insensitive;
+ * inverting any of these decisions (dropping the ended set, resurrecting on
+ * a late start, or re-adding an ended id) fails the matching test.
+ */
+
+test("replay order END before START leaves the huddle dead, not resurrected", () => {
+  let state = emptyHuddleRegistryState();
+  // Newest first: the end lands, THEN the start.
+  state = applyRegistryEvent(
+    state,
+    event({ kind: 48103, content: '{"ephemeral_channel_id":"eph-1"}' }),
+  );
+  assert.ok(
+    state.ended.has("eph-1"),
+    "the end is recorded even with no link yet",
+  );
+  state = applyRegistryEvent(state, event());
+  assert.equal(
+    state.links.size,
+    0,
+    "a start after an end must not resurrect the huddle",
+  );
+  assert.ok(state.ended.has("eph-1"));
+});
+
+test("live order START before END retires the huddle", () => {
+  let state = emptyHuddleRegistryState();
+  state = applyRegistryEvent(state, event());
+  assert.equal(state.links.get("eph-1")?.parentId, "parent-1");
+  state = applyRegistryEvent(
+    state,
+    event({ kind: 48103, content: '{"ephemeral_channel_id":"eph-1"}' }),
+  );
+  assert.equal(state.links.size, 0);
+  assert.ok(state.ended.has("eph-1"));
+});
+
+test("a live link is not clobbered by a duplicate delivery", () => {
+  let state = emptyHuddleRegistryState();
+  state = applyRegistryEvent(state, event());
+  const after = applyRegistryEvent(state, event({ created_at: 1_787_800_500 }));
+  assert.equal(after, state, "a duplicate 48100 leaves the state identical");
+});
+
+test("unrelated kinds and malformed ends change nothing", () => {
+  const state = emptyHuddleRegistryState();
+  assert.equal(applyRegistryEvent(state, event({ kind: 9 })), state);
+  assert.equal(
+    applyRegistryEvent(state, event({ kind: 48103, content: "{oops" })),
+    state,
+  );
+  assert.equal(
+    applyRegistryEvent(state, event({ kind: 48103, content: '{"other":1}' })),
+    state,
+  );
+});
+
+test("other huddles survive one huddle ending", () => {
+  let state = emptyHuddleRegistryState();
+  state = applyRegistryEvent(state, event());
+  state = applyRegistryEvent(
+    state,
+    event({
+      tags: [["h", "parent-2"]],
+      content: '{"ephemeral_channel_id":"eph-2"}',
+    }),
+  );
+  state = applyRegistryEvent(
+    state,
+    event({ kind: 48103, content: '{"ephemeral_channel_id":"eph-1"}' }),
+  );
+  assert.equal(state.links.size, 1);
+  assert.equal(state.links.get("eph-2")?.parentId, "parent-2");
+  assert.ok(state.ended.has("eph-1"));
 });
