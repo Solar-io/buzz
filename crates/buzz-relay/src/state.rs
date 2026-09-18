@@ -730,6 +730,12 @@ pub struct AppState {
     /// Shared HTTP client for relay-proxied GIF provider requests. Reusing the
     /// connection pool avoids a fresh TLS handshake for every search/share.
     pub gif_http_client: reqwest::Client,
+    /// Shared HTTP client for the docs proxy upstreams (changelog/tracker
+    /// sidecar and Daily Edition). Connect-bounded only (5s): a dead upstream
+    /// must fail the proxy request fast, while the streamed body is not
+    /// capped by a total timeout — a large edition PDF streams at network
+    /// pace, and the browser's own fetch timeout is the outer bound.
+    pub docs_http_client: reqwest::Client,
     /// Shared Redis-backed admission limits for ordinary HTTP and WebSocket work.
     pub admission_rate_limiter: Arc<RedisRateLimiter>,
 
@@ -862,6 +868,10 @@ impl AppState {
         let nip98_replay: Arc<dyn Nip98ReplayGuard> =
             Arc::new(RedisNip98ReplayGuard::new(redis_pool.clone()));
         let gif_http_client = crate::api::gifs::build_gif_http_client();
+        let docs_http_client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .build()
+            .expect("static docs proxy HTTP client configuration");
         let admission_rate_limiter = Arc::new(RedisRateLimiter::new(redis_pool.clone()));
         let audit_enabled = audit_arc.is_some();
         let state = Self {
@@ -924,6 +934,7 @@ impl AppState {
             started_at: Instant::now(),
             nip98_replay,
             gif_http_client,
+            docs_http_client,
             admission_rate_limiter,
             observer_rate_limiter: Arc::new(DashMap::new()),
             media_upload_rate_limiter: Arc::new(DashMap::new()),

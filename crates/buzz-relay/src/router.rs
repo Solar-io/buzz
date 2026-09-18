@@ -161,6 +161,31 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         merged = merged.merge(admin_router);
     }
 
+    // Same-origin docs proxy (strict allowlist). Routes exist only when the
+    // corresponding upstream is configured, like `admin_router` above — with
+    // both unset the relay behaves exactly as before and those paths fall
+    // through to the web-bundle fallback (404).
+    if state.config.docs_changelog_upstream.is_some() {
+        merged = merged.merge(
+            Router::new()
+                .route("/changelog", get(docs_proxy_handler))
+                .route("/changelog.md", get(docs_proxy_handler))
+                .route("/CHANGELOG.md", get(docs_proxy_handler))
+                .route("/tracker", get(docs_proxy_handler))
+                .route("/tracker.html", get(docs_proxy_handler))
+                .route("/tracker.json", get(docs_proxy_handler))
+                .route("/tracker/", get(docs_proxy_handler))
+                .with_state(state.clone()),
+        );
+    }
+    if state.config.docs_edition_upstream.is_some() {
+        merged = merged.merge(
+            Router::new()
+                .route("/edition/{*rest}", get(docs_proxy_handler))
+                .with_state(state.clone()),
+        );
+    }
+
     // Serve both bundles from one fallback. The admin host is checked first so
     // it can never fall through to the public web bundle.
     let web_dir = state.config.web_dir.clone();
@@ -315,6 +340,132 @@ fn classify_web_fallback(path: &str, serve_git_web_gui: bool) -> WebFallback {
         return WebFallback::SpaIndex;
     }
     WebFallback::NotFound
+}
+
+/// Which configured docs upstream a proxied path belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DocsUpstream {
+    /// The changelog/tracker sidecar (`BUZZ_DOCS_CHANGELOG_UPSTREAM`).
+    Changelog,
+    /// The Daily Edition static server (`BUZZ_DOCS_EDITION_UPSTREAM`).
+    Edition,
+}
+
+/// Exact-allowlist mapping from a relay path to its docs-upstream path.
+///
+/// `None` means "not ours" — there is deliberately NO generic prefix rule and
+/// the upstream target is NEVER derived from raw request bytes beyond this
+/// table, so the relay can only ever mirror the documents it names here.
+/// Paths are mirrored 1:1 (the web client rewrites `scheme://host:6451/x` to
+/// a same-origin `/x`), with two canonicalizations: the sidecar 404s the
+/// extensionless `/changelog` today, so the relay maps it to `/changelog.md`,
+/// and `/tracker/` trims to `/tracker`. `classify_web_fallback` stays
+/// untouched — this mapping gates the explicit routes, not the fallback.
+pub(crate) fn docs_proxy_target(path: &str) -> Option<(DocsUpstream, &str)> {
+    match path {
+        "/changelog" => Some((DocsUpstream::Changelog, "/changelog.md")),
+        "/changelog.md" => Some((DocsUpstream::Changelog, "/changelog.md")),
+        "/CHANGELOG.md" => Some((DocsUpstream::Changelog, "/CHANGELOG.md")),
+        "/tracker" | "/tracker.html" | "/tracker.json" => Some((DocsUpstream::Changelog, path)),
+        "/tracker/" => Some((DocsUpstream::Changelog, "/tracker")),
+        _ => {
+            if let Some(rest) = path.strip_prefix("/edition/") {
+                if docs_edition_rest_is_safe(rest) {
+                    return Some((DocsUpstream::Edition, path));
+                }
+            }
+            None
+        }
+    }
+}
+
+/// `/edition/{rest}` accepts a non-empty, traversal-free, fully-segmented
+/// remainder: at least one segment, no empty segment (`//`, trailing `/`),
+/// and no `..` — the raw path is checked before any percent-decoding can
+/// happen, so `..%2F` is caught by the same substring test as `../`.
+fn docs_edition_rest_is_safe(rest: &str) -> bool {
+    !rest.is_empty() && !rest.contains("..") && rest.split('/').all(|segment| !segment.is_empty())
+}
+
+/// `Cache-Control` for the docs proxy: always revalidate, matching the
+/// sidecar's own `no-store` (changelog-server.ts) — these documents change
+/// under fixed paths.
+const DOCS_PROXY_CACHE_CONTROL: &str = "no-store";
+
+/// Proxy one allowlisted docs path to its configured upstream.
+///
+/// No auth is added here — deliberately. These routes mirror documents the
+/// same tailnet can already read directly from the upstreams (:6451/:6450),
+/// which sit on the same trust boundary as the relay itself; gating the
+/// mirror would change nothing about who can read the bytes while breaking
+/// every renderer that cannot attach NIP-98 headers (the PWA's `<iframe>`
+/// viewer, installed-app navigation capture). Header hygiene runs in both
+/// directions: the upstream request is built fresh (no client headers are
+/// forwarded), and only `Content-Type` plus our own `Cache-Control` cross
+/// back — no upstream cookies, hops, or server fingerprints.
+async fn docs_proxy_handler(
+    State(state): State<Arc<AppState>>,
+    uri: axum::http::Uri,
+) -> axum::response::Response {
+    use DocsUpstream::{Changelog, Edition};
+
+    // Re-check through the pure mapping instead of trusting the route that
+    // matched: one allowlist authority, and the handler is unreachable for
+    // anything it rejects (defense in depth over the wildcard route).
+    let Some((upstream, upstream_path)) = docs_proxy_target(uri.path()) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let upstream_base = match (
+        upstream,
+        state.config.docs_changelog_upstream.as_ref(),
+        state.config.docs_edition_upstream.as_ref(),
+    ) {
+        (Changelog, Some(base), _) => base,
+        (Edition, _, Some(base)) => base,
+        // Route exists but its upstream was not configured: not ours.
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+
+    let mut target = format!(
+        "{}{}",
+        upstream_base.as_str().trim_end_matches('/'),
+        upstream_path
+    );
+    if let Some(query) = uri.query() {
+        target.push('?');
+        target.push_str(query);
+    }
+
+    let upstream_response = match state.docs_http_client.get(&target).send().await {
+        Ok(response) => response,
+        Err(error) => {
+            tracing::warn!(%error, target = %target, "docs proxy upstream unreachable");
+            return (StatusCode::BAD_GATEWAY, "docs upstream unavailable").into_response();
+        }
+    };
+    let content_type = upstream_response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_string());
+
+    let builder = axum::response::Response::builder()
+        .status(upstream_response.status().as_u16())
+        .header(
+            axum::http::header::CACHE_CONTROL,
+            HeaderValue::from_static(DOCS_PROXY_CACHE_CONTROL),
+        );
+    let builder = match content_type {
+        Some(value) => builder.header(axum::http::header::CONTENT_TYPE, value),
+        None => builder,
+    };
+    match builder.body(Body::from_stream(upstream_response.bytes_stream())) {
+        Ok(response) => response,
+        Err(error) => {
+            tracing::warn!(%error, "docs proxy response build failed");
+            (StatusCode::BAD_GATEWAY, "docs upstream unavailable").into_response()
+        }
+    }
 }
 
 /// `Cache-Control` for the SPA index: always revalidate. The index names the
@@ -690,6 +841,67 @@ mod tests {
     }
 
     #[test]
+    fn docs_proxy_target_pins_the_exact_allowlist() {
+        use DocsUpstream::{Changelog, Edition};
+
+        // Every allowlisted changelog-sidecar path, with its upstream path.
+        // The extensionless form canonicalizes (the sidecar 404s it today)
+        // and the trailing-slash tracker form trims; everything else mirrors.
+        assert_eq!(
+            docs_proxy_target("/changelog"),
+            Some((Changelog, "/changelog.md"))
+        );
+        assert_eq!(
+            docs_proxy_target("/changelog.md"),
+            Some((Changelog, "/changelog.md"))
+        );
+        assert_eq!(
+            docs_proxy_target("/CHANGELOG.md"),
+            Some((Changelog, "/CHANGELOG.md"))
+        );
+        assert_eq!(docs_proxy_target("/tracker"), Some((Changelog, "/tracker")));
+        assert_eq!(
+            docs_proxy_target("/tracker.html"),
+            Some((Changelog, "/tracker.html"))
+        );
+        assert_eq!(
+            docs_proxy_target("/tracker.json"),
+            Some((Changelog, "/tracker.json"))
+        );
+        assert_eq!(
+            docs_proxy_target("/tracker/"),
+            Some((Changelog, "/tracker"))
+        );
+
+        // Edition paths mirror 1:1 onto the edition upstream.
+        assert_eq!(
+            docs_proxy_target("/edition/latest.html"),
+            Some((Edition, "/edition/latest.html"))
+        );
+        assert_eq!(
+            docs_proxy_target("/edition/2026/09/page.html"),
+            Some((Edition, "/edition/2026/09/page.html"))
+        );
+
+        // Negatives — anything not in the table maps to nothing, forever.
+        assert_eq!(docs_proxy_target("/arbitrary"), None);
+        // Case-different extension: not the allowlisted document.
+        assert_eq!(docs_proxy_target("/CHANGELOG.MD"), None);
+        // Edition needs a non-empty remainder.
+        assert_eq!(docs_proxy_target("/edition/"), None);
+        assert_eq!(docs_proxy_target("/edition"), None);
+        // Traversal is rejected in both raw and percent-encoded shapes.
+        assert_eq!(docs_proxy_target("/edition/../secret"), None);
+        assert_eq!(docs_proxy_target("/edition/..%2Fx"), None);
+        // Empty segments (double slash, trailing slash) are not paths we mirror.
+        assert_eq!(docs_proxy_target("/edition//x"), None);
+        assert_eq!(docs_proxy_target("/edition/x/"), None);
+        // Trailing slash on a changelog path is not the allowlisted spelling.
+        assert_eq!(docs_proxy_target("/changelog/"), None);
+        assert_eq!(docs_proxy_target("/tracker.json/extra"), None);
+    }
+
+    #[test]
     fn status_payload_exposes_source_and_build_identity() {
         let payload = status_payload(42);
 
@@ -815,5 +1027,226 @@ mod tests {
             !handler_receives_message_with_limit(limit, limit + 1).await,
             "oversized messages must be rejected by the WebSocket parser before the handler sees them"
         );
+    }
+
+    /// Lazy-infra AppState (dead DB/Redis, like `api::gifs`' test helper) with
+    /// the docs proxy pointed at the given stub upstream origins.
+    async fn docs_proxy_test_state(
+        changelog_upstream: Option<String>,
+        edition_upstream: Option<String>,
+    ) -> Arc<AppState> {
+        let mut config = crate::config::Config::from_env().expect("test config");
+        config.redis_url = "redis://127.0.0.1:1".to_string();
+        config.docs_changelog_upstream =
+            changelog_upstream.map(|raw| url::Url::parse(&raw).expect("test upstream url"));
+        config.docs_edition_upstream =
+            edition_upstream.map(|raw| url::Url::parse(&raw).expect("test upstream url"));
+
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://buzz:buzz_dev@127.0.0.1:1/buzz") // sadscan:disable np.postgres.1
+            .expect("lazy test database pool");
+        let db = buzz_db::Db::from_pool(pool.clone());
+        let redis_pool = deadpool_redis::Config::from_url(&config.redis_url)
+            .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+            .expect("lazy test Redis pool");
+        let pubsub = Arc::new(
+            buzz_pubsub::PubSubManager::new(&config.redis_url, redis_pool.clone())
+                .await
+                .expect("test pubsub"),
+        );
+        let auth = buzz_auth::AuthService::new(config.auth.clone());
+        let search = buzz_search::SearchService::new(pool.clone());
+        let workflow_engine = Arc::new(buzz_workflow::WorkflowEngine::new(
+            db.clone(),
+            buzz_workflow::WorkflowConfig::default(),
+        ));
+        let media_storage =
+            buzz_media::MediaStorage::new(&config.media).expect("test media storage config");
+        let (state, _audit_shutdown) = crate::state::AppState::new(
+            config,
+            db,
+            redis_pool,
+            None::<buzz_audit::AuditService>,
+            pubsub,
+            auth,
+            search,
+            workflow_engine,
+            nostr::Keys::generate(),
+            media_storage,
+        );
+        Arc::new(state)
+    }
+
+    #[tokio::test]
+    async fn docs_proxy_mirrors_allowlisted_paths_to_their_stub_upstreams() {
+        async fn stub_server(
+            body: &'static str,
+            content_type: &'static str,
+        ) -> (String, tokio::task::JoinHandle<()>) {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind stub upstream");
+            let addr = listener.local_addr().expect("stub upstream address");
+            let app = Router::new().fallback(get(move || async move {
+                ([(axum::http::header::CONTENT_TYPE, content_type)], body)
+            }));
+            let handle = tokio::spawn(async move {
+                axum::serve(listener, app)
+                    .await
+                    .expect("serve stub upstream");
+            });
+            (format!("http://{addr}"), handle)
+        }
+
+        let (changelog_base, changelog_server) =
+            stub_server("stub changelog", "text/markdown").await;
+        let (edition_base, edition_server) = stub_server("stub edition", "text/html").await;
+
+        let state =
+            docs_proxy_test_state(Some(changelog_base.clone()), Some(edition_base.clone())).await;
+        let relay_listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind relay test listener");
+        let relay_addr = relay_listener.local_addr().expect("relay test address");
+        let relay_server = tokio::spawn(async move {
+            // With ConnectInfo, like production's serve call — some layers
+            // (git policy's localhost gate) read it.
+            axum::serve(
+                relay_listener,
+                build_router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+            .expect("serve relay test router");
+        });
+        let base = format!("http://{relay_addr}");
+
+        // Allowlisted mirror: status, forwarded body, forwarded Content-Type.
+        let response = reqwest::get(format!("{base}/changelog.md"))
+            .await
+            .expect("changelog.md request");
+        assert_eq!(response.status(), 200);
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.to_string());
+        let cache_control = response
+            .headers()
+            .get(reqwest::header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.to_string());
+        assert_eq!(content_type.as_deref(), Some("text/markdown"));
+        assert_eq!(cache_control.as_deref(), Some("no-store"));
+        assert_eq!(response.text().await.expect("body"), "stub changelog");
+
+        // Canonicalization: the extensionless form reaches the same document.
+        let response = reqwest::get(format!("{base}/changelog"))
+            .await
+            .expect("changelog request");
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.text().await.expect("body"), "stub changelog");
+
+        // Tracker sidecar JSON and the edition upstream's own path both mirror.
+        let response = reqwest::get(format!("{base}/tracker.json"))
+            .await
+            .expect("tracker.json request");
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.text().await.expect("body"), "stub changelog");
+
+        let response = reqwest::get(format!("{base}/edition/latest.html"))
+            .await
+            .expect("edition request");
+        assert_eq!(response.status(), 200);
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.to_string());
+        assert_eq!(content_type.as_deref(), Some("text/html"));
+        assert_eq!(response.text().await.expect("body"), "stub edition");
+
+        // Non-allowlisted paths stay 404 — including case-different and
+        // traversal shapes that reach the handler through the wildcard.
+        for path in [
+            "/arbitrary",
+            "/CHANGELOG.MD",
+            "/edition/",
+            "/edition/..%2Fx",
+        ] {
+            let response = reqwest::get(format!("{base}{path}"))
+                .await
+                .expect("negative request");
+            assert_eq!(
+                response.status(),
+                404,
+                "{path} must stay outside the allowlist"
+            );
+        }
+
+        relay_server.abort();
+        let _ = relay_server.await;
+        changelog_server.abort();
+        let _ = changelog_server.await;
+        edition_server.abort();
+        let _ = edition_server.await;
+    }
+
+    #[tokio::test]
+    async fn docs_proxy_returns_502_when_the_upstream_is_dead() {
+        let state = docs_proxy_test_state(Some("http://127.0.0.1:1".to_string()), None).await;
+        let relay_listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind relay test listener");
+        let relay_addr = relay_listener.local_addr().expect("relay test address");
+        let relay_server = tokio::spawn(async move {
+            axum::serve(
+                relay_listener,
+                build_router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+            .expect("serve relay test router");
+        });
+
+        let base = format!("http://{relay_addr}");
+        let response = reqwest::get(format!("{base}/changelog.md"))
+            .await
+            .expect("changelog.md request against dead upstream");
+        assert_eq!(response.status(), 502);
+
+        relay_server.abort();
+        let _ = relay_server.await;
+    }
+
+    #[tokio::test]
+    async fn docs_proxy_routes_are_absent_when_upstreams_are_unconfigured() {
+        let state = docs_proxy_test_state(None, None).await;
+        let relay_listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind relay test listener");
+        let relay_addr = relay_listener.local_addr().expect("relay test address");
+        let relay_server = tokio::spawn(async move {
+            axum::serve(
+                relay_listener,
+                build_router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+            .expect("serve relay test router");
+        });
+
+        let base = format!("http://{relay_addr}");
+        for path in ["/changelog.md", "/tracker.json", "/edition/latest.html"] {
+            let response = reqwest::get(format!("{base}{path}"))
+                .await
+                .expect("unconfigured request");
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            assert_eq!(
+                status, 404,
+                "{path} must not exist without its upstream configured (body: {body})"
+            );
+        }
+
+        relay_server.abort();
+        let _ = relay_server.await;
     }
 }
