@@ -134,6 +134,22 @@ test("a send the relay refuses still surfaces, unchanged", async () => {
   assert.equal(calls.toasts[0].message, "quota exceeded; retry in 4s");
 });
 
+test("a send that rejects (closed session) toasts instead of throwing", async () => {
+  // session.publish REJECTS when the session is closed (relay-session.ts),
+  // and the caller fires the door void — an unhandled rejection there is a
+  // silent drop, the exact class this door exists to close (QA note N1).
+  const { calls, deps } = fakeDeps({
+    deps: {
+      send: async () => {
+        throw new Error("session closed");
+      },
+    },
+  });
+  await publishVoiceFinal(MARKED, deps);
+  assert.equal(calls.toasts.length, 1);
+  assert.equal(calls.toasts[0].message, "session closed");
+});
+
 test("the empty-mention gate lives only on the voice-final path", () => {
   // Plain (typed) chat sends are NOT gated — only [voice] finals are. The
   // composer's send path (useMessageActions) must not reference the gate

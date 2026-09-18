@@ -115,12 +115,25 @@ export async function publishVoiceFinal(
   }
   const settled = gate();
   if (settled.ok) {
-    const result = await deps.send({
-      content: text,
-      mentionPubkeys: settled.mentionPubkeys,
-      threadRef: null,
-      mediaTags: [],
-    });
+    let result: Awaited<ReturnType<typeof deps.send>>;
+    try {
+      result = await deps.send({
+        content: text,
+        mentionPubkeys: settled.mentionPubkeys,
+        threadRef: null,
+        mediaTags: [],
+      });
+    } catch (error) {
+      // session.publish rejects on a closed session; the caller fires this
+      // void, so an unhandled rejection would eat the failure silently —
+      // the exact class this door exists to close (QA note N1).
+      deps.toastError(
+        error instanceof Error && error.message
+          ? error.message
+          : "The transcript could not be sent.",
+      );
+      return;
+    }
     if (!result.ok) {
       // Speech that vanishes with no feedback reads as "it ignored me".
       deps.toastError(result.message || "The transcript could not be sent.");
