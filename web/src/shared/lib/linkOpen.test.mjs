@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   fileViewerKind,
+  isRelayEditionHref,
   isRelayMediaHref,
   linkDisposition,
   openLink,
@@ -112,4 +113,22 @@ test("openLink: opens a _blank tab for tab links and never opens a window for ov
   } finally {
     globalThis.window = originalWindow;
   }
+});
+
+test("isRelayEditionHref matches only relay-origin /edition/ pages", () => {
+  const RELAY = "https://crichton.tailb3d4b8.ts.net:6351";
+  assert.equal(
+    isRelayEditionHref(`${RELAY}/edition/latest.html`, RELAY),
+    true,
+  );
+  // Same host, wrong port (the upstream :6450) is NOT the relay docs proxy.
+  assert.equal(
+    isRelayEditionHref("https://crichton.tailb3d4b8.ts.net:6450/edition/latest.html", RELAY),
+    false,
+  );
+  // Relay origin but not an edition path — strangers stay scriptless.
+  assert.equal(isRelayEditionHref(`${RELAY}/media/x.html`, RELAY), false);
+  assert.equal(isRelayEditionHref(`${RELAY}/changelog.md`, RELAY), false);
+  assert.equal(isRelayEditionHref("https://other.host/edition/x.html", RELAY), false);
+  assert.equal(isRelayEditionHref("not a url", RELAY), false);
 });

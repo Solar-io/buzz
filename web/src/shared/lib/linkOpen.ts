@@ -196,6 +196,26 @@ export function isRelayMediaHref(href: string, relayBase: string): boolean {
 }
 
 /**
+ * True when the URL is a Daily Edition page served by the relay's own docs
+ * proxy (relay origin + /edition/ path). Those pages are OURS — their inline
+ * tab script is trusted enough to run in the viewer, in an opaque origin
+ * (sandbox="allow-scripts" WITHOUT allow-same-origin, so the page can toggle
+ * its tabs but reaches none of the SPA's origin state). Strangers' .html
+ * stays scriptless.
+ */
+export function isRelayEditionHref(href: string, relayBase: string): boolean {
+  let url: URL;
+  let base: URL;
+  try {
+    url = new URL(href, TEST_BASE);
+    base = new URL(relayBase);
+  } catch {
+    return false;
+  }
+  return url.host === base.host && url.pathname.startsWith("/edition/");
+}
+
+/**
  * Open a classified link as a `_blank` tab. Only "tab" and "default"
  * dispositions belong here — "overlay" links go to the FileViewerDialog
  * via `useFileViewer` at the call site, which owns the signed-fetch and

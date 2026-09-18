@@ -13,6 +13,7 @@ import { Download, FileText } from "lucide-react";
 import { fetchSignedMedia } from "@/shared/api/blossom";
 import {
   fileViewerKind,
+  isRelayEditionHref,
   isRelayMediaHref,
   type FileViewerKind,
 } from "@/shared/lib/linkOpen";
@@ -213,7 +214,14 @@ function FileViewerDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent
         data-testid="file-viewer-dialog"
-        className="max-w-5xl grid-rows-[auto_minmax(0,1fr)]"
+        className={
+          kind === "html"
+            ? // A page-type file is a whole document (the Daily Edition is a
+              // ~1020px grid with its own tabs) — give it the window, not a
+              // 5xl box, or its layout compresses into unreadable cards.
+              "h-[90vh] w-[96vw] max-w-[1400px] grid-rows-[auto_minmax(0,1fr)]"
+            : "max-w-5xl grid-rows-[auto_minmax(0,1fr)]"
+        }
       >
         <DialogHeader className="flex-row items-start justify-between gap-4 space-y-0 pr-10">
           <div className="min-w-0">
@@ -244,6 +252,7 @@ function FileViewerDialog({
           state={state}
           downloadFailed={downloadFailed}
           onDownload={download}
+          allowScripts={kind === "html" && isRelayEditionHref(url, relayBase)}
         />
       </DialogContent>
     </Dialog>
@@ -256,12 +265,14 @@ function FileViewerBody({
   state,
   downloadFailed,
   onDownload,
+  allowScripts,
 }: {
   kind: FileViewerKind;
   title: string;
   state: BodyState;
   downloadFailed: boolean;
   onDownload: () => void;
+  allowScripts: boolean;
 }) {
   if (state.phase === "loading") {
     return (
@@ -347,13 +358,17 @@ function FileViewerBody({
         />
       );
     case "html":
-      // Sandbox allows same-origin ONLY: no scripts, no top navigation.
+      // Sandbox, two tiers. OUR OWN relay-served edition pages run their tab
+      // script in an OPAQUE origin (allow-scripts, no allow-same-origin — the
+      // page can toggle tabs but reaches none of the SPA's origin state).
+      // Everything else stays allow-same-origin with scripts off: no code
+      // execution from stranger files, no top navigation from anything.
       return (
         <iframe
           data-testid="file-viewer-body"
           src={src}
           title={title}
-          sandbox="allow-same-origin"
+          sandbox={allowScripts ? "allow-scripts" : "allow-same-origin"}
           className="h-full w-full rounded-lg border border-border/60 bg-background"
         />
       );

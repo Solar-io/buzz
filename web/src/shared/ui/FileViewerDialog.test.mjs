@@ -263,3 +263,32 @@ test("pdf renders an iframe and unpreviewable files render the fallback without 
   assert.match(body.textContent ?? "", /backup\.zip/);
   await archive.unmount();
 });
+
+test("html viewer: relay edition pages get script access, strangers stay scriptless", async () => {
+  globalThis.__BUZZ_TEST_FETCH_SIGNED_MEDIA__ = async () => {
+    throw new Error("signed seam must not be used for non-relay URLs");
+  };
+  const RELAY = "https://crichton.tailb3d4b8.ts.net:6351";
+
+  const ed = await mountViewer(`${RELAY}/edition/latest.html`);
+  await ed.open();
+  let frame = dom.window.document.querySelector('iframe[data-testid="file-viewer-body"]');
+  assert.ok(frame, "edition renders the html iframe");
+  assert.equal(
+    frame.getAttribute("sandbox"),
+    "allow-scripts",
+    "our edition page runs its tab script in an opaque origin",
+  );
+  await ed.unmount();
+
+  const foreign = await mountViewer("https://example.com/page.html");
+  await foreign.open();
+  frame = dom.window.document.querySelector('iframe[data-testid="file-viewer-body"]');
+  assert.ok(frame, "foreign html renders the html iframe");
+  assert.equal(
+    frame.getAttribute("sandbox"),
+    "allow-same-origin",
+    "stranger html keeps the scriptless sandbox",
+  );
+  await foreign.unmount();
+});
