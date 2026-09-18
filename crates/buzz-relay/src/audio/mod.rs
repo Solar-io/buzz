@@ -9,6 +9,7 @@
 //!                                                  (1-byte peer_index prefix)
 //! ```
 
+pub mod grace;
 pub mod handler;
 pub mod join;
 pub mod mesh;

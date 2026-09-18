@@ -16,6 +16,7 @@ use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 /// A connected audio peer.
@@ -573,6 +574,11 @@ impl Room {
 /// Global registry of active audio rooms.
 pub struct AudioRoomManager {
     rooms: DashMap<(CommunityId, Uuid), Arc<Room>>,
+    /// Pending empty-room auto-end graces, keyed like `rooms`. The token is
+    /// the grace timer's cancel signal: a peer admission cancels it, and the
+    /// timer's fire path consumes (takes) the entry so exactly one fire ever
+    /// ends a given grace generation. See [`super::grace`].
+    graces: DashMap<(CommunityId, Uuid), CancellationToken>,
 }
 
 impl AudioRoomManager {
@@ -580,6 +586,7 @@ impl AudioRoomManager {
     pub fn new() -> Self {
         Self {
             rooms: DashMap::new(),
+            graces: DashMap::new(),
         }
     }
 
@@ -622,10 +629,67 @@ impl AudioRoomManager {
     }
 
     /// Remove the room if it has no peers. Returns `true` if the room was removed.
+    ///
+    /// A room with a pending empty-room auto-end grace is deliberately kept:
+    /// the grace exists to give a reconnecting peer a room to rejoin, so the
+    /// failed-join cleanup paths (which call this with an empty room) must not
+    /// evict it out from under the pending timer. The grace fire consumes its
+    /// entry before evicting, so this never blocks the fire itself.
     pub fn cleanup_if_empty(&self, community_id: CommunityId, channel_id: Uuid) -> bool {
+        let key = (community_id, channel_id);
+        if self.graces.contains_key(&key) {
+            return false;
+        }
         self.rooms
-            .remove_if(&(community_id, channel_id), |_, room| room.is_empty())
+            .remove_if(&key, |_, room| room.is_empty())
             .is_some()
+    }
+
+    /// Arm the empty-room auto-end grace for a channel. Returns the timer's
+    /// cancellation token when a grace was newly installed, or `None` when one
+    /// is already pending for the room — a second empty→leave event during an
+    /// existing grace must not stack a second timer; the pending timer owns
+    /// the end and re-checks room state when it fires.
+    pub fn start_empty_grace(
+        &self,
+        community_id: CommunityId,
+        channel_id: Uuid,
+    ) -> Option<CancellationToken> {
+        match self.graces.entry((community_id, channel_id)) {
+            dashmap::mapref::entry::Entry::Occupied(_) => None,
+            dashmap::mapref::entry::Entry::Vacant(vacant) => {
+                let token = CancellationToken::new();
+                vacant.insert(token.clone());
+                Some(token)
+            }
+        }
+    }
+
+    /// Cancel and forget a pending grace — the rejoin path. Returns `true` if
+    /// a grace was actually pending. The cancelled timer task stands down
+    /// without archiving.
+    pub fn cancel_empty_grace(&self, community_id: CommunityId, channel_id: Uuid) -> bool {
+        self.graces
+            .remove(&(community_id, channel_id))
+            .map(|(_, token)| {
+                token.cancel();
+                true
+            })
+            .unwrap_or(false)
+    }
+
+    /// Consume a pending grace without cancelling its token — the fire path.
+    /// Removing the entry makes this fire the single winner for the grace
+    /// generation: a concurrent or later fire finds no entry and is a no-op,
+    /// which is what makes double-archive / double-48103 impossible.
+    pub fn take_empty_grace(
+        &self,
+        community_id: CommunityId,
+        channel_id: Uuid,
+    ) -> Option<CancellationToken> {
+        self.graces
+            .remove(&(community_id, channel_id))
+            .map(|(_, token)| token)
     }
 }
 
@@ -992,5 +1056,104 @@ mod tests {
         );
         // And the room state must be unchanged.
         assert_eq!(room.peers.len(), MAX_PEERS_PER_ROOM);
+    }
+
+    fn grace_key() -> (CommunityId, Uuid) {
+        (CommunityId::from_uuid(Uuid::new_v4()), Uuid::new_v4())
+    }
+
+    /// Invariant: a second empty→leave event during an existing grace must
+    /// not stack a second timer. Arming is once-per-generation; only
+    /// consuming (take) or cancelling re-arms.
+    #[test]
+    fn empty_room_grace_arms_exactly_once_until_consumed() {
+        let manager = AudioRoomManager::new();
+        let key = grace_key();
+
+        let first = manager
+            .start_empty_grace(key.0, key.1)
+            .expect("first arm installs a grace");
+        assert!(
+            manager.start_empty_grace(key.0, key.1).is_none(),
+            "a second arm during a pending grace must not stack another timer"
+        );
+
+        let taken = manager
+            .take_empty_grace(key.0, key.1)
+            .expect("the fire consumes the pending entry");
+        assert!(manager.take_empty_grace(key.0, key.1).is_none());
+
+        // Token identity proof: `taken` must be the same live token the armed
+        // timer task holds — cancelling one is observable through the other.
+        // A fresh token here would leave the original timer unkillable.
+        assert!(!first.is_cancelled());
+        taken.cancel();
+        assert!(
+            first.is_cancelled(),
+            "take must return the armed timer's token, not a fresh one"
+        );
+
+        let rearmed = manager
+            .start_empty_grace(key.0, key.1)
+            .expect("a consumed grace generation can be re-armed");
+        assert!(
+            !rearmed.is_cancelled(),
+            "a re-armed grace must be a fresh, live token — not the consumed one"
+        );
+    }
+
+    /// The rejoin path: cancelling a pending grace cancels the timer's token
+    /// (so the sleeping task stands down) and frees the room to be re-armed on
+    /// its next empty departure. Cancelling with nothing pending is a no-op.
+    #[test]
+    fn cancel_empty_grace_cancels_the_token_and_allows_rearming() {
+        let manager = AudioRoomManager::new();
+        let key = grace_key();
+
+        assert!(
+            !manager.cancel_empty_grace(key.0, key.1),
+            "cancelling with nothing pending must report no-op"
+        );
+
+        let token = manager.start_empty_grace(key.0, key.1).expect("grace arms");
+        assert!(
+            manager.cancel_empty_grace(key.0, key.1),
+            "cancelling a pending grace must report the cancel"
+        );
+        assert!(
+            token.is_cancelled(),
+            "the cancelled token must wake the timer task"
+        );
+        assert!(
+            manager.start_empty_grace(key.0, key.1).is_some(),
+            "a cancelled grace must leave the room re-armable"
+        );
+    }
+
+    /// The grace exists to keep an emptied room joinable: cleanup paths that
+    /// evict empty rooms (failed joins) must not evict a room whose auto-end
+    /// grace is pending, and must evict normally once the grace is gone.
+    #[test]
+    fn cleanup_if_empty_spares_a_room_with_a_pending_grace() {
+        let manager = AudioRoomManager::new();
+        let key = grace_key();
+        manager.get_or_create(key.0, key.1); // empty room
+
+        manager.start_empty_grace(key.0, key.1).expect("grace arms");
+        assert!(
+            !manager.cleanup_if_empty(key.0, key.1),
+            "a pending grace must spare the emptied room from cleanup"
+        );
+        assert!(
+            manager.get(key.0, key.1).is_some(),
+            "the spared room stays resident for rejoiners"
+        );
+
+        manager.cancel_empty_grace(key.0, key.1);
+        assert!(
+            manager.cleanup_if_empty(key.0, key.1),
+            "once the grace is gone, the empty room is evictable as before"
+        );
+        assert!(manager.get(key.0, key.1).is_none());
     }
 }
