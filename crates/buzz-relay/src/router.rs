@@ -382,9 +382,14 @@ pub(crate) fn docs_proxy_target(path: &str) -> Option<(DocsUpstream, &str)> {
 /// `/edition/{rest}` accepts a non-empty, traversal-free, fully-segmented
 /// remainder: at least one segment, no empty segment (`//`, trailing `/`),
 /// and no `..` — the raw path is checked before any percent-decoding can
-/// happen, so `..%2F` is caught by the same substring test as `../`.
+/// happen, so `..%2F` is caught by the same substring test as `../`, and
+/// percent-encoded dots (`%2e`, either case) are rejected outright so the
+/// guard never depends on the upstream re-decoding safely.
 fn docs_edition_rest_is_safe(rest: &str) -> bool {
-    !rest.is_empty() && !rest.contains("..") && rest.split('/').all(|segment| !segment.is_empty())
+    !rest.is_empty()
+        && !rest.contains("..")
+        && !rest.to_ascii_lowercase().contains("%2e")
+        && rest.split('/').all(|segment| !segment.is_empty())
 }
 
 /// `Cache-Control` for the docs proxy: always revalidate, matching the
@@ -893,6 +898,8 @@ mod tests {
         // Traversal is rejected in both raw and percent-encoded shapes.
         assert_eq!(docs_proxy_target("/edition/../secret"), None);
         assert_eq!(docs_proxy_target("/edition/..%2Fx"), None);
+        assert_eq!(docs_proxy_target("/edition/%2e%2e/x"), None);
+        assert_eq!(docs_proxy_target("/edition/%2E%2E/x"), None);
         // Empty segments (double slash, trailing slash) are not paths we mirror.
         assert_eq!(docs_proxy_target("/edition//x"), None);
         assert_eq!(docs_proxy_target("/edition/x/"), None);
