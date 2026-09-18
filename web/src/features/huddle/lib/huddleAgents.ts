@@ -203,3 +203,74 @@ export function huddleAgentAddMessage(input: {
     ? `${input.agentName} added to the huddle, but the channel add failed: ${detail}`
     : `${input.agentName} added to the huddle, but the channel add failed.`;
 }
+
+/**
+ * What the add-agent dialog does with one add result (V4 part 2,
+ * 2026-09-18 QA defect). Pure, so the failure contract is pinned by test:
+ * a FAILED add must name the failure in a toast — the one signal that
+ * survives dismissing the dialog — and must not silently discard the still-
+ * staged entry, i.e. the dialog stays open with the failure shown and the
+ * entry text untouched. The add-failure silence (an Enter that no-ops, a
+ * dismissal that buries the attempt) was the V3 rate-limit family's worst
+ * half: the user believes the agent is in the room, speaks, and the loop is
+ * dead. Never silent now.
+ */
+export const HUDDLE_AGENT_ADD_FAILED_DESCRIPTION =
+  "Nothing was added — the agent is not in this huddle yet.";
+
+export interface AgentAddOutcome {
+  /** Full success only: close the dialog. */
+  close: boolean;
+  /** Partial success (huddle yes, parent no): the add landed, clear the entry. */
+  clearEntry: boolean;
+  /** Inline dialog error (failure), if any. */
+  error: string | null;
+  /** Inline dialog notice (partial success), if any. */
+  notice: string | null;
+  /**
+   * The toast to raise, if any. Present on every failure — the part that
+   * outlives the dialog.
+   */
+  toast: { message: string; description: string } | null;
+}
+
+/** Fallback when a failure arrives with no relay message at all. */
+export const HUDDLE_AGENT_ADD_REFUSED = "The relay refused the huddle add.";
+
+export function huddleAgentAddOutcome(result: {
+  ok: boolean;
+  message: string;
+}): AgentAddOutcome {
+  if (result.ok) {
+    // Partial success (huddle yes, parent channel no) keeps the dialog open
+    // with its message, exactly as the desktop's does. The huddle add — the
+    // one that matters — landed, so the entry is spent.
+    if (result.message.includes("but the channel add failed")) {
+      return {
+        close: false,
+        clearEntry: true,
+        error: null,
+        notice: result.message,
+        toast: null,
+      };
+    }
+    return {
+      close: true,
+      clearEntry: false,
+      error: null,
+      notice: null,
+      toast: null,
+    };
+  }
+  const message =
+    result.message.trim().length > 0
+      ? result.message
+      : HUDDLE_AGENT_ADD_REFUSED;
+  return {
+    close: false,
+    clearEntry: false,
+    error: message,
+    notice: null,
+    toast: { message, description: HUDDLE_AGENT_ADD_FAILED_DESCRIPTION },
+  };
+}

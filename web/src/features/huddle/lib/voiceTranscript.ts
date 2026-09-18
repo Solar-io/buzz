@@ -405,3 +405,127 @@ export function shouldRestoreSpeechOnVoiceOff(options: {
   }
   return !options.userToggledSpeechDuringVoice;
 }
+
+/**
+ * The empty-mention gate (V4 hardening, 2026-09-18 QA defect). A `[voice]`
+ * final published while the huddle's agent roster is unresolved lands with
+ * NO p tags — and the p tags ARE the wake, so the message wakes nobody: no
+ * agent, no reply, no speech, and previously NO error anywhere. The gate
+ * refuses to publish such a final and hands the caller the visible error,
+ * so the failure is loud in BOTH directions: never a silent send, never a
+ * silent drop. Plain (typed) chat sends never pass through here — this
+ * decides only the voice-final path (`lib/voicePublish.ts`).
+ */
+
+/** Shown when a final is blocked because the roster has not resolved. */
+export const VOICE_ROSTER_UNRESOLVED_MESSAGE =
+  "The agent roster has not resolved yet — nothing was sent. Try again in a moment.";
+
+/** Shown when the bounded wait for a just-added agent runs out. */
+export const VOICE_ROSTER_FRESH_ADD_MESSAGE =
+  "The roster has not caught up with the new agent yet — nothing was sent. Try again in a moment.";
+
+/**
+ * How long the publish door waits for a just-added agent to show up in the
+ * polled member snapshot before blocking. One bounded await, not a state
+ * machine: the roster hook merges its own adds optimistically, so in
+ * practice this resolves within a render and never delays a real final.
+ */
+export const VOICE_ROSTER_FRESH_WAIT_MS = 3000;
+
+/** Poll cadence while waiting out the fresh-add window. */
+export const VOICE_ROSTER_FRESH_POLL_MS = 250;
+
+export type VoiceMentionGateResult =
+  | { ok: true; mentionPubkeys: string[] }
+  | {
+      ok: false;
+      reason: "unresolved" | "fresh_add_pending";
+      error: string;
+    };
+
+/**
+ * Bot pubkeys added successfully that the current snapshot does not carry
+ * yet — the fresh-add race. An empty result means the snapshot and the
+ * session's own adds agree.
+ */
+export function pendingFreshAdds(input: {
+  agentPubkeys: readonly string[];
+  freshAdds: readonly string[];
+}): string[] {
+  return input.freshAdds.filter(
+    (pubkey) => !input.agentPubkeys.includes(pubkey),
+  );
+}
+
+/**
+ * Decide whether one `[voice]` final may publish, given the mention set the
+ * CURRENT member snapshot produces and the session's not-yet-observed adds.
+ *
+ *  - `fresh_add_pending`: an add landed but the snapshot has not caught up —
+ *    publishing now would wake the pre-add roster and miss the new agent
+ *    (the stale-pre-add-poll false green). The caller gets one bounded wait
+ *    before re-gating (`waitForRosterInclusion`).
+ *  - `unresolved`: the mention set is empty — a dead message. Blocked with
+ *    {@link VOICE_ROSTER_UNRESOLVED_MESSAGE}.
+ *  - `ok`: publish with exactly these mentions.
+ */
+export function gateVoiceMentions(input: {
+  mentionPubkeys: readonly string[];
+  freshAdds?: readonly string[];
+}): VoiceMentionGateResult {
+  const pending = pendingFreshAdds({
+    agentPubkeys: input.mentionPubkeys,
+    freshAdds: input.freshAdds ?? [],
+  });
+  if (pending.length > 0) {
+    return {
+      ok: false,
+      reason: "fresh_add_pending",
+      error: VOICE_ROSTER_FRESH_ADD_MESSAGE,
+    };
+  }
+  if (input.mentionPubkeys.length === 0) {
+    return {
+      ok: false,
+      reason: "unresolved",
+      error: VOICE_ROSTER_UNRESOLVED_MESSAGE,
+    };
+  }
+  return { ok: true, mentionPubkeys: [...input.mentionPubkeys] };
+}
+
+/**
+ * The bounded await-once for the fresh-add race: poll `isIncluded` until it
+ * turns true or `timeoutMs` has been handed out through `sleep`, whichever
+ * comes first. Checks immediately (zero sleeps when already satisfied) and
+ * never overshoots the timeout by more than one poll step. `sleep` is
+ * injectable so tests run without real timers; the default rides setTimeout.
+ */
+export function waitForRosterInclusion(options: {
+  isIncluded: () => boolean;
+  timeoutMs?: number;
+  pollMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}): Promise<boolean> {
+  const timeoutMs = options.timeoutMs ?? VOICE_ROSTER_FRESH_WAIT_MS;
+  const pollMs = options.pollMs ?? VOICE_ROSTER_FRESH_POLL_MS;
+  const sleep =
+    options.sleep ??
+    ((ms: number) =>
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, ms);
+      }));
+  return (async () => {
+    let waited = 0;
+    while (!options.isIncluded()) {
+      if (waited >= timeoutMs) {
+        return false;
+      }
+      const step = Math.min(pollMs, timeoutMs - waited);
+      await sleep(step);
+      waited += step;
+    }
+    return true;
+  })();
+}

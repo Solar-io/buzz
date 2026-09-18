@@ -25,6 +25,7 @@ import {
 import { huddleJoinGate } from "../lib/huddleJoinGate.ts";
 import { isSpeaking } from "../lib/micMeter.ts";
 import { shouldRestoreSpeechOnVoiceOff } from "../lib/voiceTranscript.ts";
+import { publishVoiceFinal } from "../lib/voicePublish.ts";
 import { useHuddleAgentRoster } from "../useHuddleAgentRoster";
 import { useHuddleAgentSpeech } from "../useHuddleAgentSpeech";
 import { useHuddleAudio } from "../useHuddleAudio";
@@ -207,22 +208,46 @@ export function HuddleBar({
   // ARE the wake — a default-config agent's subscription filters on #p, so
   // an untagged transcript never reaches it (lib/voiceTranscript.ts header).
   // threadRef null = top-level, matching the desktop's STT publishes.
+  //
+  // V4 (2026-09-18 QA defect): an EMPTY mention set means the roster has
+  // not resolved, and publishing then is a dead message — it wakes nobody
+  // and raised no error anywhere. The door (lib/voicePublish.ts) refuses
+  // the send and toasts instead: never a silent send, never a silent drop.
+  // It also holds a final until the snapshot carries an agent this session
+  // just added (the fresh-add race), so speaking right after adding cannot
+  // wake the stale pre-add roster. Plain (typed) chat sends bypass this
+  // door entirely — only voice finals are gated.
   const agentPubkeys = agentRoster.agentPubkeys;
+  // Latest roster, read at publish time: the door's bounded fresh-add wait
+  // must see the snapshot as of AFTER the wait, not the render that closed
+  // over this callback (same ref wiring as the voice hook's callbacks).
+  const agentPubkeysRef = useRef(agentPubkeys);
+  agentPubkeysRef.current = agentPubkeys;
+  // Bot pubkeys added OK this session whose snapshot inclusion is not yet
+  // observed. Entries self-clear through the door's prune once the polled
+  // snapshot (or the roster hook's own optimistic merge) carries them.
+  const freshAddsRef = useRef(new Set<string>());
+  const onAddAgent = useCallback(
+    async (input: { agentPubkey: string; agentName: string }) => {
+      const result = await agentRoster.addAgent(input);
+      if (result.ok) {
+        freshAddsRef.current.add(input.agentPubkey.toLowerCase());
+      }
+      return result;
+    },
+    [agentRoster.addAgent],
+  );
   const publishTranscript = useCallback(
     (text: string) => {
-      void send({
-        content: text,
-        mentionPubkeys: agentPubkeys,
-        threadRef: null,
-        mediaTags: [],
-      }).then((result) => {
-        if (!result.ok) {
-          // Speech that vanishes with no feedback reads as "it ignored me".
-          toast.error(result.message || "The transcript could not be sent.");
-        }
+      void publishVoiceFinal(text, {
+        currentMentions: () => agentPubkeysRef.current,
+        currentFreshAdds: () => [...freshAddsRef.current],
+        onFreshAddIncluded: (pubkey) => freshAddsRef.current.delete(pubkey),
+        send,
+        toastError: (message, options) => toast.error(message, options),
       });
     },
-    [send, agentPubkeys],
+    [send],
   );
   const voice = useHuddleVoiceMode({
     channelId: connected ? channelId : null,
@@ -558,7 +583,7 @@ export function HuddleBar({
           </label>
           <HuddleCallControls
             agentPubkeys={agentRoster.agentPubkeys}
-            onAddAgent={agentRoster.addAgent}
+            onAddAgent={onAddAgent}
             onReact={reactions.send}
             reactionError={reactions.error}
             speech={speechForControls}

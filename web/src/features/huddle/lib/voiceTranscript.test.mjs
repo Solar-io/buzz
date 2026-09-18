@@ -6,6 +6,7 @@ import {
   ECHO_SUBSTRING_MIN_CHARS,
   ECHO_TAIL_MS,
   gateFinalTranscript,
+  gateVoiceMentions,
   isEchoOfUtterances,
   markVoiceFinal,
   MIN_TRANSCRIPT_CHARS,
@@ -13,13 +14,17 @@ import {
   nextVoiceStatus,
   normalizeForEcho,
   normalizeTranscript,
+  pendingFreshAdds,
   recordUtterance,
   shouldHoldFinal,
   shouldRestoreSpeechOnVoiceOff,
   utterancesForHold,
   UTTERANCE_MAX_ENTRIES,
   UTTERANCE_RETENTION_MS,
+  VOICE_ROSTER_FRESH_POLL_MS,
+  VOICE_ROSTER_FRESH_WAIT_MS,
   VOICE_TURN_MARKER,
+  waitForRosterInclusion,
 } from "./voiceTranscript.ts";
 
 test("the gating constants are pinned, hardcoded", () => {
@@ -443,4 +448,132 @@ test("shouldRestoreSpeechOnVoiceOff restores nothing when no off reason was reco
     }),
     false,
   );
+});
+
+// ---------------------------------------------------------------------------
+// V4 empty-mention gate (2026-09-18 QA defect): a [voice] final with no
+// mentions wakes nobody and must never publish silently.
+
+test("the fresh-add wait constants are pinned, hardcoded", () => {
+  assert.equal(VOICE_ROSTER_FRESH_WAIT_MS, 3000);
+  assert.equal(VOICE_ROSTER_FRESH_POLL_MS, 250);
+});
+
+test("gateVoiceMentions blocks an empty mention set with the visible roster error", () => {
+  // The defect shape: roster unresolved, mentions empty — the old path
+  // published a dead message with only an h tag. The gate refuses it and
+  // hands back the exact user-facing sentence (pinned here, not by
+  // reference to the constant, so a wording regression cannot hide).
+  const gate = gateVoiceMentions({ mentionPubkeys: [] });
+  assert.equal(gate.ok, false);
+  if (!gate.ok) {
+    assert.equal(gate.reason, "unresolved");
+    assert.equal(
+      gate.error,
+      "The agent roster has not resolved yet — nothing was sent. Try again in a moment.",
+    );
+  }
+});
+
+test("gateVoiceMentions passes a resolved roster through with its mention set", () => {
+  const mentions = ["a".repeat(64), "b".repeat(64)];
+  const gate = gateVoiceMentions({ mentionPubkeys: mentions });
+  assert.equal(gate.ok, true);
+  if (gate.ok) {
+    assert.deepEqual(gate.mentionPubkeys, mentions);
+    // A copy, so a later snapshot swap cannot mutate a decision in flight.
+    assert.notEqual(gate.mentionPubkeys, mentions);
+  }
+});
+
+test("gateVoiceMentions flags a fresh add the snapshot does not carry yet", () => {
+  // The stale pre-add poll: the snapshot predates the add, so publishing
+  // now would wake the wrong set — the false green part 3 closes.
+  const gate = gateVoiceMentions({
+    mentionPubkeys: ["a".repeat(64)],
+    freshAdds: ["c".repeat(64)],
+  });
+  assert.equal(gate.ok, false);
+  if (!gate.ok) {
+    assert.equal(gate.reason, "fresh_add_pending");
+    assert.equal(
+      gate.error,
+      "The roster has not caught up with the new agent yet — nothing was sent. Try again in a moment.",
+    );
+  }
+});
+
+test("pendingFreshAdds subtracts the snapshot and keeps the rest", () => {
+  const a = "a".repeat(64);
+  const b = "b".repeat(64);
+  const c = "c".repeat(64);
+  assert.deepEqual(
+    pendingFreshAdds({ agentPubkeys: [a], freshAdds: [a, b, c] }),
+    [b, c],
+  );
+  assert.deepEqual(
+    pendingFreshAdds({ agentPubkeys: [a, b, c], freshAdds: [a] }),
+    [],
+  );
+  assert.deepEqual(pendingFreshAdds({ agentPubkeys: [], freshAdds: [] }), []);
+});
+
+test("waitForRosterInclusion returns immediately when inclusion already holds", async () => {
+  let sleeps = 0;
+  const included = await waitForRosterInclusion({
+    isIncluded: () => true,
+    timeoutMs: 500,
+    pollMs: 100,
+    sleep: async () => {
+      sleeps += 1;
+    },
+  });
+  assert.equal(included, true);
+  assert.equal(sleeps, 0);
+});
+
+test("waitForRosterInclusion polls until inclusion lands inside the window", async () => {
+  let polls = 0;
+  let slept = 0;
+  const included = await waitForRosterInclusion({
+    isIncluded: () => polls >= 3,
+    timeoutMs: 3000,
+    pollMs: 250,
+    sleep: async (ms) => {
+      slept += ms;
+      polls += 1;
+    },
+  });
+  assert.equal(included, true);
+  assert.equal(slept, 750);
+});
+
+test("waitForRosterInclusion gives up at exactly the bounded window", async () => {
+  let slept = 0;
+  const included = await waitForRosterInclusion({
+    isIncluded: () => false,
+    timeoutMs: 500,
+    pollMs: 100,
+    sleep: async (ms) => {
+      slept += ms;
+    },
+  });
+  assert.equal(included, false);
+  // Five 100ms steps, never a sixth — bounded is bounded.
+  assert.equal(slept, 500);
+});
+
+test("waitForRosterInclusion clips the last step to the remaining budget", async () => {
+  let slept = 0;
+  const included = await waitForRosterInclusion({
+    isIncluded: () => false,
+    timeoutMs: 300,
+    pollMs: 250,
+    sleep: async (ms) => {
+      slept += ms;
+    },
+  });
+  assert.equal(included, false);
+  // 250 + 50: the last step is clipped to the remaining budget.
+  assert.equal(slept, 300);
 });

@@ -4,7 +4,9 @@ import {
   ADD_MEMBER_KIND,
   buildHuddleAgentAddEvent,
   huddleAgentAddMessage,
+  huddleAgentAddOutcome,
   huddleAgentAddPlan,
+  HUDDLE_AGENT_ADD_REFUSED,
   MAX_HUDDLE_AGENTS,
   selectableHuddleAgents,
 } from "./huddleAgents.ts";
@@ -273,4 +275,79 @@ test("a failed parent add with no detail still says what happened", () => {
     parentOk: false,
   });
   assert.equal(message, "Ada added to the huddle, but the channel add failed.");
+});
+
+// ---------------------------------------------------------------------------
+// V4 add-failure honesty (2026-09-18 QA defect): a failed add was an Enter
+// that no-oped and a dismissal that buried the attempt. The outcome contract
+// is pinned here: the failure toasts (the signal that outlives the dialog)
+// and the staged entry survives.
+
+test("huddleAgentAddOutcome: full success closes and toasts nothing", () => {
+  const outcome = huddleAgentAddOutcome({
+    ok: true,
+    message: "Ada added to the huddle.",
+  });
+  assert.equal(outcome.close, true);
+  assert.equal(outcome.clearEntry, false);
+  assert.equal(outcome.error, null);
+  assert.equal(outcome.notice, null);
+  assert.equal(outcome.toast, null);
+});
+
+test("huddleAgentAddOutcome: partial success keeps the dialog open with its notice", () => {
+  const outcome = huddleAgentAddOutcome({
+    ok: true,
+    message: "Ada added to the huddle, but the channel add failed: restricted",
+  });
+  assert.equal(outcome.close, false);
+  // The huddle add landed, so the entry is spent.
+  assert.equal(outcome.clearEntry, true);
+  assert.equal(
+    outcome.notice,
+    "Ada added to the huddle, but the channel add failed: restricted",
+  );
+  assert.equal(outcome.error, null);
+  assert.equal(outcome.toast, null);
+});
+
+test("huddleAgentAddOutcome: failure toasts the relay's verdict, naming that nothing was added", () => {
+  const outcome = huddleAgentAddOutcome({
+    ok: false,
+    message: "quota exceeded; retry in 4s",
+  });
+  assert.equal(outcome.close, false);
+  assert.equal(outcome.error, "quota exceeded; retry in 4s");
+  assert.ok(outcome.toast, "a failed add must toast — silence was the defect");
+  assert.equal(outcome.toast.message, "quota exceeded; retry in 4s");
+  assert.equal(
+    outcome.toast.description,
+    "Nothing was added — the agent is not in this huddle yet.",
+  );
+});
+
+test("huddleAgentAddOutcome: failure preserves the staged entry, dialog stays open", () => {
+  // The still-staged add that never landed must not be discarded as if it
+  // had: no close, no entry clear — the user can retry the same paste.
+  const outcome = huddleAgentAddOutcome({
+    ok: false,
+    message: "quota exceeded; retry in 4s",
+  });
+  assert.equal(outcome.close, false, "a failed add must not close the dialog");
+  assert.equal(
+    outcome.clearEntry,
+    false,
+    "a failed add must not clear the staged entry",
+  );
+  assert.equal(outcome.notice, null);
+});
+
+test("huddleAgentAddOutcome: an empty failure message still says the add was refused", () => {
+  const outcome = huddleAgentAddOutcome({ ok: false, message: "" });
+  assert.equal(outcome.error, HUDDLE_AGENT_ADD_REFUSED);
+  assert.equal(outcome.toast.message, HUDDLE_AGENT_ADD_REFUSED);
+  assert.equal(
+    outcome.toast.description,
+    "Nothing was added — the agent is not in this huddle yet.",
+  );
 });

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { useAgentRegistry } from "@/features/agents/useAgentRegistry";
 import { Button } from "@/shared/ui/button";
 import {
@@ -11,8 +12,10 @@ import {
 import { Input } from "@/shared/ui/input";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import {
+  huddleAgentAddOutcome,
   MAX_HUDDLE_AGENTS,
   selectableHuddleAgents,
+  type AgentAddOutcome,
 } from "../lib/huddleAgents.ts";
 import { rawHuddleAgentEntry } from "../lib/huddleRawEntry.ts";
 
@@ -82,6 +85,32 @@ export function AddHuddleAgentDialog({
 
   const atCapacity = currentAgentPubkeys.length >= MAX_HUDDLE_AGENTS;
 
+  /**
+   * Apply one add outcome to the dialog state (lib/huddleAgents.ts owns the
+   * decision; it is unit-tested, this only paints it). The failure toast is
+   * the point of the V4 fix: it outlives the dialog, so dismissing can
+   * never bury a failed add as if the agent had joined.
+   */
+  function applyOutcome(outcome: AgentAddOutcome) {
+    if (outcome.error) {
+      setError(outcome.error);
+    }
+    if (outcome.notice) {
+      setNotice(outcome.notice);
+    }
+    if (outcome.clearEntry) {
+      setEntry("");
+    }
+    if (outcome.toast) {
+      toast.error(outcome.toast.message, {
+        description: outcome.toast.description,
+      });
+    }
+    if (outcome.close) {
+      onOpenChange(false);
+    }
+  }
+
   async function add(agent: { pubkey: string; name: string }) {
     if (adding !== null) {
       return;
@@ -94,21 +123,14 @@ export function AddHuddleAgentDialog({
         agentPubkey: agent.pubkey,
         agentName: agent.name,
       });
-      if (result.ok) {
-        // A partial success (huddle yes, parent channel no) keeps the dialog
-        // open with its message, exactly as the desktop's does.
-        if (result.message.includes("but the channel add failed")) {
-          setNotice(result.message);
-          setEntry("");
-        } else {
-          onOpenChange(false);
-        }
-      } else {
-        setError(result.message);
-      }
+      applyOutcome(huddleAgentAddOutcome(result));
     } catch (cause: unknown) {
-      setError(
-        cause instanceof Error ? cause.message : "Could not add the agent.",
+      applyOutcome(
+        huddleAgentAddOutcome({
+          ok: false,
+          message:
+            cause instanceof Error ? cause.message : "Could not add the agent.",
+        }),
       );
     } finally {
       setAdding(null);
