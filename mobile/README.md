@@ -31,7 +31,7 @@ cd mobile && flutter run
 ### Worktree-aware debug identity
 
 Debug builds produced from a git worktree get a unique app identifier keyed
-to the **worktree directory name** (`com.buzz.buzzMobile.<slug>` on iOS,
+to the **worktree directory name** (`$(BUNDLE_ID_PREFIX).<slug>` on iOS,
 `xyz.block.buzz.mobile.<slug>` on Android) plus a display-only branch label
 in the app name (`Buzz (my-branch)`, or a short SHA when the worktree is
 detached). Because the identifier follows the directory rather than the
@@ -39,6 +39,14 @@ branch, one worktree keeps exactly one installed app — and its login state —
 across branch switches, and builds from multiple worktrees install side by
 side, mirroring the desktop dev experience. Release and profile builds
 always keep the production identity and name.
+
+On iOS the identifier is assembled from `BUNDLE_ID_PREFIX`, whose tracked
+default is `com.buzz.buzzMobile`. An internal or downstream build renames
+the app by setting `BUNDLE_ID_PREFIX` in the gitignored
+`mobile/ios/Flutter/AppOverrides.xcconfig` — worktree identities keep
+working because they append their slug to whatever prefix is in effect.
+Scripts that need the resolved value read it from
+`scripts/mobile-bundle-id-prefix.sh` rather than hardcoding it.
 
 `just mobile-dev` and `just mobile-build-android` apply this automatically by
 running `scripts/mobile-worktree-overrides.sh`, which writes two gitignored

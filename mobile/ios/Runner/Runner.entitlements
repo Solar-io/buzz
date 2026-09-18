@@ -6,7 +6,7 @@
 	     registerForRemoteNotifications() at runtime ("no valid aps-environment"),
 	     AND automatic signing has no reason to enable Push on the App ID — it
 	     mints the wildcard ZRXRQEURGW.* profile instead of an explicit
-	     com.buzz.buzzMobile one. Declaring it here is what makes Xcode create
+	     one for this build's bundle identifier. Declaring it here is what makes Xcode create
 	     the explicit App ID with the Push capability turned on.
 
 	     Value stays `development` for every configuration because every build

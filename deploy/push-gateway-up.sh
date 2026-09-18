@@ -39,12 +39,12 @@ docker run -d --name buzz-push-gateway \
   -e BUZZ_PUSH_MAX_GRANT_LIFETIME_SECONDS=2592000 \
   -e BUZZ_PUSH_ENABLED_PROFILES=buzz-ios-sandbox \
   -e "DATABASE_URL=$RUNTIME_URL" \
-  -e BUZZ_PUSH_APP_ATTEST_APP_ID="${TEAM_ID:-PLACEHOLDER-TEAMID}.com.buzz.buzzMobile" \
+  -e BUZZ_PUSH_APP_ATTEST_APP_ID="${TEAM_ID:-PLACEHOLDER-TEAMID}.cloud.noet.buzz" \
   -e BUZZ_PUSH_APP_ATTEST_ROOT_CERT_PATH=/secrets/AppleAppAttestRootCA.pem \
   -e BUZZ_PUSH_APNS_KEY_PATH=/secrets/key.p8 \
   -e BUZZ_PUSH_APNS_KEY_ID="${APNS_KEY_ID:-PLACEHOLDER-KEYID}" \
   -e BUZZ_PUSH_APNS_TEAM_ID="${TEAM_ID:-PLACEHOLDER-TEAMID}" \
-  -e BUZZ_PUSH_APNS_TOPIC=com.buzz.buzzMobile \
+  -e BUZZ_PUSH_APNS_TOPIC=cloud.noet.buzz \
   "$IMAGE"
 
 sleep 3
