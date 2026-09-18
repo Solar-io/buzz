@@ -8,4 +8,10 @@ BUNDLE_IDENTIFIER = com.buzz.buzzMobile
 APP_DISPLAY_NAME = Buzz
 CODE_SIGN_STYLE = Automatic
 CODE_SIGN_IDENTITY = iPhone Developer
+
+// D-029 native push. The aps-environment entitlement declared here is what
+// makes automatic signing create the explicit com.buzz.buzzMobile App ID with
+// the Push capability enabled, instead of falling back to the team wildcard
+// profile (which carries no aps-environment and leaves push dead at runtime).
+CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements
 #include? "AppOverrides.xcconfig"

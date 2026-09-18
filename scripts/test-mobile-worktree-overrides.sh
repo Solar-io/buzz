@@ -178,6 +178,27 @@ grep -q '^APP_DISPLAY_NAME = Buzz$' "$release_xcconfig" \
 grep -q '<string>$(APP_DISPLAY_NAME)</string>' "$plist" \
   && pass "Info.plist display name resolves from build settings" \
   || fail "Info.plist CFBundleDisplayName must be \$(APP_DISPLAY_NAME)"
+
+# D-029 native push signing contract. Automatic signing only creates the
+# explicit App ID with the Push capability when the app declares
+# aps-environment, and the declaration only reaches the build if BOTH
+# xcconfigs point at the entitlements file AND the pbxproj stops pinning an
+# empty DEVELOPMENT_TEAM at target level (a target setting outranks an
+# included xcconfig, which made the AppOverrides team pin inert).
+entitlements="$repo_root/mobile/ios/Runner/Runner.entitlements"
+pbxproj="$repo_root/mobile/ios/Runner.xcodeproj/project.pbxproj"
+grep -q '<key>aps-environment</key>' "$entitlements" 2>/dev/null \
+  && pass "Runner.entitlements declares aps-environment" \
+  || fail "mobile/ios/Runner/Runner.entitlements must declare aps-environment"
+grep -q '^CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements$' "$debug_xcconfig" \
+  && pass "Debug.xcconfig wires CODE_SIGN_ENTITLEMENTS" \
+  || fail "Debug.xcconfig must set CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements"
+grep -q '^CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements$' "$release_xcconfig" \
+  && pass "Release.xcconfig wires CODE_SIGN_ENTITLEMENTS" \
+  || fail "Release.xcconfig must set CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements"
+grep -q 'DEVELOPMENT_TEAM = ""' "$pbxproj" \
+  && fail "project.pbxproj must not pin an empty DEVELOPMENT_TEAM (it outranks AppOverrides.xcconfig)" \
+  || pass "project.pbxproj leaves DEVELOPMENT_TEAM to the xcconfig chain"
 grep -q 'android:label="@string/app_name"' "$manifest" \
   && pass "Android manifest label resolves from resources" \
   || fail "Android manifest label must be @string/app_name"
