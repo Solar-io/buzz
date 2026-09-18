@@ -15,10 +15,8 @@ import remarkSpoilers from "@/shared/lib/remarkSpoilers";
 import remarkCustomEmoji from "@/features/custom-emoji/lib/remarkCustomEmoji";
 import { useCustomEmoji } from "@/features/custom-emoji/hooks";
 import { CustomEmojiImage } from "@/features/custom-emoji/ui/CustomEmojiImage";
-import { toast } from "sonner";
-import { fetchSignedMedia } from "@/shared/api/blossom";
-import { relayHttpBaseUrl } from "@/shared/lib/relay-url";
-import { openLink } from "@/shared/lib/linkOpen";
+import { linkDisposition, openLink } from "@/shared/lib/linkOpen";
+import { useFileViewer } from "@/shared/ui/FileViewerDialog";
 import { Lightbox, type LightboxItem } from "@/shared/ui/Lightbox";
 import { useSnapshotPreview } from "@/features/agents/ui/SnapshotPreviewProvider";
 import type { ImetaEntry } from "../lib/imetaEntries.ts";
@@ -38,9 +36,11 @@ import {
 } from "./MessageMedia.tsx";
 
 /**
- * Message links must never navigate the SPA tab away. Plain links open in a
- * new tab; file-typical links open in a popup viewer window (relay media is
- * signed-fetched first). Modifier-clicks keep native behavior.
+ * Message links must never navigate the SPA tab away, and a click never
+ * creates any window except one deliberate `_blank` tab for genuinely
+ * external http(s) targets. File-typical links render in the in-app
+ * FileViewerDialog overlay (relay media is signed-fetched by the viewer).
+ * Modifier-clicks keep native behavior.
  */
 function MessageLink({
   href,
@@ -49,6 +49,7 @@ function MessageLink({
   href?: string;
   children: ReactNode;
 }) {
+  const openViewer = useFileViewer();
   return (
     <a
       href={href}
@@ -72,11 +73,11 @@ function MessageLink({
           return;
         }
         event.preventDefault();
-        void openLink(target, {
-          relayBase: relayHttpBaseUrl(),
-          fetchSigned: fetchSignedMedia,
-          onError: (message) => toast.error(message),
-        });
+        if (openViewer && linkDisposition(target) === "overlay") {
+          openViewer(target);
+          return;
+        }
+        openLink(target);
       }}
     >
       {children}

@@ -1,16 +1,15 @@
 /**
  * Link-click disposition for message content: a clicked link must NEVER
- * navigate the SPA tab away. File-typical URLs open as a popup viewer
- * window; everything else opens as a new tab.
- *
- * Relay media URLs (/media/…) are auth-gated, so they are fetched with a
- * signed GET and the popup navigates to the blob URL instead (a plain
- * window would receive the relay's 401 JSON). The popup is opened
- * synchronously inside the click gesture — opening AFTER an await trips
- * popup blockers — and its location is set once the blob resolves.
+ * navigate the SPA tab away. File-typical URLs render in the in-app
+ * FileViewerDialog overlay (the caller routes them to `useFileViewer`);
+ * genuinely external http(s) targets open as one deliberate `_blank` tab;
+ * non-http schemes use browser default. A link click never creates any
+ * other window — the old popup-viewer path is gone (a `window.open` after
+ * any await trips popup blockers, and the OS window chrome it needed is
+ * exactly what the installed-app URL bar complaint was about).
  */
 
-export type LinkDisposition = "popup" | "tab" | "default";
+export type LinkDisposition = "overlay" | "tab" | "default";
 
 const FILE_EXTENSIONS = new Set([
   // images
@@ -80,7 +79,7 @@ const TEST_BASE = "https://buzz.invalid";
 
 /**
  * Classify a link. http(s) (or relative) URLs whose path ends in a known
- * file extension open as a popup; other http(s) URLs open as a tab;
+ * file extension are overlay material; other http(s) URLs open as a tab;
  * anything else (mailto:, javascript:, unparsable) uses browser default.
  */
 export function linkDisposition(href: string): LinkDisposition {
@@ -99,14 +98,90 @@ export function linkDisposition(href: string): LinkDisposition {
   const segment = url.pathname.split("/").pop() ?? "";
   const match = /\.([a-z0-9]{1,8})$/i.exec(segment);
   if (match && FILE_EXTENSIONS.has(match[1].toLowerCase())) {
-    return "popup";
+    return "overlay";
   }
   return "tab";
 }
 
 /**
+ * How the FileViewerDialog renders a file-typical URL. Extension-driven:
+ * the dialog only needs to pick a tag — `<img>`/`<video>`/`<audio>` read
+ * the real MIME off the (possibly signed) blob themselves.
+ */
+export type FileViewerKind =
+  | "image"
+  | "video"
+  | "audio"
+  | "pdf"
+  | "markdown"
+  | "text"
+  | "html"
+  | "fallback";
+
+const VIEWER_KIND_BY_EXTENSION: Record<string, FileViewerKind> = {
+  png: "image",
+  jpg: "image",
+  jpeg: "image",
+  gif: "image",
+  webp: "image",
+  avif: "image",
+  svg: "image",
+  bmp: "image",
+  ico: "image",
+  mp4: "video",
+  webm: "video",
+  mov: "video",
+  m4v: "video",
+  avi: "video",
+  mkv: "video",
+  mp3: "audio",
+  wav: "audio",
+  flac: "audio",
+  ogg: "audio",
+  m4a: "audio",
+  aac: "audio",
+  pdf: "pdf",
+  md: "markdown",
+  txt: "text",
+  csv: "text",
+  tsv: "text",
+  json: "text",
+  xml: "text",
+  yaml: "text",
+  yml: "text",
+  ts: "text",
+  js: "text",
+  py: "text",
+  sh: "text",
+  rs: "text",
+  toml: "text",
+  html: "html",
+  htm: "html",
+};
+
+/**
+ * Pick the viewer rendering for a URL. Everything not in the map — office
+ * documents, archives, unknown extensions — is "fallback" (icon + name +
+ * download). Text/code extensions are joined with the "text" kind.
+ */
+export function fileViewerKind(href: string): FileViewerKind {
+  let url: URL;
+  try {
+    url = new URL(href, TEST_BASE);
+  } catch {
+    return "fallback";
+  }
+  const segment = url.pathname.split("/").pop() ?? "";
+  const match = /\.([a-z0-9]{1,8})$/i.exec(segment);
+  const kind = match
+    ? VIEWER_KIND_BY_EXTENSION[match[1].toLowerCase()]
+    : undefined;
+  return kind ?? "fallback";
+}
+
+/**
  * True when the URL points at the relay's Blossom media store (auth-gated,
- * needs a signed GET before a window can show it).
+ * needs a signed GET before anything can show it).
  */
 export function isRelayMediaHref(href: string, relayBase: string): boolean {
   let url: URL;
@@ -120,60 +195,23 @@ export function isRelayMediaHref(href: string, relayBase: string): boolean {
   return url.host === base.host && url.pathname.startsWith("/media/");
 }
 
-const POPUP_FEATURES = "popup=yes,width=960,height=720";
-const POPUP_FEATURES_NOOPENER = `${POPUP_FEATURES},noopener,noreferrer`;
-
 /**
- * Open a classified link. `fetchSigned` is injectable for tests; the
- * default is wired at the call site (shared/api/blossom) to avoid a
- * dependency cycle.
- *
- * Popup mechanics, carefully: `noopener` makes window.open return null, so
- * plain file URLs navigate AT creation (secure, no handle needed). Relay
- * media must be signed-fetched first, which needs a live handle — that
- * popup opens WITHOUT noopener and is navigated to an inert blob: URL
- * (images/media carry no script, so the kept opener link is not a
- * tabnabbing surface; it mirrors what the inline <img> path already does).
+ * Open a classified link as a `_blank` tab. Only "tab" and "default"
+ * dispositions belong here — "overlay" links go to the FileViewerDialog
+ * via `useFileViewer` at the call site, which owns the signed-fetch and
+ * error surfacing this function used to carry.
  */
-export async function openLink(
-  href: string,
-  options: {
-    relayBase: string;
-    fetchSigned?: (url: string) => Promise<string>;
-    onError?: (message: string) => void;
-  },
-): Promise<LinkDisposition> {
+export function openLink(href: string): LinkDisposition {
   const disposition = linkDisposition(href);
   if (disposition === "default") {
     return disposition;
   }
+  if (disposition === "overlay") {
+    // Defensive: a caller routed an overlay link here. Do NOT open a window
+    // with it — the in-app viewer is the only sanctioned renderer.
+    return disposition;
+  }
   const resolved = new URL(href, window.location.origin).href;
-
-  if (disposition === "tab") {
-    window.open(resolved, "_blank", "noopener,noreferrer");
-    return disposition;
-  }
-
-  if (!isRelayMediaHref(resolved, options.relayBase) || !options.fetchSigned) {
-    window.open(resolved, "buzz-file-viewer", POPUP_FEATURES_NOOPENER);
-    return disposition;
-  }
-
-  // Relay media: open inside the gesture (a window.open after an await
-  // trips popup blockers), then navigate to the signed blob.
-  const viewer = window.open("", "buzz-file-viewer", POPUP_FEATURES);
-  if (!viewer) {
-    options.onError?.("Allow popups for Buzz to view files inline.");
-    return disposition;
-  }
-  try {
-    const objectUrl = await options.fetchSigned(resolved);
-    viewer.location.href = objectUrl;
-  } catch {
-    viewer.close();
-    options.onError?.(
-      "Could not load that file from the relay store (auth failed).",
-    );
-  }
+  window.open(resolved, "_blank", "noopener,noreferrer");
   return disposition;
 }
