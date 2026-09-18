@@ -15,8 +15,9 @@ import {
   rankVoices,
   resolveProfileVoice,
   shouldSpeakLocally,
-  speechVoiceProfile,
+  speakRoute,
   SPEECH_REPLAY_WINDOW_SECONDS,
+  type SpeakRoute,
   watchdogMs,
 } from "./lib/huddleAgentSpeech.ts";
 import { botPubkeys } from "./lib/huddleMembers.ts";
@@ -24,6 +25,7 @@ import {
   recordUtterance,
   type AgentSpeechActivity,
 } from "./lib/voiceTranscript.ts";
+import { useAgentVoiceSelections } from "../voice/hooks.ts";
 import type { HuddleMemberSnapshot } from "./useHuddleMemberSnapshot";
 
 /**
@@ -65,6 +67,18 @@ export interface HuddleAgentSpeech {
    * the moment React flushes a state update.
    */
   speechActivity: RefObject<AgentSpeechActivity>;
+  /**
+   * Speak-time disposition per agent pubkey (lowercase), recorded when an
+   * utterance is built — the wiring observable that says WHICH path spoke:
+   * "selected" (the agent's published kind-30182 voice), "selected-rejected"
+   * (published but unusable here — vanished voiceURI or non-English),
+   * "derived" (no usable selection; the pubkey draw), or
+   * "pocket-selected-pending-engine" (a pocket selection, which this
+   * browser cannot synthesize until the server-side engine bridge lands).
+   * A ref mutated in place, like {@link speechActivity}: same-task accurate
+   * the moment an utterance is built, no re-render to wait for.
+   */
+  speakRoutes: RefObject<ReadonlyMap<string, SpeakRoute>>;
 }
 
 function speechSynthesisSupported(): boolean {
@@ -109,6 +123,15 @@ export function useHuddleAgentSpeech(options: {
   const selfPubkeyRef = useRef(selfPubkey);
   selfPubkeyRef.current = selfPubkey;
 
+  // The speak-time seam: the agents' published kind-30182 voice selections,
+  // folded LWW per pubkey by the voice feature's live subscription. A ref,
+  // like the values above — the speaker closure is created once and must
+  // read the CURRENT selections at utterance time, because selections
+  // arrive (and change) after it exists.
+  const { agentVoiceSelectionFor } = useAgentVoiceSelections();
+  const voiceSelectionForRef = useRef(agentVoiceSelectionFor);
+  voiceSelectionForRef.current = agentVoiceSelectionFor;
+
   // Echo-suppression state. The ref is the SOURCE OF TRUTH for "is the
   // avatar audible right now": synthesis starts and stops update it in the
   // same task, so an STT final arriving mid-utterance sees `speaking: true`
@@ -119,6 +142,9 @@ export function useHuddleAgentSpeech(options: {
     utterances: [],
   });
   const [speaking, setSpeaking] = useState(false);
+  // One disposition per speaking agent, keyed by lowercase pubkey — the
+  // wiring assertion's subject (see `speakRoutes` on the interface).
+  const speakRoutesRef = useRef(new Map<string, SpeakRoute>());
 
   /**
    * The engine's voice list, RANKED (`rankVoices`) and loaded
@@ -169,7 +195,17 @@ export function useHuddleAgentSpeech(options: {
           return;
         }
         const stopAt = stopTokenRef.current;
-        const profile = speechVoiceProfile(speakerPubkey, voicesRef.current);
+        // THE SEAM (D-005 / voice v1): the agent's published selection —
+        // if any — decides the voice. The fold keys selections by LOWERCASE
+        // pubkey, so look up with the same normalization the speech path
+        // already uses. `route.profile` is always what synthesizes; the
+        // disposition is what the wiring assertion reads.
+        const selected = voiceSelectionForRef.current(
+          speakerPubkey.toLowerCase(),
+        );
+        const route = speakRoute(speakerPubkey, voicesRef.current, selected);
+        speakRoutesRef.current.set(speakerPubkey.toLowerCase(), route);
+        const profile = route.profile;
         const voice = resolveProfileVoice(profile, voicesRef.current);
         // Sentence-sized chunks: Chromium stalls single utterances past
         // ~15 s, so a long reply must never be ONE utterance. Chunks also
@@ -313,5 +349,6 @@ export function useHuddleAgentSpeech(options: {
     suppressedAgents,
     speaking,
     speechActivity: speechActivityRef,
+    speakRoutes: speakRoutesRef,
   };
 }

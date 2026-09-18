@@ -249,15 +249,53 @@ test("reduce drops refused events rather than failing", () => {
   assert.ok(!folded.has(OTHER));
 });
 
-// ── Wiring (carrying, skipped) ─────────────────────────────────────────────
+// ── Wiring (the speak-time seam, landed) ──────────────────────────────────
+//
+// The seam this store's rows feed: `speakRoute` in the huddle speech module
+// consumes `AgentVoiceSelection` as its `selected` input. The assertion
+// checks WHICH path spoke — disposition and profile source — not merely
+// that a voice was named. (The hook-level wiring lives in
+// features/huddle/useHuddleAgentSpeech.test.mjs.)
 
-test("wiring: useHuddleAgentSpeech consumes agentVoiceSelectionFor(pubkey) as the selected? input — " +
-  "BLOCKED on the speak-time seam (CK's window owns huddleAgentSpeech.ts / useHuddleAgentSpeech.ts). " +
-  "When it lands: speechVoiceProfile(pubkey, rankedVoices, selected?) builds a profile whose source is " +
-  "'selected' | 'selected-rejected' | 'derived', and the assertion must check WHICH path spoke.", {
-  skip: "carrying test — the seam call site is another seat's one-liner, not yet landed",
-}, () => {
-  assert.fail(
-    "unskip when useHuddleAgentSpeech passes agentVoiceSelectionFor through",
-  );
+test("wiring: a selection routed at speak time names its source — selected, rejected, or pending", async () => {
+  const { speakRoute } = await import("../../huddle/lib/huddleAgentSpeech.ts");
+  const AGENT = "a".repeat(64);
+  const voices = [
+    {
+      name: "Amelie",
+      lang: "fr-CA",
+      localService: true,
+      voiceURI: "uri:amelie",
+    },
+    {
+      name: "Samantha",
+      lang: "en-US",
+      localService: true,
+      voiceURI: "uri:samantha",
+    },
+  ];
+  // A local-synth selection that resolves AND is English speaks as chosen.
+  const selected = speakRoute(AGENT, voices, {
+    engine: "local-synth",
+    voiceURI: "uri:samantha",
+  });
+  assert.equal(selected.disposition, "selected");
+  assert.equal(selected.profile.source, "selected");
+  assert.equal(selected.profile.voiceURI, "uri:samantha");
+  // A pocket selection is a VISIBLE pending state, never a silently
+  // honored voice: derived synthesis, pocket disposition.
+  const pocket = speakRoute(AGENT, voices, {
+    engine: "pocket",
+    key: "pocket:azelma",
+  });
+  assert.equal(pocket.disposition, "pocket-selected-pending-engine");
+  assert.equal(pocket.profile.source, "derived");
+  // An unspeakable selection (here: non-English) is REJECTED and marked,
+  // never silently derived.
+  const rejected = speakRoute(AGENT, voices, {
+    engine: "local-synth",
+    voiceURI: "uri:amelie",
+  });
+  assert.equal(rejected.disposition, "selected-rejected");
+  assert.equal(rejected.profile.source, "selected-rejected");
 });

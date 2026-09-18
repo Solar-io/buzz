@@ -13,6 +13,7 @@ import {
   rankVoices,
   resolveProfileVoice,
   shouldSpeakLocally,
+  speakRoute,
   speechVoiceProfile,
   SPEAKABLE_MESSAGE_KINDS,
   SPEECH_REPLAY_WINDOW_SECONDS,
@@ -447,12 +448,14 @@ test("profiles are pinned: the same pubkey is the same voice, hardcoded", () => 
     rate: 1,
     pitch: 1,
     voiceURI: "uri:Daniel",
+    source: "derived",
   });
   assert.deepEqual(speechVoiceProfile(OTHER_AGENT, ranked), {
     voiceIndex: 0,
     rate: 1,
     pitch: 1,
     voiceURI: "uri:Ava",
+    source: "derived",
   });
 });
 
@@ -507,6 +510,7 @@ test("an empty voice list degrades to engine defaults, not a crash", () => {
     rate: 1,
     pitch: 1,
     voiceURI: null,
+    source: "derived",
   });
 });
 
@@ -574,6 +578,7 @@ test("a system with no English voices degrades to the engine default", () => {
     rate: 1,
     pitch: 1,
     voiceURI: null,
+    source: "derived",
   });
 });
 
@@ -618,6 +623,108 @@ test("a rich list with a scarce English pool still differentiates by pitch", () 
   assert.ok(first.pitch >= 0.85 && first.pitch <= 1.15);
   assert.ok(second.pitch >= 0.85 && second.pitch <= 1.15);
   assert.notEqual(first.pitch, second.pitch);
+});
+
+// --- speak-time seam: published selections (kind 30182) ---
+//
+// The wiring assertion checks WHICH path spoke — the profile's `source`
+// and the route's disposition — not merely that a voice was named. A green
+// e2e once stayed green through a Korean-voice bug because it only
+// asserted a voice was NAMED (2026-09-16); `source` is the assertion that
+// cannot stay green while the wrong path speaks. Selections here use the
+// exact shape the picker publishes (`AgentVoiceSelection`).
+
+test("no selection is exactly the derived profile, marked derived", () => {
+  const ranked = rankVoices([voice("Samantha"), voice("Ava"), voice("Daniel")]);
+  const route = speakRoute(AGENT, ranked);
+  assert.equal(route.disposition, "derived");
+  assert.equal(route.profile.source, "derived");
+  // Byte-for-byte today's pre-seam behavior when nothing is selected.
+  assert.deepEqual(route.profile, speechVoiceProfile(AGENT, ranked));
+});
+
+test("a selected local-synth voice speaks THAT voice, marked selected", () => {
+  const ranked = rankVoices([voice("Samantha"), voice("Ava"), voice("Daniel")]);
+  // Aim at a voice the agent's pubkey draw did NOT pick, so the selection
+  // outranking the draw is proven by the URI itself.
+  const derivedURI = speechVoiceProfile(AGENT, ranked).voiceURI;
+  const chosen = ranked.find((v) => v.voiceURI !== derivedURI);
+  const route = speakRoute(AGENT, ranked, {
+    engine: "local-synth",
+    voiceURI: chosen.voiceURI,
+  });
+  assert.equal(route.disposition, "selected");
+  assert.equal(route.profile.source, "selected");
+  assert.equal(route.profile.voiceURI, chosen.voiceURI);
+  // The user chose this voice: it speaks at natural settings, not the
+  // derived pitch-spread computed from the pubkey hash.
+  assert.equal(route.profile.rate, 1);
+  assert.equal(route.profile.pitch, 1);
+  assert.notEqual(route.profile.voiceURI, derivedURI);
+});
+
+test("a selected voiceURI missing from the live list is rejected, never index-fallback", () => {
+  // MUTATION GATE: drop the resolution-failure branch (treat not-found as
+  // resolved) and this fails on disposition and source.
+  const ranked = rankVoices([voice("Samantha"), voice("Ava"), voice("Daniel")]);
+  const route = speakRoute(AGENT, ranked, {
+    engine: "local-synth",
+    voiceURI: "uri:uninstalled-yesterday",
+  });
+  assert.equal(route.disposition, "selected-rejected");
+  assert.equal(route.profile.source, "selected-rejected");
+  // What speaks is the ordinary derived draw — the same voice this agent
+  // would have with no selection at all (everything but the marking).
+  const derived = speechVoiceProfile(AGENT, ranked);
+  assert.equal(route.profile.voiceURI, derived.voiceURI);
+  assert.equal(route.profile.rate, derived.rate);
+  assert.equal(route.profile.pitch, derived.pitch);
+});
+
+test("a selected non-English voice is rejected even though it resolves", () => {
+  // MUTATION GATE: drop the English check on the selected path and this
+  // fails — the French voice would speak with source "selected".
+  const ranked = rankVoices([
+    voice("Amelie", { lang: "fr-CA" }),
+    voice("Samantha"),
+  ]);
+  const route = speakRoute(AGENT, ranked, {
+    engine: "local-synth",
+    voiceURI: "uri:Amelie",
+  });
+  assert.equal(route.disposition, "selected-rejected");
+  assert.equal(route.profile.source, "selected-rejected");
+  // The rejection is not cosmetic: Amelie must not be the voice that
+  // speaks (the derived English pool cannot pick her anyway).
+  assert.notEqual(route.profile.voiceURI, "uri:Amelie");
+});
+
+test("a pocket selection is a visible disposition, never a silently honored voice", () => {
+  // MUTATION GATE: pretend the pocket selection was honored (route it to
+  // "selected") and this fails on the disposition.
+  const ranked = rankVoices([voice("Samantha"), voice("Ava"), voice("Daniel")]);
+  const route = speakRoute(AGENT, ranked, {
+    engine: "pocket",
+    key: "pocket:azelma",
+  });
+  assert.equal(route.disposition, "pocket-selected-pending-engine");
+  // A browser cannot run pocket-tts today; what actually speaks is the
+  // derived profile, and the profile itself SAYS derived.
+  assert.equal(route.profile.source, "derived");
+  assert.deepEqual(route.profile, speechVoiceProfile(AGENT, ranked));
+});
+
+test("selection routing is case-insensitive on the pubkey and deterministic", () => {
+  const ranked = rankVoices([voice("Samantha"), voice("Ava"), voice("Daniel")]);
+  const selection = { engine: "local-synth", voiceURI: "uri:Samantha" };
+  assert.deepEqual(
+    speakRoute(AGENT.toUpperCase(), ranked, selection),
+    speakRoute(AGENT, ranked, selection),
+  );
+  assert.deepEqual(
+    speakRoute(AGENT, ranked, selection),
+    speakRoute(AGENT, ranked, selection),
+  );
 });
 
 // --- utterance chunking ---

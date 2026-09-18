@@ -47,7 +47,9 @@
  * from its own synthesizer. {@link shouldSpeakLocally} suppresses the local
  * copy for any agent currently present in the room's audio roster.
  *
- * Import-free apart from sibling `.ts` modules, so `node --test` loads it.
+ * Import-free apart from sibling `.ts` modules and one TYPE-only import
+ * (the kind-30182 selection contract — erased at runtime), so `node --test`
+ * loads it.
  */
 
 import {
@@ -55,6 +57,7 @@ import {
   membersFromMemberEvent,
   type MemberSnapshotEventLike,
 } from "./huddleMembers.ts";
+import type { AgentVoiceSelection } from "../../voice/lib/agentVoiceSelection.ts";
 
 export {
   GROUP_MEMBERS_KIND,
@@ -300,6 +303,29 @@ export const VOICE_PITCH_SPREAD_BELOW = 3;
 /** Pitch offsets spread across [0.85, 1.15] when voices are scarce. */
 const PITCH_SPREAD_MIN = 0.85;
 
+/**
+ * Which input produced a profile's voice — the seam's observable verdict,
+ * so a wiring assertion can check WHICH path spoke rather than merely that
+ * a voice was named (a green e2e once stayed green through a Korean-voice
+ * bug because a named voice was all it asserted).
+ *
+ *  - `selected`: the agent's published kind-30182 selection resolved
+ *    against the live voice list and is speaking.
+ *  - `selected-rejected`: a selection EXISTS but is unspeakable here —
+ *    the voiceURI is not in the live list, or it names a non-English
+ *    voice — so the derived profile speaks instead. Never silent: the
+ *    source records the rejection.
+ *  - `derived`: no selection at all; the deterministic pubkey draw.
+ *
+ * A pocket selection is none of these: the profile that actually
+ * synthesizes is `derived`, and the pocket disposition lives on the
+ * {@link SpeakRoute} (`pocket-selected-pending-engine`).
+ */
+export type AgentVoiceProfileSource =
+  | "selected"
+  | "selected-rejected"
+  | "derived";
+
 export interface AgentVoiceProfile {
   /**
    * Index into the ENGLISH selection pool this profile was derived from —
@@ -316,6 +342,19 @@ export interface AgentVoiceProfile {
   pitch: number;
   /** The voice URI to hand `SpeechSynthesisUtterance`, or null if none. */
   voiceURI: string | null;
+  /** Which input spoke — see {@link AgentVoiceProfileSource}. */
+  source: AgentVoiceProfileSource;
+}
+
+/**
+ * The English invariant, as ONE predicate: huddle speech is English text,
+ * and a non-English voice reads it as unintelligible murmur. The derived
+ * pool filter and the speak-time seam's rejection rule both call this —
+ * the picker enforces it too (`ENGLISH_ONLY` in voicePickerOptions.ts),
+ * and this module enforces it independently at speak time.
+ */
+function isEnglishVoice(voice: SpeechVoiceLike): boolean {
+  return voice.lang.toLowerCase().startsWith("en");
 }
 
 /**
@@ -334,20 +373,34 @@ export interface AgentVoiceProfile {
  * apply. Pitch spread keys on the POOL size, not the list size: a
  * machine with 180 voices and 2 English ones is voice-poor for exactly
  * this purpose.
+ *
+ * This is the base case of the speak-time seam: every fallback route
+ * ({@link speakRoute}) synthesizes THIS profile, and a two-argument call
+ * is exactly the pre-seam behavior with `source: "derived"`.
  */
-export function speechVoiceProfile(
+function deriveVoiceProfile(
   pubkey: string,
   rankedVoices: readonly SpeechVoiceLike[],
 ): AgentVoiceProfile {
   const seed = fnv1a(pubkey.toLowerCase());
   if (rankedVoices.length === 0) {
-    return { voiceIndex: 0, rate: 1, pitch: 1, voiceURI: null };
+    return {
+      voiceIndex: 0,
+      rate: 1,
+      pitch: 1,
+      voiceURI: null,
+      source: "derived",
+    };
   }
-  const pool = rankedVoices.filter((voice) =>
-    voice.lang.toLowerCase().startsWith("en"),
-  );
+  const pool = rankedVoices.filter(isEnglishVoice);
   if (pool.length === 0) {
-    return { voiceIndex: 0, rate: 1, pitch: 1, voiceURI: null };
+    return {
+      voiceIndex: 0,
+      rate: 1,
+      pitch: 1,
+      voiceURI: null,
+      source: "derived",
+    };
   }
   const voiceIndex = seed % pool.length;
   const voice = pool[voiceIndex];
@@ -360,7 +413,130 @@ export function speechVoiceProfile(
     rate: 1,
     pitch,
     voiceURI: voice.voiceURI || voice.name,
+    source: "derived",
   };
+}
+
+/**
+ * Why one utterance is being voiced the way it is — the speak-time seam's
+ * full disposition. `profile` is ALWAYS the profile to synthesize; the
+ * disposition says where it came from.
+ *
+ *  - `selected`: the published local-synth voice resolved and speaks.
+ *  - `selected-rejected`: the selection is unusable here (voiceURI not in
+ *    the live list, or it names a non-English voice) and the derived
+ *    profile speaks instead. The rejection is recorded, never silent.
+ *  - `derived`: no selection; the deterministic pubkey draw.
+ *  - `pocket-selected-pending-engine`: the agent published a POCKET voice
+ *    — synthesized server-side, where the desktop runs pocket-tts. A
+ *    browser has no path to that engine today (the server-side bridge is
+ *    unbuilt), so the derived profile speaks, but the disposition is its
+ *    own visible state: a pocket selection must never masquerade as an
+ *    honored one.
+ */
+export type SpeakDisposition =
+  | "selected"
+  | "selected-rejected"
+  | "derived"
+  | "pocket-selected-pending-engine";
+
+export interface SpeakRoute {
+  disposition: SpeakDisposition;
+  /** The profile to synthesize this utterance with — always present. */
+  profile: AgentVoiceProfile;
+}
+
+/**
+ * Route one agent's utterance to a voice, honoring its published kind-30182
+ * selection when one exists (`AgentVoiceSelection`, the exact shape the
+ * selection store folds and the picker publishes).
+ *
+ * Resolution discipline is `resolveProfileVoice`'s, shared with the derived
+ * path: the selected `voiceURI` is matched against the LIVE ranked list by
+ * URI (`voiceURI || name`), never positionally — an index into a stale list
+ * is the drift class that put Slovenian voices on English agents. A
+ * selection that resolves but fails the English invariant is rejected with
+ * the source marking it (`selected-rejected`), because a picker-published
+ * French voice reading English text is the exact murmur this module exists
+ * to prevent — the picker enforces English-only at CHOICE time
+ * (voicePickerOptions.ts `ENGLISH_ONLY`), and this is the same invariant
+ * enforced independently at SPEAK time.
+ *
+ * A pocket selection is explicit: it names a server-side voice this engine
+ * cannot run, so the derived profile synthesizes and the disposition says
+ * `pocket-selected-pending-engine` rather than pretending the pocket voice
+ * was honored.
+ */
+export function speakRoute(
+  pubkey: string,
+  rankedVoices: readonly SpeechVoiceLike[],
+  selected?: AgentVoiceSelection,
+): SpeakRoute {
+  const derived = (): AgentVoiceProfile =>
+    deriveVoiceProfile(pubkey, rankedVoices);
+  if (selected === undefined) {
+    return { disposition: "derived", profile: derived() };
+  }
+  if (selected.engine === "pocket") {
+    return {
+      disposition: "pocket-selected-pending-engine",
+      profile: derived(),
+    };
+  }
+  const selectedURI = selected.voiceURI;
+  const resolved = rankedVoices.find(
+    (voice) => (voice.voiceURI || voice.name) === selectedURI,
+  );
+  if (resolved === undefined || !isEnglishVoice(resolved)) {
+    // The rejection is recorded ON the profile that speaks, not only on
+    // the route — a wiring assertion reading either sees it.
+    return {
+      disposition: "selected-rejected",
+      profile: { ...derived(), source: "selected-rejected" },
+    };
+  }
+  return {
+    disposition: "selected",
+    profile: {
+      // Diagnostic, consistent with the derived meaning: the selected
+      // voice's position in the English pool. Resolution never uses it.
+      voiceIndex: poolIndexOfURI(rankedVoices, selectedURI),
+      // The user chose this voice; it speaks at natural settings rather
+      // than the derived pitch-spread (which exists to differentiate agents
+      // who did NOT choose).
+      rate: 1,
+      pitch: 1,
+      voiceURI: resolved.voiceURI || resolved.name,
+      source: "selected",
+    },
+  };
+}
+
+/** The selected voice's index within the English pool — diagnostic only. */
+function poolIndexOfURI(
+  rankedVoices: readonly SpeechVoiceLike[],
+  uri: string,
+): number {
+  return rankedVoices
+    .filter(isEnglishVoice)
+    .findIndex((voice) => (voice.voiceURI || voice.name) === uri);
+}
+
+/**
+ * The profile for one agent's utterance: its published selection when that
+ * selection is usable here, the deterministic pubkey draw otherwise. The
+ * two-argument form is exactly the pre-seam behavior; the optional third
+ * argument (`selected`, from `useAgentVoiceSelections`) is the seam. See
+ * {@link speakRoute} for the full disposition — callers that need to know
+ * WHICH path spoke (wiring assertions, UI) should call {@link speakRoute}
+ * directly.
+ */
+export function speechVoiceProfile(
+  pubkey: string,
+  rankedVoices: readonly SpeechVoiceLike[],
+  selected?: AgentVoiceSelection,
+): AgentVoiceProfile {
+  return speakRoute(pubkey, rankedVoices, selected).profile;
 }
 
 /**
