@@ -277,7 +277,14 @@ Desktop E2E: `cd desktop && pnpm test:e2e:smoke` for mock-bridge smoke
 coverage, or `pnpm test:e2e:integration` for relay-backed coverage. These
 scripts build the required E2E bridge before running Playwright.
 
-See [TESTING.md](TESTING.md) for the full multi-agent E2E guide.
+Web unit tests: the ONLY supported invocation is `cd web && pnpm test`
+(`node --import ./test-loader.mjs --experimental-strip-types --test`). The
+loader installs the jsdom/global environment and module-stub seam the React
+tests depend on. Bare `bun test <file>` bypasses it — components crash on
+missing DOM/context and you get a wall of false failures (15 seen 9/18:
+useRelaySession x11, useTheme x4, hook wiring cases) on a tree that is green
+under the real runner. Do not triage failures from `bun test`; re-run with
+`pnpm test` first.
 
 ### PR Screenshots
 
