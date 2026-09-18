@@ -47,7 +47,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::mesh::spawn_remote_peer_sink;
@@ -1293,6 +1293,19 @@ impl<D: HuddleDirectory + ?Sized> HuddleControlAcceptor<D> {
                     }
                     if matches!(reply, HuddleControlMsg::PeerRegistered { .. }) {
                         roster_rx = Some(new_roster_rx);
+                        // A remote admission (re)populated the room: cancel
+                        // any pending empty-room auto-end grace, same as a
+                        // same-pod admission does. Even if this races the
+                        // fire, the fire's mark_ended re-check keeps a
+                        // repopulated room alive — this just ends the window
+                        // promptly.
+                        if self.rooms.cancel_empty_grace(community, session_id) {
+                            info!(
+                                channel_id = %session_id,
+                                reason = "peer rejoined",
+                                "audio room auto-end grace cancelled"
+                            );
+                        }
                     }
                 }
                 HuddleControlMsg::UnregisterPeer { pubkey } => {

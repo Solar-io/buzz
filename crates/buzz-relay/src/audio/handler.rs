@@ -37,6 +37,7 @@ use buzz_db::channel::MemberRole;
 use buzz_core::StoredEvent;
 use buzz_pubsub::EventTopic;
 
+use crate::audio::grace::GraceArchiveOutcome;
 use crate::audio::room::PeerCtrl;
 use crate::state::{run_registered_community_connection, AppState, CommunityConnectionControl};
 
@@ -529,7 +530,22 @@ async fn handle_active_audio_connection(
     };
     let (peer_id, peer_index, peer_epoch, audio_rx, peer_ctrl_rx, admission_revision) =
         match admission {
-            Ok(v) => v,
+            Ok(v) => {
+                // A successful admission (re)populates the room: cancel any
+                // pending empty-room auto-end grace so the huddle lives on
+                // (defect V1a — this is the reload-rejoin path).
+                if state
+                    .audio_rooms
+                    .cancel_empty_grace(tenant.community(), channel_id)
+                {
+                    info!(
+                        channel_id = %channel_id,
+                        reason = "peer rejoined",
+                        "audio room auto-end grace cancelled"
+                    );
+                }
+                v
+            }
             Err(crate::audio::room::AdmissionError::Full) => {
                 warn!(channel_id = %channel_id, "audio room participant capacity reached");
                 let _ = ws_send.send(WsMessage::Text(serde_json::json!({"type":"error","code":"room_full","message":"room participant capacity reached"}).to_string().into())).await;
@@ -916,38 +932,69 @@ async fn handle_active_audio_connection(
     )
     .await;
 
-    let room_emptied;
+    let mut room_emptied = false;
     if should_auto_end {
-        info!(channel_id = %channel_id, "audio room empty — auto-ending huddle");
-
+        // Defect V1a: the last peer leaving must not end the huddle in the
+        // same millisecond — a page reload drops the WebSocket and the
+        // reloading peer rejoins moments later, into a huddle that would
+        // already be archived. Keep the emptied room resident and ADMISSIBLE
+        // for a short grace window; archive only if it stays empty. The
+        // `ended` flag set by remove_peer_and_check_ended would reject the
+        // very peer this window waits for, so roll it back here; the fire
+        // path re-sets it atomically under the admission guard.
+        room.clear_ended();
         match state
-            .db
-            .archive_channel(tenant.community(), channel_id)
-            .await
+            .audio_rooms
+            .start_empty_grace(tenant.community(), channel_id)
         {
-            Err(e) => {
-                warn!(channel_id = %channel_id, "auto-archive failed, huddle stays alive: {e}");
-                room.clear_ended();
-                room_emptied = false;
-            }
-            Ok(()) => {
-                room_emptied = state
-                    .audio_rooms
-                    .cleanup_if_empty(tenant.community(), channel_id);
-
-                emit_participant_event(
-                    &state,
-                    &tenant,
+            Some(grace_token) => {
+                info!(
+                    channel_id = %channel_id,
+                    duration = ?crate::audio::grace::EMPTY_ROOM_AUTO_END_GRACE,
+                    "audio room empty — auto-end grace started"
+                );
+                let grace_manager = Arc::clone(&state.audio_rooms);
+                let grace_state = Arc::clone(&state);
+                let grace_tenant = tenant.clone();
+                let grace_pubkey = pubkey_hex.clone();
+                // The owner lease must outlive the emptied room through the
+                // grace window: releasing now would let another pod acquire
+                // ownership and host rejoiners while this pod's timer could
+                // still archive the channel underneath them. The fire path
+                // releases only after a successful archive, preserving the
+                // old release-when-the-room-empties-for-good semantics.
+                let grace_owners = state
+                    .mesh()
+                    .map(|mesh| Arc::clone(&mesh.owners))
+                    .zip(owner_generation);
+                tokio::spawn(crate::audio::grace::run_empty_room_grace(
+                    grace_manager,
+                    tenant.community(),
                     channel_id,
-                    parent_id_for_event,
-                    ParticipantLifecycle {
-                        kind: Kind::Custom(48103),
-                        participant_pubkey: &pubkey_hex,
-                        roster_revision: None,
-                        admission_id: None,
+                    crate::audio::grace::EMPTY_ROOM_AUTO_END_GRACE,
+                    grace_token,
+                    move || async move {
+                        archive_empty_huddle(
+                            &grace_state,
+                            &grace_tenant,
+                            channel_id,
+                            parent_id_for_event,
+                            &grace_pubkey,
+                        )
+                        .await
                     },
-                )
-                .await;
+                    move || {
+                        if let Some((owners, generation)) = grace_owners {
+                            owners.release(channel_id, generation);
+                        }
+                    },
+                ));
+            }
+            None => {
+                debug!(
+                    channel_id = %channel_id,
+                    "auto-end grace already pending — existing timer owns the archive"
+                );
             }
         }
     } else {
@@ -1347,6 +1394,67 @@ struct ParticipantLifecycle<'a> {
     participant_pubkey: &'a str,
     roster_revision: Option<u64>,
     admission_id: Option<Uuid>,
+}
+
+/// The auto-end archive for a grace-expired empty huddle room: exactly the
+/// sequence the old same-millisecond auto-end ran (archive → evict the empty
+/// room → kind:48103 carrying the last leaver's p tag), plus a defensive
+/// already-archived re-check so a fire that races an explicit archive or the
+/// ephemeral-channel TTL reaper can never double-end the huddle. The
+/// "audio room empty — auto-ending huddle" wording stays on this, the actual
+/// archive path, so log consumers keep matching.
+async fn archive_empty_huddle(
+    state: &AppState,
+    tenant: &TenantContext,
+    channel_id: Uuid,
+    parent_channel_id: Uuid,
+    last_leaver_pubkey: &str,
+) -> GraceArchiveOutcome {
+    match state.db.get_channel(tenant.community(), channel_id).await {
+        Ok(ch) if ch.archived_at.is_some() => {
+            debug!(
+                channel_id = %channel_id,
+                "auto-end grace fire: huddle already archived — skipping"
+            );
+            state
+                .audio_rooms
+                .cleanup_if_empty(tenant.community(), channel_id);
+            return GraceArchiveOutcome::AlreadyEnded;
+        }
+        _ => {} // Not archived (or the read failed) — attempt the archive below.
+    }
+
+    info!(channel_id = %channel_id, "audio room empty — auto-ending huddle");
+    match state
+        .db
+        .archive_channel(tenant.community(), channel_id)
+        .await
+    {
+        Err(e) => {
+            warn!(channel_id = %channel_id, "auto-archive failed, huddle stays alive: {e}");
+            GraceArchiveOutcome::Failed
+        }
+        Ok(()) => {
+            state
+                .audio_rooms
+                .cleanup_if_empty(tenant.community(), channel_id);
+
+            emit_participant_event(
+                state,
+                tenant,
+                channel_id,
+                parent_channel_id,
+                ParticipantLifecycle {
+                    kind: Kind::Custom(48103),
+                    participant_pubkey: last_leaver_pubkey,
+                    roster_revision: None,
+                    admission_id: None,
+                },
+            )
+            .await;
+            GraceArchiveOutcome::Ended
+        }
+    }
 }
 
 async fn emit_participant_event(
