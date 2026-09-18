@@ -60,7 +60,9 @@ export function VoicePickerList({
         const selected = sameOption(option, current);
         return (
           <li
-            key={`${option.engine}:${option.key ?? option.voiceURI}`}
+            key={`${option.engine}:${
+              option.engine === "local-synth" ? option.voiceURI : option.key
+            }`}
           >
             <div
               className="flex w-full items-center gap-2 rounded-md px-2 py-1 hover:bg-accent"
