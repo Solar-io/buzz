@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type ClipboardEvent,
+  type DragEvent,
   type KeyboardEvent,
 } from "react";
 import { toast } from "sonner";
@@ -34,6 +35,7 @@ import {
   ATTACHMENT_ACCEPT,
   attachmentRejectionReason,
 } from "../lib/attachmentAccept.ts";
+import { dragCarriesFiles, partitionDropFiles } from "../lib/attachmentDrop.ts";
 import {
   filenamesByUrl,
   hasPendingUploads,
@@ -547,6 +549,69 @@ export function Composer({
     void attachFiles(images);
   };
 
+  // Drag-and-drop onto the composer (2026-09-18): the tray and queue have
+  // always been multi-file; this is the entry point the picker and paste
+  // already had. The composer root is the drop surface, and the overlay
+  // announces it. Text/URL drags are invisible here — `dragCarriesFiles`
+  // reads the dragover-safe `types` list, so an overlay never flashes for
+  // them and their default behaviour is untouched.
+  const [dragDepth, setDragDepth] = useState(0);
+  const [dragCount, setDragCount] = useState(0);
+  // No drop mid-edit (the tray is hidden and its rows belong to the channel
+  // draft, not the message under edit) and none mid-send.
+  const dropTargetActive = !editingActive && !busy;
+
+  const onDragEnter = (event: DragEvent<HTMLDivElement>) => {
+    if (!dropTargetActive || !dragCarriesFiles(event.dataTransfer)) {
+      return;
+    }
+    event.preventDefault();
+    // enter/leave pair off per child element — count them (the classic
+    // counter pattern) so crossing the textarea or a tray chip can't
+    // thrash the overlay.
+    setDragDepth((depth) => depth + 1);
+    // Best-effort count for the overlay copy; not every engine fills
+    // `items` during enter, in which case the copy omits the number.
+    setDragCount(event.dataTransfer?.items?.length ?? 0);
+  };
+
+  const onDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!dropTargetActive || !dragCarriesFiles(event.dataTransfer)) {
+      return;
+    }
+    // preventDefault on EVERY dragover — without it the browser never fires
+    // drop at all (the surface would read as "no files accepted here").
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  };
+
+  const onDragLeave = () => {
+    if (!dropTargetActive) {
+      return;
+    }
+    setDragDepth((depth) => (depth > 0 ? depth - 1 : 0));
+  };
+
+  const onDrop = (event: DragEvent<HTMLDivElement>) => {
+    if (!dropTargetActive || !dragCarriesFiles(event.dataTransfer)) {
+      return;
+    }
+    event.preventDefault();
+    setDragDepth(0);
+    const files = Array.from(event.dataTransfer?.files ?? []);
+    if (files.length === 0) {
+      return; // a text/URL drag that slipped through — nothing to attach
+    }
+    const { accepted, rejections } = partitionDropFiles(files);
+    // Same words, same surface as the picker's rejections (`attachFiles`).
+    for (const { name, reason } of rejections) {
+      toast.error(`${name}: ${reason}`);
+    }
+    if (accepted.length > 0) {
+      void attachFiles(accepted);
+    }
+  };
+
   const uploadsPending = hasPendingUploads(attachments);
   // An uploaded attachment alone is a sendable message — the markdown that
   // makes it non-empty is composed at send, so the button cannot key on the
@@ -733,7 +798,25 @@ export function Composer({
   });
 
   return (
-    <div className="relative border-t border-border p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-4">
+    // biome-ignore lint/a11y/noStaticElementInteractions: pointer-only drop target — drag-and-drop has no keyboard or ARIA equivalent; the paperclip button above is the keyboard-accessible attach path.
+    <div
+      className="relative border-t border-border p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-4"
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {dragDepth > 0 && (
+        <div
+          data-testid="composer-drop-overlay"
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-full z-10 mb-1 flex items-center justify-center rounded-lg border border-dashed border-ring/70 bg-card/95 px-3 py-2 text-sm text-foreground shadow-lg"
+        >
+          {dragCount > 0
+            ? `Drop to attach — ${dragCount} ${dragCount === 1 ? "file" : "files"}`
+            : "Drop files to attach"}
+        </div>
+      )}
       {suggestions.length > 0 && (
         <ul className="absolute bottom-full left-3 mb-1 w-64 overflow-hidden rounded-md border border-border bg-popover shadow-lg">
           {suggestions.map((row, index) => (
