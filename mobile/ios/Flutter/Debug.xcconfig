@@ -8,6 +8,12 @@
 BUNDLE_IDENTIFIER = com.buzz.buzzMobile
 APP_DISPLAY_NAME = Buzz
 
+// D-029 native push. The aps-environment entitlement declared here is what
+// makes automatic signing create the explicit com.buzz.buzzMobile App ID with
+// the Push capability enabled, instead of falling back to the team wildcard
+// profile (which carries no aps-environment and leaves push dead at runtime).
+CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements
+
 // Worktree-aware debug identity (gitignored, written by
 // scripts/mobile-worktree-overrides.sh): a per-worktree bundle identifier
 // and a branch-labelled display name so debug builds from multiple worktrees

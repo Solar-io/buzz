@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- D-029 native push. Without aps-environment iOS rejects
+	     registerForRemoteNotifications() at runtime ("no valid aps-environment"),
+	     AND automatic signing has no reason to enable Push on the App ID — it
+	     mints the wildcard ZRXRQEURGW.* profile instead of an explicit
+	     com.buzz.buzzMobile one. Declaring it here is what makes Xcode create
+	     the explicit App ID with the Push capability turned on.
+
+	     Value stays `development` for every configuration because every build
+	     this project currently produces is signed with an Apple Development
+	     certificate, and a development profile only ever carries the
+	     development aps-environment. A real App Store / Ad Hoc distribution
+	     build must flip this to `production` together with the signing
+	     identity; they move as a pair. -->
+	<key>aps-environment</key>
+	<string>development</string>
+</dict>
+</plist>
