@@ -400,7 +400,9 @@ class SearchPage extends HookConsumerWidget {
               borderRadius: const BorderRadius.vertical(
                 top: Radius.circular(Radii.dialog),
               ),
-              child: ColoredBox(
+              // Material (not ColoredBox): hosts ink for the ListTile result
+              // rows; a ColoredBox here hides their splashes (framework assert).
+              child: Material(
                 color: context.colors.surface,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
