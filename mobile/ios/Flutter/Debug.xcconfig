@@ -5,11 +5,16 @@
 // without patching tracked files by writing
 // `mobile/ios/Flutter/AppOverrides.xcconfig` containing
 // `BUNDLE_IDENTIFIER = your.app.id` (gitignored).
-BUNDLE_IDENTIFIER = com.buzz.buzzMobile
+// The bundle identifier is assembled from a PREFIX so that a downstream or
+// internal build can rename the app by overriding one variable, and the
+// per-worktree debug identity below can append its slug to whatever prefix
+// is in effect instead of hardcoding this default.
+BUNDLE_ID_PREFIX = com.buzz.buzzMobile
+BUNDLE_IDENTIFIER = $(BUNDLE_ID_PREFIX)
 APP_DISPLAY_NAME = Buzz
 
 // D-029 native push. The aps-environment entitlement declared here is what
-// makes automatic signing create the explicit com.buzz.buzzMobile App ID with
+// makes automatic signing create the explicit App ID for this build's bundle identifier with
 // the Push capability enabled, instead of falling back to the team wildcard
 // profile (which carries no aps-environment and leaves push dead at runtime).
 CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements

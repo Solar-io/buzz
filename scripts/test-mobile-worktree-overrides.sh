@@ -16,6 +16,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 script="$repo_root/scripts/mobile-worktree-overrides.sh"
 clean_script="$repo_root/scripts/mobile-worktree-clean.sh"
+prefix_script="$repo_root/scripts/mobile-bundle-id-prefix.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -33,6 +34,9 @@ make_repo() {
   local repo="$1" branch="$2"
   mkdir -p "$repo/scripts" "$repo/mobile/ios/Flutter" "$repo/mobile/android"
   cp "$script" "$repo/scripts/mobile-worktree-overrides.sh"
+  cp "$prefix_script" "$repo/scripts/mobile-bundle-id-prefix.sh"
+  printf 'BUNDLE_ID_PREFIX = com.buzz.buzzMobile\nBUNDLE_IDENTIFIER = $(BUNDLE_ID_PREFIX)\n' \
+    > "$repo/mobile/ios/Flutter/Debug.xcconfig"
   git -C "$repo" init -q -b "$branch"
   git -C "$repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
 }
@@ -43,6 +47,9 @@ make_worktree() {
   git -C "$repo" worktree add -q -b "$branch" "$wt"
   mkdir -p "$wt/scripts" "$wt/mobile/ios/Flutter" "$wt/mobile/android"
   cp "$script" "$wt/scripts/mobile-worktree-overrides.sh"
+  cp "$prefix_script" "$wt/scripts/mobile-bundle-id-prefix.sh"
+  printf 'BUNDLE_ID_PREFIX = com.buzz.buzzMobile\nBUNDLE_IDENTIFIER = $(BUNDLE_ID_PREFIX)\n' \
+    > "$wt/mobile/ios/Flutter/Debug.xcconfig"
 }
 
 # ── Main checkout: no overrides, stale files removed ─────────────────────────
@@ -64,7 +71,7 @@ out="$("$wt/scripts/mobile-worktree-overrides.sh")"
 ios="$wt/mobile/ios/Flutter/WorktreeOverrides.xcconfig"
 android="$wt/mobile/android/worktree.properties"
 [[ -f "$ios" && -f "$android" ]] || fail "worktree must write both override files"
-grep -q '^BUNDLE_IDENTIFIER = com\.buzz\.buzzMobile\.feature-work-1$' "$ios" \
+grep -qF 'BUNDLE_IDENTIFIER = $(BUNDLE_ID_PREFIX).feature-work-1' "$ios" \
   && pass "iOS bundle identifier keys to the sanitized worktree directory name" \
   || fail "iOS bundle identifier must key to the worktree dir, got: $(cat "$ios")"
 grep -q '^APP_DISPLAY_NAME = Buzz (Fix_Thing-2)$' "$ios" \
@@ -86,7 +93,7 @@ printf '%s' "$out" | grep -q 'Worktree Feature_Work-1' \
 # ── Branch switch in the same worktree: identity stable, label follows ───────
 git -C "$wt" checkout -q -b "another/branch-name"
 "$wt/scripts/mobile-worktree-overrides.sh" > /dev/null
-grep -q '^BUNDLE_IDENTIFIER = com\.buzz\.buzzMobile\.feature-work-1$' "$ios" \
+grep -qF 'BUNDLE_IDENTIFIER = $(BUNDLE_ID_PREFIX).feature-work-1' "$ios" \
   && grep -q '^applicationIdSuffix=\.feature_work_1$' "$android" \
   && pass "branch switch keeps the install identity stable (per worktree)" \
   || fail "install identity must not change on branch switch"
@@ -169,9 +176,12 @@ fi
 grep -q 'WorktreeOverrides' "$release_xcconfig" \
   && fail "Release.xcconfig must not include WorktreeOverrides.xcconfig" \
   || pass "Release.xcconfig does not include WorktreeOverrides"
-grep -q '^BUNDLE_IDENTIFIER = com\.buzz\.buzzMobile$' "$release_xcconfig" \
-  && pass "Release.xcconfig keeps the production bundle identifier" \
-  || fail "Release.xcconfig must keep BUNDLE_IDENTIFIER = com.buzz.buzzMobile"
+grep -q '^BUNDLE_ID_PREFIX = com\.buzz\.buzzMobile$' "$release_xcconfig" \
+  && pass "Release.xcconfig keeps the upstream bundle id prefix" \
+  || fail "Release.xcconfig must keep BUNDLE_ID_PREFIX = com.buzz.buzzMobile"
+grep -qF 'BUNDLE_IDENTIFIER = $(BUNDLE_ID_PREFIX)' "$release_xcconfig" \
+  && pass "Release.xcconfig builds the identifier from the prefix" \
+  || fail "Release.xcconfig must set BUNDLE_IDENTIFIER = \$(BUNDLE_ID_PREFIX)"
 grep -q '^APP_DISPLAY_NAME = Buzz$' "$release_xcconfig" \
   && pass "Release.xcconfig keeps the production display name" \
   || fail "Release.xcconfig must keep APP_DISPLAY_NAME = Buzz"
@@ -199,6 +209,38 @@ grep -q '^CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements$' "$release_xcconf
 grep -q 'DEVELOPMENT_TEAM = ""' "$pbxproj" \
   && fail "project.pbxproj must not pin an empty DEVELOPMENT_TEAM (it outranks AppOverrides.xcconfig)" \
   || pass "project.pbxproj leaves DEVELOPMENT_TEAM to the xcconfig chain"
+
+# ── Bundle id prefix resolution: tracked default, overridable downstream ─────
+# Scripts that name installed apps must read the prefix that is actually in
+# effect. If they keep their own copy of the default they silently stop
+# matching the moment a checkout renames the app in AppOverrides.xcconfig.
+prefix_fixture="$tmp/prefix-fixture"
+mkdir -p "$prefix_fixture/scripts" "$prefix_fixture/mobile/ios/Flutter"
+cp "$prefix_script" "$prefix_fixture/scripts/mobile-bundle-id-prefix.sh"
+printf 'BUNDLE_ID_PREFIX = com.buzz.buzzMobile\nBUNDLE_IDENTIFIER = $(BUNDLE_ID_PREFIX)\n' \
+  > "$prefix_fixture/mobile/ios/Flutter/Debug.xcconfig"
+resolved="$(bash "$prefix_fixture/scripts/mobile-bundle-id-prefix.sh")"
+[[ "$resolved" == "com.buzz.buzzMobile" ]] \
+  && pass "bundle id prefix falls back to the tracked default" \
+  || fail "prefix resolver must read Debug.xcconfig, got: $resolved"
+printf 'BUNDLE_ID_PREFIX = cloud.noet.buzz\n' \
+  > "$prefix_fixture/mobile/ios/Flutter/AppOverrides.xcconfig"
+resolved="$(bash "$prefix_fixture/scripts/mobile-bundle-id-prefix.sh")"
+[[ "$resolved" == "cloud.noet.buzz" ]] \
+  && pass "bundle id prefix honours AppOverrides.xcconfig" \
+  || fail "prefix resolver must prefer AppOverrides.xcconfig, got: $resolved"
+printf 'BUNDLE_IDENTIFIER = cloud.noet.legacy\n' \
+  > "$prefix_fixture/mobile/ios/Flutter/AppOverrides.xcconfig"
+resolved="$(bash "$prefix_fixture/scripts/mobile-bundle-id-prefix.sh")"
+[[ "$resolved" == "cloud.noet.legacy" ]] \
+  && pass "bundle id prefix honours the documented BUNDLE_IDENTIFIER override" \
+  || fail "prefix resolver must accept BUNDLE_IDENTIFIER in AppOverrides, got: $resolved"
+grep -q 'mobile-bundle-id-prefix\.sh' "$repo_root/scripts/mobile-worktree-clean.sh" \
+  && pass "cleanup resolves the iOS prefix instead of hardcoding it" \
+  || fail "mobile-worktree-clean.sh must resolve the prefix via mobile-bundle-id-prefix.sh"
+grep -q 'mobile-bundle-id-prefix\.sh' "$repo_root/scripts/mobile-worktree-overrides.sh" \
+  && pass "worktree identity resolves the iOS prefix instead of hardcoding it" \
+  || fail "mobile-worktree-overrides.sh must resolve the prefix via mobile-bundle-id-prefix.sh"
 grep -q 'android:label="@string/app_name"' "$manifest" \
   && pass "Android manifest label resolves from resources" \
   || fail "Android manifest label must be @string/app_name"
