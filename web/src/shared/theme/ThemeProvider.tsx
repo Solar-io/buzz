@@ -49,7 +49,7 @@ export const ACCENT_STORAGE_KEY = "buzz-accent-color";
  * one. Caching the derived variables lets us paint the right colours
  * immediately and reconcile once the real theme resolves.
  */
-const THEME_CACHE_KEY = "buzz-theme-cache";
+const THEME_CACHE_KEY = "buzz-theme-cache-v2";
 
 const DEFAULT_THEME: SyntaxThemeName = BUZZ_DARK_THEME_NAME;
 
@@ -146,6 +146,36 @@ function applyVars(vars: Record<string, string>, isDark: boolean): void {
   root.classList.remove("light", "dark");
   root.classList.add(isDark ? "dark" : "light");
   root.style.colorScheme = isDark ? "dark" : "light";
+  syncThemeColorMetas(vars, isDark);
+}
+
+/**
+ * Keep the `theme-color` metas in step with the applied background.
+ *
+ * The installed iOS PWA paints the status-bar zone from `theme-color`
+ * (index.html ships static #0a0a0a / #ffffff), while the app's first strip
+ * below it paints `--background`. When the two disagree — any non-default
+ * syntax theme, or the pre-2026-09-18 github-seeded default — the seam reads
+ * as a stray band between status bar and timeline. `hsl(240 20% 14.71%)` is
+ * a valid CSS color for the meta's content; the media query on each meta
+ * picks the polarity, so both get their matching value.
+ */
+function syncThemeColorMetas(
+  vars: Record<string, string>,
+  isDark: boolean,
+): void {
+  const background = vars["--background"];
+  if (!background) return;
+  const metas = document.querySelectorAll<HTMLMetaElement>(
+    'meta[name="theme-color"]',
+  );
+  for (const meta of metas) {
+    const media = meta.getAttribute("media") ?? "";
+    const metaIsDark = media.includes("dark");
+    if (metaIsDark === isDark) {
+      meta.setAttribute("content", `hsl(${background})`);
+    }
+  }
 }
 
 /**

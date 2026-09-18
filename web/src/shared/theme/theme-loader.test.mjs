@@ -7,6 +7,7 @@ import {
   BUZZ_THEME_NAME,
   SYNTAX_THEMES,
   getThemePair,
+  extractThemeInfo,
   isLightTheme,
   resolveShikiThemeName,
   resolveSystemTheme,
@@ -116,4 +117,54 @@ test("a non-alias theme name passes through resolveShikiThemeName intact", () =>
 test("the Buzz aliases have the polarity their names claim", () => {
   assert.equal(isLightTheme(BUZZ_THEME_NAME), true);
   assert.equal(isLightTheme(BUZZ_DARK_THEME_NAME), false);
+});
+
+test("the Buzz aliases seed interface chrome from the fleet palette", () => {
+  // Reported 2026-09-17: the installed PWA showed a ~95px gray band under
+  // the status bar. Root cause: extractThemeInfo let the aliases borrow
+  // github-dark's #24292e / github-light's #ffffff wholesale, and the engine
+  // derived every chrome token from it — replacing the fleet palette
+  // globals.css ships (#1e1e2d / #101117, Sam 2026-09-02/03). The aliases
+  // must seed bg/fg/comment from the fleet so the derived chrome keeps the
+  // designed look; every value below is hardcoded so a regression to the
+  // GitHub values fails by name, not by shade.
+  const githubDark = {
+    colors: {
+      "editor.background": "#24292e",
+      "editor.foreground": "#e6edf3",
+    },
+    settings: [{ settings: { foreground: "#8b949e" } }],
+  };
+  const dark = extractThemeInfo(BUZZ_DARK_THEME_NAME, githubDark);
+  assert.equal(dark.bg, "#1e1e2d");
+  assert.equal(dark.fg, "#cad3f5");
+  assert.equal(dark.comment, "#b8c0e0");
+
+  const githubLight = {
+    colors: {
+      "editor.background": "#ffffff",
+      "editor.foreground": "#1f2328",
+    },
+    settings: [{ settings: { foreground: "#59636e" } }],
+  };
+  const light = extractThemeInfo(BUZZ_THEME_NAME, githubLight);
+  assert.equal(light.bg, "#eff1f5");
+  assert.equal(light.fg, "#4c4f69");
+  assert.equal(light.comment, "#5c5f77");
+});
+
+test("a non-alias theme keeps its own editor colors", () => {
+  // The fleet seeding is an alias-only intervention; a bundled theme passing
+  // through extractThemeInfo must keep the colors its bundle declares.
+  const mocha = {
+    colors: {
+      "editor.background": "#24273a",
+      "editor.foreground": "#cad3f5",
+    },
+    settings: [{ scope: "comment", settings: { foreground: "#6e738d" } }],
+  };
+  const info = extractThemeInfo("catppuccin-mocha", mocha);
+  assert.equal(info.bg, "#24273a");
+  assert.equal(info.fg, "#cad3f5");
+  assert.equal(info.comment, "#6e738d");
 });
