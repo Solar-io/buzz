@@ -63,17 +63,44 @@ export function sidecarOrigin(): string | null {
   return `https://${location.hostname}:${SIDECAR_PORT}`;
 }
 
+/**
+ * True when the page is being served by the relay itself, so relay-hosted
+ * documents can be fetched same-origin. Same derivation as relay-url.ts:
+ * an explicit VITE_RELAY_URL is compared against the page origin (ws/wss
+ * normalized), and no explicit URL means the relay IS derived from the
+ * page location — same origin by definition.
+ */
+function pageOriginIsRelayOrigin(): boolean {
+  if (typeof location === "undefined" || !location.origin) return false;
+  const env =
+    typeof import.meta !== "undefined"
+      ? (import.meta.env as Record<string, string | undefined> | undefined)
+      : undefined;
+  const relayUrl = env?.VITE_RELAY_URL;
+  if (!relayUrl) return true;
+  try {
+    return new URL(relayUrl.replace(/^ws/i, "http")).origin === location.origin;
+  } catch {
+    return false;
+  }
+}
+
 export function trackerJsonUrl(): string | null {
   const env =
     typeof import.meta !== "undefined"
       ? (import.meta.env as Record<string, string | undefined>)
       : undefined;
   if (env?.VITE_TRACKER_URL) return env.VITE_TRACKER_URL;
+  // Relay-served pages fetch same-origin — the relay's docs proxy mirrors
+  // the sidecar paths, so no cross-origin sidecar request is needed (and
+  // no extra browser-chrome origin exists to link to).
+  if (pageOriginIsRelayOrigin()) return "/tracker.json";
   const base = sidecarOrigin();
   return base ? `${base}/tracker.json` : null;
 }
 
 export function changelogUrl(): string | null {
+  if (pageOriginIsRelayOrigin()) return "/changelog.md";
   const base = sidecarOrigin();
   return base ? `${base}/changelog.md` : null;
 }
@@ -192,8 +219,7 @@ export function buildTrackerIndex(
     // Existence, not entryFor: creating an entry here would put a phantom
     // "Primary: unassigned" on every card the sidecar never mentions. The
     // registry pairs fuse islands; they do not speak for the sidecar.
-    const canonical =
-      byProject.get(dtag) ?? byProject.get(dtag.toLowerCase());
+    const canonical = byProject.get(dtag) ?? byProject.get(dtag.toLowerCase());
     if (!canonical) continue;
     const island = byProject.get(name) ?? byProject.get(name.toLowerCase());
     if (island && island !== canonical) {

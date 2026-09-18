@@ -334,6 +334,64 @@ pub struct Config {
     /// Whether the configured web bundle serves Git browser routes in addition
     /// to the public invite landing page. Defaults to false.
     pub serve_git_web_gui: bool,
+    /// Optional base URL of the changelog/tracker sidecar upstream (normally
+    /// `http://host.docker.internal:6451`). When set, the relay serves a
+    /// strict allowlist of those documents same-origin (`/changelog`,
+    /// `/changelog.md`, `/CHANGELOG.md`, `/tracker`, `/tracker.html`,
+    /// `/tracker.json`) so already-posted sidecar links open without
+    /// cross-origin browser chrome. Absent means those routes do not exist.
+    pub docs_changelog_upstream: Option<url::Url>,
+    /// Optional base URL of the Daily Edition static upstream (normally
+    /// `http://host.docker.internal:6450`). When set, the relay serves
+    /// `/edition/{path}` same-origin under the same allowlist rules. Absent
+    /// means the route does not exist.
+    pub docs_edition_upstream: Option<url::Url>,
+}
+
+/// Parse and validate one `BUZZ_DOCS_*_UPSTREAM` environment variable into a
+/// bare-origin base URL. Optional: unset/empty yields `None`. The mapping in
+/// [`crate::router::docs_proxy_target`] composes exact paths onto this base,
+/// so anything but a bare `http(s)` origin (no path, query, fragment, or
+/// credentials) would silently change what gets served — reject it.
+fn docs_upstream_from_env(name: &str) -> Result<Option<url::Url>, ConfigError> {
+    let raw = std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let parsed = url::Url::parse(&raw).map_err(|error| {
+        ConfigError::InvalidValue(format!("{name} is not a valid URL: {error}"))
+    })?;
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return Err(ConfigError::InvalidValue(format!(
+            "{name} must be an http(s) URL"
+        )));
+    }
+    if parsed.host_str().is_none_or(|host| host.trim().is_empty()) {
+        return Err(ConfigError::InvalidValue(format!(
+            "{name} must include a host"
+        )));
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(ConfigError::InvalidValue(format!(
+            "{name} must not carry credentials"
+        )));
+    }
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err(ConfigError::InvalidValue(format!(
+            "{name} must be a bare origin (no query or fragment)"
+        )));
+    }
+    if parsed.path() != "/" && !parsed.path().is_empty() {
+        return Err(ConfigError::InvalidValue(format!(
+            "{name} must be a bare origin (no path — the proxy maps exact paths onto it)"
+        )));
+    }
+    let mut base = parsed;
+    base.set_path("");
+    Ok(Some(base))
 }
 
 fn parse_bind_addr(raw: &str) -> Result<SocketAddr, ConfigError> {
@@ -1048,6 +1106,17 @@ impl Config {
             tracing::info!("BUZZ_WEB_DIR={} — serving web UI from relay", dir.display());
         }
 
+        let docs_changelog_upstream = docs_upstream_from_env("BUZZ_DOCS_CHANGELOG_UPSTREAM")?;
+        let docs_edition_upstream = docs_upstream_from_env("BUZZ_DOCS_EDITION_UPSTREAM")?;
+        if docs_changelog_upstream.is_some() {
+            tracing::info!(
+                "BUZZ_DOCS_CHANGELOG_UPSTREAM set — serving changelog/tracker same-origin"
+            );
+        }
+        if docs_edition_upstream.is_some() {
+            tracing::info!("BUZZ_DOCS_EDITION_UPSTREAM set — serving /edition/ same-origin");
+        }
+
         // Reject explicitly-configured secrets that are too short.
         // The auto-generated fallback is always 64 hex chars (32 bytes), so this
         // only fires when someone sets BUZZ_GIT_HOOK_HMAC_SECRET to a weak value.
@@ -1116,6 +1185,8 @@ impl Config {
             admin,
             web_dir,
             serve_git_web_gui,
+            docs_changelog_upstream,
+            docs_edition_upstream,
         })
     }
 }
@@ -1139,6 +1210,59 @@ mod tests {
     // Parallel env-var mutation causes `defaults_are_valid` to see the invalid
     // value set by `invalid_bind_addr_returns_error`, causing a flaky failure.
     static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn docs_upstream_env_parses_and_normalizes_to_a_bare_origin() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let name = "BUZZ_DOCS_TEST_CHANGELOG_UPSTREAM";
+
+        std::env::remove_var(name);
+        assert!(docs_upstream_from_env(name)
+            .expect("unset is fine")
+            .is_none());
+
+        std::env::set_var(name, "   ");
+        assert!(docs_upstream_from_env(name)
+            .expect("blank is fine")
+            .is_none());
+
+        std::env::set_var(name, "http://host.docker.internal:6451/");
+        let base = docs_upstream_from_env(name)
+            .expect("valid origin parses")
+            .expect("set value yields Some");
+        assert_eq!(base.as_str(), "http://host.docker.internal:6451/");
+
+        std::env::set_var(name, "  http://host.docker.internal:6451  ");
+        let trimmed = docs_upstream_from_env(name)
+            .expect("whitespace-padded origin parses")
+            .expect("set value yields Some");
+        assert_eq!(trimmed.as_str(), "http://host.docker.internal:6451/");
+
+        std::env::remove_var(name);
+    }
+
+    #[test]
+    fn docs_upstream_env_rejects_non_origin_and_non_http_values() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let name = "BUZZ_DOCS_TEST_EDITION_UPSTREAM";
+
+        for (raw, why) in [
+            ("ftp://host:6450", "non-http scheme"),
+            ("http://user:pass@host:6450", "credentials"),
+            ("http://host:6450/edition", "path"),
+            ("http://host:6450/?x=1", "query"),
+            ("http://host:6450/#frag", "fragment"),
+            ("not a url", "unparsable"),
+        ] {
+            std::env::set_var(name, raw);
+            assert!(
+                docs_upstream_from_env(name).is_err(),
+                "{why} ({raw}) must be rejected"
+            );
+        }
+
+        std::env::remove_var(name);
+    }
 
     /// Look up against a fixed set, standing in for process env.
     fn env_of<'a>(set: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + use<'a> {

@@ -8,7 +8,8 @@
  * renderer turns into a signed-fetch `<img>`/`<video>`. Now that the relay's
  * generic attachment path is reachable from the web picker, there is a third
  * shape: a plain link carrying the file's own name, which `MessageLink` opens
- * through `openLink`'s signed popup viewer.
+ * in the in-app FileViewerDialog overlay (relay media is signed-fetched by
+ * the viewer).
  */
 
 import type { BlobDescriptor } from "@/shared/api/blossom";

@@ -5,6 +5,12 @@
   "start_url": "/repos/",
   "display": "standalone",
   "scope": "/",
+  "launch_handler": {
+    "client_mode": [
+      "navigate-new",
+      "auto"
+    ]
+  },
   "background_color": "#0a0a0a",
   "theme_color": "#0a0a0a",
   "icons": [
