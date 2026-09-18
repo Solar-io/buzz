@@ -1716,7 +1716,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       tester
-          .widget<RadioGroup<String>>(find.byType(RadioGroup<String>))
+          .widget<RadioGroup<String>>(
+            find.ancestor(
+              of: find.byKey(const Key('create-channel-visibility-private')),
+              matching: find.byType(RadioGroup<String>),
+            ),
+          )
           .groupValue,
       'private',
     );

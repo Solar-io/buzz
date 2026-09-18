@@ -30,9 +30,11 @@ class BuzzTitledSheetLayout extends StatelessWidget {
     final color = surfaceColor ?? context.colors.surface;
     final paintsSurface = !ConcentricSheetSurface.providesSurfaceOf(context);
 
+    // Material (not ColoredBox): descendant ListTiles need this surface as
+    // their ink host, or the framework asserts their splashes are hidden.
     final sheet = SizedBox(
       width: double.infinity,
-      child: ColoredBox(
+      child: Material(
         key: const ValueKey('buzz-sheet-surface'),
         color: paintsSurface ? color : Colors.transparent,
         child: Column(
