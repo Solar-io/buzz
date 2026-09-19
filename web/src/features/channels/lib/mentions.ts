@@ -1,3 +1,5 @@
+import { parsePubkeyInput } from "../../community-members/lib/pubkeyInput.ts";
+
 /**
  * Mention tokenizing for the composer. Mirrors the CLI's semantics:
  * @Name tokens inside CODE REGIONS do not mention (no code-region stripping
@@ -16,6 +18,11 @@ export interface MentionToken {
   /** The text after @, e.g. "Sam" in "hi @Sam!", "Lord Nikon" in "@Lord Nikon!". */
   name: string;
   /** Character index of the @ in the source string. */
+  at: number;
+}
+
+interface ExplicitPubkeyToken {
+  raw: string;
   at: number;
 }
 
@@ -62,6 +69,20 @@ export function extractMentionTokens(text: string): MentionToken[] {
   let i = 0;
   while (i < masked.length) {
     if (masked[i] === "@") {
+      const previous = masked[i - 1];
+      // An @ inside an email or an identifier is prose, not a mention. A
+      // slash immediately after the token likewise identifies npm-style
+      // `@scope/package` text rather than a member name.
+      if (previous !== undefined && NAME_SOURCE.test(previous)) {
+        i += 1;
+        continue;
+      }
+      let firstWordEnd = i + 1;
+      while (isNameChar(masked[firstWordEnd])) firstWordEnd += 1;
+      if (masked[firstWordEnd] === "/") {
+        i = firstWordEnd;
+        continue;
+      }
       const end = scanMentionSpan(masked, i + 1);
       if (end > i + 1) {
         tokens.push({ name: text.slice(i + 1, end), at: i });
@@ -70,6 +91,30 @@ export function extractMentionTokens(text: string): MentionToken[] {
       }
     }
     i += 1;
+  }
+  return tokens;
+}
+
+/**
+ * Extract explicit public-key URIs outside code regions. These are deliberately
+ * limited to `nostr:npub` so a prose-looking raw key is never treated as a
+ * mention by accident; the shared parser below still verifies its checksum and
+ * canonical 32-byte payload.
+ */
+function extractExplicitPubkeyTokens(text: string): ExplicitPubkeyToken[] {
+  const masked = maskCodeRegions(text);
+  const tokens: ExplicitPubkeyToken[] = [];
+  const pattern = /nostr:npub1[0-9a-z-]+/gi;
+  for (const match of masked.matchAll(pattern)) {
+    const at = match.index ?? -1;
+    if (at < 0) {
+      continue;
+    }
+    const previous = masked[at - 1];
+    if (previous !== undefined && /[A-Za-z0-9_]/.test(previous)) {
+      continue;
+    }
+    tokens.push({ raw: text.slice(at, at + match[0].length), at });
   }
   return tokens;
 }
@@ -177,13 +222,16 @@ export function resolveMentions(
   unresolved: string[];
 } {
   const byLower = new Map<string, string[]>();
+  const memberByPubkey = new Map<string, string>();
   for (const member of members) {
+    const pubkey = member.pubkey.toLowerCase();
+    memberByPubkey.set(pubkey, pubkey);
     const key = normalizeName(member.name);
     if (!key) {
       continue;
     }
     const list = byLower.get(key) ?? [];
-    list.push(member.pubkey);
+    list.push(pubkey);
     byLower.set(key, list);
   }
   const pickByKey = new Map<string, string>();
@@ -201,9 +249,10 @@ export function resolveMentions(
   const unresolved: string[] = [];
   const seen = new Set<string>();
   const add = (pubkey: string) => {
-    if (!seen.has(pubkey)) {
-      seen.add(pubkey);
-      mentionPubkeys.push(pubkey);
+    const canonical = memberByPubkey.get(pubkey.toLowerCase());
+    if (canonical !== undefined && !seen.has(canonical)) {
+      seen.add(canonical);
+      mentionPubkeys.push(canonical);
     }
   };
 
@@ -228,7 +277,11 @@ export function resolveMentions(
     }
     const picked = pickByKey.get(best);
     if (picked !== undefined) {
-      add(picked);
+      if (memberByPubkey.has(picked.toLowerCase())) {
+        add(picked);
+      } else {
+        unresolved.push(text.slice(token.at + 1, token.at + 1 + best.length));
+      }
       continue;
     }
     const matches = byLower.get(best);
@@ -239,6 +292,19 @@ export function resolveMentions(
       continue;
     }
     add(matches[0]);
+  }
+
+  for (const token of extractExplicitPubkeyTokens(text)) {
+    const parsed = parsePubkeyInput(token.raw);
+    if (!parsed) {
+      unresolved.push(token.raw);
+      continue;
+    }
+    if (!memberByPubkey.has(parsed)) {
+      unresolved.push(token.raw);
+      continue;
+    }
+    add(parsed);
   }
   return { mentionPubkeys, unresolved };
 }

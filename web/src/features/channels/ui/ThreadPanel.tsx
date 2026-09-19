@@ -82,6 +82,7 @@ export function ThreadPanel({
   send,
   onSelectThinkingTab,
   mobileOnly,
+  strictMentions = false,
   threadSummaries = EMPTY_SUMMARIES,
   permalinkMessageId = null,
 }: {
@@ -98,6 +99,8 @@ export function ThreadPanel({
   /** Overlay on small screens only — used when the DM right pane shows the
    *  thinking tab at lg but a thread was opened from the timeline. */
   mobileOnly?: boolean;
+  /** Huddle replies must resolve every identity before they can wake a peer. */
+  strictMentions?: boolean;
   /**
    * Relay thread counters (kind 39005) from the channel feed. Optional: with
    * none, every count comes from the loaded buffer, which is a floor rather
@@ -378,6 +381,7 @@ export function ThreadPanel({
         // `Reply in thread to <head author>`). With a target, the placeholder
         // falls through to "Reply to <author>" and the banner quotes them.
         placeholder={target ? undefined : `Reply in thread to ${rootAuthor}`}
+        strictMentions={strictMentions}
         onClearThread={() => {
           // Esc steps back one level: drop a mid-thread target first, and
           // only close the panel once the composer is aimed at the thread.

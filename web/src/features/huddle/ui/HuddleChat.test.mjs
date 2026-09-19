@@ -28,12 +28,14 @@ const ROOM = "temporary-room";
 const WRONG_ROOM = "another-room";
 const HUMAN = "1".repeat(64);
 const AGENT = "2".repeat(64);
+const SILENT_MEMBER = "3".repeat(64);
 
 globalThis.__BUZZ_TEST_HUDDLE_SESSION__ = {
   call: {
     channelId: ROOM,
     selfPubkey: HUMAN,
     send: () => {},
+    memberPubkeys: [HUMAN, AGENT],
   },
 };
 globalThis.__BUZZ_TEST_HUDDLE_FEED__ = {
@@ -56,6 +58,7 @@ globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
     }
     export function useChannelMembers() { return []; }
     export function useProfiles(pubkeys) {
+      globalThis.__BUZZ_TEST_HUDDLE_PROFILE_KEYS__ = pubkeys;
       return new Map(pubkeys.map((pubkey) => [pubkey, {
         name: pubkey.slice(0, 8), displayName: pubkey.slice(0, 8),
       }]));
@@ -75,7 +78,10 @@ globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
     }
   `,
   "@/features/channels/ui/Composer": `
-    export function Composer() { return null; }
+    export function Composer(props) {
+      globalThis.__BUZZ_TEST_HUDDLE_COMPOSER_PROPS__ = props;
+      return null;
+    }
   `,
 };
 
@@ -96,19 +102,19 @@ function message(
   return { id, channelId, authorPubkey, content, kind, deleted };
 }
 
-async function mount(messages) {
+async function mount(messages, variant = "compact") {
   globalThis.__BUZZ_TEST_HUDDLE_FEED__.messages = messages;
   const container = dom.window.document.createElement("div");
   dom.window.document.body.appendChild(container);
   const root = createRoot(container);
   await act(async () => {
-    root.render(React.createElement(HuddleChat, { variant: "compact" }));
+    root.render(React.createElement(HuddleChat, { variant }));
   });
   return {
     container,
     rerender: async () => {
       await act(async () => {
-        root.render(React.createElement(HuddleChat, { variant: "compact" }));
+        root.render(React.createElement(HuddleChat, { variant }));
       });
     },
     unmount: async () => {
@@ -190,6 +196,37 @@ test("switching rooms cannot reuse an old feed array", async () => {
     null,
   );
   await mounted.unmount();
+});
+
+test("full huddle chat uses silent roster members and requests their profiles", async () => {
+  const previousRoster =
+    globalThis.__BUZZ_TEST_HUDDLE_SESSION__.call.memberPubkeys;
+  globalThis.__BUZZ_TEST_HUDDLE_SESSION__.call.memberPubkeys = [
+    HUMAN,
+    SILENT_MEMBER,
+  ];
+  globalThis.__BUZZ_TEST_HUDDLE_COMPOSER_PROPS__ = null;
+  globalThis.__BUZZ_TEST_HUDDLE_PROFILE_KEYS__ = [];
+  const mounted = await mount(
+    [message("human-only", ROOM, HUMAN, "hello")],
+    "full",
+  );
+  try {
+    const props = globalThis.__BUZZ_TEST_HUDDLE_COMPOSER_PROPS__;
+    assert.deepEqual(
+      props.members.map((member) => member.pubkey),
+      [HUMAN, SILENT_MEMBER],
+      "a silent member remains mentionable",
+    );
+    assert.equal(props.strictMentions, true);
+    assert.deepEqual(globalThis.__BUZZ_TEST_HUDDLE_PROFILE_KEYS__, [
+      HUMAN,
+      SILENT_MEMBER,
+    ]);
+  } finally {
+    await mounted.unmount();
+    globalThis.__BUZZ_TEST_HUDDLE_SESSION__.call.memberPubkeys = previousRoster;
+  }
 });
 
 after(() => {

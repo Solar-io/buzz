@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { npubEncode } from "nostr-tools/nip19";
 import {
   activeMentionQuery,
   extractMentionTokens,
@@ -169,6 +170,87 @@ test("a candidate must end on a boundary, not inside a longer word", () => {
 test("duplicate mentions dedupe to one p tag", () => {
   const { mentionPubkeys } = resolveMentions("@Sam @Sam @Sam", members);
   assert.deepEqual(mentionPubkeys, [SAM]);
+});
+
+test("a valid nostr:npub mention resolves to a member and dedupes with their name", () => {
+  const npub = npubEncode(EVIE);
+  const { mentionPubkeys, unresolved } = resolveMentions(
+    `hey @Evie and nostr:${npub}`,
+    members,
+  );
+  assert.deepEqual(mentionPubkeys, [EVIE]);
+  assert.deepEqual(unresolved, []);
+});
+
+test("standalone member npub resolves while code-only identities stay inert", () => {
+  const result = resolveMentions(
+    `nostr:${npubEncode(EVIE)} \`nostr:${npubEncode(SAM)}\`\n\`\`\`\nnostr:${npubEncode(NIKON)}\n\`\`\``,
+    members,
+  );
+  assert.deepEqual(result, { mentionPubkeys: [EVIE], unresolved: [] });
+});
+
+test("a valid nostr:npub for a nonmember stays unresolved", () => {
+  const outsider = "d".repeat(64);
+  const { mentionPubkeys, unresolved } = resolveMentions(
+    `hey nostr:${npubEncode(outsider)}`,
+    members,
+  );
+  assert.deepEqual(mentionPubkeys, []);
+  assert.deepEqual(unresolved, [`nostr:${npubEncode(outsider)}`]);
+});
+
+test("an invalid nostr:npub stays unresolved", () => {
+  const token = "nostr:npub1not-a-valid-address";
+  const { mentionPubkeys, unresolved } = resolveMentions(token, members);
+  assert.deepEqual(mentionPubkeys, []);
+  assert.deepEqual(unresolved, [token]);
+});
+
+test("a stale picked identity is unresolved instead of producing a p tag", () => {
+  const stale = "d".repeat(64);
+  const { mentionPubkeys, unresolved } = resolveMentions(
+    "hey @Sam",
+    members,
+    new Map([["sam", stale]]),
+  );
+  assert.deepEqual(mentionPubkeys, []);
+  assert.deepEqual(unresolved, ["Sam"]);
+});
+
+test("a short typed prefix of a full name stays unresolved", () => {
+  const roster = [{ pubkey: EVIE, name: "Trevor Lefkowitz" }];
+  const { mentionPubkeys, unresolved } = resolveMentions("hey @Trevor", roster);
+  assert.deepEqual(mentionPubkeys, []);
+  assert.deepEqual(unresolved, ["Trevor"]);
+});
+
+test("email addresses and npm scope text are plain prose, not unresolved mentions", () => {
+  const { mentionPubkeys, unresolved } = resolveMentions(
+    "Contact support@example.com or install @scope/package.",
+    members,
+  );
+  assert.deepEqual(mentionPubkeys, []);
+  assert.deepEqual(unresolved, []);
+});
+
+test("a path in trailing prose cannot erase a named or everyone mention", () => {
+  assert.deepEqual(resolveMentions("@Evie inspect src/foo.ts", members), {
+    mentionPubkeys: [EVIE],
+    unresolved: [],
+  });
+  assert.deepEqual(
+    resolveMentions(
+      "@everyone please check src/foo.ts",
+      members,
+      undefined,
+      SAM,
+    ),
+    {
+      mentionPubkeys: [EVIE, NIKON],
+      unresolved: [],
+    },
+  );
 });
 
 test("activeMentionQuery finds the token at the caret", () => {
