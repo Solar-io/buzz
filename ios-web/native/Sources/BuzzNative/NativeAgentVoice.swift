@@ -22,6 +22,7 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
     private var speech = false
     private var captureAllowed = true
     private var membersReady = false
+    private var membersDate = -1
     private var agents = Set<String>()
     private var relayPubkey: String?
     private var voices: [String: (Int, String, String)] = [:]
@@ -132,6 +133,16 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
         // Public relays may accept REQ before challenging; reissue after AUTH.
         subscribe(socket)
         heartbeat(socket, token)
+        refreshMembers(socket, token)
+    }
+    private func refreshMembers(_ socket: URLSessionWebSocketTask, _ token: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self, weak socket] in
+            guard let self, let socket, self.alive, self.generation == token, self.relaySocket === socket else { return }
+            // Group membership snapshots are replaceable global events; the
+            // deployed relay does not consistently fan them into a live REQ.
+            sendJSON(["REQ", "native-members", ["kinds": [39002], "#d": [self.channel], "authors": [self.relayPubkey ?? ""], "limit": 1]], socket: socket)
+            self.refreshMembers(socket, token)
+        }
     }
     private func subscribe(_ socket: URLSessionWebSocketTask) {
         sendJSON(["REQ", "native-members", ["kinds": [39002], "#d": [channel], "authors": [relayPubkey ?? ""], "limit": 1]], socket: socket)
@@ -185,6 +196,8 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
         guard let kind = event["kind"] as? Int, let author = event["pubkey"] as? String,
               let content = event["content"] as? String, let tags = event["tags"] as? [[String]] else { return }
         if kind == 39002, author == relayPubkey, tags.contains(where: { $0.count > 1 && $0[0] == "d" && $0[1] == channel }) {
+            guard let created = event["created_at"] as? Int, created >= membersDate else { return }
+            membersDate = created
             agents = Set(tags.filter { $0.count > 3 && $0[0] == "p" && $0[3] == "bot" }.map { $0[1] })
             membersReady = true; relayReady = true; retry = 0
             if !agents.isEmpty { sendJSON(["REQ", "native-selections", ["kinds": [30182], "authors": Array(agents), "#d": ["agent-voice"]]], socket: socket) }

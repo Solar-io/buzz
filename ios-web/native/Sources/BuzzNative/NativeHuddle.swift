@@ -23,6 +23,7 @@ final class NativeHuddle {
     private var timeout: DispatchWorkItem?
     private var peers: [Int: (pubkey: String, epoch: Int)] = [:]
     private var revision = -1
+    private var roster = HuddleRoster()
     private var observers: [NSObjectProtocol] = []
     private var held = false
     private var interrupted = false
@@ -140,7 +141,7 @@ final class NativeHuddle {
         guard let url = components?.url else { fail("Invalid audio endpoint."); return }
         let socket = URLSession.shared.webSocketTask(with: url)
         audioSocket = socket
-        revision = -1; peers.removeAll()
+        revision = -1; peers.removeAll(); roster = HuddleRoster()
         socket.resume()
         receive(socket, token)
         let deadline = DispatchWorkItem { [weak self, weak socket] in
@@ -173,25 +174,13 @@ final class NativeHuddle {
                 guard let challenge = value["challenge"] as? String, !challenge.isEmpty, let relayURL, let parent else { throw NativeError.message("Invalid audio challenge.") }
                 let auth = try NativeIdentity.shared.sign(["kind": 22242, "content": "", "tags": [["relay", relayURL.absoluteString], ["challenge", challenge]]])
                 sendJSON(["type": "auth", "event": auth, "parent_channel_id": parent, "protocol_version": 3], socket: socket)
-            case "joined", "roster":
-                let nextRevision = value["revision"] as? Int ?? revision + 1
-                guard nextRevision >= revision else { return }
-                if let rows = value["peers"] as? [[String: Any]] {
-                    var next: [Int: (pubkey: String, epoch: Int)] = [:]
-                    for row in rows {
-                        if let index = row["peer_index"] as? Int, let key = row["pubkey"] as? String, let epoch = row["epoch"] as? Int, (0...255).contains(index), (0...255).contains(epoch) { next[index] = (key, epoch) }
-                    }
-                    if type == "roster" || status != "connected" { peers = next }
-                }
-                if let index = value["peer_index"] as? Int, let key = value["pubkey"] as? String, let epoch = value["epoch"] as? Int {
-                    if peers[index]?.epoch != epoch { engine?.removeRemotePeer(index) }
-                    peers[index] = (key, epoch)
-                }
-                revision = nextRevision; status = "connected"; retry = 0; timeout?.cancel(); emit()
-            case "left":
-                if let index = value["peer_index"] as? Int, let epoch = value["epoch"] as? Int, peers[index]?.epoch == epoch {
-                    peers.removeValue(forKey: index); engine?.removeRemotePeer(index); emit()
-                }
+            case "joined", "roster", "left":
+                do { try roster.apply(value, selfPubkey: NativeIdentity.shared.signer().publicKey().toHex()) }
+                catch { connectionLost(token, error.localizedDescription); return }
+                for (index, old) in peers where roster.peers[index]?.epoch != old.epoch || roster.peers[index]?.pubkey != old.pubkey { engine?.removeRemotePeer(index) }
+                peers = roster.peers.mapValues { ($0.pubkey, $0.epoch) }
+                if roster.admitted { status = "connected"; retry = 0; timeout?.cancel() }
+                emit()
             case "error": throw NativeError.message(value["message"] as? String ?? "The relay refused this huddle.")
             default: break
             }
@@ -217,7 +206,7 @@ final class NativeHuddle {
         audioSocket.send(.data(data)) { _ in }
     }
     private func play(_ data: Data) {
-        guard data.count > 10, let peer = peers[Int(data[0])], peer.epoch == Int(data[1]) else { return }
+        guard roster.accepts(data), let peer = peers[Int(data[0])] else { return }
         let sequence = Int(data[2]) << 8 | Int(data[3])
         let timestamp = data[4..<8].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
         levels[peer.pubkey] = Int(Int8(bitPattern: data[8]))
