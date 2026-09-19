@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { Button } from "@/shared/ui/button";
@@ -9,12 +9,11 @@ import type {
   AgentVoiceSelection,
   AgentVoiceSelectionRow,
 } from "../lib/agentVoiceSelection.ts";
-import type { PickerVoiceLike } from "./voicePickerOptions.ts";
 import { VoicePickerDialog } from "./VoicePickerDialog.tsx";
 
 function describeSelection(selection: AgentVoiceSelection | undefined): string {
   if (selection === undefined) {
-    return "Derived from your key — every English agent gets its own stable voice.";
+    return "Derived from your key — every agent gets its own stable Pocket voice.";
   }
   if (selection.engine === "pocket") {
     return `Pocket voice ${selection.key}`;
@@ -22,38 +21,12 @@ function describeSelection(selection: AgentVoiceSelection | undefined): string {
   if (selection.engine === "eleven") {
     return `ElevenLabs voice ${selection.key}`;
   }
-  return `On-device voice ${selection.voiceURI}`;
-}
-
-/**
- * The lowest-friction live voice list: `speechSynthesis.getVoices()` returns
- * [] until `voiceschanged` fires on several engines, so poll the getter on
- * the change event AND once per tick until it is non-empty.
- */
-export function useLocalVoices(): PickerVoiceLike[] {
-  const [voices, setVoices] = useState<PickerVoiceLike[]>([]);
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.speechSynthesis) {
-      return;
-    }
-    const synth = window.speechSynthesis;
-    const load = () => {
-      const list = synth.getVoices().map((voice) => ({
-        name: voice.name,
-        lang: voice.lang,
-        voiceURI: voice.voiceURI,
-      }));
-      if (list.length > 0) {
-        setVoices(list);
-      }
-    };
-    load();
-    synth.addEventListener?.("voiceschanged", load);
-    return () => {
-      synth.removeEventListener?.("voiceschanged", load);
-    };
-  }, []);
-  return voices;
+  // A published on-device row from before the engine was dropped. It still
+  // decodes, but it no longer decides: `resolveHuddleVoice` treats it as no
+  // selection at all, so the derived Pocket default is what actually speaks
+  // (huddle/lib/huddlePrefs.ts). Say so rather than naming a voice nobody
+  // will hear.
+  return `On-device voice ${selection.voiceURI} — no longer supported; the derived Pocket voice speaks instead.`;
 }
 
 /**
@@ -74,7 +47,6 @@ export function VoiceSettingsCard({
 }) {
   const { session } = useRelaySession();
   const { byPubkey, agentVoiceSelectionFor } = useAgentVoiceSelections();
-  const localVoices = useLocalVoices();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -133,7 +105,6 @@ export function VoiceSettingsCard({
       )}
       <VoicePickerDialog
         current={current}
-        localVoices={localVoices}
         onConfirm={confirm}
         onOpenChange={setPickerOpen}
         open={pickerOpen}

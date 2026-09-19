@@ -1,101 +1,128 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  ENGLISH_ONLY,
   PREVIEW_SAMPLE_TEXT,
-  localVoiceOptions,
+  VOICE_ENGINES,
+  elevenVoiceOptions,
+  engineLabel,
+  engineVoiceOptions,
   pocketVoiceOptions,
   sameOption,
-  speakPreview,
 } from "./voicePickerOptions.ts";
 
-const FAKE_VOICES = [
-  { name: "Zulu", lang: "en-AU", voiceURI: "uri:zulu", localService: true },
-  { name: "Aaron", lang: "en-US", voiceURI: "uri:aaron", localService: true },
-  { name: "Amelie", lang: "fr-CA", voiceURI: "uri:amelie", localService: true },
-  { name: "Slovenian", lang: "sl-SI", voiceURI: "uri:sl", localService: true },
-  {
-    name: "Samantha",
-    lang: "en-US",
-    voiceURI: "uri:samantha",
-    localService: false,
-  },
+const CATALOG_ROWS = [
+  { content: { key: "pocket:azelma", displayName: "Azelma" } },
+  { content: { key: "pocket:april", displayName: "April" } },
 ];
+const ELEVEN_VOICES = [
+  { id: "T720RsqorTx4ZZWohrNN", label: "Amara" },
+  { id: "ZZ11aaBB", label: "Rook" },
+  { id: "CC22ddEE", label: "Wren" },
+];
+const SOURCES = { catalogRows: CATALOG_ROWS, elevenVoices: ELEVEN_VOICES };
 
-// ── English filter (the ruled v1 invariant) ────────────────────────────────
+// ── Engines ────────────────────────────────────────────────────────────────
 
-test("picker surfaces only English voices — the ruled v1 invariant", () => {
-  assert.equal(ENGLISH_ONLY, true);
-  const options = localVoiceOptions(FAKE_VOICES);
-  const names = options.map((option) => option.label);
-  assert.deepEqual(names, ["Aaron", "Samantha", "Zulu"]);
-  for (const option of options) {
-    assert.equal(option.engine, "local-synth");
-  }
+test("exactly two engines are offered, and on-device is not one of them", () => {
+  assert.deepEqual([...VOICE_ENGINES], ["pocket", "eleven"]);
+  assert.equal(engineLabel("pocket"), "Pocket");
+  assert.equal(engineLabel("eleven"), "ElevenLabs");
 });
 
-test("the English filter matches on lang prefix, case-insensitively", () => {
-  const odd = [{ name: "Odd", lang: "EN-gb", voiceURI: "uri:odd" }];
-  assert.deepEqual(
-    localVoiceOptions(odd).map((option) => option.label),
-    ["Odd"],
-  );
-});
-
-// ── Pocket options ─────────────────────────────────────────────────────────
+// ── Pocket / ElevenLabs options ────────────────────────────────────────────
 
 test("catalog rows become pocket options keyed by their row key", () => {
-  const rows = [
-    { content: { key: "pocket:azelma", displayName: "Azelma" } },
-    { content: { key: "pocket:april", displayName: "April" } },
-  ];
-  assert.deepEqual(pocketVoiceOptions(rows), [
+  assert.deepEqual(pocketVoiceOptions(CATALOG_ROWS), [
     { engine: "pocket", key: "pocket:azelma", label: "Azelma" },
     { engine: "pocket", key: "pocket:april", label: "April" },
   ]);
 });
 
-// ── Same-option comparison ─────────────────────────────────────────────────
-
-test("sameOption distinguishes engine, target, and undefined", () => {
-  const local = { engine: "local-synth", voiceURI: "uri:a", label: "A" };
-  const localTwin = { engine: "local-synth", voiceURI: "uri:a", label: "A" };
-  const localOther = { engine: "local-synth", voiceURI: "uri:b", label: "B" };
-  const pocket = { engine: "pocket", key: "pocket:a", label: "A" };
-  assert.ok(sameOption(local, localTwin));
-  assert.ok(!sameOption(local, localOther));
-  assert.ok(!sameOption(local, pocket));
-  assert.ok(!sameOption(local, undefined));
-  assert.ok(!sameOption(undefined, pocket));
-});
-
-// ── Preview ────────────────────────────────────────────────────────────────
-
-test("speakPreview speaks the sample line through local-synth with the chosen URI", () => {
-  const calls = [];
-  const synth = {
-    cancel: () => calls.push("cancel"),
-    speak: (utterance) => calls.push(utterance),
-  };
-  const option = {
-    engine: "local-synth",
-    voiceURI: "uri:aaron",
-    label: "Aaron",
-  };
-  speakPreview(option, synth);
-  assert.deepEqual(calls, [
-    "cancel",
-    { text: PREVIEW_SAMPLE_TEXT, voiceURI: "uri:aaron", lang: "en" },
+test("bridge voice rows become eleven options with the eleven: key prefix", () => {
+  assert.deepEqual(elevenVoiceOptions(ELEVEN_VOICES.slice(0, 1)), [
+    {
+      engine: "eleven",
+      key: "eleven:T720RsqorTx4ZZWohrNN",
+      label: "Amara",
+    },
   ]);
 });
 
-test("speakPreview cancels but is SILENT for pocket rows — the proxy leg is a stub", () => {
-  const calls = [];
-  const synth = {
-    cancel: () => calls.push("cancel"),
-    speak: (utterance) => calls.push(utterance),
-  };
-  const option = { engine: "pocket", key: "pocket:azelma", label: "Azelma" };
-  speakPreview(option, synth);
-  assert.deepEqual(calls, ["cancel"], "a pocket preview must never call speak");
+// ── THE ENGINE FILTER ──────────────────────────────────────────────────────
+
+test("engineVoiceOptions returns the chosen engine's voices and ONLY those", () => {
+  const pocket = engineVoiceOptions("pocket", SOURCES);
+  // Count guard first: a filter that returned nothing would otherwise pass
+  // every "no eleven rows here" assertion vacuously.
+  assert.equal(pocket.length, 2, "both catalog rows");
+  assert.ok(
+    pocket.every((option) => option.engine === "pocket"),
+    "no eleven row may appear under Pocket",
+  );
+  assert.deepEqual(
+    pocket.map((option) => option.label),
+    ["Azelma", "April"],
+  );
+  assert.ok(!pocket.some((option) => option.label === "Amara"));
+
+  const eleven = engineVoiceOptions("eleven", SOURCES);
+  assert.equal(eleven.length, 3, "all three bridge voices");
+  assert.ok(
+    eleven.every((option) => option.engine === "eleven"),
+    "no pocket row may appear under ElevenLabs",
+  );
+  assert.deepEqual(
+    eleven.map((option) => option.label),
+    ["Amara", "Rook", "Wren"],
+  );
+  assert.ok(!eleven.some((option) => option.label === "Azelma"));
+
+  // The two lists are disjoint — the flat combined list is gone.
+  const pocketKeys = new Set(pocket.map((option) => option.key));
+  assert.ok(eleven.every((option) => !pocketKeys.has(option.key)));
+});
+
+test("an engine with no rows yields an empty list, not the other engine's", () => {
+  assert.deepEqual(
+    engineVoiceOptions("eleven", { catalogRows: CATALOG_ROWS, elevenVoices: [] }),
+    [],
+    "a keyless bridge shows no voices, never the pocket ones",
+  );
+  assert.deepEqual(
+    engineVoiceOptions("pocket", { catalogRows: [], elevenVoices: ELEVEN_VOICES }),
+    [],
+  );
+});
+
+// ── Same-option comparison ─────────────────────────────────────────────────
+
+test("sameOption distinguishes engine, target, and undefined", () => {
+  const pocket = { engine: "pocket", key: "pocket:a", label: "A" };
+  const pocketTwin = { engine: "pocket", key: "pocket:a" };
+  const pocketOther = { engine: "pocket", key: "pocket:b", label: "B" };
+  const eleven = { engine: "eleven", key: "eleven:a", label: "A" };
+  assert.ok(sameOption(pocket, pocketTwin));
+  assert.ok(!sameOption(pocket, pocketOther));
+  assert.ok(!sameOption(pocket, eleven), "same key, different engine");
+  assert.ok(!sameOption(pocket, undefined));
+  assert.ok(!sameOption(undefined, eleven));
+});
+
+test("a stored on-device selection matches no offered row", () => {
+  // The dropped engine: nothing in a picker can be it, so the comparison
+  // must never light a row up as "Selected".
+  const stored = { engine: "local-synth", voiceURI: "uri:samantha" };
+  for (const option of [
+    ...engineVoiceOptions("pocket", SOURCES),
+    ...engineVoiceOptions("eleven", SOURCES),
+  ]) {
+    assert.ok(!sameOption(option, stored), `${option.key} must not match`);
+  }
+  assert.ok(!sameOption(stored, stored), "not even against itself");
+});
+
+// ── Preview text ───────────────────────────────────────────────────────────
+
+test("every Preview speaks the same sample line", () => {
+  assert.equal(PREVIEW_SAMPLE_TEXT, "Hi, this is my agent voice.");
 });
