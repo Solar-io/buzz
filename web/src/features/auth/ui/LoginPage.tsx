@@ -122,7 +122,10 @@ export function LoginPage() {
             confirm: async (current, scanned) => {
               // Show what's changing: each field that differs
               const changes: string[] = [];
-              if (new URL(current.relayUrl).host !== new URL(scanned.relayUrl).host) {
+              if (
+                new URL(current.relayUrl).host !==
+                new URL(scanned.relayUrl).host
+              ) {
                 changes.push(
                   `relay: ${new URL(current.relayUrl).host} → ${new URL(scanned.relayUrl).host}`,
                 );

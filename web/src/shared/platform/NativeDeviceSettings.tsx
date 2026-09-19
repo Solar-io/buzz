@@ -2,7 +2,11 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/features/auth/ui/AuthProvider";
 import { prepareNativeCommunityChange } from "@/shared/lib/key-store";
-import { readNativeServices, writeNativeServices, validateServices } from "./config";
+import {
+  readNativeServices,
+  writeNativeServices,
+  validateServices,
+} from "./config";
 import { relayWsUrl } from "@/shared/lib/relay-url";
 import { QrScanner } from "@/features/auth/ui/QrScanner";
 import {
@@ -91,7 +95,10 @@ export function NativeDeviceSettings() {
                   confirm: async (current, scanned) => {
                     // Show what's changing
                     const changes: string[] = [];
-                    if (new URL(current.relayUrl).host !== new URL(scanned.relayUrl).host) {
+                    if (
+                      new URL(current.relayUrl).host !==
+                      new URL(scanned.relayUrl).host
+                    ) {
                       changes.push(
                         `relay: ${new URL(current.relayUrl).host} → ${new URL(scanned.relayUrl).host}`,
                       );
@@ -117,17 +124,19 @@ export function NativeDeviceSettings() {
                     setScanning(false);
                   },
                   validate: validateServices,
-                }).then((result) => {
-                  if (result === "applied") {
-                    toast.success("Connection updated from QR");
-                  }
-                }).catch((error) => {
-                  toast.error(
-                    error instanceof Error
-                      ? error.message
-                      : "Could not apply QR connection",
-                  );
-                });
+                })
+                  .then((result) => {
+                    if (result === "applied") {
+                      toast.success("Connection updated from QR");
+                    }
+                  })
+                  .catch((error) => {
+                    toast.error(
+                      error instanceof Error
+                        ? error.message
+                        : "Could not apply QR connection",
+                    );
+                  });
               } catch (error) {
                 toast.error(
                   error instanceof Error

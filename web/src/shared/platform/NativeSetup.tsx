@@ -133,7 +133,10 @@ export function NativeSetup({ children }: { children: ReactNode }) {
                     classify: classifyScannedConnection,
                     confirm: async (current, scanned) => {
                       const changes: string[] = [];
-                      if (new URL(current.relayUrl).host !== new URL(scanned.relayUrl).host) {
+                      if (
+                        new URL(current.relayUrl).host !==
+                        new URL(scanned.relayUrl).host
+                      ) {
                         changes.push(
                           `relay: ${new URL(current.relayUrl).host} → ${new URL(scanned.relayUrl).host}`,
                         );
@@ -147,9 +150,10 @@ export function NativeSetup({ children }: { children: ReactNode }) {
                       if (current.pushGatewayUrl !== scanned.pushGatewayUrl) {
                         changes.push("push gateway");
                       }
-                      const message = changes.length > 0
-                        ? `Update connection?\n\n${changes.join("\n")}${current.relayUrl !== scanned.relayUrl ? "\n\nThis leaves any active call and disables push." : ""}`
-                        : "No changes detected in this QR code.";
+                      const message =
+                        changes.length > 0
+                          ? `Update connection?\n\n${changes.join("\n")}${current.relayUrl !== scanned.relayUrl ? "\n\nThis leaves any active call and disables push." : ""}`
+                          : "No changes detected in this QR code.";
                       return window.confirm(message);
                     },
                     prepare: async () => {
