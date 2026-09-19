@@ -206,7 +206,7 @@ function tagValues(event: SignedNostrEvent, name: string): string[] {
  * app is served over HTTPS (or localhost), both of which qualify.
  */
 export async function deriveDTag(
-  conversationKey: Uint8Array,
+  conversationKey: Uint8Array | ((ciphertext: string) => Promise<string>),
   slug: string,
 ): Promise<string> {
   const subtle = globalThis.crypto?.subtle;
@@ -292,7 +292,7 @@ export async function validateAndDecrypt(
 
   let plaintext: string;
   try {
-    plaintext = nip44.v2.decrypt(event.content, conversationKey);
+    plaintext = typeof conversationKey === "function" ? await conversationKey(event.content) : nip44.v2.decrypt(event.content, conversationKey);
   } catch {
     return null;
   }
@@ -313,7 +313,8 @@ export type DecodeEngramParams = {
   agentPubkey: string;
   ownerPubkey: string;
   /** The owner's (viewer's) NIP-44 secret key. */
-  ownerSecretKey: Uint8Array;
+  ownerSecretKey?: Uint8Array;
+  decrypt?: (ciphertext: string) => Promise<string>;
   /** True when the relay returned its result cap for this query. */
   truncated: boolean;
   /** Unix seconds; injectable so tests are not clock-dependent. */
@@ -337,13 +338,12 @@ export async function decodeEngramListing({
   agentPubkey,
   ownerPubkey,
   ownerSecretKey,
+  decrypt,
   truncated,
   nowSeconds,
 }: DecodeEngramParams): Promise<AgentMemoryListing> {
-  const conversationKey = nip44.v2.utils.getConversationKey(
-    ownerSecretKey,
-    agentPubkey,
-  );
+  if (!ownerSecretKey && !decrypt) throw new Error("An unlocked signer is required.");
+  const conversationKey = decrypt ?? nip44.v2.utils.getConversationKey(ownerSecretKey as Uint8Array, agentPubkey);
 
   type Decoded = { event: SignedNostrEvent; body: EngramBody };
   const groups = new Map<string, Decoded[]>();
