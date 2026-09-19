@@ -774,6 +774,7 @@ async fn run_prompt(app: Arc<App>, id: Value, params: Value, wire_tx: WireSender
     // Not stored in Session (not session-cumulative); used only for the final
     // end-of-turn wire emission.
     let mut turn_pricing_identity: Option<Option<crate::types::PricingIdentity>> = None;
+    let mut turn_requests = Vec::new();
     let mut ctx = RunCtx {
         cfg: &app.cfg,
         effective_model: effective_model_str,
@@ -799,6 +800,7 @@ async fn run_prompt(app: Arc<App>, id: Value, params: Value, wire_tx: WireSender
         turn_cache_write_tokens: &mut turn_cache_write_tokens,
         turn_total_state: &mut turn_total_state,
         turn_pricing_identity: &mut turn_pricing_identity,
+        turn_requests: &mut turn_requests,
         usage_baseline,
     };
     let result = ctx.run(p.prompt).await;
@@ -876,7 +878,7 @@ async fn run_prompt(app: Arc<App>, id: Value, params: Value, wire_tx: WireSender
             // Same builder the run loop uses for its per-round reports, so the
             // final notification is shape-identical to the ones that preceded
             // it and a consumer taking the high-water mark lands on this one.
-            let update = wire::usage_update_payload(
+            let mut update = wire::usage_update_payload(
                 accumulated_in.exact_value(),
                 accumulated_out.exact_value(),
                 accumulated_cached.exact_value(),
@@ -888,6 +890,7 @@ async fn run_prompt(app: Arc<App>, id: Value, params: Value, wire_tx: WireSender
                     .as_ref()
                     .and_then(|inner| inner.as_ref()),
             );
+            wire::attach_request_observations(&mut update, &turn_requests);
             wire::send(&wire_tx, goose_session_update(&sid, update)).await;
         }
     }

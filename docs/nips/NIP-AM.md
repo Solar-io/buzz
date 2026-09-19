@@ -216,6 +216,72 @@ unlabeled total.
 
 ## Publisher Behavior
 
+### Optional analytics telemetry (additive)
+
+The encrypted payload MAY contain `telemetry`:
+
+```json
+{
+  "attribution": {"provider":"anthropic", "accountId":"claude-max-cc1", "accountLabel":"Claude Max CC1", "serviceTier":"priority"},
+  "costSource":"wire-reported",
+  "requestCount":2,
+  "requestsComplete":true,
+  "requests":[
+    {"id":"0", "model":"observed-model", "attribution":{"provider":"anthropic"},
+     "usage":{"inputTokens":100,"outputTokens":20,"totalTokens":null,"costUsd":null},
+     "latencyMs":420,"fallback":false},
+    {"id":"1", "model":"observed-model", "attribution":{"provider":"anthropic"},
+     "usage":{"inputTokens":200,"outputTokens":30,"totalTokens":null,"costUsd":null},
+     "latencyMs":530,"fallback":false}
+  ]
+}
+```
+
+All fields are optional except a supplied request's unique nonempty turn-local
+`id` and `usage` object. Identifiers and labels are non-secret owner-defined or
+directly observed values. Provider/account/tier MUST NOT be inferred from a model
+name, pricing identity, credential, subscription quota, or URL. Account labels
+are private display metadata; `accountId` is the stable grouping key. Publishers
+MUST NOT include keys, tokens, headers, URLs, prompts, completions or tool content.
+Unknown strings and fields remain forward-compatible.
+
+`costSource` is `wire-reported` or `manifest-estimated`; absent or unfamiliar
+values mean unknown provenance. Historical `costUsd` fields keep unknown
+provenance. Wire-reported cost is still an advisory estimate, not a subscription
+bill or realized savings. Consumers retain separate totals for each provenance.
+
+`requestCount` counts observed provider calls, including failures. Omission means
+unknown, never zero. `requestsComplete` defaults to false and may be true only
+when every provider call is observed exactly once and `requestCount` equals the
+number of distinct requests. Internal retries, unobserved compaction calls and
+truncated breakdowns require false. Request token/cache/cost semantics match
+`TokenCounts`; latency and fallback absence likewise mean unknown. Requests are
+subordinate observations: consumers MUST NEVER add them to their parent turn's
+totals. Complete breakdowns may partition dimensional reports, while turn totals
+remain authoritative; mismatches must be surfaced as partial coverage.
+
+Buzz ACP supports explicit private labels through `BUZZ_USAGE_PROVIDER`,
+`BUZZ_USAGE_ACCOUNT_ID`, and `BUZZ_USAGE_ACCOUNT_LABEL`. These variables accept
+nonempty trimmed labels up to 128 bytes without control characters. No credential
+environment variables are read for attribution. Standard ACP models are carried
+only from observed session model state or an acknowledged model change; they do
+not establish a billing identity. The Buzz agent reports a bounded metrics-only
+prefix of completed outer calls as partial request observations because internal
+retries and compaction calls are not all visible at that boundary.
+
+The desktop analytics command takes increasing `bucketBoundaries` (up to 2000
+hour/day/week/month buckets), `dayBoundaries` (up to 36,600 civil days), matching
+`dayLabels`, optional `agentPubkeys` (empty means all), and `selectNone` (clear
+the selection without changing the available agent list). Both boundary lists
+cover the same half-open range. Civil boundaries come from the viewing timezone,
+so 23/25-hour days are preserved. One SQLite read transaction supplies all
+sections; projection backfills are restartable and raw events remain canonical.
+Tokens and request/fallback counters cross IPC as decimal strings. Provider
+diversity uses normalized Shannon entropy, `−100 × Σ(p × ln p) / ln(n)`, over
+explicitly attributed provider/turn memberships (zero for a single provider),
+with unknown reports and the recent seven civil days exposed
+separately. Kind-44200 report counts are always labeled **Turns**.
+
 - Publish exactly one event per completed turn, at turn completion, including
   turns that end in cancellation or error when usage was observed.
 - Do NOT publish an event for a turn with no observed usage (all counters

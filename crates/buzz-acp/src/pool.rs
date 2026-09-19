@@ -4965,6 +4965,16 @@ async fn publish_agent_turn_metric(
     };
 
     let (turn_counts, cumulative_counts) = build_turn_metric_counts(&usage);
+    let mut telemetry =
+        crate::usage::telemetry_with_configured_attribution(usage.telemetry.clone(), |name| {
+            std::env::var(name)
+        });
+    if usage.turn_cost_usd.is_some() || usage.cumulative_cost_usd.is_some() {
+        let telemetry = telemetry.get_or_insert_with(Default::default);
+        if telemetry.cost_source.is_none() {
+            telemetry.cost_source = Some("wire-reported".into());
+        }
+    }
     let timestamp = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let payload = AgentTurnMetricPayload {
         harness: ctx.harness_name.clone(),
@@ -4979,6 +4989,7 @@ async fn publish_agent_turn_metric(
         delta_reliable: usage.delta_reliable,
         stop_reason,
         pricing_identity: usage.pricing_identity.clone(),
+        telemetry,
     };
     let ciphertext = match buzz_core::agent_turn_metric::encrypt_agent_turn_metric(
         &ctx.agent_keys,
@@ -8282,6 +8293,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             cumulative_cache_write_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
         // owner_pubkey = None → early return, no panic.
         publish_agent_turn_metric(
@@ -8321,6 +8333,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             cumulative_cache_write_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
         // Will try to publish and fail (no real relay) but must not panic.
         publish_agent_turn_metric(
@@ -8361,6 +8374,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             cumulative_cache_write_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
         // Must not panic; HTTP submit will fail (no real relay) — that's fine.
         publish_agent_turn_metric(
@@ -8401,6 +8415,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             cumulative_cache_write_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
         // Will try to publish (encrypt succeeds) and fail HTTP (no relay) — must not panic.
         publish_agent_turn_metric(
@@ -8438,6 +8453,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             cumulative_cache_write_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
 
         let (turn, cumulative) = crate::pool::build_turn_metric_counts(&usage);
@@ -8490,6 +8506,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             cumulative_cache_write_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
 
         let (turn, cumulative) = crate::pool::build_turn_metric_counts(&usage);

@@ -214,6 +214,9 @@ pub struct RunCtx<'a> {
     /// Reset to `None` at turn start in `run()`. The wire payload emits the
     /// proven identity when `Some(Some(pi))`, omits it otherwise.
     pub turn_pricing_identity: &'a mut Option<Option<PricingIdentity>>,
+    /// Metrics-only observations of completed outer LLM calls. Internal retries
+    /// and context compaction calls are not exposed, so coverage stays partial.
+    pub turn_requests: &'a mut Vec<serde_json::Value>,
     /// Tri-state total-token accumulator for this turn.
     ///
     /// - `Unseen`: no usage-bearing response observed yet this turn (initial state).
@@ -286,7 +289,7 @@ impl RunCtx<'_> {
         let write_total = base
             .cache_write_tokens
             .merge_session(*self.turn_cache_write_tokens);
-        let payload = wire::usage_update_payload(
+        let mut payload = wire::usage_update_payload(
             base.input_tokens
                 .merge_session(*self.turn_input_tokens)
                 .exact_value(),
@@ -302,6 +305,7 @@ impl RunCtx<'_> {
                 .as_ref()
                 .and_then(|inner| inner.as_ref()),
         );
+        wire::attach_request_observations(&mut payload, self.turn_requests);
         wire::send(
             self.wire,
             wire::goose_session_update(self.session_id, payload),
@@ -327,6 +331,7 @@ impl RunCtx<'_> {
         *self.turn_cached_input_tokens = CacheTotalState::Unseen;
         *self.turn_cache_write_tokens = CacheTotalState::Unseen;
         *self.turn_pricing_identity = None;
+        self.turn_requests.clear();
         *self.turn_total_state = TurnTotalState::Unseen;
         // Per-turn handoff-attempt counter. Scoped here (not persisted in the
         // session) so `BUZZ_AGENT_MAX_HANDOFFS` bounds compactions per
@@ -392,6 +397,7 @@ impl RunCtx<'_> {
                 tools.push(builtin::load_skill_def());
             }
             round = round.saturating_add(1);
+            let request_started = std::time::Instant::now();
             let response_result = tokio::select! {
                 biased;
                 _ = self.cancel.changed() => return Ok(StopReason::Cancelled),
@@ -491,6 +497,23 @@ impl RunCtx<'_> {
                 }
                 Err(error) => return Err(error),
             };
+            // No prompts, output, endpoint URLs or headers enter telemetry.
+            let mut observation = json!({
+                "id": self.turn_requests.len().to_string(),
+                "model": response.request_model,
+                "attribution": {},
+                "usage": { "inputTokens": response.input_tokens, "outputTokens": response.output_tokens,
+                    "totalTokens": response.total_tokens, "costUsd": null },
+                "latencyMs": u64::try_from(request_started.elapsed().as_millis()).ok(),
+                "fallback": null
+            });
+            if let Some(n) = response.cached_input_tokens {
+                observation["usage"]["cacheReadTokens"] = json!(n);
+            }
+            if let Some(n) = response.cache_write_tokens {
+                observation["usage"]["cacheWriteTokens"] = json!(n);
+            }
+            self.turn_requests.push(observation);
             // Record provider-reported input usage so the next loop iteration's
             // handoff gate can compare it against the token budget. We capture
             // it together with the history byte size AT THIS MOMENT — which is

@@ -212,6 +212,8 @@ pub struct AcpClient {
     goose_usage: UsageTracker,
     /// Per-turn prompt-response usage and Claude's optional cumulative cost.
     standard_usage: StandardUsageTracker,
+    /// Observed effective ACP session models; never billing identities.
+    usage_models: std::collections::HashMap<String, String>,
     /// Known adapter identity for prompt-response usage mapping.
     standard_adapter: Option<StandardAdapterKind>,
     /// The session's live `thought_level` knob, tracked for the steer-boundary
@@ -647,6 +649,7 @@ impl AcpClient {
             steer_rx: None,
             goose_usage: UsageTracker::default(),
             standard_usage: StandardUsageTracker::default(),
+            usage_models: Default::default(),
             standard_adapter,
             thought_level: None,
         })
@@ -765,6 +768,7 @@ impl AcpClient {
             .ok_or_else(|| AcpError::Protocol("session/new response missing sessionId".into()))?
             .to_owned();
         tracing::info!(target: "acp::session", "session created: {session_id}");
+        self.observe_usage_model(&session_id, &result);
         Ok(SessionNewResponse {
             session_id,
             raw: result,
@@ -818,7 +822,11 @@ impl AcpClient {
             "configId": config_id,
             "value": value,
         });
-        self.send_request("session/set_config_option", params).await
+        let result = self
+            .send_request("session/set_config_option", params)
+            .await?;
+        self.observe_usage_model(session_id, &result);
+        Ok(result)
     }
 
     /// Send `session/set_model` (unstable ACP path).
@@ -831,7 +839,10 @@ impl AcpClient {
             "sessionId": session_id,
             "modelId": model_id,
         });
-        self.send_request("session/set_model", params).await
+        let result = self.send_request("session/set_model", params).await?;
+        self.usage_models
+            .insert(session_id.to_string(), model_id.to_string());
+        Ok(result)
     }
 
     /// Send `session/prompt` with idle-based timeout instead of wall-clock.
@@ -973,7 +984,33 @@ impl AcpClient {
     pub fn take_turn_usage(&mut self) -> Option<TurnUsage> {
         let goose_usage = self.goose_usage.take();
         let standard_usage = self.standard_usage.take();
-        goose_usage.or(standard_usage)
+        let mut usage = goose_usage.or(standard_usage)?;
+        if usage.model.is_none() {
+            usage.model = self.usage_models.get(&usage.session_id).cloned();
+        }
+        Some(usage)
+    }
+
+    fn observe_usage_model(&mut self, session_id: &str, response: &serde_json::Value) {
+        let model = response
+            .pointer("/models/currentModelId")
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                response
+                    .get("configOptions")
+                    .and_then(|v| v.as_array())
+                    .and_then(|options| {
+                        options
+                            .iter()
+                            .find(|o| o.get("category").and_then(|v| v.as_str()) == Some("model"))
+                            .and_then(|o| o.get("currentValue"))
+                            .and_then(|v| v.as_str())
+                    })
+            });
+        if let Some(model) = model.filter(|s| !s.is_empty()) {
+            self.usage_models
+                .insert(session_id.to_string(), model.to_string());
+        }
     }
 
     /// Notify the usage tracker that buzz-acp just spawned a new session.
@@ -2079,6 +2116,22 @@ impl AcpClient {
             .unwrap_or("unknown");
 
         match update_type {
+            "current_model_update" => {
+                if let (Some(session), Some(model)) = (
+                    msg["params"]["sessionId"].as_str(),
+                    update["currentModelId"].as_str(),
+                ) {
+                    self.usage_models
+                        .insert(session.to_string(), model.to_string());
+                }
+                false
+            }
+            "config_option_update" => {
+                if let Some(session) = msg["params"]["sessionId"].as_str() {
+                    self.observe_usage_model(session, update);
+                }
+                false
+            }
             "agent_message_chunk" => {
                 if let Some(text) = update["content"]["text"].as_str() {
                     tracing::info!(target: "acp::stream", "{text}");
@@ -5648,6 +5701,10 @@ done
     async fn claude_prompt_response_usage_merges_with_cumulative_cost() {
         let mut client = spawn_inert_client().await;
         client.standard_adapter = Some(StandardAdapterKind::Claude);
+        client.observe_usage_model(
+            "claude-session",
+            &serde_json::json!({"models":{"currentModelId":"observed-claude"}}),
+        );
         client.notify_session_spawned("claude-session");
         client.standard_usage.begin_turn("claude-session");
         client.handle_session_update(&standard_cost_update("claude-session", 0.042));
@@ -5662,6 +5719,11 @@ done
         );
 
         let usage = client.take_turn_usage().expect("prompt usage");
+        assert_eq!(usage.model.as_deref(), Some("observed-claude"));
+        assert_eq!(
+            usage.pricing_identity, None,
+            "effective model never establishes billing identity"
+        );
         assert!(usage.delta_reliable, "response tokens need no baseline");
         assert_eq!(usage.turn_input_tokens, Some(155));
         assert_eq!(usage.turn_output_tokens, Some(20));

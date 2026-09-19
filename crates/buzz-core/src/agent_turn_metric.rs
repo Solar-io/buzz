@@ -103,6 +103,64 @@ pub struct PricingIdentity {
     pub cache_class: Option<String>,
 }
 
+/// Explicit, non-secret usage attribution. Never derived from a model name.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageAttribution {
+    /// Observed or explicitly configured provider identifier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Owner-defined stable account identifier, never a credential.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+    /// Private display label for that account.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_label: Option<String>,
+    /// Observed service tier, not inferred from model or account.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
+}
+
+/// One observed provider call, subordinate to (never additive to) turn totals.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestObservation {
+    /// Unique, turn-local observation identifier for deduplication.
+    pub id: String,
+    /// Actual requested model, when available.
+    pub model: Option<String>,
+    /// Explicit route/account/tier attribution.
+    #[serde(default)]
+    pub attribution: UsageAttribution,
+    /// Provider-reported counters; absence is unknown.
+    pub usage: TokenCounts,
+    /// `wire-reported`, `manifest-estimated`, or absent/unknown.
+    pub cost_source: Option<String>,
+    /// Elapsed request time in milliseconds, when observed.
+    pub latency_ms: Option<u64>,
+    /// Whether this was a fallback request, when observed.
+    pub fallback: Option<bool>,
+}
+
+/// Optional additive analytics metadata. Older events remain valid unchanged.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageTelemetry {
+    /// Turn-wide attribution, only when common to all contributions.
+    #[serde(default)]
+    pub attribution: UsageAttribution,
+    /// Cost provenance; unrecognized values remain unknown.
+    pub cost_source: Option<String>,
+    /// Total provider calls observed by the harness, including failures.
+    pub request_count: Option<u64>,
+    /// True only if every call is represented exactly once in `requests`.
+    #[serde(default)]
+    pub requests_complete: bool,
+    /// Optional provider-call breakdown, metrics only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requests: Vec<RequestObservation>,
+}
+
 /// Decrypted payload of a `kind:44200` Agent Turn Metric event.
 /// nullable unless constrained by the NIP (e.g. `session_id` + `turn_seq`
 /// are required whenever `cumulative` is present).
@@ -157,6 +215,9 @@ pub struct AgentTurnMetricPayload {
     /// treat omission as "price unknown".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pricing_identity: Option<PricingIdentity>,
+    /// Optional private analytics metadata, never copied to event tags.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry: Option<UsageTelemetry>,
 }
 
 fn default_delta_reliable() -> bool {
@@ -185,6 +246,22 @@ impl AgentTurnMetricPayload {
         }
         if let Some(c) = &self.cumulative {
             check_cost(c.cost_usd, "cumulative.costUsd")?;
+        }
+        if let Some(t) = &self.telemetry {
+            let mut ids = std::collections::HashSet::new();
+            for request in &t.requests {
+                if request.id.is_empty() || !ids.insert(&request.id) {
+                    return Err(ObserverPayloadError::InvalidPayload(
+                        "request ids must be unique and nonempty".into(),
+                    ));
+                }
+                check_cost(request.usage.cost_usd, "requests.usage.costUsd")?;
+            }
+            if t.requests_complete && t.request_count != Some(t.requests.len() as u64) {
+                return Err(ObserverPayloadError::InvalidPayload(
+                    "complete requests must match requestCount".into(),
+                ));
+            }
         }
         Ok(())
     }
@@ -228,6 +305,36 @@ mod tests {
     use super::*;
     use nostr::{EventBuilder, Kind, Tag};
 
+    #[test]
+    fn analytics_extensions_validate_completeness_duplicates_and_costs() {
+        let mut p = sample_payload();
+        let request = RequestObservation {
+            id: "0".into(),
+            model: None,
+            attribution: Default::default(),
+            usage: p.turn.clone().unwrap(),
+            cost_source: None,
+            latency_ms: Some(u64::MAX),
+            fallback: None,
+        };
+        p.telemetry = Some(UsageTelemetry {
+            request_count: Some(1),
+            requests_complete: true,
+            requests: vec![request.clone()],
+            ..Default::default()
+        });
+        assert!(p.validate().is_ok());
+        p.telemetry.as_mut().unwrap().requests.push(request);
+        assert!(p.validate().is_err());
+        p.telemetry.as_mut().unwrap().requests.pop();
+        p.telemetry.as_mut().unwrap().request_count = Some(2);
+        assert!(p.validate().is_err());
+        p.telemetry.as_mut().unwrap().requests_complete = false;
+        assert!(p.validate().is_ok());
+        p.telemetry.as_mut().unwrap().requests[0].usage.cost_usd = Some(-1.0);
+        assert!(p.validate().is_err());
+    }
+
     fn sample_payload() -> AgentTurnMetricPayload {
         AgentTurnMetricPayload {
             harness: "goose".to_string(),
@@ -256,6 +363,7 @@ mod tests {
             delta_reliable: true,
             stop_reason: Some(StopReason::EndTurn),
             pricing_identity: None,
+            telemetry: None,
         }
     }
 
@@ -402,6 +510,7 @@ mod tests {
             delta_reliable: true,
             stop_reason: None,
             pricing_identity: None,
+            telemetry: None,
         }
     }
 
@@ -426,6 +535,7 @@ mod tests {
             delta_reliable: true,
             stop_reason: None,
             pricing_identity: None,
+            telemetry: None,
         }
     }
 

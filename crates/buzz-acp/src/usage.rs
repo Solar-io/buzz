@@ -33,6 +33,34 @@
 
 use std::collections::HashMap;
 
+/// Reads only dedicated non-secret attribution variables. Provider endpoints,
+/// API keys, OAuth tokens and model names are never inspected for attribution.
+pub(crate) fn telemetry_with_configured_attribution(
+    telemetry: Option<buzz_core::agent_turn_metric::UsageTelemetry>,
+    get: impl Fn(&str) -> Result<String, std::env::VarError>,
+) -> Option<buzz_core::agent_turn_metric::UsageTelemetry> {
+    let mut result = telemetry.unwrap_or_default();
+    let read = |name| {
+        get(name)
+            .ok()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty() && s.len() <= 128 && !s.chars().any(char::is_control))
+    };
+    result.attribution.provider = result
+        .attribution
+        .provider
+        .or_else(|| read("BUZZ_USAGE_PROVIDER"));
+    result.attribution.account_id = result
+        .attribution
+        .account_id
+        .or_else(|| read("BUZZ_USAGE_ACCOUNT_ID"));
+    result.attribution.account_label = result
+        .attribution
+        .account_label
+        .or_else(|| read("BUZZ_USAGE_ACCOUNT_LABEL"));
+    (result != Default::default()).then_some(result)
+}
+
 /// Wire-format deserialization for `_goose/unstable/session/update` params.
 ///
 /// Method: `_goose/unstable/session/update`
@@ -137,6 +165,8 @@ pub(crate) struct UsageUpdatePayload {
     /// baseline: it is per-turn only and must not persist to `SessionState`.
     #[serde(default)]
     pub pricing_identity: Option<buzz_core::agent_turn_metric::PricingIdentity>,
+    #[serde(default)]
+    pub telemetry: Option<buzz_core::agent_turn_metric::UsageTelemetry>,
 }
 
 /// Per-session normalization state: the last cumulative snapshot we saw.
@@ -242,6 +272,8 @@ pub struct TurnUsage {
     /// `None` when the publisher omitted it (unrecognised endpoint, mixed
     /// identities, old harness). Per-turn only — not session-cumulative.
     pub pricing_identity: Option<buzz_core::agent_turn_metric::PricingIdentity>,
+    /// Optional explicitly observed analytics metadata for this turn.
+    pub telemetry: Option<buzz_core::agent_turn_metric::UsageTelemetry>,
 }
 
 /// Per-turn usage carried by a standard ACP `session/prompt` response.
@@ -392,6 +424,7 @@ impl StandardUsageTracker {
             cumulative_cache_write_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         })
     }
 }
@@ -749,6 +782,7 @@ impl UsageTracker {
                 // The folded identity is written in take() — use a placeholder
                 // here and replace it before returning the record.
                 pricing_identity: None,
+                telemetry: payload.telemetry.clone(),
             });
         } else if self.in_flight_session.is_none() {
             // Not in-flight at all: advance the committed baseline so the next
@@ -926,6 +960,49 @@ impl UsageTracker {
 mod tests {
     use super::*;
 
+    #[test]
+    fn analytics_attribution_reads_only_explicit_nonsecret_labels() {
+        let absent = telemetry_with_configured_attribution(None, |name| {
+            assert!(matches!(
+                name,
+                "BUZZ_USAGE_PROVIDER" | "BUZZ_USAGE_ACCOUNT_ID" | "BUZZ_USAGE_ACCOUNT_LABEL"
+            ));
+            Err(std::env::VarError::NotPresent)
+        });
+        assert!(absent.is_none());
+        let present = telemetry_with_configured_attribution(None, |name| match name {
+            "BUZZ_USAGE_PROVIDER" => Ok(" gateway-a ".into()),
+            "BUZZ_USAGE_ACCOUNT_ID" => Ok("cc1".into()),
+            _ => Err(std::env::VarError::NotPresent),
+        })
+        .unwrap();
+        assert_eq!(present.attribution.provider.as_deref(), Some("gateway-a"));
+        assert_eq!(present.attribution.account_id.as_deref(), Some("cc1"));
+        assert_eq!(present.request_count, None);
+        assert!(!present.requests_complete);
+        assert!(
+            telemetry_with_configured_attribution(None, |_| Ok("secret\ninvalid".into())).is_none()
+        );
+    }
+
+    #[test]
+    fn analytics_request_observations_do_not_leak_between_turns() {
+        let mut tracker = UsageTracker::default();
+        tracker.seed_zero_baseline("s");
+        tracker.begin_turn("s");
+        let mut p = payload(10, 3, None);
+        p.telemetry = Some(buzz_core::agent_turn_metric::UsageTelemetry {
+            request_count: Some(0),
+            requests_complete: true,
+            ..Default::default()
+        });
+        tracker.record("s", &p);
+        assert!(tracker.take().unwrap().telemetry.is_some());
+        tracker.begin_turn("s");
+        tracker.record("s", &payload(20, 5, None));
+        assert!(tracker.take().unwrap().telemetry.is_none());
+    }
+
     /// The camelCase key buzz-agent actually puts on the wire must land on the
     /// field. A rename mismatch here would deserialize to None, and every trial
     /// would be treated as "not reported" — the exact silent failure this field
@@ -991,6 +1068,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         }
     }
 
@@ -1006,6 +1084,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         }
     }
 
@@ -1507,6 +1586,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: model.map(str::to_string),
             pricing_identity: None,
+            telemetry: None,
         }
     }
 
@@ -1573,6 +1653,7 @@ mod tests {
             accumulated_total_tokens: total,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         }
     }
 
@@ -1743,6 +1824,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         }
     }
 
@@ -1989,6 +2071,7 @@ mod tests {
             cumulative_cache_write_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
 
         let (turn_counts, cumulative_counts) = build_turn_metric_counts(&usage);
@@ -2030,6 +2113,7 @@ mod tests {
             cumulative_cache_write_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
 
         let (turn_counts, cumulative_counts) = build_turn_metric_counts(&usage);
@@ -2158,6 +2242,7 @@ mod tests {
                 accumulated_total_tokens: Some(12345),
                 model: Some("claude-opus-4-5".to_string()),
                 pricing_identity: None,
+                telemetry: None,
             },
         );
         let usage = tracker.take().expect("pending");
@@ -2248,6 +2333,7 @@ mod tests {
                 model: model.to_string(),
                 cache_class: None,
             }),
+            telemetry: None,
         }
     }
 
@@ -2407,6 +2493,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
         tracker.record("sess-seed1", &payload);
         let usage = tracker
@@ -2562,6 +2649,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
         tracker.record("sess-poison-in", &p);
         let usage = tracker.take().expect("pending");
@@ -2605,6 +2693,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
         tracker.record("sess-poison-out", &p);
         let usage = tracker.take().expect("pending");
@@ -2671,6 +2760,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
         tracker.record("sess-poison-mid", &poisoned);
         let t2 = tracker.take().expect("t2");
@@ -2690,6 +2780,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
         tracker.record("sess-poison-mid", &also_poisoned);
         let t3 = tracker.take().expect("t3");
@@ -2731,6 +2822,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
         tracker.record("sess-sticky-input", &poisoned);
         let t2 = tracker.take().expect("t2");
@@ -2790,6 +2882,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
         tracker.record("sess-sticky-output", &poisoned);
         let t2 = tracker.take().expect("t2");
@@ -2834,6 +2927,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         }
     }
 
@@ -2862,6 +2956,7 @@ mod tests {
             accumulated_total_tokens: total,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         }
     }
 

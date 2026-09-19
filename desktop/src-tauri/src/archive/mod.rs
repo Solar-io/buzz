@@ -18,6 +18,8 @@
 //! == agent) is applied fail-closed.
 
 mod agent_usage;
+mod analytics;
+mod analytics_store;
 mod archive_db;
 mod metric_store;
 mod pipeline;
@@ -827,6 +829,20 @@ pub async fn get_agent_usage_series(
 }
 
 // ── Retention configuration commands ──────────────────────────────────────────
+
+/// Read every usage dashboard section from one archive transaction.
+#[tauri::command]
+pub async fn get_agent_usage_analytics(
+    state: State<'_, AppState>,
+    request: analytics::AnalyticsRequest,
+) -> Result<analytics::Analytics, String> {
+    let identity = identity_pubkey(&state)?;
+    let relay = relay_ws_url_with_override(&state);
+    state
+        .archive_db
+        .with_conn(move |conn| analytics::query(conn, &identity, &relay, &request))
+        .await
+}
 
 /// Read the global observer-frame (kind 24200) retention window, in days. Every
 /// other archived kind — NIP-AM metrics and any custom subscription — is kept
