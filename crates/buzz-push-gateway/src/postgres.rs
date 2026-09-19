@@ -65,6 +65,8 @@ fn profile(v: &str) -> Result<AppProfile, AuthorityError> {
     match v {
         "buzz-ios-production" => Ok(AppProfile::BuzzIosProduction),
         "buzz-ios-sandbox" => Ok(AppProfile::BuzzIosSandbox),
+        "buzz-capacitor-ios-production" => Ok(AppProfile::BuzzCapacitorIosProduction),
+        "buzz-capacitor-ios-sandbox" => Ok(AppProfile::BuzzCapacitorIosSandbox),
         _ => Err(AuthorityError::Unavailable),
     }
 }

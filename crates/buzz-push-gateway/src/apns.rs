@@ -297,6 +297,44 @@ fn reconnect_payload(profile: AppProfile, wake_id: uuid::Uuid) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capacitor_payload_contains_only_the_opaque_wake_and_fixed_alert() {
+        let wake = uuid::Uuid::parse_str("a19a1f57-3cbf-4ca3-b98f-21fafdbdbfa4").unwrap();
+        for profile in [
+            AppProfile::BuzzCapacitorIosProduction,
+            AppProfile::BuzzCapacitorIosSandbox,
+        ] {
+            let body: serde_json::Value =
+                serde_json::from_slice(&reconnect_payload(profile, wake)).unwrap();
+            assert_eq!(
+                body,
+                serde_json::json!({
+                    "aps": {"alert":{"body":"Reconnect to your relay now"},"mutable-content":1},
+                    "buzz":{"v":2,"wake_id":"a19a1f57-3cbf-4ca3-b98f-21fafdbdbfa4"}
+                })
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn capacitor_delivery_refuses_to_borrow_the_flutter_topic() {
+        let key = SigningKey::from_slice(&[7; 32]).unwrap();
+        let pem = key.to_pkcs8_pem(LineEnding::LF).unwrap();
+        let transport =
+            ApnsTransport::token(pem.as_bytes(), "kid", "team", "flutter.app".into()).unwrap();
+        let outcome = transport
+            .send(
+                DeliveryAttempt {
+                    request_id: uuid::Uuid::new_v4(),
+                    expires_at: i64::MAX,
+                },
+                AppProfile::BuzzCapacitorIosSandbox,
+                &"aa".repeat(32),
+            )
+            .await;
+        assert_eq!(outcome, DeliveryOutcome::ConfigurationFault);
+    }
     use axum::{body::Bytes, extract::State, http::StatusCode, routing::post, Router};
     use p256::pkcs8::{EncodePrivateKey, LineEnding};
     use std::sync::Arc;
