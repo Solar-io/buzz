@@ -143,6 +143,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // BUZZ_MESH_DEMO_ECHO=on (see api::mesh_demo).
         .route("/_mesh/demo/echo", post(api::mesh_demo::demo_echo))
         // Huddle audio WebSocket route
+        .route("/api/push/wakes/{wake_id}", get(api::push_wakes::resolve))
         .route(
             "/huddle/{channel_id}/audio",
             get(audio::handler::ws_audio_handler),
