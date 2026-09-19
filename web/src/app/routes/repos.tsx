@@ -36,6 +36,7 @@ import { usePermalinkCleanup } from "@/features/channels/lib/usePermalinkCleanup
 import { useChannelLists } from "@/features/channels/lib/useChannelLists.ts";
 import { useMessageActions } from "@/features/channels/lib/useMessageActions.ts";
 import { paletteActions } from "@/features/channels/lib/paletteActions.ts";
+import { isNativeIOS } from "@/shared/platform/native";
 import { ChannelTimeline } from "@/features/channels/ui/ChannelTimeline";
 import { ChannelHeader } from "@/features/channels/ui/ChannelHeader";
 import { Composer } from "@/features/channels/ui/Composer";
@@ -531,7 +532,7 @@ function ChannelBrowser() {
         onNewChannel: () => setNewChannelOpen(true),
         onNewDm: () => setNewDmOpen(true),
         onOpenFiles: () => setFilesOpen(true),
-      }),
+      }).filter((action) => !isNativeIOS() || action.id !== "action:agents"),
     [navigate],
   );
   const closeChannel = () => {

@@ -85,9 +85,9 @@ final class NativeHuddle {
                     self.engine = try HuddleAudioEngine(onLocalPacket: { [weak self] packet in
                         DispatchQueue.main.async { self?.sendAudio(packet, generation: activeGeneration) }
                     }, onFailure: { [weak self] _, message in
-                        DispatchQueue.main.async { self?.fail(message) }
+                        DispatchQueue.main.async { guard let self, self.generation == activeGeneration else { return }; self.fail(message) }
                     }, onDiagnostics: { _ in }, diagnosticsEnabled: false, onPCM: { [weak self] samples in
-                        DispatchQueue.main.async { self?.voice?.capture(samples) }
+                        DispatchQueue.main.async { guard let self, self.generation == activeGeneration else { return }; self.voice?.capture(samples) }
                     })
                     try self.engine?.start()
                     if !stt.isEmpty && !tts.isEmpty {

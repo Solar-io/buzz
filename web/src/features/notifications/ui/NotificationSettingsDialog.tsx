@@ -18,6 +18,8 @@ import type {
 } from "../lib/notifyDecision.ts";
 import { promptForNotificationPermission } from "../lib/permissionStore.ts";
 import { updateNotificationSettings } from "../lib/settingsStore.ts";
+import { isNativeIOS } from "@/shared/platform/native";
+import { NativePushSettings } from "@/shared/platform/NativePush";
 
 const MODES: { value: NotificationMode; label: string; hint: string }[] = [
   {
@@ -85,6 +87,7 @@ export function NotificationSettingsDialog({
   const permission = useNotificationPermission();
   const [asking, setAsking] = useState(false);
   const status = permissionCopy(permission);
+  if (isNativeIOS()) return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent><DialogHeader><DialogTitle>Notifications</DialogTitle><DialogDescription>Settings for this iPhone.</DialogDescription></DialogHeader><NativePushSettings /></DialogContent></Dialog>;
 
   // Turning the switch ON is the user gesture the browser demands, so the
   // prompt is raised from here and nowhere else. Turning it off never asks.
