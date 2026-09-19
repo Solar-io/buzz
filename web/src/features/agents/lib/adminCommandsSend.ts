@@ -44,7 +44,7 @@ export async function sendAdminCommand(
     ...(options?.target ? { target: options.target } : {}),
     request: command.request,
   };
-  const { ciphertext } = nip44EncryptTo(JSON.stringify(envelope), pubkey);
+  const { ciphertext } = await nip44EncryptTo(JSON.stringify(envelope), pubkey);
   const event = await signNostrEvent({
     kind: ADMIN_COMMAND_KIND,
     tags: [],
@@ -83,9 +83,9 @@ export function useAdminAckWatcher(
       cleanup = session.subscribe(
         { kinds: [ADMIN_ACK_KIND], authors: [pubkey] },
         {
-          onEvent: (event) => {
+          onEvent: async (event) => {
             try {
-              const { plaintext } = nip44DecryptFrom(
+              const { plaintext } = await nip44DecryptFrom(
                 event.content,
                 event.pubkey,
               );
@@ -123,7 +123,7 @@ export async function publishAdminAck(
     throw new Error("No unlocked key.");
   }
   const envelope = { type: AGENT_ADMIN_ACK_TYPE, ...ack };
-  const { ciphertext } = nip44EncryptTo(JSON.stringify(envelope), pubkey);
+  const { ciphertext } = await nip44EncryptTo(JSON.stringify(envelope), pubkey);
   const event = await signNostrEvent({
     kind: ADMIN_ACK_KIND,
     tags: [],

@@ -94,8 +94,8 @@ function tagValue(tags, name) {
   return found.length === 1 ? found[0][1] : undefined;
 }
 
-test("decryptReminder reads d tag, not_before and content", () => {
-  const reminder = decryptReminder(
+test("decryptReminder reads d tag, not_before and content", async () => {
+  const reminder = await decryptReminder(
     reminderEvent({
       id: "e1",
       dTag: "d1",
@@ -113,7 +113,7 @@ test("decryptReminder reads d tag, not_before and content", () => {
   assert.equal(reminder.content.note, "hello");
 });
 
-test("decryptReminder returns null for ciphertext this key cannot open", () => {
+test("decryptReminder returns null for ciphertext this key cannot open", async () => {
   const event = reminderEvent({
     id: "e1",
     dTag: "d1",
@@ -121,10 +121,10 @@ test("decryptReminder returns null for ciphertext this key cannot open", () => {
     payload: { status: "pending", note: "x" },
   });
   event.content = "someone-elses-ciphertext";
-  assert.equal(decryptReminder(event, SELF, fakeCrypto()), null);
+  assert.equal(await decryptReminder(event, SELF, fakeCrypto()), null);
 });
 
-test("decryptReminder returns null when the d tag is missing", () => {
+test("decryptReminder returns null when the d tag is missing", async () => {
   const event = reminderEvent({
     id: "e1",
     dTag: "d1",
@@ -132,7 +132,7 @@ test("decryptReminder returns null when the d tag is missing", () => {
     payload: { status: "pending", note: "x" },
   });
   event.tags = event.tags.filter((tag) => tag[0] !== "d");
-  assert.equal(decryptReminder(event, SELF, fakeCrypto()), null);
+  assert.equal(await decryptReminder(event, SELF, fakeCrypto()), null);
 });
 
 test("fetchReminders sends an author-scoped 30300 filter", async () => {

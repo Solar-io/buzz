@@ -67,8 +67,8 @@ export class ReminderKeyUnavailableError extends Error {
  * `features/channels/lib/unreact.ts`.
  */
 export interface ReminderCrypto {
-  encryptToSelf(plaintext: string, selfPubkey: string): string;
-  decryptFromSelf(ciphertext: string, selfPubkey: string): string;
+  encryptToSelf(plaintext: string, selfPubkey: string): string | Promise<string>;
+  decryptFromSelf(ciphertext: string, selfPubkey: string): string | Promise<string>;
   sign(
     template: Omit<UnsignedNostrEvent, "created_at"> & { created_at?: number },
   ): Promise<SignedNostrEvent>;
@@ -88,10 +88,10 @@ export async function loadReminderCrypto(): Promise<ReminderCrypto> {
   cachedSigner ??= import("@/shared/lib/nostr-signer");
   const signer = await cachedSigner;
   return {
-    encryptToSelf: (plaintext, selfPubkey) =>
-      signer.nip44EncryptTo(plaintext, selfPubkey).ciphertext,
-    decryptFromSelf: (ciphertext, selfPubkey) =>
-      signer.nip44DecryptFrom(ciphertext, selfPubkey).plaintext,
+    encryptToSelf: async (plaintext, selfPubkey) =>
+      (await signer.nip44EncryptTo(plaintext, selfPubkey)).ciphertext,
+    decryptFromSelf: async (ciphertext, selfPubkey) =>
+      (await signer.nip44DecryptFrom(ciphertext, selfPubkey)).plaintext,
     sign: (template) => signer.signNostrEvent(template),
   };
 }
@@ -108,18 +108,18 @@ function nowSeconds(): number {
  * mean "not actionable", so they collapse rather than throwing and taking the
  * whole page down with them.
  */
-export function decryptReminder(
+export async function decryptReminder(
   event: SignedNostrEvent,
   selfPubkey: string,
   crypto: ReminderCrypto,
-): Reminder | null {
+): Promise<Reminder | null> {
   const dTag = extractDTag(event.tags);
   if (!dTag) {
     return null;
   }
   let plaintext: string;
   try {
-    plaintext = crypto.decryptFromSelf(event.content, selfPubkey);
+    plaintext = await crypto.decryptFromSelf(event.content, selfPubkey);
   } catch {
     return null;
   }
@@ -161,7 +161,7 @@ export async function fetchReminders(
   });
   const decrypted: Reminder[] = [];
   for (const event of events) {
-    const reminder = decryptReminder(event, selfPubkey, cipher);
+    const reminder = await decryptReminder(event, selfPubkey, cipher);
     if (reminder) {
       decrypted.push(reminder);
     }
@@ -185,7 +185,7 @@ async function publishReminder(
 ): Promise<SignedNostrEvent> {
   let ciphertext: string;
   try {
-    ciphertext = crypto.encryptToSelf(
+    ciphertext = await crypto.encryptToSelf(
       reminderPlaintext(input.content),
       selfPubkey,
     );

@@ -75,9 +75,9 @@ function awaitAcks(
     const unsubscribe = session.subscribe(
       { kinds: [ADMIN_ACK_KIND], authors: [selfPubkey] },
       {
-        onEvent: (event) => {
+        onEvent: async (event) => {
           try {
-            const { plaintext } = nip44DecryptFrom(event.content, event.pubkey);
+            const { plaintext } = await nip44DecryptFrom(event.content, event.pubkey);
             const ack = parseAdminAck(JSON.parse(plaintext));
             if (!ack || !requestIds.has(ack.requestId)) return;
             acks.set(ack.requestId, ack);

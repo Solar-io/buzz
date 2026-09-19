@@ -62,7 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ready,
       extensionAvailable,
       canSign: unlocked || extensionAvailable,
-      isLocked: state.status === "locked",
+      isLocked: state.status === "locked" || state.status === "native-locked",
       unlock,
       lock,
       forgetDevice,
