@@ -136,8 +136,12 @@ test("compareInboxRows pins asks above conversations, newest first within each",
     (a, b) => inboxRowSortAt(b) - inboxRowSortAt(a),
   );
   assert.notDeepEqual(
-    sorted.map((row) => (row.kind === "ask" ? row.ask.id : row.item.conversationId)),
-    byRecency.map((row) => (row.kind === "ask" ? row.ask.id : row.item.conversationId)),
+    sorted.map((row) =>
+      row.kind === "ask" ? row.ask.id : row.item.conversationId,
+    ),
+    byRecency.map((row) =>
+      row.kind === "ask" ? row.ask.id : row.item.conversationId,
+    ),
   );
 });
 

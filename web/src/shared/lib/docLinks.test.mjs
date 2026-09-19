@@ -117,7 +117,10 @@ test("absoluteDocHref returns the ABSOLUTE relay URL, not a bare path", () => {
 });
 
 test("absoluteDocHref is null exactly where resolveDocHref is", () => {
-  assert.equal(absoluteDocHref("https://other.host:6451/changelog.md", RELAY), null);
+  assert.equal(
+    absoluteDocHref("https://other.host:6451/changelog.md", RELAY),
+    null,
+  );
   assert.equal(absoluteDocHref("/changelog.md", RELAY), null);
   assert.equal(absoluteDocHref("not a url", RELAY), null);
 });

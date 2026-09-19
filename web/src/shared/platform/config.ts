@@ -10,8 +10,22 @@ const KEY = "buzz.native-services.v1";
 export function validateServices(input: NativeServices): NativeServices {
   for (const [name, value] of Object.entries(input)) {
     if (!value && name !== "relayUrl") continue;
+
+    // Cap length
+    if (value.length > 512) {
+      throw new Error(`${name} exceeds 512 character limit.`);
+    }
+
+    // Reject @ (credentials)
+    if (value.includes("@")) {
+      throw new Error(
+        `${name} must not contain credentials (@ character not allowed).`,
+      );
+    }
+
     const url = new URL(value);
     const scheme = name === "relayUrl" || name === "sttUrl" ? "wss:" : "https:";
+
     if (
       url.protocol !== scheme ||
       !url.hostname ||
@@ -23,6 +37,15 @@ export function validateServices(input: NativeServices): NativeServices {
       throw new Error(
         `${name} must be a secure URL without credentials, a query or a fragment.`,
       );
+    }
+
+    // No path on relayUrl or pushGatewayUrl
+    if (
+      (name === "relayUrl" || name === "pushGatewayUrl") &&
+      url.pathname !== "" &&
+      url.pathname !== "/"
+    ) {
+      throw new Error(`${name} must not have a path component.`);
     }
   }
   return input;

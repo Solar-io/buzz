@@ -294,7 +294,12 @@ test("only kind-9 events count as DM activity, whatever the sub delivered", () =
   // for kind 9; the reader must not trust the delivery to have honored it.
   const map = dmActivityFromEvents([
     { kind: 30315, created_at: 200, content: "status flip", tags: H("dm-a") },
-    { kind: 44100, created_at: 300, content: "workflow run text", tags: H("dm-a") },
+    {
+      kind: 44100,
+      created_at: 300,
+      content: "workflow run text",
+      tags: H("dm-a"),
+    },
     { kind: 9, created_at: 100, content: "real message", tags: H("dm-a") },
     { kind: 9, created_at: 250, content: "newest real", tags: H("dm-b") },
   ]);

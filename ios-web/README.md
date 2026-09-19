@@ -51,6 +51,14 @@ editable on the device. Saving leaves an active call and revokes the old push
 registration before changing communities. Native relay/STT use `wss`; TTS and
 push use `https`.
 
+**Pairing QRs carry service URLs**: a QR code generated on a browser running this
+client embeds the relay address, speech service URLs, and push gateway address
+(when configured). Scanning a pairing QR on the native app automatically applies
+those addresses, along with the signing key — no manual entry needed. The push
+gateway may be omitted from the QR (if `VITE_PUSH_GATEWAY_URL` was unset at
+build time); set it manually in Settings → Identity and connection after
+pairing if needed.
+
 ## Signing and distribution
 
 Put local signing values in gitignored `ios-web/Signing.local.xcconfig`:

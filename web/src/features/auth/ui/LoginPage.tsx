@@ -12,6 +12,15 @@ import {
   setAuthTagJson,
 } from "@/shared/lib/key-store";
 import { type ParsedKey, parseSecretKeyInput } from "@/shared/lib/nsec";
+import {
+  parsePairingServices,
+  classifyScannedConnection,
+} from "@/shared/lib/pairing-link";
+import { applyScannedConnection } from "@/shared/lib/apply-scanned-connection";
+import {
+  readNativeServices,
+  writeNativeServices,
+} from "@/shared/platform/config";
 import { nsecEncode } from "nostr-tools/nip19";
 import { decryptNcryptsec } from "@/features/onboarding/keyBackup";
 import {
@@ -98,6 +107,53 @@ export function LoginPage() {
         toast.error(parsed.error);
         return;
       }
+
+      // Native iOS: apply services from QR first, then enroll
+      if (isNativeIOS()) {
+        try {
+          const services = parsePairingServices(text);
+          // Validate before writing
+          const current = readNativeServices();
+
+          // Apply the connection (write services, then enroll)
+          void applyScannedConnection(current, services, {
+            classify: classifyScannedConnection,
+            prepare: async (current, scanned) => {
+              // Community-change: ask for confirmation
+              const confirmed = window.confirm(
+                `Switch from ${new URL(current.relayUrl).host} to ${new URL(scanned.relayUrl).host}? This leaves any active call and disables push.`,
+              );
+              if (!confirmed) {
+                throw new Error("User cancelled community change");
+              }
+            },
+            write: async (services) => {
+              writeNativeServices(services);
+            },
+          })
+            .then(() => {
+              void enrollFromQr(parsed);
+            })
+            .catch((error) => {
+              toast.error(
+                error instanceof Error
+                  ? error.message
+                  : "Could not apply connection",
+              );
+            });
+        } catch (error) {
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "Could not parse QR services",
+          );
+          // Still try to enroll the key even if services failed
+          void enrollFromQr(parsed);
+        }
+        return;
+      }
+
+      // Browser path: just enroll the key, don't apply services
       void enrollFromQr(parsed);
     },
     [enrollFromQr],

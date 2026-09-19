@@ -24,9 +24,9 @@ export async function signIn(
 ): Promise<void> {
   await page.goto(path);
   await page.getByRole("button", { name: "Enter key manually" }).click();
-  await page.getByPlaceholder("nsec1…").fill(
-    nsecEncode(secretKey ?? generateSecretKey()),
-  );
+  await page
+    .getByPlaceholder("nsec1…")
+    .fill(nsecEncode(secretKey ?? generateSecretKey()));
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByPlaceholder("New passphrase").fill("e2e-passphrase");
   await page.getByPlaceholder("Confirm passphrase").fill("e2e-passphrase");

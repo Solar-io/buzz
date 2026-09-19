@@ -34,7 +34,13 @@ test("parses a well-formed card tag", () => {
 });
 
 test("no card tag yields null (renders fallback markdown)", () => {
-  assert.equal(parseCardTags([["h", "chan"], ["p", "a".repeat(64)]]), null);
+  assert.equal(
+    parseCardTags([
+      ["h", "chan"],
+      ["p", "a".repeat(64)],
+    ]),
+    null,
+  );
 });
 
 test("malformed payloads degrade to null, never a broken card", () => {
@@ -44,14 +50,19 @@ test("malformed payloads degrade to null, never a broken card", () => {
   // Spread order matters: the override must come AFTER ...VALID.
   assert.equal(parseCardTags(tagFor({ ...VALID, v: 2 })), null);
   assert.equal(parseCardTags(tagFor({ ...VALID, title: "" })), null);
-  assert.equal(parseCardTags(tagFor({ ...VALID, title: "x".repeat(121) })), null);
+  assert.equal(
+    parseCardTags(tagFor({ ...VALID, title: "x".repeat(121) })),
+    null,
+  );
   assert.equal(parseCardTags(tagFor({ ...VALID, options: [] })), null);
   // 9 options — one over the cap of 8.
   const nine = Array.from({ length: 9 }, (_, i) => ({ label: `o${i}` }));
   assert.equal(parseCardTags(tagFor({ ...VALID, options: nine })), null);
   // Non-string label.
   assert.equal(
-    parseCardTags(tagFor({ ...VALID, options: [{ label: 7 }, { label: "b" }] })),
+    parseCardTags(
+      tagFor({ ...VALID, options: [{ label: 7 }, { label: "b" }] }),
+    ),
     null,
   );
 });

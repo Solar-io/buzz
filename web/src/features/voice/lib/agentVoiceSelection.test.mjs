@@ -110,7 +110,12 @@ test("the eleven id ceiling matches the relay's 36-char bound, both sides of it"
   const parse = (key) =>
     parseAgentVoiceEvent(
       selectionEvent({
-        content: JSON.stringify({ version: 1, engine: "eleven", key, label: "x" }),
+        content: JSON.stringify({
+          version: 1,
+          engine: "eleven",
+          key,
+          label: "x",
+        }),
       }),
     );
   assert.ok(parse(at36), "36-char id (the ceiling) must parse");

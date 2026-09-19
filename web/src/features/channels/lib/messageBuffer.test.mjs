@@ -237,7 +237,10 @@ test("card tag parses onto the message; malformed degrades to null (D-035)", () 
   const withCard = timelineMessageFromEvent(
     event({
       content: "**Ship the claims fix?**\n\n- Relaunch now\n- Let it ride",
-      tags: [["h", "chan-1"], ["card", JSON.stringify(payload)]],
+      tags: [
+        ["h", "chan-1"],
+        ["card", JSON.stringify(payload)],
+      ],
     }),
   );
   assert.equal(withCard.card.title, "Ship the claims fix?");
@@ -249,7 +252,10 @@ test("card tag parses onto the message; malformed degrades to null (D-035)", () 
   // Malformed card tag: null card, plain markdown rendering.
   const malformed = timelineMessageFromEvent(
     event({
-      tags: [["h", "chan-1"], ["card", "not json"]],
+      tags: [
+        ["h", "chan-1"],
+        ["card", "not json"],
+      ],
     }),
   );
   assert.equal(malformed.card, null);

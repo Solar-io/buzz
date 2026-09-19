@@ -49,15 +49,10 @@ export interface DecisionCard {
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return (
-    typeof value === "object" && value !== null && !Array.isArray(value)
-  );
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function boundedString(
-  value: unknown,
-  maxChars: number,
-): string | null {
+function boundedString(value: unknown, maxChars: number): string | null {
   if (typeof value !== "string") {
     return null;
   }
@@ -107,7 +102,7 @@ export function parseCardTags(tags: string[][]): DecisionCard | null {
   const body =
     parsed.body === undefined
       ? undefined
-      : boundedString(parsed.body, CARD_LIMITS.maxBodyChars) ?? undefined;
+      : (boundedString(parsed.body, CARD_LIMITS.maxBodyChars) ?? undefined);
   // `body: ""` and whitespace-only bodies degrade to "no body" rather than
   // rejecting the card — the title and options carry the question.
   if (!Array.isArray(parsed.options)) {
@@ -152,9 +147,10 @@ export function parseCardTags(tags: string[][]): DecisionCard | null {
  * so the leniency above stays a rendering guard, never a way to publish a
  * self-contradicting card.
  */
-export function buildCardTag(
-  card: DecisionCard,
-): { tag: string[][]; fallbackContent: string } {
+export function buildCardTag(card: DecisionCard): {
+  tag: string[][];
+  fallbackContent: string;
+} {
   const title = boundedString(card.title, CARD_LIMITS.maxTitleChars);
   if (!title) {
     throw new Error("card title must be 1-120 characters");
@@ -208,7 +204,10 @@ export function buildCardTag(
       `card payload exceeds ${CARD_LIMITS.maxTagBytes} bytes after serialization`,
     );
   }
-  return { tag: [tag], fallbackContent: cardFallbackText({ title, body, options: card.options }) };
+  return {
+    tag: [tag],
+    fallbackContent: cardFallbackText({ title, body, options: card.options }),
+  };
 }
 
 /**

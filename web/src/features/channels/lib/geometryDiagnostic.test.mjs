@@ -17,28 +17,49 @@ test("healthy conversation never fires", () => {
 });
 
 test("the device signature fires: content rows with NO composer (composer-less tell)", () => {
-  const d = decideGeometryDiagnostic({ ...HEALTHY_VIEW, composerPresent: false, timelineRows: 1, timelineHeight: 200 });
+  const d = decideGeometryDiagnostic({
+    ...HEALTHY_VIEW,
+    composerPresent: false,
+    timelineRows: 1,
+    timelineHeight: 200,
+  });
   assert.deepEqual(d, { fire: true, trigger: "composer-less" });
 });
 
 test("collapsed list with composer fires the collapsed trigger (guard's condition)", () => {
-  const d = decideGeometryDiagnostic({ ...HEALTHY_VIEW, timelineHeight: 0, wrapperHeight: 592 });
+  const d = decideGeometryDiagnostic({
+    ...HEALTHY_VIEW,
+    timelineHeight: 0,
+    wrapperHeight: 592,
+  });
   assert.deepEqual(d, { fire: true, trigger: "collapsed-list" });
 });
 
 test("healthy composer-less states excluded BY NAME (Dwight condition 1)", () => {
   // Login gate, picker, settings, files, loading — no timeline mounted.
-  const noConv = decideGeometryDiagnostic({ ...HEALTHY_VIEW, timelineMounted: false, composerPresent: false });
+  const noConv = decideGeometryDiagnostic({
+    ...HEALTHY_VIEW,
+    timelineMounted: false,
+    composerPresent: false,
+  });
   assert.equal(noConv.fire, false);
   assert.match(noConv.reason, /login-picker-settings-files/);
   // Empty conversation WITH composer is healthy.
-  const empty = decideGeometryDiagnostic({ ...HEALTHY_VIEW, timelineRows: 0, timelineHeight: 604 });
+  const empty = decideGeometryDiagnostic({
+    ...HEALTHY_VIEW,
+    timelineRows: 0,
+    timelineHeight: 604,
+  });
   assert.equal(empty.fire, false);
   assert.match(empty.reason, /empty-conversation-with-composer/);
 });
 
 test("small wrapper never fires the collapsed trigger (tiny-pane guard)", () => {
-  const d = decideGeometryDiagnostic({ ...HEALTHY_VIEW, timelineHeight: 0, wrapperHeight: 120 });
+  const d = decideGeometryDiagnostic({
+    ...HEALTHY_VIEW,
+    timelineHeight: 0,
+    wrapperHeight: 120,
+  });
   assert.equal(d.fire, false);
 });
 
