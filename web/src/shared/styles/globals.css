@@ -14,8 +14,7 @@
    at-rules, so placing this above them silently drops the rest of the sheet. */
 @custom-variant dark (&:where(.dark, .dark *));
 
-:root[data-custom-gradient="true"] .buzz-app-shell,
-:root[data-custom-gradient="true"] .buzz-shell-navigation {
+:root[data-custom-gradient="true"] .buzz-app-shell {
   background: linear-gradient(
     90deg,
     var(--custom-gradient-light) 0%,
@@ -24,24 +23,56 @@
   );
 }
 
+:root[data-custom-gradient="true"] .buzz-shell-navigation {
+  --sidebar-background: var(--custom-gradient-pane-hsl);
+  --sidebar-foreground: var(--custom-gradient-nav-foreground-hsl);
+  --sidebar-border: var(--custom-gradient-border-hsl);
+  --sidebar-accent: var(--custom-gradient-accent-hsl);
+  --sidebar-accent-foreground: var(--custom-gradient-nav-foreground-hsl);
+  --muted-foreground: var(--custom-gradient-muted-foreground-hsl);
+  color: hsl(var(--custom-gradient-nav-foreground-hsl));
+  background-color: hsl(var(--custom-gradient-nav-wash-hsl) / 0.58);
+  background-image: none;
+  border-color: hsl(var(--custom-gradient-border-hsl) / 0.7);
+  -webkit-backdrop-filter: blur(24px) saturate(135%);
+  backdrop-filter: blur(24px) saturate(135%);
+}
+
 :root[data-custom-gradient="true"] .buzz-conversation-pane,
 :root[data-custom-gradient="true"] [data-thinking-pane] {
   --background: var(--custom-gradient-pane-hsl);
-  --card: var(--custom-gradient-pane-hsl);
+  --card: var(--custom-gradient-card-hsl);
   --card-foreground: var(--custom-gradient-pane-foreground-hsl);
-  --popover: var(--custom-gradient-pane-hsl);
+  --popover: var(--custom-gradient-popover-hsl);
   --popover-foreground: var(--custom-gradient-pane-foreground-hsl);
-  --secondary: var(--custom-gradient-pane-hsl);
+  --secondary: var(--custom-gradient-secondary-hsl);
   --secondary-foreground: var(--custom-gradient-pane-foreground-hsl);
-  --muted: var(--custom-gradient-pane-hsl);
-  --muted-foreground: var(--custom-gradient-pane-foreground-hsl);
-  --accent: var(--custom-gradient-pane-hsl);
+  --muted: var(--custom-gradient-muted-hsl);
+  --muted-foreground: var(--custom-gradient-muted-foreground-hsl);
+  --accent: var(--custom-gradient-accent-hsl);
   --accent-foreground: var(--custom-gradient-pane-foreground-hsl);
   --foreground: var(--custom-gradient-pane-foreground-hsl);
-  --border: var(--custom-gradient-pane-foreground-hsl);
-  --input: var(--custom-gradient-pane-foreground-hsl);
+  --border: var(--custom-gradient-border-hsl);
+  --input: var(--custom-gradient-input-hsl);
   color: var(--custom-gradient-pane-foreground);
   background: var(--custom-gradient-pane);
+}
+
+@media (min-width: 1024px) {
+  :root[data-custom-gradient="true"] .buzz-conversation-row {
+    gap: 0.5rem;
+    padding: 0.5rem;
+  }
+
+  :root[data-custom-gradient="true"] .buzz-conversation-pane,
+  :root[data-custom-gradient="true"] [data-thinking-pane] {
+    overflow: hidden;
+    border: 1px solid hsl(var(--custom-gradient-border-hsl) / 0.75);
+    border-radius: 0.75rem;
+    box-shadow:
+      0 1px 2px hsl(var(--custom-gradient-pane-foreground-hsl) / 0.08),
+      0 8px 24px hsl(var(--custom-gradient-pane-foreground-hsl) / 0.06);
+  }
 }
 
 .custom-gradient-preview {
@@ -51,6 +82,12 @@
     var(--preview-mix) var(--preview-midpoint),
     var(--preview-dark) 100%
   );
+}
+
+.custom-gradient-preview-nav {
+  background-color: hsl(var(--preview-nav-wash) / 0.58);
+  -webkit-backdrop-filter: blur(6px) saturate(135%);
+  backdrop-filter: blur(6px) saturate(135%);
 }
 
 /*

@@ -504,12 +504,78 @@ test("Custom Gradient pane endpoint follows Light, Dark, and System mode", async
   await expect(root).toHaveCSS("--custom-gradient-pane", "#102030");
 });
 
+test("Custom Gradient paints one shell ramp with frosted navigation and inset panes", async ({
+  page,
+}, testInfo) => {
+  await signIn(page);
+  await page.locator("#appearance-theme").selectOption("custom-gradient");
+  await page.getByLabel("Custom gradient light color").fill("#f2ecb5");
+  await page.getByLabel("Custom gradient dark color").fill("#8fcfe3");
+  await page.getByTestId("color-mode-light").check();
+  await page.evaluate(() => {
+    let shell = document.querySelector(".buzz-app-shell");
+    if (!shell) {
+      shell = document.createElement("div");
+      shell.className = "buzz-app-shell fixed inset-0 z-[100] flex";
+      const nav = document.createElement("aside");
+      nav.className = "buzz-shell-navigation w-64 p-5";
+      nav.textContent = "Buzz\nChannels\nGeneral\nDirect messages";
+      shell.append(nav);
+      document.body.append(shell);
+    }
+    const row = document.createElement("div");
+    row.className = "buzz-conversation-row flex min-w-0 flex-1";
+    const chat = document.createElement("section");
+    chat.className = "buzz-conversation-pane min-w-0 flex-1 p-6";
+    chat.textContent =
+      "Chat\nOne continuous gradient frames this solid conversation surface.";
+    const thinking = document.createElement("aside");
+    thinking.dataset.thinkingPane = "";
+    thinking.className = "w-80 p-6";
+    thinking.textContent =
+      "Thinking\nA distinct inset surface, without a bright divider.";
+    row.append(chat, thinking);
+    shell.append(row);
+  });
+
+  const shell = page.locator(".buzz-app-shell");
+  const nav = page.locator(".buzz-shell-navigation").first();
+  const row = page.locator(".buzz-conversation-row");
+  const chat = page.locator(".buzz-conversation-pane");
+  const thinking = page.locator("[data-thinking-pane]");
+  await expect(shell).toHaveCSS("background-image", /linear-gradient/);
+  await expect(nav).toHaveCSS("background-image", "none");
+  await expect(nav).toHaveCSS("backdrop-filter", /blur\(24px\)/);
+  expect(
+    await nav.evaluate((el) => getComputedStyle(el).backgroundColor),
+  ).toMatch(/rgba\(.+, 0\.[0-9]+\)/);
+  await expect(row).toHaveCSS("gap", "8px");
+  await expect(chat).toHaveCSS("background-color", "rgb(242, 236, 181)");
+  await expect(thinking).toHaveCSS("background-color", "rgb(242, 236, 181)");
+  await expect(chat).toHaveCSS("border-radius", "12px");
+  await expect(thinking).toHaveCSS("border-left-width", "1px");
+  expect(
+    await chat.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return (
+        style.getPropertyValue("--border") !==
+        style.getPropertyValue("--foreground")
+      );
+    }),
+  ).toBe(true);
+  if (process.env.CAPTURE_CUSTOM_GRADIENT === "1") {
+    await page.screenshot({
+      path: testInfo.outputPath("custom-gradient-desktop.png"),
+    });
+  }
+});
+
 test.describe("Custom Gradient on a phone", () => {
   test.use({ viewport: { width: 375, height: 667 } });
 
   test("has no horizontal overflow and keeps controls at touch size", async ({
     page,
-  }) => {
+  }, testInfo) => {
     await signIn(page);
     await page.locator("#appearance-theme").selectOption("custom-gradient");
     const scroller = page.getByTestId("settings-scroll");
@@ -536,6 +602,14 @@ test.describe("Custom Gradient on a phone", () => {
     ]) {
       const box = await control.boundingBox();
       expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+    }
+    if (process.env.CAPTURE_CUSTOM_GRADIENT === "1") {
+      await page
+        .getByRole("group", { name: "Custom Gradient" })
+        .scrollIntoViewIfNeeded();
+      await page.screenshot({
+        path: testInfo.outputPath("custom-gradient-phone.png"),
+      });
     }
   });
 });

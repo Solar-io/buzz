@@ -825,7 +825,7 @@ function ChannelBrowser() {
             ) : current ? (
               <div
                 ref={setRowEl}
-                className="flex h-full min-h-0"
+                className="buzz-conversation-row flex h-full min-h-0"
                 style={{ ["--thread-width" as string]: `${threadWidth}px` }}
               >
                 <section className="buzz-conversation-pane relative flex min-w-0 flex-1 flex-col">
