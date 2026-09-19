@@ -1,5 +1,10 @@
-import { useState, type ReactNode } from "react";
-import { BuzzHuddle, isNativeIOS } from "./native";
+import { useEffect, useState, type ReactNode } from "react";
+import {
+  BuzzHuddle,
+  BuzzIdentity,
+  isNativeIOS,
+  type LegacyIdentityRestore,
+} from "./native";
 import {
   readNativeServices,
   writeNativeServices,
@@ -17,6 +22,34 @@ export function NativeSetup({ children }: { children: ReactNode }) {
       },
   );
   const [error, setError] = useState("");
+  const [previous, setPrevious] = useState<LegacyIdentityRestore["choices"]>(
+    [],
+  );
+  const [restoring, setRestoring] = useState(false);
+  const restore = async (selectedId?: string) => {
+    setRestoring(true);
+    try {
+      const restored = await BuzzIdentity.restoreFlutter({ selectedId });
+      if (restored.relayUrl) {
+        const next = { ...services, relayUrl: restored.relayUrl };
+        writeNativeServices(next);
+        setServices(next);
+      } else {
+        setPrevious(restored.choices ?? []);
+      }
+    } catch {
+      setError(
+        "The previous Buzz login could not be restored. You can continue and pair or sign in.",
+      );
+    } finally {
+      setRestoring(false);
+    }
+  };
+  useEffect(() => {
+    if (isNativeIOS() && !readNativeServices()) void restore();
+    // Only first setup attempts migration; changing input fields is not a retry.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: initial native migration only
+  }, []);
   if (!isNativeIOS() || readNativeServices()) return children;
   return (
     <main className="flex min-h-dvh items-center justify-center bg-background p-6 text-foreground">
@@ -39,6 +72,27 @@ export function NativeSetup({ children }: { children: ReactNode }) {
         }}
       >
         <h1 className="text-xl font-semibold">Connect Buzz</h1>
+        {previous && previous.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-sm">
+              Choose the previous Buzz community to restore.
+            </p>
+            {previous.map((community) => (
+              <button
+                type="button"
+                key={community.id}
+                disabled={restoring}
+                className="block w-full rounded border border-border p-3 text-left"
+                onClick={() => void restore(community.id)}
+              >
+                {community.name}
+                <span className="block truncate text-xs text-muted-foreground">
+                  {community.relayUrl}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
         <p className="text-sm text-muted-foreground">
           {services.relayUrl
             ? "Your community connection is ready. Continue to pair this iPhone or sign in."
@@ -81,6 +135,7 @@ export function NativeSetup({ children }: { children: ReactNode }) {
         <button
           className="w-full rounded bg-primary p-3 text-primary-foreground"
           type="submit"
+          disabled={restoring}
         >
           Connect
         </button>

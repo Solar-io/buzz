@@ -15,9 +15,23 @@ export interface NativeIdentityState {
   pubkey: string | null;
   locked: boolean;
 }
+export interface LegacyIdentityRestore {
+  status: "existing" | "migrated" | "none" | "choice";
+  relayUrl?: string;
+  pubkey?: string;
+  choices?: Array<{
+    id: string;
+    name: string;
+    relayUrl: string;
+    pubkey: string;
+  }>;
+}
 
 export const BuzzIdentity = registerPlugin<{
   state(): Promise<NativeIdentityState>;
+  restoreFlutter(options: {
+    selectedId?: string;
+  }): Promise<LegacyIdentityRestore>;
   enroll(options: { secretHex: string }): Promise<NativeIdentityState>;
   unlock(): Promise<NativeIdentityState>;
   lock(): Promise<void>;

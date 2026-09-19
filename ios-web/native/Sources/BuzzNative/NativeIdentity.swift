@@ -69,6 +69,8 @@ final class NativeIdentity {
         guard secret.count == 64, secret.allSatisfy({ $0.isHexDigit }) else { throw NativeError.message("Invalid identity key.") }
         let parsed = try Keys.parse(secretKey: secret)
         try Self.write(account, data: Data(secret.utf8))
+        UserDefaults.standard.removeObject(forKey: "buzz.migrated-flutter-relay")
+        UserDefaults.standard.set(true, forKey: "buzz.flutter-migration-completed")
         keys = parsed
         explicitlyLocked = false
         UserDefaults.standard.set(false, forKey: "buzz.identity.locked")
@@ -86,7 +88,7 @@ final class NativeIdentity {
     }
 
     func lock() { keys = nil; explicitlyLocked = true; UserDefaults.standard.set(true, forKey: "buzz.identity.locked") }
-    func forget() throws { try Self.write(account, data: nil); keys = nil; explicitlyLocked = false; UserDefaults.standard.removeObject(forKey: "buzz.identity.locked") }
+    func forget() throws { try Self.write(account, data: nil); keys = nil; explicitlyLocked = false; UserDefaults.standard.removeObject(forKey: "buzz.identity.locked"); UserDefaults.standard.set(true, forKey: "buzz.flutter-migration-completed") }
 
     func sign(_ template: [String: Any]) throws -> [String: Any] {
         let keys = try signer()

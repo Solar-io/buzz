@@ -5,13 +5,14 @@ import NostrSDK
 public final class BuzzIdentityPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "BuzzIdentityPlugin"
     public let jsName = "BuzzIdentity"
-    public let pluginMethods: [CAPPluginMethod] = ["state", "enroll", "unlock", "lock", "forget", "signEvent", "encrypt", "decrypt"].map {
+    public let pluginMethods: [CAPPluginMethod] = ["state", "enroll", "unlock", "lock", "forget", "signEvent", "encrypt", "decrypt", "restoreFlutter"].map {
         CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
     }
     private func perform(_ call: CAPPluginCall, _ work: () throws -> [String: Any]) {
         do { call.resolve(try work()) } catch { call.reject(error.localizedDescription) }
     }
     @objc func state(_ call: CAPPluginCall) { call.resolve(NativeIdentity.shared.state()) }
+    @objc func restoreFlutter(_ call: CAPPluginCall) { perform(call) { try FlutterIdentityMigration.restore(selectedId: call.getString("selectedId")) } }
     @objc func enroll(_ call: CAPPluginCall) {
         perform(call) {
             guard NativeHuddle.shared.isIdle else { throw NativeError.message("Leave the call before changing identity.") }
