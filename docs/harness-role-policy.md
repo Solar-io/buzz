@@ -34,3 +34,15 @@ stale edit before the atomic write, so a later policy cannot be overwritten by
 an older dialog. Custom catalog ids such as `claude-code-glm` are resolved from
 the selected runtime id before the static built-in fallback and receive the
 same exact overlay path.
+
+The native projection is generated from one policy: Codex uses exact custom
+agent model/effort settings; `claude-codex` forces exact Sol subagents; other
+Claude Code profiles route named stages through the Codex role runner and
+reject native-Agent bypasses. Connector assignments use the same global and
+per-agent inheritance model. Shared remote integrations resolve through the
+central relay; browser/computer tools remain local edge adapters.
+
+The installed desktop bundle is intentionally not replaced by a development
+source change. Validate this surface with the E2E-mode bundle and its mocked
+Tauri bridge; install it through the documented full desktop rebuild and
+mv-swap procedure only as a separately authorized application release.
