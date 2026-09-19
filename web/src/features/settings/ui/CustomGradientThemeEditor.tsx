@@ -21,6 +21,7 @@ export function CustomGradientThemeEditor() {
     "--preview-pane": isDark
       ? customGradient.darkColor
       : customGradient.lightColor,
+    "--preview-nav-wash": isDark ? "0 0% 0%" : "0 0% 100%",
   } as CSSProperties;
 
   return (
@@ -77,15 +78,15 @@ export function CustomGradientThemeEditor() {
         role="img"
         style={previewStyle}
       >
-        <div className="border-r border-black/15 p-2">
+        <div className="custom-gradient-preview-nav border-r border-black/10 p-2">
           <div className="h-2 w-3/4 rounded bg-black/30" />
         </div>
-        <div className="m-2 rounded border border-black/15 bg-[var(--preview-pane)]" />
-        <div className="m-2 ml-0 rounded border border-black/15 bg-[var(--preview-pane)]" />
+        <div className="m-2 rounded-xl border border-black/10 bg-[var(--preview-pane)] shadow-sm" />
+        <div className="m-2 ml-0 rounded-xl border border-black/10 bg-[var(--preview-pane)] shadow-sm" />
       </div>
       <p className="text-xs text-muted-foreground">
-        Navigation uses the gradient. Chat and Thinking use the selected light
-        or dark color as a solid surface.
+        Navigation floats over one continuous gradient. Chat and Thinking use
+        the selected light or dark color as inset solid surfaces.
       </p>
     </fieldset>
   );

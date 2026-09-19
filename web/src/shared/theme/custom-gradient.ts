@@ -97,14 +97,30 @@ export function blendHex(start: string, end: string, amount = 0.5): string {
     .join("")}`;
 }
 
-export function contrastColor(hex: string): "#000000" | "#ffffff" {
+function relativeLuminance(hex: string): number {
   const channels = rgb(normalizeHex(hex) ?? "#000000").map((channel) => {
     const value = channel / 255;
     return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
   });
-  const luminance =
-    channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
-  return luminance > 0.179 ? "#000000" : "#ffffff";
+  return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+}
+
+export function contrastRatio(first: string, second: string): number {
+  const light = Math.max(relativeLuminance(first), relativeLuminance(second));
+  const dark = Math.min(relativeLuminance(first), relativeLuminance(second));
+  return (light + 0.05) / (dark + 0.05);
+}
+
+export function contrastColor(hex: string): "#000000" | "#ffffff" {
+  return relativeLuminance(hex) > 0.179 ? "#000000" : "#ffffff";
+}
+
+function readableMuted(pane: string, foreground: string): string {
+  for (let weight = 0.45; weight <= 1; weight += 0.01) {
+    const candidate = blendHex(pane, foreground, weight);
+    if (contrastRatio(pane, candidate) >= 4.5) return candidate;
+  }
+  return foreground;
 }
 
 export function customGradientVars(
@@ -113,6 +129,9 @@ export function customGradientVars(
 ): Record<string, string> {
   const pane = dark ? config.darkColor : config.lightColor;
   const foreground = contrastColor(pane);
+  const tonal = (amount: number) =>
+    hslComponents(blendHex(pane, foreground, amount));
+  const mutedForeground = readableMuted(pane, foreground);
   return {
     "--custom-gradient-light": config.lightColor,
     "--custom-gradient-dark": config.darkColor,
@@ -120,8 +139,21 @@ export function customGradientVars(
     "--custom-gradient-mix": blendHex(config.lightColor, config.darkColor),
     "--custom-gradient-pane": pane,
     "--custom-gradient-pane-hsl": hslComponents(pane),
+    "--custom-gradient-card-hsl": hslComponents(pane),
+    "--custom-gradient-popover-hsl": tonal(0.05),
+    "--custom-gradient-secondary-hsl": tonal(0.06),
+    "--custom-gradient-muted-hsl": tonal(0.08),
+    "--custom-gradient-accent-hsl": tonal(0.1),
+    "--custom-gradient-border-hsl": tonal(0.12),
+    "--custom-gradient-input-hsl": tonal(0.12),
     "--custom-gradient-pane-foreground": foreground,
     "--custom-gradient-pane-foreground-hsl": hslComponents(foreground),
+    "--custom-gradient-muted-foreground": mutedForeground,
+    "--custom-gradient-muted-foreground-hsl": hslComponents(mutedForeground),
+    "--custom-gradient-nav-wash-hsl": hslComponents(
+      foreground === "#000000" ? "#ffffff" : "#000000",
+    ),
+    "--custom-gradient-nav-foreground-hsl": hslComponents(foreground),
   };
 }
 
