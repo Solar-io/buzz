@@ -62,6 +62,11 @@ export function HuddleFloatingPanel() {
     loadPanelPosition(positionStore(), viewport(), PANEL_SIZE),
   );
   const dragRef = useRef<{ offsetX: number; offsetY: number } | null>(null);
+  // The latest position, for the pointer-up save: a pointer-up handler is
+  // a closure over the render it was attached in, and a fast drag can end
+  // before that render caught up with the last move.
+  const positionRef = useRef(position);
+  positionRef.current = position;
 
   // A window that shrank must not leave the panel stranded off-screen.
   useEffect(() => {
@@ -96,17 +101,18 @@ export function HuddleFloatingPanel() {
       ),
     );
   }, []);
-  const endDrag = useCallback(
-    (event: React.PointerEvent) => {
-      if (dragRef.current === null) {
-        return;
-      }
-      dragRef.current = null;
+  const endDrag = useCallback((event: React.PointerEvent) => {
+    if (dragRef.current === null) {
+      return;
+    }
+    dragRef.current = null;
+    try {
       event.currentTarget.releasePointerCapture(event.pointerId);
-      savePanelPosition(positionStore(), position);
-    },
-    [position],
-  );
+    } catch {
+      // A pointer that was never captured (synthetic, or already lost).
+    }
+    savePanelPosition(positionStore(), positionRef.current);
+  }, []);
 
   const channelId = call.channelId;
   const feed = useChannelMessages(channelId);
@@ -138,7 +144,12 @@ export function HuddleFloatingPanel() {
             offsetX: event.clientX - position.x,
             offsetY: event.clientY - position.y,
           };
-          event.currentTarget.setPointerCapture(event.pointerId);
+          try {
+            event.currentTarget.setPointerCapture(event.pointerId);
+          } catch {
+            // No active pointer for this id: the drag still works through
+            // the handle's own move/up handlers while the pointer stays on it.
+          }
         }}
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
