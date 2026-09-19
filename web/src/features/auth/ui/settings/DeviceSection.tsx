@@ -8,7 +8,7 @@
  * out instead, and asks first.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import QRCode from "qrcode";
 import { getPublicKey } from "nostr-tools/pure";
 import { npubEncode } from "nostr-tools/nip19";
@@ -24,7 +24,11 @@ import {
   hasRememberedKey,
   rememberSecretKeyForSettings,
 } from "@/shared/lib/key-store";
-import { buildPairingLink } from "@/shared/lib/pairing-link";
+import {
+  buildPairingLink,
+  describePairingContents,
+  type PairingServices,
+} from "@/shared/lib/pairing-link";
 import {
   relayWsUrl,
   publicAppOrigin,
@@ -158,9 +162,23 @@ export function DeviceSection() {
   );
 }
 
+/** The service addresses a pairing QR built on this device would carry. */
+function currentPairingServices(): PairingServices {
+  return {
+    relayUrl: relayWsUrl(),
+    sttUrl: speechServiceUrl("stt"),
+    ttsUrl: speechServiceUrl("tts"),
+    pushGatewayUrl: import.meta.env.VITE_PUSH_GATEWAY_URL ?? "",
+  };
+}
+
 export function PairDeviceSection() {
   const source = activeSignerSource();
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const contents = useMemo(
+    () => describePairingContents(currentPairingServices()),
+    [],
+  );
 
   const showQr = useCallback(async () => {
     const secretKey = getUnlockedSecretKey();
@@ -186,12 +204,11 @@ export function PairDeviceSection() {
     }
 
     try {
-      const pairingUrl = buildPairingLink(origin, secretKey, {
-        relayUrl: relayWsUrl(),
-        sttUrl: speechServiceUrl("stt"),
-        ttsUrl: speechServiceUrl("tts"),
-        pushGatewayUrl: import.meta.env.VITE_PUSH_GATEWAY_URL ?? "",
-      });
+      const pairingUrl = buildPairingLink(
+        origin,
+        secretKey,
+        currentPairingServices(),
+      );
 
       const dataUrl = await QRCode.toDataURL(pairingUrl, {
         errorCorrectionLevel: "M",
@@ -221,9 +238,13 @@ export function PairDeviceSection() {
         Safari — they open the PWA instead. The key rides inside this link, only
         on your screens — treat it like a password.
       </p>
-      <p className="text-xs text-muted-foreground">
-        Carries: relay, speech recognition, agent speech. Not included: push
-        gateway — set it in Settings on the new device.
+      <p
+        className="text-xs text-muted-foreground"
+        data-testid="pairing-contents"
+      >
+        Carries: {contents.carried.join(", ")}.
+        {contents.omitted.length > 0 &&
+          ` Not included: ${contents.omitted.join(", ")} — set ${contents.omitted.length > 1 ? "them" : "it"} in Settings on the new device.`}
       </p>
       {qrDataUrl ? (
         <>

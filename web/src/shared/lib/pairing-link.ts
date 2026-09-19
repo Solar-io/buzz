@@ -196,3 +196,38 @@ function safeGetHost(url: string): string {
     return "(invalid)";
   }
 }
+
+/**
+ * Describe what a pairing QR built from these services will actually carry.
+ *
+ * The card under the QR used to state this from a hardcoded string, which went
+ * stale the moment the builder started carrying the push gateway — the screen
+ * told you to hand-configure something the code had already sent. Derive it
+ * from the same values the builder reads instead.
+ *
+ * The relay is always carried: when the param is absent the scanner derives it
+ * from the link host, so there is no QR that omits it.
+ */
+export function describePairingContents(services: PairingServices): {
+  carried: string[];
+  omitted: string[];
+} {
+  const carried: string[] = ["relay"];
+  const omitted: string[] = [];
+
+  const optional: Array<[keyof PairingServices, string]> = [
+    ["sttUrl", "speech recognition"],
+    ["ttsUrl", "agent speech"],
+    ["pushGatewayUrl", "push gateway"],
+  ];
+
+  for (const [field, label] of optional) {
+    if (services[field]) {
+      carried.push(label);
+    } else {
+      omitted.push(label);
+    }
+  }
+
+  return { carried, omitted };
+}
