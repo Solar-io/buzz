@@ -78,4 +78,26 @@ final class HuddleRosterTests: XCTestCase {
             XCTAssertEqual(roster.peers.count, 2)
         }
     }
+
+    func testNewerRosterBeforeAdmissionKeepsItsEpochAndStillAuthenticatesSelf() throws {
+        let snapshot: [String: Any] = ["type": "roster", "revision": 6,
+            "peers": [peer(own, 1, 7), peer(other, 2, 9)]]
+        var roster = HuddleRoster()
+        try roster.apply(snapshot, selfPubkey: own)
+        XCTAssertFalse(roster.admitted)
+        XCTAssertFalse(roster.accepts(packet(index: 2, epoch: 9)))
+        try roster.apply(joined(), selfPubkey: own)
+        XCTAssertTrue(roster.admitted)
+        XCTAssertEqual(roster.revision, 6)
+        XCTAssertTrue(roster.accepts(packet(index: 2, epoch: 9)))
+        XCTAssertFalse(roster.accepts(packet(index: 2, epoch: 8)))
+
+        var rejected = HuddleRoster()
+        try rejected.apply(snapshot, selfPubkey: own)
+        var invalid = joined()
+        invalid["epoch"] = 8
+        XCTAssertThrowsError(try rejected.apply(invalid, selfPubkey: own))
+        XCTAssertFalse(rejected.admitted)
+        XCTAssertEqual(rejected.revision, 6)
+    }
 }
