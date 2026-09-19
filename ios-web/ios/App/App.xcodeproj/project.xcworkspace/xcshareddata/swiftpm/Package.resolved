@@ -1,0 +1,24 @@
+{
+  "originHash" : "9c4b158531272f3c1cf088d24041e2b2efd07ce8ad1e7ad3e4f9d64dbf5b3021",
+  "pins" : [
+    {
+      "identity" : "capacitor-swift-pm",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ionic-team/capacitor-swift-pm.git",
+      "state" : {
+        "revision" : "0b6882e9a3288342aacf36348e5a94e4f1dd7b13",
+        "version" : "8.5.2"
+      }
+    },
+    {
+      "identity" : "nostr-sdk-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/rust-nostr/nostr-sdk-swift.git",
+      "state" : {
+        "revision" : "a0554770a2dbbcd6e292277cf217dc171cb252f3",
+        "version" : "0.45.1"
+      }
+    }
+  ],
+  "version" : 3
+}

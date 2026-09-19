@@ -11,6 +11,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         window = UIWindow(windowScene: windowScene)
         window?.rootViewController = BuzzBridgeController()
         window?.makeKeyAndVisible()
+        if let response = connectionOptions.notificationResponse {
+            BuzzPushPlugin.receiveWake(response.notification.request.content.userInfo)
+        }
 
         SceneDelegateProxy.shared.scene(scene, willConnectTo: session, options: connectionOptions)
     }
