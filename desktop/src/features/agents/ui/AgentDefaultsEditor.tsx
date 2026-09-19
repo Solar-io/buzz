@@ -40,6 +40,7 @@ import {
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { Textarea } from "@/shared/ui/textarea";
+import { HarnessPolicyEditor } from "./HarnessPolicyEditor";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
@@ -353,6 +354,7 @@ export function AgentDefaultsEditor({
               Live — agents pick it up on next restart.
             </p>
           </div>
+          <HarnessPolicyEditor compact={flatLayout} />
         </>
       )}
 

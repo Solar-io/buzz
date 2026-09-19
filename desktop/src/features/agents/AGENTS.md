@@ -250,6 +250,21 @@ with a TypeScript lookup table or an id comparison in a component.
     refresh only local persona/team/managed-agent caches; they must never
     invalidate the remote relay directory.
 
+15. **Harness role policy is provider-neutral and exact.** `HarnessPolicy`
+    (`desktop/src-tauri/src/managed_agents/harness_policy.rs`) is the sole
+    desired-state schema for Architect, Coder, QA/tester variants, Verifier,
+    and generic Worker routing. Global defaults live in `roleDefaults`; an
+    agent-specific override lives in `agentOverrides` and is edited through
+    the same `HarnessPolicyEditor` on Global Defaults and Edit Agent. Model
+    identifiers are opaque exact strings and effort is an explicit tier — the
+    UI must never infer a nearby model or silently substitute an effort.
+    Native adapters compile against their live runtime catalog and report
+    unsupported exact routes. Claude profiles without native exact-Sol
+    enforcement select the explicit `codex_role_runner` adapter; desired,
+    adapter, effective, and health state remain separate. Spawn carries the
+    compiled provider-neutral overlay in Desktop-owned `BUZZ_HARNESS_POLICY_*`
+    variables, which are reserved from user env overrides.
+
 ## The tests that enforce this
 
 - `lib/agentConfigCore.test.mjs` — field model per harness × scope, clearing

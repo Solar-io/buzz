@@ -42,10 +42,13 @@ export function compileHarnessProfileOverlay(
   profileId: string,
   agentPubkey?: string,
 ): Promise<CompiledHarnessProfile> {
-  return invokeTauri<CompiledHarnessProfile>("compile_harness_profile_overlay", {
-    policy,
-    catalog,
-    profileId,
-    agentPubkey: agentPubkey ?? null,
-  });
+  return invokeTauri<CompiledHarnessProfile>(
+    "compile_harness_profile_overlay",
+    {
+      policy,
+      catalog,
+      profileId,
+      agentPubkey: agentPubkey ?? null,
+    },
+  );
 }

@@ -1047,7 +1047,10 @@ export type HarnessPolicy = {
   delegation: HarnessDelegationPolicy;
   roleDefaults: Partial<Record<HarnessRole, HarnessRoleRoute>>;
   profiles: Record<string, HarnessProfilePolicy>;
-  agentOverrides: Record<string, Partial<Record<HarnessRole, HarnessRoleRoute>>>;
+  agentOverrides: Record<
+    string,
+    Partial<Record<HarnessRole, HarnessRoleRoute>>
+  >;
 };
 
 export type HarnessPolicyState = {

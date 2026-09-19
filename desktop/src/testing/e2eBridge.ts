@@ -22,6 +22,7 @@ import type { ConnectionState } from "@/shared/api/relayClientShared";
 import type {
   ChannelTemplate,
   FeedItemCategory,
+  HarnessPolicy,
   RelayEvent,
 } from "@/shared/api/types";
 import { getMarkdownParseCount } from "@/shared/ui/markdown/nodeCache";
@@ -556,6 +557,8 @@ type E2eConfig = {
       /** Global shared instructions; null/omitted = unset. */
       shared_instructions?: string | null;
     };
+    /** Provider-neutral harness role policy returned by policy IPC mocks. */
+    harnessPolicy?: HarnessPolicy;
     /** Explicit owner-only agent-access capability; independent of baked defaults. */
     ownerOnlyAccessBuild?: boolean;
     /** File-layer config returned by runtime id. */
@@ -8241,6 +8244,44 @@ let mockGlobalAgentConfig: {
   preferred_runtime?: string | null;
   shared_instructions?: string | null;
 } | null = null;
+let mockHarnessPolicy: HarnessPolicy | null = null;
+
+function defaultMockHarnessPolicy(): HarnessPolicy {
+  const roleDefaults = {
+    architect: { model: "gpt-5.6-sol", effort: "high" as const },
+    coder: { model: "gpt-5.6-sol", effort: "low" as const },
+    qa: { model: "gpt-5.6-sol", effort: "low" as const },
+    tester: { model: "gpt-5.6-sol", effort: "low" as const },
+    backend_tester: { model: "gpt-5.6-sol", effort: "low" as const },
+    ui_tester: { model: "gpt-5.6-sol", effort: "low" as const },
+    verifier: { model: "gpt-5.6-sol", effort: "low" as const },
+    worker: { model: "gpt-5.6-sol", effort: "low" as const },
+  };
+  const profile = (adapter: "native" | "codex_role_runner") => ({
+    enabled: true,
+    adapter,
+    nativeConfigPath: null,
+    nativeConfigFormat: null,
+  });
+  return {
+    schemaVersion: 1,
+    revision: 0,
+    delegation: {
+      defaultMode: "proportional",
+      explicitRequestRequiresPipeline: true,
+    },
+    roleDefaults,
+    profiles: {
+      codex: profile("native"),
+      "claude-codex": profile("native"),
+      claude: profile("codex_role_runner"),
+      "claude-glm": profile("codex_role_runner"),
+      goose: profile("native"),
+      "buzz-agent": profile("native"),
+    },
+    agentOverrides: {},
+  };
+}
 
 // Per-page get_nsec call counter for sequenced error testing.
 let nsecCallCount = 0;
@@ -10743,6 +10784,9 @@ export function maybeInstallE2eTauriMocks() {
   mockGlobalAgentConfig = config.mock?.globalAgentConfig
     ? { ...config.mock.globalAgentConfig }
     : null;
+  mockHarnessPolicy = config.mock?.harnessPolicy
+    ? structuredClone(config.mock.harnessPolicy)
+    : defaultMockHarnessPolicy();
   resetMockRelayMembers(config);
   resetMockRelayAgents(config);
   resetMockManagedAgents(config);
@@ -13293,6 +13337,29 @@ export function maybeInstallE2eTauriMocks() {
             shared_instructions: null,
           }
         );
+      }
+      case "get_harness_policy": {
+        return {
+          policy: structuredClone(
+            mockHarnessPolicy ?? defaultMockHarnessPolicy(),
+          ),
+          policyHash: "e2e-harness-policy-hash",
+        };
+      }
+      case "set_harness_policy": {
+        const submitted = (payload as { policy: HarnessPolicy }).policy;
+        const previousRevision = mockHarnessPolicy?.revision ?? 0;
+        mockHarnessPolicy = {
+          ...structuredClone(submitted),
+          revision: previousRevision + 1,
+        };
+        return {
+          state: {
+            policy: structuredClone(mockHarnessPolicy),
+            policyHash: "e2e-harness-policy-hash-saved",
+          },
+          previousRevision,
+        };
       }
       case "get_global_agent_config_set_call_count":
         return setGlobalAgentConfigCallCount;
