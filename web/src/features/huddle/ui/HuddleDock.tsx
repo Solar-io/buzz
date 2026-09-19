@@ -3,6 +3,7 @@ import { useLayoutEffect } from "react";
 import { MicMeter } from "./MicMeter.tsx";
 import { HuddleControls } from "./HuddleControls.tsx";
 import { HuddleReactionBurst } from "./HuddleReactionBurst.tsx";
+import { HuddleChat } from "./HuddleChat.tsx";
 import { useHuddleSession } from "../HuddleSessionProvider.tsx";
 
 /**
@@ -51,6 +52,7 @@ export function HuddleDock({ currentChannelId }: { currentChannelId: string }) {
       data-testid="huddle-dock"
     >
       <HuddleReactionBurst reactions={call.reactions.active} />
+      <HuddleChat key={call.channelId} variant="compact" />
       <HuddleControls variant="dock" />
       <div className="mt-1 flex flex-wrap items-center gap-3">
         <MicMeter levelDbov={call.huddle.micLevel} muted={call.huddle.muted} />

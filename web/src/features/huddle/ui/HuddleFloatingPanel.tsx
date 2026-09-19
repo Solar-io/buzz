@@ -1,13 +1,5 @@
 import { GripHorizontal, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
-import {
-  useChannelMembers,
-  useChannelMessages,
-  useProfiles,
-} from "@/features/channels/hooks";
-import { ChannelTimeline } from "@/features/channels/ui/ChannelTimeline";
-import { Composer } from "@/features/channels/ui/Composer";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   clampPanelPosition,
@@ -17,6 +9,7 @@ import {
 } from "../lib/floatingPosition.ts";
 import { useHuddleSession } from "../HuddleSessionProvider.tsx";
 import { HuddleControls } from "./HuddleControls.tsx";
+import { HuddleChat } from "./HuddleChat.tsx";
 import { HuddleReactionBurst } from "./HuddleReactionBurst.tsx";
 import {
   HuddleParticipantCards,
@@ -56,10 +49,18 @@ function viewport() {
     : { width: window.innerWidth, height: window.innerHeight };
 }
 
+function panelSize(view: { width: number; height: number }) {
+  return {
+    width: Math.min(PANEL_SIZE.width, Math.max(0, view.width - 16)),
+    height: Math.min(PANEL_SIZE.height, Math.max(0, view.height - 16)),
+  };
+}
+
 export function HuddleFloatingPanel() {
   const { call, setFloating } = useHuddleSession();
+  const [size, setSize] = useState(() => panelSize(viewport()));
   const [position, setPosition] = useState<PanelPosition>(() =>
-    loadPanelPosition(positionStore(), viewport(), PANEL_SIZE),
+    loadPanelPosition(positionStore(), viewport(), panelSize(viewport())),
   );
   const dragRef = useRef<{ offsetX: number; offsetY: number } | null>(null);
   // The latest position, for the pointer-up save: a pointer-up handler is
@@ -68,12 +69,17 @@ export function HuddleFloatingPanel() {
   const positionRef = useRef(position);
   positionRef.current = position;
 
-  // A window that shrank must not leave the panel stranded off-screen.
+  // A window that shrank must not leave the panel stranded off-screen. The
+  // same computed size is used for both clamping and the rendered panel, so a
+  // 375px phone never gets a 380px panel.
   useEffect(() => {
-    const onResize = () =>
+    const onResize = () => {
+      const nextSize = panelSize(viewport());
+      setSize(nextSize);
       setPosition((current) =>
-        clampPanelPosition(current, viewport(), PANEL_SIZE),
+        clampPanelPosition(current, viewport(), nextSize),
       );
+    };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
@@ -88,19 +94,22 @@ export function HuddleFloatingPanel() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [setFloating]);
 
-  const onPointerMove = useCallback((event: React.PointerEvent) => {
-    const drag = dragRef.current;
-    if (drag === null) {
-      return;
-    }
-    setPosition(
-      clampPanelPosition(
-        { x: event.clientX - drag.offsetX, y: event.clientY - drag.offsetY },
-        viewport(),
-        PANEL_SIZE,
-      ),
-    );
-  }, []);
+  const onPointerMove = useCallback(
+    (event: React.PointerEvent) => {
+      const drag = dragRef.current;
+      if (drag === null) {
+        return;
+      }
+      setPosition(
+        clampPanelPosition(
+          { x: event.clientX - drag.offsetX, y: event.clientY - drag.offsetY },
+          viewport(),
+          size,
+        ),
+      );
+    },
+    [size],
+  );
   const endDrag = useCallback((event: React.PointerEvent) => {
     if (dragRef.current === null) {
       return;
@@ -114,14 +123,6 @@ export function HuddleFloatingPanel() {
     savePanelPosition(positionStore(), positionRef.current);
   }, []);
 
-  const channelId = call.channelId;
-  const feed = useChannelMessages(channelId);
-  const members = useChannelMembers(channelId);
-  const authorPubkeys = useMemo(
-    () => feed.messages.map((message) => message.authorPubkey),
-    [feed.messages],
-  );
-  const timelineProfiles = useProfiles(authorPubkeys);
   const participants = huddleParticipants(call, call.profiles);
 
   return (
@@ -132,8 +133,8 @@ export function HuddleFloatingPanel() {
       style={{
         left: position.x,
         top: position.y,
-        width: PANEL_SIZE.width,
-        height: PANEL_SIZE.height,
+        width: size.width,
+        height: size.height,
       }}
     >
       <header
@@ -174,31 +175,8 @@ export function HuddleFloatingPanel() {
       <div className="relative flex min-h-0 flex-1 flex-col gap-2 p-3">
         <HuddleReactionBurst reactions={call.reactions.active} />
         <HuddleParticipantCards participants={participants} />
-        <h2 className="text-2xs uppercase tracking-wide text-muted-foreground">
-          Huddle chat
-        </h2>
-        <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-border">
-          <ChannelTimeline
-            historyExhausted={feed.historyExhausted}
-            loadingOlder={feed.loadingOlder}
-            messages={feed.messages}
-            onLoadOlder={feed.loadOlder}
-            onOpenThread={() => {}}
-            profiles={timelineProfiles}
-            reactions={feed.reactions}
-            replyCounts={new Map()}
-            selfPubkey={call.selfPubkey}
-            tailKey={channelId ?? ""}
-          />
-          <Composer
-            draftKey={channelId ?? undefined}
-            members={members}
-            onClearThread={() => {}}
-            profiles={timelineProfiles}
-            send={call.send}
-            threadRef={null}
-          />
-        </div>
+        <h2 className="text-sm font-medium text-foreground">Call transcript</h2>
+        <HuddleChat key={call.channelId} variant="full" />
       </div>
 
       <footer className="border-t border-border px-3 py-2">

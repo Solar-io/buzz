@@ -62,6 +62,13 @@ globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
       });
     }
   `,
+  "./HuddleChat.tsx": `
+    export function HuddleChat({ variant }) {
+      return globalThis.__BUZZ_TEST_REACT__.createElement("div", {
+        "data-testid": "huddle-chat-" + variant,
+      });
+    }
+  `,
 };
 
 const React = (await import("react")).default;

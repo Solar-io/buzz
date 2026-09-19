@@ -91,6 +91,7 @@ export function ChannelTimeline({
   onOpenThread,
   activeRootId,
   flat,
+  showActions = true,
   workingAgent,
   reactions,
   onReact,
@@ -124,6 +125,8 @@ export function ChannelTimeline({
    * conversation and must show in full.
    */
   flat?: boolean;
+  /** Hide reply/action affordances for read-only embedded call transcripts. */
+  showActions?: boolean;
   /** When set, renders the "received and working" typing row at the bottom. */
   workingAgent?: { name: string; startedAt: number } | null;
   /** Kind-7 reactions aggregated per target id. */
@@ -499,6 +502,7 @@ export function ChannelTimeline({
         grouped={grouped}
         replyCount={flat ? 0 : (replyCounts.get(message.id) ?? 0)}
         onOpenThread={onOpenThread}
+        showActions={showActions}
         active={!flat && activeRootId === message.id}
         reactionGroups={groupReactions(
           reactions ?? EMPTY_REACTIONS,
