@@ -9,6 +9,7 @@ import { ObserverProvider } from "@/features/agents/ObserverProvider";
 import { SnapshotPreviewProvider } from "@/features/agents/ui/SnapshotPreviewProvider";
 import { UpdatePrompt } from "@/shared/ui/UpdatePrompt";
 import { FileViewerProvider } from "@/shared/ui/FileViewerDialog";
+import { HuddleSessionProvider } from "@/features/huddle/HuddleSessionProvider";
 
 function AuthenticatedApp() {
   const { canSign } = useAuth();
@@ -23,7 +24,12 @@ function AuthenticatedApp() {
               instead of opening popup windows (which manufacture browser
               chrome in the installed app). One app-wide instance. */}
           <FileViewerProvider relayBase={relayHttpBaseUrl()}>
-            <RouterProvider router={router} />
+            {/* Above the router on purpose: ONE huddle call that outlives
+                every route change, so it can be docked to the channel it
+                started in or floated over everything else. */}
+            <HuddleSessionProvider>
+              <RouterProvider router={router} />
+            </HuddleSessionProvider>
           </FileViewerProvider>
         </SnapshotPreviewProvider>
         <UpdatePrompt />

@@ -21,10 +21,13 @@ test("ttsBridgeUrl builds from the serving hostname", () => {
 });
 
 test("selectionToBridgeRequest maps engines", () => {
-  assert.deepEqual(selectionToBridgeRequest({ engine: "pocket", key: "pocket:azelma" }), {
-    engine: "pocket",
-    voice: "azelma",
-  });
+  assert.deepEqual(
+    selectionToBridgeRequest({ engine: "pocket", key: "pocket:azelma" }),
+    {
+      engine: "pocket",
+      voice: "azelma",
+    },
+  );
   assert.deepEqual(
     selectionToBridgeRequest({
       engine: "eleven",
@@ -66,7 +69,10 @@ test("chunkToInt16Pieces survives odd byte offsets and splits long chunks", () =
   const total = pieces.reduce((a, p) => a + p.length, 0);
   assert.equal(total, Math.floor((bytes.length - 1) / 2));
   // A tiny chunk yields exactly one piece.
-  const one = chunkToInt16Pieces(new Uint8Array([0x01, 0x00, 0xff, 0xff]), BRIDGE_PIECE_SAMPLES);
+  const one = chunkToInt16Pieces(
+    new Uint8Array([0x01, 0x00, 0xff, 0xff]),
+    BRIDGE_PIECE_SAMPLES,
+  );
   assert.equal(one.length, 1);
   assert.deepEqual(Array.from(one[0]), [1, -1]);
 });
@@ -111,19 +117,18 @@ test("playBridgeResponse schedules pieces and settles after the tail", async () 
     },
   });
   const settleCalls = [];
-  const result = await playBridgeResponse(
-    { body },
-    ctx,
-    {
-      scheduleSettle: (delayMs, fn) => {
-        settleCalls.push(delayMs);
-        const t = setTimeout(fn, Math.min(delayMs, 50));
-        return () => clearTimeout(t);
-      },
+  const result = await playBridgeResponse({ body }, ctx, {
+    scheduleSettle: (delayMs, fn) => {
+      settleCalls.push(delayMs);
+      const t = setTimeout(fn, Math.min(delayMs, 50));
+      return () => clearTimeout(t);
     },
-  );
+  });
   assert.equal(result.seconds, 1);
-  assert.equal(scheduled.length, Math.ceil(BRIDGE_SAMPLE_RATE / BRIDGE_PIECE_SAMPLES));
+  assert.equal(
+    scheduled.length,
+    Math.ceil(BRIDGE_SAMPLE_RATE / BRIDGE_PIECE_SAMPLES),
+  );
   // The settle timer was armed for the remaining schedule (plus slack) —
   // zero remaining here because start() advanced `now` past the queue.
   assert.equal(settleCalls.length, 1);
@@ -197,25 +202,103 @@ test("DERIVED_POCKET_PRESETS equals the hardcoded 11-slug list (drift guard)", (
   // the 11 publishable presets of crates/buzz-voice/src/bundled.rs
   // (eve excluded), matching the /voices/pocket roster the bridge serves
   // and the voicecheck gate asserts.
-  assert.deepEqual([...DERIVED_POCKET_PRESETS], [
-    "anna",
-    "vera",
-    "fantine",
-    "charles",
-    "paul",
-    "eponine",
-    "azelma",
-    "george",
-    "mary",
-    "jane",
-    "michael",
-  ]);
+  assert.deepEqual(
+    [...DERIVED_POCKET_PRESETS],
+    [
+      "anna",
+      "vera",
+      "fantine",
+      "charles",
+      "paul",
+      "eponine",
+      "azelma",
+      "george",
+      "mary",
+      "jane",
+      "michael",
+    ],
+  );
 });
 
 test("derivedBridgeVoice differentiates co-speakers", () => {
-  const a = derivedBridgeVoice("aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111");
-  const b = derivedBridgeVoice("bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222");
+  const a = derivedBridgeVoice(
+    "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+  );
+  const b = derivedBridgeVoice(
+    "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222",
+  );
   // Not required to differ (11 presets, 2 draws can collide) — but these
   // two fixture keys must land apart, pinning that the hash sees the key.
   assert.notEqual(a.voice, b.voice);
+});
+
+test("an interrupt stops sources that are already scheduled, and routes at the given destination", async () => {
+  // BARGE-IN's real mechanism. Cancelling the fetch is not enough: a reply
+  // schedules its whole stream ahead of the clock, so without stopping the
+  // queued sources an "interrupt" only means the agent keeps talking with
+  // no new audio arriving. This asserts the stop reaches them.
+  const now = 0;
+  const gain = { name: "output-gain" };
+  const sources = [];
+  const ctx = {
+    get currentTime() {
+      return now;
+    },
+    destination: { name: "raw-destination" },
+    createBuffer: (_c, length) => ({ length, copyToChannel() {} }),
+    createBufferSource: () => {
+      const source = {
+        buffer: null,
+        connectedTo: null,
+        stopped: false,
+        connect(target) {
+          this.connectedTo = target;
+        },
+        start(when) {
+          // Deliberately does NOT advance the clock: these buffers stay
+          // scheduled in the future, which is the case under test.
+          this.startedAt = when;
+        },
+        stop() {
+          this.stopped = true;
+        },
+      };
+      sources.push(source);
+      return source;
+    },
+  };
+  let stopped = false;
+  const body = new ReadableStream({
+    start(controller) {
+      // 2 s of 24 kHz PCM16 — many 0.25 s pieces, all scheduled ahead.
+      controller.enqueue(new Uint8Array(2 * 2 * BRIDGE_SAMPLE_RATE));
+      controller.close();
+    },
+  });
+  const pending = playBridgeResponse({ body }, ctx, {
+    destination: gain,
+    shouldStop: () => stopped,
+    scheduleSettle: (delayMs, fn) => {
+      const timer = setTimeout(fn, delayMs);
+      return () => clearTimeout(timer);
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  // Count guard: the assertions below are vacuous if nothing was scheduled.
+  assert.ok(sources.length >= 8, `expected many pieces, got ${sources.length}`);
+  assert.ok(
+    sources.every((source) => source.connectedTo === gain),
+    "every piece must play through the supplied destination, not ctx.destination",
+  );
+  assert.ok(
+    sources.every((source) => !source.stopped),
+    "nothing is stopped before the interrupt",
+  );
+
+  stopped = true;
+  await pending;
+  assert.ok(
+    sources.every((source) => source.stopped),
+    "every scheduled piece is stopped by the interrupt",
+  );
 });

@@ -9,6 +9,23 @@ import {
   parseDownlinkFrame,
   rmsToDbov,
 } from "./lib/huddleWire.ts";
+import {
+  micConstraints,
+  RECONNECT_DELAYS_MS,
+  SPEAKING_TICK_MS,
+  US_PER_SAMPLE,
+  WORKLET_SOURCE,
+} from "./lib/huddleAudioGraph.ts";
+import {
+  audioInputOptions,
+  loadAudioDevicePrefs,
+  patchAudioDevicePrefs,
+  resolveDeviceId,
+  SYSTEM_DEFAULT_DEVICE_ID,
+  type AudioDeviceOption,
+} from "./lib/audioDevices.ts";
+import { useHuddleOutput } from "./useHuddleOutput.ts";
+import { createPeerPlayback } from "./lib/peerPlayback.ts";
 
 /**
  * Huddle voice for the web: one WebSocket to /huddle/{id}/audio, mic capture
@@ -45,50 +62,14 @@ export type HuddleStatus =
  */
 export type VoiceInputMode = "open" | "push_to_talk";
 
-export interface AudioInputDevice {
-  deviceId: string;
-  label: string;
-}
+/** Kept as the hook's public name for one device row. */
+export type AudioInputDevice = AudioDeviceOption;
 
-/** µs per 48 kHz sample (WebCodecs timestamps are µs). */
-const US_PER_SAMPLE = 1_000_000 / 48_000;
-/** Playback lead-in: schedule audio this far ahead of now (jitter buffer). */
-const PLAYBACK_LEAD_S = 0.12;
-/** Speaking-indicator refresh cadence. */
-const SPEAKING_TICK_MS = 250;
-/**
- * Redial delays after an unexpected audio-socket drop, in ms. The DESKTOP's
- * ladder exactly (desktop/src/features/huddle/HuddleContext.tsx — the list
- * `[0, 100, 250, 500, 1_000, 2_000, 2_000]`, sized for endpoint-drain
- * handoff): early retries catch a blip fast, the 2s tail covers a relay
- * restart. Only the SOCKET is redialed — mic, context, and encoder stay
- * live, so a successful reconnect is a short audio gap, not a rejoin. When
- * the ladder runs out the call ends with the reason on screen.
- */
-const RECONNECT_DELAYS_MS = [0, 100, 250, 500, 1_000, 2_000, 2_000];
-
-const WORKLET_SOURCE = `
-  class UplinkTap extends AudioWorkletProcessor {
-    process(inputs) {
-      const input = inputs[0][0];
-      if (input) this.port.postMessage(input.slice(0));
-      return true;
-    }
-  }
-  registerProcessor('uplink-tap', UplinkTap);
-`;
-
-interface PeerPlayback {
-  decoder: AudioDecoder;
-  nextStart: number;
-  /**
-   * The occupancy epoch this decoder was created for. The relay bumps a
-   * slot's epoch when a peer_index is reused
-   * (crates/buzz-relay/src/audio/room.rs `index_epochs`); a frame whose
-   * epoch differs from the entry's belongs to a DIFFERENT occupant of that
-   * index, and an Opus decoder must never carry state across speakers.
-   */
-  epoch: number;
+/** The browser store device choices persist to; null outside a browser. */
+function devicePrefsStore(): Storage | null {
+  return typeof window !== "undefined" && window.localStorage
+    ? window.localStorage
+    : null;
 }
 
 export function useHuddleAudio(
@@ -103,12 +84,22 @@ export function useHuddleAudio(
   /** The viewer's own mic level in dBov, for the meter. */
   const [micLevel, setMicLevel] = useState(-127);
   const [devices, setDevices] = useState<AudioInputDevice[]>([]);
-  const [deviceId, setDeviceId] = useState("");
+  const [deviceId, setDeviceId] = useState(
+    () => loadAudioDevicePrefs(devicePrefsStore()).inputDeviceId,
+  );
+  /**
+   * The mic held by the DUPLEX GATE (`lib/duplexGate.ts`), never by the
+   * user. Deliberately separate from `muted`: half-duplex must be able to
+   * hold and release the mic without touching — or restoring the wrong
+   * value into — the user's own mute.
+   */
+  const [held, setHeldState] = useState(false);
   const [voiceInputMode, setVoiceInputMode] = useState<VoiceInputMode>("open");
   const [pttActive, setPttActive] = useState(false);
   const voiceInputModeRef = useRef<VoiceInputMode>("open");
   const pttActiveRef = useRef(false);
   const trackRef = useRef<MediaStreamTrack | null>(null);
+  const heldRef = useRef(false);
   const [supportsVoice] = useState(
     () =>
       typeof window !== "undefined" &&
@@ -124,7 +115,13 @@ export function useHuddleAudio(
   const workletRef = useRef<AudioWorkletNode | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const vuBinsRef = useRef<Float32Array<ArrayBuffer> | null>(null);
-  const playbackRef = useRef(new Map<number, PeerPlayback>());
+  const outputGainRef = useRef<GainNode | null>(null);
+  const playbackRef = useRef(
+    createPeerPlayback({
+      getContext: () => ctxRef.current,
+      getDestination: () => outputGainRef.current,
+    }),
+  );
   const mutedRef = useRef(false);
   const seqRef = useRef(0);
   const samplesSentRef = useRef(0);
@@ -153,16 +150,29 @@ export function useHuddleAudio(
     new Set<(frame: Float32Array, sampleRate: number) => void>(),
   );
 
+  // Where this browser plays the call — speaker choice and the one mute
+  // that covers peers and the agent alike (useHuddleOutput for why it is a
+  // gain node and not a per-source flag).
+  const output = useHuddleOutput(useCallback(() => ctxRef.current, []));
+  const {
+    applyEnumeration: applyOutputEnumeration,
+    attach: attachOutput,
+    detach: detachOutput,
+  } = output;
+
   /**
    * Is the mic live right now?
    *
-   * Muted always wins. In push-to-talk the key/button must be held; in open
-   * mic it is always true. Read through refs because the encoder and worklet
-   * callbacks are created once and would otherwise close over stale state.
+   * Muted always wins, and the duplex gate's HOLD is a second, independent
+   * veto (half-duplex parks the mic while the agent speaks). In push-to-talk
+   * the key/button must be held; in open mic it is always true. Read through
+   * refs because the encoder and worklet callbacks are created once and
+   * would otherwise close over stale state.
    */
   const transmitting = useCallback(
     () =>
       !mutedRef.current &&
+      !heldRef.current &&
       (voiceInputModeRef.current === "open" || pttActiveRef.current),
     [],
   );
@@ -207,12 +217,7 @@ export function useHuddleAudio(
       ws.close();
       wsRef.current = null;
     }
-    for (const { decoder } of playbackRef.current.values()) {
-      if (decoder.state !== "closed") {
-        decoder.close();
-      }
-    }
-    playbackRef.current.clear();
+    playbackRef.current.closeAll();
     rosterRef.current.clear();
     recentLevelsRef.current.clear();
     setPeers([]);
@@ -235,6 +240,8 @@ export function useHuddleAudio(
     vuBinsRef.current = null;
     sourceRef.current?.disconnect();
     sourceRef.current = null;
+    detachOutput();
+    outputGainRef.current = null;
     void ctxRef.current?.close();
     ctxRef.current = null;
     for (const track of streamRef.current?.getTracks() ?? []) {
@@ -242,13 +249,18 @@ export function useHuddleAudio(
     }
     streamRef.current = null;
     trackRef.current = null;
-  }, [stopReconnectTimer, teardownSocket]);
+  }, [stopReconnectTimer, teardownSocket, detachOutput]);
 
   useEffect(() => {
     return () => {
       teardown();
     };
   }, [teardown]);
+
+  /** Remember the chosen mic without disturbing the chosen speaker. */
+  const persistInputDevice = useCallback((inputDeviceId: string) => {
+    patchAudioDevicePrefs(devicePrefsStore(), { inputDeviceId });
+  }, []);
 
   /**
    * Input devices. Labels are empty until the page holds a microphone grant
@@ -261,18 +273,21 @@ export function useHuddleAudio(
     }
     try {
       const all = await navigator.mediaDevices.enumerateDevices();
-      setDevices(
-        all
-          .filter((device) => device.kind === "audioinput")
-          .map((device, index) => ({
-            deviceId: device.deviceId,
-            label: device.label || `Microphone ${index + 1}`,
-          })),
-      );
+      const inputs = audioInputOptions(all);
+      setDevices(inputs);
+      applyOutputEnumeration(all);
+      // A remembered device that has been unplugged must not be handed to
+      // getUserMedia as an `exact` constraint (it would fail the join) or
+      // to setSinkId (it would reject) — fall back to the system default.
+      const resolvedInput = resolveDeviceId(deviceIdRef.current, inputs);
+      if (resolvedInput !== deviceIdRef.current) {
+        deviceIdRef.current = resolvedInput;
+        setDeviceId(resolvedInput);
+      }
     } catch {
       // Enumeration is a convenience; the default device still works.
     }
-  }, []);
+  }, [applyOutputEnumeration]);
 
   useEffect(() => {
     void refreshDevices();
@@ -285,7 +300,7 @@ export function useHuddleAudio(
     return () => media.removeEventListener("devicechange", onChange);
   }, [refreshDevices]);
 
-  /** Decode + jitter-schedule one downlink frame's Opus payload. */
+  /** Decode + jitter-schedule one downlink frame (see lib/peerPlayback.ts). */
   const playFrame = useCallback(
     (
       peerIndex: number,
@@ -293,69 +308,7 @@ export function useHuddleAudio(
       opus: Uint8Array,
       ts48k: number,
       dtx: boolean,
-    ) => {
-      const ctx = ctxRef.current;
-      if (!ctx || dtx || opus.length === 0) {
-        return;
-      }
-      let entry = playbackRef.current.get(peerIndex);
-      if (!entry || entry.decoder.state === "closed" || entry.epoch !== epoch) {
-        // A reused peer_index with a bumped epoch is a DIFFERENT occupant:
-        // close the old decoder so no Opus state carries across speakers.
-        if (entry && entry.decoder.state !== "closed") {
-          entry.decoder.close();
-        }
-        const decoder = new AudioDecoder({
-          output: (audioData: AudioData) => {
-            const sink = playbackRef.current.get(peerIndex);
-            if (!sink) {
-              audioData.close();
-              return;
-            }
-            const samples = new Float32Array(audioData.numberOfFrames);
-            audioData.copyTo(samples, {
-              planeIndex: 0,
-              format: "f32",
-            });
-            audioData.close();
-            const buffer = ctx.createBuffer(1, samples.length, 48_000);
-            buffer.copyToChannel(samples, 0);
-            const sourceNode = ctx.createBufferSource();
-            sourceNode.buffer = buffer;
-            sourceNode.connect(ctx.destination);
-            const startAt = Math.max(
-              sink.nextStart,
-              ctx.currentTime + PLAYBACK_LEAD_S,
-            );
-            sourceNode.start(startAt);
-            sink.nextStart = startAt + samples.length / 48_000;
-          },
-          error: () => {
-            playbackRef.current.delete(peerIndex);
-          },
-        });
-        decoder.configure({
-          codec: "opus",
-          sampleRate: 48_000,
-          numberOfChannels: 1,
-        });
-        entry = { decoder, nextStart: 0, epoch };
-        playbackRef.current.set(peerIndex, entry);
-      }
-      entry.decoder.decode(
-        new EncodedAudioChunk({
-          type: "key",
-          timestamp: Math.round(ts48k * US_PER_SAMPLE),
-          data: new Uint8Array(
-            opus.buffer instanceof ArrayBuffer
-              ? opus.buffer
-              : new ArrayBuffer(0),
-            opus.byteOffset,
-            opus.byteLength,
-          ),
-        }),
-      );
-    },
+    ) => playbackRef.current.play(peerIndex, epoch, opus, ts48k, dtx),
     [],
   );
 
@@ -534,12 +487,7 @@ export function useHuddleAudio(
       // The socket is dead and its roster with it. Keep the mic, context,
       // encoder, and worklet alive — a recovered redial is an audio blip,
       // not a leave — and either redial or land on idle, never silently.
-      for (const { decoder } of playbackRef.current.values()) {
-        if (decoder.state !== "closed") {
-          decoder.close();
-        }
-      }
-      playbackRef.current.clear();
+      playbackRef.current.closeAll();
       rosterRef.current.clear();
       recentLevelsRef.current.clear();
       setPeers([]);
@@ -566,70 +514,96 @@ export function useHuddleAudio(
    * up, so recovery is a gap in uplink, not a dropped call. On total
    * failure end the call with the reason on screen.
    */
-  const recoverMic = useCallback(async () => {
-    if (!wantConnectedRef.current) {
-      return;
-    }
-    const constraints = (id: string): MediaTrackConstraints => ({
-      channelCount: 1,
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-      ...(id ? { deviceId: { exact: id } } : {}),
-    });
-    let stream: MediaStream | null = null;
-    let fellBackToDefault = false;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: constraints(deviceIdRef.current),
-      });
-    } catch {
+  const swapMicStream = useCallback(
+    async (wantedDeviceId: string, options: { fatalOnFailure: boolean }) => {
+      if (!wantConnectedRef.current) {
+        return false;
+      }
+      let stream: MediaStream | null = null;
+      let fellBackToDefault = false;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          audio: constraints(""),
+          audio: micConstraints(wantedDeviceId),
         });
-        fellBackToDefault = deviceIdRef.current !== "";
-      } catch {
-        wantConnectedRef.current = false;
-        teardown();
-        setError("The microphone was disconnected and could not be restarted.");
-        setStatus("error");
-        return;
+      } catch (firstError) {
+        if (!options.fatalOnFailure) {
+          // A DELIBERATE pick that the browser refused: say so and keep the
+          // call — and the mic it already has — exactly as they were. Ending
+          // a healthy call because someone chose a busy device is worse than
+          // the refusal.
+          setError(
+            firstError instanceof Error && firstError.name === "NotAllowedError"
+              ? "Microphone permission was denied."
+              : "That microphone could not be opened — still using the previous one.",
+          );
+          return false;
+        }
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: micConstraints(SYSTEM_DEFAULT_DEVICE_ID),
+          });
+          fellBackToDefault = wantedDeviceId !== SYSTEM_DEFAULT_DEVICE_ID;
+        } catch {
+          wantConnectedRef.current = false;
+          teardown();
+          setError(
+            "The microphone was disconnected and could not be restarted.",
+          );
+          setStatus("error");
+          return false;
+        }
       }
-    }
-    const ctx = ctxRef.current;
-    const analyser = analyserRef.current;
-    const worklet = workletRef.current;
-    if (!ctx || !analyser || !worklet) {
-      for (const track of stream.getTracks()) {
-        track.stop();
+      const ctx = ctxRef.current;
+      const analyser = analyserRef.current;
+      const worklet = workletRef.current;
+      if (!ctx || !analyser || !worklet) {
+        for (const track of stream.getTracks()) {
+          track.stop();
+        }
+        return false;
       }
-      return;
-    }
-    const oldStream = streamRef.current;
-    streamRef.current = stream;
-    const track = stream.getAudioTracks()[0] ?? null;
-    trackRef.current = track;
-    if (track) {
-      track.onended = () => recoverMicRef.current();
-      // A fresh track captures by default; honor the mute state so the OS
-      // mic indicator matches the UI after recovery (QA F2).
-      track.enabled = !mutedRef.current;
-    }
-    if (fellBackToDefault) {
-      deviceIdRef.current = "";
-      setDeviceId("");
-    }
-    const source = ctx.createMediaStreamSource(stream);
-    source.connect(analyser);
-    source.connect(worklet);
-    sourceRef.current?.disconnect();
-    sourceRef.current = source;
-    for (const old of oldStream?.getTracks() ?? []) {
-      old.stop();
-    }
-    void refreshDevices();
-  }, [teardown, refreshDevices]);
+      const oldStream = streamRef.current;
+      streamRef.current = stream;
+      const track = stream.getAudioTracks()[0] ?? null;
+      trackRef.current = track;
+      if (track) {
+        track.onended = () => recoverMicRef.current();
+        // A fresh track captures by default; honor the mute AND the duplex
+        // hold so the OS mic indicator matches the UI after a swap (QA F2).
+        track.enabled = !mutedRef.current && !heldRef.current;
+      }
+      const landedOn = fellBackToDefault
+        ? SYSTEM_DEFAULT_DEVICE_ID
+        : wantedDeviceId;
+      if (landedOn !== deviceIdRef.current) {
+        deviceIdRef.current = landedOn;
+        setDeviceId(landedOn);
+      }
+      persistInputDevice(landedOn);
+      const source = ctx.createMediaStreamSource(stream);
+      source.connect(analyser);
+      source.connect(worklet);
+      sourceRef.current?.disconnect();
+      sourceRef.current = source;
+      for (const old of oldStream?.getTracks() ?? []) {
+        old.stop();
+      }
+      setError(null);
+      void refreshDevices();
+      return true;
+    },
+    [teardown, refreshDevices, persistInputDevice],
+  );
+
+  /**
+   * The mic track died mid-call (unplug, OS reclaim): try the configured
+   * device, then the system default, and end the call only if neither
+   * opens.
+   */
+  const recoverMic = useCallback(
+    () => swapMicStream(deviceIdRef.current, { fatalOnFailure: true }),
+    [swapMicStream],
+  );
 
   /**
    * Resume a browser-suspended AudioContext. Called from the bar's
@@ -655,6 +629,10 @@ export function useHuddleAudio(
     setStatus("idle");
     setMuted(false);
     mutedRef.current = false;
+    // The duplex hold belongs to a call, not to the user: a rejoin must
+    // never start with a mic parked by the last call's agent.
+    setHeldState(false);
+    heldRef.current = false;
   }, [teardown]);
 
   scheduleReconnectRef.current = scheduleReconnect;
@@ -681,20 +659,16 @@ export function useHuddleAudio(
     wantConnectedRef.current = true;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          // A chosen device is a REQUIREMENT, not a hint: `exact` makes the
-          // browser fail loudly if the mic was unplugged, instead of quietly
-          // opening a different one and leaving the picker lying about it.
-          ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
-        },
+        audio: micConstraints(deviceId),
       });
       streamRef.current = stream;
       const track = stream.getAudioTracks()[0] ?? null;
       trackRef.current = track;
+      if (track) {
+        // A hold that was in force when the call started must survive the
+        // join, or half-duplex leaks one live mic per rejoin.
+        track.enabled = !mutedRef.current && !heldRef.current;
+      }
       // A track that ends mid-call (unplug, OS reclaim) is recoverable:
       // recoverMic swaps a fresh capture into the live graph.
       if (track) {
@@ -729,6 +703,10 @@ export function useHuddleAudio(
           });
       };
       ctxRef.current = ctx;
+      // Everything the room says goes through one gain, so the speaker
+      // mute can silence already-scheduled audio; the remembered output
+      // device is applied here too, before the first frame arrives.
+      outputGainRef.current = attachOutput(ctx);
       const source = ctx.createMediaStreamSource(stream);
       sourceRef.current = source;
 
@@ -847,6 +825,7 @@ export function useHuddleAudio(
     deviceId,
     transmitting,
     refreshDevices,
+    attachOutput,
   ]);
 
   const toggleMute = useCallback(() => {
@@ -858,15 +837,51 @@ export function useHuddleAudio(
       // indicator lit — so the OS says "this page is listening" while the UI
       // says "muted". `track.enabled = false` is what actually stops it.
       if (trackRef.current) {
-        trackRef.current.enabled = !next;
+        trackRef.current.enabled = !next && !heldRef.current;
       }
       return next;
     });
   }, []);
 
-  const selectDevice = useCallback((nextDeviceId: string) => {
-    deviceIdRef.current = nextDeviceId;
-    setDeviceId(nextDeviceId);
+  /**
+   * Choose the microphone. Before a call this is just a preference; DURING
+   * one it replaces the uplink track in the live graph — analyser, worklet,
+   * encoder and socket all stay up, so switching headsets is a gap in
+   * uplink rather than a leave and rejoin.
+   */
+  const selectDevice = useCallback(
+    async (nextDeviceId: string) => {
+      if (nextDeviceId === deviceIdRef.current) {
+        return;
+      }
+      if (!wantConnectedRef.current) {
+        deviceIdRef.current = nextDeviceId;
+        setDeviceId(nextDeviceId);
+        persistInputDevice(nextDeviceId);
+        return;
+      }
+      // A refused pick keeps the previous mic and says so; swapMicStream
+      // owns both the swap and the persistence of where it landed.
+      await swapMicStream(nextDeviceId, { fatalOnFailure: false });
+    },
+    [swapMicStream, persistInputDevice],
+  );
+
+  /**
+   * The DUPLEX GATE's hold. Disables the track exactly as mute does — the
+   * OS indicator has to go dark too, or half-duplex reads as "it is still
+   * listening to me" — but through its own flag, so the user's mute is
+   * neither read nor written here.
+   */
+  const setHeld = useCallback((next: boolean) => {
+    if (heldRef.current === next) {
+      return;
+    }
+    heldRef.current = next;
+    setHeldState(next);
+    if (trackRef.current) {
+      trackRef.current.enabled = !mutedRef.current && !next;
+    }
   }, []);
 
   const setMode = useCallback((mode: VoiceInputMode) => {
@@ -888,7 +903,7 @@ export function useHuddleAudio(
    * `transmitting()` gives the encoder callbacks, as state the bar can
    * pass to voice mode so a dark mic never publishes transcripts.
    */
-  const micLive = !muted && (voiceInputMode === "open" || pttActive);
+  const micLive = !muted && !held && (voiceInputMode === "open" || pttActive);
 
   return {
     status,
@@ -899,6 +914,11 @@ export function useHuddleAudio(
     micLevel,
     devices,
     deviceId,
+    outputDevices: output.devices,
+    outputDeviceId: output.deviceId,
+    speakerMuted: output.muted,
+    supportsOutputSelection: output.supported,
+    held,
     voiceInputMode,
     pttActive,
     micLive,
@@ -906,7 +926,10 @@ export function useHuddleAudio(
     join,
     leave,
     toggleMute,
+    toggleSpeakerMuted: output.toggleMuted,
     selectDevice,
+    selectOutputDevice: output.selectDevice,
+    setHeld,
     setVoiceInputMode: setMode,
     setPushToTalkActive,
     subscribeMicFrames,

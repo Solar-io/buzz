@@ -43,6 +43,7 @@ import { ForumView } from "@/features/channels/ui/ForumView";
 import { MessageToasts } from "@/features/channels/ui/MessageToasts";
 import { SearchPanel } from "@/features/channels/ui/SearchPanel";
 import { HuddleBar } from "@/features/huddle/ui/HuddleBar";
+import { HuddleDock } from "@/features/huddle/ui/HuddleDock";
 import { useHuddleLinks } from "@/features/huddle/useHuddleLinks";
 import { ThreadPanel } from "@/features/channels/ui/ThreadPanel";
 import {
@@ -390,8 +391,11 @@ function ChannelBrowser() {
     () => channels.map((channel) => channel.id),
     [channels],
   );
-  const { links: huddleLinks, ended: huddleEndedIds, resolved } =
-    useHuddleLinks(huddleChannelIds);
+  const {
+    links: huddleLinks,
+    ended: huddleEndedIds,
+    resolved,
+  } = useHuddleLinks(huddleChannelIds);
   const currentHuddleParent =
     current && huddleLinks.has(current.id)
       ? (huddleLinks.get(current.id)?.parentId ?? null)
@@ -907,8 +911,6 @@ function ChannelBrowser() {
                       parentChannelId={currentHuddleParent}
                       huddleEnded={currentHuddleEnded}
                       huddleLinksResolved={resolved}
-                      selfPubkey={selfPubkey}
-                      send={send}
                     />
                   )}
                   {current.type === "forum" ? (
@@ -1006,6 +1008,7 @@ function ChannelBrowser() {
                       />
                     </>
                   )}
+                  <HuddleDock currentChannelId={current.id} />
                 </section>
                 {(threadRoot || dmAgentPubkey) && (
                   // biome-ignore lint/a11y/useFocusableInteractive: pointer-only resize handle; keyboard resize is not implemented

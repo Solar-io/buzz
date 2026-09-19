@@ -27,6 +27,11 @@ import {
 } from "./lib/bridgeSpeech.ts";
 import { botPubkeys } from "./lib/huddleMembers.ts";
 import {
+  resolveHuddleVoice,
+  type HuddleVoiceOverride,
+} from "./lib/huddlePrefs.ts";
+import { applySinkId } from "./lib/huddleAudioGraph.ts";
+import {
   recordUtterance,
   type AgentSpeechActivity,
 } from "./lib/voiceTranscript.ts";
@@ -89,6 +94,20 @@ export interface HuddleAgentSpeech {
    * wait for.
    */
   speakRoutes: RefObject<ReadonlyMap<string, SpeakRoute>>;
+  /**
+   * Stop the current reply NOW and drop whatever is queued behind it —
+   * barge-in's whole effect (`lib/duplexGate.ts` decides WHEN).
+   *
+   * Distinct from `setEnabled(false)`: the reader stays armed, so the NEXT
+   * reply is spoken normally. It stops the bridge's already-scheduled
+   * buffers as well as the fetch, because a reply is scheduled ahead of the
+   * clock and cancelling only the fetch would let her finish the sentence.
+   */
+  interrupt: () => void;
+  /** Route agent audio at a chosen speaker (the dock's speaker menu). */
+  setOutputDevice: (deviceId: string) => void;
+  /** Silence agent audio at this browser (the dock's speaker button). */
+  setMuted: (muted: boolean) => void;
 }
 
 function speechSynthesisSupported(): boolean {
@@ -110,6 +129,14 @@ export function useHuddleAgentSpeech(options: {
    * so this hook and the agent roster share ONE poller on the same channel.
    */
   snapshot: HuddleMemberSnapshot;
+  /**
+   * THE PER-CHANNEL SEAM (S4). The voice this browser has been told to use
+   * in THIS channel, if any. Injected rather than read here so
+   * `speakRoute` keeps its exact contract — the override is folded into the
+   * `selected` input by `resolveHuddleVoice`, which is also where a stale
+   * `local-synth` row is demoted to "no selection".
+   */
+  voiceOverride?: HuddleVoiceOverride | null;
 }): HuddleAgentSpeech {
   const { session } = useRelaySession();
   const { channelId, selfPubkey, audioPeerPubkeys, snapshot } = options;
@@ -141,6 +168,15 @@ export function useHuddleAgentSpeech(options: {
   const { agentVoiceSelectionFor } = useAgentVoiceSelections();
   const voiceSelectionForRef = useRef(agentVoiceSelectionFor);
   voiceSelectionForRef.current = agentVoiceSelectionFor;
+  // Same treatment for the channel override: the speaker closure is built
+  // once and must read the CURRENT override at utterance time.
+  const voiceOverrideRef = useRef<HuddleVoiceOverride | null>(
+    options.voiceOverride ?? null,
+  );
+  voiceOverrideRef.current = options.voiceOverride ?? null;
+  /** Chosen speaker + local mute for agent audio; applied to the bridge ctx. */
+  const outputDeviceIdRef = useRef("");
+  const mutedRef = useRef(false);
 
   // Echo-suppression state. The ref is the SOURCE OF TRUTH for "is the
   // avatar audible right now": synthesis starts and stops update it in the
@@ -205,21 +241,61 @@ export function useHuddleAgentSpeech(options: {
   // — matching the bridge PCM — with the browser default as fallback:
   // buffers carry their own rate and are resampled either way.
   const bridgeCtxRef = useRef<BridgeAudioContextLike | null>(null);
+  /** The gain every bridge piece plays through, so the mute covers the tail. */
+  const bridgeGainRef = useRef<GainNode | null>(null);
   const bridgeContext = useCallback((): BridgeAudioContextLike | null => {
-    if (typeof window === "undefined" || typeof window.AudioContext === "undefined") {
+    if (
+      typeof window === "undefined" ||
+      typeof window.AudioContext === "undefined"
+    ) {
       return null;
     }
     if (bridgeCtxRef.current === null) {
+      let created: AudioContext;
       try {
-        bridgeCtxRef.current = new window.AudioContext({
-          sampleRate: 24_000,
-        }) as unknown as BridgeAudioContextLike;
+        created = new window.AudioContext({ sampleRate: 24_000 });
       } catch {
-        bridgeCtxRef.current = new window.AudioContext() as unknown as BridgeAudioContextLike;
+        created = new window.AudioContext();
+      }
+      bridgeCtxRef.current = created as unknown as BridgeAudioContextLike;
+      // One gain for agent audio, mirroring the room's: muting has to
+      // silence what is already scheduled, not only what arrives next.
+      try {
+        const gain = created.createGain();
+        gain.gain.value = mutedRef.current ? 0 : 1;
+        gain.connect(created.destination);
+        bridgeGainRef.current = gain;
+      } catch {
+        bridgeGainRef.current = null;
+      }
+      if (outputDeviceIdRef.current !== "") {
+        void applySinkId(created, outputDeviceIdRef.current);
       }
     }
     void (bridgeCtxRef.current as unknown as AudioContext).resume?.();
     return bridgeCtxRef.current;
+  }, []);
+
+  /** Send agent audio to a chosen speaker; remembered for a later context. */
+  const setOutputDevice = useCallback((deviceId: string) => {
+    outputDeviceIdRef.current = deviceId;
+    const ctx = bridgeCtxRef.current;
+    if (ctx !== null) {
+      void applySinkId(ctx, deviceId);
+    }
+  }, []);
+
+  /**
+   * Silence agent audio at this browser. The bridge leg goes through the
+   * gain; the local-synth fallback has no graph to route, so its utterances
+   * are built at volume 0 instead.
+   */
+  const setMuted = useCallback((muted: boolean) => {
+    mutedRef.current = muted;
+    const gain = bridgeGainRef.current;
+    if (gain) {
+      gain.gain.value = muted ? 0 : 1;
+    }
   }, []);
 
   const speaker = useMemo(
@@ -236,8 +312,15 @@ export function useHuddleAgentSpeech(options: {
         // is the server-side request when one speaks (below), and
         // `route.profile` is what the local synthesizer uses otherwise; the
         // disposition is what the wiring assertion reads.
-        const selected = voiceSelectionForRef.current(
+        const published = voiceSelectionForRef.current(
           speakerPubkey.toLowerCase(),
+        );
+        // Channel override first, then the published selection, then
+        // nothing — and a stale `local-synth` row counts as nothing
+        // (lib/huddlePrefs.ts).
+        const selected = resolveHuddleVoice(
+          voiceOverrideRef.current,
+          published,
         );
         const route = speakRoute(speakerPubkey, voicesRef.current, selected);
         speakRoutesRef.current.set(speakerPubkey.toLowerCase(), route);
@@ -296,6 +379,9 @@ export function useHuddleAgentSpeech(options: {
                 }
                 await playBridgeResponse(raced, ctx, {
                   shouldStop: () => stopTokenRef.current !== stopAt,
+                  ...(bridgeGainRef.current === null
+                    ? {}
+                    : { destination: bridgeGainRef.current }),
                 });
                 speechActivityRef.current.utterances = recordUtterance(
                   speechActivityRef.current.utterances,
@@ -305,7 +391,10 @@ export function useHuddleAgentSpeech(options: {
               }
             } catch (err) {
               bridgeFailed = true;
-              console.warn("[huddle-agent-speech] bridge failed, speaking locally", err);
+              console.warn(
+                "[huddle-agent-speech] bridge failed, speaking locally",
+                err,
+              );
             }
             if (!bridgeFailed) {
               speechActivityRef.current.speaking = false;
@@ -351,7 +440,9 @@ export function useHuddleAgentSpeech(options: {
               }
               utterance.rate = profile.rate;
               utterance.pitch = profile.pitch;
-              utterance.volume = 1;
+              // The local fallback has no gain node to route through, so
+              // the speaker mute has to land on the utterance itself.
+              utterance.volume = mutedRef.current ? 0 : 1;
               let settled = false;
               let watchdog: number | null = null;
               const finish = () => {
@@ -388,8 +479,17 @@ export function useHuddleAgentSpeech(options: {
           setSpeaking(false);
         }
       }),
-    [],
+    [bridgeContext],
   );
+
+  const interrupt = useCallback(() => {
+    // Drop the queue first: a cancelled utterance must not be followed by
+    // the next one a fraction of a second later.
+    speaker.cancel();
+    stopSpeechNow();
+    speechActivityRef.current.speaking = false;
+    setSpeaking(false);
+  }, [speaker, stopSpeechNow]);
 
   const setEnabled = useCallback(
     (next: boolean) => {
@@ -445,6 +545,14 @@ export function useHuddleAgentSpeech(options: {
       unsubscribe();
       speaker.cancel();
       stopSpeechNow();
+      // Release the TTS context with the call (QA 2026-09-18, defect 2):
+      // the room context is closed by useHuddleAudio.teardown, but this one
+      // was created lazily here and stayed open for the life of the tab,
+      // holding the output device after Leave.
+      const ctx = bridgeCtxRef.current;
+      bridgeCtxRef.current = null;
+      bridgeGainRef.current = null;
+      void ctx?.close?.().catch(() => {});
     };
   }, [session, channelId, speaker, stopSpeechNow]);
 
@@ -464,5 +572,8 @@ export function useHuddleAgentSpeech(options: {
     speaking,
     speechActivity: speechActivityRef,
     speakRoutes: speakRoutesRef,
+    interrupt,
+    setOutputDevice,
+    setMuted,
   };
 }

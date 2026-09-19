@@ -11,24 +11,19 @@ import {
 
 import { useElevenVoices, useVoiceCatalog } from "../hooks.ts";
 import type { AgentVoiceSelection } from "../lib/agentVoiceSelection.ts";
+import { VoiceEngineTabs } from "./VoiceEngineTabs.tsx";
 import {
-  playBridgeResponse,
-  ttsBridgeUrl,
-} from "../../huddle/lib/bridgeSpeech.ts";
-import {
-  elevenVoiceOptions,
-  localVoiceOptions,
-  pocketVoiceOptions,
-  PREVIEW_SAMPLE_TEXT,
+  engineLabel,
+  engineVoiceOptions,
   sameOption,
-  speakPreview,
-  type PickerVoiceLike,
+  type VoiceEngine,
   type VoicePickerOption,
 } from "./voicePickerOptions.ts";
+import { createVoicePreviewer } from "./voicePreview.ts";
 
 /**
- * The picker body, deliberately presentational: fixture rows and fake voices
- * in the test drive exactly what production feeds it.
+ * The picker body, deliberately presentational: fixture rows and fixture
+ * bridge voices in the test drive exactly what production feeds it.
  */
 export function VoicePickerList({
   options,
@@ -36,20 +31,23 @@ export function VoicePickerList({
   onPreview,
   onSelect,
   busy,
-  pocketReady,
+  ready,
+  engine,
 }: {
   options: VoicePickerOption[];
   current: AgentVoiceSelection | undefined;
   onPreview: (option: VoicePickerOption) => void;
   onSelect: (option: VoicePickerOption) => void;
   busy: boolean;
-  pocketReady: boolean;
+  /** Has the source for this engine finished loading? */
+  ready: boolean;
+  engine: VoiceEngine;
 }) {
   if (options.length === 0) {
     return (
       <p className="py-4 text-center text-sm text-muted-foreground">
-        {pocketReady
-          ? "No English voices available — the catalog is empty and this system has no English speechSynthesis voices."
+        {ready
+          ? `No ${engineLabel(engine)} voices are available from the bridge.`
           : "Loading voices…"}
       </p>
     );
@@ -59,11 +57,7 @@ export function VoicePickerList({
       {options.map((option) => {
         const selected = sameOption(option, current);
         return (
-          <li
-            key={`${option.engine}:${
-              option.engine === "local-synth" ? option.voiceURI : option.key
-            }`}
-          >
+          <li key={`${option.engine}:${option.key}`}>
             <div
               className="flex w-full items-center gap-2 rounded-md px-2 py-1 hover:bg-accent"
               data-testid="voice-picker-row"
@@ -71,11 +65,7 @@ export function VoicePickerList({
               <span className="min-w-0 flex-1 truncate text-left text-sm">
                 {option.label}
                 <span className="ml-2 shrink-0 text-2xs text-muted-foreground">
-                  {option.engine === "pocket"
-                    ? "pocket"
-                    : option.engine === "eleven"
-                      ? "elevenlabs"
-                      : "on-device"}
+                  {option.engine === "pocket" ? "pocket" : "elevenlabs"}
                 </span>
               </span>
               <Button
@@ -109,31 +99,38 @@ export function VoicePickerList({
 /**
  * Pick the speaking voice for the signed-in agent.
  *
- * Lists both engines — kind:30181 catalog rows (pocket, synthesized
- * server-side) and this machine's English `speechSynthesis` voices — each
- * with a Preview button that speaks a sample line through the engine it
- * names. Confirming publishes the kind:30182 selection for the logged-in
- * identity; `onConfirm` is async and its error surfaces here, because a
- * relay refusal is the one thing this dialog cannot resolve locally.
+ * ENGINE FIRST (Sam, 2026-09-18): a segmented control chooses Pocket or
+ * ElevenLabs and the list below shows that engine's voices alone. The
+ * browser's own `speechSynthesis` voices are no longer offered at all — see
+ * `voicePickerOptions.ts` for why, and `huddlePrefs.ts` for what happens to
+ * a kind-30182 row that still names one.
+ *
+ * Every row previews through its OWN engine via the shared previewer
+ * (`voicePreview.ts`), which is real bridge synthesis. Confirming publishes
+ * the kind:30182 selection for the logged-in identity; `onConfirm` is async
+ * and its error surfaces here, because a relay refusal is the one thing
+ * this dialog cannot resolve locally.
  */
 export function VoicePickerDialog({
   open,
   onOpenChange,
   current,
-  localVoices,
   onConfirm,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   current: AgentVoiceSelection | undefined;
-  /** `speechSynthesis.getVoices()` output — ranked or raw, both fine. */
-  localVoices: readonly PickerVoiceLike[];
   onConfirm: (selection: AgentVoiceSelection, label: string) => Promise<void>;
 }) {
-  const { rows, ready } = useVoiceCatalog();
-  const { voices: elevenVoices } = useElevenVoices();
+  const { rows, ready: catalogReady } = useVoiceCatalog();
+  const { voices: elevenVoices, ready: elevenReady } = useElevenVoices();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Open on the engine the current selection uses, so "which one am I on?"
+  // is answered by the control itself rather than by reading the list.
+  const [engine, setEngine] = useState<VoiceEngine>(
+    current?.engine === "eleven" ? "eleven" : "pocket",
+  );
   // The option staged for "Confirm" — clicking Select stages; confirming
   // publishes. Keeps a preview-first flow from publishing as a side effect.
   const [staged, setStaged] = useState<VoicePickerOption | null>(null);
@@ -143,80 +140,26 @@ export function VoicePickerDialog({
       setBusy(false);
       setError(null);
       setStaged(null);
+      setEngine(current?.engine === "eleven" ? "eleven" : "pocket");
     }
-  }, [open]);
+  }, [open, current?.engine]);
 
   const options = useMemo(
-    () => [
-      ...pocketVoiceOptions(rows),
-      ...elevenVoiceOptions(elevenVoices),
-      ...localVoiceOptions(localVoices),
-    ],
-    [rows, elevenVoices, localVoices],
+    () =>
+      engineVoiceOptions(engine, {
+        catalogRows: rows,
+        elevenVoices,
+      }),
+    [engine, rows, elevenVoices],
   );
 
-  // One lazily-created AudioContext for bridge previews — created inside a
-  // click handler, which is the user gesture browsers require.
-  const previewCtxRef = useRef<AudioContext | null>(null);
-
-  function preview(option: VoicePickerOption) {
-    if (typeof window === "undefined") {
-      return;
-    }
-    // Bridge engines preview through the REAL synthesis path — the silent
-    // stub era ended with the bridge.
-    if (option.engine === "pocket" || option.engine === "eleven") {
-      const voice =
-        option.engine === "pocket" ? option.key.slice("pocket:".length) : option.key.slice("eleven:".length);
-      if (previewCtxRef.current === null) {
-        try {
-          previewCtxRef.current = new AudioContext({ sampleRate: 24_000 });
-        } catch {
-          previewCtxRef.current = new AudioContext();
-        }
-      }
-      void previewCtxRef.current.resume?.();
-      void (async () => {
-        try {
-          const res = await fetch(ttsBridgeUrl(window.location.hostname), {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              engine: option.engine,
-              voice,
-              text: PREVIEW_SAMPLE_TEXT,
-            }),
-          });
-          if (!res.ok) {
-            return;
-          }
-          await playBridgeResponse(res, previewCtxRef.current!);
-        } catch {
-          // A failed preview must never wedge the dialog.
-        }
-      })();
-      return;
-    }
-    if (!window.speechSynthesis) {
-      return;
-    }
-    speakPreview(option, {
-      cancel: () => window.speechSynthesis.cancel(),
-      speak: (utterance) => {
-        // The real utterance construction lives here, behind the same
-        // surface the tests stub: one place, one shape.
-        const spoken = new SpeechSynthesisUtterance(utterance.text);
-        const voice = window.speechSynthesis
-          .getVoices()
-          .find((candidate) => candidate.voiceURI === utterance.voiceURI);
-        if (voice) {
-          spoken.voice = voice;
-        }
-        spoken.lang = utterance.lang;
-        window.speechSynthesis.speak(spoken);
-      },
-    });
-  }
+  // One previewer for the dialog's lifetime; its AudioContext is built on
+  // the first Preview click, which is the gesture browsers require.
+  const previewerRef = useRef(createVoicePreviewer());
+  useEffect(() => {
+    const previewer = previewerRef.current;
+    return () => previewer.dispose();
+  }, []);
 
   async function confirm() {
     if (staged === null || busy) {
@@ -228,9 +171,7 @@ export function VoicePickerDialog({
       await onConfirm(
         staged.engine === "pocket"
           ? { engine: "pocket", key: staged.key }
-          : staged.engine === "eleven"
-            ? { engine: "eleven", key: staged.key }
-            : { engine: "local-synth", voiceURI: staged.voiceURI },
+          : { engine: "eleven", key: staged.key },
         staged.label,
       );
       onOpenChange(false);
@@ -249,9 +190,9 @@ export function VoicePickerDialog({
         <DialogHeader>
           <DialogTitle>Choose your agent voice</DialogTitle>
           <DialogDescription>
-            Catalog voices are synthesized server-side; on-device voices come
-            from this browser. Preview any of them, then confirm to publish your
-            selection.
+            Pocket voices are bundled presets; ElevenLabs voices come from the
+            community library. Both are synthesized server-side. Preview any of
+            them, then confirm to publish your selection.
           </DialogDescription>
         </DialogHeader>
 
@@ -264,12 +205,26 @@ export function VoicePickerDialog({
           </p>
         )}
 
+        <VoiceEngineTabs
+          engine={engine}
+          onChange={(next) => {
+            setEngine(next);
+            setStaged(null);
+          }}
+        />
+
         <VoicePickerList
           busy={busy}
           current={current}
+          engine={engine}
           options={options}
-          pocketReady={ready}
-          onPreview={preview}
+          ready={engine === "pocket" ? catalogReady : elevenReady}
+          onPreview={(option) =>
+            previewerRef.current.preview({
+              engine: option.engine,
+              key: option.key,
+            })
+          }
           onSelect={(option) => setStaged(option)}
         />
 
