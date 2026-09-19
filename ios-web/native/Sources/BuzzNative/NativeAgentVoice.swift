@@ -245,8 +245,9 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
     private func final(_ text: String) {
         interim = ""; onChange()
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard voice, captureAllowed, !speaking, Date().timeIntervalSince(lastSpeechEnded) > 0.7,
+        guard voice, captureAllowed, (duplex == "barge" || !speaking), (duplex == "barge" || Date().timeIntervalSince(lastSpeechEnded) > 0.7),
               !trimmed.isEmpty, !finals.contains(trimmed) else { return }
+        if (speaking || Date().timeIntervalSince(lastSpeechEnded) < 0.7) && lastSpoken.lowercased().contains(trimmed.lowercased()) { return }
         guard relayReady, membersReady, !agents.isEmpty, let relaySocket else { report("Transcript could not be sent: no connected agent roster."); return }
         do {
             let event = try NativeIdentity.shared.sign(["kind": 9, "content": "[voice] " + trimmed,

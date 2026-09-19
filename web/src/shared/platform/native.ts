@@ -44,6 +44,9 @@ export interface NativeCallState {
   voiceEnabled: boolean;
   speechEnabled: boolean;
   speaking: boolean;
+  speakerMuted?: boolean;
+  micLevel?: number;
+  levels?: Record<string, number>;
   interim: string;
   error: string | null;
   peers: Array<{ pubkey: string; peerIndex: number; epoch: number }>;
@@ -52,6 +55,6 @@ export const BuzzHuddle = registerPlugin<{
   snapshot(): Promise<NativeCallState>;
   join(options: { relayUrl: string; channelId: string; parentChannelId: string; sttUrl: string; ttsUrl: string }): Promise<NativeCallState>;
   leave(): Promise<void>;
-  configure(options: { muted?: boolean; speaker?: boolean; voiceEnabled?: boolean; speechEnabled?: boolean; held?: boolean }): Promise<void>;
+  configure(options: { muted?: boolean; speaker?: boolean; speakerMuted?: boolean; voiceEnabled?: boolean; speechEnabled?: boolean; held?: boolean; duplex?: "half" | "barge"; voiceOverride?: { engine?: string; key?: string }; interrupt?: boolean }): Promise<void>;
   addListener(event: "state", listener: (state: NativeCallState) => void): Promise<PluginListenerHandle>;
 }>("BuzzHuddle");

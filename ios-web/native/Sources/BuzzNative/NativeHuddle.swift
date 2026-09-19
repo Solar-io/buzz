@@ -116,7 +116,7 @@ final class NativeHuddle {
         if let duplex { voice?.duplex = duplex == "barge" ? "barge" : "half" }
         if let voiceOverride { voice?.setVoiceOverride(voiceOverride) }
         if interrupt { voice?.interruptSpeech() }
-        try engine?.setMuted(self.muted || self.held || (voice?.speaking ?? false))
+        try engine?.setMuted(self.muted || self.held || ((voice?.speaking ?? false) && voice?.duplex != "barge"))
         voice?.configure(voice: self.voiceEnabled, speech: self.speechEnabled, capture: !self.muted && !self.held && !interrupted)
         emit()
     }

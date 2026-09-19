@@ -13,7 +13,7 @@ enum NativeError: LocalizedError {
 final class NativeIdentity {
     static let shared = NativeIdentity()
     private var keys: Keys?
-    private var explicitlyLocked = false
+    private var explicitlyLocked = UserDefaults.standard.bool(forKey: "buzz.identity.locked")
     private let account = "identity.v1"
     private init() {}
 
@@ -71,6 +71,7 @@ final class NativeIdentity {
         try Self.write(account, data: Data(secret.utf8))
         keys = parsed
         explicitlyLocked = false
+        UserDefaults.standard.set(false, forKey: "buzz.identity.locked")
         return state()
     }
 
@@ -79,12 +80,13 @@ final class NativeIdentity {
         let accepted = try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock your Buzz identity")
         guard accepted else { throw NativeError.message("Identity remains locked.") }
         explicitlyLocked = false
+        UserDefaults.standard.set(false, forKey: "buzz.identity.locked")
         _ = try signer()
         return state()
     }
 
-    func lock() { keys = nil; explicitlyLocked = true }
-    func forget() throws { try Self.write(account, data: nil); keys = nil; explicitlyLocked = false }
+    func lock() { keys = nil; explicitlyLocked = true; UserDefaults.standard.set(true, forKey: "buzz.identity.locked") }
+    func forget() throws { try Self.write(account, data: nil); keys = nil; explicitlyLocked = false; UserDefaults.standard.removeObject(forKey: "buzz.identity.locked") }
 
     func sign(_ template: [String: Any]) throws -> [String: Any] {
         let keys = try signer()

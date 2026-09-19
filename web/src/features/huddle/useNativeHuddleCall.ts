@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { BuzzHuddle, type NativeCallState } from "@/shared/platform/native";
-import { relayWsUrl, speechServiceUrl } from "@/shared/lib/relay-url";
+import { relayWsUrl } from "@/shared/lib/relay-url";
+import { readNativeServices } from "@/shared/platform/config";
 import { useProfiles } from "@/features/channels/hooks";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { signNostrEvent } from "@/shared/lib/nostr-signer";
@@ -47,17 +48,19 @@ export function useNativeHuddleCall({ target, selfPubkey }: { target: HuddleCall
   const join = useCallback(async () => {
     if (!target?.parentChannelId) return;
     try {
-      setState(await BuzzHuddle.join({ relayUrl: relayWsUrl(), channelId: target.huddleChannelId, parentChannelId: target.parentChannelId, sttUrl: speechServiceUrl("stt"), ttsUrl: speechServiceUrl("tts") }));
+      const services = readNativeServices();
+      setState(await BuzzHuddle.join({ relayUrl: relayWsUrl(), channelId: target.huddleChannelId, parentChannelId: target.parentChannelId, sttUrl: services?.sttUrl ?? "", ttsUrl: services?.ttsUrl ?? "" }));
     } catch (error) {
       setState((old) => ({ ...old, status: "error", error: error instanceof Error ? error.message : "Could not join huddle." }));
     }
   }, [target]);
   const leave = useCallback(() => { void BuzzHuddle.leave().catch((error: unknown) => toast.error(String(error))); }, []);
-  const held = state.speaking || (voiceInputMode === "push_to_talk" && !pttActive);
+  const held = (prefs.duplex === "half" && state.speaking) || (voiceInputMode === "push_to_talk" && !pttActive);
   const setPrefs = useCallback((next: HuddlePrefs) => {
     setPrefsState(next);
+    configure({ duplex: next.duplex, voiceOverride: next.voice ?? {} });
     if (parentChannelId) saveHuddlePrefs(localStorage, parentChannelId, next);
-  }, [parentChannelId]);
+  }, [parentChannelId, configure]);
   return {
     channelId, parentChannelId, connected, reconnecting: state.status === "reconnecting", selfPubkey,
     profiles, reactions, agentPubkeys: roster.agentPubkeys, addAgent: roster.addAgent, prefs, setPrefs,
@@ -70,12 +73,12 @@ export function useNativeHuddleCall({ target, selfPubkey }: { target: HuddleCall
       return session.publish(event);
     },
     huddle: {
-      status: state.status, error: state.error, peers: state.peers, speaking: new Map<string, number>(), muted: state.muted,
-      micLevel: -127, devices: [], deviceId: "", outputDevices: [], outputDeviceId: "", speakerMuted: false,
-      supportsOutputSelection: false, held, voiceInputMode, pttActive, micLive: connected && !held && !state.muted,
+      status: state.status, error: state.error, peers: state.peers, speaking: new Map(Object.entries(state.levels ?? {})), muted: state.muted,
+      micLevel: state.micLevel ?? -127, devices: [], deviceId: "", outputDevices: [{ deviceId: "speaker", label: "Speaker", groupId: "" }, { deviceId: "receiver", label: "Receiver / connected headphones", groupId: "" }], outputDeviceId: state.speaker ? "speaker" : "receiver", speakerMuted: state.speakerMuted ?? false,
+      supportsOutputSelection: true, held, voiceInputMode, pttActive, micLive: connected && !held && !state.muted,
       supportsVoice: true, join, leave, toggleMute: () => configure({ muted: !state.muted }),
-      toggleSpeakerMuted: () => configure({ speaker: !state.speaker }),
-      selectDevice: async () => { throw new Error("Choose the microphone in iOS audio routing."); }, selectOutputDevice: async () => false,
+      toggleSpeakerMuted: () => configure({ speakerMuted: !state.speakerMuted }),
+      selectDevice: async () => { throw new Error("Choose the microphone in iOS audio routing."); }, selectOutputDevice: async (device) => { await BuzzHuddle.configure({ speaker: device === "speaker" }); return true; },
       setHeld: (held) => configure({ held }),
       setVoiceInputMode: (mode) => { setVoiceInputMode(mode); configure({ held: mode === "push_to_talk" && !pttActive }); },
       setPushToTalkActive: (active) => { setPttActive(active); configure({ held: voiceInputMode === "push_to_talk" && !active }); },
@@ -87,8 +90,8 @@ export function useNativeHuddleCall({ target, selfPubkey }: { target: HuddleCall
       supported: true, enabled: state.speechEnabled, setEnabled: (enabled) => configure({ speechEnabled: enabled }),
       agentPubkeys: new Set(roster.agentPubkeys), membershipKnown: members.known, suppressedAgents: state.peers.map((p) => p.pubkey),
       speaking: state.speaking, speechActivity, speakRoutes,
-      interrupt: () => configure({ speechEnabled: false }),
-      setOutputDevice: async () => false, setMuted: (muted) => configure({ speaker: !muted }),
+      interrupt: () => configure({ interrupt: true }),
+      setOutputDevice: (device) => configure({ speaker: device === "speaker" }), setMuted: (muted) => configure({ speakerMuted: muted }),
     },
   };
 }
