@@ -5,8 +5,8 @@ export const CUSTOM_GRADIENT_STORAGE_KEY = "buzz-custom-gradient-v2";
 
 export const DEFAULT_CUSTOM_GRADIENT = {
   version: 2,
-  gradientColor1: "#e6e6b6",
-  gradientColor2: "#c4d0da",
+  gradientColor1: "#4c9ed0",
+  gradientColor2: "#0e2a6e",
   midpoint: 50,
   lightContentColor: "#ffffff",
   darkContentColor: "#17132f",
