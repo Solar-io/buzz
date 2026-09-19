@@ -81,6 +81,18 @@ install preserved the application container. A human visual confirmation on
 the physical screen remains distinct from the successful install/launch
 receipt.
 
+The first intended-account recovery attempt exposed a separate pairing UX
+trap. The desktop web QR is an HTTPS link containing the key in its fragment;
+the native application does not claim that URL. Scanning it with iPhone's
+system Camera therefore opens Safari/PWA and can report a successful web login
+while leaving the Capacitor Keychain identity unchanged. Pairing through Buzz
+Web's in-app scanner then restored the intended identity and Sam confirmed the
+DM list matched. The web pairing card now explicitly requires the native
+in-app scanner and warns against system Camera/Safari; the live bundle carries
+that guidance. This is containment for the current direct-key flow, not a
+claim that native NIP-AB pairing or the stronger secret-boundary redesign is
+complete.
+
 - Initial base: `1199b86a67` (2026-09-19 canonical main).
 - Isolated branch: `codex/buzz-ios-capacitor-20260919`.
 - Prior analysis: `~/.buzz/RESEARCH/BUZZ_WEB_IOS_FUNCTIONALITY_ANALYSIS_2026-09-19.md` and `BUZZ_IOS_WRAPPER_RECOMMENDATION_2026-09-19.md`.
