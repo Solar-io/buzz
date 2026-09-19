@@ -44,19 +44,22 @@ export interface ApplyScannedConnectionDeps {
  * Validates the merged result BEFORE confirm and prepare — invalid input
  * throws immediately with zero side effects.
  *
- * On community-change: calls confirm. If user cancels (false), returns "cancelled"
- * with nothing written. Otherwise runs prepare, then write, returning "applied".
+ * Confirmation is required when ANY field changes from current, regardless
+ * of relay host classification. prepare() is only called when the relay
+ * host actually changes (community-change side effects).
  *
- * On same-community or first-run: merges and writes, returning "applied".
+ * Flow:
+ * 1. Merge scanned over current (absent scanned params keep current values)
+ * 2. Validate the merged result — invalid input throws with zero side effects
+ * 3. If any field changed from current: confirm, then prepare (if relay changed), then write
+ * 4. If nothing changed: return "applied" without prompting or writing
+ * 5. If user cancels confirm: return "cancelled" with zero writes
  */
 export async function applyScannedConnection(
   current: PairingServices | null,
   scanned: PairingServices,
   deps: ApplyScannedConnectionDeps,
 ): Promise<ApplyScannedConnectionResult> {
-  // Classify the connection type
-  const classification = deps.classify(current, scanned);
-
   // Merge: keep current values for absent scanned params
   const merged: PairingServices = {
     relayUrl: scanned.relayUrl,
@@ -68,21 +71,38 @@ export async function applyScannedConnection(
   // Validate BEFORE confirm and prepare — invalid input throws with zero side effects
   deps.validate(merged);
 
-  // On community-change, confirm first (after the merge is ready to inspect)
-  if (classification === "community-change" && current) {
-    const userConfirmed = await deps.confirm(current, merged);
-    if (!userConfirmed) {
-      // User cancelled — nothing written, no error thrown
-      return "cancelled";
-    }
-
-    // User confirmed — run the side effect, then write
-    await deps.prepare(current, merged);
+  // If no current configuration, this is first-run: write without confirming
+  if (!current) {
     await deps.write(merged);
     return "applied";
   }
 
-  // Same-community and first-run: write only
+  // Check if ANY field changed from current
+  const relayChanged = current.relayUrl !== merged.relayUrl;
+  const sttChanged = current.sttUrl !== merged.sttUrl;
+  const ttsChanged = current.ttsUrl !== merged.ttsUrl;
+  const pushChanged = current.pushGatewayUrl !== merged.pushGatewayUrl;
+  const anyFieldChanged =
+    relayChanged || sttChanged || ttsChanged || pushChanged;
+
+  // If nothing changed, return without writing or prompting
+  if (!anyFieldChanged) {
+    return "applied";
+  }
+
+  // Something changed — confirm with the user
+  const userConfirmed = await deps.confirm(current, merged);
+  if (!userConfirmed) {
+    // User cancelled — nothing written, no error thrown
+    return "cancelled";
+  }
+
+  // User confirmed — if the relay host changed, run the side effect (prepare)
+  if (relayChanged) {
+    await deps.prepare(current, merged);
+  }
+
+  // Write the merged configuration
   await deps.write(merged);
   return "applied";
 }
