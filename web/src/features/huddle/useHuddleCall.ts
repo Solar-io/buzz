@@ -211,6 +211,8 @@ export function useHuddleCall(options: {
       agentPubkey: string;
       agentName: string;
       alreadyParentMember?: boolean;
+      retryRateLimited?: boolean;
+      shouldContinue?: () => boolean;
     }) => {
       const result = await agentRoster.addAgent(input);
       if (result.ok) {

@@ -6,6 +6,7 @@ import {
   huddleAgentAddMessage,
   huddleAgentAddPlan,
 } from "./lib/huddleAgents.ts";
+import { publishWithRateLimitRetry } from "./lib/huddlePublishRetry.ts";
 import type { HuddleMemberSnapshot } from "./useHuddleMemberSnapshot";
 
 /**
@@ -53,6 +54,10 @@ export interface HuddleAgentRoster {
      * ephemeral huddle add.
      */
     alreadyParentMember?: boolean;
+    /** Retry relay admission only for the one-click direct-call path. */
+    retryRateLimited?: boolean;
+    /** Cancel a delayed direct-call retry when its intent is stale. */
+    shouldContinue?: () => boolean;
   }) => Promise<{ ok: boolean; message: string }>;
 }
 
@@ -83,10 +88,14 @@ export function useHuddleAgentRoster(options: {
       agentPubkey,
       agentName,
       alreadyParentMember = false,
+      retryRateLimited = false,
+      shouldContinue,
     }: {
       agentPubkey: string;
       agentName: string;
       alreadyParentMember?: boolean;
+      retryRateLimited?: boolean;
+      shouldContinue?: () => boolean;
     }) => {
       if (!ephemeralChannelId) {
         return { ok: false, message: "This huddle is no longer active." };
@@ -107,7 +116,11 @@ export function useHuddleAgentRoster(options: {
       // Ephemeral first, and fail hard on it: an agent added only to the
       // parent channel is not in the huddle at all.
       const signedEphemeral = await signNostrEvent(planned.plan.ephemeral);
-      const ephemeralResult = await session.publish(signedEphemeral);
+      const ephemeralResult = await publishWithRateLimitRetry(
+        (event) => session.publish(event),
+        signedEphemeral,
+        { enabled: retryRateLimited, shouldContinue },
+      );
       if (!ephemeralResult.ok) {
         return {
           ok: false,
@@ -132,7 +145,11 @@ export function useHuddleAgentRoster(options: {
       }
       // Best effort, exactly as the desktop treats it.
       const signedParent = await signNostrEvent(planned.plan.parent);
-      const parentResult = await session.publish(signedParent);
+      const parentResult = await publishWithRateLimitRetry(
+        (event) => session.publish(event),
+        signedParent,
+        { enabled: retryRateLimited, shouldContinue },
+      );
       return {
         ok: true,
         message: huddleAgentAddMessage({

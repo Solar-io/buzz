@@ -11,11 +11,21 @@ import type { RelaySession } from "@/shared/api/relay-session";
 import { signNostrEvent } from "@/shared/lib/nostr-signer";
 import { buildHuddleGuidelinesEvent } from "./huddleGuidelines.ts";
 import { HUDDLE_BACKING_TTL_SECONDS } from "./huddleRegistry.ts";
+import { publishWithRateLimitRetry } from "./huddlePublishRetry.ts";
 
 export async function startHuddle(
   session: RelaySession,
-  options: { parentChannelId: string; name?: string },
+  options: {
+    parentChannelId: string;
+    name?: string;
+    retryRateLimited?: boolean;
+    shouldContinue?: () => boolean;
+  },
 ): Promise<{ ok: boolean; channelId?: string; message: string }> {
+  const publishOptions = {
+    enabled: options.retryRateLimited,
+    shouldContinue: options.shouldContinue,
+  };
   const channelId = crypto.randomUUID();
   const name =
     options.name?.trim().replace(/^#+/, "") ||
@@ -32,7 +42,11 @@ export async function startHuddle(
     ],
     content: "",
   });
-  const created = await session.publish(create);
+  const created = await publishWithRateLimitRetry(
+    (event) => session.publish(event),
+    create,
+    publishOptions,
+  );
   if (!created.ok) {
     return {
       ok: false,
@@ -52,7 +66,18 @@ export async function startHuddle(
   });
   if ("event" in guidelines) {
     const signedGuidelines = await signNostrEvent(guidelines.event);
-    await session.publish(signedGuidelines);
+    const guidelineResult = await publishWithRateLimitRetry(
+      (event) => session.publish(event),
+      signedGuidelines,
+      publishOptions,
+    );
+    if (
+      !guidelineResult.ok &&
+      options.shouldContinue &&
+      !options.shouldContinue()
+    ) {
+      return { ok: false, message: guidelineResult.message };
+    }
   }
 
   const link = await signNostrEvent({
@@ -60,7 +85,11 @@ export async function startHuddle(
     tags: [["h", options.parentChannelId]],
     content: JSON.stringify({ ephemeral_channel_id: channelId }),
   });
-  const linked = await session.publish(link);
+  const linked = await publishWithRateLimitRetry(
+    (event) => session.publish(event),
+    link,
+    publishOptions,
+  );
   if (!linked.ok) {
     return {
       ok: false,

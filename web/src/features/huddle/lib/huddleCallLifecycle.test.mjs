@@ -109,7 +109,7 @@ test("an idle status right after the join was requested is NOT the end of the ca
   );
 });
 
-test("a delayed microphone continuation is rejected after leave or a newer join", () => {
+test("a stale delayed microphone rejection cannot touch the current transport", () => {
   assert.equal(
     shouldContinueAudioJoin({
       joinGeneration: 2,

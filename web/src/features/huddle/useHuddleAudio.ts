@@ -678,6 +678,7 @@ export function useHuddleAudio(
     deviceIdRef.current = deviceId;
     wantConnectedRef.current = true;
     const generation = ++audioGenerationRef.current;
+    let pendingContext: AudioContext | null = null;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: micConstraints(deviceId),
@@ -705,6 +706,7 @@ export function useHuddleAudio(
       // the first moment enumeration is worth anything.
       void refreshDevices();
       const ctx = new AudioContext({ sampleRate: 48_000 });
+      pendingContext = ctx;
       if (ctx.state === "suspended") {
         await ctx.resume();
       }
@@ -846,7 +848,6 @@ export function useHuddleAudio(
       };
 
       if (!joinIsCurrent(generation)) {
-        teardown();
         return;
       }
 
@@ -855,11 +856,13 @@ export function useHuddleAudio(
       connectSocketRef.current();
     } catch (mediaError) {
       const stale = !joinIsCurrent(generation);
-      teardown();
       if (stale) {
-        setStatus("idle");
+        // A newer join owns the refs now. The older continuation must not
+        // tear down its socket or rewrite its status.
+        void pendingContext?.close();
         return;
       }
+      teardown();
       setStatus("error");
       setError(
         mediaError instanceof Error && mediaError.name === "NotAllowedError"

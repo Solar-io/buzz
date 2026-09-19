@@ -309,10 +309,17 @@ export function HuddleSessionProvider({ children }: { children: ReactNode }) {
             startHuddle(session, {
               parentChannelId: flowOptions.parentChannelId,
               name: `${flowOptions.agentName} call`,
+              retryRateLimited: true,
+              shouldContinue: () => callIntentRef.current?.token === token,
             }),
           requestJoin,
           addAgent: (input) =>
-            callRef.current.addAgent({ ...input, alreadyParentMember: true }),
+            callRef.current.addAgent({
+              ...input,
+              alreadyParentMember: true,
+              retryRateLimited: true,
+              shouldContinue: () => callIntentRef.current?.token === token,
+            }),
           armVoice: () => {
             const currentCall = callRef.current;
             if (
