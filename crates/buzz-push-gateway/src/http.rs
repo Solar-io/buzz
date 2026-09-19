@@ -190,14 +190,14 @@ async fn enroll(State(s): State<AppState>, body: Bytes) -> Response {
         Some(v) => v,
         None => return error(StatusCode::BAD_REQUEST, "invalid_request"),
     };
-    let verified =
-        match s
-            .app_attest
-            .verify_attestation(&r.attestation, &r.key_id, signed.as_bytes())
-        {
-            Ok(v) => v,
-            Err(_) => return error(StatusCode::UNAUTHORIZED, "invalid_attestation"),
-        };
+    let verifier = match s.app_attest.for_profile(r.app_profile) {
+        Ok(verifier) => verifier,
+        Err(_) => return error(StatusCode::UNAUTHORIZED, "invalid_attestation"),
+    };
+    let verified = match verifier.verify_attestation(&r.attestation, &r.key_id, signed.as_bytes()) {
+        Ok(v) => v,
+        Err(_) => return error(StatusCode::UNAUTHORIZED, "invalid_attestation"),
+    };
     if let Err(e) = s
         .authority
         .consume_challenge(r.challenge_id, challenge, now)
@@ -256,6 +256,8 @@ async fn verify_installation_assertion<T: serde::Serialize>(
         .ok_or_else(|| error(StatusCode::BAD_REQUEST, "invalid_request"))?;
     let verified = s
         .app_attest
+        .for_profile(installation.profile)
+        .map_err(|_| error(StatusCode::UNAUTHORIZED, "invalid_attestation"))?
         .verify_assertion(
             assertion,
             transcript.as_bytes(),

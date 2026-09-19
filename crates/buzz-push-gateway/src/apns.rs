@@ -107,12 +107,19 @@ pub struct ApnsTransport {
     key_id: String,
     team_id: String,
     topic: String,
+    capacitor_topic: Option<String>,
     production_base_url: String,
     sandbox_base_url: String,
     cached_jwt: Mutex<Option<CachedJwt>>,
 }
 
 impl ApnsTransport {
+    /// Attach a separately provisioned Capacitor topic. Without this opt-in,
+    /// attempts for its profiles fail before any provider request is made.
+    pub fn with_capacitor_topic(mut self, topic: String) -> Self {
+        self.capacitor_topic = Some(topic);
+        self
+    }
     /// Build a reusable APNs client from an Apple `.p8` private key.
     pub fn token(p8: &[u8], key_id: &str, team_id: &str, topic: String) -> Result<Self, ApnsError> {
         let client = reqwest::Client::builder()
@@ -147,6 +154,7 @@ impl ApnsTransport {
             key_id: key_id.to_owned(),
             team_id: team_id.to_owned(),
             topic,
+            capacitor_topic: None,
             production_base_url,
             sandbox_base_url,
             cached_jwt: Mutex::new(None),
@@ -205,18 +213,24 @@ impl PushTransport for ApnsTransport {
         profile: AppProfile,
         endpoint: &str,
     ) -> DeliveryOutcome {
-        // This is the only APNs application body in the program. It is a
-        // byte constant, not a serialization of the relay request, grant,
-        // endpoint, headers, route, provider response, or any generic JSON map.
-        let body = APNS_RECONNECT_PAYLOAD;
+        let topic = if profile.is_capacitor() {
+            match &self.capacitor_topic {
+                Some(topic) => topic,
+                None => return DeliveryOutcome::ConfigurationFault,
+            }
+        } else {
+            &self.topic
+        };
+        let body = reconnect_payload(profile, attempt.request_id);
         let now = chrono::Utc::now().timestamp();
         let token = match self.jwt(now) {
             Ok(token) => token,
             Err(_) => return DeliveryOutcome::ConfigurationFault,
         };
-        let base_url = match profile {
-            AppProfile::BuzzIosProduction => &self.production_base_url,
-            AppProfile::BuzzIosSandbox => &self.sandbox_base_url,
+        let base_url = if profile.is_sandbox() {
+            &self.sandbox_base_url
+        } else {
+            &self.production_base_url
         };
         let response = self
             .client
@@ -224,7 +238,7 @@ impl PushTransport for ApnsTransport {
             .header(AUTHORIZATION, format!("bearer {token}"))
             .header(CONTENT_TYPE, "application/json")
             .header("apns-id", attempt.request_id.to_string())
-            .header("apns-topic", &self.topic)
+            .header("apns-topic", topic)
             .header("apns-push-type", "alert")
             .header("apns-priority", "10")
             .header("apns-expiration", attempt.expires_at.to_string())
@@ -268,6 +282,16 @@ impl PushTransport for ApnsTransport {
             *cached = None;
         }
     }
+}
+
+/// Legacy v1 stays byte-exact. The opt-in Capacitor v2 body has one closed
+/// addition: the UUID already sent in `apns-id`. No event content, channel,
+/// grant, endpoint or caller-provided JSON can enter this body.
+fn reconnect_payload(profile: AppProfile, wake_id: uuid::Uuid) -> Vec<u8> {
+    if !profile.is_capacitor() {
+        return APNS_RECONNECT_PAYLOAD.to_vec();
+    }
+    format!(r#"{{"aps":{{"alert":{{"body":"Reconnect to your relay now"}},"mutable-content":1}},"buzz":{{"v":2,"wake_id":"{wake_id}"}}}}"#).into_bytes()
 }
 
 #[cfg(test)]

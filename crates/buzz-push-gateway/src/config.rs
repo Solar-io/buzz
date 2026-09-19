@@ -34,6 +34,15 @@ pub struct Config {
     pub apns_key_id: String,
     pub apns_team_id: String,
     pub apns_topic: String,
+    /// Independent app identity; absent unless Capacitor profiles are enabled.
+    pub capacitor_app: Option<CapacitorAppConfig>,
+}
+
+/// Server-owned identity for the separately installed Capacitor application.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapacitorAppConfig {
+    pub app_attest_app_id: String,
+    pub apns_topic: String,
 }
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -146,12 +155,44 @@ impl Config {
             .map(|profile| match profile {
                 "buzz-ios-production" => Ok(crate::model::AppProfile::BuzzIosProduction),
                 "buzz-ios-sandbox" => Ok(crate::model::AppProfile::BuzzIosSandbox),
+                "buzz-capacitor-ios-production" => {
+                    Ok(crate::model::AppProfile::BuzzCapacitorIosProduction)
+                }
+                "buzz-capacitor-ios-sandbox" => {
+                    Ok(crate::model::AppProfile::BuzzCapacitorIosSandbox)
+                }
                 _ => Err(ConfigError::Invalid("BUZZ_PUSH_ENABLED_PROFILES")),
             })
             .collect::<Result<HashSet<_>, _>>()?;
         if enabled_profiles.is_empty() {
             return Err(ConfigError::Invalid("BUZZ_PUSH_ENABLED_PROFILES"));
         }
+        let capacitor_app = if enabled_profiles
+            .iter()
+            .any(|profile| profile.is_capacitor())
+        {
+            let app_attest_app_id = req(e, "BUZZ_PUSH_CAPACITOR_APP_ATTEST_APP_ID")?.to_owned();
+            let apns_topic = req(e, "BUZZ_PUSH_CAPACITOR_APNS_TOPIC")?.to_owned();
+            // Tokens and App Attest proofs must name the SAME separately
+            // provisioned app, on the provider key's team. Never borrow the
+            // Flutter topic as a fallback.
+            if app_attest_app_id != format!("{}.{}", req(e, "BUZZ_PUSH_APNS_TEAM_ID")?, apns_topic)
+                || apns_topic == req(e, "BUZZ_PUSH_APNS_TOPIC")?
+                || apns_topic
+                    .bytes()
+                    .any(|b| !(b.is_ascii_alphanumeric() || b == b'.' || b == b'-'))
+            {
+                return Err(ConfigError::Invalid(
+                    "BUZZ_PUSH_CAPACITOR_APP_ATTEST_APP_ID",
+                ));
+            }
+            Some(CapacitorAppConfig {
+                app_attest_app_id,
+                apns_topic,
+            })
+        } else {
+            None
+        };
         Ok(Self {
             bind_addr: e
                 .get("BUZZ_PUSH_BIND_ADDR")
@@ -180,6 +221,7 @@ impl Config {
             apns_key_id: req(e, "BUZZ_PUSH_APNS_KEY_ID")?.to_owned(),
             apns_team_id: req(e, "BUZZ_PUSH_APNS_TEAM_ID")?.to_owned(),
             apns_topic: req(e, "BUZZ_PUSH_APNS_TOPIC")?.to_owned(),
+            capacitor_app,
         })
     }
 }
@@ -232,6 +274,43 @@ mod tests {
             ("BUZZ_PUSH_APNS_TEAM_ID".into(), "team".into()),
             ("BUZZ_PUSH_APNS_TOPIC".into(), "app".into()),
         ])
+    }
+
+    #[test]
+    fn capacitor_profiles_require_a_distinct_consistent_identity() {
+        let mut env = base();
+        assert!(Config::from_map(&env).unwrap().capacitor_app.is_none());
+        env.insert(
+            "BUZZ_PUSH_ENABLED_PROFILES".into(),
+            "buzz-ios-production,buzz-capacitor-ios-sandbox".into(),
+        );
+        assert!(Config::from_map(&env).is_err());
+        env.insert(
+            "BUZZ_PUSH_CAPACITOR_APP_ATTEST_APP_ID".into(),
+            "team.app.web".into(),
+        );
+        env.insert("BUZZ_PUSH_CAPACITOR_APNS_TOPIC".into(), "app.web".into());
+        assert_eq!(
+            Config::from_map(&env)
+                .unwrap()
+                .capacitor_app
+                .unwrap()
+                .apns_topic,
+            "app.web"
+        );
+        for invalid in ["TEAM.app.web", "team.wrong", "team.app"] {
+            env.insert(
+                "BUZZ_PUSH_CAPACITOR_APP_ATTEST_APP_ID".into(),
+                invalid.into(),
+            );
+            assert!(Config::from_map(&env).is_err(), "{invalid}");
+        }
+        env.insert(
+            "BUZZ_PUSH_CAPACITOR_APP_ATTEST_APP_ID".into(),
+            "team.app".into(),
+        );
+        env.insert("BUZZ_PUSH_CAPACITOR_APNS_TOPIC".into(), "app".into());
+        assert!(Config::from_map(&env).is_err());
     }
 
     #[test]

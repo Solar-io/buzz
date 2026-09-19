@@ -32,6 +32,7 @@ pub enum AppAttestError {
 pub struct AppAttestVerifier {
     app_id: String,
     apple_root_cert_pem: Vec<u8>,
+    capacitor_app_id: Option<String>,
 }
 impl AppAttestVerifier {
     pub fn new(app_id: String, apple_root_cert_pem: Vec<u8>) -> Result<Self, AppAttestError> {
@@ -43,7 +44,26 @@ impl AppAttestVerifier {
         Ok(Self {
             app_id,
             apple_root_cert_pem,
+            capacitor_app_id: None,
         })
+    }
+    /// Configure an independent app without widening the legacy verifier.
+    pub fn with_capacitor_app(mut self, app_id: String) -> Self {
+        self.capacitor_app_id = Some(app_id);
+        self
+    }
+
+    /// Both enrollment and subsequent assertions select from the persisted
+    /// profile. A missing profile identity fails closed, never to the old app.
+    pub fn for_profile(&self, profile: crate::model::AppProfile) -> Result<Self, AppAttestError> {
+        let mut verifier = self.clone();
+        if profile.is_capacitor() {
+            verifier.app_id = self
+                .capacitor_app_id
+                .clone()
+                .ok_or(AppAttestError::Invalid)?;
+        }
+        Ok(verifier)
     }
     /// `client_data` is the exact canonical enrollment transcript represented by
     /// the challenge string passed to `attestKey`; callers must include every
