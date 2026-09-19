@@ -23,6 +23,7 @@ import {
   WATCHDOG_MS_PER_CHAR,
   WATCHDOG_SLACK_MS,
 } from "./huddleAgentSpeech.ts";
+import { derivedBridgeVoice } from "./bridgeSpeech.ts";
 
 const AGENT = "a".repeat(64);
 const OTHER_AGENT = "b".repeat(64);
@@ -634,13 +635,71 @@ test("a rich list with a scarce English pool still differentiates by pitch", () 
 // cannot stay green while the wrong path speaks. Selections here use the
 // exact shape the picker publishes (`AgentVoiceSelection`).
 
-test("no selection is exactly the derived profile, marked derived", () => {
+test("no selection routes the derived Pocket default through the bridge", () => {
   const ranked = rankVoices([voice("Samantha"), voice("Ava"), voice("Daniel")]);
   const route = speakRoute(AGENT, ranked);
-  assert.equal(route.disposition, "derived");
+  // The robot is gone: a no-selection agent is a BRIDGE route, visibly
+  // distinct from the local-synth draw in speakRoutes.
+  assert.equal(route.disposition, "derived-bridge");
   assert.equal(route.profile.source, "derived");
-  // Byte-for-byte today's pre-seam behavior when nothing is selected.
+  assert.ok(route.bridge !== null, "the bridge request must be populated");
+  assert.equal(route.bridge.engine, "pocket");
+  // Byte-for-byte the pre-seam LOCAL behavior when nothing is selected:
+  // the local profile is still the derived draw (it is the fallback when
+  // the bridge cannot execute).
   assert.deepEqual(route.profile, speechVoiceProfile(AGENT, ranked));
+});
+
+test("AC1: no selection over 50 pubkeys is derived-bridge, deterministic, never eve", () => {
+  // The AC's exact shape: an EMPTY ranked list changes nothing — the
+  // bridge decision keys on the pubkey alone, before any voice list or
+  // fetch resolves.
+  for (let i = 0; i < 50; i++) {
+    const pk = (i.toString(16).padStart(2, "0") + "abcdef0123456789").repeat(2);
+    const route = speakRoute(pk, [], undefined);
+    assert.equal(route.disposition, "derived-bridge");
+    assert.ok(route.bridge !== null, `pubkey ${i}: bridge must be non-null`);
+    assert.equal(route.bridge.engine, "pocket");
+    // The drawn voice is one of the 11 publishable presets — hardcoded
+    // here, so a preset rename in DERIVED_POCKET_PRESETS fails THIS test
+    // (the mutation gate), not an agent's voice someday.
+    assert.ok(
+      [
+        "anna",
+        "vera",
+        "fantine",
+        "charles",
+        "paul",
+        "eponine",
+        "azelma",
+        "george",
+        "mary",
+        "jane",
+        "michael",
+      ].includes(route.bridge.voice),
+      `pubkey ${i}: drew "${route.bridge.voice}", not one of the 11 presets`,
+    );
+    assert.notEqual(route.bridge.voice, "eve");
+    // Deterministic: same key, same draw.
+    assert.deepEqual(speakRoute(pk, [], undefined).bridge, route.bridge);
+  }
+});
+
+test("AC2: an imported pocket selection executes the derived-bridge default", () => {
+  const ranked = rankVoices([voice("Samantha"), voice("Ava"), voice("Daniel")]);
+  const route = speakRoute(AGENT, ranked, {
+    engine: "pocket",
+    key: "pocket:imported:" + "a".repeat(64),
+  });
+  // The disposition keeps the name that says the selection is pending an
+  // engine that can run it...
+  assert.equal(route.disposition, "pocket-selected-pending-engine");
+  // ...but the EXECUTION voice is the derived-bridge Pocket default —
+  // the OS-synth path is no longer reachable from a pocket selection.
+  assert.ok(route.bridge !== null, "the bridge request must be populated");
+  assert.equal(route.bridge.engine, "pocket");
+  assert.notEqual(route.bridge.voice, "eve");
+  assert.deepEqual(route.bridge, derivedBridgeVoice(AGENT));
 });
 
 test("a selected local-synth voice speaks THAT voice, marked selected", () => {
@@ -708,16 +767,45 @@ test("a pocket selection routes to the bridge as a visible disposition", () => {
     key: "pocket:azelma",
   });
   assert.equal(route.disposition, "pocket-bridge");
+  // The bridge request IS the selection, mapped: hardcode the shape so a
+  // mapping drift cannot slide past.
+  assert.deepEqual(route.bridge, { engine: "pocket", voice: "azelma" });
   // The bridge synthesizes server-side; the LOCAL profile (unused for
   // bridge playback) is the derived draw.
   assert.equal(route.profile.source, "derived");
   assert.deepEqual(route.profile, speechVoiceProfile(AGENT, ranked));
-  // An IMPORTED key stays pending — the bridge cannot run it today.
+  // An IMPORTED key stays pending — but its execution voice is the
+  // derived-bridge default (asserted in detail by the AC2 test above).
   const imported = speakRoute(AGENT, ranked, {
     engine: "pocket",
     key: "pocket:imported:" + "a".repeat(64),
   });
   assert.equal(imported.disposition, "pocket-selected-pending-engine");
+  assert.ok(imported.bridge !== null);
+  // Eleven selections carry their voice id to the bridge.
+  const eleven = speakRoute(AGENT, ranked, {
+    engine: "eleven",
+    key: "eleven:T720RsqorTx4ZZWohrNN",
+  });
+  assert.equal(eleven.disposition, "eleven-bridge");
+  assert.deepEqual(eleven.bridge, {
+    engine: "eleven",
+    voice: "T720RsqorTx4ZZWohrNN",
+  });
+  // Local-synth routes never touch the bridge — both the honored and the
+  // rejected path are local-synth-only.
+  const selected = speakRoute(AGENT, ranked, {
+    engine: "local-synth",
+    voiceURI: "uri:Samantha",
+  });
+  assert.equal(selected.disposition, "selected");
+  assert.equal(selected.bridge, null);
+  const rejected = speakRoute(AGENT, ranked, {
+    engine: "local-synth",
+    voiceURI: "uri:uninstalled-yesterday",
+  });
+  assert.equal(rejected.disposition, "selected-rejected");
+  assert.equal(rejected.bridge, null);
 });
 
 test("selection routing is case-insensitive on the pubkey and deterministic", () => {

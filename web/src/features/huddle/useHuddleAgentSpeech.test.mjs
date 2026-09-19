@@ -104,6 +104,7 @@ const { useHuddleAgentSpeech } = await import("./useHuddleAgentSpeech.ts");
 const { rankVoices, speechVoiceProfile } = await import(
   "./lib/huddleAgentSpeech.ts"
 );
+const { derivedBridgeVoice } = await import("./lib/bridgeSpeech.ts");
 
 const AGENT = "a".repeat(64);
 const HUMAN = "c".repeat(64);
@@ -230,6 +231,87 @@ test("wiring: no selection speaks the derived draw, disposition derived", async 
   assert.equal(route.disposition, "derived");
   assert.equal(route.profile.source, "derived");
   await harness.unmount();
+});
+
+test("wiring: a no-selection agent speaks through the bridge, not the robot, disposition derived-bridge", async () => {
+  // §4 AC1/AC5 wiring: with an AudioContext present, the derived default is
+  // a /tts POST and ZERO SpeechSynthesisUtterances; speakRoutes records
+  // derived-bridge, distinct from derived (which now exists only when no
+  // AudioContext is available — the test below covers that branch).
+  class FakeAudioContext {
+    constructor() {
+      this.currentTime = 0;
+      this.destination = {};
+      this.sampleRate = 24_000;
+    }
+    resume() {
+      return Promise.resolve();
+    }
+    createBuffer(_channels, length, sampleRate) {
+      return { length, sampleRate, copyToChannel() {} };
+    }
+    createBufferSource() {
+      return {
+        buffer: null,
+        connect() {},
+        start(when) {
+          this.currentTime = Math.max(this.currentTime, when);
+        },
+      };
+    }
+  }
+  const bridgeCalls = [];
+  const realFetch = globalThis.fetch;
+  const realAudioContext = dom.window.AudioContext;
+  // 20 bytes = 10 PCM samples — the smallest legal response, so the
+  // scheduler settles almost immediately.
+  const pcm = new Uint8Array(20);
+  globalThis.fetch = (url, init) => {
+    bridgeCalls.push({ url: String(url), init });
+    return Promise.resolve(new Response(pcm, { status: 200 }));
+  };
+  dom.window.AudioContext = FakeAudioContext;
+  try {
+    const harness = await mountEnabledAndSpeak(undefined);
+    // The derived draw for this fixture pubkey, from the pure function —
+    // the body the hook must POST.
+    const expectedVoice = derivedBridgeVoice(AGENT).voice;
+    await harness.flush();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(bridgeCalls.length, 1, "exactly one /tts POST was made");
+    assert.equal(
+      bridgeCalls[0].url,
+      "https://web.test:6366/tts",
+      "the POST goes to the tts bridge",
+    );
+    assert.equal(bridgeCalls[0].init.method, "POST");
+    const body = JSON.parse(bridgeCalls[0].init.body);
+    assert.equal(body.engine, "pocket");
+    assert.equal(body.voice, expectedVoice);
+    assert.equal(body.text, "Ready when you are.");
+    // THE point of the rework: the robot never speaks this reply.
+    assert.equal(
+      spoken.length,
+      0,
+      "no SpeechSynthesisUtterance may be synthesized for a derived reply",
+    );
+    const route = harness.captured.current.speakRoutes.current.get(AGENT);
+    assert.ok(route, "the speak route must be recorded for the agent");
+    assert.equal(route.disposition, "derived-bridge");
+    assert.equal(route.profile.source, "derived");
+    assert.deepEqual(route.bridge, {
+      engine: "pocket",
+      voice: expectedVoice,
+    });
+    await harness.unmount();
+  } finally {
+    globalThis.fetch = realFetch;
+    if (realAudioContext === undefined) {
+      delete dom.window.AudioContext;
+    } else {
+      dom.window.AudioContext = realAudioContext;
+    }
+  }
 });
 
 test("wiring: a pocket selection routes to the bridge, disposition pocket-bridge", async () => {

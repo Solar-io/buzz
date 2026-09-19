@@ -22,7 +22,6 @@ import {
 } from "./lib/huddleAgentSpeech.ts";
 import {
   playBridgeResponse,
-  selectionToBridgeRequest,
   ttsBridgeUrl,
   type BridgeAudioContextLike,
 } from "./lib/bridgeSpeech.ts";
@@ -78,11 +77,16 @@ export interface HuddleAgentSpeech {
    * utterance is built — the wiring observable that says WHICH path spoke:
    * "selected" (the agent's published kind-30182 voice), "selected-rejected"
    * (published but unusable here — vanished voiceURI or non-English),
-   * "derived" (no usable selection; the pubkey draw), or
-   * "pocket-selected-pending-engine" (a pocket selection, which this
-   * browser cannot synthesize until the server-side engine bridge lands).
-   * A ref mutated in place, like {@link speechActivity}: same-task accurate
-   * the moment an utterance is built, no re-render to wait for.
+   * "derived-bridge" (no selection; the derived Pocket default went through
+   * the tts bridge), "derived" (the local-synth draw — reachable only when
+   * this browser has no AudioContext, so the bridge request cannot
+   * execute), "pocket-bridge" / "eleven-bridge" (the selection names a
+   * server-side engine), "pocket-selected-pending-engine" (an imported
+   * pocket selection, executed as the derived-bridge default), or
+   * "bridge-error-fallback" (the bridge failed mid-reply; local synth
+   * rescued it). A ref mutated in place, like {@link speechActivity}:
+   * same-task accurate the moment an utterance is built, no re-render to
+   * wait for.
    */
   speakRoutes: RefObject<ReadonlyMap<string, SpeakRoute>>;
 }
@@ -228,7 +232,9 @@ export function useHuddleAgentSpeech(options: {
         // THE SEAM (D-005 / voice v1): the agent's published selection —
         // if any — decides the voice. The fold keys selections by LOWERCASE
         // pubkey, so look up with the same normalization the speech path
-        // already uses. `route.profile` is always what synthesizes; the
+        // already uses. `speakRoute` owns the whole decision: `route.bridge`
+        // is the server-side request when one speaks (below), and
+        // `route.profile` is what the local synthesizer uses otherwise; the
         // disposition is what the wiring assertion reads.
         const selected = voiceSelectionForRef.current(
           speakerPubkey.toLowerCase(),
@@ -245,16 +251,17 @@ export function useHuddleAgentSpeech(options: {
         speechActivityRef.current.speaking = true;
         setSpeaking(true);
 
-        // Bridge engines (pocket presets, ElevenLabs): synthesize
-        // server-side and stream the PCM in. A bridge failure must not
-        // mute the reply — the local-synth path below speaks it with the
-        // derived profile and the disposition is corrected to say so.
-        const bridgeRequest =
-          selected !== undefined ? selectionToBridgeRequest(selected) : null;
-        if (
-          bridgeRequest !== null &&
-          (route.disposition === "pocket-bridge" || route.disposition === "eleven-bridge")
-        ) {
+        // Bridge engines (pocket presets, ElevenLabs — and the DERIVED
+        // default for agents with no selection, which used to be the OS
+        // robot): `route.bridge` IS the decision, made by `speakRoute` —
+        // execute it, or fall to the local-synth path below. A bridge
+        // failure must not mute the reply — the local-synth path speaks it
+        // with the derived profile and the disposition is corrected to say
+        // so. A browser with no AudioContext at all corrects
+        // `derived-bridge` to `derived` — the only place that disposition
+        // still originates.
+        const bridgeRequest = route.bridge;
+        if (bridgeRequest !== null) {
           const ctx = bridgeContext();
           if (ctx !== null) {
             let bridgeFailed = false;
@@ -308,6 +315,14 @@ export function useHuddleAgentSpeech(options: {
             speakRoutesRef.current.set(speakerPubkey.toLowerCase(), {
               disposition: "bridge-error-fallback",
               profile,
+              bridge: null,
+            });
+            // fall through: the local-synth loop below speaks this reply
+          } else if (route.disposition === "derived-bridge") {
+            speakRoutesRef.current.set(speakerPubkey.toLowerCase(), {
+              disposition: "derived",
+              profile,
+              bridge: null,
             });
             // fall through: the local-synth loop below speaks this reply
           }

@@ -47,9 +47,19 @@
  * from its own synthesizer. {@link shouldSpeakLocally} suppresses the local
  * copy for any agent currently present in the room's audio roster.
  *
- * Import-free apart from sibling `.ts` modules and one TYPE-only import
- * (the kind-30182 selection contract — erased at runtime), so `node --test`
- * loads it.
+ * WEB/DESKTOP DEFAULT SPLIT: the derived-Pocket default (a no-selection
+ * agent drawing a bundled preset through the tts bridge) is a web-speech
+ * concept and stays web-only — the desktop never robot-speaks (it always
+ * assigns Pocket voices itself, `agent_voice.rs`), so there is nothing to
+ * reconcile. The shared agreement point is the published kind-30182 default,
+ * which the web honors and the desktop does not yet read (desktop honorship
+ * is an out-of-scope follow-up; no contract change is needed when it
+ * happens).
+ *
+ * Import-free apart from sibling `.ts` modules (one TYPE-only import of the
+ * kind-30182 selection contract — erased at runtime — and the pure
+ * bridge-request builders from `bridgeSpeech.ts`), so `node --test` loads
+ * it.
  */
 
 import {
@@ -57,6 +67,11 @@ import {
   membersFromMemberEvent,
   type MemberSnapshotEventLike,
 } from "./huddleMembers.ts";
+import {
+  derivedBridgeVoice,
+  selectionToBridgeRequest,
+  type BridgeSpeakRequest,
+} from "./bridgeSpeech.ts";
 import type { AgentVoiceSelection } from "../../voice/lib/agentVoiceSelection.ts";
 
 export {
@@ -420,25 +435,41 @@ function deriveVoiceProfile(
 /**
  * Why one utterance is being voiced the way it is — the speak-time seam's
  * full disposition. `profile` is the profile for LOCAL synthesis; the
- * disposition says what actually speaks.
+ * disposition and {@link SpeakRoute.bridge} say what actually speaks.
  *
- *  - `selected`: the published local-synth voice resolved and speaks.
+ *  - `selected`: the published local-synth voice resolved and speaks
+ *    (`bridge: null`).
  *  - `selected-rejected`: the selection is unusable here (voiceURI not in
  *    the live list, or it names a non-English voice) and the derived
- *    profile speaks instead. The rejection is recorded, never silent.
- *  - `derived`: no selection; the deterministic pubkey draw.
+ *    profile speaks instead. The rejection is recorded, never silent
+ *    (`bridge: null`).
+ *  - `derived-bridge`: no selection; the deterministic Pocket draw IS the
+ *    bridge request — the robot never speaks. The disposition that
+ *    distinguishes a derived-via-bridge utterance from a derived-via-OS
+ *    one in `speakRoutes`.
+ *  - `derived`: the derived local-synth draw. Reachable only when the
+ *    bridge cannot execute — no AudioContext in this browser — where the
+ *    hook corrects a `derived-bridge` route to this.
  *  - `pocket-bridge` / `eleven-bridge`: the agent's selection names a
- *    server-side engine the tts bridge runs — the utterance synthesizes
- *    through `bridgeSpeech.ts`, NOT through speechSynthesis, and the
- *    local profile is irrelevant (kept for interface stability).
+ *    server-side engine the tts bridge runs — `bridge` carries the
+ *    request, the utterance synthesizes through `bridgeSpeech.ts`, NOT
+ *    through speechSynthesis, and the local profile is irrelevant (kept
+ *    for interface stability).
  *  - `pocket-selected-pending-engine`: an IMPORTED pocket key
- *    (`pocket:imported:<hash>`), which the bridge cannot synthesize yet —
- *    the derived profile speaks, visibly marked rather than honored.
+ *    (`pocket:imported:<hash>`), which the bridge cannot synthesize yet.
+ *    The execution voice (`bridge`) is still the derived-bridge Pocket
+ *    default — the robot is never the fallback — while the disposition
+ *    keeps the name that says the published selection is pending an
+ *    engine that can run it.
+ *  - `bridge-error-fallback`: the bridge failed mid-reply; the hook set
+ *    this and the local derived profile speaks so the reply is not mute
+ *    (mute-avoidance, not a default).
  */
 export type SpeakDisposition =
   | "selected"
   | "selected-rejected"
   | "derived"
+  | "derived-bridge"
   | "pocket-bridge"
   | "eleven-bridge"
   | "pocket-selected-pending-engine"
@@ -448,12 +479,29 @@ export interface SpeakRoute {
   disposition: SpeakDisposition;
   /** The profile to synthesize this utterance with — always present. */
   profile: AgentVoiceProfile;
+  /**
+   * The bridge request that synthesizes this utterance, or null when the
+   * local synthesizer speaks it. Decided HERE — the pure, node-testable
+   * router — so the hook merely executes `bridge ?? local-synth` and no
+   * consumer ever re-derives the engine decision from the disposition
+   * string. On a bridge failure the hook nulls this on the corrected
+   * route it records.
+   */
+  bridge: BridgeSpeakRequest | null;
 }
 
 /**
  * Route one agent's utterance to a voice, honoring its published kind-30182
  * selection when one exists (`AgentVoiceSelection`, the exact shape the
  * selection store folds and the picker publishes).
+ *
+ * The BRIDGE DECISION lives here too: every disposition that synthesizes
+ * server-side returns its `BridgeSpeakRequest` (`pocket-bridge`,
+ * `eleven-bridge` via `selectionToBridgeRequest`; `derived-bridge` and the
+ * unsynthesizable `pocket-selected-pending-engine` via `derivedBridgeVoice`),
+ * and every local-synth disposition returns `bridge: null`. The derived
+ * Pocket default keys on the pubkey alone — it must resolve before any
+ * fetch or voice-list load completes, exactly like the local-synth draw.
  *
  * Resolution discipline is `resolveProfileVoice`'s, shared with the derived
  * path: the selected `voiceURI` is matched against the LIVE ranked list by
@@ -465,11 +513,6 @@ export interface SpeakRoute {
  * to prevent — the picker enforces English-only at CHOICE time
  * (voicePickerOptions.ts `ENGLISH_ONLY`), and this is the same invariant
  * enforced independently at SPEAK time.
- *
- * A pocket selection is explicit: it names a server-side voice this engine
- * cannot run, so the derived profile synthesizes and the disposition says
- * `pocket-selected-pending-engine` rather than pretending the pocket voice
- * was honored.
  */
 export function speakRoute(
   pubkey: string,
@@ -479,20 +522,35 @@ export function speakRoute(
   const derived = (): AgentVoiceProfile =>
     deriveVoiceProfile(pubkey, rankedVoices);
   if (selected === undefined) {
-    return { disposition: "derived", profile: derived() };
+    return {
+      disposition: "derived-bridge",
+      profile: derived(),
+      bridge: derivedBridgeVoice(pubkey),
+    };
   }
   if (selected.engine === "pocket") {
+    if (selected.key.startsWith("pocket:imported:")) {
+      // Unsynthesizable selection: the derived Pocket default speaks
+      // through the bridge (never the robot), while the disposition keeps
+      // the name that says the published selection is pending an engine
+      // that can run it.
+      return {
+        disposition: "pocket-selected-pending-engine",
+        profile: derived(),
+        bridge: derivedBridgeVoice(pubkey),
+      };
+    }
     return {
-      disposition: selected.key.startsWith("pocket:imported:")
-        ? "pocket-selected-pending-engine"
-        : "pocket-bridge",
+      disposition: "pocket-bridge",
       profile: derived(),
+      bridge: selectionToBridgeRequest(selected),
     };
   }
   if (selected.engine === "eleven") {
     return {
       disposition: "eleven-bridge",
       profile: derived(),
+      bridge: selectionToBridgeRequest(selected),
     };
   }
   const selectedURI = selected.voiceURI;
@@ -505,6 +563,7 @@ export function speakRoute(
     return {
       disposition: "selected-rejected",
       profile: { ...derived(), source: "selected-rejected" },
+      bridge: null,
     };
   }
   return {
@@ -521,6 +580,7 @@ export function speakRoute(
       voiceURI: resolved.voiceURI || resolved.name,
       source: "selected",
     },
+    bridge: null,
   };
 }
 

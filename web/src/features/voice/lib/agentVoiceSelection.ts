@@ -122,11 +122,13 @@ function isValidSelectionKey(key: string): boolean {
 
 /**
  * ElevenLabs key grammar: `eleven:<voice id>` where the id is the vendor's
- * alphanumeric voice identifier (observed 20 chars; bounded 10-40 so a
- * future id shape still fits without accepting arbitrary prose).
+ * alphanumeric voice identifier (observed 20 chars; bounded 10-36 — the
+ * relay's own ingest grammar, crates/buzz-relay/src/handlers/ingest.rs).
+ * The parser must refuse what the relay refuses, so the bounds mirror it
+ * exactly rather than guessing a future id shape.
  */
 function isValidElevenKey(key: string): boolean {
-  return /^eleven:[A-Za-z0-9]{10,40}$/.test(key);
+  return /^eleven:[A-Za-z0-9]{10,36}$/.test(key);
 }
 
 /**

@@ -102,6 +102,21 @@ test("parse rejects malformed eleven keys", () => {
   }
 });
 
+test("the eleven id ceiling matches the relay's 36-char bound, both sides of it", () => {
+  // The bounds mirror crates/buzz-relay/src/handlers/ingest.rs — hardcoded
+  // lengths here so moving the ceiling in either file alone fails this.
+  const at36 = "eleven:" + "A".repeat(36);
+  const at37 = "eleven:" + "A".repeat(37);
+  const parse = (key) =>
+    parseAgentVoiceEvent(
+      selectionEvent({
+        content: JSON.stringify({ version: 1, engine: "eleven", key, label: "x" }),
+      }),
+    );
+  assert.ok(parse(at36), "36-char id (the ceiling) must parse");
+  assert.equal(parse(at37), null, "37-char id must be refused");
+});
+
 test("a pocket selection with a full imported catalog key parses", () => {
   const hash = "6".repeat(64);
   const row = parseAgentVoiceEvent(
@@ -336,6 +351,10 @@ test("wiring: a selection routed at speak time names its source — selected, re
     key: "pocket:imported:" + "a".repeat(64),
   });
   assert.equal(imported.disposition, "pocket-selected-pending-engine");
+  // Pending ≠ robot: the execution voice is the derived-bridge Pocket
+  // default, so the OS synth is unreachable from a pocket selection.
+  assert.ok(imported.bridge !== null);
+  assert.equal(imported.bridge.engine, "pocket");
   // An eleven selection routes to the same bridge, its own disposition.
   const eleven = speakRoute(AGENT, voices, {
     engine: "eleven",

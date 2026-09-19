@@ -5,6 +5,8 @@ import {
   BRIDGE_PIECE_SAMPLES,
   BRIDGE_SAMPLE_RATE,
   chunkToInt16Pieces,
+  DERIVED_POCKET_PRESETS,
+  derivedBridgeVoice,
   int16ToFloat32,
   playBridgeResponse,
   selectionToBridgeRequest,
@@ -169,4 +171,51 @@ test("playBridgeResponse stops when shouldStop signals", async () => {
   stopped = true;
   const result = await pending;
   assert.ok(result.seconds >= 0);
+});
+
+test("derivedBridgeVoice is deterministic, from presets, never eve", () => {
+  const seen = new Set();
+  for (let i = 0; i < 50; i++) {
+    // Synthetic pubkeys: hex-ish strings of varying content.
+    const pk = (i.toString(16).padStart(2, "0") + "abcdef0123456789").repeat(2);
+    const req = derivedBridgeVoice(pk);
+    assert.equal(req.engine, "pocket");
+    assert.ok(DERIVED_POCKET_PRESETS.includes(req.voice));
+    assert.notEqual(req.voice, "eve");
+    seen.add(req.voice);
+    // Determinism: same key, same voice.
+    assert.deepEqual(derivedBridgeVoice(pk), req);
+  }
+  // The draw actually spreads (a 1-of-11 draw over 50 keys would be broken).
+  assert.ok(seen.size >= 4, `expected spread, got ${[...seen].join(",")}`);
+});
+
+test("DERIVED_POCKET_PRESETS equals the hardcoded 11-slug list (drift guard)", () => {
+  // MUTATION GATE (voice-picker-v2 §4 AC3): rename a slug in
+  // DERIVED_POCKET_PRESETS and THIS test fails by name. The list is
+  // hardcoded, never derived from the constant it pins — and it must stay
+  // the 11 publishable presets of crates/buzz-voice/src/bundled.rs
+  // (eve excluded), matching the /voices/pocket roster the bridge serves
+  // and the voicecheck gate asserts.
+  assert.deepEqual([...DERIVED_POCKET_PRESETS], [
+    "anna",
+    "vera",
+    "fantine",
+    "charles",
+    "paul",
+    "eponine",
+    "azelma",
+    "george",
+    "mary",
+    "jane",
+    "michael",
+  ]);
+});
+
+test("derivedBridgeVoice differentiates co-speakers", () => {
+  const a = derivedBridgeVoice("aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111");
+  const b = derivedBridgeVoice("bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222");
+  // Not required to differ (11 presets, 2 draws can collide) — but these
+  // two fixture keys must land apart, pinning that the hash sees the key.
+  assert.notEqual(a.voice, b.voice);
 });

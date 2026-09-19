@@ -56,6 +56,45 @@ export function selectionToBridgeRequest(
 }
 
 /**
+ * The bundled Pocket presets an agent with NO published selection draws
+ * from — the shipped 11 minus `pocket:eve`, which is excluded from the
+ * default draw for consistency with its catalog-publication ban. Order
+ * mirrors `crates/buzz-voice/src/bundled.rs`.
+ */
+export const DERIVED_POCKET_PRESETS: readonly string[] = [
+  "anna",
+  "vera",
+  "fantine",
+  "charles",
+  "paul",
+  "eponine",
+  "azelma",
+  "george",
+  "mary",
+  "jane",
+  "michael",
+];
+
+/**
+ * The bridge request for an agent that never published a selection.
+ *
+ * Before 2026-09-18 these agents spoke through local `speechSynthesis` —
+ * the "crap robot" Sam hit in a live huddle — while every agent WITH a
+ * selection had already moved to the bridge. The derived default is now a
+ * Pocket preset, drawn deterministically from the pubkey so co-speakers
+ * still sound different without anyone configuring anything (the same
+ * differentiation intent as the derived pitch-spread, one level up).
+ */
+export function derivedBridgeVoice(pubkey: string): BridgeSpeakRequest {
+  let h = 5381;
+  for (let i = 0; i < pubkey.length; i++) {
+    h = ((h << 5) + h + pubkey.charCodeAt(i)) | 0;
+  }
+  const index = Math.abs(h) % DERIVED_POCKET_PRESETS.length;
+  return { engine: "pocket", voice: DERIVED_POCKET_PRESETS[index] };
+}
+
+/**
  * Split one network chunk into ALIGNED Int16 pieces of at most `maxSamples`.
  *
  * Two hardening rules earned the hard way (tts-lab, 2026-09-18):
