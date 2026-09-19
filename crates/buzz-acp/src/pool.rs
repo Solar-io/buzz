@@ -1346,10 +1346,8 @@ async fn create_session_and_apply_model(
     // advertises the requested mode in session/new. Agents that don't support
     // the mode (e.g., goose crashes on unrecognized set_config_option values)
     // are safely skipped — the harness auto-approves via handle_permission_request.
-    if !ctx.permission_mode.is_default()
-        && agent_supports_mode(&resp.raw, ctx.permission_mode.as_wire_str())
-    {
-        apply_permission_mode(&mut agent.acp, &resp.session_id, &ctx.permission_mode).await?;
+    if let Some(mode_wire) = resolve_session_mode(&resp.raw, &ctx.permission_mode) {
+        apply_permission_mode(&mut agent.acp, &resp.session_id, mode_wire).await?;
     }
 
     Ok(resp.session_id)
@@ -1917,6 +1915,54 @@ async fn restore_voice_turn_overrides(
 /// Check if the agent's `session/new` response advertises a given mode ID
 /// in `result.modes.availableModes[].id`. Returns `false` if the modes
 /// field is absent or the mode isn't listed.
+/// Adapter mode ids that are acceptable stand-ins for a harness permission
+/// mode the adapter does not advertise under Buzz's own wire name.
+///
+/// Every adapter names its modes differently: claude-agent-acp advertises
+/// `bypassPermissions`, codex-acp advertises `read-only` / `agent` /
+/// `agent-full-access`. codex-acp's default `agent` mode passes a per-turn
+/// sandbox policy with `networkAccess: false` that overrides the
+/// `sandbox_workspace_write.network_access` config override, so every shell
+/// command the agent runs is cut off from the relay — `buzz messages send`
+/// exits 2 while the identical command succeeds outside Codex (2026-09-19,
+/// twenty managed Codex agents). Only `agent-full-access` lifts that, so a
+/// harness asked for no permission prompts maps to it when the exact wire
+/// name is absent. Order is preference order.
+fn permission_mode_aliases(mode: &PermissionMode) -> &'static [&'static str] {
+    match mode {
+        PermissionMode::BypassPermissions | PermissionMode::DontAsk => &["agent-full-access"],
+        PermissionMode::Default
+        | PermissionMode::Auto
+        | PermissionMode::AcceptEdits
+        | PermissionMode::Plan => &[],
+    }
+}
+
+/// Pick the mode id to send for `requested`, or `None` to leave the
+/// adapter's built-in default in place.
+///
+/// The exact wire name wins when advertised; otherwise the first advertised
+/// entry of [`permission_mode_aliases`]. `Default` never issues a request.
+/// Agents that advertise neither (goose crashes on unrecognized
+/// set_config_option values) are skipped — the harness still auto-approves
+/// via `handle_permission_request`.
+fn resolve_session_mode(
+    session_new_result: &serde_json::Value,
+    requested: &PermissionMode,
+) -> Option<&'static str> {
+    if requested.is_default() {
+        return None;
+    }
+    let exact = requested.as_wire_str();
+    if agent_supports_mode(session_new_result, exact) {
+        return Some(exact);
+    }
+    permission_mode_aliases(requested)
+        .iter()
+        .copied()
+        .find(|alias| agent_supports_mode(session_new_result, alias))
+}
+
 fn agent_supports_mode(session_new_result: &serde_json::Value, mode_wire: &str) -> bool {
     session_new_result
         .get("modes")
@@ -1937,9 +1983,8 @@ fn agent_supports_mode(session_new_result: &serde_json::Value, mode_wire: &str) 
 async fn apply_permission_mode(
     acp: &mut AcpClient,
     session_id: &str,
-    mode: &PermissionMode,
+    wire: &str,
 ) -> Result<(), AcpError> {
-    let wire = mode.as_wire_str();
     let result = tokio::time::timeout(PERMISSION_MODE_TIMEOUT, async {
         acp.session_set_config_option(session_id, "mode", wire)
             .await
@@ -5267,6 +5312,98 @@ mod tests {
             &session_new,
             PermissionMode::Auto.as_wire_str()
         ));
+    }
+
+    // --- resolve_session_mode: exact wire name, adapter alias, or nothing ---
+
+    /// The mode table codex-acp 1.12 advertises in session/new.
+    fn codex_session_new() -> serde_json::Value {
+        json!({
+            "sessionId": "sess-codex",
+            "modes": { "availableModes": [
+                { "id": "read-only" }, { "id": "agent" }, { "id": "agent-full-access" }
+            ] }
+        })
+    }
+
+    #[test]
+    fn resolve_session_mode_codex_bypass_maps_to_agent_full_access() {
+        // The desktop default (bypass-permissions) is not a Codex mode id, so
+        // without the alias Codex stays in `agent` mode with network off.
+        assert_eq!(
+            resolve_session_mode(&codex_session_new(), &PermissionMode::BypassPermissions),
+            Some("agent-full-access")
+        );
+        assert_eq!(
+            resolve_session_mode(&codex_session_new(), &PermissionMode::DontAsk),
+            Some("agent-full-access")
+        );
+    }
+
+    #[test]
+    fn resolve_session_mode_exact_wire_name_wins_over_alias() {
+        let both = json!({
+            "modes": { "availableModes": [
+                { "id": "bypassPermissions" }, { "id": "agent-full-access" }
+            ] }
+        });
+        assert_eq!(
+            resolve_session_mode(&both, &PermissionMode::BypassPermissions),
+            Some("bypassPermissions")
+        );
+    }
+
+    #[test]
+    fn resolve_session_mode_claude_adapter_unchanged() {
+        let claude = json!({
+            "modes": { "availableModes": [
+                { "id": "default" }, { "id": "acceptEdits" }, { "id": "bypassPermissions" }
+            ] }
+        });
+        assert_eq!(
+            resolve_session_mode(&claude, &PermissionMode::BypassPermissions),
+            Some("bypassPermissions")
+        );
+        assert_eq!(
+            resolve_session_mode(&claude, &PermissionMode::AcceptEdits),
+            Some("acceptEdits")
+        );
+    }
+
+    #[test]
+    fn resolve_session_mode_default_never_issues_a_request() {
+        assert_eq!(
+            resolve_session_mode(&codex_session_new(), &PermissionMode::Default),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_session_mode_no_advertised_modes_is_none() {
+        // goose: no modes table at all — must stay skipped (it crashes on
+        // unrecognized set_config_option values).
+        let goose = json!({ "sessionId": "sess-goose" });
+        assert_eq!(
+            resolve_session_mode(&goose, &PermissionMode::BypassPermissions),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_session_mode_modes_without_alias_or_exact_is_none() {
+        // Only Auto / AcceptEdits / Plan have no Codex stand-in; Codex must not
+        // be silently widened to full access for them.
+        for mode in [
+            PermissionMode::Auto,
+            PermissionMode::AcceptEdits,
+            PermissionMode::Plan,
+        ] {
+            assert_eq!(
+                resolve_session_mode(&codex_session_new(), &mode),
+                None,
+                "{mode:?} must not map to a Codex mode"
+            );
+        }
     }
 
     #[test]
