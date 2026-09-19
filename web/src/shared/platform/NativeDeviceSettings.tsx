@@ -76,13 +76,13 @@ export function NativeDeviceSettings() {
                 const scanned = parsePairingServices(text);
                 void applyScannedConnection(services, scanned, {
                   classify: classifyScannedConnection,
-                  prepare: async (current, scanned) => {
-                    const confirmed = window.confirm(
+                  confirm: async (current, scanned) => {
+                    return window.confirm(
                       `Switch from ${new URL(current.relayUrl).host} to ${new URL(scanned.relayUrl).host}?`,
                     );
-                    if (!confirmed) {
-                      throw new Error("User cancelled");
-                    }
+                  },
+                  prepare: async () => {
+                    await prepareNativeCommunityChange();
                   },
                   write: async (newServices) => {
                     writeNativeServices(newServices);

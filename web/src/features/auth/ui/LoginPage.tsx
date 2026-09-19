@@ -10,6 +10,7 @@ import {
   enrollSecretKey,
   enrollSecretKeyFromPairing,
   setAuthTagJson,
+  prepareNativeCommunityChange,
 } from "@/shared/lib/key-store";
 import { type ParsedKey, parseSecretKeyInput } from "@/shared/lib/nsec";
 import {
@@ -112,20 +113,20 @@ export function LoginPage() {
       if (isNativeIOS()) {
         try {
           const services = parsePairingServices(text);
-          // Validate before writing
           const current = readNativeServices();
 
-          // Apply the connection (write services, then enroll)
+          // Apply the connection: confirm, prepare, then write
           void applyScannedConnection(current, services, {
             classify: classifyScannedConnection,
-            prepare: async (current, scanned) => {
-              // Community-change: ask for confirmation
-              const confirmed = window.confirm(
+            confirm: async (current, scanned) => {
+              // User confirmation for community change
+              return window.confirm(
                 `Switch from ${new URL(current.relayUrl).host} to ${new URL(scanned.relayUrl).host}? This leaves any active call and disables push.`,
               );
-              if (!confirmed) {
-                throw new Error("User cancelled community change");
-              }
+            },
+            prepare: async () => {
+              // Run the native side effect (leave calls, revoke push)
+              await prepareNativeCommunityChange();
             },
             write: async (services) => {
               writeNativeServices(services);

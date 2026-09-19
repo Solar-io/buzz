@@ -12,10 +12,9 @@ const getClassifyScannedConnection = async () => {
   return mod.classifyScannedConnection;
 };
 
-// T7: applyScannedConnection with fakes: prepare once and strictly before write on
-// community-change; zero on same-community; write never on validation throw
+// T7: applyScannedConnection with fakes: proper order and cancel handling
 
-test("T7a: applyScannedConnection on first-run writes, no prepare", async () => {
+test("T7a: applyScannedConnection on first-run writes, no confirm/prepare", async () => {
   const applyScannedConnection = await getApplyScannedConnection();
   const classifyScannedConnection = await getClassifyScannedConnection();
 
@@ -26,11 +25,16 @@ test("T7a: applyScannedConnection on first-run writes, no prepare", async () => 
     pushGatewayUrl: "",
   };
 
+  let confirmCallCount = 0;
   let prepareCallCount = 0;
   let writeCallCount = 0;
 
   const deps = {
     classify: classifyScannedConnection,
+    confirm: async () => {
+      confirmCallCount++;
+      return true;
+    },
     prepare: async () => {
       prepareCallCount++;
     },
@@ -42,10 +46,11 @@ test("T7a: applyScannedConnection on first-run writes, no prepare", async () => 
   await applyScannedConnection(null, scanned, deps);
 
   assert.equal(writeCallCount, 1);
+  assert.equal(confirmCallCount, 0);
   assert.equal(prepareCallCount, 0);
 });
 
-test("T7b: applyScannedConnection on same-community writes, no prepare", async () => {
+test("T7b: applyScannedConnection on same-community writes, no confirm/prepare", async () => {
   const applyScannedConnection = await getApplyScannedConnection();
   const classifyScannedConnection = await getClassifyScannedConnection();
 
@@ -63,11 +68,16 @@ test("T7b: applyScannedConnection on same-community writes, no prepare", async (
     pushGatewayUrl: "",
   };
 
+  let confirmCallCount = 0;
   let prepareCallCount = 0;
   let writeCallCount = 0;
 
   const deps = {
     classify: classifyScannedConnection,
+    confirm: async () => {
+      confirmCallCount++;
+      return true;
+    },
     prepare: async () => {
       prepareCallCount++;
     },
@@ -79,10 +89,11 @@ test("T7b: applyScannedConnection on same-community writes, no prepare", async (
   await applyScannedConnection(current, scanned, deps);
 
   assert.equal(writeCallCount, 1);
+  assert.equal(confirmCallCount, 0);
   assert.equal(prepareCallCount, 0);
 });
 
-test("T7c: applyScannedConnection on community-change calls prepare after write", async () => {
+test("T7c: applyScannedConnection on community-change: confirm → prepare → write", async () => {
   const applyScannedConnection = await getApplyScannedConnection();
   const classifyScannedConnection = await getClassifyScannedConnection();
 
@@ -104,6 +115,10 @@ test("T7c: applyScannedConnection on community-change calls prepare after write"
 
   const deps = {
     classify: classifyScannedConnection,
+    confirm: async () => {
+      callOrder.push("confirm");
+      return true;
+    },
     prepare: async () => {
       callOrder.push("prepare");
     },
@@ -114,15 +129,66 @@ test("T7c: applyScannedConnection on community-change calls prepare after write"
 
   await applyScannedConnection(current, scanned, deps);
 
-  // Write must come before prepare
-  assert.deepEqual(callOrder, ["write", "prepare"]);
+  // Correct order: confirm, then prepare, then write
+  assert.deepEqual(callOrder, ["confirm", "prepare", "write"]);
 });
 
-test("T7d: applyScannedConnection - write is never called if validation throws", async () => {
+test("T7d: applyScannedConnection: user cancellation writes nothing", async () => {
   const applyScannedConnection = await getApplyScannedConnection();
+  const classifyScannedConnection = await getClassifyScannedConnection();
+
+  const current = {
+    relayUrl: "wss://relay-old.test:6351",
+    sttUrl: "",
+    ttsUrl: "",
+    pushGatewayUrl: "",
+  };
 
   const scanned = {
-    relayUrl: "wss://relay.test",
+    relayUrl: "wss://relay-new.test:6351",
+    sttUrl: "",
+    ttsUrl: "",
+    pushGatewayUrl: "",
+  };
+
+  let prepareCallCount = 0;
+  let writeCallCount = 0;
+
+  const deps = {
+    classify: classifyScannedConnection,
+    confirm: async () => {
+      // User cancels
+      return false;
+    },
+    prepare: async () => {
+      prepareCallCount++;
+    },
+    write: async () => {
+      writeCallCount++;
+    },
+  };
+
+  // Should return silently without throwing
+  await applyScannedConnection(current, scanned, deps);
+
+  // Nothing should be persisted
+  assert.equal(writeCallCount, 0);
+  assert.equal(prepareCallCount, 0);
+});
+
+test("T7e: applyScannedConnection: prepare failure does not write", async () => {
+  const applyScannedConnection = await getApplyScannedConnection();
+  const classifyScannedConnection = await getClassifyScannedConnection();
+
+  const current = {
+    relayUrl: "wss://relay-old.test:6351",
+    sttUrl: "",
+    ttsUrl: "",
+    pushGatewayUrl: "",
+  };
+
+  const scanned = {
+    relayUrl: "wss://relay-new.test:6351",
     sttUrl: "",
     ttsUrl: "",
     pushGatewayUrl: "",
@@ -130,22 +196,22 @@ test("T7d: applyScannedConnection - write is never called if validation throws",
 
   let writeCallCount = 0;
 
-  // Classifier throws (simulating validation failure)
   const deps = {
-    classify: () => {
-      throw new Error("Validation failed");
+    classify: classifyScannedConnection,
+    confirm: async () => true,
+    prepare: async () => {
+      throw new Error("Prepare failed");
     },
-    prepare: async () => {},
     write: async () => {
       writeCallCount++;
     },
   };
 
   try {
-    await applyScannedConnection(null, scanned, deps);
+    await applyScannedConnection(current, scanned, deps);
     assert.fail("Should have thrown");
   } catch (e) {
-    assert.match(e.message, /Validation failed/);
+    assert.match(e.message, /Prepare failed/);
     assert.equal(writeCallCount, 0);
   }
 });

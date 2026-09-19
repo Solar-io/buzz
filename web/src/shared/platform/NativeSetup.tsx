@@ -17,6 +17,7 @@ import {
   classifyScannedConnection,
 } from "@/shared/lib/pairing-link";
 import { applyScannedConnection } from "@/shared/lib/apply-scanned-connection";
+import { prepareNativeCommunityChange } from "@/shared/lib/key-store";
 
 export function NativeSetup({ children }: { children: ReactNode }) {
   const [services, setServices] = useState<NativeServices>(
@@ -129,13 +130,13 @@ export function NativeSetup({ children }: { children: ReactNode }) {
 
                   void applyScannedConnection(current, scanned, {
                     classify: classifyScannedConnection,
-                    prepare: async (current, scanned) => {
-                      const confirmed = window.confirm(
+                    confirm: async (current, scanned) => {
+                      return window.confirm(
                         `Switch from ${new URL(current.relayUrl).host} to ${new URL(scanned.relayUrl).host}?`,
                       );
-                      if (!confirmed) {
-                        throw new Error("User cancelled");
-                      }
+                    },
+                    prepare: async () => {
+                      await prepareNativeCommunityChange();
                     },
                     write: async (services) => {
                       writeNativeServices(services);
