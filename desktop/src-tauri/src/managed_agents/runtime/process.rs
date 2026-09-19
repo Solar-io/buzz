@@ -393,6 +393,19 @@ pub(crate) fn valid_agent_runtime_receipt(
     )
 }
 
+/// Compare the policy hash stamped at spawn with the current desired policy.
+/// Legacy receipts without a hash are accepted only when no current policy
+/// hash is available; once policy state is readable they fail closed.
+pub(crate) fn receipt_policy_matches(
+    receipt: &super::super::ManagedAgentRuntimeReceipt,
+    expected_policy_hash: Option<&str>,
+) -> bool {
+    match expected_policy_hash {
+        Some(expected) => receipt.harness_policy_hash.as_deref() == Some(expected),
+        None => true,
+    }
+}
+
 /// Injectable version of `valid_agent_runtime_receipt` for testing.
 /// `is_running(pid)` and `has_marker(pid, instance_id)` can be substituted by
 /// test doubles without spawning real processes.
@@ -450,6 +463,9 @@ pub(crate) fn terminate_untracked_pair_runtime(
     key: &ManagedAgentRuntimeKey,
 ) -> Result<(), String> {
     let instance_id = current_instance_id(app);
+    let current_policy_hash = crate::managed_agents::harness_policy::load_harness_policy(app)
+        .ok()
+        .and_then(|policy| crate::managed_agents::harness_policy::policy_hash(&policy).ok());
     let Some((path, receipt)) = super::super::read_all_agent_runtime_receipts(app)
         .into_iter()
         .find(|(path, receipt)| {
@@ -458,6 +474,12 @@ pub(crate) fn terminate_untracked_pair_runtime(
     else {
         return Ok(());
     };
+    if !receipt_policy_matches(&receipt, current_policy_hash.as_deref()) {
+        eprintln!(
+            "buzz-desktop: replacing stale runtime receipt {} after harness policy drift",
+            receipt.key.runtime_id()
+        );
+    }
 
     terminate_runtime_receipt_with(
         &path,

@@ -42,7 +42,8 @@ use process::{
 };
 pub(crate) use process::{
     current_instance_id, process_belongs_to_us, process_has_buzz_marker, process_is_running,
-    terminate_process, terminate_untracked_pair_runtime, valid_agent_runtime_receipt,
+    receipt_policy_matches, terminate_process, terminate_untracked_pair_runtime,
+    valid_agent_runtime_receipt,
 };
 
 mod orphan_sweep;
@@ -497,6 +498,7 @@ pub fn spawn_agent_child(
     // substitutes another model or effort. Unknown custom harnesses keep
     // their existing behavior until they register a policy profile.
     let policy = crate::managed_agents::harness_policy::load_harness_policy(app)?;
+    let harness_policy_hash = Some(crate::managed_agents::harness_policy::policy_hash(&policy)?);
     let harness_policy_env =
         resolve_harness_policy_env(&policy, record, &personas, effective_command)?;
 
@@ -971,6 +973,7 @@ pub fn spawn_agent_child(
         spawn_config,
         spawned_setup_mode,
         spawned_adapter_availability,
+        harness_policy_hash,
         start_nonce,
         &record.name,
     ));
@@ -981,6 +984,7 @@ pub fn spawn_agent_child(
         spawn_config,
         setup_mode: spawned_setup_mode,
         adapter_availability: spawned_adapter_availability,
+        harness_policy_hash,
         start_nonce,
     })
 }
@@ -1031,6 +1035,7 @@ pub fn start_managed_agent_process(
         pid: process.child.id(),
         desktop_instance_id: current_instance_id(app),
         started_at: now.clone(),
+        harness_policy_hash: process.harness_policy_hash.clone(),
     };
     if let Err(error) = super::write_agent_runtime_receipt(app, &receipt) {
         let _ = terminate_process(process.child.id());

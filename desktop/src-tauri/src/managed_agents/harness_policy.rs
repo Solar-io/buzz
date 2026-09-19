@@ -456,6 +456,11 @@ impl HarnessPolicy {
         let mut profiles = BTreeMap::new();
         for profile_id in self.profiles.keys() {
             let profile_policy = &self.profiles[profile_id];
+            if !profile_policy.enabled {
+                return Err(format!(
+                    "harness profile '{profile_id}' is disabled by policy"
+                ));
+            }
             let mut routes = BTreeMap::new();
             let mut effective_routes = BTreeMap::new();
             let mut unsupported = Vec::new();
@@ -553,9 +558,7 @@ impl HarnessPolicy {
                     );
                 }
             }
-            let health = if !profile_policy.enabled {
-                HarnessPolicyHealth::Unavailable
-            } else if unsupported.is_empty() {
+            let health = if unsupported.is_empty() {
                 HarnessPolicyHealth::Healthy
             } else if profile_policy.adapter == HarnessPolicyAdapter::CodexRoleRunner
                 && !catalog.codex_role_runner_available
@@ -941,6 +944,32 @@ mod tests {
             policy.profile_for_harness(Some("not-registered"), Some("claude")),
             Some("claude".to_string())
         );
+    }
+
+    #[test]
+    fn disabled_profile_fails_closed_in_catalog_compile() {
+        let mut policy = default_harness_policy();
+        policy.profiles.get_mut("codex").unwrap().enabled = false;
+        let error = policy
+            .compile(&HarnessRuntimeCatalog::default(), None)
+            .unwrap_err();
+        assert!(error.contains("codex"));
+        assert!(error.contains("disabled"));
+    }
+
+    #[test]
+    fn disabled_profile_fails_closed_in_native_overlay_compile() {
+        let mut policy = default_harness_policy();
+        policy.profiles.get_mut("codex").unwrap().enabled = false;
+        let error = compile_native_overlay(
+            &policy,
+            &HarnessRuntimeCatalog::default(),
+            "codex",
+            None,
+        )
+        .unwrap_err();
+        assert!(error.contains("codex"));
+        assert!(error.contains("disabled"));
     }
 
     #[test]
