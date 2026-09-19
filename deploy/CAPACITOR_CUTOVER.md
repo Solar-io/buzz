@@ -122,11 +122,13 @@ explicit image and delivery URL.
 ```sh
 bash -n deploy/capacitor-common.sh deploy/push-gateway-up.sh deploy/deploy-capacitor.sh
 node --test deploy/tests/*.test.mjs
+shellcheck -x deploy/capacitor-common.sh deploy/push-gateway-up.sh deploy/deploy-capacitor.sh
 ```
 
 The fixture suite executes the real gateway script against isolated Docker/curl
 state-machine doubles. It verifies healthy retention, readiness/start/rename
-failure restoration, dry-run read-only behavior, secret-output exclusion,
+failure restoration, integrated relay failure restoring both applications,
+dry-run read-only behavior, secret-output exclusion,
 manifest checksum checks, and unrelated Compose-service protection. Those tests
 do not establish a live deployment, real APNs delivery, or database rollback.
 

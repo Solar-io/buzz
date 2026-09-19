@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Existing gateway replacement; default is read-only planning, never recreation.
 set -euo pipefail
+# shellcheck source=deploy/capacitor-common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/capacitor-common.sh"
 
 gateway::rollback() {
@@ -39,7 +40,7 @@ gateway::failure() {
 }
 
 gateway::main() {
-  local mode=legacy execute=0 rollback= image="${IMAGE:-}" manifest="" delivery="" topic="${CAPACITOR_APNS_TOPIC:-cloud.noet.buzz}"
+  local mode=legacy execute=0 rollback="" image="${IMAGE:-}" manifest="" delivery="" topic="${CAPACITOR_APNS_TOPIC:-cloud.noet.buzz}"
   local name="${GATEWAY_CONTAINER:-buzz-push-gateway}" state="" migrate_env=""
   while [[ $# -gt 0 ]]; do
     case "$1" in

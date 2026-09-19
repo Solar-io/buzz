@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Gateway then relay, with bounded service scope and automatic application rollback.
 set -euo pipefail
+# shellcheck source=deploy/capacitor-common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/capacitor-common.sh"
 
 cap::compose() {

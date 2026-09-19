@@ -4,7 +4,7 @@ CAP_COMMON_LIB="${DEPLOY_COMMON_LIB:-/Users/sgallant/software_development/projec
 [[ -r "$CAP_COMMON_LIB" ]] || { printf 'Missing deploy-common library: %s\n' "$CAP_COMMON_LIB" >&2; exit 1; }
 # shellcheck source=/dev/null
 source "$CAP_COMMON_LIB"
-DC_LOG_FILE="${CAP_DEPLOY_LOG:-$CAP_REPO_ROOT/logs/verification.log}"
+export DC_LOG_FILE="${CAP_DEPLOY_LOG:-$CAP_REPO_ROOT/logs/verification.log}"
 CAP_CONFIG="$CAP_REPO_ROOT/deploy/capacitor-config.mjs"
 CAP_REGISTRY="${PORT_REGISTRY:-/Users/sgallant/software_development/infra/port-registry.json}"
 CAP_STATE_ROOT="${CAP_DEPLOY_STATE_ROOT:-${HOME}/.evie/buzz/deployments}"
