@@ -37,7 +37,14 @@ public final class BuzzPushPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
     @objc func apnsToken(_ call: CAPPluginCall) { call.resolve(["token": Self.token as Any? ?? NSNull()]) }
-    @objc func isSupported(_ call: CAPPluginCall) { call.resolve(["supported": DCAppAttestService.shared.isSupported]) }
+    @objc func isSupported(_ call: CAPPluginCall) {
+        #if DEBUG
+        let profile = "buzz-capacitor-ios-sandbox"
+        #else
+        let profile = "buzz-capacitor-ios-production"
+        #endif
+        call.resolve(["supported": DCAppAttestService.shared.isSupported, "appProfile": profile])
+    }
     @objc func generateKey(_ call: CAPPluginCall) {
         DCAppAttestService.shared.generateKey { id, error in
             if let id { call.resolve(["keyId": id]) } else { call.reject(error?.localizedDescription ?? "App Attest key unavailable.") }

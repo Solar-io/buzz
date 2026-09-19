@@ -10,11 +10,13 @@ import { SnapshotPreviewProvider } from "@/features/agents/ui/SnapshotPreviewPro
 import { UpdatePrompt } from "@/shared/ui/UpdatePrompt";
 import { FileViewerProvider } from "@/shared/ui/FileViewerDialog";
 import { HuddleSessionProvider } from "@/features/huddle/HuddleSessionProvider";
+import { NativePushRuntime } from "@/shared/platform/NativePush";
 
 function AuthenticatedApp() {
   const { canSign } = useAuth();
   return (
     <RelaySessionProvider enabled={canSign}>
+      <NativePushRuntime />
       <ObserverProvider enabled={canSign}>
         {/* Snapshot review (Phase 3 §2.1): bridges timeline snapshot cards to
             the preview dialog's session/admin dependencies. One app-wide

@@ -22,7 +22,7 @@ export const BuzzIdentity = registerPlugin<{
 export interface NativePushPlugin {
   requestAuthorizationAndRegister(): Promise<{ granted: boolean }>;
   apnsToken(): Promise<{ token: string | null }>;
-  isSupported(): Promise<{ supported: boolean }>;
+  isSupported(): Promise<{ supported: boolean; appProfile?: string }>;
   generateKey(): Promise<{ keyId: string }>;
   attest(options: { keyId: string; clientDataHash: string }): Promise<{ attestation: string }>;
   assertKey(options: { keyId: string; clientDataHash: string }): Promise<{ assertion: string }>;
