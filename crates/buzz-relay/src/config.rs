@@ -317,6 +317,8 @@ pub struct Config {
     /// Exact HTTPS gateway endpoint used to submit client-authorized APNs delivery capabilities.
     /// Push lease support is disabled when unset.
     pub push_gateway_delivery_url: Option<url::Url>,
+    /// Opt-in profiles for a separately provisioned Capacitor application.
+    pub push_capacitor_enabled: bool,
     /// Hard timeout for one gateway delivery request.
     pub push_gateway_timeout: Duration,
 
@@ -1180,6 +1182,7 @@ impl Config {
             git_hook_hmac_secret,
             push_executor_key_id,
             push_gateway_delivery_url,
+            push_capacitor_enabled: parse_bool("BUZZ_PUSH_CAPACITOR_ENABLED", false)?,
             push_gateway_timeout,
             join_policy,
             admin,

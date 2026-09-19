@@ -493,19 +493,32 @@ pub async fn accept(
     let body = parse_plaintext(&plaintext, MAX_PLAINTEXT)?;
     let origin = canonical_origin(&state.config.relay_url, tenant.host())?;
     let author_hex = event.pubkey.to_hex();
+    let mut app_profiles = vec![
+        AppProfile {
+            id: "buzz-ios-production",
+            transport: "apns",
+        },
+        AppProfile {
+            id: "buzz-ios-sandbox",
+            transport: "apns",
+        },
+    ];
+    if state.config.push_capacitor_enabled {
+        app_profiles.extend([
+            AppProfile {
+                id: "buzz-capacitor-ios-production",
+                transport: "apns",
+            },
+            AppProfile {
+                id: "buzz-capacitor-ios-sandbox",
+                transport: "apns",
+            },
+        ]);
+    }
     let limits = LeaseLimits {
         expected_origin: &origin,
         author_hex: &author_hex,
-        app_profiles: &[
-            AppProfile {
-                id: "buzz-ios-production",
-                transport: "apns",
-            },
-            AppProfile {
-                id: "buzz-ios-sandbox",
-                transport: "apns",
-            },
-        ],
+        app_profiles: &app_profiles,
         supported_classes: &["silent", "default", "time_sensitive"],
         push_kinds: PUSH_KINDS,
         urgent_kinds: URGENT_KINDS,

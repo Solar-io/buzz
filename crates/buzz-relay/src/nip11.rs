@@ -304,19 +304,33 @@ pub(crate) async fn nip11_document(state: &crate::state::AppState, raw_host: &st
     } else {
         None
     };
-    if let Some(push) = push_descriptor(
+    if let Some(mut push) = push_descriptor(
         state.config.push_gateway_delivery_url.is_some(),
         &state.config.relay_url,
         &state.config.push_executor_key_id,
         &state.relay_keypair,
         tenant_host.as_deref(),
     ) {
+        add_capacitor_profiles(&mut push, state.config.push_capacitor_enabled);
         info.supported_extensions
             .get_or_insert_default()
             .push("nip-pl".to_string());
         info.push = Some(push);
     }
     info
+}
+
+fn add_capacitor_profiles(push: &mut serde_json::Value, enabled: bool) {
+    if !enabled {
+        return;
+    }
+    if let Some(profiles) = push["app_profiles"].as_array_mut() {
+        profiles.extend([
+            serde_json::json!({"id":"buzz-capacitor-ios-production","transport":"apns","payload_version":2}),
+            serde_json::json!({"id":"buzz-capacitor-ios-sandbox","transport":"apns","payload_version":2}),
+        ]);
+    }
+    push["wake_resolver"] = serde_json::json!("/api/push/wakes/{wake_id}");
 }
 
 /// Fetches the workspace icon for the community bound to `raw_host`, as the
@@ -392,6 +406,24 @@ const _RELAY_INFO_BUILD_STATIC_INPUT_FENCE: fn(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capacitor_profiles_are_explicitly_opt_in_and_leave_legacy_profiles_intact() {
+        let keys = nostr::Keys::generate();
+        let mut descriptor =
+            push_descriptor(true, "wss://relay", "key", &keys, Some("tenant.example")).unwrap();
+        add_capacitor_profiles(&mut descriptor, false);
+        assert_eq!(descriptor["app_profiles"].as_array().unwrap().len(), 2);
+        assert!(descriptor.get("wake_resolver").is_none());
+        add_capacitor_profiles(&mut descriptor, true);
+        assert_eq!(descriptor["app_profiles"].as_array().unwrap().len(), 4);
+        assert_eq!(descriptor["app_profiles"][0]["id"], "buzz-ios-production");
+        assert_eq!(
+            descriptor["app_profiles"][2]["id"],
+            "buzz-capacitor-ios-production"
+        );
+        assert_eq!(descriptor["app_profiles"][3]["payload_version"], 2);
+    }
 
     #[test]
     fn push_descriptor_is_gated_by_gateway_configuration_and_tenant_binding() {
