@@ -57,6 +57,17 @@ export async function applyScannedConnection(
   scanned: PairingServices,
   deps: ApplyScannedConnectionDeps,
 ): Promise<ApplyScannedConnectionResult> {
+  // Legacy bare nsec QR (all-empty scanned): no-op, don't validate or write
+  // This must be checked BEFORE merge and validate to avoid throwing on empty relay
+  const isAllEmpty =
+    !scanned.relayUrl &&
+    !scanned.sttUrl &&
+    !scanned.ttsUrl &&
+    !scanned.pushGatewayUrl;
+  if (isAllEmpty) {
+    return "applied";
+  }
+
   // Merge: keep current values for absent scanned params
   const merged: PairingServices = {
     relayUrl: scanned.relayUrl || current?.relayUrl || "",
@@ -67,16 +78,6 @@ export async function applyScannedConnection(
 
   // Validate BEFORE confirm and prepare — invalid input throws with zero side effects
   deps.validate(merged);
-
-  // Legacy bare nsec QR (all-empty scanned): no-op, don't write anything
-  const isAllEmpty =
-    !scanned.relayUrl &&
-    !scanned.sttUrl &&
-    !scanned.ttsUrl &&
-    !scanned.pushGatewayUrl;
-  if (isAllEmpty) {
-    return "applied";
-  }
 
   // If no current configuration, this is first-run: write without confirming
   if (!current) {

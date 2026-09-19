@@ -149,7 +149,16 @@ export function describeConnectionChanges(
   if (current.relayUrl !== scanned.relayUrl) {
     const currentHost = safeGetHost(current.relayUrl);
     const scannedHost = safeGetHost(scanned.relayUrl);
-    changes.push(`relay: ${currentHost} → ${scannedHost}`);
+    // If hosts are the same, show full URL to reveal trailing slash or path differences
+    const currentDisplay =
+      currentHost === scannedHost && currentHost !== "(none)"
+        ? current.relayUrl
+        : currentHost;
+    const scannedDisplay =
+      currentHost === scannedHost && scannedHost !== "(none)"
+        ? scanned.relayUrl
+        : scannedHost;
+    changes.push(`relay: ${currentDisplay} → ${scannedDisplay}`);
   }
 
   if (current.sttUrl !== scanned.sttUrl) {

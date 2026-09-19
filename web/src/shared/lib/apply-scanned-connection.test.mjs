@@ -600,3 +600,70 @@ test("describeConnectionChanges handles empty URLs safely", async () => {
   assert.match(changes.join("\n"), /agent speech/, "describes tts change");
   assert.match(changes.join("\n"), /push gateway/, "describes push change");
 });
+
+test("Bare nsec QR on fresh install (null current) does not throw (CRITICAL 2 first-run)", async () => {
+  const applyScannedConnection = await getApplyScannedConnection();
+  const mod = await import("../platform/config.ts");
+  const validateServices = mod.validateServices;
+
+  // Fresh install: no services stored yet
+  const current = null;
+
+  const scanned = {
+    relayUrl: "",
+    sttUrl: "",
+    ttsUrl: "",
+    pushGatewayUrl: "",
+  };
+
+  let writeCalled = false;
+
+  const deps = {
+    confirm: async () => true,
+    prepare: async () => {},
+    write: async () => {
+      writeCalled = true;
+    },
+    validate: validateServices,
+  };
+
+  // REQUIRED: must not throw even with null current and empty relay
+  const result = await applyScannedConnection(current, scanned, deps);
+
+  assert.equal(result, "applied", "returns 'applied' without throwing");
+  assert.equal(
+    writeCalled,
+    false,
+    "nothing written for all-empty services",
+  );
+});
+
+test("describeConnectionChanges shows full URL when hosts match but strings differ", async () => {
+  const mod = await import("./pairing-link.ts");
+  const describeConnectionChanges = mod.describeConnectionChanges;
+
+  const current = {
+    relayUrl: "wss://r.test:6351",
+    sttUrl: "",
+    ttsUrl: "",
+    pushGatewayUrl: "",
+  };
+
+  const merged = {
+    relayUrl: "wss://r.test:6351/", // trailing slash — same host, different string
+    sttUrl: "",
+    ttsUrl: "",
+    pushGatewayUrl: "",
+  };
+
+  const changes = describeConnectionChanges(current, merged);
+
+  // REQUIRED: must distinguish the two URLs (trailing slash visible)
+  assert.equal(changes.length, 1);
+  const relayChange = changes[0];
+  assert.match(
+    relayChange,
+    /wss:\/\/r\.test:6351\s*→\s*wss:\/\/r\.test:6351\//,
+    "shows full URLs when hosts match but strings differ",
+  );
+});
