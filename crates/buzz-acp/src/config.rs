@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use clap::ValueEnum;
 use nostr::Keys;
+use nostr::ToBech32;
 use thiserror::Error;
 use url::Url;
 use uuid::Uuid;
@@ -838,6 +839,65 @@ pub fn codex_network_env(agent_command: &str, relay_url: &str) -> Option<(String
     ))
 }
 
+/// Build the `CODEX_CONFIG` overlay that pins the agent's Buzz identity into
+/// every shell command Codex runs on its behalf.
+///
+/// Codex filters the environment of its shell tool through
+/// `shell_environment_policy`. An operator config with `inherit = "core"`
+/// keeps only HOME/PATH/USER-class variables, and even `inherit = "all"`
+/// drops any name containing `KEY`, `SECRET`, or `TOKEN` via the default
+/// exclude list — which catches `BUZZ_PRIVATE_KEY`. Either way the agent's
+/// `buzz messages send` exits 3 (`BUZZ_PRIVATE_KEY is required`) and its
+/// reply never reaches the channel (2026-09-19, twenty Codex agents on one
+/// operator config).
+///
+/// `shell_environment_policy.set` is applied *after* inherit filtering and
+/// the exclude list, so values placed there always reach the shell. This
+/// entry is deep-merged onto the network-access entry by
+/// `build_codex_config_env`, so it must be pushed after
+/// [`codex_network_env`] and only when that returned `Some`. It never
+/// touches the operator's `~/.codex/config.toml`: `CODEX_CONFIG` is an env
+/// var on the Codex child process only.
+///
+/// Returns `None` for non-Codex agents. `auth_tag` is included only when
+/// non-empty; the CLI treats an absent tag as "no owner attestation".
+pub fn codex_shell_identity_env(
+    agent_command: &str,
+    keys: &Keys,
+    relay_url: &str,
+    auth_tag: Option<&str>,
+) -> Option<(String, String)> {
+    match normalize_agent_command_identity(agent_command).as_str() {
+        "codex" | "codex-acp" => {}
+        _ => return None,
+    }
+
+    let nsec = match keys.secret_key().to_bech32() {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "codex shell identity: secret key bech32 encoding failed — skipping injection");
+            return None;
+        }
+    };
+
+    let mut set = serde_json::Map::new();
+    set.insert(
+        "BUZZ_RELAY_URL".into(),
+        serde_json::Value::String(relay_url.to_string()),
+    );
+    set.insert("BUZZ_PRIVATE_KEY".into(), serde_json::Value::String(nsec));
+    if let Some(tag) = auth_tag.map(str::trim).filter(|t| !t.is_empty()) {
+        set.insert(
+            "BUZZ_AUTH_TAG".into(),
+            serde_json::Value::String(tag.to_string()),
+        );
+    }
+
+    let value = serde_json::json!({ "shell_environment_policy": { "set": set } });
+    tracing::debug!("injecting CODEX_CONFIG shell_environment_policy.set for buzz identity");
+    Some(("CODEX_CONFIG".into(), value.to_string()))
+}
+
 pub fn normalize_agent_args(command: &str, agent_args: Vec<String>) -> Vec<String> {
     let normalized = agent_args
         .into_iter()
@@ -1129,6 +1189,19 @@ impl Config {
         let has_generated_codex_config =
             if let Some(network_env) = codex_network_env(&agent_command, &args.relay_url) {
                 persona_env_vars.push(network_env);
+                // Second generated entry: pin the Buzz identity into Codex's shell
+                // tool env so `buzz messages send` can sign regardless of the
+                // operator's `shell_environment_policy`. Deep-merged onto the
+                // network entry by `build_codex_config_env`.
+                let auth_tag = std::env::var("BUZZ_AUTH_TAG").ok();
+                if let Some(identity_env) = codex_shell_identity_env(
+                    &agent_command,
+                    &keys,
+                    &args.relay_url,
+                    auth_tag.as_deref(),
+                ) {
+                    persona_env_vars.push(identity_env);
+                }
                 true
             } else {
                 false
@@ -1855,6 +1928,134 @@ mod tests {
     fn codex_network_env_schemeless_string_returns_none() {
         // A bare string with no scheme fails Url::parse — graceful None return.
         assert!(codex_network_env("codex-acp", "not-a-url").is_none());
+    }
+
+    // --- codex_shell_identity_env tests ---
+
+    const IDENTITY_TEST_KEY_HEX: &str =
+        "0000000000000000000000000000000000000000000000000000000000000001";
+
+    fn identity_test_keys() -> Keys {
+        Keys::parse(IDENTITY_TEST_KEY_HEX).expect("test key parses")
+    }
+
+    #[test]
+    fn codex_shell_identity_env_pins_all_three_vars_under_set() {
+        let keys = identity_test_keys();
+        let (name, value) = codex_shell_identity_env(
+            "codex-acp",
+            &keys,
+            "wss://relay.example.com:6351",
+            Some("owner-attestation-tag"),
+        )
+        .expect("codex agent gets an identity overlay");
+        assert_eq!(name, "CODEX_CONFIG");
+        let v: serde_json::Value = serde_json::from_str(&value).expect("overlay is JSON");
+        let set = &v["shell_environment_policy"]["set"];
+        assert_eq!(set["BUZZ_RELAY_URL"], "wss://relay.example.com:6351");
+        assert_eq!(set["BUZZ_AUTH_TAG"], "owner-attestation-tag");
+        // Pinned to the nostr crate's encoding, not to the code under test.
+        let expected_nsec = keys.secret_key().to_bech32().expect("bech32");
+        assert!(
+            expected_nsec.starts_with("nsec1"),
+            "sanity: {expected_nsec}"
+        );
+        assert_eq!(set["BUZZ_PRIVATE_KEY"], expected_nsec.as_str());
+        // The overlay carries ONLY the policy block — it must not restate the
+        // sandbox entry, which is a separate generated CODEX_CONFIG value.
+        assert!(v.get("sandbox_workspace_write").is_none());
+    }
+
+    #[test]
+    fn codex_shell_identity_env_omits_empty_auth_tag() {
+        let keys = identity_test_keys();
+        for tag in [None, Some(""), Some("   ")] {
+            let (_, value) =
+                codex_shell_identity_env("codex", &keys, "ws://localhost:3000", tag).unwrap();
+            let v: serde_json::Value = serde_json::from_str(&value).unwrap();
+            let set = v["shell_environment_policy"]["set"]
+                .as_object()
+                .expect("set is an object");
+            assert!(
+                !set.contains_key("BUZZ_AUTH_TAG"),
+                "tag {tag:?} must not be injected"
+            );
+            assert_eq!(set.len(), 2, "exactly relay + key for tag {tag:?}");
+        }
+    }
+
+    #[test]
+    fn codex_shell_identity_env_non_codex_agent_returns_none() {
+        let keys = identity_test_keys();
+        for cmd in ["goose", "claude-agent-acp", "hermes", "bash"] {
+            assert!(
+                codex_shell_identity_env(cmd, &keys, "ws://localhost:3000", None).is_none(),
+                "{cmd} must not receive a Codex overlay"
+            );
+        }
+    }
+
+    #[test]
+    fn from_args_codex_agent_gets_network_and_identity_codex_config_entries() {
+        let args = CliArgs::try_parse_from([
+            "buzz-acp",
+            "--private-key",
+            IDENTITY_TEST_KEY_HEX,
+            "--relay-url",
+            "wss://relay.example.com:6351",
+            "--agent-command",
+            "codex-acp",
+        ])
+        .expect("clap parses");
+        let config = Config::from_args(args).expect("config builds");
+        assert!(config.has_generated_codex_config);
+        let entries: Vec<&str> = config
+            .persona_env_vars
+            .iter()
+            .filter(|(k, _)| k == "CODEX_CONFIG")
+            .map(|(_, v)| v.as_str())
+            .collect();
+        assert_eq!(
+            entries.len(),
+            2,
+            "network entry + identity entry, got {entries:?}"
+        );
+        assert_eq!(
+            entries[0], CODEX_CONFIG_JSON,
+            "network entry must come first"
+        );
+        let identity: serde_json::Value = serde_json::from_str(entries[1]).unwrap();
+        assert_eq!(
+            identity["shell_environment_policy"]["set"]["BUZZ_RELAY_URL"],
+            "wss://relay.example.com:6351"
+        );
+        assert!(
+            identity["shell_environment_policy"]["set"]["BUZZ_PRIVATE_KEY"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("nsec1"))
+        );
+    }
+
+    #[test]
+    fn from_args_non_codex_agent_gets_no_codex_config_entries() {
+        let args = CliArgs::try_parse_from([
+            "buzz-acp",
+            "--private-key",
+            IDENTITY_TEST_KEY_HEX,
+            "--agent-command",
+            "goose",
+        ])
+        .expect("clap parses");
+        let config = Config::from_args(args).expect("config builds");
+        assert!(!config.has_generated_codex_config);
+        assert!(
+            !config
+                .persona_env_vars
+                .iter()
+                .any(|(k, _)| k == "CODEX_CONFIG"),
+            "goose must not carry a CODEX_CONFIG: {:?}",
+            config.persona_env_vars
+        );
     }
 
     #[test]

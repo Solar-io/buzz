@@ -6059,6 +6059,47 @@ done
     }
 
     #[test]
+    fn build_codex_config_env_merges_identity_entry_alongside_network_access() {
+        // The real spawn shape: generated network entry followed by the generated
+        // identity entry (config.rs pushes both). Both must survive the merge and
+        // the identity values must land under shell_environment_policy.set, which
+        // Codex applies after inherit filtering and its default KEY/SECRET/TOKEN
+        // exclude list.
+        let identity = r#"{"shell_environment_policy":{"set":{"BUZZ_RELAY_URL":"wss://relay.example.com:6351","BUZZ_PRIVATE_KEY":"nsec1testvalue","BUZZ_AUTH_TAG":"tag"}}}"#;
+        let extra = env(&[("CODEX_CONFIG", GENERATED), ("CODEX_CONFIG", identity)]);
+        let merged = build_codex_config_env(&extra, None, true).unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_str(&merged).unwrap();
+        assert_eq!(v["sandbox_workspace_write"]["network_access"], true);
+        let set = &v["shell_environment_policy"]["set"];
+        assert_eq!(set["BUZZ_RELAY_URL"], "wss://relay.example.com:6351");
+        assert_eq!(set["BUZZ_PRIVATE_KEY"], "nsec1testvalue");
+        assert_eq!(set["BUZZ_AUTH_TAG"], "tag");
+    }
+
+    #[test]
+    fn build_codex_config_env_persona_shell_policy_keys_survive_identity_merge() {
+        // An operator/persona policy (e.g. inherit = "core" plus its own PATH) keeps
+        // its keys; the identity overlay only adds the three Buzz names.
+        let persona =
+            r#"{"shell_environment_policy":{"inherit":"core","set":{"PATH":"/custom/bin"}}}"#;
+        let identity = r#"{"shell_environment_policy":{"set":{"BUZZ_RELAY_URL":"ws://localhost:3000","BUZZ_PRIVATE_KEY":"nsec1testvalue"}}}"#;
+        let extra = env(&[
+            ("CODEX_CONFIG", persona),
+            ("CODEX_CONFIG", GENERATED),
+            ("CODEX_CONFIG", identity),
+        ]);
+        let merged = build_codex_config_env(&extra, None, true).unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_str(&merged).unwrap();
+        assert_eq!(v["shell_environment_policy"]["inherit"], "core");
+        assert_eq!(v["shell_environment_policy"]["set"]["PATH"], "/custom/bin");
+        assert_eq!(
+            v["shell_environment_policy"]["set"]["BUZZ_PRIVATE_KEY"],
+            "nsec1testvalue"
+        );
+        assert_eq!(v["sandbox_workspace_write"]["network_access"], true);
+    }
+
+    #[test]
     fn build_codex_config_env_persona_keys_survive_merge() {
         // Persona has CODEX_CONFIG with unrelated keys; generated overlay must
         // force network_access=true without erasing persona keys.
