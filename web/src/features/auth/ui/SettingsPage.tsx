@@ -37,6 +37,8 @@ import { VoiceSettingsCard } from "@/features/voice/ui/VoiceSettingsCard.tsx";
 import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
 
 import { AppearanceSection } from "./AppearanceSection";
+import { isNativeIOS } from "@/shared/platform/native";
+import { NativePushSettings } from "@/shared/platform/NativePush";
 import {
   DeviceSection,
   ForgetDeviceSection,
@@ -79,7 +81,7 @@ export function SettingsPage() {
       <ProfileSection onOpen={() => setProfileOpen(true)} />
       <PresenceSettingsCard />
       <VoiceSettingsCard selfPubkey={self} />
-      <NotificationsSection />
+      {isNativeIOS() ? <NativePushSettings /> : <NotificationsSection />}
       <AppearanceSection />
       <KeyboardShortcutsCard />
 
@@ -88,7 +90,7 @@ export function SettingsPage() {
       <CustomEmojiSettingsCard />
       <InvitesCard />
       <IdentityArchiveCard />
-      <AgentsSection />
+      {!isNativeIOS() && <AgentsSection />}
       {templatesEnabled ? <ChannelTemplatesSettingsCard /> : null}
 
       <SectionHeading>Data</SectionHeading>
@@ -96,9 +98,7 @@ export function SettingsPage() {
       <FilesUrlSection />
 
       <SectionHeading>Identity and this device</SectionHeading>
-      <KeyBackupCard />
-      <DeviceSection />
-      <PairDeviceSection />
+      {isNativeIOS() ? <p className="rounded-lg border border-border p-4 text-sm">Your identity is held in iOS Keychain. Native signing never exports the key to web content. Keep your original pairing device or encrypted backup to enroll another device.</p> : <><KeyBackupCard /><DeviceSection /><PairDeviceSection /></>}
       <ForgetDeviceSection />
 
       <SectionHeading>Advanced</SectionHeading>

@@ -91,6 +91,7 @@ export function MessageActionBar({
   const { openReminder } = useRemindMeLater();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [touchExpanded, setTouchExpanded] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const disarmTimer = useRef<number | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -159,6 +160,8 @@ export function MessageActionBar({
   const canDelete = Boolean(canModify && onDelete);
 
   return (
+    <>
+    <button type="button" aria-label={touchExpanded ? "Hide message actions" : "Show message actions"} aria-expanded={touchExpanded} className="buzz-touch-message-trigger" onClick={() => setTouchExpanded((open) => !open)}><EllipsisVertical aria-hidden className="size-4" /></button>
     <div
       ref={barRef}
       // A toolbar is what this is: a labelled group of controls acting on one
@@ -190,7 +193,7 @@ export function MessageActionBar({
         setPickerOpen(false);
       }}
       className={cn(
-        "absolute right-2 top-1 z-10 -translate-y-1/2",
+        "buzz-message-actions absolute right-2 top-1 z-10 -translate-y-1/2",
         "flex items-center gap-0.5 rounded-full border border-border/70 p-1",
         "bg-background/95 shadow-xs backdrop-blur-sm supports-[backdrop-filter]:bg-background/85",
         "transition-opacity duration-150 ease-out",
@@ -200,7 +203,7 @@ export function MessageActionBar({
         // interaction. (The overflow menu portals out of this element, so
         // without `menuOpen` the pointer leaving the row would fade the bar —
         // and with it the trigger the open menu is anchored to.)
-        pickerOpen || menuOpen || confirmingDelete
+        pickerOpen || menuOpen || confirmingDelete || touchExpanded
           ? "pointer-events-auto opacity-100"
           : cn(
               "pointer-events-none opacity-0",
@@ -379,5 +382,6 @@ export function MessageActionBar({
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
+    </>
   );
 }

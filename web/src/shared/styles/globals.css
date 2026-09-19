@@ -700,3 +700,12 @@
     --tw-exit-translate-y: 0;
   }
 }
+
+.buzz-touch-message-trigger { display: none; }
+@media (hover: none) and (pointer: coarse) {
+  [data-testid^="message-row-"] { padding-bottom: 2.75rem; }
+  .buzz-touch-message-trigger { display: flex; position: absolute; left: 2.75rem; bottom: 0; align-items: center; justify-content: center; width: 2.5rem; height: 2.5rem; border-radius: 999px; }
+  .buzz-message-actions { top: auto; bottom: 0; transform: none; }
+  [aria-label^="Options for "] { display: block; }
+  [aria-label^="React "] { display: inline-flex; opacity: 1; min-height: 2rem; min-width: 2rem; }
+}

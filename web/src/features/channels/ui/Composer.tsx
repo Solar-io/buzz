@@ -778,6 +778,7 @@ export function Composer({
       return;
     }
     if (event.key === "Enter" && !event.shiftKey) {
+      if (window.matchMedia("(pointer: coarse)").matches) return;
       event.preventDefault();
       void submit();
     }
