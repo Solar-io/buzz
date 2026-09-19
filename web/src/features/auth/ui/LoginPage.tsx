@@ -21,6 +21,7 @@ import { applyScannedConnection } from "@/shared/lib/apply-scanned-connection";
 import {
   readNativeServices,
   writeNativeServices,
+  validateServices,
 } from "@/shared/platform/config";
 import { nsecEncode } from "nostr-tools/nip19";
 import { decryptNcryptsec } from "@/features/onboarding/keyBackup";
@@ -119,10 +120,30 @@ export function LoginPage() {
           void applyScannedConnection(current, services, {
             classify: classifyScannedConnection,
             confirm: async (current, scanned) => {
-              // User confirmation for community change
-              return window.confirm(
-                `Switch from ${new URL(current.relayUrl).host} to ${new URL(scanned.relayUrl).host}? This leaves any active call and disables push.`,
-              );
+              // Show what's changing: each field that differs
+              const changes: string[] = [];
+              if (new URL(current.relayUrl).host !== new URL(scanned.relayUrl).host) {
+                changes.push(
+                  `relay: ${new URL(current.relayUrl).host} → ${new URL(scanned.relayUrl).host}`,
+                );
+              }
+              if (current.sttUrl !== scanned.sttUrl) {
+                changes.push(
+                  `speech recognition: ${new URL(current.sttUrl || "").host || "(none)"} → ${new URL(scanned.sttUrl || "").host || "(none)"}`,
+                );
+              }
+              if (current.ttsUrl !== scanned.ttsUrl) {
+                changes.push(
+                  `agent speech: ${new URL(current.ttsUrl || "").host || "(none)"} → ${new URL(scanned.ttsUrl || "").host || "(none)"}`,
+                );
+              }
+              if (current.pushGatewayUrl !== scanned.pushGatewayUrl) {
+                changes.push(
+                  `push gateway: ${new URL(current.pushGatewayUrl || "").host || "(none)"} → ${new URL(scanned.pushGatewayUrl || "").host || "(none)"}`,
+                );
+              }
+              const message = `Update connection?\n\n${changes.join("\n")}${current.relayUrl !== scanned.relayUrl ? "\n\nThis leaves any active call and disables push." : ""}`;
+              return window.confirm(message);
             },
             prepare: async () => {
               // Run the native side effect (leave calls, revoke push)
@@ -131,9 +152,13 @@ export function LoginPage() {
             write: async (services) => {
               writeNativeServices(services);
             },
+            validate: validateServices,
           })
-            .then(() => {
-              void enrollFromQr(parsed);
+            .then((result) => {
+              // Only enroll if the connection was actually applied
+              if (result === "applied") {
+                void enrollFromQr(parsed);
+              }
             })
             .catch((error) => {
               toast.error(

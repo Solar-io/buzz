@@ -9,6 +9,7 @@ import {
 import {
   readNativeServices,
   writeNativeServices,
+  validateServices,
   type NativeServices,
 } from "./config";
 import { QrScanner } from "@/features/auth/ui/QrScanner";
@@ -131,9 +132,25 @@ export function NativeSetup({ children }: { children: ReactNode }) {
                   void applyScannedConnection(current, scanned, {
                     classify: classifyScannedConnection,
                     confirm: async (current, scanned) => {
-                      return window.confirm(
-                        `Switch from ${new URL(current.relayUrl).host} to ${new URL(scanned.relayUrl).host}?`,
-                      );
+                      const changes: string[] = [];
+                      if (new URL(current.relayUrl).host !== new URL(scanned.relayUrl).host) {
+                        changes.push(
+                          `relay: ${new URL(current.relayUrl).host} → ${new URL(scanned.relayUrl).host}`,
+                        );
+                      }
+                      if (current.sttUrl !== scanned.sttUrl) {
+                        changes.push("speech recognition");
+                      }
+                      if (current.ttsUrl !== scanned.ttsUrl) {
+                        changes.push("agent speech");
+                      }
+                      if (current.pushGatewayUrl !== scanned.pushGatewayUrl) {
+                        changes.push("push gateway");
+                      }
+                      const message = changes.length > 0
+                        ? `Update connection?\n\n${changes.join("\n")}${current.relayUrl !== scanned.relayUrl ? "\n\nThis leaves any active call and disables push." : ""}`
+                        : "No changes detected in this QR code.";
+                      return window.confirm(message);
                     },
                     prepare: async () => {
                       await prepareNativeCommunityChange();
@@ -142,10 +159,13 @@ export function NativeSetup({ children }: { children: ReactNode }) {
                       writeNativeServices(services);
                       setServices(services);
                     },
+                    validate: validateServices,
                   })
-                    .then(() => {
-                      setScanning(false);
-                      toast.success("Connection updated from QR");
+                    .then((result) => {
+                      if (result === "applied") {
+                        setScanning(false);
+                        toast.success("Connection updated from QR");
+                      }
                     })
                     .catch((error) => {
                       toast.error(

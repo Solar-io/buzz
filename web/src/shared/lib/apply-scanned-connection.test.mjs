@@ -41,9 +41,11 @@ test("T7a: applyScannedConnection on first-run writes, no confirm/prepare", asyn
     write: async () => {
       writeCallCount++;
     },
+    validate: (services) => services,
   };
 
-  await applyScannedConnection(null, scanned, deps);
+  const result = await applyScannedConnection(null, scanned, deps);
+  assert.equal(result, "applied");
 
   assert.equal(writeCallCount, 1);
   assert.equal(confirmCallCount, 0);
@@ -84,9 +86,11 @@ test("T7b: applyScannedConnection on same-community writes, no confirm/prepare",
     write: async () => {
       writeCallCount++;
     },
+    validate: (services) => services,
   };
 
-  await applyScannedConnection(current, scanned, deps);
+  const result = await applyScannedConnection(current, scanned, deps);
+  assert.equal(result, "applied");
 
   assert.equal(writeCallCount, 1);
   assert.equal(confirmCallCount, 0);
@@ -125,9 +129,11 @@ test("T7c: applyScannedConnection on community-change: confirm → prepare → w
     write: async () => {
       callOrder.push("write");
     },
+    validate: (services) => services,
   };
 
-  await applyScannedConnection(current, scanned, deps);
+  const result = await applyScannedConnection(current, scanned, deps);
+  assert.equal(result, "applied");
 
   // Correct order: confirm, then prepare, then write
   assert.deepEqual(callOrder, ["confirm", "prepare", "write"]);
@@ -166,10 +172,12 @@ test("T7d: applyScannedConnection: user cancellation writes nothing", async () =
     write: async () => {
       writeCallCount++;
     },
+    validate: (services) => services,
   };
 
-  // Should return silently without throwing
-  await applyScannedConnection(current, scanned, deps);
+  // Should return "cancelled" without throwing
+  const result = await applyScannedConnection(current, scanned, deps);
+  assert.equal(result, "cancelled");
 
   // Nothing should be persisted
   assert.equal(writeCallCount, 0);
@@ -205,6 +213,7 @@ test("T7e: applyScannedConnection: prepare failure does not write", async () => 
     write: async () => {
       writeCallCount++;
     },
+    validate: (services) => services,
   };
 
   try {

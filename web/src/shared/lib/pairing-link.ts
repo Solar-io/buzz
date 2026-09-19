@@ -59,13 +59,33 @@ export function buildPairingLink(
 /**
  * Parse service URLs from a QR pairing link fragment.
  * Returns the extracted services; validation is the caller's responsibility.
+ *
+ * Requires the link to be https: protocol for the relay to be derivable.
+ * Rejects http: and other protocols (not transferable).
+ *
+ * Legacy nsec-only QR codes (bare nsec1... without a link) return empty
+ * services — the relay must be hand-configured.
  */
 export function parsePairingServices(link: string): PairingServices {
   let url: URL;
   try {
     url = new URL(link);
   } catch {
-    throw new Error("Invalid QR link URL");
+    // Legacy nsec-only QR: link is not a valid URL; return empty services
+    // The caller will handle enrolling the key separately.
+    return {
+      relayUrl: "",
+      sttUrl: "",
+      ttsUrl: "",
+      pushGatewayUrl: "",
+    };
+  }
+
+  // Reject non-https links (not transferable to another device)
+  if (url.protocol !== "https:") {
+    throw new Error(
+      `Cannot derive relay address from non-https protocol: ${url.protocol}. The pairing QR must originate from an https:// origin.`,
+    );
   }
 
   const hashParams = new URLSearchParams(url.hash.replace(/^#/, ""));

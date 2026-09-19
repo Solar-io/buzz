@@ -19,6 +19,8 @@ import type {
   PairingServices,
 } from "./pairing-link.ts";
 
+export type ApplyScannedConnectionResult = "applied" | "cancelled";
+
 export interface ApplyScannedConnectionDeps {
   classify: (
     current: PairingServices | null,
@@ -33,38 +35,54 @@ export interface ApplyScannedConnectionDeps {
     scanned: PairingServices,
   ) => Promise<void>;
   write: (services: PairingServices) => Promise<void>;
+  validate: (services: PairingServices) => PairingServices;
 }
 
 /**
  * Apply a scanned connection with dependency injection.
  *
- * On community-change: calls confirm first. If user cancels (false), returns silently
- * with nothing written. Otherwise runs prepare, then write.
+ * Validates the merged result BEFORE confirm and prepare — invalid input
+ * throws immediately with zero side effects.
  *
- * On same-community or first-run: writes immediately (no confirm, no prepare).
+ * On community-change: calls confirm. If user cancels (false), returns "cancelled"
+ * with nothing written. Otherwise runs prepare, then write, returning "applied".
+ *
+ * On same-community or first-run: merges and writes, returning "applied".
  */
 export async function applyScannedConnection(
   current: PairingServices | null,
   scanned: PairingServices,
   deps: ApplyScannedConnectionDeps,
-): Promise<void> {
+): Promise<ApplyScannedConnectionResult> {
   // Classify the connection type
   const classification = deps.classify(current, scanned);
 
-  // On community-change, confirm first
+  // Merge: keep current values for absent scanned params
+  const merged: PairingServices = {
+    relayUrl: scanned.relayUrl,
+    sttUrl: scanned.sttUrl || current?.sttUrl || "",
+    ttsUrl: scanned.ttsUrl || current?.ttsUrl || "",
+    pushGatewayUrl: scanned.pushGatewayUrl || current?.pushGatewayUrl || "",
+  };
+
+  // Validate BEFORE confirm and prepare — invalid input throws with zero side effects
+  deps.validate(merged);
+
+  // On community-change, confirm first (after the merge is ready to inspect)
   if (classification === "community-change" && current) {
-    const userConfirmed = await deps.confirm(current, scanned);
+    const userConfirmed = await deps.confirm(current, merged);
     if (!userConfirmed) {
       // User cancelled — nothing written, no error thrown
-      return;
+      return "cancelled";
     }
 
     // User confirmed — run the side effect, then write
-    await deps.prepare(current, scanned);
-    await deps.write(scanned);
-    return;
+    await deps.prepare(current, merged);
+    await deps.write(merged);
+    return "applied";
   }
 
   // Same-community and first-run: write only
-  await deps.write(scanned);
+  await deps.write(merged);
+  return "applied";
 }

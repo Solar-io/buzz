@@ -2,7 +2,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/features/auth/ui/AuthProvider";
 import { prepareNativeCommunityChange } from "@/shared/lib/key-store";
-import { readNativeServices, writeNativeServices } from "./config";
+import { readNativeServices, writeNativeServices, validateServices } from "./config";
 import { relayWsUrl } from "@/shared/lib/relay-url";
 import { QrScanner } from "@/features/auth/ui/QrScanner";
 import {
@@ -50,7 +50,13 @@ export function NativeDeviceSettings() {
           <div className="flex justify-between gap-4">
             <dt className="text-muted-foreground">Speech recognition</dt>
             <dd className="truncate font-mono text-xs" title={services.sttUrl}>
-              {new URL(services.sttUrl).host}
+              {(() => {
+                try {
+                  return new URL(services.sttUrl).host;
+                } catch {
+                  return "(invalid URL)";
+                }
+              })()}
             </dd>
           </div>
         )}
@@ -58,7 +64,13 @@ export function NativeDeviceSettings() {
           <div className="flex justify-between gap-4">
             <dt className="text-muted-foreground">Agent speech</dt>
             <dd className="truncate font-mono text-xs" title={services.ttsUrl}>
-              {new URL(services.ttsUrl).host}
+              {(() => {
+                try {
+                  return new URL(services.ttsUrl).host;
+                } catch {
+                  return "(invalid URL)";
+                }
+              })()}
             </dd>
           </div>
         )}
@@ -77,9 +89,24 @@ export function NativeDeviceSettings() {
                 void applyScannedConnection(services, scanned, {
                   classify: classifyScannedConnection,
                   confirm: async (current, scanned) => {
-                    return window.confirm(
-                      `Switch from ${new URL(current.relayUrl).host} to ${new URL(scanned.relayUrl).host}?`,
-                    );
+                    // Show what's changing
+                    const changes: string[] = [];
+                    if (new URL(current.relayUrl).host !== new URL(scanned.relayUrl).host) {
+                      changes.push(
+                        `relay: ${new URL(current.relayUrl).host} → ${new URL(scanned.relayUrl).host}`,
+                      );
+                    }
+                    if (current.sttUrl !== scanned.sttUrl) {
+                      changes.push("speech recognition");
+                    }
+                    if (current.ttsUrl !== scanned.ttsUrl) {
+                      changes.push("agent speech");
+                    }
+                    if (current.pushGatewayUrl !== scanned.pushGatewayUrl) {
+                      changes.push("push gateway");
+                    }
+                    const message = `Update connection?\n\n${changes.join("\n")}${current.relayUrl !== scanned.relayUrl ? "\n\nThis leaves any active call and disables push." : ""}`;
+                    return window.confirm(message);
                   },
                   prepare: async () => {
                     await prepareNativeCommunityChange();
@@ -88,8 +115,12 @@ export function NativeDeviceSettings() {
                     writeNativeServices(newServices);
                     setServices(newServices);
                     setScanning(false);
-                    toast.success("Connection updated from QR");
                   },
+                  validate: validateServices,
+                }).then((result) => {
+                  if (result === "applied") {
+                    toast.success("Connection updated from QR");
+                  }
                 }).catch((error) => {
                   toast.error(
                     error instanceof Error
@@ -97,8 +128,12 @@ export function NativeDeviceSettings() {
                       : "Could not apply QR connection",
                   );
                 });
-              } catch {
-                toast.error("Could not parse QR code");
+              } catch (error) {
+                toast.error(
+                  error instanceof Error
+                    ? error.message
+                    : "Could not parse QR code",
+                );
               }
             }}
             onError={(m) => toast.error(m)}
