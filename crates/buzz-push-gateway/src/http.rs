@@ -1,4 +1,7 @@
 //! Stateful installation, delegation, delivery, and health APIs.
+#[cfg(test)]
+#[path = "http_cutover_tests.rs"]
+mod cutover_tests;
 use crate::{
     apns::{DeliveryAttempt, DeliveryOutcome, PushTransport},
     app_attest::AppAttestVerifier,
@@ -650,7 +653,7 @@ async fn deliver(State(s): State<AppState>, headers: HeaderMap, body: Bytes) -> 
         Err(_) => return error(StatusCode::NOT_FOUND, "invalid_grant"),
     };
     if !s.enabled_profiles.contains(&grant.app_profile) {
-        return error(StatusCode::FORBIDDEN, "profile_disabled");
+        return error(StatusCode::NOT_FOUND, "invalid_grant");
     }
     let now = (s.now)();
     if grant.v != WIRE_VERSION
