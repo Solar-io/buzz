@@ -110,6 +110,8 @@ Real-time voice runs over a WebSocket Opus relay built into `buzz-relay`. Buzz a
 
 Voice, room lifecycle, and lifecycle events are wired. Recording and per-track publishing are planned.
 
+On the web, voice calls start with one action from a one-to-one agent DM. The call stays attached to that conversation and automatically connects its agent; private temporary rooms handle transport without a channel picker or separate join step. Channel and group-DM huddle creation is not exposed in the web interface.
+
 ---
 
 ## Buzz Mesh
