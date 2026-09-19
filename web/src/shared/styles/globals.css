@@ -17,14 +17,14 @@
 :root[data-custom-gradient="true"] .buzz-app-shell {
   background: linear-gradient(
     90deg,
-    var(--custom-gradient-light) 0%,
+    var(--custom-gradient-color-1) 0%,
     var(--custom-gradient-mix) var(--custom-gradient-midpoint),
-    var(--custom-gradient-dark) 100%
+    var(--custom-gradient-color-2) 100%
   );
 }
 
 :root[data-custom-gradient="true"] .buzz-shell-navigation {
-  --sidebar-background: var(--custom-gradient-pane-hsl);
+  --sidebar-background: var(--custom-gradient-content-hsl);
   --sidebar-foreground: var(--custom-gradient-nav-foreground-hsl);
   --sidebar-border: var(--custom-gradient-border-hsl);
   --sidebar-accent: var(--custom-gradient-accent-hsl);
@@ -38,24 +38,23 @@
   backdrop-filter: blur(24px) saturate(135%);
 }
 
-:root[data-custom-gradient="true"] .buzz-conversation-pane,
-:root[data-custom-gradient="true"] [data-thinking-pane] {
-  --background: var(--custom-gradient-pane-hsl);
+:root[data-custom-gradient="true"] [data-custom-content-pane] {
+  --background: var(--custom-gradient-content-hsl);
   --card: var(--custom-gradient-card-hsl);
-  --card-foreground: var(--custom-gradient-pane-foreground-hsl);
+  --card-foreground: var(--custom-gradient-content-foreground-hsl);
   --popover: var(--custom-gradient-popover-hsl);
-  --popover-foreground: var(--custom-gradient-pane-foreground-hsl);
+  --popover-foreground: var(--custom-gradient-content-foreground-hsl);
   --secondary: var(--custom-gradient-secondary-hsl);
-  --secondary-foreground: var(--custom-gradient-pane-foreground-hsl);
+  --secondary-foreground: var(--custom-gradient-content-foreground-hsl);
   --muted: var(--custom-gradient-muted-hsl);
   --muted-foreground: var(--custom-gradient-muted-foreground-hsl);
   --accent: var(--custom-gradient-accent-hsl);
-  --accent-foreground: var(--custom-gradient-pane-foreground-hsl);
-  --foreground: var(--custom-gradient-pane-foreground-hsl);
+  --accent-foreground: var(--custom-gradient-content-foreground-hsl);
+  --foreground: var(--custom-gradient-content-foreground-hsl);
   --border: var(--custom-gradient-border-hsl);
   --input: var(--custom-gradient-input-hsl);
-  color: var(--custom-gradient-pane-foreground);
-  background: var(--custom-gradient-pane);
+  color: var(--custom-gradient-content-foreground);
+  background: var(--custom-gradient-content);
 }
 
 @media (min-width: 1024px) {
@@ -69,23 +68,22 @@
     margin-left: 0;
   }
 
-  :root[data-custom-gradient="true"] .buzz-conversation-pane,
-  :root[data-custom-gradient="true"] [data-thinking-pane] {
+  :root[data-custom-gradient="true"] [data-custom-content-pane] {
     overflow: hidden;
     border: 1px solid hsl(var(--custom-gradient-border-hsl) / 0.75);
     border-radius: 0.75rem;
     box-shadow:
-      0 1px 2px hsl(var(--custom-gradient-pane-foreground-hsl) / 0.08),
-      0 8px 24px hsl(var(--custom-gradient-pane-foreground-hsl) / 0.06);
+      0 1px 2px hsl(var(--custom-gradient-content-foreground-hsl) / 0.08),
+      0 8px 24px hsl(var(--custom-gradient-content-foreground-hsl) / 0.06);
   }
 }
 
 .custom-gradient-preview {
   background: linear-gradient(
     90deg,
-    var(--preview-light) 0%,
+    var(--preview-color-1) 0%,
     var(--preview-mix) var(--preview-midpoint),
-    var(--preview-dark) 100%
+    var(--preview-color-2) 100%
   );
 }
 

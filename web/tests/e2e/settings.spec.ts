@@ -2,6 +2,7 @@ import { expect, type Page, test } from "@playwright/test";
 import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
 import { encrypt as nip49Encrypt } from "nostr-tools/nip49";
 import { npubEncode, nsecEncode } from "nostr-tools/nip19";
+import { readFileSync } from "node:fs";
 
 /**
  * The settings surface, driven through the real sign-in flow.
@@ -446,40 +447,97 @@ test("Custom Gradient is one picker choice with live, persistent variables and c
     0,
   );
   await picker.selectOption("custom-gradient");
+  const editor = page.getByRole("group", { name: "Custom Gradient" });
+  await expect(editor.locator('input[type="color"]')).toHaveCount(4);
+  await expect(editor.locator('input[type="range"]')).toHaveCount(1);
 
   const root = page.locator("html");
   await expect(root).toHaveAttribute("data-custom-gradient", "true");
-  await page.getByLabel("Custom gradient light color").fill("#f1e2d3");
-  await page.getByLabel("Custom gradient dark color").fill("#102030");
+  await page.getByLabel("Gradient color 1").fill("#f1e2d3");
+  await page.getByLabel("Gradient color 2").fill("#102030");
+  await page.getByLabel("Light content color").fill("#fffefe");
+  await page.getByLabel("Dark content color").fill("#121212");
   await page.locator("#gradient-midpoint").fill("73");
   await expect(page.locator("#gradient-midpoint")).toHaveAttribute(
     "aria-valuetext",
     "73 percent",
   );
-  await expect(root).toHaveCSS("--custom-gradient-light", "#f1e2d3");
-  await expect(root).toHaveCSS("--custom-gradient-dark", "#102030");
+  await expect(root).toHaveCSS("--custom-gradient-color-1", "#f1e2d3");
+  await expect(root).toHaveCSS("--custom-gradient-color-2", "#102030");
   await expect(root).toHaveCSS("--custom-gradient-midpoint", "73%");
+  const metaColors = await page
+    .locator('meta[name="theme-color"]')
+    .evaluateAll((metas) => metas.map((meta) => meta.getAttribute("content")));
+  expect(metaColors).toContain("#fffefe");
+  expect(metaColors).toContain("#121212");
+  expect(metaColors).not.toContain("#f1e2d3");
+  expect(metaColors).not.toContain("#102030");
 
   await page.reload();
   await expect(picker).toHaveValue("custom-gradient");
   await expect(root).toHaveAttribute("data-custom-gradient", "true");
   await expect(page.locator("#gradient-midpoint")).toHaveValue("73");
+  if (process.env.CAPTURE_CUSTOM_GRADIENT === "1") {
+    await page
+      .getByRole("group", { name: "Custom Gradient" })
+      .scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: test.info().outputPath("custom-gradient-settings.png"),
+    });
+  }
 
   await picker.selectOption("github-light");
   await expect(root).not.toHaveAttribute("data-custom-gradient", /.+/);
+  await expect(root).toHaveCSS("--custom-gradient-content", "");
+  await expect(root).toHaveCSS("--custom-gradient-light", "");
+  await expect(root).toHaveCSS("--custom-gradient-dark", "");
   await expect(root).toHaveCSS("--custom-gradient-pane", "");
+  await expect(root).toHaveCSS("--custom-gradient-pane-hsl", "");
   for (const meta of await page.locator('meta[name="theme-color"]').all()) {
-    await expect(meta).not.toHaveAttribute("content", "#f1e2d3");
+    await expect(meta).not.toHaveAttribute("content", "#fffefe");
   }
 
   await picker.selectOption("custom-gradient");
   await page.getByTestId("color-mode-dark").check();
-  await expect(root).toHaveCSS("--custom-gradient-pane", "#102030");
+  await expect(root).toHaveCSS("--custom-gradient-content", "#121212");
   await picker.selectOption("github-dark");
   await expect(root).not.toHaveAttribute("data-custom-gradient", /.+/);
   for (const meta of await page.locator('meta[name="theme-color"]').all()) {
-    await expect(meta).not.toHaveAttribute("content", "#102030");
+    await expect(meta).not.toHaveAttribute("content", "#121212");
   }
+});
+
+test("Custom Gradient migrates v1 once without changing the v1 record", async ({
+  page,
+}) => {
+  const v1 = JSON.stringify({
+    version: 1,
+    lightColor: "#aabbcc",
+    darkColor: "#112233",
+    midpoint: 37,
+  });
+  await page.addInitScript((stored) => {
+    localStorage.setItem("buzz-custom-gradient-v1", stored);
+    localStorage.removeItem("buzz-custom-gradient-v2");
+  }, v1);
+  await signIn(page);
+  expect(
+    await page.evaluate(() => localStorage.getItem("buzz-custom-gradient-v1")),
+  ).toBe(v1);
+  expect(
+    JSON.parse(
+      (await page.evaluate(() =>
+        localStorage.getItem("buzz-custom-gradient-v2"),
+      )) ?? "null",
+    ),
+  ).toEqual({
+    version: 2,
+    gradientColor1: "#aabbcc",
+    gradientColor2: "#112233",
+    midpoint: 37,
+    lightContentColor: "#aabbcc",
+    darkContentColor: "#112233",
+  });
 });
 
 test("Custom Gradient pane endpoint follows Light, Dark, and System mode", async ({
@@ -488,20 +546,42 @@ test("Custom Gradient pane endpoint follows Light, Dark, and System mode", async
   await page.emulateMedia({ colorScheme: "light" });
   await signIn(page);
   await page.locator("#appearance-theme").selectOption("custom-gradient");
-  await page.getByLabel("Custom gradient light color").fill("#f0e0d0");
-  await page.getByLabel("Custom gradient dark color").fill("#102030");
+  await page.getByLabel("Gradient color 1").fill("#ffeeaa");
+  await page.getByLabel("Gradient color 2").fill("#88ccdd");
+  await page.getByLabel("Light content color").fill("#f0e0d0");
+  await page.getByLabel("Dark content color").fill("#102030");
   const root = page.locator("html");
+  const gradientBefore = await root.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return [
+      "--custom-gradient-color-1",
+      "--custom-gradient-color-2",
+      "--custom-gradient-midpoint",
+      "--custom-gradient-mix",
+    ].map((name) => style.getPropertyValue(name));
+  });
 
   await page.getByTestId("color-mode-light").check();
-  await expect(root).toHaveCSS("--custom-gradient-pane", "#f0e0d0");
+  await expect(root).toHaveCSS("--custom-gradient-content", "#f0e0d0");
   await page.getByTestId("color-mode-dark").check();
-  await expect(root).toHaveCSS("--custom-gradient-pane", "#102030");
+  await expect(root).toHaveCSS("--custom-gradient-content", "#102030");
+  expect(
+    await root.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return [
+        "--custom-gradient-color-1",
+        "--custom-gradient-color-2",
+        "--custom-gradient-midpoint",
+        "--custom-gradient-mix",
+      ].map((name) => style.getPropertyValue(name));
+    }),
+  ).toEqual(gradientBefore);
 
   await page.getByTestId("color-mode-system").check();
   await page.emulateMedia({ colorScheme: "light" });
-  await expect(root).toHaveCSS("--custom-gradient-pane", "#f0e0d0");
+  await expect(root).toHaveCSS("--custom-gradient-content", "#f0e0d0");
   await page.emulateMedia({ colorScheme: "dark" });
-  await expect(root).toHaveCSS("--custom-gradient-pane", "#102030");
+  await expect(root).toHaveCSS("--custom-gradient-content", "#102030");
 });
 
 test("Custom Gradient paints one shell ramp with frosted navigation and inset panes", async ({
@@ -509,8 +589,10 @@ test("Custom Gradient paints one shell ramp with frosted navigation and inset pa
 }, testInfo) => {
   await signIn(page);
   await page.locator("#appearance-theme").selectOption("custom-gradient");
-  await page.getByLabel("Custom gradient light color").fill("#f2ecb5");
-  await page.getByLabel("Custom gradient dark color").fill("#8fcfe3");
+  await page.getByLabel("Gradient color 1").fill("#f2ecb5");
+  await page.getByLabel("Gradient color 2").fill("#8fcfe3");
+  await page.getByLabel("Light content color").fill("#ffffff");
+  await page.getByLabel("Dark content color").fill("#17132f");
   await page.getByTestId("color-mode-light").check();
   await page.evaluate(() => {
     let shell = document.querySelector(".buzz-app-shell");
@@ -527,17 +609,24 @@ test("Custom Gradient paints one shell ramp with frosted navigation and inset pa
     row.className = "buzz-conversation-row flex min-w-0 flex-1";
     const chat = document.createElement("section");
     chat.className = "buzz-conversation-pane min-w-0 flex-1 p-6";
+    chat.dataset.customContentPane = "chat";
     chat.textContent =
       "Chat\nOne continuous gradient frames this solid conversation surface.";
     const separator = document.createElement("div");
     separator.className =
       "buzz-side-panel-resize-handle hidden w-1 shrink-0 lg:block lg:-ml-px";
+    const replies = document.createElement("aside");
+    replies.dataset.customContentPane = "replies";
+    replies.className = "w-64 p-6";
+    replies.textContent =
+      "Replies\nThread replies use the same content surface.";
     const thinking = document.createElement("aside");
+    thinking.dataset.customContentPane = "thinking";
     thinking.dataset.thinkingPane = "";
     thinking.className = "w-80 p-6";
     thinking.textContent =
       "Thinking\nA distinct inset surface, without a bright divider.";
-    row.append(chat, separator, thinking);
+    row.append(chat, separator, replies, thinking);
     shell.append(row);
   });
 
@@ -546,8 +635,15 @@ test("Custom Gradient paints one shell ramp with frosted navigation and inset pa
   const row = page.locator(".buzz-conversation-row");
   const chat = page.locator(".buzz-conversation-pane");
   const thinking = page.locator("[data-thinking-pane]");
+  const replies = page.locator('[data-custom-content-pane="replies"]');
   const separator = page.locator(".buzz-side-panel-resize-handle");
   await expect(shell).toHaveCSS("background-image", /linear-gradient/);
+  const shellImage = await shell.evaluate(
+    (element) => getComputedStyle(element).backgroundImage,
+  );
+  expect(shellImage).toContain("rgb(242, 236, 181)");
+  expect(shellImage).toContain("rgb(143, 207, 227)");
+  expect(shellImage).not.toContain("rgb(255, 255, 255)");
   await expect(nav).toHaveCSS("background-image", "none");
   await expect(nav).toHaveCSS("backdrop-filter", /blur\(24px\)/);
   expect(
@@ -555,14 +651,15 @@ test("Custom Gradient paints one shell ramp with frosted navigation and inset pa
   ).toMatch(/rgba\(.+, 0\.[0-9]+\)/);
   await expect(row).toHaveCSS("gap", "0px");
   await expect(separator).toHaveCSS("width", "8px");
-  await expect(chat).toHaveCSS("background-color", "rgb(242, 236, 181)");
-  await expect(thinking).toHaveCSS("background-color", "rgb(242, 236, 181)");
+  await expect(chat).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect(replies).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect(thinking).toHaveCSS("background-color", "rgb(255, 255, 255)");
   await expect(chat).toHaveCSS("border-radius", "12px");
   await expect(thinking).toHaveCSS("border-left-width", "1px");
   const chatBox = await chat.boundingBox();
-  const thinkingBox = await thinking.boundingBox();
+  const repliesBox = await replies.boundingBox();
   expect(
-    (thinkingBox?.x ?? 0) - ((chatBox?.x ?? 0) + (chatBox?.width ?? 0)),
+    (repliesBox?.x ?? 0) - ((chatBox?.x ?? 0) + (chatBox?.width ?? 0)),
   ).toBe(8);
   expect(
     await chat.evaluate((el) => {
@@ -573,6 +670,20 @@ test("Custom Gradient paints one shell ramp with frosted navigation and inset pa
       );
     }),
   ).toBe(true);
+  const sourceRoot = new URL("../../src/", import.meta.url);
+  for (const [file, marker] of [
+    ["app/routes/repos.tsx", 'data-custom-content-pane="chat"'],
+    [
+      "features/channels/ui/ThreadPanel.tsx",
+      'data-custom-content-pane="replies"',
+    ],
+    [
+      "features/agents/ui/AgentActivityPanel.tsx",
+      'data-custom-content-pane="thinking"',
+    ],
+  ]) {
+    expect(readFileSync(new URL(file, sourceRoot), "utf8")).toContain(marker);
+  }
   if (process.env.CAPTURE_CUSTOM_GRADIENT === "1") {
     await page.screenshot({
       path: testInfo.outputPath("custom-gradient-desktop.png"),
@@ -606,8 +717,10 @@ test.describe("Custom Gradient on a phone", () => {
       (modeCopyBox?.y ?? 0) + (modeCopyBox?.height ?? 0),
     );
     for (const control of [
-      page.getByLabel("Custom gradient light color"),
-      page.getByLabel("Custom gradient dark color"),
+      page.getByLabel("Gradient color 1"),
+      page.getByLabel("Gradient color 2"),
+      page.getByLabel("Light content color"),
+      page.getByLabel("Dark content color"),
       page.locator("#gradient-midpoint"),
     ]) {
       const box = await control.boundingBox();

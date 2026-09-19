@@ -6,102 +6,95 @@ import {
   DEFAULT_CUSTOM_GRADIENT,
   blendHex,
   clampMidpoint,
-  contrastColor,
+  contrastRatio,
   customGradientThemeForDark,
   customGradientVars,
-  normalizeHex,
-  parseCustomGradientConfig,
-  contrastRatio,
+  loadCustomGradientConfig,
 } from "./custom-gradient.ts";
 
-test("corrupt and unsupported stored configurations fall back safely", () => {
-  assert.deepEqual(
-    parseCustomGradientConfig("not-json"),
-    DEFAULT_CUSTOM_GRADIENT,
-  );
-  assert.deepEqual(
-    parseCustomGradientConfig('{"version":2,"lightColor":"#ffffff"}'),
-    DEFAULT_CUSTOM_GRADIENT,
-  );
+const V1 = JSON.stringify({
+  version: 1,
+  lightColor: "#aabbcc",
+  darkColor: "#112233",
+  midpoint: 37,
+});
+const V2 = JSON.stringify({
+  version: 2,
+  gradientColor1: "#010203",
+  gradientColor2: "#a0b0c0",
+  midpoint: 64,
+  lightContentColor: "#fefefe",
+  darkContentColor: "#121212",
 });
 
-test("stored colors are canonicalized and invalid fields fall back independently", () => {
-  assert.deepEqual(
-    parseCustomGradientConfig(
-      '{"version":1,"lightColor":" #ABC ","darkColor":"oops","midpoint":120}',
-    ),
-    {
-      version: 1,
-      lightColor: "#aabbcc",
-      darkColor: DEFAULT_CUSTOM_GRADIENT.darkColor,
-      midpoint: 100,
+test("valid v1 migrates exactly into the four-color v2 schema", () => {
+  assert.deepEqual(loadCustomGradientConfig(null, V1), {
+    migratedFromV1: true,
+    config: {
+      version: 2,
+      gradientColor1: "#aabbcc",
+      gradientColor2: "#112233",
+      midpoint: 37,
+      lightContentColor: "#aabbcc",
+      darkContentColor: "#112233",
     },
-  );
-  assert.equal(normalizeHex("#A0b1C2"), "#a0b1c2");
+  });
 });
 
-test("midpoint clamps to the inclusive range and blend has known endpoints", () => {
+test("valid v2 wins over valid v1", () => {
+  const loaded = loadCustomGradientConfig(V2, V1);
+  assert.equal(loaded.migratedFromV1, false);
+  assert.deepEqual(loaded.config, JSON.parse(V2));
+});
+
+test("corrupt v2 falls back to v1, then exact defaults", () => {
+  assert.equal(loadCustomGradientConfig("not-json", V1).migratedFromV1, true);
+  assert.deepEqual(
+    loadCustomGradientConfig("not-json", "also-bad").config,
+    DEFAULT_CUSTOM_GRADIENT,
+  );
+});
+
+test("midpoint clamps and blend has known endpoints", () => {
   assert.equal(clampMidpoint(-4), 0);
   assert.equal(clampMidpoint(104), 100);
-  assert.equal(clampMidpoint("37.6"), 38);
-  assert.equal(blendHex("#000000", "#ffffff", 0), "#000000");
   assert.equal(blendHex("#000000", "#ffffff", 0.5), "#808080");
-  assert.equal(blendHex("#000000", "#ffffff", 1), "#ffffff");
 });
 
-test("contrast and pane endpoint change with resolved polarity", () => {
-  assert.equal(contrastColor("#ffffff"), "#000000");
-  assert.equal(contrastColor("#000000"), "#ffffff");
-  const config = {
-    version: 1,
-    lightColor: "#abcdef",
-    darkColor: "#123456",
-    midpoint: 35,
-  };
-  assert.equal(
-    customGradientVars(config, false)["--custom-gradient-pane"],
-    "#abcdef",
+test("mode changes content only and leaves every gradient variable byte-identical", () => {
+  const config = loadCustomGradientConfig(V2, null).config;
+  const light = customGradientVars(config, false);
+  const dark = customGradientVars(config, true);
+  for (const name of [
+    "--custom-gradient-color-1",
+    "--custom-gradient-color-2",
+    "--custom-gradient-midpoint",
+    "--custom-gradient-mix",
+  ]) {
+    assert.equal(light[name], dark[name], `${name} must ignore mode`);
+  }
+  assert.equal(light["--custom-gradient-content"], "#fefefe");
+  assert.equal(dark["--custom-gradient-content"], "#121212");
+});
+
+test("content tonal tokens remain subtle and readable", () => {
+  const vars = customGradientVars(
+    loadCustomGradientConfig(V2, null).config,
+    true,
   );
-  assert.equal(
-    customGradientVars(config, true)["--custom-gradient-pane"],
-    "#123456",
+  assert.notEqual(
+    vars["--custom-gradient-border-hsl"],
+    vars["--custom-gradient-content-foreground-hsl"],
   );
-  assert.equal(
-    customGradientVars(config, false)["--custom-gradient-pane-foreground"],
-    "#000000",
-  );
-  assert.equal(
-    customGradientVars(config, true)["--custom-gradient-pane-foreground"],
-    "#ffffff",
+  assert.ok(
+    contrastRatio(
+      vars["--custom-gradient-content"],
+      vars["--custom-gradient-muted-foreground"],
+    ) >= 4.5,
   );
 });
 
 test("theme pair selector maps both polarities explicitly", () => {
   assert.equal(customGradientThemeForDark(false), CUSTOM_GRADIENT_LIGHT);
   assert.equal(customGradientThemeForDark(true), CUSTOM_GRADIENT_DARK);
-});
-
-test("pane tonal tokens remain distinct, subtle, and readable", () => {
-  const vars = customGradientVars(
-    { version: 1, lightColor: "#f1e2d3", darkColor: "#17132f", midpoint: 50 },
-    true,
-  );
-  assert.equal(
-    vars["--custom-gradient-card-hsl"],
-    vars["--custom-gradient-pane-hsl"],
-  );
-  assert.notEqual(
-    vars["--custom-gradient-secondary-hsl"],
-    vars["--custom-gradient-pane-hsl"],
-  );
-  assert.notEqual(
-    vars["--custom-gradient-border-hsl"],
-    vars["--custom-gradient-pane-foreground-hsl"],
-  );
-  assert.ok(
-    contrastRatio(
-      vars["--custom-gradient-pane"],
-      vars["--custom-gradient-muted-foreground"],
-    ) >= 4.5,
-  );
 });

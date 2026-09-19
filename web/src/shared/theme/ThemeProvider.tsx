@@ -11,11 +11,12 @@ import {
 import { createThemeVars, hexToHsl, luminance } from "./adaptive-theme.ts";
 import {
   CUSTOM_GRADIENT_STORAGE_KEY,
+  CUSTOM_GRADIENT_V1_STORAGE_KEY,
   CUSTOM_GRADIENT_VAR_NAMES,
   type CustomGradientConfig,
   customGradientVars,
   isCustomGradientTheme,
-  parseCustomGradientConfig,
+  loadCustomGradientConfig,
 } from "./custom-gradient.ts";
 import {
   BUZZ_DARK_THEME_NAME,
@@ -138,7 +139,14 @@ function initialFollowSystem(): boolean {
 }
 
 function initialCustomGradient(): CustomGradientConfig {
-  return parseCustomGradientConfig(readStored(CUSTOM_GRADIENT_STORAGE_KEY));
+  const loaded = loadCustomGradientConfig(
+    readStored(CUSTOM_GRADIENT_STORAGE_KEY),
+    readStored(CUSTOM_GRADIENT_V1_STORAGE_KEY),
+  );
+  if (loaded.migratedFromV1) {
+    writeStored(CUSTOM_GRADIENT_STORAGE_KEY, JSON.stringify(loaded.config));
+  }
+  return loaded.config;
 }
 
 function readThemeCache(): ThemeCache | null {
@@ -275,7 +283,7 @@ function applyCustomGradient(
       const metaIsDark = (meta.getAttribute("media") ?? "").includes("dark");
       meta.setAttribute(
         "content",
-        metaIsDark ? config.darkColor : config.lightColor,
+        metaIsDark ? config.darkContentColor : config.lightContentColor,
       );
     });
 }
@@ -402,7 +410,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setCustomGradient = useCallback((config: CustomGradientConfig) => {
-    const safe = parseCustomGradientConfig(JSON.stringify(config));
+    const safe = loadCustomGradientConfig(JSON.stringify(config), null).config;
     setCustomGradientState(safe);
     writeStored(CUSTOM_GRADIENT_STORAGE_KEY, JSON.stringify(safe));
   }, []);

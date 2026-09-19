@@ -300,6 +300,7 @@ export function ThreadPanel({
             ? THREAD_OVERLAY_CLASSES
             : `${THREAD_OVERLAY_CLASSES} ${THREAD_DOCK_CLASSES}`
       }
+      data-custom-content-pane="replies"
       data-testid="thread-panel"
       data-thread-layout={mobileOnly ? "focus" : layoutMode}
     >
