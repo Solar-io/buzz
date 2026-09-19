@@ -2,7 +2,6 @@ node_modules/
 build/
 build-qa/
 build-device/
-build-qa/
 *.local.xcconfig
 ios/App/App/public/
 ios/App/App/capacitor.config.json

@@ -1,10 +1,10 @@
 import AVFoundation
 import Foundation
 
-/// Foreground-only iOS realtime media engine for the fixed Huddle Opus v2 path.
+/// Native realtime media engine reused from mobile/ios/Runner (1199b86a67).
 ///
 /// AVAudioEngine owns voice-processed capture and per-peer mixed playout.
-/// AVAudioConverter keeps PCM native and moves only Opus packets across Flutter.
+/// AVAudioConverter keeps PCM native; NativeHuddle owns background lifetime.
 final class HuddleAudioEngine {
   private let onLocalPacket: (HuddleLocalOpusPacket) -> Void
   private let onPCM: ([Float]) -> Void

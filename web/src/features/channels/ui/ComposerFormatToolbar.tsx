@@ -11,6 +11,7 @@ import {
   Strikethrough,
 } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
+import { useState } from "react";
 import type { ActiveMarks } from "../lib/composerActiveMarks.ts";
 import {
   applyCode,
@@ -148,9 +149,12 @@ export function ComposerFormatToolbar({
   onApply: (format: FormatFn) => void;
   onCaptureSelection?: () => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   return (
+    <>
+    <button type="button" className="mb-1 rounded px-2 py-1 text-xs text-muted-foreground sm:hidden" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>Text formatting</button>
     <div
-      className="mb-1.5 flex flex-wrap items-center gap-0.5"
+      className={cn("mb-1.5 flex-wrap items-center gap-0.5 sm:flex", expanded ? "flex" : "hidden")}
       role="toolbar"
       aria-label="Format message"
     >
@@ -171,7 +175,7 @@ export function ComposerFormatToolbar({
                 : "text-muted-foreground hover:bg-accent hover:text-foreground",
             )}
             disabled={disabled}
-            onMouseDown={onCaptureSelection}
+            onPointerDown={onCaptureSelection}
             onClick={() => onApply(item.apply)}
           >
             <item.Icon aria-hidden className="h-4 w-4" />
@@ -179,5 +183,6 @@ export function ComposerFormatToolbar({
         );
       })}
     </div>
+    </>
   );
 }
