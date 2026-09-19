@@ -234,6 +234,25 @@ test("email addresses and npm scope text are plain prose, not unresolved mention
   assert.deepEqual(unresolved, []);
 });
 
+test("a path in trailing prose cannot erase a named or everyone mention", () => {
+  assert.deepEqual(resolveMentions("@Evie inspect src/foo.ts", members), {
+    mentionPubkeys: [EVIE],
+    unresolved: [],
+  });
+  assert.deepEqual(
+    resolveMentions(
+      "@everyone please check src/foo.ts",
+      members,
+      undefined,
+      SAM,
+    ),
+    {
+      mentionPubkeys: [EVIE, NIKON],
+      unresolved: [],
+    },
+  );
+});
+
 test("activeMentionQuery finds the token at the caret", () => {
   assert.equal(activeMentionQuery("hello @Sa", 9), "Sa");
   assert.equal(activeMentionQuery("hello @Sam and @Ev", 18), "Ev");

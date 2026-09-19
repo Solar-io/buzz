@@ -77,8 +77,14 @@ export function extractMentionTokens(text: string): MentionToken[] {
         i += 1;
         continue;
       }
+      let firstWordEnd = i + 1;
+      while (isNameChar(masked[firstWordEnd])) firstWordEnd += 1;
+      if (masked[firstWordEnd] === "/") {
+        i = firstWordEnd;
+        continue;
+      }
       const end = scanMentionSpan(masked, i + 1);
-      if (end > i + 1 && masked[end] !== "/") {
+      if (end > i + 1) {
         tokens.push({ name: text.slice(i + 1, end), at: i });
         i = end;
         continue;
