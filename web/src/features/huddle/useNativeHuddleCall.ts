@@ -74,7 +74,7 @@ export function useNativeHuddleCall({ target, selfPubkey }: { target: HuddleCall
     },
     huddle: {
       status: state.status, error: state.error, peers: state.peers, speaking: new Map(Object.entries(state.levels ?? {})), muted: state.muted,
-      micLevel: state.micLevel ?? -127, devices: [], deviceId: "", outputDevices: [{ deviceId: "speaker", label: "Speaker", groupId: "" }, { deviceId: "receiver", label: "Receiver / connected headphones", groupId: "" }], outputDeviceId: state.speaker ? "speaker" : "receiver", speakerMuted: state.speakerMuted ?? false,
+      micLevel: state.micLevel ?? -127, devices: [], deviceId: "", outputDevices: [{ deviceId: "speaker", label: "Speaker" }, { deviceId: "receiver", label: "Receiver / connected headphones" }], outputDeviceId: state.speaker ? "speaker" : "receiver", speakerMuted: state.speakerMuted ?? false,
       supportsOutputSelection: true, held, voiceInputMode, pttActive, micLive: connected && !held && !state.muted,
       supportsVoice: true, join, leave, toggleMute: () => configure({ muted: !state.muted }),
       toggleSpeakerMuted: () => configure({ speakerMuted: !state.speakerMuted }),

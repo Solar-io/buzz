@@ -80,6 +80,10 @@ let unlockedSecretKey: Uint8Array<ArrayBuffer> | null = null;
 const listeners = new Set<Listener>();
 let nativeBeforeForget: (() => Promise<void>) | null = null;
 export function setNativeBeforeForget(action: (() => Promise<void>) | null): void { nativeBeforeForget = action; }
+export async function prepareNativeCommunityChange(): Promise<void> {
+  await BuzzHuddle.leave();
+  await nativeBeforeForget?.();
+}
 
 function setState(next: AuthState) {
   authState = next;

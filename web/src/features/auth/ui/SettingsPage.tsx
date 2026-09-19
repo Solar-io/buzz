@@ -39,6 +39,7 @@ import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
 import { AppearanceSection } from "./AppearanceSection";
 import { isNativeIOS } from "@/shared/platform/native";
 import { NativePushSettings } from "@/shared/platform/NativePush";
+import { NativeDeviceSettings } from "@/shared/platform/NativeDeviceSettings";
 import {
   DeviceSection,
   ForgetDeviceSection,
@@ -98,7 +99,7 @@ export function SettingsPage() {
       <FilesUrlSection />
 
       <SectionHeading>Identity and this device</SectionHeading>
-      {isNativeIOS() ? <p className="rounded-lg border border-border p-4 text-sm">Your identity is held in iOS Keychain. Native signing never exports the key to web content. Keep your original pairing device or encrypted backup to enroll another device.</p> : <><KeyBackupCard /><DeviceSection /><PairDeviceSection /></>}
+      {isNativeIOS() ? <NativeDeviceSettings /> : <><KeyBackupCard /><DeviceSection /><PairDeviceSection /></>}
       <ForgetDeviceSection />
 
       <SectionHeading>Advanced</SectionHeading>
