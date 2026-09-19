@@ -31,7 +31,16 @@ export function NativeSetup({ children }: { children: ReactNode }) {
     try {
       const restored = await BuzzIdentity.restoreFlutter({ selectedId });
       if (restored.relayUrl) {
-        const next = { ...services, relayUrl: restored.relayUrl };
+        const sameCommunity =
+          services.relayUrl &&
+          new URL(services.relayUrl).host === new URL(restored.relayUrl).host;
+        const next = {
+          ...services,
+          relayUrl: restored.relayUrl,
+          ...(sameCommunity
+            ? {}
+            : { sttUrl: "", ttsUrl: "", pushGatewayUrl: "" }),
+        };
         writeNativeServices(next);
         setServices(next);
       } else {
@@ -45,10 +54,10 @@ export function NativeSetup({ children }: { children: ReactNode }) {
       setRestoring(false);
     }
   };
+  // Only first setup attempts migration; changing input fields is not a retry.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: initial native migration only
   useEffect(() => {
     if (isNativeIOS() && !readNativeServices()) void restore();
-    // Only first setup attempts migration; changing input fields is not a retry.
-    // biome-ignore lint/correctness/useExhaustiveDependencies: initial native migration only
   }, []);
   if (!isNativeIOS() || readNativeServices()) return children;
   return (
