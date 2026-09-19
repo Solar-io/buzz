@@ -468,6 +468,9 @@ pub struct ManagedAgentProcess {
     /// cached availability and sets `needs_restart` on drift, catching out-of-
     /// band adapter changes that Phase-1 auto-restart doesn't cover.
     pub adapter_availability: Option<AcpAvailabilityStatus>,
+    /// Hash of the provider-neutral harness policy used when this process was
+    /// launched. Runtime-only; copied into the durable pair receipt.
+    pub harness_policy_hash: Option<String>,
     /// Unpredictable identity shared only with this harness generation.
     pub start_nonce: String,
     /// Win32 Job Object owning the harness + its entire process tree. Closing

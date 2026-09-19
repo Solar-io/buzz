@@ -117,4 +117,9 @@ pub struct ManagedAgentRuntimeReceipt {
     pub pid: u32,
     pub desktop_instance_id: String,
     pub started_at: String,
+    /// Hash of the provider-neutral harness policy used for this spawn.
+    /// Missing on legacy receipts; those receipts are not trusted when the
+    /// current policy hash is available.
+    #[serde(default)]
+    pub harness_policy_hash: Option<String>,
 }

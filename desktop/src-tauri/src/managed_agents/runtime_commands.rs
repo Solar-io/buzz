@@ -295,6 +295,7 @@ fn start_pair(
         pid: process.child.id(),
         desktop_instance_id: current_instance_id(&app),
         started_at: now.clone(),
+        harness_policy_hash: process.harness_policy_hash.clone(),
     };
     if let Err(error) = write_agent_runtime_receipt(&app, &receipt) {
         let _ = terminate_process(process.child.id());

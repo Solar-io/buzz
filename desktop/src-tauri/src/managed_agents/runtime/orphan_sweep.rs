@@ -10,10 +10,19 @@ use super::*;
 pub(crate) fn sweep_orphaned_agent_processes(app: &AppHandle, skip_pids: &[u32]) {
     let legacy_entries = super::super::read_all_agent_pid_files(app);
     let instance_id = current_instance_id(app);
+    let current_policy_hash = crate::managed_agents::harness_policy::load_harness_policy(app)
+        .ok()
+        .and_then(|policy| crate::managed_agents::harness_policy::policy_hash(&policy).ok());
     let receipt_entries: Vec<_> = super::super::read_all_agent_runtime_receipts(app)
         .into_iter()
         .filter_map(|(path, receipt)| {
             if valid_agent_runtime_receipt(&path, &receipt, &instance_id) {
+                if !receipt_policy_matches(&receipt, current_policy_hash.as_deref()) {
+                    eprintln!(
+                        "buzz-desktop: orphan receipt {} has harness policy drift; treating it as stale",
+                        receipt.key.runtime_id()
+                    );
+                }
                 Some((path, receipt))
             } else {
                 super::super::remove_agent_runtime_receipt_path(&path);

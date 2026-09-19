@@ -243,6 +243,44 @@ test.describe("global agent config screenshots", () => {
     });
   });
 
+  test("global role policy saves exact routes and adapter selection", async ({
+    page,
+  }) => {
+    await installMockBridge(page);
+    await openAiDefaultsSettings(page);
+
+    const policy = page.getByTestId("global-harness-policy");
+    await expect(policy).toBeVisible();
+    await policy.getByTestId("harness-policy-toggle").click();
+    await policy.getByTestId("harness-policy-model-coder").fill("gpt-5.6-sol");
+    await policy.getByTestId("harness-policy-effort-coder").selectOption("low");
+    await policy
+      .getByTestId("harness-policy-adapter-claude")
+      .selectOption("codex_role_runner");
+    await policy.getByTestId("harness-policy-save").click();
+
+    const saved = await page.evaluate(async () =>
+      (
+        window as typeof window & {
+          __BUZZ_E2E_INVOKE_MOCK_COMMAND__?: (
+            command: string,
+            payload: unknown,
+          ) => Promise<unknown>;
+        }
+      ).__BUZZ_E2E_INVOKE_MOCK_COMMAND__?.("get_harness_policy", null),
+    );
+    expect(saved).toMatchObject({
+      policy: {
+        roleDefaults: {
+          coder: { model: "gpt-5.6-sol", effort: "low" },
+        },
+        profiles: {
+          claude: { adapter: "codex_role_runner" },
+        },
+      },
+    });
+  });
+
   test("settings renders and saves the persisted preferred harness", async ({
     page,
   }) => {

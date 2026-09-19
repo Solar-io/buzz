@@ -126,6 +126,10 @@ pub async fn restore_managed_agents_on_launch(
         changed |=
             kill_stale_tracked_processes(&mut records, &runtimes, &super::current_instance_id(app));
 
+        let current_policy_hash = crate::managed_agents::harness_policy::load_harness_policy(app)
+            .ok()
+            .and_then(|policy| crate::managed_agents::harness_policy::policy_hash(&policy).ok());
+
         let tracked_pids: Vec<u32> = runtimes
             .values()
             .map(|runtime| runtime.child.id())
@@ -133,12 +137,21 @@ pub async fn restore_managed_agents_on_launch(
                 super::read_all_agent_runtime_receipts(app)
                     .into_iter()
                     .filter_map(|(path, receipt)| {
-                        super::valid_agent_runtime_receipt(
+                        let valid = super::valid_agent_runtime_receipt(
                             &path,
                             &receipt,
                             &super::current_instance_id(app),
-                        )
-                        .then_some(receipt.pid)
+                        );
+                        if !valid {
+                            return None;
+                        }
+                        if !super::receipt_policy_matches(&receipt, current_policy_hash.as_deref()) {
+                            eprintln!(
+                                "buzz-desktop: runtime receipt {} has harness policy drift; reconcile will replace it",
+                                receipt.key.runtime_id()
+                            );
+                        }
+                        Some(receipt.pid)
                     }),
             )
             .collect();
@@ -390,6 +403,7 @@ pub async fn restore_managed_agents_on_launch(
                     pid: process.child.id(),
                     desktop_instance_id: super::current_instance_id(app),
                     started_at: now.clone(),
+                    harness_policy_hash: process.harness_policy_hash.clone(),
                 };
                 if let Err(error) = super::write_agent_runtime_receipt(app, &receipt) {
                     let _ = super::terminate_process(process.child.id());

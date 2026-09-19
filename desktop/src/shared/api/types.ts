@@ -1007,3 +1007,104 @@ export type GlobalAgentConfigSaveResult = {
   /** Number of agents whose stop succeeded but respawn failed. */
   failed_restart_count: number;
 };
+
+// ── Provider-neutral harness role policy ────────────────────────────────────
+
+export type HarnessRole =
+  | "architect"
+  | "coder"
+  | "qa"
+  | "tester"
+  | "backend_tester"
+  | "ui_tester"
+  | "verifier"
+  | "worker";
+
+export type HarnessEffort = "low" | "medium" | "high" | "x_high" | "max";
+
+export type HarnessRoleRoute = {
+  model: string;
+  effort: HarnessEffort;
+};
+
+export type HarnessPolicyAdapter = "native" | "codex_role_runner";
+
+export type HarnessProfilePolicy = {
+  enabled: boolean;
+  adapter: HarnessPolicyAdapter;
+  nativeConfigPath: string | null;
+  nativeConfigFormat: string | null;
+};
+
+export type HarnessDelegationPolicy = {
+  defaultMode: "proportional";
+  explicitRequestRequiresPipeline: boolean;
+};
+
+export type HarnessPolicy = {
+  schemaVersion: number;
+  revision: number;
+  delegation: HarnessDelegationPolicy;
+  roleDefaults: Partial<Record<HarnessRole, HarnessRoleRoute>>;
+  profiles: Record<string, HarnessProfilePolicy>;
+  agentOverrides: Record<
+    string,
+    Partial<Record<HarnessRole, HarnessRoleRoute>>
+  >;
+};
+
+export type HarnessPolicyState = {
+  policy: HarnessPolicy;
+  policyHash: string;
+};
+
+export type HarnessPolicySaveResult = {
+  state: HarnessPolicyState;
+  previousRevision: number;
+};
+
+export type HarnessRuntimeCapability = {
+  profileId: string;
+  available: boolean;
+  supportedModels: string[];
+  supportedEfforts: HarnessEffort[];
+  supportsRoleRouting: boolean;
+  supportsForcedModelAndEffort: boolean;
+};
+
+export type HarnessRuntimeCatalog = {
+  runtimes: Record<string, HarnessRuntimeCapability>;
+  codexRoleRunnerAvailable: boolean;
+};
+
+export type HarnessPolicyHealth =
+  | "healthy"
+  | "unsupported"
+  | "unavailable"
+  | "unknown";
+
+export type CompiledHarnessRoute = HarnessRoleRoute;
+
+export type UnsupportedHarnessRoute = {
+  profileId: string;
+  role: HarnessRole;
+  model: string;
+  effort: HarnessEffort;
+  reason: string;
+};
+
+export type CompiledHarnessProfile = {
+  profileId: string;
+  adapter: HarnessPolicyAdapter;
+  routes: Record<HarnessRole, CompiledHarnessRoute>;
+  effectiveRoutes: Record<HarnessRole, CompiledHarnessRoute>;
+  health: HarnessPolicyHealth;
+  unsupported: UnsupportedHarnessRoute[];
+};
+
+export type CompiledHarnessPolicy = {
+  policyHash: string;
+  schemaVersion: number;
+  delegation: HarnessDelegationPolicy;
+  profiles: Record<string, CompiledHarnessProfile>;
+};

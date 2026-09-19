@@ -42,7 +42,8 @@ use process::{
 };
 pub(crate) use process::{
     current_instance_id, process_belongs_to_us, process_has_buzz_marker, process_is_running,
-    terminate_process, terminate_untracked_pair_runtime, valid_agent_runtime_receipt,
+    receipt_policy_matches, terminate_process, terminate_untracked_pair_runtime,
+    valid_agent_runtime_receipt,
 };
 
 mod orphan_sweep;
@@ -397,6 +398,37 @@ pub(crate) fn configure_runtime_cli(
     }
 }
 
+/// Resolve the Desktop-owned policy overlay for one spawn.  The configured
+/// runtime id is checked before the static built-in fallback so custom
+/// catalog entries (for example `claude-code-glm`) receive their exact policy
+/// routes too.
+pub(crate) fn resolve_harness_policy_env(
+    policy: &crate::managed_agents::harness_policy::HarnessPolicy,
+    record: &ManagedAgentRecord,
+    personas: &[crate::managed_agents::types::AgentDefinition],
+    effective_command: &str,
+) -> Result<Option<std::collections::BTreeMap<String, String>>, String> {
+    let configured_runtime_id = record.runtime.as_deref().or_else(|| {
+        record.persona_id.as_deref().and_then(|persona_id| {
+            personas
+                .iter()
+                .find(|persona| persona.id == persona_id)
+                .and_then(|persona| persona.runtime.as_deref())
+        })
+    });
+    let fallback_profile_id = known_acp_runtime(effective_command).map(|runtime| runtime.id);
+    let Some(profile_id) = policy.profile_for_harness(configured_runtime_id, fallback_profile_id)
+    else {
+        return Ok(None);
+    };
+    crate::managed_agents::harness_policy::spawn_overlay_env(
+        policy,
+        &profile_id,
+        Some(record.pubkey.as_str()),
+    )
+    .map(Some)
+}
+
 /// Spawn an agent process without holding any locks on records or runtimes.
 /// Returns the child process and log path on success. The caller is responsible
 /// for updating `ManagedAgentRecord` fields and inserting into the runtimes map.
@@ -459,6 +491,16 @@ pub fn spawn_agent_child(
             })?;
     let effective_command = &descriptor.command;
     let agent_args = &descriptor.args;
+
+    // The provider-neutral policy is compiled once at the spawn boundary and
+    // carried to the native adapter as an exact desired/effective overlay.
+    // The adapter performs the live capability check; the desktop never
+    // substitutes another model or effort. Unknown custom harnesses keep
+    // their existing behavior until they register a policy profile.
+    let policy = crate::managed_agents::harness_policy::load_harness_policy(app)?;
+    let harness_policy_hash = Some(crate::managed_agents::harness_policy::policy_hash(&policy)?);
+    let harness_policy_env =
+        resolve_harness_policy_env(&policy, record, &personas, effective_command)?;
 
     let log_path = super::managed_agent_runtime_log_path(app, &runtime_key)?;
     append_log_marker(
@@ -528,6 +570,11 @@ pub fn spawn_agent_child(
     command.stderr(std::process::Stdio::from(stderr));
     if let Some(ref path) = augmented_path {
         command.env("PATH", path);
+    }
+    if let Some(policy_env) = &harness_policy_env {
+        for (key, value) in policy_env {
+            command.env(key, value);
+        }
     }
     command.env("RUST_LOG", child_rust_log_filter());
     command.env("BUZZ_PRIVATE_KEY", &record.private_key_nsec);
@@ -926,6 +973,7 @@ pub fn spawn_agent_child(
         spawn_config,
         spawned_setup_mode,
         spawned_adapter_availability,
+        harness_policy_hash,
         start_nonce,
         &record.name,
     ));
@@ -936,6 +984,7 @@ pub fn spawn_agent_child(
         spawn_config,
         setup_mode: spawned_setup_mode,
         adapter_availability: spawned_adapter_availability,
+        harness_policy_hash,
         start_nonce,
     })
 }
@@ -986,6 +1035,7 @@ pub fn start_managed_agent_process(
         pid: process.child.id(),
         desktop_instance_id: current_instance_id(app),
         started_at: now.clone(),
+        harness_policy_hash: process.harness_policy_hash.clone(),
     };
     if let Err(error) = super::write_agent_runtime_receipt(app, &receipt) {
         let _ = terminate_process(process.child.id());

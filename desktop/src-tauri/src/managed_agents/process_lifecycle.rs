@@ -136,6 +136,7 @@ pub fn finish_spawn(
     spawn_config: super::spawn_snapshot::SpawnConfigSnapshot,
     setup_mode: bool,
     adapter_availability: Option<super::AcpAvailabilityStatus>,
+    harness_policy_hash: Option<String>,
     start_nonce: String,
     agent_name: &str,
 ) -> super::ManagedAgentProcess {
@@ -152,6 +153,7 @@ pub fn finish_spawn(
         spawn_config,
         setup_mode,
         adapter_availability,
+        harness_policy_hash,
         start_nonce,
         job,
     }

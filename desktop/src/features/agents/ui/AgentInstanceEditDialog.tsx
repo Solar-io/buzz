@@ -91,6 +91,7 @@ import { resolveModelFieldStatusMessage } from "./agentConfigControls";
 import { AdvancedRequiredBadge } from "./AdvancedRequiredBadge";
 import { showAgentProfileSyncWarning } from "./agentProfileSyncWarning";
 import { AddCustomHarnessDialog } from "./AddCustomHarnessDialog";
+import { HarnessPolicyEditor } from "./HarnessPolicyEditor";
 import {
   ADD_CUSTOM_HARNESS_OPTION,
   runtimeDropdownAction,
@@ -1127,6 +1128,8 @@ export function AgentInstanceEditDialog({
             </div>
 
             <EffortPickerField agent={agent} config={configSurfaceQuery.data} />
+
+            <HarnessPolicyEditor agentPubkey={agent.pubkey} compact />
 
             <AgentAiDefaultsNotice
               onEditDefaults={() => setAiDefaultsOpen(true)}

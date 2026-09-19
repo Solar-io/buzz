@@ -1,3 +1,4 @@
+use crate::managed_agents::harness_policy::default_harness_policy;
 use crate::managed_agents::known_acp_runtime;
 
 #[path = "cli_tests.rs"]
@@ -116,6 +117,47 @@ fn goose_has_no_mcp_hooks() {
 #[test]
 fn unknown_command_returns_none() {
     assert!(known_acp_runtime("custom-agent").is_none());
+}
+
+#[test]
+fn custom_claude_glm_runtime_receives_policy_overlay() {
+    let mut record = super::test_fixtures::fixture(RespondTo::OwnerOnly, vec![], None);
+    record.runtime = Some("claude-code-glm".to_string());
+    record.agent_command = "claude-code-glm".to_string();
+    let policy = default_harness_policy();
+
+    let env = super::resolve_harness_policy_env(&policy, &record, &[], "claude-code-glm")
+        .expect("custom runtime policy resolution should succeed")
+        .expect("registered custom Claude profile should receive an overlay");
+    assert_eq!(
+        env.get("BUZZ_HARNESS_POLICY_PROFILE").map(String::as_str),
+        Some("claude-code-glm")
+    );
+    let overlay: serde_json::Value =
+        serde_json::from_str(env.get("BUZZ_HARNESS_POLICY_JSON").unwrap()).unwrap();
+    assert_eq!(overlay["adapter"], "codex_role_runner");
+    assert_eq!(overlay["routes"]["architect"]["model"], "gpt-5.6-sol");
+}
+
+#[cfg(unix)]
+#[test]
+fn spawn_boundary_canary_carries_exact_custom_profile_env() {
+    let mut record = super::test_fixtures::fixture(RespondTo::OwnerOnly, vec![], None);
+    record.runtime = Some("claude-code-glm".to_string());
+    let policy = default_harness_policy();
+    let env = super::resolve_harness_policy_env(&policy, &record, &[], "claude-code-glm")
+        .unwrap()
+        .unwrap();
+
+    let output = std::process::Command::new("/usr/bin/env")
+        .envs(&env)
+        .output()
+        .expect("spawn env canary");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("BUZZ_HARNESS_POLICY_PROFILE=claude-code-glm"));
+    assert!(stdout.contains("BUZZ_HARNESS_POLICY_HASH="));
+    assert!(stdout.contains("BUZZ_HARNESS_POLICY_JSON="));
 }
 
 // ── build_respond_to_env tests ───────────────────────────────────────
@@ -865,7 +907,29 @@ fn receipt_fixture(
         pid: std::process::id(),
         desktop_instance_id: "test-instance".into(),
         started_at: "now".into(),
+        harness_policy_hash: None,
     }
+}
+
+#[test]
+fn receipt_policy_hash_matches_current_policy_and_rejects_drift() {
+    let mut receipt = receipt_fixture(
+        crate::managed_agents::ManagedAgentRuntimeKey::new("aa".repeat(32), "wss://relay.example")
+            .unwrap(),
+    );
+    receipt.harness_policy_hash = Some("policy-v1".into());
+    assert!(super::receipt_policy_matches(&receipt, Some("policy-v1")));
+    assert!(!super::receipt_policy_matches(&receipt, Some("policy-v2")));
+}
+
+#[test]
+fn legacy_receipt_without_policy_hash_is_rejected_when_policy_is_readable() {
+    let receipt = receipt_fixture(
+        crate::managed_agents::ManagedAgentRuntimeKey::new("aa".repeat(32), "wss://relay.example")
+            .unwrap(),
+    );
+    assert!(!super::receipt_policy_matches(&receipt, Some("policy-v1")));
+    assert!(super::receipt_policy_matches(&receipt, None));
 }
 
 #[test]
@@ -1239,6 +1303,7 @@ fn make_pair_runtime_placeholder() -> crate::managed_agents::ManagedAgentPairRun
         ),
         setup_mode: false,
         adapter_availability: None,
+        harness_policy_hash: None,
         start_nonce: "test-nonce".to_string(),
         #[cfg(windows)]
         job: None,
