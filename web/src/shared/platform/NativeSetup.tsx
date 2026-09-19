@@ -154,7 +154,7 @@ export function NativeSetup({ children }: { children: ReactNode }) {
                           : "Could not apply QR connection",
                       );
                     });
-                } catch (e) {
+                } catch {
                   toast.error("Could not parse QR code");
                 }
               }}
