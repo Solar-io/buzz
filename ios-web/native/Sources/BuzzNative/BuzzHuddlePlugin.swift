@@ -23,7 +23,7 @@ public final class BuzzHuddlePlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func configure(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             do {
-                try NativeHuddle.shared.configure(muted: call.getBool("muted"), speaker: call.getBool("speaker"), voiceEnabled: call.getBool("voiceEnabled"), speechEnabled: call.getBool("speechEnabled"), held: call.getBool("held"))
+                try NativeHuddle.shared.configure(muted: call.getBool("muted"), speaker: call.getBool("speaker"), voiceEnabled: call.getBool("voiceEnabled"), speechEnabled: call.getBool("speechEnabled"), held: call.getBool("held"), outputMuted: call.getBool("speakerMuted"), duplex: call.getString("duplex"), voiceOverride: call.getObject("voiceOverride"), interrupt: call.getBool("interrupt") ?? false)
                 call.resolve()
             } catch { call.reject(error.localizedDescription) }
         }

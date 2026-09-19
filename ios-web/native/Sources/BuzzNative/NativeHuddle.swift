@@ -26,6 +26,10 @@ final class NativeHuddle {
     private var observers: [NSObjectProtocol] = []
     private var held = false
     private var interrupted = false
+    private var outputMuted = false
+    private var micLevel = -127
+    private var levels: [String: Int] = [:]
+    private var lastMeter = Date.distantPast
     private var voice: NativeAgentVoice?
 
     private init() {
@@ -51,7 +55,8 @@ final class NativeHuddle {
          "parentChannelId": parent as Any? ?? NSNull(), "muted": muted,
          "speaker": speaker, "voiceEnabled": voiceEnabled, "speechEnabled": speechEnabled,
          "speaking": voice?.speaking ?? false, "interim": voice?.interim ?? "",
-         "error": error as Any? ?? NSNull(),
+         "speakerMuted": outputMuted, "micLevel": micLevel, "levels": levels,
+         "error": (error ?? voice?.error) as Any? ?? NSNull(),
          "peers": peers.map { ["peerIndex": $0.key, "pubkey": $0.value.pubkey, "epoch": $0.value.epoch] as [String: Any] }]
     }
     func emit() { onState?(snapshot()) }
@@ -84,18 +89,21 @@ final class NativeHuddle {
                         DispatchQueue.main.async { self?.voice?.capture(samples) }
                     })
                     try self.engine?.start()
+                    if !stt.isEmpty && !tts.isEmpty {
                     self.voice = try NativeAgentVoice(relay: url, channel: channel, stt: stt, tts: tts, onChange: { [weak self] in self?.emit() }, onSpeaking: { [weak self] speaking in
                         guard let self else { return }
                         try? self.engine?.setMuted(self.muted || self.held || speaking)
                     }, audioPeers: { [weak self] in Set(self?.peers.values.map(\.pubkey) ?? []) })
                     self.voice?.start()
+                    }
                     self.connectAudio(activeGeneration)
                 } catch { self.fail(error.localizedDescription) }
             }
         }
     }
 
-    func configure(muted: Bool?, speaker: Bool?, voiceEnabled: Bool?, speechEnabled: Bool?, held: Bool?) throws {
+    func configure(muted: Bool?, speaker: Bool?, voiceEnabled: Bool?, speechEnabled: Bool?, held: Bool?, outputMuted: Bool? = nil, duplex: String? = nil, voiceOverride: [String: Any]? = nil, interrupt: Bool = false) throws {
+        if (voiceEnabled == true || speechEnabled == true) && voice == nil { throw NativeError.message("Configure speech service addresses before enabling agent voice.") }
         if let muted { self.muted = muted }
         if let held { self.held = held }
         if let speaker {
@@ -104,6 +112,10 @@ final class NativeHuddle {
         }
         if let voiceEnabled { self.voiceEnabled = voiceEnabled }
         if let speechEnabled { self.speechEnabled = speechEnabled }
+        if let outputMuted { self.outputMuted = outputMuted; engine?.setOutputMuted(outputMuted); voice?.setOutputMuted(outputMuted) }
+        if let duplex { voice?.duplex = duplex == "barge" ? "barge" : "half" }
+        if let voiceOverride { voice?.setVoiceOverride(voiceOverride) }
+        if interrupt { voice?.interruptSpeech() }
         try engine?.setMuted(self.muted || self.held || (voice?.speaking ?? false))
         voice?.configure(voice: self.voiceEnabled, speech: self.speechEnabled, capture: !self.muted && !self.held && !interrupted)
         emit()
@@ -195,6 +207,8 @@ final class NativeHuddle {
     }
     private func sendAudio(_ packet: HuddleLocalOpusPacket, generation token: Int) {
         guard token == generation, status == "connected", let audioSocket, !muted, !held else { return }
+        micLevel = packet.levelDbov
+        if Date().timeIntervalSince(lastMeter) >= 0.2 { lastMeter = Date(); emit() }
         var data = Data([UInt8((packet.sequence >> 8) & 255), UInt8(packet.sequence & 255)])
         let timestamp = UInt32(truncatingIfNeeded: packet.timestamp48k)
         data.append(contentsOf: [24, 16, 8, 0].map { UInt8((timestamp >> $0) & 255) })
@@ -206,6 +220,7 @@ final class NativeHuddle {
         guard data.count > 10, let peer = peers[Int(data[0])], peer.epoch == Int(data[1]) else { return }
         let sequence = Int(data[2]) << 8 | Int(data[3])
         let timestamp = data[4..<8].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+        levels[peer.pubkey] = Int(Int8(bitPattern: data[8]))
         do { try engine?.enqueueRemote(HuddleRemoteOpusPacket(peerIndex: Int(data[0]), sequence: sequence, timestamp48k: Int64(timestamp), levelDbov: Int(Int8(bitPattern: data[8])), opus: Data(data.dropFirst(10)))) }
         catch { self.error = error.localizedDescription; emit() }
     }

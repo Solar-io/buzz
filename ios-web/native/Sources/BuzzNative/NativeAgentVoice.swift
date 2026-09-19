@@ -36,6 +36,11 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
     private var lastSpeechEnded = Date.distantPast
     private var retry = 0
     private var sttRetry = 0
+    var duplex = "half"
+    private var outputMuted = false
+    private var overrideVoice: (String, String)?
+    private var micHotSince: Date?
+    private var lastSpoken = ""
     private(set) var speaking = false
     private(set) var interim = ""
     var error: String?
@@ -83,6 +88,15 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
         onChange()
     }
     func setCaptureAllowed(_ value: Bool) { captureAllowed = value; if !value { pcm.removeAll() } }
+    func setOutputMuted(_ value: Bool) { outputMuted = value; player?.volume = value ? 0 : 1 }
+    func setVoiceOverride(_ value: [String: Any]) {
+        if let engine = value["engine"] as? String, ["pocket", "eleven"].contains(engine), let key = value["key"] as? String, key.hasPrefix(engine + ":") { overrideVoice = (engine, String(key.dropFirst(engine.count + 1))) }
+        else { overrideVoice = nil }
+    }
+    func interruptSpeech() {
+        synthesis?.cancel(); synthesis = nil; player?.stop(); player = nil
+        speechQueue.removeAll(); endSpeech()
+    }
     func stop() {
         alive = false; generation += 1; relayReady = false; sttReady = false
         relaySocket?.cancel(with: .normalClosure, reason: nil); relaySocket = nil
@@ -93,7 +107,9 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
 
     func capture(_ frame: [Float]) {
         guard alive, voice, captureAllowed, sttReady, relayReady, membersReady, !agents.isEmpty,
-              !speaking, Date().timeIntervalSince(lastSpeechEnded) > 0.7, let socket = sttSocket else { pcm.removeAll(); return }
+              (duplex == "barge" || !speaking), (duplex == "barge" || Date().timeIntervalSince(lastSpeechEnded) > 0.7), let socket = sttSocket else { pcm.removeAll(); return }
+        let level = HuddleAudioLevels.rmsDbov(frame)
+        if level > -45 { if micHotSince == nil { micHotSince = Date() } } else { micHotSince = nil }
         // The native capture engine delivers fixed 48k mono frames. Average
         // triples (anti-alias box filter) into the bridge's PCM16LE 16k format.
         for i in stride(from: 0, to: frame.count - 2, by: 3) {
@@ -211,7 +227,10 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
                     if let event = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] {
                         switch event["type"] as? String {
                         case "ready": self.sttReady = true; self.sttRetry = 0
-                        case "partial": self.interim = event["text"] as? String ?? ""; self.onChange()
+                        case "partial":
+                            self.interim = event["text"] as? String ?? ""
+                            if self.duplex == "barge", self.speaking, let since = self.micHotSince, Date().timeIntervalSince(since) >= 0.3, !self.interim.isEmpty, !self.lastSpoken.lowercased().contains(self.interim.lowercased()) { self.interruptSpeech() }
+                            self.onChange()
                         case "final": self.final(event["text"] as? String ?? "")
                         case "error": self.report(event["message"] as? String ?? "Speech recognition failed."); self.sttReady = false
                         default: break
@@ -251,12 +270,13 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
         for byte in author.utf8 { hash = hash &* 33 &+ Int32(byte) }
         let defaultVoice = presets[Int(abs(Int64(hash))) % presets.count]
         let selection = voices[author]
-        let voiceName = selection?.2.hasPrefix("imported:") == false ? selection!.2 : defaultVoice
-        let engineName = selection?.2.hasPrefix("imported:") == false ? selection!.1 : "pocket"
+        let voiceName = overrideVoice?.1 ?? (selection?.2.hasPrefix("imported:") == false ? selection!.2 : defaultVoice)
+        let engineName = overrideVoice?.0 ?? (selection?.2.hasPrefix("imported:") == false ? selection!.1 : "pocket")
         var request = URLRequest(url: ttsURL); request.httpMethod = "POST"; request.timeoutInterval = 60
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["engine": engineName, "voice": voiceName, "text": text])
-        speaking = true; onSpeaking(true); onChange()
+        lastSpoken = text
+        speaking = true; onSpeaking(duplex == "half"); onChange()
         let token = generation
         synthesis = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
@@ -267,7 +287,7 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
                 }
                 do {
                     let player = try AVAudioPlayer(data: Self.wav(data))
-                    self.player = player; player.delegate = self
+                    self.player = player; player.delegate = self; player.volume = self.outputMuted ? 0 : 1
                     guard player.play() else { throw NativeError.message("Audio playback unavailable.") }
                 } catch { self.report(error.localizedDescription); self.endSpeech() }
             }

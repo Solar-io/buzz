@@ -108,6 +108,10 @@ final class HuddleAudioEngine {
     muted = value
   }
 
+  func setOutputMuted(_ value: Bool) {
+    processingQueue.async { self.audioEngine.mainMixerNode.outputVolume = value ? 0 : 1 }
+  }
+
   func setInterrupted(_ value: Bool) {
     stateLock.lock()
     let shouldUpdate = running
