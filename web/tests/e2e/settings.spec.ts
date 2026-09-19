@@ -167,6 +167,33 @@ test("the setup checklist lists the key backup for a local key", async ({
   );
 });
 
+test("pairing instructions keep iPhone scans inside the native app", async ({
+  page,
+}) => {
+  await signIn(page);
+
+  const card = page.getByTestId("pair-device-card");
+  const instructions = card.getByTestId("pairing-instructions");
+  await expect(instructions).toContainText("native Buzz Web app");
+  await expect(instructions).toContainText("Pair with QR code");
+  await expect(instructions).toContainText("in-app camera");
+  await expect(instructions).toContainText(
+    "Do not use the system Camera or Safari",
+  );
+  await expect(
+    card.getByRole("button", { name: "Show pairing QR" }),
+  ).toBeVisible();
+
+  await card.getByRole("button", { name: "Show pairing QR" }).click();
+  await expect(
+    card.getByRole("img", { name: "Device pairing QR code" }),
+  ).toBeVisible();
+  await expect(instructions).toBeVisible();
+  await expect(card.getByTestId("pairing-qr-ready")).toContainText(
+    "Buzz Web's in-app camera",
+  );
+});
+
 test("a short backup passphrase is refused and a long one is accepted", async ({
   page,
 }) => {

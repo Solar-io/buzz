@@ -182,21 +182,36 @@ export function PairDeviceSection() {
   if (source !== "local") return null;
 
   return (
-    <section className="space-y-3 rounded-lg border border-border bg-card p-4">
+    <section
+      className="space-y-3 rounded-lg border border-border bg-card p-4"
+      data-testid="pair-device-card"
+    >
       <h2 className="font-medium">Pair a device</h2>
-      <p className="text-sm text-muted-foreground">
-        Show a QR that opens Buzz with your key — scan it with any camera and
-        that device signs straight in, nothing to type. The key rides inside the
-        link itself, only on your screens — treat it like a password.
+      <p
+        className="text-sm text-muted-foreground"
+        data-testid="pairing-instructions"
+      >
+        On the target iPhone, open the native Buzz Web app, choose Pair with QR
+        code, and scan from the in-app camera. Do not use the system Camera or
+        Safari — they open the PWA instead. The key rides inside this link, only
+        on your screens — treat it like a password.
       </p>
       {qrDataUrl ? (
-        <img
-          src={qrDataUrl}
-          alt="Device pairing QR code"
-          className="mx-auto rounded-md border border-border"
-          width={320}
-          height={320}
-        />
+        <>
+          <p
+            className="text-sm text-muted-foreground"
+            data-testid="pairing-qr-ready"
+          >
+            QR ready — keep Buzz Web&apos;s in-app camera open while scanning.
+          </p>
+          <img
+            src={qrDataUrl}
+            alt="Device pairing QR code"
+            className="mx-auto rounded-md border border-border"
+            width={320}
+            height={320}
+          />
+        </>
       ) : (
         <Button size="sm" onClick={() => void showQr()}>
           Show pairing QR
