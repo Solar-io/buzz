@@ -153,10 +153,14 @@ test("a send that rejects (closed session) toasts instead of throwing", async ()
 test("the empty-mention gate lives only on the voice-final path", () => {
   // Plain (typed) chat sends are NOT gated — only [voice] finals are. The
   // composer's send path (useMessageActions) must not reference the gate
-  // or the door at all, and the bar must route voice finals through the
+  // or the door at all, and the call must route voice finals through the
   // door. Reading the two send paths keeps the scope honest: wiring the
   // gate into the composer would fail this test, as would unwiring it
-  // from the bar.
+  // from the call.
+  //
+  // This is a LOCATION check, not a behaviour one — the door's behaviour is
+  // covered by the cases above. It moved from `ui/HuddleBar.tsx` to
+  // `useHuddleCall.ts` when the call was lifted above the router (S1).
   const composerPath = new URL(
     "../../channels/lib/useMessageActions.ts",
     import.meta.url,
@@ -170,10 +174,14 @@ test("the empty-mention gate lives only on the voice-final path", () => {
     !composer.includes("publishVoiceFinal"),
     "the composer must not ride the voice door",
   );
-  const barPath = new URL("../ui/HuddleBar.tsx", import.meta.url);
-  const bar = readFileSync(barPath, "utf8");
+  const callPath = new URL("../useHuddleCall.ts", import.meta.url);
+  const call = readFileSync(callPath, "utf8");
   assert.ok(
-    bar.includes("publishVoiceFinal"),
+    call.includes("publishVoiceFinal"),
     "voice finals must go through the door",
+  );
+  assert.ok(
+    call.includes("onFinalTranscript: publishTranscript"),
+    "...and the voice hook's final callback must BE that door",
   );
 });
