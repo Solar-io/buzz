@@ -391,8 +391,11 @@ function ChannelBrowser() {
     () => channels.map((channel) => channel.id),
     [channels],
   );
-  const { links: huddleLinks, ended: huddleEndedIds, resolved } =
-    useHuddleLinks(huddleChannelIds);
+  const {
+    links: huddleLinks,
+    ended: huddleEndedIds,
+    resolved,
+  } = useHuddleLinks(huddleChannelIds);
   const currentHuddleParent =
     current && huddleLinks.has(current.id)
       ? (huddleLinks.get(current.id)?.parentId ?? null)

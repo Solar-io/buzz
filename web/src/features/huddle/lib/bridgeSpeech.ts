@@ -135,6 +135,8 @@ export interface BridgeAudioContextLike {
     sampleRate: number,
   ): AudioBufferLike;
   createBufferSource(): BridgeBufferSourceLike;
+  /** Real contexts close; test doubles may omit it. */
+  close?(): Promise<void>;
 }
 
 export interface AudioBufferLike {

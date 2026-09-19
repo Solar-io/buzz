@@ -84,6 +84,11 @@ export function useHuddleOutput(
 
   const selectDevice = useCallback(
     async (next: string) => {
+      if (!supported) {
+        // No setSinkId here: the menu is disabled, but a caller must not be
+        // told a pick landed when it can never be applied (QA defect 3).
+        return false;
+      }
       deviceIdRef.current = next;
       setDeviceIdState(next);
       patchAudioDevicePrefs(outputStore(), { outputDeviceId: next });
@@ -94,7 +99,7 @@ export function useHuddleOutput(
       }
       return applySinkId(context, next);
     },
-    [getContext],
+    [getContext, supported],
   );
 
   const toggleMuted = useCallback(() => {

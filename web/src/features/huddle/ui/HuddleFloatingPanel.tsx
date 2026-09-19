@@ -130,7 +130,6 @@ export function HuddleFloatingPanel() {
         height: PANEL_SIZE.height,
       }}
     >
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: a drag handle is a pointer affordance; Escape and the dock button are the keyboard paths */}
       <header
         className="flex cursor-grab items-center gap-2 border-b border-border px-3 py-2 active:cursor-grabbing"
         data-testid="huddle-float-handle"

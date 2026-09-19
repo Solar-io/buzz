@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useLayoutEffect } from "react";
 
 import { MicMeter } from "./MicMeter.tsx";
 import { HuddleControls } from "./HuddleControls.tsx";
@@ -29,7 +29,11 @@ export function HuddleDock({ currentChannelId }: { currentChannelId: string }) {
     (currentChannelId === call.channelId ||
       currentChannelId === call.parentChannelId);
 
-  useEffect(() => {
+  // Layout effect, not a passive one: on a parent-channel -> huddle-channel
+  // navigation the old dock's cleanup and the new dock's mount land in the
+  // same commit, so the provider's count never PAINTS at zero and the pill
+  // cannot flash between them (QA defect 4).
+  useLayoutEffect(() => {
     if (!visible) {
       return;
     }

@@ -545,6 +545,14 @@ export function useHuddleAgentSpeech(options: {
       unsubscribe();
       speaker.cancel();
       stopSpeechNow();
+      // Release the TTS context with the call (QA 2026-09-18, defect 2):
+      // the room context is closed by useHuddleAudio.teardown, but this one
+      // was created lazily here and stayed open for the life of the tab,
+      // holding the output device after Leave.
+      const ctx = bridgeCtxRef.current;
+      bridgeCtxRef.current = null;
+      bridgeGainRef.current = null;
+      void ctx?.close?.().catch(() => {});
     };
   }, [session, channelId, speaker, stopSpeechNow]);
 
