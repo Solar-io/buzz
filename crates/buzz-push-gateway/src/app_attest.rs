@@ -8,6 +8,44 @@ use thiserror::Error;
 
 const MAX_ATTESTATION_BYTES: usize = 16 * 1024;
 const MAX_ASSERTION_BYTES: usize = 1024;
+
+#[cfg(test)]
+mod capacitor_qa {
+    use super::*;
+    use crate::model::AppProfile;
+
+    #[test]
+    fn profile_identity_isolated_and_missing_capacitor_identity_fails_closed() {
+        // This fixture tests profile selection, not certificate verification.
+        let legacy = AppAttestVerifier {
+            app_id: "TEAM.legacy.flutter".into(),
+            apple_root_cert_pem: Vec::new(),
+            capacitor_app_id: None,
+        };
+        for profile in [
+            AppProfile::BuzzCapacitorIosProduction,
+            AppProfile::BuzzCapacitorIosSandbox,
+        ] {
+            assert!(legacy.for_profile(profile).is_err());
+        }
+        let configured = legacy.with_capacitor_app("TEAM.native.capacitor".into());
+        for profile in [AppProfile::BuzzIosProduction, AppProfile::BuzzIosSandbox] {
+            assert_eq!(
+                configured.for_profile(profile).unwrap().app_id,
+                "TEAM.legacy.flutter"
+            );
+        }
+        for profile in [
+            AppProfile::BuzzCapacitorIosProduction,
+            AppProfile::BuzzCapacitorIosSandbox,
+        ] {
+            assert_eq!(
+                configured.for_profile(profile).unwrap().app_id,
+                "TEAM.native.capacitor"
+            );
+        }
+    }
+}
 const APPLE_APP_ATTEST_ROOT_PEM_SHA256: [u8; 32] = [
     0xc7, 0x78, 0xd0, 0x9a, 0xc3, 0x41, 0xf7, 0xfd, 0x9f, 0x8f, 0x3b, 0x19, 0xe2, 0xb8, 0x15, 0xaf,
     0x6a, 0xed, 0x4a, 0xd4, 0x49, 0x0e, 0x1e, 0x92, 0xc0, 0x5c, 0xb3, 0x55, 0x21, 0x2a, 0x50, 0x13,

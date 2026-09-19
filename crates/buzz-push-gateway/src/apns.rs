@@ -295,6 +295,9 @@ fn reconnect_payload(profile: AppProfile, wake_id: uuid::Uuid) -> Vec<u8> {
 }
 
 #[cfg(test)]
+mod capacitor_qa;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
