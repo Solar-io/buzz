@@ -1,38 +1,34 @@
 /**
  * Apply a scanned QR connection with optional confirmation and side effects.
  *
- * Takes injected dependencies for testability:
- * - classify: determines connection type (first-run, same-community, community-change)
- * - confirm: async confirmation dialog for community-change. Returns boolean.
- * - prepare: async side effect for community-change (e.g., leave active calls, revoke push).
- * - write: persist the connection
+ * Validates the merged result BEFORE confirm and prepare — invalid input
+ * throws immediately with zero side effects.
  *
- * Ordering on community-change: confirm → prepare → write.
- * If confirm returns false, nothing is persisted and no error is thrown (user cancellation).
- * If prepare fails, nothing is written.
+ * Confirmation is required when ANY field changes from current, regardless
+ * of whether the relay host is the same. prepare() is only called when the
+ * relay URL (full string) actually changes (community-change side effects).
  *
- * On same-community and first-run: write only (no confirm, no prepare).
+ * Flow:
+ * 1. Merge scanned over current (absent scanned params keep current values)
+ * 2. Validate the merged result — invalid input throws with zero side effects
+ * 3. If all fields are empty after merge (legacy bare nsec QR): return "applied" without writing
+ * 4. If any field changed from current: confirm, then prepare (if relay changed), then write
+ * 5. If nothing changed: return "applied" without prompting or writing
+ * 6. If user cancels confirm: return "cancelled" with zero writes
  */
 
-import type {
-  ConnectionClassification,
-  PairingServices,
-} from "./pairing-link.ts";
+import type { PairingServices } from "./pairing-link.ts";
 
 export type ApplyScannedConnectionResult = "applied" | "cancelled";
 
 export interface ApplyScannedConnectionDeps {
-  classify: (
-    current: PairingServices | null,
-    scanned: PairingServices,
-  ) => ConnectionClassification;
   confirm: (
     current: PairingServices,
-    scanned: PairingServices,
+    merged: PairingServices,
   ) => Promise<boolean>;
   prepare: (
     current: PairingServices,
-    scanned: PairingServices,
+    merged: PairingServices,
   ) => Promise<void>;
   write: (services: PairingServices) => Promise<void>;
   validate: (services: PairingServices) => PairingServices;
@@ -46,14 +42,15 @@ export interface ApplyScannedConnectionDeps {
  *
  * Confirmation is required when ANY field changes from current, regardless
  * of relay host classification. prepare() is only called when the relay
- * host actually changes (community-change side effects).
+ * URL (full string) actually changes (community-change side effects).
  *
  * Flow:
  * 1. Merge scanned over current (absent scanned params keep current values)
  * 2. Validate the merged result — invalid input throws with zero side effects
- * 3. If any field changed from current: confirm, then prepare (if relay changed), then write
- * 4. If nothing changed: return "applied" without prompting or writing
- * 5. If user cancels confirm: return "cancelled" with zero writes
+ * 3. If all fields are empty after merge (legacy bare nsec QR): return "applied" without writing
+ * 4. If any field changed from current: confirm, then prepare (if relay changed), then write
+ * 5. If nothing changed: return "applied" without prompting or writing
+ * 6. If user cancels confirm: return "cancelled" with zero writes
  */
 export async function applyScannedConnection(
   current: PairingServices | null,
@@ -62,7 +59,7 @@ export async function applyScannedConnection(
 ): Promise<ApplyScannedConnectionResult> {
   // Merge: keep current values for absent scanned params
   const merged: PairingServices = {
-    relayUrl: scanned.relayUrl,
+    relayUrl: scanned.relayUrl || current?.relayUrl || "",
     sttUrl: scanned.sttUrl || current?.sttUrl || "",
     ttsUrl: scanned.ttsUrl || current?.ttsUrl || "",
     pushGatewayUrl: scanned.pushGatewayUrl || current?.pushGatewayUrl || "",
@@ -70,6 +67,16 @@ export async function applyScannedConnection(
 
   // Validate BEFORE confirm and prepare — invalid input throws with zero side effects
   deps.validate(merged);
+
+  // Legacy bare nsec QR (all-empty scanned): no-op, don't write anything
+  const isAllEmpty =
+    !scanned.relayUrl &&
+    !scanned.sttUrl &&
+    !scanned.ttsUrl &&
+    !scanned.pushGatewayUrl;
+  if (isAllEmpty) {
+    return "applied";
+  }
 
   // If no current configuration, this is first-run: write without confirming
   if (!current) {
@@ -97,7 +104,7 @@ export async function applyScannedConnection(
     return "cancelled";
   }
 
-  // User confirmed — if the relay host changed, run the side effect (prepare)
+  // User confirmed — if the relay URL changed, run the side effect (prepare)
   if (relayChanged) {
     await deps.prepare(current, merged);
   }

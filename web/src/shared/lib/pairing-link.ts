@@ -130,3 +130,60 @@ export function classifyScannedConnection(
 
   return "community-change";
 }
+
+/**
+ * Safely describe what fields are changing between current and scanned services.
+ * Returns a string array of field changes, safe to use in UI confirmation dialogs.
+ * Handles empty values gracefully without throwing on invalid URLs.
+ *
+ * Comparison uses full relay URL string (not host-only), so `wss://relay:6351` vs
+ * `wss://relay:6351/` are detected as a change.
+ */
+export function describeConnectionChanges(
+  current: PairingServices,
+  scanned: PairingServices,
+): string[] {
+  const changes: string[] = [];
+
+  // Relay: compare full string, not just host
+  if (current.relayUrl !== scanned.relayUrl) {
+    const currentHost = safeGetHost(current.relayUrl);
+    const scannedHost = safeGetHost(scanned.relayUrl);
+    changes.push(`relay: ${currentHost} → ${scannedHost}`);
+  }
+
+  if (current.sttUrl !== scanned.sttUrl) {
+    const currentHost = safeGetHost(current.sttUrl);
+    const scannedHost = safeGetHost(scanned.sttUrl);
+    changes.push(`speech recognition: ${currentHost} → ${scannedHost}`);
+  }
+
+  if (current.ttsUrl !== scanned.ttsUrl) {
+    const currentHost = safeGetHost(current.ttsUrl);
+    const scannedHost = safeGetHost(scanned.ttsUrl);
+    changes.push(`agent speech: ${currentHost} → ${scannedHost}`);
+  }
+
+  if (current.pushGatewayUrl !== scanned.pushGatewayUrl) {
+    const currentHost = safeGetHost(current.pushGatewayUrl);
+    const scannedHost = safeGetHost(scanned.pushGatewayUrl);
+    changes.push(`push gateway: ${currentHost} → ${scannedHost}`);
+  }
+
+  return changes;
+}
+
+/**
+ * Safe URL host extractor that never throws on empty or invalid values.
+ * Returns "(none)" for empty URLs, and "(invalid)" for unparseable ones.
+ */
+function safeGetHost(url: string): string {
+  if (!url) {
+    return "(none)";
+  }
+  try {
+    return new URL(url).host;
+  } catch {
+    return "(invalid)";
+  }
+}

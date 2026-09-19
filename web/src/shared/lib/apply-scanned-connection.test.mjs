@@ -493,3 +493,110 @@ test("DEFECT 6: parsePairingServices rejects http:// and handles legacy nsec-onl
     "legacy nsec-only QR must not throw user-visible error",
   );
 });
+
+// REAL VALIDATOR TESTS — using validateServices from config.ts
+
+test("Empty pushGatewayUrl with confirm using real validator (CRITICAL 1)", async () => {
+  const applyScannedConnection = await getApplyScannedConnection();
+  const mod = await import("../platform/config.ts");
+  const validateServices = mod.validateServices;
+
+  const current = {
+    relayUrl: "wss://relay.test:6351",
+    sttUrl: "wss://stt.test/stt",
+    ttsUrl: "https://tts.test/tts",
+    pushGatewayUrl: "", // common case: push not configured
+  };
+
+  const scanned = {
+    relayUrl: "wss://relay.test:6351",
+    sttUrl: "wss://stt.test/stt",
+    ttsUrl: "https://tts.test/tts",
+    pushGatewayUrl: "https://push.test/", // QR adds push
+  };
+
+  let confirmCalled = false;
+  let writtenServices = null;
+
+  const deps = {
+    confirm: async () => {
+      confirmCalled = true;
+      return true;
+    },
+    prepare: async () => {},
+    write: async (services) => {
+      writtenServices = services;
+    },
+    validate: validateServices,
+  };
+
+  const result = await applyScannedConnection(current, scanned, deps);
+
+  // REQUIRED: confirm must not throw (was the bug: new URL("") throws)
+  assert.equal(confirmCalled, true, "confirm called without throwing");
+  assert.equal(result, "applied");
+  assert.equal(writtenServices?.pushGatewayUrl, "https://push.test/");
+});
+
+test("Bare nsec QR (all-empty) does not throw with real validator (CRITICAL 2)", async () => {
+  const applyScannedConnection = await getApplyScannedConnection();
+  const mod = await import("../platform/config.ts");
+  const validateServices = mod.validateServices;
+
+  const current = {
+    relayUrl: "wss://relay.test:6351",
+    sttUrl: "",
+    ttsUrl: "",
+    pushGatewayUrl: "",
+  };
+
+  const scanned = {
+    relayUrl: "",
+    sttUrl: "",
+    ttsUrl: "",
+    pushGatewayUrl: "",
+  };
+
+  let wrote = false;
+
+  const deps = {
+    confirm: async () => true,
+    prepare: async () => {},
+    write: async () => {
+      wrote = true;
+    },
+    validate: validateServices,
+  };
+
+  // REQUIRED: bare nsec QR must not throw, should return "applied" without writing
+  const result = await applyScannedConnection(current, scanned, deps);
+
+  assert.equal(result, "applied", "bare nsec returns 'applied'");
+  assert.equal(wrote, false, "nothing written for all-empty scanned");
+});
+
+test("describeConnectionChanges handles empty URLs safely", async () => {
+  const mod = await import("./pairing-link.ts");
+  const describeConnectionChanges = mod.describeConnectionChanges;
+
+  const current = {
+    relayUrl: "wss://relay.test:6351",
+    sttUrl: "wss://stt.test/stt",
+    ttsUrl: "",
+    pushGatewayUrl: "",
+  };
+
+  const merged = {
+    relayUrl: "wss://relay.test:6351",
+    sttUrl: "wss://stt.test/stt",
+    ttsUrl: "https://tts.test/tts",
+    pushGatewayUrl: "https://push.test/",
+  };
+
+  // REQUIRED: must not throw on empty or URL parsing issues
+  const changes = describeConnectionChanges(current, merged);
+
+  // Should describe tts and push changes without throwing
+  assert.match(changes.join("\n"), /agent speech/, "describes tts change");
+  assert.match(changes.join("\n"), /push gateway/, "describes push change");
+});

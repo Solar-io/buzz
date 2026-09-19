@@ -11,7 +11,7 @@ import { relayWsUrl } from "@/shared/lib/relay-url";
 import { QrScanner } from "@/features/auth/ui/QrScanner";
 import {
   parsePairingServices,
-  classifyScannedConnection,
+  describeConnectionChanges,
 } from "@/shared/lib/pairing-link";
 import { applyScannedConnection } from "@/shared/lib/apply-scanned-connection";
 
@@ -91,28 +91,13 @@ export function NativeDeviceSettings() {
               try {
                 const scanned = parsePairingServices(text);
                 void applyScannedConnection(services, scanned, {
-                  classify: classifyScannedConnection,
-                  confirm: async (current, scanned) => {
-                    // Show what's changing
-                    const changes: string[] = [];
-                    if (
-                      new URL(current.relayUrl).host !==
-                      new URL(scanned.relayUrl).host
-                    ) {
-                      changes.push(
-                        `relay: ${new URL(current.relayUrl).host} → ${new URL(scanned.relayUrl).host}`,
-                      );
+                  confirm: async (current, merged) => {
+                    const changes = describeConnectionChanges(current, merged);
+                    if (changes.length === 0) {
+                      return window.confirm("Update connection?");
                     }
-                    if (current.sttUrl !== scanned.sttUrl) {
-                      changes.push("speech recognition");
-                    }
-                    if (current.ttsUrl !== scanned.ttsUrl) {
-                      changes.push("agent speech");
-                    }
-                    if (current.pushGatewayUrl !== scanned.pushGatewayUrl) {
-                      changes.push("push gateway");
-                    }
-                    const message = `Update connection?\n\n${changes.join("\n")}${current.relayUrl !== scanned.relayUrl ? "\n\nThis leaves any active call and disables push." : ""}`;
+                    const relayChanging = current.relayUrl !== merged.relayUrl;
+                    const message = `Update connection?\n\n${changes.join("\n")}${relayChanging ? "\n\nThis leaves any active call and disables push." : ""}`;
                     return window.confirm(message);
                   },
                   prepare: async () => {
@@ -121,12 +106,12 @@ export function NativeDeviceSettings() {
                   write: async (newServices) => {
                     writeNativeServices(newServices);
                     setServices(newServices);
-                    setScanning(false);
                   },
                   validate: validateServices,
                 })
                   .then((result) => {
                     if (result === "applied") {
+                      setScanning(false);
                       toast.success("Connection updated from QR");
                     }
                   })

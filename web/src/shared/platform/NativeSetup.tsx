@@ -15,8 +15,10 @@ import {
 import { QrScanner } from "@/features/auth/ui/QrScanner";
 import {
   parsePairingServices,
-  classifyScannedConnection,
+  describeConnectionChanges,
 } from "@/shared/lib/pairing-link";
+import { parseSecretKeyInput } from "@/shared/lib/nsec";
+import { enrollSecretKeyFromPairing } from "@/shared/lib/key-store";
 import { applyScannedConnection } from "@/shared/lib/apply-scanned-connection";
 import { prepareNativeCommunityChange } from "@/shared/lib/key-store";
 
@@ -126,34 +128,18 @@ export function NativeSetup({ children }: { children: ReactNode }) {
             <QrScanner
               onResult={(text) => {
                 try {
+                  const parsed = parseSecretKeyInput(text);
                   const scanned = parsePairingServices(text);
                   const current = readNativeServices();
 
                   void applyScannedConnection(current, scanned, {
-                    classify: classifyScannedConnection,
-                    confirm: async (current, scanned) => {
-                      const changes: string[] = [];
-                      if (
-                        new URL(current.relayUrl).host !==
-                        new URL(scanned.relayUrl).host
-                      ) {
-                        changes.push(
-                          `relay: ${new URL(current.relayUrl).host} → ${new URL(scanned.relayUrl).host}`,
-                        );
+                    confirm: async (current, merged) => {
+                      const changes = describeConnectionChanges(current, merged);
+                      if (changes.length === 0) {
+                        return window.confirm("Update connection?");
                       }
-                      if (current.sttUrl !== scanned.sttUrl) {
-                        changes.push("speech recognition");
-                      }
-                      if (current.ttsUrl !== scanned.ttsUrl) {
-                        changes.push("agent speech");
-                      }
-                      if (current.pushGatewayUrl !== scanned.pushGatewayUrl) {
-                        changes.push("push gateway");
-                      }
-                      const message =
-                        changes.length > 0
-                          ? `Update connection?\n\n${changes.join("\n")}${current.relayUrl !== scanned.relayUrl ? "\n\nThis leaves any active call and disables push." : ""}`
-                          : "No changes detected in this QR code.";
+                      const relayChanging = current.relayUrl !== merged.relayUrl;
+                      const message = `Update connection?\n\n${changes.join("\n")}${relayChanging ? "\n\nThis leaves any active call and disables push." : ""}`;
                       return window.confirm(message);
                     },
                     prepare: async () => {
@@ -165,10 +151,12 @@ export function NativeSetup({ children }: { children: ReactNode }) {
                     },
                     validate: validateServices,
                   })
-                    .then((result) => {
-                      if (result === "applied") {
+                    .then(async (result) => {
+                      if (result === "applied" && parsed.ok) {
+                        // Enroll the scanned key after services are written
+                        await enrollSecretKeyFromPairing(parsed.secretKey);
                         setScanning(false);
-                        toast.success("Connection updated from QR");
+                        // authState flips and the shell route re-renders on its own
                       }
                     })
                     .catch((error) => {
@@ -178,8 +166,12 @@ export function NativeSetup({ children }: { children: ReactNode }) {
                           : "Could not apply QR connection",
                       );
                     });
-                } catch {
-                  toast.error("Could not parse QR code");
+                } catch (error) {
+                  toast.error(
+                    error instanceof Error
+                      ? error.message
+                      : "Could not parse QR code",
+                  );
                 }
               }}
               onError={(m) => toast.error(m)}

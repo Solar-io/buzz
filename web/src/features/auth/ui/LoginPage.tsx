@@ -15,7 +15,7 @@ import {
 import { type ParsedKey, parseSecretKeyInput } from "@/shared/lib/nsec";
 import {
   parsePairingServices,
-  classifyScannedConnection,
+  describeConnectionChanges,
 } from "@/shared/lib/pairing-link";
 import { applyScannedConnection } from "@/shared/lib/apply-scanned-connection";
 import {
@@ -118,34 +118,14 @@ export function LoginPage() {
 
           // Apply the connection: confirm, prepare, then write
           void applyScannedConnection(current, services, {
-            classify: classifyScannedConnection,
-            confirm: async (current, scanned) => {
-              // Show what's changing: each field that differs
-              const changes: string[] = [];
-              if (
-                new URL(current.relayUrl).host !==
-                new URL(scanned.relayUrl).host
-              ) {
-                changes.push(
-                  `relay: ${new URL(current.relayUrl).host} → ${new URL(scanned.relayUrl).host}`,
-                );
+            confirm: async (current, merged) => {
+              const changes = describeConnectionChanges(current, merged);
+              if (changes.length === 0) {
+                // Should not reach here, but handle gracefully
+                return window.confirm("Update connection?");
               }
-              if (current.sttUrl !== scanned.sttUrl) {
-                changes.push(
-                  `speech recognition: ${new URL(current.sttUrl || "").host || "(none)"} → ${new URL(scanned.sttUrl || "").host || "(none)"}`,
-                );
-              }
-              if (current.ttsUrl !== scanned.ttsUrl) {
-                changes.push(
-                  `agent speech: ${new URL(current.ttsUrl || "").host || "(none)"} → ${new URL(scanned.ttsUrl || "").host || "(none)"}`,
-                );
-              }
-              if (current.pushGatewayUrl !== scanned.pushGatewayUrl) {
-                changes.push(
-                  `push gateway: ${new URL(current.pushGatewayUrl || "").host || "(none)"} → ${new URL(scanned.pushGatewayUrl || "").host || "(none)"}`,
-                );
-              }
-              const message = `Update connection?\n\n${changes.join("\n")}${current.relayUrl !== scanned.relayUrl ? "\n\nThis leaves any active call and disables push." : ""}`;
+              const relayChanging = current.relayUrl !== merged.relayUrl;
+              const message = `Update connection?\n\n${changes.join("\n")}${relayChanging ? "\n\nThis leaves any active call and disables push." : ""}`;
               return window.confirm(message);
             },
             prepare: async () => {
