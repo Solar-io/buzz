@@ -30,6 +30,11 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
     private var pendingPublications: [String: [String: Any]] = [:]
     private var seen = Set<String>()
     private var finals: [String] = []
+    private var finalGate = NativeFinalGate()
+    private var drainPending = false
+    private(set) var offReason: String?
+    var enabled: Bool { voice }
+    var voiceStatus: String { offReason == nil ? (voice ? (sttReady ? "listening" : "starting") : "idle") : "error" }
     private var pcm = Data()
     private var player: AVAudioPlayer?
     private var synthesis: URLSessionDataTask?
@@ -80,6 +85,7 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
         let changed = self.voice != voice
         self.voice = voice; self.speech = speech; captureAllowed = capture
         if changed {
+            offReason = nil; error = nil; finalGate = NativeFinalGate()
             sttSocket?.cancel(with: .normalClosure, reason: nil); sttSocket = nil; sttReady = false; pcm.removeAll()
             sttRetry = 0
             if voice { connectSTT(generation) }
@@ -108,7 +114,7 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
 
     func capture(_ frame: [Float]) {
         guard alive, voice, captureAllowed, sttReady, relayReady, membersReady, !agents.isEmpty,
-              (duplex == "barge" || !speaking), (duplex == "barge" || Date().timeIntervalSince(lastSpeechEnded) > 0.7), let socket = sttSocket else { pcm.removeAll(); return }
+              (duplex == "barge" || !speaking), let socket = sttSocket else { pcm.removeAll(); return }
         let level = HuddleAudioLevels.rmsDbov(frame)
         if level > -45 { if micHotSince == nil { micHotSince = Date() } } else { micHotSince = nil }
         // The native capture engine delivers fixed 48k mono frames. Average
@@ -162,7 +168,7 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
                 switch result {
                 case .failure:
                     self.relayReady = false; self.membersReady = false; self.retry += 1
-                    if self.retry > 6 { self.report("Voice relay disconnected; rejoin to resume."); return }
+                    if self.retry > 6 { self.dropVoice("Voice relay disconnected; rejoin to resume.", reason: "reconnect_cap"); return }
                     DispatchQueue.main.asyncAfter(deadline: .now() + min(16, pow(2, Double(self.retry - 1)))) { self.connectRelay(token) }
                     return
                 case .success(.string(let text)): self.handleRelay(text, socket)
@@ -203,12 +209,10 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
             if !agents.isEmpty { sendJSON(["REQ", "native-selections", ["kinds": [30182], "authors": Array(agents), "#d": ["agent-voice"]]], socket: socket) }
             let buffered = pendingMessages; pendingMessages.removeAll()
             buffered.forEach { process($0, socket) }
-        } else if kind == 30182, agents.contains(author), let data = content.data(using: .utf8),
-                  let selection = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let engine = selection["engine"] as? String, ["pocket", "eleven"].contains(engine),
-                  let key = selection["key"] as? String, key.hasPrefix(engine + ":"),
+        } else if kind == 30182, agents.contains(author),
+                  let selection = NativeVoicePolicy.voiceSelection(content: content, tags: tags),
                   let date = event["created_at"] as? Int, date >= (voices[author]?.0 ?? 0) {
-            voices[author] = (date, engine, String(key.dropFirst(engine.count + 1)))
+            voices[author] = (date, selection.engine, String(selection.key.dropFirst(selection.engine.count + 1)))
         } else if [9, 40002].contains(kind), tags.contains(where: { $0.count > 1 && $0[0] == "h" && $0[1] == channel }) {
             if !membersReady { if pendingMessages.count < 32 { pendingMessages.append(event) }; return }
             guard speech, agents.contains(author), !audioPeers().contains(author), let id = event["id"] as? String,
@@ -216,7 +220,7 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
                   !content.hasPrefix("[System]") else { return }
             seen.insert(id)
             if seen.count > 2048 { seen = [id] }
-            if speechQueue.count < 24 { speechQueue.append((author, String(content.prefix(12000)))) }
+            speechQueue.append(contentsOf: NativeVoicePolicy.chunks(content).map { (author, $0) })
             playNext()
         }
     }
@@ -233,7 +237,7 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
                 switch result {
                 case .failure:
                     self.sttReady = false; self.sttRetry += 1; self.pcm.removeAll()
-                    if self.sttRetry > 6 { self.report("Speech recognition disconnected; turn voice mode off and on to retry."); return }
+                    if self.sttRetry > 6 { self.dropVoice("Speech recognition disconnected; turn voice mode off and on to retry.", reason: "reconnect_cap"); return }
                     DispatchQueue.main.asyncAfter(deadline: .now() + min(16, pow(2, Double(self.sttRetry - 1)))) { self.connectSTT(token) }
                     return
                 case .success(.string(let text)):
@@ -245,7 +249,7 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
                             if self.duplex == "barge", self.speaking, let since = self.micHotSince, Date().timeIntervalSince(since) >= 0.3, !self.interim.isEmpty, !self.lastSpoken.lowercased().contains(self.interim.lowercased()) { self.interruptSpeech() }
                             self.onChange()
                         case "final": self.final(event["text"] as? String ?? "")
-                        case "error": self.report(event["message"] as? String ?? "Speech recognition failed."); self.sttReady = false
+                        case "error": self.dropVoice(event["message"] as? String ?? "Speech recognition failed.", reason: "bridge_error")
                         default: break
                         }
                     }
@@ -257,10 +261,23 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
     }
     private func final(_ text: String) {
         interim = ""; onChange()
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard voice, captureAllowed, (duplex == "barge" || !speaking), (duplex == "barge" || Date().timeIntervalSince(lastSpeechEnded) > 0.7),
-              !trimmed.isEmpty, !finals.contains(trimmed) else { return }
-        if (speaking || Date().timeIntervalSince(lastSpeechEnded) < 0.7) && lastSpoken.lowercased().contains(trimmed.lowercased()) { return }
+        guard voice, captureAllowed else { return }
+        if let clean = finalGate.receive(text, now: Date().timeIntervalSince1970, speaking: speaking) { publishFinal(clean) }
+        scheduleDrain()
+    }
+    private func scheduleDrain() {
+        guard finalGate.hasPending, !drainPending else { return }
+        drainPending = true
+        let token = generation
+        DispatchQueue.main.asyncAfter(deadline: .now() + NativeVoicePolicy.echoTail) { [weak self] in
+            guard let self, self.alive, self.generation == token else { return }
+            self.drainPending = false
+            let finals = self.finalGate.drain(now: Date().timeIntervalSince1970, speaking: self.speaking)
+            if self.voice && self.captureAllowed { finals.forEach { self.publishFinal($0) } }
+            self.scheduleDrain()
+        }
+    }
+    private func publishFinal(_ trimmed: String) {
         guard relayReady, membersReady, !agents.isEmpty, let relaySocket else { report("Transcript could not be sent: no connected agent roster."); return }
         do {
             let event = try NativeIdentity.shared.sign(["kind": 9, "content": "[voice] " + trimmed,
@@ -268,7 +285,6 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
             guard let id = event["id"] as? String else { return }
             pendingPublications[id] = event
             sendJSON(["EVENT", event], socket: relaySocket)
-            finals.append(trimmed); if finals.count > 8 { finals.removeFirst() }
             DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
                 if self?.pendingPublications.removeValue(forKey: id) != nil { self?.report("Voice transcript delivery was not acknowledged.") }
             }
@@ -286,7 +302,7 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
         let selection = voices[author]
         let voiceName = overrideVoice?.1 ?? (selection?.2.hasPrefix("imported:") == false ? selection!.2 : defaultVoice)
         let engineName = overrideVoice?.0 ?? (selection?.2.hasPrefix("imported:") == false ? selection!.1 : "pocket")
-        var request = URLRequest(url: ttsURL); request.httpMethod = "POST"; request.timeoutInterval = 60
+        var request = URLRequest(url: ttsURL); request.httpMethod = "POST"; request.timeoutInterval = Double(text.utf16.count) * 0.09 + 5
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["engine": engineName, "voice": voiceName, "text": text])
         lastSpoken = text
@@ -310,12 +326,14 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
     }
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { endSpeech() }
     private func endSpeech() {
+        if !lastSpoken.isEmpty { finalGate.record(lastSpoken, at: Date().timeIntervalSince1970); lastSpoken = "" }
         speaking = false; lastSpeechEnded = Date(); player = nil
-        let token = generation
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
-            guard let self, self.generation == token else { return }
-            self.onSpeaking(false); self.onChange(); self.playNext()
-        }
+        onSpeaking(false); onChange(); scheduleDrain(); playNext()
+    }
+    private func dropVoice(_ message: String, reason: String) {
+        voice = false; sttReady = false; offReason = reason; interim = ""; pcm.removeAll(); finalGate = NativeFinalGate()
+        sttSocket?.cancel(with: .normalClosure, reason: nil); sttSocket = nil
+        report(message)
     }
     private func report(_ message: String) { error = message; onChange() }
     private static func wav(_ pcm: Data) -> Data {
