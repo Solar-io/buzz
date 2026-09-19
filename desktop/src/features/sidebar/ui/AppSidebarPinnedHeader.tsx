@@ -1,4 +1,5 @@
-import { Activity, Bot, Folders, Inbox, Zap } from "lucide-react";
+import { Activity, BarChart3, Bot, Folders, Inbox, Zap } from "lucide-react";
+import { Link, useLocation } from "@tanstack/react-router";
 
 import { TopbarSearch } from "@/features/search/ui/TopbarSearch";
 import { SidebarProjectsSection } from "@/features/sidebar/ui/SidebarProjectsSection";
@@ -98,6 +99,9 @@ export function AppSidebarPrimaryMenu({
   projectsOverviewActive,
   selectedView,
 }: AppSidebarPrimaryMenuProps) {
+  const usageActive = useLocation({
+    select: (location) => location.pathname === "/agents/usage",
+  });
   return (
     <>
       <SidebarHeader
@@ -158,13 +162,26 @@ export function AppSidebarPrimaryMenu({
             <SidebarMenuButton
               className="data-[active=true]:font-normal"
               data-testid="open-agents-view"
-              isActive={selectedView === "agents"}
+              isActive={selectedView === "agents" && !usageActive}
               onClick={onSelectAgents}
               tooltip="Agents"
               type="button"
             >
               <Bot className="h-4 w-4" />
               <SidebarMenuLabel>Agents</SidebarMenuLabel>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              asChild
+              isActive={usageActive}
+              tooltip="Usage"
+              data-testid="open-agent-usage-view"
+            >
+              <Link to="/agents/usage">
+                <BarChart3 className="h-4 w-4" />
+                <SidebarMenuLabel>Usage</SidebarMenuLabel>
+              </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <FeatureGate feature="workflows">

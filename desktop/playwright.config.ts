@@ -19,6 +19,7 @@ export default defineConfig({
     {
       name: "smoke",
       testMatch: [
+        "**/agent-usage.spec.ts",
         "**/smoke.spec.ts",
         "**/sidebar-offcanvas-rail.spec.ts",
         "**/tooltip-semantics.spec.ts",

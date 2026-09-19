@@ -1,4 +1,9 @@
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
+import {
+  mockUsageAnalytics,
+  type MockUsageAnalytics,
+} from "./e2eBridgeUsageAnalytics";
+import type { AgentUsageAnalyticsRequest } from "@/shared/api/tauriArchive";
 import { emit, listen } from "@tauri-apps/api/event";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { decode, npubEncode, nsecEncode } from "nostr-tools/nip19";
@@ -188,6 +193,7 @@ type MockHuddleSeed = {
 type E2eConfig = {
   mode?: "mock" | "relay";
   mock?: {
+    usageAnalytics?: MockUsageAnalytics;
     /** Tauri window label exposed to the app. Defaults to the main window. */
     windowLabel?: string;
     ttsSettings?: {
@@ -13936,6 +13942,16 @@ export function maybeInstallE2eTauriMocks() {
       // union / delete-row-when-empty semantics as the real Rust commands
       // (see `archive/store.rs::merge_owner_p_kinds` / `remove_owner_p_kind`)
       // so specs can drive default-on seeding and toggle ON/OFF flows.
+      case "get_agent_usage_analytics": {
+        const seed = activeConfig?.mock?.usageAnalytics;
+        if (seed?.delayMs)
+          await new Promise((resolve) => setTimeout(resolve, seed.delayMs));
+        if (seed?.error) throw new Error(seed.error);
+        return mockUsageAnalytics(
+          (payload as { request: AgentUsageAnalyticsRequest }).request,
+          seed,
+        );
+      }
       case "list_save_subscriptions": {
         const win = window as unknown as Record<string, unknown>;
         if (!win.__BUZZ_E2E_IPC_COUNTERS__) {

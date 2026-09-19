@@ -145,6 +145,7 @@ type MockInstallRuntimeResult = {
 };
 
 type MockBridgeOptions = {
+  usageAnalytics?: import("../../src/testing/e2eBridgeUsageAnalytics").MockUsageAnalytics;
   /** Tauri window label exposed to the app. Defaults to the main window. */
   windowLabel?: string;
   ttsSettings?: {
