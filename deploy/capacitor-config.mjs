@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from "node:fs";
+import { createReadStream, readFileSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
@@ -37,7 +37,7 @@ export function gatewayEnvironment(inspect, mode, delivery, topic) {
   } else if (mode !== "legacy") throw new Error("Unsupported gateway configuration mode.");
   return Object.entries(env).map(([key, value]) => `${key}=${value}`).join("\n") + "\n";
 }
-export function verifyBackup(manifest, ids, read = readFileSync, stat = statSync) {
+export async function verifyBackup(manifest, ids, read = null, stat = statSync) {
   if (manifest.version !== 1 || manifest.verified !== true || !Array.isArray(manifest.artifacts) || manifest.artifacts.length === 0) throw new Error("Verified version-1 backup manifest with artifacts required.");
   for (const [name, id] of Object.entries(ids)) {
     if (!/^[a-f0-9]{64}$/.test(id) || manifest.containers?.[name] !== id) throw new Error(`Backup container identity mismatch: ${name}`);
@@ -45,7 +45,10 @@ export function verifyBackup(manifest, ids, read = readFileSync, stat = statSync
   for (const artifact of manifest.artifacts) {
     if (typeof artifact.path !== "string" || !artifact.path.startsWith("/") || !/^[a-f0-9]{64}$/.test(artifact.sha256 ?? "")) throw new Error("Backup artifacts need absolute paths and SHA256 hashes.");
     if (!stat(artifact.path).isFile() || stat(artifact.path).size === 0) throw new Error("Backup artifact missing or empty.");
-    if (createHash("sha256").update(read(artifact.path)).digest("hex") !== artifact.sha256) throw new Error("Backup artifact checksum mismatch.");
+    const hash = createHash("sha256");
+    if (read) hash.update(read(artifact.path));
+    else for await (const chunk of createReadStream(artifact.path)) hash.update(chunk);
+    if (hash.digest("hex") !== artifact.sha256) throw new Error("Backup artifact checksum mismatch.");
   }
 }
 export function relayEnvironment(before, delivery) {
@@ -72,7 +75,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const json = (path) => JSON.parse(readFileSync(path, "utf8"));
   try {
     if (mode === "gateway-env") process.stdout.write(gatewayEnvironment(json(args[0]), args[1], args[2], args[3]));
-    else if (mode === "verify-backup") verifyBackup(json(args[0]), Object.fromEntries(args.slice(1).map((entry) => entry.split("="))));
+    else if (mode === "verify-backup") await verifyBackup(json(args[0]), Object.fromEntries(args.slice(1).map((entry) => entry.split("="))));
     else if (mode === "relay-env") process.stdout.write(relayEnvironment(readFileSync(args[0], "utf8"), args[1]));
     else if (mode === "check-compose") assertRelayOnlyChange(json(args[0]), json(args[1]));
     else if (mode === "delivery-url") process.stdout.write(deliveryUrl(args[0]));

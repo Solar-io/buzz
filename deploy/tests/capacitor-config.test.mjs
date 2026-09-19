@@ -34,15 +34,15 @@ test("private delivery URL rejects insecure audiences and token-bearing variants
   for (const url of ["http://host/v1/deliveries/apns", "https://user:secret@host/v1/deliveries/apns", "https://host/v1/deliveries/apns?key=secret", "https://host/other", "https://host/v1/deliveries/apns#fragment"]) assert.throws(() => deliveryUrl(url));
   assert.throws(() => gatewayEnvironment(gateway(), "native", "https://push.buzz.xyz/v1/deliveries/apns", "cloud.noet.buzz"));
 });
-test("backup verification detects stale identities, changed bytes and empty artifacts", () => {
+test("backup verification detects stale identities, changed bytes and empty artifacts", async () => {
   const id = "a".repeat(64); const bytes = Buffer.from("verified fixture dump");
   const manifest = { version: 1, verified: true, containers: { gateway: id }, artifacts: [{ path: "/fixture/dump", sha256: createHash("sha256").update(bytes).digest("hex") }] };
   const stat = () => ({ isFile: () => true, size: bytes.length });
-  verifyBackup(manifest, { gateway: id }, () => bytes, stat);
-  assert.throws(() => verifyBackup(manifest, { gateway: "b".repeat(64) }, () => bytes, stat));
-  assert.throws(() => verifyBackup(manifest, { gateway: id }, () => Buffer.from("corrupted"), stat));
-  assert.throws(() => verifyBackup({ ...manifest, artifacts: [] }, { gateway: id }, () => bytes, stat));
-  assert.throws(() => verifyBackup(manifest, { gateway: id }, () => bytes, () => ({ isFile: () => true, size: 0 })));
+  await verifyBackup(manifest, { gateway: id }, () => bytes, stat);
+  await assert.rejects(() => verifyBackup(manifest, { gateway: "b".repeat(64) }, () => bytes, stat));
+  await assert.rejects(() => verifyBackup(manifest, { gateway: id }, () => Buffer.from("corrupted"), stat));
+  await assert.rejects(() => verifyBackup({ ...manifest, artifacts: [] }, { gateway: id }, () => bytes, stat));
+  await assert.rejects(() => verifyBackup(manifest, { gateway: id }, () => bytes, () => ({ isFile: () => true, size: 0 })));
 });
 test("relay env editing preserves every unrelated line and replaces only native push flags", () => {
   const before = "# keep\nBUZZ_RELAY_PRIVATE_KEY=fixture-secret\nBUZZ_IMAGE=old-relay\nBUZZ_PUSH_CAPACITOR_ENABLED=false\nBUZZ_PUSH_GATEWAY_DELIVERY_URL=https://old/v1/deliveries/apns\n";
