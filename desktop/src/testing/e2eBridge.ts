@@ -8274,6 +8274,7 @@ function defaultMockHarnessPolicy(): HarnessPolicy {
     profiles: {
       codex: profile("native"),
       "claude-codex": profile("native"),
+      "claude-code-glm": profile("codex_role_runner"),
       claude: profile("codex_role_runner"),
       "claude-glm": profile("codex_role_runner"),
       goose: profile("native"),

@@ -127,6 +127,7 @@ export function HarnessPolicyEditor({
   const [dirty, setDirty] = React.useState(false);
   const [saveState, setSaveState] = React.useState<SaveState>("idle");
   const [error, setError] = React.useState<string | null>(null);
+  const [expanded, setExpanded] = React.useState(!compact);
 
   // The policy document is shared, but changing between global and one-agent
   // scopes must reset the local draft and loading state.
@@ -138,6 +139,7 @@ export function HarnessPolicyEditor({
     setDirty(false);
     setSaveState("idle");
     setError(null);
+    setExpanded(!compact);
     getHarnessPolicy()
       .then((loaded) => {
         if (cancelled) return;
@@ -214,173 +216,197 @@ export function HarnessPolicyEditor({
         agentPubkey ? "agent-harness-policy-overrides" : "global-harness-policy"
       }
     >
-      <div className="space-y-1">
-        <h3 className="text-sm font-semibold text-foreground">
+      <button
+        aria-expanded={expanded}
+        className="flex w-full items-center justify-between text-left"
+        data-testid="harness-policy-toggle"
+        onClick={() => setExpanded((current) => !current)}
+        type="button"
+      >
+        <span className="text-sm font-semibold text-foreground">
           {agentPubkey ? "Role overrides" : "Role routing"}
-        </h3>
-        <p className="text-xs text-muted-foreground">
-          {agentPubkey
-            ? "Choose exact model and effort values for this agent. Unchanged roles inherit global defaults."
-            : "Set exact model and effort defaults. Native adapters refuse routes their live catalog cannot enforce. An explicit architect or dev-team request uses the full pipeline."}
-        </p>
-      </div>
-
-      <div className="space-y-2" data-testid="harness-policy-role-rows">
-        {ROLE_ROWS.map(({ key, label }) => {
-          const { route, override } = routeFor(draft, key, agentPubkey);
-          const effectiveRoute = route ?? { model: "", effort: "low" as const };
-          return (
-            <div
-              className="grid grid-cols-[minmax(7rem,0.8fr)_minmax(9rem,1.5fr)_6.5rem_auto] items-center gap-2"
-              data-testid={`harness-policy-role-${key}`}
-              key={key}
-            >
-              <label
-                className="text-sm text-foreground"
-                htmlFor={`harness-policy-model-${key}`}
-              >
-                {label}
-              </label>
-              <Input
-                aria-label={`${label} model`}
-                className="h-9"
-                data-testid={`harness-policy-model-${key}`}
-                disabled={disabled}
-                id={`harness-policy-model-${key}`}
-                onChange={(event) =>
-                  updateDraft(
-                    updateRole(
-                      draft,
-                      key,
-                      { ...effectiveRoute, model: event.target.value },
-                      agentPubkey,
-                    ),
-                  )
-                }
-                value={effectiveRoute.model}
-              />
-              <select
-                aria-label={`${label} effort`}
-                className={FIELD_CLASS}
-                data-testid={`harness-policy-effort-${key}`}
-                disabled={disabled}
-                onChange={(event) => {
-                  if (agentPubkey && event.target.value === "inherit") {
-                    updateDraft(clearOverride(draft, key, agentPubkey));
-                    return;
-                  }
-                  updateDraft(
-                    updateRole(
-                      draft,
-                      key,
-                      {
-                        ...effectiveRoute,
-                        effort: event.target.value as HarnessEffort,
-                      },
-                      agentPubkey,
-                    ),
-                  );
-                }}
-                value={
-                  agentPubkey && !override ? "inherit" : effectiveRoute.effort
-                }
-              >
-                {agentPubkey ? <option value="inherit">Inherit</option> : null}
-                {EFFORT_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              {agentPubkey && override ? (
-                <Button
-                  aria-label={`Reset ${label} override`}
-                  data-testid={`harness-policy-reset-${key}`}
-                  disabled={disabled}
-                  onClick={() =>
-                    updateDraft(clearOverride(draft, key, agentPubkey))
-                  }
-                  size="icon"
-                  variant="ghost"
-                >
-                  <RotateCcw className="size-3.5" />
-                </Button>
-              ) : (
-                <span className="w-9" />
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {!agentPubkey ? (
-        <div className="space-y-2" data-testid="harness-policy-profile-rows">
-          <p className="text-xs font-medium text-muted-foreground">
-            Runtime adapters
-          </p>
-          {Object.entries(draft.profiles).map(([profileId, profile]) => (
-            <div
-              className="grid grid-cols-[minmax(8rem,1fr)_minmax(12rem,1.2fr)] items-center gap-2"
-              key={profileId}
-            >
-              <span className="text-sm text-foreground">{profileId}</span>
-              <select
-                aria-label={`${profileId} adapter`}
-                className={FIELD_CLASS}
-                data-testid={`harness-policy-adapter-${profileId}`}
-                disabled={disabled}
-                onChange={(event) =>
-                  updateDraft({
-                    ...draft,
-                    profiles: {
-                      ...draft.profiles,
-                      [profileId]: {
-                        ...profile,
-                        adapter: event.target.value as HarnessPolicyAdapter,
-                      },
-                    },
-                  })
-                }
-                value={profile.adapter}
-              >
-                {ADAPTER_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      <div className="flex items-center gap-2">
-        {saveState === "saved" ? (
-          <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-            <Check className="size-3.5" /> Saved
-          </span>
-        ) : null}
-        {saveState === "error" && error ? (
-          <span className="text-xs text-destructive">{error}</span>
-        ) : null}
-        <span
-          className="ml-auto text-[11px] text-muted-foreground"
-          data-testid="harness-policy-hash"
-        >
-          Policy {state.policyHash.slice(0, 12)}
         </span>
-        <Button
-          data-testid="harness-policy-save"
-          disabled={!dirty || disabled || saveState === "saving"}
-          onClick={() => void save()}
-          size="sm"
-        >
-          {saveState === "saving" ? (
-            <Loader className="mr-1.5 size-3.5 animate-spin" />
+        <span className="text-xs text-muted-foreground">
+          {expanded ? "Hide" : "Configure"}
+        </span>
+      </button>
+
+      {expanded ? (
+        <>
+          <p className="text-xs text-muted-foreground">
+            {agentPubkey
+              ? "Choose exact model and effort values for this agent. Unchanged roles inherit global defaults."
+              : "Set exact model and effort defaults. Native adapters refuse routes their live catalog cannot enforce. An explicit architect or dev-team request uses the full pipeline."}
+          </p>
+
+          <div className="space-y-2" data-testid="harness-policy-role-rows">
+            {ROLE_ROWS.map(({ key, label }) => {
+              const { route, override } = routeFor(draft, key, agentPubkey);
+              const effectiveRoute = route ?? {
+                model: "",
+                effort: "low" as const,
+              };
+              return (
+                <div
+                  className="grid grid-cols-[minmax(7rem,0.8fr)_minmax(9rem,1.5fr)_6.5rem_auto] items-center gap-2"
+                  data-testid={`harness-policy-role-${key}`}
+                  key={key}
+                >
+                  <label
+                    className="text-sm text-foreground"
+                    htmlFor={`harness-policy-model-${key}`}
+                  >
+                    {label}
+                  </label>
+                  <Input
+                    aria-label={`${label} model`}
+                    className="h-9"
+                    data-testid={`harness-policy-model-${key}`}
+                    disabled={disabled}
+                    id={`harness-policy-model-${key}`}
+                    onChange={(event) =>
+                      updateDraft(
+                        updateRole(
+                          draft,
+                          key,
+                          { ...effectiveRoute, model: event.target.value },
+                          agentPubkey,
+                        ),
+                      )
+                    }
+                    value={effectiveRoute.model}
+                  />
+                  <select
+                    aria-label={`${label} effort`}
+                    className={FIELD_CLASS}
+                    data-testid={`harness-policy-effort-${key}`}
+                    disabled={disabled}
+                    onChange={(event) => {
+                      if (agentPubkey && event.target.value === "inherit") {
+                        updateDraft(clearOverride(draft, key, agentPubkey));
+                        return;
+                      }
+                      updateDraft(
+                        updateRole(
+                          draft,
+                          key,
+                          {
+                            ...effectiveRoute,
+                            effort: event.target.value as HarnessEffort,
+                          },
+                          agentPubkey,
+                        ),
+                      );
+                    }}
+                    value={
+                      agentPubkey && !override
+                        ? "inherit"
+                        : effectiveRoute.effort
+                    }
+                  >
+                    {agentPubkey ? (
+                      <option value="inherit">Inherit</option>
+                    ) : null}
+                    {EFFORT_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  {agentPubkey && override ? (
+                    <Button
+                      aria-label={`Reset ${label} override`}
+                      data-testid={`harness-policy-reset-${key}`}
+                      disabled={disabled}
+                      onClick={() =>
+                        updateDraft(clearOverride(draft, key, agentPubkey))
+                      }
+                      size="icon"
+                      variant="ghost"
+                    >
+                      <RotateCcw className="size-3.5" />
+                    </Button>
+                  ) : (
+                    <span className="w-9" />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {!agentPubkey ? (
+            <div
+              className="space-y-2"
+              data-testid="harness-policy-profile-rows"
+            >
+              <p className="text-xs font-medium text-muted-foreground">
+                Runtime adapters
+              </p>
+              {Object.entries(draft.profiles).map(([profileId, profile]) => (
+                <div
+                  className="grid grid-cols-[minmax(8rem,1fr)_minmax(12rem,1.2fr)] items-center gap-2"
+                  key={profileId}
+                >
+                  <span className="text-sm text-foreground">{profileId}</span>
+                  <select
+                    aria-label={`${profileId} adapter`}
+                    className={FIELD_CLASS}
+                    data-testid={`harness-policy-adapter-${profileId}`}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      updateDraft({
+                        ...draft,
+                        profiles: {
+                          ...draft.profiles,
+                          [profileId]: {
+                            ...profile,
+                            adapter: event.target.value as HarnessPolicyAdapter,
+                          },
+                        },
+                      })
+                    }
+                    value={profile.adapter}
+                  >
+                    {ADAPTER_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
           ) : null}
-          Save policy
-        </Button>
-      </div>
+
+          <div className="flex items-center gap-2">
+            {saveState === "saved" ? (
+              <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                <Check className="size-3.5" /> Saved
+              </span>
+            ) : null}
+            {saveState === "error" && error ? (
+              <span className="text-xs text-destructive">{error}</span>
+            ) : null}
+            <span
+              className="ml-auto text-xs text-muted-foreground"
+              data-testid="harness-policy-hash"
+            >
+              Policy {state.policyHash.slice(0, 12)}
+            </span>
+            <Button
+              data-testid="harness-policy-save"
+              disabled={!dirty || disabled || saveState === "saving"}
+              onClick={() => void save()}
+              size="sm"
+            >
+              {saveState === "saving" ? (
+                <Loader className="mr-1.5 size-3.5 animate-spin" />
+              ) : null}
+              Save policy
+            </Button>
+          </div>
+        </>
+      ) : null}
     </section>
   );
 }

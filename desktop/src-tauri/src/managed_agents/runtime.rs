@@ -397,6 +397,37 @@ pub(crate) fn configure_runtime_cli(
     }
 }
 
+/// Resolve the Desktop-owned policy overlay for one spawn.  The configured
+/// runtime id is checked before the static built-in fallback so custom
+/// catalog entries (for example `claude-code-glm`) receive their exact policy
+/// routes too.
+pub(crate) fn resolve_harness_policy_env(
+    policy: &crate::managed_agents::harness_policy::HarnessPolicy,
+    record: &ManagedAgentRecord,
+    personas: &[crate::managed_agents::types::AgentDefinition],
+    effective_command: &str,
+) -> Result<Option<std::collections::BTreeMap<String, String>>, String> {
+    let configured_runtime_id = record.runtime.as_deref().or_else(|| {
+        record.persona_id.as_deref().and_then(|persona_id| {
+            personas
+                .iter()
+                .find(|persona| persona.id == persona_id)
+                .and_then(|persona| persona.runtime.as_deref())
+        })
+    });
+    let fallback_profile_id = known_acp_runtime(effective_command).map(|runtime| runtime.id);
+    let Some(profile_id) = policy.profile_for_harness(configured_runtime_id, fallback_profile_id)
+    else {
+        return Ok(None);
+    };
+    crate::managed_agents::harness_policy::spawn_overlay_env(
+        policy,
+        &profile_id,
+        Some(record.pubkey.as_str()),
+    )
+    .map(Some)
+}
+
 /// Spawn an agent process without holding any locks on records or runtimes.
 /// Returns the child process and log path on success. The caller is responsible
 /// for updating `ManagedAgentRecord` fields and inserting into the runtimes map.
@@ -465,16 +496,9 @@ pub fn spawn_agent_child(
     // The adapter performs the live capability check; the desktop never
     // substitutes another model or effort. Unknown custom harnesses keep
     // their existing behavior until they register a policy profile.
-    let harness_policy_env = if let Some(runtime) = known_acp_runtime(effective_command) {
-        let policy = crate::managed_agents::harness_policy::load_harness_policy(app)?;
-        Some(crate::managed_agents::harness_policy::spawn_overlay_env(
-            &policy,
-            runtime.id,
-            Some(record.pubkey.as_str()),
-        )?)
-    } else {
-        None
-    };
+    let policy = crate::managed_agents::harness_policy::load_harness_policy(app)?;
+    let harness_policy_env =
+        resolve_harness_policy_env(&policy, record, &personas, effective_command)?;
 
     let log_path = super::managed_agent_runtime_log_path(app, &runtime_key)?;
     append_log_marker(

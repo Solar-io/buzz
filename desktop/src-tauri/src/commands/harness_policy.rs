@@ -1,5 +1,6 @@
 //! IPC surface for the provider-neutral harness role policy.
 
+use std::sync::{Mutex, OnceLock};
 use tauri::AppHandle;
 
 use crate::managed_agents::harness_policy::{
@@ -7,6 +8,22 @@ use crate::managed_agents::harness_policy::{
     CompiledHarnessPolicy, HarnessPolicy, HarnessPolicySaveResult, HarnessPolicyState,
     HarnessRuntimeCatalog,
 };
+
+fn policy_write_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn next_policy_revision(previous: u64, submitted: u64) -> Result<u64, String> {
+    if submitted != previous {
+        return Err(format!(
+            "harness policy changed concurrently (expected revision {previous}, received {submitted}); reload before saving"
+        ));
+    }
+    previous
+        .checked_add(1)
+        .ok_or_else(|| "harness policy revision overflow".to_string())
+}
 
 /// Read the desired harness policy and its canonical hash.
 #[tauri::command]
@@ -29,8 +46,11 @@ pub fn set_harness_policy(
     mut policy: HarnessPolicy,
     app: AppHandle,
 ) -> Result<HarnessPolicySaveResult, String> {
+    let _guard = policy_write_lock()
+        .lock()
+        .map_err(|_| "harness policy write lock is poisoned".to_string())?;
     let previous = load_harness_policy(&app)?;
-    policy.revision = previous.revision.saturating_add(1);
+    policy.revision = next_policy_revision(previous.revision, policy.revision)?;
     policy.validate()?;
     save_harness_policy(&app, &policy)?;
     let state = HarnessPolicyState {
@@ -75,5 +95,16 @@ mod tests {
         let policy = HarnessPolicy::default();
         assert_eq!(policy.schema_version, 1);
         assert!(!policy_hash(&policy).unwrap().is_empty());
+    }
+
+    #[test]
+    fn stale_policy_revision_is_rejected_instead_of_overwriting_newer_state() {
+        let error = next_policy_revision(4, 3).unwrap_err();
+        assert!(error.contains("changed concurrently"));
+    }
+
+    #[test]
+    fn policy_revision_advances_exactly_once() {
+        assert_eq!(next_policy_revision(4, 4).unwrap(), 5);
     }
 }

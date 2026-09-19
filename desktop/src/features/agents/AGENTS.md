@@ -263,7 +263,9 @@ with a TypeScript lookup table or an id comparison in a component.
     enforcement select the explicit `codex_role_runner` adapter; desired,
     adapter, effective, and health state remain separate. Spawn carries the
     compiled provider-neutral overlay in Desktop-owned `BUZZ_HARNESS_POLICY_*`
-    variables, which are reserved from user env overrides.
+    variables, which are reserved from user env overrides. The editor is
+    progressively disclosed in compact dialogs so global defaults do not
+    change the create/edit dialog height until the user opens role routing.
 
 ## The tests that enforce this
 

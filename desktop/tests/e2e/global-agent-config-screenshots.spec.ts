@@ -251,6 +251,7 @@ test.describe("global agent config screenshots", () => {
 
     const policy = page.getByTestId("global-harness-policy");
     await expect(policy).toBeVisible();
+    await policy.getByTestId("harness-policy-toggle").click();
     await policy.getByTestId("harness-policy-model-coder").fill("gpt-5.6-sol");
     await policy.getByTestId("harness-policy-effort-coder").selectOption("low");
     await policy

@@ -155,9 +155,9 @@ pub struct HarnessProfilePolicy {
     /// different model.
     #[serde(default)]
     pub adapter: HarnessPolicyAdapter,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub native_config_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub native_config_format: Option<String>,
 }
 
@@ -351,6 +351,13 @@ pub fn default_harness_policy() -> HarnessPolicy {
         profiles.insert(profile.to_string(), HarnessProfilePolicy::default());
     }
     profiles.insert("claude-codex".to_string(), HarnessProfilePolicy::default());
+    profiles.insert(
+        "claude-code-glm".to_string(),
+        HarnessProfilePolicy {
+            adapter: HarnessPolicyAdapter::CodexRoleRunner,
+            ..HarnessProfilePolicy::default()
+        },
+    );
     for profile in ["claude", "claude-glm"] {
         profiles.insert(
             profile.to_string(),
@@ -416,6 +423,22 @@ impl HarnessPolicy {
             .and_then(|key| self.agent_overrides.get(key))
             .and_then(|overrides| overrides.get(&role))
             .or_else(|| self.role_defaults.get(&role))
+    }
+
+    /// Resolve a policy profile from the identity selected in the runtime
+    /// catalog, falling back to the static runtime id only when the catalog
+    /// did not provide one.  Custom catalog entries therefore participate in
+    /// policy routing without being mistaken for one of the four built-ins.
+    pub fn profile_for_harness(
+        &self,
+        configured_runtime_id: Option<&str>,
+        fallback_profile_id: Option<&str>,
+    ) -> Option<String> {
+        configured_runtime_id
+            .into_iter()
+            .chain(fallback_profile_id)
+            .find(|candidate| self.profiles.contains_key(*candidate))
+            .map(str::to_string)
     }
 
     /// Compile the policy against an adapter-supplied live runtime catalog.
@@ -891,6 +914,33 @@ mod tests {
             .unwrap()
             .effort = HarnessEffort::Medium;
         assert_ne!(first, policy_hash(&policy).unwrap());
+    }
+
+    #[test]
+    fn profile_config_nulls_are_explicit_on_the_wire() {
+        let profile = HarnessProfilePolicy::default();
+        let value = serde_json::to_value(profile).unwrap();
+        assert_eq!(
+            value.get("nativeConfigPath"),
+            Some(&serde_json::Value::Null)
+        );
+        assert_eq!(
+            value.get("nativeConfigFormat"),
+            Some(&serde_json::Value::Null)
+        );
+    }
+
+    #[test]
+    fn custom_catalog_profile_wins_over_static_fallback() {
+        let policy = default_harness_policy();
+        assert_eq!(
+            policy.profile_for_harness(Some("claude-code-glm"), Some("claude")),
+            Some("claude-code-glm".to_string())
+        );
+        assert_eq!(
+            policy.profile_for_harness(Some("not-registered"), Some("claude")),
+            Some("claude".to_string())
+        );
     }
 
     #[test]

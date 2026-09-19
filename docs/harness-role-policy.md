@@ -26,3 +26,11 @@ Managed agent spawns carry the provider-neutral overlay in the reserved
 `BUZZ_HARNESS_POLICY_JSON`, `BUZZ_HARNESS_POLICY_HASH`, and
 `BUZZ_HARNESS_POLICY_PROFILE` variables. User/persona env values cannot
 override these keys.
+
+Profile config paths and formats are serialized explicitly as `null` when
+unset, keeping the Rust and TypeScript contracts byte-for-byte aligned. Saves
+use the persisted revision as an optimistic concurrency token and reject a
+stale edit before the atomic write, so a later policy cannot be overwritten by
+an older dialog. Custom catalog ids such as `claude-code-glm` are resolved from
+the selected runtime id before the static built-in fallback and receive the
+same exact overlay path.

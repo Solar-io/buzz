@@ -1,3 +1,4 @@
+use crate::managed_agents::harness_policy::default_harness_policy;
 use crate::managed_agents::known_acp_runtime;
 
 #[path = "cli_tests.rs"]
@@ -116,6 +117,26 @@ fn goose_has_no_mcp_hooks() {
 #[test]
 fn unknown_command_returns_none() {
     assert!(known_acp_runtime("custom-agent").is_none());
+}
+
+#[test]
+fn custom_claude_glm_runtime_receives_policy_overlay() {
+    let mut record = super::test_fixtures::fixture(RespondTo::OwnerOnly, vec![], None);
+    record.runtime = Some("claude-code-glm".to_string());
+    record.agent_command = "claude-code-glm".to_string();
+    let policy = default_harness_policy();
+
+    let env = super::resolve_harness_policy_env(&policy, &record, &[], "claude-code-glm")
+        .expect("custom runtime policy resolution should succeed")
+        .expect("registered custom Claude profile should receive an overlay");
+    assert_eq!(
+        env.get("BUZZ_HARNESS_POLICY_PROFILE").map(String::as_str),
+        Some("claude-code-glm")
+    );
+    let overlay: serde_json::Value =
+        serde_json::from_str(env.get("BUZZ_HARNESS_POLICY_JSON").unwrap()).unwrap();
+    assert_eq!(overlay["adapter"], "codex_role_runner");
+    assert_eq!(overlay["routes"]["architect"]["model"], "gpt-5.6-sol");
 }
 
 // ── build_respond_to_env tests ───────────────────────────────────────
