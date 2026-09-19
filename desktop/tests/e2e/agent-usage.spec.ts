@@ -48,7 +48,9 @@ test("one many all none filter every analytics dimension and survive reload", as
   await page.getByRole("checkbox").first().check();
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("usage-total")).toHaveText("10.0M");
-  await expect(page.getByTestId("usage-cost")).toHaveText("$15.50");
+  await expect(page.getByTestId("usage-cost")).toHaveText(
+    "Wire $15.50 · Manifest —",
+  );
   await expect(
     page
       .getByRole("region", { name: "Provider breakdown", exact: true })
@@ -98,7 +100,9 @@ test("empty disabled unknown and retry states remain truthful", async ({
   await page.goto("/#/agents/usage");
   await expect(page.getByText("Usage collection is disabled.")).toBeVisible();
   await expect(page.getByTestId("usage-total")).toHaveText("—");
-  await expect(page.getByTestId("usage-cost")).toHaveText("—");
+  await expect(page.getByTestId("usage-cost")).toHaveText(
+    "Wire — · Manifest —",
+  );
 });
 for (const width of [375, 768, 1024, 1440, 2560]) {
   test(`responsive reference screenshot ${width}`, async ({ page }) => {
