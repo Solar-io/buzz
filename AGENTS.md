@@ -286,6 +286,15 @@ useRelaySession x11, useTheme x4, hook wiring cases) on a tree that is green
 under the real runner. Do not triage failures from `bun test`; re-run with
 `pnpm test` first.
 
+Mutation proof: **commit the change before you mutate anything.** Reverting a
+mutation with `git checkout -- <file>` also reverts every uncommitted line in
+that file, so the next mutation runs against a tree missing the code under
+test — the suite then fails at module load and looks like a kill. Tell the two
+apart by the COUNT, not the colour: a genuine kill leaves the total test count
+unchanged and names the failing tests; a reverted-source run reports a whole
+FILE failing and a total well below baseline (seen 9/19: 2653 → 2637, read as
+three kills that never happened).
+
 ### PR Screenshots
 
 > **Do NOT use `buzz upload`, the relay media endpoint, or any third-party
