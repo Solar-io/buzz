@@ -1,10 +1,22 @@
 # Buzz Web for iOS
 
 This is a separate Capacitor application containing the shared `web/` client.
-It coexists with the Flutter application under `mobile/`; neither its files nor
-its bundle identity are replaced. The display name is **Buzz Web**. The default
-bundle identifier is `com.buzz.web`; Sam's local signing override uses
-`cloud.noet.buzz.web` (the Flutter app uses `cloud.noet.buzz`).
+Flutter source remains under `mobile/` for rollback. The default bundle
+identifier `com.buzz.web` supports a separate installation. Sam authorized an
+in-place replacement using the existing `cloud.noet.buzz` identity; the local
+signing override selects that identity. Install over the previous application,
+never uninstall it first: the app container and legacy Keychain records are
+preserved. Gateway replacement uses only Capacitor profiles, with the old
+container/image retained by the guarded cutover workflow.
+
+When native identity storage is empty, setup can restore the verified active
+Flutter community entirely inside Swift. It validates the key/public-key pair
+and secure relay, asks for a public community choice when ambiguous, and never
+returns secret material to JavaScript. Existing native identities are never
+overwritten. Flutter records remain for rollback, while a one-time marker
+prevents them from resurrecting an explicitly forgotten native identity.
+Flutter drafts/preferences are preserved in the backup, not translated into
+web-client preferences. Pair/import remains the fallback if restoration fails.
 
 ## Build
 
@@ -45,7 +57,9 @@ is `development`; Release uses `production`. App Attest uses `production` in bot
 because the gateway verifies the production attestation environment. The native
 plugin reports `buzz-capacitor-ios-sandbox` in Debug and
 `buzz-capacitor-ios-production` in Release; configure the matching gateway
-profile for this app's **distinct** bundle id, not the Flutter id.
+profile for the chosen bundle id. Co-installation requires a distinct topic;
+the explicitly authorized `cloud.noet.buzz` replacement requires disabling all
+legacy gateway profiles before reusing that topic.
 
 For a device SDK compile without signing or account changes:
 
