@@ -78,7 +78,7 @@ export function useNativeHuddleCall({
     channelId: channelId ?? "",
     selfPubkey,
   });
-  const members = useHuddleMemberSnapshot(connected ? channelId : null);
+  const members = useHuddleMemberSnapshot(channelId);
   const parentMembers = useHuddleMemberSnapshot(
     connected ? parentChannelId : null,
   );
@@ -184,6 +184,10 @@ export function useNativeHuddleCall({
     },
     [parentChannelId, configure],
   );
+  const memberPubkeys = useMemo(
+    () => [...members.members.keys()],
+    [members.members],
+  );
   return {
     channelId,
     parentChannelId,
@@ -193,6 +197,8 @@ export function useNativeHuddleCall({
     profiles,
     reactions,
     agentPubkeys: roster.agentPubkeys,
+    memberPubkeys,
+    memberRosterKnown: members.known,
     addAgent: roster.addAgent,
     prefs,
     setPrefs,
