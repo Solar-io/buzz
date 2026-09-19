@@ -1049,6 +1049,10 @@ mod tests {
     fn custom_catalog_profile_wins_over_static_fallback() {
         let policy = default_harness_policy();
         assert_eq!(
+            policy.profiles["claude-code-glm"].adapter, policy.profiles["claude-glm"].adapter,
+            "runtime alias and native config target must select the same adapter"
+        );
+        assert_eq!(
             policy.profile_for_harness(Some("claude-code-glm"), Some("claude")),
             Some("claude-code-glm".to_string())
         );
