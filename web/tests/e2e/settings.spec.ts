@@ -434,6 +434,112 @@ test("the accent picker repaints the interface's primary colour", async ({
   await expect(primary()).resolves.toBe(themeDefault);
 });
 
+test("Custom Gradient is one picker choice with live, persistent variables and cleanup", async ({
+  page,
+}) => {
+  await signIn(page);
+  const picker = page.locator("#appearance-theme");
+  await expect(picker.locator('option[value="custom-gradient"]')).toHaveCount(
+    1,
+  );
+  await expect(picker.locator('option[value^="custom-gradient-"]')).toHaveCount(
+    0,
+  );
+  await picker.selectOption("custom-gradient");
+
+  const root = page.locator("html");
+  await expect(root).toHaveAttribute("data-custom-gradient", "true");
+  await page.getByLabel("Custom gradient light color").fill("#f1e2d3");
+  await page.getByLabel("Custom gradient dark color").fill("#102030");
+  await page.locator("#gradient-midpoint").fill("73");
+  await expect(page.locator("#gradient-midpoint")).toHaveAttribute(
+    "aria-valuetext",
+    "73 percent",
+  );
+  await expect(root).toHaveCSS("--custom-gradient-light", "#f1e2d3");
+  await expect(root).toHaveCSS("--custom-gradient-dark", "#102030");
+  await expect(root).toHaveCSS("--custom-gradient-midpoint", "73%");
+
+  await page.reload();
+  await expect(picker).toHaveValue("custom-gradient");
+  await expect(root).toHaveAttribute("data-custom-gradient", "true");
+  await expect(page.locator("#gradient-midpoint")).toHaveValue("73");
+
+  await picker.selectOption("github-light");
+  await expect(root).not.toHaveAttribute("data-custom-gradient", /.+/);
+  await expect(root).toHaveCSS("--custom-gradient-pane", "");
+  for (const meta of await page.locator('meta[name="theme-color"]').all()) {
+    await expect(meta).not.toHaveAttribute("content", "#f1e2d3");
+  }
+
+  await picker.selectOption("custom-gradient");
+  await page.getByTestId("color-mode-dark").check();
+  await expect(root).toHaveCSS("--custom-gradient-pane", "#102030");
+  await picker.selectOption("github-dark");
+  await expect(root).not.toHaveAttribute("data-custom-gradient", /.+/);
+  for (const meta of await page.locator('meta[name="theme-color"]').all()) {
+    await expect(meta).not.toHaveAttribute("content", "#102030");
+  }
+});
+
+test("Custom Gradient pane endpoint follows Light, Dark, and System mode", async ({
+  page,
+}) => {
+  await page.emulateMedia({ colorScheme: "light" });
+  await signIn(page);
+  await page.locator("#appearance-theme").selectOption("custom-gradient");
+  await page.getByLabel("Custom gradient light color").fill("#f0e0d0");
+  await page.getByLabel("Custom gradient dark color").fill("#102030");
+  const root = page.locator("html");
+
+  await page.getByTestId("color-mode-light").check();
+  await expect(root).toHaveCSS("--custom-gradient-pane", "#f0e0d0");
+  await page.getByTestId("color-mode-dark").check();
+  await expect(root).toHaveCSS("--custom-gradient-pane", "#102030");
+
+  await page.getByTestId("color-mode-system").check();
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect(root).toHaveCSS("--custom-gradient-pane", "#f0e0d0");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(root).toHaveCSS("--custom-gradient-pane", "#102030");
+});
+
+test.describe("Custom Gradient on a phone", () => {
+  test.use({ viewport: { width: 375, height: 667 } });
+
+  test("has no horizontal overflow and keeps controls at touch size", async ({
+    page,
+  }) => {
+    await signIn(page);
+    await page.locator("#appearance-theme").selectOption("custom-gradient");
+    const scroller = page.getByTestId("settings-scroll");
+    expect(
+      await scroller.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    ).toBe(true);
+    const modeCopy = page.getByText("System follows your device", {
+      exact: false,
+    });
+    const modeCopyBox = await modeCopy.boundingBox();
+    const modeControlBox = await page
+      .getByTestId("color-mode-control")
+      .boundingBox();
+    expect(modeCopyBox?.width ?? 0).toBeGreaterThanOrEqual(250);
+    expect(modeControlBox?.y ?? 0).toBeGreaterThanOrEqual(
+      (modeCopyBox?.y ?? 0) + (modeCopyBox?.height ?? 0),
+    );
+    for (const control of [
+      page.getByLabel("Custom gradient light color"),
+      page.getByLabel("Custom gradient dark color"),
+      page.locator("#gradient-midpoint"),
+    ]) {
+      const box = await control.boundingBox();
+      expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+    }
+  });
+});
+
 test("the custom emoji card offers add, and refuses an illegal name", async ({
   page,
 }) => {

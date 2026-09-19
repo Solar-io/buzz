@@ -5,6 +5,13 @@ import { cn } from "@/shared/lib/cn";
 import { AccentPicker } from "@/features/settings/ui/AccentPicker";
 import { AppearancePreferences } from "@/features/settings/ui/AppearancePreferences";
 import { SegmentedControl } from "@/features/settings/ui/SegmentedControl";
+import { CustomGradientThemeEditor } from "@/features/settings/ui/CustomGradientThemeEditor";
+import {
+  CUSTOM_GRADIENT_DARK,
+  CUSTOM_GRADIENT_LIGHT,
+  customGradientThemeForDark,
+  isCustomGradientTheme,
+} from "@/shared/theme/custom-gradient";
 
 /**
  * Human labels for the theme registry.
@@ -101,6 +108,7 @@ export function AppearanceSection() {
     const light: string[] = [];
     const dark: string[] = [];
     for (const name of availableThemes) {
+      if (isCustomGradientTheme(name)) continue;
       (isLightTheme(name) ? light : dark).push(name);
     }
     return { light, dark };
@@ -118,7 +126,7 @@ export function AppearanceSection() {
         </span>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">Colour mode</p>
           <p className="text-xs text-muted-foreground">
@@ -146,9 +154,20 @@ export function AppearanceSection() {
             "h-9 w-full rounded-md border border-input bg-background px-2 text-sm",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           )}
-          value={themeName}
-          onChange={(event) => setThemeName(event.target.value)}
+          value={
+            isCustomGradientTheme(themeName) ? "custom-gradient" : themeName
+          }
+          onChange={(event) =>
+            setThemeName(
+              event.target.value === "custom-gradient"
+                ? customGradientThemeForDark(mode === "dark")
+                : event.target.value,
+            )
+          }
         >
+          <optgroup label="Custom">
+            <option value="custom-gradient">Custom Gradient</option>
+          </optgroup>
           <optgroup label="Light">
             {light.map((name) => (
               <option key={name} value={name}>
@@ -168,6 +187,9 @@ export function AppearanceSection() {
           Every colour in the interface is derived from the theme you pick.
         </p>
       </div>
+
+      {(themeName === CUSTOM_GRADIENT_LIGHT ||
+        themeName === CUSTOM_GRADIENT_DARK) && <CustomGradientThemeEditor />}
 
       <AccentPicker accent={accent} setAccent={setAccent} />
 

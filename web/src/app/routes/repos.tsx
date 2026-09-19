@@ -828,7 +828,7 @@ function ChannelBrowser() {
                 className="flex h-full min-h-0"
                 style={{ ["--thread-width" as string]: `${threadWidth}px` }}
               >
-                <section className="relative flex min-w-0 flex-1 flex-col">
+                <section className="buzz-conversation-pane relative flex min-w-0 flex-1 flex-col">
                   {dmAgentPubkey && (
                     // Stationary portrait over the chat column (Sam's
                     // placement verdict, 2026-09-14): anchored top-right, it

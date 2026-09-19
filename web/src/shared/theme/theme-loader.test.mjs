@@ -119,6 +119,17 @@ test("the Buzz aliases have the polarity their names claim", () => {
   assert.equal(isLightTheme(BUZZ_DARK_THEME_NAME), false);
 });
 
+test("the Custom Gradient aliases form one light/dark Shiki-backed pair", () => {
+  assert.equal(getThemePair("custom-gradient-light"), "custom-gradient-dark");
+  assert.equal(getThemePair("custom-gradient-dark"), "custom-gradient-light");
+  assert.equal(
+    resolveSystemTheme("custom-gradient-light", true),
+    "custom-gradient-dark",
+  );
+  assert.equal(resolveShikiThemeName("custom-gradient-light"), "github-light");
+  assert.equal(resolveShikiThemeName("custom-gradient-dark"), "github-dark");
+});
+
 test("the Buzz aliases seed interface chrome from the fleet palette", () => {
   // Reported 2026-09-17: the installed PWA showed a ~95px gray band under
   // the status bar. Root cause: extractThemeInfo let the aliases borrow

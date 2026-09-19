@@ -14,6 +14,45 @@
    at-rules, so placing this above them silently drops the rest of the sheet. */
 @custom-variant dark (&:where(.dark, .dark *));
 
+:root[data-custom-gradient="true"] .buzz-app-shell,
+:root[data-custom-gradient="true"] .buzz-shell-navigation {
+  background: linear-gradient(
+    90deg,
+    var(--custom-gradient-light) 0%,
+    var(--custom-gradient-mix) var(--custom-gradient-midpoint),
+    var(--custom-gradient-dark) 100%
+  );
+}
+
+:root[data-custom-gradient="true"] .buzz-conversation-pane,
+:root[data-custom-gradient="true"] [data-thinking-pane] {
+  --background: var(--custom-gradient-pane-hsl);
+  --card: var(--custom-gradient-pane-hsl);
+  --card-foreground: var(--custom-gradient-pane-foreground-hsl);
+  --popover: var(--custom-gradient-pane-hsl);
+  --popover-foreground: var(--custom-gradient-pane-foreground-hsl);
+  --secondary: var(--custom-gradient-pane-hsl);
+  --secondary-foreground: var(--custom-gradient-pane-foreground-hsl);
+  --muted: var(--custom-gradient-pane-hsl);
+  --muted-foreground: var(--custom-gradient-pane-foreground-hsl);
+  --accent: var(--custom-gradient-pane-hsl);
+  --accent-foreground: var(--custom-gradient-pane-foreground-hsl);
+  --foreground: var(--custom-gradient-pane-foreground-hsl);
+  --border: var(--custom-gradient-pane-foreground-hsl);
+  --input: var(--custom-gradient-pane-foreground-hsl);
+  color: var(--custom-gradient-pane-foreground);
+  background: var(--custom-gradient-pane);
+}
+
+.custom-gradient-preview {
+  background: linear-gradient(
+    90deg,
+    var(--preview-light) 0%,
+    var(--preview-mix) var(--preview-midpoint),
+    var(--preview-dark) 100%
+  );
+}
+
 /*
  * Buzz motion system — ported from the desktop client's
  * shared/styles/globals/motion.css.
@@ -701,11 +740,36 @@
   }
 }
 
-.buzz-touch-message-trigger { display: none; }
+.buzz-touch-message-trigger {
+  display: none;
+}
 @media (hover: none) and (pointer: coarse) {
-  [data-testid^="message-row-"] { padding-bottom: 2.75rem; }
-  .buzz-touch-message-trigger { display: flex; position: absolute; left: 2.75rem; bottom: 0; align-items: center; justify-content: center; width: 2.5rem; height: 2.5rem; border-radius: 999px; }
-  .buzz-message-actions { top: auto; bottom: 0; transform: none; }
-  [aria-label^="Options for "] { display: block; }
-  [aria-label^="React "] { display: inline-flex; opacity: 1; min-height: 2rem; min-width: 2rem; }
+  [data-testid^="message-row-"] {
+    padding-bottom: 2.75rem;
+  }
+  .buzz-touch-message-trigger {
+    display: flex;
+    position: absolute;
+    left: 2.75rem;
+    bottom: 0;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 999px;
+  }
+  .buzz-message-actions {
+    top: auto;
+    bottom: 0;
+    transform: none;
+  }
+  [aria-label^="Options for "] {
+    display: block;
+  }
+  [aria-label^="React "] {
+    display: inline-flex;
+    opacity: 1;
+    min-height: 2rem;
+    min-width: 2rem;
+  }
 }

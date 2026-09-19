@@ -10,6 +10,14 @@ import {
 
 import { createThemeVars, hexToHsl, luminance } from "./adaptive-theme.ts";
 import {
+  CUSTOM_GRADIENT_STORAGE_KEY,
+  CUSTOM_GRADIENT_VAR_NAMES,
+  type CustomGradientConfig,
+  customGradientVars,
+  isCustomGradientTheme,
+  parseCustomGradientConfig,
+} from "./custom-gradient.ts";
+import {
   BUZZ_DARK_THEME_NAME,
   BUZZ_THEME_NAME,
   type SyntaxThemeName,
@@ -50,6 +58,7 @@ export const ACCENT_STORAGE_KEY = "buzz-accent-color";
  * immediately and reconcile once the real theme resolves.
  */
 const THEME_CACHE_KEY = "buzz-theme-cache-v2";
+const CUSTOM_META_PREVIOUS = "customGradientPreviousContent";
 
 const DEFAULT_THEME: SyntaxThemeName = BUZZ_DARK_THEME_NAME;
 
@@ -75,6 +84,8 @@ export interface ThemeContextValue {
   /** Accent as a hex string, or null to leave the stylesheet's own values. */
   accent: string | null;
   setAccent: (hex: string | null) => void;
+  customGradient: CustomGradientConfig;
+  setCustomGradient: (config: CustomGradientConfig) => void;
   /** Every selectable theme, for a picker. */
   availableThemes: readonly string[];
   /** Coarse light/dark/system control. */
@@ -124,6 +135,10 @@ function initialFollowSystem(): boolean {
   // Default on: a first-run user should track their OS rather than be forced
   // into whichever polarity DEFAULT_THEME happens to be.
   return readStored(FOLLOW_SYSTEM_STORAGE_KEY) !== "false";
+}
+
+function initialCustomGradient(): CustomGradientConfig {
+  return parseCustomGradientConfig(readStored(CUSTOM_GRADIENT_STORAGE_KEY));
 }
 
 function readThemeCache(): ThemeCache | null {
@@ -242,6 +257,43 @@ async function applyThemeByName(name: string): Promise<ThemeCache> {
   return { name, isDark, vars };
 }
 
+function applyCustomGradient(
+  config: CustomGradientConfig,
+  isDark: boolean,
+): void {
+  const root = document.documentElement;
+  root.dataset.customGradient = "true";
+  const vars = customGradientVars(config, isDark);
+  for (const [name, value] of Object.entries(vars))
+    root.style.setProperty(name, value);
+  document
+    .querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')
+    .forEach((meta) => {
+      if (!(CUSTOM_META_PREVIOUS in meta.dataset)) {
+        meta.dataset[CUSTOM_META_PREVIOUS] = meta.getAttribute("content") ?? "";
+      }
+      const metaIsDark = (meta.getAttribute("media") ?? "").includes("dark");
+      meta.setAttribute(
+        "content",
+        metaIsDark ? config.darkColor : config.lightColor,
+      );
+    });
+}
+
+function clearCustomGradient(): void {
+  const root = document.documentElement;
+  delete root.dataset.customGradient;
+  for (const name of CUSTOM_GRADIENT_VAR_NAMES) root.style.removeProperty(name);
+  document
+    .querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')
+    .forEach((meta) => {
+      const previous = meta.dataset[CUSTOM_META_PREVIOUS];
+      if (previous === undefined) return;
+      meta.setAttribute("content", previous);
+      delete meta.dataset[CUSTOM_META_PREVIOUS];
+    });
+}
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [themeName, setThemeNameState] =
     useState<SyntaxThemeName>(initialThemeName);
@@ -250,24 +302,38 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [accent, setAccentState] = useState<string | null>(() =>
     readStored(ACCENT_STORAGE_KEY),
   );
+  const [customGradient, setCustomGradientState] =
+    useState<CustomGradientConfig>(initialCustomGradient);
   const [systemDark, setSystemDark] = useState<boolean>(systemPrefersDark);
 
   // Optimistic first paint from the cache, before any dynamic import lands.
   const [isDark, setIsDark] = useState<boolean>(() => {
+    const initial = initialThemeName();
+    const initialApplied = initialFollowSystem()
+      ? resolveSystemTheme(initial, systemPrefersDark())
+      : initial;
     const cached = readThemeCache();
     if (cached) {
       applyVars(cached.vars, cached.isDark);
+      if (isCustomGradientTheme(initialApplied)) {
+        applyCustomGradient(
+          initialCustomGradient(),
+          !isLightTheme(initialApplied),
+        );
+      }
       return cached.isDark;
     }
     // No cache: fall back to the selection's own polarity so the .dark class
     // is at least right, even though the derived vars are not applied yet.
-    const initial = initialThemeName();
     const dark = initialFollowSystem()
       ? systemPrefersDark()
       : !isLightTheme(initial);
     const root = document.documentElement;
     root.classList.remove("light", "dark");
     root.classList.add(dark ? "dark" : "light");
+    if (isCustomGradientTheme(initialApplied)) {
+      applyCustomGradient(initialCustomGradient(), dark);
+    }
     return dark;
   });
 
@@ -290,9 +356,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+    if (!isCustomGradientTheme(appliedThemeName)) clearCustomGradient();
     void applyThemeByName(appliedThemeName)
       .then((cache) => {
         if (cancelled) return;
+        if (isCustomGradientTheme(appliedThemeName)) {
+          applyCustomGradient(customGradient, cache.isDark);
+        } else {
+          clearCustomGradient();
+        }
         setIsDark(cache.isDark);
         writeStored(THEME_CACHE_KEY, JSON.stringify(cache));
       })
@@ -303,7 +375,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [appliedThemeName]);
+  }, [appliedThemeName, customGradient]);
 
   // Independent of the theme effect on purpose: `applyVars` writes only what
   // the engine emits, and the engine emits none of the accent properties
@@ -327,6 +399,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const setAccent = useCallback((hex: string | null) => {
     setAccentState(hex);
     writeStored(ACCENT_STORAGE_KEY, hex);
+  }, []);
+
+  const setCustomGradient = useCallback((config: CustomGradientConfig) => {
+    const safe = parseCustomGradientConfig(JSON.stringify(config));
+    setCustomGradientState(safe);
+    writeStored(CUSTOM_GRADIENT_STORAGE_KEY, JSON.stringify(safe));
   }, []);
 
   const mode: ThemeMode = followSystem
@@ -371,6 +449,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       setFollowSystem,
       accent,
       setAccent,
+      customGradient,
+      setCustomGradient,
       availableThemes: SYNTAX_THEMES,
       mode,
       setMode,
@@ -384,6 +464,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       setFollowSystem,
       accent,
       setAccent,
+      customGradient,
+      setCustomGradient,
       mode,
       setMode,
     ],
