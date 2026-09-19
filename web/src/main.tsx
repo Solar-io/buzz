@@ -8,6 +8,9 @@ import { ThemeProvider } from "@/shared/theme/ThemeProvider";
 import { Toaster } from "@/shared/ui/sonner";
 import { TooltipProvider } from "@/shared/ui/tooltip";
 import { initializeAppearancePreferences } from "@/features/settings/lib/appearanceStore";
+import { NativeSetup } from "@/shared/platform/NativeSetup";
+import { isNativeIOS } from "@/shared/platform/native";
+import { installNativeNavigation } from "@/shared/platform/native-navigation";
 
 // Font size, conversation density, link preview style and thread layout are
 // carried on `<html>` attributes that globals.css selects on. Apply them
@@ -15,6 +18,7 @@ import { initializeAppearancePreferences } from "@/features/settings/lib/appeara
 // scale and spacing and then snaps — the same first-paint problem the theme
 // cache solves for colours.
 initializeAppearancePreferences();
+installNativeNavigation();
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -35,7 +39,9 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <TooltipProvider delayDuration={300}>
-          <App />
+          <NativeSetup>
+            <App />
+          </NativeSetup>
           <Toaster />
         </TooltipProvider>
       </ThemeProvider>
@@ -43,7 +49,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   </React.StrictMode>,
 );
 
-if ("serviceWorker" in navigator && import.meta.env.PROD) {
+if (!isNativeIOS() && "serviceWorker" in navigator && import.meta.env.PROD) {
   window.addEventListener("load", () => {
     // Root scope: the worker must control the app page for its asset cache
     // to run at all. The relay answers the script request with

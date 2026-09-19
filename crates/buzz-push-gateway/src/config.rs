@@ -34,6 +34,15 @@ pub struct Config {
     pub apns_key_id: String,
     pub apns_team_id: String,
     pub apns_topic: String,
+    /// Independent app identity; absent unless Capacitor profiles are enabled.
+    pub capacitor_app: Option<CapacitorAppConfig>,
+}
+
+/// Server-owned identity for the separately installed Capacitor application.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapacitorAppConfig {
+    pub app_attest_app_id: String,
+    pub apns_topic: String,
 }
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -101,9 +110,19 @@ impl Config {
         let public_delivery_url = req(e, "BUZZ_PUSH_PUBLIC_DELIVERY_URL")?
             .parse::<url::Url>()
             .map_err(|_| ConfigError::Invalid("BUZZ_PUSH_PUBLIC_DELIVERY_URL"))?;
+        // Registered public v1 remains the default. A private deployment
+        // must deliberately select its exact NIP-98 audience, matching the
+        // relay's configured delivery URL (not an incoming Host header).
+        let self_hosted = match e.get("BUZZ_PUSH_ALLOW_SELF_HOSTED_URL").map(String::as_str) {
+            None | Some("false") => false,
+            Some("true") => true,
+            _ => return Err(ConfigError::Invalid("BUZZ_PUSH_ALLOW_SELF_HOSTED_URL")),
+        };
         if public_delivery_url.scheme() != "https"
-            || public_delivery_url.host_str() != Some("push.buzz.xyz")
-            || public_delivery_url.port().is_some()
+            || public_delivery_url.host_str().is_none()
+            || (!self_hosted
+                && (public_delivery_url.host_str() != Some("push.buzz.xyz")
+                    || public_delivery_url.port().is_some()))
             || public_delivery_url.path() != "/v1/deliveries/apns"
             || public_delivery_url.query().is_some()
             || public_delivery_url.fragment().is_some()
@@ -146,12 +165,47 @@ impl Config {
             .map(|profile| match profile {
                 "buzz-ios-production" => Ok(crate::model::AppProfile::BuzzIosProduction),
                 "buzz-ios-sandbox" => Ok(crate::model::AppProfile::BuzzIosSandbox),
+                "buzz-capacitor-ios-production" => {
+                    Ok(crate::model::AppProfile::BuzzCapacitorIosProduction)
+                }
+                "buzz-capacitor-ios-sandbox" => {
+                    Ok(crate::model::AppProfile::BuzzCapacitorIosSandbox)
+                }
                 _ => Err(ConfigError::Invalid("BUZZ_PUSH_ENABLED_PROFILES")),
             })
             .collect::<Result<HashSet<_>, _>>()?;
         if enabled_profiles.is_empty() {
             return Err(ConfigError::Invalid("BUZZ_PUSH_ENABLED_PROFILES"));
         }
+        let capacitor_app = if enabled_profiles
+            .iter()
+            .any(|profile| profile.is_capacitor())
+        {
+            let app_attest_app_id = req(e, "BUZZ_PUSH_CAPACITOR_APP_ATTEST_APP_ID")?.to_owned();
+            let apns_topic = req(e, "BUZZ_PUSH_CAPACITOR_APNS_TOPIC")?.to_owned();
+            // Tokens and App Attest proofs must name the SAME separately
+            // provisioned app, on the provider key's team. Never borrow the
+            // Flutter topic as a fallback.
+            if app_attest_app_id != format!("{}.{}", req(e, "BUZZ_PUSH_APNS_TEAM_ID")?, apns_topic)
+                || (apns_topic == req(e, "BUZZ_PUSH_APNS_TOPIC")?
+                    && enabled_profiles
+                        .iter()
+                        .any(|profile| !profile.is_capacitor()))
+                || apns_topic
+                    .bytes()
+                    .any(|b| !(b.is_ascii_alphanumeric() || b == b'.' || b == b'-'))
+            {
+                return Err(ConfigError::Invalid(
+                    "BUZZ_PUSH_CAPACITOR_APP_ATTEST_APP_ID",
+                ));
+            }
+            Some(CapacitorAppConfig {
+                app_attest_app_id,
+                apns_topic,
+            })
+        } else {
+            None
+        };
         Ok(Self {
             bind_addr: e
                 .get("BUZZ_PUSH_BIND_ADDR")
@@ -180,6 +234,7 @@ impl Config {
             apns_key_id: req(e, "BUZZ_PUSH_APNS_KEY_ID")?.to_owned(),
             apns_team_id: req(e, "BUZZ_PUSH_APNS_TEAM_ID")?.to_owned(),
             apns_topic: req(e, "BUZZ_PUSH_APNS_TOPIC")?.to_owned(),
+            capacitor_app,
         })
     }
 }
@@ -232,6 +287,95 @@ mod tests {
             ("BUZZ_PUSH_APNS_TEAM_ID".into(), "team".into()),
             ("BUZZ_PUSH_APNS_TOPIC".into(), "app".into()),
         ])
+    }
+
+    #[test]
+    fn capacitor_profiles_require_a_distinct_consistent_identity() {
+        let mut env = base();
+        assert!(Config::from_map(&env).unwrap().capacitor_app.is_none());
+        env.insert(
+            "BUZZ_PUSH_ENABLED_PROFILES".into(),
+            "buzz-ios-production,buzz-capacitor-ios-sandbox".into(),
+        );
+        assert!(Config::from_map(&env).is_err());
+        env.insert(
+            "BUZZ_PUSH_CAPACITOR_APP_ATTEST_APP_ID".into(),
+            "team.app.web".into(),
+        );
+        env.insert("BUZZ_PUSH_CAPACITOR_APNS_TOPIC".into(), "app.web".into());
+        assert_eq!(
+            Config::from_map(&env)
+                .unwrap()
+                .capacitor_app
+                .unwrap()
+                .apns_topic,
+            "app.web"
+        );
+        for invalid in ["TEAM.app.web", "team.wrong", "team.app"] {
+            env.insert(
+                "BUZZ_PUSH_CAPACITOR_APP_ATTEST_APP_ID".into(),
+                invalid.into(),
+            );
+            assert!(Config::from_map(&env).is_err(), "{invalid}");
+        }
+        env.insert(
+            "BUZZ_PUSH_CAPACITOR_APP_ATTEST_APP_ID".into(),
+            "team.app".into(),
+        );
+        env.insert("BUZZ_PUSH_CAPACITOR_APNS_TOPIC".into(), "app".into());
+        assert!(Config::from_map(&env).is_err());
+    }
+
+    #[test]
+    fn private_gateway_audience_requires_explicit_opt_in_and_exact_secure_route() {
+        let mut env = base();
+        env.insert(
+            "BUZZ_PUSH_PUBLIC_DELIVERY_URL".into(),
+            "https://gateway.internal:8443/v1/deliveries/apns".into(),
+        );
+        assert!(Config::from_map(&env).is_err());
+        env.insert("BUZZ_PUSH_ALLOW_SELF_HOSTED_URL".into(), "true".into());
+        assert_eq!(
+            Config::from_map(&env).unwrap().public_delivery_url.as_str(),
+            "https://gateway.internal:8443/v1/deliveries/apns"
+        );
+        for invalid in [
+            "http://gateway.internal/v1/deliveries/apns",
+            "https://user:pass@gateway.internal/v1/deliveries/apns",
+            "https://gateway.internal/other",
+            "https://gateway.internal/v1/deliveries/apns?x=1",
+            "https://gateway.internal/v1/deliveries/apns#fragment",
+        ] {
+            env.insert("BUZZ_PUSH_PUBLIC_DELIVERY_URL".into(), invalid.into());
+            assert!(Config::from_map(&env).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn replacement_can_reuse_the_app_identity_only_after_legacy_profiles_are_disabled() {
+        let mut env = base();
+        env.insert(
+            "BUZZ_PUSH_ENABLED_PROFILES".into(),
+            "buzz-capacitor-ios-sandbox,buzz-capacitor-ios-production".into(),
+        );
+        env.insert(
+            "BUZZ_PUSH_CAPACITOR_APP_ATTEST_APP_ID".into(),
+            "team.app".into(),
+        );
+        env.insert("BUZZ_PUSH_CAPACITOR_APNS_TOPIC".into(), "app".into());
+        assert_eq!(
+            Config::from_map(&env)
+                .unwrap()
+                .capacitor_app
+                .unwrap()
+                .apns_topic,
+            "app"
+        );
+        env.insert(
+            "BUZZ_PUSH_ENABLED_PROFILES".into(),
+            "buzz-capacitor-ios-sandbox,buzz-ios-production".into(),
+        );
+        assert!(Config::from_map(&env).is_err());
     }
 
     #[test]

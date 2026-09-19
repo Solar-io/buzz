@@ -12,6 +12,9 @@ import {
 import * as nip44 from "nostr-tools/nip44";
 import { getPublicKey } from "nostr-tools";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
+import { nip44DecryptFrom } from "@/shared/lib/nostr-signer";
+import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
+import { isNativeIOS } from "@/shared/platform/native";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import {
   getAuthState,
@@ -145,12 +148,14 @@ export function ObserverProvider({
     getAuthState,
     getAuthState,
   );
+  const nativeOwner = useOwnPubkey();
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `authState` is a trigger, not a read — the body deliberately ignores its value and re-derives the owner when the key store resolves.
   const ownerPubkey = useMemo(() => {
     if (!enabled) {
       return null;
     }
+    if (isNativeIOS()) return nativeOwner;
     const secretKey = getUnlockedSecretKey();
     if (!secretKey) {
       return null;
@@ -160,7 +165,7 @@ export function ObserverProvider({
     } catch {
       return null;
     }
-  }, [enabled, authState]);
+  }, [enabled, authState, nativeOwner]);
 
   /**
    * Decrypt and index one envelope. Reads the secret key at call time rather
@@ -168,12 +173,12 @@ export function ObserverProvider({
    * is still used — and so the live REQ and every per-agent history REQ share
    * exactly one code path, including de-duplication.
    */
-  const ingest = useCallback((event: SignedNostrEvent) => {
+  const ingest = useCallback(async (event: SignedNostrEvent) => {
     if (seenEnvelopes.current.has(event.id)) {
       return;
     }
     const secretKey = getUnlockedSecretKey();
-    if (!secretKey) {
+    if (!secretKey && !isNativeIOS()) {
       return;
     }
     seenEnvelopes.current.add(event.id);
@@ -182,7 +187,24 @@ export function ObserverProvider({
         Array.from(seenEnvelopes.current).slice(-SEEN_ENVELOPE_CAP / 2),
       );
     }
-    const frame = decodeFrame(event, secretKey);
+    let frame: ObserverFrame[] | null = null;
+    if (isNativeIOS()) {
+      try {
+        const { plaintext } = await nip44DecryptFrom(
+          event.content,
+          event.pubkey,
+        );
+        const parsed = parseObserverPayload(plaintext);
+        if (parsed)
+          frame = expandObserverFrame({
+            ...parsed,
+            id: event.id,
+            createdAt: event.created_at,
+          });
+      } catch {
+        /* A locked or differently addressed envelope stays locked. */
+      }
+    } else if (secretKey) frame = decodeFrame(event, secretKey);
     if (!frame) {
       setLockedCount((n) => n + 1);
       return;

@@ -37,6 +37,9 @@ import { VoiceSettingsCard } from "@/features/voice/ui/VoiceSettingsCard.tsx";
 import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
 
 import { AppearanceSection } from "./AppearanceSection";
+import { isNativeIOS } from "@/shared/platform/native";
+import { NativePushSettings } from "@/shared/platform/NativePush";
+import { NativeDeviceSettings } from "@/shared/platform/NativeDeviceSettings";
 import {
   DeviceSection,
   ForgetDeviceSection,
@@ -79,7 +82,7 @@ export function SettingsPage() {
       <ProfileSection onOpen={() => setProfileOpen(true)} />
       <PresenceSettingsCard />
       <VoiceSettingsCard selfPubkey={self} />
-      <NotificationsSection />
+      {isNativeIOS() ? <NativePushSettings /> : <NotificationsSection />}
       <AppearanceSection />
       <KeyboardShortcutsCard />
 
@@ -88,7 +91,7 @@ export function SettingsPage() {
       <CustomEmojiSettingsCard />
       <InvitesCard />
       <IdentityArchiveCard />
-      <AgentsSection />
+      {!isNativeIOS() && <AgentsSection />}
       {templatesEnabled ? <ChannelTemplatesSettingsCard /> : null}
 
       <SectionHeading>Data</SectionHeading>
@@ -96,9 +99,15 @@ export function SettingsPage() {
       <FilesUrlSection />
 
       <SectionHeading>Identity and this device</SectionHeading>
-      <KeyBackupCard />
-      <DeviceSection />
-      <PairDeviceSection />
+      {isNativeIOS() ? (
+        <NativeDeviceSettings />
+      ) : (
+        <>
+          <KeyBackupCard />
+          <DeviceSection />
+          <PairDeviceSection />
+        </>
+      )}
       <ForgetDeviceSection />
 
       <SectionHeading>Advanced</SectionHeading>

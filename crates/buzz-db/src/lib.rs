@@ -57,6 +57,8 @@ pub mod partition;
 pub mod product_feedback;
 /// Community-scoped push lease and durable wake-outbox persistence.
 pub mod push;
+/// Authenticated notification wake lookup, separate from delivery processing.
+pub mod push_wake;
 /// Reaction persistence.
 pub mod reaction;
 /// Use-limited relay invite persistence (v2 opaque tokens).

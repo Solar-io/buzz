@@ -6,6 +6,8 @@ desktop/src-tauri/target/
 # Native non-relay UI builds (not part of the public image)
 desktop/
 mobile/
+ios-web/
+logs/
 
 # Node artifacts (built inside the image; host outputs would invalidate cache)
 node_modules/
@@ -20,6 +22,9 @@ web/dist/
 .vscode/
 .idea/
 .scratch/
+.hermit/
+.claude/
+.playwright-mcp/
 
 # Local environment / secrets — never want these in the build context
 .env

@@ -226,7 +226,15 @@ export function ForgetDeviceSection() {
           variant="destructive"
           size="sm"
           disabled={text.trim().toLowerCase() !== "forget"}
-          onClick={() => void forgetDevice()}
+          onClick={() =>
+            void forgetDevice().catch((error: unknown) =>
+              toast.error(
+                error instanceof Error
+                  ? error.message
+                  : "Could not forget this device.",
+              ),
+            )
+          }
         >
           Forget
         </Button>

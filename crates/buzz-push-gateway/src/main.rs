@@ -35,12 +35,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let c = Config::from_env()?;
     let metrics_handle = buzz_push_gateway::metrics::install()?;
-    let transport = Arc::new(ApnsTransport::token(
+    let transport = ApnsTransport::token(
         &fs::read(&c.apns_key_path)?,
         &c.apns_key_id,
         &c.apns_team_id,
         c.apns_topic,
-    )?);
+    )?;
+    let transport = Arc::new(match &c.capacitor_app {
+        Some(app) => transport.with_capacitor_topic(app.apns_topic.clone()),
+        None => transport,
+    });
     let grant_keyring = GrantKeyring::new(
         c.grant_keys
             .iter()
@@ -77,10 +81,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-    let app_attest = Arc::new(AppAttestVerifier::new(
-        c.app_attest_app_id,
-        fs::read(&c.app_attest_root_cert_path)?,
-    )?);
+    let app_attest =
+        AppAttestVerifier::new(c.app_attest_app_id, fs::read(&c.app_attest_root_cert_path)?)?;
+    let app_attest = Arc::new(match &c.capacitor_app {
+        Some(app) => app_attest.with_capacitor_app(app.app_attest_app_id.clone()),
+        None => app_attest,
+    });
     let accepting = Arc::new(AtomicBool::new(true));
     let (public, health) = router_with_metrics(
         AppState {

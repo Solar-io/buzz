@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
+import { speechServiceUrl } from "@/shared/lib/relay-url";
 import {
   KIND_AGENT_VOICE,
   reduceAgentVoiceEvents,
@@ -126,11 +127,12 @@ export function useElevenVoices(): {
       return;
     }
     const controller = new AbortController();
-    fetch(
-      `https://${window.location.hostname}:6366/voices/eleven`,
-      { signal: controller.signal },
-    )
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`bridge ${res.status}`))))
+    fetch(new URL("/voices/eleven", speechServiceUrl("tts")).href, {
+      signal: controller.signal,
+    })
+      .then((res) =>
+        res.ok ? res.json() : Promise.reject(new Error(`bridge ${res.status}`)),
+      )
       .then((body: { voices?: { id: string; label: string }[] }) => {
         setVoices(Array.isArray(body.voices) ? body.voices : []);
       })

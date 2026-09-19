@@ -1,0 +1,10 @@
+node_modules/
+build/
+build-qa/
+build-device/
+*.local.xcconfig
+ios/App/App/public/
+ios/App/App/capacitor.config.json
+ios/App/CapApp-SPM/.build/
+ios/App/App.xcodeproj/xcuserdata/
+ios/App/App.xcworkspace/xcuserdata/

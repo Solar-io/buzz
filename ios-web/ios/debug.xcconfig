@@ -1,0 +1,6 @@
+CAPACITOR_DEBUG = true
+BUZZ_BUNDLE_ID = com.buzz.web
+BUZZ_APNS_ENVIRONMENT = development
+BUZZ_ATTEST_ENVIRONMENT = production
+CODE_SIGN_ENTITLEMENTS = App/App.entitlements
+#include? "../Signing.local.xcconfig"

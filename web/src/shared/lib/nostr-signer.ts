@@ -5,6 +5,8 @@ import {
 } from "nostr-tools/pure";
 import { getUnlockedSecretKey } from "./key-store.ts";
 import * as nip44 from "nostr-tools/nip44";
+import { BuzzIdentity, isNativeIOS } from "../platform/native.ts";
+import { hasUnlockedKey } from "./key-store.ts";
 
 export type UnsignedNostrEvent = {
   kind: number;
@@ -84,6 +86,8 @@ export async function signNostrEvent(
     ...template,
     created_at: template.created_at ?? Math.floor(Date.now() / 1000),
   };
+  if (isNativeIOS())
+    return (await BuzzIdentity.signEvent({ event: unsigned })).event;
   const localSecret = getUnlockedSecretKey();
   if (localSecret) {
     const signed = finalizeEvent(unsigned, localSecret);
@@ -126,10 +130,12 @@ export async function signNostrEvent(
  * unlocked local key (the web login keystore); NIP-07-only sessions throw —
  * extension encryption is not wired, and callers should surface that.
  */
-export function nip44EncryptTo(
+export async function nip44EncryptTo(
   plaintext: string,
   peerPubkey: string,
-): { ciphertext: string } {
+): Promise<{ ciphertext: string }> {
+  if (isNativeIOS())
+    return BuzzIdentity.encrypt({ plaintext, peer: peerPubkey });
   const secret = getUnlockedSecretKey();
   if (!secret) {
     throw new Error(
@@ -140,10 +146,12 @@ export function nip44EncryptTo(
   return { ciphertext: nip44.v2.encrypt(plaintext, key) };
 }
 
-export function nip44DecryptFrom(
+export async function nip44DecryptFrom(
   ciphertext: string,
   peerPubkey: string,
-): { plaintext: string } {
+): Promise<{ plaintext: string }> {
+  if (isNativeIOS())
+    return BuzzIdentity.decrypt({ ciphertext, peer: peerPubkey });
   const secret = getUnlockedSecretKey();
   if (!secret) {
     throw new Error(
@@ -156,6 +164,7 @@ export function nip44DecryptFrom(
 
 /** Which signer `signNostrEvent` will use right now — for settings UI. */
 export function activeSignerSource(): "local" | "extension" | "ephemeral" {
+  if (isNativeIOS()) return hasUnlockedKey() ? "local" : "ephemeral";
   if (getUnlockedSecretKey()) {
     return "local";
   }
@@ -164,6 +173,7 @@ export function activeSignerSource(): "local" | "extension" | "ephemeral" {
 
 /** Our own public key (hex) for the active signer; null when unknowable. */
 export async function ownPubkey(): Promise<string | null> {
+  if (isNativeIOS()) return (await BuzzIdentity.state()).pubkey;
   const secret = getUnlockedSecretKey();
   if (secret) {
     return getPublicKey(secret);

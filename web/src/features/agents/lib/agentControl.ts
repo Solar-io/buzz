@@ -2,6 +2,8 @@ import * as nip44 from "nostr-tools/nip44";
 import type { RelaySession } from "@/shared/api/relay-session";
 import { signNostrEvent, ownPubkey } from "@/shared/lib/nostr-signer";
 import { getUnlockedSecretKey } from "@/shared/lib/key-store";
+import { nip44EncryptTo } from "@/shared/lib/nostr-signer";
+import { isNativeIOS } from "@/shared/platform/native";
 import { buildObserverEnvelope } from "./agentDrafts.ts";
 
 /**
@@ -35,7 +37,7 @@ export async function sendAgentControl(
 ): Promise<{ ok: boolean; requestId: string; message: string }> {
   const requestId = command.requestId;
   const secretKey = getUnlockedSecretKey();
-  if (!secretKey) {
+  if (!secretKey && !isNativeIOS()) {
     return {
       ok: false,
       requestId,
@@ -48,11 +50,15 @@ export async function sendAgentControl(
       command.channelId,
       requestId,
     );
-    const conversationKey = nip44.v2.utils.getConversationKey(
-      secretKey,
-      agentPubkey,
-    );
-    const encrypted = nip44.v2.encrypt(payload, conversationKey);
+    const encrypted = isNativeIOS()
+      ? (await nip44EncryptTo(payload, agentPubkey)).ciphertext
+      : nip44.v2.encrypt(
+          payload,
+          nip44.v2.utils.getConversationKey(
+            secretKey as Uint8Array,
+            agentPubkey,
+          ),
+        );
     const event = await signNostrEvent({
       kind: 24200,
       tags: [

@@ -16,6 +16,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import type { Profile } from "@/features/channels/hooks";
 import { NotificationSettingsDialog } from "@/features/notifications/ui/NotificationSettingsDialog";
+import { isNativeIOS } from "@/shared/platform/native";
 import {
   publishUserStatus,
   useUserStatuses,
@@ -276,17 +277,19 @@ export function SidebarProfileCard({
             <Workflow aria-hidden className="size-4" />
             Workflows
           </Link>
-          <Link
-            to="/repos/agents"
-            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
-            onClick={() => {
-              setOpen(false);
-              closeDrawer();
-            }}
-          >
-            <Bot aria-hidden className="size-4" />
-            Agents
-          </Link>
+          {!isNativeIOS() && (
+            <Link
+              to="/repos/agents"
+              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+              onClick={() => {
+                setOpen(false);
+                closeDrawer();
+              }}
+            >
+              <Bot aria-hidden className="size-4" />
+              Agents
+            </Link>
+          )}
           <button
             type="button"
             className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"

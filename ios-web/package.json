@@ -1,0 +1,19 @@
+{
+  "name": "buzz-ios-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm --filter buzz-web build && cap sync ios",
+    "sync": "cap sync ios",
+    "open": "cap open ios",
+    "build:simulator": "xcodebuild -project ios/App/App.xcodeproj -scheme App -sdk iphonesimulator -configuration Debug -derivedDataPath build CODE_SIGNING_ALLOWED=NO build",
+    "test:native": "node scripts/test-native.mjs"
+  },
+  "dependencies": {
+    "@capacitor/core": "8.5.2",
+    "@capacitor/ios": "8.5.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.2"
+  }
+}

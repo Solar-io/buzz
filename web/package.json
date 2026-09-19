@@ -20,6 +20,7 @@
     "test": "node --import ./test-loader.mjs --experimental-strip-types --test \"src/**/*.test.mjs\""
   },
   "dependencies": {
+    "@capacitor/core": "8.5.2",
     "@fontsource-variable/inter": "^5.2.8",
     "@isomorphic-git/lightning-fs": "^4.6.2",
     "@noble/curves": "2.0.1",

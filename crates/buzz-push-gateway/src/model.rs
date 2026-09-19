@@ -14,13 +14,30 @@ pub const WIRE_VERSION: u8 = 1;
 pub enum AppProfile {
     BuzzIosProduction,
     BuzzIosSandbox,
+    BuzzCapacitorIosProduction,
+    BuzzCapacitorIosSandbox,
 }
 impl AppProfile {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::BuzzIosProduction => "buzz-ios-production",
             Self::BuzzIosSandbox => "buzz-ios-sandbox",
+            Self::BuzzCapacitorIosProduction => "buzz-capacitor-ios-production",
+            Self::BuzzCapacitorIosSandbox => "buzz-capacitor-ios-sandbox",
         }
+    }
+
+    /// The additional app uses its own signing identity and opt-in payload.
+    pub const fn is_capacitor(self) -> bool {
+        matches!(
+            self,
+            Self::BuzzCapacitorIosProduction | Self::BuzzCapacitorIosSandbox
+        )
+    }
+
+    /// Select the provider environment without inferring it from a device token.
+    pub const fn is_sandbox(self) -> bool {
+        matches!(self, Self::BuzzIosSandbox | Self::BuzzCapacitorIosSandbox)
     }
 }
 
@@ -119,6 +136,19 @@ pub struct RotateEndpointRequest {
     pub endpoint_epoch: i64,
     pub new_endpoint_epoch: i64,
     pub endpoint: String,
+    pub assertion: String,
+}
+
+/// Extend a live installation using its existing App Attest authority.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RenewInstallationRequest {
+    pub v: u8,
+    pub challenge_id: uuid::Uuid,
+    pub challenge: String,
+    pub installation_handle: uuid::Uuid,
+    pub endpoint_epoch: i64,
+    pub expires_at: i64,
     pub assertion: String,
 }
 

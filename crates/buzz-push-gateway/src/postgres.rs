@@ -65,6 +65,8 @@ fn profile(v: &str) -> Result<AppProfile, AuthorityError> {
     match v {
         "buzz-ios-production" => Ok(AppProfile::BuzzIosProduction),
         "buzz-ios-sandbox" => Ok(AppProfile::BuzzIosSandbox),
+        "buzz-capacitor-ios-production" => Ok(AppProfile::BuzzCapacitorIosProduction),
+        "buzz-capacitor-ios-sandbox" => Ok(AppProfile::BuzzCapacitorIosSandbox),
         _ => Err(AuthorityError::Unavailable),
     }
 }
@@ -185,6 +187,23 @@ impl AuthorityStore for PostgresAuthorityStore {
         }
         Ok(())
     }
+    async fn renew_installation(
+        &self,
+        id: Uuid,
+        epoch: i64,
+        expires: i64,
+        now: i64,
+    ) -> Result<(), AuthorityError> {
+        if expires <= now {
+            return Err(AuthorityError::Rejected);
+        }
+        let result = sqlx::query("UPDATE push_gateway_installations SET expires_at=$3, updated_at=now() WHERE id=$1 AND endpoint_epoch=$2 AND revoked_at IS NULL AND expires_at >= $4 AND expires_at <= $3")
+            .bind(id).bind(epoch).bind(at(expires)?).bind(at(now)?).execute(&self.pool).await.map_err(db)?;
+        if result.rows_affected() != 1 {
+            return Err(AuthorityError::Rejected);
+        }
+        Ok(())
+    }
     async fn upsert_delegation(&self, d: Delegation) -> Result<(), AuthorityError> {
         let mut tx = self.pool.begin().await.map_err(db)?;
         let i=sqlx::query("SELECT endpoint_epoch,expires_at,revoked_at FROM push_gateway_installations WHERE id=$1 FOR UPDATE").bind(d.installation_id).fetch_optional(&mut *tx).await.map_err(db)?.ok_or(AuthorityError::Rejected)?;
@@ -216,7 +235,7 @@ impl AuthorityStore for PostgresAuthorityStore {
         if new != expected.checked_add(1).ok_or(AuthorityError::Rejected)? {
             return Err(AuthorityError::Rejected);
         }
-        let result=sqlx::query("UPDATE push_gateway_installations SET endpoint_epoch=$3,token_ciphertext=$4,token_fingerprint=$5,updated_at=now() WHERE id=$1 AND endpoint_epoch=$2 AND revoked_at IS NULL").bind(id).bind(expected).bind(new).bind(ciphertext).bind(fingerprint.to_vec()).execute(&self.pool).await.map_err(db)?;
+        let result=sqlx::query("UPDATE push_gateway_installations SET endpoint_epoch=$3,token_ciphertext=$4,token_fingerprint=$5,updated_at=now() WHERE id=$1 AND (endpoint_epoch=$2 OR (endpoint_epoch=$3 AND token_fingerprint=$5)) AND revoked_at IS NULL").bind(id).bind(expected).bind(new).bind(ciphertext).bind(fingerprint.to_vec()).execute(&self.pool).await.map_err(db)?;
         if result.rows_affected() != 1 {
             return Err(AuthorityError::Rejected);
         }

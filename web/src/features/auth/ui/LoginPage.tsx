@@ -5,6 +5,7 @@ import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { useAuth } from "./AuthProvider";
 import { QrScanner } from "./QrScanner";
+import { isNativeIOS } from "@/shared/platform/native";
 import {
   enrollSecretKey,
   enrollSecretKeyFromPairing,
@@ -159,17 +160,24 @@ export function LoginPage() {
             }}
           >
             <p className="text-sm text-muted-foreground">
-              Enter this device's passphrase to unlock your key.
+              {isNativeIOS()
+                ? "Unlock with Face ID, Touch ID or your device passcode."
+                : "Enter this device's passphrase to unlock your key."}
             </p>
-            <Input
-              type="password"
-              placeholder="Passphrase"
-              autoComplete="current-password"
-              value={passphrase}
-              onChange={(event) => setPassphrase(event.target.value)}
-              autoFocus
-            />
-            <Button className="w-full" disabled={busy || !passphrase}>
+            {!isNativeIOS() && (
+              <Input
+                type="password"
+                placeholder="Passphrase"
+                autoComplete="current-password"
+                value={passphrase}
+                onChange={(event) => setPassphrase(event.target.value)}
+                autoFocus
+              />
+            )}
+            <Button
+              className="w-full"
+              disabled={busy || (!isNativeIOS() && !passphrase)}
+            >
               Unlock
             </Button>
           </form>

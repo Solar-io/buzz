@@ -6,9 +6,31 @@ import {
   isRelayMediaHref,
   linkDisposition,
   openLink,
+  resolveRelayHref,
 } from "./linkOpen.ts";
 
 const RELAY = "https://crichton.tailb3d4b8.ts.net:6351";
+
+test("relative media and edition paths bind to the configured relay origin", () => {
+  assert.equal(
+    resolveRelayHref("/media/photo.png", RELAY),
+    `${RELAY}/media/photo.png`,
+  );
+  assert.equal(isRelayMediaHref("/media/photo.png", RELAY), true);
+  assert.equal(isRelayEditionHref("/edition/latest.html", RELAY), true);
+  assert.equal(isRelayMediaHref("//evil.test/media/photo.png", RELAY), false);
+  assert.equal(
+    isRelayEditionHref(
+      "http://crichton.tailb3d4b8.ts.net:6351/edition/latest.html",
+      RELAY,
+    ),
+    false,
+  );
+  assert.equal(
+    isRelayMediaHref("https://user.test/media/photo.png", RELAY),
+    false,
+  );
+});
 
 test("linkDisposition: file-typical URLs are overlay", () => {
   assert.equal(linkDisposition("https://example.com/a.png"), "overlay");
@@ -117,18 +139,21 @@ test("openLink: opens a _blank tab for tab links and never opens a window for ov
 
 test("isRelayEditionHref matches only relay-origin /edition/ pages", () => {
   const RELAY = "https://crichton.tailb3d4b8.ts.net:6351";
-  assert.equal(
-    isRelayEditionHref(`${RELAY}/edition/latest.html`, RELAY),
-    true,
-  );
+  assert.equal(isRelayEditionHref(`${RELAY}/edition/latest.html`, RELAY), true);
   // Same host, wrong port (the upstream :6450) is NOT the relay docs proxy.
   assert.equal(
-    isRelayEditionHref("https://crichton.tailb3d4b8.ts.net:6450/edition/latest.html", RELAY),
+    isRelayEditionHref(
+      "https://crichton.tailb3d4b8.ts.net:6450/edition/latest.html",
+      RELAY,
+    ),
     false,
   );
   // Relay origin but not an edition path — strangers stay scriptless.
   assert.equal(isRelayEditionHref(`${RELAY}/media/x.html`, RELAY), false);
   assert.equal(isRelayEditionHref(`${RELAY}/changelog.md`, RELAY), false);
-  assert.equal(isRelayEditionHref("https://other.host/edition/x.html", RELAY), false);
+  assert.equal(
+    isRelayEditionHref("https://other.host/edition/x.html", RELAY),
+    false,
+  );
   assert.equal(isRelayEditionHref("not a url", RELAY), false);
 });

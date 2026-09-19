@@ -91,6 +91,7 @@ export function MessageActionBar({
   const { openReminder } = useRemindMeLater();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [touchExpanded, setTouchExpanded] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const disarmTimer = useRef<number | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -159,225 +160,238 @@ export function MessageActionBar({
   const canDelete = Boolean(canModify && onDelete);
 
   return (
-    <div
-      ref={barRef}
-      // A toolbar is what this is: a labelled group of controls acting on one
-      // object. The role also satisfies a11y linting for the mouse handlers
-      // below, which exist to disarm the delete confirm and mirror the emoji
-      // palette's open state.
-      role="toolbar"
-      aria-label="Message actions"
-      aria-orientation="horizontal"
-      data-testid={`message-action-bar-${messageId}`}
-      data-picker-open={pickerOpen ? "true" : undefined}
-      data-menu-open={menuOpen ? "true" : undefined}
-      onMouseLeave={disarm}
-      // A click on a sibling action closes the palette (EmojiPicker's own
-      // outside-click rule counts it as outside), so drop the mirror too.
-      // Capture phase only reads the target; the button's own handler still
-      // runs.
-      onClickCapture={(event) => {
-        if (!pickerOpen) {
-          return;
-        }
-        const target = event.target as Element | null;
-        if (
-          target?.closest('[data-testid^="react-message-"]') ||
-          target?.closest('[role="menu"]')
-        ) {
-          return;
-        }
-        setPickerOpen(false);
-      }}
-      className={cn(
-        "absolute right-2 top-1 z-10 -translate-y-1/2",
-        "flex items-center gap-0.5 rounded-full border border-border/70 p-1",
-        "bg-background/95 shadow-xs backdrop-blur-sm supports-[backdrop-filter]:bg-background/85",
-        "transition-opacity duration-150 ease-out",
-        // Hidden until the row is hovered or something inside it holds focus.
-        // Forced open while the emoji palette or the overflow menu is up, or a
-        // delete is armed, so the bar does not vanish out from under the
-        // interaction. (The overflow menu portals out of this element, so
-        // without `menuOpen` the pointer leaving the row would fade the bar —
-        // and with it the trigger the open menu is anchored to.)
-        pickerOpen || menuOpen || confirmingDelete
-          ? "pointer-events-auto opacity-100"
-          : cn(
-              "pointer-events-none opacity-0",
-              "group-hover/message:pointer-events-auto group-hover/message:opacity-100",
-              "group-focus-within/message:pointer-events-auto group-focus-within/message:opacity-100",
-            ),
-      )}
-    >
-      {onReact && (
-        <>
-          <div className="hidden items-center gap-0.5 sm:flex">
-            {QUICK_REACTIONS.map((emoji) => (
-              <button
-                key={emoji}
-                type="button"
-                aria-label={`React with ${emoji}`}
-                title={`React with ${emoji}`}
-                data-testid={`quick-react-${emoji}-${messageId}`}
-                className={cn(ACTION_BUTTON_CLASS, "text-sm leading-none")}
-                onClick={() => onReact(emoji)}
-              >
-                {emoji}
-              </button>
-            ))}
-          </div>
-          <span
-            aria-hidden="true"
-            className="mx-0.5 hidden h-4 w-px bg-border/70 sm:block"
-          />
-          <EmojiPicker
-            label="Add reaction"
-            onSelect={(emoji) => {
-              setPickerOpen(false);
-              onReact(emoji);
-            }}
-          >
-            {(props) => (
-              <button
-                type="button"
-                ref={props.ref}
-                aria-label={props["aria-label"]}
-                aria-expanded={pickerOpen}
-                title="Add reaction"
-                data-testid={`react-message-${messageId}`}
-                className={cn(
-                  ACTION_BUTTON_CLASS,
-                  pickerOpen && "bg-accent text-accent-foreground",
-                )}
-                onClick={() => {
-                  setPickerOpen((open) => !open);
-                  props.onClick();
-                }}
-              >
-                <SmilePlus className={ACTION_ICON_CLASS} aria-hidden="true" />
-              </button>
-            )}
-          </EmojiPicker>
-        </>
-      )}
-
+    <>
       <button
         type="button"
-        aria-label="Reply in thread"
-        title="Reply in thread"
-        data-testid={`reply-message-${messageId}`}
-        className={ACTION_BUTTON_CLASS}
-        onClick={onReply}
+        aria-label={
+          touchExpanded ? "Hide message actions" : "Show message actions"
+        }
+        aria-expanded={touchExpanded}
+        className="buzz-touch-message-trigger"
+        onClick={() => setTouchExpanded((open) => !open)}
       >
-        <CornerUpLeft className={ACTION_ICON_CLASS} aria-hidden="true" />
+        <EllipsisVertical aria-hidden className="size-4" />
       </button>
+      <div
+        ref={barRef}
+        // A toolbar is what this is: a labelled group of controls acting on one
+        // object. The role also satisfies a11y linting for the mouse handlers
+        // below, which exist to disarm the delete confirm and mirror the emoji
+        // palette's open state.
+        role="toolbar"
+        aria-label="Message actions"
+        aria-orientation="horizontal"
+        data-testid={`message-action-bar-${messageId}`}
+        data-picker-open={pickerOpen ? "true" : undefined}
+        data-menu-open={menuOpen ? "true" : undefined}
+        onMouseLeave={disarm}
+        // A click on a sibling action closes the palette (EmojiPicker's own
+        // outside-click rule counts it as outside), so drop the mirror too.
+        // Capture phase only reads the target; the button's own handler still
+        // runs.
+        onClickCapture={(event) => {
+          if (!pickerOpen) {
+            return;
+          }
+          const target = event.target as Element | null;
+          if (
+            target?.closest('[data-testid^="react-message-"]') ||
+            target?.closest('[role="menu"]')
+          ) {
+            return;
+          }
+          setPickerOpen(false);
+        }}
+        className={cn(
+          "buzz-message-actions absolute right-2 top-1 z-10 -translate-y-1/2",
+          "flex items-center gap-0.5 rounded-full border border-border/70 p-1",
+          "bg-background/95 shadow-xs backdrop-blur-sm supports-[backdrop-filter]:bg-background/85",
+          "transition-opacity duration-150 ease-out",
+          // Hidden until the row is hovered or something inside it holds focus.
+          // Forced open while the emoji palette or the overflow menu is up, or a
+          // delete is armed, so the bar does not vanish out from under the
+          // interaction. (The overflow menu portals out of this element, so
+          // without `menuOpen` the pointer leaving the row would fade the bar —
+          // and with it the trigger the open menu is anchored to.)
+          pickerOpen || menuOpen || confirmingDelete || touchExpanded
+            ? "pointer-events-auto opacity-100"
+            : cn(
+                "pointer-events-none opacity-0",
+                "group-hover/message:pointer-events-auto group-hover/message:opacity-100",
+                "group-focus-within/message:pointer-events-auto group-focus-within/message:opacity-100",
+              ),
+        )}
+      >
+        {onReact && (
+          <>
+            <div className="hidden items-center gap-0.5 sm:flex">
+              {QUICK_REACTIONS.map((emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  aria-label={`React with ${emoji}`}
+                  title={`React with ${emoji}`}
+                  data-testid={`quick-react-${emoji}-${messageId}`}
+                  className={cn(ACTION_BUTTON_CLASS, "text-sm leading-none")}
+                  onClick={() => onReact(emoji)}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+            <span
+              aria-hidden="true"
+              className="mx-0.5 hidden h-4 w-px bg-border/70 sm:block"
+            />
+            <EmojiPicker
+              label="Add reaction"
+              onSelect={(emoji) => {
+                setPickerOpen(false);
+                onReact(emoji);
+              }}
+            >
+              {(props) => (
+                <button
+                  type="button"
+                  ref={props.ref}
+                  aria-label={props["aria-label"]}
+                  aria-expanded={pickerOpen}
+                  title="Add reaction"
+                  data-testid={`react-message-${messageId}`}
+                  className={cn(
+                    ACTION_BUTTON_CLASS,
+                    pickerOpen && "bg-accent text-accent-foreground",
+                  )}
+                  onClick={() => {
+                    setPickerOpen((open) => !open);
+                    props.onClick();
+                  }}
+                >
+                  <SmilePlus className={ACTION_ICON_CLASS} aria-hidden="true" />
+                </button>
+              )}
+            </EmojiPicker>
+          </>
+        )}
 
-      {onShare && (
         <button
           type="button"
-          aria-label="Copy link to message"
-          title="Copy link to message"
-          data-testid={`copy-link-message-${messageId}`}
+          aria-label="Reply in thread"
+          title="Reply in thread"
+          data-testid={`reply-message-${messageId}`}
           className={ACTION_BUTTON_CLASS}
-          onClick={onShare}
+          onClick={onReply}
         >
-          <Link2 className={ACTION_ICON_CLASS} aria-hidden="true" />
+          <CornerUpLeft className={ACTION_ICON_CLASS} aria-hidden="true" />
         </button>
-      )}
 
-      {/* Always mounted: "Remind me later" is offered on every message,
+        {onShare && (
+          <button
+            type="button"
+            aria-label="Copy link to message"
+            title="Copy link to message"
+            data-testid={`copy-link-message-${messageId}`}
+            className={ACTION_BUTTON_CLASS}
+            onClick={onShare}
+          >
+            <Link2 className={ACTION_ICON_CLASS} aria-hidden="true" />
+          </button>
+        )}
+
+        {/* Always mounted: "Remind me later" is offered on every message,
           authored by anyone — the rarer edit/delete items gate themselves
           inside. Wrapping this menu in a condition would silently revoke
           reminders on messages the viewer did not write. */}
-      <DropdownMenu
-        open={menuOpen}
-        onOpenChange={(open) => {
-          setMenuOpen(open);
-          if (!open) {
-            disarm();
-          }
-        }}
-      >
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            aria-label="More actions"
-            title="More actions"
-            data-testid={`more-actions-${messageId}`}
-            className={cn(
-              ACTION_BUTTON_CLASS,
-              menuOpen && "bg-accent text-accent-foreground",
-            )}
-          >
-            <EllipsisVertical
-              className={ACTION_ICON_CLASS}
-              aria-hidden="true"
-            />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem
-            data-testid={`remind-message-${messageId}`}
-            onClick={() =>
-              openReminder({
-                eventId: messageId,
-                channelId: channelId ?? "",
-                preview: messagePreview ?? "",
-                authorPubkey: authorPubkey ?? "",
-              })
+        <DropdownMenu
+          open={menuOpen}
+          onOpenChange={(open) => {
+            setMenuOpen(open);
+            if (!open) {
+              disarm();
             }
-          >
-            <Clock className={ACTION_ICON_CLASS} aria-hidden="true" />
-            Remind me later
-          </DropdownMenuItem>
-
-          {canEdit && (
-            <DropdownMenuItem
-              data-testid={`edit-message-${messageId}`}
-              onClick={() => onEdit?.()}
+          }}
+        >
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="More actions"
+              title="More actions"
+              data-testid={`more-actions-${messageId}`}
+              className={cn(
+                ACTION_BUTTON_CLASS,
+                menuOpen && "bg-accent text-accent-foreground",
+              )}
             >
-              <Pencil className={ACTION_ICON_CLASS} aria-hidden="true" />
-              Edit message
+              <EllipsisVertical
+                className={ACTION_ICON_CLASS}
+                aria-hidden="true"
+              />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              data-testid={`remind-message-${messageId}`}
+              onClick={() =>
+                openReminder({
+                  eventId: messageId,
+                  channelId: channelId ?? "",
+                  preview: messagePreview ?? "",
+                  authorPubkey: authorPubkey ?? "",
+                })
+              }
+            >
+              <Clock className={ACTION_ICON_CLASS} aria-hidden="true" />
+              Remind me later
             </DropdownMenuItem>
-          )}
 
-          {canDelete &&
-            (confirmingDelete ? (
-              <>
+            {canEdit && (
+              <DropdownMenuItem
+                data-testid={`edit-message-${messageId}`}
+                onClick={() => onEdit?.()}
+              >
+                <Pencil className={ACTION_ICON_CLASS} aria-hidden="true" />
+                Edit message
+              </DropdownMenuItem>
+            )}
+
+            {canDelete &&
+              (confirmingDelete ? (
+                <>
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    data-testid={`confirm-delete-message-${messageId}`}
+                    onClick={() => {
+                      disarm();
+                      onDelete?.();
+                    }}
+                  >
+                    <Check className={ACTION_ICON_CLASS} aria-hidden="true" />
+                    Confirm delete
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    data-testid={`cancel-delete-message-${messageId}`}
+                    onClick={disarm}
+                  >
+                    <X className={ACTION_ICON_CLASS} aria-hidden="true" />
+                    Cancel
+                  </DropdownMenuItem>
+                </>
+              ) : (
                 <DropdownMenuItem
                   className="text-destructive focus:text-destructive"
-                  data-testid={`confirm-delete-message-${messageId}`}
-                  onClick={() => {
-                    disarm();
-                    onDelete?.();
-                  }}
+                  data-testid={`delete-message-${messageId}`}
+                  // Arming must not close the menu, or the confirm step it
+                  // arms would be unreachable.
+                  onSelect={(event) => event.preventDefault()}
+                  onClick={() => setConfirmingDelete(true)}
                 >
-                  <Check className={ACTION_ICON_CLASS} aria-hidden="true" />
-                  Confirm delete
+                  <Trash2 className={ACTION_ICON_CLASS} aria-hidden="true" />
+                  Delete message
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  data-testid={`cancel-delete-message-${messageId}`}
-                  onClick={disarm}
-                >
-                  <X className={ACTION_ICON_CLASS} aria-hidden="true" />
-                  Cancel
-                </DropdownMenuItem>
-              </>
-            ) : (
-              <DropdownMenuItem
-                className="text-destructive focus:text-destructive"
-                data-testid={`delete-message-${messageId}`}
-                // Arming must not close the menu, or the confirm step it
-                // arms would be unreachable.
-                onSelect={(event) => event.preventDefault()}
-                onClick={() => setConfirmingDelete(true)}
-              >
-                <Trash2 className={ACTION_ICON_CLASS} aria-hidden="true" />
-                Delete message
-              </DropdownMenuItem>
-            ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
+              ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </>
   );
 }

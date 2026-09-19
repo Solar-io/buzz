@@ -11,6 +11,7 @@ import {
 import { clearDraft, saveDraft } from "@/features/channels/lib/drafts.ts";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import type { RelaySession } from "@/shared/api/relay-session";
+import { publicAppOrigin } from "@/shared/lib/relay-url";
 
 /** Result shape the composer and forum views expect from a publish. */
 export interface MessageSendResult {
@@ -137,7 +138,7 @@ export function useMessageActions({
       if (!current) {
         return;
       }
-      const url = `${globalThis.location.origin}/repos?c=${current.id}&m=${messageId}`;
+      const url = `${publicAppOrigin()}/repos?c=${current.id}&m=${messageId}`;
       void navigator.clipboard
         ?.writeText(url)
         .then(() => toast.success("Link copied"))

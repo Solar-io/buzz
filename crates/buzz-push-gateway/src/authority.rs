@@ -118,6 +118,14 @@ pub trait AuthorityStore: Send + Sync {
         installation: NewInstallation,
     ) -> Result<(), AuthorityError>;
     async fn installation(&self, id: Uuid, now: i64) -> Result<Installation, AuthorityError>;
+    /// Extend only the current, unrevoked endpoint epoch of a live installation.
+    async fn renew_installation(
+        &self,
+        id: Uuid,
+        epoch: i64,
+        expires: i64,
+        now: i64,
+    ) -> Result<(), AuthorityError>;
     async fn advance_assertion_counter(
         &self,
         installation_id: Uuid,
@@ -258,6 +266,30 @@ impl AuthorityStore for MemoryAuthorityStore {
         Ok(i.clone())
     }
 
+    async fn renew_installation(
+        &self,
+        id: Uuid,
+        epoch: i64,
+        expires: i64,
+        now: i64,
+    ) -> Result<(), AuthorityError> {
+        let mut state = self.0.lock().map_err(|_| AuthorityError::Unavailable)?;
+        let installation = state
+            .installations
+            .get_mut(&id)
+            .ok_or(AuthorityError::Rejected)?;
+        if installation.revoked
+            || installation.endpoint_epoch != epoch
+            || installation.expires_at < now
+            || expires < installation.expires_at
+            || expires <= now
+        {
+            return Err(AuthorityError::Rejected);
+        }
+        installation.expires_at = expires;
+        Ok(())
+    }
+
     async fn advance_assertion_counter(
         &self,
         id: Uuid,
@@ -320,6 +352,12 @@ impl AuthorityStore for MemoryAuthorityStore {
         let mut s = self.0.lock().map_err(|_| AuthorityError::Unavailable)?;
         let (profile, old_fingerprint) = {
             let i = s.installations.get(&id).ok_or(AuthorityError::Rejected)?;
+            // A fresh, authenticated assertion may retry an operation whose
+            // response was lost. Only the identical committed epoch/token is
+            // idempotent; a different endpoint can never borrow that epoch.
+            if !i.revoked && i.endpoint_epoch == new && i.token_fingerprint == fingerprint {
+                return Ok(());
+            }
             if i.revoked || i.endpoint_epoch != expected {
                 return Err(AuthorityError::Rejected);
             }
@@ -541,6 +579,44 @@ mod tests {
             .await
             .unwrap();
         store
+    }
+
+    #[tokio::test]
+    async fn renewal_cannot_revive_or_shorten_or_cross_endpoint_epochs() {
+        let store = store().await;
+        let id = Uuid::from_u128(1);
+        assert!(store.renew_installation(id, 2, 3_000, 1_000).await.is_err());
+        assert!(store.renew_installation(id, 1, 1_900, 1_000).await.is_err());
+        assert!(store.renew_installation(id, 1, 3_000, 2_001).await.is_err());
+        store.renew_installation(id, 1, 3_000, 1_000).await.unwrap();
+        assert_eq!(
+            store.installation(id, 2_500).await.unwrap().expires_at,
+            3_000
+        );
+        store.revoke_installation(id, 1, 2).await.unwrap();
+        assert!(store.renew_installation(id, 2, 4_000, 2_500).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn rotation_retry_is_idempotent_only_for_the_exact_endpoint_and_epoch() {
+        let store = store().await;
+        let id = Uuid::from_u128(1);
+        store
+            .rotate_endpoint(id, 1, 2, vec![5], [6; 32])
+            .await
+            .unwrap();
+        store
+            .rotate_endpoint(id, 1, 2, vec![7], [6; 32])
+            .await
+            .unwrap();
+        assert!(store
+            .rotate_endpoint(id, 1, 2, vec![7], [8; 32])
+            .await
+            .is_err());
+        assert_eq!(
+            store.installation(id, 1_000).await.unwrap().endpoint_epoch,
+            2
+        );
     }
 
     #[tokio::test]

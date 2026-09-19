@@ -9,6 +9,8 @@
  * exactly what the installed-app URL bar complaint was about).
  */
 
+import { publicAppOrigin } from "./relay-url.ts";
+
 export type LinkDisposition = "overlay" | "tab" | "default";
 
 const FILE_EXTENSIONS = new Set([
@@ -187,12 +189,12 @@ export function isRelayMediaHref(href: string, relayBase: string): boolean {
   let url: URL;
   let base: URL;
   try {
-    url = new URL(href, TEST_BASE);
+    url = new URL(href, relayBase);
     base = new URL(relayBase);
   } catch {
     return false;
   }
-  return url.host === base.host && url.pathname.startsWith("/media/");
+  return url.origin === base.origin && url.pathname.startsWith("/media/");
 }
 
 /**
@@ -207,12 +209,18 @@ export function isRelayEditionHref(href: string, relayBase: string): boolean {
   let url: URL;
   let base: URL;
   try {
-    url = new URL(href, TEST_BASE);
+    url = new URL(href, relayBase);
     base = new URL(relayBase);
   } catch {
     return false;
   }
-  return url.host === base.host && url.pathname.startsWith("/edition/");
+  return url.origin === base.origin && url.pathname.startsWith("/edition/");
+}
+
+/** Relative document/media paths refer to the relay, not the packaged asset origin. */
+export function resolveRelayHref(href: string, relayBase: string): string {
+  if (!href.trim()) return href;
+  return new URL(href, relayBase).href;
 }
 
 /**
@@ -231,7 +239,7 @@ export function openLink(href: string): LinkDisposition {
     // with it — the in-app viewer is the only sanctioned renderer.
     return disposition;
   }
-  const resolved = new URL(href, window.location.origin).href;
+  const resolved = new URL(href, publicAppOrigin()).href;
   window.open(resolved, "_blank", "noopener,noreferrer");
   return disposition;
 }

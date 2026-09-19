@@ -18,6 +18,12 @@
 
 import { get, set, del } from "idb-keyval";
 import {
+  BuzzIdentity,
+  BuzzHuddle,
+  isNativeIOS,
+  type NativeIdentityState,
+} from "../platform/native.ts";
+import {
   type KeyEnvelope,
   decryptSecretKey,
   encryptSecretKey,
@@ -68,6 +74,7 @@ let authTagJson: string | null = null;
 
 export type AuthState =
   | { status: "anonymous" }
+  | { status: "native-locked" }
   | { status: "locked"; envelope: KeyEnvelope }
   | { status: "unlocked"; source: "local"; pubkeyHint: string };
 
@@ -76,6 +83,10 @@ type Listener = (state: AuthState) => void;
 let authState: AuthState = { status: "anonymous" };
 let unlockedSecretKey: Uint8Array<ArrayBuffer> | null = null;
 const listeners = new Set<Listener>();
+export async function prepareNativeCommunityChange(): Promise<void> {
+  await BuzzHuddle.leave();
+  await (await import("../platform/native-push-revoke.ts")).revokeNativePush();
+}
 
 function setState(next: AuthState) {
   authState = next;
@@ -97,6 +108,10 @@ export function subscribeAuth(listener: Listener): () => void {
 
 /** Load the envelope (if any) from IndexedDB and derive the initial state. */
 export async function initKeyStore(): Promise<void> {
+  if (isNativeIOS()) {
+    applyNativeState(await BuzzIdentity.state());
+    return;
+  }
   try {
     const storedTag = await get(AUTH_TAG_KEY);
     if (typeof storedTag === "string" && storedTag.length > 0) {
@@ -155,7 +170,9 @@ export function getAuthTagJson(): string | null {
 
 /** True when a raw secret key is held in memory for this page session. */
 export function hasUnlockedKey(): boolean {
-  return unlockedSecretKey !== null;
+  return isNativeIOS()
+    ? authState.status === "unlocked"
+    : unlockedSecretKey !== null;
 }
 
 /** The unlocked raw key, or null when locked/anonymous. */
@@ -187,6 +204,7 @@ export async function clearRememberedKey(): Promise<void> {
 
 /** True when a remembered key row exists (for the Settings toggle state). */
 export async function hasRememberedKey(): Promise<boolean> {
+  if (isNativeIOS()) return (await BuzzIdentity.state()).pubkey !== null;
   try {
     const remembered = await get(REMEMBERED_KEY);
     return isValidRememberedKey(remembered, hintFromKey);
@@ -203,6 +221,14 @@ export async function enrollSecretKey(
   secretKey: Uint8Array,
   passphrase: string,
 ): Promise<void> {
+  if (isNativeIOS()) {
+    const secretHex = Array.from(secretKey, (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+    applyNativeState(await BuzzIdentity.enroll({ secretHex }));
+    secretKey.fill(0);
+    return;
+  }
   // Copy into a fresh ArrayBuffer-backed array at the boundary so callers
   // cannot observe later mutation of the source buffer.
   const keyBytes = new Uint8Array(secretKey.length);
@@ -234,6 +260,10 @@ export async function enrollSecretKey(
 export async function enrollSecretKeyFromPairing(
   secretKey: Uint8Array,
 ): Promise<void> {
+  if (isNativeIOS()) {
+    await enrollSecretKey(secretKey, "");
+    return;
+  }
   const random = crypto.getRandomValues(new Uint8Array(32));
   const passphrase = Array.from(random, (b) =>
     b.toString(16).padStart(2, "0"),
@@ -245,6 +275,7 @@ export async function enrollSecretKeyFromPairing(
 /** True when this device's envelope is sealed under a generated (unknown
  * to the user) passphrase — i.e. it was paired by QR. */
 export async function hasNoPassphrase(): Promise<boolean> {
+  if (isNativeIOS()) return true;
   try {
     return (await get(NO_PASSPHRASE_KEY)) === true;
   } catch {
@@ -254,6 +285,10 @@ export async function hasNoPassphrase(): Promise<boolean> {
 
 /** Unlock the persisted envelope with its passphrase. */
 export async function unlockWithPassphrase(passphrase: string): Promise<void> {
+  if (isNativeIOS()) {
+    applyNativeState(await BuzzIdentity.unlock());
+    return;
+  }
   const stored = await get(ENVELOPE_KEY);
   if (!isValidEnvelope(stored)) {
     throw new Error("No stored key on this device.");
@@ -274,6 +309,11 @@ export async function unlockWithPassphrase(passphrase: string): Promise<void> {
 
 /** Drop the in-memory key. The envelope stays; passphrase re-unlocks. */
 export function lockNow(): void {
+  if (isNativeIOS()) {
+    setState({ status: "native-locked" });
+    void BuzzHuddle.leave().then(() => BuzzIdentity.lock());
+    return;
+  }
   unlockedSecretKey = null;
   void (async () => {
     try {
@@ -310,6 +350,15 @@ export function lockNow(): void {
 
 /** Forget this device entirely: clear envelope, remembered key, and memory. */
 export async function signOut(): Promise<void> {
+  if (isNativeIOS()) {
+    await BuzzHuddle.leave();
+    await (
+      await import("../platform/native-push-revoke.ts")
+    ).revokeNativePush();
+    await BuzzIdentity.forget();
+    setState({ status: "anonymous" });
+    return;
+  }
   unlockedSecretKey = null;
   authTagJson = null;
   await del(ENVELOPE_KEY);
@@ -327,4 +376,18 @@ function hintFromKey(secretKey: Uint8Array): string {
     h = (Math.imul(h, 31) + b) | 0;
   }
   return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+function applyNativeState(state: NativeIdentityState): void {
+  setState(
+    state.locked
+      ? { status: "native-locked" }
+      : state.pubkey
+        ? {
+            status: "unlocked",
+            source: "local",
+            pubkeyHint: state.pubkey.slice(0, 8),
+          }
+        : { status: "anonymous" },
+  );
 }

@@ -93,11 +93,13 @@ function ResizeHandle({
 export function AppShell({
   sidebar,
   title,
+  onBack,
   children,
 }: {
   sidebar: ReactNode;
   /** Current conversation label for the mobile top bar. */
   title?: string | null;
+  onBack?: () => void;
   children: ReactNode;
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -140,6 +142,16 @@ export function AppShell({
       {/* Mobile top bar + drawer */}
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-center gap-2 border-b border-border px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))] md:hidden">
+          {onBack && (
+            <button
+              type="button"
+              aria-label="Back"
+              className="rounded-md p-2 hover:bg-accent"
+              onClick={onBack}
+            >
+              ‹
+            </button>
+          )}
           <button
             type="button"
             aria-label="Open channels"
