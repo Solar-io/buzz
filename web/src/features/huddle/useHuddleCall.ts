@@ -41,6 +41,8 @@ import { useHuddleAudio } from "./useHuddleAudio";
 import { useHuddleMemberSnapshot } from "./useHuddleMemberSnapshot";
 import { useHuddleReactions } from "./useHuddleReactions";
 import { useHuddleVoiceMode } from "./useHuddleVoiceMode";
+import { isNativeIOS } from "@/shared/platform/native";
+import { useNativeHuddleCall } from "./useNativeHuddleCall";
 
 /**
  * ONE huddle call, owned above the router.
@@ -86,9 +88,13 @@ export interface HuddleCallTarget {
   parentChannelId: string | null;
 }
 
-export type HuddleCall = ReturnType<typeof useHuddleCall>;
+export type HuddleCall = ReturnType<typeof useBrowserHuddleCall>;
 
-export function useHuddleCall(options: {
+// Platform is immutable for this process. Selecting the hook once keeps the
+// browser audio hooks entirely unmounted in the native application.
+export const useHuddleCall = isNativeIOS() ? useNativeHuddleCall : useBrowserHuddleCall;
+
+function useBrowserHuddleCall(options: {
   /** The call in progress, or null when nothing is active. */
   target: HuddleCallTarget | null;
   selfPubkey: string | null;

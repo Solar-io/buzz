@@ -21,6 +21,7 @@ import {
   type BridgeAudioContextLike,
 } from "../../huddle/lib/bridgeSpeech.ts";
 import { PREVIEW_SAMPLE_TEXT, type VoiceEngine } from "./voicePickerOptions.ts";
+import { relayHostname, speechServiceUrl } from "../../../shared/lib/relay-url.ts";
 
 /** What one preview asks the bridge for. */
 export interface VoicePreviewRequest {
@@ -75,7 +76,7 @@ export function createVoicePreviewer(
   const createContext = options.createContext ?? defaultContext;
   const hostname =
     options.hostname ??
-    (() => (typeof window === "undefined" ? "" : window.location.hostname));
+    (() => (typeof window === "undefined" ? "" : relayHostname()));
   let context: BridgeAudioContextLike | null = null;
   /** Bumped by every new preview so an in-flight one stops scheduling. */
   let token = 0;
@@ -101,7 +102,7 @@ export function createVoicePreviewer(
       const doFetch = options.fetchImpl ?? fetch;
       void (async () => {
         try {
-          const response = await doFetch(ttsBridgeUrl(host), {
+          const response = await doFetch(options.hostname ? ttsBridgeUrl(host) : speechServiceUrl("tts"), {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({

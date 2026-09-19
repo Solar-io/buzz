@@ -29,6 +29,7 @@ import {
 import { startHuddle } from "./lib/huddleLifecycle.ts";
 import { HuddleFloatingPanel } from "./ui/HuddleFloatingPanel.tsx";
 import { HuddlePill } from "./ui/HuddlePill.tsx";
+import { BuzzHuddle, isNativeIOS } from "@/shared/platform/native";
 
 /**
  * The app-level owner of the ONE active huddle call.
@@ -112,6 +113,16 @@ export function HuddleSessionProvider({ children }: { children: ReactNode }) {
   const directAgentPubkeyRef = useRef<string | null>(null);
 
   const call = useHuddleCall({ target, selfPubkey });
+  useEffect(() => {
+    if (!isNativeIOS()) return;
+    let alive = true;
+    const restore = () => void BuzzHuddle.snapshot().then((state) => {
+      if (alive && state.channelId && state.parentChannelId) setTarget({ huddleChannelId: state.channelId, parentChannelId: state.parentChannelId });
+    });
+    restore();
+    document.addEventListener("visibilitychange", restore);
+    return () => { alive = false; document.removeEventListener("visibilitychange", restore); };
+  }, []);
   const callRef = useRef(call);
   callRef.current = call;
   const { status, join } = call.huddle;

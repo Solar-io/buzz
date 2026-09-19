@@ -1,0 +1,94 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+import { BuzzHuddle, type NativeCallState } from "@/shared/platform/native";
+import { relayWsUrl, speechServiceUrl } from "@/shared/lib/relay-url";
+import { useProfiles } from "@/features/channels/hooks";
+import { useRelaySession } from "@/shared/api/RelaySessionProvider";
+import { signNostrEvent } from "@/shared/lib/nostr-signer";
+import { useHuddleMemberSnapshot } from "./useHuddleMemberSnapshot";
+import { useHuddleAgentRoster } from "./useHuddleAgentRoster";
+import { useHuddleReactions } from "./useHuddleReactions";
+import { DEFAULT_HUDDLE_PREFS, loadHuddlePrefs, saveHuddlePrefs, type HuddlePrefs } from "./lib/huddlePrefs";
+import { initialDuplexState } from "./lib/duplexGate";
+import type { HuddleCall, HuddleCallTarget } from "./useHuddleCall";
+
+const EMPTY: NativeCallState = { status: "idle", channelId: null, parentChannelId: null, muted: false, speaker: true, voiceEnabled: false, speechEnabled: false, speaking: false, interim: "", error: null, peers: [] };
+
+export function useNativeHuddleCall({ target, selfPubkey }: { target: HuddleCallTarget | null; selfPubkey: string | null }): HuddleCall {
+  const [state, setState] = useState(EMPTY);
+  const [voiceInputMode, setVoiceInputMode] = useState<"open" | "push_to_talk">("open");
+  const [pttActive, setPttActive] = useState(false);
+  const [prefs, setPrefsState] = useState(DEFAULT_HUDDLE_PREFS);
+  const { session } = useRelaySession();
+  const channelId = state.channelId ?? target?.huddleChannelId ?? null;
+  const parentChannelId = state.parentChannelId ?? target?.parentChannelId ?? null;
+  const connected = state.status === "connected" || state.status === "reconnecting";
+  const members = useHuddleMemberSnapshot(connected ? channelId : null);
+  const parentMembers = useHuddleMemberSnapshot(connected ? parentChannelId : null);
+  const roster = useHuddleAgentRoster({ ephemeralChannelId: connected ? channelId : null, parentChannelId, ephemeral: members, parent: parentMembers });
+  const profiles = useProfiles(useMemo(() => [...state.peers.map((p) => p.pubkey), ...roster.agentPubkeys], [state.peers, roster.agentPubkeys]));
+  const reactions = useHuddleReactions({ channelId: connected ? channelId : null, selfPubkey, senderName: selfPubkey ? profiles.get(selfPubkey)?.displayName ?? "You" : "You" });
+  const speechActivity = useRef({ speaking: false, utterances: [] });
+  const speakRoutes = useRef(new Map());
+  speechActivity.current.speaking = state.speaking;
+
+  useEffect(() => {
+    let alive = true;
+    const listener = BuzzHuddle.addListener("state", (next) => { if (alive) setState(next); });
+    void BuzzHuddle.snapshot().then((next) => { if (alive) setState(next); });
+    const refresh = () => { if (!document.hidden) void BuzzHuddle.snapshot().then((next) => { if (alive) setState(next); }); };
+    document.addEventListener("visibilitychange", refresh);
+    return () => { alive = false; void listener.then((handle) => handle.remove()); document.removeEventListener("visibilitychange", refresh); };
+  }, []);
+  useEffect(() => { if (parentChannelId) setPrefsState(loadHuddlePrefs(localStorage, parentChannelId)); }, [parentChannelId]);
+  const configure = useCallback((options: Parameters<typeof BuzzHuddle.configure>[0]) => {
+    void BuzzHuddle.configure(options).catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Could not change call settings."));
+  }, []);
+  const join = useCallback(async () => {
+    if (!target?.parentChannelId) return;
+    try {
+      setState(await BuzzHuddle.join({ relayUrl: relayWsUrl(), channelId: target.huddleChannelId, parentChannelId: target.parentChannelId, sttUrl: speechServiceUrl("stt"), ttsUrl: speechServiceUrl("tts") }));
+    } catch (error) {
+      setState((old) => ({ ...old, status: "error", error: error instanceof Error ? error.message : "Could not join huddle." }));
+    }
+  }, [target]);
+  const leave = useCallback(() => { void BuzzHuddle.leave().catch((error: unknown) => toast.error(String(error))); }, []);
+  const held = state.speaking || (voiceInputMode === "push_to_talk" && !pttActive);
+  const setPrefs = useCallback((next: HuddlePrefs) => {
+    setPrefsState(next);
+    if (parentChannelId) saveHuddlePrefs(localStorage, parentChannelId, next);
+  }, [parentChannelId]);
+  return {
+    channelId, parentChannelId, connected, reconnecting: state.status === "reconnecting", selfPubkey,
+    profiles, reactions, agentPubkeys: roster.agentPubkeys, addAgent: roster.addAgent, prefs, setPrefs,
+    duplex: { ...initialDuplexState(prefs.duplex), agentSpeaking: state.speaking, userMuted: state.muted, held },
+    micHoldNotice: held ? "Microphone held while the agent speaks" : null,
+    leave,
+    send: async (input) => {
+      if (!channelId) return { ok: false, message: "No active huddle." };
+      const event = await signNostrEvent({ kind: 9, content: input.content, tags: [["h", channelId], ...input.mentionPubkeys.map((key) => ["p", key])] });
+      return session.publish(event);
+    },
+    huddle: {
+      status: state.status, error: state.error, peers: state.peers, speaking: new Map<string, number>(), muted: state.muted,
+      micLevel: -127, devices: [], deviceId: "", outputDevices: [], outputDeviceId: "", speakerMuted: false,
+      supportsOutputSelection: false, held, voiceInputMode, pttActive, micLive: connected && !held && !state.muted,
+      supportsVoice: true, join, leave, toggleMute: () => configure({ muted: !state.muted }),
+      toggleSpeakerMuted: () => configure({ speaker: !state.speaker }),
+      selectDevice: async () => { throw new Error("Choose the microphone in iOS audio routing."); }, selectOutputDevice: async () => false,
+      setHeld: (held) => configure({ held }),
+      setVoiceInputMode: (mode) => { setVoiceInputMode(mode); configure({ held: mode === "push_to_talk" && !pttActive }); },
+      setPushToTalkActive: (active) => { setPttActive(active); configure({ held: voiceInputMode === "push_to_talk" && !active }); },
+      subscribeMicFrames: () => { throw new Error("Native microphone frames stay inside the native call engine."); },
+      resumeAudio: async () => { await BuzzHuddle.snapshot(); },
+    },
+    voice: { supported: true, enabled: state.voiceEnabled, setEnabled: (enabled) => configure({ voiceEnabled: enabled, ...(enabled ? { speechEnabled: true } : {}) }), offReason: null, status: state.voiceEnabled ? "listening" : "idle", interimText: state.interim, error: state.error },
+    speech: {
+      supported: true, enabled: state.speechEnabled, setEnabled: (enabled) => configure({ speechEnabled: enabled }),
+      agentPubkeys: new Set(roster.agentPubkeys), membershipKnown: members.known, suppressedAgents: state.peers.map((p) => p.pubkey),
+      speaking: state.speaking, speechActivity, speakRoutes,
+      interrupt: () => configure({ speechEnabled: false }),
+      setOutputDevice: async () => false, setMuted: (muted) => configure({ speaker: !muted }),
+    },
+  };
+}

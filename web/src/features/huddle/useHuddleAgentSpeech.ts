@@ -22,9 +22,9 @@ import {
 } from "./lib/huddleAgentSpeech.ts";
 import {
   playBridgeResponse,
-  ttsBridgeUrl,
   type BridgeAudioContextLike,
 } from "./lib/bridgeSpeech.ts";
+import { speechServiceUrl } from "@/shared/lib/relay-url";
 import { botPubkeys } from "./lib/huddleMembers.ts";
 import {
   resolveHuddleVoice,
@@ -353,7 +353,7 @@ export function useHuddleAgentSpeech(options: {
                 if (stopTokenRef.current !== stopAt) {
                   break;
                 }
-                const bridgeUrl = ttsBridgeUrl(window.location.hostname);
+                const bridgeUrl = speechServiceUrl("tts");
                 const bridgePromise = fetch(bridgeUrl, {
                   method: "POST",
                   headers: { "content-type": "application/json" },

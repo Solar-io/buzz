@@ -9,8 +9,8 @@ import {
   bridgeErrorMessage,
   parseBridgeEvent,
   PcmBatcher,
-  sttBridgeUrl,
 } from "./lib/sttBridge.ts";
+import { speechServiceUrl } from "@/shared/lib/relay-url";
 import {
   DUPLICATE_WINDOW,
   ECHO_TAIL_MS,
@@ -258,7 +258,7 @@ export function useHuddleVoiceMode(options: {
         return;
       }
       transition({ type: "start" });
-      const socket = new WebSocket(sttBridgeUrl(window.location.hostname));
+      const socket = new WebSocket(speechServiceUrl("stt"));
       ws = socket;
 
       socket.onmessage = (event: MessageEvent) => {

@@ -7,5 +7,6 @@ const config: CapacitorConfig = {
   webDir: "../web/dist",
   ios: { scheme: "App", contentInset: "never" },
   server: { hostname: "localhost", iosScheme: "capacitor" },
+  plugins: { CapacitorHttp: { enabled: true } },
 };
 export default config;
