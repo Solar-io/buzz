@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-const { BARGE_MIC_HOT_MS, initialDuplexState, micHeld, micHoldNotice, nextMicHold } =
-  await import("./duplexGate.ts");
+const {
+  BARGE_MIC_HOT_MS,
+  initialDuplexState,
+  micHeld,
+  micHoldNotice,
+  nextMicHold,
+} = await import("./duplexGate.ts");
 
 /** Fold a list of events through the reducer, collecting the interrupts. */
 function run(state, events) {
@@ -65,7 +70,8 @@ test("barge-in interrupts only after the mic has been hot for the debounce", () 
     "300 ms interrupts",
   );
   assert.equal(
-    nextMicHold(hot, { type: "interim", text: "hang on", at: 12_000 }).interrupt,
+    nextMicHold(hot, { type: "interim", text: "hang on", at: 12_000 })
+      .interrupt,
     true,
   );
 });

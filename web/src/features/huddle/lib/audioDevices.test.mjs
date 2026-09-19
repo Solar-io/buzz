@@ -10,6 +10,7 @@ const {
   devicePresent,
   isSystemDefault,
   loadAudioDevicePrefs,
+  patchAudioDevicePrefs,
   resolveDeviceId,
   saveAudioDevicePrefs,
   supportsSinkId,
@@ -142,4 +143,16 @@ test("a remembered device that was unplugged falls back to the system default", 
   // `exact` constraint fails the whole join.
   assert.equal(resolveDeviceId("spk-bt", outputs), "spk-bt");
   assert.equal(resolveDeviceId("spk-gone", outputs), "");
+});
+
+test("patchAudioDevicePrefs merges rather than clobbering the other side", () => {
+  const store = memoryStore();
+  patchAudioDevicePrefs(store, { inputDeviceId: "mic-usb" });
+  patchAudioDevicePrefs(store, { outputDeviceId: "spk-bt" });
+  // The discriminating case: a whole-record write would have dropped the
+  // mic id when the speaker was chosen.
+  assert.deepEqual(loadAudioDevicePrefs(store), {
+    inputDeviceId: "mic-usb",
+    outputDeviceId: "spk-bt",
+  });
 });

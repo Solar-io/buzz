@@ -54,7 +54,10 @@ export interface VoicePreviewerOptions {
 }
 
 function defaultContext(): BridgeAudioContextLike | null {
-  if (typeof window === "undefined" || typeof window.AudioContext === "undefined") {
+  if (
+    typeof window === "undefined" ||
+    typeof window.AudioContext === "undefined"
+  ) {
     return null;
   }
   try {
@@ -122,7 +125,9 @@ export function createVoicePreviewer(
       token += 1;
       const ctx = context;
       context = null;
-      void (ctx as unknown as { close?: () => Promise<void> } | null)?.close?.();
+      void (
+        ctx as unknown as { close?: () => Promise<void> } | null
+      )?.close?.();
     },
   };
 }

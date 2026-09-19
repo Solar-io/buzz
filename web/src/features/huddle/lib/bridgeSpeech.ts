@@ -129,7 +129,11 @@ export const BRIDGE_PIECE_SAMPLES = Math.floor(BRIDGE_SAMPLE_RATE / 4);
 export interface BridgeAudioContextLike {
   currentTime: number;
   destination: AudioNode;
-  createBuffer(channels: number, length: number, sampleRate: number): AudioBufferLike;
+  createBuffer(
+    channels: number,
+    length: number,
+    sampleRate: number,
+  ): AudioBufferLike;
   createBufferSource(): BridgeBufferSourceLike;
 }
 
@@ -141,6 +145,15 @@ export interface BridgeBufferSourceLike {
   buffer: AudioBufferLike | null;
   connect(destination: AudioNode): void;
   start(when: number): void;
+  /**
+   * Cancel a source that is playing or still scheduled.
+   *
+   * Optional only because the contract predates barge-in; every real
+   * `AudioBufferSourceNode` has it. Without it an "interrupt" would abort
+   * the fetch and leave up to a whole reply's worth of already-scheduled
+   * buffers to play out — which is not an interrupt, it is a delay.
+   */
+  stop?(when?: number): void;
 }
 
 /** Convert an aligned Int16 piece to the Float32 WebAudio consumes. */
@@ -169,6 +182,12 @@ export async function playBridgeResponse(
     shouldStop?: () => boolean;
     /** Injected timer so tests don't wait wall-clock. Returns a cancel fn. */
     scheduleSettle?: (delayMs: number, fn: () => void) => () => void;
+    /**
+     * Where the audio goes. Defaults to the context's own output; the
+     * huddle passes a gain node so the speaker mute covers agent speech
+     * the same way it covers peers.
+     */
+    destination?: AudioNode;
   } = {},
 ): Promise<{ seconds: number }> {
   const shouldStop = options.shouldStop ?? (() => false);
@@ -179,9 +198,29 @@ export async function playBridgeResponse(
       return () => clearTimeout(t);
     });
 
-  const reader = response.body!.getReader();
+  const body = response.body;
+  if (body === null) {
+    return { seconds: 0 };
+  }
+  const reader = body.getReader();
+  const destination = options.destination ?? audioContext.destination;
   let queueAt = audioContext.currentTime + 0.02;
   let samples = 0;
+  /**
+   * Every source handed to the clock, so an abort can silence the ones
+   * already scheduled — see {@link BridgeBufferSourceLike.stop}.
+   */
+  const scheduled: BridgeBufferSourceLike[] = [];
+  const stopScheduled = () => {
+    for (const source of scheduled) {
+      try {
+        source.stop?.();
+      } catch {
+        // A source that already ended throws on stop(); nothing to do.
+      }
+    }
+    scheduled.length = 0;
+  };
 
   while (true) {
     if (shouldStop()) {
@@ -190,6 +229,7 @@ export async function playBridgeResponse(
       } catch {
         // already closed
       }
+      stopScheduled();
       break;
     }
     const { done, value } = await reader.read();
@@ -200,9 +240,10 @@ export async function playBridgeResponse(
       buf.copyToChannel(f32, 0);
       const src = audioContext.createBufferSource();
       src.buffer = buf;
-      src.connect(audioContext.destination);
+      src.connect(destination);
       const when = Math.max(queueAt, audioContext.currentTime);
       src.start(when);
+      scheduled.push(src);
       queueAt = when + f32.length / BRIDGE_SAMPLE_RATE;
       samples += piece.length;
     }
@@ -222,7 +263,12 @@ export async function playBridgeResponse(
     };
     const cancelSettle = settleAfter(remainingMs + 30, finish);
     const check = setInterval(() => {
-      if (shouldStop()) finish();
+      if (shouldStop()) {
+        // An interrupt during the tail must silence the queue, not merely
+        // stop waiting for it.
+        stopScheduled();
+        finish();
+      }
     }, 50);
   });
 

@@ -84,12 +84,18 @@ test("engineVoiceOptions returns the chosen engine's voices and ONLY those", () 
 
 test("an engine with no rows yields an empty list, not the other engine's", () => {
   assert.deepEqual(
-    engineVoiceOptions("eleven", { catalogRows: CATALOG_ROWS, elevenVoices: [] }),
+    engineVoiceOptions("eleven", {
+      catalogRows: CATALOG_ROWS,
+      elevenVoices: [],
+    }),
     [],
     "a keyless bridge shows no voices, never the pocket ones",
   );
   assert.deepEqual(
-    engineVoiceOptions("pocket", { catalogRows: [], elevenVoices: ELEVEN_VOICES }),
+    engineVoiceOptions("pocket", {
+      catalogRows: [],
+      elevenVoices: ELEVEN_VOICES,
+    }),
     [],
   );
 });

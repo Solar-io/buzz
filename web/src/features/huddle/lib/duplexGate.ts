@@ -147,7 +147,9 @@ export function nextMicHold(
     }
     case "mic_level": {
       if (state.userMuted) {
-        return settled(state.micHotSince === null ? state : { ...state, micHotSince: null });
+        return settled(
+          state.micHotSince === null ? state : { ...state, micHotSince: null },
+        );
       }
       if (!event.speaking) {
         return settled(

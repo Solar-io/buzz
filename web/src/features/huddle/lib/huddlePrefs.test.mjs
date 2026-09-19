@@ -92,7 +92,10 @@ test("malformed, hostile and unreadable stores all read as the defaults", () => 
   }
   // A store that throws (private mode, blocked site data) must not throw
   // out of a render — read AND write.
-  assert.deepEqual(loadHuddlePrefs(throwingStore, PARENT), DEFAULT_HUDDLE_PREFS);
+  assert.deepEqual(
+    loadHuddlePrefs(throwingStore, PARENT),
+    DEFAULT_HUDDLE_PREFS,
+  );
   assert.doesNotThrow(() =>
     saveHuddlePrefs(throwingStore, PARENT, DEFAULT_HUDDLE_PREFS),
   );
@@ -113,10 +116,13 @@ test("resolution order: the channel override outranks the published selection", 
 });
 
 test("resolution order: with no override the published selection speaks", () => {
-  assert.deepEqual(resolveHuddleVoice(null, { engine: "pocket", key: "pocket:vera" }), {
-    engine: "pocket",
-    key: "pocket:vera",
-  });
+  assert.deepEqual(
+    resolveHuddleVoice(null, { engine: "pocket", key: "pocket:vera" }),
+    {
+      engine: "pocket",
+      key: "pocket:vera",
+    },
+  );
   assert.deepEqual(
     resolveHuddleVoice(undefined, { engine: "eleven", key: "eleven:q" }),
     { engine: "eleven", key: "eleven:q" },
@@ -132,7 +138,10 @@ test("a published local-synth selection resolves like NO selection", () => {
   // The dropped engine: the row still decodes, but it no longer decides —
   // an old on-device selection must not drag the OS robot back into a call.
   assert.equal(
-    resolveHuddleVoice(null, { engine: "local-synth", voiceURI: "uri:samantha" }),
+    resolveHuddleVoice(null, {
+      engine: "local-synth",
+      voiceURI: "uri:samantha",
+    }),
     undefined,
   );
   // ...and an explicit channel override still wins over it.

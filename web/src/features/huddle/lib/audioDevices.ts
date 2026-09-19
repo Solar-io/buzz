@@ -80,9 +80,9 @@ export function audioOutputOptions(
  * and constructing one just to feature-test would need a user gesture.
  */
 export function supportsSinkId(
-  constructor: { prototype?: unknown } | undefined | null,
+  audioContextCtor: { prototype?: unknown } | undefined | null,
 ): boolean {
-  const prototype = constructor?.prototype;
+  const prototype = audioContextCtor?.prototype;
   if (prototype === undefined || prototype === null) {
     return false;
   }
@@ -140,7 +140,10 @@ export function loadAudioDevicePrefs(
   if (parsed === null || typeof parsed !== "object") {
     return DEFAULT_AUDIO_DEVICE_PREFS;
   }
-  const record = parsed as { inputDeviceId?: unknown; outputDeviceId?: unknown };
+  const record = parsed as {
+    inputDeviceId?: unknown;
+    outputDeviceId?: unknown;
+  };
   return {
     inputDeviceId:
       typeof record.inputDeviceId === "string"
@@ -165,6 +168,22 @@ export function saveAudioDevicePrefs(
   } catch {
     // A blocked or full store must not break a live call.
   }
+}
+
+/**
+ * Merge one side's choice into the stored pair.
+ *
+ * The mic and the speaker are chosen by different code paths but share one
+ * key, so a blind write of the whole record would let whichever ran last
+ * clobber the other's id.
+ */
+export function patchAudioDevicePrefs(
+  store: AudioDevicePrefsStore | null,
+  patch: Partial<AudioDevicePrefs>,
+): AudioDevicePrefs {
+  const next = { ...loadAudioDevicePrefs(store), ...patch };
+  saveAudioDevicePrefs(store, next);
+  return next;
 }
 
 /**

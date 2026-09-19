@@ -23,6 +23,7 @@ export function VoiceEngineTabs({
   disabled?: boolean;
 }) {
   return (
+    // biome-ignore lint/a11y/useSemanticElements: a two-button segmented control is a group of toggles, not a form fieldset
     <div
       aria-label="Voice engine"
       className="flex items-center gap-1 rounded-full border border-border p-0.5"

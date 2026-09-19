@@ -145,7 +145,7 @@ function speakableMessage(overrides = {}) {
   };
 }
 
-async function mountHook() {
+async function mountHook(voiceOverride) {
   subscriptions.length = 0;
   const container = dom.window.document.createElement("div");
   dom.window.document.body.appendChild(container);
@@ -157,6 +157,7 @@ async function mountHook() {
       selfPubkey: HUMAN,
       audioPeerPubkeys: [],
       snapshot: snapshot(),
+      voiceOverride: voiceOverride ?? null,
     });
     return null;
   }
@@ -191,9 +192,9 @@ async function mountHook() {
   };
 }
 
-async function mountEnabledAndSpeak(selection) {
+async function mountEnabledAndSpeak(selection, voiceOverride) {
   spoken.length = 0; // tests assert exactly-one-utterance
-  const harness = await mountHook();
+  const harness = await mountHook(voiceOverride);
   await act(async () => {
     harness.captured.current.setEnabled(true);
   });
@@ -206,19 +207,59 @@ async function mountEnabledAndSpeak(selection) {
   return harness;
 }
 
-test("wiring: a published local-synth selection speaks THAT voice, disposition selected", async () => {
+test("wiring: a published local-synth selection is DEMOTED to no selection", async () => {
+  // The engine was dropped (Sam, 2026-09-18). An old kind-30182 row naming
+  // an OS voice still decodes, but it must not be what speaks: resolution
+  // treats it as no selection at all, so the derived default runs instead.
+  // In jsdom there is no AudioContext, so the derived-bridge route is
+  // corrected to `derived` and the local synthesizer speaks it — which is
+  // exactly the disposition that discriminates: the OLD behaviour recorded
+  // `selected` here.
   const harness = await mountEnabledAndSpeak({
     engine: "local-synth",
     voiceURI: "uri:samantha",
   });
-  // THE wiring assertion: the utterance's voice IS the selected one.
   assert.equal(spoken.length, 1, "exactly one utterance was synthesized");
-  assert.equal(spoken[0].voice?.voiceURI, "uri:samantha");
-  // ...and the observable disposition says WHICH path spoke.
   const route = harness.captured.current.speakRoutes.current.get(AGENT);
   assert.ok(route, "the speak route must be recorded for the agent");
-  assert.equal(route.disposition, "selected");
-  assert.equal(route.profile.source, "selected");
+  assert.equal(route.disposition, "derived");
+  assert.equal(route.profile.source, "derived");
+  assert.equal(route.bridge, null);
+  // ...and the voice is the derived draw, not the published one.
+  const derived = speechVoiceProfile(AGENT, rankVoices(FIXTURE_VOICES));
+  assert.equal(spoken[0].voice?.voiceURI, derived.voiceURI);
+  await harness.unmount();
+});
+
+test("wiring: a per-channel override OUTRANKS the agent's published selection", async () => {
+  // S4's seam. The agent publishes pocket:azelma; this channel says
+  // ElevenLabs. The route must record the override's engine — with a
+  // DIFFERENT engine on each side, so the assertion cannot pass by
+  // accident if the override were ignored.
+  const harness = await mountEnabledAndSpeak(
+    { engine: "pocket", key: "pocket:azelma" },
+    { engine: "eleven", key: "eleven:OVERRIDE123" },
+  );
+  const route = harness.captured.current.speakRoutes.current.get(AGENT);
+  assert.ok(route, "the speak route must be recorded for the agent");
+  assert.equal(route.disposition, "eleven-bridge", "the override decided");
+  assert.deepEqual(route.bridge, {
+    engine: "eleven",
+    voice: "OVERRIDE123",
+  });
+  await harness.unmount();
+});
+
+test("wiring: an override also outranks having no published selection", async () => {
+  const harness = await mountEnabledAndSpeak(undefined, {
+    engine: "pocket",
+    key: "pocket:vera",
+  });
+  const route = harness.captured.current.speakRoutes.current.get(AGENT);
+  // Without the override this agent draws `derived-bridge`; with it the
+  // route is the named preset.
+  assert.equal(route.disposition, "pocket-bridge");
+  assert.deepEqual(route.bridge, { engine: "pocket", voice: "vera" });
   await harness.unmount();
 });
 

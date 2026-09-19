@@ -99,7 +99,8 @@ test("the picker renders the CHOSEN engine's rows and none of the other's", asyn
     list({ options: engineVoiceOptions("eleven", SOURCES), engine: "eleven" }),
   );
   assert.equal(
-    eleven.container.querySelectorAll('[data-testid="voice-picker-row"]').length,
+    eleven.container.querySelectorAll('[data-testid="voice-picker-row"]')
+      .length,
     3,
     "all three bridge voices",
   );
