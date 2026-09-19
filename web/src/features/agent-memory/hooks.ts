@@ -5,8 +5,6 @@ import type { RelaySession } from "@/shared/api/relay-session";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { getUnlockedSecretKey } from "@/shared/lib/key-store";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
-import { ownPubkey, nip44DecryptFrom } from "@/shared/lib/nostr-signer";
-import { isNativeIOS } from "@/shared/platform/native";
 import { getPublicKey } from "nostr-tools/pure";
 
 import { buildMemoryGraph, type MemoryGraph } from "./lib/buildMemoryGraph.ts";
@@ -115,13 +113,12 @@ export function useAgentMemoryQuery(
     staleTime: 30_000,
     queryFn: async () => {
       const secretKey = getUnlockedSecretKey();
-      if (!secretKey && !isNativeIOS()) {
+      if (!secretKey) {
         throw new Error(
           "Reading agent memory needs the unlocked local key — this session signs with a browser extension, which cannot derive the NIP-44 conversation key.",
         );
       }
-      const ownerPubkey = isNativeIOS() ? await ownPubkey() : getPublicKey(secretKey as Uint8Array);
-      if (!ownerPubkey) throw new Error("Unlock your identity first.");
+      const ownerPubkey = getPublicKey(secretKey);
       const events = await queryEngramEvents(
         session,
         agentPubkey as string,
@@ -131,8 +128,7 @@ export function useAgentMemoryQuery(
         events,
         agentPubkey: agentPubkey as string,
         ownerPubkey,
-        ownerSecretKey: secretKey ?? undefined,
-        ...(isNativeIOS() ? { decrypt: async (ciphertext: string) => (await nip44DecryptFrom(ciphertext, agentPubkey as string)).plaintext } : {}),
+        ownerSecretKey: secretKey,
         // `>=` accepts a false positive at exactly the cap: a relay that
         // returned the clamp cannot be distinguished from one that happened
         // to hold exactly that many. The banner says "may be incomplete",

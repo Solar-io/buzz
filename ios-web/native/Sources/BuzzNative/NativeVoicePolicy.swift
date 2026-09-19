@@ -57,7 +57,7 @@ enum NativeVoicePolicy {
         guard tags.filter({ $0.first == "d" }).count == 1,
               tags.contains(["d", "agent-voice"]),
               let data = content.data(using: .utf8), let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              value["version"] as? Int == 1, let label = value["label"] as? String,
+              nativeInteger(value["version"]) == 1, let label = value["label"] as? String,
               !label.isEmpty, label.utf16.count <= 128,
               !label.unicodeScalars.contains(where: { $0.value <= 31 || $0.value == 127 }),
               let engine = value["engine"] as? String, let key = value["key"] as? String else { return nil }

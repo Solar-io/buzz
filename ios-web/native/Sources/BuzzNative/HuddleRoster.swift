@@ -9,15 +9,15 @@ struct HuddleRoster {
 
     private func peer(_ value: [String: Any]) throws -> Peer {
         guard let key = value["pubkey"] as? String, key.count == 64, key.allSatisfy(\.isHexDigit),
-              let index = value["peer_index"] as? Int, (0...255).contains(index),
-              let epoch = value["epoch"] as? Int, (0...255).contains(epoch) else {
+              let index = nativeInteger(value["peer_index"]), (0...255).contains(index),
+              let epoch = nativeInteger(value["epoch"]), (0...255).contains(epoch) else {
             throw NativeError.message("Invalid audio roster entry.")
         }
         return Peer(pubkey: key.lowercased(), index: index, epoch: epoch)
     }
     mutating func apply(_ message: [String: Any], selfPubkey: String) throws {
         guard let type = message["type"] as? String,
-              let nextRevision = message["revision"] as? Int, nextRevision >= 0 else { throw NativeError.message("Invalid audio roster revision.") }
+              let nextRevision = nativeInteger(message["revision"]), nextRevision >= 0 else { throw NativeError.message("Invalid audio roster revision.") }
         if nextRevision < revision { return }
         if type == "roster" || (type == "joined" && !admitted) {
             guard let values = message["peers"] as? [[String: Any]] else { throw NativeError.message("Missing audio roster snapshot.") }
