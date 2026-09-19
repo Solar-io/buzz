@@ -28,6 +28,8 @@ if (args[0] === "inspect") {
   const created = structuredClone(current);
   created.Id = "b".repeat(64); created.Name = `/${args[args.indexOf("--name") + 1]}`; created.Image = args.at(-1);
   created.Config.Env = readFileSync(args[args.indexOf("--env-file") + 1], "utf8").trim().split("\n");
+  created.HostConfig.NetworkMode = args[args.indexOf("--network") + 1];
+  created.HostConfig.PortBindings = args.flatMap((arg, index) => arg === "-p" ? [args[index + 1]] : []);
   created.State.Running = false; state.containers.push(created); save(); output(created.Id);
 } else if (args[0] === "stop") {
   const item = find(args.at(-1)); if (!item) fail(); item.State.Running = false; save(); output(item.Id);

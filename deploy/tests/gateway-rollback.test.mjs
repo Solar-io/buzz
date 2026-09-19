@@ -38,6 +38,9 @@ test("healthy gateway cutover retains previous stopped container and never expos
   const f = fixture(); try {
     const result = f.run(); assert.equal(result.status, 0, result.stderr);
     const state = f.state(); assert.equal(state.containers.find((item) => item.Name === "/buzz-push-gateway").Id, "b".repeat(64));
+    const replacement = state.containers.find((item) => item.Id === "b".repeat(64));
+    assert.deepEqual(replacement.HostConfig.PortBindings, ["127.0.0.1:61359:8080", "127.0.0.1:61362:8081"]);
+    assert.equal(replacement.HostConfig.NetworkMode, "fixture-network");
     const old = state.containers.find((item) => item.Id === "a".repeat(64)); assert.match(old.Name, /\.previous\./); assert.equal(old.State.Running, false);
     assert.doesNotMatch(result.stdout + result.stderr, /PRIVATE-CANARY/);
   } finally { f.cleanup(); }
@@ -48,6 +51,8 @@ for (const fault of ["failReadiness", "failStart", "failRename"]) {
       const result = f.run(); assert.notEqual(result.status, 0);
       const old = f.state().containers.find((item) => item.Name === "/buzz-push-gateway");
       assert.equal(old.Id, "a".repeat(64), result.stderr); assert.equal(old.State.Running, true, result.stderr);
+      const calls = readFileSync(`${f.stateFile}.calls`, "utf8").trim().split("\n").map(JSON.parse);
+      assert.ok(calls.some(([verb, target]) => verb === "stop" && target === "buzz-push-gateway"), "fault must occur after stopping the real target in the fixture");
       assert.doesNotMatch(result.stdout + result.stderr, /PRIVATE-CANARY/);
     } finally { f.cleanup(); }
   });
@@ -67,7 +72,9 @@ test("integrated relay failure rolls relay configuration and gateway container b
     assert.equal(state.containers.find((item) => item.Name === "/buzz-push-gateway").Id, "a".repeat(64), result.stderr);
     assert.equal(state.containers.find((item) => item.Name === "/buzz-dev-relay-1").Image, `sha256:${"d".repeat(64)}`, result.stderr);
     assert.equal(readFileSync(join(f.dir, ".env"), "utf8"), "BUZZ_IMAGE=fixture-old\nDATABASE_URL=fixture-unchanged\n");
-    const calls = readFileSync(`${f.stateFile}.calls`, "utf8"); assert.ok(calls.includes("--context"), result.stderr);
+    assert.ok(state.containers.some((item) => item.Id === "b".repeat(64) && item.Name.includes(".failed.")), "replacement must have started and then been retained as failed");
+    const calls = readFileSync(`${f.stateFile}.calls`, "utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(calls.filter(([verb, last]) => verb === "--context" && last === "relay").length, 2, "both forward relay recreation and rollback must execute");
     assert.doesNotMatch(result.stdout + result.stderr, /PRIVATE-CANARY/);
   } finally { f.cleanup(); }
 });
