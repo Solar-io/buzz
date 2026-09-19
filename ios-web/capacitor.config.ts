@@ -4,6 +4,9 @@ import type { CapacitorConfig } from "@capacitor/cli";
 const config: CapacitorConfig = {
   appId: process.env.BUZZ_IOS_BUNDLE_ID || "com.buzz.web",
   appName: "Buzz Web",
+  // Plugin results include signed message content and APNs device metadata.
+  // Never forward those values into a physical-device debug transcript.
+  loggingBehavior: "none",
   webDir: "../web/dist",
   ios: { scheme: "App", contentInset: "never" },
   server: { hostname: "localhost", iosScheme: "capacitor" },
