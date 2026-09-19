@@ -29,7 +29,7 @@ private final class FixtureScheme: NSObject, WKURLSchemeHandler {
 final class BridgeGateTests: XCTestCase {
     @MainActor
     func testZZBundledAppRestoresNativeIdentityIntoAuthenticatedPhoneShell() async throws {
-        try XCTSkipUnless(Bundle.main.bundleURL.pathExtension == "app", "Requires app-hosted bundled React and native signer.")
+        try requireIdentityFixtureSimulator()
         func findWebView(_ view: UIView) -> WKWebView? {
             if let webView = view as? WKWebView { return webView }
             return view.subviews.compactMap { findWebView($0) }.first

@@ -1,7 +1,18 @@
 import XCTest
 import AVFoundation
 import NostrSDK
+import Security
 @testable import BuzzNative
+
+func requireIdentityFixtureSimulator() throws {
+#if targetEnvironment(simulator)
+    try XCTSkipUnless(Bundle.main.bundleURL.pathExtension == "app", "Identity fixtures require the app-hosted simulator scheme.")
+    try XCTSkipUnless(ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"]?.contains("Buzz Capacitor QA") == true,
+                      "Identity fixtures require the dedicated Buzz Capacitor QA simulator.")
+#else
+    throw XCTSkip("Identity fixture tests never run on a physical device.")
+#endif
+}
 
 final class NativeBehaviorTests: XCTestCase {
     func testNativeOpusRoundTripProducesAudiblePCMAndRejectsMalformedLengths() throws {
@@ -64,7 +75,7 @@ final class NativeBehaviorTests: XCTestCase {
 
     @MainActor
     func testNativeIdentityVectorSignsAndLocksWithoutRememberedKeyBypass() throws {
-        try XCTSkipUnless(Bundle.main.bundleURL.pathExtension == "app", "Real Keychain requires the BuzzNativeTests app-hosted scheme.")
+        try requireIdentityFixtureSimulator()
         let identity = NativeIdentity.shared
         try identity.forget()
         defer { try? identity.forget() }
@@ -93,7 +104,7 @@ final class NativeBehaviorTests: XCTestCase {
 
     @MainActor
     func testNativeNip44RoundTripAuthenticatesCiphertext() throws {
-        try XCTSkipUnless(Bundle.main.bundleURL.pathExtension == "app", "Real Keychain requires the BuzzNativeTests app-hosted scheme.")
+        try requireIdentityFixtureSimulator()
         let identity = NativeIdentity.shared
         try identity.forget()
         defer { try? identity.forget() }
@@ -108,6 +119,169 @@ final class NativeBehaviorTests: XCTestCase {
         var bytes = try XCTUnwrap(Data(base64Encoded: encrypted))
         bytes[bytes.count - 1] ^= 1
         XCTAssertThrowsError(try peer.nip44Decrypt(publicKey: own.publicKey(), payload: bytes.base64EncodedString()))
+    }
+}
+
+final class FlutterIdentityMigrationTests: XCTestCase {
+    private let secretOne = String(repeating: "0", count: 63) + "1"
+    private let secretTwo = String(repeating: "0", count: 63) + "2"
+    private let publicOne = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    private let accounts = ["buzz_communities", "buzz_active_community_id", "buzz_workspaces", "buzz_active_workspace_id", "buzz_relay_url", "buzz_nsec", "buzz_pubkey"]
+
+    private func row(_ id: String, secret: String? = nil, relay: String = "wss://migration-qa.invalid") throws -> [String: Any] {
+        let keys = try Keys.parse(secretKey: secret ?? secretOne)
+        return ["id": id, "name": "QA \(id)", "relayUrl": relay,
+                "nsec": try keys.secretKey().toBech32(), "pubkey": keys.publicKey().toHex()]
+    }
+    private func data(_ rows: [[String: Any]]) throws -> Data { try JSONSerialization.data(withJSONObject: rows) }
+
+    func testActiveSingleExplicitAndAmbiguousSelection() throws {
+        let entries = try FlutterIdentityMigration.candidates(data([row("one"), row("two", secret: secretTwo)]), activeId: "two")
+        XCTAssertEqual(entries.count, 2)
+        XCTAssertEqual(try FlutterIdentityMigration.choose(entries, activeId: "two", selectedId: nil)?.id, "two")
+        XCTAssertEqual(try FlutterIdentityMigration.choose(entries, activeId: "two", selectedId: "one")?.id, "one")
+        XCTAssertNil(try FlutterIdentityMigration.choose(entries, activeId: nil, selectedId: nil))
+        XCTAssertNil(try FlutterIdentityMigration.choose(entries, activeId: "missing", selectedId: nil))
+        XCTAssertEqual(try FlutterIdentityMigration.choose([entries[0]], activeId: nil, selectedId: nil)?.id, "one")
+        XCTAssertThrowsError(try FlutterIdentityMigration.choose(entries, activeId: nil, selectedId: "missing"))
+        XCTAssertThrowsError(try FlutterIdentityMigration.candidates(data([row("one"), row("one", secret: secretTwo)]), activeId: nil))
+    }
+
+    func testPublicDescriptorsContainNoSecretAndInvalidActiveIdentityFailsClosed() throws {
+        let entry = try XCTUnwrap(FlutterIdentityMigration.candidates(data([row("one")]), activeId: "one").first)
+        XCTAssertEqual(Set(entry.descriptor.keys), Set(["id", "name", "relayUrl", "pubkey"]))
+        XCTAssertEqual(entry.descriptor["pubkey"], publicOne)
+        let encoded = String(data: try JSONSerialization.data(withJSONObject: entry.descriptor), encoding: .utf8)!
+        XCTAssertFalse(encoded.contains(secretOne))
+        XCTAssertFalse(encoded.contains("nsec1"))
+        var mismatch = try row("one")
+        mismatch["pubkey"] = try Keys.parse(secretKey: secretTwo).publicKey().toHex()
+        XCTAssertThrowsError(try FlutterIdentityMigration.candidates(data([mismatch]), activeId: "one"))
+        XCTAssertTrue(try FlutterIdentityMigration.candidates(data([mismatch]), activeId: nil).isEmpty)
+        var absent = try row("one")
+        absent.removeValue(forKey: "nsec")
+        XCTAssertThrowsError(try FlutterIdentityMigration.candidates(data([absent]), activeId: "one"))
+    }
+
+    func testMigrationAcceptsOnlySecureBareRelayOriginsAndBoundsInput() throws {
+        XCTAssertEqual(try FlutterIdentityMigration.secureRelay("https://migration-qa.invalid:9443/"), "wss://migration-qa.invalid:9443")
+        for relay in ["ws://migration-qa.invalid", "http://migration-qa.invalid", "wss://user:pass@migration-qa.invalid", "wss://migration-qa.invalid/path", "wss://migration-qa.invalid?x=1", "wss://migration-qa.invalid#x", "file:///tmp/relay", ""] {
+            XCTAssertThrowsError(try FlutterIdentityMigration.secureRelay(relay), relay)
+            XCTAssertThrowsError(try FlutterIdentityMigration.candidates(data([row("one", relay: relay)]), activeId: "one"), relay)
+        }
+        XCTAssertThrowsError(try FlutterIdentityMigration.candidates(data((0..<65).map { try row("\($0)") }), activeId: nil))
+        XCTAssertThrowsError(try FlutterIdentityMigration.candidates(Data(repeating: 32, count: 1_048_577), activeId: nil))
+    }
+
+    @MainActor
+    private func withLegacyFixture(_ operation: () throws -> Void) throws {
+        try requireIdentityFixtureSimulator()
+        guard try NativeIdentity.read("identity.v1") == nil else { throw XCTSkip("Refusing to replace an existing simulator identity.") }
+        for account in accounts {
+            guard try FlutterIdentityMigration.read(account) == nil else { throw XCTSkip("Refusing to replace existing legacy simulator records.") }
+        }
+        let defaults = UserDefaults.standard
+        let names = ["buzz.flutter-migration-completed", "buzz.migrated-flutter-relay", "buzz.identity.locked"]
+        let original = names.map { defaults.object(forKey: $0) }
+        defer {
+            try? NativeIdentity.shared.forget()
+            for account in accounts {
+                let result = SecItemDelete(legacyQuery(account) as CFDictionary)
+                XCTAssertTrue(result == errSecSuccess || result == errSecItemNotFound)
+            }
+            for (index, name) in names.enumerated() {
+                if let value = original[index] { defaults.set(value, forKey: name) }
+                else { defaults.removeObject(forKey: name) }
+            }
+        }
+        defaults.removeObject(forKey: "buzz.flutter-migration-completed")
+        defaults.removeObject(forKey: "buzz.migrated-flutter-relay")
+        try operation()
+    }
+    private func legacyQuery(_ account: String) -> [CFString: Any] {
+        [kSecClass: kSecClassGenericPassword, kSecAttrService: "flutter_secure_storage_service",
+         kSecAttrAccount: account, kSecAttrSynchronizable: false]
+    }
+    private func insertLegacy(_ account: String, _ data: Data) throws {
+        var query = legacyQuery(account)
+        query[kSecValueData] = data
+        query[kSecAttrAccessible] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        let result = SecItemAdd(query as CFDictionary, nil)
+        guard result == errSecSuccess else { throw NativeError.message("QA fixture Keychain write failed (\(result)).") }
+    }
+
+    @MainActor
+    func testActualLegacyKeychainMigrationRetainsRowsAndForgetCannotResurrect() throws {
+        try withLegacyFixture {
+            let old = try data([row("one"), row("two", secret: secretTwo)])
+            try insertLegacy("buzz_communities", old)
+            try insertLegacy("buzz_active_community_id", Data("one".utf8))
+            let result = try FlutterIdentityMigration.restore(selectedId: nil)
+            XCTAssertEqual(result["status"] as? String, "migrated")
+            XCTAssertEqual(result["pubkey"] as? String, publicOne)
+            XCTAssertEqual(result["relayUrl"] as? String, "wss://migration-qa.invalid")
+            XCTAssertEqual(Set(result.keys), Set(["status", "pubkey", "relayUrl"]))
+            XCTAssertEqual(try NativeIdentity.read("identity.v1"), Data(secretOne.utf8))
+            XCTAssertEqual(try FlutterIdentityMigration.read("buzz_communities"), old)
+            XCTAssertEqual(try FlutterIdentityMigration.read("buzz_active_community_id"), Data("one".utf8))
+            try NativeIdentity.shared.forget()
+            XCTAssertEqual(try FlutterIdentityMigration.restore(selectedId: nil)["status"] as? String, "none")
+            XCTAssertNil(try NativeIdentity.read("identity.v1"))
+            XCTAssertEqual(try FlutterIdentityMigration.read("buzz_communities"), old)
+        }
+    }
+
+    @MainActor
+    func testExistingNativeIdentityIsNeverOverwrittenByLegacySelection() throws {
+        try withLegacyFixture {
+            let old = try data([row("legacy-two", secret: secretTwo)])
+            try insertLegacy("buzz_communities", old)
+            _ = try NativeIdentity.shared.enroll(secretOne)
+            let result = try FlutterIdentityMigration.restore(selectedId: "legacy-two")
+            XCTAssertEqual(result["status"] as? String, "existing")
+            XCTAssertEqual(try NativeIdentity.read("identity.v1"), Data(secretOne.utf8))
+            XCTAssertEqual(NativeIdentity.shared.state()["pubkey"] as? String, publicOne)
+            XCTAssertEqual(try FlutterIdentityMigration.read("buzz_communities"), old)
+        }
+    }
+
+    @MainActor
+    func testAmbiguousLegacyRowsExposeOnlyPublicChoicesUntilExplicitSelection() throws {
+        try withLegacyFixture {
+            let old = try data([row("one"), row("two", secret: secretTwo)])
+            try insertLegacy("buzz_communities", old)
+            let result = try FlutterIdentityMigration.restore(selectedId: nil)
+            XCTAssertEqual(result["status"] as? String, "choice")
+            let choices = try XCTUnwrap(result["choices"] as? [[String: String]])
+            XCTAssertEqual(choices.count, 2)
+            XCTAssertTrue(choices.allSatisfy { Set($0.keys) == Set(["id", "name", "relayUrl", "pubkey"]) })
+            XCTAssertNil(try NativeIdentity.read("identity.v1"))
+            let restored = try FlutterIdentityMigration.restore(selectedId: "two")
+            XCTAssertEqual(restored["status"] as? String, "migrated")
+            XCTAssertEqual(try NativeIdentity.read("identity.v1"), Data(secretTwo.utf8))
+            XCTAssertEqual(try FlutterIdentityMigration.read("buzz_communities"), old)
+        }
+    }
+
+    @MainActor
+    func testWorkspaceAndSingleCommunityLegacyFormatsRemainReadable() throws {
+        try withLegacyFixture {
+            let old = try data([row("workspace")])
+            try insertLegacy("buzz_workspaces", old)
+            try insertLegacy("buzz_active_workspace_id", Data("workspace".utf8))
+            XCTAssertEqual(try FlutterIdentityMigration.restore(selectedId: nil)["status"] as? String, "migrated")
+            XCTAssertEqual(try NativeIdentity.read("identity.v1"), Data(secretOne.utf8))
+            XCTAssertEqual(try FlutterIdentityMigration.read("buzz_workspaces"), old)
+        }
+        try withLegacyFixture {
+            try insertLegacy("buzz_relay_url", Data("https://migration-qa.invalid/".utf8))
+            let nsec = try Keys.parse(secretKey: secretOne).secretKey().toBech32()
+            try insertLegacy("buzz_nsec", Data(nsec.utf8))
+            try insertLegacy("buzz_pubkey", Data(publicOne.utf8))
+            XCTAssertEqual(try FlutterIdentityMigration.restore(selectedId: nil)["status"] as? String, "migrated")
+            XCTAssertEqual(try NativeIdentity.read("identity.v1"), Data(secretOne.utf8))
+            XCTAssertEqual(try FlutterIdentityMigration.read("buzz_nsec"), Data(nsec.utf8))
+        }
     }
 }
 
