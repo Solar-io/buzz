@@ -103,3 +103,27 @@ provider, account, model, channel, cost or token information. Request
 observations contain metrics only—never prompts, outputs, tool calls, URLs,
 headers or credentials. Schema changes are additive projections over archived
 raw events, so application rollback needs no destructive down-migration.
+
+## Integration status — 2026-09-19
+
+The backend telemetry, additive archive projection, transaction-consistent
+analytics query, and full desktop Usage surface are integrated on the feature
+branch. The page is routed at `/agents/usage`, persists filters in the URL,
+supports the specified ranges and agent selection semantics, exports filtered
+CSV, and renders the summary, coverage, chart, highlight, and table surfaces
+with explicit unknown and partial states.
+
+Local integration evidence:
+
+- 13 focused Tauri analytics tests pass, including the 100,000-row query,
+  migration repair, filtering, incomplete data, cost provenance, cumulative
+  reconciliation, provider diversity, and DST boundaries.
+- The complete desktop unit suite passes (5,714 tests), including usage filter,
+  range, sorting, export, exact `u64`, coverage, and keyboard interaction tests.
+- Desktop TypeScript typecheck and production build pass.
+- Focused Biome checks pass for every usage analytics frontend and integration
+  file.
+
+Independent browser QA, named mutation runs, isolated-relay proof, and final
+verification remain delivery gates; this integration record does not claim
+those later stages have passed.

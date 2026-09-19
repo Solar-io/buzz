@@ -27,11 +27,18 @@ export type AnalyticsMetricGroup = {
   usage: ReportedUsage;
   reportCount: number;
   requestCount: string | null;
-  costs: { wireReported: CostField; manifestEstimated: CostField; unknown: CostField };
+  costs: {
+    wireReported: CostField;
+    manifestEstimated: CostField;
+    unknown: CostField;
+  };
   avgLatencyMs: CostField;
   fallbackCount: string | null;
 };
-export type AnalyticsTimeBucket = AnalyticsMetricGroup & { start: number; end: number };
+export type AnalyticsTimeBucket = AnalyticsMetricGroup & {
+  start: number;
+  end: number;
+};
 export type AgentUsageAnalytics = {
   collectionEnabled: boolean;
   summary: AnalyticsMetricGroup;
@@ -46,14 +53,41 @@ export type AgentUsageAnalytics = {
   serviceTiers: AnalyticsMetricGroup[];
   stopReasons?: AnalyticsMetricGroup[];
   availableAgents: string[];
-  highlights: { busiestDay: string | null; topModel: string | null; topAgent: string | null; activeDays: number };
-  diversity: { score: number | null; providerCount: number; knownReportCount: number; totalReportCount: number; recentScore: number | null; recentStart: number; shares: { provider: string; share: number }[] };
-  coverage: AgentUsageCoverage & { providerReports: number; accountReports: number; tierReports: number; completeRequestReports: number; requestObservationCount: number; costProvenanceReports: number; archiveFirstReportedAt: number | null; archiveLastReportedAt: number | null; inconsistentRequestReports: number };
+  highlights: {
+    busiestDay: string | null;
+    topModel: string | null;
+    topAgent: string | null;
+    activeDays: number;
+  };
+  diversity: {
+    score: number | null;
+    providerCount: number;
+    knownReportCount: number;
+    totalReportCount: number;
+    recentScore: number | null;
+    recentStart: number;
+    shares: { provider: string; share: number }[];
+  };
+  coverage: AgentUsageCoverage & {
+    providerReports: number;
+    accountReports: number;
+    tierReports: number;
+    completeRequestReports: number;
+    requestObservationCount: number;
+    costProvenanceReports: number;
+    archiveFirstReportedAt: number | null;
+    archiveLastReportedAt: number | null;
+    inconsistentRequestReports: number;
+  };
 };
 
 /** One archive snapshot supplies all filtered dashboard metrics. */
-export async function getAgentUsageAnalytics(request: AgentUsageAnalyticsRequest): Promise<AgentUsageAnalytics> {
-  return invokeTauri<AgentUsageAnalytics>("get_agent_usage_analytics", { request });
+export async function getAgentUsageAnalytics(
+  request: AgentUsageAnalyticsRequest,
+): Promise<AgentUsageAnalytics> {
+  return invokeTauri<AgentUsageAnalytics>("get_agent_usage_analytics", {
+    request,
+  });
 }
 
 export type ReportedUsage = {
