@@ -7,7 +7,9 @@ import {
   resolveBuzzDownloadUrlForPlatform,
 } from "@/shared/lib/buzz-download";
 import { hasNip07Provider } from "@/shared/lib/nostr-signer";
-import { relayWsUrl } from "@/shared/lib/relay-url";
+import { relayHttpBaseUrl, relayWsUrl } from "@/shared/lib/relay-url";
+import { useAuth } from "@/features/auth/ui/AuthProvider";
+import { isNativeIOS } from "@/shared/platform/native";
 import { Button } from "@/shared/ui/button";
 import * as React from "react";
 import Markdown from "react-markdown";
@@ -41,6 +43,7 @@ function inviteClaimErrorMessage(message: string): string {
 /** Landing page for a community invite link (`/invite/<code>`). */
 export function InvitePage({ code }: { code: string }) {
   const relay = relayWsUrl();
+  const { canSign } = useAuth();
   const host = relay.replace(/^wss?:\/\//, "");
   const [policy, setPolicy] = React.useState<JoinPolicy | null | undefined>(
     undefined,
@@ -80,7 +83,7 @@ export function InvitePage({ code }: { code: string }) {
   }, []);
 
   React.useEffect(() => {
-    fetch("/api/join-policy")
+    fetch(`${relayHttpBaseUrl()}/api/join-policy`)
       .then(async (response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const config = (await response.json()) as { policy?: JoinPolicy };
@@ -91,20 +94,27 @@ export function InvitePage({ code }: { code: string }) {
 
   const acceptPolicy = async (): Promise<string | undefined> => {
     if (!policy) return undefined;
-    const response = await fetch("/api/invites/accept-policy", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        code,
-        policy_version: policy.version,
-        age_confirmed: ageConfirmed,
-      }),
-    });
+    const response = await fetch(
+      `${relayHttpBaseUrl()}/api/invites/accept-policy`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code,
+          policy_version: policy.version,
+          age_confirmed: ageConfirmed,
+        }),
+      },
+    );
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return ((await response.json()) as { receipt: string }).receipt;
   };
 
   const openInvite = async () => {
+    if (isNativeIOS()) {
+      await joinInBrowser();
+      return;
+    }
     setOpening(true);
     try {
       const receipt = await acceptPolicy();
@@ -132,7 +142,7 @@ export function InvitePage({ code }: { code: string }) {
     }
   };
 
-  const browserSigningAvailable = hasNip07Provider();
+  const browserSigningAvailable = canSign || hasNip07Provider();
   const disabled =
     policy === undefined ||
     opening ||

@@ -374,10 +374,10 @@ export function RepoDetailPage() {
               className="border-black/10 bg-white text-black hover:bg-black/5 dark:border-white/10 dark:bg-white/5 dark:text-white dark:hover:bg-white/10"
               asChild
             >
-              <a href={`/channels/${repo.channelId}`}>
+              <Link to="/repos" search={{ c: repo.channelId }}>
                 <MessageSquare className="h-4 w-4" />
                 View channel
-              </a>
+              </Link>
             </Button>
           </div>
         )}

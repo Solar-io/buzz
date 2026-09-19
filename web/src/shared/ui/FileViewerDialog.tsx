@@ -15,6 +15,7 @@ import {
   fileViewerKind,
   isRelayEditionHref,
   isRelayMediaHref,
+  resolveRelayHref,
   type FileViewerKind,
 } from "@/shared/lib/linkOpen";
 import { Spinner } from "@/shared/ui/spinner";
@@ -69,7 +70,10 @@ export function FileViewerProvider({
   children: ReactNode;
 }) {
   const [url, setUrl] = useState<string | null>(null);
-  const openViewer = useCallback((next: string) => setUrl(next), []);
+  const openViewer = useCallback(
+    (next: string) => setUrl(resolveRelayHref(next, relayBase)),
+    [relayBase],
+  );
   const contextValue = useMemo(() => ({ openViewer }), [openViewer]);
 
   return (

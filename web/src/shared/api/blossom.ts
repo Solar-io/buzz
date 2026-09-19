@@ -13,6 +13,7 @@ import { signNostrEvent } from "../lib/nostr-signer";
 import { getAuthTagJson } from "../lib/key-store";
 import { relayHttpBaseUrl } from "../lib/relay-url";
 import { canonicalizeImage } from "../lib/mediaCanonical";
+import { resolveRelayHref } from "../lib/linkOpen";
 
 export const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 export const MAX_VIDEO_BYTES = 500 * 1024 * 1024;
@@ -284,7 +285,8 @@ export async function uploadBlob(
 const objectUrlCache = new Map<string, string>();
 
 /** Fetch a media URL with a signed GET and cache its object URL. */
-export async function fetchSignedMedia(url: string): Promise<string> {
+export async function fetchSignedMedia(rawUrl: string): Promise<string> {
+  const url = resolveRelayHref(rawUrl, relayHttpBaseUrl());
   const cached = objectUrlCache.get(url);
   if (cached) {
     return cached;
@@ -314,7 +316,8 @@ export async function fetchSignedMedia(url: string): Promise<string> {
  * the exact bytes, and fetchSignedMedia's Blob keeps the response MIME for
  * <img> rendering, which byte consumers don't want.
  */
-export async function fetchSignedBytes(url: string): Promise<Uint8Array> {
+export async function fetchSignedBytes(rawUrl: string): Promise<Uint8Array> {
+  const url = resolveRelayHref(rawUrl, relayHttpBaseUrl());
   const authorization = await buildAuthorization("get", {
     content: "Get media",
     targetUrl: url,
