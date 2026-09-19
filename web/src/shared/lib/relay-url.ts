@@ -19,7 +19,7 @@ export function relayWsUrl(): string {
     if (!relay) throw new Error("Configure the native app's relay first.");
     return relay;
   }
-  const envUrl = import.meta.env.VITE_RELAY_URL;
+  const envUrl = import.meta.env?.VITE_RELAY_URL;
   if (envUrl) return envUrl;
   // Same-origin: derive from current page location (works when served from relay)
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -32,8 +32,8 @@ export function relayHostname(): string { return new URL(relayWsUrl()).hostname;
 export function speechServiceUrl(kind: "stt" | "tts"): string {
   const configured = readNativeServices();
   const explicit = kind === "stt"
-    ? (isNativeIOS() ? configured?.sttUrl : import.meta.env.VITE_STT_URL)
-    : (isNativeIOS() ? configured?.ttsUrl : import.meta.env.VITE_TTS_URL);
+    ? (isNativeIOS() ? configured?.sttUrl : import.meta.env?.VITE_STT_URL)
+    : (isNativeIOS() ? configured?.ttsUrl : import.meta.env?.VITE_TTS_URL);
   if (explicit) return explicit;
   if (isNativeIOS()) throw new Error("Configure speech service addresses in the native connection settings.");
   return kind === "stt" ? `wss://${relayHostname()}:6361/stt` : `https://${relayHostname()}:6366/tts`;
