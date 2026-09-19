@@ -9,6 +9,14 @@ never uninstall it first: the app container and legacy Keychain records are
 preserved. Gateway replacement uses only Capacitor profiles, with the old
 container/image retained by the guarded cutover workflow.
 
+Inventory **all** installed Buzz bundle identifiers before calling a cutover a
+replacement. Flutter's tracked default is `com.buzz.buzzMobile`; a local
+`AppOverrides.xcconfig` can instead select `cloud.noet.buzz`. Those can coexist
+and have different saved accounts. Updating one does not remove the other.
+Verify the restored public identity against the owner's intended account before
+retiring another installation. A connected relay or APNs token alone does not
+prove the correct account was restored.
+
 When native identity storage is empty, setup can restore the verified active
 Flutter community entirely inside Swift. It validates the key/public-key pair
 and secure relay, asks for a public community choice when ambiguous, and never
