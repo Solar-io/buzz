@@ -1,12 +1,9 @@
 import { useMemo } from "react";
 
-import {
-  useChannelMembers,
-  useChannelMessages,
-  useProfiles,
-} from "@/features/channels/hooks";
+import { useChannelMessages, useProfiles } from "@/features/channels/hooks";
 import { ChannelTimeline } from "@/features/channels/ui/ChannelTimeline";
 import { Composer } from "@/features/channels/ui/Composer";
+import { truncatePubkey } from "@/shared/lib/pubkey";
 
 import { useHuddleSession } from "../HuddleSessionProvider.tsx";
 
@@ -24,7 +21,14 @@ export function HuddleChat({ variant }: { variant: "compact" | "full" }) {
   const { call } = useHuddleSession();
   const channelId = call.channelId;
   const feed = useChannelMessages(channelId);
-  const members = useChannelMembers(channelId);
+  const members = useMemo(
+    () =>
+      call.memberPubkeys.map((pubkey) => ({
+        pubkey,
+        name: truncatePubkey(pubkey),
+      })),
+    [call.memberPubkeys],
+  );
   const messages = useMemo(() => {
     const roomMessages = feed.messages.filter(
       (message) => message.channelId === channelId && !message.deleted,
@@ -34,8 +38,14 @@ export function HuddleChat({ variant }: { variant: "compact" | "full" }) {
       : roomMessages;
   }, [channelId, feed.messages, variant]);
   const authorPubkeys = useMemo(
-    () => messages.map((message) => message.authorPubkey),
-    [messages],
+    () =>
+      Array.from(
+        new Set([
+          ...messages.map((message) => message.authorPubkey),
+          ...call.memberPubkeys,
+        ]),
+      ),
+    [call.memberPubkeys, messages],
   );
   const profiles = useProfiles(authorPubkeys);
   const lastMessageId = messages[messages.length - 1]?.id ?? "";
@@ -93,6 +103,7 @@ export function HuddleChat({ variant }: { variant: "compact" | "full" }) {
         onClearThread={() => {}}
         profiles={profiles}
         send={call.send}
+        strictMentions
         threadRef={null}
       />
     </section>

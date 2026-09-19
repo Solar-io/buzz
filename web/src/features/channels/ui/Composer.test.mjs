@@ -170,26 +170,34 @@ async function flush() {
   }
 }
 
-async function mountComposer() {
+async function mountComposer(options = {}) {
   globalThis.__BUZZ_TEST_UPLOADS__ = [];
   globalThis.__BUZZ_TEST_TOASTS__ = [];
+  const sent = [];
   const container = dom.window.document.createElement("div");
   dom.window.document.body.appendChild(container);
   const root = createRoot(container);
   await act(async () => {
     root.render(
       React.createElement(Composer, {
-        members: [],
-        profiles: new Map(),
+        members: options.members ?? [],
+        profiles: options.profiles ?? new Map(),
+        strictMentions: options.strictMentions ?? false,
         threadRef: null,
         onClearThread: () => {},
-        send: async () => ({ ok: true, message: "" }),
+        send:
+          options.send ??
+          (async (payload) => {
+            sent.push(payload);
+            return { ok: true, message: "" };
+          }),
       }),
     );
   });
   await flush();
   return {
     container,
+    sent,
     // React's enter/leave plugin ignores events whose target IS the root
     // container, so drags are dispatched on the textarea inside it — the
     // real path anyway — and bubble up to the composer root.
@@ -315,6 +323,79 @@ test("a text-only drag never opens the overlay and a text-only drop changes noth
       "no tray rows appear",
     );
     assert.deepEqual(toastLines(), []);
+  } finally {
+    await composer.unmount();
+  }
+});
+
+test("strict huddle mentions retain an unresolved draft and publish nothing", async () => {
+  const member = "a".repeat(64);
+  const composer = await mountComposer({
+    strictMentions: true,
+    members: [{ pubkey: member, name: "Trevor Lefkowitz" }],
+    profiles: new Map([
+      [member, { name: "Trevor Lefkowitz", displayName: "Trevor Lefkowitz" }],
+    ]),
+  });
+  try {
+    const input = composer.container.querySelector(
+      '[data-testid="composer-input"]',
+    );
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        dom.window.HTMLTextAreaElement.prototype,
+        "value",
+      ).set.call(input, "hello @Trevor");
+      input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    });
+    await flush();
+    await act(async () => {
+      composer.container
+        .querySelector('[aria-label="Send"]')
+        .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+    assert.equal(
+      input.value,
+      "hello @Trevor",
+      "the unresolved draft stays visible",
+    );
+    assert.deepEqual(composer.sent, [], "the strict composer does not publish");
+    assert.match(toastLines()[0] ?? "", /Resolve huddle mention/);
+  } finally {
+    await composer.unmount();
+  }
+});
+
+test("strict huddle mode still sends ordinary email and package text", async () => {
+  const composer = await mountComposer({
+    strictMentions: true,
+    members: [{ pubkey: "a".repeat(64), name: "Trevor Lefkowitz" }],
+  });
+  try {
+    const input = composer.container.querySelector(
+      '[data-testid="composer-input"]',
+    );
+    Object.getOwnPropertyDescriptor(
+      dom.window.HTMLTextAreaElement.prototype,
+      "value",
+    ).set.call(input, "Email support@example.com about @scope/package.");
+    await act(async () => {
+      input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    });
+    await flush();
+    await act(async () => {
+      composer.container
+        .querySelector('[aria-label="Send"]')
+        .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+    assert.equal(composer.sent.length, 1);
+    assert.equal(
+      composer.sent[0].content,
+      "Email support@example.com about @scope/package.",
+    );
+    assert.deepEqual(composer.sent[0].mentionPubkeys, []);
   } finally {
     await composer.unmount();
   }

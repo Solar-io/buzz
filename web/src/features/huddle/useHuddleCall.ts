@@ -158,9 +158,10 @@ export function useHuddleCall(options: {
   // ONE poller per channel, shared by the speech gate and the agent roster
   // (two on the same channel doubled REQ/CLOSE churn and could trip the
   // relay's per-second write quota alongside a publish).
-  const ephemeralMembers = useHuddleMemberSnapshot(
-    connected ? channelId : null,
-  );
+  // Warm the signed full roster as soon as a target exists. The route and
+  // huddle chat need it before audio connects, and the relay only refreshes
+  // this addressable snapshot on repeated one-shot REQs.
+  const ephemeralMembers = useHuddleMemberSnapshot(channelId);
   const parentMembers = useHuddleMemberSnapshot(
     connected ? parentChannelId : null,
   );
@@ -495,6 +496,11 @@ export function useHuddleCall(options: {
     return first ? authorLabel(first, profiles) : "the agent";
   }, [agentPubkeys, profiles]);
 
+  const memberPubkeys = useMemo(
+    () => [...ephemeralMembers.members.keys()],
+    [ephemeralMembers.members],
+  );
+
   return {
     channelId,
     parentChannelId,
@@ -511,6 +517,8 @@ export function useHuddleCall(options: {
     ),
     reactions,
     agentPubkeys,
+    memberPubkeys,
+    memberRosterKnown: ephemeralMembers.known,
     addAgent,
     profiles,
     prefs,

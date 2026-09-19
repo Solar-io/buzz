@@ -4,7 +4,6 @@ import { useAuth } from "@/features/auth/ui/AuthProvider";
 import { LoginPage } from "@/features/auth/ui/LoginPage";
 import {
   useChannelActivity,
-  useChannelMembers,
   useChannelMessages,
   useProfiles,
 } from "@/features/channels/hooks";
@@ -17,7 +16,6 @@ import {
   type ChannelPrefs,
 } from "@/features/channels/lib/channelPrefs.ts";
 import { sendPresence, usePresence } from "@/features/channels/hooks";
-import { shortKey } from "@/features/dms/lib/dmNaming.ts";
 
 import { replyCounts } from "@/features/channels/lib/messageBuffer.ts";
 import { timelineReplyCounts } from "@/features/channels/lib/threadSummaryEvent.ts";
@@ -44,6 +42,7 @@ import { MessageToasts } from "@/features/channels/ui/MessageToasts";
 import { SearchPanel } from "@/features/channels/ui/SearchPanel";
 import { HuddleDock } from "@/features/huddle/ui/HuddleDock";
 import { useHuddleSession } from "@/features/huddle/HuddleSessionProvider";
+import { useRouteMentionMembers } from "@/features/huddle/useHuddleMentionMembers";
 import { eligibleDmAgentPubkey } from "@/features/huddle/lib/dmAgentCall.ts";
 import { ThreadPanel } from "@/features/channels/ui/ThreadPanel";
 import {
@@ -295,18 +294,10 @@ function ChannelBrowser() {
     const timer = window.setInterval(() => forceTick((n) => n + 1), 3000);
     return () => window.clearInterval(timer);
   }, []);
-  const channelMembers = useChannelMembers(current?.id ?? null);
-  // DMs carry no 39002 member events — their roster IS the 39000's p tags.
-  // Without this, @-mention autocomplete and p-tag resolution are dead in
-  // DMs (empty member list).
-  const members = useMemo(
-    () =>
-      current?.type === "dm" && selfPubkey
-        ? current.participantPubkeys
-            .filter((pk) => pk !== selfPubkey)
-            .map((pk) => ({ pubkey: pk, name: shortKey(pk) }))
-        : channelMembers,
-    [current, selfPubkey, channelMembers],
+  const { members, strictMentions } = useRouteMentionMembers(
+    current,
+    selfPubkey,
+    huddleSession.call,
   );
   const profiles = useProfiles(
     useMemo(
@@ -982,6 +973,7 @@ function ChannelBrowser() {
                         onCancelEdit={() => messageActions.setEditing(null)}
                         editSend={messageActions.editSend}
                         profiles={profiles}
+                        strictMentions={strictMentions}
                         threadRef={
                           threadRoot
                             ? {
@@ -1040,6 +1032,7 @@ function ChannelBrowser() {
                     buffer={messages}
                     members={members}
                     profiles={profiles}
+                    strictMentions={strictMentions}
                     threadSummaries={threadSummaries}
                     selfPubkey={selfPubkey}
                     permalinkMessageId={threadPermalinkId}
@@ -1056,6 +1049,7 @@ function ChannelBrowser() {
                     buffer={messages}
                     members={members}
                     profiles={profiles}
+                    strictMentions={strictMentions}
                     threadSummaries={threadSummaries}
                     selfPubkey={selfPubkey}
                     onClose={() => setThreadRootId(null)}

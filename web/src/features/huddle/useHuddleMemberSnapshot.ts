@@ -39,6 +39,8 @@ import {
 /** Cadence of the snapshot re-REQ. Half the desktop's, since a huddle is short. */
 export const MEMBER_SNAPSHOT_REFRESH_MS = 15_000;
 
+const EMPTY_MEMBERS: ReadonlyMap<string, string> = new Map();
+
 export interface HuddleMemberSnapshot {
   /** pubkey (lowercase) → role. Empty until the first snapshot arrives. */
   members: ReadonlyMap<string, string>;
@@ -57,6 +59,13 @@ export function useHuddleMemberSnapshot(
     () => new Map<string, string>(),
   );
   const [known, setKnown] = useState(false);
+  // Effects run after render. Keep the room that produced this state so a
+  // route switch cannot expose the previous room's snapshot for one frame.
+  const [snapshotChannelId, setSnapshotChannelId] = useState<string | null>(
+    null,
+  );
+  const channelIdRef = useRef(channelId);
+  channelIdRef.current = channelId;
   // Locally-published adds, replayed over every poll result until the relay's
   // own snapshot catches up and makes them redundant.
   const optimisticRef = useRef(new Map<string, string>());
@@ -64,6 +73,7 @@ export function useHuddleMemberSnapshot(
   useEffect(() => {
     setMembers(new Map<string, string>());
     setKnown(false);
+    setSnapshotChannelId(null);
     optimisticRef.current = new Map<string, string>();
     if (!channelId) {
       return;
@@ -90,6 +100,7 @@ export function useHuddleMemberSnapshot(
               optimisticRef.current.delete(pubkey);
             }
           }
+          setSnapshotChannelId(channelId);
           setMembers(parsed);
           setKnown(true);
         },
@@ -105,18 +116,30 @@ export function useHuddleMemberSnapshot(
     };
   }, [session, channelId, refreshMs]);
 
-  const merge = useCallback((pubkey: string, role: string) => {
-    const key = pubkey.toLowerCase();
-    optimisticRef.current.set(key, role);
-    setMembers((previous) => {
-      if (previous.get(key) === role) {
-        return previous;
+  const merge = useCallback(
+    (pubkey: string, role: string) => {
+      if (channelId === null || channelIdRef.current !== channelId) {
+        return;
       }
-      const next = new Map(previous);
-      next.set(key, role);
-      return next;
-    });
-  }, []);
+      const key = pubkey.toLowerCase();
+      optimisticRef.current.set(key, role);
+      setSnapshotChannelId(channelId);
+      setMembers((previous) => {
+        if (previous.get(key) === role) {
+          return previous;
+        }
+        const next = new Map(previous);
+        next.set(key, role);
+        return next;
+      });
+    },
+    [channelId],
+  );
 
-  return { members, known, merge };
+  const currentRoom = snapshotChannelId === channelId;
+  return {
+    members: currentRoom ? members : EMPTY_MEMBERS,
+    known: currentRoom && channelId !== null ? known : false,
+    merge,
+  };
 }

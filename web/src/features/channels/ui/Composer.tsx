@@ -112,6 +112,7 @@ export function Composer({
   draftKey,
   channelName,
   placeholder,
+  strictMentions = false,
   send,
 }: {
   members: ChannelMember[];
@@ -142,6 +143,7 @@ export function Composer({
   channelName?: string | null;
   /** Overrides the idle textarea hint (forum views say "Write your post..."). */
   placeholder?: string;
+  strictMentions?: boolean;
   send: (options: {
     content: string;
     mentionPubkeys: string[];
@@ -625,10 +627,7 @@ export function Composer({
 
   const submit = async () => {
     const trimmed = text.trim();
-    // The wire content: typed text plus each uploaded attachment's markdown,
-    // composed here and never shown in the box. An edit keeps the raw text
-    // as-is — the composer is editing the original body, and the tray's
-    // attachments belong to the channel draft, not the message under edit.
+    // Attachment markdown is wire-only; edits keep the original body.
     const finalContent = editingActive
       ? trimmed
       : composeSendContent(
@@ -645,6 +644,12 @@ export function Composer({
       mentionPicks,
       selfPubkey ?? undefined,
     );
+    if (strictMentions && unresolved.length > 0) {
+      toast.error(
+        `Resolve huddle mention: ${unresolved.join(", ")}. Choose a member from the @ suggestions.`,
+      );
+      return;
+    }
     setBusy(true);
     try {
       const result = editingActive
@@ -653,13 +658,8 @@ export function Composer({
             content: finalContent,
             mentionPubkeys,
             threadRef,
-            // `mediaTags` is appended verbatim to the event's tags by
-            // `sendChannelMessage`, so it is also where the NIP-30 `emoji`
-            // tags go. They are derived from the FINAL content, the same way
-            // @mentions become `p` tags: without them the event carries a
-            // bare `:shortcode:` and no other client can resolve the image.
-            // (The field would be better named `extraTags` — that rename
-            // touches files this change does not own.)
+            // Media tags are derived from final content and appended verbatim
+            // by sendChannelMessage, covering imeta and NIP-30 emoji tags.
             mediaTags: [
               ...uploadedDescriptors(attachments).map((descriptor) =>
                 buildImetaTag(descriptor),
