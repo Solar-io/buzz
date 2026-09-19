@@ -110,3 +110,66 @@ final class NativeBehaviorTests: XCTestCase {
         XCTAssertThrowsError(try peer.nip44Decrypt(publicKey: own.publicKey(), payload: bytes.base64EncodedString()))
     }
 }
+
+final class NativeVoicePolicyTests: XCTestCase {
+    func testFinalGateNormalizesRejectsShortAndDeduplicatesOnlyLastThree() {
+        var gate = NativeFinalGate()
+        XCTAssertNil(gate.receive("  x  ", now: 0, speaking: false))
+        XCTAssertEqual(gate.receive("  hello\n there  ", now: 0, speaking: false), "hello there")
+        XCTAssertNil(gate.receive("hello there", now: 1, speaking: false))
+        XCTAssertEqual(gate.receive("two", now: 2, speaking: false), "two")
+        XCTAssertEqual(gate.receive("three", now: 3, speaking: false), "three")
+        XCTAssertEqual(gate.receive("four", now: 4, speaking: false), "four")
+        XCTAssertEqual(gate.receive("hello there", now: 5, speaking: false), "hello there")
+    }
+
+    func testFinalGateHoldsExactlyThroughEchoTailAndDropsEchoOnly() {
+        var gate = NativeFinalGate()
+        gate.record("alpha bravo charlie delta", at: 0)
+        XCTAssertNil(gate.receive("Alpha, bravo charlie delta!", now: 0.5, speaking: false))
+        XCTAssertNil(gate.receive("please change the subject", now: 0.6, speaking: false))
+        XCTAssertTrue(gate.hasPending)
+        XCTAssertEqual(gate.drain(now: 1.499, speaking: false), [])
+        XCTAssertEqual(gate.drain(now: 1.5, speaking: true), [])
+        XCTAssertEqual(gate.drain(now: 1.5, speaking: false), ["please change the subject"])
+        XCTAssertFalse(gate.hasPending)
+        XCTAssertEqual(gate.drain(now: 2, speaking: false), [])
+    }
+
+    func testEarlierSentenceEchoIsRejectedAfterLaterSentencesFinish() {
+        var gate = NativeFinalGate()
+        gate.record("The first sentence is echoed by the microphone", at: 1)
+        XCTAssertNil(gate.receive("the first sentence is echoed by the microphone", now: 1.2, speaking: true))
+        for time in 2...5 { gate.record("unrelated sentence number \(time)", at: Double(time)) }
+        XCTAssertEqual(gate.drain(now: 6.5, speaking: false), [])
+        XCTAssertFalse(gate.hasPending)
+    }
+
+    func testEchoThresholdAndChunkCeilingAreLiteralContracts() {
+        XCTAssertTrue(NativeVoicePolicy.isEcho("a b c", of: ["a b c d e"]))
+        XCTAssertFalse(NativeVoicePolicy.isEcho("a b", of: ["a b c d e"]))
+        XCTAssertFalse(NativeVoicePolicy.isEcho("", of: ["a b c d e"]))
+        let source = String(repeating: "x", count: 401)
+        let chunks = NativeVoicePolicy.chunks(source)
+        XCTAssertEqual(chunks.map(\.count), [200, 200, 1])
+        XCTAssertEqual(chunks.joined(), source)
+        XCTAssertEqual(NativeVoicePolicy.chunks("  First sentence. Second sentence!  "), ["First sentence. Second sentence!"])
+        XCTAssertEqual(NativeVoicePolicy.chunks(" "), [])
+    }
+
+    func testVoiceSelectionRequiresExactVersionTagAndValidEngineKey() {
+        let tags = [["d", "agent-voice"]]
+        let valid = #"{"version":1,"label":"Alice","engine":"pocket","key":"pocket:alba"}"#
+        XCTAssertEqual(NativeVoicePolicy.voiceSelection(content: valid, tags: tags)?.key, "pocket:alba")
+        XCTAssertNil(NativeVoicePolicy.voiceSelection(content: valid, tags: tags + tags))
+        XCTAssertNil(NativeVoicePolicy.voiceSelection(content: valid, tags: [["d", "other"]]))
+        for invalid in [
+            #"{"version":true,"label":"Alice","engine":"pocket","key":"pocket:alba"}"#,
+            #"{"version":2,"label":"Alice","engine":"pocket","key":"pocket:alba"}"#,
+            #"{"version":1,"label":"","engine":"pocket","key":"pocket:alba"}"#,
+            #"{"version":1,"label":"Alice","engine":"pocket","key":"pocket:eve"}"#,
+            #"{"version":1,"label":"Alice","engine":"pocket","key":"../voice"}"#,
+            #"{"version":1,"label":"Alice","engine":"eleven","key":"eleven:short"}"#
+        ] { XCTAssertNil(NativeVoicePolicy.voiceSelection(content: invalid, tags: tags), invalid) }
+    }
+}

@@ -15,6 +15,24 @@ final class HuddleRosterTests: XCTestCase {
         Data([index, epoch] + Array(repeating: 0, count: max(0, length - 2)))
     }
 
+    func testBooleanAndFractionalRosterNumbersAreRejectedBeforeAdmission() {
+        for invalid in [true, 1.5] as [Any] {
+            var roster = HuddleRoster()
+            var message = joined()
+            message["revision"] = invalid
+            XCTAssertThrowsError(try roster.apply(message, selfPubkey: own))
+            XCTAssertFalse(roster.admitted)
+            for field in ["peer_index", "epoch"] {
+                message = joined()
+                var entry = peer(own, 1, 7)
+                entry[field] = invalid
+                message["peers"] = [entry]
+                XCTAssertThrowsError(try roster.apply(message, selfPubkey: own))
+                XCTAssertFalse(roster.admitted)
+            }
+        }
+    }
+
     func testAdmissionIdentityAndPacketEpochGuard() throws {
         var roster = HuddleRoster()
         XCTAssertFalse(roster.accepts(packet(index: 2, epoch: 8)))
