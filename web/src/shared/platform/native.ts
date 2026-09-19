@@ -42,6 +42,8 @@ export interface NativeCallState {
   muted: boolean;
   speaker: boolean;
   voiceEnabled: boolean;
+  voiceStatus?: "idle" | "starting" | "listening" | "error";
+  voiceOffReason?: "bridge_error" | "reconnect_cap" | null;
   speechEnabled: boolean;
   speaking: boolean;
   speakerMuted?: boolean;

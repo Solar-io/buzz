@@ -48,6 +48,9 @@ export function useNativeHuddleCall({ target, selfPubkey }: { target: HuddleCall
   const configure = useCallback((options: Parameters<typeof BuzzHuddle.configure>[0]) => {
     void BuzzHuddle.configure(options).catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Could not change call settings."));
   }, []);
+  useEffect(() => {
+    if (connected) configure({ duplex: prefs.duplex, voiceOverride: prefs.voice ?? {} });
+  }, [connected, prefs, configure]);
   const join = useCallback(async () => {
     if (!target?.parentChannelId) return;
     try {
@@ -84,7 +87,7 @@ export function useNativeHuddleCall({ target, selfPubkey }: { target: HuddleCall
       subscribeMicFrames: () => { throw new Error("Native microphone frames stay inside the native call engine."); },
       resumeAudio: async () => { await BuzzHuddle.snapshot(); },
     },
-    voice: { supported: true, enabled: state.voiceEnabled, setEnabled: (enabled) => configure({ voiceEnabled: enabled, ...(enabled ? { speechEnabled: true } : {}) }), offReason: null, status: state.voiceEnabled ? "listening" : "idle", interimText: state.interim, error: state.error },
+    voice: { supported: true, enabled: state.voiceEnabled, setEnabled: (enabled) => configure({ voiceEnabled: enabled, ...(enabled ? { speechEnabled: true } : {}) }), offReason: state.voiceOffReason ?? null, status: state.voiceStatus ?? "idle", interimText: state.interim, error: state.error },
     speech: {
       supported: true, enabled: state.speechEnabled, setEnabled: (enabled) => configure({ speechEnabled: enabled }),
       agentPubkeys: new Set(roster.agentPubkeys), membershipKnown: members.known, suppressedAgents: state.peers.map((p) => p.pubkey),

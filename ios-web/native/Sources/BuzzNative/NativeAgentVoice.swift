@@ -38,6 +38,7 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
     private var pcm = Data()
     private var player: AVAudioPlayer?
     private var synthesis: URLSessionDataTask?
+    private var speechGeneration = 0
     private var speechQueue: [(String, String)] = []
     private var lastSpeechEnded = Date.distantPast
     private var retry = 0
@@ -101,6 +102,7 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
         else { overrideVoice = nil }
     }
     func interruptSpeech() {
+        speechGeneration += 1
         synthesis?.cancel(); synthesis = nil; player?.stop(); player = nil
         speechQueue.removeAll(); endSpeech()
     }
@@ -229,6 +231,10 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
         guard alive, voice, generation == token else { return }
         let socket = URLSession.shared.webSocketTask(with: sttURL)
         sttSocket = socket; socket.resume(); readSTT(socket, token)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self, weak socket] in
+            guard let self, let socket, self.generation == token, self.sttSocket === socket, !self.sttReady else { return }
+            socket.cancel(with: .goingAway, reason: nil)
+        }
     }
     private func readSTT(_ socket: URLSessionWebSocketTask, _ token: Int) {
         socket.receive { [weak self, weak socket] result in
@@ -307,10 +313,12 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["engine": engineName, "voice": voiceName, "text": text])
         lastSpoken = text
         speaking = true; onSpeaking(duplex == "half"); onChange()
+        speechGeneration += 1
+        let speechToken = speechGeneration
         let token = generation
         synthesis = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
-                guard let self, self.alive, self.generation == token, self.speech else { return }
+                guard let self, self.alive, self.generation == token, self.speechGeneration == speechToken, self.speech else { return }
                 guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200, let data,
                       !data.isEmpty, data.count.isMultiple(of: 2), data.count <= 24_000 * 2 * 180 else {
                     self.report("Agent speech playback failed."); self.endSpeech(); return
@@ -324,8 +332,9 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
         }
         synthesis?.resume()
     }
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { endSpeech() }
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { if player === self.player { endSpeech() } }
     private func endSpeech() {
+        speechGeneration += 1
         if !lastSpoken.isEmpty { finalGate.record(lastSpoken, at: Date().timeIntervalSince1970); lastSpoken = "" }
         speaking = false; lastSpeechEnded = Date(); player = nil
         onSpeaking(false); onChange(); scheduleDrain(); playNext()

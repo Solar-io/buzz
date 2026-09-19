@@ -37,10 +37,12 @@ final class NativeHuddle {
         observers.append(NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
             guard let self else { return }
             let began = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt) == AVAudioSession.InterruptionType.began.rawValue
-            self.interrupted = began
-            self.engine?.setInterrupted(began)
-            self.voice?.setCaptureAllowed(!began && !self.muted && !self.held)
-            if !began, self.channel != nil {
+            let options = AVAudioSession.InterruptionOptions(rawValue: note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0)
+            self.interrupted = began || !options.contains(.shouldResume)
+            self.engine?.setInterrupted(self.interrupted)
+            self.voice?.setCaptureAllowed(!self.interrupted && !self.muted && !self.held)
+            if !began && self.interrupted { self.error = "Audio was interrupted. Leave and rejoin to resume." }
+            if !self.interrupted, self.channel != nil {
                 do { try AVAudioSession.sharedInstance().setActive(true) }
                 catch { self.fail(error.localizedDescription) }
             }
@@ -54,7 +56,8 @@ final class NativeHuddle {
     func snapshot() -> [String: Any] {
         ["status": status, "channelId": channel as Any? ?? NSNull(),
          "parentChannelId": parent as Any? ?? NSNull(), "muted": muted,
-         "speaker": speaker, "voiceEnabled": voiceEnabled, "speechEnabled": speechEnabled,
+         "speaker": speaker, "voiceEnabled": voice?.enabled ?? false, "speechEnabled": speechEnabled,
+         "voiceStatus": voice?.voiceStatus ?? "idle", "voiceOffReason": voice?.offReason as Any? ?? NSNull(),
          "speaking": voice?.speaking ?? false, "interim": voice?.interim ?? "",
          "speakerMuted": outputMuted, "micLevel": micLevel, "levels": levels,
          "error": (error ?? voice?.error) as Any? ?? NSNull(),
@@ -104,6 +107,7 @@ final class NativeHuddle {
     }
 
     func configure(muted: Bool?, speaker: Bool?, voiceEnabled: Bool?, speechEnabled: Bool?, held: Bool?, outputMuted: Bool? = nil, duplex: String? = nil, voiceOverride: [String: Any]? = nil, interrupt: Bool = false) throws {
+        self.voiceEnabled = voice?.enabled ?? false
         if (voiceEnabled == true || speechEnabled == true) && voice == nil { throw NativeError.message("Configure speech service addresses before enabling agent voice.") }
         if let muted { self.muted = muted }
         if let held { self.held = held }
