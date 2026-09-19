@@ -16,6 +16,7 @@ import {
   type HuddleCall,
   type HuddleCallTarget,
 } from "./useHuddleCall.ts";
+import { isCallOver, shouldDispatchJoin } from "./lib/huddleCallLifecycle.ts";
 import { HuddleFloatingPanel } from "./ui/HuddleFloatingPanel.tsx";
 import { HuddlePill } from "./ui/HuddlePill.tsx";
 
@@ -74,8 +75,13 @@ export function HuddleSessionProvider({ children }: { children: ReactNode }) {
   const { status, join } = call.huddle;
 
   useEffect(() => {
-    const pending = pendingJoinRef.current;
-    if (pending === null || pending !== call.channelId || status !== "idle") {
+    if (
+      !shouldDispatchJoin({
+        pendingChannelId: pendingJoinRef.current,
+        hookChannelId: call.channelId,
+        status,
+      })
+    ) {
       return;
     }
     pendingJoinRef.current = null;
@@ -84,12 +90,14 @@ export function HuddleSessionProvider({ children }: { children: ReactNode }) {
 
   // The relay ended the room, the ladder ran out, or the user left: the
   // call is over, so the dock, the panel and the pill must all go with it.
+  // Decided on the TRANSITION into idle, never on idle alone — the
+  // same-commit idle read right after the join dispatch above is the race
+  // that dialed /huddle/null/audio (lib/huddleCallLifecycle.ts).
+  const previousStatusRef = useRef(status);
   useEffect(() => {
-    if (
-      target !== null &&
-      status === "idle" &&
-      pendingJoinRef.current === null
-    ) {
+    const previousStatus = previousStatusRef.current;
+    previousStatusRef.current = status;
+    if (isCallOver({ hasTarget: target !== null, previousStatus, status })) {
       setTarget(null);
       setFloatingState(false);
     }
