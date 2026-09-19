@@ -127,3 +127,9 @@ Local integration evidence:
 Independent browser QA, named mutation runs, isolated-relay proof, and final
 verification remain delivery gates; this integration record does not claim
 those later stages have passed.
+
+Built-in Claude/Codex ACP responses currently do not expose an observed service
+tier. Their publishers therefore leave `serviceTier` absent and the dashboard
+reports it as Not reported; it is never inferred from model, provider, or
+account text. The optional wire field remains available for publishers that do
+receive an explicit tier from their provider.

@@ -13,6 +13,7 @@ const seed = {
       at,
       input: "9000000",
       output: "1000000",
+      total: "10000000",
       cost: 15.5,
       provider: "Anthropic",
       account: "Claude Max · personal",
@@ -24,6 +25,7 @@ const seed = {
       at,
       input: "18000000",
       output: "2000000",
+      total: "20000000",
       cost: 22.5,
       provider: "OpenAI",
       account: "ChatGPT Pro",
@@ -36,7 +38,7 @@ test("one many all none filter every analytics dimension and survive reload", as
   page,
 }) => {
   await installMockBridge(page, { usageAnalytics: seed });
-  await page.goto("/agents/usage");
+  await page.goto("/#/agents/usage");
   await expect(page.getByTestId("usage-total")).toHaveText("30.0M");
   await page.getByRole("button", { name: "Filter by agents" }).click();
   await page.getByRole("button", { name: "Clear", exact: true }).click();
@@ -61,7 +63,7 @@ test("one many all none filter every analytics dimension and survive reload", as
 });
 test("custom validation range URL sort search and export", async ({ page }) => {
   await installMockBridge(page, { usageAnalytics: seed });
-  await page.goto("/agents/usage");
+  await page.goto("/#/agents/usage");
   await page.getByRole("button", { name: "7D", exact: true }).click();
   await expect(page).toHaveURL(/range=7D/);
   await page.getByRole("button", { name: "Custom", exact: true }).click();
@@ -93,7 +95,7 @@ test("empty disabled unknown and retry states remain truthful", async ({
       reports: [{ agent: A, at, input: null, output: null, cost: null }],
     },
   });
-  await page.goto("/agents/usage");
+  await page.goto("/#/agents/usage");
   await expect(page.getByText("Usage collection is disabled.")).toBeVisible();
   await expect(page.getByTestId("usage-total")).toHaveText("—");
   await expect(page.getByTestId("usage-cost")).toHaveText("—");
@@ -102,7 +104,7 @@ for (const width of [375, 768, 1024, 1440, 2560]) {
   test(`responsive reference screenshot ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1032 });
     await installMockBridge(page, { usageAnalytics: seed });
-    await page.goto("/agents/usage");
+    await page.goto("/#/agents/usage");
     await expect(page.getByTestId("usage-total")).toHaveText("30.0M");
     await waitForAnimations(page);
     expect(
@@ -116,3 +118,78 @@ for (const width of [375, 768, 1024, 1440, 2560]) {
     });
   });
 }
+
+for (const theme of ["light", "dark"]) {
+  test(`theme ${theme}, maximum text zoom and reduced motion`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 1032 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.addInitScript(
+      (value) => {
+        localStorage.setItem("buzz-theme", value);
+        localStorage.setItem("buzz:text-scale", "1.5");
+      },
+      theme === "light" ? "buzz" : "buzz-dark",
+    );
+    await installMockBridge(page, { usageAnalytics: seed });
+    await page.goto("/#/agents/usage");
+    await expect(page.getByTestId("usage-total")).toHaveText("30.0M");
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => getComputedStyle(document.documentElement).fontSize,
+        ),
+      )
+      .toBe("24px");
+    await waitForAnimations(page);
+    expect(
+      await page
+        .getByTestId("agent-usage-page")
+        .evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
+    ).toBe(true);
+    await page.screenshot({
+      path: `test-results/agent-usage/usage-${theme}-zoom.png`,
+      fullPage: true,
+    });
+    const firstBar = page.locator(".usage-bar").first();
+    await firstBar.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(page.locator(".usage-bar").nth(1)).toBeFocused();
+  });
+}
+
+test("loading and error states expose retry without invented metrics", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    usageAnalytics: { error: "Archive temporarily unavailable", delayMs: 300 },
+  });
+  await page.goto("/#/agents/usage");
+  await expect(page.getByText("Loading your usage reports…")).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText(
+    "Archive temporarily unavailable",
+  );
+  await expect(page.getByTestId("usage-total")).toHaveCount(0);
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Usage could not be loaded.",
+  );
+});
+
+test("back and forward restore date and agent selection", async ({ page }) => {
+  await installMockBridge(page, { usageAnalytics: seed });
+  await page.goto(`/#/agents/usage?agents=${A}&range=7D`);
+  await expect(page.getByTestId("usage-total")).toHaveText("10.0M");
+  await page.getByRole("button", { name: "90D", exact: true }).click();
+  await expect(page).toHaveURL(/range=90D/);
+  await page.goBack();
+  await expect(
+    page.getByRole("button", { name: "7D", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("usage-total")).toHaveText("10.0M");
+  await page.goForward();
+  await expect(
+    page.getByRole("button", { name: "90D", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+});

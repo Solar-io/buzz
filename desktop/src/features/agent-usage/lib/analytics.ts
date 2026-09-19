@@ -72,7 +72,7 @@ export function usageWindow(
   else if (range === "All") {
     start =
       firstReportedAt == null
-        ? new Date(1970, 0, 1)
+        ? new Date(end.getFullYear(), end.getMonth(), end.getDate() - 30)
         : new Date(firstReportedAt * 1000);
     start.setHours(0, 0, 0, 0);
   } else start.setDate(start.getDate() - Number.parseInt(range, 10));
@@ -147,7 +147,7 @@ export function tokenShare(value: string | null, total: string | null): number {
 }
 export function csvCell(value: unknown): string {
   let text = value == null ? "" : String(value);
-  if (/^[=+@\-\t\r]/.test(text)) text = `'${text}`;
+  if (/^\s*[=+@-]/.test(text)) text = `'${text}`;
   return `"${text.replaceAll('"', '""')}"`;
 }
 export function csvDocument(headers: string[], rows: unknown[][]): string {

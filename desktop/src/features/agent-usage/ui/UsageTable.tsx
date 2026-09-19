@@ -21,6 +21,16 @@ export function sortUsageRows(
   ascending: boolean,
   search = "",
 ) {
+  const sourcedCost = (row: AnalyticsMetricGroup) => {
+    const values = [
+      row.costs.wireReported.value,
+      row.costs.manifestEstimated.value,
+      row.costs.unknown.value,
+    ];
+    return values.every((value) => value === null)
+      ? null
+      : values.reduce<number>((sum, value) => sum + (value ?? 0), 0);
+  };
   return rows
     .filter((row) => row.label.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => {
@@ -30,7 +40,7 @@ export function sortUsageRows(
           : sort === "reportCount"
             ? a.reportCount
             : sort === "cost"
-              ? a.usage.estimatedCostUsd.value
+              ? sourcedCost(a)
               : a.usage[sort].value == null
                 ? null
                 : BigInt(a.usage[sort].value);
@@ -40,7 +50,7 @@ export function sortUsageRows(
           : sort === "reportCount"
             ? b.reportCount
             : sort === "cost"
-              ? b.usage.estimatedCostUsd.value
+              ? sourcedCost(b)
               : b.usage[sort].value == null
                 ? null
                 : BigInt(b.usage[sort].value);
@@ -76,7 +86,7 @@ export function UsageTable({
     ["inputTokens", "Input"],
     ["outputTokens", "Output"],
     ["totalTokens", "Total"],
-    ["cost", "Est. cost"],
+    ["cost", "Cost by source"],
   ];
   return (
     <section className="usage-card usage-table-card" aria-label={title}>
@@ -152,10 +162,10 @@ export function UsageTable({
                     </td>
                   ),
                 )}
-                <td
-                  title={`Wire reported: ${money(row.costs.wireReported)}; manifest estimated: ${money(row.costs.manifestEstimated)}; unknown source: ${money(row.costs.unknown)}`}
-                >
-                  {money(row.usage.estimatedCostUsd)}
+                <td>
+                  Wire {money(row.costs.wireReported)} · Manifest{" "}
+                  {money(row.costs.manifestEstimated)} · Unknown{" "}
+                  {money(row.costs.unknown)}
                 </td>
                 <td>
                   {row.usage.totalTokens.value === null || total === null

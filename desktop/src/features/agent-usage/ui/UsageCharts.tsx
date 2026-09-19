@@ -53,7 +53,11 @@ export function Distribution({
 }) {
   const values = rows.map((row) =>
     cost
-      ? (row.usage.estimatedCostUsd.value ?? 0)
+      ? [
+          row.costs.wireReported.value,
+          row.costs.manifestEstimated.value,
+          row.costs.unknown.value,
+        ].reduce<number>((sum, value) => sum + (value ?? 0), 0)
       : Number(BigInt(row.usage.totalTokens.value ?? "0")),
   );
   const total = values.reduce((a, b) => a + b, 0);
@@ -95,9 +99,15 @@ export function Distribution({
               <strong
                 title={cost ? undefined : exactTokens(row.usage.totalTokens)}
               >
-                {cost
-                  ? money(row.usage.estimatedCostUsd)
-                  : compactTokens(row.usage.totalTokens)}
+                {cost ? (
+                  <span>
+                    Wire {money(row.costs.wireReported)} · Manifest{" "}
+                    {money(row.costs.manifestEstimated)} · Unknown{" "}
+                    {money(row.costs.unknown)}
+                  </span>
+                ) : (
+                  compactTokens(row.usage.totalTokens)
+                )}
               </strong>
             </li>
           ))}
@@ -111,7 +121,13 @@ export function Distribution({
 export function Timeline({ buckets }: { buckets: AnalyticsTimeBucket[] }) {
   const [active, setActive] = useState<number | null>(null);
   const maxTokens = buckets.reduce((max, bucket) => {
-    const amount = BigInt(bucket.usage.totalTokens.value ?? "0");
+    const amount = [
+      bucket.usage.inputTokens.value,
+      bucket.usage.outputTokens.value,
+    ].reduce<bigint>((largest, value) => {
+      const parsed = BigInt(value ?? "0");
+      return parsed > largest ? parsed : largest;
+    }, 0n);
     return amount > max ? amount : max;
   }, 0n);
   const maxCost = Math.max(
@@ -168,7 +184,7 @@ export function Timeline({ buckets }: { buckets: AnalyticsTimeBucket[] }) {
               type="button"
               key={bucket.start}
               className="usage-bar"
-              aria-label={`${bucket.label}: input ${exactTokens(bucket.usage.inputTokens)}, output ${exactTokens(bucket.usage.outputTokens)}, estimated cost ${money(bucket.usage.estimatedCostUsd)}`}
+              aria-label={`${bucket.label}: input ${exactTokens(bucket.usage.inputTokens)}, output ${exactTokens(bucket.usage.outputTokens)}, combined observed cost ${money(bucket.usage.estimatedCostUsd)}; wire ${money(bucket.costs.wireReported)}, manifest ${money(bucket.costs.manifestEstimated)}, unknown source ${money(bucket.costs.unknown)}`}
               onMouseEnter={() => setActive(index)}
               onFocus={() => setActive(index)}
               onBlur={() => setActive(null)}
@@ -219,15 +235,18 @@ export function Timeline({ buckets }: { buckets: AnalyticsTimeBucket[] }) {
         </span>
         <span>
           <i style={{ background: "var(--usage-cost)" }} />
-          Cost ($)
+          Combined cost ($): wire + manifest + unknown source
         </span>
       </div>
       <div className="usage-chart-tooltip" aria-live="polite">
         {point ? (
           <>
             {point.label} · Input {exactTokens(point.usage.inputTokens)} ·
-            Output {exactTokens(point.usage.outputTokens)} ·{" "}
-            {money(point.usage.estimatedCostUsd)}
+            Output {exactTokens(point.usage.outputTokens)} · Combined cost{" "}
+            {money(point.usage.estimatedCostUsd)} (wire{" "}
+            {money(point.costs.wireReported)}; manifest{" "}
+            {money(point.costs.manifestEstimated)}; unknown{" "}
+            {money(point.costs.unknown)})
           </>
         ) : (
           "Focus or point to a bar for exact values. Arrow keys move between periods."
@@ -242,7 +261,9 @@ export function Timeline({ buckets }: { buckets: AnalyticsTimeBucket[] }) {
                 <th>Period</th>
                 <th>Input</th>
                 <th>Output</th>
-                <th>Est. cost</th>
+                <th>Wire cost</th>
+                <th>Manifest cost</th>
+                <th>Unknown-source cost</th>
               </tr>
             </thead>
             <tbody>
@@ -251,7 +272,9 @@ export function Timeline({ buckets }: { buckets: AnalyticsTimeBucket[] }) {
                   <th>{bucket.label}</th>
                   <td>{exactTokens(bucket.usage.inputTokens)}</td>
                   <td>{exactTokens(bucket.usage.outputTokens)}</td>
-                  <td>{money(bucket.usage.estimatedCostUsd)}</td>
+                  <td>{money(bucket.costs.wireReported)}</td>
+                  <td>{money(bucket.costs.manifestEstimated)}</td>
+                  <td>{money(bucket.costs.unknown)}</td>
                 </tr>
               ))}
             </tbody>
@@ -281,9 +304,30 @@ export function Heatmap({
       BigInt(day.usage.totalTokens.value) === max,
   );
   const [focused, setFocused] = useState<string | null>(null);
-  const firstWeekday = days.length
-    ? (new Date(days[0].start * 1000).getDay() + 6) % 7
-    : 0;
+  const calendarStart = new Date((days[0]?.start ?? Date.now() / 1000) * 1000);
+  const paddingDays = Math.max(0, 365 - days.length);
+  calendarStart.setDate(calendarStart.getDate() - paddingDays);
+  const inactiveDates = Array.from({ length: paddingDays }, (_, index) => {
+    const date = new Date(calendarStart);
+    date.setDate(date.getDate() + index);
+    return date;
+  });
+  const firstWeekday = (calendarStart.getDay() + 6) % 7;
+  const weeks = Math.max(
+    1,
+    Math.ceil((days.length + paddingDays + firstWeekday) / 7),
+  );
+  const months = Array.from({ length: weeks }, (_, week) => {
+    const date = new Date(calendarStart);
+    date.setDate(date.getDate() + week * 7);
+    return {
+      key: date.getTime(),
+      label:
+        week === 0 || date.getDate() <= 7
+          ? date.toLocaleDateString(undefined, { month: "short" })
+          : "",
+    };
+  });
   return (
     <div className="usage-calendar-row">
       <UsageCard
@@ -292,13 +336,19 @@ export function Heatmap({
       >
         <div className="usage-heatmap-scroll">
           <div
+            className="usage-heatmap-months"
+            aria-hidden="true"
+            style={{ gridTemplateColumns: `repeat(${weeks}, 10px)` }}
+          >
+            {months.map((month) => (
+              <span key={month.key}>{month.label}</span>
+            ))}
+          </div>
+          <div
             className="usage-heatmap"
             style={
               {
-                "--weeks": Math.max(
-                  1,
-                  Math.ceil((days.length + firstWeekday) / 7),
-                ),
+                "--weeks": weeks,
               } as CSSProperties
             }
           >
@@ -314,6 +364,13 @@ export function Heatmap({
               .map((day) => (
                 <span key={day} />
               ))}
+            {inactiveDates.map((date) => (
+              <span
+                className="usage-heatmap-inactive"
+                key={date.getTime()}
+                title={`${date.toLocaleDateString()}: outside selected range`}
+              />
+            ))}
             {days.map((day) => {
               const label = `${day.label}: ${exactTokens(day.usage.totalTokens)} tokens; ${day.reportCount.toLocaleString()} turns`;
               return (
@@ -370,6 +427,7 @@ export function Heatmap({
           ))}
           <span>More</span>
           <span>Mon → Sun</span>
+          {paddingDays > 0 && <span>Faded: outside range</span>}
         </div>
         <p className="usage-heatmap-detail" aria-live="polite">
           {focused ??

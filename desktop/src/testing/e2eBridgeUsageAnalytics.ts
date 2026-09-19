@@ -12,6 +12,8 @@ export type MockUsageReport = {
   at: number;
   input: string | null;
   output: string | null;
+  /** Wire-reported total. Absence is unknown; it is never derived from I/O. */
+  total?: string | null;
   cost: number | null;
   provider?: string;
   account?: string;
@@ -58,13 +60,12 @@ function aggregate(
       inputTokens: input,
       outputTokens: output,
       totalTokens: {
-        value:
-          input.value === null && output.value === null
-            ? null
-            : (
-                BigInt(input.value ?? "0") + BigInt(output.value ?? "0")
-              ).toString(),
-        incomplete: input.incomplete || output.incomplete,
+        value: reports.some((row) => row.total != null)
+          ? reports
+              .reduce((total, row) => total + BigInt(row.total ?? "0"), 0n)
+              .toString()
+          : null,
+        incomplete: reports.some((row) => row.total == null),
       },
       estimatedCostUsd: cost,
       cacheReadTokens: unknown,
@@ -155,7 +156,10 @@ export function mockUsageAnalytics(
   return {
     collectionEnabled: seed.collectionEnabled ?? true,
     summary,
-    timeline: buckets(request.bucketBoundaries),
+    timeline: buckets(
+      request.bucketBoundaries,
+      request.bucketBoundaries.slice(0, -1).map(String),
+    ),
     days,
     weekdays: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(
       (label, index) =>
@@ -195,7 +199,7 @@ export function mockUsageAnalytics(
       knownReportCount: knownReports,
       totalReportCount: rows.length,
       recentScore: null,
-      recentStart: Math.floor(Date.now() / 1000) - 3600,
+      recentStart: (request.dayBoundaries.at(-1) ?? 0) - 3600,
       shares,
     },
     coverage: {

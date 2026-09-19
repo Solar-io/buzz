@@ -231,6 +231,41 @@ impl AgentTurnMetricPayload {
     /// present but negative or non-finite (NaN or infinity). Token counts are
     /// typed as `Option<u64>` and therefore cannot be negative by construction.
     pub fn validate(&self) -> Result<(), ObserverPayloadError> {
+        fn metric_label(
+            value: &str,
+            field: &str,
+            allow_unknown: bool,
+        ) -> Result<(), ObserverPayloadError> {
+            let trimmed = value.trim();
+            if trimmed.is_empty()
+                || trimmed != value
+                || trimmed.len() > 256
+                || trimmed.chars().any(|c| c.is_control())
+                || (!allow_unknown && trimmed.eq_ignore_ascii_case("__unknown__"))
+            {
+                return Err(ObserverPayloadError::InvalidPayload(format!(
+                    "{field} must be a nonblank label of at most 256 bytes without controls or reserved values"
+                )));
+            }
+            Ok(())
+        }
+        fn attribution(value: &UsageAttribution, prefix: &str) -> Result<(), ObserverPayloadError> {
+            for (name, field) in [
+                ("provider", value.provider.as_deref()),
+                ("accountId", value.account_id.as_deref()),
+                ("accountLabel", value.account_label.as_deref()),
+                ("serviceTier", value.service_tier.as_deref()),
+            ] {
+                if let Some(field) = field {
+                    metric_label(field, &format!("{prefix}.{name}"), false)?;
+                }
+            }
+            Ok(())
+        }
+        metric_label(&self.harness, "harness", false)?;
+        if let Some(model) = &self.model {
+            metric_label(model, "model", false)?;
+        }
         fn check_cost(cost: Option<f64>, field: &str) -> Result<(), ObserverPayloadError> {
             if let Some(c) = cost {
                 if !c.is_finite() || c < 0.0 {
@@ -248,13 +283,19 @@ impl AgentTurnMetricPayload {
             check_cost(c.cost_usd, "cumulative.costUsd")?;
         }
         if let Some(t) = &self.telemetry {
+            attribution(&t.attribution, "telemetry.attribution")?;
             let mut ids = std::collections::HashSet::new();
             for request in &t.requests {
-                if request.id.is_empty() || !ids.insert(&request.id) {
+                metric_label(&request.id, "requests.id", true)?;
+                if !ids.insert(&request.id) {
                     return Err(ObserverPayloadError::InvalidPayload(
                         "request ids must be unique and nonempty".into(),
                     ));
                 }
+                if let Some(model) = &request.model {
+                    metric_label(model, "requests.model", false)?;
+                }
+                attribution(&request.attribution, "requests.attribution")?;
                 check_cost(request.usage.cost_usd, "requests.usage.costUsd")?;
             }
             if (t.requests_complete && t.request_count != Some(t.requests.len() as u64))
@@ -334,6 +375,19 @@ mod tests {
         assert!(p.validate().is_err());
         p.telemetry.as_mut().unwrap().requests_complete = false;
         assert!(p.validate().is_ok());
+        p.telemetry.as_mut().unwrap().request_count = Some(0);
+        assert!(
+            p.validate().is_err(),
+            "observations cannot exceed requestCount"
+        );
+        p.telemetry.as_mut().unwrap().request_count = Some(1);
+        p.telemetry.as_mut().unwrap().attribution.provider = Some("__unknown__".into());
+        assert!(p.validate().is_err(), "reserved labels are rejected");
+        p.telemetry.as_mut().unwrap().attribution.provider = Some("bad\nprovider".into());
+        assert!(p.validate().is_err(), "control characters are rejected");
+        p.telemetry.as_mut().unwrap().attribution.provider = Some("x".repeat(257));
+        assert!(p.validate().is_err(), "oversized labels are rejected");
+        p.telemetry.as_mut().unwrap().attribution.provider = None;
         p.telemetry.as_mut().unwrap().requests[0].usage.cost_usd = Some(-1.0);
         assert!(p.validate().is_err());
     }

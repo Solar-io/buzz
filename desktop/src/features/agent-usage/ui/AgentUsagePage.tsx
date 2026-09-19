@@ -120,11 +120,25 @@ export function AgentUsagePage() {
           ...agent,
           label: label(agent.key),
         })),
+        timeline: query.data.timeline.map((bucket) => ({
+          ...bucket,
+          label: new Date(bucket.start * 1000).toLocaleString(
+            undefined,
+            bucket.end - bucket.start < 86400
+              ? {
+                  month: "short",
+                  day: "numeric",
+                  hour: "numeric",
+                  timeZoneName: "short",
+                }
+              : { month: "short", day: "numeric", year: "numeric" },
+          ),
+        })),
       }
     : undefined;
   const isStale =
-    data?.coverage.lastArchivedAt != null &&
-    Date.now() / 1000 - data.coverage.lastArchivedAt > 86400;
+    data?.coverage.archiveLastReportedAt != null &&
+    Date.now() / 1000 - data.coverage.archiveLastReportedAt > 86400;
   return (
     <main className="usage-page" data-testid="agent-usage-page">
       <header className="usage-page-header">
@@ -249,7 +263,7 @@ export function AgentUsagePage() {
             <div className="usage-two-column">
               <Timeline buckets={data.timeline} />
               <Distribution
-                title="Cost by provider"
+                title="Cost by provider and source"
                 rows={data.providers}
                 cost
               />

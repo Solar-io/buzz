@@ -5743,6 +5743,10 @@ done
     async fn codex_prompt_response_usage_preserves_provider_total_without_cost() {
         let mut client = spawn_inert_client().await;
         client.standard_adapter = Some(StandardAdapterKind::Codex);
+        client.observe_usage_model(
+            "codex-session",
+            &serde_json::json!({"models":{"currentModelId":"observed-codex"}}),
+        );
         client.standard_usage.begin_turn("codex-session");
         client.handle_session_update(&standard_cost_update("codex-session", 0.042));
         client
@@ -5753,6 +5757,11 @@ done
             .unwrap();
 
         let usage = client.take_turn_usage().expect("prompt usage");
+        assert_eq!(usage.model.as_deref(), Some("observed-codex"));
+        assert_eq!(
+            usage.pricing_identity, None,
+            "effective model never establishes billing identity"
+        );
         assert!(usage.delta_reliable);
         assert_eq!(usage.turn_input_tokens, Some(130));
         assert_eq!(usage.turn_output_tokens, Some(10));

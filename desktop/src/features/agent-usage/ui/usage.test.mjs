@@ -51,6 +51,7 @@ function fixture() {
         at,
         input: "900",
         output: "100",
+        total: "1000",
         cost: 10,
         provider: "Provider A",
         model: "Model A",
@@ -60,6 +61,7 @@ function fixture() {
         at,
         input: "90",
         output: "10",
+        total: "100",
         cost: 1,
         provider: "Provider B",
         model: "Model B",
@@ -97,7 +99,17 @@ test("headline reports turns and leaves unknown requests unreported", () => {
   const view = render(createElement(UsageSummary, { data }));
   assert.equal(view.getByTestId("usage-total").textContent, "1.1K+");
   assert.ok(view.getByText("3 Turns · Requests not reported"));
-  assert.equal(view.getByTestId("usage-cost").textContent, "$11.00+");
+  assert.equal(
+    view.getByTestId("usage-cost").textContent,
+    "Wire $11.00+ · Manifest —",
+  );
+});
+test("headline never invents total tokens from reported input and output", () => {
+  const data = fixture();
+  data.summary.usage.totalTokens = { value: null, incomplete: true };
+  const view = render(createElement(UsageSummary, { data }));
+  assert.equal(view.getByTestId("usage-total").textContent, "—");
+  assert.ok(view.getByText("990+"));
 });
 test("provenance displays wire estimates unknown separately", () => {
   const data = fixture();

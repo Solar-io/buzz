@@ -336,6 +336,22 @@ fn top_by_tokens(rows: &[MetricGroup]) -> Option<String> {
         .map(|(_, row)| row.key.clone())
 }
 
+fn observed_providers(
+    metadata: &analytics_store::Metadata,
+    complete_requests: bool,
+) -> Vec<&String> {
+    if complete_requests && !metadata.telemetry.requests.is_empty() {
+        metadata
+            .telemetry
+            .requests
+            .iter()
+            .filter_map(|request| request.attribution.provider.as_ref())
+            .collect()
+    } else {
+        metadata.telemetry.attribution.provider.iter().collect()
+    }
+}
+
 fn requests_consistent(outcome: &EventOutcome, meta: &analytics_store::Metadata) -> bool {
     let mut aggregate = UsageAccumulator::default();
     let mut turn = UsageAccumulator::default();
@@ -521,7 +537,12 @@ fn compute(
     };
     let mut provider_counts = BTreeMap::<String, usize>::new();
     let mut recent_counts = BTreeMap::new();
-    let recent_start = request.day_boundaries[request.day_labels.len().saturating_sub(7)];
+    let recent_start = request
+        .day_boundaries
+        .last()
+        .copied()
+        .unwrap_or_default()
+        .saturating_sub(3600);
     for row in rows {
         let Some(at) = row.reported_at else { continue };
         let ti = bucket(&request.bucket_boundaries, at);
@@ -650,16 +671,7 @@ fn compute(
         // Diversity is weighted by the finest complete observation available:
         // each request when request coverage is complete, otherwise one turn.
         // Never collapse a 99:1 request split into a 50:50 set of providers.
-        let observed_providers: Vec<&String> = if has_requests {
-            meta.telemetry
-                .requests
-                .iter()
-                .filter_map(|r| r.attribution.provider.as_ref())
-                .collect()
-        } else {
-            a.provider.iter().collect()
-        };
-        for provider in observed_providers {
+        for provider in observed_providers(meta, has_requests) {
             *provider_counts.entry(provider.clone()).or_default() += 1;
             if at >= recent_start {
                 *recent_counts.entry(provider.clone()).or_default() += 1;
@@ -776,3 +788,45 @@ fn compute(
 #[cfg(test)]
 #[path = "analytics_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod integration_regressions {
+    use super::*;
+    use buzz_core_pkg::agent_turn_metric::{RequestObservation, TokenCounts, UsageAttribution};
+
+    #[test]
+    fn complete_request_diversity_preserves_ninety_nine_to_one_weighting() {
+        let request = |id: usize, provider: &str| RequestObservation {
+            id: id.to_string(),
+            model: None,
+            attribution: UsageAttribution {
+                provider: Some(provider.into()),
+                ..Default::default()
+            },
+            usage: TokenCounts {
+                input_tokens: None,
+                output_tokens: None,
+                total_tokens: None,
+                cost_usd: None,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
+            },
+            cost_source: None,
+            latency_ms: None,
+            fallback: None,
+        };
+        let mut metadata = analytics_store::Metadata::default();
+        metadata.telemetry.requests_complete = true;
+        metadata.telemetry.requests = (0..99)
+            .map(|id| request(id, "alpha"))
+            .chain(std::iter::once(request(99, "beta")))
+            .collect();
+        let mut counts = BTreeMap::new();
+        for provider in observed_providers(&metadata, true) {
+            *counts.entry(provider.clone()).or_insert(0) += 1;
+        }
+        assert_eq!(counts["alpha"], 99);
+        assert_eq!(counts["beta"], 1);
+        assert!(score(&counts).is_some_and(|value| value < 10.0));
+    }
+}

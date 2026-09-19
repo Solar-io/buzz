@@ -28,8 +28,18 @@ export function UsageSummary({ data }: { data: AgentUsageAnalytics }) {
       : `${(Number((BigInt(summary.usage.inputTokens.value) * 10n) / BigInt(summary.usage.outputTokens.value)) / 10).toLocaleString()}×`;
   const topProvider =
     [...data.providers]
-      .filter((row) => row.key !== "__unknown__")
-      .sort((a, b) => b.reportCount - a.reportCount)[0]?.label ?? "—";
+      .filter(
+        (row) =>
+          row.key !== "__unknown__" &&
+          !row.usage.totalTokens.incomplete &&
+          row.usage.totalTokens.value !== null,
+      )
+      .sort((a, b) =>
+        BigInt(a.usage.totalTokens.value ?? "0") <
+        BigInt(b.usage.totalTokens.value ?? "0")
+          ? 1
+          : -1,
+      )[0]?.label ?? "—";
   const fast = data.serviceTiers.find(
     (tier) => tier.key.toLowerCase() === "fast",
   );
@@ -136,9 +146,10 @@ export function UsageSummary({ data }: { data: AgentUsageAnalytics }) {
             Est. cost
           </h2>
           <strong data-testid="usage-cost">
-            {money(summary.usage.estimatedCostUsd)}
+            Wire {money(summary.costs.wireReported)} · Manifest{" "}
+            {money(summary.costs.manifestEstimated)}
           </strong>
-          <p>Usage estimate · not a subscription charge</p>
+          <p>Unknown source {money(summary.costs.unknown)} · never blended</p>
         </div>
       </div>
       <section className="usage-card usage-summary" aria-label="Usage summary">
@@ -320,7 +331,8 @@ export function Diversity({ data }: { data: AgentUsageAnalytics }) {
       <p className="usage-note">
         Provider known for {diversity.knownReportCount.toLocaleString()} of{" "}
         {diversity.totalReportCount.toLocaleString()} turns; unknown providers
-        excluded from diversity.
+        excluded from diversity. Shares use requests when complete request
+        coverage exists; otherwise each attributed turn is one observation.
       </p>
     </UsageCard>
   );
