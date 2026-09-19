@@ -68,61 +68,82 @@ export function SettingsPage() {
   const templatesEnabled = useFeatureEnabled("channel-templates");
 
   return (
-    <div className="mx-auto max-w-2xl space-y-4 p-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Settings</h1>
-        <Button asChild variant="ghost" size="sm">
-          <Link to="/repos">Back to channels</Link>
-        </Button>
-      </div>
+    <div
+      className="flex h-dvh min-h-0 flex-col bg-background text-foreground"
+      data-testid="settings-page"
+    >
+      <header
+        className="shrink-0 px-4 pt-[max(1rem,env(safe-area-inset-top))]"
+        data-testid="settings-header"
+      >
+        <div className="mx-auto flex max-w-2xl items-center justify-between">
+          <h1 className="text-lg font-semibold">Settings</h1>
+          <Button
+            asChild
+            className="min-h-11 min-w-11 md:min-h-8 md:min-w-0"
+            data-testid="settings-back"
+            size="sm"
+            variant="ghost"
+          >
+            <Link to="/repos">Back to channels</Link>
+          </Button>
+        </div>
+      </header>
 
-      <WelcomeChecklist />
+      <main
+        className="buzz-content-scrollbar min-h-0 flex-1 overflow-y-auto"
+        data-testid="settings-scroll"
+      >
+        <div className="mx-auto max-w-2xl space-y-4 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <WelcomeChecklist />
 
-      <SectionHeading>You</SectionHeading>
-      <ProfileSection onOpen={() => setProfileOpen(true)} />
-      <PresenceSettingsCard />
-      <VoiceSettingsCard selfPubkey={self} />
-      {isNativeIOS() ? <NativePushSettings /> : <NotificationsSection />}
-      <AppearanceSection />
-      <KeyboardShortcutsCard />
+          <SectionHeading>You</SectionHeading>
+          <ProfileSection onOpen={() => setProfileOpen(true)} />
+          <PresenceSettingsCard />
+          <VoiceSettingsCard selfPubkey={self} />
+          {isNativeIOS() ? <NativePushSettings /> : <NotificationsSection />}
+          <AppearanceSection />
+          <KeyboardShortcutsCard />
 
-      <SectionHeading>Community</SectionHeading>
-      <CommunityMembersCard />
-      <CustomEmojiSettingsCard />
-      <InvitesCard />
-      <IdentityArchiveCard />
-      {!isNativeIOS() && <AgentsSection />}
-      {templatesEnabled ? <ChannelTemplatesSettingsCard /> : null}
+          <SectionHeading>Community</SectionHeading>
+          <CommunityMembersCard />
+          <CustomEmojiSettingsCard />
+          <InvitesCard />
+          <IdentityArchiveCard />
+          {!isNativeIOS() && <AgentsSection />}
+          {templatesEnabled ? <ChannelTemplatesSettingsCard /> : null}
 
-      <SectionHeading>Data</SectionHeading>
-      <LocalArchiveSettingsCard />
-      <FilesUrlSection />
+          <SectionHeading>Data</SectionHeading>
+          <LocalArchiveSettingsCard />
+          <FilesUrlSection />
 
-      <SectionHeading>Identity and this device</SectionHeading>
-      {isNativeIOS() ? (
-        <NativeDeviceSettings />
-      ) : (
-        <>
-          <KeyBackupCard />
-          <DeviceSection />
-          <PairDeviceSection />
-        </>
-      )}
-      <ForgetDeviceSection />
+          <SectionHeading>Identity and this device</SectionHeading>
+          {isNativeIOS() ? (
+            <NativeDeviceSettings />
+          ) : (
+            <>
+              <KeyBackupCard />
+              <DeviceSection />
+              <PairDeviceSection />
+            </>
+          )}
+          <ForgetDeviceSection />
 
-      <SectionHeading>Advanced</SectionHeading>
-      <ExperimentsCard />
+          <SectionHeading>Advanced</SectionHeading>
+          <ExperimentsCard />
 
-      {self ? (
-        <ProfileDialog
-          fallbackLabel="You"
-          onOpenChange={setProfileOpen}
-          open={profileOpen}
-          pubkey={self}
-          selfPubkey={self}
-          startInEdit
-        />
-      ) : null}
+          {self ? (
+            <ProfileDialog
+              fallbackLabel="You"
+              onOpenChange={setProfileOpen}
+              open={profileOpen}
+              pubkey={self}
+              selfPubkey={self}
+              startInEdit
+            />
+          ) : null}
+        </div>
+      </main>
     </div>
   );
 }

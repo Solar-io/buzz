@@ -50,7 +50,11 @@ async function signIn(page: Page, path = "/repos/settings"): Promise<string> {
   // navigation to /repos; a `goto` fired into that pending navigation races it,
   // and the losing order lands on a settings page whose key store never
   // finished restoring.
-  await expect(page.getByTestId("channel-sidebar")).toBeVisible();
+  const shellReady =
+    (page.viewportSize()?.width ?? Number.POSITIVE_INFINITY) < 768
+      ? page.getByRole("button", { name: "Open channels" })
+      : page.getByTestId("channel-sidebar");
+  await expect(shellReady).toBeVisible();
   await page.goto(path);
   return getPublicKey(secretKey);
 }
@@ -74,6 +78,56 @@ test("every settings card renders for a signed-in viewer", async ({ page }) => {
     await expect(page.getByTestId(testId)).toBeVisible();
   }
   expect(pageErrors).toEqual([]);
+});
+
+test.describe("narrow mobile settings layout", () => {
+  test.use({ viewport: { width: 375, height: 667 } });
+
+  test("keeps the header visible at the bottom and returns to channels", async ({
+    page,
+  }) => {
+    await signIn(page);
+
+    const header = page.getByTestId("settings-header");
+    const back = page.getByTestId("settings-back");
+    const scroller = page.getByTestId("settings-scroll");
+    await expect(header).toBeVisible();
+    await expect(back).toBeVisible();
+
+    const scrollHeight = await scroller.evaluate((element) => {
+      return element.scrollHeight;
+    });
+    const clientHeight = await scroller.evaluate((element) => {
+      return element.clientHeight;
+    });
+    expect(scrollHeight).toBeGreaterThan(clientHeight);
+
+    await scroller.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    const maxScrollTop = scrollHeight - clientHeight;
+    await expect
+      .poll(() => scroller.evaluate((element) => element.scrollTop))
+      .toBe(maxScrollTop);
+
+    await expect(header).toBeVisible();
+    await expect(back).toBeVisible();
+    const viewportHeight = page.viewportSize()?.height ?? 667;
+    for (const element of [header, back]) {
+      const box = await element.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box?.y).toBeGreaterThanOrEqual(0);
+      expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual(
+        viewportHeight,
+      );
+    }
+
+    await back.click();
+    await expect(page).toHaveURL(/\/repos(?:\?.*)?$/);
+    await expect(
+      page.getByRole("button", { name: "Open channels" }),
+    ).toBeVisible();
+  });
 });
 
 /**
