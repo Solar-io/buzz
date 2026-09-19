@@ -266,6 +266,9 @@ with a TypeScript lookup table or an id comparison in a component.
     variables, which are reserved from user env overrides. The editor is
     progressively disclosed in compact dialogs so global defaults do not
     change the create/edit dialog height until the user opens role routing.
+    Buzz and the native generators share the single desired-state file at
+    `~/.config/agent-harness/role-policy.json`; do not add a runtime-owned
+    policy JSON beside it. The old app-data policy is migration input only.
 
 ## The tests that enforce this
 

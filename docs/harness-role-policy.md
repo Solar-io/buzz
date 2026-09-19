@@ -1,7 +1,12 @@
 # Harness role policy
 
-Buzz stores the provider-neutral role policy in the desktop agent data
-directory as `harness-policy.json`. The Tauri commands are:
+Buzz and every native harness adapter read one provider-neutral desired-state
+file: `~/.config/agent-harness/role-policy.json` (override with
+`HARNESS_ROLE_POLICY_FILE`). Buzz owns writes to this file. Saves are atomic,
+mode-restricted, and retain the immediately previous version beside it as
+`role-policy.json.rollback`. On first read, Buzz migrates the former
+app-data `agents/harness-policy.json` store when the shared file is absent.
+The Tauri commands are:
 
 - `get_harness_policy` — returns the desired policy and canonical SHA-256 hash.
 - `set_harness_policy` — validates and atomically persists global defaults,
