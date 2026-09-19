@@ -1016,7 +1016,7 @@ function ChannelBrowser() {
                     // divider line. The handle used to add a second 1px
                     // border 4px beside it — under always-on OS scrollbars
                     // that stack read as "two scrollbars and a sliver".
-                    className="relative z-10 hidden w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-white/15 active:bg-white/25 lg:block lg:-ml-px"
+                    className="buzz-side-panel-resize-handle relative z-10 hidden w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-white/15 active:bg-white/25 lg:block lg:-ml-px"
                     onPointerDown={(event) => {
                       event.preventDefault();
                       event.currentTarget.setPointerCapture(event.pointerId);

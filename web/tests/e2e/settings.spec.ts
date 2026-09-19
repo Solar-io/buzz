@@ -529,12 +529,15 @@ test("Custom Gradient paints one shell ramp with frosted navigation and inset pa
     chat.className = "buzz-conversation-pane min-w-0 flex-1 p-6";
     chat.textContent =
       "Chat\nOne continuous gradient frames this solid conversation surface.";
+    const separator = document.createElement("div");
+    separator.className =
+      "buzz-side-panel-resize-handle hidden w-1 shrink-0 lg:block lg:-ml-px";
     const thinking = document.createElement("aside");
     thinking.dataset.thinkingPane = "";
     thinking.className = "w-80 p-6";
     thinking.textContent =
       "Thinking\nA distinct inset surface, without a bright divider.";
-    row.append(chat, thinking);
+    row.append(chat, separator, thinking);
     shell.append(row);
   });
 
@@ -543,17 +546,24 @@ test("Custom Gradient paints one shell ramp with frosted navigation and inset pa
   const row = page.locator(".buzz-conversation-row");
   const chat = page.locator(".buzz-conversation-pane");
   const thinking = page.locator("[data-thinking-pane]");
+  const separator = page.locator(".buzz-side-panel-resize-handle");
   await expect(shell).toHaveCSS("background-image", /linear-gradient/);
   await expect(nav).toHaveCSS("background-image", "none");
   await expect(nav).toHaveCSS("backdrop-filter", /blur\(24px\)/);
   expect(
     await nav.evaluate((el) => getComputedStyle(el).backgroundColor),
   ).toMatch(/rgba\(.+, 0\.[0-9]+\)/);
-  await expect(row).toHaveCSS("gap", "8px");
+  await expect(row).toHaveCSS("gap", "0px");
+  await expect(separator).toHaveCSS("width", "8px");
   await expect(chat).toHaveCSS("background-color", "rgb(242, 236, 181)");
   await expect(thinking).toHaveCSS("background-color", "rgb(242, 236, 181)");
   await expect(chat).toHaveCSS("border-radius", "12px");
   await expect(thinking).toHaveCSS("border-left-width", "1px");
+  const chatBox = await chat.boundingBox();
+  const thinkingBox = await thinking.boundingBox();
+  expect(
+    (thinkingBox?.x ?? 0) - ((chatBox?.x ?? 0) + (chatBox?.width ?? 0)),
+  ).toBe(8);
   expect(
     await chat.evaluate((el) => {
       const style = getComputedStyle(el);
