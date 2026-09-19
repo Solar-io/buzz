@@ -68,6 +68,19 @@ Evidence: `logs/capacitor-physical-smoke.log`,
 `logs/capacitor-installed-apps-current.json` and
 `logs/capacitor-device-install.json` in the implementation worktree.
 
+Sam then reported that the Settings route's only exit control was obscured on
+the native phone. The route bypassed `AppShell` despite the wrapper using
+`contentInset: "never"`; its header therefore lacked the safe-area treatment
+already used by the conversation shell. The Settings page now owns a
+safe-area-aware, non-scrolling header and a dedicated scrolling body with a
+bottom safe-area inset. The narrow-viewport journey passed, the full web suite
+passed 2,606 tests, and removing the constrained layout made the named mobile
+regression fail. The signed `cloud.noet.buzz` build containing this change was
+installed in place and launched on the physical iPhone on 2026-09-19; the
+install preserved the application container. A human visual confirmation on
+the physical screen remains distinct from the successful install/launch
+receipt.
+
 - Initial base: `1199b86a67` (2026-09-19 canonical main).
 - Isolated branch: `codex/buzz-ios-capacitor-20260919`.
 - Prior analysis: `~/.buzz/RESEARCH/BUZZ_WEB_IOS_FUNCTIONALITY_ANALYSIS_2026-09-19.md` and `BUZZ_IOS_WRAPPER_RECOMMENDATION_2026-09-19.md`.
@@ -89,6 +102,7 @@ Evidence goes in this worktree's `logs/verification.log` and focused supporting 
 | `logs/backend-qa-mutant-{author,topic,payload}.log`, `native-qa-mutants.log`, `web-qa-mutant-{plaintext,ack}.log` and corresponding restored runs | Named tests detect broken wake ownership, profile/topic/payload mapping, frame/epoch gates, ciphertext publication and negative acknowledgments | These are bounded mechanisms, not complete user journeys |
 | `logs/capacitor-deployment-final-tests.log`, `capacitor-deployment-mutation.log` | Guarded cutover/rollback automation tests: 14 passed with mutation evidence | Deployment success alone does not validate identity, notifications or audio |
 | `logs/capacitor-physical-smoke.log` | Actual device launch/connection and signed read occurred; expected identity and nonempty own-profile checks failed | Physical acceptance remains open |
+| `logs/settings-e2e.log`, `logs/mutation-settings-e2e.log`, `logs/settings-exit-install.json`, `logs/settings-exit-launch.json` | Settings header/exit stays reachable after mobile scrolling; the test fails when the constrained layout is removed; the corrected signed app installed and launched in place | Install/launch does not by itself visually inspect the physical screen |
 
 The earlier broad Rust run (`logs/backend-qa-full.log`,
 `logs/backend-qa-integration.log`) was not wholly green: relay had 1020 passes,
