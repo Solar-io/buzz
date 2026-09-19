@@ -27,6 +27,7 @@ export function relayWsUrl(): string {
 }
 
 export function relayHostname(): string { return new URL(relayWsUrl()).hostname; }
+export function publicAppOrigin(): string { return isNativeIOS() ? new URL(relayHttpBaseUrl()).origin : window.location.origin; }
 
 /** Native origin is capacitor://localhost, never a service host. */
 export function speechServiceUrl(kind: "stt" | "tts"): string {

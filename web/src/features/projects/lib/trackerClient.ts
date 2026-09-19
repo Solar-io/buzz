@@ -55,6 +55,9 @@ export type TrackerIndex = {
   byProject: Map<string, TrackerEntry>;
 };
 
+import { isNativeIOS } from "../../../shared/platform/native.ts";
+import { relayHttpBaseUrl } from "../../../shared/lib/relay-url.ts";
+
 const SIDECAR_PORT = "6451";
 
 /** Origin serving the changelog and the tracker sidecar (same host as the SPA). */
@@ -86,6 +89,7 @@ function pageOriginIsRelayOrigin(): boolean {
 }
 
 export function trackerJsonUrl(): string | null {
+  if (isNativeIOS()) return new URL("/tracker.json", relayHttpBaseUrl()).href;
   const env =
     typeof import.meta !== "undefined"
       ? (import.meta.env as Record<string, string | undefined>)
@@ -100,6 +104,7 @@ export function trackerJsonUrl(): string | null {
 }
 
 export function changelogUrl(): string | null {
+  if (isNativeIOS()) return new URL("/changelog.md", relayHttpBaseUrl()).href;
   if (pageOriginIsRelayOrigin()) return "/changelog.md";
   const base = sidecarOrigin();
   return base ? `${base}/changelog.md` : null;

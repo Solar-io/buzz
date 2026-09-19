@@ -3,6 +3,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/shared/ui/button";
+import { publicAppOrigin } from "@/shared/lib/relay-url";
 
 import { mintInvite } from "../hooks.ts";
 import {
@@ -34,7 +35,7 @@ export function InviteLinkSection() {
   // authoritative half, so the link is rebuilt locally and the relay's own
   // URL is kept only as a fallback.
   const link = invite
-    ? inviteUrlForCode(window.location.origin, invite.code) || invite.url
+    ? inviteUrlForCode(publicAppOrigin(), invite.code) || invite.url
     : "";
 
   const generate = async () => {

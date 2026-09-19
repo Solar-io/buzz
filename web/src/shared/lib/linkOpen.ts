@@ -9,6 +9,8 @@
  * exactly what the installed-app URL bar complaint was about).
  */
 
+import { publicAppOrigin } from "./relay-url.ts";
+
 export type LinkDisposition = "overlay" | "tab" | "default";
 
 const FILE_EXTENSIONS = new Set([
@@ -231,7 +233,7 @@ export function openLink(href: string): LinkDisposition {
     // with it — the in-app viewer is the only sanctioned renderer.
     return disposition;
   }
-  const resolved = new URL(href, window.location.origin).href;
+  const resolved = new URL(href, publicAppOrigin()).href;
   window.open(resolved, "_blank", "noopener,noreferrer");
   return disposition;
 }
