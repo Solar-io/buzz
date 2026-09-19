@@ -5,7 +5,8 @@ import { relayWsUrl } from "@/shared/lib/relay-url";
 import { readNativeServices } from "@/shared/platform/config";
 import { useProfiles } from "@/features/channels/hooks";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
-import { signNostrEvent } from "@/shared/lib/nostr-signer";
+import { useMessageActions } from "@/features/channels/lib/useMessageActions";
+import type { ChannelSummary } from "@/features/channels/lib/channelFromEvent";
 import { useHuddleMemberSnapshot } from "./useHuddleMemberSnapshot";
 import { useHuddleAgentRoster } from "./useHuddleAgentRoster";
 import { useHuddleReactions } from "./useHuddleReactions";
@@ -24,6 +25,8 @@ export function useNativeHuddleCall({ target, selfPubkey }: { target: HuddleCall
   const channelId = state.channelId ?? target?.huddleChannelId ?? null;
   const parentChannelId = state.parentChannelId ?? target?.parentChannelId ?? null;
   const connected = state.status === "connected" || state.status === "reconnecting";
+  const current = useMemo<ChannelSummary | null>(() => channelId ? { id: channelId, name: "huddle", about: "", updatedAt: 0, type: "stream", archived: false, isPrivate: false, topic: "", purpose: "", ttlDeadline: null, ttlSeconds: 3600, participantPubkeys: [] } : null, [channelId]);
+  const { send } = useMessageActions({ session, current, channelId: channelId ?? "", selfPubkey });
   const members = useHuddleMemberSnapshot(connected ? channelId : null);
   const parentMembers = useHuddleMemberSnapshot(connected ? parentChannelId : null);
   const roster = useHuddleAgentRoster({ ephemeralChannelId: connected ? channelId : null, parentChannelId, ephemeral: members, parent: parentMembers });
@@ -67,11 +70,7 @@ export function useNativeHuddleCall({ target, selfPubkey }: { target: HuddleCall
     duplex: { ...initialDuplexState(prefs.duplex), agentSpeaking: state.speaking, userMuted: state.muted, held },
     micHoldNotice: held ? "Microphone held while the agent speaks" : null,
     leave,
-    send: async (input) => {
-      if (!channelId) return { ok: false, message: "No active huddle." };
-      const event = await signNostrEvent({ kind: 9, content: input.content, tags: [["h", channelId], ...input.mentionPubkeys.map((key) => ["p", key])] });
-      return session.publish(event);
-    },
+    send,
     huddle: {
       status: state.status, error: state.error, peers: state.peers, speaking: new Map(Object.entries(state.levels ?? {})), muted: state.muted,
       micLevel: state.micLevel ?? -127, devices: [], deviceId: "", outputDevices: [{ deviceId: "speaker", label: "Speaker" }, { deviceId: "receiver", label: "Receiver / connected headphones" }], outputDeviceId: state.speaker ? "speaker" : "receiver", speakerMuted: state.speakerMuted ?? false,
