@@ -11,6 +11,9 @@ let package = Package(
     ],
     targets: [.target(name: "BuzzNative", dependencies: [
         .product(name: "Capacitor", package: "capacitor-swift-pm"),
+        .product(name: "Cordova", package: "capacitor-swift-pm"),
         .product(name: "NostrSDK", package: "nostr-sdk-swift")
+    ]), .testTarget(name: "BuzzNativeTests", dependencies: [
+        "BuzzNative", .product(name: "NostrSDK", package: "nostr-sdk-swift")
     ])]
 )
