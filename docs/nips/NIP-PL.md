@@ -440,3 +440,59 @@ Zombie leases (e.g. `#h` after leaving a channel) are neutralized by match-time 
 - Classes: `silent`, `default`, `time_sensitive`, `urgent`
 - `h_grammar` values: `"uuid-v4-lowercase"` (initial entry; origins may register additional grammars with this NIP)
 - Public APNs gateway profile: base URL `https://push.buzz.xyz`; app profiles `buzz-ios-production`, `buzz-ios-sandbox`; wire version `1`
+
+## Opt-in Capacitor wake-routing extension
+
+The legacy `buzz-ios-production` and `buzz-ios-sandbox` profiles retain the
+exact constant APNs body specified above. Two separately provisioned profiles,
+`buzz-capacitor-ios-production` and `buzz-capacitor-ios-sandbox`, opt into
+payload version 2 while retaining the version-1 enrollment/delegation schema.
+For these profiles only, the gateway constructs the closed body:
+
+```json
+{"aps":{"alert":{"body":"Reconnect to your relay now"},"mutable-content":1},"buzz":{"v":2,"wake_id":"<request_id UUID>"}}
+```
+
+This intentionally extends v1's byte-constant application-body rule. The only
+variable is the opaque canonical UUID already disclosed in the APNs `apns-id`
+header. No relay URL, event id, channel id, sender, content, endpoint grant or
+arbitrary JSON enters the body. Relay requests cannot choose notification text.
+Each app has separately configured App Attest identity and APNs topic.
+
+The relay advertises the additional profiles only with
+`BUZZ_PUSH_CAPACITOR_ENABLED=true`; they carry `payload_version: 2`, and the
+descriptor includes `wake_resolver: "/api/push/wakes/{wake_id}"`. Operators
+must configure the corresponding gateway profiles before advertising them.
+
+`GET /api/push/wakes/{wake_id}` requires fresh URL-bound NIP-98 authentication,
+HTTP admission, replay protection and relay membership. The UUID grants no
+authority: lookup is scoped to the Host-bound community and authenticated
+lease author. The lease must remain active, enabled and unexpired; the event
+must exist and remain readable under current membership and recipient rules.
+The reply is exactly `{ "v": 1, "event_id": "<64hex>", "channel_id": null }`
+(or a channel UUID instead of null). Missing, deleted, wrong-author, revoked
+and inaccessible targets return the same generic 404. The app reads message
+content through existing authorized event APIs. Delivery expiry alone is not
+a read expiry for an already delivered notification.
+
+### Installation renewal and safe retries
+
+`POST /v1/installations/renew` extends a live installation. Request fields:
+`v`, `challenge_id`, `challenge`, `installation_handle`, `endpoint_epoch`,
+`expires_at`, `assertion`. Its App Attest transcript is the domain
+`buzz.push.renew-installation.v1`, newline, then an ordered compact object:
+`v`, `audience` (the fixed `https://push.buzz.xyz/v1/installations/renew`),
+`challenge_id`, `challenge`, `installation_handle`, `endpoint_epoch`,
+`expires_at`. Fresh challenge, valid current-app assertion and increasing
+assertion counter are mandatory. Renewal cannot revive expired/revoked
+installations, change epoch, shorten lifetime or exceed the configured
+installation lifetime limit. Its response matches enrollment's handle, epoch
+and expiration fields.
+
+Endpoint rotation may be retried with a fresh assertion after a lost response.
+An already committed new epoch succeeds only if its endpoint fingerprint also
+matches exactly; substituting a different endpoint at that epoch fails.
+Clients reserve delegation generations durably, persist encrypted pending
+lease events, and require a positive relay acknowledgment before claiming
+registration is enabled. Disabling publishes a higher-generation minimal
+inactive lease and revokes the gateway delegation.

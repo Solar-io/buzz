@@ -4,6 +4,34 @@
 
 ## Network and health
 
+### Optional Capacitor application
+
+Capacitor uses a separate app identity. Add
+`buzz-capacitor-ios-sandbox` and/or `buzz-capacitor-ios-production` to
+`BUZZ_PUSH_ENABLED_PROFILES`, with `BUZZ_PUSH_CAPACITOR_APP_ATTEST_APP_ID`
+(`TEAMID.bundle-id`) and `BUZZ_PUSH_CAPACITOR_APNS_TOPIC` (`bundle-id`).
+The team must match `BUZZ_PUSH_APNS_TEAM_ID`, and the new topic must differ
+from the legacy `BUZZ_PUSH_APNS_TOPIC`. The same-team provider key is reused.
+Missing/inconsistent configuration fails startup. Migration 0002 extends
+allowed profile values without rewriting existing installations.
+
+After matching signing/profile configuration is ready, the relay can enable
+`BUZZ_PUSH_CAPACITOR_ENABLED=true` to advertise the new profiles and wake
+resolver. Existing Flutter payloads remain byte-exact. Capacitor carries only
+the opaque wake UUID described in `docs/nips/NIP-PL.md`.
+
+APNs and App Attest environments are separate settings. This gateway verifies
+production App Attest evidence even when using sandbox APNs; do not weaken
+attestation to enroll a simulator. Confirm the signed entitlements and profile
+on the physical-device build.
+
+Rollback: disable the new app's push registration (inactive lease), then
+disable relay advertisement and remove only the Capacitor profiles from the
+gateway configuration. Preserve the old application's identity/topic. Keep
+the additive migration while any new-profile rows exist.
+
+### Listener endpoints
+
 - Public listener: `BUZZ_PUSH_BIND_ADDR` (default `0.0.0.0:8080`). Route `https://push.buzz.xyz` to this port.
 - Private health listener: `BUZZ_PUSH_HEALTH_ADDR` (default `0.0.0.0:8081`). Probe `/_liveness` and `/_readiness`; do not expose this port publicly. The chart has no pod-ingress allowance for 8081; Kubernetes node/kubelet-origin probe traffic is exempt from NetworkPolicy. Add a narrowly selected monitoring source only if the target CNI requires pod-origin health scraping.
 - Readiness fails when PostgreSQL authority is unavailable. Graceful shutdown stops accepting new requests before draining in-flight APNs calls.
