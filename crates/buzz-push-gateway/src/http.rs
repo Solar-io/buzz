@@ -552,6 +552,70 @@ async fn revoke_installation(State(s): State<AppState>, body: Bytes) -> Response
     }
 }
 
+#[derive(serde::Serialize)]
+struct RenewTranscript<'a> {
+    v: u8,
+    audience: &'static str,
+    challenge_id: uuid::Uuid,
+    challenge: &'a str,
+    installation_handle: uuid::Uuid,
+    endpoint_epoch: i64,
+    expires_at: i64,
+}
+
+async fn renew_installation(State(s): State<AppState>, body: Bytes) -> Response {
+    let r: RenewInstallationRequest = match crate::strict_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(_) => return error(StatusCode::BAD_REQUEST, "invalid_request"),
+    };
+    let now = (s.now)();
+    if r.v != WIRE_VERSION
+        || r.endpoint_epoch < 1
+        || r.expires_at <= now
+        || r.expires_at > now.saturating_add(s.max_installation_lifetime_seconds)
+    {
+        return error(StatusCode::BAD_REQUEST, "invalid_request");
+    }
+    let transcript = RenewTranscript {
+        v: r.v,
+        audience: "https://push.buzz.xyz/v1/installations/renew",
+        challenge_id: r.challenge_id,
+        challenge: &r.challenge,
+        installation_handle: r.installation_handle,
+        endpoint_epoch: r.endpoint_epoch,
+        expires_at: r.expires_at,
+    };
+    if let Err(response) = verify_installation_assertion(
+        &s,
+        r.installation_handle,
+        r.challenge_id,
+        &r.challenge,
+        &r.assertion,
+        "buzz.push.renew-installation.v1",
+        &transcript,
+    )
+    .await
+    {
+        return response;
+    }
+    match s
+        .authority
+        .renew_installation(r.installation_handle, r.endpoint_epoch, r.expires_at, now)
+        .await
+    {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(InstallationEnrollResponse {
+                installation_handle: r.installation_handle,
+                endpoint_epoch: r.endpoint_epoch,
+                expires_at: r.expires_at,
+            }),
+        )
+            .into_response(),
+        Err(error) => authority_error(error),
+    }
+}
+
 async fn deliver(State(s): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
     let r: DeliveryRequest = match crate::strict_json::from_slice(&body) {
         Ok(x) => x,
@@ -743,6 +807,7 @@ pub fn router_with_metrics(
         .route("/v1/delegations", post(delegate))
         .route("/v1/delegations/revoke", post(revoke_delegation))
         .route("/v1/installations/endpoint", post(rotate_endpoint))
+        .route("/v1/installations/renew", post(renew_installation))
         .route("/v1/installations/revoke", post(revoke_installation))
         .route("/v1/deliveries/apns", post(deliver))
         .with_state(state.clone())

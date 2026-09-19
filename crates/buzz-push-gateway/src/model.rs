@@ -139,6 +139,19 @@ pub struct RotateEndpointRequest {
     pub assertion: String,
 }
 
+/// Extend a live installation using its existing App Attest authority.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RenewInstallationRequest {
+    pub v: u8,
+    pub challenge_id: uuid::Uuid,
+    pub challenge: String,
+    pub installation_handle: uuid::Uuid,
+    pub endpoint_epoch: i64,
+    pub expires_at: i64,
+    pub assertion: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RevokeDelegationRequest {
