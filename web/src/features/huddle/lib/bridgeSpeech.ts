@@ -33,11 +33,13 @@ export interface BridgeSpeakRequest {
  * Map a kind-30182 selection onto a bridge request, or null when the
  * selection names something the bridge cannot run:
  *
- *  - `pocket:<slug>` → preset voice (the 26 built-in origins);
- *  - `pocket:imported:<hash>` → null TODAY — the bridge's pocket adapter
+ *  - `pocket:<slug>` → preset voice (one of the 12 bundled presets);
+ *  - `pocket:imported:<hash>` → null — the bridge's pocket adapter
  *    accepts preset names and http(s) voice URLs, not imported-hash keys.
- *    The caller falls back to the local-synth profile for these, exactly
- *    the pre-bridge behavior.
+ *    `speakRoute` intercepts that null and executes the derived-bridge
+ *    Pocket default instead (disposition
+ *    `pocket-selected-pending-engine`), so the OS robot is never the
+ *    fallback for an imported selection.
  *  - `eleven:<voiceid>` → ElevenLabs voice id.
  */
 export function selectionToBridgeRequest(

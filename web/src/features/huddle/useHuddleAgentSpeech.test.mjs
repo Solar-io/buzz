@@ -314,6 +314,72 @@ test("wiring: a no-selection agent speaks through the bridge, not the robot, dis
   }
 });
 
+test("wiring: a failed derived /tts (502) speaks locally exactly once as bridge-error-fallback", async () => {
+  // Mute-avoidance, not the default: when the bridge rejects the derived
+  // request the reply must STILL be spoken — once, locally, with the
+  // derived profile — and speakRoutes must record bridge-error-fallback
+  // (never the robot silently, never a retry storm against a down bridge).
+  class FakeAudioContext {
+    constructor() {
+      this.currentTime = 0;
+      this.destination = {};
+      this.sampleRate = 24_000;
+    }
+    resume() {
+      return Promise.resolve();
+    }
+    createBuffer(_channels, length, sampleRate) {
+      return { length, sampleRate, copyToChannel() {} };
+    }
+    createBufferSource() {
+      return {
+        buffer: null,
+        connect() {},
+        start(when) {
+          this.currentTime = Math.max(this.currentTime, when);
+        },
+      };
+    }
+  }
+  const bridgeCalls = [];
+  const realFetch = globalThis.fetch;
+  const realAudioContext = dom.window.AudioContext;
+  globalThis.fetch = (url, init) => {
+    bridgeCalls.push({ url: String(url), init });
+    // Bridge is down: every POST fails.
+    return Promise.resolve(new Response("bridge exploded", { status: 502 }));
+  };
+  dom.window.AudioContext = FakeAudioContext;
+  try {
+    const harness = await mountEnabledAndSpeak(undefined);
+    await harness.flush();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // (c) Exactly ONE POST — the failed one. The local-synth rescue makes
+    // zero additional /tts calls.
+    assert.equal(bridgeCalls.length, 1, "no POSTs after the failed one");
+    assert.equal(bridgeCalls[0].init.method, "POST");
+    // (a) The reply is spoken, exactly once, locally.
+    const expected = speechVoiceProfile(AGENT, rankVoices(FIXTURE_VOICES));
+    assert.equal(spoken.length, 1, "the reply is spoken locally exactly once");
+    assert.equal(spoken[0].voice?.voiceURI, expected.voiceURI);
+    // (b) The recorded disposition says the bridge failed and local synth
+    // rescued it — and the corrected route no longer carries a request.
+    const route = harness.captured.current.speakRoutes.current.get(AGENT);
+    assert.ok(route, "the speak route must be recorded for the agent");
+    assert.equal(route.disposition, "bridge-error-fallback");
+    assert.equal(route.profile.source, "derived");
+    assert.equal(route.bridge, null);
+    await harness.unmount();
+  } finally {
+    globalThis.fetch = realFetch;
+    if (realAudioContext === undefined) {
+      delete dom.window.AudioContext;
+    } else {
+      dom.window.AudioContext = realAudioContext;
+    }
+  }
+});
+
 test("wiring: a pocket selection routes to the bridge, disposition pocket-bridge", async () => {
   const harness = await mountEnabledAndSpeak({
     engine: "pocket",
