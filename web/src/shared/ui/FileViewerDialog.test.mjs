@@ -206,6 +206,27 @@ test("relay media resolves through the signed-fetch seam and renders the object 
   await viewer.unmount();
 });
 
+test("relative relay image is signed and fetched at the relay, never the app origin", async () => {
+  const seen = [];
+  globalThis.__BUZZ_TEST_FETCH_SIGNED_MEDIA__ = async (url) => {
+    seen.push(url);
+    return "blob:relative-image";
+  };
+  const viewer = await mountViewer("/media/relative.png");
+  try {
+    await viewer.open();
+    assert.deepEqual(seen, [`${RELAY}/media/relative.png`]);
+    assert.equal(
+      dom.window.document
+        .querySelector('[data-testid="file-viewer-body"] img')
+        ?.getAttribute("src"),
+      "blob:relative-image",
+    );
+  } finally {
+    await viewer.unmount();
+  }
+});
+
 test("non-relay images render the raw URL and never touch the signed seam", async () => {
   globalThis.__BUZZ_TEST_FETCH_SIGNED_MEDIA__ = async () => {
     throw new Error("signed seam must not be used for non-relay URLs");
@@ -272,7 +293,9 @@ test("html viewer: relay edition pages get script access, strangers stay scriptl
 
   const ed = await mountViewer(`${RELAY}/edition/latest.html`);
   await ed.open();
-  let frame = dom.window.document.querySelector('iframe[data-testid="file-viewer-body"]');
+  let frame = dom.window.document.querySelector(
+    'iframe[data-testid="file-viewer-body"]',
+  );
   assert.ok(frame, "edition renders the html iframe");
   assert.equal(
     frame.getAttribute("sandbox"),
@@ -283,7 +306,9 @@ test("html viewer: relay edition pages get script access, strangers stay scriptl
 
   const foreign = await mountViewer("https://example.com/page.html");
   await foreign.open();
-  frame = dom.window.document.querySelector('iframe[data-testid="file-viewer-body"]');
+  frame = dom.window.document.querySelector(
+    'iframe[data-testid="file-viewer-body"]',
+  );
   assert.ok(frame, "foreign html renders the html iframe");
   assert.equal(
     frame.getAttribute("sandbox"),
