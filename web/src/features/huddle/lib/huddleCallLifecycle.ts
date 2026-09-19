@@ -63,3 +63,19 @@ export function isCallOver(input: {
   }
   return previousStatus === "connected" || previousStatus === "reconnecting";
 }
+
+/**
+ * Whether an async microphone/audio-graph continuation still belongs to the
+ * current join. A leave can happen while getUserMedia or AudioWorklet is
+ * awaiting; stale continuations must stop their local stream and never open
+ * a socket for the old room.
+ */
+export function shouldContinueAudioJoin(input: {
+  joinGeneration: number;
+  currentGeneration: number;
+  wantsConnection: boolean;
+}): boolean {
+  return (
+    input.wantsConnection && input.joinGeneration === input.currentGeneration
+  );
+}

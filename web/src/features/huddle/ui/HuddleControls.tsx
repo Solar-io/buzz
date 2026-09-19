@@ -46,7 +46,7 @@ import { HuddleSettingsPopover } from "./HuddleSettingsPopover.tsx";
  * `huddle-add-agent`, `huddle-device` — alongside the new ones.
  */
 export function HuddleControls({ variant }: { variant: "dock" | "panel" }) {
-  const { call, floating, setFloating } = useHuddleSession();
+  const { call, floating, setFloating, directAgentCall } = useHuddleSession();
   const { huddle, voice, speech } = call;
   const [addAgentOpen, setAddAgentOpen] = useState(false);
   const pushToTalk = huddle.voiceInputMode === "push_to_talk";
@@ -254,16 +254,18 @@ export function HuddleControls({ variant }: { variant: "dock" | "panel" }) {
           </span>
         </button>
 
-        <button
-          className="rounded-full border border-border px-2 py-1 text-muted-foreground hover:text-foreground"
-          data-testid="huddle-add-agent"
-          onClick={() => setAddAgentOpen(true)}
-          title="Add an agent to this huddle"
-          type="button"
-        >
-          <Bot aria-hidden className="h-3.5 w-3.5" />
-          <span className="sr-only">Add an agent</span>
-        </button>
+        {!directAgentCall && (
+          <button
+            className="rounded-full border border-border px-2 py-1 text-muted-foreground hover:text-foreground"
+            data-testid="huddle-add-agent"
+            onClick={() => setAddAgentOpen(true)}
+            title="Add an agent to this huddle"
+            type="button"
+          >
+            <Bot aria-hidden className="h-3.5 w-3.5" />
+            <span className="sr-only">Add an agent</span>
+          </button>
+        )}
 
         <HuddleSettingsPopover onChange={call.setPrefs} prefs={call.prefs} />
       </div>
@@ -302,12 +304,14 @@ export function HuddleControls({ variant }: { variant: "dock" | "panel" }) {
         </span>
       )}
 
-      <AddHuddleAgentDialog
-        currentAgentPubkeys={call.agentPubkeys}
-        onAdd={call.addAgent}
-        onOpenChange={setAddAgentOpen}
-        open={addAgentOpen}
-      />
+      {!directAgentCall && (
+        <AddHuddleAgentDialog
+          currentAgentPubkeys={call.agentPubkeys}
+          onAdd={call.addAgent}
+          onOpenChange={setAddAgentOpen}
+          open={addAgentOpen}
+        />
+      )}
     </div>
   );
 }

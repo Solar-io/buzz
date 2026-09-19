@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-const { isCallOver, shouldDispatchJoin } = await import(
-  "./huddleCallLifecycle.ts"
-);
+const { isCallOver, shouldContinueAudioJoin, shouldDispatchJoin } =
+  await import("./huddleCallLifecycle.ts");
 
 test("a join is dispatched once the hook renders the requested channel", () => {
   assert.equal(
@@ -105,6 +104,33 @@ test("an idle status right after the join was requested is NOT the end of the ca
       hasTarget: false,
       previousStatus: "connected",
       status: "idle",
+    }),
+    false,
+  );
+});
+
+test("a delayed microphone continuation is rejected after leave or a newer join", () => {
+  assert.equal(
+    shouldContinueAudioJoin({
+      joinGeneration: 2,
+      currentGeneration: 2,
+      wantsConnection: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldContinueAudioJoin({
+      joinGeneration: 2,
+      currentGeneration: 3,
+      wantsConnection: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldContinueAudioJoin({
+      joinGeneration: 2,
+      currentGeneration: 2,
+      wantsConnection: false,
     }),
     false,
   );

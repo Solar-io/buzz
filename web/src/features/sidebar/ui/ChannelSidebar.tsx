@@ -19,7 +19,6 @@ import type { ChannelSummary } from "@/features/channels/useChannels";
 import type { DmSummary } from "@/features/dms/hooks";
 import { NewDmDialog } from "@/features/dms/ui/NewDmDialog";
 import { useUserStatuses } from "@/features/user-status/hooks";
-import { shortDate } from "@/features/sidebar/lib/shortDate.ts";
 import { ChannelForum, ChannelGlyph } from "@/features/sidebar/ui/ChannelGlyph";
 import { DmNavRow } from "@/features/sidebar/ui/DmNavRow";
 import {
@@ -45,8 +44,6 @@ export interface ChannelSidebarLists {
   unstarred: ChannelSummary[];
   /** Forum-type channels, which get their own section and body. */
   forums: ChannelSummary[];
-  /** Ephemeral huddle rooms a kind-48100 link makes joinable. */
-  huddles: ChannelSummary[];
   /** Every DM, hidden ones included — drives the "all hidden" copy. */
   dms: DmSummary[];
   /** DMs the viewer has not hidden locally. */
@@ -150,7 +147,7 @@ export interface ChannelSidebarProps {
 
 /**
  * The app's left rail: connection state, the ⌘K search field, the starred /
- * channel / forum / huddle / DM sections, and the Files + Agents footer.
+ * channel / forum / DM sections, and the Files + Agents footer.
  */
 export function ChannelSidebar({
   connected,
@@ -193,7 +190,7 @@ export function ChannelSidebar({
   }, [lists.visibleDms, dmIdentity.selfPubkey]);
   const dmStatuses = useUserStatuses(dmPartnerPubkeys);
 
-  // Unread dot for channel/forum/huddle rows: read marker vs the newest
+  // Unread dot for channel/forum rows: read marker vs the newest
   // sampled MESSAGE (self-authored samples excluded — see
   // channelUnreadSignal), falling back to metadata for unsampled channels.
   // DM rows keep their own activity feed and stay on lastMessage logic.
@@ -352,27 +349,6 @@ export function ChannelSidebar({
               ))}
             </ul>
           </>
-        )}
-        {lists.huddles.length > 0 && (
-          <details className="px-0 pt-2">
-            <summary className="mb-[4px] flex h-8 cursor-pointer select-none items-center pl-[6px] pr-2 text-[13px] font-medium normal-case tracking-normal text-sidebar-foreground/60">
-              Huddles ({lists.huddles.length})
-            </summary>
-            <ul className="space-y-0.5">
-              {lists.huddles.map((channel) => (
-                <li key={channel.id}>
-                  <SidebarNavButton
-                    selected={channel.id === selectedId}
-                    label={`${channel.name} · ${shortDate(channel.updatedAt)}`}
-                    unread={rowUnread(channel)}
-                    unreadCount={rowUnreadCount(channel)}
-                    muted={isMuted(readState.prefs, channel.id)}
-                    onSelect={() => actions.onSelectChannel(channel.id)}
-                  />
-                </li>
-              ))}
-            </ul>
-          </details>
         )}
         <SectionHeader
           label="Direct messages"

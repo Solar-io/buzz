@@ -42,9 +42,9 @@ import { Composer } from "@/features/channels/ui/Composer";
 import { ForumView } from "@/features/channels/ui/ForumView";
 import { MessageToasts } from "@/features/channels/ui/MessageToasts";
 import { SearchPanel } from "@/features/channels/ui/SearchPanel";
-import { HuddleBar } from "@/features/huddle/ui/HuddleBar";
 import { HuddleDock } from "@/features/huddle/ui/HuddleDock";
-import { useHuddleLinks } from "@/features/huddle/useHuddleLinks";
+import { useHuddleSession } from "@/features/huddle/HuddleSessionProvider";
+import { eligibleDmAgentPubkey } from "@/features/huddle/lib/dmAgentCall.ts";
 import { ThreadPanel } from "@/features/channels/ui/ThreadPanel";
 import {
   useAgentFrames,
@@ -196,6 +196,7 @@ function ChannelBrowser() {
     dmDisplayName(participantPubkeys, selfPubkey ?? "", dmProfiles);
 
   const { session, status: relayStatus } = useRelaySession();
+  const huddleSession = useHuddleSession();
   const channelId = current?.id ?? "";
   const {
     messages,
@@ -385,29 +386,6 @@ function ChannelBrowser() {
       ? null
       : `${channelId}:${lastMessageId}`;
 
-  // The huddle REQ must carry #h or it is a global subscription and never goes
-  // live; the shell owns the channel list it needs.
-  const huddleChannelIds = useMemo(
-    () => channels.map((channel) => channel.id),
-    [channels],
-  );
-  const {
-    links: huddleLinks,
-    ended: huddleEndedIds,
-    resolved,
-  } = useHuddleLinks(huddleChannelIds);
-  const currentHuddleParent =
-    current && huddleLinks.has(current.id)
-      ? (huddleLinks.get(current.id)?.parentId ?? null)
-      : null;
-  // A huddle is over when the registry saw its 48103 (replay or live — the
-  // replay arrives end-first, which the ended set exists to survive), or
-  // the backing channel's own 39000 says archived. Either way the bar must
-  // stop presenting a live room.
-  const currentHuddleEnded =
-    Boolean(current?.archived) ||
-    (current ? huddleEndedIds.has(current.id) : false);
-
   // Viewer-side channel prefs (starred / muted), local like the desktop's DB.
   const [channelPrefs, setChannelPrefs] = useState<ChannelPrefs>(() =>
     loadChannelPrefs(),
@@ -471,7 +449,6 @@ function ChannelBrowser() {
     dms,
     channelPrefs,
     hiddenDmIds,
-    huddleLinks,
   });
 
   // Default conversation (D-025): opening the app with nothing selected
@@ -586,14 +563,6 @@ function ChannelBrowser() {
       closeChannel();
     }
   };
-  const onHuddleStarted = (channelId: string) => {
-    void navigate({ to: "/repos", search: { c: channelId } });
-    // The private room's 39000 has no live fan-out —
-    // staggered re-REQs pull it into the sidebar.
-    window.setTimeout(refreshChannels, 500);
-    window.setTimeout(refreshChannels, 2000);
-  };
-
   const sidebar = (
     <SidebarWithAsks
       connected={connected}
@@ -605,7 +574,6 @@ function ChannelBrowser() {
         starred: lists.starred,
         unstarred: lists.unstarred,
         forums: lists.forums,
-        huddles: lists.huddles,
         dms,
         visibleDms: lists.visibleDms,
       }}
@@ -655,14 +623,6 @@ function ChannelBrowser() {
     />
   );
 
-  // DM with an agent → the right pane is the thinking/activity panel unless a
-  // thread is open (thread wins; both ride the same resizable width).
-  const dmAgentPubkey =
-    current?.type === "dm"
-      ? (current.participantPubkeys.find((pk) => pk !== selfPubkey) ??
-        current.participantPubkeys[0] ??
-        null)
-      : null;
   // Per-agent selection from the global observer store (one subscription,
   // indexed by the frame's agent tag — no cross-agent leakage).
   const observerStore = useObserverStore();
@@ -676,6 +636,25 @@ function ChannelBrowser() {
   // activity — narrowing it to five minutes would otherwise have quietly
   // un-badged any agent that had been quiet for longer.
   const agentRegistry = useAgentRegistry();
+  const knownAgentPubkeys = useMemo(() => {
+    const set = new Set(observerStore?.byAgent.keys() ?? []);
+    for (const entry of agentRegistry) {
+      set.add(entry.pubkey.toLowerCase());
+    }
+    return set;
+  }, [observerStore, agentRegistry]);
+  // A direct call is only offered for a true 1:1 DM whose one counterparty is
+  // known to be an agent. Group DMs and human DMs keep their normal header.
+  const dmAgentPubkey = useMemo(() => {
+    return current
+      ? eligibleDmAgentPubkey({
+          channelType: current.type,
+          participantPubkeys: current.participantPubkeys,
+          selfPubkey,
+          knownAgentPubkeys,
+        })
+      : null;
+  }, [current, selfPubkey, knownAgentPubkeys]);
   const agentPubkeys = useMemo(() => {
     const set = new Set(observerStore?.byAgent.keys() ?? []);
     for (const entry of agentRegistry) {
@@ -869,8 +848,25 @@ function ChannelBrowser() {
                         ? dmName(current.participantPubkeys)
                         : `# ${current.name}`
                     }
-                    session={session}
-                    onHuddleStarted={onHuddleStarted}
+                    onStartAgentCall={
+                      dmAgentPubkey && current.type === "dm"
+                        ? (existingHuddleChannelId) =>
+                            huddleSession.startAgentCall({
+                              parentChannelId: current.id,
+                              agentPubkey: dmAgentPubkey,
+                              agentName:
+                                profiles.get(dmAgentPubkey)?.displayName ??
+                                dmAgentPubkey,
+                              existingHuddleChannelId,
+                            })
+                        : undefined
+                    }
+                    agentCallPhase={huddleSession.agentCallPhase}
+                    agentCallError={
+                      huddleSession.agentCallParentChannelId === current.id
+                        ? huddleSession.agentCallError
+                        : null
+                    }
                     members={members}
                     profiles={profiles}
                     presence={presence}
@@ -905,14 +901,6 @@ function ChannelBrowser() {
                       />
                     }
                   />
-                  {current.ttlSeconds !== null && (
-                    <HuddleBar
-                      channelId={current.id}
-                      parentChannelId={currentHuddleParent}
-                      huddleEnded={currentHuddleEnded}
-                      huddleLinksResolved={resolved}
-                    />
-                  )}
                   {current.type === "forum" ? (
                     <ForumView
                       channel={current}

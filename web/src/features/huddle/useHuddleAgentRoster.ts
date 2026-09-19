@@ -45,6 +45,14 @@ export interface HuddleAgentRoster {
   addAgent: (input: {
     agentPubkey: string;
     agentName: string;
+    /**
+     * The parent membership was established by the caller's authoritative
+     * channel metadata. DMs do not emit a kind-39002 roster, so waiting for
+     * the parent snapshot would never settle; this trusted flag skips only
+     * the redundant parent role rewrite and still publishes the required
+     * ephemeral huddle add.
+     */
+    alreadyParentMember?: boolean;
   }) => Promise<{ ok: boolean; message: string }>;
 }
 
@@ -74,9 +82,11 @@ export function useHuddleAgentRoster(options: {
     async ({
       agentPubkey,
       agentName,
+      alreadyParentMember = false,
     }: {
       agentPubkey: string;
       agentName: string;
+      alreadyParentMember?: boolean;
     }) => {
       if (!ephemeralChannelId) {
         return { ok: false, message: "This huddle is no longer active." };
@@ -86,7 +96,9 @@ export function useHuddleAgentRoster(options: {
         parentChannelId,
         agentPubkey,
         currentAgentPubkeys: agentPubkeys,
-        parentMemberPubkeys,
+        parentMemberPubkeys: alreadyParentMember
+          ? [...parentMemberPubkeys, agentPubkey]
+          : parentMemberPubkeys,
       });
       if ("error" in planned) {
         return { ok: false, message: planned.error };

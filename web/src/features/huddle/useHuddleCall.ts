@@ -207,7 +207,11 @@ export function useHuddleCall(options: {
   agentPubkeysRef.current = agentPubkeys;
   const freshAddsRef = useRef(new Set<string>());
   const addAgent = useCallback(
-    async (input: { agentPubkey: string; agentName: string }) => {
+    async (input: {
+      agentPubkey: string;
+      agentName: string;
+      alreadyParentMember?: boolean;
+    }) => {
       const result = await agentRoster.addAgent(input);
       if (result.ok) {
         freshAddsRef.current.add(input.agentPubkey.toLowerCase());

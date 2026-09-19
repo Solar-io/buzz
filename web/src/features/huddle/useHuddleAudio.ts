@@ -26,6 +26,7 @@ import {
 } from "./lib/audioDevices.ts";
 import { useHuddleOutput } from "./useHuddleOutput.ts";
 import { createPeerPlayback } from "./lib/peerPlayback.ts";
+import { shouldContinueAudioJoin } from "./lib/huddleCallLifecycle.ts";
 
 /**
  * Huddle voice for the web: one WebSocket to /huddle/{id}/audio, mic capture
@@ -137,6 +138,8 @@ export function useHuddleAudio(
    * ws.onclose checks it to decide between reconnecting and going idle.
    */
   const wantConnectedRef = useRef(false);
+  /** Invalidates delayed getUserMedia/AudioContext work after a leave. */
+  const audioGenerationRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptRef = useRef(0);
   /** deviceId mirror the recovery path reads without re-creating join(). */
@@ -159,6 +162,15 @@ export function useHuddleAudio(
     attach: attachOutput,
     detach: detachOutput,
   } = output;
+  const joinIsCurrent = useCallback(
+    (generation: number) =>
+      shouldContinueAudioJoin({
+        joinGeneration: generation,
+        currentGeneration: audioGenerationRef.current,
+        wantsConnection: wantConnectedRef.current,
+      }),
+    [],
+  );
 
   /**
    * Is the mic live right now?
@@ -227,6 +239,7 @@ export function useHuddleAudio(
   }, [stopReconnectTimer]);
 
   const teardown = useCallback(() => {
+    audioGenerationRef.current += 1;
     wantConnectedRef.current = false;
     stopReconnectTimer();
     teardownSocket();
@@ -519,6 +532,7 @@ export function useHuddleAudio(
       if (!wantConnectedRef.current) {
         return false;
       }
+      const generation = audioGenerationRef.current;
       let stream: MediaStream | null = null;
       let fellBackToDefault = false;
       try {
@@ -552,6 +566,12 @@ export function useHuddleAudio(
           setStatus("error");
           return false;
         }
+      }
+      if (!joinIsCurrent(generation)) {
+        for (const track of stream?.getTracks() ?? []) {
+          track.stop();
+        }
+        return false;
       }
       const ctx = ctxRef.current;
       const analyser = analyserRef.current;
@@ -592,7 +612,7 @@ export function useHuddleAudio(
       void refreshDevices();
       return true;
     },
-    [teardown, refreshDevices, persistInputDevice],
+    [teardown, refreshDevices, persistInputDevice, joinIsCurrent],
   );
 
   /**
@@ -657,10 +677,17 @@ export function useHuddleAudio(
     setStatus("connecting");
     deviceIdRef.current = deviceId;
     wantConnectedRef.current = true;
+    const generation = ++audioGenerationRef.current;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: micConstraints(deviceId),
       });
+      if (!joinIsCurrent(generation)) {
+        for (const track of stream.getTracks()) {
+          track.stop();
+        }
+        return;
+      }
       streamRef.current = stream;
       const track = stream.getAudioTracks()[0] ?? null;
       trackRef.current = track;
@@ -680,6 +707,13 @@ export function useHuddleAudio(
       const ctx = new AudioContext({ sampleRate: 48_000 });
       if (ctx.state === "suspended") {
         await ctx.resume();
+      }
+      if (!joinIsCurrent(generation)) {
+        await ctx.close();
+        for (const track of stream.getTracks()) {
+          track.stop();
+        }
+        return;
       }
       // A context the SYSTEM suspends mid-call (device change, OS pause)
       // kills capture AND playback silently. Try to resume; if the browser
@@ -723,6 +757,13 @@ export function useHuddleAudio(
       );
       await ctx.audioWorklet.addModule(workletUrl);
       URL.revokeObjectURL(workletUrl);
+      if (!joinIsCurrent(generation)) {
+        await ctx.close();
+        for (const track of stream.getTracks()) {
+          track.stop();
+        }
+        return;
+      }
       const worklet = new AudioWorkletNode(ctx, "uplink-tap");
       source.connect(worklet);
       workletRef.current = worklet;
@@ -804,11 +845,21 @@ export function useHuddleAudio(
         );
       };
 
+      if (!joinIsCurrent(generation)) {
+        teardown();
+        return;
+      }
+
       // Socket + auth + roster handling live in connectSocket so the
       // reconnect ladder redials exactly this half.
       connectSocketRef.current();
     } catch (mediaError) {
+      const stale = !joinIsCurrent(generation);
       teardown();
+      if (stale) {
+        setStatus("idle");
+        return;
+      }
       setStatus("error");
       setError(
         mediaError instanceof Error && mediaError.name === "NotAllowedError"
@@ -826,6 +877,7 @@ export function useHuddleAudio(
     transmitting,
     refreshDevices,
     attachOutput,
+    joinIsCurrent,
   ]);
 
   const toggleMute = useCallback(() => {

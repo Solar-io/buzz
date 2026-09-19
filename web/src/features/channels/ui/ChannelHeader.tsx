@@ -7,15 +7,13 @@ import {
   Hash,
   Lock,
   LogIn,
+  PhoneCall,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { ChannelSummary } from "@/features/channels/useChannels";
-import { HuddleIndicator } from "@/features/huddle/ui/HuddleIndicator";
 import { useHuddleRoster } from "@/features/huddle/useHuddleRoster";
-import { startHuddle } from "@/features/huddle/lib/huddleLifecycle";
-import { formatHuddleActionError } from "@/features/huddle/lib/huddleNaming";
+import type { AgentCallPhase } from "@/features/huddle/lib/agentCallFlow.ts";
 import { cn } from "@/shared/lib/cn";
-import type { RelaySession } from "@/shared/api/relay-session";
 import type { ChannelMember, Profile } from "../hooks.ts";
 import { channelDescription } from "../lib/channelDescription.ts";
 import { ephemeralDisplay } from "../lib/ephemeralChannel.ts";
@@ -28,10 +26,14 @@ export interface ChannelHeaderProps {
   channel: ChannelSummary;
   /** Resolved title — DMs use participant names, channels use "# name". */
   title: string;
-  /** Live relay session, used to publish the huddle-start event. */
-  session: RelaySession;
-  /** A huddle room landed: open it and re-REQ the channel list. */
-  onHuddleStarted: (channelId: string) => void;
+  /** Start the one-click DM voice call using a private TTL transport room. */
+  onStartAgentCall?: (
+    existingHuddleChannelId?: string | null,
+  ) => Promise<{ ok: boolean; message: string }>;
+  /** Current one-click call phase, for the button's pending label. */
+  agentCallPhase?: AgentCallPhase;
+  /** Current one-click call failure, shown in the DM header. */
+  agentCallError?: string | null;
   /** Set when this DM has an agent counterpart — shows the 🧠 toggle. */
   agentPubkey: string | null;
   /** Reveal the thinking panel in the right pane. */
@@ -49,7 +51,7 @@ export interface ChannelHeaderProps {
   /** DM counterparty pubkeys, for the roster's add-member suggestions. */
   contacts?: string[];
   /**
-   * Feature-owned controls pinned ahead of Join/Members/Huddle (the
+   * Feature-owned controls pinned ahead of Join/Members/Call (the
    * shortcut bar). The header does not import the feature — it renders
    * whatever the shell passes.
    */
@@ -81,18 +83,19 @@ function ChannelIcon({ channel }: { channel: ChannelSummary }) {
  * `ChannelMembersBar` trio: the type glyph, the name with a copy action, the
  * one-line description (topic → about → purpose, with archived / read-only
  * prefixes), an expiry badge for ephemeral channels, the member count with
- * its roster, a huddle control that shows who is already in the call, a Join
- * button for open channels the viewer is not in, and the DM thinking toggle.
+ * its roster, a Join button for open channels the viewer is not in, a direct
+ * DM voice-call button for an eligible agent, and the DM thinking toggle.
  *
- * Everything past `channel`/`title`/`session` is optional so the header
+ * Everything past `channel`/`title` is optional so the header
  * degrades to its previous behaviour rather than failing when the shell has
  * not been wired for a given signal yet.
  */
 export function ChannelHeader({
   channel,
   title,
-  session,
-  onHuddleStarted,
+  onStartAgentCall,
+  agentCallPhase = "idle",
+  agentCallError = null,
   agentPubkey,
   onOpenThinking,
   members = NO_MEMBERS,
@@ -103,9 +106,11 @@ export function ChannelHeader({
   contacts,
   actions,
 }: ChannelHeaderProps) {
-  const [startingHuddle, setStartingHuddle] = useState(false);
+  const [startingAgentCall, setStartingAgentCall] = useState(false);
   const [joining, setJoining] = useState(false);
-  const { live } = useHuddleRoster(channel.id);
+  const { live } = useHuddleRoster(
+    channel.type === "dm" && onStartAgentCall ? channel.id : null,
+  );
 
   // The expiry badge counts DOWN, so it needs a tick of its own — nothing
   // else in this header changes when a minute passes.
@@ -137,6 +142,21 @@ export function ChannelHeader({
     isMember === false &&
     !channel.isPrivate &&
     !channel.archived;
+  const canStartAgentCall =
+    channel.type === "dm" &&
+    agentPubkey !== null &&
+    onStartAgentCall !== undefined;
+  const existingAgentHuddleId = canStartAgentCall
+    ? (live.find((room) =>
+        room.participants.some(
+          (participant) =>
+            participant.toLowerCase() === agentPubkey.toLowerCase(),
+        ),
+      )?.ephemeralId ?? null)
+    : null;
+  const callInProgress =
+    startingAgentCall ||
+    (agentCallPhase !== "idle" && agentCallPhase !== "active");
 
   return (
     <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-secondary px-4">
@@ -213,34 +233,50 @@ export function ChannelHeader({
             selfPubkey={selfPubkey}
           />
         )}
-        {/*
-          A huddle hangs off a permanent channel; the backing channel is
-          itself ephemeral, so offering "start a huddle" inside one would
-          nest a huddle in a huddle.
-        */}
-        {!isEphemeral && (
-          <HuddleIndicator
-            live={live}
-            starting={startingHuddle}
-            disabled={channel.archived}
-            onJoin={onHuddleStarted}
-            onStart={() => {
-              setStartingHuddle(true);
-              void startHuddle(session, { parentChannelId: channel.id })
-                .then((result) => {
-                  if (result.ok && result.channelId) {
-                    toast.success(result.message);
-                    onHuddleStarted(result.channelId);
-                  } else {
-                    toast.error(result.message);
-                  }
+        {canStartAgentCall && (
+          <button
+            type="button"
+            data-testid="dm-start-call"
+            aria-label={`Call ${title}`}
+            title={
+              agentCallPhase === "active"
+                ? "Open the active call"
+                : "Start a voice call"
+            }
+            disabled={callInProgress}
+            className="flex shrink-0 items-center gap-1 rounded-full border border-border px-2 py-1 text-2xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+            onClick={() => {
+              if (!onStartAgentCall || callInProgress) {
+                return;
+              }
+              setStartingAgentCall(true);
+              void onStartAgentCall(existingAgentHuddleId)
+                .catch((error: unknown) => {
+                  const message =
+                    error instanceof Error
+                      ? error.message
+                      : "The voice call could not be started.";
+                  toast.error("Could not start the voice call", {
+                    description: message,
+                  });
+                  return { ok: false, message };
                 })
-                .catch((error) =>
-                  toast.error(formatHuddleActionError(error, "start")),
-                )
-                .finally(() => setStartingHuddle(false));
+                .finally(() => setStartingAgentCall(false));
             }}
-          />
+          >
+            <PhoneCall aria-hidden className="h-4 w-4" />
+            <span className="hidden sm:inline">
+              {callInProgress ? "Calling…" : "Call"}
+            </span>
+          </button>
+        )}
+        {agentCallError && canStartAgentCall && (
+          <span
+            className="max-w-56 truncate text-2xs text-red-400"
+            role="alert"
+          >
+            {agentCallError}
+          </span>
         )}
         {agentPubkey && (
           <button
