@@ -468,6 +468,18 @@ test("Custom Gradient is one picker choice with live, persistent variables and c
   await picker.selectOption("github-light");
   await expect(root).not.toHaveAttribute("data-custom-gradient", /.+/);
   await expect(root).toHaveCSS("--custom-gradient-pane", "");
+  for (const meta of await page.locator('meta[name="theme-color"]').all()) {
+    await expect(meta).not.toHaveAttribute("content", "#f1e2d3");
+  }
+
+  await picker.selectOption("custom-gradient");
+  await page.getByTestId("color-mode-dark").check();
+  await expect(root).toHaveCSS("--custom-gradient-pane", "#102030");
+  await picker.selectOption("github-dark");
+  await expect(root).not.toHaveAttribute("data-custom-gradient", /.+/);
+  for (const meta of await page.locator('meta[name="theme-color"]').all()) {
+    await expect(meta).not.toHaveAttribute("content", "#102030");
+  }
 });
 
 test("Custom Gradient pane endpoint follows Light, Dark, and System mode", async ({
@@ -506,6 +518,17 @@ test.describe("Custom Gradient on a phone", () => {
         (element) => element.scrollWidth <= element.clientWidth,
       ),
     ).toBe(true);
+    const modeCopy = page.getByText("System follows your device", {
+      exact: false,
+    });
+    const modeCopyBox = await modeCopy.boundingBox();
+    const modeControlBox = await page
+      .getByTestId("color-mode-control")
+      .boundingBox();
+    expect(modeCopyBox?.width ?? 0).toBeGreaterThanOrEqual(250);
+    expect(modeControlBox?.y ?? 0).toBeGreaterThanOrEqual(
+      (modeCopyBox?.y ?? 0) + (modeCopyBox?.height ?? 0),
+    );
     for (const control of [
       page.getByLabel("Custom gradient light color"),
       page.getByLabel("Custom gradient dark color"),

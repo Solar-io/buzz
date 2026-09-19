@@ -58,6 +58,7 @@ export const ACCENT_STORAGE_KEY = "buzz-accent-color";
  * immediately and reconcile once the real theme resolves.
  */
 const THEME_CACHE_KEY = "buzz-theme-cache-v2";
+const CUSTOM_META_PREVIOUS = "customGradientPreviousContent";
 
 const DEFAULT_THEME: SyntaxThemeName = BUZZ_DARK_THEME_NAME;
 
@@ -265,11 +266,17 @@ function applyCustomGradient(
   const vars = customGradientVars(config, isDark);
   for (const [name, value] of Object.entries(vars))
     root.style.setProperty(name, value);
-  const pane = vars["--custom-gradient-pane"];
   document
     .querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')
     .forEach((meta) => {
-      meta.setAttribute("content", pane);
+      if (!(CUSTOM_META_PREVIOUS in meta.dataset)) {
+        meta.dataset[CUSTOM_META_PREVIOUS] = meta.getAttribute("content") ?? "";
+      }
+      const metaIsDark = (meta.getAttribute("media") ?? "").includes("dark");
+      meta.setAttribute(
+        "content",
+        metaIsDark ? config.darkColor : config.lightColor,
+      );
     });
 }
 
@@ -277,6 +284,14 @@ function clearCustomGradient(): void {
   const root = document.documentElement;
   delete root.dataset.customGradient;
   for (const name of CUSTOM_GRADIENT_VAR_NAMES) root.style.removeProperty(name);
+  document
+    .querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')
+    .forEach((meta) => {
+      const previous = meta.dataset[CUSTOM_META_PREVIOUS];
+      if (previous === undefined) return;
+      meta.setAttribute("content", previous);
+      delete meta.dataset[CUSTOM_META_PREVIOUS];
+    });
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
@@ -341,6 +356,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+    if (!isCustomGradientTheme(appliedThemeName)) clearCustomGradient();
     void applyThemeByName(appliedThemeName)
       .then((cache) => {
         if (cancelled) return;

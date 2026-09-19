@@ -126,7 +126,7 @@ export function AppearanceSection() {
         </span>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">Colour mode</p>
           <p className="text-xs text-muted-foreground">
