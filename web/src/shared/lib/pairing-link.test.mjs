@@ -4,6 +4,7 @@ import { nsecEncode } from "nostr-tools/nip19";
 import {
   buildPairingLink,
   classifyScannedConnection,
+  describePairingContents,
   parsePairingServices,
 } from "./pairing-link.ts";
 import { parseSecretKeyInput } from "./nsec.ts";
@@ -272,4 +273,61 @@ test("buildPairingLink includes relay when it differs from the derived default",
   // Relay param should be included
   const hash = link.split("#")[1];
   assert.ok(hash.includes("relay=wss%3A%2F%2Frelay.example.com%3A6352"));
+});
+
+// T20: every configured service is named as carried, nothing omitted.
+// Mutation: drop the pushGatewayUrl row from `optional` → push gateway
+// disappears from `carried` and this test fails.
+test("T20: describePairingContents names every configured service", () => {
+  const { carried, omitted } = describePairingContents({
+    relayUrl: "wss://relay.example.com:6351",
+    sttUrl: "wss://stt.example.com:6361/stt",
+    ttsUrl: "https://tts.example.com:6366/tts",
+    pushGatewayUrl: "https://push.example.com:6359/",
+  });
+
+  assert.deepEqual(carried, [
+    "relay",
+    "speech recognition",
+    "agent speech",
+    "push gateway",
+  ]);
+  assert.deepEqual(omitted, []);
+});
+
+// T21: an unconfigured service is reported as omitted, not carried.
+// Mutation: always push to `carried` (drop the else branch) → omitted is []
+// and this test fails.
+test("T21: describePairingContents omits unconfigured services", () => {
+  const { carried, omitted } = describePairingContents({
+    relayUrl: "wss://relay.example.com:6351",
+    sttUrl: "wss://stt.example.com:6361/stt",
+    ttsUrl: "",
+    pushGatewayUrl: "",
+  });
+
+  assert.deepEqual(carried, ["relay", "speech recognition"]);
+  assert.deepEqual(omitted, ["agent speech", "push gateway"]);
+});
+
+// T22: the description tracks what the BUILDER actually put in the link —
+// this is the defect that shipped: a hardcoded line said push was not
+// included while buildPairingLink was carrying it.
+// Mutation: hardcode `omitted` to ["push gateway"] → this test fails.
+test("T22: describePairingContents agrees with buildPairingLink", () => {
+  const services = {
+    relayUrl: "wss://relay.example.com:6351",
+    sttUrl: "wss://stt.example.com:6361/stt",
+    ttsUrl: "https://tts.example.com:6366/tts",
+    pushGatewayUrl: "https://push.example.com:6359/",
+  };
+
+  const link = buildPairingLink("https://example.com", secretKey, services);
+  const fragment = new URLSearchParams(new URL(link).hash.replace(/^#/, ""));
+  const { carried, omitted } = describePairingContents(services);
+
+  assert.equal(carried.includes("push gateway"), fragment.has("push"));
+  assert.equal(carried.includes("speech recognition"), fragment.has("stt"));
+  assert.equal(carried.includes("agent speech"), fragment.has("tts"));
+  assert.deepEqual(omitted, []);
 });
