@@ -18,7 +18,16 @@ struct HuddleRoster {
     mutating func apply(_ message: [String: Any], selfPubkey: String) throws {
         guard let type = message["type"] as? String,
               let nextRevision = nativeInteger(message["revision"]), nextRevision >= 0 else { throw NativeError.message("Invalid audio roster revision.") }
-        if nextRevision < revision { return }
+        if nextRevision < revision {
+            // A newer authoritative roster can arrive ahead of our admission
+            // frame. Preserve that roster while accepting the matching self.
+            if type == "joined" && !admitted {
+                let own = try peer(message)
+                guard own.pubkey == selfPubkey.lowercased(), peers[own.index] == own else { throw NativeError.message("Invalid audio admission identity.") }
+                admitted = true
+            }
+            return
+        }
         if type == "roster" || (type == "joined" && !admitted) {
             guard let values = message["peers"] as? [[String: Any]] else { throw NativeError.message("Missing audio roster snapshot.") }
             var next: [Int: Peer] = [:]

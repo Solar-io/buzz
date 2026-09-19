@@ -34,11 +34,12 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
     private var drainPending = false
     private(set) var offReason: String?
     var enabled: Bool { voice }
-    var voiceStatus: String { offReason == nil ? (voice ? (sttReady ? "listening" : "starting") : "idle") : "error" }
+    var voiceStatus: String { offReason == nil ? (voice ? (sttReady && relayReady && membersReady ? "listening" : "starting") : "idle") : "error" }
     private var pcm = Data()
     private var player: AVAudioPlayer?
     private var synthesis: URLSessionDataTask?
     private var speechGeneration = 0
+    private var speechDeadline: DispatchWorkItem?
     private var speechQueue: [(String, String)] = []
     private var lastSpeechEnded = Date.distantPast
     private var retry = 0
@@ -74,7 +75,7 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
                 guard let self, self.alive, self.generation == token,
                       let bytes, let value = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
                       let pubkey = value["pubkey"] as? String, pubkey.count == 64 else {
-                    self?.report("Relay identity discovery failed; voice is unavailable."); return
+                    self?.dropVoice("Relay identity discovery failed; voice is unavailable.", reason: "bridge_error"); return
                 }
                 self.relayPubkey = pubkey
                 self.connectRelay(token)
@@ -316,6 +317,13 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
         speechGeneration += 1
         let speechToken = speechGeneration
         let token = generation
+        let deadline = DispatchWorkItem { [weak self] in
+            guard let self, self.generation == token, self.speechGeneration == speechToken, self.speaking else { return }
+            self.synthesis?.cancel(); self.player?.stop()
+            self.report("Agent speech timed out."); self.endSpeech()
+        }
+        speechDeadline = deadline
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double(text.utf16.count) * 0.09 + 5, execute: deadline)
         synthesis = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
                 guard let self, self.alive, self.generation == token, self.speechGeneration == speechToken, self.speech else { return }
@@ -334,6 +342,7 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
     }
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { if player === self.player { endSpeech() } }
     private func endSpeech() {
+        speechDeadline?.cancel(); speechDeadline = nil
         speechGeneration += 1
         if !lastSpoken.isEmpty { finalGate.record(lastSpoken, at: Date().timeIntervalSince1970); lastSpoken = "" }
         speaking = false; lastSpeechEnded = Date(); player = nil
