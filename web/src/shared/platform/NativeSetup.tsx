@@ -19,7 +19,8 @@ export function NativeSetup({ children }: { children: ReactNode }) {
       }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Could not save connection."));
     }}>
       <h1 className="text-xl font-semibold">Connect Buzz</h1>
-      <p className="text-sm text-muted-foreground">Enter your community relay. Speech and push service addresses are optional; your community operator provides them.</p>
+      <p className="text-sm text-muted-foreground">{services.relayUrl ? "Your community connection is ready. Continue to pair this iPhone or sign in." : "Enter your community connection to get started."}</p>
+      <details open={!services.relayUrl}><summary className="cursor-pointer text-sm">Advanced connection settings</summary>
       {([
         ["relayUrl", "Relay", "wss://relay.your-network/"],
         ["sttUrl", "Speech recognition", "wss://speech.your-network/stt"],
@@ -29,6 +30,7 @@ export function NativeSetup({ children }: { children: ReactNode }) {
         <span className="text-sm">{label}</span>
         <input className="w-full rounded border border-input bg-background p-3 text-base" aria-label={label} placeholder={placeholder} value={services[key]} required={key === "relayUrl"} autoCapitalize="none" autoCorrect="off" onChange={(event) => setServices({ ...services, [key]: event.target.value.trim() })} />
       </label>)}
+      </details>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       <button className="w-full rounded bg-primary p-3 text-primary-foreground" type="submit">Connect</button>
     </form>

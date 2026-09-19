@@ -159,7 +159,7 @@ export function ChannelHeader({
     (agentCallPhase !== "idle" && agentCallPhase !== "active");
 
   return (
-    <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-secondary px-4">
+    <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-1 border-b border-border bg-secondary px-2 py-1 sm:h-14 sm:flex-nowrap sm:gap-2 sm:px-4 sm:py-0">
       <div className="group/title flex min-w-0 items-center gap-1.5">
         <ChannelIcon channel={channel} />
         <h1 className="truncate text-base font-semibold">{title}</h1>
@@ -204,7 +204,7 @@ export function ChannelHeader({
           {description}
         </p>
       )}
-      <div className="ml-auto flex shrink-0 items-center gap-1.5">
+      <div className="ml-auto flex min-w-0 max-w-full items-center gap-1.5 overflow-x-auto">
         {actions}
         {showJoin && (
           <button
