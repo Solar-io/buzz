@@ -1040,8 +1040,7 @@ pub struct PromptProfile {
     pub display_name: Option<String>,
     pub nip05_handle: Option<String>,
     /// True when this pubkey's kind:0 profile carries a NIP-OA `auth` tag,
-    /// i.e. it is an owned agent rather than a human. Used to gate reply-anchor
-    /// flattening (UX routing heuristic, not a security boundary).
+    /// i.e. it is an owned agent rather than a human.
     pub is_agent: bool,
 }
 
@@ -1204,7 +1203,7 @@ fn append_reply_instruction(s: &mut String, event_id: &str) {
     ));
 }
 
-/// Append a new-thread reply instruction for a human-facing top-level mention.
+/// Append a new-thread reply instruction for a top-level mention.
 ///
 /// The triggering mention has no thread tags, so the agent's reply becomes the
 /// thread root. Anchoring to the triggering event (rather than leaving the
@@ -1219,50 +1218,12 @@ fn append_new_thread_reply_instruction(s: &mut String, event_id: &str) {
     ));
 }
 
-/// Decide whether a turn is human-facing for reply-anchor purposes.
-///
-/// A turn is human-facing when the triggering sender is a human, OR a human
-/// (other than this agent) is tagged in the triggering event. Identity comes
-/// from `PromptProfile::is_agent` (NIP-OA auth tag), not raw `p`-tag presence:
-/// agent-only mentions must not force flattening. When a participant cannot be
-/// classified (no profile fetched), it is treated as human — humans must not
-/// lose thread visibility to a misclassification.
-fn turn_is_human_facing(
-    sender_pubkey: &str,
-    thread_tags: &ThreadTags,
-    profile_lookup: Option<&PromptProfileLookup>,
-) -> bool {
-    let is_agent = |pubkey: &str| -> bool {
-        profile_lookup
-            .and_then(|m| m.get(&normalize_lookup_key(pubkey)))
-            .map(|p| p.is_agent)
-            // Unknown identity → treat as human (fail open for visibility).
-            .unwrap_or(false)
-    };
-
-    if !is_agent(sender_pubkey) {
-        return true;
-    }
-    thread_tags.mentioned_pubkeys.iter().any(|pk| !is_agent(pk))
-}
-
 /// Resolve the `--reply-to` anchor for a non-DM turn.
 ///
-/// Returns `Some(id)` only for human-facing turns (see [`turn_is_human_facing`]):
+/// Returns `Some(id)` for every turn:
 ///   - in a thread → the thread ROOT, keeping the reply flat at layer 1
 ///   - top-level   → the triggering event id, which becomes the new thread root
-///
-/// Returns `None` for agent↔agent turns, leaving the agent free to nest deeply
-/// (intentional for agent coordination).
-fn resolve_reply_anchor(
-    sender_pubkey: &str,
-    thread_tags: &ThreadTags,
-    triggering_event_id: &str,
-    profile_lookup: Option<&PromptProfileLookup>,
-) -> Option<String> {
-    if !turn_is_human_facing(sender_pubkey, thread_tags, profile_lookup) {
-        return None;
-    }
+fn resolve_reply_anchor(thread_tags: &ThreadTags, triggering_event_id: &str) -> Option<String> {
     Some(
         thread_tags
             .root_event_id
@@ -1402,9 +1363,8 @@ fn append_channel_description(s: &mut String, channel_info: Option<&PromptChanne
 ///
 /// `reply_anchor` is the pre-resolved `--reply-to` target for this turn (see
 /// [`resolve_reply_anchor`]). In the thread/DM branches it threads ordinary
-/// replies; in the channel branch a `Some` anchor means a human-facing
-/// top-level mention whose reply should open a new thread rooted at the
-/// triggering event.
+/// replies; in the channel branch a `Some` anchor means a top-level mention
+/// whose reply should open a new thread rooted at the triggering event.
 #[allow(clippy::too_many_arguments)]
 fn format_context_hints(
     channel_id: Uuid,
@@ -1726,26 +1686,19 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
         );
     }
 
-    // 2. Context hints (with a human-aware reply anchor).
+    // 2. Context hints (with a flat reply anchor).
     //
-    // Human-facing turns are anchored so replies stay readable at layer 1:
+    // Every turn is anchored so replies stay readable at layer 1:
     //   - in a thread  → anchor to the thread ROOT (no depth-2 nesting)
     //   - top-level     → anchor to the triggering event (it becomes the root)
-    // Agent↔agent turns get no forced anchor — deep nesting is intentional
-    // there. DMs are always 1:1 with a human, so they always anchor.
-    let sender_pubkey = last_event.event.pubkey.to_hex();
+    // DMs keep their existing reply behavior.
     let reply_anchor = if is_dm {
         thread_tags
             .root_event_id
             .is_some()
             .then(|| last_event.event.id.to_hex())
     } else {
-        resolve_reply_anchor(
-            &sender_pubkey,
-            &thread_tags,
-            &last_event.event.id.to_hex(),
-            args.profile_lookup,
-        )
+        resolve_reply_anchor(&thread_tags, &last_event.event.id.to_hex())
     };
 
     // Temporal ground truth: local wall clock + message staleness. `now` is
@@ -2638,8 +2591,8 @@ mod tests {
 
         // Reply instruction points at the thread root of the steering message
         // (thread_b), not the steering event's own id — this matches the
-        // human-aware reply anchoring from PR #1281: for human-facing turns in
-        // a thread, the anchor is always the thread root.
+        // flat reply anchoring: for every turn in a thread, the anchor is
+        // always the thread root.
         assert!(
             prompt.contains(&format!("--reply-to {thread_b}")),
             "reply instruction should target the steering thread root: {prompt}"
@@ -3999,29 +3952,13 @@ mod tests {
         );
     }
 
-    // ── Human-aware reply anchoring ──────────────────────────────────────────
+    // ── Flat reply anchoring ─────────────────────────────────────────────────
 
     const HUMAN_PK: &str = "1111111111111111111111111111111111111111111111111111111111111111";
     const AGENT_A_PK: &str = "2222222222222222222222222222222222222222222222222222222222222222";
     const AGENT_B_PK: &str = "3333333333333333333333333333333333333333333333333333333333333333";
     const ROOT_ID: &str = "abc0000000000000000000000000000000000000000000000000000000000000";
     const TRIGGER_ID: &str = "def0000000000000000000000000000000000000000000000000000000000000";
-
-    fn profile(is_agent: bool) -> PromptProfile {
-        PromptProfile {
-            is_agent,
-            ..Default::default()
-        }
-    }
-
-    /// Lookup with HUMAN as a human and AGENT_A / AGENT_B as agents.
-    fn id_lookup() -> PromptProfileLookup {
-        HashMap::from([
-            (HUMAN_PK.to_string(), profile(false)),
-            (AGENT_A_PK.to_string(), profile(true)),
-            (AGENT_B_PK.to_string(), profile(true)),
-        ])
-    }
 
     fn thread_tags(root: Option<&str>, mentions: &[&str]) -> ThreadTags {
         ThreadTags {
@@ -4035,7 +3972,7 @@ mod tests {
     fn test_anchor_human_in_thread_uses_root() {
         // Human asks inside a thread → anchor to the thread ROOT (flat at L1).
         let tags = thread_tags(Some(ROOT_ID), &[AGENT_A_PK]);
-        let anchor = resolve_reply_anchor(HUMAN_PK, &tags, TRIGGER_ID, Some(&id_lookup()));
+        let anchor = resolve_reply_anchor(&tags, TRIGGER_ID);
         assert_eq!(anchor.as_deref(), Some(ROOT_ID));
     }
 
@@ -4043,48 +3980,47 @@ mod tests {
     fn test_anchor_human_top_level_uses_triggering_event() {
         // Human top-level mention (no thread tags) → triggering event is root.
         let tags = thread_tags(None, &[AGENT_A_PK]);
-        let anchor = resolve_reply_anchor(HUMAN_PK, &tags, TRIGGER_ID, Some(&id_lookup()));
+        let anchor = resolve_reply_anchor(&tags, TRIGGER_ID);
         assert_eq!(anchor.as_deref(), Some(TRIGGER_ID));
     }
 
     #[test]
-    fn test_anchor_agent_to_agent_in_thread_is_none() {
-        // Agent pings agent inside a thread → no forced anchor (deep nesting ok).
+    fn test_anchor_agent_to_agent_in_thread_uses_root() {
+        // Agent pings agent inside a thread → anchor to the thread ROOT.
         let tags = thread_tags(Some(ROOT_ID), &[AGENT_B_PK]);
-        let anchor = resolve_reply_anchor(AGENT_A_PK, &tags, TRIGGER_ID, Some(&id_lookup()));
-        assert_eq!(anchor, None);
+        let anchor = resolve_reply_anchor(&tags, TRIGGER_ID);
+        assert_eq!(anchor.as_deref(), Some(ROOT_ID));
     }
 
     #[test]
-    fn test_anchor_agent_to_agent_top_level_is_none() {
+    fn test_anchor_agent_to_agent_top_level_uses_triggering_event() {
         let tags = thread_tags(None, &[AGENT_B_PK]);
-        let anchor = resolve_reply_anchor(AGENT_A_PK, &tags, TRIGGER_ID, Some(&id_lookup()));
-        assert_eq!(anchor, None);
+        let anchor = resolve_reply_anchor(&tags, TRIGGER_ID);
+        assert_eq!(anchor.as_deref(), Some(TRIGGER_ID));
     }
 
     #[test]
-    fn test_anchor_agent_sender_but_human_tagged_flattens() {
-        // Agent-authored, but a human is tagged → human-facing → anchor to root.
+    fn test_anchor_agent_sender_with_human_tag_uses_root() {
+        // Agent-authored with a human tagged → still anchor to the root.
         let tags = thread_tags(Some(ROOT_ID), &[AGENT_B_PK, HUMAN_PK]);
-        let anchor = resolve_reply_anchor(AGENT_A_PK, &tags, TRIGGER_ID, Some(&id_lookup()));
+        let anchor = resolve_reply_anchor(&tags, TRIGGER_ID);
         assert_eq!(anchor.as_deref(), Some(ROOT_ID));
     }
 
     #[test]
-    fn test_anchor_unknown_identity_treated_as_human() {
-        // No profile lookup → fail open (treat as human so visibility is kept).
+    fn test_anchor_without_profile_uses_root() {
+        // No profile lookup is needed: every thread reply uses the root.
         let tags = thread_tags(Some(ROOT_ID), &[]);
-        let anchor = resolve_reply_anchor(AGENT_A_PK, &tags, TRIGGER_ID, None);
+        let anchor = resolve_reply_anchor(&tags, TRIGGER_ID);
         assert_eq!(anchor.as_deref(), Some(ROOT_ID));
     }
 
     #[test]
-    fn test_anchor_agent_only_p_tags_do_not_flatten() {
-        // Raw p-tag presence must NOT flatten when every tagged pubkey is an
-        // agent — this is the regression Pinky flagged.
+    fn test_anchor_agent_only_p_tags_still_use_root() {
+        // Agent-only p-tags follow the same one-level rule as every other turn.
         let tags = thread_tags(Some(ROOT_ID), &[AGENT_A_PK, AGENT_B_PK]);
-        let anchor = resolve_reply_anchor(AGENT_A_PK, &tags, TRIGGER_ID, Some(&id_lookup()));
-        assert_eq!(anchor, None);
+        let anchor = resolve_reply_anchor(&tags, TRIGGER_ID);
+        assert_eq!(anchor.as_deref(), Some(ROOT_ID));
     }
 
     #[test]
@@ -4733,13 +4669,12 @@ mod tests {
             cancel_reason: None,
         };
 
-        // No profile lookup → sender treated as human → human-facing thread
-        // reply anchors to the thread ROOT (flat at layer 1), not the
-        // triggering event id.
+        // Every thread reply anchors to the thread ROOT (flat at layer 1), not
+        // the triggering event id.
         let prompt = format_prompt(&batch, &FormatPromptArgs::default()).join("\n\n");
         assert!(
             prompt.contains(&format!("--reply-to {root_id}")),
-            "human-facing thread reply should anchor to the thread root"
+            "thread reply should anchor to the thread root"
         );
         assert!(
             prompt.contains("For ordinary replies in this turn"),
@@ -4752,6 +4687,59 @@ mod tests {
         assert!(
             !prompt.contains("Do not broadcast to the channel"),
             "reply instruction should not forbid explicit human-requested root posts"
+        );
+    }
+
+    #[test]
+    fn test_reply_instruction_present_for_agent_to_agent_thread_reply() {
+        let ch = Uuid::new_v4();
+        let root_id = "f".repeat(64);
+        let event = make_event_with_tags(
+            "@agent continue here",
+            vec![
+                vec!["e".into(), root_id.clone(), "".into(), "reply".into()],
+                vec!["p".into(), AGENT_B_PK.into()],
+            ],
+        );
+        let sender_pubkey = event.pubkey.to_hex();
+        let profiles = HashMap::from([
+            (
+                sender_pubkey,
+                PromptProfile {
+                    is_agent: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                AGENT_B_PK.into(),
+                PromptProfile {
+                    is_agent: true,
+                    ..Default::default()
+                },
+            ),
+        ]);
+        let batch = FlushBatch {
+            channel_id: ch,
+            events: vec![BatchEvent {
+                event,
+                prompt_tag: "@mention".into(),
+                received_at: Instant::now(),
+            }],
+            cancelled_events: vec![],
+            cancel_reason: None,
+        };
+
+        let prompt = format_prompt(
+            &batch,
+            &FormatPromptArgs {
+                profile_lookup: Some(&profiles),
+                ..Default::default()
+            },
+        )
+        .join("\n\n");
+        assert!(
+            prompt.contains(&format!("--reply-to {root_id}")),
+            "agent-to-agent thread reply should anchor to the thread root"
         );
     }
 
@@ -4882,12 +4870,12 @@ mod tests {
             cancel_reason: None,
         };
 
-        // Human-facing (no lookup) deep reply: anchor to the thread ROOT to
-        // keep the conversation flat — NOT the triggering event or parent.
+        // Deep reply: anchor to the thread ROOT to keep the conversation flat
+        // — NOT the triggering event or parent.
         let prompt = format_prompt(&batch, &FormatPromptArgs::default()).join("\n\n");
         assert!(
             prompt.contains(&format!("--reply-to {root_id}")),
-            "human-facing nested reply should anchor to the thread root"
+            "nested reply should anchor to the thread root"
         );
         assert!(
             !prompt.contains(&format!("--reply-to {event_id}")),
@@ -4921,7 +4909,7 @@ mod tests {
         let prompt = format_prompt(&batch, &FormatPromptArgs::default()).join("\n\n");
         assert!(
             prompt.contains(&format!("--reply-to {root_id}")),
-            "human-facing thread reply should anchor to the thread root"
+            "thread reply should anchor to the thread root"
         );
         assert!(
             prompt.contains("channel-root, top-level"),
@@ -4960,8 +4948,8 @@ mod tests {
             cancel_reason: None,
         };
 
-        // Scope derives from the last (threaded) event; human-facing → anchor
-        // to that thread's root.
+        // Scope derives from the last (threaded) event and anchors to that
+        // thread's root.
         let prompt = format_prompt(&batch, &FormatPromptArgs::default()).join("\n\n");
         assert!(
             prompt.contains(&format!("--reply-to {root_id}")),
@@ -4997,8 +4985,8 @@ mod tests {
             cancel_reason: None,
         };
 
-        // Last event is top-level and human-facing → opens a new thread
-        // anchored to that top-level event (NOT the earlier thread's root).
+        // Last event is top-level → opens a new thread anchored to that event
+        // (NOT the earlier thread's root).
         let prompt = format_prompt(&batch, &FormatPromptArgs::default()).join("\n\n");
         assert!(
             prompt.contains(&format!("--reply-to {plain_id}")),
