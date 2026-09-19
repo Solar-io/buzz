@@ -1,6 +1,9 @@
 import XCTest
 import WebKit
 import UIKit
+import UserNotifications
+import CryptoKit
+import Capacitor
 @testable import BuzzNative
 
 private final class MessageCapture: NSObject, WKScriptMessageHandler {
@@ -130,5 +133,93 @@ final class BridgeGateTests: XCTestCase {
         XCTAssertEqual(witness.values, ["foreign-frame"])
         webView.stopLoading()
         config.userContentController.removeAllScriptMessageHandlers()
+    }
+}
+
+/// No fixture setup, enrollment, migration invocation, logout, permission
+/// request, audio start, or device control belongs in this class.
+final class DeviceReadOnlySmokeTests: XCTestCase {
+    @MainActor
+    func testRestoredIdentityAndAuthenticatedConnection() async throws {
+#if targetEnvironment(simulator)
+        throw XCTSkip("Physical read-only smoke is run separately with an exact -only-testing filter.")
+#else
+        try await inspectRestoredApplication()
+#endif
+    }
+
+    @MainActor
+    private func inspectRestoredApplication() async throws {
+        func findWebView(_ view: UIView) -> WKWebView? {
+            if let webView = view as? WKWebView { return webView }
+            return view.subviews.compactMap { findWebView($0) }.first
+        }
+        var applicationWebView: WKWebView?
+        for _ in 0..<100 {
+            applicationWebView = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                .flatMap(\.windows).compactMap { findWebView($0) }.first
+            if let webView = applicationWebView,
+               let ready = try? await webView.evaluateJavaScript("!!window.Capacitor?.isPluginAvailable('BuzzIdentity')") as? Bool, ready { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        let webView = try XCTUnwrap(applicationWebView, "The installed application has no WebView")
+        XCTAssertEqual(webView.url?.scheme, "capacitor")
+        XCTAssertEqual(webView.url?.host, "localhost")
+        let result = try await webView.callAsyncJavaScript(
+            "return await window.Capacitor.nativePromise('BuzzIdentity', 'state', {});",
+            arguments: [:], in: nil, contentWorld: .page)
+        let state = try XCTUnwrap(result as? [String: Any])
+        XCTAssertEqual(Set(state.keys), Set(["pubkey", "locked"]))
+        XCTAssertEqual(state["locked"] as? Bool, false, "Unlock normally before running smoke; this test does not unlock anything")
+        let pubkey = try XCTUnwrap(state["pubkey"] as? String, "No restored signed-in identity")
+        XCTAssertEqual(pubkey.count, 64)
+        if let expected = ProcessInfo.processInfo.environment["BUZZ_SMOKE_EXPECTED_PUBKEY"], !expected.isEmpty {
+            XCTAssertEqual(pubkey, expected, "Restored public identity differs from the expected pre-upgrade identity")
+        }
+        let configValue = try await webView.evaluateJavaScript("localStorage.getItem('buzz.native-services.v1')")
+        let raw = try XCTUnwrap(configValue as? String)
+        let services = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: String])
+        let relay = try XCTUnwrap(services["relayUrl"])
+        let relayURL = try XCTUnwrap(URL(string: relay))
+        XCTAssertEqual(relayURL.scheme, "wss")
+        XCTAssertNotNil(relayURL.host)
+        XCTAssertFalse(relayURL.host?.hasSuffix(".invalid") ?? true, "A fixture relay is not a physical connectivity receipt")
+        var connected = false
+        for _ in 0..<300 {
+            if let ready = try? await webView.evaluateJavaScript("!!document.querySelector('button[aria-label=\"Open channels\"]') && !!document.querySelector('[title=\"Connected\"]')") as? Bool, ready { connected = true; break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertTrue(connected, "Authenticated phone shell did not report a connected relay")
+        // One signed read of this identity's public profile, never messages.
+        var queryURL = try XCTUnwrap(URLComponents(url: relayURL, resolvingAgainstBaseURL: false))
+        queryURL.scheme = "https"; queryURL.path = "/query"; queryURL.query = nil; queryURL.fragment = nil
+        let endpoint = try XCTUnwrap(queryURL.url)
+        let body = try JSONSerialization.data(withJSONObject: [["kinds": [0], "authors": [pubkey], "limit": 1]], options: [.sortedKeys])
+        let digest = SHA256.hash(data: body).map { String(format: "%02x", $0) }.joined()
+        let auth = try NativeIdentity.shared.sign(["kind": 27235, "content": "", "tags": [
+            ["u", endpoint.absoluteString], ["method", "POST"], ["payload", digest], ["nonce", UUID().uuidString]
+        ]])
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"; request.httpBody = body; request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Nostr \(try JSONSerialization.data(withJSONObject: auth).base64EncodedString())", forHTTPHeaderField: "Authorization")
+        let (responseBody, response) = try await URLSession.shared.data(for: request)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200, "Signed profile query was not accepted")
+        let profiles = try XCTUnwrap(try JSONSerialization.jsonObject(with: responseBody) as? [[String: Any]])
+        XCTAssertLessThanOrEqual(profiles.count, 1)
+        XCTAssertTrue(profiles.allSatisfy { $0["pubkey"] as? String == pubkey && $0["kind"] as? Int == 0 })
+        // Call the getter directly with a local result sink. The normal debug
+        // JS bridge logs complete responses, which would expose the APNs token.
+        var tokenPresent: Bool?
+        let call = try XCTUnwrap(CAPPluginCall(callbackId: "readonly-smoke", methodName: "apnsToken", options: [:], success: { result, _ in
+            tokenPresent = !((result?.data?["token"] as? String)?.isEmpty ?? true)
+        }, error: { _ in tokenPresent = nil }))
+        BuzzPushPlugin().apnsToken(call)
+        let hasToken = try XCTUnwrap(tokenPresent, "Native token getter did not return")
+        let notificationSettings = await UNUserNotificationCenter.current().notificationSettings()
+        let receipt = XCTAttachment(string: "Public identity: \(pubkey)\nRelay: \(relay)\nNotification authorization raw value: \(notificationSettings.authorizationStatus.rawValue)\nAPNs token present: \(hasToken)\nConnected shell: \(connected)\nSigned public-profile query: HTTP 200")
+        receipt.name = "Read-only device metadata; no message content or secrets"
+        receipt.lifetime = .keepAlways
+        add(receipt)
     }
 }
