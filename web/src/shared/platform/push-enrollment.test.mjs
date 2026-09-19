@@ -263,6 +263,20 @@ test("denied permission never creates an installation or lease", async () => {
   assert.equal(f.values.size, 0);
   assert.equal(f.published.length, 0);
 });
+
+test("cold-launch maintenance waits for APNs registration without disabling a valid lease", async () => {
+  const f = fixture();
+  const service = f.service();
+  await service.enable();
+  f.options.plugin.apnsToken = async () => ({ token: null });
+  const calls = f.requests.length;
+  const status = await service.maintain();
+  assert.equal(status.enabled, true);
+  assert.equal(f.requests.length, calls);
+  f.options.plugin.apnsToken = async () => ({ token: "bb".repeat(32) });
+  await service.maintain();
+  assert.equal(f.state().epoch, 2);
+});
 test("wrong relay descriptor origin is rejected before requesting native authority", async () => {
   const f = fixture();
   f.options.fetch = async () =>

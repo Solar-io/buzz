@@ -10,6 +10,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        // Refresh the process-local APNs token on every launch. This does
+        // not prompt for alert permission or enable a relay lease; explicit
+        // opt-in and its persisted desired state still control enrollment.
+        application.registerForRemoteNotifications()
         return true
     }
 

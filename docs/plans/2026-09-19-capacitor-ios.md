@@ -26,6 +26,18 @@ An item is complete only with implementation and the relevant verification. Devi
 
 ## Initial evidence
 
+### Authorized cutover update
+
+Sam subsequently authorized replacing the unused Flutter app and gateway
+(2026-09-19, event `e7b172efdb595608840e633ebde1e73185edf763790fe7d2bd801c58e3073b96`).
+The local installation can reuse `cloud.noet.buzz`, with the old gateway/image
+and database backed up first. This supersedes the initial co-installation
+requirement for this deployment; the source still supports a separate bundle.
+Flutter source and existing app data are not deleted. Same-topic gateway
+configuration is accepted only when every enabled profile is Capacitor.
+The cutover includes the relay's necessary push integration and exact signed
+gateway URL; pairing/database containers are not replacement targets.
+
 - Initial base: `1199b86a67` (2026-09-19 canonical main).
 - Isolated branch: `codex/buzz-ios-capacitor-20260919`.
 - Prior analysis: `~/.buzz/RESEARCH/BUZZ_WEB_IOS_FUNCTIONALITY_ANALYSIS_2026-09-19.md` and `BUZZ_IOS_WRAPPER_RECOMMENDATION_2026-09-19.md`.

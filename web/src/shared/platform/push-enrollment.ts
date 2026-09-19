@@ -489,6 +489,10 @@ export function createPushEnrollment(options: PushEnrollmentOptions) {
         await flush(s);
         if (s.revokePending) await revoke(s);
         if (!s.desired) return statusOf(s);
+        // APNs re-registers asynchronously at cold launch. Its token event
+        // will retry maintenance; don't falsely report a broken lease while
+        // registration is still in flight or the device is offline.
+        if (!(await options.plugin.apnsToken()).token) return statusOf(s);
         const endpoint = await token(false);
         const d = await discover();
         if (s.installationExpires <= now()) {

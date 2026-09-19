@@ -649,6 +649,9 @@ async fn deliver(State(s): State<AppState>, headers: HeaderMap, body: Bytes) -> 
         Ok(x) => x,
         Err(_) => return error(StatusCode::NOT_FOUND, "invalid_grant"),
     };
+    if !s.enabled_profiles.contains(&grant.app_profile) {
+        return error(StatusCode::FORBIDDEN, "profile_disabled");
+    }
     let now = (s.now)();
     if grant.v != WIRE_VERSION
         || !valid_relay_pubkey(&grant.relay_pubkey)

@@ -21,7 +21,9 @@ Capacitor uses a separate app identity. Add
 (`TEAMID.bundle-id`) and `BUZZ_PUSH_CAPACITOR_APNS_TOPIC` (`bundle-id`).
 The team must match `BUZZ_PUSH_APNS_TEAM_ID`, and the new topic must differ
 from the legacy `BUZZ_PUSH_APNS_TOPIC`. The same-team provider key is reused.
-Missing/inconsistent configuration fails startup. Migration 0002 extends
+An explicitly authorized replacement may reuse the legacy topic only when
+all enabled profiles are Capacitor profiles. Co-installation continues to
+require distinct topics. Missing/inconsistent configuration fails startup. Migration 0002 extends
 allowed profile values without rewriting existing installations.
 
 After matching signing/profile configuration is ready, the relay can enable

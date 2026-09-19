@@ -187,7 +187,10 @@ impl Config {
             // provisioned app, on the provider key's team. Never borrow the
             // Flutter topic as a fallback.
             if app_attest_app_id != format!("{}.{}", req(e, "BUZZ_PUSH_APNS_TEAM_ID")?, apns_topic)
-                || apns_topic == req(e, "BUZZ_PUSH_APNS_TOPIC")?
+                || (apns_topic == req(e, "BUZZ_PUSH_APNS_TOPIC")?
+                    && enabled_profiles
+                        .iter()
+                        .any(|profile| !profile.is_capacitor()))
                 || apns_topic
                     .bytes()
                     .any(|b| !(b.is_ascii_alphanumeric() || b == b'.' || b == b'-'))
@@ -346,6 +349,33 @@ mod tests {
             env.insert("BUZZ_PUSH_PUBLIC_DELIVERY_URL".into(), invalid.into());
             assert!(Config::from_map(&env).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn replacement_can_reuse_the_app_identity_only_after_legacy_profiles_are_disabled() {
+        let mut env = base();
+        env.insert(
+            "BUZZ_PUSH_ENABLED_PROFILES".into(),
+            "buzz-capacitor-ios-sandbox,buzz-capacitor-ios-production".into(),
+        );
+        env.insert(
+            "BUZZ_PUSH_CAPACITOR_APP_ATTEST_APP_ID".into(),
+            "team.app".into(),
+        );
+        env.insert("BUZZ_PUSH_CAPACITOR_APNS_TOPIC".into(), "app".into());
+        assert_eq!(
+            Config::from_map(&env)
+                .unwrap()
+                .capacitor_app
+                .unwrap()
+                .apns_topic,
+            "app"
+        );
+        env.insert(
+            "BUZZ_PUSH_ENABLED_PROFILES".into(),
+            "buzz-capacitor-ios-sandbox,buzz-ios-production".into(),
+        );
+        assert!(Config::from_map(&env).is_err());
     }
 
     #[test]
