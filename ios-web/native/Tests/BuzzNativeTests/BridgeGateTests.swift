@@ -184,12 +184,16 @@ final class DeviceReadOnlySmokeTests: XCTestCase {
         XCTAssertEqual(relayURL.scheme, "wss")
         XCTAssertNotNil(relayURL.host)
         XCTAssertFalse(relayURL.host?.hasSuffix(".invalid") ?? true, "A fixture relay is not a physical connectivity receipt")
+        let openedDrawer = try await webView.evaluateJavaScript("(() => { if (document.querySelector('button[aria-label=\"Close channels\"]')) return false; const button = document.querySelector('button[aria-label=\"Open channels\"]'); if (!button) return false; button.click(); return true; })()") as? Bool ?? false
         var connected = false
         for _ in 0..<300 {
             if let ready = try? await webView.evaluateJavaScript("!!document.querySelector('button[aria-label=\"Open channels\"]') && !!document.querySelector('[title=\"Connected\"]')") as? Bool, ready { connected = true; break }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
         XCTAssertTrue(connected, "Authenticated phone shell did not report a connected relay")
+        if openedDrawer {
+            _ = try await webView.evaluateJavaScript("document.querySelector('button[aria-label=\"Close channels\"]')?.click()")
+        }
         // One signed read of this identity's public profile, never messages.
         var queryURL = try XCTUnwrap(URLComponents(url: relayURL, resolvingAgainstBaseURL: false))
         queryURL.scheme = "https"; queryURL.path = "/query"; queryURL.query = nil; queryURL.fragment = nil
@@ -206,7 +210,7 @@ final class DeviceReadOnlySmokeTests: XCTestCase {
         let (responseBody, response) = try await URLSession.shared.data(for: request)
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200, "Signed profile query was not accepted")
         let profiles = try XCTUnwrap(try JSONSerialization.jsonObject(with: responseBody) as? [[String: Any]])
-        XCTAssertLessThanOrEqual(profiles.count, 1)
+        XCTAssertEqual(profiles.count, 1, "The expected pre-existing public profile must be returned; an empty response is not identity proof")
         XCTAssertTrue(profiles.allSatisfy { $0["pubkey"] as? String == pubkey && $0["kind"] as? Int == 0 })
         // Call the getter directly with a local result sink. The normal debug
         // JS bridge logs complete responses, which would expose the APNs token.
