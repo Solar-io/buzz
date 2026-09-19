@@ -2,6 +2,7 @@ node_modules/
 build/
 build-qa/
 build-device/
+build-device-smoke/
 *.local.xcconfig
 ios/App/App/public/
 ios/App/App/capacitor.config.json
