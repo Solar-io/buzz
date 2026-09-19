@@ -105,10 +105,7 @@ test("done is the only closed status; case and whitespace tolerant", () => {
   assert.ok(entry);
   // "shipped" and the statusless item are NOT done — they stay open. A
   // synonym list here would silently close real work.
-  assert.deepEqual(
-    entry.openItems.map((item) => item.id).sort(),
-    ["C", "D"],
-  );
+  assert.deepEqual(entry.openItems.map((item) => item.id).sort(), ["C", "D"]);
 });
 
 test("cites by display name still join to the slug-keyed card", () => {

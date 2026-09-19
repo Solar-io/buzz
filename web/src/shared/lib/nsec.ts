@@ -80,11 +80,6 @@ export function parseSecretKeyInput(input: string): ParsedKey {
   return { ok: true, secretKey, nsec: nsecEncode(secretKey) };
 }
 
-/** Canonical QR payload for pairing: a link that opens the app with the key. */
-export function pairingLink(origin: string, secretKey: Uint8Array): string {
-  return `${origin}/repos#nsec=${nsecFromSecretKey(secretKey)}`;
-}
-
 /** nsec form of the key. */
 export function nsecFromSecretKey(secretKey: Uint8Array): string {
   return nsecEncode(secretKey);

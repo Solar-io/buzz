@@ -17,14 +17,20 @@ const BASE = {
 };
 
 test("picks the first message-bearing DM once settled", () => {
-  assert.deepEqual(decideDefaultConversation(BASE), { action: "open", index: 1 });
+  assert.deepEqual(decideDefaultConversation(BASE), {
+    action: "open",
+    index: 1,
+  });
 });
 
 test("round-3 fix: WAITS past the old 1.2s behavior while the window is unsettled", () => {
   // Cold start, sampling subs unanswered, hard cap NOT yet reached: the
   // pick must hold even though connected + channels exist. Under the old
   // fixed-timer code this exact state opened nothing and left the picker.
-  const decision = decideDefaultConversation({ ...BASE, samplingSettled: false });
+  const decision = decideDefaultConversation({
+    ...BASE,
+    samplingSettled: false,
+  });
   assert.equal(decision.action, "wait");
 });
 
@@ -34,10 +40,7 @@ test("hard cap frees a dead relay to the picker, never a hang", () => {
     samplingSettled: false,
     hardCapElapsed: true,
     // Unmessaged multi-DM set under the cap-less gate = stand down (picker).
-    visibleDms: [
-      { lastActivity: 0 },
-      { lastActivity: 0 },
-    ],
+    visibleDms: [{ lastActivity: 0 }, { lastActivity: 0 }],
   });
   assert.equal(decision.action, "stand-down");
 });
@@ -62,11 +65,7 @@ test("lone visible DM opens even unmessaged", () => {
 test("no messaged DM and multiple visible DMs stands down (no roulette)", () => {
   const decision = decideDefaultConversation({
     ...BASE,
-    visibleDms: [
-      { lastActivity: 0 },
-      { lastActivity: 0 },
-      { lastActivity: 0 },
-    ],
+    visibleDms: [{ lastActivity: 0 }, { lastActivity: 0 }, { lastActivity: 0 }],
   });
   assert.equal(decision.action, "stand-down");
 });

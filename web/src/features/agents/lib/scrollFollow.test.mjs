@@ -42,12 +42,27 @@ test("a virtualizer's own upward corrections never pause the tail", () => {
   // survive the whole correction cascade.
   const state = createInputFollowState(true);
   // The jump: 0 → bottom.
-  assert.equal(applyInputFollowScroll(state, BOTTOM, CONTENT, VIEWPORT, 1_000), true);
+  assert.equal(
+    applyInputFollowScroll(state, BOTTOM, CONTENT, VIEWPORT, 1_000),
+    true,
+  );
   // Correction cascade: upward, downward, upward — unarmed by design.
-  assert.equal(applyInputFollowScroll(state, BOTTOM - 40, CONTENT, VIEWPORT, 1_016), true);
-  assert.equal(applyInputFollowScroll(state, BOTTOM - 12, CONTENT, VIEWPORT, 1_050), true);
-  assert.equal(applyInputFollowScroll(state, BOTTOM - 60, CONTENT, VIEWPORT, 1_090), true);
-  assert.equal(applyInputFollowScroll(state, BOTTOM, CONTENT, VIEWPORT, 1_120), true);
+  assert.equal(
+    applyInputFollowScroll(state, BOTTOM - 40, CONTENT, VIEWPORT, 1_016),
+    true,
+  );
+  assert.equal(
+    applyInputFollowScroll(state, BOTTOM - 12, CONTENT, VIEWPORT, 1_050),
+    true,
+  );
+  assert.equal(
+    applyInputFollowScroll(state, BOTTOM - 60, CONTENT, VIEWPORT, 1_090),
+    true,
+  );
+  assert.equal(
+    applyInputFollowScroll(state, BOTTOM, CONTENT, VIEWPORT, 1_120),
+    true,
+  );
   assert.equal(state.follow, true);
 });
 
@@ -57,9 +72,15 @@ test("an armed input followed by upward movement pauses the tail", () => {
   const state = createInputFollowState(true);
   applyInputFollowScroll(state, BOTTOM, CONTENT, VIEWPORT, 1_000);
   armFollowInput(state, 1_100); // touchmove
-  assert.equal(applyInputFollowScroll(state, BOTTOM - 20, CONTENT, VIEWPORT, 1_110), false);
+  assert.equal(
+    applyInputFollowScroll(state, BOTTOM - 20, CONTENT, VIEWPORT, 1_110),
+    false,
+  );
   // And it stays paused while they read up.
-  assert.equal(applyInputFollowScroll(state, BOTTOM - 900, CONTENT, VIEWPORT, 1_200), false);
+  assert.equal(
+    applyInputFollowScroll(state, BOTTOM - 900, CONTENT, VIEWPORT, 1_200),
+    false,
+  );
 });
 
 test("arming alone pauses nothing until the input actually moves up", () => {
@@ -69,11 +90,17 @@ test("arming alone pauses nothing until the input actually moves up", () => {
   applyInputFollowScroll(state, BOTTOM, CONTENT, VIEWPORT, 1_000);
   armFollowInput(state, 1_050);
   // Downward re-pin of the tail while armed: still following.
-  assert.equal(applyInputFollowScroll(state, BOTTOM, CONTENT, VIEWPORT, 1_060), true);
+  assert.equal(
+    applyInputFollowScroll(state, BOTTOM, CONTENT, VIEWPORT, 1_060),
+    true,
+  );
   // And a later UNARMED-looking upward correction cannot be blamed on the
   // expired arm.
   const late = 1_050 + FOLLOW_INPUT_ARM_MS + 100;
-  assert.equal(applyInputFollowScroll(state, BOTTOM - 50, CONTENT, VIEWPORT, late), true);
+  assert.equal(
+    applyInputFollowScroll(state, BOTTOM - 50, CONTENT, VIEWPORT, late),
+    true,
+  );
 });
 
 test("a stale arm expires instead of pausing a later settle", () => {
@@ -83,7 +110,10 @@ test("a stale arm expires instead of pausing a later settle", () => {
   // The input never scrolled (swipe on an inner scroller). Long after the
   // arm window, the tail's own correction passes by — it must not pause.
   const late = 2_000 + FOLLOW_INPUT_ARM_MS + 500;
-  assert.equal(applyInputFollowScroll(state, BOTTOM - 80, CONTENT, VIEWPORT, late), true);
+  assert.equal(
+    applyInputFollowScroll(state, BOTTOM - 80, CONTENT, VIEWPORT, late),
+    true,
+  );
 });
 
 test("scrolling back to the bottom resumes tailing", () => {
@@ -94,7 +124,10 @@ test("scrolling back to the bottom resumes tailing", () => {
   assert.equal(state.follow, false);
   // The reader scrolls back down to the very bottom — resume, regardless
   // of what armed the original pause.
-  assert.equal(applyInputFollowScroll(state, BOTTOM, CONTENT, VIEWPORT, 2_000), true);
+  assert.equal(
+    applyInputFollowScroll(state, BOTTOM, CONTENT, VIEWPORT, 2_000),
+    true,
+  );
   assert.equal(state.follow, true);
 });
 
@@ -104,11 +137,20 @@ test("the resume band consumes a pending arm", () => {
   const state = createInputFollowState(true);
   applyInputFollowScroll(state, BOTTOM, CONTENT, VIEWPORT, 1_000);
   armFollowInput(state, 1_100);
-  assert.equal(applyInputFollowScroll(state, READING, CONTENT, VIEWPORT, 1_120), false);
+  assert.equal(
+    applyInputFollowScroll(state, READING, CONTENT, VIEWPORT, 1_120),
+    false,
+  );
   armFollowInput(state, 1_200); // second input: scrolling back down
-  assert.equal(applyInputFollowScroll(state, BOTTOM, CONTENT, VIEWPORT, 1_260), true);
+  assert.equal(
+    applyInputFollowScroll(state, BOTTOM, CONTENT, VIEWPORT, 1_260),
+    true,
+  );
   // Unarmed upward correction afterwards: still following (arm was consumed).
-  assert.equal(applyInputFollowScroll(state, BOTTOM - 30, CONTENT, VIEWPORT, 1_300), true);
+  assert.equal(
+    applyInputFollowScroll(state, BOTTOM - 30, CONTENT, VIEWPORT, 1_300),
+    true,
+  );
 });
 
 test("forceInputFollow re-arms after a pause — the own-send exception", () => {
@@ -122,8 +164,14 @@ test("forceInputFollow re-arms after a pause — the own-send exception", () => 
   forceInputFollow(state);
   assert.equal(state.follow, true);
   // The send's tail jump then survives its own correction cascade.
-  assert.equal(applyInputFollowScroll(state, BOTTOM, CONTENT, VIEWPORT, 1_200), true);
-  assert.equal(applyInputFollowScroll(state, BOTTOM - 45, CONTENT, VIEWPORT, 1_230), true);
+  assert.equal(
+    applyInputFollowScroll(state, BOTTOM, CONTENT, VIEWPORT, 1_200),
+    true,
+  );
+  assert.equal(
+    applyInputFollowScroll(state, BOTTOM - 45, CONTENT, VIEWPORT, 1_230),
+    true,
+  );
   assert.equal(state.follow, true);
 });
 
@@ -132,7 +180,13 @@ test("sub-pixel unarmed drift is still ignored by the input engine", () => {
   applyInputFollowScroll(state, BOTTOM, CONTENT, VIEWPORT, 1_000);
   // Fractional hidpi drift, unarmed: no pause, exactly like the delta engine.
   assert.equal(
-    applyInputFollowScroll(state, BOTTOM - FOLLOW_UPWARD_PX, CONTENT, VIEWPORT, 1_010),
+    applyInputFollowScroll(
+      state,
+      BOTTOM - FOLLOW_UPWARD_PX,
+      CONTENT,
+      VIEWPORT,
+      1_010,
+    ),
     true,
   );
   // The band itself still matches FOLLOW_EDGE_PX.

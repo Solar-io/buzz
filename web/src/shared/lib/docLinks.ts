@@ -84,7 +84,10 @@ export function resolveDocHref(href: string, relayBase: string): string | null {
  * it only worked by accident on the relay-served SPA and rendered nothing
  * everywhere else.
  */
-export function absoluteDocHref(href: string, relayBase: string): string | null {
+export function absoluteDocHref(
+  href: string,
+  relayBase: string,
+): string | null {
   const path = resolveDocHref(href, relayBase);
   if (path === null) {
     return null;

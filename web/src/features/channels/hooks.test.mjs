@@ -420,4 +420,3 @@ after(() => {
     Object.defineProperty(globalThis, "navigator", originals.navigator);
   }
 });
-

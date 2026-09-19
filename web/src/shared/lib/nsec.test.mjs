@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { nsecEncode, npubEncode } from "nostr-tools/nip19";
-import { nsecFromSecretKey, pairingLink, parseSecretKeyInput } from "./nsec.ts";
+import { nsecFromSecretKey, parseSecretKeyInput } from "./nsec.ts";
 
 const secretKey = globalThis.crypto.getRandomValues(new Uint8Array(32));
 const nsec = nsecEncode(secretKey);
@@ -89,16 +89,4 @@ test("rejects a pairing link with a checksum-corrupted key", () => {
   );
   assert.equal(parsed.ok, false);
   assert.match(parsed.error, /checksum/i);
-});
-
-test("pairingLink builds an app URL that parses back to the same key", () => {
-  const link = pairingLink("https://buzz.example.com", secretKey);
-  assert.ok(
-    link.startsWith("https://buzz.example.com/repos#nsec="),
-    `unexpected link shape: ${link}`,
-  );
-  const parsed = parseSecretKeyInput(link);
-  assert.equal(parsed.ok, true);
-  assert.deepEqual(Array.from(parsed.secretKey), Array.from(secretKey));
-  assert.equal(parsed.nsec, nsec);
 });

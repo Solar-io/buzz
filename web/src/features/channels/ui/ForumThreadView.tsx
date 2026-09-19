@@ -165,7 +165,10 @@ export function ForumThreadView({
         arm();
       }
     };
-    scroller.addEventListener("touchmove", arm, { capture: true, passive: true });
+    scroller.addEventListener("touchmove", arm, {
+      capture: true,
+      passive: true,
+    });
     scroller.addEventListener("wheel", arm, { capture: true, passive: true });
     scroller.addEventListener("pointerdown", armForPointer, {
       capture: true,

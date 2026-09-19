@@ -10,8 +10,19 @@ import {
   enrollSecretKey,
   enrollSecretKeyFromPairing,
   setAuthTagJson,
+  prepareNativeCommunityChange,
 } from "@/shared/lib/key-store";
 import { type ParsedKey, parseSecretKeyInput } from "@/shared/lib/nsec";
+import {
+  parsePairingServices,
+  describeConnectionChanges,
+} from "@/shared/lib/pairing-link";
+import { applyScannedConnection } from "@/shared/lib/apply-scanned-connection";
+import {
+  readNativeServices,
+  writeNativeServices,
+  validateServices,
+} from "@/shared/platform/config";
 import { nsecEncode } from "nostr-tools/nip19";
 import { decryptNcryptsec } from "@/features/onboarding/keyBackup";
 import {
@@ -98,6 +109,60 @@ export function LoginPage() {
         toast.error(parsed.error);
         return;
       }
+
+      // Native iOS: apply services from QR first, then enroll
+      if (isNativeIOS()) {
+        try {
+          const services = parsePairingServices(text);
+          const current = readNativeServices();
+
+          // Apply the connection: confirm, prepare, then write
+          void applyScannedConnection(current, services, {
+            confirm: async (current, merged) => {
+              const changes = describeConnectionChanges(current, merged);
+              if (changes.length === 0) {
+                // Should not reach here, but handle gracefully
+                return window.confirm("Update connection?");
+              }
+              const relayChanging = current.relayUrl !== merged.relayUrl;
+              const message = `Update connection?\n\n${changes.join("\n")}${relayChanging ? "\n\nThis leaves any active call and disables push." : ""}`;
+              return window.confirm(message);
+            },
+            prepare: async () => {
+              // Run the native side effect (leave calls, revoke push)
+              await prepareNativeCommunityChange();
+            },
+            write: async (services) => {
+              writeNativeServices(services);
+            },
+            validate: validateServices,
+          })
+            .then((result) => {
+              // Only enroll if the connection was actually applied
+              if (result === "applied") {
+                void enrollFromQr(parsed);
+              }
+            })
+            .catch((error) => {
+              toast.error(
+                error instanceof Error
+                  ? error.message
+                  : "Could not apply connection",
+              );
+            });
+        } catch (error) {
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "Could not parse QR services",
+          );
+          // Still try to enroll the key even if services failed
+          void enrollFromQr(parsed);
+        }
+        return;
+      }
+
+      // Browser path: just enroll the key, don't apply services
       void enrollFromQr(parsed);
     },
     [enrollFromQr],

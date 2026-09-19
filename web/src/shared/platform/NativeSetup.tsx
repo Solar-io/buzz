@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { toast } from "sonner";
 import {
   BuzzHuddle,
   BuzzIdentity,
@@ -8,8 +9,18 @@ import {
 import {
   readNativeServices,
   writeNativeServices,
+  validateServices,
   type NativeServices,
 } from "./config";
+import { QrScanner } from "@/features/auth/ui/QrScanner";
+import {
+  parsePairingServices,
+  describeConnectionChanges,
+} from "@/shared/lib/pairing-link";
+import { parseSecretKeyInput } from "@/shared/lib/nsec";
+import { enrollSecretKeyFromPairing } from "@/shared/lib/key-store";
+import { applyScannedConnection } from "@/shared/lib/apply-scanned-connection";
+import { prepareNativeCommunityChange } from "@/shared/lib/key-store";
 
 export function NativeSetup({ children }: { children: ReactNode }) {
   const [services, setServices] = useState<NativeServices>(
@@ -22,6 +33,7 @@ export function NativeSetup({ children }: { children: ReactNode }) {
       },
   );
   const [error, setError] = useState("");
+  const [scanning, setScanning] = useState(false);
   const [previous, setPrevious] = useState<LegacyIdentityRestore["choices"]>(
     [],
   );
@@ -107,35 +119,123 @@ export function NativeSetup({ children }: { children: ReactNode }) {
             ? "Your community connection is ready. Continue to pair this iPhone or sign in."
             : "Enter your community connection to get started."}
         </p>
-        <details open={!services.relayUrl}>
-          <summary className="cursor-pointer text-sm">
-            Advanced connection settings
-          </summary>
-          {(
-            [
-              ["relayUrl", "Relay", "wss://relay.your-network/"],
-              ["sttUrl", "Speech recognition", "wss://speech.your-network/stt"],
-              ["ttsUrl", "Agent speech", "https://speech.your-network/tts"],
-              ["pushGatewayUrl", "Push gateway", "https://push.your-network/"],
-            ] as const
-          ).map(([key, label, placeholder]) => (
-            <label className="block space-y-1" key={key}>
-              <span className="text-sm">{label}</span>
-              <input
-                className="w-full rounded border border-input bg-background p-3 text-base"
-                aria-label={label}
-                placeholder={placeholder}
-                value={services[key]}
-                required={key === "relayUrl"}
-                autoCapitalize="none"
-                autoCorrect="off"
-                onChange={(event) =>
-                  setServices({ ...services, [key]: event.target.value.trim() })
+        {scanning && (
+          <div className="space-y-3 rounded-lg border border-border bg-card p-4">
+            <p className="text-sm text-muted-foreground">
+              Point your camera at a pairing QR code from an already-connected
+              device.
+            </p>
+            <QrScanner
+              onResult={(text) => {
+                try {
+                  const parsed = parseSecretKeyInput(text);
+                  const scanned = parsePairingServices(text);
+                  const current = readNativeServices();
+
+                  void applyScannedConnection(current, scanned, {
+                    confirm: async (current, merged) => {
+                      const changes = describeConnectionChanges(current, merged);
+                      if (changes.length === 0) {
+                        return window.confirm("Update connection?");
+                      }
+                      const relayChanging = current.relayUrl !== merged.relayUrl;
+                      const message = `Update connection?\n\n${changes.join("\n")}${relayChanging ? "\n\nThis leaves any active call and disables push." : ""}`;
+                      return window.confirm(message);
+                    },
+                    prepare: async () => {
+                      await prepareNativeCommunityChange();
+                    },
+                    write: async (services) => {
+                      writeNativeServices(services);
+                      setServices(services);
+                    },
+                    validate: validateServices,
+                  })
+                    .then(async (result) => {
+                      if (result === "applied" && parsed.ok) {
+                        // Enroll the scanned key after services are written
+                        await enrollSecretKeyFromPairing(parsed.secretKey);
+                        setScanning(false);
+                        // authState flips and the shell route re-renders on its own
+                      }
+                    })
+                    .catch((error) => {
+                      toast.error(
+                        error instanceof Error
+                          ? error.message
+                          : "Could not apply QR connection",
+                      );
+                    });
+                } catch (error) {
+                  toast.error(
+                    error instanceof Error
+                      ? error.message
+                      : "Could not parse QR code",
+                  );
                 }
-              />
-            </label>
-          ))}
-        </details>
+              }}
+              onError={(m) => toast.error(m)}
+            />
+            <button
+              type="button"
+              className="w-full rounded border border-border p-2 text-sm"
+              onClick={() => setScanning(false)}
+            >
+              Back
+            </button>
+          </div>
+        )}
+        {!scanning && (
+          <>
+            <button
+              type="button"
+              className="w-full rounded border border-border p-3 text-sm"
+              onClick={() => setScanning(true)}
+            >
+              Pair with QR code
+            </button>
+            <details open={!services.relayUrl}>
+              <summary className="cursor-pointer text-sm">
+                Advanced connection settings
+              </summary>
+              {(
+                [
+                  ["relayUrl", "Relay", "wss://relay.your-network/"],
+                  [
+                    "sttUrl",
+                    "Speech recognition",
+                    "wss://speech.your-network/stt",
+                  ],
+                  ["ttsUrl", "Agent speech", "https://speech.your-network/tts"],
+                  [
+                    "pushGatewayUrl",
+                    "Push gateway",
+                    "https://push.your-network/",
+                  ],
+                ] as const
+              ).map(([key, label, placeholder]) => (
+                <label className="block space-y-1" key={key}>
+                  <span className="text-sm">{label}</span>
+                  <input
+                    className="w-full rounded border border-input bg-background p-3 text-base"
+                    aria-label={label}
+                    placeholder={placeholder}
+                    value={services[key]}
+                    required={key === "relayUrl"}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    onChange={(event) =>
+                      setServices({
+                        ...services,
+                        [key]: event.target.value.trim(),
+                      })
+                    }
+                  />
+                </label>
+              ))}
+            </details>
+          </>
+        )}
         {error && (
           <p role="alert" className="text-sm text-destructive">
             {error}

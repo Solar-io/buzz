@@ -95,11 +95,9 @@ test("composeSendContent appends each attachment after the typed text", () => {
   const image = descriptor("image/png", "https://r/1.png");
   const pdf = descriptor("application/pdf", "https://r/3.pdf");
   assert.equal(
-    composeSendContent(
-      "look at this",
-      [image, pdf],
-      { "https://r/3.pdf": "Q3 report.pdf" },
-    ),
+    composeSendContent("look at this", [image, pdf], {
+      "https://r/3.pdf": "Q3 report.pdf",
+    }),
     "look at this\n![image](https://r/1.png)\n[Q3 report.pdf](https://r/3.pdf)",
   );
 });
@@ -118,7 +116,9 @@ test("composeSendContent never duplicates markdown an old draft already carries"
   const pdf = descriptor("application/pdf", "https://r/3.pdf");
   const staleDraftText = "here\n[Q3 report.pdf](https://r/3.pdf)";
   assert.equal(
-    composeSendContent(staleDraftText, [pdf], { "https://r/3.pdf": "Q3 report.pdf" }),
+    composeSendContent(staleDraftText, [pdf], {
+      "https://r/3.pdf": "Q3 report.pdf",
+    }),
     "here\n[Q3 report.pdf](https://r/3.pdf)",
     "the link already in the text must not be appended a second time",
   );
@@ -135,7 +135,8 @@ test("composeSendContent trims trailing whitespace off the typed text", () => {
 test("stripAttachmentsMarkdown migrates an old draft's text to the tray-only shape", () => {
   const image = descriptor("image/png", "https://r/1.png");
   const pdf = descriptor("application/pdf", "https://r/3.pdf");
-  const stale = "see this\n![image](https://r/1.png)\n[report.pdf](https://r/3.pdf)\nand that";
+  const stale =
+    "see this\n![image](https://r/1.png)\n[report.pdf](https://r/3.pdf)\nand that";
   assert.equal(
     stripAttachmentsMarkdown(stale, [image, pdf]),
     "see this\nand that",

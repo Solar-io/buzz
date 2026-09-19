@@ -36,7 +36,9 @@ export const DIAGNOSTIC_COLLAPSED_MAX = 40;
 /** Wrapper must be at least this tall for "collapsed" to mean anything. */
 export const DIAGNOSTIC_WRAPPER_MIN = 200;
 
-export function decideGeometryDiagnostic(i: DiagnosticInputs): DiagnosticDecision {
+export function decideGeometryDiagnostic(
+  i: DiagnosticInputs,
+): DiagnosticDecision {
   const {
     timelineMounted,
     timelineRows,
@@ -47,7 +49,10 @@ export function decideGeometryDiagnostic(i: DiagnosticInputs): DiagnosticDecisio
 
   // Healthy composer-less states, excluded by name (Dwight's condition 1):
   if (!timelineMounted) {
-    return { fire: false, reason: "no-conversation-login-picker-settings-files" };
+    return {
+      fire: false,
+      reason: "no-conversation-login-picker-settings-files",
+    };
   }
   if (timelineRows === 0 && composerPresent) {
     return { fire: false, reason: "empty-conversation-with-composer" };

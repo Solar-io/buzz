@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { RelaySessionStatus } from "@/shared/api/relay-session";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { Button } from "@/shared/ui/button";
+import { relayWsUrl } from "@/shared/lib/relay-url";
 
 /**
  * Relay connection state, with a way to act on it.
@@ -25,6 +26,13 @@ function describe(status: RelaySessionStatus): {
   /** Transient states are working on it; only stuck ones offer a retry. */
   transient: boolean;
 } | null {
+  let relayHost: string | null = null;
+  try {
+    relayHost = new URL(relayWsUrl()).host;
+  } catch {
+    // relayWsUrl() threw or returned invalid URL
+  }
+
   switch (status) {
     case "open":
       return null;
@@ -44,14 +52,20 @@ function describe(status: RelaySessionStatus): {
       };
     case "reconnecting":
       return {
-        title: "Reconnecting…",
-        detail: "The connection dropped. Retrying automatically.",
+        title: relayHost
+          ? `Lost the connection to ${relayHost}`
+          : "Reconnecting…",
+        detail: "Retrying automatically.",
         transient: true,
       };
     case "closed":
       return {
-        title: "Not connected",
-        detail: "Messages you send will not be delivered until this returns.",
+        title: relayHost
+          ? `Could not reach ${relayHost}`
+          : "No relay address is configured",
+        detail: relayHost
+          ? "Messages will not be delivered until this returns."
+          : "Open Settings → Identity and connection.",
         transient: false,
       };
   }
@@ -89,6 +103,7 @@ export function RelayConnectionCard({ status }: RelayConnectionCardProps) {
   return (
     <div
       role="status"
+      data-testid="relay-connection-card"
       className="mx-2 mb-2 rounded-md border border-sidebar-border bg-sidebar-accent/60 p-2.5"
     >
       <div className="flex items-start gap-2">

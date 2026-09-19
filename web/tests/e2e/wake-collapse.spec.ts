@@ -30,9 +30,7 @@ const RELAY_WS = process.env.E2E_RELAY_WS ?? "";
 /** Deterministic scratch key standing in for BUZZ_SERVICES_KEY — pinned so
  * the build's VITE_WAKE_SERVICE_PUBKEYS and the signer can never drift.
  * ("0e2e" × 16: 32 bytes, valid hex, obviously synthetic.) */
-const SERVICE_SECRET = Uint8Array.from(
-  Buffer.from("0e2e".repeat(16), "hex"),
-);
+const SERVICE_SECRET = Uint8Array.from(Buffer.from("0e2e".repeat(16), "hex"));
 const SERVICE_PUBKEY = getPublicKey(SERVICE_SECRET);
 
 const WAKE_TEXT = [
@@ -130,7 +128,9 @@ test.describe("scheduled wake collapsing", () => {
     await expect(control).toBeVisible();
     // The control row must not contain a wake toggle.
     await expect(
-      control.locator("xpath=ancestor::div[contains(@data-testid,'message-row-')]"),
+      control.locator(
+        "xpath=ancestor::div[contains(@data-testid,'message-row-')]",
+      ),
     ).not.toContainText("Scheduled wake");
   });
 });

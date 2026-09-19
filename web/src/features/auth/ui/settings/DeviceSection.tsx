@@ -24,8 +24,12 @@ import {
   hasRememberedKey,
   rememberSecretKeyForSettings,
 } from "@/shared/lib/key-store";
-import { pairingLink } from "@/shared/lib/nsec";
-import { relayWsUrl } from "@/shared/lib/relay-url";
+import { buildPairingLink } from "@/shared/lib/pairing-link";
+import {
+  relayWsUrl,
+  publicAppOrigin,
+  speechServiceUrl,
+} from "@/shared/lib/relay-url";
 
 import { useAuth } from "../AuthProvider";
 
@@ -164,15 +168,36 @@ export function PairDeviceSection() {
       toast.error("Unlock a local key first.");
       return;
     }
-    try {
-      const dataUrl = await QRCode.toDataURL(
-        pairingLink(window.location.origin, secretKey),
-        {
-          errorCorrectionLevel: "M",
-          margin: 2,
-          width: 320,
-        },
+
+    // Validate origin is transferable
+    const origin = publicAppOrigin();
+    const originUrl = new URL(origin);
+    if (
+      originUrl.protocol !== "https:" ||
+      originUrl.hostname === "localhost" ||
+      originUrl.hostname === "127.0.0.1" ||
+      originUrl.hostname === "::1" ||
+      originUrl.hostname.endsWith(".local")
+    ) {
+      toast.error(
+        `Cannot create a pairing QR from ${origin} — it is not accessible outside this network. Pair with a tailnet or public address.`,
       );
+      return;
+    }
+
+    try {
+      const pairingUrl = buildPairingLink(origin, secretKey, {
+        relayUrl: relayWsUrl(),
+        sttUrl: speechServiceUrl("stt"),
+        ttsUrl: speechServiceUrl("tts"),
+        pushGatewayUrl: import.meta.env.VITE_PUSH_GATEWAY_URL ?? "",
+      });
+
+      const dataUrl = await QRCode.toDataURL(pairingUrl, {
+        errorCorrectionLevel: "M",
+        margin: 2,
+        width: 512,
+      });
       setQrDataUrl(dataUrl);
     } catch {
       toast.error("Could not render the QR code.");
@@ -196,6 +221,10 @@ export function PairDeviceSection() {
         Safari — they open the PWA instead. The key rides inside this link, only
         on your screens — treat it like a password.
       </p>
+      <p className="text-xs text-muted-foreground">
+        Carries: relay, speech recognition, agent speech. Not included: push
+        gateway — set it in Settings on the new device.
+      </p>
       {qrDataUrl ? (
         <>
           <p
@@ -208,8 +237,8 @@ export function PairDeviceSection() {
             src={qrDataUrl}
             alt="Device pairing QR code"
             className="mx-auto rounded-md border border-border"
-            width={320}
-            height={320}
+            width={512}
+            height={512}
           />
         </>
       ) : (
