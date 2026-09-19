@@ -11,6 +11,7 @@ import {
   customGradientVars,
   normalizeHex,
   parseCustomGradientConfig,
+  contrastRatio,
 } from "./custom-gradient.ts";
 
 test("corrupt and unsupported stored configurations fall back safely", () => {
@@ -78,4 +79,29 @@ test("contrast and pane endpoint change with resolved polarity", () => {
 test("theme pair selector maps both polarities explicitly", () => {
   assert.equal(customGradientThemeForDark(false), CUSTOM_GRADIENT_LIGHT);
   assert.equal(customGradientThemeForDark(true), CUSTOM_GRADIENT_DARK);
+});
+
+test("pane tonal tokens remain distinct, subtle, and readable", () => {
+  const vars = customGradientVars(
+    { version: 1, lightColor: "#f1e2d3", darkColor: "#17132f", midpoint: 50 },
+    true,
+  );
+  assert.equal(
+    vars["--custom-gradient-card-hsl"],
+    vars["--custom-gradient-pane-hsl"],
+  );
+  assert.notEqual(
+    vars["--custom-gradient-secondary-hsl"],
+    vars["--custom-gradient-pane-hsl"],
+  );
+  assert.notEqual(
+    vars["--custom-gradient-border-hsl"],
+    vars["--custom-gradient-pane-foreground-hsl"],
+  );
+  assert.ok(
+    contrastRatio(
+      vars["--custom-gradient-pane"],
+      vars["--custom-gradient-muted-foreground"],
+    ) >= 4.5,
+  );
 });
