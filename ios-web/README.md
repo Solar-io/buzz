@@ -108,6 +108,16 @@ crypto/storage/wire/bridge methods where available; use its app-hosted target
 for Keychain entitlement behavior. A package-only test process lacks the app's
 Keychain entitlement.
 
+Run the app-hosted native suite on a **dedicated** simulator UUID:
+
+```sh
+BUZZ_IOS_TEST_SIMULATOR=<your-test-simulator-uuid> pnpm --filter buzz-ios-web test:native
+```
+
+The command refuses a missing/invalid destination and never erases a device.
+It uses ad-hoc simulator signing so the hosted app has its Keychain entitlement.
+The repository's existing `just ci` does not invoke this new native suite.
+
 Release acceptance also requires a physical iPhone: explicit pairing, cold and
 warm notification-to-thread navigation, denied-permission recovery, APNs token
 rotation/revocation, and **two-way human/agent audio while locked/backgrounded**.
