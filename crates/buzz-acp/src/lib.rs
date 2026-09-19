@@ -5110,6 +5110,16 @@ mod agent_draft_prompt_tests {
             .contains("add them explicitly with `buzz channels add-member` only when authorized"));
         assert!(prompt.contains("never changes membership automatically"));
     }
+
+    #[test]
+    fn shared_base_prompt_forbids_nested_threads() {
+        let prompt = include_str!("base_prompt.md");
+        assert!(prompt.contains("Never reply to a reply or create a thread inside a thread"));
+        assert!(
+            prompt.contains("This applies equally to human-agent and agent-to-agent coordination")
+        );
+        assert!(!prompt.contains("deeper nesting is allowed"));
+    }
 }
 
 fn default_heartbeat_prompt(tz: chrono_tz::Tz) -> String {
