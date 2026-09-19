@@ -257,7 +257,10 @@ impl AgentTurnMetricPayload {
                 }
                 check_cost(request.usage.cost_usd, "requests.usage.costUsd")?;
             }
-            if t.requests_complete && t.request_count != Some(t.requests.len() as u64) {
+            if (t.requests_complete && t.request_count != Some(t.requests.len() as u64))
+                || t.request_count
+                    .is_some_and(|count| count < t.requests.len() as u64)
+            {
                 return Err(ObserverPayloadError::InvalidPayload(
                     "complete requests must match requestCount".into(),
                 ));

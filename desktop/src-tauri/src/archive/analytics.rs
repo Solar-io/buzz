@@ -11,6 +11,7 @@ use super::agent_usage::{
 use super::{analytics_store, metric_store, store};
 
 const UNKNOWN: &str = "__unknown__";
+const WEEKDAY_LABELS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 /// Range and civil-calendar definition from the viewer's local timezone.
 #[derive(Debug, Clone, Deserialize)]
@@ -321,6 +322,20 @@ fn score(counts: &BTreeMap<String, usize>) -> Option<f64> {
     }
 }
 
+fn known_total_tokens(group: &MetricGroup) -> Option<u128> {
+    (!group.usage.total_tokens.incomplete)
+        .then(|| group.usage.total_tokens.value.as_deref()?.parse().ok())
+        .flatten()
+}
+
+fn top_by_tokens(rows: &[MetricGroup]) -> Option<String> {
+    rows.iter()
+        .filter(|row| row.key != UNKNOWN)
+        .filter_map(|row| Some((known_total_tokens(row)?, row)))
+        .max_by_key(|(tokens, _)| *tokens)
+        .map(|(_, row)| row.key.clone())
+}
+
 fn requests_consistent(outcome: &EventOutcome, meta: &analytics_store::Metadata) -> bool {
     let mut aggregate = UsageAccumulator::default();
     let mut turn = UsageAccumulator::default();
@@ -593,7 +608,11 @@ fn compute(
                 add(&mut models, dimension(model), &row.id, outcome, meta);
                 let account = dimension(a.account_id.as_deref());
                 add(&mut accounts, account.clone(), &row.id, outcome, meta);
-                if let Some(label) = &a.account_label {
+                if let Some(label) = a.account_label.as_ref().filter(|_| {
+                    a.account_id
+                        .as_ref()
+                        .is_some_and(|id| !id.trim().is_empty())
+                }) {
                     if let Some(group) = accounts.get_mut(&account) {
                         group.label = Some(label.clone());
                     }
@@ -628,7 +647,10 @@ fn compute(
         } else {
             contribute(&outcome, meta, row.model.as_deref());
         }
-        let observed_providers: HashSet<_> = if has_requests {
+        // Diversity is weighted by the finest complete observation available:
+        // each request when request coverage is complete, otherwise one turn.
+        // Never collapse a 99:1 request split into a 50:50 set of providers.
+        let observed_providers: Vec<&String> = if has_requests {
             meta.telemetry
                 .requests
                 .iter()
@@ -659,7 +681,11 @@ fn compute(
     coverage.base.has_unknown_usage |= summary.usage.input_tokens.incomplete
         || summary.usage.output_tokens.incomplete
         || summary.usage.total_tokens.incomplete
-        || summary.usage.estimated_cost_usd.incomplete;
+        || summary.usage.estimated_cost_usd.incomplete
+        || summary.usage.cache_read_tokens.incomplete
+        || summary.usage.cache_write_tokens.incomplete
+        || summary.usage.fresh_input_tokens.incomplete
+        || coverage.inconsistent_request_reports > 0;
     let timeline = timeline
         .into_iter()
         .enumerate()
@@ -681,7 +707,7 @@ fn compute(
     let weekdays = weekdays
         .into_iter()
         .enumerate()
-        .map(|(i, g)| g.finish(i.to_string()))
+        .map(|(i, g)| g.finish(WEEKDAY_LABELS[i].to_string()))
         .collect();
     let (providers, agents, models, accounts, service_tiers) = (
         finish(providers),
@@ -701,20 +727,14 @@ fn compute(
             })
         })
         .collect();
-    let top = |rows: &[MetricGroup]| {
-        rows.iter()
-            .filter(|r| r.key != UNKNOWN)
-            .max_by_key(|r| r.report_count)
-            .map(|r| r.key.clone())
-    };
     let highlights = Highlights {
         busiest_day: days
             .iter()
-            .filter(|d| d.group.report_count > 0)
-            .max_by_key(|d| d.group.report_count)
-            .map(|d| d.group.key.clone()),
-        top_model: top(&models),
-        top_agent: top(&agents),
+            .filter_map(|day| Some((known_total_tokens(&day.group)?, day)))
+            .max_by_key(|(tokens, _)| *tokens)
+            .map(|(_, day)| day.group.key.clone()),
+        top_model: top_by_tokens(&models),
+        top_agent: top_by_tokens(&agents),
         active_days: days.iter().filter(|d| d.group.report_count > 0).count(),
     };
     let known = provider_counts.values().sum::<usize>();

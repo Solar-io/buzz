@@ -280,3 +280,61 @@ fn analytics_cumulative_accounting_uses_predecessor_outside_window() {
     assert_eq!(data.summary.usage.input_tokens.value.as_deref(), Some("20"));
     assert_eq!(data.summary.report_count, 1);
 }
+
+#[test]
+fn unknown_token_fields_are_not_coerced_to_zero() {
+    let c = db();
+    insert(&c, "one", &"a".repeat(64), None, Value::Null);
+    let data = query(&c, "owner", "relay", &request()).unwrap();
+    assert_eq!(data.summary.usage.input_tokens.value, None);
+    assert!(data.summary.usage.input_tokens.incomplete);
+    assert_eq!(data.summary.usage.total_tokens.value, None);
+}
+
+#[test]
+fn wire_and_manifest_costs_keep_distinct_provenance() {
+    let c = db();
+    let a = "a".repeat(64);
+    insert(
+        &c,
+        "wire",
+        &a,
+        Some(1),
+        json!({"costSource":"wire-reported"}),
+    );
+    insert(
+        &c,
+        "manifest",
+        &a,
+        Some(1),
+        json!({"costSource":"manifest-estimated"}),
+    );
+    insert(&c, "old", &a, Some(1), Value::Null);
+    let data = query(&c, "owner", "relay", &request()).unwrap();
+    assert_eq!(data.summary.costs.wire_reported.value, Some(0.5));
+    assert_eq!(data.summary.costs.manifest_estimated.value, Some(0.5));
+    assert_eq!(data.summary.costs.unknown.value, Some(0.5));
+    assert_eq!(data.coverage.cost_provenance_reports, 2);
+}
+
+#[test]
+fn dst_short_day_assigns_next_midnight_to_next_day() {
+    let c = db();
+    insert(&c, "one", &"a".repeat(64), Some(1), Value::Null);
+    let at = START + 23 * 3600 + 1;
+    c.execute(
+        "UPDATE archived_events SET raw_json=json_set(raw_json,'$.timestamp',?1)",
+        params![chrono::DateTime::from_timestamp(at, 0)
+            .unwrap()
+            .to_rfc3339()],
+    )
+    .unwrap();
+    let mut req = request();
+    req.day_boundaries = vec![START, START + 23 * 3600, START + 47 * 3600];
+    req.bucket_boundaries = req.day_boundaries.clone();
+    req.day_labels = vec!["2026-03-08".into(), "2026-03-09".into()];
+    let data = query(&c, "owner", "relay", &req).unwrap();
+    assert_eq!(data.days[0].group.report_count, 0);
+    assert_eq!(data.days[1].group.report_count, 1);
+    assert_eq!(data.weekdays[0].report_count, 1);
+}

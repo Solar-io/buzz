@@ -13,7 +13,7 @@ pub(super) struct Metadata {
     pub expected_requests: usize,
 }
 
-/// Additive DDL is atomic and safe to repeat after interruption.
+/// Each additive DDL statement is atomic; the batch is safe to repeat after interruption.
 pub(super) fn migrate(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS agent_usage_metadata (
