@@ -10,6 +10,7 @@ import { TooltipProvider } from "@/shared/ui/tooltip";
 import { initializeAppearancePreferences } from "@/features/settings/lib/appearanceStore";
 import { NativeSetup } from "@/shared/platform/NativeSetup";
 import { isNativeIOS } from "@/shared/platform/native";
+import { installNativeNavigation } from "@/shared/platform/native-navigation";
 
 // Font size, conversation density, link preview style and thread layout are
 // carried on `<html>` attributes that globals.css selects on. Apply them
@@ -17,6 +18,7 @@ import { isNativeIOS } from "@/shared/platform/native";
 // scale and spacing and then snaps — the same first-paint problem the theme
 // cache solves for colours.
 initializeAppearancePreferences();
+installNativeNavigation();
 
 const queryClient = new QueryClient({
   defaultOptions: {

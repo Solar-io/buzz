@@ -17,6 +17,7 @@ import { readNotificationPermission } from "@/features/notifications/lib/permiss
 import { useProfileMetadata } from "@/features/profile/hooks";
 import { THEME_STORAGE_KEY } from "@/shared/theme/ThemeProvider";
 import { ownPubkey } from "@/shared/lib/nostr-signer";
+import { isNativeIOS } from "@/shared/platform/native";
 
 import { hasBackupFor } from "./keyBackup";
 import { useSignerSource } from "./useSignerSource";
@@ -111,8 +112,8 @@ export function useOnboardingChecklist(): OnboardingChecklistState {
       notificationsDecided: readNotificationPermission() !== "default",
       themeChosen: themeChosen(),
       inAChannel: channels.length > 0,
-      usesLocalKey: signerSource === "local",
-    });
+      usesLocalKey: signerSource === "local" && !isNativeIOS(),
+    }).filter((item) => !isNativeIOS() || item.id !== "notifications");
     // `nonce` is the manual refresh handle for the non-subscription facts.
   }, [profile.metadata, hasBackup, channels.length, signerSource, nonce]);
 

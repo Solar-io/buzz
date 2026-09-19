@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { isNativeIOS } from "@/shared/platform/native";
 
 /**
  * Stale-bundle detector. The SPA keeps running whatever it booted with —
@@ -11,6 +12,7 @@ export function UpdatePrompt() {
   const [stale, setStale] = useState(false);
 
   useEffect(() => {
+    if (isNativeIOS()) return;
     const loadedScript = document
       .querySelector('script[src*="/assets/index-"]')
       ?.getAttribute("src");
