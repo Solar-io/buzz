@@ -18,6 +18,10 @@
  */
 
 import type { ThemeRegistrationRaw } from "shiki";
+import {
+  CUSTOM_GRADIENT_DARK,
+  CUSTOM_GRADIENT_LIGHT,
+} from "./custom-gradient.ts";
 
 /**
  * Buzz theme name. Buzz is a first-party light theme that reuses GitHub
@@ -63,6 +67,8 @@ export const BUZZ_DARK_BASE_THEME: SyntaxThemeName = "github-dark";
 export function resolveShikiThemeName(name: string): SyntaxThemeName {
   if (name === BUZZ_THEME_NAME) return BUZZ_BASE_THEME;
   if (name === BUZZ_DARK_THEME_NAME) return BUZZ_DARK_BASE_THEME;
+  if (name === CUSTOM_GRADIENT_LIGHT) return BUZZ_BASE_THEME;
+  if (name === CUSTOM_GRADIENT_DARK) return BUZZ_DARK_BASE_THEME;
   return name as SyntaxThemeName;
 }
 
@@ -72,6 +78,8 @@ export function resolveShikiThemeName(name: string): SyntaxThemeName {
 export const SYNTAX_THEMES = [
   "buzz",
   "buzz-dark",
+  "custom-gradient-light",
+  "custom-gradient-dark",
   "andromeeda",
   "aurora-x",
   "ayu-dark",
@@ -140,6 +148,7 @@ export type SyntaxThemeName = (typeof SYNTAX_THEMES)[number];
 // for themes that haven't been loaded yet.
 export const LIGHT_THEMES: ReadonlySet<SyntaxThemeName> = new Set([
   "buzz",
+  "custom-gradient-light",
   "catppuccin-latte",
   "everforest-light",
   "github-light",
@@ -169,6 +178,8 @@ const themeImports: Record<
   buzz: () => import("shiki/themes/github-light.mjs"),
   // Buzz Dark reuses the github-dark palette; dark gradient applied separately.
   "buzz-dark": () => import("shiki/themes/github-dark.mjs"),
+  "custom-gradient-light": () => import("shiki/themes/github-light.mjs"),
+  "custom-gradient-dark": () => import("shiki/themes/github-dark.mjs"),
   andromeeda: () => import("shiki/themes/andromeeda.mjs"),
   "aurora-x": () => import("shiki/themes/aurora-x.mjs"),
   "ayu-dark": () => import("shiki/themes/ayu-dark.mjs"),
@@ -249,6 +260,7 @@ export const THEME_PAIRS: ReadonlyMap<SyntaxThemeName, SyntaxThemeName> =
     // Light → Dark
     // Buzz is the first-party pair; keep it first so it leads every category.
     ["buzz", "buzz-dark"],
+    ["custom-gradient-light", "custom-gradient-dark"],
     ["catppuccin-latte", "catppuccin-mocha"],
     ["everforest-light", "everforest-dark"],
     ["github-light", "github-dark"],
@@ -268,6 +280,7 @@ export const THEME_PAIRS: ReadonlyMap<SyntaxThemeName, SyntaxThemeName> =
     ["vitesse-light", "vitesse-dark"],
     // Dark → Light (reverse mappings)
     ["buzz-dark", "buzz"],
+    ["custom-gradient-dark", "custom-gradient-light"],
     ["catppuccin-mocha", "catppuccin-latte"],
     ["everforest-dark", "everforest-light"],
     ["github-dark", "github-light"],
@@ -442,10 +455,12 @@ export function extractThemeInfo(
     name: themeName,
     bg: fleet?.bg ?? bg,
     fg: fleet?.fg ?? fg,
-    comment: fleet?.comment ?? extractCommentColor(
-      theme.settings as ReadonlyArray<ThemeSetting> | undefined,
-      fg,
-    ),
+    comment:
+      fleet?.comment ??
+      extractCommentColor(
+        theme.settings as ReadonlyArray<ThemeSetting> | undefined,
+        fg,
+      ),
     ...gitColors,
   };
 }

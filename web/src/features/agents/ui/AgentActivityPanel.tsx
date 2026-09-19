@@ -244,7 +244,10 @@ export function AgentActivityPanel({
         arm();
       }
     };
-    scroller.addEventListener("touchmove", arm, { capture: true, passive: true });
+    scroller.addEventListener("touchmove", arm, {
+      capture: true,
+      passive: true,
+    });
     scroller.addEventListener("wheel", arm, { capture: true, passive: true });
     scroller.addEventListener("pointerdown", armForPointer, {
       capture: true,
@@ -320,6 +323,7 @@ export function AgentActivityPanel({
           : "hidden lg:static lg:flex lg:w-[var(--thread-width)] lg:shrink-0 lg:flex-col lg:border-l lg:border-border"
       }
       data-agent-panel={agentPubkey}
+      data-thinking-pane
     >
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-secondary px-4">
         <AuthorAvatar

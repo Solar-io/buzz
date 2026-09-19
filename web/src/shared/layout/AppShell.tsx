@@ -122,12 +122,12 @@ export function AppShell({
   }, []);
 
   return (
-    <div className="flex h-dvh w-full bg-background text-foreground">
+    <div className="buzz-app-shell flex h-dvh w-full bg-background text-foreground">
       {/* Desktop sidebar — its own tone (theme --sidebar-background), matching
           the desktop client's deliberate sidebar/chat two-tone. Width is
           drag-adjustable; the handle doubles as the border. */}
       <aside
-        className="hidden shrink-0 flex-col bg-sidebar text-sidebar-foreground md:flex"
+        className="buzz-shell-navigation hidden shrink-0 flex-col bg-sidebar text-sidebar-foreground md:flex"
         style={{ width: `${sidebarWidth}px` }}
       >
         {sidebar}
@@ -141,7 +141,7 @@ export function AppShell({
 
       {/* Mobile top bar + drawer */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-2 border-b border-border px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))] md:hidden">
+        <header className="buzz-shell-navigation flex items-center gap-2 border-b border-border px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))] md:hidden">
           {onBack && (
             <button
               type="button"
@@ -195,7 +195,7 @@ export function AppShell({
             className="absolute inset-0 bg-black/50"
             onClick={closeDrawer}
           />
-          <aside className="absolute top-0 bottom-0 left-0 flex w-72 max-w-[85vw] flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground pt-[max(0.5rem,env(safe-area-inset-top))]">
+          <aside className="buzz-shell-navigation absolute top-0 bottom-0 left-0 flex w-72 max-w-[85vw] flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground pt-[max(0.5rem,env(safe-area-inset-top))]">
             <DrawerCloseContext.Provider value={closeDrawer}>
               {sidebar}
             </DrawerCloseContext.Provider>
