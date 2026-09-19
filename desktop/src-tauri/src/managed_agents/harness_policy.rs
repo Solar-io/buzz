@@ -10,7 +10,10 @@
 //! exact model and effort requested by the operator.  It never substitutes a
 //! nearby model or effort when a native adapter cannot support the request.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -26,7 +29,9 @@ pub const HARNESS_POLICY_JSON_ENV: &str = "BUZZ_HARNESS_POLICY_JSON";
 pub const HARNESS_POLICY_HASH_ENV: &str = "BUZZ_HARNESS_POLICY_HASH";
 /// Environment variable naming the runtime profile receiving the overlay.
 pub const HARNESS_POLICY_PROFILE_ENV: &str = "BUZZ_HARNESS_POLICY_PROFILE";
-const HARNESS_POLICY_FILE: &str = "harness-policy.json";
+const HARNESS_POLICY_FILE: &str = "role-policy.json";
+const HARNESS_POLICY_DIR: &str = "agent-harness";
+const HARNESS_POLICY_ENV: &str = "HARNESS_ROLE_POLICY_FILE";
 
 /// Roles the orchestration policy can route.
 ///
@@ -358,7 +363,14 @@ pub fn default_harness_policy() -> HarnessPolicy {
             ..HarnessProfilePolicy::default()
         },
     );
-    for profile in ["claude", "claude-glm"] {
+    for profile in [
+        "claude",
+        "claude-2",
+        "claude-glm",
+        "claude-alibaba",
+        "claude-kimi",
+        "claude-ollama",
+    ] {
         profiles.insert(
             profile.to_string(),
             HarnessProfilePolicy {
@@ -714,27 +726,127 @@ pub fn policy_hash(policy: &HarnessPolicy) -> Result<String, String> {
 pub fn load_harness_policy(app: &AppHandle) -> Result<HarnessPolicy, String> {
     let path = harness_policy_path(app)?;
     if !path.exists() {
+        let legacy = managed_agents_base_dir(app)?.join("harness-policy.json");
+        if legacy.exists() {
+            let policy = read_harness_policy(&legacy)?;
+            persist_harness_policy(&path, &policy)?;
+            return Ok(policy);
+        }
+        if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+            let generator_legacy = home.join(".claude/scripts/harness-role-policy.json");
+            if generator_legacy.exists() {
+                let policy = read_harness_policy(&generator_legacy)?;
+                persist_harness_policy(&path, &policy)?;
+                return Ok(policy);
+            }
+        }
         return Ok(default_harness_policy());
     }
-    let content = std::fs::read_to_string(&path)
-        .map_err(|error| format!("failed to read harness policy: {error}"))?;
-    let policy: HarnessPolicy = serde_json::from_str(&content)
-        .map_err(|error| format!("failed to parse harness policy: {error}"))?;
-    policy.validate()?;
-    Ok(policy)
+    read_harness_policy(&path)
 }
 
 /// Persist desired policy atomically with restricted permissions.
 pub fn save_harness_policy(app: &AppHandle, policy: &HarnessPolicy) -> Result<(), String> {
     policy.validate()?;
     let path = harness_policy_path(app)?;
+    if path.exists() {
+        let previous = std::fs::read(&path)
+            .map_err(|error| format!("failed to read harness policy for rollback: {error}"))?;
+        atomic_write_json_restricted(&path.with_extension("json.rollback"), &previous)?;
+    }
+    persist_harness_policy(&path, policy)
+}
+
+fn persist_harness_policy(path: &Path, policy: &HarnessPolicy) -> Result<(), String> {
     let payload = serde_json::to_vec_pretty(policy)
         .map_err(|error| format!("failed to serialize harness policy: {error}"))?;
     atomic_write_json_restricted(&path, &payload)
 }
 
 fn harness_policy_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    Ok(managed_agents_base_dir(app)?.join(HARNESS_POLICY_FILE))
+    if let Some(path) = std::env::var_os(HARNESS_POLICY_ENV).filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(path));
+    }
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| "HOME is unavailable; cannot resolve shared harness policy".to_string())?;
+    Ok(home
+        .join(".config")
+        .join(HARNESS_POLICY_DIR)
+        .join(HARNESS_POLICY_FILE))
+}
+
+fn read_harness_policy(path: &Path) -> Result<HarnessPolicy, String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|error| format!("failed to read harness policy {}: {error}", path.display()))?;
+    let policy: HarnessPolicy = match serde_json::from_str(&content) {
+        Ok(policy) => policy,
+        Err(primary_error) => migrate_generator_policy(&content).map_err(|legacy_error| {
+            format!(
+                "failed to parse harness policy {}: {primary_error}; legacy migration failed: {legacy_error}",
+                path.display()
+            )
+        })?,
+    };
+    policy.validate()?;
+    Ok(policy)
+}
+
+fn migrate_generator_policy(content: &str) -> Result<HarnessPolicy, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(content).map_err(|error| error.to_string())?;
+    if value.get("schema").and_then(serde_json::Value::as_str) != Some("harness-role-policy/v1") {
+        return Err("not a harness-role-policy/v1 document".to_string());
+    }
+    let mut policy = default_harness_policy();
+    let roles = value
+        .get("roles")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| "legacy roles object is missing".to_string())?;
+    for (role, source) in [
+        (HarnessRole::Architect, "architect"),
+        (HarnessRole::Coder, "coder"),
+        (HarnessRole::Qa, "tester"),
+        (HarnessRole::Tester, "tester"),
+        (HarnessRole::BackendTester, "backend-tester"),
+        (HarnessRole::UiTester, "ui-tester"),
+        (HarnessRole::Verifier, "verifier"),
+    ] {
+        let route: HarnessRoleRoute = serde_json::from_value(
+            roles
+                .get(source)
+                .cloned()
+                .ok_or_else(|| format!("legacy role '{source}' is missing"))?,
+        )
+        .map_err(|error| format!("legacy role '{source}' is invalid: {error}"))?;
+        policy.role_defaults.insert(role, route);
+    }
+    if let Some(route) = value.get("default") {
+        policy.role_defaults.insert(
+            HarnessRole::Worker,
+            serde_json::from_value(route.clone())
+                .map_err(|error| format!("legacy default route is invalid: {error}"))?,
+        );
+    }
+    if let Some(profiles) = value.get("profiles").and_then(serde_json::Value::as_object) {
+        policy.profiles.clear();
+        for (id, raw) in profiles {
+            policy.profiles.insert(
+                id.clone(),
+                HarnessProfilePolicy {
+                    adapter: if raw.get("adapter").and_then(serde_json::Value::as_str)
+                        == Some("exact")
+                    {
+                        HarnessPolicyAdapter::Native
+                    } else {
+                        HarnessPolicyAdapter::CodexRoleRunner
+                    },
+                    ..HarnessProfilePolicy::default()
+                },
+            );
+        }
+    }
+    Ok(policy)
 }
 
 fn validate_route(route: &HarnessRoleRoute, context: &str) -> Result<(), String> {
@@ -961,13 +1073,9 @@ mod tests {
     fn disabled_profile_fails_closed_in_native_overlay_compile() {
         let mut policy = default_harness_policy();
         policy.profiles.get_mut("codex").unwrap().enabled = false;
-        let error = compile_native_overlay(
-            &policy,
-            &HarnessRuntimeCatalog::default(),
-            "codex",
-            None,
-        )
-        .unwrap_err();
+        let error =
+            compile_native_overlay(&policy, &HarnessRuntimeCatalog::default(), "codex", None)
+                .unwrap_err();
         assert!(error.contains("codex"));
         assert!(error.contains("disabled"));
     }
@@ -982,5 +1090,40 @@ mod tests {
             .agent_overrides
             .insert("not-a-pubkey".to_string(), BTreeMap::new());
         assert!(policy.validate().unwrap_err().contains("pubkey"));
+    }
+
+    #[test]
+    fn legacy_generator_policy_migrates_to_the_shared_schema() {
+        let roles = serde_json::json!({
+            "architect":{"model":"gpt-5.6-sol","effort":"high"},
+            "coder":{"model":"gpt-5.6-sol","effort":"low"},
+            "tester":{"model":"gpt-5.6-sol","effort":"low"},
+            "backend-tester":{"model":"gpt-5.6-sol","effort":"low"},
+            "ui-tester":{"model":"gpt-5.6-sol","effort":"low"},
+            "verifier":{"model":"gpt-5.6-sol","effort":"low"}
+        });
+        let legacy = serde_json::json!({
+            "schema":"harness-role-policy/v1",
+            "default":{"model":"gpt-5.6-sol","effort":"low"},
+            "roles":roles,
+            "profiles":{
+                "claude-codex":{"adapter":"exact"},
+                "claude-glm":{"adapter":"codex-sol"}
+            }
+        });
+        let migrated = migrate_generator_policy(&legacy.to_string()).unwrap();
+        migrated.validate().unwrap();
+        assert_eq!(
+            migrated.profiles["claude-codex"].adapter,
+            HarnessPolicyAdapter::Native
+        );
+        assert_eq!(
+            migrated.profiles["claude-glm"].adapter,
+            HarnessPolicyAdapter::CodexRoleRunner
+        );
+        assert_eq!(
+            migrated.role_defaults[&HarnessRole::Architect].effort,
+            HarnessEffort::High
+        );
     }
 }
