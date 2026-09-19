@@ -82,6 +82,7 @@ export function MessageRow({
   highlighted,
   pending,
   selfPubkey,
+  showActions = true,
   onOpenDm,
   children,
 }: {
@@ -103,6 +104,8 @@ export function MessageRow({
   /** Optimistic send still in flight — renders the desktop's "Sending…". */
   pending?: boolean;
   selfPubkey?: string | null;
+  /** Hide the action bar when the row is embedded read-only in a call. */
+  showActions?: boolean;
   /**
    * Open a DM with the author, offered by the profile card. The shell owns DM
    * creation, so this is optional here; when it is omitted the card falls back
@@ -267,22 +270,24 @@ export function MessageRow({
             />
             {children}
           </div>
-          <MessageActionBar
-            messageId={message.id}
-            canModify={canModify}
-            // Reminders need the conversation and the author the row is about;
-            // both already ride on TimelineMessage.
-            channelId={message.channelId}
-            authorPubkey={message.authorPubkey}
-            messagePreview={message.content}
-            onReact={
-              onReact ? (emoji) => onReact(message.id, emoji) : undefined
-            }
-            onReply={() => onOpenThread(message)}
-            onShare={onShare ? () => onShare(message.id) : undefined}
-            onEdit={onEdit ? () => onEdit(message) : undefined}
-            onDelete={onDelete ? () => onDelete(message.id) : undefined}
-          />
+          {showActions && (
+            <MessageActionBar
+              messageId={message.id}
+              canModify={canModify}
+              // Reminders need the conversation and the author the row is about;
+              // both already ride on TimelineMessage.
+              channelId={message.channelId}
+              authorPubkey={message.authorPubkey}
+              messagePreview={message.content}
+              onReact={
+                onReact ? (emoji) => onReact(message.id, emoji) : undefined
+              }
+              onReply={() => onOpenThread(message)}
+              onShare={onShare ? () => onShare(message.id) : undefined}
+              onEdit={onEdit ? () => onEdit(message) : undefined}
+              onDelete={onDelete ? () => onDelete(message.id) : undefined}
+            />
+          )}
         </>
       )}
     </div>
