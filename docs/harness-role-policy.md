@@ -40,6 +40,11 @@ an older dialog. Custom catalog ids such as `claude-code-glm` are resolved from
 the selected runtime id before the static built-in fallback and receive the
 same exact overlay path.
 
+`claude-code-glm` is the runtime-catalog alias for the installable native config
+profile `claude-glm`; both entries must select the same adapter. The native
+generator installs seven Claude config profiles and resolves this alias to its
+target rather than creating an eighth config directory.
+
 The native projection is generated from one policy: Codex uses exact custom
 agent model/effort settings; `claude-codex` forces exact Sol subagents; other
 Claude Code profiles route named stages through the Codex role runner and
