@@ -17,7 +17,12 @@
  */
 
 import { get, set, del } from "idb-keyval";
-import { BuzzIdentity, BuzzHuddle, isNativeIOS, type NativeIdentityState } from "../platform/native.ts";
+import {
+  BuzzIdentity,
+  BuzzHuddle,
+  isNativeIOS,
+  type NativeIdentityState,
+} from "../platform/native.ts";
 import {
   type KeyEnvelope,
   decryptSecretKey,
@@ -165,7 +170,9 @@ export function getAuthTagJson(): string | null {
 
 /** True when a raw secret key is held in memory for this page session. */
 export function hasUnlockedKey(): boolean {
-  return isNativeIOS() ? authState.status === "unlocked" : unlockedSecretKey !== null;
+  return isNativeIOS()
+    ? authState.status === "unlocked"
+    : unlockedSecretKey !== null;
 }
 
 /** The unlocked raw key, or null when locked/anonymous. */
@@ -215,7 +222,9 @@ export async function enrollSecretKey(
   passphrase: string,
 ): Promise<void> {
   if (isNativeIOS()) {
-    const secretHex = Array.from(secretKey, (byte) => byte.toString(16).padStart(2, "0")).join("");
+    const secretHex = Array.from(secretKey, (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
     applyNativeState(await BuzzIdentity.enroll({ secretHex }));
     secretKey.fill(0);
     return;
@@ -251,7 +260,10 @@ export async function enrollSecretKey(
 export async function enrollSecretKeyFromPairing(
   secretKey: Uint8Array,
 ): Promise<void> {
-  if (isNativeIOS()) { await enrollSecretKey(secretKey, ""); return; }
+  if (isNativeIOS()) {
+    await enrollSecretKey(secretKey, "");
+    return;
+  }
   const random = crypto.getRandomValues(new Uint8Array(32));
   const passphrase = Array.from(random, (b) =>
     b.toString(16).padStart(2, "0"),
@@ -273,7 +285,10 @@ export async function hasNoPassphrase(): Promise<boolean> {
 
 /** Unlock the persisted envelope with its passphrase. */
 export async function unlockWithPassphrase(passphrase: string): Promise<void> {
-  if (isNativeIOS()) { applyNativeState(await BuzzIdentity.unlock()); return; }
+  if (isNativeIOS()) {
+    applyNativeState(await BuzzIdentity.unlock());
+    return;
+  }
   const stored = await get(ENVELOPE_KEY);
   if (!isValidEnvelope(stored)) {
     throw new Error("No stored key on this device.");
@@ -337,7 +352,9 @@ export function lockNow(): void {
 export async function signOut(): Promise<void> {
   if (isNativeIOS()) {
     await BuzzHuddle.leave();
-    await (await import("../platform/native-push-revoke.ts")).revokeNativePush();
+    await (
+      await import("../platform/native-push-revoke.ts")
+    ).revokeNativePush();
     await BuzzIdentity.forget();
     setState({ status: "anonymous" });
     return;
@@ -362,7 +379,15 @@ function hintFromKey(secretKey: Uint8Array): string {
 }
 
 function applyNativeState(state: NativeIdentityState): void {
-  setState(state.locked ? { status: "native-locked" } : state.pubkey
-    ? { status: "unlocked", source: "local", pubkeyHint: state.pubkey.slice(0, 8) }
-    : { status: "anonymous" });
+  setState(
+    state.locked
+      ? { status: "native-locked" }
+      : state.pubkey
+        ? {
+            status: "unlocked",
+            source: "local",
+            pubkeyHint: state.pubkey.slice(0, 8),
+          }
+        : { status: "anonymous" },
+  );
 }

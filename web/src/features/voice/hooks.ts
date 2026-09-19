@@ -127,11 +127,12 @@ export function useElevenVoices(): {
       return;
     }
     const controller = new AbortController();
-    fetch(
-      new URL("/voices/eleven", speechServiceUrl("tts")).href,
-      { signal: controller.signal },
-    )
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`bridge ${res.status}`))))
+    fetch(new URL("/voices/eleven", speechServiceUrl("tts")).href, {
+      signal: controller.signal,
+    })
+      .then((res) =>
+        res.ok ? res.json() : Promise.reject(new Error(`bridge ${res.status}`)),
+      )
       .then((body: { voices?: { id: string; label: string }[] }) => {
         setVoices(Array.isArray(body.voices) ? body.voices : []);
       })

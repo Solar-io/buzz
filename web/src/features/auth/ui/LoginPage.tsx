@@ -160,17 +160,24 @@ export function LoginPage() {
             }}
           >
             <p className="text-sm text-muted-foreground">
-              {isNativeIOS() ? "Unlock with Face ID, Touch ID or your device passcode." : "Enter this device's passphrase to unlock your key."}
+              {isNativeIOS()
+                ? "Unlock with Face ID, Touch ID or your device passcode."
+                : "Enter this device's passphrase to unlock your key."}
             </p>
-            {!isNativeIOS() && <Input
-              type="password"
-              placeholder="Passphrase"
-              autoComplete="current-password"
-              value={passphrase}
-              onChange={(event) => setPassphrase(event.target.value)}
-              autoFocus
-            />}
-            <Button className="w-full" disabled={busy || (!isNativeIOS() && !passphrase)}>
+            {!isNativeIOS() && (
+              <Input
+                type="password"
+                placeholder="Passphrase"
+                autoComplete="current-password"
+                value={passphrase}
+                onChange={(event) => setPassphrase(event.target.value)}
+                autoFocus
+              />
+            )}
+            <Button
+              className="w-full"
+              disabled={busy || (!isNativeIOS() && !passphrase)}
+            >
               Unlock
             </Button>
           </form>

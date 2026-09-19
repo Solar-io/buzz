@@ -87,7 +87,18 @@ export function NotificationSettingsDialog({
   const permission = useNotificationPermission();
   const [asking, setAsking] = useState(false);
   const status = permissionCopy(permission);
-  if (isNativeIOS()) return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent><DialogHeader><DialogTitle>Notifications</DialogTitle><DialogDescription>Settings for this iPhone.</DialogDescription></DialogHeader><NativePushSettings /></DialogContent></Dialog>;
+  if (isNativeIOS())
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Notifications</DialogTitle>
+            <DialogDescription>Settings for this iPhone.</DialogDescription>
+          </DialogHeader>
+          <NativePushSettings />
+        </DialogContent>
+      </Dialog>
+    );
 
   // Turning the switch ON is the user gesture the browser demands, so the
   // prompt is raised from here and nowhere else. Turning it off never asks.

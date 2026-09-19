@@ -225,7 +225,10 @@ export function useShortcutBar(channelId: string): ShortcutBar {
 
   const newest = useMemo(() => reduceShortcutEvents(events), [events]);
 
-  const [relayState, setRelayState] = useState<RelayBlobState>({ blob: emptyShortcutBlob(), blocked: false });
+  const [relayState, setRelayState] = useState<RelayBlobState>({
+    blob: emptyShortcutBlob(),
+    blocked: false,
+  });
   useEffect(() => {
     let alive = true;
     if (!newest || !selfPubkey || signer !== "local") {
@@ -234,15 +237,23 @@ export function useShortcutBar(channelId: string): ShortcutBar {
     }
     void (async () => {
       try {
-        const { plaintext } = await nip44DecryptFrom(newest.content, newest.pubkey);
+        const { plaintext } = await nip44DecryptFrom(
+          newest.content,
+          newest.pubkey,
+        );
         const parsed = parseShortcutBlob(JSON.parse(plaintext));
-        if (alive && parsed.ok) { setRelayState({ blob: parsed.blob, blocked: false }); return; }
+        if (alive && parsed.ok) {
+          setRelayState({ blob: parsed.blob, blocked: false });
+          return;
+        }
       } catch {
         // Undecryptable here — expose a blocked state.
       }
       if (alive) setRelayState({ blob: emptyShortcutBlob(), blocked: true });
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [newest, selfPubkey, signer]);
 
   const optimisticStamp = useSyncExternalStore(

@@ -92,7 +92,9 @@ export type HuddleCall = ReturnType<typeof useBrowserHuddleCall>;
 
 // Platform is immutable for this process. Selecting the hook once keeps the
 // browser audio hooks entirely unmounted in the native application.
-export const useHuddleCall = isNativeIOS() ? useNativeHuddleCall : useBrowserHuddleCall;
+export const useHuddleCall = isNativeIOS()
+  ? useNativeHuddleCall
+  : useBrowserHuddleCall;
 
 function useBrowserHuddleCall(options: {
   /** The call in progress, or null when nothing is active. */

@@ -190,10 +190,20 @@ export function ObserverProvider({
     let frame: ObserverFrame[] | null = null;
     if (isNativeIOS()) {
       try {
-        const { plaintext } = await nip44DecryptFrom(event.content, event.pubkey);
+        const { plaintext } = await nip44DecryptFrom(
+          event.content,
+          event.pubkey,
+        );
         const parsed = parseObserverPayload(plaintext);
-        if (parsed) frame = expandObserverFrame({ ...parsed, id: event.id, createdAt: event.created_at });
-      } catch { /* A locked or differently addressed envelope stays locked. */ }
+        if (parsed)
+          frame = expandObserverFrame({
+            ...parsed,
+            id: event.id,
+            createdAt: event.created_at,
+          });
+      } catch {
+        /* A locked or differently addressed envelope stays locked. */
+      }
     } else if (secretKey) frame = decodeFrame(event, secretKey);
     if (!frame) {
       setLockedCount((n) => n + 1);

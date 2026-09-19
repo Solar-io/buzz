@@ -52,7 +52,13 @@ export async function sendAgentControl(
     );
     const encrypted = isNativeIOS()
       ? (await nip44EncryptTo(payload, agentPubkey)).ciphertext
-      : nip44.v2.encrypt(payload, nip44.v2.utils.getConversationKey(secretKey as Uint8Array, agentPubkey));
+      : nip44.v2.encrypt(
+          payload,
+          nip44.v2.utils.getConversationKey(
+            secretKey as Uint8Array,
+            agentPubkey,
+          ),
+        );
     const event = await signNostrEvent({
       kind: 24200,
       tags: [

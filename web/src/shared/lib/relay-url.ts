@@ -26,18 +26,34 @@ export function relayWsUrl(): string {
   return `${proto}//${window.location.host}`;
 }
 
-export function relayHostname(): string { return new URL(relayWsUrl()).hostname; }
-export function publicAppOrigin(): string { return isNativeIOS() ? new URL(relayHttpBaseUrl()).origin : window.location.origin; }
+export function relayHostname(): string {
+  return new URL(relayWsUrl()).hostname;
+}
+export function publicAppOrigin(): string {
+  return isNativeIOS()
+    ? new URL(relayHttpBaseUrl()).origin
+    : window.location.origin;
+}
 
 /** Native origin is capacitor://localhost, never a service host. */
 export function speechServiceUrl(kind: "stt" | "tts"): string {
   const configured = readNativeServices();
-  const explicit = kind === "stt"
-    ? (isNativeIOS() ? configured?.sttUrl : import.meta.env?.VITE_STT_URL)
-    : (isNativeIOS() ? configured?.ttsUrl : import.meta.env?.VITE_TTS_URL);
+  const explicit =
+    kind === "stt"
+      ? isNativeIOS()
+        ? configured?.sttUrl
+        : import.meta.env?.VITE_STT_URL
+      : isNativeIOS()
+        ? configured?.ttsUrl
+        : import.meta.env?.VITE_TTS_URL;
   if (explicit) return explicit;
-  if (isNativeIOS()) throw new Error("Configure speech service addresses in the native connection settings.");
-  return kind === "stt" ? `wss://${relayHostname()}:6361/stt` : `https://${relayHostname()}:6366/tts`;
+  if (isNativeIOS())
+    throw new Error(
+      "Configure speech service addresses in the native connection settings.",
+    );
+  return kind === "stt"
+    ? `wss://${relayHostname()}:6361/stt`
+    : `https://${relayHostname()}:6366/tts`;
 }
 
 /** HTTP base URL for the relay (derived from the WS URL). */

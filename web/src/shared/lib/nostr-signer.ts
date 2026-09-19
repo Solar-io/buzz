@@ -86,7 +86,8 @@ export async function signNostrEvent(
     ...template,
     created_at: template.created_at ?? Math.floor(Date.now() / 1000),
   };
-  if (isNativeIOS()) return (await BuzzIdentity.signEvent({ event: unsigned })).event;
+  if (isNativeIOS())
+    return (await BuzzIdentity.signEvent({ event: unsigned })).event;
   const localSecret = getUnlockedSecretKey();
   if (localSecret) {
     const signed = finalizeEvent(unsigned, localSecret);
@@ -133,7 +134,8 @@ export async function nip44EncryptTo(
   plaintext: string,
   peerPubkey: string,
 ): Promise<{ ciphertext: string }> {
-  if (isNativeIOS()) return BuzzIdentity.encrypt({ plaintext, peer: peerPubkey });
+  if (isNativeIOS())
+    return BuzzIdentity.encrypt({ plaintext, peer: peerPubkey });
   const secret = getUnlockedSecretKey();
   if (!secret) {
     throw new Error(
@@ -148,7 +150,8 @@ export async function nip44DecryptFrom(
   ciphertext: string,
   peerPubkey: string,
 ): Promise<{ plaintext: string }> {
-  if (isNativeIOS()) return BuzzIdentity.decrypt({ ciphertext, peer: peerPubkey });
+  if (isNativeIOS())
+    return BuzzIdentity.decrypt({ ciphertext, peer: peerPubkey });
   const secret = getUnlockedSecretKey();
   if (!secret) {
     throw new Error(

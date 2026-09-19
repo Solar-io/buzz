@@ -1,7 +1,15 @@
-import { Capacitor, registerPlugin, type PluginListenerHandle } from "@capacitor/core";
-import type { SignedNostrEvent, UnsignedNostrEvent } from "../lib/nostr-signer.ts";
+import {
+  Capacitor,
+  registerPlugin,
+  type PluginListenerHandle,
+} from "@capacitor/core";
+import type {
+  SignedNostrEvent,
+  UnsignedNostrEvent,
+} from "../lib/nostr-signer.ts";
 
-export const isNativeIOS = () => Capacitor.isNativePlatform() && Capacitor.getPlatform() === "ios";
+export const isNativeIOS = () =>
+  Capacitor.isNativePlatform() && Capacitor.getPlatform() === "ios";
 
 export interface NativeIdentityState {
   pubkey: string | null;
@@ -14,9 +22,17 @@ export const BuzzIdentity = registerPlugin<{
   unlock(): Promise<NativeIdentityState>;
   lock(): Promise<void>;
   forget(): Promise<void>;
-  signEvent(options: { event: UnsignedNostrEvent }): Promise<{ event: SignedNostrEvent }>;
-  encrypt(options: { peer: string; plaintext: string }): Promise<{ ciphertext: string }>;
-  decrypt(options: { peer: string; ciphertext: string }): Promise<{ plaintext: string }>;
+  signEvent(options: {
+    event: UnsignedNostrEvent;
+  }): Promise<{ event: SignedNostrEvent }>;
+  encrypt(options: {
+    peer: string;
+    plaintext: string;
+  }): Promise<{ ciphertext: string }>;
+  decrypt(options: {
+    peer: string;
+    ciphertext: string;
+  }): Promise<{ plaintext: string }>;
 }>("BuzzIdentity");
 
 export interface NativePushPlugin {
@@ -24,14 +40,26 @@ export interface NativePushPlugin {
   apnsToken(): Promise<{ token: string | null }>;
   isSupported(): Promise<{ supported: boolean; appProfile?: string }>;
   generateKey(): Promise<{ keyId: string }>;
-  attest(options: { keyId: string; clientDataHash: string }): Promise<{ attestation: string }>;
-  assertKey(options: { keyId: string; clientDataHash: string }): Promise<{ assertion: string }>;
+  attest(options: {
+    keyId: string;
+    clientDataHash: string;
+  }): Promise<{ attestation: string }>;
+  assertKey(options: {
+    keyId: string;
+    clientDataHash: string;
+  }): Promise<{ assertion: string }>;
   readState(options: { scope: string }): Promise<{ value: string | null }>;
   writeState(options: { scope: string; value: string | null }): Promise<void>;
   getWake(): Promise<{ wakeId: string | null }>;
   acknowledgeWake(options: { wakeId: string }): Promise<void>;
-  addListener(event: "token", listener: (event: { token: string }) => void): Promise<PluginListenerHandle>;
-  addListener(event: "wake", listener: (event: { wakeId: string }) => void): Promise<PluginListenerHandle>;
+  addListener(
+    event: "token",
+    listener: (event: { token: string }) => void,
+  ): Promise<PluginListenerHandle>;
+  addListener(
+    event: "wake",
+    listener: (event: { wakeId: string }) => void,
+  ): Promise<PluginListenerHandle>;
 }
 export const BuzzPush = registerPlugin<NativePushPlugin>("BuzzPush");
 
@@ -55,8 +83,27 @@ export interface NativeCallState {
 }
 export const BuzzHuddle = registerPlugin<{
   snapshot(): Promise<NativeCallState>;
-  join(options: { relayUrl: string; channelId: string; parentChannelId: string; sttUrl: string; ttsUrl: string }): Promise<NativeCallState>;
+  join(options: {
+    relayUrl: string;
+    channelId: string;
+    parentChannelId: string;
+    sttUrl: string;
+    ttsUrl: string;
+  }): Promise<NativeCallState>;
   leave(): Promise<void>;
-  configure(options: { muted?: boolean; speaker?: boolean; speakerMuted?: boolean; voiceEnabled?: boolean; speechEnabled?: boolean; held?: boolean; duplex?: "half" | "barge"; voiceOverride?: { engine?: string; key?: string }; interrupt?: boolean }): Promise<void>;
-  addListener(event: "state", listener: (state: NativeCallState) => void): Promise<PluginListenerHandle>;
+  configure(options: {
+    muted?: boolean;
+    speaker?: boolean;
+    speakerMuted?: boolean;
+    voiceEnabled?: boolean;
+    speechEnabled?: boolean;
+    held?: boolean;
+    duplex?: "half" | "barge";
+    voiceOverride?: { engine?: string; key?: string };
+    interrupt?: boolean;
+  }): Promise<void>;
+  addListener(
+    event: "state",
+    listener: (state: NativeCallState) => void,
+  ): Promise<PluginListenerHandle>;
 }>("BuzzHuddle");

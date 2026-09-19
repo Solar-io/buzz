@@ -116,12 +116,20 @@ export function HuddleSessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!isNativeIOS()) return;
     let alive = true;
-    const restore = () => void BuzzHuddle.snapshot().then((state) => {
-      if (alive && state.channelId && state.parentChannelId) setTarget({ huddleChannelId: state.channelId, parentChannelId: state.parentChannelId });
-    });
+    const restore = () =>
+      void BuzzHuddle.snapshot().then((state) => {
+        if (alive && state.channelId && state.parentChannelId)
+          setTarget({
+            huddleChannelId: state.channelId,
+            parentChannelId: state.parentChannelId,
+          });
+      });
     restore();
     document.addEventListener("visibilitychange", restore);
-    return () => { alive = false; document.removeEventListener("visibilitychange", restore); };
+    return () => {
+      alive = false;
+      document.removeEventListener("visibilitychange", restore);
+    };
   }, []);
   const callRef = useRef(call);
   callRef.current = call;

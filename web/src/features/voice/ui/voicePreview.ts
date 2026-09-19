@@ -21,7 +21,10 @@ import {
   type BridgeAudioContextLike,
 } from "../../huddle/lib/bridgeSpeech.ts";
 import { PREVIEW_SAMPLE_TEXT, type VoiceEngine } from "./voicePickerOptions.ts";
-import { relayHostname, speechServiceUrl } from "../../../shared/lib/relay-url.ts";
+import {
+  relayHostname,
+  speechServiceUrl,
+} from "../../../shared/lib/relay-url.ts";
 
 /** What one preview asks the bridge for. */
 export interface VoicePreviewRequest {
@@ -102,15 +105,18 @@ export function createVoicePreviewer(
       const doFetch = options.fetchImpl ?? fetch;
       void (async () => {
         try {
-          const response = await doFetch(options.hostname ? ttsBridgeUrl(host) : speechServiceUrl("tts"), {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              engine: request.engine,
-              voice: bridgeVoiceId(request),
-              text: PREVIEW_SAMPLE_TEXT,
-            }),
-          });
+          const response = await doFetch(
+            options.hostname ? ttsBridgeUrl(host) : speechServiceUrl("tts"),
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                engine: request.engine,
+                voice: bridgeVoiceId(request),
+                text: PREVIEW_SAMPLE_TEXT,
+              }),
+            },
+          );
           if (!response.ok || token !== mine) {
             return;
           }

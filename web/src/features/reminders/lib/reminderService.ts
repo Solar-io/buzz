@@ -67,8 +67,14 @@ export class ReminderKeyUnavailableError extends Error {
  * `features/channels/lib/unreact.ts`.
  */
 export interface ReminderCrypto {
-  encryptToSelf(plaintext: string, selfPubkey: string): string | Promise<string>;
-  decryptFromSelf(ciphertext: string, selfPubkey: string): string | Promise<string>;
+  encryptToSelf(
+    plaintext: string,
+    selfPubkey: string,
+  ): string | Promise<string>;
+  decryptFromSelf(
+    ciphertext: string,
+    selfPubkey: string,
+  ): string | Promise<string>;
   sign(
     template: Omit<UnsignedNostrEvent, "created_at"> & { created_at?: number },
   ): Promise<SignedNostrEvent>;

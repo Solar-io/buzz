@@ -39,7 +39,9 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <TooltipProvider delayDuration={300}>
-          <NativeSetup><App /></NativeSetup>
+          <NativeSetup>
+            <App />
+          </NativeSetup>
           <Toaster />
         </TooltipProvider>
       </ThemeProvider>

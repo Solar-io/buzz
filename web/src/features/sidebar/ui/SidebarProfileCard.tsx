@@ -277,17 +277,19 @@ export function SidebarProfileCard({
             <Workflow aria-hidden className="size-4" />
             Workflows
           </Link>
-          {!isNativeIOS() && <Link
-            to="/repos/agents"
-            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
-            onClick={() => {
-              setOpen(false);
-              closeDrawer();
-            }}
-          >
-            <Bot aria-hidden className="size-4" />
-            Agents
-          </Link>}
+          {!isNativeIOS() && (
+            <Link
+              to="/repos/agents"
+              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+              onClick={() => {
+                setOpen(false);
+                closeDrawer();
+              }}
+            >
+              <Bot aria-hidden className="size-4" />
+              Agents
+            </Link>
+          )}
           <button
             type="button"
             className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"

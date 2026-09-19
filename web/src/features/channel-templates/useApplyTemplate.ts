@@ -77,7 +77,10 @@ function awaitAcks(
       {
         onEvent: async (event) => {
           try {
-            const { plaintext } = await nip44DecryptFrom(event.content, event.pubkey);
+            const { plaintext } = await nip44DecryptFrom(
+              event.content,
+              event.pubkey,
+            );
             const ack = parseAdminAck(JSON.parse(plaintext));
             if (!ack || !requestIds.has(ack.requestId)) return;
             acks.set(ack.requestId, ack);

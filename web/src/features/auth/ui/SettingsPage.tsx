@@ -99,7 +99,15 @@ export function SettingsPage() {
       <FilesUrlSection />
 
       <SectionHeading>Identity and this device</SectionHeading>
-      {isNativeIOS() ? <NativeDeviceSettings /> : <><KeyBackupCard /><DeviceSection /><PairDeviceSection /></>}
+      {isNativeIOS() ? (
+        <NativeDeviceSettings />
+      ) : (
+        <>
+          <KeyBackupCard />
+          <DeviceSection />
+          <PairDeviceSection />
+        </>
+      )}
       <ForgetDeviceSection />
 
       <SectionHeading>Advanced</SectionHeading>
