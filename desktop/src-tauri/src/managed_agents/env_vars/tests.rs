@@ -189,6 +189,18 @@ fn reserved_keys_include_code_execution_surface() {
 }
 
 #[test]
+fn reserved_keys_include_harness_policy_overlay() {
+    for key in [
+        "BUZZ_HARNESS_POLICY_JSON",
+        "BUZZ_HARNESS_POLICY_HASH",
+        "BUZZ_HARNESS_POLICY_PROFILE",
+    ] {
+        assert!(is_reserved_env_key(key), "{key} should be reserved");
+        assert!(merged_user_env(&BTreeMap::new(), &map(&[(key, "tampered")])).is_empty());
+    }
+}
+
+#[test]
 fn reserved_keys_include_relay_url() {
     // Overriding the relay URL could redirect the agent to an
     // attacker-controlled relay.

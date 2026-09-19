@@ -460,6 +460,22 @@ pub fn spawn_agent_child(
     let effective_command = &descriptor.command;
     let agent_args = &descriptor.args;
 
+    // The provider-neutral policy is compiled once at the spawn boundary and
+    // carried to the native adapter as an exact desired/effective overlay.
+    // The adapter performs the live capability check; the desktop never
+    // substitutes another model or effort. Unknown custom harnesses keep
+    // their existing behavior until they register a policy profile.
+    let harness_policy_env = if let Some(runtime) = known_acp_runtime(effective_command) {
+        let policy = crate::managed_agents::harness_policy::load_harness_policy(app)?;
+        Some(crate::managed_agents::harness_policy::spawn_overlay_env(
+            &policy,
+            runtime.id,
+            Some(record.pubkey.as_str()),
+        )?)
+    } else {
+        None
+    };
+
     let log_path = super::managed_agent_runtime_log_path(app, &runtime_key)?;
     append_log_marker(
         &log_path,
@@ -528,6 +544,11 @@ pub fn spawn_agent_child(
     command.stderr(std::process::Stdio::from(stderr));
     if let Some(ref path) = augmented_path {
         command.env("PATH", path);
+    }
+    if let Some(policy_env) = &harness_policy_env {
+        for (key, value) in policy_env {
+            command.env(key, value);
+        }
     }
     command.env("RUST_LOG", child_rust_log_filter());
     command.env("BUZZ_PRIVATE_KEY", &record.private_key_nsec);

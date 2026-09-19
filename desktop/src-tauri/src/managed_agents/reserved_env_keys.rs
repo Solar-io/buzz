@@ -73,6 +73,12 @@ pub(crate) const RESERVED_ENV_KEYS: &[&str] = &[
     // for same-session sweep decisions.
     "BUZZ_MANAGED_AGENT",
     "BUZZ_MANAGED_AGENT_START_NONCE",
+    // Harness policy is a Desktop-owned control-plane overlay. A persona or
+    // agent env override must not replace the desired model/effort matrix or
+    // its hash after the spawn boundary has compiled it.
+    "BUZZ_HARNESS_POLICY_JSON",
+    "BUZZ_HARNESS_POLICY_HASH",
+    "BUZZ_HARNESS_POLICY_PROFILE",
 ];
 
 pub(crate) fn is_reserved_env_key(key: &str) -> bool {
