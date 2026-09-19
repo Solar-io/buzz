@@ -42,9 +42,11 @@ cap::rollback_relay() {
 cap::cutover_failure() {
   local code=$?
   trap - EXIT
-  [[ "${CAP_RELAY_CHANGED:-0}" != 1 ]] || cap::rollback_relay "$CAP_CUTOVER_STATE"
+  if [[ "${CAP_RELAY_CHANGED:-0}" == 1 ]]; then
+    (cap::rollback_relay "$CAP_CUTOVER_STATE") || dc::err "Automatic relay rollback failed; gateway rollback will still be attempted."
+  fi
   if [[ "${CAP_GATEWAY_READY:-0}" == 1 ]]; then
-    bash "$CAP_REPO_ROOT/deploy/push-gateway-up.sh" --rollback "$CAP_CUTOVER_STATE/gateway" --execute
+    bash "$CAP_REPO_ROOT/deploy/push-gateway-up.sh" --rollback "$CAP_CUTOVER_STATE/gateway" --execute || dc::err "Automatic gateway rollback failed; retain private state $CAP_CUTOVER_STATE."
   fi
   exit "$code"
 }
