@@ -110,9 +110,19 @@ impl Config {
         let public_delivery_url = req(e, "BUZZ_PUSH_PUBLIC_DELIVERY_URL")?
             .parse::<url::Url>()
             .map_err(|_| ConfigError::Invalid("BUZZ_PUSH_PUBLIC_DELIVERY_URL"))?;
+        // Registered public v1 remains the default. A private deployment
+        // must deliberately select its exact NIP-98 audience, matching the
+        // relay's configured delivery URL (not an incoming Host header).
+        let self_hosted = match e.get("BUZZ_PUSH_ALLOW_SELF_HOSTED_URL").map(String::as_str) {
+            None | Some("false") => false,
+            Some("true") => true,
+            _ => return Err(ConfigError::Invalid("BUZZ_PUSH_ALLOW_SELF_HOSTED_URL")),
+        };
         if public_delivery_url.scheme() != "https"
-            || public_delivery_url.host_str() != Some("push.buzz.xyz")
-            || public_delivery_url.port().is_some()
+            || public_delivery_url.host_str().is_none()
+            || (!self_hosted
+                && (public_delivery_url.host_str() != Some("push.buzz.xyz")
+                    || public_delivery_url.port().is_some()))
             || public_delivery_url.path() != "/v1/deliveries/apns"
             || public_delivery_url.query().is_some()
             || public_delivery_url.fragment().is_some()
@@ -311,6 +321,31 @@ mod tests {
         );
         env.insert("BUZZ_PUSH_CAPACITOR_APNS_TOPIC".into(), "app".into());
         assert!(Config::from_map(&env).is_err());
+    }
+
+    #[test]
+    fn private_gateway_audience_requires_explicit_opt_in_and_exact_secure_route() {
+        let mut env = base();
+        env.insert(
+            "BUZZ_PUSH_PUBLIC_DELIVERY_URL".into(),
+            "https://gateway.internal:8443/v1/deliveries/apns".into(),
+        );
+        assert!(Config::from_map(&env).is_err());
+        env.insert("BUZZ_PUSH_ALLOW_SELF_HOSTED_URL".into(), "true".into());
+        assert_eq!(
+            Config::from_map(&env).unwrap().public_delivery_url.as_str(),
+            "https://gateway.internal:8443/v1/deliveries/apns"
+        );
+        for invalid in [
+            "http://gateway.internal/v1/deliveries/apns",
+            "https://user:pass@gateway.internal/v1/deliveries/apns",
+            "https://gateway.internal/other",
+            "https://gateway.internal/v1/deliveries/apns?x=1",
+            "https://gateway.internal/v1/deliveries/apns#fragment",
+        ] {
+            env.insert("BUZZ_PUSH_PUBLIC_DELIVERY_URL".into(), invalid.into());
+            assert!(Config::from_map(&env).is_err(), "{invalid}");
+        }
     }
 
     #[test]

@@ -6,6 +6,15 @@
 
 ### Optional Capacitor application
 
+For a private gateway, set `BUZZ_PUSH_ALLOW_SELF_HOSTED_URL=true` and
+`BUZZ_PUSH_PUBLIC_DELIVERY_URL` to its exact HTTPS `/v1/deliveries/apns` URL.
+Set the relay's `BUZZ_PUSH_GATEWAY_DELIVERY_URL` to the identical value.
+Without this explicit opt-in, the registered public `push.buzz.xyz` audience
+remains mandatory. A relay signing its private URL against a gateway expecting
+the public URL fails NIP-98 verification even when transport connects.
+App Attest transcript audiences remain the canonical protocol strings; this
+setting changes only delivery HTTP authentication and its transport address.
+
 Capacitor uses a separate app identity. Add
 `buzz-capacitor-ios-sandbox` and/or `buzz-capacitor-ios-production` to
 `BUZZ_PUSH_ENABLED_PROFILES`, with `BUZZ_PUSH_CAPACITOR_APP_ATTEST_APP_ID`
