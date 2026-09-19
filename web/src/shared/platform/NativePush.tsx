@@ -4,7 +4,6 @@ import { useAuth } from "@/features/auth/ui/AuthProvider";
 import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { nip44EncryptTo, signNostrEvent } from "@/shared/lib/nostr-signer";
-import { setNativeBeforeForget } from "@/shared/lib/key-store";
 import { nip98Headers } from "@/shared/lib/nip98";
 import { relayHttpBaseUrl, relayWsUrl } from "@/shared/lib/relay-url";
 import { router } from "@/app/router";
@@ -67,9 +66,8 @@ export function NativePushRuntime() {
     const foreground = () => { if (!document.hidden) { maintain(); void wake(); } };
     document.addEventListener("visibilitychange", foreground);
     maintain(); void wake();
-    setNativeBeforeForget(async () => { await service?.disable(); });
     return () => {
-      alive = false; setNativeBeforeForget(null);
+      alive = false;
       document.removeEventListener("visibilitychange", foreground);
       void token.then((handle) => handle.remove()); void notification.then((handle) => handle.remove());
     };

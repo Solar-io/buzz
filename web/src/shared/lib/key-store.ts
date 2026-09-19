@@ -78,11 +78,9 @@ type Listener = (state: AuthState) => void;
 let authState: AuthState = { status: "anonymous" };
 let unlockedSecretKey: Uint8Array<ArrayBuffer> | null = null;
 const listeners = new Set<Listener>();
-let nativeBeforeForget: (() => Promise<void>) | null = null;
-export function setNativeBeforeForget(action: (() => Promise<void>) | null): void { nativeBeforeForget = action; }
 export async function prepareNativeCommunityChange(): Promise<void> {
   await BuzzHuddle.leave();
-  await nativeBeforeForget?.();
+  await (await import("../platform/native-push-revoke.ts")).revokeNativePush();
 }
 
 function setState(next: AuthState) {
@@ -339,7 +337,7 @@ export function lockNow(): void {
 export async function signOut(): Promise<void> {
   if (isNativeIOS()) {
     await BuzzHuddle.leave();
-    await nativeBeforeForget?.();
+    await (await import("../platform/native-push-revoke.ts")).revokeNativePush();
     await BuzzIdentity.forget();
     setState({ status: "anonymous" });
     return;
