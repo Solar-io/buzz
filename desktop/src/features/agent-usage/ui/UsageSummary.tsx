@@ -3,7 +3,7 @@ import type {
   AgentUsageAnalytics,
   AnalyticsMetricGroup,
 } from "@/shared/api/tauriArchive";
-import { compactTokens, exactTokens, money } from "../lib/analytics";
+import { compactTokens, exactTokens, ioRatio, money } from "../lib/analytics";
 import { UsageCard } from "./UsageCharts";
 
 export function UsageSummary({ data }: { data: AgentUsageAnalytics }) {
@@ -20,12 +20,10 @@ export function UsageSummary({ data }: { data: AgentUsageAnalytics }) {
           ).toString(),
           incomplete: summary.usage.totalTokens.incomplete,
         });
-  const ratio =
-    summary.usage.inputTokens.value === null ||
-    summary.usage.outputTokens.value === null ||
-    BigInt(summary.usage.outputTokens.value) === 0n
-      ? "—"
-      : `${(Number((BigInt(summary.usage.inputTokens.value) * 10n) / BigInt(summary.usage.outputTokens.value)) / 10).toLocaleString()}×`;
+  // Carries the partial marker its band-neighbours carry. The ratio divides one
+  // population by another, so it is marked when *either* side is incomplete —
+  // a complete input over a partial output is not a confident number.
+  const ratio = ioRatio(summary.usage.inputTokens, summary.usage.outputTokens);
   const topProvider =
     [...data.providers]
       .filter(
@@ -282,9 +280,10 @@ export function UsageCoverage({ data }: { data: AgentUsageAnalytics }) {
         {coverage.invalidReportCount > 0
           ? `${coverage.invalidReportCount.toLocaleString()} invalid reports excluded. `
           : ""}
-        A + indicates a partial total. Subscription value compares observed
-        usage, not promised capacity. Only usage archived on this device is
-        included.
+        A + indicates a partial total. A derived value computed over partial
+        data reads “(partial)” instead, because a missing denominator can move
+        it in either direction. Subscription value compares observed usage, not
+        promised capacity. Only usage archived on this device is included.
       </p>
     </UsageCard>
   );

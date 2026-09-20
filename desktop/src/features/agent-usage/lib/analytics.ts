@@ -135,6 +135,25 @@ export function compactTokens(field: UsageField): string {
     }
   return `${value.toLocaleString()}${field.incomplete ? "+" : ""}`;
 }
+/** Input-to-output token ratio, marked whenever either side is partial.
+ *
+ * The quotient of two incomplete populations is not a total, so it does not
+ * take the `+` marker its sibling fields use: `+` means "at least this much",
+ * and a partial *denominator* makes the displayed ratio an upper bound rather
+ * than a lower one. `(partial)` — the same word `exactTokens` already uses for
+ * an incomplete count — says the honest thing: this was computed over data the
+ * page knows is missing values, in either direction.
+ *
+ * Unknown is never zero: an absent input or output, or a zero output, declines
+ * to compute rather than inventing a ratio. */
+export function ioRatio(input: UsageField, output: UsageField): string {
+  if (input.value === null || output.value === null) return "—";
+  const divisor = BigInt(output.value);
+  if (divisor === 0n) return "—";
+  const tenths = Number((BigInt(input.value) * 10n) / divisor) / 10;
+  const partial = input.incomplete || output.incomplete;
+  return `${tenths.toLocaleString()}×${partial ? " (partial)" : ""}`;
+}
 export function money(field: CostField): string {
   return field.value === null
     ? "—"

@@ -111,6 +111,26 @@ test("headline never invents total tokens from reported input and output", () =>
   assert.equal(view.getByTestId("usage-total").textContent, "—");
   assert.ok(view.getByText("990+"));
 });
+test("the I/O ratio is marked partial exactly when its band-neighbours are", () => {
+  const value = (view, label) =>
+    view.getByText(label).nextElementSibling.textContent;
+  // The fixture has one all-null report, so every total is partial. The ratio
+  // must say so too: it was a complete input over a partial output, rendered
+  // as a confident number.
+  const partialView = render(createElement(UsageSummary, { data: fixture() }));
+  assert.equal(value(partialView, "I/O ratio"), "9× (partial)");
+  assert.equal(value(partialView, "Avg tokens / turn"), "366+");
+  assert.equal(value(partialView, "Cost / turn"), "$3.67+");
+  cleanup();
+
+  // Complete populations on both sides: no marker at all. This is the half
+  // that makes the assertion above discriminate.
+  const complete = fixture();
+  complete.summary.usage.inputTokens = { value: "990", incomplete: false };
+  complete.summary.usage.outputTokens = { value: "110", incomplete: false };
+  const completeView = render(createElement(UsageSummary, { data: complete }));
+  assert.equal(value(completeView, "I/O ratio"), "9×");
+});
 test("provenance displays wire estimates unknown separately", () => {
   const data = fixture();
   data.summary.costs.wireReported = { value: 4, incomplete: false };

@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   compactTokens,
   exactTokens,
+  ioRatio,
   money,
   tokenShare,
   csvDocument,
@@ -58,6 +59,49 @@ test("unknown usage is distinct from reported zero", () => {
 });
 test("display ratios preserve huge integer proportions", () => {
   assert.equal(tokenShare("9223372036854775807", "18446744073709551614"), 50);
+});
+test("the I/O ratio is marked partial whenever either population is", () => {
+  const complete = (value) => ({ value, incomplete: false });
+  const partial = (value) => ({ value, incomplete: true });
+  assert.equal(ioRatio(complete("30000000"), complete("3000000")), "10×");
+  assert.equal(
+    ioRatio(complete("30000000"), partial("3000000")),
+    "10× (partial)",
+    "a complete input over a partial output is not a confident ratio",
+  );
+  assert.equal(
+    ioRatio(partial("30000000"), complete("3000000")),
+    "10× (partial)",
+  );
+  assert.equal(
+    ioRatio(partial("30000000"), partial("3000000")),
+    "10× (partial)",
+  );
+  assert.equal(ioRatio(complete("9900"), complete("1100")), "9×");
+});
+test("the I/O ratio declines to compute rather than inventing one", () => {
+  assert.equal(
+    ioRatio(
+      { value: null, incomplete: true },
+      { value: "5", incomplete: false },
+    ),
+    "—",
+  );
+  assert.equal(
+    ioRatio(
+      { value: "5", incomplete: false },
+      { value: null, incomplete: true },
+    ),
+    "—",
+  );
+  assert.equal(
+    ioRatio(
+      { value: "5", incomplete: false },
+      { value: "0", incomplete: false },
+    ),
+    "—",
+    "no output reported is not a ratio of infinity",
+  );
 });
 test("agent keys are validated normalized and deduplicated", () => {
   assert.deepEqual(selectedAgents(`${B},${A.toUpperCase()},${A},junk`), [A, B]);
