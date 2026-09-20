@@ -141,6 +141,45 @@ the wire format.
 - A single-question v2 payload may omit `title` (it borrows the question's
   text). More than one question **must** be titled.
 
+### Resolved ids are unique
+
+Ids are **resolved** before anything reads them: an explicit, non-blank `id`
+is taken verbatim, and an omitted or blank one becomes the item's position
+(`"0"`, `"1"`, …). So a question declaring `id: "1"` in position 0 resolves to
+the same id as an un-`id`'d question in position 1.
+
+**After resolution, no two questions — and no two options within one question
+— may share an id.** Both sides enforce it identically:
+
+| | |
+|---|---|
+| reader (`parseCardTags`) | returns "not a card"; the message renders its `content` |
+| builder (`--card`, `buildCardTag`) | refuses the send, naming both positions and the id |
+
+This is **not** one of the leniency asymmetries above. The answer format keys
+on these ids (`{"q": …}`, `{"o": […]}`), so two questions called `"1"` produce
+two `{"q":"1"}` entries that no reader can tell apart — the card's structured
+answer is undefined, not merely awkward. A card that looks legal and then
+silently degrades to plain text at the moment of answering is worse than one
+that never rendered, so the refusal sits in the format.
+
+The builder's message names the collision:
+
+```
+--card: questions 1 and 2 resolve to the same id "1"
+--card: question 1 options 1 and 2 resolve to the same id "1"
+--card: options 1 and 2 resolve to the same id "1"     # v1 (one question)
+```
+
+Option ids are scoped **per question** — reusing `yes`/`no` in every question
+is ordinary and legal.
+
+This rule applies to **v1 as well as v2**. The id scheme is shared, so a
+version-dependent uniqueness rule would be a second contract to keep in step
+for no gain; the cost is that a v1 card whose explicit option id collides with
+a later positional one now renders as plain text. No card the v1 CLI could
+emit without explicit ids is affected.
+
 ### One parsed shape
 
 `parseCardTags` normalizes both versions into one structure — a v1 card becomes
@@ -318,16 +357,10 @@ short because each entry is a way to publish an ambiguous machine payload:
 | a single-select question given two options | refuses |
 | a multi-select question with nothing chosen | refuses — that is "not answered", not an answer |
 | both `o` and `t` for one question | refuses |
-| **a card whose question ids, or one question's option ids, collide** | refuses |
 
-That last one is a real hole in the card format rather than a hypothetical:
-`parseCardTags` fills omitted ids positionally (`"0"`, `"1"`, …) and takes
-explicit ones verbatim, so a card declaring `id: "1"` on question 0 produces
-two questions both called `"1"`. The `content` stays unambiguous (it keys on
-question text in author order), so this is not a reason to refuse to RENDER —
-but two `{"q":"1"}` entries cannot be told apart, so it is a reason to refuse
-to BUILD. Such a card is still answerable through the plain-text path, and the
-web client falls back to it automatically.
+Colliding ids are **not** on this list any more. They are refused one layer
+up — see "Resolved ids are unique" — so a card that renders at all already
+has ids an answer can key on.
 
 ## Sending one
 

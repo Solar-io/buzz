@@ -616,3 +616,209 @@ test("a tags array carrying a null element returns null, never a throw", () => {
   assert.ok(card, "a good card after a null element still parses");
   assert.equal(card.title, VALID.title);
 });
+
+// ---- resolved ids are unique (the contract layer, both sides) -------------
+
+function parsedCard(payload) {
+  return parseCardTags([["card", JSON.stringify(payload)]]);
+}
+
+test("duplicate resolved question ids are a parse refusal, not a fallback", () => {
+  // Ids are filled positionally and taken verbatim, so question 1's explicit
+  // "1" collides with question 2's positional "1". The answer format keys on
+  // these ids, so such a payload has no unambiguous structured answer at all
+  // — the card degrades to its fallback text rather than rendering an
+  // interview whose answers nobody can read back.
+  assert.equal(
+    parsedCard({
+      v: 2,
+      title: "Collide",
+      questions: [
+        {
+          id: "1",
+          question: "First?",
+          options: [{ label: "a" }, { label: "b" }],
+        },
+        { question: "Second?", options: [{ label: "c" }, { label: "d" }] },
+      ],
+    }),
+    null,
+  );
+  // Two identical EXPLICIT ids: the same refusal by a different route.
+  assert.equal(
+    parsedCard({
+      v: 2,
+      title: "Collide",
+      questions: [
+        {
+          id: "s",
+          question: "First?",
+          options: [{ label: "a" }, { label: "b" }],
+        },
+        {
+          id: "s",
+          question: "Second?",
+          options: [{ label: "c" }, { label: "d" }],
+        },
+      ],
+    }),
+    null,
+  );
+  // The discriminating control: explicit numeric ids that line up with the
+  // positions they occupy are LEGAL. A check that compared an explicit id
+  // against its own index would refuse this and still pass everything above.
+  const ok = parsedCard({
+    v: 2,
+    title: "Fine",
+    questions: [
+      {
+        id: "0",
+        question: "First?",
+        options: [{ label: "a" }, { label: "b" }],
+      },
+      {
+        id: "1",
+        question: "Second?",
+        options: [{ label: "c" }, { label: "d" }],
+      },
+    ],
+  });
+  assert.ok(ok, "non-colliding explicit ids must keep parsing");
+  assert.deepEqual(
+    ok.questions.map((question) => question.id),
+    ["0", "1"],
+  );
+});
+
+test("duplicate resolved option ids are a parse refusal, in v1 as in v2", () => {
+  // One question's option 1 declares "1"; option 2 resolves to positional
+  // "1". v1 shares the id scheme, so it shares the rule — a v1 card like this
+  // now degrades to plain text, which is the documented tightening.
+  assert.equal(
+    parsedCard({
+      v: 1,
+      title: "Q",
+      options: [{ id: "1", label: "a" }, { label: "b" }],
+    }),
+    null,
+  );
+  assert.equal(
+    parsedCard({
+      v: 2,
+      questions: [
+        {
+          question: "First?",
+          options: [{ id: "1", label: "a" }, { label: "b" }],
+        },
+      ],
+    }),
+    null,
+  );
+  // Collisions are scoped to ONE question: the same option ids reused in a
+  // second question are ordinary and must keep working.
+  const ok = parsedCard({
+    v: 2,
+    title: "Fine",
+    questions: [
+      {
+        id: "a",
+        question: "First?",
+        options: [
+          { id: "yes", label: "a" },
+          { id: "no", label: "b" },
+        ],
+      },
+      {
+        id: "b",
+        question: "Second?",
+        options: [
+          { id: "yes", label: "c" },
+          { id: "no", label: "d" },
+        ],
+      },
+    ],
+  });
+  assert.ok(ok, "per-question option ids must not collide across questions");
+  assert.deepEqual(
+    ok.questions.map((question) => question.options.map((o) => o.id)),
+    [
+      ["yes", "no"],
+      ["yes", "no"],
+    ],
+  );
+});
+
+test("buildCardTag names both colliding positions when ids resolve alike", () => {
+  // The builder refuses the shapes the parser returns null for, and its
+  // message names the collision so an agent can fix the payload rather than
+  // guess at it. The exact strings are pinned for BOTH languages by the
+  // shared corpus.
+  assert.throws(
+    () =>
+      buildCardTag({
+        v: 2,
+        title: "Collide",
+        questions: [
+          {
+            id: "1",
+            question: "First?",
+            options: [{ label: "a" }, { label: "b" }],
+          },
+          { question: "Second?", options: [{ label: "c" }, { label: "d" }] },
+        ],
+      }),
+    /questions 1 and 2 resolve to the same id "1"/,
+  );
+  assert.throws(
+    () =>
+      buildCardTag({
+        v: 2,
+        questions: [
+          {
+            question: "First?",
+            options: [{ id: "1", label: "a" }, { label: "b" }],
+          },
+        ],
+      }),
+    /question 1 options 1 and 2 resolve to the same id "1"/,
+  );
+  assert.throws(
+    () =>
+      buildCardTag({
+        v: 1,
+        title: "Q",
+        options: [{ id: "1", label: "a" }, { label: "b" }],
+      }),
+    /options 1 and 2 resolve to the same id "1"/,
+  );
+});
+
+test("an id that trims to empty is positional, and can therefore collide", () => {
+  // `{"id":"   "}` is not an id: both sides drop it from the wire and the
+  // parser fills the position. So a blank id on option 2 resolves to "1" and
+  // collides with option 1's explicit "1" — the check has to run on the
+  // RESOLVED id, not on whether the key was present.
+  assert.throws(
+    () =>
+      buildCardTag({
+        v: 1,
+        title: "Q",
+        options: [
+          { id: "1", label: "a" },
+          { id: "   ", label: "b" },
+        ],
+      }),
+    /options 1 and 2 resolve to the same id "1"/,
+  );
+  assert.equal(
+    parsedCard({
+      v: 1,
+      title: "Q",
+      options: [
+        { id: "1", label: "a" },
+        { id: "   ", label: "b" },
+      ],
+    }),
+    null,
+  );
+});

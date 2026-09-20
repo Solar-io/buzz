@@ -90,7 +90,7 @@ test("every accept case builds its exact canonical payload and fallback", () => 
 
 test("every accept case's canonical parses and round-trips", () => {
   const accepted = cases.filter((entry) => entry.expect === "accept");
-  assert.equal(accepted.length, 16, "accept-case count moved");
+  assert.equal(accepted.length, 17, "accept-case count moved");
   for (const testCase of accepted) {
     const wire = JSON.stringify(testCase.canonical);
     const card = parseCardTags([["card", wire]]);
@@ -107,7 +107,7 @@ test("every accept case's canonical parses and round-trips", () => {
 
 test("every reject case is refused by the builder, with the shared reason", () => {
   const rejected = cases.filter((entry) => entry.expect === "reject");
-  assert.equal(rejected.length, 22, "reject-case count moved");
+  assert.equal(rejected.length, 26, "reject-case count moved");
   for (const testCase of rejected) {
     assert.throws(
       () => buildCardTag(payloadOf(testCase)),
@@ -162,5 +162,5 @@ test("reject cases without a parseRaw expectation also fail the parse", () => {
     );
     checked += 1;
   }
-  assert.equal(checked, 19, "default-reject case count moved");
+  assert.equal(checked, 23, "default-reject case count moved");
 });

@@ -43,6 +43,28 @@
  * Field names deliberately mirror Claude Code's `AskUserQuestion` tool
  * schema (`question`, `header`, `options`, `label`, `description`,
  * `multiSelect`) so an agent that knows one knows the other.
+ *
+ * ## Resolved ids are UNIQUE, and that is a contract not a preference
+ *
+ * Ids are filled positionally when the author omits them (`"0"`, `"1"`, …)
+ * and taken verbatim when supplied, so question 0 declaring `id:"1"` collides
+ * with question 1's positional id. The ANSWER format (`cardAnswerTag.ts`)
+ * keys on those ids: two questions called `"1"` produce two `{"q":"1"}`
+ * entries that no reader can tell apart. A card like that is not a card that
+ * renders imperfectly — it is a card whose structured answer is undefined.
+ *
+ * So both sides refuse it, at the same layer: after positional fill, any two
+ * questions or any two options WITHIN one question that resolve to the same
+ * id make `parseCardTags` return null and `buildCardTag` throw. The parse
+ * degrading to the fallback text is the correct outcome — the text keys on
+ * question TEXT in author order and stays unambiguous — and refusing at the
+ * builder means the shape never reaches the wire in the first place.
+ *
+ * This is the one place v2 tightened a rule v1 also lives under: a v1 card
+ * whose explicit option id collides with a later positional one now degrades
+ * to plain text too. Deliberate — the rule is a property of the ID SCHEME,
+ * which both versions share, and a version-dependent uniqueness rule would be
+ * a second contract to keep in step for no gain.
  */
 
 /**
@@ -271,6 +293,9 @@ function parseOptions(
     return null;
   }
   let recommendedSeen = false;
+  // Resolved ids, so an explicit `"1"` and a later positional `"1"` collide
+  // here exactly as they would in an answer payload. See the module doc.
+  const seenIds = new Set<string>();
   const options: DecisionCardOption[] = [];
   for (let index = 0; index < raw.length; index += 1) {
     const candidate: unknown = raw[index];
@@ -285,10 +310,12 @@ function parseOptions(
       candidate.id === undefined
         ? null
         : boundedString(candidate.id, CARD_LIMITS.maxIdChars);
-    const option: DecisionCardOption = {
-      id: explicitId ?? String(index),
-      label,
-    };
+    const id = explicitId ?? String(index);
+    if (seenIds.has(id)) {
+      return null;
+    }
+    seenIds.add(id);
+    const option: DecisionCardOption = { id, label };
     if (allowDescription && candidate.description !== undefined) {
       const description = boundedString(
         candidate.description,
@@ -344,6 +371,9 @@ function parseV2(parsed: Record<string, unknown>): DecisionCard | null {
     return null;
   }
   const questions: CardQuestion[] = [];
+  // Same rule as the option ids one level down, for the same reason: the
+  // answer payload keys on these. See the module doc.
+  const seenIds = new Set<string>();
   for (let index = 0; index < rawQuestions.length; index += 1) {
     const candidate: unknown = rawQuestions[index];
     if (!isPlainObject(candidate)) {
@@ -364,8 +394,13 @@ function parseV2(parsed: Record<string, unknown>): DecisionCard | null {
       candidate.id === undefined
         ? null
         : boundedString(candidate.id, CARD_LIMITS.maxIdChars);
+    const id = explicitId ?? String(index);
+    if (seenIds.has(id)) {
+      return null;
+    }
+    seenIds.add(id);
     const question: CardQuestion = {
-      id: explicitId ?? String(index),
+      id,
       question: text,
       multiSelect: candidate.multiSelect === true,
       options,
@@ -600,6 +635,9 @@ function buildOptions(
     );
   }
   let recommendedCount = 0;
+  // Resolved id → the 1-based position that claimed it, so the refusal can
+  // name BOTH colliding options rather than only the second one.
+  const idOwner = new Map<string, number>();
   const options: Record<string, unknown>[] = [];
   for (let index = 0; index < raw.length; index += 1) {
     const candidate: unknown = raw[index];
@@ -629,6 +667,16 @@ function buildOptions(
         entry.id = id;
       }
     }
+    // The id the PARSER will resolve for this option — an omitted or blank
+    // explicit id is not written to the wire and becomes the position.
+    const resolvedId = typeof entry.id === "string" ? entry.id : String(index);
+    const owner = idOwner.get(resolvedId);
+    if (owner !== undefined) {
+      reject(
+        `${prefix}options ${owner} and ${index + 1} resolve to the same id ${JSON.stringify(resolvedId)}`,
+      );
+    }
+    idOwner.set(resolvedId, index + 1);
     entry.label = label;
     if (allowDescription && candidate.description !== undefined) {
       entry.description = requireBounded(
@@ -755,6 +803,8 @@ function buildV2Payload(
     );
   }
   const questions: Record<string, unknown>[] = [];
+  // Same collision rule as the options one level down. See the module doc.
+  const idOwner = new Map<string, number>();
   for (let index = 0; index < rawQuestions.length; index += 1) {
     const candidate: unknown = rawQuestions[index];
     const prefix = `question ${index + 1} `;
@@ -781,6 +831,14 @@ function buildV2Payload(
         entry.id = id;
       }
     }
+    const resolvedId = typeof entry.id === "string" ? entry.id : String(index);
+    const owner = idOwner.get(resolvedId);
+    if (owner !== undefined) {
+      reject(
+        `questions ${owner} and ${index + 1} resolve to the same id ${JSON.stringify(resolvedId)}`,
+      );
+    }
+    idOwner.set(resolvedId, index + 1);
     if (candidate.header !== undefined) {
       entry.header = requireBounded(
         candidate.header,

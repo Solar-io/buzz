@@ -33,6 +33,20 @@
 //! dropping it): this side refuses the send, so self-contradicting cards never
 //! reach the wire. The corpus's `parseRaw` field records each of those
 //! asymmetries as a tested fact.
+//!
+//! ## Resolved ids are UNIQUE
+//!
+//! One rule both sides enforce IDENTICALLY, rather than an asymmetry. Ids are
+//! filled positionally when the author omits them (`"0"`, `"1"`, …) and taken
+//! verbatim when supplied, so question 1 declaring `id:"1"` collides with
+//! question 2's positional id. The answer format keys on those ids, and two
+//! questions called `"1"` produce two `{"q":"1"}` entries no reader can tell
+//! apart — an undefined structured answer, not a cosmetic flaw. So after
+//! positional fill, any two questions, or any two options within one
+//! question, that resolve to the same id are a refusal here and a `null` from
+//! `parseCardTags` there. Applies to v1 too: the ID SCHEME is shared, so a
+//! version-dependent uniqueness rule would be a second contract to keep in
+//! step for no gain.
 
 use crate::error::CliError;
 use serde_json::{Map, Value};
@@ -241,6 +255,10 @@ fn build_options(
         )));
     }
     let mut recommended_count = 0usize;
+    // Resolved id -> the 1-based position that claimed it, so the refusal can
+    // name BOTH colliding options rather than only the second one. Mirrors
+    // `idOwner` in the web builder's `buildOptions`.
+    let mut id_owner: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut wire: Vec<Value> = Vec::with_capacity(raw_options.len());
     let mut view: Vec<OptionView> = Vec::with_capacity(raw_options.len());
     for (index, candidate) in raw_options.iter().enumerate() {
@@ -273,6 +291,21 @@ fn build_options(
                 entry.insert("id".to_string(), Value::String(id.to_string()));
             }
         }
+        // The id the WEB PARSER will resolve for this option: an omitted or
+        // blank explicit id is not written to the wire and becomes the
+        // position.
+        let resolved_id = match entry.get("id").and_then(Value::as_str) {
+            Some(id) => id.to_string(),
+            None => index.to_string(),
+        };
+        if let Some(owner) = id_owner.get(&resolved_id) {
+            return Err(usage(format!(
+                "{prefix}options {owner} and {} resolve to the same id {}",
+                index + 1,
+                Value::String(resolved_id)
+            )));
+        }
+        id_owner.insert(resolved_id, index + 1);
         entry.insert("label".to_string(), Value::String(label.clone()));
         let mut description = None;
         if allow_description && option.get("description").is_some() {
@@ -399,6 +432,8 @@ fn build_v2(obj: &Map<String, Value>) -> Result<BuiltCard, CliError> {
     }
     let mut questions_wire: Vec<Value> = Vec::with_capacity(raw_questions.len());
     let mut questions_view: Vec<QuestionView> = Vec::with_capacity(raw_questions.len());
+    // Same collision rule as the options one level down. See the module doc.
+    let mut id_owner: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for (index, candidate) in raw_questions.iter().enumerate() {
         let prefix = format!("question {} ", index + 1);
         let question = candidate
@@ -425,6 +460,18 @@ fn build_v2(obj: &Map<String, Value>) -> Result<BuiltCard, CliError> {
                 entry.insert("id".to_string(), Value::String(id.to_string()));
             }
         }
+        let resolved_id = match entry.get("id").and_then(Value::as_str) {
+            Some(id) => id.to_string(),
+            None => index.to_string(),
+        };
+        if let Some(owner) = id_owner.get(&resolved_id) {
+            return Err(usage(format!(
+                "questions {owner} and {} resolve to the same id {}",
+                index + 1,
+                Value::String(resolved_id)
+            )));
+        }
+        id_owner.insert(resolved_id, index + 1);
         if question.get("header").is_some() {
             let header = require_bounded(
                 question.get("header"),
@@ -679,8 +726,8 @@ mod tests {
                 other => panic!("{name}: unknown expect {other:?}"),
             }
         }
-        assert_eq!(accepted, 16, "accept-case count moved");
-        assert_eq!(rejected, 22, "reject-case count moved");
+        assert_eq!(accepted, 17, "accept-case count moved");
+        assert_eq!(rejected, 26, "reject-case count moved");
     }
 
     // ---- Asks inbox authoring guardrail (D-035 follow-on) ----
@@ -978,6 +1025,88 @@ mod tests {
         assert!(err
             .to_string()
             .contains("option 1 description must be 1-200"));
+    }
+
+    #[test]
+    fn card_rejects_ids_that_resolve_to_the_same_value() {
+        // Positional fill makes an explicit `"1"` collide with the NEXT
+        // item's derived id. The answer format keys on these, so the web
+        // parser returns null for the same payloads and this side refuses
+        // the send — one rule, both implementations, error text pinned by
+        // the shared corpus.
+        let questions_positional = build_card_tag(
+            r#"{"v":2,"title":"Collide","questions":[
+                 {"id":"1","question":"First?","options":[{"label":"a"},{"label":"b"}]},
+                 {"question":"Second?","options":[{"label":"c"},{"label":"d"}]}]}"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            questions_positional.contains(r#"questions 1 and 2 resolve to the same id "1""#),
+            "{questions_positional}"
+        );
+        let questions_explicit = build_card_tag(
+            r#"{"v":2,"title":"Collide","questions":[
+                 {"id":"s","question":"First?","options":[{"label":"a"},{"label":"b"}]},
+                 {"id":"s","question":"Second?","options":[{"label":"c"},{"label":"d"}]}]}"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            questions_explicit.contains(r#"questions 1 and 2 resolve to the same id "s""#),
+            "{questions_explicit}"
+        );
+        let options_v2 = build_card_tag(
+            r#"{"v":2,"questions":[{"question":"First?",
+                 "options":[{"id":"1","label":"a"},{"label":"b"}]}]}"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            options_v2.contains(r#"question 1 options 1 and 2 resolve to the same id "1""#),
+            "{options_v2}"
+        );
+        // v1 shares the id scheme, so it shares the rule — and the refusal
+        // carries no question prefix, because a v1 card has one question.
+        let options_v1 = build_card_tag(
+            r#"{"v":1,"title":"Q","options":[{"id":"1","label":"a"},{"label":"b"}]}"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            options_v1.contains(r#"options 1 and 2 resolve to the same id "1""#),
+            "{options_v1}"
+        );
+        // A blank id is NOT an id: it is dropped from the wire and the
+        // position fills in, so it can collide. The check runs on the
+        // resolved id, not on whether the key was present.
+        let blank = build_card_tag(
+            r#"{"v":1,"title":"Q","options":[{"id":"1","label":"a"},{"id":"   ","label":"b"}]}"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            blank.contains(r#"options 1 and 2 resolve to the same id "1""#),
+            "{blank}"
+        );
+
+        // The discriminating controls. Explicit numeric ids that line up with
+        // the positions they occupy are LEGAL — a check that compared an id
+        // against its own index would refuse these and still pass everything
+        // above. And option ids are scoped per question, so reusing them in a
+        // second question is ordinary.
+        assert!(build_card_tag(
+            r#"{"v":2,"title":"Fine","questions":[
+                 {"id":"0","question":"First?","options":[{"id":"1","label":"a"},{"id":"0","label":"b"}]},
+                 {"id":"1","question":"Second?","options":[{"id":"yes","label":"c"},{"id":"no","label":"d"}]}]}"#,
+        )
+        .is_ok());
+        assert!(build_card_tag(
+            r#"{"v":2,"title":"Fine","questions":[
+                 {"question":"First?","options":[{"id":"yes","label":"a"},{"id":"no","label":"b"}]},
+                 {"question":"Second?","options":[{"id":"yes","label":"c"},{"id":"no","label":"d"}]}]}"#,
+        )
+        .is_ok());
     }
 
     #[test]

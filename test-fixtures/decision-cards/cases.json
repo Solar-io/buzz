@@ -634,7 +634,7 @@
     "name": "v1 accept — a title padded with U+FEFF and U+0085 trims to the 120-character bound",
     "payload": {
       "v": 1,
-      "title": "\uFEFFxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\u0085",
+      "title": "﻿xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       "options": [
         {
           "label": "Yes"
@@ -666,11 +666,11 @@
       "v": 2,
       "questions": [
         {
-          "header": "\u0085hhhhhhhhhhhh\uFEFF",
+          "header": "hhhhhhhhhhhh﻿",
           "question": "Pick one",
           "options": [
             {
-              "label": "\uFEFFyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\u0085"
+              "label": "﻿yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
             },
             {
               "label": "No"
@@ -703,7 +703,7 @@
   {
     "name": "v1 accept — the version written 1.0 is the number 1",
     "payload": {
-      "v": 1.0,
+      "v": 1,
       "title": "Q",
       "options": [
         {
@@ -1263,7 +1263,7 @@
       "title": "Q",
       "options": [
         {
-          "label": "\uFEFF"
+          "label": "﻿"
         },
         {
           "label": "B"
@@ -1280,7 +1280,7 @@
       "title": "Q",
       "options": [
         {
-          "label": "\u0085"
+          "label": ""
         },
         {
           "label": "B"
@@ -1312,5 +1312,183 @@
     "payloadRaw": "{\"v\":1,\"title\":\"Q\",\"options\":[{\"label\":\"\\ud800\"},{\"label\":\"B\"}]}",
     "expect": "reject",
     "reason": "payload must not contain unpaired surrogates"
+  },
+  {
+    "name": "v2 accept — numeric explicit ids that line up but never collide",
+    "payload": {
+      "v": 2,
+      "title": "Numeric ids that line up",
+      "questions": [
+        {
+          "id": "0",
+          "question": "First?",
+          "options": [
+            {
+              "id": "1",
+              "label": "A"
+            },
+            {
+              "id": "0",
+              "label": "B"
+            }
+          ]
+        },
+        {
+          "id": "1",
+          "question": "Second?",
+          "options": [
+            {
+              "label": "C"
+            },
+            {
+              "label": "D"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 2,
+      "title": "Numeric ids that line up",
+      "questions": [
+        {
+          "id": "0",
+          "question": "First?",
+          "options": [
+            {
+              "id": "1",
+              "label": "A"
+            },
+            {
+              "id": "0",
+              "label": "B"
+            }
+          ]
+        },
+        {
+          "id": "1",
+          "question": "Second?",
+          "options": [
+            {
+              "label": "C"
+            },
+            {
+              "label": "D"
+            }
+          ]
+        }
+      ]
+    },
+    "fallback": "**Numeric ids that line up**\n\n**1. First?**\n\n- A\n- B\n\n**2. Second?**\n\n- C\n- D\n\n_Reply with an option or your own answer._"
+  },
+  {
+    "name": "reject — an explicit question id collides with a later positional one",
+    "payload": {
+      "v": 2,
+      "title": "Collide",
+      "questions": [
+        {
+          "id": "1",
+          "question": "First?",
+          "options": [
+            {
+              "label": "a"
+            },
+            {
+              "label": "b"
+            }
+          ]
+        },
+        {
+          "question": "Second?",
+          "options": [
+            {
+              "label": "c"
+            },
+            {
+              "label": "d"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "questions 1 and 2 resolve to the same id \"1\""
+  },
+  {
+    "name": "reject — two questions declare the same explicit id",
+    "payload": {
+      "v": 2,
+      "title": "Collide",
+      "questions": [
+        {
+          "id": "scope",
+          "question": "First?",
+          "options": [
+            {
+              "label": "a"
+            },
+            {
+              "label": "b"
+            }
+          ]
+        },
+        {
+          "id": "scope",
+          "question": "Second?",
+          "options": [
+            {
+              "label": "c"
+            },
+            {
+              "label": "d"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "questions 1 and 2 resolve to the same id \"scope\""
+  },
+  {
+    "name": "reject — two options in one question resolve to the same id",
+    "payload": {
+      "v": 2,
+      "questions": [
+        {
+          "question": "First?",
+          "options": [
+            {
+              "id": "1",
+              "label": "a"
+            },
+            {
+              "label": "b"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "question 1 options 1 and 2 resolve to the same id \"1\""
+  },
+  {
+    "name": "reject — a v1 explicit option id collides with a later positional one",
+    "payload": {
+      "v": 1,
+      "title": "Q",
+      "options": [
+        {
+          "id": "1",
+          "label": "a"
+        },
+        {
+          "label": "b"
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "options 1 and 2 resolve to the same id \"1\""
   }
 ]

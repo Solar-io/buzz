@@ -35,6 +35,24 @@
  * no such power — a submission with a gap IS a partial, whatever the user
  * meant by it. A partial does not clear the ask badge (`askDetection.ts`).
  *
+ * ## Where the id-ambiguity guard lives now
+ *
+ * This module used to refuse a card whose resolved question or option ids
+ * collided (`requireUniqueIds`), because two `{"q":"1"}` entries in one `a[]`
+ * cannot be told apart. That check has moved UP, to the contract layer:
+ * `parseCardTags` returns null for such a payload and `buildCardTag` refuses
+ * to emit one, so a colliding card is not a card at all and never reaches
+ * here. A guard at this layer let a legal-looking card render an interview
+ * and then silently degrade to plain text at the moment of answering — the
+ * failure was in the format, so the refusal belongs in the format.
+ *
+ * Nothing here relies on that guarantee for SAFETY, only for a better error
+ * message. A hand-built `DecisionCard` that violates it still cannot produce
+ * an ambiguous `a[]`: the per-submission `seen` set refuses two answers for
+ * one question id, and the final self-parse below rejects any payload
+ * `parseCardAnswerTags` would not read back. Pinned by
+ * `a hand-built card with colliding ids still cannot produce an ambiguous a[]`.
+ *
  * ## Unreadable is NOT the same as absent
  *
  * `parseCardAnswerTags` returns `null` only when there is no `card-answer`
@@ -191,39 +209,6 @@ function boundedAnswerText(
   return normalized;
 }
 
-/**
- * Ids in a parsed card are NOT guaranteed unique, and that is a real hole
- * rather than a hypothetical: `parseCardTags` fills omitted ids positionally
- * (`"0"`, `"1"`, …) and accepts explicit ones verbatim, so a card whose
- * question 0 declares `id:"1"` and whose question 1 declares none produces
- * two questions both called `"1"`. An agent that can choose the ids can
- * therefore author a card whose structured answer is ambiguous — the tag
- * would carry two `{"q":"1"}` entries with no way to tell them apart.
- *
- * The content fallback stays unambiguous either way (it keys on question TEXT
- * in author order), so this is not a reason to refuse to render. It is a
- * reason to refuse to BUILD: an ambiguous machine payload is worse than no
- * machine payload. Answer such a card with the plain-text path.
- */
-function requireUniqueIds(card: DecisionCard): void {
-  const seen = new Set<string>();
-  for (const question of card.questions) {
-    if (seen.has(question.id)) {
-      reject(`card has two questions with id ${JSON.stringify(question.id)}`);
-    }
-    seen.add(question.id);
-    const optionIds = new Set<string>();
-    for (const option of question.options) {
-      if (optionIds.has(option.id)) {
-        reject(
-          `question ${JSON.stringify(question.id)} has two options with id ${JSON.stringify(option.id)}`,
-        );
-      }
-      optionIds.add(option.id);
-    }
-  }
-}
-
 function buildSelection(
   question: CardQuestion,
   selection: CardAnswerSelection,
@@ -300,7 +285,6 @@ export function buildCardAnswerTag(
   cardId: string,
   draft: CardAnswerDraft,
 ): { tag: string[][]; fallbackContent: string; answer: CardAnswer } {
-  requireUniqueIds(card);
   const id = boundedAnswerText(
     cardId,
     ANSWER_LIMITS.maxCardIdChars,

@@ -17,10 +17,12 @@ import {
  * shipped without them and adversarial QA found both (AGENTS.md, 9/20):
  *
  * 1. Hostile input from the CARD side. Option and question ids are author
- *    text echoed back into a machine payload, and `parseCardTags` does NOT
- *    guarantee they are unique — so "answer an id that is not on the card",
- *    "answer a question that does not exist" and "answer a card whose ids
- *    collide" all have cases here rather than comments.
+ *    text echoed back into a machine payload, so "answer an id that is not on
+ *    the card" and "answer a question that does not exist" have cases here
+ *    rather than comments. Id COLLISIONS are now refused one layer up, by the
+ *    card parser and the card builder; the cases below pin that they never
+ *    reach an answer, and that a hand-built card violating the guarantee
+ *    still cannot produce an ambiguous `a[]`.
  * 2. Assertions that could not fail. Every expected content string is written
  *    out in full rather than rebuilt from the builder's own pieces, every
  *    limit is hardcoded rather than restated as `ANSWER_LIMITS.x`, and the
@@ -310,59 +312,128 @@ test("an answer naming a question the card does not have is refused", () => {
   );
 });
 
-test("a card with duplicate question ids has no unambiguous answer", () => {
-  // Real, not hypothetical: parseCardTags fills omitted ids POSITIONALLY and
-  // takes explicit ones verbatim, so declaring id "1" on question 0 collides
-  // with question 1's positional id. Two `{"q":"1"}` entries cannot be told
-  // apart, so the builder refuses rather than emitting an ambiguous payload.
-  const collided = card({
+test("a card whose ids would collide is not a card, so it never gets here", () => {
+  // The guard this module used to carry (`requireUniqueIds`) moved up to the
+  // contract layer. Both payloads below used to PARSE into a card with
+  // colliding ids, which this builder then refused at answer time — a card
+  // that rendered an interview and degraded to plain text on the last tap.
+  // They now fail the parse outright, so the ambiguity cannot reach an answer.
+  const questionCollision = parseCardTags([
+    [
+      "card",
+      JSON.stringify({
+        v: 2,
+        title: "Collide",
+        questions: [
+          {
+            id: "1",
+            question: "First?",
+            options: [{ label: "a" }, { label: "b" }],
+          },
+          { question: "Second?", options: [{ label: "c" }, { label: "d" }] },
+        ],
+      }),
+    ],
+  ]);
+  assert.equal(questionCollision, null);
+  const optionCollision = parseCardTags([
+    [
+      "card",
+      JSON.stringify({
+        v: 2,
+        questions: [
+          {
+            id: "q",
+            question: "Which?",
+            options: [{ id: "1", label: "a" }, { label: "b" }],
+          },
+        ],
+      }),
+    ],
+  ]);
+  assert.equal(optionCollision, null);
+});
+
+test("a hand-built card with colliding ids still cannot produce an ambiguous a[]", () => {
+  // Defence in depth, and the reason removing `requireUniqueIds` is safe. The
+  // card below never came off the wire — it is the shape the parser now
+  // refuses to produce, handed straight to the builder. Whatever a caller
+  // asks for, no payload carrying two `{"q":"1"}` entries (or a repeated
+  // option id inside one `o`) can be emitted.
+  const handBuilt = {
     v: 2,
     title: "Collide",
     questions: [
       {
         id: "1",
         question: "First?",
-        options: [{ label: "a" }, { label: "b" }],
+        multiSelect: false,
+        options: [
+          { id: "a", label: "a" },
+          { id: "b", label: "b" },
+        ],
       },
-      { question: "Second?", options: [{ label: "c" }, { label: "d" }] },
+      {
+        id: "1",
+        question: "Second?",
+        multiSelect: false,
+        options: [
+          { id: "c", label: "c" },
+          { id: "d", label: "d" },
+        ],
+      },
     ],
-  });
-  assert.deepEqual(
-    collided.questions.map((q) => q.id),
-    ["1", "1"],
-    "the card parser really does produce the collision",
-  );
+  };
+  // Two answers for the colliding id: refused by the per-submission dedupe,
+  // which is what makes `a[]` unambiguous by construction.
   assert.throws(
     () =>
-      buildCardAnswerTag(collided, CARD_ID, {
-        answers: [{ questionId: "1", optionIds: ["0"] }],
+      buildCardAnswerTag(handBuilt, CARD_ID, {
+        answers: [
+          { questionId: "1", optionIds: ["c"] },
+          { questionId: "1", optionIds: ["d"] },
+        ],
       }),
-    /two questions with id "1"/,
+    /two answers for question "1"/,
   );
-});
-
-test("a question with duplicate option ids has no unambiguous answer", () => {
-  const collided = card({
+  // One answer for it is unambiguous ON THE WIRE — one `{"q":"1"}` entry —
+  // even though the card is malformed. It binds to the LAST question with
+  // that id, which is why the option id has to be one of THAT question's.
+  const built = buildCardAnswerTag(handBuilt, CARD_ID, {
+    answers: [{ questionId: "1", optionIds: ["c"] }],
+  });
+  assert.equal(
+    built.tag[0][1],
+    '{"v":2,"c":"card-1","a":[{"q":"1","o":["c"]}],"done":false}',
+  );
+  assert.equal(
+    built.answer.answers.filter((entry) => entry.questionId === "1").length,
+    1,
+  );
+  // And the option-id half: a question carrying the same option id twice
+  // would serialize a repeated `o` entry, which the builder's own self-parse
+  // refuses rather than publishing.
+  const dupOptions = {
     v: 2,
     title: "Collide",
     questions: [
       {
         id: "q",
         question: "Which?",
-        options: [{ id: "1", label: "a" }, { label: "b" }],
+        multiSelect: true,
+        options: [
+          { id: "1", label: "a" },
+          { id: "1", label: "b" },
+        ],
       },
     ],
-  });
-  assert.deepEqual(
-    collided.questions[0].options.map((o) => o.id),
-    ["1", "1"],
-  );
+  };
   assert.throws(
     () =>
-      buildCardAnswerTag(collided, CARD_ID, {
+      buildCardAnswerTag(dupOptions, CARD_ID, {
         answers: [{ questionId: "q", optionIds: ["1"] }],
       }),
-    /two options with id "1"/,
+    /failed its own parse/,
   );
 });
 

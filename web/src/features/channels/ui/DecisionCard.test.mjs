@@ -254,31 +254,56 @@ test("a typed answer publishes as typed text, not as an option id", async () => 
   await mounted.unmount();
 });
 
-test("a card with ambiguous ids still answers, as plain text", async () => {
-  // The renderer tolerates what the builder refuses: question 0 declaring
-  // id "1" collides with question 1's positional id, so there is no
-  // unambiguous machine answer. The card must stay answerable rather than
-  // going dead — and a reply with no card-answer tag is COMPLETE by the
-  // badge rule, which is exactly v1 behaviour.
-  const calls = installFakeSession();
-  const mounted = await mount({
-    v: 2,
-    title: "Collide",
-    questions: [
-      {
-        id: "1",
-        question: "First?",
-        options: [{ label: "a" }, { label: "b" }],
-      },
-      { question: "Second?", options: [{ label: "c" }, { label: "d" }] },
-    ],
-  });
-  await mounted.click("decision-card-option-0");
-  assert.equal(calls.length, 1);
-  assert.deepEqual(
-    calls[0].tags.filter((t) => t[0] === "card-answer"),
-    [],
+test("a card with colliding ids is not a card, so the row renders text", async () => {
+  // Duplicate resolved ids are a CONTRACT refusal, not a render fallback:
+  // question 1's explicit "1" collides with question 2's positional "1", the
+  // parse returns null, and `MessageRow` therefore renders the message's
+  // markdown content instead of mounting this component at all. The reply a
+  // user then types carries no `card-answer` tag and is COMPLETE by the badge
+  // rule — exactly v1's behaviour.
+  assert.equal(
+    parseCardTags([
+      [
+        "card",
+        JSON.stringify({
+          v: 2,
+          title: "Collide",
+          questions: [
+            {
+              id: "1",
+              question: "First?",
+              options: [{ label: "a" }, { label: "b" }],
+            },
+            { question: "Second?", options: [{ label: "c" }, { label: "d" }] },
+          ],
+        }),
+      ],
+    ]),
+    null,
   );
-  assert.equal(calls[0].content, "a");
-  await mounted.unmount();
+  // The component's own contract for that state: given no card it renders
+  // nothing, so a null parse can never paint a half-card.
+  const container = dom.window.document.createElement("div");
+  dom.window.document.body.appendChild(container);
+  const root = createRoot(container);
+  await act(async () => {
+    root.render(
+      React.createElement(DecisionCard, {
+        message: {
+          id: "card-1",
+          channelId: "ch-1",
+          kind: 9,
+          authorPubkey: "a".repeat(64),
+          createdAt: 1,
+          content: "fallback",
+          card: null,
+          rootId: null,
+          replyToId: null,
+        },
+      }),
+    );
+  });
+  assert.equal(container.textContent, "");
+  await act(async () => root.unmount());
+  container.remove();
 });

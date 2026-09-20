@@ -47,12 +47,13 @@ export function DecisionCard({ message }: { message: TimelineMessage }) {
    * content), falling back to the plain-text reply when the builder refuses
    * the payload.
    *
-   * The fallback is not defensive padding: the renderer is deliberately more
-   * tolerant than the builder, so a card whose author gave two questions —
-   * or two options — the same id renders fine and has no unambiguous machine
-   * answer. Such a card must stay answerable; a plain reply carries no
-   * `card-answer` tag and is COMPLETE by the badge rule, which is exactly
-   * v1's behaviour.
+   * The fallback covers the refusals the RENDER side cannot see coming — an
+   * answer payload past its own tag budget, say. The id-collision case it
+   * used to exist for is gone: duplicate resolved ids are refused by
+   * `parseCardTags` now, so a card that renders at all has unambiguous ids.
+   * Keeping the fallback still matters, because a plain reply carries no
+   * `card-answer` tag and is COMPLETE by the badge rule — an answer that
+   * cannot be structured must never become an answer that cannot be sent.
    *
    * Note this card shows question ONE only (the stepper is a later phase), so
    * answering a multi-question interview here publishes `done:false` and
