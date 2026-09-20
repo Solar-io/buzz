@@ -704,6 +704,18 @@ export async function sendChannelMessage(
     threadRef?: { rootId: string; replyToId: string } | null;
     mediaTags?: string[][];
     /**
+     * Author tags that are neither media nor threading — today the
+     * `["card-answer", …]` payload a decision-card reply carries
+     * (`cardAnswer.ts`). Appended last, after `mediaTags`.
+     *
+     * A separate slice rather than a second use of `mediaTags`: that field
+     * would have worked, and it would have made a future search for "what
+     * tags can a chat message carry" lie. The relay passes unknown author
+     * tags through verbatim (they are signature-covered), so nothing else
+     * has to know these exist.
+     */
+    extraTags?: string[][];
+    /**
      * Event kind to publish. Chat messages are kind 9; forum views pass
      * 45001 (top-level post, threadRef null) or 45003 (comment, threadRef
      * set) — desktop's build_forum_post/build_forum_comment tag shapes,
@@ -734,6 +746,9 @@ export async function sendChannelMessage(
   }
   for (const mediaTag of options.mediaTags ?? []) {
     tags.push(mediaTag);
+  }
+  for (const extraTag of options.extraTags ?? []) {
+    tags.push(extraTag);
   }
 
   const event = await signNostrEvent({

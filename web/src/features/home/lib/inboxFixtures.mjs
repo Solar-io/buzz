@@ -37,6 +37,8 @@ export function message(overrides) {
     mentionPubkeys: [],
     imetaByUrl: new Map(),
     linkPreviews: [],
+    card: null,
+    cardAnswer: null,
     edited: false,
     deleted: false,
     ...overrides,

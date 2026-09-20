@@ -2,8 +2,13 @@ import { useState } from "react";
 import { Check, CornerDownLeft, TriangleAlert } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
-import { sendCardAnswer } from "../lib/cardAnswer.ts";
+import { sendCardAnswer, sendCardInterviewAnswer } from "../lib/cardAnswer.ts";
+import {
+  ANSWER_LIMITS,
+  type CardAnswerSelection,
+} from "../lib/cardAnswerTag.ts";
 import type { TimelineMessage } from "../lib/messageBuffer.ts";
+import type { SendResult } from "../hooks.ts";
 
 /**
  * D-035 decision card: renders the `["card", …]` tag payload of a kind 9
@@ -36,7 +41,42 @@ export function DecisionCard({ message }: { message: TimelineMessage }) {
   >({ phase: "idle" });
   const [draft, setDraft] = useState("");
 
-  async function reply(answer: string) {
+  /**
+   * Publish one answer. STRUCTURED when we can (option ids + the `done`
+   * flag in a `card-answer` tag, plus the deterministic per-question
+   * content), falling back to the plain-text reply when the builder refuses
+   * the payload.
+   *
+   * The fallback is not defensive padding: the renderer is deliberately more
+   * tolerant than the builder, so a card whose author gave two questions —
+   * or two options — the same id renders fine and has no unambiguous machine
+   * answer. Such a card must stay answerable; a plain reply carries no
+   * `card-answer` tag and is COMPLETE by the badge rule, which is exactly
+   * v1's behaviour.
+   *
+   * Note this card shows question ONE only (the stepper is a later phase), so
+   * answering a multi-question interview here publishes `done:false` and
+   * correctly leaves the ask lit.
+   */
+  async function publishAnswer(
+    selection: CardAnswerSelection,
+    plainText: string,
+  ): Promise<SendResult> {
+    if (card) {
+      try {
+        return await sendCardInterviewAnswer(
+          session,
+          { ...message, card },
+          { answers: [selection] },
+        );
+      } catch {
+        // Fall through to the plain-text path.
+      }
+    }
+    return sendCardAnswer(session, message, plainText);
+  }
+
+  async function reply(selection: CardAnswerSelection, answer: string) {
     if (state.phase === "sending" || state.phase === "sent") {
       return;
     }
@@ -46,11 +86,11 @@ export function DecisionCard({ message }: { message: TimelineMessage }) {
     }
     setState({ phase: "sending" });
     try {
-      // The tag/threadRef rules live in sendCardAnswer (shared with the
-      // Asks inbox row); the ok check here is what makes the sent state
+      // The tag/threadRef rules live in the cardAnswer module (shared with
+      // the Asks inbox row); the ok check here is what makes the sent state
       // honest — publish() RESOLVES {ok:false} on a relay FAILED or ack
       // timeout rather than throwing (caught live 9/16).
-      const result = await sendCardAnswer(session, message, trimmed);
+      const result = await publishAnswer(selection, trimmed);
       if (!result.ok) {
         setState({
           phase: "error",
@@ -104,7 +144,12 @@ export function DecisionCard({ message }: { message: TimelineMessage }) {
                 type="button"
                 data-testid={`decision-card-option-${option.id}`}
                 disabled={state.phase === "sending"}
-                onClick={() => reply(option.label)}
+                onClick={() =>
+                  reply(
+                    { questionId: question.id, optionIds: [option.id] },
+                    option.label,
+                  )
+                }
                 className={cn(
                   "flex w-full items-center gap-2 rounded-lg border bg-background px-3 py-2 text-left text-sm",
                   "transition-colors hover:border-primary/50 hover:bg-primary/5",
@@ -131,7 +176,10 @@ export function DecisionCard({ message }: { message: TimelineMessage }) {
             className="mt-1.5 flex items-center gap-1.5"
             onSubmit={(event) => {
               event.preventDefault();
-              reply(draft);
+              reply(
+                { questionId: question.id, optionIds: [], text: draft },
+                draft,
+              );
             }}
           >
             <input
@@ -141,7 +189,13 @@ export function DecisionCard({ message }: { message: TimelineMessage }) {
               disabled={state.phase === "sending"}
               placeholder="Or type your own answer…"
               aria-label="Type your own answer"
-              maxLength={2000}
+              // A typed per-question answer is bounded like an option label
+              // (`ANSWER_LIMITS.maxTextChars`), so typing cannot smuggle in
+              // more than choosing could — and so the structured builder
+              // never refuses text this input accepted. The 2000 that used
+              // to be here is the INTERVIEW-level note's bound, a different
+              // field that arrives with the stepper.
+              maxLength={ANSWER_LIMITS.maxTextChars}
               className="h-8 min-w-0 flex-1 rounded-lg border bg-background px-2.5 text-sm outline-none placeholder:text-muted-foreground/60 focus-visible:border-primary/50"
             />
             <button

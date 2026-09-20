@@ -3,10 +3,13 @@ import { test } from "node:test";
 import {
   ASKS_CACHE_CAP,
   asksCacheKey,
+  emptyAsksCacheEntry,
   fromCachedAsk,
   markCachedAnswered,
   mergeCachedAsks,
   nextPersistedEntry,
+  recordCachedProgress,
+  sameEntry,
   toCachedAsk,
 } from "./askCache.ts";
 import { loadAsksCache, saveAsksCache } from "./askCache.ts";
@@ -65,7 +68,7 @@ const ask = (id, createdAt, overrides = {}) => ({
   ...overrides,
 });
 
-const empty = () => ({ asks: [], answered: {}, cursor: 0 });
+const empty = () => emptyAsksCacheEntry();
 
 test("the cache key is versioned — a shape change starts fresh, not corrupt", () => {
   assert.equal(asksCacheKey(), "asks:v2");
@@ -141,6 +144,102 @@ test("answered keys prune when their card falls out of the cap", () => {
   entry = mergeCachedAsks(entry, [ask("fresher", ASKS_CACHE_CAP + 20_000)]);
   assert.equal(entry.answered["old-50"], "answer-for-old-50");
   assert.ok(!entry.asks.some((a) => a.id === "old-1"));
+});
+
+test("emptyAsksCacheEntry carries every field a fold needs", () => {
+  // Harness self-check: the folds below spread this, so a missing key would
+  // make them silently write `undefined` into the cache.
+  assert.deepEqual(emptyAsksCacheEntry(), {
+    asks: [],
+    answered: {},
+    progress: {},
+    cursor: 0,
+  });
+});
+
+test("progress records a partial WITHOUT answering the card", () => {
+  // The two maps are deliberately separate: `answered` clears the badge and
+  // `progress` only feeds the N/M chip. A partial must land in exactly one
+  // of them, and the discriminating assertion is that `answered` is empty.
+  let entry = mergeCachedAsks(empty(), [ask("a", 1)]);
+  entry = recordCachedProgress(entry, "a", { answered: 2, total: 4, at: 100 });
+  assert.deepEqual(entry.progress.a, { answered: 2, total: 4, at: 100 });
+  assert.deepEqual(entry.answered, {});
+
+  // Completing it afterwards answers the card; progress is untouched.
+  entry = markCachedAnswered(entry, "a", "answer-1");
+  assert.equal(entry.answered.a, "answer-1");
+  assert.deepEqual(entry.progress.a, { answered: 2, total: 4, at: 100 });
+});
+
+test("progress takes the NEWEST answer and re-folds to the same reference", () => {
+  // Answer events arrive over four REQ families in no particular order, so
+  // an older replay must not overwrite a newer partial.
+  let entry = mergeCachedAsks(empty(), [ask("a", 1)]);
+  entry = recordCachedProgress(entry, "a", { answered: 3, total: 4, at: 200 });
+  const older = recordCachedProgress(entry, "a", {
+    answered: 1,
+    total: 4,
+    at: 100,
+  });
+  assert.equal(older, entry, "an older event is a no-op, same reference");
+  assert.equal(entry.progress.a.answered, 3);
+
+  const replay = recordCachedProgress(entry, "a", {
+    answered: 3,
+    total: 4,
+    at: 200,
+  });
+  assert.equal(replay, entry, "a replayed identical event is a no-op");
+
+  const newer = recordCachedProgress(entry, "a", {
+    answered: 4,
+    total: 4,
+    at: 300,
+  });
+  assert.notEqual(newer, entry);
+  assert.equal(newer.progress.a.answered, 4);
+});
+
+test("a progress-only change is written to disk", () => {
+  // The 2026-09-17 badge-resurrect defect, one field over: the persist step
+  // decides by CONTENT through sameEntry, so a field sameEntry does not
+  // compare never reaches disk. Two entries differing only in progress must
+  // not be "same".
+  const base = mergeCachedAsks(empty(), [ask("a", 1)]);
+  const withProgress = recordCachedProgress(base, "a", {
+    answered: 1,
+    total: 3,
+    at: 5,
+  });
+  assert.equal(sameEntry(base, withProgress), false);
+  const decision = nextPersistedEntry(withProgress, base, []);
+  assert.equal(decision.persist, true);
+  assert.equal(decision.entry.progress.a.answered, 1);
+});
+
+test("progress prunes with the cap, exactly like answered", () => {
+  const first = Array.from({ length: ASKS_CACHE_CAP }, (_, i) =>
+    ask(`old-${i}`, i),
+  );
+  let entry = mergeCachedAsks(empty(), first);
+  entry = recordCachedProgress(entry, "old-0", {
+    answered: 1,
+    total: 2,
+    at: 1,
+  });
+  entry = recordCachedProgress(entry, "old-50", {
+    answered: 1,
+    total: 2,
+    at: 1,
+  });
+  entry = mergeCachedAsks(entry, [ask("fresh", ASKS_CACHE_CAP + 10_000)]);
+  assert.equal(
+    entry.progress["old-0"],
+    undefined,
+    "evicted card's progress goes",
+  );
+  assert.deepEqual(entry.progress["old-50"], { answered: 1, total: 2, at: 1 });
 });
 
 test("the stored card round-trips through the current parser", () => {

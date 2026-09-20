@@ -267,6 +267,90 @@ test("card tag parses onto the message; malformed degrades to null (D-035)", () 
   assert.equal(plain.card, null);
 });
 
+test("a card-answer tag parses onto the message; absent and unreadable DIFFER", () => {
+  // The badge rule (askDetection) keys on this field, and the distinction it
+  // needs is three-way: no tag (a v1 or freely-typed reply, COMPLETE), a tag
+  // it could not read (completeness unknown, so not complete), and the
+  // answer itself. A parser that folded the middle case into `null` would
+  // make an unreadable future answer clear the badge.
+  const done = timelineMessageFromEvent(
+    event({
+      id: "answer-done",
+      tags: [
+        ["h", "ch-1"],
+        ["e", "card-1", "", "reply"],
+        [
+          "card-answer",
+          '{"v":2,"c":"card-1","a":[{"q":"scope","o":["web"]}],"done":true}',
+        ],
+      ],
+      content: "**Which surfaces?** — Web only",
+    }),
+  );
+  assert.equal(done.cardAnswer.done, true);
+  assert.equal(done.cardAnswer.cardId, "card-1");
+  assert.deepEqual(done.cardAnswer.answers, [
+    { questionId: "scope", optionIds: ["web"] },
+  ]);
+
+  const partial = timelineMessageFromEvent(
+    event({
+      id: "answer-partial",
+      tags: [
+        ["h", "ch-1"],
+        [
+          "card-answer",
+          '{"v":2,"c":"card-1","a":[{"q":"scope","o":["web"]}],"done":false}',
+        ],
+      ],
+    }),
+  );
+  assert.equal(partial.cardAnswer.done, false);
+  assert.equal(partial.cardAnswer.cardId, "card-1");
+
+  const unreadable = timelineMessageFromEvent(
+    event({
+      id: "answer-broken",
+      tags: [
+        ["h", "ch-1"],
+        ["card-answer", "not json"],
+      ],
+    }),
+  );
+  assert.equal(unreadable.cardAnswer.done, false);
+  assert.equal(unreadable.cardAnswer.cardId, null);
+
+  const none = timelineMessageFromEvent(
+    event({ id: "plain", tags: [["h", "ch-1"]] }),
+  );
+  assert.equal(none.cardAnswer, null);
+});
+
+test("an edit overlay never rewrites the answer the tag froze at send time", () => {
+  // Same construction-time-constant discipline as `card` and `imetaByUrl`:
+  // an edit replaces CONTENT. If an edit could move `cardAnswer`, a partial
+  // could be edited into a completion and clear a badge the relay never
+  // agreed to.
+  const answer = timelineMessageFromEvent(
+    event({
+      id: "answer-1",
+      tags: [
+        ["h", "ch-1"],
+        [
+          "card-answer",
+          '{"v":2,"c":"card-1","a":[{"q":"scope","o":["web"]}],"done":false}',
+        ],
+      ],
+      content: "before",
+    }),
+  );
+  const edited = applyOverlay([answer], EDIT_KIND, "answer-1", "after");
+  assert.equal(edited[0].content, "after");
+  assert.equal(edited[0].edited, true);
+  assert.equal(edited[0].cardAnswer, answer.cardAnswer);
+  assert.equal(edited[0].cardAnswer.done, false);
+});
+
 test("a kind-40099 system event survives the buffer as its own row", () => {
   // 40099 is hardcoded — deriving it from TIMELINE_KINDS would make this
   // assertion agree with whatever the constant happens to say.

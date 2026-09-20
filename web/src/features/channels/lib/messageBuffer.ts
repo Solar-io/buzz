@@ -2,6 +2,7 @@ import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { imetaByUrl, type ImetaEntry } from "./imetaEntries.ts";
 import { linkPreviewsFromTags, type LinkPreview } from "./linkPreview.ts";
 import { parseCardTags, type DecisionCard } from "./decisionCard.ts";
+import { parseCardAnswerTags, type CardAnswer } from "./cardAnswerTag.ts";
 import { SYSTEM_MESSAGE_KIND } from "./systemEvent.ts";
 
 /**
@@ -72,6 +73,22 @@ export interface TimelineMessage {
    * content only and can never mutate the card the tag froze at send time.
    */
   card: DecisionCard | null;
+  /**
+   * Structured decision-card ANSWER parsed from the event's
+   * `["card-answer", …]` tag. Three states, and the third is what the ask
+   * badge turns on (`askDetection.answeredByMe`):
+   *
+   * - `null` — no such tag. A v1 answer or a freely-typed reply, both of
+   *   which COMPLETE the ask.
+   * - `UNREADABLE_CARD_ANSWER` (`cardId === null`, `done === false`) — a tag
+   *   is present and could not be read, so completeness is unknown and the
+   *   badge stays lit.
+   * - the answer, whose `done` decides.
+   *
+   * A construction-time constant, like `card`: an edit replaces content and
+   * can never mutate the answer the tag froze at send time.
+   */
+  cardAnswer: CardAnswer | null;
   /** Edit overlay present (renders the "(edited)" marker). */
   edited: boolean;
   /** Deleted via kind 5 — rows hide rather than render. */
@@ -129,6 +146,12 @@ export function timelineMessageFromEvent(
     card: event.tags.some((tag) => tag[0] === "card")
       ? parseCardTags(event.tags)
       : null,
+    // No `.some` pre-check: parseCardAnswerTags already returns null when
+    // the tag is absent, and it must be the ONE place that decides what
+    // "absent" means — a guard here would make a present-but-unreadable tag
+    // look identical to no tag at all, which is exactly the distinction the
+    // badge rule depends on.
+    cardAnswer: parseCardAnswerTags(event.tags),
     edited: false,
     deleted: false,
   };

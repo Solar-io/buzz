@@ -119,7 +119,9 @@ export interface DecisionCard {
   questions: CardQuestion[];
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+export function isPlainObject(
+  value: unknown,
+): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -148,8 +150,15 @@ const CARD_TRIM_CHARS =
 
 const CARD_TRIM_SET = new Set(CARD_TRIM_CHARS.split(""));
 
-/** `String.prototype.trim` over `CARD_TRIM_CHARS` instead of ECMAScript's set. */
-function cardTrim(value: string): string {
+/**
+ * `String.prototype.trim` over `CARD_TRIM_CHARS` instead of ECMAScript's set.
+ *
+ * Exported because the ANSWER format (`cardAnswerTag.ts`) bounds its own
+ * string fields and must agree with this module about what an empty field
+ * IS — a second trim there would be a third trim set to keep in step with
+ * Rust, which is the exact drift this function exists to close.
+ */
+export function cardTrim(value: string): string {
   let start = 0;
   let end = value.length;
   while (start < end && CARD_TRIM_SET.has(value[start])) {
@@ -197,7 +206,7 @@ function hasUnpairedSurrogate(value: string): boolean {
  * would trade the parser's null return for a stack overflow — the parse must
  * stay total.
  */
-function containsUnpairedSurrogate(value: unknown): boolean {
+export function containsUnpairedSurrogate(value: unknown): boolean {
   const pending: unknown[] = [value];
   while (pending.length > 0) {
     const current = pending.pop();

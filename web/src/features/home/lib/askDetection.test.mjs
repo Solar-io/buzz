@@ -5,9 +5,11 @@ import {
   answeredByMe,
   askForMe,
   extractAsks,
+  myReplyToCard,
   unansweredAsks,
 } from "./askDetection.ts";
 import { message } from "./inboxFixtures.mjs";
+import { parseCardAnswerTags } from "@/features/channels/lib/cardAnswerTag.ts";
 
 const SELF = "aa".repeat(32);
 const ALICE = "bb".repeat(32);
@@ -140,6 +142,148 @@ test("answeredByMe.deep thread reply does not clear", () => {
   assert.equal(answeredByMe(siblingReply, "card-1", SELF), false);
 });
 
+/**
+ * The v2 completeness arm. `cardAnswer` is parsed by messageBuffer from the
+ * reply's own `["card-answer", …]` tag, so these build it the same way the
+ * shipped path does rather than hand-writing the parsed shape.
+ */
+function answerTag(payload) {
+  return parseCardAnswerTags([["card-answer", JSON.stringify(payload)]]);
+}
+
+const COMPLETE = answerTag({
+  v: 2,
+  c: "card-1",
+  a: [{ q: "0", o: ["yes"] }],
+  done: true,
+});
+const PARTIAL = answerTag({
+  v: 2,
+  c: "card-1",
+  a: [{ q: "0", o: ["yes"] }],
+  done: false,
+});
+
+test("partial answer does not clear the badge", () => {
+  // THE rule this phase exists for. A `done:false` reply is my reply to the
+  // card — `myReplyToCard` says so — and it is NOT an answer, because an
+  // agent acting on 2 of 4 as though the interview concluded is the failure
+  // that costs real work. The two predicates must DISAGREE here; if they
+  // agreed, neither would be carrying any information.
+  const partial = message({
+    kind: 9,
+    authorPubkey: SELF,
+    replyToId: "card-1",
+    rootId: null,
+    cardAnswer: PARTIAL,
+  });
+  assert.equal(PARTIAL.done, false, "the fixture must really be a partial");
+  assert.equal(myReplyToCard(partial, "card-1", SELF), true);
+  assert.equal(answeredByMe(partial, "card-1", SELF), false);
+
+  // Discriminating control: the SAME reply with done:true clears it. Only
+  // the flag differs, so nothing but the flag can explain the difference.
+  const complete = { ...partial, cardAnswer: COMPLETE };
+  assert.equal(answeredByMe(complete, "card-1", SELF), true);
+});
+
+test("a reply with no card-answer tag stays complete — v1 and type-freely", () => {
+  // The arm that keeps v1 bit-identical and keeps "answer in chat instead"
+  // working: content-agnostic, tag-free, still an answer.
+  const plain = message({
+    kind: 9,
+    authorPubkey: SELF,
+    replyToId: "card-1",
+    rootId: null,
+    cardAnswer: null,
+  });
+  assert.equal(answeredByMe(plain, "card-1", SELF), true);
+  // A record that never had the field at all (an older cached shape) must
+  // not throw inside the badge predicate.
+  const legacy = {
+    kind: 9,
+    authorPubkey: SELF,
+    replyToId: "card-1",
+    rootId: null,
+  };
+  assert.equal(answeredByMe(legacy, "card-1", SELF), true);
+});
+
+test("an unreadable card-answer tag is not evidence of completeness", () => {
+  // A future v3 answer, or a corrupt payload. We know an answer claims to be
+  // here and we know it does not claim to be complete — so the badge stays
+  // lit rather than assuming the ask is done.
+  const unreadable = answerTag({ v: 3, c: "card-1", a: [], done: true });
+  assert.equal(unreadable.cardId, null, "the fixture must be unreadable");
+  const reply = message({
+    kind: 9,
+    authorPubkey: SELF,
+    replyToId: "card-1",
+    rootId: null,
+    cardAnswer: unreadable,
+  });
+  assert.equal(myReplyToCard(reply, "card-1", SELF), true);
+  assert.equal(answeredByMe(reply, "card-1", SELF), false);
+});
+
+test("myReplyToCard and answeredByMe agree about whose reply it is", () => {
+  // Everything upstream of completeness is shared, so a partial from someone
+  // ELSE, or to a sibling, is not even my reply to this card.
+  const theirs = message({
+    kind: 9,
+    authorPubkey: BOB,
+    replyToId: "card-1",
+    rootId: null,
+    cardAnswer: PARTIAL,
+  });
+  assert.equal(myReplyToCard(theirs, "card-1", SELF), false);
+  assert.equal(answeredByMe(theirs, "card-1", SELF), false);
+  const sibling = message({
+    kind: 9,
+    authorPubkey: SELF,
+    rootId: "card-1",
+    replyToId: "sibling-9",
+    cardAnswer: COMPLETE,
+  });
+  assert.equal(myReplyToCard(sibling, "card-1", SELF), false);
+  assert.equal(answeredByMe(sibling, "card-1", SELF), false);
+});
+
+test("the newest done:true wins when a partial is later completed", () => {
+  // Supersession is a SECOND event, never an edit. Folding both in order —
+  // the partial first, the completion second — must end answered; the
+  // reverse order (a replayed old partial after the completion) must not
+  // un-answer it. `answered` only ever takes done:true, so the fold is a
+  // filter, and this pins that the filter is what makes order irrelevant.
+  const events = [
+    message({
+      id: "partial-answer",
+      kind: 9,
+      authorPubkey: SELF,
+      replyToId: "card-1",
+      createdAt: 10,
+      cardAnswer: PARTIAL,
+    }),
+    message({
+      id: "final-answer",
+      kind: 9,
+      authorPubkey: SELF,
+      replyToId: "card-1",
+      createdAt: 20,
+      cardAnswer: COMPLETE,
+    }),
+  ];
+  for (const order of [events, [...events].reverse()]) {
+    const answered = {};
+    for (const reply of order) {
+      if (answeredByMe(reply, "card-1", SELF)) {
+        answered["card-1"] = reply.id;
+      }
+    }
+    assert.deepEqual(answered, { "card-1": "final-answer" });
+  }
+});
+
 test("answeredByMe refuses other people's answers and non-messages", () => {
   const theirs = message({
     kind: 9,
@@ -253,6 +397,36 @@ test("unansweredAsks.excludes answered cards", () => {
     waiting.map((ask) => ask.id),
     ["a", "c"],
   );
+});
+
+test("the badge still counts a card whose only reply was a partial", () => {
+  // The rule at the surface Sam actually sees. Folding a partial the way the
+  // provider does leaves `answered` empty, so the ask stays in the list and
+  // the badge stays at 3; folding the completion drops it to 2.
+  const partialReply = message({
+    id: "partial",
+    kind: 9,
+    authorPubkey: SELF,
+    replyToId: "b",
+    cardAnswer: PARTIAL,
+  });
+  const answered = {};
+  if (answeredByMe(partialReply, "b", SELF)) {
+    answered.b = partialReply.id;
+  }
+  assert.deepEqual(answered, {});
+  assert.equal(asksBadgeCount(askItems, answered), 3);
+  assert.deepEqual(
+    unansweredAsks(askItems, answered).map((ask) => ask.id),
+    ["a", "b", "c"],
+  );
+
+  const finalReply = { ...partialReply, id: "final", cardAnswer: COMPLETE };
+  if (answeredByMe(finalReply, "b", SELF)) {
+    answered.b = finalReply.id;
+  }
+  assert.deepEqual(answered, { b: "final" });
+  assert.equal(asksBadgeCount(askItems, answered), 2);
 });
 
 test("asksBadgeCount.counts only unanswered", () => {

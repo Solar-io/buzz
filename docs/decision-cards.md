@@ -172,6 +172,163 @@ therefore **ignore it on v1**: the reader never validates it (a malformed one
 cannot reject the card) and the builder drops it from canonical v1 output rather
 than refusing the send. On v2 it is part of the format and validated strictly.
 
+## Answering one
+
+An answer is **one** ordinary kind 9 reply per submission — never one per
+question. Its NIP-10 reply marker names the card, which is the whole
+"answered" test, and it p-tags the card's author so the asker is notified
+once.
+
+It carries **both halves**, and which half matters depends on who is reading:
+
+| Half | Read by |
+|---|---|
+| `content` | the asking agent's LLM, Buzz Desktop, every plain nostr reader |
+| `["card-answer", "<compact JSON>"]` | the Buzz web client, and any structured reader |
+
+### The content — the contract with the agent
+
+```
+**Which surfaces?** — Web only
+**Which extras?** — Docs, Tests
+**When?** — after the release
+
+_Note: Also keep the CLI unchanged._
+```
+
+Exactly:
+
+- **One line per question OF THE CARD, in author order** — answered or not.
+  An omitted line would make "this question was not asked" and "this question
+  was not answered" the same text.
+- The line is `**<question text>** — <answer>`. An unanswered question's
+  answer is the literal `_(not answered)_`.
+- A multi-select answer is its chosen labels comma-joined on that one line,
+  **in card option order** (not tap order), so identical choices produce
+  identical bytes.
+- A typed answer is the typed text, in the same shape as a chosen label.
+- An optional interview note is one trailing `_Note: …_` paragraph after a
+  blank line. Nothing else appears.
+- **Line separators are collapsed to a single space** in every string that
+  reaches this text — question text, option labels, typed answers, the note.
+  Card text otherwise rides the wire verbatim, but the content contract is
+  ONE LINE PER QUESTION, and a newline inside a label would silently split one
+  line into two with no way for any reader to reattach them.
+
+A partial prepends one line and a blank line:
+
+```
+Answered 2 of 4 — the rest are still open.
+
+**Which surfaces?** — Web only
+**Which extras?** — _(not answered)_
+**When?** — Now
+**Anything else?** — _(not answered)_
+```
+
+It leads, so an agent that reads only the first line still learns the
+interview is unfinished.
+
+### The tag — the machine half
+
+```json
+{
+  "v": 2,
+  "c": "<card event id>",
+  "a": [
+    { "q": "scope", "o": ["web"] },
+    { "q": "extras", "o": ["docs", "tests"] },
+    { "q": "when", "t": "after the release" }
+  ],
+  "n": "Also keep the CLI unchanged.",
+  "done": true
+}
+```
+
+Keys are short because nobody reads them. `q` is a question id and `o` holds
+option ids — the thing `content` cannot carry and v1 never transmitted at all
+(v1 sent the label verbatim, so a client could only recover the choice by
+string-matching labels back onto the card). `t` is a typed answer and excludes
+`o`. `c` is redundant with the reply-marker e-tag and nothing branches on it.
+
+There is no v1 answer payload. `v` must be the number `2`.
+
+| Key | Bound |
+|---|---|
+| `c` | 64 chars (a nostr event id) |
+| `a` | 1–6 entries, one per answered question, no duplicate `q` |
+| `q` | 40 chars |
+| `o` | 1–8 unique ids, each 40 chars |
+| `t` | 200 chars — an option label's bound, so typing cannot smuggle in more than choosing could |
+| `n` | 2000 chars |
+| whole payload | 16384 chars, the same self-cap as the card |
+
+### `done` is derived, never asserted
+
+`done` is `answers.length === card.questions.length`. The builder computes it
+and **no caller can set it**: the failure being guarded is an agent acting on
+2 of 4 answers as though the interview concluded, and a caller able to pass
+`done: true` alongside a gap is a caller able to manufacture exactly that.
+"Send what I have" needs no such power — a submission with a gap IS a partial.
+
+### The badge rule
+
+An ask clears when:
+
+```
+reply.kind === 9
+  ∧ reply.author === me
+  ∧ reply.replyToId === cardId
+  ∧ ( no card-answer tag  ∨  cardAnswer.done === true )
+```
+
+The first arm keeps **v1 bit-identical**: a reply with no `card-answer` tag is
+content-agnostic and complete. A plain "yes", an Asks-inbox chip, and the
+"answer in chat instead" path all clear the badge exactly as they did before
+v2 existed. That arm is not a compatibility shim to be tidied away later — it
+is the whole reason typing freely still works.
+
+A `done:false` partial leaves the ask **lit**. A lit badge and a stalled agent
+is a recoverable state; a confidently-wrong agent is not.
+
+### Absent is not the same as unreadable
+
+A `card-answer` tag that is PRESENT and cannot be read — a future `v:3`, a
+corrupt payload, two tags on one event — parses to `done:false`, not to "no
+tag". We know an answer claims to be here and we know it does not claim to be
+complete, so the badge stays lit. Assuming completeness from a payload we
+could not read is the one direction that loses the ask.
+
+### Superseding an answer
+
+A user who later completes a partial publishes a **second** answer event with
+`done:true`. Answers are never edited in place, and only `done:true` answers
+are recorded as clearing the card — so replay order does not matter.
+
+### Authoring is stricter than rendering, here too
+
+The answer builder refuses what the card RENDERER tolerates, and the list is
+short because each entry is a way to publish an ambiguous machine payload:
+
+| Situation | Builder |
+|---|---|
+| an option id that is not on the card | refuses |
+| a question id the card does not have | refuses |
+| two answers for one question | refuses |
+| a single-select question given two options | refuses |
+| a multi-select question with nothing chosen | refuses — that is "not answered", not an answer |
+| both `o` and `t` for one question | refuses |
+| **a card whose question ids, or one question's option ids, collide** | refuses |
+
+That last one is a real hole in the card format rather than a hypothetical:
+`parseCardTags` fills omitted ids positionally (`"0"`, `"1"`, …) and takes
+explicit ones verbatim, so a card declaring `id: "1"` on question 0 produces
+two questions both called `"1"`. The `content` stays unambiguous (it keys on
+question text in author order), so this is not a reason to refuse to RENDER —
+but two `{"q":"1"}` entries cannot be told apart, so it is a reason to refuse
+to BUILD. Such a card is still answerable through the plain-text path, and the
+web client falls back to it automatically.
+
 ## Sending one
 
 ```bash

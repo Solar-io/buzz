@@ -48,16 +48,48 @@ test("the fake store is wired — a save is readable back through the cache", as
   // Harness self-check first: an inert stub would make every assertion below
   // vacuously true.
   reset();
-  const entry = { asks: [], answered: { a: "b" }, cursor: 7 };
+  const entry = { asks: [], answered: { a: "b" }, progress: {}, cursor: 7 };
   await saveAsksCache(entry);
   assert.deepEqual(store.data.get("asks:v2"), entry);
   assert.deepEqual(await loadAsksCache(), entry);
 });
 
+test("an entry stored before `progress` existed loads with an empty map", async () => {
+  // `progress` (partial decision-card answers) was added to the v2 entry
+  // after v2 shipped. A version bump would have thrown away a perfectly
+  // good badge state to add an empty object; normalizing on load keeps it.
+  // The assertion discriminates: the stored bytes have NO progress key and
+  // the loaded entry does, so a loader that passed the entry through
+  // untouched fails here.
+  reset();
+  store.data.set(asksCacheKey(), {
+    asks: [],
+    answered: { card: "answer" },
+    cursor: 11,
+  });
+  const loaded = await loadAsksCache();
+  assert.deepEqual(loaded, {
+    asks: [],
+    answered: { card: "answer" },
+    progress: {},
+    cursor: 11,
+  });
+  // A stored progress map is NOT clobbered by the normalization.
+  reset();
+  const withProgress = {
+    asks: [],
+    answered: {},
+    progress: { card: { answered: 2, total: 4, at: 99 } },
+    cursor: 12,
+  };
+  store.data.set(asksCacheKey(), withProgress);
+  assert.deepEqual(await loadAsksCache(), withProgress);
+});
+
 test("loading deletes the superseded asks:v1 entry and keeps the current one", async () => {
   reset();
   store.data.set("asks:v1", { asks: ["stale"], answered: {}, cursor: 1 });
-  const current = { asks: [], answered: {}, cursor: 2 };
+  const current = { asks: [], answered: {}, progress: {}, cursor: 2 };
   store.data.set(asksCacheKey(), current);
 
   const loaded = await loadAsksCache();
@@ -73,7 +105,7 @@ test("loading deletes the superseded asks:v1 entry and keeps the current one", a
 
 test("the sweep never deletes the key in use", async () => {
   reset();
-  const current = { asks: [], answered: {}, cursor: 3 };
+  const current = { asks: [], answered: {}, progress: {}, cursor: 3 };
   store.data.set(asksCacheKey(), current);
   await dropSupersededAsksCaches();
   assert.deepEqual(store.data.get(asksCacheKey()), current);

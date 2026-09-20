@@ -22,20 +22,24 @@ import {
   answeredByMe,
   asksBadgeCount,
   extractAsks,
+  myReplyToCard,
   unansweredAsks,
   type AskChannelInfo,
   type AskItem,
 } from "./lib/askDetection.ts";
+import { answeredQuestionCount } from "@/features/channels/lib/cardAnswerTag.ts";
 import {
   answerHistoryRequests,
   answerLiveRequests,
   targetedAnswerRequest,
 } from "./lib/askQueries.ts";
 import {
+  emptyAsksCacheEntry,
   fromCachedAsk,
   loadAsksCache,
   markCachedAnswered,
   nextPersistedEntry,
+  recordCachedProgress,
   saveAsksCache,
   type AsksCacheEntry,
 } from "./lib/askCache.ts";
@@ -218,6 +222,15 @@ export function AsksProvider({
   useEffect(() => {
     trackedSetRef.current = new Set(trackedIds);
   }, [trackedIds]);
+  // cardId → question count. The `M` of the inbox's `N/M` chip lives on the
+  // CARD, and a partial answer carries only the questions it answered — so
+  // the total can only come from the ask, never from the answer event.
+  const trackedTotalsRef = useRef<ReadonlyMap<string, number>>(new Map());
+  useEffect(() => {
+    trackedTotalsRef.current = new Map(
+      unanswered.map((ask) => [ask.id, ask.card.questions.length]),
+    );
+  }, [unanswered]);
   const selfRef = useRef(selfPubkey);
   useEffect(() => {
     selfRef.current = selfPubkey;
@@ -229,16 +242,28 @@ export function AsksProvider({
     if (!message || !cardId || !trackedSetRef.current.has(cardId)) {
       return;
     }
-    if (!answeredByMe(message, cardId, selfRef.current ?? "")) {
+    const self = selfRef.current ?? "";
+    // My reply to this card — answered or NOT. A partial gets this far on
+    // purpose: it updates progress and must not touch `answered`.
+    if (!myReplyToCard(message, cardId, self)) {
       return;
     }
+    const answer = message.cardAnswer;
+    const total = trackedTotalsRef.current.get(cardId);
+    const complete = answeredByMe(message, cardId, self);
     setCache((previous) => {
-      const base: AsksCacheEntry = previous ?? {
-        asks: [],
-        answered: {},
-        cursor: 0,
-      };
-      return markCachedAnswered(base, cardId, message.id);
+      let next: AsksCacheEntry = previous ?? emptyAsksCacheEntry();
+      if (answer && total !== undefined) {
+        next = recordCachedProgress(next, cardId, {
+          answered: answeredQuestionCount(answer),
+          total,
+          at: message.createdAt,
+        });
+      }
+      // ONLY a complete answer clears the badge. `answered` is the map the
+      // badge reads, so a partial reaching it would be the bug this whole
+      // phase exists to prevent.
+      return complete ? markCachedAnswered(next, cardId, message.id) : next;
     });
   }, []);
 

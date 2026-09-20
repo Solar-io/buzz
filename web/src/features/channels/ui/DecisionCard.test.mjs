@@ -44,6 +44,10 @@ function messageWith(payload) {
   assert.ok(card, "the fixture payload must parse");
   return {
     id: "card-1",
+    // Required by the send path (the `h` tag): without it the reply cannot
+    // be signed at all, and the component's catch turns that into an error
+    // state rather than a published event.
+    channelId: "ch-1",
     kind: 9,
     authorPubkey: "a".repeat(64),
     createdAt: 1,
@@ -69,11 +73,33 @@ async function mount(payload) {
       Array.from(
         container.querySelectorAll('[data-testid^="decision-card-option-"]'),
       ).map((node) => node.textContent.trim()),
+    click: async (testid) => {
+      const node = container.querySelector(`[data-testid="${testid}"]`);
+      assert.ok(node, `${testid} must exist to be clicked`);
+      await act(async () => {
+        node.dispatchEvent(
+          new dom.window.MouseEvent("click", { bubbles: true }),
+        );
+      });
+    },
     unmount: async () => {
       await act(async () => root.unmount());
       container.remove();
     },
   };
+}
+
+/** A relay session that records what the component actually published. */
+function installFakeSession() {
+  const calls = [];
+  globalThis.__BUZZ_TEST_RELAY_SESSION__ = {
+    calls,
+    async publish(event) {
+      calls.push(event);
+      return { ok: true, message: "" };
+    },
+  };
+  return calls;
 }
 
 test("a v1 card renders its title and every option", async () => {
@@ -119,5 +145,140 @@ test("a v2 card renders question one — its text and ITS options", async () => 
   assert.ok(!text.includes("When?"), text);
   assert.ok(!text.includes("Release shape"), text);
   assert.deepEqual(mounted.labels(), ["Web only", "Web + desktop"]);
+  await mounted.unmount();
+});
+
+/**
+ * Reachability for the ANSWER half. The tag builder having a green suite
+ * proves nothing about whether the shipped button calls it — a correct
+ * feature nothing invokes is the failure shape no unit test of the library
+ * can see. These drive the real component and read the real published event.
+ */
+test("tapping an option publishes the structured card-answer tag", async () => {
+  const calls = installFakeSession();
+  const mounted = await mount({
+    v: 2,
+    title: "Release shape",
+    questions: [
+      {
+        id: "scope",
+        question: "Which surfaces?",
+        options: [
+          { id: "web", label: "Web only" },
+          { id: "both", label: "Web + desktop" },
+        ],
+      },
+      {
+        id: "when",
+        question: "When?",
+        options: [
+          { id: "now", label: "Now" },
+          { id: "later", label: "Later" },
+        ],
+      },
+    ],
+  });
+
+  await mounted.click("decision-card-option-both");
+
+  assert.equal(calls.length, 1);
+  const event = calls[0];
+  // The machine half, with the OPTION ID — which the plain-text path could
+  // never carry, so this assertion cannot pass on the old code path.
+  assert.deepEqual(
+    event.tags.filter((t) => t[0] === "card-answer"),
+    [
+      [
+        "card-answer",
+        '{"v":2,"c":"card-1","a":[{"q":"scope","o":["both"]}],"done":false}',
+      ],
+    ],
+  );
+  // The human half. This card shows question one only (the stepper is a
+  // later phase), so answering it is a PARTIAL and says so.
+  assert.equal(
+    event.content,
+    [
+      "Answered 1 of 2 — the rest are still open.",
+      "",
+      "**Which surfaces?** — Web + desktop",
+      "**When?** — _(not answered)_",
+    ].join("\n"),
+  );
+  assert.deepEqual(
+    event.tags.filter((t) => t[0] === "e"),
+    [["e", "card-1", "", "reply"]],
+  );
+  assert.ok(
+    mounted.container.textContent.includes("You replied: Web + desktop"),
+    mounted.container.textContent,
+  );
+  await mounted.unmount();
+});
+
+test("a typed answer publishes as typed text, not as an option id", async () => {
+  const calls = installFakeSession();
+  const mounted = await mount({
+    v: 1,
+    title: "Ship the claims fix?",
+    options: [{ id: "now", label: "Relaunch now" }, { label: "Let it ride" }],
+  });
+
+  const input = mounted.container.querySelector(
+    '[data-testid="decision-card-input"]',
+  );
+  // The bound is the ANSWER's typed-text limit, not the interview note's.
+  assert.equal(input.getAttribute("maxlength"), "200");
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(
+      dom.window.HTMLInputElement.prototype,
+      "value",
+    ).set;
+    setter.call(input, "next Tuesday");
+    input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  });
+  await mounted.click("decision-card-send");
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(
+    calls[0].tags.filter((t) => t[0] === "card-answer"),
+    [
+      [
+        "card-answer",
+        '{"v":2,"c":"card-1","a":[{"q":"0","t":"next Tuesday"}],"done":true}',
+      ],
+    ],
+  );
+  // A v1 card is one question, so a typed answer COMPLETES it.
+  assert.equal(calls[0].content, "**Ship the claims fix?** — next Tuesday");
+  await mounted.unmount();
+});
+
+test("a card with ambiguous ids still answers, as plain text", async () => {
+  // The renderer tolerates what the builder refuses: question 0 declaring
+  // id "1" collides with question 1's positional id, so there is no
+  // unambiguous machine answer. The card must stay answerable rather than
+  // going dead — and a reply with no card-answer tag is COMPLETE by the
+  // badge rule, which is exactly v1 behaviour.
+  const calls = installFakeSession();
+  const mounted = await mount({
+    v: 2,
+    title: "Collide",
+    questions: [
+      {
+        id: "1",
+        question: "First?",
+        options: [{ label: "a" }, { label: "b" }],
+      },
+      { question: "Second?", options: [{ label: "c" }, { label: "d" }] },
+    ],
+  });
+  await mounted.click("decision-card-option-0");
+  assert.equal(calls.length, 1);
+  assert.deepEqual(
+    calls[0].tags.filter((t) => t[0] === "card-answer"),
+    [],
+  );
+  assert.equal(calls[0].content, "a");
   await mounted.unmount();
 });

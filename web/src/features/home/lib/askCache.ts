@@ -60,13 +60,44 @@ export interface CachedAsk {
   cardReplyToId: string | null;
 }
 
+/**
+ * How far through one interview my newest answer got. The inbox's `N/M`
+ * chip (a later phase) reads this; the badge never does — a card with
+ * progress and no `answered` entry is still an open ask, which is the whole
+ * point of a partial.
+ *
+ * `at` is the answering event's `created_at`, kept so NEWEST wins
+ * deterministically. Answer events arrive over several REQ families (history,
+ * live, targeted, a 5-minute heartbeat) in no particular order, so without it
+ * a replayed older partial would overwrite a newer one.
+ */
+export interface AskProgress {
+  answered: number;
+  total: number;
+  at: number;
+}
+
 export interface AsksCacheEntry {
   /** Newest-first, capped at ASKS_CACHE_CAP. */
   asks: CachedAsk[];
-  /** cardId → my answer event id. Grows monotonically, pruned with the cap. */
+  /**
+   * cardId → my answer event id. **Only `done:true` answers land here** —
+   * this map is what clears the badge, so a partial must never reach it.
+   * Grows monotonically, pruned with the cap.
+   */
   answered: Record<string, string>;
+  /**
+   * cardId → newest partial progress. Absent in entries written before
+   * this field existed; `loadAsksCache` normalizes those to `{}`.
+   */
+  progress: Record<string, AskProgress>;
   /** Newest discovery-feed created_at seen. Discovery watermark. */
   cursor: number;
+}
+
+/** A cold-start entry — one shape, so no caller invents a partial one. */
+export function emptyAsksCacheEntry(): AsksCacheEntry {
+  return { asks: [], answered: {}, progress: {}, cursor: 0 };
 }
 
 export function asksCacheKey(): string {
@@ -100,7 +131,13 @@ export async function loadAsksCache(): Promise<AsksCacheEntry | null> {
     ) {
       return null;
     }
-    return entry;
+    // `progress` arrived after `asks`/`answered`: an entry written by an
+    // earlier build of this same CACHE_VERSION is valid and simply has none.
+    // Normalizing beats bumping the version — a bump would throw away a
+    // perfectly good badge state to add an empty map.
+    return typeof entry.progress === "object" && entry.progress !== null
+      ? entry
+      : { ...entry, progress: {} };
   } catch {
     // Corrupt or unavailable storage (node test env, private mode, quota):
     // behave like a cold start.
@@ -192,7 +229,17 @@ function pruneAnswered(entry: AsksCacheEntry): AsksCacheEntry {
       changed = true;
     }
   }
-  return changed ? { ...entry, answered } : entry;
+  // `progress` is pruned by the SAME rule and for the same reason: a card
+  // evicted by the cap would otherwise pin its partial forever.
+  const progress: Record<string, AskProgress> = {};
+  for (const [cardId, entryProgress] of Object.entries(entry.progress ?? {})) {
+    if (tracked.has(cardId)) {
+      progress[cardId] = entryProgress;
+    } else {
+      changed = true;
+    }
+  }
+  return changed ? { ...entry, answered, progress } : entry;
 }
 
 /** Content equality for two entries — identity would lie, merges rebuild. */
@@ -207,6 +254,26 @@ export function sameEntry(a: AsksCacheEntry, b: AsksCacheEntry): boolean {
   }
   for (const [cardId, answerId] of aAnswers) {
     if (b.answered[cardId] !== answerId) {
+      return false;
+    }
+  }
+  // Progress is compared here for the same reason `answered` is, and it is
+  // the same trap: the persist step decides whether to WRITE by asking this
+  // function, so a field it does not look at is a field that silently never
+  // reaches disk (the 2026-09-17 badge-resurrect defect, one field over).
+  const aProgress = Object.entries(a.progress ?? {});
+  const bProgress = Object.entries(b.progress ?? {});
+  if (aProgress.length !== bProgress.length) {
+    return false;
+  }
+  for (const [cardId, progress] of aProgress) {
+    const other = b.progress?.[cardId];
+    if (
+      !other ||
+      other.answered !== progress.answered ||
+      other.total !== progress.total ||
+      other.at !== progress.at
+    ) {
       return false;
     }
   }
@@ -259,6 +326,37 @@ export function mergeCachedAsks(
   );
   const candidate = pruneAnswered({ ...entry, asks: merged, cursor });
   return sameEntry(entry, candidate) ? entry : candidate;
+}
+
+/**
+ * Record how far a PARTIAL answer got. Pure; newest (`at`) wins, ties keep
+ * what is already stored so a replayed event is a no-op.
+ *
+ * Returns the SAME entry when nothing moved — load-bearing for the same
+ * reason `mergeCachedAsks` is: the provider's persist effect re-runs on every
+ * dep change, and a fresh object every time feeds its own state update back
+ * into the effect forever.
+ */
+export function recordCachedProgress(
+  entry: AsksCacheEntry,
+  cardId: string,
+  progress: AskProgress,
+): AsksCacheEntry {
+  const current = entry.progress?.[cardId];
+  if (current && current.at >= progress.at) {
+    return entry;
+  }
+  if (
+    current &&
+    current.answered === progress.answered &&
+    current.total === progress.total
+  ) {
+    return entry;
+  }
+  return {
+    ...entry,
+    progress: { ...(entry.progress ?? {}), [cardId]: progress },
+  };
 }
 
 /** Record my answer to one card. Pure; idempotent per (cardId, answerId). */
