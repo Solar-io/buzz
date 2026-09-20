@@ -713,3 +713,36 @@ usage.
 - `RelaySession.publish()` **resolves `{ok:false}` on a relay FAILED or ack timeout — it does not throw.** Callers that treat resolution as success render a false sent state. Always check `result.ok` and surface `result.message` (it carries the relay's verdict verbatim).
 - **Thread ancestry:** a reply to a message that is itself a reply must carry the THREAD ROOT, not the parent's id — the relay rejects a self-rooted reply with `invalid: root tag does not match thread ancestry`. The client-side chain that satisfies it: `rootId: message.rootId ?? message.replyToId ?? message.id` (a plain reply event carries only a reply marker, so its rootId is null and the parent IS the root).
 - Neither rule is reachable from the unit suite — both were caught only by the live relay. New send-path UI: run one real send against the live relay before calling it done.
+
+## Driving the real web client against the real relay (earned 2026-09-20)
+
+There is exactly one Buzz community on crichton. `127.0.0.1:6350` and
+`wss://crichton.tailb3d4b8.ts.net:6351` are the SAME relay, and the container
+resolves communities by Host header — so the loopback port answers
+`404 relay: no community is configured for this host` and is not a scratch
+relay you can hide in. Any live check runs against the real one; create your
+own private channel for it and stay out of everybody else's.
+
+Four things cost a run each, in this order:
+
+1. **Build the CLI from your worktree.** The installed `buzz` on PATH is
+   whatever last shipped — a branch that adds a wire format gets
+   `--card: only v=1 is supported` from it. `cargo build -p buzz-cli` and
+   invoke `target/debug/buzz`.
+2. **`BUZZ_PRIVATE_KEY` is an nsec, not hex.** `Buffer.from(value, "hex")`
+   silently yields zero bytes and the login form says
+   `secret key must be 32 bytes, got 0`.
+3. **A fresh key cannot connect at all.** Channel membership is not relay
+   membership: the socket closes with `relay_membership_required` (visible in
+   `docker logs buzz-dev-relay-1`, not in the browser). Sign in with an
+   ATTESTED agent key instead — the login form's "Agent attestation (agents
+   only)" disclosure takes `BUZZ_AUTH_TAG` verbatim, and that is the whole
+   enrollment.
+4. **Never locate a fixture with `.first()` in this workspace.** It is full of
+   other people's real decision cards, and the shell restores whatever view it
+   last had rather than your `?c=&m=` permalink. Click your channel, then
+   filter by your own card's text.
+
+`playwright.config.ts`'s projects carry explicit `testMatch` lists, so a
+one-off spec is not picked up by `--project=smoke`. Point `--config` at a
+throwaway config and delete both when the gate is met.
