@@ -317,7 +317,8 @@ pub fn seed_usage_attribution(observed: ObservedAgentConfig<'_>) -> Option<Usage
     let runtime_id = trimmed(observed.runtime_id);
     let provider = trimmed(observed.provider);
     let gateway = observed.gateway_base_url.and_then(gateway_authority);
-    let credential = provider_credential_key(provider).or_else(|| runtime_login_authority(runtime_id));
+    let credential =
+        provider_credential_key(provider).or_else(|| runtime_login_authority(runtime_id));
 
     if runtime_id.is_none() && provider.is_none() && gateway.is_none() {
         // Nothing was ever recorded for this agent. An account id built from

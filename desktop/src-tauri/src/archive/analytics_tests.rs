@@ -343,7 +343,6 @@ fn dst_short_day_assigns_next_midnight_to_next_day() {
     assert_eq!(data.weekdays[0].report_count, 1);
 }
 
-
 // ── Seeded vs owner-confirmed account identity ───────────────────────────────
 
 /// A seeded account and a confirmed account must be distinguishable in the
@@ -378,7 +377,10 @@ fn seeded_and_confirmed_accounts_are_reported_apart() {
         .iter()
         .find(|account| account.group.key == "harness=claude-code-glm")
         .expect("the seeded account is reported");
-    assert!(!seeded.confirmed, "a seeded account must read as provisional");
+    assert!(
+        !seeded.confirmed,
+        "a seeded account must read as provisional"
+    );
     assert_eq!(seeded.unconfirmed_reports, 1);
     assert_eq!(seeded.confirmed_reports, 0);
     assert_eq!(seeded.group.label, "Observed harness claude-code-glm");
@@ -388,7 +390,10 @@ fn seeded_and_confirmed_accounts_are_reported_apart() {
         .iter()
         .find(|account| account.group.key == "zai-coding-plan")
         .expect("the confirmed account is reported");
-    assert!(confirmed.confirmed, "an owner-confirmed account reads as established");
+    assert!(
+        confirmed.confirmed,
+        "an owner-confirmed account reads as established"
+    );
     assert_eq!(confirmed.confirmed_reports, 1);
     assert_eq!(confirmed.unconfirmed_reports, 0);
 

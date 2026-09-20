@@ -13,7 +13,12 @@ use crate::managed_agents::{
     BackendKind, RespondTo,
 };
 
-fn record(name: &str, pubkey: &str, slug: Option<&str>, runtime: Option<&str>) -> ManagedAgentRecord {
+fn record(
+    name: &str,
+    pubkey: &str,
+    slug: Option<&str>,
+    runtime: Option<&str>,
+) -> ManagedAgentRecord {
     ManagedAgentRecord {
         pubkey: pubkey.to_string(),
         name: name.to_string(),
@@ -83,9 +88,19 @@ fn seeded(runtime: &str) -> Option<UsageAttributionConfig> {
 
 #[test]
 fn overview_groups_seeded_agents_and_separates_the_unattributed() {
-    let mut glm_a = record("Acid Burn", "a".repeat(64).as_str(), None, Some("claude-code-glm"));
+    let mut glm_a = record(
+        "Acid Burn",
+        "a".repeat(64).as_str(),
+        None,
+        Some("claude-code-glm"),
+    );
     glm_a.usage_attribution = seeded("claude-code-glm");
-    let mut glm_b = record("Crash Override", "b".repeat(64).as_str(), None, Some("claude-code-glm"));
+    let mut glm_b = record(
+        "Crash Override",
+        "b".repeat(64).as_str(),
+        None,
+        Some("claude-code-glm"),
+    );
     glm_b.usage_attribution = seeded("claude-code-glm");
     let mut cc = record("Richard", "c".repeat(64).as_str(), None, Some("claude"));
     cc.usage_attribution = seeded("claude");
@@ -119,18 +134,32 @@ fn overview_groups_seeded_agents_and_separates_the_unattributed() {
         "a harness profile id is never published as a provider"
     );
     assert_eq!(
-        overview.unattributed.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
+        overview
+            .unattributed
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect::<Vec<_>>(),
         vec!["Fizz"],
         "an agent with nothing observable is reported unattributed, not as an account"
     );
     assert_eq!(
-        overview.declined.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
+        overview
+            .declined
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect::<Vec<_>>(),
         vec!["Honey"]
     );
     // A definition row reports its slug and no pubkey; an instance the reverse.
     assert_eq!(overview.unattributed[0].pubkey, None);
-    assert_eq!(overview.unattributed[0].slug.as_deref(), Some("builtin:fizz"));
-    assert_eq!(glm.agents[0].pubkey.as_deref(), Some("a".repeat(64).as_str()));
+    assert_eq!(
+        overview.unattributed[0].slug.as_deref(),
+        Some("builtin:fizz")
+    );
+    assert_eq!(
+        glm.agents[0].pubkey.as_deref(),
+        Some("a".repeat(64).as_str())
+    );
 }
 
 /// Confirming an account rewrites every agent filed under it in one edit —
@@ -185,8 +214,7 @@ fn confirming_an_account_rewrites_every_member() {
         .expect("the other account is untouched");
     assert!(!cc.confirmed);
     assert_eq!(
-        records[3].updated_at,
-        "",
+        records[3].updated_at, "",
         "a record outside the group must not be restamped"
     );
     assert_eq!(records[0].updated_at, "2026-09-19T00:00:00Z");
@@ -252,7 +280,10 @@ fn confirming_an_unknown_account_matches_nothing() {
         0
     );
     assert_eq!(
-        records[0].usage_attribution.as_ref().and_then(|a| a.account_id.as_deref()),
+        records[0]
+            .usage_attribution
+            .as_ref()
+            .and_then(|a| a.account_id.as_deref()),
         Some("harness=claude;credential=claude-cli-login"),
         "a non-matching record must be left alone"
     );
@@ -271,7 +302,6 @@ fn overview_serializes_camel_case() {
     assert!(json["unattributed"].is_array());
     assert!(json["declined"].is_array());
 }
-
 
 // ── Confirmation survives restart, edit and respawn ──────────────────────────
 
@@ -319,9 +349,10 @@ fn a_respawned_instance_inherits_its_definitions_confirmed_row() {
     // A definition whose owner cleared the row passes the clearing along,
     // rather than letting the new instance be re-seeded into an account.
     let mut cleared = record("cleared", "", Some("cleared"), Some("claude"));
-    cleared.usage_attribution =
-        Some(crate::managed_agents::usage_attribution::apply_owner_attribution(None, None, None)
-            .expect("clearing is allowed"));
+    cleared.usage_attribution = Some(
+        crate::managed_agents::usage_attribution::apply_owner_attribution(None, None, None)
+            .expect("clearing is allowed"),
+    );
     let inherited = inherited_from_definition(&[cleared], Some("cleared"))
         .expect("an explicit clearing is inherited too");
     assert!(inherited.is_empty());

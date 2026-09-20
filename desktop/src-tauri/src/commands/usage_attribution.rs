@@ -99,16 +99,17 @@ pub(crate) fn overview_from_records(records: &[ManagedAgentRecord]) -> UsageAttr
             declined.push(row(record));
             continue;
         };
-        let entry = accounts
-            .entry(account_id.to_string())
-            .or_insert_with(|| UsageAttributionAccountRow {
-                account_id: account_id.to_string(),
-                provider: None,
-                account_label: None,
-                // Identity for the `&&` fold below; the first member decides.
-                confirmed: true,
-                agents: Vec::new(),
-            });
+        let entry =
+            accounts
+                .entry(account_id.to_string())
+                .or_insert_with(|| UsageAttributionAccountRow {
+                    account_id: account_id.to_string(),
+                    provider: None,
+                    account_label: None,
+                    // Identity for the `&&` fold below; the first member decides.
+                    confirmed: true,
+                    agents: Vec::new(),
+                });
         // A confirmed member's labels describe the account; a seeded member's
         // only fill a gap. Never let a seeded label overwrite a confirmed one.
         let prefer = attribution.confirmed || entry.agents.is_empty();

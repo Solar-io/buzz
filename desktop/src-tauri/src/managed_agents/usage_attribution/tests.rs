@@ -30,7 +30,10 @@ fn seeds_from_runtime_profile_without_claiming_a_provider() {
         ..Default::default()
     })
     .expect("a recorded runtime is observable configuration");
-    assert_eq!(seeded.account_id.as_deref(), Some("harness=claude-code-glm"));
+    assert_eq!(
+        seeded.account_id.as_deref(),
+        Some("harness=claude-code-glm")
+    );
     assert_eq!(
         seeded.account_label.as_deref(),
         Some("Observed harness claude-code-glm")
@@ -129,7 +132,11 @@ fn model_is_not_a_seeding_signal() {
     let seeded = seed_usage_attribution(observed).expect("seeded");
     for model in ["opus", "fable", "opus[1m]"] {
         assert!(
-            !seeded.account_id.as_deref().unwrap_or_default().contains(model),
+            !seeded
+                .account_id
+                .as_deref()
+                .unwrap_or_default()
+                .contains(model),
             "the account id must not mention the model `{model}`"
         );
         assert!(
@@ -235,7 +242,10 @@ fn gateway_authority_discards_userinfo_path_query_and_fragment() {
         seeded.provider.as_deref(),
     ] {
         let field = field.unwrap_or_default();
-        assert!(!field.contains("sk-live-supersecret"), "leaked token: {field}");
+        assert!(
+            !field.contains("sk-live-supersecret"),
+            "leaked token: {field}"
+        );
         assert!(!field.contains("sam"), "leaked userinfo: {field}");
         assert!(!field.contains("/v1"), "leaked path: {field}");
     }
@@ -266,7 +276,10 @@ fn gateway_lookup_reads_only_gateway_keys() {
     let map = env(&[
         ("OPENAI_COMPAT_API_KEY", "sk-live-should-never-be-read"),
         ("ANTHROPIC_API_KEY", "sk-ant-should-never-be-read"),
-        ("OPENAI_COMPAT_BASE_URL", "https://pilot.example.net:6250/v1"),
+        (
+            "OPENAI_COMPAT_BASE_URL",
+            "https://pilot.example.net:6250/v1",
+        ),
     ]);
     assert_eq!(
         gateway_base_url_from_env(&map),
@@ -358,7 +371,10 @@ fn over_long_account_ids_digest_instead_of_colliding() {
         seed_usage_attribution(ObservedAgentConfig {
             runtime_id: Some("buzz-agent"),
             provider: Some("openai-compat"),
-            gateway_base_url: Some(&format!("https://{}{suffix}.example.com/v1", "n".repeat(120))),
+            gateway_base_url: Some(&format!(
+                "https://{}{suffix}.example.com/v1",
+                "n".repeat(120)
+            )),
         })
         .and_then(|seeded| seeded.account_id)
         .expect("seeded")
@@ -375,7 +391,10 @@ fn over_long_account_ids_digest_instead_of_colliding() {
         gateway_base_url: Some(&format!("https://{}.example.com/v1", "n".repeat(120))),
     })
     .expect("seeded");
-    assert!(seeded.validate().is_ok(), "a digested row stays publishable");
+    assert!(
+        seeded.validate().is_ok(),
+        "a digested row stays publishable"
+    );
     assert!(seeded.account_label.as_deref().unwrap_or_default().len() <= 128);
 }
 
