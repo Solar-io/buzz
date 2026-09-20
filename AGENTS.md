@@ -746,3 +746,74 @@ Four things cost a run each, in this order:
 `playwright.config.ts`'s projects carry explicit `testMatch` lists, so a
 one-off spec is not picked up by `--project=smoke`. Point `--config` at a
 throwaway config and delete both when the gate is met.
+
+Three more, earned on the Phase 3 gate 2026-09-20:
+
+4. **The web client you must drive is YOUR worktree's**, and it is not
+   deployed anywhere — run `cd web && pnpm dev` with
+   `VITE_RELAY_URL=wss://crichton.tailb3d4b8.ts.net:6351` and point the
+   browser at it. `vite` binds `localhost`, which resolves to `[::1]` on
+   macOS, so **`http://127.0.0.1:<port>` is CONNECTION REFUSED while
+   `http://localhost:<port>` works** — that failure looks exactly like "the
+   server did not start".
+5. **`--mention` requires the pubkey to be a channel MEMBER.** The pubkey in
+   `BUZZ_AUTH_TAG` is the attesting authority's, not necessarily a member of
+   your channel; mentioning it fails the send with
+   `mentioned pubkeys are not channel members`. Read the members first
+   (`buzz channels members --channel <uuid>`) and mention one of those.
+6. The subcommand is **`buzz messages thread --channel <uuid> --event <id>`**.
+   There is no `messages list`, and `messages thread` takes `--event`, not
+   `--message`. Two wasted calls each.
+
+## Decision cards on a phone: the inline stepper is not usable (measured 2026-09-20)
+
+Not a virtualizer re-measure quirk, and worth knowing before anyone tries to make
+the inline card work at phone widths. At 390x844 the timeline scroller
+(`div.buzz-timeline-scrollbar`) has **clientHeight 617** and sits **pinned to
+the bottom** — `scrollTop + clientHeight == scrollHeight` at every step. So
+every pixel a card GROWS by comes out of its top.
+
+Measured advancing a 4-question card from a short question to a tall one:
+card height 301 -> 1003 px, card top **+413 -> -289**. The title, the
+progress rail and the question text all left the viewport; the user was
+looking at options three through eight of a question they could no longer
+see. Advancing back onto a short question (340 px) restored it.
+
+Two consequences: anything taller than ~600 px cannot fit at that width
+regardless of scroll position, and the fix is to take the interaction OUT of
+the scroller (a bottom sheet), not to scroll-into-view harder.
+
+## React: a handler that changes state and then acts on it must be PASSED the new state
+
+Cost five red tests on the decision-card stepper and would have shipped as a
+silent wire-format bug. The stepper auto-submits when the last question is
+answered, so `select()` and `submit()` fire in the SAME handler — and
+`setState` has not re-rendered by then, so a `latest.current` ref updated
+during render still holds the PREVIOUS state. Every completed interview
+published one answer short, with a `content` that read
+`Answered 3 of 4 — the rest are still open.`
+
+The fix is structural, not a bigger ref: `onSubmit` takes the state as an
+ARGUMENT, so the value that was just computed is the value that is published.
+Any "do X, then immediately act on the result of X" handler has this shape.
+
+## E2E against crichton: a fresh key cannot seed, and two measurements lie at phone width
+
+Earned on the Phase 4 mobile gate 2026-09-20.
+
+`wake-collapse.spec.ts`'s contract — generate a key, publish, assert — does
+NOT hold against the crichton relay. A freshly generated key is refused at
+AUTH with `restricted: not a relay member`, and every publish afterwards
+returns `auth-required: not authenticated`. A relay-backed spec must gate on
+`E2E_RELAY_WS` **plus** a real identity (`E2E_AGENT_NSEC` / `E2E_AUTH_TAG`)
+and carry the attestation tag through `publishAs`/`signIn`.
+
+Two Playwright measurements read as product bugs at 390x844 and are not:
+
+- **`boundingBox()` is document-relative** and the app shell's document is
+  itself scrolled at phone width. A correctly-placed bottom sheet reads as
+  `bottom: 1396` in an 844 px window. Measure against the viewport, not the
+  document.
+- **`toBeVisible()` resolves before `slide-in-from-bottom` finishes**, so a
+  sheet measured immediately reads ~1561. Wait for the animation to settle
+  before asserting geometry.
