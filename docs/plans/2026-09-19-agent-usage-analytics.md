@@ -467,3 +467,65 @@ versus closed change can move it. The mutation used instead — a hardcoded
 Both runners were verified before being trusted: the Rust selection reported
 `running 6 tests` (6 ran, 2,965 filtered, so the filter matched rather than
 matching nothing), and the frontend file reported `tests 7`.
+
+Earlier per-subject mutation logs from commit `fcb46339` survive under
+`logs/test-results/mutations-fcb46339/`. They are superseded by the runs above,
+which were made against the current head of the branch.
+
+## Live isolated-relay proof — 2026-09-20
+
+All four sub-parts the checklist names are delivered in one run:
+`archive::live_usage_relay_tests::live_two_agent_usage_survives_restart_and_filters_one_many_all`
+(`desktop/src-tauri/src/archive/live_usage_relay_tests.rs`), against the
+repository's own isolated harness — Compose project `buzz-harness` with its own
+Postgres/Redis/MinIO and a relay built from this branch on `:3030`
+(`scripts/start-isolated-test-relay.sh`), whose database is dropped and
+recreated at launch. Nothing reads or writes the real relay or
+`~/.buzz/archive/archive.db`. Commands and verbatim output:
+`logs/test-results/usage-live-relay-full-20260920.log`.
+
+The single result line, wrapped:
+
+```
+LIVE_USAGE_PASS relay=ws://localhost:3030
+  owner=2b67da53… agent_a=453665c0… agent_b=9f615cf6…
+  published=2 owner_served=2 outsider_served=0
+  outsider_closed=restricted: p-gated events require #p matching your pubkey
+  owner_decrypted=2 outsider_decrypted=0
+  persisted=2 rows_after_restart=2
+  one_a_input=1000 one_b_input=22 many_input=1022 all_input=1022
+  none_reports=0 available_agents=2
+```
+
+| Sub-part | Evidence |
+|---|---|
+| Two agents publish encrypted kind 44200 | `published=2`; two distinct keys, each on its own NIP-42-authenticated socket, each event carrying only `p` and `agent` tags over a NIP-44 ciphertext. The relay's own database shows both rows with `public_tag_count=2` and the private provider/account labels absent from the stored content. |
+| Ingestion, owner decrypts, outsider cannot | `owner_served=2 owner_decrypted=2`, and two independent refusals of the outsider: the relay closed its owner-scoped filter with `restricted: p-gated events require #p matching your pubkey`, and the outsider key also failed to decrypt the ciphertexts the owner had already fetched. The archived row is asserted to be plaintext, so the owner-only decrypt-at-ingest demonstrably ran. |
+| Archive restart | `persisted=2 rows_after_restart=2` — ingested through the shipped `plan_archive` → `commit_archive`, the connection dropped, the same file reopened with the production `store::open_archive_db`, and the rows counted and queried again. |
+| One / many / all filtering | `one_a_input=1000`, `one_b_input=22` (asserted to differ, so the selections discriminate), `many_input=1022`, `all_input=1022`, cleared selection `none_reports=0` with `available_agents=2` still offered. `1000 + 22 = 1022 = many = all`. |
+
+**The proof was shown to fail, three ways**, each a production mutation run
+against the same live relay and then reverted:
+
+| Mutation | Assertion that failed |
+|---|---|
+| `pipeline.rs` routes kind 44200 down the ephemeral path | `live_usage_relay_tests.rs:432` — `one owner_p bucket`, `left: 0` / `right: 1` |
+| `store.rs`'s `open_archive_db` opens an in-memory database instead of the file | `live_usage_relay_tests.rs:495` — `both rows must survive closing and reopening the archive`, `left: 0` / `right: 2` |
+| `analytics.rs`'s row filter ignores the agent selection | `live_usage_relay_tests.rs:516` — `one agent, one turn`, `left: 2` / `right: 1` |
+
+The middle one is the important one: it is what makes the restart sub-part an
+assertion about durability rather than a formality.
+
+Two things this proof does not claim. The relay refuses a kind-44200 whose `p`
+tag is not the agent's *registered* owner, so each agent presents the owner's
+NIP-OA `auth` tag on its AUTH event and the relationship is materialized the way
+production materializes it — the first attempt here was rejected with
+`restricted: agent-turn-metric \`p\` tag must be the registered owner of this
+agent`, which is how that requirement was found. And production's
+`query_buckets` re-asks the relay over the authed HTTP `/query`, which needs an
+`AppState`; this test fills the bucket's `returned_ids` from the owner's own live
+REQ against the same relay, so the relay still answers "which of these match
+this owner-scoped filter" but the HTTP transport is not the one exercised.
+
+The test is gated on `BUZZ_LIVE_USAGE_RELAY` and prints `LIVE_USAGE_SKIP`
+without it, because the ordinary suite has no relay.

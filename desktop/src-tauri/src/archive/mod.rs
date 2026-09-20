@@ -883,3 +883,7 @@ pub async fn archive_size_stats(
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod mod_tests;
+
+#[cfg(test)]
+#[path = "live_usage_relay_tests.rs"]
+mod live_usage_relay_tests;
