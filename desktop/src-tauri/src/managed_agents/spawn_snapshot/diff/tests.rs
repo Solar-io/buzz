@@ -30,6 +30,16 @@ fn base() -> SpawnConfigSnapshot {
         max_turn_duration_seconds: Some(7200),
         parallelism: 1,
         effort_level: Some("high".into()),
+        usage_attribution: BTreeMap::from([
+            (
+                "BUZZ_USAGE_ACCOUNT_ID".to_string(),
+                "harness=claude".to_string(),
+            ),
+            (
+                "BUZZ_USAGE_ACCOUNT_CONFIRMED".to_string(),
+                "false".to_string(),
+            ),
+        ]),
     }
 }
 
@@ -74,6 +84,14 @@ fn mutations() -> Vec<Mutation> {
         }),
         ("parallelism", |s| s.parallelism = 8),
         ("effort_level", |s| s.effort_level = None),
+        // Confirming a seeded label is the edit the owner actually makes, so
+        // that is the mutation pinned here: the flag alone must drift the
+        // canonical value and light the restart badge, because the running
+        // harness is still publishing the seeded value.
+        ("usage_attribution.BUZZ_USAGE_ACCOUNT_CONFIRMED", |s| {
+            s.usage_attribution
+                .insert("BUZZ_USAGE_ACCOUNT_CONFIRMED".into(), "true".into());
+        }),
     ]
 }
 

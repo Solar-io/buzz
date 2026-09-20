@@ -270,6 +270,41 @@ with a TypeScript lookup table or an id comparison in a component.
     `~/.config/agent-harness/role-policy.json`; do not add a runtime-owned
     policy JSON beside it. The old app-data policy is migration input only.
 
+16. **Usage attribution is structured configuration with a derived env var, and
+    a seeded value is never presented as an owner's.** NIP-AM subscription
+    attribution lives in `ManagedAgentRecord.usage_attribution`
+    (`managed_agents/usage_attribution.rs`): `provider`, `account_id`,
+    `account_label`, `confirmed`. The four `BUZZ_USAGE_*` variables are
+    **derived** from it at spawn — same shape as
+    `DERIVED_PROVIDER_MODEL_ENV_KEYS` — with one deliberate inversion from
+    effort: they are written **before** the layered user env, so an explicit
+    per-agent `env_vars` entry still wins. `effective_usage_attribution` is the
+    only place that precedence is decided; the spawn and the spawn-config
+    snapshot both read it, and the keys are stripped from the snapshot's `env`
+    map so attribution has exactly one representation there.
+
+    **Seeding may read only recorded configuration**: the structured `runtime`
+    profile id, the structured `provider` field, an explicitly-configured
+    gateway host (host and port only — `gateway_authority` discards userinfo,
+    path, query and fragment), and the credential the readiness gate requires,
+    by name, from the shared table in `readiness/credentials.rs`. It may **not**
+    read the model, a credential value, or a harness id as a provider — a
+    `claude-*` custom profile is seeded with no provider rather than a guessed
+    one, per NIP-AM and rule "runtime profile identifiers, not capability
+    claims". An agent with nothing observable gets the field **absent**: never a
+    placeholder, never a shared bucket, never zero.
+
+    **Seeding only ever fills an absent row.** That is what makes it safe on
+    every boot and what makes a confirmation survive restart, edit and respawn:
+    `apply_persona_snapshot` deliberately does **not** mirror attribution (it is
+    instance-owned after mint), and `create_managed_agent` inherits the linked
+    definition's row keyed off `record.persona_id`. A row whose identity fields
+    are all absent but whose `confirmed` is true is the owner saying "no
+    subscription identity" — a real answer, and seeding must not undo it. New
+    write paths go through `apply_owner_attribution`, which validates and marks
+    the row confirmed: editing **is** confirming, so no path may write an owner
+    value that still reads as seeded.
+
 ## The tests that enforce this
 
 - `lib/agentConfigCore.test.mjs` — field model per harness × scope, clearing
@@ -308,10 +343,73 @@ with a TypeScript lookup table or an id comparison in a component.
   restoration, zero-write Skip, Next save failure/retry, navigation, and
   successful-empty vs failed optional-model discovery.
 - Rust: `runtime_metadata_env_vars` tests pin spawn-time key application.
+- Rust: `managed_agents::usage_attribution::tests` pin the honesty rules —
+  `runtime_null_yields_absent_attribution_not_a_placeholder`,
+  `model_is_not_a_seeding_signal`,
+  `gateway_authority_discards_userinfo_path_query_and_fragment`,
+  `spawn_lets_an_explicit_env_var_override_the_derived_mapping`, and
+  `seeding_never_overwrites_an_existing_row`. `commands::usage_attribution::tests`
+  pin account grouping plus survival across restart and respawn. Each was
+  verified by mutation; results are recorded in
+  `docs/plans/2026-09-19-agent-usage-analytics.md`.
+  **Known gap recorded there:** severing the create-path slug argument survives
+  both the suite and clippy, because `create_managed_agent`'s body has no test
+  harness in this repo.
+- Rust: `migration::usage_attribution::tests::on_disk` pins the boot layer, not
+  the decision — the store the pass opens, that the bytes reach the file the app
+  later reads (including through a dev worktree's symlink), that a second launch
+  rewrites nothing, and that the canonical dev directory a worktree instance
+  shares is covered. **Both layers are required**: the decision tests were all
+  that existed once, and removing the write entirely left 2,948 tests green.
+  Any new `*_in_file` boot migration gets the same pair, as `materialize` does.
+- `desktop/tests/e2e/agent-usage.spec.ts` — `theme light|dark, every themed
+  surface resolves to a real colour` pins the rule that **the semantic theme
+  tokens hold bare HSL triplets and must always be read as
+  `hsl(var(--token))`**. A bare `var(--card)` is an invalid colour: the browser
+  drops the declaration, the surface never paints, and nothing else notices —
+  79 declarations in `usage.css` shipped that way under a green suite, leaving
+  the analytics page with no cards, borders or muted panels at all. The
+  `--usage-*` dimension tokens are the opposite case (full hex colours, wrapping
+  them is what breaks them) and the same test pins one unwrapped. Verified by
+  mutation both ways; results in
+  `docs/plans/2026-09-19-agent-usage-analytics.md`.
 - Rust: persona sharing/retention tests pin relay+owner scoping, durable
   enqueue errors, relay rejection/unavailability, and accepted publication.
 - Rust: `definition_validation` and inbound persona tests pin the shared
   Unicode/control-character policy at local, import, publish, and sync gates.
+
+## Two things that cost a round trip each, so they are written down
+
+**A file that is over the size ceiling but STATIC on `main` becomes a *new*
+ratchet violation the moment you add one line to it.** The gate compares against
+a base commit and reports "file may not grow", so adding a required struct field
+to an exhaustive test fixture in `discovery/tests.rs` (1,819 lines) turned a
+grandfathered file into a fresh failure and took the desktop report from 10
+entries to 12. Splitting a 1,800-line test file to buy back one line is not the
+proportionate fix; buying it back in place is. What worked, in order of
+preference: delete an import the module's own `use super::*` already supplies
+(a child module sees its parent's private imports, so an explicit
+`use std::collections::BTreeMap` next to `use super::*` is dead); inline a
+single-use `let` into the one call that consumed it; and drop a `pub use`
+re-export nothing outside the file reads, naming the module at the call site
+instead. All three are genuine tightenings rather than padding. Note `cargo fmt`
+constrains the shapes available: rustfmt's default `fn_call_width` is 60, so a
+call whose *arguments* exceed 60 characters goes one-per-line however short the
+line would have been.
+
+**A live kind-44200 test needs the agent registered to the owner, or the relay
+refuses the event.** `buzz-relay`'s ingest gate requires the `p` tag to be the
+agent's registered owner (`users.agent_owner_pubkey`), so publishing from a
+freshly generated key fails with `restricted: agent-turn-metric \`p\` tag must
+be the registered owner of this agent`. The registration is materialized from a
+verified NIP-OA `auth` tag, and the ws AUTH handler is one place that does it:
+put `buzz_sdk::nip_oa::compute_auth_tag(owner, agent, "")` on the agent's NIP-42
+AUTH event (the `compute_auth_tag` → `parse_auth_tag` → `Tag::parse` bridge that
+`commands/engrams.rs`'s tests already use). Live relay for this:
+`scripts/start-isolated-test-relay.sh` — its own Compose project, its own
+database, dropped and recreated at launch. Worked example:
+`desktop/src-tauri/src/archive/live_usage_relay_tests.rs`, gated on
+`BUZZ_LIVE_USAGE_RELAY`.
 
 ## Keep this file true
 

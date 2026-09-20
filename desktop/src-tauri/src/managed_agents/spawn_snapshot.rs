@@ -155,6 +155,19 @@ pub(crate) struct SpawnConfigSnapshot {
     /// user env `low`, or the reverse) produces no spurious drift entry, and an
     /// env-only edit still surfaces as exactly one `effort_level` entry.
     pub effort_level: Option<String>,
+    /// The NIP-AM attribution variables a spawn would actually export, with
+    /// the layered user env winning over the derived row — resolved by
+    /// [`effective_usage_attribution`], the same precedence `spawn_agent_child`
+    /// produces. Like `effort_level`, this is the *sole* representation: the
+    /// four keys are stripped from `env` (see `from_inputs`) so an
+    /// authority handoff that leaves the effective values unchanged raises no
+    /// spurious drift entry, and confirming a label surfaces as exactly one
+    /// `usage_attribution` change rather than a duplicate under `env.`.
+    ///
+    /// Empty when nothing would be exported, which is also what an
+    /// unattributed agent produces — so seeding an agent that has nothing
+    /// observable never lights the restart badge.
+    pub usage_attribution: BTreeMap<String, String>,
 }
 
 /// The startup effort a spawn would actually apply, mirroring `apply_effort_env`
@@ -206,6 +219,11 @@ impl SpawnConfigSnapshot {
             env: {
                 let mut env = descriptor.env.clone();
                 env.remove(EFFORT_LEVEL_ENV_VAR);
+                // Same single-representation rule as effort: attribution lives
+                // in `usage_attribution` below, never also under `env.`.
+                for key in super::usage_attribution::USAGE_ATTRIBUTION_ENV_KEYS {
+                    env.remove(*key);
+                }
                 env
             },
             relay_url: relay_url.to_string(),
@@ -240,6 +258,14 @@ impl SpawnConfigSnapshot {
             // raw descriptor env (before the strip), so a user-seeded env value
             // is preserved as the effective effort when no canonical is set.
             effort_level: effective_effort(record, &descriptor.env),
+            // Sole attribution representation — see the field doc and the
+            // `env` strip above. Reads the raw descriptor env (before the
+            // strip) so a user-supplied `BUZZ_USAGE_*` override is preserved
+            // as the effective value, exactly as spawn resolves it.
+            usage_attribution: super::usage_attribution::effective_usage_attribution(
+                record.usage_attribution.as_ref(),
+                &descriptor.env,
+            ),
         }
     }
 

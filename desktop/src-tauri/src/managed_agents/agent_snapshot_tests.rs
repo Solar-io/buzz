@@ -74,6 +74,7 @@ fn minimal_record() -> ManagedAgentRecord {
         definition_parallelism: Some(4),
         relay_mesh: None,
         effort_level: None,
+        usage_attribution: None,
     }
 }
 

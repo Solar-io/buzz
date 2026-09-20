@@ -198,18 +198,36 @@ pub struct AgentUsageSeries {
 // ── Per-event field ladder (A1, A4, A11, A12) ───────────────────────────────
 
 #[derive(Debug, Clone, Copy)]
-enum FieldValue<T> {
+pub(super) enum FieldValue<T> {
     Known(T),
     Unknown,
 }
 
-struct EventOutcome {
+pub(super) struct EventOutcome {
     input: FieldValue<u64>,
     output: FieldValue<u64>,
     total: FieldValue<u64>,
-    cost: FieldValue<f64>,
+    pub(super) cost: FieldValue<f64>,
     cache_read: FieldValue<u64>,
     cache_write: FieldValue<u64>,
+}
+
+impl EventOutcome {
+    pub(super) fn from_counts(counts: &buzz_core_pkg::agent_turn_metric::TokenCounts) -> Self {
+        fn token(v: Option<u64>) -> FieldValue<u64> {
+            v.map_or(FieldValue::Unknown, FieldValue::Known)
+        }
+        Self {
+            input: token(counts.input_tokens),
+            output: token(counts.output_tokens),
+            total: token(counts.total_tokens),
+            cost: counts
+                .cost_usd
+                .map_or(FieldValue::Unknown, FieldValue::Known),
+            cache_read: token(counts.cache_read_tokens),
+            cache_write: token(counts.cache_write_tokens),
+        }
+    }
 }
 
 /// Per-field ladder for token counters (A1): adjacent nondecreasing cumulative
@@ -289,7 +307,7 @@ fn resolve_baseline<'a>(
     Some(pred_group[0])
 }
 
-fn compute_event_outcome(
+pub(super) fn compute_event_outcome(
     row: &AgentMetricIndexRow,
     probe_by_key: &HashMap<(String, String, u64), Vec<&AgentMetricIndexRow>>,
 ) -> EventOutcome {
@@ -450,7 +468,7 @@ impl CostAccumulator {
 }
 
 #[derive(Debug, Default, Clone)]
-struct UsageAccumulator {
+pub(super) struct UsageAccumulator {
     input: TokenAccumulator,
     output: TokenAccumulator,
     total: TokenAccumulator,
@@ -460,7 +478,7 @@ struct UsageAccumulator {
 }
 
 impl UsageAccumulator {
-    fn add(&mut self, outcome: &EventOutcome) {
+    pub(super) fn add(&mut self, outcome: &EventOutcome) {
         self.input.add(outcome.input);
         self.output.add(outcome.output);
         self.total.add(outcome.total);
@@ -603,7 +621,7 @@ impl UsageAccumulator {
         }
     }
 
-    fn finish(self) -> ReportedUsage {
+    pub(super) fn finish(self) -> ReportedUsage {
         let fresh_input = self.derive_fresh_input();
         ReportedUsage {
             input_tokens: self.input.finish(),

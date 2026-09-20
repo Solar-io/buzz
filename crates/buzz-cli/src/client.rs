@@ -2449,11 +2449,10 @@ mod retry_policy_tests {
 #[cfg(test)]
 mod tests {
     use super::{
-        advance_query_cursor, create_response_with_id_if_accepted, extract_relay_response_field,
-        BuzzClient, ALLOWED_MIMES, canonical_upload_mime,
+        advance_query_cursor, canonical_upload_mime, create_response_with_id_if_accepted,
+        extract_relay_response_field, BuzzClient, ALLOWED_MIMES,
     };
     use nostr::{EventBuilder, Keys, Kind, Tag};
-
 
     #[test]
     fn wav_magic_passes_the_upload_allow_list() {
@@ -2461,7 +2460,9 @@ mod tests {
         // `infer` reports the legacy alias `audio/x-wav` for it (pinned
         // so the canonicalizer below can never silently go unused).
         let wav: &[u8] = b"RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x44\xac\x00\x00\x88\x58\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00";
-        let detected = infer::get(wav).expect("wav magic must be recognized").mime_type();
+        let detected = infer::get(wav)
+            .expect("wav magic must be recognized")
+            .mime_type();
         assert_eq!(detected, "audio/x-wav");
         let canonical = canonical_upload_mime(detected);
         assert_eq!(canonical, "audio/wav");

@@ -182,13 +182,14 @@ fn run_boot_migrations_inner(app: &tauri::AppHandle, reset_completed: bool) {
     // B5: manufacture definitions for standalone agents AFTER the fold (so
     // pre-existing definition slugs exist for collision checks) and before event
     // sync republishes — the backfilled link flips the 30177 projection.
-    backfill_standalone_agents(app);
+    backfill::backfill_standalone_agents(app);
     // Repair dropped team↔member links, then detach directory-backed teams,
     // gated on a clean repair so a failure preserves `source_dir` for a retry.
     team_membership::repair_then_detach_teams(app);
     reconcile_provider_mcp_commands(app);
     reconcile_databricks_v1_to_v2(app);
-    materialize_agent_runtimes(app);
+    materialize::materialize_agent_runtimes(app);
+    usage_attribution::seed_usage_attribution_records(app);
 }
 
 /// Copy one-time app state from the legacy app identifier directory to
@@ -1365,13 +1366,12 @@ pub fn migrate_persona_provider_to_runtime(app: &tauri::AppHandle) {
     }
     rename_provider_to_runtime_in_personas(&path);
 }
-mod materialize;
-pub use materialize::materialize_agent_runtimes;
 mod fold;
+mod materialize;
+mod usage_attribution;
 pub use fold::fold_personas_into_agent_store;
 use fold::load_persona_runtimes;
 mod backfill;
-pub use backfill::backfill_standalone_agents;
 mod detach;
 mod pollen;
 mod team_membership;

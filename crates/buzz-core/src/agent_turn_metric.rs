@@ -103,6 +103,82 @@ pub struct PricingIdentity {
     pub cache_class: Option<String>,
 }
 
+/// Explicit, non-secret usage attribution. Never derived from a model name.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageAttribution {
+    /// Observed or explicitly configured provider identifier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Owner-defined stable account identifier, never a credential.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+    /// Private display label for that account.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_label: Option<String>,
+    /// Whether the owner has confirmed this account identity, as opposed to it
+    /// having been seeded from observed configuration.
+    ///
+    /// `None` means the publisher said nothing, which consumers treat exactly
+    /// like `Some(false)`: unconfirmed. `Some(true)` is a claim only the owner
+    /// can make, so it is invalid without an `account_id` to attach it to — an
+    /// "confirmed nothing" carries no information and would let a publisher
+    /// launder an unattributed turn into an established identity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_confirmed: Option<bool>,
+    /// Observed service tier, not inferred from model or account.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
+}
+
+impl UsageAttribution {
+    /// `true` only when the owner has confirmed this account identity. An
+    /// absent flag is unconfirmed — never treated as an assertion.
+    pub fn is_account_confirmed(&self) -> bool {
+        self.account_confirmed.unwrap_or(false)
+    }
+}
+
+/// One observed provider call, subordinate to (never additive to) turn totals.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestObservation {
+    /// Unique, turn-local observation identifier for deduplication.
+    pub id: String,
+    /// Actual requested model, when available.
+    pub model: Option<String>,
+    /// Explicit route/account/tier attribution.
+    #[serde(default)]
+    pub attribution: UsageAttribution,
+    /// Provider-reported counters; absence is unknown.
+    pub usage: TokenCounts,
+    /// `wire-reported`, `manifest-estimated`, or absent/unknown.
+    pub cost_source: Option<String>,
+    /// Elapsed request time in milliseconds, when observed.
+    pub latency_ms: Option<u64>,
+    /// Whether this was a fallback request, when observed.
+    pub fallback: Option<bool>,
+}
+
+/// Optional additive analytics metadata. Older events remain valid unchanged.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageTelemetry {
+    /// Turn-wide attribution, only when common to all contributions.
+    #[serde(default)]
+    pub attribution: UsageAttribution,
+    /// Cost provenance; unrecognized values remain unknown.
+    pub cost_source: Option<String>,
+    /// Total provider calls observed by the harness, including failures.
+    pub request_count: Option<u64>,
+    /// True only if every call is represented exactly once in `requests`.
+    #[serde(default)]
+    pub requests_complete: bool,
+    /// Optional provider-call breakdown, metrics only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requests: Vec<RequestObservation>,
+}
+
 /// Decrypted payload of a `kind:44200` Agent Turn Metric event.
 /// nullable unless constrained by the NIP (e.g. `session_id` + `turn_seq`
 /// are required whenever `cumulative` is present).
@@ -157,6 +233,9 @@ pub struct AgentTurnMetricPayload {
     /// treat omission as "price unknown".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pricing_identity: Option<PricingIdentity>,
+    /// Optional private analytics metadata, never copied to event tags.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry: Option<UsageTelemetry>,
 }
 
 fn default_delta_reliable() -> bool {
@@ -170,6 +249,50 @@ impl AgentTurnMetricPayload {
     /// present but negative or non-finite (NaN or infinity). Token counts are
     /// typed as `Option<u64>` and therefore cannot be negative by construction.
     pub fn validate(&self) -> Result<(), ObserverPayloadError> {
+        fn metric_label(
+            value: &str,
+            field: &str,
+            allow_unknown: bool,
+        ) -> Result<(), ObserverPayloadError> {
+            let trimmed = value.trim();
+            if trimmed.is_empty()
+                || trimmed != value
+                || trimmed.len() > 256
+                || trimmed.chars().any(|c| c.is_control())
+                || (!allow_unknown && trimmed.eq_ignore_ascii_case("__unknown__"))
+            {
+                return Err(ObserverPayloadError::InvalidPayload(format!(
+                    "{field} must be a nonblank label of at most 256 bytes without controls or reserved values"
+                )));
+            }
+            Ok(())
+        }
+        fn attribution(value: &UsageAttribution, prefix: &str) -> Result<(), ObserverPayloadError> {
+            for (name, field) in [
+                ("provider", value.provider.as_deref()),
+                ("accountId", value.account_id.as_deref()),
+                ("accountLabel", value.account_label.as_deref()),
+                ("serviceTier", value.service_tier.as_deref()),
+            ] {
+                if let Some(field) = field {
+                    metric_label(field, &format!("{prefix}.{name}"), false)?;
+                }
+            }
+            // A confirmation is a claim *about an account*. Without an
+            // `accountId` there is nothing it could confirm, so accepting it
+            // would let a publisher mark an unattributed turn as an
+            // owner-established identity.
+            if value.account_confirmed.is_some() && value.account_id.is_none() {
+                return Err(ObserverPayloadError::InvalidPayload(format!(
+                    "{prefix}.accountConfirmed requires {prefix}.accountId"
+                )));
+            }
+            Ok(())
+        }
+        metric_label(&self.harness, "harness", false)?;
+        if let Some(model) = &self.model {
+            metric_label(model, "model", false)?;
+        }
         fn check_cost(cost: Option<f64>, field: &str) -> Result<(), ObserverPayloadError> {
             if let Some(c) = cost {
                 if !c.is_finite() || c < 0.0 {
@@ -185,6 +308,31 @@ impl AgentTurnMetricPayload {
         }
         if let Some(c) = &self.cumulative {
             check_cost(c.cost_usd, "cumulative.costUsd")?;
+        }
+        if let Some(t) = &self.telemetry {
+            attribution(&t.attribution, "telemetry.attribution")?;
+            let mut ids = std::collections::HashSet::new();
+            for request in &t.requests {
+                metric_label(&request.id, "requests.id", true)?;
+                if !ids.insert(&request.id) {
+                    return Err(ObserverPayloadError::InvalidPayload(
+                        "request ids must be unique and nonempty".into(),
+                    ));
+                }
+                if let Some(model) = &request.model {
+                    metric_label(model, "requests.model", false)?;
+                }
+                attribution(&request.attribution, "requests.attribution")?;
+                check_cost(request.usage.cost_usd, "requests.usage.costUsd")?;
+            }
+            if (t.requests_complete && t.request_count != Some(t.requests.len() as u64))
+                || t.request_count
+                    .is_some_and(|count| count < t.requests.len() as u64)
+            {
+                return Err(ObserverPayloadError::InvalidPayload(
+                    "complete requests must match requestCount".into(),
+                ));
+            }
         }
         Ok(())
     }
@@ -228,6 +376,137 @@ mod tests {
     use super::*;
     use nostr::{EventBuilder, Kind, Tag};
 
+    #[test]
+    fn analytics_extensions_validate_completeness_duplicates_and_costs() {
+        let mut p = sample_payload();
+        let request = RequestObservation {
+            id: "0".into(),
+            model: None,
+            attribution: Default::default(),
+            usage: p.turn.clone().unwrap(),
+            cost_source: None,
+            latency_ms: Some(u64::MAX),
+            fallback: None,
+        };
+        p.telemetry = Some(UsageTelemetry {
+            request_count: Some(1),
+            requests_complete: true,
+            requests: vec![request.clone()],
+            ..Default::default()
+        });
+        assert!(p.validate().is_ok());
+        p.telemetry.as_mut().unwrap().requests.push(request);
+        assert!(p.validate().is_err());
+        p.telemetry.as_mut().unwrap().requests.pop();
+        p.telemetry.as_mut().unwrap().request_count = Some(2);
+        assert!(p.validate().is_err());
+        p.telemetry.as_mut().unwrap().requests_complete = false;
+        assert!(p.validate().is_ok());
+        p.telemetry.as_mut().unwrap().request_count = Some(0);
+        assert!(
+            p.validate().is_err(),
+            "observations cannot exceed requestCount"
+        );
+        p.telemetry.as_mut().unwrap().request_count = Some(1);
+        p.telemetry.as_mut().unwrap().attribution.provider = Some("__unknown__".into());
+        assert!(p.validate().is_err(), "reserved labels are rejected");
+        p.telemetry.as_mut().unwrap().attribution.provider = Some("bad\nprovider".into());
+        assert!(p.validate().is_err(), "control characters are rejected");
+        p.telemetry.as_mut().unwrap().attribution.provider = Some("x".repeat(257));
+        assert!(p.validate().is_err(), "oversized labels are rejected");
+        p.telemetry.as_mut().unwrap().attribution.provider = None;
+        p.telemetry.as_mut().unwrap().requests[0].usage.cost_usd = Some(-1.0);
+        assert!(p.validate().is_err());
+    }
+
+    /// `accountConfirmed` is a claim about an account, so it is only valid
+    /// alongside an `accountId`. A publisher must not be able to mark an
+    /// unattributed turn as an owner-established identity.
+    #[test]
+    fn account_confirmed_requires_an_account_id() {
+        let mut p = sample_payload();
+        p.telemetry = Some(UsageTelemetry {
+            attribution: UsageAttribution {
+                account_confirmed: Some(true),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert!(
+            p.validate().is_err(),
+            "a confirmation with no accountId must be rejected"
+        );
+        p.telemetry.as_mut().unwrap().attribution.account_id = Some("seeded-1".into());
+        assert!(p.validate().is_ok());
+        // Explicitly-unconfirmed still needs the account it describes.
+        p.telemetry.as_mut().unwrap().attribution.account_id = None;
+        p.telemetry.as_mut().unwrap().attribution.account_confirmed = Some(false);
+        assert!(p.validate().is_err());
+    }
+
+    /// The same rule applies to a per-request observation, which is the other
+    /// place attribution enters the payload.
+    #[test]
+    fn request_account_confirmed_requires_an_account_id() {
+        let mut p = sample_payload();
+        p.telemetry = Some(UsageTelemetry {
+            request_count: Some(1),
+            requests: vec![RequestObservation {
+                id: "0".into(),
+                model: None,
+                attribution: UsageAttribution {
+                    account_confirmed: Some(true),
+                    ..Default::default()
+                },
+                usage: p.turn.clone().unwrap(),
+                cost_source: None,
+                latency_ms: None,
+                fallback: None,
+            }],
+            ..Default::default()
+        });
+        assert!(p.validate().is_err());
+        p.telemetry.as_mut().unwrap().requests[0]
+            .attribution
+            .account_id = Some("seeded-1".into());
+        assert!(p.validate().is_ok());
+    }
+
+    /// Absence is unconfirmed, and it stays off the wire entirely so older
+    /// consumers see a byte-identical payload.
+    #[test]
+    fn absent_account_confirmed_is_unconfirmed_and_omitted_from_the_wire() {
+        let attribution = UsageAttribution {
+            account_id: Some("seeded-1".into()),
+            ..Default::default()
+        };
+        assert!(!attribution.is_account_confirmed());
+        let json = serde_json::to_string(&attribution).expect("attribution serializes");
+        assert_eq!(json, r#"{"accountId":"seeded-1"}"#);
+        assert!(UsageAttribution {
+            account_confirmed: Some(true),
+            ..attribution.clone()
+        }
+        .is_account_confirmed());
+        assert!(!UsageAttribution {
+            account_confirmed: Some(false),
+            ..attribution
+        }
+        .is_account_confirmed());
+    }
+
+    /// An unknown `accountConfirmed` shape must not make an otherwise valid
+    /// historical event unparseable — forward compatibility per NIP-AM.
+    #[test]
+    fn unknown_attribution_fields_remain_forward_compatible() {
+        let parsed: UsageAttribution = serde_json::from_str(
+            r#"{"accountId":"a","accountLabel":"b","futureField":{"nested":1}}"#,
+        )
+        .expect("unknown fields are ignored");
+        assert_eq!(parsed.account_id.as_deref(), Some("a"));
+        assert_eq!(parsed.account_confirmed, None);
+    }
+
     fn sample_payload() -> AgentTurnMetricPayload {
         AgentTurnMetricPayload {
             harness: "goose".to_string(),
@@ -256,6 +535,7 @@ mod tests {
             delta_reliable: true,
             stop_reason: Some(StopReason::EndTurn),
             pricing_identity: None,
+            telemetry: None,
         }
     }
 
@@ -402,6 +682,7 @@ mod tests {
             delta_reliable: true,
             stop_reason: None,
             pricing_identity: None,
+            telemetry: None,
         }
     }
 
@@ -426,6 +707,7 @@ mod tests {
             delta_reliable: true,
             stop_reason: None,
             pricing_identity: None,
+            telemetry: None,
         }
     }
 

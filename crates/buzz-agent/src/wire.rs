@@ -350,6 +350,46 @@ pub fn usage_update_payload(
     update
 }
 
+/// Attach observed request metrics, retaining honest partial coverage because
+/// internal retries and compaction calls are not visible to the outer runner.
+/// Keep ciphertext under NIP-AM's 65,535-byte ceiling by retaining a bounded
+/// prefix; request totals remain unknown rather than fabricating completeness.
+pub fn attach_request_observations(update: &mut Value, requests: &[Value]) {
+    if requests.is_empty() {
+        return;
+    }
+    let mut bytes = 0;
+    let retained: Vec<_> = requests
+        .iter()
+        .take_while(|request| {
+            bytes += request.to_string().len();
+            bytes < 40_000
+        })
+        .cloned()
+        .collect();
+    update["telemetry"] =
+        json!({"attribution": {}, "requestsComplete": false, "requests": retained});
+}
+
+#[cfg(test)]
+mod analytics_observation_tests {
+    use super::*;
+    #[test]
+    fn request_observations_are_bounded_partial_and_never_invent_attribution() {
+        let mut update = json!({"model":"claude-model"});
+        attach_request_observations(&mut update, &[]);
+        assert!(update.get("telemetry").is_none());
+        let request = json!({"id":"0","usage":{"inputTokens":null},"attribution":{}});
+        attach_request_observations(&mut update, &vec![request; 2000]);
+        let t = &update["telemetry"];
+        assert_eq!(t["requestsComplete"], false);
+        assert!(t.get("requestCount").is_none());
+        assert!(t["requests"].as_array().unwrap().len() < 2000);
+        assert!(t["attribution"].get("provider").is_none());
+        assert!(update.to_string().len() < 41_000);
+    }
+}
+
 /// A `session/update` notification carrying a `update._meta.goose.<key>` field.
 /// Used to advertise `activeRunId` (so steer-capable clients can target the
 /// in-flight run) and `queuedSteer` (so they can correlate an accepted steer

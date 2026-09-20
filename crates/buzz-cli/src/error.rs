@@ -224,10 +224,12 @@ mod tests {
     #[test]
     fn indeterminate_reads_are_retryable_and_exit_2() {
         let e = CliError::Indeterminate("could not load channel membership".into());
-        assert!(is_retryable_error(&e), "an indeterminate read must retry — absence of a read is not proof of absence");
+        assert!(
+            is_retryable_error(&e),
+            "an indeterminate read must retry — absence of a read is not proof of absence"
+        );
         assert_eq!(exit_code(&e), 2);
     }
-
 
     #[test]
     fn network_builder_errors_are_not_retryable() {

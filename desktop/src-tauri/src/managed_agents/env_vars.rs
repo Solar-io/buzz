@@ -189,6 +189,13 @@ pub(crate) fn is_safe_to_reveal(key: &str) -> bool {
         "BUZZ_AGENT_THINKING_SUMMARY",
         "DATABRICKS_HOST",
         "DATABRICKS_MODEL",
+        // NIP-AM declares these non-secret by contract ("Publishers MUST NOT
+        // include keys, tokens, headers, URLs…"), and the owner has to be able
+        // to read which subscription label a spawn would use.
+        "BUZZ_USAGE_PROVIDER",
+        "BUZZ_USAGE_ACCOUNT_ID",
+        "BUZZ_USAGE_ACCOUNT_LABEL",
+        "BUZZ_USAGE_ACCOUNT_CONFIRMED",
     ];
     let upper = key.to_ascii_uppercase();
     SAFE_KEYS.iter().any(|safe| upper == *safe)

@@ -421,6 +421,7 @@ mod tests {
             agent_command_override: None,
             persona_source_version: None,
             provider: None,
+            usage_attribution: None,
         }
     }
 

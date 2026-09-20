@@ -317,11 +317,20 @@ mod tests {
         let path = temp_claims(&body);
         // Fresh mtime + watching membership → NO channel folds: the watching
         // fold is retired, and the legacy keys must be inert.
-        assert!(!claim_holds(&path, sam_dm), "retired watching claim must not fold");
-        assert!(!claim_holds(&path, group_dm), "retired watching claim must not fold");
+        assert!(
+            !claim_holds(&path, sam_dm),
+            "retired watching claim must not fold"
+        );
+        assert!(
+            !claim_holds(&path, group_dm),
+            "retired watching claim must not fold"
+        );
         // null composing contributes nothing; an unwatched channel never folds.
         let other = Uuid::new_v4();
-        assert!(!claim_holds(&path, other), "unwatched channel must not fold");
+        assert!(
+            !claim_holds(&path, other),
+            "unwatched channel must not fold"
+        );
         // And the doc still deserializes (unknown keys ignored, not an error).
         let doc: ClaimsDoc = serde_json::from_str(&body).expect("live shape must deserialize");
         assert!(doc.composing.is_none(), "null composing reads as no claim");

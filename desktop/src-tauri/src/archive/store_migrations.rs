@@ -23,7 +23,8 @@ pub(super) fn apply_schema_migrations(conn: &Connection) -> Result<(), String> {
     migrate_add_cache_read_tokens(conn)?;
     migrate_add_cache_write_and_pricing(conn)?;
     migrate_add_harness_to_metric_index(conn)?;
-    migrate_add_archive_meta(conn)
+    migrate_add_archive_meta(conn)?;
+    super::analytics_store::migrate(conn)
 }
 
 /// M1: add `harness TEXT` column to `agent_metric_index` and rebuild index

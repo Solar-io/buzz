@@ -11,9 +11,10 @@ use crate::{
         managed_agent_avatar_url, normalize_agent_args, resolve_provider_binary,
         save_managed_agents, start_managed_agent_process, stop_managed_agent_process,
         stop_managed_agent_workspace_pair, sync_managed_agent_processes, try_regenerate_nest,
-        validate_provider_config, BackendKind, CreateManagedAgentRequest,
-        CreateManagedAgentResponse, ManagedAgentRecord, ManagedAgentSummary, RelayMeshConfig,
-        DEFAULT_ACP_COMMAND, DEFAULT_AGENT_PARALLELISM, DEFAULT_AGENT_TURN_TIMEOUT_SECONDS,
+        usage_attribution::inherited_from_definition, validate_provider_config, BackendKind,
+        CreateManagedAgentRequest, CreateManagedAgentResponse, ManagedAgentRecord,
+        ManagedAgentSummary, RelayMeshConfig, DEFAULT_ACP_COMMAND, DEFAULT_AGENT_PARALLELISM,
+        DEFAULT_AGENT_TURN_TIMEOUT_SECONDS,
     },
     relay::{relay_ws_url_with_override, sync_managed_agent_profile},
     util::now_iso,
@@ -646,7 +647,7 @@ pub async fn create_managed_agent(
             linked_persona.as_ref(),
         )?;
 
-        let record = ManagedAgentRecord {
+        let mut record = ManagedAgentRecord {
             pubkey: pubkey.clone(),
             name: name.clone(),
             persona_id: requested_persona_id.clone(),
@@ -732,7 +733,14 @@ pub async fn create_managed_agent(
                 relay_mesh.clone()
             },
             effort_level: None,
+            usage_attribution: None,
         };
+        // Delete+respawn mints a fresh pubkey; inheriting the definition's row
+        // keeps the owner's confirmed subscription identity alive. Keyed off
+        // the record's OWN persona link rather than a second copy of the
+        // requested id, so there is no parallel expression to fall out of step.
+        record.usage_attribution =
+            inherited_from_definition(&records, record.persona_id.as_deref());
 
         records.push(record);
 
@@ -1092,7 +1100,6 @@ pub async fn stop_managed_agent(
     .await
     .map_err(|e| format!("spawn_blocking failed: {e}"))?
 }
-
 
 // Remote agent shutdown is handled entirely by the frontend:
 // 1. Frontend sends "!shutdown" @mention via WebSocket (signed by user's key)

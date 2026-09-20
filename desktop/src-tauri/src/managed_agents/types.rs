@@ -155,6 +155,7 @@ impl AgentDefinition {
             definition_parallelism: self.parallelism,
             relay_mesh: None,
             effort_level: None,
+            usage_attribution: None,
         }
     }
 }
@@ -444,6 +445,13 @@ pub struct ManagedAgentRecord {
     /// so the harness applies it via `session/set_config_option` at session creation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort_level: Option<String>,
+    /// Owner-editable NIP-AM subscription/account attribution. `None` means
+    /// undecided, so boot-time seeding may fill it; a present row is never
+    /// rewritten, which is how a confirmation survives restart and respawn.
+    /// See `managed_agents::usage_attribution` for the derivation and the
+    /// honesty rules it enforces.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_attribution: Option<super::usage_attribution::UsageAttributionConfig>,
 }
 
 #[derive(Debug)]

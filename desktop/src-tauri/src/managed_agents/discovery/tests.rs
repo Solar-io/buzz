@@ -266,6 +266,7 @@ fn record_with(
         definition_parallelism: None,
         relay_mesh: None,
         effort_level: None,
+        usage_attribution: None,
     }
 }
 
@@ -1010,8 +1011,7 @@ fn find_nvm_default_bin_returns_none_when_nvm_absent() {
 #[test]
 fn find_nvm_default_bin_returns_none_when_versions_dir_empty() {
     let home = tempfile::tempdir().unwrap();
-    let versions_dir = home.path().join(".nvm/versions/node");
-    std::fs::create_dir_all(&versions_dir).unwrap();
+    std::fs::create_dir_all(home.path().join(".nvm/versions/node")).unwrap();
     assert_eq!(find_nvm_default_bin(home.path()), None);
 }
 

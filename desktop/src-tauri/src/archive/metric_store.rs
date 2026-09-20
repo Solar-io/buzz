@@ -137,7 +137,10 @@ impl AgentMetricIndexRow {
         let cumulative_requires_session_seq = payload.cumulative.is_some();
         let has_session_and_seq = payload.session_id.is_some() && payload.turn_seq.is_some();
 
-        if reported_at.is_none() || (cumulative_requires_session_seq && !has_session_and_seq) {
+        if payload.validate().is_err()
+            || reported_at.is_none()
+            || (cumulative_requires_session_seq && !has_session_and_seq)
+        {
             return Self::invalid(id, agent_pubkey, event_created_at, archived_at);
         }
 
@@ -378,6 +381,7 @@ pub(super) fn backfill_agent_metric_index(
 ) -> Result<usize, String> {
     const CHUNK_SIZE: i64 = 500;
     let mut total = 0usize;
+    let mut cursor = String::new();
 
     loop {
         let mut stmt = conn
@@ -387,26 +391,30 @@ pub(super) fn backfill_agent_metric_index(
                  WHERE ae.identity_pubkey = ?1
                    AND ae.relay_url       = ?2
                    AND ae.kind            = 44200
+                   AND ae.id > ?4
                    AND ae.id NOT IN (
                        SELECT id FROM agent_metric_index
                        WHERE identity_pubkey = ?1
                          AND relay_url       = ?2
                    )
-                 ORDER BY ae.created_at ASC, ae.id ASC
+                 ORDER BY ae.id ASC
                  LIMIT ?3",
             )
             .map_err(|e| format!("prepare backfill_agent_metric_index select: {e}"))?;
 
         let chunk: Vec<(String, String, i64, i64, String)> = stmt
-            .query_map(params![identity_pubkey, relay_url, CHUNK_SIZE], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, String>(4)?,
-                ))
-            })
+            .query_map(
+                params![identity_pubkey, relay_url, CHUNK_SIZE, cursor],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, String>(4)?,
+                    ))
+                },
+            )
             .map_err(|e| format!("query backfill_agent_metric_index select: {e}"))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("read backfill_agent_metric_index row: {e}"))?;
@@ -416,6 +424,9 @@ pub(super) fn backfill_agent_metric_index(
             break;
         }
         let chunk_len = chunk.len();
+        if let Some(last) = chunk.last() {
+            cursor = last.0.clone();
+        }
 
         let tx = conn
             .unchecked_transaction()

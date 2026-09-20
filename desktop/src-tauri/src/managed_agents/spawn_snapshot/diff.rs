@@ -108,6 +108,14 @@ fn policy_for(path: &str) -> MaskPolicy {
         //   idle_timeout_seconds / max_turn_duration_seconds / parallelism
         //                                       — numeric limits
         //   adapter_availability                — an enum variant name
+        //   usage_attribution.*                 — NIP-AM's explicitly
+        //     non-secret identity labels. Deliberately plain: the owner has to
+        //     be able to read which subscription label a restart would change
+        //     to, and a masked label is useless for that. The values cannot be
+        //     credentials by construction — a gateway URL's userinfo is
+        //     discarded before it ever reaches this field (see
+        //     `usage_attribution::gateway_authority`), and an owner-typed value
+        //     is validated against the same 128-byte/no-control rules.
         _ => MaskPolicy::Plain,
     }
 }

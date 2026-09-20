@@ -33,6 +33,58 @@
 
 use std::collections::HashMap;
 
+/// Reads only dedicated non-secret attribution variables. Provider endpoints,
+/// API keys, OAuth tokens and model names are never inspected for attribution.
+///
+/// `BUZZ_USAGE_ACCOUNT_CONFIRMED` distinguishes an account identity the owner
+/// confirmed from one their client seeded out of observed configuration. It is
+/// carried only alongside a resolved `accountId`, because a confirmation with
+/// nothing to confirm is not a fact the payload may assert (NIP-AM rejects it).
+pub(crate) fn telemetry_with_configured_attribution(
+    telemetry: Option<buzz_core::agent_turn_metric::UsageTelemetry>,
+    get: impl Fn(&str) -> Result<String, std::env::VarError>,
+) -> Option<buzz_core::agent_turn_metric::UsageTelemetry> {
+    let mut result = telemetry.unwrap_or_default();
+    let read = |name| {
+        get(name)
+            .ok()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty() && s.len() <= 128 && !s.chars().any(char::is_control))
+    };
+    result.attribution.provider = result
+        .attribution
+        .provider
+        .or_else(|| read("BUZZ_USAGE_PROVIDER"));
+    result.attribution.account_id = result
+        .attribution
+        .account_id
+        .or_else(|| read("BUZZ_USAGE_ACCOUNT_ID"));
+    result.attribution.account_label = result
+        .attribution
+        .account_label
+        .or_else(|| read("BUZZ_USAGE_ACCOUNT_LABEL"));
+    result.attribution.account_confirmed = result
+        .attribution
+        .account_confirmed
+        .or_else(|| read("BUZZ_USAGE_ACCOUNT_CONFIRMED").map(|value| is_truthy_flag(&value)));
+    // Keep the payload valid by construction: an unattributed turn carries no
+    // confirmation, whatever the environment says.
+    if result.attribution.account_id.is_none() {
+        result.attribution.account_confirmed = None;
+    }
+    (result != Default::default()).then_some(result)
+}
+
+/// Accept the flag spellings a shell environment realistically carries. Any
+/// other value is a deliberate *not* confirmed rather than an error, so a typo
+/// can never upgrade a seeded label into an established identity.
+fn is_truthy_flag(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
 /// Wire-format deserialization for `_goose/unstable/session/update` params.
 ///
 /// Method: `_goose/unstable/session/update`
@@ -137,6 +189,8 @@ pub(crate) struct UsageUpdatePayload {
     /// baseline: it is per-turn only and must not persist to `SessionState`.
     #[serde(default)]
     pub pricing_identity: Option<buzz_core::agent_turn_metric::PricingIdentity>,
+    #[serde(default)]
+    pub telemetry: Option<buzz_core::agent_turn_metric::UsageTelemetry>,
 }
 
 /// Per-session normalization state: the last cumulative snapshot we saw.
@@ -242,6 +296,8 @@ pub struct TurnUsage {
     /// `None` when the publisher omitted it (unrecognised endpoint, mixed
     /// identities, old harness). Per-turn only — not session-cumulative.
     pub pricing_identity: Option<buzz_core::agent_turn_metric::PricingIdentity>,
+    /// Optional explicitly observed analytics metadata for this turn.
+    pub telemetry: Option<buzz_core::agent_turn_metric::UsageTelemetry>,
 }
 
 /// Per-turn usage carried by a standard ACP `session/prompt` response.
@@ -392,6 +448,7 @@ impl StandardUsageTracker {
             cumulative_cache_write_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         })
     }
 }
@@ -749,6 +806,7 @@ impl UsageTracker {
                 // The folded identity is written in take() — use a placeholder
                 // here and replace it before returning the record.
                 pricing_identity: None,
+                telemetry: payload.telemetry.clone(),
             });
         } else if self.in_flight_session.is_none() {
             // Not in-flight at all: advance the committed baseline so the next
@@ -926,6 +984,134 @@ impl UsageTracker {
 mod tests {
     use super::*;
 
+    #[test]
+    fn analytics_attribution_reads_only_explicit_nonsecret_labels() {
+        let absent = telemetry_with_configured_attribution(None, |name| {
+            assert!(matches!(
+                name,
+                "BUZZ_USAGE_PROVIDER"
+                    | "BUZZ_USAGE_ACCOUNT_ID"
+                    | "BUZZ_USAGE_ACCOUNT_LABEL"
+                    | "BUZZ_USAGE_ACCOUNT_CONFIRMED"
+            ));
+            Err(std::env::VarError::NotPresent)
+        });
+        assert!(absent.is_none());
+        let present = telemetry_with_configured_attribution(None, |name| match name {
+            "BUZZ_USAGE_PROVIDER" => Ok(" gateway-a ".into()),
+            "BUZZ_USAGE_ACCOUNT_ID" => Ok("cc1".into()),
+            _ => Err(std::env::VarError::NotPresent),
+        })
+        .unwrap();
+        assert_eq!(present.attribution.provider.as_deref(), Some("gateway-a"));
+        assert_eq!(present.attribution.account_id.as_deref(), Some("cc1"));
+        assert_eq!(present.request_count, None);
+        assert!(!present.requests_complete);
+        assert!(
+            telemetry_with_configured_attribution(None, |_| Ok("secret\ninvalid".into())).is_none()
+        );
+    }
+
+    /// A seeded account is published as explicitly unconfirmed; only the
+    /// owner's confirmation flag flips it. The two cases must differ on the
+    /// wire, not merely in the client that wrote them.
+    #[test]
+    fn analytics_attribution_distinguishes_seeded_from_confirmed_accounts() {
+        let resolve = |confirmed: Option<&'static str>| {
+            telemetry_with_configured_attribution(None, move |name| match name {
+                "BUZZ_USAGE_ACCOUNT_ID" => Ok("runtime=claude".into()),
+                "BUZZ_USAGE_ACCOUNT_LABEL" => Ok("Harness claude".into()),
+                "BUZZ_USAGE_ACCOUNT_CONFIRMED" => confirmed
+                    .map(str::to_owned)
+                    .ok_or(std::env::VarError::NotPresent),
+                _ => Err(std::env::VarError::NotPresent),
+            })
+            .expect("an account id yields telemetry")
+            .attribution
+        };
+        // Seeded: the desktop writes the flag as a literal false.
+        let seeded = resolve(Some("false"));
+        assert_eq!(seeded.account_confirmed, Some(false));
+        assert!(!seeded.is_account_confirmed());
+        // Owner-confirmed.
+        let confirmed = resolve(Some("true"));
+        assert_eq!(confirmed.account_confirmed, Some(true));
+        assert!(confirmed.is_account_confirmed());
+        // A publisher that never sets the variable says nothing, which is
+        // still unconfirmed — never silently confirmed.
+        assert_eq!(resolve(None).account_confirmed, None);
+        assert!(!resolve(None).is_account_confirmed());
+        // A value that is not a recognized flag is not a confirmation.
+        assert_eq!(resolve(Some("maybe")).account_confirmed, Some(false));
+    }
+
+    /// The confirmation cannot travel without the account it describes: that
+    /// combination is invalid per NIP-AM, so the publisher must drop it rather
+    /// than emit an event the owner's own client will reject.
+    #[test]
+    fn analytics_attribution_drops_confirmation_without_an_account() {
+        let resolved = telemetry_with_configured_attribution(None, |name| match name {
+            "BUZZ_USAGE_ACCOUNT_CONFIRMED" => Ok("true".into()),
+            "BUZZ_USAGE_PROVIDER" => Ok("some-gateway".into()),
+            _ => Err(std::env::VarError::NotPresent),
+        })
+        .expect("a provider alone still yields telemetry");
+        assert_eq!(resolved.attribution.account_id, None);
+        assert_eq!(resolved.attribution.account_confirmed, None);
+    }
+
+    /// No credential variable is consulted for attribution. The reader is
+    /// handed a source that fails the test outright if it is asked for one.
+    #[test]
+    fn analytics_attribution_never_reads_a_credential_variable() {
+        const CREDENTIALS: &[&str] = &[
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "OPENAI_COMPAT_API_KEY",
+            "OPENROUTER_API_KEY",
+            "DATABRICKS_TOKEN",
+            "DATABRICKS_HOST",
+            "OPENAI_COMPAT_BASE_URL",
+            "BUZZ_ACP_PRIVATE_KEY",
+            "BUZZ_AUTH_TAG",
+            "BUZZ_ACP_MODEL",
+            "BUZZ_AGENT_MODEL",
+        ];
+        let resolved = telemetry_with_configured_attribution(None, |name| {
+            assert!(
+                !CREDENTIALS.contains(&name),
+                "attribution must never read `{name}`"
+            );
+            match name {
+                "BUZZ_USAGE_ACCOUNT_ID" => Ok("runtime=claude".into()),
+                _ => Err(std::env::VarError::NotPresent),
+            }
+        })
+        .expect("an account id yields telemetry");
+        assert_eq!(
+            resolved.attribution.account_id.as_deref(),
+            Some("runtime=claude")
+        );
+    }
+
+    #[test]
+    fn analytics_request_observations_do_not_leak_between_turns() {
+        let mut tracker = UsageTracker::default();
+        tracker.seed_zero_baseline("s");
+        tracker.begin_turn("s");
+        let mut p = payload(10, 3, None);
+        p.telemetry = Some(buzz_core::agent_turn_metric::UsageTelemetry {
+            request_count: Some(0),
+            requests_complete: true,
+            ..Default::default()
+        });
+        tracker.record("s", &p);
+        assert!(tracker.take().unwrap().telemetry.is_some());
+        tracker.begin_turn("s");
+        tracker.record("s", &payload(20, 5, None));
+        assert!(tracker.take().unwrap().telemetry.is_none());
+    }
+
     /// The camelCase key buzz-agent actually puts on the wire must land on the
     /// field. A rename mismatch here would deserialize to None, and every trial
     /// would be treated as "not reported" — the exact silent failure this field
@@ -991,6 +1177,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         }
     }
 
@@ -1006,6 +1193,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         }
     }
 
@@ -1507,6 +1695,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: model.map(str::to_string),
             pricing_identity: None,
+            telemetry: None,
         }
     }
 
@@ -1573,6 +1762,7 @@ mod tests {
             accumulated_total_tokens: total,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         }
     }
 
@@ -1743,6 +1933,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         }
     }
 
@@ -1989,6 +2180,7 @@ mod tests {
             cumulative_cache_write_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
 
         let (turn_counts, cumulative_counts) = build_turn_metric_counts(&usage);
@@ -2030,6 +2222,7 @@ mod tests {
             cumulative_cache_write_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
 
         let (turn_counts, cumulative_counts) = build_turn_metric_counts(&usage);
@@ -2158,6 +2351,7 @@ mod tests {
                 accumulated_total_tokens: Some(12345),
                 model: Some("claude-opus-4-5".to_string()),
                 pricing_identity: None,
+                telemetry: None,
             },
         );
         let usage = tracker.take().expect("pending");
@@ -2248,6 +2442,7 @@ mod tests {
                 model: model.to_string(),
                 cache_class: None,
             }),
+            telemetry: None,
         }
     }
 
@@ -2407,6 +2602,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
         tracker.record("sess-seed1", &payload);
         let usage = tracker
@@ -2562,6 +2758,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
         tracker.record("sess-poison-in", &p);
         let usage = tracker.take().expect("pending");
@@ -2605,6 +2802,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
         tracker.record("sess-poison-out", &p);
         let usage = tracker.take().expect("pending");
@@ -2671,6 +2869,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
         tracker.record("sess-poison-mid", &poisoned);
         let t2 = tracker.take().expect("t2");
@@ -2690,6 +2889,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
         tracker.record("sess-poison-mid", &also_poisoned);
         let t3 = tracker.take().expect("t3");
@@ -2731,6 +2931,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
         tracker.record("sess-sticky-input", &poisoned);
         let t2 = tracker.take().expect("t2");
@@ -2790,6 +2991,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         };
         tracker.record("sess-sticky-output", &poisoned);
         let t2 = tracker.take().expect("t2");
@@ -2834,6 +3036,7 @@ mod tests {
             accumulated_total_tokens: None,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         }
     }
 
@@ -2862,6 +3065,7 @@ mod tests {
             accumulated_total_tokens: total,
             model: None,
             pricing_identity: None,
+            telemetry: None,
         }
     }
 

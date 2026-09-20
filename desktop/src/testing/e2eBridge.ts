@@ -1,4 +1,12 @@
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
+import {
+  applyMockUsageAttribution,
+  mockUsageAttributionOverview,
+  mockUsageAnalytics,
+  type MockUsageAnalytics,
+} from "./e2eBridgeUsageAnalytics";
+import type { AgentUsageAnalyticsRequest } from "@/shared/api/tauriArchive";
+import type { UsageAttributionOverview } from "@/shared/api/tauriUsageAttribution";
 import { emit, listen } from "@tauri-apps/api/event";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { decode, npubEncode, nsecEncode } from "nostr-tools/nip19";
@@ -188,6 +196,7 @@ type MockHuddleSeed = {
 type E2eConfig = {
   mode?: "mock" | "relay";
   mock?: {
+    usageAnalytics?: MockUsageAnalytics;
     /** Tauri window label exposed to the app. Defaults to the main window. */
     windowLabel?: string;
     ttsSettings?: {
@@ -3137,6 +3146,13 @@ type MockSaveSubscriptionRow = {
 };
 let mockSaveSubscriptions: MockSaveSubscriptionRow[] = [];
 
+/** Mutable owner-editable usage attribution, reset on every bridge install. */
+let mockUsageAttribution: UsageAttributionOverview = {
+  accounts: [],
+  unattributed: [],
+  declined: [],
+};
+
 type MockObservedUnreadScope = {
   generation: string;
   revision: number;
@@ -3243,6 +3259,9 @@ function resetMockObservedUnread() {
 }
 
 function resetMockSaveSubscriptions(config: E2eConfig | undefined) {
+  mockUsageAttribution = mockUsageAttributionOverview(
+    config?.mock?.usageAnalytics ?? {},
+  );
   mockSaveSubscriptions = (config?.mock?.saveSubscriptions ?? []).map((s) => ({
     ...s,
   }));
@@ -13936,6 +13955,30 @@ export function maybeInstallE2eTauriMocks() {
       // union / delete-row-when-empty semantics as the real Rust commands
       // (see `archive/store.rs::merge_owner_p_kinds` / `remove_owner_p_kind`)
       // so specs can drive default-on seeding and toggle ON/OFF flows.
+      case "get_agent_usage_analytics": {
+        const seed = activeConfig?.mock?.usageAnalytics;
+        if (seed?.delayMs)
+          await new Promise((resolve) => setTimeout(resolve, seed.delayMs));
+        if (seed?.error) throw new Error(seed.error);
+        return mockUsageAnalytics(
+          (payload as { request: AgentUsageAnalyticsRequest }).request,
+          seed,
+        );
+      }
+      case "get_usage_attribution_overview":
+        return mockUsageAttribution;
+      case "confirm_usage_account_attribution": {
+        mockUsageAttribution = applyMockUsageAttribution(
+          mockUsageAttribution,
+          payload as {
+            accountId: string;
+            newAccountId?: string | null;
+            accountLabel?: string | null;
+            provider?: string | null;
+          },
+        );
+        return mockUsageAttribution;
+      }
       case "list_save_subscriptions": {
         const win = window as unknown as Record<string, unknown>;
         if (!win.__BUZZ_E2E_IPC_COUNTERS__) {

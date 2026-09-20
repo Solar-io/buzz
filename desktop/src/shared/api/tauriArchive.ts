@@ -12,6 +12,99 @@ import { invokeTauri } from "./tauri";
 export type UsageField = { value: string | null; incomplete: boolean };
 export type CostField = { value: number | null; incomplete: boolean };
 
+/** Exact civil boundaries are computed in the viewer's timezone, including DST. */
+export type AgentUsageAnalyticsRequest = {
+  bucketBoundaries: number[];
+  dayBoundaries: number[];
+  dayLabels: string[];
+  agentPubkeys?: string[];
+  selectNone?: boolean;
+};
+
+export type AnalyticsMetricGroup = {
+  key: string;
+  label: string;
+  usage: ReportedUsage;
+  reportCount: number;
+  requestCount: string | null;
+  costs: {
+    wireReported: CostField;
+    manifestEstimated: CostField;
+    unknown: CostField;
+  };
+  avgLatencyMs: CostField;
+  fallbackCount: string | null;
+};
+export type AnalyticsTimeBucket = AnalyticsMetricGroup & {
+  start: number;
+  end: number;
+};
+/**
+ * An account/subscription group, plus whether the owner has actually confirmed
+ * the identity its usage is being grouped under.
+ *
+ * `confirmed` is the strict reading: true only when every turn in the group
+ * carried an owner-confirmed identity. One report still carrying a label Buzz
+ * seeded from observed configuration keeps the whole account provisional —
+ * presenting it otherwise would overstate the subscription comparison.
+ */
+export type AnalyticsAccountGroup = AnalyticsMetricGroup & {
+  confirmed: boolean;
+  confirmedReports: number;
+  unconfirmedReports: number;
+};
+export type AgentUsageAnalytics = {
+  collectionEnabled: boolean;
+  summary: AnalyticsMetricGroup;
+  timeline: AnalyticsTimeBucket[];
+  days: AnalyticsTimeBucket[];
+  weekdays: AnalyticsMetricGroup[];
+  providers: AnalyticsMetricGroup[];
+  providerByDate: (AnalyticsMetricGroup & { date: string; provider: string })[];
+  agents: AnalyticsMetricGroup[];
+  models: AnalyticsMetricGroup[];
+  accounts: AnalyticsAccountGroup[];
+  serviceTiers: AnalyticsMetricGroup[];
+  stopReasons?: AnalyticsMetricGroup[];
+  availableAgents: string[];
+  highlights: {
+    busiestDay: string | null;
+    topModel: string | null;
+    topAgent: string | null;
+    activeDays: number;
+  };
+  diversity: {
+    score: number | null;
+    providerCount: number;
+    knownReportCount: number;
+    totalReportCount: number;
+    recentScore: number | null;
+    recentStart: number;
+    shares: { provider: string; share: number }[];
+  };
+  coverage: AgentUsageCoverage & {
+    providerReports: number;
+    accountReports: number;
+    confirmedAccountReports: number;
+    tierReports: number;
+    completeRequestReports: number;
+    requestObservationCount: number;
+    costProvenanceReports: number;
+    archiveFirstReportedAt: number | null;
+    archiveLastReportedAt: number | null;
+    inconsistentRequestReports: number;
+  };
+};
+
+/** One archive snapshot supplies all filtered dashboard metrics. */
+export async function getAgentUsageAnalytics(
+  request: AgentUsageAnalyticsRequest,
+): Promise<AgentUsageAnalytics> {
+  return invokeTauri<AgentUsageAnalytics>("get_agent_usage_analytics", {
+    request,
+  });
+}
+
 export type ReportedUsage = {
   inputTokens: UsageField;
   outputTokens: UsageField;
