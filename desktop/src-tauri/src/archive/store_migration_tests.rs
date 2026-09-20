@@ -865,3 +865,81 @@ fn migration_m3_reopen_twice_is_idempotent() {
         "M3: marker must still be present after idempotent second open"
     );
 }
+
+// ── Migration M5: backfill the analytics projections for archived history ────
+
+/// Upgrading an archive that already holds kind-44200 events must project all
+/// of them, without waiting for anyone to open the Usage dashboard.
+///
+/// This is the history half of the fix: the projections shipped with the
+/// dashboard read path as their only writer, so an owner who had not visited
+/// the page had an empty `agent_usage_metadata` for every turn ever archived.
+#[test]
+fn migration_m5_projects_pre_existing_turn_metrics_on_upgrade() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(SCHEMA).unwrap();
+
+    // Two events archived by a build that had no analytics projection at all:
+    // canonical rows present, nothing else.
+    let raw = |stop: &str| {
+        format!(
+            r#"{{"harness":"goose","model":"m","sessionId":"s","turnSeq":1,"timestamp":"2026-07-01T00:00:00Z","turn":{{"inputTokens":10,"outputTokens":5,"totalTokens":15,"costUsd":null}},"deltaReliable":true,"stopReason":"{stop}"}}"#
+        )
+    };
+    for (id, stop) in [("aa", "error"), ("bb", "cancelled")] {
+        conn.execute(
+            "INSERT INTO archived_events VALUES ('owner','relay',?1,44200,'agent',1,?2,1)",
+            params![id, raw(stop)],
+        )
+        .unwrap();
+    }
+
+    apply_schema_migrations(&conn).expect("upgrade must succeed");
+
+    let projected: i64 = conn
+        .query_row("SELECT COUNT(*) FROM agent_usage_metadata", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(projected, 2, "M5: every archived turn metric must project");
+
+    // Assert the content, not just the count: a migration that wrote two empty
+    // default rows would satisfy the count and lose every stop reason.
+    let stop_of = |id: &str| -> String {
+        let json: String = conn
+            .query_row(
+                "SELECT metadata FROM agent_usage_metadata WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        serde_json::from_str::<serde_json::Value>(&json).unwrap()["stop_reason"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string()
+    };
+    assert_eq!(stop_of("aa"), "error", "M5: stop reason must be projected");
+    assert_eq!(
+        stop_of("bb"),
+        "cancelled",
+        "M5: each row's own stop reason, not a shared default"
+    );
+
+    let marker_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM archive_migrations WHERE name = 'backfill_agent_usage_metadata'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(marker_count, 1, "M5: migration marker must be recorded");
+
+    // Re-running is a no-op that neither duplicates nor drops rows.
+    apply_schema_migrations(&conn).expect("second pass must be a no-op");
+    let projected: i64 = conn
+        .query_row("SELECT COUNT(*) FROM agent_usage_metadata", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(projected, 2, "M5: re-run must not change the projection");
+}

@@ -24,7 +24,119 @@ pub(super) fn apply_schema_migrations(conn: &Connection) -> Result<(), String> {
     migrate_add_cache_write_and_pricing(conn)?;
     migrate_add_harness_to_metric_index(conn)?;
     migrate_add_archive_meta(conn)?;
-    super::analytics_store::migrate(conn)
+    super::analytics_store::migrate(conn)?;
+    migrate_backfill_agent_usage_metadata(conn)
+}
+
+/// M5: project every already-archived kind-44200 event into
+/// `agent_usage_metadata` / `agent_request_index`.
+///
+/// These two projections shipped with a single writer — the dashboard read
+/// path (`analytics::query`) — so on any archive whose owner had not opened the
+/// Usage page since the feature landed they were simply empty, and every turn's
+/// stop reason and request attribution read as unknown. The ingest writer added
+/// alongside this migration covers events from here on; this covers the history
+/// that was archived before it existed, with no action required from the owner.
+///
+/// Runs after `analytics_store::migrate` (which creates the tables) and is
+/// guarded by an `archive_migrations` marker, so it costs one pass over the
+/// kind-44200 rows exactly once. Reads are cursor-paged to bound memory; every
+/// page and the marker commit in one transaction, so a crash before COMMIT
+/// leaves the DB fully pre-migration and the next open re-runs it.
+///
+/// Deliberately NOT self-healing beyond the one shot: a build that predates the
+/// ingest writer could archive an unprojected event after the marker is set.
+/// `analytics_store::backfill` still repairs that on the next dashboard read —
+/// this migration removes the dependency on that read, it does not replace it.
+fn migrate_backfill_agent_usage_metadata(conn: &Connection) -> Result<(), String> {
+    const MARKER: &str = "backfill_agent_usage_metadata";
+    const PAGE: i64 = 500;
+
+    let already_run: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM archive_migrations WHERE name = ?1",
+            params![MARKER],
+            |r| r.get::<_, i64>(0),
+        )
+        .map_err(|e| format!("migration M5: guard check: {e}"))?
+        > 0;
+    if already_run {
+        return Ok(());
+    }
+
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| format!("migration M5: begin transaction: {e}"))?;
+
+    // Worklist from `archived_events` (canonical), never from the projection —
+    // an empty or partially built projection must not shrink the worklist.
+    let scopes: Vec<(String, String)> = {
+        let mut stmt = tx
+            .prepare(
+                "SELECT DISTINCT identity_pubkey, relay_url
+                 FROM archived_events
+                 WHERE kind = 44200",
+            )
+            .map_err(|e| format!("migration M5: prepare scope query: {e}"))?;
+        let result = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|e| format!("migration M5: query scopes: {e}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("migration M5: read scopes: {e}"))?;
+        result
+    };
+
+    for (identity, relay) in &scopes {
+        let mut cursor = String::new();
+        loop {
+            let page: Vec<(String, String)> = {
+                let mut stmt = tx
+                    .prepare(
+                        "SELECT id, raw_json FROM archived_events
+                         WHERE identity_pubkey = ?1 AND relay_url = ?2
+                           AND kind = 44200 AND id > ?3
+                         ORDER BY id ASC LIMIT ?4",
+                    )
+                    .map_err(|e| format!("migration M5: prepare page select: {e}"))?;
+                let rows = stmt
+                    .query_map(params![identity, relay, cursor, PAGE], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    })
+                    .map_err(|e| format!("migration M5: query page: {e}"))?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| format!("migration M5: read page row: {e}"))?;
+                rows
+            };
+            let Some(last) = page.last() else { break };
+            cursor = last.0.clone();
+            let page_len = page.len();
+            for (id, raw_json) in &page {
+                super::analytics_store::project_event(&tx, identity, relay, id, raw_json)
+                    .map_err(|e| format!("migration M5: project {id}: {e}"))?;
+            }
+            if (page_len as i64) < PAGE {
+                break;
+            }
+        }
+    }
+
+    // Marker last, so it is only present in a fully committed transaction.
+    tx.execute(
+        "INSERT OR IGNORE INTO archive_migrations (name, applied_at) VALUES (?1, ?2)",
+        params![
+            MARKER,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64
+        ],
+    )
+    .map_err(|e| format!("migration M5: record marker: {e}"))?;
+
+    tx.commit()
+        .map_err(|e| format!("migration M5: commit: {e}"))?;
+
+    Ok(())
 }
 
 /// M1: add `harness TEXT` column to `agent_metric_index` and rebuild index

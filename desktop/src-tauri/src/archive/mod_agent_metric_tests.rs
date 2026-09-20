@@ -410,3 +410,181 @@ fn test_agent_usage_series_backfills_unindexed_row_before_reading() {
         "backfill must index the pre-existing row before the window read"
     );
 }
+
+// ── Analytics projection at ingest ───────────────────────────────────────────
+
+/// Like [`make_turn_metric_event`] but with a caller-chosen stop reason and one
+/// request observation, so the projection can be checked on content that only
+/// this event could have produced.
+fn make_turn_metric_event_with_telemetry(
+    owner_keys: &Keys,
+    agent_keys: &Keys,
+    stop_reason: buzz_core_pkg::agent_turn_metric::StopReason,
+    request_id: &str,
+    provider: &str,
+) -> Event {
+    use buzz_core_pkg::agent_turn_metric::{
+        encrypt_agent_turn_metric, AgentTurnMetricPayload, RequestObservation, TokenCounts,
+        UsageAttribution, UsageTelemetry,
+    };
+    let owner_pk = owner_keys.public_key().to_hex();
+    let payload = AgentTurnMetricPayload {
+        harness: "test-harness".to_string(),
+        model: Some("test-model".to_string()),
+        channel_id: None,
+        session_id: Some("sess-projected".to_string()),
+        turn_id: Some("turn-projected".to_string()),
+        turn_seq: Some(1),
+        timestamp: "2026-07-01T00:00:00Z".to_string(),
+        turn: Some(TokenCounts {
+            input_tokens: Some(100),
+            output_tokens: Some(50),
+            total_tokens: Some(150),
+            cost_usd: Some(0.001),
+            cache_read_tokens: None,
+            cache_write_tokens: None,
+        }),
+        cumulative: None,
+        delta_reliable: true,
+        stop_reason: Some(stop_reason),
+        pricing_identity: None,
+        telemetry: Some(UsageTelemetry {
+            attribution: UsageAttribution::default(),
+            cost_source: None,
+            request_count: Some(1),
+            requests_complete: true,
+            requests: vec![RequestObservation {
+                id: request_id.to_string(),
+                model: Some("test-model".to_string()),
+                attribution: UsageAttribution {
+                    provider: Some(provider.to_string()),
+                    ..UsageAttribution::default()
+                },
+                usage: TokenCounts {
+                    input_tokens: Some(100),
+                    output_tokens: Some(50),
+                    total_tokens: Some(150),
+                    cost_usd: Some(0.001),
+                    cache_read_tokens: None,
+                    cache_write_tokens: None,
+                },
+                cost_source: Some("wire-reported".to_string()),
+                latency_ms: Some(42),
+                fallback: Some(false),
+            }],
+        }),
+    };
+    let ciphertext =
+        encrypt_agent_turn_metric(agent_keys, &owner_keys.public_key(), &payload).unwrap();
+    let tags = vec![
+        Tag::parse(["p", &owner_pk]).unwrap(),
+        Tag::parse(["agent", &agent_keys.public_key().to_hex()]).unwrap(),
+    ];
+    EventBuilder::new(Kind::Custom(44200), &ciphertext)
+        .tags(tags)
+        .sign_with_keys(agent_keys)
+        .unwrap()
+}
+
+/// Ingesting a kind-44200 event must project its private telemetry in the same
+/// pass that indexes it — with no dashboard read anywhere in the test.
+///
+/// The two analytics projections shipped with the dashboard read path as their
+/// only writer, so on an archive whose owner had not opened the Usage page they
+/// stayed empty while `agent_metric_index` (written here, at ingest) was
+/// complete. This test holds the ingest writer in place: it never calls
+/// `analytics_store::backfill`, `analytics::query`, or `agent_usage_series`.
+#[test]
+fn test_ingest_projects_agent_usage_metadata_without_any_dashboard_read() {
+    use buzz_core_pkg::agent_turn_metric::StopReason;
+
+    let conn = in_memory();
+    let owner_keys = Keys::generate();
+    let agent_keys = Keys::generate();
+    let owner_pk = owner_keys.public_key().to_hex();
+    let relay_url = "wss://relay.example";
+    add_sub(&conn, &owner_pk, relay_url, "owner_p", &owner_pk, "[44200]");
+
+    // `cancelled`, not the `end_turn` default: a projection that silently wrote
+    // a default Metadata row would still say "end_turn" is absent, but it could
+    // never say "cancelled".
+    let ev = make_turn_metric_event_with_telemetry(
+        &owner_keys,
+        &agent_keys,
+        StopReason::Cancelled,
+        "req-ingest-1",
+        "anthropic",
+    );
+    let cand = candidate(&ev, ScopeType::OwnerP, &owner_pk);
+    let result = run_batch_sync_with_keys(
+        vec![cand],
+        &owner_pk,
+        relay_url,
+        &conn,
+        vec![ev.clone()],
+        &owner_keys,
+    );
+    assert_eq!(result.persisted, 1, "the event must be archived");
+
+    let metadata: String = conn
+        .query_row(
+            "SELECT metadata FROM agent_usage_metadata WHERE id = ?1",
+            rusqlite::params![ev.id.to_hex()],
+            |r| r.get(0),
+        )
+        .expect("ingest must write the metadata projection row");
+    let parsed: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+    assert_eq!(
+        parsed["stop_reason"], "cancelled",
+        "the projected stop reason must come from this event's payload"
+    );
+    assert_eq!(
+        parsed["expected_requests"], 1,
+        "the projection must record how many request observations to expect"
+    );
+
+    let requests: Vec<(String, Option<String>)> = {
+        let mut stmt = conn
+            .prepare("SELECT request_id, provider FROM agent_request_index WHERE event_id = ?1")
+            .unwrap();
+        let rows = stmt
+            .query_map(rusqlite::params![ev.id.to_hex()], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        rows
+    };
+    assert_eq!(
+        requests.len(),
+        1,
+        "ingest must project the request observation too"
+    );
+    assert_eq!(requests[0].0, "req-ingest-1");
+    assert_eq!(requests[0].1.as_deref(), Some("anthropic"));
+
+    // Re-ingesting the same event must not duplicate or corrupt the projection.
+    let cand = candidate(&ev, ScopeType::OwnerP, &owner_pk);
+    run_batch_sync_with_keys(
+        vec![cand],
+        &owner_pk,
+        relay_url,
+        &conn,
+        vec![ev.clone()],
+        &owner_keys,
+    );
+    let rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM agent_request_index", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(rows, 1, "re-ingest must not duplicate request rows");
+    let metadata_rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM agent_usage_metadata", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(
+        metadata_rows, 1,
+        "re-ingest must not duplicate metadata rows"
+    );
+}
