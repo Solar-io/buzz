@@ -1,0 +1,141 @@
+# ============================================================================
+# compose.push-gateway.yml — the APNs push gateway (D-029) as a compose service.
+#
+# 🔴 WHY THIS FILE EXISTS.
+# The gateway was stood up by `deploy/push-gateway-up.sh`, which uses a raw
+# `docker create --network buzz-dev_buzz-net ...`. That left a container
+# sitting INSIDE the buzz-dev project's network while being invisible to the
+# project itself: `docker compose ps` never listed it, `compose config` could
+# not validate its env, and a `compose down` would tear the network out from
+# under a container compose does not know it owns. Every field below is
+# transcribed from `docker inspect buzz-push-gateway` on 2026-09-20, so
+# adopting it is a rename of who manages the container, not a behaviour change.
+#
+# LOCAL-ONLY FILE. Upstream (github.com/block/buzz) deploys the gateway from
+# deploy/charts/; compose.yml and run.sh are upstream and must not be edited,
+# so this overlay is where our deployment lives — the same split compose.web.yml
+# already uses.
+#
+# container_name is pinned, NOT left to compose's <project>-<service>-<n>.
+# Three things address the gateway by its literal name today:
+#   deploy/push-gateway-up.sh      (GATEWAY_CONTAINER default, and its rollback
+#                                   state file records the name it renamed)
+#   deploy/deploy-capacitor.sh
+#   the tailnet front door notes in infra/port-registry.json
+# Renaming it would break all three for no gain. The cost is the usual one:
+# a fixed container_name means this service cannot be scaled past 1 replica.
+# It is a singleton holding one APNs provider key, so that is not a loss.
+#
+# SECRETS. Nothing secret is spelled out here. Cryptographic material and the
+# database password come from deploy/compose/.env (gitignored) through `${...}`
+# with a `:?` guard, so a missing value is a loud refusal at `compose config`
+# rather than a container that boots with an empty key and rejects every push.
+# Values that are NOT secret — paths inside the container image, the APNs
+# topic, the enabled-profile list, the grant lifetime — are literals, because
+# hiding a non-secret in .env only makes the deployment harder to read.
+#
+# ⚠️ `env_file: .env` IS DELIBERATELY ABSENT, unlike the relay service in
+# compose.yml. .env carries the RELAY's BUZZ_PUSH_TOKEN_KEYS and
+# BUZZ_PUSH_GRANT_KEYS — different key sets from the gateway's own, measured
+# 2026-09-20. Pulling .env in wholesale would silently overwrite the gateway's
+# keys with the relay's and break every capability check. The gateway's copies
+# are therefore named BUZZ_PUSH_GATEWAY_{TOKEN,GRANT}_KEYS in .env and mapped
+# onto the container's variable names here, explicitly, one at a time.
+# ============================================================================
+services:
+  push-gateway:
+    # Pinned to the tag that is live. This image is built locally from
+    # Dockerfile.push-gateway and exists in NO registry, so `compose pull` will
+    # not find it — build it before a cutover, never expect compose to fetch it.
+    image: ${BUZZ_PUSH_GATEWAY_IMAGE:-buzz-push-gateway:capacitor-cutover-final}
+    container_name: buzz-push-gateway
+    # Loopback-only on purpose, same reasoning as compose.loopback.yml: crichton
+    # is on a LAN *and* a tailnet, so a bare "6359:8080" would publish the
+    # gateway onto the LAN. `tailscale serve` is the only intended door, and it
+    # already holds :6359 on the tailnet addresses — a 0.0.0.0 publish would
+    # collide with it outright. Ports come from infra/port-registry.json
+    # (push_gateway 6359, push_gateway_metrics 6362); the defaults here are that
+    # registry's values, not invented ones.
+    ports:
+      - "127.0.0.1:${BUZZ_PUSH_GATEWAY_PORT:-6359}:8080"
+      - "127.0.0.1:${BUZZ_PUSH_GATEWAY_METRICS_PORT:-6362}:8081"
+    # Long-form bind with create_host_path:false, matching the `docker create
+    # --mount type=bind,...` the hand-rolled deploy used. The short `a:b:ro`
+    # form would CREATE an empty host directory when the source is missing and
+    # the gateway would then start with no provider key — a silent failure. This
+    # form errors instead.
+    #
+    # No default on the source: a wrong secrets directory is worse than a
+    # refusal to render, and the current one lives under .buzz/.scratch, which
+    # is documented as disposable. Guard, do not guess.
+    volumes:
+      - type: bind
+        source: ${BUZZ_PUSH_GATEWAY_SECRETS_DIR:?set BUZZ_PUSH_GATEWAY_SECRETS_DIR — host dir holding key.p8 + AppleAppAttestRootCA.pem, bind-mounted read-only at /secrets}
+        target: /secrets
+        read_only: true
+        bind:
+          create_host_path: false
+    environment:
+      # --- provider material, read from the read-only /secrets bind ----------
+      BUZZ_PUSH_APNS_KEY_PATH: /secrets/key.p8
+      BUZZ_PUSH_APP_ATTEST_ROOT_CERT_PATH: /secrets/AppleAppAttestRootCA.pem
+      # --- Apple account identifiers (shared with the relay; same values) ----
+      BUZZ_PUSH_APNS_KEY_ID: ${BUZZ_PUSH_APNS_KEY_ID:?set BUZZ_PUSH_APNS_KEY_ID}
+      BUZZ_PUSH_APNS_TEAM_ID: ${BUZZ_PUSH_APNS_TEAM_ID:?set BUZZ_PUSH_APNS_TEAM_ID}
+      BUZZ_PUSH_APNS_TOPIC: ${BUZZ_PUSH_APNS_TOPIC:-cloud.noet.buzz}
+      BUZZ_PUSH_APP_ATTEST_APP_ID: ${BUZZ_PUSH_APP_ATTEST_APP_ID:?set BUZZ_PUSH_APP_ATTEST_APP_ID}
+      BUZZ_PUSH_CAPACITOR_APNS_TOPIC: ${BUZZ_PUSH_CAPACITOR_APNS_TOPIC:-cloud.noet.buzz}
+      BUZZ_PUSH_CAPACITOR_APP_ATTEST_APP_ID: ${BUZZ_PUSH_CAPACITOR_APP_ATTEST_APP_ID:?set BUZZ_PUSH_CAPACITOR_APP_ATTEST_APP_ID}
+      # --- gateway-only signing keys -----------------------------------------
+      # Distinct .env names because .env's BUZZ_PUSH_{TOKEN,GRANT}_KEYS belong
+      # to the relay and hold DIFFERENT key sets. See the env_file note above.
+      BUZZ_PUSH_TOKEN_KEYS: ${BUZZ_PUSH_GATEWAY_TOKEN_KEYS:?set BUZZ_PUSH_GATEWAY_TOKEN_KEYS — the GATEWAY's token keys, not the relay's BUZZ_PUSH_TOKEN_KEYS}
+      BUZZ_PUSH_GRANT_KEYS: ${BUZZ_PUSH_GATEWAY_GRANT_KEYS:?set BUZZ_PUSH_GATEWAY_GRANT_KEYS — the GATEWAY's grant keys, not the relay's BUZZ_PUSH_GRANT_KEYS}
+      # --- policy ------------------------------------------------------------
+      # The URL the gateway advertises for delivery callbacks. Same value the
+      # relay already resolves from BUZZ_PUSH_GATEWAY_DELIVERY_URL, so it is
+      # read from that one key rather than duplicated — two copies of a URL are
+      # two chances to move only one of them.
+      BUZZ_PUSH_PUBLIC_DELIVERY_URL: ${BUZZ_PUSH_GATEWAY_DELIVERY_URL:?set BUZZ_PUSH_GATEWAY_DELIVERY_URL}
+      # Self-hosted delivery URL: this relay IS the self-hosted case.
+      BUZZ_PUSH_ALLOW_SELF_HOSTED_URL: "true"
+      BUZZ_PUSH_ENABLED_PROFILES: buzz-capacitor-ios-sandbox,buzz-capacitor-ios-production
+      # 30 days. A grant outliving the app install it was minted for is the
+      # failure this caps.
+      BUZZ_PUSH_MAX_GRANT_LIFETIME_SECONDS: "2592000"
+      # --- database ----------------------------------------------------------
+      # The gateway owns its OWN role and database on the shared postgres
+      # service — buzz_push_runtime / buzz_push_gateway, NOT the relay's
+      # POSTGRES_USER / POSTGRES_DB. Composed from parts the same way
+      # compose.yml composes the relay's DATABASE_URL, so the password is the
+      # only piece that has to live in .env.
+      DATABASE_URL: postgres://${BUZZ_PUSH_GATEWAY_DB_USER:-buzz_push_runtime}:${BUZZ_PUSH_GATEWAY_DB_PASSWORD:?set BUZZ_PUSH_GATEWAY_DB_PASSWORD — the buzz_push_runtime role's password, NOT POSTGRES_PASSWORD}@postgres:5432/${BUZZ_PUSH_GATEWAY_DB_NAME:-buzz_push_gateway}
+    # The hand-rolled container had no ordering constraint at all and relied on
+    # `restart: unless-stopped` to retry until postgres answered. Compose can
+    # state the dependency properly, so it does.
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Transcribed verbatim from the live container. Same /dev/tcp technique as
+    # the relay's own probe — the runtime image ships bash but no curl or wget.
+    # It probes 8081 (the metrics/health listener), NOT 8080 (the API listener).
+    # NOTE: the IMAGE declares no HEALTHCHECK at all (`docker image inspect
+    # ... .Config.Healthcheck` is null), so this block is the only thing that
+    # makes the container report health — and it is what `up --wait` and the
+    # depends_on of anything downstream would gate on. Deleting it would not
+    # fall back to an image default; it would leave the container with none.
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -ec 'exec 3<>/dev/tcp/127.0.0.1/8081; printf \"GET /_readiness HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n\" >&3; grep -q \"200 OK\" <&3'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+    # buzz-net is declared by compose.yml; joining it by name puts this service
+    # on the project's existing <project>_buzz-net, which is the network the
+    # live container is already attached to.
+    networks:
+      - buzz-net

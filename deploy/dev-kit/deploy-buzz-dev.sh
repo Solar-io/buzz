@@ -36,6 +36,13 @@ COMPOSE_DIR="$BUZZ_CHECKOUT/deploy/compose"
 RELAY_PORT="$(grep -E '^BUZZ_HTTP_PORT=' "$COMPOSE_DIR/.env" | cut -d= -f2-)"
 PAIRING_PORT="$(grep -E '^BUZZ_PAIRING_PORT=' "$COMPOSE_DIR/.env" | cut -d= -f2-)"
 HTTPS_PORT="$(registry_port https 2>/dev/null || echo '')"
+# Same defaults the overlay uses, so the cutover hint below prints a real port
+# whether or not these are pinned in .env.
+# `|| true` is load-bearing under `set -e`: this key is optional, and a grep
+# that matches nothing exits 1 and would kill the script before it printed a
+# single line. (It did, once.)
+GATEWAY_METRICS_PORT="$(grep -E '^BUZZ_PUSH_GATEWAY_METRICS_PORT=' "$COMPOSE_DIR/.env" | cut -d= -f2- || true)"
+GATEWAY_METRICS_PORT="${GATEWAY_METRICS_PORT:-6362}"
 
 # -p is NOT optional. buzz's deploy/compose/compose.yml hardcodes
 # `name: buzz-prod`, so without an explicit project name a DEV stack comes up
@@ -43,25 +50,127 @@ HTTPS_PORT="$(registry_port https 2>/dev/null || echo '')"
 # would then land in the SAME project and fight it for containers and volumes.
 # evie-ui already runs dev and prod co-resident on crichton; assume Buzz will
 # too, and keep the projects disjoint from day one.
-# compose.web.yml is load-bearing: it binds the web bundle into /app/web-dist
-# (BUZZ_WEB_DIR in .env). Without it the relay crash-loops its config check —
-# this exact omission caused the 2026-09-01 outage.
-compose() { (cd "$COMPOSE_DIR" && docker compose -p "$BUZZ_COMPOSE_PROJECT" --env-file .env -f compose.yml -f "$COMPOSE_DIR/compose.web.yml" -f "$BUZZ_KIT_DIR/compose.loopback.yml" -f "$BUZZ_KIT_DIR/compose.pairing.yml" "$@"); }
+# ONE source of truth for the overlay stack. This list used to be typed out
+# verbatim in four places (the compose() helper plus the down/restart/up call
+# sites), which meant adding a file was four edits and forgetting one was
+# silent — a `down` that omits an overlay simply leaves that service running,
+# and an `up` that omits one never starts it. The 2026-09-01 outage was this
+# exact shape: compose.web.yml present in some invocations and not others.
+#
+# Order matters: later files override earlier ones.
+#   compose.yml               upstream base (relay/postgres/redis/minio)
+#   compose.web.yml           load-bearing — binds the web bundle into
+#                             /app/web-dist (BUZZ_WEB_DIR in .env). Without it
+#                             the relay crash-loops its config check; this exact
+#                             omission caused the 2026-09-01 outage.
+#   compose.loopback.yml      pins the relay's publish to 127.0.0.1
+#   compose.pairing.yml       NIP-AB pairing sidecar
+#   compose.push-gateway.yml  the APNs push gateway (D-029). container_name is
+#                             pinned to `buzz-push-gateway` so everything that
+#                             addresses it by name keeps working.
+#
+# 🔴 COMPOSE DOES NOT ADOPT A FOREIGN CONTAINER. Measured 2026-09-20 in an
+# isolated lab project: compose matches containers by its own
+# `com.docker.compose.*` LABELS, never by name. The hand-rolled gateway that
+# deploy/push-gateway-up.sh created carries no such labels, so compose does not
+# see it as a candidate — it tries to create a new one and the daemon refuses
+# the name:
+#     Error response from daemon: Conflict. The container name
+#     "/buzz-push-gateway" is already in use by container "<id>"
+# `up` exits 1. `--force-recreate` gives the identical conflict, because it only
+# force-recreates containers compose already owns. This fails BEFORE anything is
+# touched, so it is a failed deploy and not an outage — but a first run after
+# this overlay landed WILL fail until the one-time cutover below is done by hand.
+#
+# ONE-TIME CUTOVER (rename, never remove — keeps it reversible):
+#     docker inspect buzz-push-gateway > /tmp/pg-preadopt.json
+#     docker rename buzz-push-gateway buzz-push-gateway-preadopt
+#     docker stop   buzz-push-gateway-preadopt      # frees 6359/6362
+#     ./deploy-buzz-dev.sh                          # compose creates its own
+#     curl -fsS --max-time 5 http://127.0.0.1:6362/_readiness
+#     docker rm buzz-push-gateway-preadopt          # ONLY after that passes
+# Rollback before that last line:
+#     docker rm -f buzz-push-gateway
+#     docker rename buzz-push-gateway-preadopt buzz-push-gateway
+#     docker start  buzz-push-gateway
+# Removing the old container instead of renaming it is the one step that can
+# leave nothing listening on 6359, so do not do it that way.
+#
+# Two consequences of the gateway now being compose-managed:
+#   - `--stop` DESTROYS it. It previously survived every `down`. No volume is at
+#     risk (the service has one read-only bind and no named volume; gateway
+#     state lives in the `buzz_push_gateway` database on the shared postgres
+#     service, and `--stop` correctly omits `-v`).
+#   - `up -d --wait` now gates on the gateway's healthcheck, up to 60s
+#     (interval 10s x 6 retries). The image itself declares NO healthcheck —
+#     `.Config.Healthcheck` is null — so the block in the overlay is
+#     load-bearing, not decorative. Deleting it does not fall back to a default;
+#     it leaves the container with no health signal at all.
+#
+# The image `buzz-push-gateway:capacitor-cutover-final` exists ONLY on this
+# host — it is in no registry. This script neither pulls nor builds it, so
+# nothing here trips on that; but it does mean deploy/push-gateway-up.sh stays
+# as the cold-rebuild path. Do not delete it.
+#
+# `compose.yml` is left RELATIVE, exactly as it was: every invocation cds into
+# $COMPOSE_DIR first, and that bare name is what fixes compose's project
+# directory there.
+COMPOSE_FILES=(
+  -f compose.yml
+  -f "$COMPOSE_DIR/compose.web.yml"
+  -f "$BUZZ_KIT_DIR/compose.loopback.yml"
+  -f "$BUZZ_KIT_DIR/compose.pairing.yml"
+  -f "$COMPOSE_DIR/compose.push-gateway.yml"
+)
+# Shell-quoted rendering of the same array, for the `run bash -c "..."` call
+# sites. They go through `run` so that DRY_RUN prints the real command line;
+# keeping the printed form means a dry run still shows every -f it would pass.
+COMPOSE_FILES_Q="$(printf ' %q' "${COMPOSE_FILES[@]}")"
+
+# -p is NOT optional (see the note above). Both spellings below take their file
+# list from COMPOSE_FILES, so there is nothing left to keep in sync by hand.
+compose() { (cd "$COMPOSE_DIR" && docker compose -p "$BUZZ_COMPOSE_PROJECT" --env-file .env "${COMPOSE_FILES[@]}" "$@"); }
 
 case "$MODE" in
   status)
     step "Buzz DEV status"; compose ps; exit 0 ;;
   stop)
     step "Stopping Buzz DEV"
-    run bash -c "cd '$COMPOSE_DIR' && docker compose -p '$BUZZ_COMPOSE_PROJECT' --env-file .env -f compose.yml -f '$COMPOSE_DIR/compose.web.yml' -f '$BUZZ_KIT_DIR/compose.loopback.yml' -f '$BUZZ_KIT_DIR/compose.pairing.yml' down"
-    launchctl bootout "gui/$(id -u)/com.dev.buzz-relay" 2>/dev/null || true
+    run bash -c "cd '$COMPOSE_DIR' && docker compose -p '$BUZZ_COMPOSE_PROJECT' --env-file .env$COMPOSE_FILES_Q down"
+    # Through `run`, or `--stop --dry-run` really boots the launchd unit out —
+    # a dry run that mutates. The bootout at the bottom of this script is
+    # already DRY_RUN-guarded; this one was not.
+    run launchctl bootout "gui/$(id -u)/com.dev.buzz-relay" 2>/dev/null || true
     log "stopped (volumes preserved — 'docker compose down -v' would destroy data)"
     exit 0 ;;
 esac
 
+# A `buzz-push-gateway` container that predates the compose overlay carries no
+# com.docker.compose.* labels, so compose will not adopt it — it tries to create
+# its own and the daemon refuses the name. Left to itself that surfaces as a
+# bare "Conflict. The container name is already in use", which reads like a bug
+# rather than a one-time migration. Catch it here, before anything starts, and
+# say what to do. Nothing is mutated: this only looks.
+check_gateway_adoption() {
+  local id
+  id="$(docker ps -aq --filter name='^buzz-push-gateway$' 2>/dev/null)" || return 0
+  [ -n "$id" ] || return 0
+  [ -z "$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$id" 2>/dev/null)" ] || return 0
+  die "buzz-push-gateway exists but is not compose-managed; compose will refuse the name.
+  Run the one-time cutover (rename, do not remove — it stays reversible):
+    docker inspect buzz-push-gateway > /tmp/pg-preadopt.json
+    docker rename buzz-push-gateway buzz-push-gateway-preadopt
+    docker stop   buzz-push-gateway-preadopt
+    $0            # re-run this script; compose creates its own
+    curl -fsS --max-time 5 http://127.0.0.1:${GATEWAY_METRICS_PORT}/_readiness
+    docker rm buzz-push-gateway-preadopt     # only after that passes
+  Rollback: docker rm -f buzz-push-gateway; docker rename buzz-push-gateway-preadopt buzz-push-gateway; docker start buzz-push-gateway"
+}
+
 step "[1/4] Compose config validation"
 if [ "$DRY_RUN" = "1" ]; then log "[DRY_RUN] would validate + start"; else
   compose config >/dev/null || die "compose config invalid — fix .env before starting"
+  check_gateway_adoption
   log "config OK"
 fi
 
@@ -69,9 +178,9 @@ step "[2/4] Bring the stack up"
 # `--wait` blocks on every service healthcheck, so a failed start is an
 # immediate non-zero here rather than a mystery 30 seconds later.
 if [ "$MODE" = "restart" ]; then
-  run bash -c "cd '$COMPOSE_DIR' && docker compose -p '$BUZZ_COMPOSE_PROJECT' --env-file .env -f compose.yml -f '$COMPOSE_DIR/compose.web.yml' -f '$BUZZ_KIT_DIR/compose.loopback.yml' -f '$BUZZ_KIT_DIR/compose.pairing.yml' restart"
+  run bash -c "cd '$COMPOSE_DIR' && docker compose -p '$BUZZ_COMPOSE_PROJECT' --env-file .env$COMPOSE_FILES_Q restart"
 else
-  run bash -c "cd '$COMPOSE_DIR' && docker compose -p '$BUZZ_COMPOSE_PROJECT' --env-file .env -f compose.yml -f '$COMPOSE_DIR/compose.web.yml' -f '$BUZZ_KIT_DIR/compose.loopback.yml' -f '$BUZZ_KIT_DIR/compose.pairing.yml' up -d --wait"
+  run bash -c "cd '$COMPOSE_DIR' && docker compose -p '$BUZZ_COMPOSE_PROJECT' --env-file .env$COMPOSE_FILES_Q up -d --wait"
 fi
 
 step "[3/4] Health gate"
