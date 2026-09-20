@@ -86,17 +86,22 @@ the funnel.
 2. `git rebase origin/main` — known conflict hot spots:
    `pnpm-lock.yaml`, `desktop/src-tauri/src/lib.rs`, `desktop/src-tauri/Cargo.toml`,
    `desktop/package.json`
-3. Build real sidecars (the bundle needs them; `binaries/` is gitignored, and the
-   `_ensure-sidecar-stubs` stubs produce an app whose sidecars are empty files):
-   `export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"` (cargo isn't on the
-   agent-shell PATH; `audiopus_sys` needs brew cmake), then
-   `cargo build --release -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p buzz-cli -p git-credential-nostr`
-   and copy each `target/release/<bin>` to
-   `desktop/src-tauri/binaries/<bin>-aarch64-apple-darwin`.
-4. Build: `cd desktop && pnpm tauri build --features mesh-llm --target aarch64-apple-darwin`
-   (frontend `tsc && vite build` runs inside it; the `.app` lands under
-   `src-tauri/target/aarch64-apple-darwin/release/bundle/macos/` — `bundle_dmg`
-   may fail; the `.app` is what we install)
+3. Build: `export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"` (cargo isn't on
+   the agent-shell PATH; `audiopus_sys` needs brew cmake), then
+   `just desktop-release-build`. That recipe compiles the real sidecars via
+   `scripts/build-sidecars.sh`, bundles only the `.app` (the dmg bundler fails
+   locally and its exit code would otherwise bury a good build), and finishes by
+   running `scripts/verify-bundled-sidecars.sh`, which compares every sidecar
+   inside the bundle byte-for-byte against the binaries just compiled.
+   The `.app` lands under
+   `desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/`.
+   Use `just desktop-release-dmg` if a `.dmg` is actually wanted.
+4. Never hand-`touch` the sidecar paths for a release bundle. Tauri accepts
+   zero-byte placeholders, so a stubbed bundle builds, signs and launches with a
+   missing or stale harness and no visible symptom; `_ensure-sidecar-stubs` and
+   `scripts/make-sidecar-stubs.sh` exist for check/clippy/test runs only.
+   mtime cannot detect this — `touch` sets it — which is why the verification
+   compares bytes.
 
    Debug runs (`pnpm tauri dev`) while the installed Buzz.app is also
    running: the single-instance plugin keys on the bundle identifier, so
