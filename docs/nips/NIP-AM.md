@@ -222,7 +222,7 @@ The encrypted payload MAY contain `telemetry`:
 
 ```json
 {
-  "attribution": {"provider":"anthropic", "accountId":"claude-max-cc1", "accountLabel":"Claude Max CC1", "serviceTier":"priority"},
+  "attribution": {"provider":"anthropic", "accountId":"claude-max-cc1", "accountLabel":"Claude Max CC1", "accountConfirmed":true, "serviceTier":"priority"},
   "costSource":"wire-reported",
   "requestCount":2,
   "requestsComplete":true,
@@ -245,6 +245,17 @@ are private display metadata; `accountId` is the stable grouping key. Publishers
 MUST NOT include keys, tokens, headers, URLs, prompts, completions or tool content.
 Unknown strings and fields remain forward-compatible.
 
+`accountConfirmed` distinguishes an account identity the **owner** confirmed from
+one their client derived from observed configuration. Absent means unconfirmed
+and MUST NOT be read as an assertion either way; historical events carry no flag
+at all, so every pre-existing report is unconfirmed by construction. A publisher
+MUST NOT send `accountConfirmed` without an `accountId` — a confirmation with
+nothing to confirm would let an unattributed turn be laundered into an
+established subscription identity, and consumers MUST reject that payload.
+Consumers MUST keep confirmed and unconfirmed identities distinguishable wherever
+they group by `accountId`: an account whose reports are not all confirmed is
+provisional, because its totals are the sum of all of them.
+
 `costSource` is `wire-reported` or `manifest-estimated`; absent or unfamiliar
 values mean unknown provenance. Historical `costUsd` fields keep unknown
 provenance. Wire-reported cost is still an advisory estimate, not a subscription
@@ -261,9 +272,22 @@ totals. Complete breakdowns may partition dimensional reports, while turn totals
 remain authoritative; mismatches must be surfaced as partial coverage.
 
 Buzz ACP supports explicit private labels through `BUZZ_USAGE_PROVIDER`,
-`BUZZ_USAGE_ACCOUNT_ID`, and `BUZZ_USAGE_ACCOUNT_LABEL`. These variables accept
-nonempty trimmed labels up to 128 bytes without control characters. No credential
-environment variables are read for attribution. Standard ACP models are carried
+`BUZZ_USAGE_ACCOUNT_ID`, `BUZZ_USAGE_ACCOUNT_LABEL`, and
+`BUZZ_USAGE_ACCOUNT_CONFIRMED`. These variables accept nonempty trimmed labels up
+to 128 bytes without control characters; the confirmation flag accepts `1`,
+`true`, `yes` or `on` and treats any other value as unconfirmed, so a typo can
+never upgrade a derived label. The flag is dropped when no `accountId` resolved.
+No credential environment variables are read for attribution.
+
+Buzz Desktop derives all four from an owner-editable structured field on the agent
+record rather than from free-text environment variables, and seeds it from
+configuration it has actually recorded: the runtime profile identifier, the
+structured `provider` field, an explicitly-configured gateway host (host and port
+only — userinfo, path, query and fragment are discarded), and which credential the
+readiness gate requires for that runtime. Seeded rows are `accountConfirmed:
+false`. An agent with no recorded runtime, provider or gateway gets **no**
+attribution at all — never a placeholder and never a shared catch-all bucket. An
+explicit per-agent environment entry still overrides the derived value. Standard ACP models are carried
 only from observed session model state or an acknowledged model change; they do
 not establish a billing identity. The Buzz agent reports a bounded metrics-only
 prefix of completed outer calls as partial request observations because internal
@@ -280,7 +304,9 @@ Tokens and request/fallback counters cross IPC as decimal strings. Provider
 diversity uses normalized Shannon entropy, `−100 × Σ(p × ln p) / ln(n)`, over
 explicitly attributed provider/turn memberships (zero for a single provider),
 with unknown reports and the recent seven civil days exposed
-separately. Kind-44200 report counts are always labeled **Turns**.
+separately. Kind-44200 report counts are always labeled **Turns**. The account
+dimension additionally reports confirmed and unconfirmed turn counts per account,
+and coverage reports confirmed account identities separately from attributed ones.
 
 - Publish exactly one event per completed turn, at turn completion, including
   turns that end in cancellation or error when usage was observed.

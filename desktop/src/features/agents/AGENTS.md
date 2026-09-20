@@ -270,6 +270,41 @@ with a TypeScript lookup table or an id comparison in a component.
     `~/.config/agent-harness/role-policy.json`; do not add a runtime-owned
     policy JSON beside it. The old app-data policy is migration input only.
 
+16. **Usage attribution is structured configuration with a derived env var, and
+    a seeded value is never presented as an owner's.** NIP-AM subscription
+    attribution lives in `ManagedAgentRecord.usage_attribution`
+    (`managed_agents/usage_attribution.rs`): `provider`, `account_id`,
+    `account_label`, `confirmed`. The four `BUZZ_USAGE_*` variables are
+    **derived** from it at spawn — same shape as
+    `DERIVED_PROVIDER_MODEL_ENV_KEYS` — with one deliberate inversion from
+    effort: they are written **before** the layered user env, so an explicit
+    per-agent `env_vars` entry still wins. `effective_usage_attribution` is the
+    only place that precedence is decided; the spawn and the spawn-config
+    snapshot both read it, and the keys are stripped from the snapshot's `env`
+    map so attribution has exactly one representation there.
+
+    **Seeding may read only recorded configuration**: the structured `runtime`
+    profile id, the structured `provider` field, an explicitly-configured
+    gateway host (host and port only — `gateway_authority` discards userinfo,
+    path, query and fragment), and the credential the readiness gate requires,
+    by name, from the shared table in `readiness/credentials.rs`. It may **not**
+    read the model, a credential value, or a harness id as a provider — a
+    `claude-*` custom profile is seeded with no provider rather than a guessed
+    one, per NIP-AM and rule "runtime profile identifiers, not capability
+    claims". An agent with nothing observable gets the field **absent**: never a
+    placeholder, never a shared bucket, never zero.
+
+    **Seeding only ever fills an absent row.** That is what makes it safe on
+    every boot and what makes a confirmation survive restart, edit and respawn:
+    `apply_persona_snapshot` deliberately does **not** mirror attribution (it is
+    instance-owned after mint), and `create_managed_agent` inherits the linked
+    definition's row keyed off `record.persona_id`. A row whose identity fields
+    are all absent but whose `confirmed` is true is the owner saying "no
+    subscription identity" — a real answer, and seeding must not undo it. New
+    write paths go through `apply_owner_attribution`, which validates and marks
+    the row confirmed: editing **is** confirming, so no path may write an owner
+    value that still reads as seeded.
+
 ## The tests that enforce this
 
 - `lib/agentConfigCore.test.mjs` — field model per harness × scope, clearing
@@ -308,6 +343,18 @@ with a TypeScript lookup table or an id comparison in a component.
   restoration, zero-write Skip, Next save failure/retry, navigation, and
   successful-empty vs failed optional-model discovery.
 - Rust: `runtime_metadata_env_vars` tests pin spawn-time key application.
+- Rust: `managed_agents::usage_attribution::tests` pin the honesty rules —
+  `runtime_null_yields_absent_attribution_not_a_placeholder`,
+  `model_is_not_a_seeding_signal`,
+  `gateway_authority_discards_userinfo_path_query_and_fragment`,
+  `spawn_lets_an_explicit_env_var_override_the_derived_mapping`, and
+  `seeding_never_overwrites_an_existing_row`. `commands::usage_attribution::tests`
+  pin account grouping plus survival across restart and respawn. Each was
+  verified by mutation; results are recorded in
+  `docs/plans/2026-09-19-agent-usage-analytics.md`.
+  **Known gap recorded there:** severing the create-path slug argument survives
+  both the suite and clippy, because `create_managed_agent`'s body has no test
+  harness in this repo.
 - Rust: persona sharing/retention tests pin relay+owner scoping, durable
   enqueue errors, relay rejection/unavailability, and accepted publication.
 - Rust: `definition_validation` and inbound persona tests pin the shared
