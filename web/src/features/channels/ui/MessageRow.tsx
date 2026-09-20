@@ -69,6 +69,7 @@ export function MessageRow({
   profiles,
   grouped,
   replyCount,
+  cardAnswer = null,
   onOpenThread,
   active,
   reactionGroups,
@@ -90,6 +91,15 @@ export function MessageRow({
   profiles: Map<string, Profile>;
   grouped: boolean;
   replyCount: number;
+  /**
+   * When this row is a decision card, MY answer to it from the same buffer
+   * (`answeredCardReplies`). The row cannot derive this itself — it sees one
+   * message, and the answer is a different event — so the host that holds the
+   * buffer looks it up. Absent means "no answer", which is also what a host
+   * with no buffer to consult says, and that degrades to an answerable card
+   * rather than to a false "you replied".
+   */
+  cardAnswer?: TimelineMessage | null;
   /**
    * Open this message's thread pane. Optional: a flat list (the thread panel)
    * passes nothing — no "View all N replies" button and no ↩ action, because
@@ -253,6 +263,7 @@ export function MessageRow({
               // is not rendered rather than rendered dead.
               <DecisionCard
                 message={message}
+                answer={cardAnswer}
                 onAnswerInChat={
                   onOpenThread ? () => onOpenThread(message) : undefined
                 }

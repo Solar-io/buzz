@@ -1,6 +1,7 @@
 import { ArrowLeft, ArrowUpRight, Check, Inbox, Undo2 } from "lucide-react";
 
 import type { Profile } from "@/features/channels/hooks";
+import { answeredCardReplies } from "@/features/channels/lib/cardAnswered.ts";
 import type { TimelineMessage } from "@/features/channels/lib/messageBuffer.ts";
 import { MessageRow } from "@/features/channels/ui/MessageRow";
 import { Button } from "@/shared/ui/button";
@@ -67,6 +68,11 @@ export function InboxDetailPane({
   }
 
   const firstUnreadId = context.find((message) => !isRead(message))?.id ?? null;
+  // Same rule as the channel timeline: a card I have already answered renders
+  // terminal here too. Plain, not memoized — this pane returns early above, so
+  // a hook here would be a conditional one, and the context list is a handful
+  // of messages rather than a 500-message buffer.
+  const cardAnswers = answeredCardReplies(context, selfPubkey);
 
   return (
     <div
@@ -154,6 +160,7 @@ export function InboxDetailPane({
                 inboxContextGrouped(message, context[index - 1])
               }
               replyCount={0}
+              cardAnswer={cardAnswers.get(message.id) ?? null}
               onOpenThread={() => onOpenInChannel(item)}
               active={message.id === item.message.id}
               reactionGroups={[]}

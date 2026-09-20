@@ -78,66 +78,22 @@ export function askForMe(
 }
 
 /**
- * Is this event MY reply to this card at all — answered or not?
+ * The answered rule lives in `features/channels/lib/cardAnswered.ts` and is
+ * re-exported here, not reimplemented.
  *
- * Strict on purpose: only MY reply concerns MY ask, and it must reply TO the
- * card (`replyToId === cardId`) — a reply to a sibling elsewhere in the
- * card's thread does not.
- *
- * Split out from {@link answeredByMe} because a PARTIAL answer is my reply
- * to the card without being an answer to it: the provider records its
- * progress (`N of M` for the inbox chip) while deliberately not clearing the
- * badge. One predicate could not say both things.
+ * It moved there when the timeline started needing it too: an answered card
+ * must render terminal in the CHANNEL as well as clear the inbox badge, and
+ * the version of this that held "answered" in component state let a card come
+ * back answerable on a remount (measured 2026-09-20 — scrolling it out of the
+ * virtualizer and back was enough). Two copies of the rule would let the badge
+ * and the card disagree about the same event, which has no correct reading, so
+ * there is one copy and the dependency points channels-ward like every other
+ * import in this feature.
  */
-export function myReplyToCard(
-  reply: Pick<
-    TimelineMessage,
-    "kind" | "authorPubkey" | "rootId" | "replyToId"
-  >,
-  cardId: string,
-  selfPubkey: string,
-): boolean {
-  return (
-    reply.kind === 9 &&
-    reply.authorPubkey === selfPubkey &&
-    reply.replyToId === cardId
-  );
-}
-
-/**
- * Did MY answer clear this card?
- *
- *     my reply to the card ∧ ( no card-answer tag ∨ cardAnswer.done )
- *
- * The first arm is v1, bit-identical: a reply with no `card-answer` tag is
- * content-agnostic and COMPLETE — a plain "yes", an AskRow chip, and the
- * dismiss-and-type-freely path all clear the badge exactly as they did
- * before v2 existed. That arm is not a compatibility shim to be tidied away
- * later; it is the whole reason typing freely still works.
- *
- * The second arm is v2. A `done:false` partial leaves the ask LIT, because
- * the failure being guarded is an agent acting on 2 of 4 answers as though
- * the interview concluded: a lit badge and a stalled agent is recoverable,
- * a confidently-wrong agent is not. A tag that is present but UNREADABLE
- * parses to `done:false` for the same reason (`cardAnswerTag.ts`) — a
- * payload we could not read is never evidence of completeness.
- */
-export function answeredByMe(
-  reply: Pick<
-    TimelineMessage,
-    "kind" | "authorPubkey" | "rootId" | "replyToId" | "cardAnswer"
-  >,
-  cardId: string,
-  selfPubkey: string,
-): boolean {
-  if (!myReplyToCard(reply, cardId, selfPubkey)) {
-    return false;
-  }
-  // Falsy, not `=== null`: a caller that hands over a record without the
-  // field (a hand-built event, an older cached shape) means "no tag", and a
-  // thrown TypeError inside the badge predicate would take the sidebar down.
-  return !reply.cardAnswer || reply.cardAnswer.done === true;
-}
+export {
+  answeredByMe,
+  myReplyToCard,
+} from "@/features/channels/lib/cardAnswered.ts";
 
 /** Channel info for a lookup that missed — never DM-lenient by accident. */
 function unknownChannel(channelId: string): AskChannelInfo {

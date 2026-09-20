@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, TriangleAlert } from "lucide-react";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
+import { cardReplySummary } from "../lib/cardAnswered.ts";
 import { sendCardAnswer, sendCardInterviewAnswer } from "../lib/cardAnswer.ts";
 import {
   clearCardDraft,
@@ -51,12 +52,34 @@ import { CardInterview } from "./CardInterview.tsx";
  * `publish()` RESOLVES `{ok:false}` on a FAILED or an ack timeout rather than
  * throwing (caught live 9/16), so a caller that treats resolution as success
  * renders a false sent state.
+ *
+ * ## Terminal is DERIVED FROM THE EVENT, not remembered from the mount
+ *
+ * `answer` is my published answer, read off the timeline by the host. When it
+ * is present the card is terminal on the FIRST render, before any effect runs
+ * and regardless of what happened in this mount — which is the only form of
+ * the rule that survives what actually broke it (measured 2026-09-20):
+ * `phase` is component state, the timeline is a `virtua` virtualizer, and
+ * scrolling an answered card out of the window and back unmounts and remounts
+ * it. The card came back at "Question 1 of 4" with its own answer rendered one
+ * row below, ready to publish a SECOND `done:true` answer to a card the agent
+ * had already acted on. A reload-only patch would have left that path broken,
+ * so nothing here reads a mount-lifetime flag to decide terminal-ness.
  */
 export function DecisionCard({
   message,
+  answer = null,
   onAnswerInChat,
 }: {
   message: TimelineMessage;
+  /**
+   * MY answer to this card, if the timeline carries one — the reply whose
+   * `e`-marker names this card and which `answeredByMe` calls complete.
+   * `null` when unanswered, and when the host cannot know (a surface that
+   * renders a card with no buffer around it), which degrades to today's
+   * answer-once-per-mount behaviour rather than to a wrong claim.
+   */
+  answer?: TimelineMessage | null;
   /**
    * The dismiss-and-type path: hand the conversation back to the composer
    * with the card as the reply target. Absent where replying to the card is
@@ -78,6 +101,16 @@ export function DecisionCard({
 
   const cardId = message.id;
   const writer = useMemo(() => createCardDraftWriter(cardId), [cardId]);
+
+  /**
+   * The published answer's summary, or null when there is none. Derived every
+   * render from the event — never copied into state, because state is exactly
+   * what a remount throws away.
+   */
+  const publishedSummary = useMemo(
+    () => (card && answer ? cardReplySummary(card, answer) : null),
+    [card, answer],
+  );
 
   // Restore the draft, once per card. `cancelled` guards the ordinary React
   // race: the read is async, and a card that scrolls out of the virtualized
@@ -102,6 +135,18 @@ export function DecisionCard({
   // scrolling a card out of the virtualizer unmounts it.
   useEffect(() => () => writer.flush(), [writer]);
 
+  // A card answered somewhere else (another device, or this one before a
+  // reload) has nothing left to resume. Dropping the draft here is what keeps
+  // it from outliving the interview it belonged to; the answer itself is on
+  // the relay and is not what is being deleted.
+  useEffect(() => {
+    if (publishedSummary === null) {
+      return;
+    }
+    writer.cancel();
+    void clearCardDraft(cardId);
+  }, [publishedSummary, writer, cardId]);
+
   const update = useCallback(
     (next: CardInterviewState) => {
       setState(next);
@@ -123,6 +168,12 @@ export function DecisionCard({
 
   async function submit(current: CardInterviewState) {
     if (!card || sending.current || phase.kind === "sent") {
+      return;
+    }
+    // Belt and braces against the defect this component is built around: a
+    // card the wire says is answered never publishes a second answer, even if
+    // something managed to render an interview over the top of it.
+    if (publishedSummary !== null) {
       return;
     }
     const view = interviewView(card, current);
@@ -217,6 +268,10 @@ export function DecisionCard({
 
   const busy = phase.kind === "sending";
   const title = card.questions.length > 1 ? card.title : null;
+  // The wire first: an answer that exists outranks anything this mount
+  // believes, so a remount and a reload both land on the same rendering.
+  const sentSummary =
+    publishedSummary ?? (phase.kind === "sent" ? phase.summary : null);
 
   return (
     <div
@@ -230,14 +285,14 @@ export function DecisionCard({
         </p>
       )}
 
-      {phase.kind === "sent" ? (
+      {sentSummary !== null ? (
         <p
           data-testid="decision-card-sent"
           className="flex items-start gap-1.5 text-sm font-medium text-primary"
         >
           <Check className="mt-0.5 size-3.5 shrink-0" aria-hidden />
           <span className="min-w-0 break-words">
-            You replied: <bdi>{phase.summary}</bdi>
+            You replied: <bdi>{sentSummary}</bdi>
           </span>
         </p>
       ) : (

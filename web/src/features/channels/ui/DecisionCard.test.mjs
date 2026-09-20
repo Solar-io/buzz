@@ -52,6 +52,7 @@ const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { parseCardTags } = await import("../lib/decisionCard.ts");
 const { cardDraftKey } = await import("../lib/cardDraft.ts");
+const { timelineMessageFromEvent } = await import("../lib/messageBuffer.ts");
 const { DecisionCard } = await import("./DecisionCard.tsx");
 
 const idb = globalThis.__BUZZ_TEST_IDB__;
@@ -75,7 +76,7 @@ function messageWith(payload, id = "card-1") {
   };
 }
 
-async function mount(payload, { id = "card-1", onAnswerInChat } = {}) {
+async function mount(payload, { id = "card-1", onAnswerInChat, answer } = {}) {
   const container = dom.window.document.createElement("div");
   dom.window.document.body.appendChild(container);
   const root = createRoot(container);
@@ -83,6 +84,7 @@ async function mount(payload, { id = "card-1", onAnswerInChat } = {}) {
     root.render(
       React.createElement(DecisionCard, {
         message: messageWith(payload, id),
+        answer,
         onAnswerInChat,
       }),
     );
@@ -304,6 +306,151 @@ test("answering four questions publishes ONE reply carrying all four", async () 
   );
   // A completed interview deletes its draft: nothing to resume.
   assert.equal(idb.data.has(cardDraftKey("card-1")), false);
+  await mounted.unmount();
+});
+
+test("an answered card is terminal on a REMOUNT, from the answer event", async () => {
+  // THE regression this seeding exists for, and the reload is not the worst
+  // half of it: the timeline is a virtua virtualizer, so scrolling an
+  // answered card out of the window and back UNMOUNTS and remounts it. Before
+  // the fix that card came back at "Question 1 of 4" with live options and
+  // would happily publish a SECOND done:true answer to a card the agent had
+  // already acted on — measured live 2026-09-20, no reload involved.
+  //
+  // So the remount here is the real one (unmount + fresh mount, no shared
+  // state), and the answer handed to it is the event the FIRST mount really
+  // published, parsed by the shipped `timelineMessageFromEvent`.
+  idb.data.clear();
+  const calls = installFakeSession();
+  const first = await mount(FOUR, { id: "card-remount" });
+  await first.click("card-interview-option-both");
+  await first.click("card-interview-option-tests");
+  await first.click("card-interview-continue");
+  await first.click("card-interview-option-now");
+  await first.click("card-interview-option-sam");
+  assert.equal(calls.length, 1, "the interview published exactly one answer");
+  await first.unmount();
+
+  const published = timelineMessageFromEvent(calls[0]);
+  assert.ok(published, "the published answer must parse as a timeline row");
+  assert.equal(published.replyToId, "card-remount");
+  assert.equal(published.cardAnswer?.done, true);
+
+  const remounted = await mount(FOUR, {
+    id: "card-remount",
+    answer: published,
+  });
+  assert.ok(
+    remounted.find("decision-card-sent"),
+    `a remounted answered card must be terminal; rendered: ${remounted.text()}`,
+  );
+  // Terminal means the interview is GONE, not merely captioned: no options,
+  // no progress rail, nothing to tap.
+  assert.deepEqual(remounted.labels(), []);
+  assert.equal(remounted.find("card-interview-progress"), null);
+  assert.equal(remounted.find("card-interview-send-partial"), null);
+  // And the summary is rebuilt from the tag's option IDS against the card's
+  // labels — the values differ from the previous test's, so a summary copied
+  // from anywhere else reads wrong.
+  assert.ok(
+    remounted.text().includes("Web + desktop · Tests · Tonight · Sam"),
+    remounted.text(),
+  );
+  // Nothing more was published by the remount.
+  assert.equal(calls.length, 1);
+  await remounted.unmount();
+});
+
+test("an UNANSWERED card of the same shape still renders the stepper", async () => {
+  // The other side of the discriminating pair: identical card, identical
+  // mount, no answer event. If this rendered terminal too, the test above
+  // would be proving nothing.
+  idb.data.clear();
+  installFakeSession();
+  const mounted = await mount(FOUR, { id: "card-remount" });
+  assert.equal(mounted.find("decision-card-sent"), null);
+  assert.deepEqual(mounted.labels(), ["Web only", "Web + desktop"]);
+  await mounted.unmount();
+});
+
+test("a v1 plain answer makes a v1 card terminal on remount too", async () => {
+  // One path for both versions: a reply with NO card-answer tag is complete
+  // (v1, AskRow chips, dismiss-and-type-freely), and its content IS the
+  // chosen label, so that is what "You replied" shows.
+  idb.data.clear();
+  installFakeSession();
+  const mounted = await mount(
+    {
+      v: 1,
+      title: "Ship the claims fix?",
+      options: [{ id: "now", label: "Relaunch now" }, { label: "Let it ride" }],
+    },
+    {
+      id: "card-v1",
+      answer: {
+        id: "answer-v1",
+        channelId: "ch-1",
+        kind: 9,
+        authorPubkey: "a".repeat(64),
+        createdAt: 2,
+        content: "Relaunch now",
+        card: null,
+        cardAnswer: null,
+        rootId: null,
+        replyToId: "card-v1",
+      },
+    },
+  );
+  assert.ok(mounted.find("decision-card-sent"), mounted.text());
+  assert.ok(
+    mounted.text().includes("You replied: Relaunch now"),
+    mounted.text(),
+  );
+  assert.deepEqual(mounted.labels(), []);
+  await mounted.unmount();
+});
+
+test("a terminal card drops its draft rather than leaving one to resume", async () => {
+  // The card was half-answered on this device and finished somewhere else.
+  // The stale draft must not survive the answer it was superseded by.
+  idb.data.clear();
+  installFakeSession();
+  idb.data.set(cardDraftKey("card-elsewhere"), {
+    v: "v1",
+    cardId: "card-elsewhere",
+    index: 1,
+    answers: { scope: { optionIds: ["web"] } },
+    note: "",
+    at: Date.now(),
+  });
+  const mounted = await mount(FOUR, {
+    id: "card-elsewhere",
+    answer: {
+      id: "answer-elsewhere",
+      channelId: "ch-1",
+      kind: 9,
+      authorPubkey: "a".repeat(64),
+      createdAt: 5,
+      content: "**Which surfaces?** — Web only",
+      card: null,
+      cardAnswer: {
+        v: 2,
+        cardId: "card-elsewhere",
+        answers: [
+          { questionId: "scope", optionIds: ["web"] },
+          { questionId: "extras", optionIds: ["docs"] },
+          { questionId: "when", optionIds: ["mon"] },
+          { questionId: "who", optionIds: ["sam"] },
+        ],
+        done: true,
+      },
+      rootId: null,
+      replyToId: "card-elsewhere",
+    },
+  });
+  assert.ok(mounted.find("decision-card-sent"), mounted.text());
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(idb.data.has(cardDraftKey("card-elsewhere")), false);
   await mounted.unmount();
 });
 

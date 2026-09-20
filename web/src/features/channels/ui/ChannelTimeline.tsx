@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useReducer,
   useRef,
   useState,
@@ -18,6 +19,7 @@ import {
   createInputFollowState,
   forceInputFollow,
 } from "@/features/agents/lib/scrollFollow";
+import { answeredCardReplies } from "@/features/channels/lib/cardAnswered.ts";
 import { isWithinGroupingWindow } from "@/features/channels/lib/messageGrouping";
 import {
   decideTimelineRecovery,
@@ -392,6 +394,15 @@ export function ChannelTimeline({
   const [pinnedDay, setPinnedDay] = useState<string | null>(null);
   const isEmpty = messages.length === 0;
   const pending = pendingIds ?? EMPTY_PENDING;
+  // Decision cards this viewer has already answered, cardId → the answer
+  // event. Computed HERE because this is the component that holds the buffer:
+  // a row sees one message, and the answer is a different event entirely.
+  // Without it an answered card re-arms every time the virtualizer unmounts
+  // and remounts it, which is a scroll away (measured 2026-09-20).
+  const cardAnswers = useMemo(
+    () => answeredCardReplies(messages, selfPubkey),
+    [messages, selfPubkey],
+  );
   let lastAuthor: string | null = null;
   let lastKind = 0;
   /** Tree depth of the previously rendered row — a change breaks grouping. */
@@ -508,6 +519,7 @@ export function ChannelTimeline({
         profiles={profiles}
         grouped={grouped}
         replyCount={flat ? 0 : (replyCounts.get(message.id) ?? 0)}
+        cardAnswer={cardAnswers.get(message.id) ?? null}
         onOpenThread={onOpenThread}
         showActions={showActions}
         active={!flat && activeRootId === message.id}
