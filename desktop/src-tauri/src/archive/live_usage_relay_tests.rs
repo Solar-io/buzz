@@ -280,6 +280,10 @@ fn input_of(group: &analytics::MetricGroup) -> u64 {
 }
 
 #[tokio::test]
+// Requires an isolated relay, so it is `#[ignore]` like the `real_relay` tests in
+// `archive/mod_tests.rs`. Without this the env-gated early return below reports a
+// PASS having asserted nothing, which is indistinguishable from the proof running.
+#[ignore]
 async fn live_two_agent_usage_survives_restart_and_filters_one_many_all() {
     let Ok(relay_url) = std::env::var(ENV_RELAY) else {
         eprintln!(

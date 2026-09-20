@@ -627,12 +627,23 @@ Full commands and verbatim output:
 | Sorting | `sortUsageRows`'s direction multiplier inverted | `table headers change numeric order and search scopes visible rows` (`usage.test.mjs:73`) | `actual [B, A, Not reported]` / `expected [A, B, Not reported]` at line 87 — nulls still last, only the direction broken |
 | DST | civil-day index computed as `(at - day_boundaries[0]) / 86_400` instead of through the supplied boundaries | `archive::analytics::tests::dst_short_day_assigns_next_midnight_to_next_day` | `left: 1` / `right: 0` — the 23-hour spring-forward day put the next day's first report back on day 0 |
 
-**All seven produced a named failure, and none was an equivalent mutant.** One
-candidate was rejected *as* an equivalent mutant rather than counted: flipping
-`bucket`'s `partition_point(|b| *b <= at)` to `*b < at` cannot be detected by
-the DST test, whose event sits one second past the boundary, so no half-open
-versus closed change can move it. The mutation used instead — a hardcoded
-86,400-second day — is the assumption those boundaries exist to defeat.
+**All seven produced a named failure.** An eighth candidate was first recorded
+here as an equivalent mutant, and that was wrong: flipping `bucket`'s
+`partition_point(|b| *b <= at)` to `*b < at` is a real behavioural change that
+no test detected. Verified directly against the DST test's own boundaries
+`[0, 82800, 169200]`: at `82799` both return `0`, but at `82800` and `169200`
+the original returns `1` and `2` while the mutant returns `0` and `1` — a report
+landing *exactly* on midnight is credited to the day that just ended. The DST
+test genuinely cannot see it, because its event sits one second past the
+boundary; but "no test can see it" is a coverage gap, not an equivalence, and
+recording it as the latter converted a missing test into a justified absence.
+
+Closed by `archive::analytics::tests::a_report_exactly_on_a_civil_day_boundary_belongs_to_the_later_day`,
+which pins a boundary-exact timestamp to the later day. Under the `*b < at`
+mutation it fails with *"a report at exactly midnight must not be credited to
+the day that ended"* (`left: 1` / `right: 0`); restored, it passes. The DST row
+above keeps its own mutation — a hardcoded 86,400-second day — which is the
+assumption those boundaries exist to defeat.
 
 Both runners were verified before being trusted: the Rust selection reported
 `running 6 tests` (6 ran, 2,965 filtered, so the filter matched rather than

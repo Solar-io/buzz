@@ -322,6 +322,38 @@ fn wire_and_manifest_costs_keep_distinct_provenance() {
 }
 
 #[test]
+fn a_report_exactly_on_a_civil_day_boundary_belongs_to_the_later_day() {
+    // Midnight itself starts the new day. The half-open convention makes this a
+    // one-sided boundary, so `bucket` must use `<=` and not `<`: with `<` a
+    // report landing exactly on midnight is credited to the day that just
+    // ended. Every other day test here sits at least a second off the boundary,
+    // which cannot tell the two apart.
+    let c = db();
+    insert(&c, "one", &"a".repeat(64), Some(1), Value::Null);
+    let at = START + 23 * 3600;
+    c.execute(
+        "UPDATE archived_events SET raw_json=json_set(raw_json,'$.timestamp',?1)",
+        params![chrono::DateTime::from_timestamp(at, 0)
+            .unwrap()
+            .to_rfc3339()],
+    )
+    .unwrap();
+    let mut req = request();
+    req.day_boundaries = vec![START, START + 23 * 3600, START + 47 * 3600];
+    req.bucket_boundaries = req.day_boundaries.clone();
+    req.day_labels = vec!["2026-03-08".into(), "2026-03-09".into()];
+    let data = query(&c, "owner", "relay", &req).unwrap();
+    assert_eq!(
+        data.days[0].group.report_count, 0,
+        "a report at exactly midnight must not be credited to the day that ended"
+    );
+    assert_eq!(
+        data.days[1].group.report_count, 1,
+        "a report at exactly midnight belongs to the day it starts"
+    );
+}
+
+#[test]
 fn dst_short_day_assigns_next_midnight_to_next_day() {
     let c = db();
     insert(&c, "one", &"a".repeat(64), Some(1), Value::Null);
