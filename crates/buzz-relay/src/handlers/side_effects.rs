@@ -3762,7 +3762,9 @@ mod tests {
             .sign_with_keys(&keys)
             .expect("sign");
 
-        assert!(author_delete_can_use_self_delete_path(&actor, &actor, &event));
+        assert!(author_delete_can_use_self_delete_path(
+            &actor, &actor, &event
+        ));
     }
 
     #[test]

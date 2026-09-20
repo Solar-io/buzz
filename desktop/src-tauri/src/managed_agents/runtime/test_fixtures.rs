@@ -91,5 +91,6 @@ pub(super) fn fixture(
         definition_parallelism: None,
         relay_mesh: None,
         effort_level: None,
+        usage_attribution: None,
     }
 }

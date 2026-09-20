@@ -189,6 +189,7 @@ fn run_boot_migrations_inner(app: &tauri::AppHandle, reset_completed: bool) {
     reconcile_provider_mcp_commands(app);
     reconcile_databricks_v1_to_v2(app);
     materialize_agent_runtimes(app);
+    usage_attribution::seed_usage_attribution_records(app);
 }
 
 /// Copy one-time app state from the legacy app identifier directory to
@@ -1367,6 +1368,7 @@ pub fn migrate_persona_provider_to_runtime(app: &tauri::AppHandle) {
 }
 mod materialize;
 pub use materialize::materialize_agent_runtimes;
+mod usage_attribution;
 mod fold;
 pub use fold::fold_personas_into_agent_store;
 use fold::load_persona_runtimes;

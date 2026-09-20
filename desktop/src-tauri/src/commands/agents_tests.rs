@@ -64,6 +64,7 @@ fn bare_agent_record(
         definition_respond_to: None,
         definition_respond_to_allowlist: vec![],
         definition_parallelism: None,
+        usage_attribution: None,
     }
 }
 fn persona_record(id: &str, model: Option<&str>, provider: Option<&str>) -> AgentDefinition {

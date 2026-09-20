@@ -797,8 +797,12 @@ mod tests {
     fn jpeg_with_exif() -> Vec<u8> {
         let mut clean = Vec::new();
         let img = image::DynamicImage::new_rgb8(4, 4);
-        image::DynamicImage::write_to(&img, std::io::Cursor::new(&mut clean), image::ImageFormat::Jpeg)
-            .unwrap();
+        image::DynamicImage::write_to(
+            &img,
+            std::io::Cursor::new(&mut clean),
+            image::ImageFormat::Jpeg,
+        )
+        .unwrap();
         assert!(clean.starts_with(&[0xff, 0xd8]));
 
         let exif = exif_orientation_payload(6);
@@ -826,8 +830,8 @@ mod tests {
         );
 
         // Sanitized, the same image passes cleanly.
-        let clean = sanitize_image_for_upload(raw.clone(), "image/jpeg")
-            .expect("sanitize must succeed");
+        let clean =
+            sanitize_image_for_upload(raw.clone(), "image/jpeg").expect("sanitize must succeed");
         let mime = crate::validation::validate_content(&clean, &config)
             .expect("sanitized JPEG must pass the validator");
         assert_eq!(mime, "image/jpeg");
@@ -887,8 +891,7 @@ mod tests {
         with_exif.extend_from_slice(b"WEBP");
         with_exif.extend_from_slice(&webp_chunk(b"VP8X", &[0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
         with_exif.extend_from_slice(&webp_chunk(b"ANIM", &[0; 6]));
-        with_exif
-            .extend_from_slice(&webp_chunk(b"EXIF", &exif_orientation_payload(6)));
+        with_exif.extend_from_slice(&webp_chunk(b"EXIF", &exif_orientation_payload(6)));
         let riff_len = (with_exif.len() - 8) as u32;
         with_exif[4..8].copy_from_slice(&riff_len.to_le_bytes());
         assert!(animated_webp_uses_exif_orientation(&with_exif));
@@ -927,8 +930,7 @@ mod tests {
         let mut with_iccp_webp = b"RIFF".to_vec();
         with_iccp_webp.extend_from_slice(&[0, 0, 0, 0]);
         with_iccp_webp.extend_from_slice(b"WEBP");
-        with_iccp_webp
-            .extend_from_slice(&webp_chunk(b"VP8X", &[0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
+        with_iccp_webp.extend_from_slice(&webp_chunk(b"VP8X", &[0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
         with_iccp_webp.extend_from_slice(&webp_chunk(b"ANIM", &[0; 6]));
         with_iccp_webp.extend_from_slice(&webp_chunk(b"ICCP", b"profile"));
         let riff_len = (with_iccp_webp.len() - 8) as u32;
@@ -943,7 +945,7 @@ mod tests {
         // size 0 → 6-byte table), bg 0, aspect 0.
         body.extend_from_slice(&[0x02, 0x00, 0x02, 0x00, 0x80, 0x00, 0x00]);
         body.extend_from_slice(&[0u8; 6]); // 2-entry GCT (3 * 2^1)
-        // Comment extension — metadata, must be dropped.
+                                           // Comment extension — metadata, must be dropped.
         body.extend_from_slice(&[0x21, 0xfe, 3, b'a', b'b', b'c', 0]);
         // NETSCAPE looping extension — must be kept.
         body.extend_from_slice(&[

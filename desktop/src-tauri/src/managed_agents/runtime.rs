@@ -862,11 +862,13 @@ pub fn spawn_agent_child(
         );
     }
 
-    // User env (descriptor.env): fully-layered floor→runtime→definition→global→persona→agent,
-    // reserved-key filtered. Written last so user-explicit values win over Buzz-set env.
-    for (key, value) in &descriptor.env {
-        command.env(key, value);
-    }
+    // Derived NIP-AM attribution, then the layered user env (which wins); see
+    // `usage_attribution::apply_user_and_attribution_env` for why one function.
+    super::usage_attribution::apply_user_and_attribution_env(
+        &mut command,
+        record.usage_attribution.as_ref(),
+        &descriptor.env,
+    );
 
     // B5: carry persisted effort; harness resolves thought_level configId at first session.
     // Written AFTER descriptor.env so the canonical persisted value wins over any

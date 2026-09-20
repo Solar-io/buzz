@@ -5505,7 +5505,10 @@ mod tests {
         .to_string();
         let ev = make_agent_voice_content(&content, KIND_AGENT_VOICE_D_TAG);
         let err = validate_agent_voice_envelope(&ev).unwrap_err();
-        assert!(err.contains("`local-synth`, `pocket`, or `eleven`"), "got: {err}");
+        assert!(
+            err.contains("`local-synth`, `pocket`, or `eleven`"),
+            "got: {err}"
+        );
     }
 
     #[test]

@@ -1121,7 +1121,11 @@ mod content_tests {
         // that nothing on the send path ever reads. Same class as the proxy
         // and TLS entries: the parent was configured correctly and the child
         // could not see it.
-        for var in ["BUZZ_ACP_SESSION_ID", "BUZZ_ACP_DISPLAY_NAME", "BUZZ_ACP_CLAIMS_FILE"] {
+        for var in [
+            "BUZZ_ACP_SESSION_ID",
+            "BUZZ_ACP_DISPLAY_NAME",
+            "BUZZ_ACP_CLAIMS_FILE",
+        ] {
             assert!(
                 PASSTHROUGH_ENV.contains(&var),
                 "{var} must survive env_clear() or the CLI send gate is silently disarmed"
@@ -1136,10 +1140,19 @@ mod content_tests {
         // must say so, because every downstream effect is silent by design.
         // An unmanaged parent (no pin anywhere) is the human/ad-hoc shape and
         // must stay quiet — that is the gate's standing fail-open contract.
-        assert!(session_pin_dropped(true, false), "parent had the pin and the child lost it — warn");
+        assert!(
+            session_pin_dropped(true, false),
+            "parent had the pin and the child lost it — warn"
+        );
         assert!(!session_pin_dropped(true, true), "pin survived — quiet");
-        assert!(!session_pin_dropped(false, false), "unmanaged parent — the gate never applied, stay quiet");
-        assert!(!session_pin_dropped(false, true), "child invented a pin — not ours to police");
+        assert!(
+            !session_pin_dropped(false, false),
+            "unmanaged parent — the gate never applied, stay quiet"
+        );
+        assert!(
+            !session_pin_dropped(false, true),
+            "child invented a pin — not ours to police"
+        );
     }
 
     #[test]
@@ -1149,10 +1162,19 @@ mod content_tests {
         // check must agree: `is_ok()` alone is true for `""`, which would
         // keep the tripwire silent through exactly the shape it exists to
         // catch (an exported-but-empty pin riding through a shell).
-        assert!(!pin_is_live(Some(String::new())), "empty string is not a live pin");
-        assert!(!pin_is_live(Some("   ".to_string())), "whitespace is not a live pin");
+        assert!(
+            !pin_is_live(Some(String::new())),
+            "empty string is not a live pin"
+        );
+        assert!(
+            !pin_is_live(Some("   ".to_string())),
+            "whitespace is not a live pin"
+        );
         assert!(!pin_is_live(None), "absent is not a live pin");
-        assert!(pin_is_live(Some("boot-uuid:0".to_string())), "a real slot id is live");
+        assert!(
+            pin_is_live(Some("boot-uuid:0".to_string())),
+            "a real slot id is live"
+        );
     }
 
     #[test]

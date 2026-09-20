@@ -607,8 +607,13 @@ mod tests {
         let channel = channel_c();
         for age in [151, 200, 366, 425, 589, 599] {
             assert!(
-                evaluate_hold(&doc_with_turn(&channel, age), &channel, "me-boot:7", Utc::now())
-                    .is_none(),
+                evaluate_hold(
+                    &doc_with_turn(&channel, age),
+                    &channel,
+                    "me-boot:7",
+                    Utc::now()
+                )
+                .is_none(),
                 "a claim {age}s stale (dead holder, inside old 600s TTL) must not hold"
             );
         }

@@ -11,7 +11,8 @@ use crate::{
         managed_agent_avatar_url, normalize_agent_args, resolve_provider_binary,
         save_managed_agents, start_managed_agent_process, stop_managed_agent_process,
         stop_managed_agent_workspace_pair, sync_managed_agent_processes, try_regenerate_nest,
-        validate_provider_config, BackendKind, CreateManagedAgentRequest,
+        usage_attribution::inherited_from_definition, validate_provider_config, BackendKind,
+        CreateManagedAgentRequest,
         CreateManagedAgentResponse, ManagedAgentRecord, ManagedAgentSummary, RelayMeshConfig,
         DEFAULT_ACP_COMMAND, DEFAULT_AGENT_PARALLELISM, DEFAULT_AGENT_TURN_TIMEOUT_SECONDS,
     },
@@ -732,6 +733,9 @@ pub async fn create_managed_agent(
                 relay_mesh.clone()
             },
             effort_level: None,
+            // Delete+respawn mints a fresh pubkey; inheriting the definition's
+            // row keeps the owner's confirmed subscription identity alive.
+            usage_attribution: inherited_from_definition(&records, requested_persona_id.as_deref()),
         };
 
         records.push(record);

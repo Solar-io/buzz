@@ -448,6 +448,7 @@ fn bare_record() -> ManagedAgentRecord {
         definition_respond_to: None,
         definition_respond_to_allowlist: vec![],
         definition_parallelism: None,
+        usage_attribution: None,
     }
 }
 
