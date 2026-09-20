@@ -617,3 +617,124 @@ test("a solo thread never auto-tags", async () => {
     await panel.unmount();
   }
 });
+
+// The lurker (QA mutation gap): a THIRD identity opened the pane on a
+// two-author thread — the viewer authored nothing. They are not "the other
+// side" of anybody's conversation, so nobody gets auto-tagged. This is the
+// only test that fails when the viewer-is-author half of the gate is
+// dropped: the size check alone cannot catch it (the set is still exactly 2).
+test("a lurker viewing a two-author thread auto-tags nobody", async () => {
+  const panel = await mountPanel({
+    fixture: twoAuthorFixture,
+    selfPubkey: CAROL,
+    profiles: new Map([
+      [ALICE, { name: "Alice", displayName: "Alice Coil" }],
+      [BOB, { name: "Bob", displayName: "Bob" }],
+    ]),
+  });
+  try {
+    assert.ok(
+      !panel.container.querySelector('[data-testid="composer-auto-notify"]'),
+      "no hint: Carol never posted, so there is no conversation partner to name",
+    );
+    await panel.type("joining late");
+    await panel.send();
+    assert.deepEqual(
+      panel.sent[0].mentionPubkeys,
+      [],
+      "neither Alice nor Bob is tagged beyond what the text itself resolves",
+    );
+  } finally {
+    await panel.unmount();
+  }
+});
+
+// Ordering + dedupe across sources: the explicit @ lands FIRST (it is what
+// the author typed), the automatic key APPENDS — a reader of the raw event
+// can tell the deliberate tag from the implied one.
+test("an explicit third-party mention comes first, the auto-tag appends after it", async () => {
+  const panel = await mountPanel({
+    fixture: twoAuthorFixture,
+    selfPubkey: BOB,
+    members: [{ pubkey: CAROL, name: "Carol" }],
+    profiles: new Map([[CAROL, { name: "Carol", displayName: "Carol" }]]),
+  });
+  try {
+    await panel.type("cc @Carol");
+    await panel.send();
+    assert.deepEqual(
+      panel.sent[0].mentionPubkeys,
+      [CAROL, ALICE],
+      "explicit picks keep their position; Alice (the other thread author) appends",
+    );
+  } finally {
+    await panel.unmount();
+  }
+});
+
+// The deleted-author filter, both sides. threadDescendants keeps deleted rows
+// (their children must stay attached), so the author set is computed over
+// non-deleted messages only — a deletion must RETRACT the author whose every
+// message is gone, but never retract someone who still has a live message.
+test("deleted messages drive the author set, not just hide rows", async () => {
+  // (a) Alice's ONLY message is deleted: she has left the conversation. The
+  // thread is Bob's solo now, and Bob's send tags nobody.
+  const soloAfterDeletion = twoAuthorFixture();
+  soloAfterDeletion.root.deleted = true;
+  const panelA = await mountPanel({
+    fixture: () => soloAfterDeletion,
+    selfPubkey: BOB,
+    profiles: new Map([[BOB, { name: "Bob", displayName: "Bob" }]]),
+  });
+  try {
+    assert.ok(
+      !panelA.container.querySelector('[data-testid="composer-auto-notify"]'),
+      "no hint: the only surviving author is the sender",
+    );
+    await panelA.type("anyone there?");
+    await panelA.send();
+    assert.deepEqual(
+      panelA.sent[0].mentionPubkeys,
+      [],
+      "a deleted root author is not tagged",
+    );
+  } finally {
+    await panelA.unmount();
+  }
+
+  // (b) Alice has a deleted reply AND a live root: the deletion hides a row,
+  // it does not un-author her. Still a two-person thread — the auto-tag fires.
+  const mixedDeletion = twoAuthorFixture();
+  const messages = mixedDeletion.buffer;
+  const deletedReply = channelEvent({
+    id: "deleted-reply",
+    pubkey: ALICE,
+    createdAt: 1_020,
+    content: "retracted",
+    tags: [["e", "root-event", "", "reply"]],
+  });
+  messages.push(timelineMessageFromEvent(deletedReply));
+  messages[2].deleted = true;
+  const panelB = await mountPanel({
+    fixture: () => mixedDeletion,
+    selfPubkey: BOB,
+    profiles: new Map([[ALICE, { name: "Alice", displayName: "Alice Coil" }]]),
+  });
+  try {
+    assert.match(
+      panelB.container.querySelector('[data-testid="composer-auto-notify"]')
+        ?.textContent ?? "",
+      /^Alice Coil will be notified$/,
+      "Alice still counts through her live root",
+    );
+    await panelB.type("still here");
+    await panelB.send();
+    assert.deepEqual(
+      panelB.sent[0].mentionPubkeys,
+      [ALICE],
+      "the auto-tag survives a deleted reply by the same author",
+    );
+  } finally {
+    await panelB.unmount();
+  }
+});
