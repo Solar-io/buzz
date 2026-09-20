@@ -177,22 +177,25 @@ async function mountComposer(options = {}) {
   const container = dom.window.document.createElement("div");
   dom.window.document.body.appendChild(container);
   const root = createRoot(container);
-  await act(async () => {
-    root.render(
-      React.createElement(Composer, {
-        members: options.members ?? [],
-        profiles: options.profiles ?? new Map(),
-        strictMentions: options.strictMentions ?? false,
-        threadRef: null,
-        onClearThread: () => {},
-        send:
-          options.send ??
-          (async (payload) => {
-            sent.push(payload);
-            return { ok: true, message: "" };
-          }),
+  const props = {
+    members: options.members ?? [],
+    profiles: options.profiles ?? new Map(),
+    strictMentions: options.strictMentions ?? false,
+    send:
+      options.send ??
+      (async (payload) => {
+        sent.push(payload);
+        return { ok: true, message: "" };
       }),
-    );
+  };
+  if (!options.omitThreadProps) {
+    // The channel main composer's historical shape. `omitThreadProps` mounts
+    // the composer the way repos.tsx does NOW — no threadRef at all.
+    props.threadRef = null;
+    props.onClearThread = () => {};
+  }
+  await act(async () => {
+    root.render(React.createElement(Composer, props));
   });
   await flush();
   return {
@@ -396,6 +399,47 @@ test("strict huddle mode still sends ordinary email and package text", async () 
       "Email support@example.com about @scope/package.",
     );
     assert.deepEqual(composer.sent[0].mentionPubkeys, []);
+  } finally {
+    await composer.unmount();
+  }
+});
+
+// The channel main composer no longer takes a threadRef at all (Sam
+// 2026-09-20): with a thread open in the right pane, typing HERE must post
+// TOP-LEVEL — the thread pane's own composer is the only one that targets the
+// thread. Mutation guard: if the send payload carried anything but null (an
+// undefined, or a leaked root ref), the wire would thread the message after
+// all. `null` is asserted exactly — not `falsy` — so undefined fails too.
+test("a composer with no threadRef prop posts top-level (threadRef null)", async () => {
+  const composer = await mountComposer({ omitThreadProps: true });
+  try {
+    assert.ok(
+      !composer.container.textContent.includes("Replying in thread"),
+      "no thread hint renders without a threadRef",
+    );
+    const input = composer.container.querySelector(
+      '[data-testid="composer-input"]',
+    );
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        dom.window.HTMLTextAreaElement.prototype,
+        "value",
+      ).set.call(input, "top-level channel message");
+      input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    });
+    await flush();
+    await act(async () => {
+      composer.container
+        .querySelector('[aria-label="Send"]')
+        .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+    assert.equal(composer.sent.length, 1);
+    assert.equal(
+      composer.sent[0].threadRef,
+      null,
+      "the payload carries threadRef null, not undefined, not a root",
+    );
   } finally {
     await composer.unmount();
   }

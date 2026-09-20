@@ -1,19 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { MessageBuffer, TimelineMessage } from "../lib/messageBuffer.ts";
 import type { ChannelMember, Profile } from "../hooks.ts";
-import {
-  replyTargetMessage,
-  resolveThreadReplyRef,
-} from "../lib/threadTarget.ts";
 import { threadParticipants, threadSummaryLine } from "../lib/threadSummary.ts";
 import {
-  ancestorsOfMessage,
   branchSummary,
-  buildThreadEntries,
   buildThreadIndex,
-  initialExpandedIds,
   threadDescendants,
-  type ThreadBranchSummary,
 } from "../lib/threadTree.ts";
 import {
   mergeThreadCounts,
@@ -50,27 +42,43 @@ const THREAD_DOCK_CLASSES =
 
 /**
  * Thread view in the desktop client's shape: a "Thread" header with the reply
- * count, the root message on a rounded card, the thread's replies, and a
- * composer that replies into the thread (NIP-10 root/reply tags). At lg+ the
+ * count, the root message, the thread's replies, and a composer. At lg+ the
  * panel docks right; its width comes from the shared --thread-width CSS
  * variable the shell maintains (drag handle there).
  *
- * THREADS NEST. Replies used to render as one flat list under the root,
- * which threw away exactly the information the NIP-10 `reply` marker exists
- * to carry: mid-thread answers looked like answers to the thread. The panel
- * now renders the tree the markers describe — direct replies at the top
- * level, a sub-branch collapsed behind a "N replies" chip until it is
- * expanded, and depth as indent (lib/threadTree.ts, ported from the
- * desktop's `threadPanel.ts` + `threadTreeLayout.ts`).
+ * THE THREAD IS FLAT (Sam 2026-09-20). One click from the main chat shows the
+ * whole conversation: the pane renders the root and EVERY descendant of it,
+ * oldest first, as ordinary full rows — no indent ladder, no collapsed
+ * "N replies" chip, no second click to open a sub-branch. A reply nested two
+ * levels deep by some other client lands here as a plain row like any other
+ * (`threadDescendants` already walks the whole subtree, whatever depth the
+ * NIP-10 markers describe). This supersedes the tree rendering this panel
+ * carried before, and with it the affordances that only made sense there:
+ * the ↩ "reply to THIS reply" picker is gone from pane rows — the composer
+ * below ALWAYS answers the root, so per-row targeting inside the pane could
+ * only lie about where the send would land.
  *
- * The reply count in the header is the whole SUBTREE, and it is reconciled
- * with the relay's materialised `descendant_count` when a kind-39005 overlay
- * has arrived for this root — so a thread whose older replies are outside
- * the loaded buffer still reports its real size.
+ * That also retires two cards whose mechanism was expansion:
+ * - D-041 (card answers must be visible on open): they now always are — a
+ *   flat list hides nothing behind a chip.
+ * - D-050 (expand a permalink's ancestors before jumping): there are no
+ *   collapsed ancestors left to expand, so the permalink target's row exists
+ *   on the first render and the list can jump straight to it.
  *
- * The composer's NIP-10 `reply` marker names the message the author chose to
- * respond to — the thread root by default, or whichever reply the reader
- * picked with its ↩ button. See lib/threadTarget.ts.
+ * The tree machinery itself stays in lib/threadTree.ts — the forum views
+ * still render threaded, and the index/stats half of the lib still feeds this
+ * panel's header counts.
+ *
+ * The reply count in the header is the whole SUBTREE, reconciled with the
+ * relay's materialised `descendant_count` when a kind-39005 overlay has
+ * arrived for this root — so a thread whose older replies are outside the
+ * loaded buffer still reports its real size.
+ *
+ * The composer's NIP-10 shape is constant: `threadRef {rootId, replyToId:
+ * rootId}` — the single `["e", root, "", "reply"]` tag `sendChannelMessage`
+ * derives from it. Replies sent from the pane are always answers to the
+ * thread, never to a mid-thread parent. See lib/threadTarget.ts for the wire
+ * convention.
  */
 export function ThreadPanel({
   root,
@@ -117,29 +125,6 @@ export function ThreadPanel({
 }) {
   const layoutMode = useThreadLayout();
   const rootId = root.id;
-  /** Replies whose own sub-branch is expanded in place. */
-  const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
-  /**
-   * Replies already accounted for by the auto-expand below — seeded on open
-   * so only arrivals WHILE THIS PANEL IS OPEN trigger expansion.
-   */
-  const seenReplyIds = useRef<Set<string>>(new Set());
-  // Which message the composer is replying to. Null = the thread itself,
-  // whose NIP-10 parent is the root. Cleared whenever a different thread
-  // opens so a selection can never carry over to another root.
-  const [selectedReplyId, setSelectedReplyId] = useState<string | null>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: rootId is the reset trigger, not a value read inside the effect
-  useEffect(() => {
-    setSelectedReplyId(null);
-    // D-041: a decision card's answers are the point of the card — its
-    // branch opens expanded, not behind an "N replies" chip.
-    setExpandedIds(initialExpandedIds(buffer, rootId));
-    seenReplyIds.current = new Set(
-      threadDescendants(buildThreadIndex(buffer), rootId).map((m) => m.id),
-    );
-  }, [rootId]);
 
   const index = useMemo(() => buildThreadIndex(buffer), [buffer]);
   /** Every reply under this root, at any depth, oldest first. */
@@ -147,98 +132,9 @@ export function ThreadPanel({
     () => threadDescendants(index, rootId),
     [index, rootId],
   );
-  /**
-   * D-041: a reply that arrives under a collapsed branch while this panel
-   * is open expands that branch — otherwise the panel visibly does nothing
-   * with a nested answer (the exact misread that filed D-041 as data loss:
-   * three observers watched card answers land "invisible"). Expansion of an
-   * already-expanded id is a no-op, so this only ever opens what a new
-   * arrival actually needs.
-   */
-  useEffect(() => {
-    const fresh = replies.filter((m) => !seenReplyIds.current.has(m.id));
-    if (fresh.length === 0) {
-      return;
-    }
-    for (const message of fresh) {
-      seenReplyIds.current.add(message.id);
-    }
-    setExpandedIds((previous) => {
-      const additions = new Set<string>();
-      for (const message of fresh) {
-        for (const ancestor of ancestorsOfMessage(index, message.id)) {
-          if (!previous.has(ancestor)) {
-            additions.add(ancestor);
-          }
-        }
-      }
-      if (additions.size === 0) {
-        return previous;
-      }
-      const next = new Set(previous);
-      for (const id of additions) {
-        next.add(id);
-      }
-      return next;
-    });
-  }, [replies, index]);
-  /**
-   * D-050: a permalink to a reply nested in a still-collapsed branch needs
-   * that branch expanded BEFORE its row exists for the list's jump — the
-   * card seeding above covers card branches; this covers every other
-   * nested target.
-   */
-  useEffect(() => {
-    if (!permalinkMessageId) {
-      return;
-    }
-    setExpandedIds((previous) => {
-      const ancestors = ancestorsOfMessage(index, permalinkMessageId);
-      if (ancestors.every((id) => previous.has(id))) {
-        return previous;
-      }
-      const next = new Set(previous);
-      for (const id of ancestors) {
-        next.add(id);
-      }
-      return next;
-    });
-  }, [permalinkMessageId, index]);
-  const entries = useMemo(
-    () => buildThreadEntries(index, rootId, expandedIds),
-    [index, rootId, expandedIds],
-  );
-  const threadMessages = useMemo(
-    () => [root, ...entries.map((entry) => entry.message)],
-    [root, entries],
-  );
-  const depthById = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const entry of entries) {
-      map.set(entry.message.id, entry.depth);
-    }
-    return map;
-  }, [entries]);
-  const summaryById = useMemo(() => {
-    const map = new Map<string, ThreadBranchSummary>();
-    for (const entry of entries) {
-      if (entry.summary) {
-        map.set(entry.message.id, entry.summary);
-      }
-    }
-    return map;
-  }, [entries]);
-  const onExpand = useCallback((parentId: string) => {
-    setExpandedIds((previous) => {
-      const next = new Set(previous);
-      next.add(parentId);
-      return next;
-    });
-  }, []);
-  const threadLayout = useMemo(
-    () => ({ depthById, summaryById, onExpand }),
-    [depthById, summaryById, onExpand],
-  );
+  // Flat rendering: the root plus every descendant, one row each. A nested
+  // reply (parent = another reply) is a row here exactly like a direct one.
+  const threadMessages = useMemo(() => [root, ...replies], [root, replies]);
 
   const localSummary = branchSummary(index, rootId);
   const counts = mergeThreadCounts(
@@ -283,9 +179,11 @@ export function ThreadPanel({
   );
   const summary = threadSummaryLine(counts.descendantCount, counts.lastReplyAt);
 
-  const threadRef = resolveThreadReplyRef(rootId, replies, selectedReplyId);
-  const target = replyTargetMessage(rootId, replies, selectedReplyId);
   const rootAuthor = authorLabel(root.authorPubkey, profiles);
+  // The composer ALWAYS answers the thread itself — there is no mid-thread
+  // target to aim at anymore, and the wire shape is the constant single
+  // ["e", root, "", "reply"] tag (see the docblock).
+  const rootThreadRef = { rootId, replyToId: rootId };
 
   return (
     // Below lg the thread is a full-screen sheet (safe-area aware) — a third
@@ -354,13 +252,10 @@ export function ThreadPanel({
         messages={threadMessages}
         profiles={profiles}
         replyCounts={new Map()}
-        // Inside a thread the row's ↩ button picks the reply TARGET rather
-        // than opening a nested panel — the nesting is rendered in place.
-        onOpenThread={(message) => setSelectedReplyId(message.id)}
-        activeRootId={threadRef.replyToId}
+        // Flat rows, no tree layout, and no onOpenThread: an in-pane ↩ would
+        // only promise a mid-thread parent the composer no longer sends.
         selfPubkey={selfPubkey}
         flat
-        threadLayout={threadLayout}
         tailKey={`${rootId}:${lastReply.id}:${threadMessages.length}`}
         highlightId={permalinkMessageId}
         scrollToMessageId={permalinkMessageId}
@@ -368,30 +263,13 @@ export function ThreadPanel({
       <Composer
         members={members}
         profiles={profiles}
-        threadRef={threadRef}
-        replyTarget={
-          target
-            ? {
-                author: authorLabel(target.authorPubkey, profiles),
-                body: target.content,
-              }
-            : null
-        }
-        // With no mid-thread target the composer answers the thread itself, so
-        // the hint names its root author (the desktop's
-        // `Reply in thread to <head author>`). With a target, the placeholder
-        // falls through to "Reply to <author>" and the banner quotes them.
-        placeholder={target ? undefined : `Reply in thread to ${rootAuthor}`}
+        threadRef={rootThreadRef}
+        // The composer answers the thread itself, so the hint names its root
+        // author (the desktop's `Reply in thread to <head author>`).
+        placeholder={`Reply in thread to ${rootAuthor}`}
         strictMentions={strictMentions}
-        onClearThread={() => {
-          // Esc steps back one level: drop a mid-thread target first, and
-          // only close the panel once the composer is aimed at the thread.
-          if (selectedReplyId) {
-            setSelectedReplyId(null);
-            return;
-          }
-          onClose();
-        }}
+        // Esc has nothing mid-thread to step back out of — it closes the pane.
+        onClearThread={onClose}
         send={send}
       />
     </aside>

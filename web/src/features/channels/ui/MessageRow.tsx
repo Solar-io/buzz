@@ -90,7 +90,13 @@ export function MessageRow({
   profiles: Map<string, Profile>;
   grouped: boolean;
   replyCount: number;
-  onOpenThread: (message: TimelineMessage) => void;
+  /**
+   * Open this message's thread pane. Optional: a flat list (the thread panel)
+   * passes nothing — no "View all N replies" button and no ↩ action, because
+   * an in-pane reply target would promise a parent the pane's composer never
+   * sends to (Sam 2026-09-20).
+   */
+  onOpenThread?: (message: TimelineMessage) => void;
   active: boolean;
   reactionGroups: ReactionGroup[];
   onReact?: (messageId: string, emoji: string) => void;
@@ -251,7 +257,7 @@ export function MessageRow({
               </span>
             )}
             <LinkPreviewCards previews={message.linkPreviews} />
-            {replyCount > 2 && (
+            {replyCount > 2 && onOpenThread && (
               <button
                 type="button"
                 className="mt-0.5 text-sm font-medium text-primary hover:underline"
@@ -282,7 +288,9 @@ export function MessageRow({
               onReact={
                 onReact ? (emoji) => onReact(message.id, emoji) : undefined
               }
-              onReply={() => onOpenThread(message)}
+              // The ↩ affordance only exists where "reply in thread" is a
+              // real navigation; flat rows drop it along with onOpenThread.
+              onReply={onOpenThread ? () => onOpenThread(message) : undefined}
               onShare={onShare ? () => onShare(message.id) : undefined}
               onEdit={onEdit ? () => onEdit(message) : undefined}
               onDelete={onDelete ? () => onDelete(message.id) : undefined}

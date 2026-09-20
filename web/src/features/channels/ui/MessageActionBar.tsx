@@ -83,7 +83,13 @@ export function MessageActionBar({
    */
   messagePreview?: string;
   onReact?: (emoji: string) => void;
-  onReply: () => void;
+  /**
+   * Open the thread on this message. Optional: rows that cannot offer it
+   * (inside the flat thread pane) omit it, and the ↩ button drops out rather
+   * than promising a mid-thread reply the composer would not send
+   * (Sam 2026-09-20).
+   */
+  onReply?: () => void;
   onShare?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
@@ -274,16 +280,18 @@ export function MessageActionBar({
           </>
         )}
 
-        <button
-          type="button"
-          aria-label="Reply in thread"
-          title="Reply in thread"
-          data-testid={`reply-message-${messageId}`}
-          className={ACTION_BUTTON_CLASS}
-          onClick={onReply}
-        >
-          <CornerUpLeft className={ACTION_ICON_CLASS} aria-hidden="true" />
-        </button>
+        {onReply && (
+          <button
+            type="button"
+            aria-label="Reply in thread"
+            title="Reply in thread"
+            data-testid={`reply-message-${messageId}`}
+            className={ACTION_BUTTON_CLASS}
+            onClick={onReply}
+          >
+            <CornerUpLeft className={ACTION_ICON_CLASS} aria-hidden="true" />
+          </button>
+        )}
 
         {onShare && (
           <button

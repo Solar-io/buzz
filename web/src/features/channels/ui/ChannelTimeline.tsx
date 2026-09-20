@@ -115,7 +115,14 @@ export function ChannelTimeline({
   messages: MessageBuffer;
   profiles: Map<string, Profile>;
   replyCounts: Map<string, number>;
-  onOpenThread: (message: TimelineMessage) => void;
+  /**
+   * Open a message's thread pane. Optional: a flat list must not offer it —
+   * the thread panel passes nothing, because an in-pane ↩ would promise a
+   * mid-thread parent its composer no longer sends (Sam 2026-09-20). Without
+   * it the previews, the "View all N replies" button and the ↩ action all
+   * drop out of the rows.
+   */
+  onOpenThread?: (message: TimelineMessage) => void;
   /** Root id of the currently open thread — highlights it in the timeline. */
   activeRootId?: string | null;
   /**
@@ -520,7 +527,10 @@ export function ChannelTimeline({
         pending={pending.has(message.id)}
         selfPubkey={selfPubkey}
       >
-        {replies.length > 0 && (
+        {replies.length > 0 && onOpenThread && (
+          // Previews only exist on a non-flat timeline, where every caller
+          // still passes onOpenThread — the guard is for the seam, not the
+          // current callers.
           <ThreadPreview
             replies={replies}
             profiles={profiles}
@@ -1013,7 +1023,7 @@ function ThreadPreview({
 }: {
   replies: TimelineMessage[];
   profiles: Map<string, Profile>;
-  onOpenThread: (message: TimelineMessage) => void;
+  onOpenThread?: (message: TimelineMessage) => void;
   root: TimelineMessage;
 }) {
   const newest = [...replies].sort((a, b) => b.createdAt - a.createdAt);
@@ -1025,7 +1035,7 @@ function ThreadPreview({
           key={reply.id}
           type="button"
           className="flex w-full items-center gap-2 rounded-lg py-0.5 pr-2 text-left hover:bg-muted/50"
-          onClick={() => onOpenThread(root)}
+          onClick={() => onOpenThread?.(root)}
         >
           <AuthorAvatar
             pubkey={reply.authorPubkey}
@@ -1045,7 +1055,7 @@ function ThreadPreview({
         <button
           type="button"
           className="py-0.5 pr-2 text-sm font-medium text-muted-foreground hover:underline"
-          onClick={() => onOpenThread(root)}
+          onClick={() => onOpenThread?.(root)}
         >
           +{newest.length - shown.length} more →
         </button>
