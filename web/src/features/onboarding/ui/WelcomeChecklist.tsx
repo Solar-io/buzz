@@ -19,6 +19,7 @@ import type {
   ChecklistItemId,
 } from "../lib/onboardingChecklist.ts";
 import { useOnboardingChecklist } from "../useOnboardingChecklist";
+import type { OnboardingChecklistState } from "../useOnboardingChecklist";
 
 /** Where each item sends you. Settings is one route; the rest are panes. */
 const DESTINATIONS: Record<ChecklistItemId, { to: string; search?: object }> = {
@@ -130,6 +131,143 @@ export function WelcomeChecklist({
       {progress.hasOutstandingCritical ? (
         <p className="text-xs text-muted-foreground/70">
           This panel keeps itself open until your key is backed up — that is the
+          one step nothing else can undo for you.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+/**
+ * Where each checklist item lands in the redesigned settings: the same facts
+ * drive both this strip and the settings nav's backup badge, and each pending
+ * chip takes you to the group that owns the step. `"channels"` leaves
+ * settings for the shell.
+ */
+export type ChecklistTarget =
+  | "account"
+  | "notifications"
+  | "appearance"
+  | "security"
+  | "channels";
+
+export interface WelcomeChecklistChipProps {
+  /** The checklist item this chip renders. */
+  item: ChecklistItem;
+  onNavigate: (item: ChecklistItem, target: ChecklistTarget) => void;
+}
+
+function StripChip({ item, onNavigate }: WelcomeChecklistChipProps) {
+  return (
+    <button
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors",
+        item.done
+          ? "border-border/60 text-muted-foreground/70"
+          : "border-border hover:border-primary",
+      )}
+      data-testid={`checklist-chip-${item.id}`}
+      onClick={() =>
+        onNavigate(item, item.done ? "account" : CHECKLIST_TARGETS[item.id])
+      }
+      type="button"
+    >
+      <span
+        className={cn(
+          "block h-1.5 w-1.5 rounded-full",
+          item.done
+            ? "bg-emerald-600 dark:bg-emerald-400"
+            : item.critical
+              ? "bg-amber-600 dark:bg-amber-400"
+              : "bg-muted-foreground/50",
+        )}
+      />
+      <span className={cn(item.done && "line-through")}>{item.title}</span>
+    </button>
+  );
+}
+
+const CHECKLIST_TARGETS: Record<ChecklistItemId, ChecklistTarget> = {
+  profile: "account",
+  backup: "security",
+  notifications: "notifications",
+  theme: "appearance",
+  channel: "channels",
+};
+
+/**
+ * The checklist as a compact dismissible strip, for the top of the settings
+ * Account pane: one progress line and a chip per item instead of the full
+ * cards. Completion state comes from the same `useOnboardingChecklist` facts
+ * as the full panel — items tick and un-tick with reality, and a dismissed
+ * strip stays hidden unless the key backup (the one critical item) is still
+ * outstanding, exactly like the shell pane.
+ */
+export function WelcomeChecklistStrip({
+  state,
+  onNavigate,
+}: {
+  state: OnboardingChecklistState;
+  onNavigate: (item: ChecklistItem, target: ChecklistTarget) => void;
+}) {
+  const { dismiss, dismissed, items, progress, restore, visible } = state;
+
+  if (!visible) return null;
+
+  return (
+    <section
+      className="rounded-lg border border-primary/30 bg-primary/5 p-4"
+      data-testid="welcome-checklist-strip"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">
+            Getting set up · {progress.done} of {progress.total} done
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {progress.hasOutstandingCritical
+              ? "One of these protects your identity — the rest are optional."
+              : "Optional steps, whenever you like."}
+          </p>
+        </div>
+        {progress.hasOutstandingCritical ? (
+          <div
+            aria-hidden
+            className="h-1.5 w-24 overflow-hidden rounded-full bg-muted"
+          >
+            <div
+              className="h-full rounded-full bg-primary transition-[width]"
+              style={{
+                width: `${progress.total === 0 ? 0 : Math.round((progress.done / progress.total) * 100)}%`,
+              }}
+            />
+          </div>
+        ) : dismissed ? (
+          <Button onClick={restore} size="sm" variant="ghost">
+            Show again
+          </Button>
+        ) : (
+          <Button
+            aria-label="Dismiss the setup checklist"
+            onClick={dismiss}
+            size="sm"
+            variant="ghost"
+          >
+            <X className="mr-1 h-3.5 w-3.5" />
+            Dismiss
+          </Button>
+        )}
+      </div>
+
+      <div className="mt-2.5 flex flex-wrap gap-2">
+        {items.map((item) => (
+          <StripChip item={item} key={item.id} onNavigate={onNavigate} />
+        ))}
+      </div>
+
+      {progress.hasOutstandingCritical ? (
+        <p className="mt-2 text-xs text-muted-foreground/70">
+          This strip keeps itself open until your key is backed up — that is the
           one step nothing else can undo for you.
         </p>
       ) : null}

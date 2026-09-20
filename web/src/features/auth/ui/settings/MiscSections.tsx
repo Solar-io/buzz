@@ -15,32 +15,13 @@ import {
   getConfiguredFilesUrl,
   setConfiguredFilesUrl,
 } from "@/features/files/filesConfig";
-import { NotificationSettingsDialog } from "@/features/notifications/ui/NotificationSettingsDialog";
 
-/**
- * Notifications entry point.
- *
- * The dialog owns the permission prompt, because the browser only grants
- * permission from a real user gesture — so it has to be raised from the
- * control the user actually clicked, not on mount.
+/*
+ * Notifications has no entry point here any more: the settings redesign
+ * promotes it to a real pane, and the dialog's controls live in
+ * `NotificationSettingsPanel` (features/notifications) — rendered inline,
+ * still prompting only from the switch's own change event.
  */
-export function NotificationsSection() {
-  const [open, setOpen] = useState(false);
-  return (
-    <section className="space-y-2 rounded-lg border border-border bg-card p-4">
-      <div className="flex items-center justify-between gap-4">
-        <h2 className="font-medium">Notifications</h2>
-        <Button variant="ghost" size="sm" onClick={() => setOpen(true)}>
-          Manage
-        </Button>
-      </div>
-      <p className="text-sm text-muted-foreground">
-        Choose what alerts you when Buzz is in a background tab.
-      </p>
-      <NotificationSettingsDialog open={open} onOpenChange={setOpen} />
-    </section>
-  );
-}
 
 export function AgentsSection() {
   return (
