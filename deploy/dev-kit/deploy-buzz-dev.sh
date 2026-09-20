@@ -58,11 +58,52 @@ HTTPS_PORT="$(registry_port https 2>/dev/null || echo '')"
 #                             omission caused the 2026-09-01 outage.
 #   compose.loopback.yml      pins the relay's publish to 127.0.0.1
 #   compose.pairing.yml       NIP-AB pairing sidecar
-#   compose.push-gateway.yml  the APNs push gateway (D-029), adopted from the
-#                             hand-rolled container deploy/push-gateway-up.sh
-#                             created. Its container_name is pinned, so compose
-#                             adopts the existing `buzz-push-gateway` rather
-#                             than standing a second one alongside it.
+#   compose.push-gateway.yml  the APNs push gateway (D-029). container_name is
+#                             pinned to `buzz-push-gateway` so everything that
+#                             addresses it by name keeps working.
+#
+# 🔴 COMPOSE DOES NOT ADOPT A FOREIGN CONTAINER. Measured 2026-09-20 in an
+# isolated lab project: compose matches containers by its own
+# `com.docker.compose.*` LABELS, never by name. The hand-rolled gateway that
+# deploy/push-gateway-up.sh created carries no such labels, so compose does not
+# see it as a candidate — it tries to create a new one and the daemon refuses
+# the name:
+#     Error response from daemon: Conflict. The container name
+#     "/buzz-push-gateway" is already in use by container "<id>"
+# `up` exits 1. `--force-recreate` gives the identical conflict, because it only
+# force-recreates containers compose already owns. This fails BEFORE anything is
+# touched, so it is a failed deploy and not an outage — but a first run after
+# this overlay landed WILL fail until the one-time cutover below is done by hand.
+#
+# ONE-TIME CUTOVER (rename, never remove — keeps it reversible):
+#     docker inspect buzz-push-gateway > /tmp/pg-preadopt.json
+#     docker rename buzz-push-gateway buzz-push-gateway-preadopt
+#     docker stop   buzz-push-gateway-preadopt      # frees 6359/6362
+#     ./deploy-buzz-dev.sh                          # compose creates its own
+#     curl -fsS --max-time 5 http://127.0.0.1:6362/_readiness
+#     docker rm buzz-push-gateway-preadopt          # ONLY after that passes
+# Rollback before that last line:
+#     docker rm -f buzz-push-gateway
+#     docker rename buzz-push-gateway-preadopt buzz-push-gateway
+#     docker start  buzz-push-gateway
+# Removing the old container instead of renaming it is the one step that can
+# leave nothing listening on 6359, so do not do it that way.
+#
+# Two consequences of the gateway now being compose-managed:
+#   - `--stop` DESTROYS it. It previously survived every `down`. No volume is at
+#     risk (the service has one read-only bind and no named volume; gateway
+#     state lives in the `buzz_push_gateway` database on the shared postgres
+#     service, and `--stop` correctly omits `-v`).
+#   - `up -d --wait` now gates on the gateway's healthcheck, up to 60s
+#     (interval 10s x 6 retries). The image itself declares NO healthcheck —
+#     `.Config.Healthcheck` is null — so the block in the overlay is
+#     load-bearing, not decorative. Deleting it does not fall back to a default;
+#     it leaves the container with no health signal at all.
+#
+# The image `buzz-push-gateway:capacitor-cutover-final` exists ONLY on this
+# host — it is in no registry. This script neither pulls nor builds it, so
+# nothing here trips on that; but it does mean deploy/push-gateway-up.sh stays
+# as the cold-rebuild path. Do not delete it.
 #
 # `compose.yml` is left RELATIVE, exactly as it was: every invocation cds into
 # $COMPOSE_DIR first, and that bare name is what fixes compose's project
@@ -89,7 +130,10 @@ case "$MODE" in
   stop)
     step "Stopping Buzz DEV"
     run bash -c "cd '$COMPOSE_DIR' && docker compose -p '$BUZZ_COMPOSE_PROJECT' --env-file .env$COMPOSE_FILES_Q down"
-    launchctl bootout "gui/$(id -u)/com.dev.buzz-relay" 2>/dev/null || true
+    # Through `run`, or `--stop --dry-run` really boots the launchd unit out —
+    # a dry run that mutates. The bootout at the bottom of this script is
+    # already DRY_RUN-guarded; this one was not.
+    run launchctl bootout "gui/$(id -u)/com.dev.buzz-relay" 2>/dev/null || true
     log "stopped (volumes preserved — 'docker compose down -v' would destroy data)"
     exit 0 ;;
 esac
