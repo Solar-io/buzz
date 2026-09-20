@@ -245,7 +245,7 @@ identity", which seeding will not undo.
 
 - Rust: 2,943 desktop tests pass (36 new across seeding, the absent case, spawn
   precedence, validation, grouping, the IPC surface, restart and respawn), plus
-  20 `buzz-core` and 4 `buzz-acp` attribution tests.
+  the full `buzz-core` suite at 271 tests and the full `buzz-acp` suite at 942.
 - Frontend: the complete desktop unit suite passes (5,725 tests, 12 new), plus
   `tsc --noEmit`, the production build, and focused Biome checks.
 - Playwright `agent-usage.spec.ts`: 13 pass (the 12 existing plus a confirm-flow
@@ -290,3 +290,107 @@ running app.
   required struct field and two module wirings. `types.rs` and
   `personas/snapshot/import.rs`, which this change would otherwise have pushed
   *over* the ceiling, were kept under it.
+
+## Independent QA remediation — 2026-09-19
+
+An independent QA pass raised four defects. Three were fixed; the fourth was
+taken to Sam and declined. What each one turned out to be:
+
+### Boot seeding — the untested layer, not a broken one
+
+QA read a 28-record dev store after two app boots, found no `usage_attribution`
+rows and no `seed-usage-attribution:` log line, and concluded the per-record
+decision was failing. It was not: feeding that exact store through the shipped
+`seed_records` seeds 22 rows and leaves 6 absent, and running the real app from
+this branch against a copy of it seeds 22 of 28 in the instance's own store and
+22 of 28 in the canonical dev store it shares, with both log lines present and
+the rows still in place afterwards. A second launch seeds 0 of 28 in each and
+rewrites neither file.
+
+The measured boot therefore did not contain this code. No `buzz-desktop` binary
+carrying it existed before the boot artifacts QA inspected were written, and the
+pre-feature binary still on disk at
+`projects/buzz/desktop/src-tauri/target/debug/buzz-desktop` resolves to exactly
+the data directory QA read — it contains `patch-json-records` and no
+`seed-usage-attribution` string at all.
+
+Two real defects sat behind the wrong conclusion, and both are fixed.
+
+- **The file and directory layer had no tests.** Every test called the pure
+  `seed_records`. Removing the write entirely left 2,948 desktop tests green.
+  Nine `on_disk` tests now drive real stores in temp directories, following
+  `materialize`'s `*_in_file` pattern, and `seed_target_dirs` /
+  `seed_usage_attribution_in_dirs` are split out so the directory resolution is
+  reachable without an `AppHandle`.
+- **The no-op branches were silent.** A missing store logged nothing, and a pass
+  that seeded zero rows returned without a word, so "ran and found nothing to do"
+  and "never ran" produced identical logs. Every branch now reports.
+
+### I/O ratio — marked, not declined
+
+The ratio dropped `incomplete` while both its band-neighbours propagated it, and
+it divides a complete input total by a partial output total. **The decision is to
+mark it, not to decline to compute it**: the figure is still useful to an owner,
+and the rest of the page marks partial values rather than hiding them. The marker
+is `(partial)` rather than `+` because `+` asserts a lower bound, and a partial
+denominator makes the displayed ratio an *upper* bound — so `+` here would be a
+new false claim rather than the propagation of an existing one. An absent input
+or output, or a reported zero output, still renders `—`.
+
+### Light-theme contrast
+
+All three light dimension values were below 4.5:1 for normal-size text, and they
+colour values and axis labels, not only chart fills. They are darkened along
+their own hue and saturation rather than replaced, so the page keeps the same
+three colours. The theme test asserted only root font size and horizontal
+overflow — facts identical in both themes — so it could not fail on a colour
+regression; it now emulates the colour scheme, proves which theme rendered from
+the measured surface luminance, and asserts computed contrast per token.
+
+### Archived-usage author trust — BOTH REMEDIES DECLINED BY THE OWNER
+
+**Status: declined owner decision, 2026-09-19. This is an accepted risk, not an
+oversight.**
+
+Two facts compose: `accountConfirmed` is read from the publisher-supplied
+`BUZZ_USAGE_ACCOUNT_CONFIRMED` and is never checked against the owner's own
+local `usage_attribution` record at read time
+(`crates/buzz-acp/src/usage.rs:66-69`), and the archive subscription for kind
+44200 is `{kinds:[44200], #p:[owner]}` with no author allowlist, so
+`agent_pubkey` is whoever signed the event and is never intersected with the
+owner's managed-agent list (`desktop/src-tauri/src/archive/mod.rs:449-470`).
+
+**Consequently, archived usage is forgeable: any nostr key can publish a kind
+44200 event p-tagged to the owner and appear on this dashboard as an agent with
+attacker-chosen provider, account, token counts, cost and `confirmed: true`.**
+
+Both candidate remedies were put to Sam and both were declined:
+
+- Treat `confirmed` as trustworthy only when it matches the owner's own local
+  `usage_attribution` record for that agent, rendering an unmatched
+  publisher-asserted `confirmed` as provisional — would go at
+  `crates/buzz-acp/src/usage.rs:66-69`.
+- Restrict the archive subscription to the owner's managed-agent authors — would
+  go at `desktop/src-tauri/src/archive/mod.rs:449-470`.
+
+Envelope hygiene is unaffected and unchanged: tags carry only `p` and `agent`,
+content is NIP-44 encrypted to the owner, and request observations add only
+latency and fallback and are never added to parent turn totals.
+
+### Found during remediation, NOT fixed — the page's theme tokens do not apply
+
+`usage.css` consumes the app's semantic theme tokens as bare values —
+`background: var(--card)`, `color: var(--foreground)`,
+`border: 1px solid var(--border)`, and the same for `--muted`, `--accent`,
+`--primary`, `--ring` and `--muted-foreground`. Those tokens hold bare HSL
+triplets (`--card: 220 23.08% 94.9%`) and are consumed everywhere else through
+Tailwind as `hsl(var(--card))`, so every one of these declarations is an invalid
+value and is dropped. The computed background of `.usage-card` in the running
+page is `rgba(0, 0, 0, 0)`: the cards have no surface, no border and no muted
+text of their own, and the page shows through to the app shell's background.
+
+This is outside the four defects that were authorized, and fixing it changes how
+the page looks, so it is recorded here rather than changed. It is also why the
+contrast measurements are taken against the nearest non-transparent ancestor
+rather than against `.usage-card` — that is what is actually behind the text
+today, and the measurement stays correct if the tokens are later repaired.

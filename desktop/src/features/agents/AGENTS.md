@@ -355,6 +355,13 @@ with a TypeScript lookup table or an id comparison in a component.
   **Known gap recorded there:** severing the create-path slug argument survives
   both the suite and clippy, because `create_managed_agent`'s body has no test
   harness in this repo.
+- Rust: `migration::usage_attribution::tests::on_disk` pins the boot layer, not
+  the decision — the store the pass opens, that the bytes reach the file the app
+  later reads (including through a dev worktree's symlink), that a second launch
+  rewrites nothing, and that the canonical dev directory a worktree instance
+  shares is covered. **Both layers are required**: the decision tests were all
+  that existed once, and removing the write entirely left 2,948 tests green.
+  Any new `*_in_file` boot migration gets the same pair, as `materialize` does.
 - Rust: persona sharing/retention tests pin relay+owner scoping, durable
   enqueue errors, relay rejection/unavailability, and accepted publication.
 - Rust: `definition_validation` and inbound persona tests pin the shared
