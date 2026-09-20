@@ -862,8 +862,6 @@ pub fn spawn_agent_child(
         );
     }
 
-    // Derived NIP-AM attribution, then the layered user env (which wins); see
-    // `usage_attribution::apply_user_and_attribution_env` for why one function.
     super::usage_attribution::apply_user_and_attribution_env(
         &mut command,
         record.usage_attribution.as_ref(),

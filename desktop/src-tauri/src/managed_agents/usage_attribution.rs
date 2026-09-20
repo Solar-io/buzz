@@ -217,6 +217,11 @@ pub fn effective_usage_attribution(
 /// Write the resolved attribution variables and the layered user env onto a
 /// spawn command, in that order.
 ///
+/// `descriptor_env` is the caller's fully-layered, reserved-key-filtered user
+/// env (floor→runtime→definition→global→persona→agent). It is written last, so
+/// a user-explicit value wins over every Buzz-set variable — which is why
+/// `spawn_agent_child` calls this instead of writing that env itself.
+///
 /// One function rather than two adjacent loops in `spawn_agent_child`, because
 /// the ordering *is* the precedence contract and a test of two loops it had to
 /// re-create would be testing a copy. Every attribution key is cleared first,

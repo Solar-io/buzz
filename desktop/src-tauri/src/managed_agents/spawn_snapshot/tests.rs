@@ -1,6 +1,5 @@
 use super::*;
 use crate::managed_agents::types::RespondTo;
-use std::collections::BTreeMap;
 
 /// Canonical projection of a prospective snapshot — the exact value the drift
 /// comparison reads, so these tests assert on drift itself rather than on a
