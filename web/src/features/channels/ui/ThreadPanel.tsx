@@ -185,6 +185,46 @@ export function ThreadPanel({
   // ["e", root, "", "reply"] tag (see the docblock).
   const rootThreadRef = { rootId, replyToId: rootId };
 
+  // Two-person threads notify the other person (Sam 2026-09-20: "if two
+  // people are the only ones in the conversation, then I shouldn't have to
+  // tag them"). A DM-shaped thread, or a side thread off #general with one
+  // other voice in it, otherwise reaches NOBODY — a mention is the only wake
+  // path, and neither side types one. Participants are the distinct
+  // NON-DELETED authors of the root and its replies — exactly the flat list
+  // this panel already renders; viewers and lurkers don't count. The rule:
+  // authors ∪ {self} must be exactly two people AND self must be one of the
+  // authors. That excludes the three shapes where an auto-tag would lie:
+  // a solo thread (the author would tag themselves), three or more authors
+  // (a mention blast is a decision, not a default), and a viewer who never
+  // posted (they have no conversation partner here yet). The author can
+  // always add more p-tags by hand; the auto-tag only guarantees the one
+  // person who is unambiguously "the other side".
+  const autoNotify = useMemo(() => {
+    if (!selfPubkey) {
+      return null;
+    }
+    // Deleted authors have left the conversation. threadDescendants keeps
+    // deleted rows so their children stay attached (see lib/threadTree.ts),
+    // so the filter happens here, where the participants are computed.
+    const authors = new Set<string>();
+    if (!root.deleted) {
+      authors.add(root.authorPubkey);
+    }
+    for (const reply of replies) {
+      if (!reply.deleted) {
+        authors.add(reply.authorPubkey);
+      }
+    }
+    if (authors.size !== 2 || !authors.has(selfPubkey)) {
+      return null;
+    }
+    const other = [...authors].find((pubkey) => pubkey !== selfPubkey);
+    if (!other) {
+      return null;
+    }
+    return { pubkey: other, label: authorLabel(other, profiles) };
+  }, [root, replies, selfPubkey, profiles]);
+
   return (
     // Below lg the thread is a full-screen sheet (safe-area aware) — a third
     // column at phone/tablet widths is what crushed the timeline. lg+: docked
@@ -268,6 +308,9 @@ export function ThreadPanel({
         // author (the desktop's `Reply in thread to <head author>`).
         placeholder={`Reply in thread to ${rootAuthor}`}
         strictMentions={strictMentions}
+        // The two-person-thread wake (see autoNotify above): the pane's
+        // composer adds the other participant's p-tag on every send.
+        autoNotify={autoNotify}
         // Esc has nothing mid-thread to step back out of — it closes the pane.
         onClearThread={onClose}
         send={send}

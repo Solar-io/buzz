@@ -113,6 +113,7 @@ export function Composer({
   channelName,
   placeholder,
   strictMentions = false,
+  autoNotify = null,
   send,
 }: {
   members: ChannelMember[];
@@ -155,6 +156,16 @@ export function Composer({
   /** Overrides the idle textarea hint (forum views say "Write your post..."). */
   placeholder?: string;
   strictMentions?: boolean;
+  /**
+   * A participant every send from this composer should wake WITHOUT the
+   * author typing an @. Set by ThreadPanel when the thread's only authors
+   * are the viewer and exactly one other person — Sam 2026-09-20: "if two
+   * people are the only ones in the conversation, then I shouldn't have to
+   * tag them." `label` is the display name the "… will be notified" hint
+   * shows. Null/absent means no automatic tagging: the main-channel composer
+   * never passes this, so its payload is untouched.
+   */
+  autoNotify?: { pubkey: string; label: string } | null;
   send: (options: {
     content: string;
     mentionPubkeys: string[];
@@ -649,12 +660,26 @@ export function Composer({
     if (!finalContent || busy || uploadsPending) {
       return;
     }
-    const { mentionPubkeys, unresolved } = resolveMentions(
+    const { mentionPubkeys: resolved, unresolved } = resolveMentions(
       trimmed,
       namedMembers,
       mentionPicks,
       selfPubkey ?? undefined,
     );
+    // The two-person-thread auto-tag rides the SAME p-tag set as the typed
+    // mentions, deduped against them (p-tags are a set — if the author also
+    // @typed the other participant, one tag goes out, not two). Explicit
+    // picks keep their position; the automatic key appends. It is a
+    // send-payload addition only — no @ token is written into the content —
+    // and absent when `autoNotify` is null (the main-channel composer).
+    const autoEntry = autoNotify ? autoNotify.pubkey : null;
+    const mentionPubkeys =
+      autoEntry &&
+      !resolved.some(
+        (pubkey) => pubkey.toLowerCase() === autoEntry.toLowerCase(),
+      )
+        ? [...resolved, autoEntry]
+        : resolved;
     if (strictMentions && unresolved.length > 0) {
       toast.error(
         `Resolve huddle mention: ${unresolved.join(", ")}. Choose a member from the @ suggestions.`,
@@ -898,6 +923,17 @@ export function Composer({
           Replying in thread — Esc clears
         </p>
       ) : null}
+      {/* The author cannot tell an invisible p-tag is being added, so the
+          pane says so: the same quiet line style as the thread banner. An
+          edit carries no p-tags at all, hence the editingActive guard. */}
+      {autoNotify && !editingActive && (
+        <p
+          data-testid="composer-auto-notify"
+          className="mb-1 text-xs text-muted-foreground"
+        >
+          {autoNotify.label} will be notified
+        </p>
+      )}
       {!editingActive && (
         <ComposerFormatToolbar
           marks={marks}
