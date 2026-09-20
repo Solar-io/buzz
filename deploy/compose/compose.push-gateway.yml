@@ -16,6 +16,15 @@
 # so this overlay is where our deployment lives — the same split compose.web.yml
 # already uses.
 #
+# TWO DEPLOYMENT PATHS, AND THAT IS DELIBERATE (decided 2026-09-20).
+# `deploy/charts/buzz-push-gateway/` is NOT dead code and is not to be deleted.
+# It is upstream's KUBERNETES path: it came from block/buzz #1855, has its own
+# `push-chart-v*` release tags, its own CI workflow and test scripts, and it
+# publishes to oci://ghcr.io/block/buzz/charts. Deleting it here would diverge
+# from an upstream we still merge from (this fork is ~745 ahead / 188 behind),
+# so every future pull would have to re-fight the deletion.
+# THIS file is the crichton/compose path. Chart for Kubernetes, this for here.
+#
 # container_name is pinned, NOT left to compose's <project>-<service>-<n>.
 # Three things address the gateway by its literal name today:
 #   deploy/push-gateway-up.sh      (GATEWAY_CONTAINER default, and its rollback
