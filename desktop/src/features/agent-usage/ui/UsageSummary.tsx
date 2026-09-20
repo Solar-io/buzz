@@ -230,6 +230,9 @@ export function UsageCoverage({ data }: { data: AgentUsageAnalytics }) {
         {[
           ["Provider", coverage.providerReports],
           ["Account", coverage.accountReports],
+          // Attributed and *confirmed* are different facts: a seeded label
+          // groups usage without the owner having vouched for the identity.
+          ["Confirmed account", coverage.confirmedAccountReports],
           ["Service tier", coverage.tierReports],
           ["Complete requests", coverage.completeRequestReports],
           ["Cost source", coverage.costProvenanceReports],

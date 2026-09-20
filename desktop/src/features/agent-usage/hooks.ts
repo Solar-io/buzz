@@ -6,6 +6,11 @@ import {
   getAgentUsageAnalytics,
   onAgentMetricsChanged,
 } from "@/shared/api/tauriArchive";
+import {
+  confirmUsageAccountAttribution,
+  getUsageAttributionOverview,
+  type UsageAttributionOverview,
+} from "@/shared/api/tauriUsageAttribution";
 import { usageWindow, type UsageSearch } from "./lib/analytics";
 
 export function useUsageAnalytics(search: UsageSearch) {
@@ -52,4 +57,46 @@ export function useUsageAnalytics(search: UsageSearch) {
     window,
     scopeKey: `${identity.data?.pubkey ?? ""}:${activeCommunity?.relayUrl ?? ""}`,
   };
+}
+
+/**
+ * The owner-editable account attribution mapping.
+ *
+ * `save` resolves `true` when the edit landed. A confirmed edit changes what
+ * the next spawn publishes, so the analytics query is invalidated too — the
+ * archived reports it reads are unchanged until agents restart, which is the
+ * honest behaviour, but the coverage note below the dashboard reflects the new
+ * mapping immediately.
+ */
+export function useUsageAttribution() {
+  const client = useQueryClient();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const query = useQuery({
+    queryKey: ["usage-attribution-overview"],
+    queryFn: getUsageAttributionOverview,
+    staleTime: 60_000,
+  });
+  async function save(input: {
+    accountId: string;
+    newAccountId: string;
+    accountLabel: string;
+    provider: string;
+  }): Promise<boolean> {
+    setSaving(true);
+    setError(null);
+    try {
+      const next: UsageAttributionOverview =
+        await confirmUsageAccountAttribution(input);
+      client.setQueryData(["usage-attribution-overview"], next);
+      void client.invalidateQueries({ queryKey: ["agent-usage-analytics"] });
+      return true;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+  return { query, save, saving, error };
 }

@@ -46,10 +46,13 @@ export function Distribution({
   title,
   rows,
   cost = false,
+  note,
 }: {
   title: string;
   rows: AnalyticsMetricGroup[];
   cost?: boolean;
+  /** Coverage note rendered under the chart, in the shared `usage-note` voice. */
+  note?: ReactNode;
 }) {
   const values = rows.map((row) =>
     cost
@@ -114,6 +117,7 @@ export function Distribution({
           {rows.length === 0 && <li>No reported data</li>}
         </ul>
       </div>
+      {note}
     </UsageCard>
   );
 }

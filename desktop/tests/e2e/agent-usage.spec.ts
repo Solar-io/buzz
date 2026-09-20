@@ -17,6 +17,7 @@ const seed = {
       cost: 15.5,
       provider: "Anthropic",
       account: "Claude Max · personal",
+      accountConfirmed: true,
       model: "Claude Sonnet",
       tier: "Standard",
     },
@@ -196,4 +197,57 @@ test("back and forward restore date and agent selection", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "90D", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
+});
+
+test("a seeded account reads as provisional until the owner confirms it", async ({
+  page,
+}) => {
+  await installMockBridge(page, { usageAnalytics: seed });
+  await page.goto("/#/agents/usage");
+  const table = page.getByRole("region", {
+    name: "Account breakdown",
+    exact: true,
+  });
+  // `ChatGPT Pro` was seeded (no accountConfirmed in the fixture);
+  // `Claude Max · personal` was confirmed. They must not read alike.
+  await expect(
+    table.getByRole("rowheader", {
+      name: /ChatGPT Pro · seeded — unconfirmed/,
+    }),
+  ).toBeVisible();
+  await expect(
+    table.getByRole("rowheader", { name: "Claude Max · personal" }),
+  ).toBeVisible();
+  await expect(table.getByText("Claude Max · personal · seeded")).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByText(/Account identity confirmed for 1 of 2 attributed turns/),
+  ).toBeVisible();
+
+  const editor = page.getByRole("region", {
+    name: "Accounts & subscriptions",
+    exact: true,
+  });
+  const provisional = editor.locator("li[data-confirmed='false']");
+  await expect(provisional).toHaveCount(1);
+  await expect(provisional).toContainText("seeded — unconfirmed");
+
+  await provisional.getByRole("button", { name: "Confirm" }).click();
+  await editor.getByLabel("Subscription name").fill("ChatGPT Pro (work)");
+  await editor.getByLabel("Account ID").fill("chatgpt-pro-work");
+  await editor.getByLabel("Provider").fill("openai");
+  await editor.getByRole("button", { name: "Confirm" }).click();
+
+  await expect(editor.locator("li[data-confirmed='false']")).toHaveCount(0);
+  await expect(
+    editor.locator("li[data-confirmed='true']").filter({
+      hasText: "ChatGPT Pro (work)",
+    }),
+  ).toContainText("provider openai");
+  // The archived reports are unchanged until those agents restart, so the
+  // dashboard's own coverage must NOT claim the new label retroactively.
+  await expect(
+    page.getByText(/Account identity confirmed for 1 of 2 attributed turns/),
+  ).toBeVisible();
 });

@@ -112,6 +112,24 @@ pub struct TimeBucket {
     pub start: i64,
     pub end: i64,
 }
+/// One account/subscription, plus whether the owner has actually confirmed the
+/// identity the dashboard is grouping this usage under.
+///
+/// `confirmed` is deliberately the strict reading: it is true only when every
+/// turn in the group carried an owner-confirmed identity. One seeded report
+/// keeps the whole account provisional, because the account's totals are the
+/// sum of all of them — presenting that as an established subscription would
+/// overstate exactly the comparison the page exists to support.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountGroup {
+    #[serde(flatten)]
+    pub group: MetricGroup,
+    pub confirmed: bool,
+    pub confirmed_reports: usize,
+    pub unconfirmed_reports: usize,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderDate {
@@ -152,6 +170,9 @@ pub struct AnalyticsCoverage {
     pub base: Coverage,
     pub provider_reports: usize,
     pub account_reports: usize,
+    /// Of `account_reports`, how many carried an identity the owner confirmed.
+    /// The remainder were seeded from observed configuration.
+    pub confirmed_account_reports: usize,
     pub tier_reports: usize,
     pub complete_request_reports: usize,
     pub request_observation_count: usize,
@@ -173,7 +194,7 @@ pub struct Analytics {
     pub provider_by_date: Vec<ProviderDate>,
     pub agents: Vec<MetricGroup>,
     pub models: Vec<MetricGroup>,
-    pub accounts: Vec<MetricGroup>,
+    pub accounts: Vec<AccountGroup>,
     pub service_tiers: Vec<MetricGroup>,
     pub stop_reasons: Vec<MetricGroup>,
     pub available_agents: Vec<String>,
@@ -196,12 +217,27 @@ struct Group {
     fallback: u64,
     fallback_unknown: bool,
     label: Option<String>,
+    /// Turns in this group that carried an owner-confirmed account identity,
+    /// and turns that carried an account identity the owner has not confirmed.
+    /// Counted once per event id, like `reports`. Only the account dimension
+    /// reads them (see [`AccountGroup`]); on other dimensions they are inert.
+    confirmed_reports: usize,
+    unconfirmed_reports: usize,
 }
 impl Group {
     fn add(&mut self, id: &str, outcome: &EventOutcome, metadata: &analytics_store::Metadata) {
         self.usage.add(outcome);
-        self.reports.insert(id.to_string());
+        let first_report = self.reports.insert(id.to_string());
         let t = &metadata.telemetry;
+        // Seeded and confirmed identities are counted apart, once per turn: a
+        // complete request breakdown calls this repeatedly for the same event.
+        if first_report && t.attribution.account_id.is_some() {
+            if t.attribution.is_account_confirmed() {
+                self.confirmed_reports += 1;
+            } else {
+                self.unconfirmed_reports += 1;
+            }
+        }
         match t.request_count {
             Some(n) => {
                 self.requests = self.requests.unwrap_or(0).checked_add(n);
@@ -296,6 +332,23 @@ fn add(
 }
 fn finish(map: BTreeMap<String, Group>) -> Vec<MetricGroup> {
     map.into_iter().map(|(key, g)| g.finish(key)).collect()
+}
+/// Finish the account dimension, carrying the seeded/confirmed split out with
+/// each group. An account with no confirmed reports at all is not confirmed —
+/// which is also what the `__unknown__` bucket produces, correctly.
+fn finish_accounts(map: BTreeMap<String, Group>) -> Vec<AccountGroup> {
+    map.into_iter()
+        .map(|(key, g)| {
+            let (confirmed_reports, unconfirmed_reports) =
+                (g.confirmed_reports, g.unconfirmed_reports);
+            AccountGroup {
+                group: g.finish(key),
+                confirmed: unconfirmed_reports == 0 && confirmed_reports > 0,
+                confirmed_reports,
+                unconfirmed_reports,
+            }
+        })
+        .collect()
 }
 fn bucket(boundaries: &[i64], at: i64) -> usize {
     boundaries.partition_point(|b| *b <= at).saturating_sub(1)
@@ -527,6 +580,7 @@ fn compute(
         },
         provider_reports: 0,
         account_reports: 0,
+        confirmed_account_reports: 0,
         tier_reports: 0,
         complete_request_reports: 0,
         request_observation_count: 0,
@@ -596,6 +650,13 @@ fn compute(
                         .requests
                         .iter()
                         .all(|r| r.attribution.account_id.is_some())),
+        );
+        coverage.confirmed_account_reports += usize::from(
+            (a.account_id.is_some() && a.is_account_confirmed())
+                || (has_requests
+                    && meta.telemetry.requests.iter().all(|r| {
+                        r.attribution.account_id.is_some() && r.attribution.is_account_confirmed()
+                    })),
         );
         coverage.tier_reports += usize::from(
             a.service_tier.is_some()
@@ -721,13 +782,13 @@ fn compute(
         .enumerate()
         .map(|(i, g)| g.finish(WEEKDAY_LABELS[i].to_string()))
         .collect();
-    let (providers, agents, models, accounts, service_tiers) = (
+    let (providers, agents, models, service_tiers) = (
         finish(providers),
         finish(agents),
         finish(models),
-        finish(accounts),
         finish(tiers),
     );
+    let accounts = finish_accounts(accounts);
     let provider_by_date = dates
         .into_iter()
         .filter_map(|(key, g)| {

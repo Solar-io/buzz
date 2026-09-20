@@ -5,6 +5,11 @@ import type {
   AnalyticsTimeBucket,
   UsageField,
 } from "@/shared/api/tauriArchive";
+import type {
+  UsageAttributionAccountRow,
+  UsageAttributionAgentRow,
+  UsageAttributionOverview,
+} from "@/shared/api/tauriUsageAttribution";
 
 /** E2E fixtures only. Production analytics are computed by the Rust archive. */
 export type MockUsageReport = {
@@ -17,6 +22,8 @@ export type MockUsageReport = {
   cost: number | null;
   provider?: string;
   account?: string;
+  /** Whether the owner confirmed `account`. Absent reads as unconfirmed. */
+  accountConfirmed?: boolean;
   model?: string;
   tier?: string;
 };
@@ -175,7 +182,20 @@ export function mockUsageAnalytics(
     providerByDate,
     agents: group("agent"),
     models,
-    accounts: group("account"),
+    accounts: group("account").map((account) => {
+      const members = rows.filter(
+        (row) => (row.account ?? "__unknown__") === account.key,
+      );
+      const confirmedReports = members.filter(
+        (row) => row.account && row.accountConfirmed,
+      ).length;
+      return {
+        ...account,
+        confirmedReports,
+        unconfirmedReports: members.length - confirmedReports,
+        confirmed: confirmedReports > 0 && confirmedReports === members.length,
+      };
+    }),
     serviceTiers: group("tier"),
     availableAgents: [...new Set(all.map((row) => row.agent))],
     highlights: {
@@ -220,11 +240,98 @@ export function mockUsageAnalytics(
       ),
       providerReports: rows.filter((row) => row.provider).length,
       accountReports: rows.filter((row) => row.account).length,
+      confirmedAccountReports: rows.filter(
+        (row) => row.account && row.accountConfirmed,
+      ).length,
       tierReports: rows.filter((row) => row.tier).length,
       completeRequestReports: 0,
       requestObservationCount: 0,
       inconsistentRequestReports: 0,
       costProvenanceReports: rows.filter((row) => row.cost !== null).length,
     },
+  };
+}
+
+/**
+ * Build the owner-editable attribution overview the Usage page's editor reads,
+ * from the same report fixture the analytics mock uses.
+ *
+ * Reports with no `account` land in `unattributed` — the honest state for an
+ * agent whose configuration Buzz cannot observe — and never in a placeholder
+ * account.
+ */
+export function mockUsageAttributionOverview(
+  seed: MockUsageAnalytics = {},
+): UsageAttributionOverview {
+  const reports = seed.reports ?? [];
+  const accounts = new Map<string, UsageAttributionAccountRow>();
+  const unattributed: UsageAttributionAgentRow[] = [];
+  for (const report of reports) {
+    const agent: UsageAttributionAgentRow = {
+      pubkey: report.agent,
+      slug: null,
+      name: report.agent.slice(0, 8),
+      runtime: null,
+    };
+    if (!report.account) {
+      unattributed.push(agent);
+      continue;
+    }
+    const existing = accounts.get(report.account);
+    if (existing) {
+      existing.agents.push(agent);
+      existing.confirmed = existing.confirmed && !!report.accountConfirmed;
+      continue;
+    }
+    accounts.set(report.account, {
+      accountId: report.account,
+      provider: report.provider ?? null,
+      accountLabel: report.account,
+      confirmed: !!report.accountConfirmed,
+      agents: [agent],
+    });
+  }
+  return { accounts: [...accounts.values()], unattributed, declined: [] };
+}
+
+/**
+ * Apply an owner confirmation to a mock overview, mirroring the Rust command:
+ * every agent filed under `accountId` moves together, the row becomes
+ * confirmed, and clearing the id records "not a subscription" instead.
+ */
+export function applyMockUsageAttribution(
+  overview: UsageAttributionOverview,
+  input: {
+    accountId: string;
+    newAccountId?: string | null;
+    accountLabel?: string | null;
+    provider?: string | null;
+  },
+): UsageAttributionOverview {
+  const target = overview.accounts.find(
+    (account) => account.accountId === input.accountId,
+  );
+  if (!target) throw new Error(`no agents are filed under ${input.accountId}`);
+  const rest = overview.accounts.filter((account) => account !== target);
+  const nextId = (input.newAccountId ?? input.accountId).trim();
+  if (!nextId)
+    return {
+      accounts: rest,
+      unattributed: overview.unattributed,
+      declined: [...overview.declined, ...target.agents],
+    };
+  return {
+    accounts: [
+      ...rest,
+      {
+        accountId: nextId,
+        accountLabel: input.accountLabel?.trim() || null,
+        provider: input.provider?.trim() || null,
+        confirmed: true,
+        agents: target.agents,
+      },
+    ],
+    unattributed: overview.unattributed,
+    declined: overview.declined,
   };
 }

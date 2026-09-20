@@ -1,9 +1,12 @@
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import {
+  applyMockUsageAttribution,
+  mockUsageAttributionOverview,
   mockUsageAnalytics,
   type MockUsageAnalytics,
 } from "./e2eBridgeUsageAnalytics";
 import type { AgentUsageAnalyticsRequest } from "@/shared/api/tauriArchive";
+import type { UsageAttributionOverview } from "@/shared/api/tauriUsageAttribution";
 import { emit, listen } from "@tauri-apps/api/event";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { decode, npubEncode, nsecEncode } from "nostr-tools/nip19";
@@ -3143,6 +3146,13 @@ type MockSaveSubscriptionRow = {
 };
 let mockSaveSubscriptions: MockSaveSubscriptionRow[] = [];
 
+/** Mutable owner-editable usage attribution, reset on every bridge install. */
+let mockUsageAttribution: UsageAttributionOverview = {
+  accounts: [],
+  unattributed: [],
+  declined: [],
+};
+
 type MockObservedUnreadScope = {
   generation: string;
   revision: number;
@@ -3249,6 +3259,9 @@ function resetMockObservedUnread() {
 }
 
 function resetMockSaveSubscriptions(config: E2eConfig | undefined) {
+  mockUsageAttribution = mockUsageAttributionOverview(
+    config?.mock?.usageAnalytics ?? {},
+  );
   mockSaveSubscriptions = (config?.mock?.saveSubscriptions ?? []).map((s) => ({
     ...s,
   }));
@@ -13951,6 +13964,20 @@ export function maybeInstallE2eTauriMocks() {
           (payload as { request: AgentUsageAnalyticsRequest }).request,
           seed,
         );
+      }
+      case "get_usage_attribution_overview":
+        return mockUsageAttribution;
+      case "confirm_usage_account_attribution": {
+        mockUsageAttribution = applyMockUsageAttribution(
+          mockUsageAttribution,
+          payload as {
+            accountId: string;
+            newAccountId?: string | null;
+            accountLabel?: string | null;
+            provider?: string | null;
+          },
+        );
+        return mockUsageAttribution;
       }
       case "list_save_subscriptions": {
         const win = window as unknown as Record<string, unknown>;

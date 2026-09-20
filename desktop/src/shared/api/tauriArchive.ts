@@ -39,6 +39,20 @@ export type AnalyticsTimeBucket = AnalyticsMetricGroup & {
   start: number;
   end: number;
 };
+/**
+ * An account/subscription group, plus whether the owner has actually confirmed
+ * the identity its usage is being grouped under.
+ *
+ * `confirmed` is the strict reading: true only when every turn in the group
+ * carried an owner-confirmed identity. One report still carrying a label Buzz
+ * seeded from observed configuration keeps the whole account provisional —
+ * presenting it otherwise would overstate the subscription comparison.
+ */
+export type AnalyticsAccountGroup = AnalyticsMetricGroup & {
+  confirmed: boolean;
+  confirmedReports: number;
+  unconfirmedReports: number;
+};
 export type AgentUsageAnalytics = {
   collectionEnabled: boolean;
   summary: AnalyticsMetricGroup;
@@ -49,7 +63,7 @@ export type AgentUsageAnalytics = {
   providerByDate: (AnalyticsMetricGroup & { date: string; provider: string })[];
   agents: AnalyticsMetricGroup[];
   models: AnalyticsMetricGroup[];
-  accounts: AnalyticsMetricGroup[];
+  accounts: AnalyticsAccountGroup[];
   serviceTiers: AnalyticsMetricGroup[];
   stopReasons?: AnalyticsMetricGroup[];
   availableAgents: string[];
@@ -71,6 +85,7 @@ export type AgentUsageAnalytics = {
   coverage: AgentUsageCoverage & {
     providerReports: number;
     accountReports: number;
+    confirmedAccountReports: number;
     tierReports: number;
     completeRequestReports: number;
     requestObservationCount: number;

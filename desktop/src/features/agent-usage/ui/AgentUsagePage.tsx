@@ -6,12 +6,14 @@ import { useUsersBatchQuery } from "@/features/profile/hooks";
 import { useHistorySearchState } from "@/shared/hooks/useHistorySearchState";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { useUsageAnalytics } from "../hooks";
+import { accountRowLabel, confirmedCsvCell } from "../lib/accounts";
 import {
   USAGE_SEARCH_KEYS,
   csvDocument,
   selectedAgents,
   type UsageSearch,
 } from "../lib/analytics";
+import { AccountAttribution, AccountCoverageNote } from "./UsageAccounts";
 import { Distribution, Heatmap, RankedModels, Timeline } from "./UsageCharts";
 import { UsageControls } from "./UsageControls";
 import {
@@ -52,6 +54,7 @@ export function usageCsv(data: AgentUsageAnalytics): string {
       "output_partial",
       "total_partial",
       "cost_partial",
+      "owner_confirmed",
     ],
     dimensions.flatMap(([dimension, rows]) =>
       rows.map((row) => [
@@ -73,6 +76,7 @@ export function usageCsv(data: AgentUsageAnalytics): string {
         row.usage.outputTokens.incomplete,
         row.usage.totalTokens.incomplete,
         row.usage.estimatedCostUsd.incomplete,
+        confirmedCsvCell(dimension, row),
       ]),
     ),
   );
@@ -119,6 +123,12 @@ export function AgentUsagePage() {
         agents: query.data.agents.map((agent) => ({
           ...agent,
           label: label(agent.key),
+        })),
+        // One place decides how a seeded account reads, so the donut legend,
+        // the account table, its search box and the CSV cannot disagree.
+        accounts: query.data.accounts.map((account) => ({
+          ...account,
+          label: accountRowLabel(account),
         })),
         timeline: query.data.timeline.map((bucket) => ({
           ...bucket,
@@ -277,9 +287,17 @@ export function AgentUsagePage() {
               <Distribution
                 title="By account / subscription"
                 rows={data.accounts}
+                note={<AccountCoverageNote data={data} />}
               />
               <Distribution title="By agent" rows={data.agents} />
             </div>
+            <AccountAttribution />
+            <UsageTable
+              title="Account breakdown"
+              dimension="Account"
+              rows={data.accounts}
+              total={data.summary.usage.totalTokens.value}
+            />
             <UsageTable
               title="Provider breakdown"
               dimension="Provider"

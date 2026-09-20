@@ -171,7 +171,11 @@ fn provider_diversity_is_normalized_shannon_and_does_not_infer_model() {
     let data = query(&c, "owner", "relay", &request()).unwrap();
     assert_eq!(data.diversity.score, None);
     assert_eq!(data.providers[0].key, UNKNOWN);
-    assert_eq!(data.accounts[0].key, UNKNOWN);
+    assert_eq!(data.accounts[0].group.key, UNKNOWN);
+    assert!(
+        !data.accounts[0].confirmed,
+        "the unknown-account bucket is never a confirmed subscription identity"
+    );
 }
 
 #[test]
@@ -337,4 +341,153 @@ fn dst_short_day_assigns_next_midnight_to_next_day() {
     assert_eq!(data.days[0].group.report_count, 0);
     assert_eq!(data.days[1].group.report_count, 1);
     assert_eq!(data.weekdays[0].report_count, 1);
+}
+
+
+// ── Seeded vs owner-confirmed account identity ───────────────────────────────
+
+/// A seeded account and a confirmed account must be distinguishable in the
+/// query output, not just in the store that wrote them. The expected values
+/// DIFFER between the two accounts so the assertions discriminate.
+#[test]
+fn seeded_and_confirmed_accounts_are_reported_apart() {
+    let c = db();
+    let a = "a".repeat(64);
+    insert(
+        &c,
+        "seeded",
+        &a,
+        Some(10),
+        json!({"attribution":{"accountId":"harness=claude-code-glm",
+               "accountLabel":"Observed harness claude-code-glm",
+               "accountConfirmed":false}}),
+    );
+    insert(
+        &c,
+        "confirmed",
+        &a,
+        Some(20),
+        json!({"attribution":{"accountId":"zai-coding-plan",
+               "accountLabel":"Z.ai Coding Plan","accountConfirmed":true,
+               "provider":"zai"}}),
+    );
+    let data = query(&c, "owner", "relay", &request()).unwrap();
+
+    let seeded = data
+        .accounts
+        .iter()
+        .find(|account| account.group.key == "harness=claude-code-glm")
+        .expect("the seeded account is reported");
+    assert!(!seeded.confirmed, "a seeded account must read as provisional");
+    assert_eq!(seeded.unconfirmed_reports, 1);
+    assert_eq!(seeded.confirmed_reports, 0);
+    assert_eq!(seeded.group.label, "Observed harness claude-code-glm");
+
+    let confirmed = data
+        .accounts
+        .iter()
+        .find(|account| account.group.key == "zai-coding-plan")
+        .expect("the confirmed account is reported");
+    assert!(confirmed.confirmed, "an owner-confirmed account reads as established");
+    assert_eq!(confirmed.confirmed_reports, 1);
+    assert_eq!(confirmed.unconfirmed_reports, 0);
+
+    assert_eq!(data.coverage.account_reports, 2);
+    assert_eq!(
+        data.coverage.confirmed_account_reports, 1,
+        "coverage must report confirmed identities separately from all identities"
+    );
+}
+
+/// An absent `accountConfirmed` is unconfirmed, and it must not be readable as
+/// a confirmation. Historical events carry no flag at all, so this is the shape
+/// every pre-existing archived report has.
+#[test]
+fn an_account_without_a_confirmation_flag_is_provisional() {
+    let c = db();
+    insert(
+        &c,
+        "historical",
+        &"a".repeat(64),
+        Some(5),
+        json!({"attribution":{"accountId":"acct","accountLabel":"Acct"}}),
+    );
+    let data = query(&c, "owner", "relay", &request()).unwrap();
+    let account = data
+        .accounts
+        .iter()
+        .find(|account| account.group.key == "acct")
+        .expect("the account is reported");
+    assert!(!account.confirmed);
+    assert_eq!(account.unconfirmed_reports, 1);
+    assert_eq!(data.coverage.account_reports, 1);
+    assert_eq!(data.coverage.confirmed_account_reports, 0);
+}
+
+/// One still-seeded report keeps the whole account provisional, because the
+/// account's totals are the sum of every report in it.
+#[test]
+fn one_seeded_report_keeps_a_mostly_confirmed_account_provisional() {
+    let c = db();
+    let a = "a".repeat(64);
+    for (id, confirmed) in [("c1", true), ("c2", true), ("s1", false)] {
+        insert(
+            &c,
+            id,
+            &a,
+            Some(1),
+            json!({"attribution":{"accountId":"shared","accountConfirmed":confirmed}}),
+        );
+    }
+    let data = query(&c, "owner", "relay", &request()).unwrap();
+    let account = data
+        .accounts
+        .iter()
+        .find(|account| account.group.key == "shared")
+        .expect("the account is reported");
+    assert_eq!(account.group.report_count, 3);
+    assert_eq!(account.confirmed_reports, 2);
+    assert_eq!(account.unconfirmed_reports, 1);
+    assert!(
+        !account.confirmed,
+        "two confirmed reports do not launder the third"
+    );
+}
+
+/// Confirmation counts are per turn, not per request observation: a complete
+/// request breakdown must not multiply them.
+#[test]
+fn request_breakdowns_do_not_multiply_confirmation_counts() {
+    let c = db();
+    let attribution = json!({"accountId":"acct","accountConfirmed":true});
+    insert(
+        &c,
+        "one",
+        &"a".repeat(64),
+        Some(4),
+        json!({
+            "attribution": attribution,
+            "requestCount": 2,
+            "requestsComplete": true,
+            "requests": [
+                {"id":"0","model":"m","attribution":attribution,
+                 "usage":{"inputTokens":2,"outputTokens":1,"totalTokens":null,"costUsd":null}},
+                {"id":"1","model":"m","attribution":attribution,
+                 "usage":{"inputTokens":2,"outputTokens":1,"totalTokens":null,"costUsd":null}}
+            ]
+        }),
+    );
+    let data = query(&c, "owner", "relay", &request()).unwrap();
+    let account = data
+        .accounts
+        .iter()
+        .find(|account| account.group.key == "acct")
+        .expect("the account is reported");
+    assert_eq!(account.group.report_count, 1, "one turn, not two requests");
+    assert_eq!(
+        account.confirmed_reports, 1,
+        "two request observations of one turn count once"
+    );
+    assert!(account.confirmed);
+    assert_eq!(data.coverage.confirmed_account_reports, 1);
 }
