@@ -21,6 +21,10 @@ import {
   saveInboxReadState,
   type InboxReadState,
 } from "./lib/inboxReadState.ts";
+import {
+  READ_STATE_SYNCED_EVENT,
+  notifyReadStateLocalChange,
+} from "@/features/channels/lib/readStateSync.ts";
 
 /**
  * Coalesce relay bursts into one render. The initial replay delivers up to a
@@ -170,9 +174,13 @@ export function useInboxReadState(): InboxReadStateApi {
     };
     window.addEventListener("focus", reread);
     document.addEventListener("visibilitychange", reread);
+    // The NIP-RS boot merge writes the same stores from outside React —
+    // same reread, one more trigger.
+    window.addEventListener(READ_STATE_SYNCED_EVENT, reread);
     return () => {
       window.removeEventListener("focus", reread);
       document.removeEventListener("visibilitychange", reread);
+      window.removeEventListener(READ_STATE_SYNCED_EVENT, reread);
     };
   }, []);
 
@@ -181,6 +189,7 @@ export function useInboxReadState(): InboxReadStateApi {
       const next = markInboxMessagesRead(previous, messages);
       if (next !== previous) {
         saveInboxReadState(next);
+        notifyReadStateLocalChange();
       }
       return next;
     });
@@ -191,6 +200,7 @@ export function useInboxReadState(): InboxReadStateApi {
       const next = markInboxMessagesUnread(previous, messages);
       if (next !== previous) {
         saveInboxReadState(next);
+        notifyReadStateLocalChange();
       }
       return next;
     });

@@ -27,6 +27,8 @@ import {
   saveReadState,
   type ReadState,
 } from "@/features/channels/lib/readState.ts";
+import { notifyReadStateLocalChange } from "@/features/channels/lib/readStateSync.ts";
+import { useReadStateSync } from "@/features/channels/lib/useReadStateSync.ts";
 import { activeTyping } from "@/features/channels/lib/typing.ts";
 import { clampThreadWidth } from "@/features/channels/lib/threadPanelWidth.ts";
 import { useThreadPaneWidth } from "@/features/channels/lib/useThreadPaneWidth.ts";
@@ -228,10 +230,19 @@ function ChannelBrowser() {
       const next = markSeen(previous, channelId, newestMessageAt);
       if (next !== previous) {
         saveReadState(next);
+        notifyReadStateLocalChange();
       }
       return next;
     });
   }, [channelId, newestMessageAt]);
+  // Cross-browser sync (NIP-RS): boot-merge the relay's markers in, and let
+  // the debounced publisher carry every local persist above to other
+  // browsers. Strictly additive — see readStateSync.ts.
+  useReadStateSync({
+    session,
+    selfPubkey,
+    onSynced: () => setReadState(loadReadState()),
+  });
   // React / edit / delete / share / typing / send for the open channel.
   const messageActions = useMessageActions({
     session,

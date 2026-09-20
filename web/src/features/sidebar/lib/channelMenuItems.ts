@@ -22,6 +22,7 @@ import {
   saveReadState,
   type ReadState,
 } from "@/features/channels/lib/readState.ts";
+import { notifyReadStateLocalChange } from "@/features/channels/lib/readStateSync.ts";
 import { evictTimelineCache } from "@/features/channels/lib/timelineCache.ts";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import type { RelaySession } from "@/shared/api/relay-session";
@@ -75,6 +76,7 @@ export function channelMenuItems(
           const next = markSeen(previous, channel.id, channel.updatedAt);
           if (next !== previous) {
             saveReadState(next);
+            notifyReadStateLocalChange();
           }
           return next;
         });
@@ -153,6 +155,7 @@ export function channelMenuItems(
               const next = forgetChannelRead(previous, channel.id);
               if (next !== previous) {
                 saveReadState(next);
+                notifyReadStateLocalChange();
               }
               return next;
             });
