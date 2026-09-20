@@ -434,3 +434,36 @@ named tests with `computed to rgba(0, 0, 0, 0)` while all 13 pre-existing tests
 still pass, which is the measurement of why this defect survived a green suite.
 The inverse mutation — wrapping `--usage-input`, a hex token, in `hsl()` — fails
 the fifth sample, so the test pins both directions.
+
+## Named mutations for the seven checklist subjects — 2026-09-20
+
+The checklist names seven subjects: agent filtering, unknown-to-zero coercion,
+double-counting, cost provenance, cumulative deltas, sorting and DST. Each one
+below was run the same way — break the production mechanism, run the named test,
+confirm it fails and that the failure *value* names the mechanism, restore the
+file, confirm `git status --short` is empty. Tests for several of these already
+passed, which is not the same thing, and is why this was run.
+
+Full commands and verbatim output:
+`logs/test-results/usage-named-mutations-20260920.log`.
+
+| Subject | Mutation | Named test that failed | Observed failure |
+|---|---|---|---|
+| Agent filtering | `analytics::query`'s row filter ignores `selected` | `archive::analytics::tests::filters_every_section_and_preserves_unknown_fields` | `assertion failed: !single.summary.usage.input_tokens.incomplete` — agent `b`'s absent count leaked into agent `a`'s selection |
+| Unknown-to-zero coercion | `TokenAccumulator::add`'s `Unknown` arm writes `Some(0)` instead of marking incomplete | `archive::analytics::tests::unknown_token_fields_are_not_coerced_to_zero` | `left: Some("0")` / `right: None` |
+| Double-counting | each complete request observation is also added to `summary` | `archive::analytics::tests::complete_requests_partition_dimensions_without_double_counting` | `left: Some("60")` / `right: Some("30")` — the turn's 30 plus its 10 + 20 requests |
+| Cost provenance | `manifest-estimated` costs indexed into the `wire-reported` bucket | `archive::analytics::tests::wire_and_manifest_costs_keep_distinct_provenance` | `left: Some(1.0)` / `right: Some(0.5)` — an estimate blended into a bill |
+| Cumulative deltas | `window_probe_keys` stops emitting the `turnSeq - 1` predecessor key | `archive::analytics::tests::analytics_cumulative_accounting_uses_predecessor_outside_window` | `left: Some("999")` / `right: Some("20")` — the ladder fell to the turn-reported value instead of `110 - 90` |
+| Sorting | `sortUsageRows`'s direction multiplier inverted | `table headers change numeric order and search scopes visible rows` (`usage.test.mjs:73`) | `actual [B, A, Not reported]` / `expected [A, B, Not reported]` at line 87 — nulls still last, only the direction broken |
+| DST | civil-day index computed as `(at - day_boundaries[0]) / 86_400` instead of through the supplied boundaries | `archive::analytics::tests::dst_short_day_assigns_next_midnight_to_next_day` | `left: 1` / `right: 0` — the 23-hour spring-forward day put the next day's first report back on day 0 |
+
+**All seven produced a named failure, and none was an equivalent mutant.** One
+candidate was rejected *as* an equivalent mutant rather than counted: flipping
+`bucket`'s `partition_point(|b| *b <= at)` to `*b < at` cannot be detected by
+the DST test, whose event sits one second past the boundary, so no half-open
+versus closed change can move it. The mutation used instead — a hardcoded
+86,400-second day — is the assumption those boundaries exist to defeat.
+
+Both runners were verified before being trusted: the Rust selection reported
+`running 6 tests` (6 ran, 2,965 filtered, so the filter matched rather than
+matching nothing), and the frontend file reported `tests 7`.
