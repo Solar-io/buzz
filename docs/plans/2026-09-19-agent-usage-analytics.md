@@ -17,76 +17,232 @@ Reference artifacts:
 An item is complete only when the implementation and its relevant verification
 exist. No item may be dropped without Sam's explicit approval.
 
+Walked item by item on 2026-09-20: **37 of 45 checked, 8 left open.** Every
+checked box names the evidence it rests on. **Seven of the eight open boxes are
+verification gaps, not missing features** — the code is there and was seen
+working; what is absent is a test or measurement that pins it, so the box stays
+empty rather than taking an unearned tick. The eighth (documentation reconciled
+after delivery) is not this branch's to claim. Nothing here is descoped; the
+open items are stated so they can be closed or explicitly deferred by Sam.
+
 ### Product surface
 
-- [ ] Dedicated, deep-linkable full-page `Agents → Usage` view.
-- [ ] Reference-order page structure and card/table density inside Buzz chrome.
+- [x] Dedicated, deep-linkable full-page `Agents → Usage` view. — route
+      `app/routes/agents.usage.tsx`; `agent-usage.spec.ts` navigates
+      `/#/agents/usage` and the state survives `page.reload()`.
+- [x] Reference-order page structure and card/table density inside Buzz chrome. —
+      the five responsive `agent-usage.spec.ts` runs assert no horizontal
+      overflow inside the app shell and capture
+      `test-results/agent-usage/usage-{375,768,1024,1440,2560}.png`.
 - [ ] Searchable agent multi-select with Select all, Clear, avatars, names and
-      pubkey fallback.
-- [ ] One, many and all-agent selections recompute every KPI, chart, table,
-      highlight, coverage value and export row.
-- [ ] Agent selection and range survive reload, back/forward and copied links.
-- [ ] `1D`, `7D`, `30D`, `90D`, `YTD`, `All` and validated custom ranges.
-- [ ] Four headline KPIs: total, input, output and estimated cost.
-- [ ] Infrastructure, Performance and Highlights summary bands.
-- [ ] Calendar heatmap, busiest-day card and weekday chart.
-- [ ] Input/output/cost timeline with exact-value pointer and keyboard access.
-- [ ] Provider-cost visualization.
-- [ ] Service-tier distribution with explicit Unknown/Not reported coverage.
-- [ ] Ranked model usage visualization.
-- [ ] Account/subscription and agent distribution visualizations.
-- [ ] Provider, provider-by-date, agent and model sortable/searchable tables.
-- [ ] Provider-diversity score, shares, recent window and honest coverage.
-- [ ] CSV export of the filtered data.
+      pubkey fallback. — Select all, Clear and checkbox selection are covered by
+      `agent-usage.spec.ts`; the picker's own `Search agents` box and its avatars
+      are asserted nowhere (`UsageControls` has no unit test).
+- [x] One, many and all-agent selections recompute every KPI, chart, table,
+      highlight, coverage value and export row. —
+      `agent-usage.spec.ts::one many all none filter every analytics dimension`,
+      `analytics.test.mjs::one many all and none produce distinct global snapshots`,
+      `analytics_tests.rs::filters_every_section_and_preserves_unknown_fields`,
+      and the live-relay proof's one/many/all reconciliation.
+- [x] Agent selection and range survive reload, back/forward and copied links. —
+      `agent-usage.spec.ts::back and forward restore date and agent selection`
+      plus the reload in the one/many/all test and
+      `analytics.test.mjs::URL multi-selection is transmitted to the analytics query`.
+- [x] `1D`, `7D`, `30D`, `90D`, `YTD`, `All` and validated custom ranges. —
+      `analytics.test.mjs::all presets and custom inclusive last day create exact boundaries`
+      and `::invalid and reversed dates fail before IPC`;
+      `agent-usage.spec.ts::custom validation range URL sort search and export`.
+- [x] Four headline KPIs: total, input, output and estimated cost. —
+      `usage.test.mjs::headline reports turns…` and `::headline never invents
+      total tokens…`; `agent-usage.spec.ts` asserts `usage-total` and
+      `usage-cost`.
+- [x] Infrastructure, Performance and Highlights summary bands. — the themed
+      `agent-usage.spec.ts` runs measure `.usage-summary-band:nth-child(2) dd`
+      and `:nth-child(3) dd` and fail if either selector stops matching; all
+      three bands are in the captured screenshots.
+- [x] Calendar heatmap, busiest-day card and weekday chart. — all three render in
+      the captured page; the data behind them is pinned by
+      `analytics_tests.rs::dst_short_day_assigns_next_midnight_to_next_day`
+      (day and weekday groups) and
+      `analytics.test.mjs::calendar boundaries preserve spring and fall DST`.
+- [x] Input/output/cost timeline with exact-value pointer and keyboard access. —
+      `usage.test.mjs::timeline focus reveals exact values and arrows move real focus`.
+- [x] Provider-cost visualization. — the cost-by-provider-and-source card renders
+      in the captured page over the provider aggregation pinned by
+      `analytics_tests.rs::filters_every_section_and_preserves_unknown_fields`.
+- [x] Service-tier distribution with explicit Unknown/Not reported coverage. —
+      `usage.test.mjs::the service-tier share is a dash when there are no turns to divide by`;
+      `agent-usage.spec.ts::empty disabled unknown and retry states remain truthful`;
+      the tier coverage note renders in the captured page.
+- [x] Ranked model usage visualization. — ranked by total tokens in the captured
+      page; ranking pinned by `agent_usage_tests.rs::d6_*` and
+      `compute_series_ranks_known_total_before_unknown_total`.
+- [x] Account/subscription and agent distribution visualizations. — both donuts in
+      the captured page; `accounts.test.mjs::a seeded account renders as
+      provisional and a confirmed one does not` drives the legend.
+- [x] Provider, provider-by-date, agent and model sortable/searchable tables. —
+      all four render with sort controls and search boxes in the captured page;
+      `usage.test.mjs::table headers change numeric order and search scopes
+      visible rows` and `agent-usage.spec.ts::custom validation range URL sort
+      search and export`.
+- [x] Provider-diversity score, shares, recent window and honest coverage. —
+      `usage.test.mjs::diversity reports percent scale and never fabricates empty
+      recent score`;
+      `analytics_tests.rs::provider_diversity_is_normalized_shannon_and_does_not_infer_model`
+      and `::complete_request_diversity_preserves_ninety_nine_to_one_weighting`.
+- [x] CSV export of the filtered data. —
+      `analytics.test.mjs::CSV preserves unknown cells exact integers quotes and
+      prevents formula execution`,
+      `accounts.test.mjs::CSV export carries the account dimension and its
+      confirmation state`, and the export in `agent-usage.spec.ts`.
 - [ ] Loading, updating, empty, disabled, partial, unknown, stale and error states.
-- [ ] Accessible table/text alternatives for charts; no color-only encoding.
-- [ ] Responsive layouts at 375, 768, 1024, 1440 and 2560 widths.
-- [ ] Light/dark themes, reduced motion, keyboard-only use, screen readers and
-      maximum supported text zoom.
+      — six of the eight are covered (`agent-usage.spec.ts::empty disabled unknown
+      and retry states…` and `::loading and error states expose retry…`, partial
+      by the I/O-ratio and `+` marker tests). The `Updating usage…` indicator and
+      the `isStale` banner in `AgentUsagePage.tsx` have no assertion at any layer.
+- [ ] Accessible table/text alternatives for charts; no color-only encoding. — the
+      timeline's `aria-live` exact-value readout is asserted
+      (`usage.test.mjs`), the tables carry `sr-only` captions, and every partial
+      or seeded state is text rather than colour (asserted in
+      `accounts.test.mjs` and the I/O-ratio tests). The two disclosure tables
+      (`View daily data`, `View timeline data`) are asserted nowhere.
+- [x] Responsive layouts at 375, 768, 1024, 1440 and 2560 widths. — five
+      `agent-usage.spec.ts` runs, each asserting
+      `scrollWidth <= clientWidth + 1` and capturing a screenshot. (The capture
+      is viewport-height: the page scrolls inside its own container.)
+- [x] Light/dark themes, reduced motion, keyboard-only use, screen readers and
+      maximum supported text zoom. — two themes × `agent-usage.spec.ts::theme
+      …, maximum text zoom and reduced motion` and `::theme …, every themed
+      surface resolves to a real colour` (luminance-banded per theme, so light
+      cannot pass on a dark render); keyboard focus and arrow navigation in
+      `usage.test.mjs`; both suites address controls through the accessibility
+      tree (`getByRole` with accessible names) rather than by CSS selector.
 
 ### Telemetry and accounting
 
-- [ ] Preserve current encrypted owner-only NIP-AM kind `44200` contract and
-      historical compatibility.
-- [ ] Add optional observed provider/account/service-tier attribution; never
-      infer provider or account from model text.
-- [ ] Add optional per-provider-call observations with token/cache/cost,
-      latency, fallback and cost-provenance fields.
-- [ ] Add stable owner-defined subscription/account identifiers plus encrypted
-      display labels; never store an API key or credential as identity.
-- [ ] Make a derived account identity structurally distinguishable from an
-      owner-confirmed one in storage, on the wire, and in the UI.
+- [x] Preserve current encrypted owner-only NIP-AM kind `44200` contract and
+      historical compatibility. — `mod_agent_metric_tests.rs` (routing and
+      fail-closed decrypt), the live-relay proof (owner decrypts, outsider
+      cannot), and a telemetry-less legacy payload still counted in
+      `analytics_tests.rs::wire_and_manifest_costs_keep_distinct_provenance`.
+- [x] Add optional observed provider/account/service-tier attribution; never
+      infer provider or account from model text. — `buzz-acp`
+      `analytics_attribution_reads_only_explicit_nonsecret_labels`;
+      `analytics_tests.rs::provider_diversity_is_normalized_shannon_and_does_not_infer_model`;
+      `usage_attribution_tests.rs::agents_differing_only_by_model_share_one_account`.
+- [x] Add optional per-provider-call observations with token/cache/cost,
+      latency, fallback and cost-provenance fields. —
+      `analytics_tests.rs::complete_requests_partition_dimensions_without_double_counting`
+      (per-request tokens and latency) and
+      `::inconsistent_requests_remain_subordinate_and_are_flagged`.
+- [x] Add stable owner-defined subscription/account identifiers plus encrypted
+      display labels; never store an API key or credential as identity. —
+      `usage_attribution_tests.rs::credentials_in_env_vars_never_reach_the_seeded_row`
+      and `buzz-acp` `analytics_attribution_never_reads_a_credential_variable`.
+- [x] Make a derived account identity structurally distinguishable from an
+      owner-confirmed one in storage, on the wire, and in the UI. —
+      `analytics_tests.rs::seeded_and_confirmed_accounts_are_reported_apart`,
+      `::an_account_without_a_confirmation_flag_is_provisional`,
+      `::one_seeded_report_keeps_a_mostly_confirmed_account_provisional`;
+      `buzz-acp` `analytics_attribution_distinguishes_seeded_from_confirmed_accounts`;
+      four `accounts.test.mjs` tests; `agent-usage.spec.ts::a seeded account
+      reads as provisional until the owner confirms it`.
 - [ ] Carry the effective model for Claude/Codex turns when the standard ACP
-      usage payload omits it, without claiming a billing identity.
-- [ ] Preserve exact `u64` handling and per-field incomplete/unknown semantics.
-- [ ] Never double-count request observations and aggregate turn totals.
-- [ ] Keep wire-reported and manifest-estimated costs visibly distinct.
-- [ ] Record stop reason, request coverage and request-breakdown completeness.
-- [ ] Add additive, crash-idempotent archive schema migration and raw backfill.
-- [ ] Add rebuildable per-request projection table and required scan indexes.
-- [ ] Add one transaction-consistent analytics query supporting multi-agent
-      filters and adaptive hourly/daily/weekly/monthly buckets.
+      usage payload omits it, without claiming a billing identity. — implemented:
+      `crates/buzz-acp/src/acp.rs` keeps an observed `usage_models` map filled
+      from `session/new`, `session/set_model` and `current_model_update`, applied
+      only when `usage.model.is_none()`. **No test touches `usage_models` or
+      `observe_usage_model` at all**, so the fallback is unverified.
+- [x] Preserve exact `u64` handling and per-field incomplete/unknown semantics. —
+      `agent_usage_p4a_tests.rs::adjacent_pair_at_u64_max_computes_normally` and
+      `::duplicate_at_u64_max_needs_no_successor_probe`;
+      `analytics_tests.rs::unknown_token_fields_are_not_coerced_to_zero`;
+      `analytics.test.mjs::decimal counters preserve all u64 digits`,
+      `::unknown usage is distinct from reported zero` and `::numeric sorting
+      distinguishes adjacent values above MAX_SAFE_INTEGER`.
+- [x] Never double-count request observations and aggregate turn totals. —
+      `analytics_tests.rs::complete_requests_partition_dimensions_without_double_counting`,
+      shown to fail (60 vs 30) under the double-counting mutation below.
+- [x] Keep wire-reported and manifest-estimated costs visibly distinct. —
+      `analytics_tests.rs::wire_and_manifest_costs_keep_distinct_provenance`,
+      shown to fail (1.0 vs 0.5) under the provenance mutation below;
+      `usage.test.mjs::provenance displays wire estimates unknown separately`.
+- [ ] Record stop reason, request coverage and request-breakdown completeness. —
+      request coverage and breakdown completeness are asserted
+      (`coverage.complete_request_reports`, `inconsistent_request_reports` and
+      `request_observation_count` in `analytics_tests.rs`). Stop reason is
+      recorded end to end and rendered by `UsageSummary.tsx`, but no test
+      asserts the `stopReasons` dimension and the analytics mock never supplies
+      it, so that section is never exercised.
+- [x] Add additive, crash-idempotent archive schema migration and raw backfill. —
+      `analytics_tests.rs::migration_backfill_restart_and_orphan_repair_are_idempotent`
+      and `::missing_request_projection_is_rebuilt_from_canonical_archive`, plus
+      `store_migration_tests.rs`.
+- [x] Add rebuildable per-request projection table and required scan indexes. —
+      the same rebuild test, the indexes in `store.rs`'s `SCHEMA`, and
+      `analytics_tests.rs::hundred_thousand_rows_keep_exact_totals_with_bounded_query_time`.
+- [x] Add one transaction-consistent analytics query supporting multi-agent
+      filters and adaptive hourly/daily/weekly/monthly buckets. —
+      `analytics_tests.rs::boundaries_accept_dst_and_adaptive_months_reject_invalid_input`,
+      `::filters_every_section_and_preserves_unknown_fields`, and the
+      100,000-row query. The single-`unchecked_transaction` property itself has
+      no dedicated test; it is read off `analytics.rs::query`.
 - [ ] Resolve display names/avatars from current profiles while retaining
-      historical pubkey fallback.
-- [ ] Truthfully label kind-44200 report count as Turns unless complete provider
-      request coverage exists.
+      historical pubkey fallback. — implemented in `AgentUsagePage.tsx`
+      (`displayName` → `name` → `truncatePubkey`). The e2e mock supplies no
+      profiles, so only the fallback branch ever runs and even that is not
+      asserted (it is visible in the captured page); the current-profile
+      resolution path is unverified.
+- [x] Truthfully label kind-44200 report count as Turns unless complete provider
+      request coverage exists. — `usage.test.mjs::headline reports turns and
+      leaves unknown requests unreported`; the captured page reads
+      `2 Turns · Requests not reported`.
 
 ### Verification and delivery
 
-- [ ] Rust unit tests for validation, buckets, grouping, completeness, cost
-      provenance, reconciliation and diversity math.
-- [ ] SQLite migration, crash repair, backfill, orphan and 100,000-row
-      performance tests.
-- [ ] Publisher tests proving attribution is emitted only when observed.
-- [ ] React tests for all filter/range/sort/export/error/partial interactions.
-- [ ] E2E screenshots in light/dark and at reference desktop/mobile widths.
-- [ ] Named mutations for agent filtering, unknown-to-zero coercion,
-      double-counting, cost provenance, cumulative deltas, sorting and DST.
-- [ ] Live isolated-relay proof from two agents through encrypted ingestion,
-      archive restart and one/many/all dashboard filtering.
+- [x] Rust unit tests for validation, buckets, grouping, completeness, cost
+      provenance, reconciliation and diversity math. — `analytics_tests.rs`,
+      `agent_usage_tests.rs`, `agent_usage_p4a_tests.rs` (validation, buckets,
+      the accounting ladder, diversity, provenance, reconciliation).
+- [x] SQLite migration, crash repair, backfill, orphan and 100,000-row
+      performance tests. — `analytics_tests.rs::migration_backfill_restart_and_orphan_repair_are_idempotent`,
+      `::missing_request_projection_is_rebuilt_from_canonical_archive`,
+      `::hundred_thousand_rows_keep_exact_totals_with_bounded_query_time`,
+      `store_migration_tests.rs`.
+- [x] Publisher tests proving attribution is emitted only when observed. — the
+      four `analytics_attribution_*` tests in `crates/buzz-acp/src/usage.rs` and
+      `pool.rs::test_real_publisher_leaves_unobserved_service_tier_unknown`.
+- [x] React tests for all filter/range/sort/export/error/partial interactions. —
+      filter, range, sort, export and partial in `analytics.test.mjs`,
+      `usage.test.mjs` and `accounts.test.mjs`; error and retry at the e2e layer
+      in `agent-usage.spec.ts::loading and error states expose retry without
+      invented metrics` rather than in a unit test.
+- [x] E2E screenshots in light/dark and at reference desktop/mobile widths. —
+      `usage-{375,768,1024,1440,2560}.png` and `usage-light-zoom.png` /
+      `usage-dark-zoom.png` under `desktop/test-results/agent-usage/`.
+- [x] Named mutations for agent filtering, unknown-to-zero coercion,
+      double-counting, cost provenance, cumulative deltas, sorting and DST. —
+      all seven run on 2026-09-20, each with the named test it broke and the
+      observed failure value; see the mutation table below and
+      `logs/test-results/usage-named-mutations-20260920.log`.
+- [x] Live isolated-relay proof from two agents through encrypted ingestion,
+      archive restart and one/many/all dashboard filtering. — all four sub-parts
+      in one run; see the section below and
+      `logs/test-results/usage-live-relay-full-20260920.log`.
 - [ ] No source file over the repository ceiling; formatting, lint, typecheck,
-      full affected suites and repository build pass.
-- [ ] Documentation reconciled after integration and delivery.
+      full affected suites and repository build pass. — typecheck, the full
+      affected suites and both builds pass, and the file-size ratchet now prints
+      exactly the entry set `main` prints. But that entry set is 10 files over
+      the ceiling on `main` already, `cargo fmt --check` fails on `main` too
+      (26 hunks under the pinned rustfmt 1.9.0) with 21 further hunks in this
+      branch's own new files, `clippy -D warnings` is red on `main` with 20
+      errors, and biome reports 3 pre-existing format errors in unrelated files.
+      None of that is this feature's doing and none of it can be asserted as
+      passing, so the box stays open.
+- [ ] Documentation reconciled after integration and delivery. — not this
+      branch's to claim: by the repository's own rule, the reconciliation
+      against git happens after integration, and writing it here in advance is
+      exactly the expiring status the rule forbids.
 
 ## Truthful reference mapping
 
@@ -126,9 +282,12 @@ Local integration evidence:
 - Focused Biome checks pass for every usage analytics frontend and integration
   file.
 
-Independent browser QA, named mutation runs, isolated-relay proof, and final
-verification remain delivery gates; this integration record does not claim
-those later stages have passed.
+What has since been built and measured, each recorded below with its evidence:
+an independent browser QA pass and its three fixes; named mutations for all
+seven subjects the checklist lists, each with the test it broke; and the live
+isolated-relay proof covering two agents, encrypted ingestion, owner-only
+decryption, an archive restart and one/many/all filtering. This record
+describes what exists in the tree and what was measured locally.
 
 Built-in Claude/Codex ACP responses currently do not expose an observed service
 tier. Their publishers therefore leave `serviceTier` absent and the dashboard
@@ -243,13 +402,22 @@ identity", which seeding will not undo.
 
 ### Evidence
 
-- Rust: 2,943 desktop tests pass (36 new across seeding, the absent case, spawn
-  precedence, validation, grouping, the IPC surface, restart and respawn), plus
-  the full `buzz-core` suite at 271 tests and the full `buzz-acp` suite at 942.
-- Frontend: the complete desktop unit suite passes (5,725 tests, 12 new), plus
-  `tsc --noEmit`, the production build, and focused Biome checks.
-- Playwright `agent-usage.spec.ts`: 13 pass (the 12 existing plus a confirm-flow
-  test that drives the real editor through the mock IPC bridge).
+The counts below were re-measured on 2026-09-20; the earlier ones in this
+section (2,943 Rust / 5,725 frontend / 13 Playwright) had been overtaken by
+later commits on the branch.
+
+- Rust, desktop: 2,954 pass in the lib binary, 0 fail, 18 ignored, plus 7 in
+  `tests/csp.rs` and 3 in `tests/rodio_mixer_diagnostic.rs` — 2,964 passing
+  across all five binaries. (36 were new across seeding, the absent case, spawn
+  precedence, validation, grouping, the IPC surface, restart and respawn.)
+- Rust, the two crates this touches: `buzz-core` 271 in its lib binary plus 2
+  doc-tests, and `buzz-acp` 942 in its lib binary plus 9 in
+  `tests/pool_lifecycle_state.rs`, both with the three `BUZZ_ACP_*` pool
+  variables unset per `AGENTS.md`'s gotcha 7.
+- Frontend: the complete desktop unit suite passes at 5,729 tests, 81 suites,
+  0 fail, plus `tsc --noEmit`, the production build, and focused Biome checks.
+- Playwright `agent-usage.spec.ts`: 15 pass — 6 behavioural, 5 responsive widths,
+  and 2 themes × 2 (text zoom / reduced motion, and themed-surface colour).
 - Named mutations were run and each is recorded with the test it broke below.
 
 ### Mutation results
@@ -282,14 +450,16 @@ running app.
   labels update only as agents restart and publish with the new derived
   environment; the page's coverage note reflects the mapping immediately but does
   not retroactively relabel history. That is the honest behaviour, not a bug.
-- The repository file-size ratchet was already failing on this branch before this
-  change (11 files over the 1000-line ceiling at the preceding commit). This
-  change adds 10 lines across 5 of those already-over files
-  (`commands/agents.rs` +4, `migration.rs` +2, `managed_agents/runtime.rs` +2,
-  `discovery/tests.rs` +1, `spawn_snapshot/tests.rs` +1) for an unavoidable
-  required struct field and two module wirings. `types.rs` and
-  `personas/snapshot/import.rs`, which this change would otherwise have pushed
-  *over* the ceiling, were kept under it.
+- The file-size ratchet note here described a state that has since been
+  corrected, and is kept only so the sequence reads straight. This change had
+  added 6 lines across 4 files the ratchet had pinned
+  (`discovery/tests.rs` +1, `migration.rs` +2, `managed_agents/runtime.rs` +2,
+  `spawn_snapshot/tests.rs` +1) for a required struct field and two module
+  wirings, which made `discovery/tests.rs` and `migration.rs` read as *new*
+  violations because they were over the ceiling but static on `main`. All six
+  lines were bought back on 2026-09-20 (see the ratchet-parity commit):
+  `node desktop/scripts/check-file-sizes.mjs` now prints the identical 10
+  entries with the identical counts here as it does on `main`.
 
 ## Independent QA remediation — 2026-09-19
 
@@ -318,7 +488,7 @@ Two real defects sat behind the wrong conclusion, and both are fixed.
 
 - **The file and directory layer had no tests.** Every test called the pure
   `seed_records`. Removing the write entirely left 2,948 desktop tests green.
-  Nine `on_disk` tests now drive real stores in temp directories, following
+  Ten `on_disk` tests now drive real stores in temp directories, following
   `materialize`'s `*_in_file` pattern, and `seed_target_dirs` /
   `seed_usage_attribution_in_dirs` are split out so the directory resolution is
   reachable without an `AppHandle`.
@@ -389,7 +559,7 @@ computed background of `.usage-card` in the running page was `rgba(0, 0, 0, 0)`:
 the cards had no surface, no border and no muted text of their own, and the page
 showed through to the app shell's background.
 
-**78 declarations in `usage.css`** are now wrapped, plus **5 bare `var(--muted)`
+**79 declarations in `usage.css`** are now wrapped, plus **5 bare `var(--muted)`
 references in `UsageCharts.tsx`** inline styles — the donut's empty state and
 three `color-mix()` heatmap fills, which were invalid for the same reason and
 left the heatmap with no cells at all. The three `--usage-*` dimension tokens are

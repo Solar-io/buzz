@@ -17,6 +17,7 @@ let render,
   UsageSummary,
   UsageCoverage,
   Diversity,
+  ServiceTiers,
   Timeline;
 before(async () => {
   Object.assign(globalThis, {
@@ -31,7 +32,7 @@ before(async () => {
   ));
   ({ createElement } = await import("react"));
   ({ UsageTable } = await import("./UsageTable.tsx"));
-  ({ UsageSummary, UsageCoverage, Diversity } = await import(
+  ({ UsageSummary, UsageCoverage, Diversity, ServiceTiers } = await import(
     "./UsageSummary.tsx"
   ));
   ({ Timeline } = await import("./UsageCharts.tsx"));
@@ -139,6 +140,21 @@ test("provenance displays wire estimates unknown separately", () => {
   assert.ok(view.getByText("$4.00"));
   assert.ok(view.getByText("$7.00"));
   assert.ok(view.getByText(/Unknown source/));
+});
+test("the service-tier share is a dash when there are no turns to divide by", () => {
+  // With turns, the share is a real percentage.
+  const populated = fixture();
+  assert.equal(populated.summary.reportCount, 3);
+  const withTurns = render(createElement(ServiceTiers, { data: populated }));
+  assert.match(withTurns.container.textContent, /100\.0% of turns/);
+  cleanup();
+  // Without them it is absent, not zero — the page's rule everywhere else.
+  const empty = fixture();
+  empty.summary.reportCount = 0;
+  const withoutTurns = render(createElement(ServiceTiers, { data: empty }));
+  const text = withoutTurns.container.textContent;
+  assert.doesNotMatch(text, /% of turns/, `rendered a share anyway: ${text}`);
+  assert.match(text, /—/, `no em dash for the absent share: ${text}`);
 });
 test("diversity reports percent scale and never fabricates empty recent score", () => {
   const view = render(createElement(Diversity, { data: fixture() }));

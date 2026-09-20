@@ -186,14 +186,14 @@ export function ServiceTiers({ data }: { data: AgentUsageAnalytics }) {
               <strong className="usage-cost">
                 {money(tier.usage.estimatedCostUsd)}
               </strong>
+              {/* No turns to divide by is an absent share, not a zero one —
+                  the same em dash the breakdown tables' Share column uses. */}
               <span>
                 {data.summary.reportCount
-                  ? (
-                      (tier.reportCount / data.summary.reportCount) *
-                      100
-                    ).toFixed(1)
-                  : 0}
-                % of turns
+                  ? `${(
+                      (tier.reportCount / data.summary.reportCount) * 100
+                    ).toFixed(1)}% of turns`
+                  : "—"}
               </span>
             </div>
             <meter
