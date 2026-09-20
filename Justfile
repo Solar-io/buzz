@@ -159,7 +159,8 @@ fmt-all: fmt desktop-tauri-fmt mobile-fmt
 fix-all: fmt desktop-tauri-fmt desktop-fix web-fix mobile-fix
 
 # Ensure sidecar placeholder binaries exist (Tauri validates externalBin at compile time)
-# Sidecar binary list must stay in sync with desktop-release-build below.
+# Stubs for check/clippy/test only. Release bundles must use
+# scripts/build-sidecars.sh, which compiles the real binaries.
 _ensure-sidecar-stubs:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -253,23 +254,33 @@ desktop-tauri-test-compiled-flags: _ensure-sidecar-stubs
     echo "Both compiled states verified."
 
 # Build the full desktop Tauri app locally (unsigned, for testing)
-# Sidecar binary list must stay in sync with _ensure-sidecar-stubs above.
+# Sidecars are COMPILED here, never stubbed: `touch`ed placeholders bundle as
+# empty files, and the resulting app launches with no working harness while
+# looking entirely healthy. Mirrors the "Build sidecars" step in release.yml.
+# Only the .app is bundled: the dmg bundler fails locally (bundle_dmg.sh exits
+# non-zero after the .app is already correct), which would make this recipe
+# report failure for a good build. Use `just desktop-release-dmg` for a dmg.
 # pnpm install is unconditional here: release builds must start from a clean dep tree.
 desktop-release-build target="aarch64-apple-darwin":
     #!/usr/bin/env bash
     set -euo pipefail
     TARGET={{target}}
-    mkdir -p desktop/src-tauri/binaries
-    touch "desktop/src-tauri/binaries/buzz-acp-$TARGET"
-    touch "desktop/src-tauri/binaries/buzz-agent-$TARGET"
-    if [[ "$TARGET" != *windows* ]]; then
-        touch "desktop/src-tauri/binaries/buzz-backend-kubernetes-$TARGET"
-    fi
-    touch "desktop/src-tauri/binaries/buzz-dev-mcp-$TARGET"
-    touch "desktop/src-tauri/binaries/git-credential-nostr-$TARGET"
-    touch "desktop/src-tauri/binaries/buzz-$TARGET"
+    ./scripts/build-sidecars.sh "$TARGET"
     pnpm install
-    cd {{desktop_dir}} && pnpm tauri build --features mesh-llm --target {{target}}
+    (cd {{desktop_dir}} && pnpm tauri build --features mesh-llm --target {{target}} --bundles app)
+    ./scripts/verify-bundled-sidecars.sh "$TARGET"
+
+# Same as desktop-release-build but also produces the .dmg. The dmg bundler is
+# known to fail on some local setups; when it does, the .app under
+# desktop/src-tauri/target/<triple>/release/bundle/macos/ is still correct.
+desktop-release-dmg target="aarch64-apple-darwin":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    TARGET={{target}}
+    ./scripts/build-sidecars.sh "$TARGET"
+    pnpm install
+    (cd {{desktop_dir}} && pnpm tauri build --features mesh-llm --target {{target}} --bundles app dmg)
+    ./scripts/verify-bundled-sidecars.sh "$TARGET"
 
 # Run desktop checks suitable for CI / pre-push
 desktop-ci: desktop-check desktop-test desktop-tauri-fmt-check desktop-build desktop-tauri-check desktop-tauri-test
