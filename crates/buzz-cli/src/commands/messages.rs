@@ -3,7 +3,7 @@ use nostr::PublicKey;
 use uuid::Uuid;
 
 use crate::client::{normalize_events, normalize_write_response, BuzzClient};
-use crate::commands::card::{build_card_tag, card_without_mention_notice};
+use crate::commands::card::{build_card_tag, card_round_notice, card_without_mention_notice};
 use crate::error::CliError;
 use crate::validate::{
     infer_language, parse_event_id, read_or_stdin, truncate_diff, validate_content_size,
@@ -719,6 +719,16 @@ pub async fn cmd_send_message(
     // member check), so a doomed send is not double-noised. stderr keeps
     // stdout JSON-clean for `--format json` consumers.
     if let Some(notice) = card_without_mention_notice(card_tag.is_some(), mention_pubkeys.len()) {
+        eprintln!("{notice}");
+    }
+    // The rounds guardrail, same placement and same reasoning: an interview
+    // card with no thread to join and nobody to ask is the shape that opens a
+    // second Asks row when a follow-up was meant.
+    if let Some(notice) = card_round_notice(
+        card_tag.as_ref().and_then(|tag| tag.get(1)).map(String::as_str),
+        p.reply_to.is_some(),
+        mention_pubkeys.len(),
+    ) {
         eprintln!("{notice}");
     }
 

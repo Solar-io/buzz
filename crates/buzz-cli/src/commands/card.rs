@@ -204,6 +204,45 @@ pub(crate) fn card_without_mention_notice(has_card: bool, mention_count: usize) 
     }
 }
 
+/// The stderr guidance for an interview card that is going nowhere in
+/// particular — neither answering a previous round nor addressed to anybody.
+///
+/// A refinement round is a second card in the SAME NIP-10 thread
+/// (`--reply-to <the previous answer's event id>`). That is the only thing
+/// that folds the rounds into one Asks row; a round-2 card sent top-level is a
+/// different interview by definition and opens a SECOND row, leaving the
+/// askee looking at a superseded question next to the live one.
+///
+/// Only multi-question (v2) cards earn this: a one-question card is an
+/// ordinary ask, and there is no round to get wrong. A WARNING, not a
+/// refusal — a broadcast interview is legitimate, just undirected.
+///
+/// Takes the SERIALIZED payload rather than a flag so the version it reports
+/// on is the one that actually went on the wire.
+pub(crate) fn card_round_notice(
+    card_json: Option<&str>,
+    has_reply_to: bool,
+    mention_count: usize,
+) -> Option<String> {
+    if has_reply_to || mention_count > 0 {
+        return None;
+    }
+    let json = card_json?;
+    // Total: an unreadable payload cannot reach the send path at all (the
+    // builder produced it), and if it somehow did, silence beats a panic in a
+    // guidance notice.
+    let parsed: Value = serde_json::from_str(json).ok()?;
+    if parsed.get("v").and_then(Value::as_u64) != Some(2) {
+        return None;
+    }
+    Some(
+        "note: interview card sent with neither --reply-to nor --mention; a follow-up round must \
+         reply to the previous answer's event id (--reply-to <answer event id>) or it opens a \
+         SECOND Asks row instead of folding into the first"
+            .to_string(),
+    )
+}
+
 /// One validated option, in the shape the fallback text generator needs.
 struct OptionView {
     label: String,
@@ -748,6 +787,69 @@ mod tests {
         // Any mention addresses the ask; no card means nothing to warn about.
         assert!(card_without_mention_notice(true, 1).is_none());
         assert!(card_without_mention_notice(false, 0).is_none());
+    }
+
+    // ---- rounds guardrail (Decision 4) ----
+
+    /// The payload exactly as it goes on the wire, so the notice is tested
+    /// against the builder's output rather than against hand-written JSON.
+    fn built_payload(raw: &str) -> String {
+        let (tag, _) = build_card_tag(raw).expect("fixture must build");
+        tag[1].clone()
+    }
+
+    const V2_TWO_QUESTIONS: &str = r#"{"v":2,"title":"Release shape","questions":[
+        {"question":"Which surfaces?","options":[{"label":"Web"},{"label":"Web + desktop"}]},
+        {"question":"When?","options":[{"label":"Now"},{"label":"Monday"}]}]}"#;
+    const V1_ONE_QUESTION: &str =
+        r#"{"v":1,"title":"Ship it?","options":[{"label":"Yes"},{"label":"No"}]}"#;
+
+    #[test]
+    fn interview_card_going_nowhere_warns_about_rounds() {
+        // Neither joining a thread nor addressed to anybody: the shape that
+        // opens a SECOND Asks row when a follow-up round was meant.
+        let payload = built_payload(V2_TWO_QUESTIONS);
+        let notice = card_round_notice(Some(&payload), false, 0)
+            .expect("an undirected interview card must produce a notice");
+        assert!(notice.contains("--reply-to <answer event id>"));
+        assert!(notice.contains("SECOND Asks row"));
+    }
+
+    #[test]
+    fn a_round_two_card_does_not_warn() {
+        // `--reply-to` IS the round-2 idiom; warning about it would be noise.
+        let payload = built_payload(V2_TWO_QUESTIONS);
+        assert!(card_round_notice(Some(&payload), true, 0).is_none());
+    }
+
+    #[test]
+    fn an_addressed_interview_card_does_not_warn() {
+        // Round 1 legitimately has no --reply-to. A mention makes it an ask,
+        // which is the whole point, so it is not going nowhere.
+        let payload = built_payload(V2_TWO_QUESTIONS);
+        assert!(card_round_notice(Some(&payload), false, 1).is_none());
+    }
+
+    #[test]
+    fn a_one_question_card_never_warns_about_rounds() {
+        // v1 has no interview to continue, so the guidance would be noise —
+        // and this is the case that discriminates the version check from a
+        // notice that fires on every card.
+        let payload = built_payload(V1_ONE_QUESTION);
+        assert_eq!(
+            serde_json::from_str::<Value>(&payload)
+                .unwrap()
+                .get("v")
+                .and_then(Value::as_u64),
+            Some(1),
+            "the v1 fixture must really serialize as v1"
+        );
+        assert!(card_round_notice(Some(&payload), false, 0).is_none());
+    }
+
+    #[test]
+    fn no_card_never_warns_about_rounds() {
+        assert!(card_round_notice(None, false, 0).is_none());
     }
 
     #[test]
