@@ -194,6 +194,11 @@ async function mountComposer(options = {}) {
     props.threadRef = null;
     props.onClearThread = () => {};
   }
+  if ("autoNotify" in options) {
+    // Passed through verbatim — including an explicit null, which is how
+    // ThreadPanel says "no auto-target".
+    props.autoNotify = options.autoNotify;
+  }
   await act(async () => {
     root.render(React.createElement(Composer, props));
   });
@@ -442,5 +447,71 @@ test("a composer with no threadRef prop posts top-level (threadRef null)", async
     );
   } finally {
     await composer.unmount();
+  }
+});
+
+// The two-person-thread prop (Sam 2026-09-20): ThreadPanel passes it, the
+// composer folds the pubkey into the send payload's p-tag set. Composer-level
+// contract: prop set → the pubkey rides EVERY send and the hint names it;
+// prop absent/null → the payload is exactly what resolveMentions produced,
+// which is what keeps the main-channel composer (repos.tsx, never passes it)
+// byte-identical to before.
+test("autoNotify adds the pubkey to every send payload; without it nothing changes", async () => {
+  const carol = "c".repeat(64);
+  const typeAndSend = async (composer, text) => {
+    const input = composer.container.querySelector(
+      '[data-testid="composer-input"]',
+    );
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        dom.window.HTMLTextAreaElement.prototype,
+        "value",
+      ).set.call(input, text);
+      input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    });
+    await flush();
+    await act(async () => {
+      composer.container
+        .querySelector('[aria-label="Send"]')
+        .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+  };
+
+  const withAuto = await mountComposer({
+    autoNotify: { pubkey: carol, label: "Carol" },
+  });
+  try {
+    assert.match(
+      withAuto.container.querySelector('[data-testid="composer-auto-notify"]')
+        ?.textContent ?? "",
+      /^Carol will be notified$/,
+      "the hint renders while the prop is set",
+    );
+    await typeAndSend(withAuto, "first");
+    await typeAndSend(withAuto, "second");
+    assert.deepEqual(
+      withAuto.sent.map((payload) => payload.mentionPubkeys),
+      [[carol], [carol]],
+      "EVERY send carries the auto-tag, not just the first",
+    );
+  } finally {
+    await withAuto.unmount();
+  }
+
+  const without = await mountComposer({ autoNotify: null });
+  try {
+    assert.ok(
+      !without.container.querySelector('[data-testid="composer-auto-notify"]'),
+      "no hint without an auto-target",
+    );
+    await typeAndSend(without, "plain");
+    assert.deepEqual(
+      without.sent[0].mentionPubkeys,
+      [],
+      "no prop → no p-tag the text did not ask for",
+    );
+  } finally {
+    await without.unmount();
   }
 });

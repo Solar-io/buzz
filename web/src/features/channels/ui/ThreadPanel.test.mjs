@@ -213,6 +213,49 @@ function threadFixture() {
   return { root: messages[0], buffer: messages };
 }
 
+// The two-person shape (Sam 2026-09-20): a root and one reply, no third
+// voice — the DM-like thread where the pane must wake the other participant
+// without a typed @.
+function twoAuthorFixture() {
+  const rootEvent = channelEvent({
+    id: "root-event",
+    pubkey: ALICE,
+    createdAt: 1_000,
+    content: "dm-ish root",
+    tags: [],
+  });
+  const replyEvent = channelEvent({
+    id: "direct-reply",
+    pubkey: BOB,
+    createdAt: 1_010,
+    content: "bob answers",
+    tags: [["e", "root-event", "", "reply"]],
+  });
+  const messages = [rootEvent, replyEvent].map(timelineMessageFromEvent);
+  return { root: messages[0], buffer: messages };
+}
+
+// Every message is the viewer's own: the solo shape that must NOT auto-tag
+// (the only participant to notify would be the sender).
+function soloFixture() {
+  const rootEvent = channelEvent({
+    id: "root-event",
+    pubkey: ALICE,
+    createdAt: 1_000,
+    content: "note to self",
+    tags: [],
+  });
+  const replyEvent = channelEvent({
+    id: "direct-reply",
+    pubkey: ALICE,
+    createdAt: 1_010,
+    content: "still me",
+    tags: [["e", "root-event", "", "reply"]],
+  });
+  const messages = [rootEvent, replyEvent].map(timelineMessageFromEvent);
+  return { root: messages[0], buffer: messages };
+}
+
 async function flush() {
   for (let i = 0; i < 5; i += 1) {
     await act(async () => {
@@ -222,7 +265,7 @@ async function flush() {
 }
 
 async function mountPanel(options = {}) {
-  const { root, buffer } = threadFixture();
+  const { root, buffer } = (options.fixture ?? threadFixture)();
   globalThis.__BUZZ_TEST_TOASTS__ = [];
   const sent = [];
   let closed = 0;
@@ -239,9 +282,9 @@ async function mountPanel(options = {}) {
         React.createElement(ThreadPanel, {
           root,
           buffer,
-          members: [],
+          members: options.members ?? [],
           profiles: options.profiles ?? new Map(),
-          selfPubkey: null,
+          selfPubkey: options.selfPubkey ?? null,
           onClose: () => {
             closed += 1;
           },
@@ -435,6 +478,140 @@ test("the header counts every descendant and lists the participants", async () =
     assert.ok(
       panel.container.querySelector('[data-testid="thread-panel"]'),
       "the panel is mounted",
+    );
+  } finally {
+    await panel.unmount();
+  }
+});
+
+// ── Two-person threads auto-notify (Sam 2026-09-20) ─────────────────────
+// "if two people are the only ones in the conversation, then I shouldn't
+// have to tag them." Every assertion below reads the REAL send payload the
+// pane composer handed `send` — the p-tag set is the wake mechanism, so a
+// payload without the other author's pubkey is a silent thread, the exact
+// bug being guarded against.
+
+test("a two-person thread p-tags the other participant with no @ typed (Bob sending)", async () => {
+  const panel = await mountPanel({
+    fixture: twoAuthorFixture,
+    selfPubkey: BOB,
+    profiles: new Map([
+      [ALICE, { name: "Alice", displayName: "Alice Coil" }],
+      [BOB, { name: "Bob", displayName: "Bob" }],
+    ]),
+  });
+  try {
+    assert.match(
+      panel.container.querySelector('[data-testid="composer-auto-notify"]')
+        ?.textContent ?? "",
+      /^Alice Coil will be notified$/,
+      "the hint names the other participant by display name",
+    );
+    await panel.type("no tag needed here");
+    await panel.send();
+    assert.equal(panel.sent.length, 1);
+    assert.deepEqual(
+      panel.sent[0].mentionPubkeys,
+      [ALICE],
+      "Alice rides the p-tag set although nothing in the content mentions her",
+    );
+    assert.ok(
+      !panel.sent[0].content.includes("@"),
+      "no @ token was inserted into the content — the tag is payload-only",
+    );
+  } finally {
+    await panel.unmount();
+  }
+});
+
+test("the auto-tag follows the viewer (Alice sending gets Bob), label falls back to the truncated pubkey", async () => {
+  const panel = await mountPanel({
+    fixture: twoAuthorFixture,
+    selfPubkey: ALICE,
+    // No profiles at all: the hint must still say WHO, via the pubkey.
+  });
+  try {
+    assert.match(
+      panel.container.querySelector('[data-testid="composer-auto-notify"]')
+        ?.textContent ?? "",
+      /^bbbbbbbb…bbbb will be notified$/,
+      "no profile: the hint names the truncated pubkey",
+    );
+    await panel.type("bob, you there?");
+    await panel.send();
+    assert.deepEqual(
+      panel.sent[0].mentionPubkeys,
+      [BOB],
+      "the OTHER author is tagged, not the sender",
+    );
+  } finally {
+    await panel.unmount();
+  }
+});
+
+test("an explicit @ of the same person dedupes to one p-tag", async () => {
+  const panel = await mountPanel({
+    fixture: twoAuthorFixture,
+    selfPubkey: ALICE,
+    members: [{ pubkey: BOB, name: "Bob" }],
+    profiles: new Map([[BOB, { name: "Bob", displayName: "Bob" }]]),
+  });
+  try {
+    await panel.type("hey @Bob");
+    await panel.send();
+    assert.equal(panel.sent.length, 1);
+    assert.deepEqual(
+      panel.sent[0].mentionPubkeys,
+      [BOB],
+      "p-tags are a set: resolveMentions produced Bob and the auto-tag added nothing",
+    );
+  } finally {
+    await panel.unmount();
+  }
+});
+
+test("a three-author thread never auto-tags", async () => {
+  const panel = await mountPanel({
+    selfPubkey: ALICE,
+    profiles: new Map([
+      [ALICE, { name: "Alice", displayName: "Alice Coil" }],
+      [BOB, { name: "Bob", displayName: "Bob" }],
+    ]),
+  });
+  try {
+    assert.ok(
+      !panel.container.querySelector('[data-testid="composer-auto-notify"]'),
+      "no hint renders — the pane promises nothing about notifications",
+    );
+    await panel.type("plain text, nobody tagged");
+    await panel.send();
+    assert.deepEqual(
+      panel.sent[0].mentionPubkeys,
+      [],
+      "three authors: explicit mentions stay the only wake path",
+    );
+  } finally {
+    await panel.unmount();
+  }
+});
+
+test("a solo thread never auto-tags", async () => {
+  const panel = await mountPanel({
+    fixture: soloFixture,
+    selfPubkey: ALICE,
+    profiles: new Map([[ALICE, { name: "Alice", displayName: "Alice Coil" }]]),
+  });
+  try {
+    assert.ok(
+      !panel.container.querySelector('[data-testid="composer-auto-notify"]'),
+      "no hint: the only author is the sender, nobody to notify",
+    );
+    await panel.type("talking to myself");
+    await panel.send();
+    assert.deepEqual(
+      panel.sent[0].mentionPubkeys,
+      [],
+      "a solo thread p-tags nobody",
     );
   } finally {
     await panel.unmount();
