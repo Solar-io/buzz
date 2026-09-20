@@ -1,28 +1,36 @@
 /* The three dimension colours are the only palette this page adds, and they are
-   carried as tokens so the light and dark values live in one place. Both sets
-   must clear WCAG AA 4.5:1 for normal-size text against their own theme's card
-   surface, because they colour values and axis labels, not just chart fills —
-   the light values are measured against Latte's `--card` (#eff1f5), which is
-   the stricter case than pure white. Colour is never the only encoding; every
-   value that carries one also carries its label. */
+   carried as tokens so the light and dark values live in one place. They hold
+   full hex colours, unlike the app's theme tokens, which hold bare HSL
+   triplets and so must always be read as `hsl(var(--token))` — a bare
+   `var(--card)` is an invalid colour, silently discarded, and the surface
+   never paints. Both dimension sets must clear WCAG AA 4.5:1 for normal-size
+   text against the card surface their theme actually renders, because they
+   colour values and axis labels, not just chart fills. Measured against the
+   two Buzz defaults, which derive from GitHub Light / GitHub Dark at runtime;
+   `#eff1f5` is theme.css's static Catppuccin Latte card, checked as the
+   stricter light case. Colour is never the only encoding; every value that
+   carries one also carries its label. */
 .usage-page {
-  /* 4.73:1 on #eff1f5, 5.35:1 on #fff */
+  /* 5.35:1 on Buzz Light's #fff card, 4.73:1 on #eff1f5 */
   --usage-input: #c33450;
-  /* 4.75:1 on #eff1f5, 5.37:1 on #fff */
+  /* 5.37:1 on Buzz Light's #fff card, 4.75:1 on #eff1f5 */
   --usage-output: #06795f;
-  /* 4.72:1 on #eff1f5, 5.34:1 on #fff */
+  /* 5.34:1 on Buzz Light's #fff card, 4.72:1 on #eff1f5 */
   --usage-cost: #965f00;
   min-width: 0;
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  color: var(--foreground);
-  background: var(--background);
+  color: hsl(var(--foreground));
+  background: hsl(var(--background));
   font-size: 0.8125rem;
 }
 .dark .usage-page {
+  /* 4.75:1 on Buzz Dark's #24292e card — the tightest of the six */
   --usage-input: #f06479;
+  /* 7.73:1 on #24292e */
   --usage-output: #2dd4a5;
+  /* 8.02:1 on #24292e */
   --usage-cost: #ffb020;
 }
 .usage-page button,
@@ -35,7 +43,7 @@
 }
 .usage-page :is(button, input, a, summary):focus-visible,
 .usage-agent-picker :is(button, input):focus-visible {
-  outline: 2px solid var(--ring);
+  outline: 2px solid hsl(var(--ring));
   outline-offset: 3px;
 }
 .usage-page-header {
@@ -45,7 +53,7 @@
   flex-wrap: wrap;
   gap: 12px;
   padding: 18px 24px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid hsl(var(--border));
 }
 .usage-page-header > div:first-child {
   display: flex;
@@ -60,7 +68,7 @@
   font-weight: 650;
 }
 .usage-page-header p {
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   font-size: 0.75rem;
   margin-top: 2px;
 }
@@ -83,12 +91,12 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   font-size: 0.75rem;
   margin-bottom: 2px;
 }
 .usage-breadcrumb a:hover {
-  color: var(--foreground);
+  color: hsl(var(--foreground));
   text-decoration: underline;
 }
 .usage-title-row {
@@ -109,9 +117,9 @@
   color: var(--usage-input);
 }
 .usage-button {
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 7px;
-  background: var(--card);
+  background: hsl(var(--card));
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -122,13 +130,13 @@
   white-space: nowrap;
 }
 .usage-button:hover:not(:disabled) {
-  background: var(--accent);
+  background: hsl(var(--accent));
 }
 .usage-ranges {
   display: flex;
   padding: 3px;
-  border: 1px solid var(--border);
-  background: var(--card);
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
   border-radius: 8px;
   gap: 2px;
 }
@@ -142,7 +150,7 @@
   background: #bc3b55;
 }
 .usage-ranges button:not([aria-pressed="true"]):hover {
-  background: var(--accent);
+  background: hsl(var(--accent));
 }
 .usage-custom {
   display: flex;
@@ -153,13 +161,13 @@
 .usage-custom label {
   display: grid;
   font-size: 0.6875rem;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   gap: 3px;
 }
 .usage-custom input {
-  background: var(--card);
-  color: var(--foreground);
-  border: 1px solid var(--border);
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  border: 1px solid hsl(var(--border));
   border-radius: 5px;
   padding: 5px;
   min-width: 0;
@@ -171,16 +179,16 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 6px;
   padding: 5px 8px;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
 }
 .usage-search input {
   min-width: 0;
   width: 100%;
   background: transparent;
-  color: var(--foreground);
+  color: hsl(var(--foreground));
   outline: none;
   font-size: 0.75rem;
 }
@@ -188,7 +196,7 @@
   display: flex;
   justify-content: space-between;
   padding: 12px 0 8px;
-  color: var(--primary);
+  color: hsl(var(--primary));
   font-size: 0.75rem;
 }
 .usage-agent-list {
@@ -204,19 +212,19 @@
   border-radius: 5px;
 }
 .usage-agent-list label:hover {
-  background: var(--accent);
+  background: hsl(var(--accent));
 }
 .usage-agent-list :where(label) span:last-child {
   overflow-wrap: anywhere;
 }
 .usage-agent-list input {
-  accent-color: var(--primary);
+  accent-color: hsl(var(--primary));
   width: 15px;
   height: 15px;
 }
 .usage-card {
-  background: var(--card);
-  border: 1px solid var(--border);
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
   border-radius: 11px;
   padding: 17px;
   min-width: 0;
@@ -235,10 +243,10 @@
   text-transform: uppercase;
   letter-spacing: 0.055em;
   font-size: 0.6875rem;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
 }
 .usage-card-heading > span {
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   font-size: 0.6875rem;
 }
 .usage-kpis {
@@ -260,7 +268,7 @@
   font-variant-numeric: tabular-nums;
 }
 .usage-kpi p {
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   font-size: 0.6875rem;
 }
 .usage-input > strong {
@@ -280,10 +288,10 @@
   padding: 12px 0;
 }
 .usage-summary-band + .usage-summary-band {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid hsl(var(--border));
 }
 .usage-summary-band h2 {
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   text-transform: uppercase;
   letter-spacing: 0.12em;
   font-size: 0.5625rem;
@@ -303,7 +311,7 @@
   min-width: 0;
 }
 .usage-summary-band dt {
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   text-transform: uppercase;
   font-size: 0.625rem;
   font-weight: 550;
@@ -337,7 +345,7 @@
   font-weight: 650;
 }
 .usage-calendar-side p {
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   font-size: 0.6875rem;
   margin-top: 3px;
 }
@@ -349,12 +357,12 @@
   display: grid;
   gap: 3px;
   padding-bottom: 6px;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   font-size: 0.5625rem;
   width: max-content;
 }
 .usage-heatmap-inactive {
-  background: var(--muted);
+  background: hsl(var(--muted));
   opacity: 0.4;
   border-radius: 2px;
 }
@@ -371,13 +379,13 @@
   min-width: 0;
 }
 .usage-heatmap button:hover {
-  outline: 1px solid var(--foreground);
+  outline: 1px solid hsl(var(--foreground));
 }
 .usage-heatmap-legend {
   display: flex;
   align-items: center;
   gap: 4px;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   font-size: 0.625rem;
   margin-top: 8px;
 }
@@ -390,7 +398,7 @@
   margin-left: 12px;
 }
 .usage-heatmap-detail {
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   font-size: 0.6875rem;
   margin-top: 10px;
   min-height: 1.5em;
@@ -412,7 +420,7 @@
 }
 .usage-weekdays small {
   font-size: 0.5625rem;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
 }
 .usage-weekdays b {
   font-size: 0.5625rem;
@@ -438,7 +446,7 @@
 }
 .usage-donut > div {
   border-radius: 50%;
-  background: var(--card);
+  background: hsl(var(--card));
   width: 100%;
   height: 100%;
   display: flex;
@@ -451,7 +459,7 @@
 }
 .usage-donut small {
   font-size: 0.5625rem;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
 }
 .usage-legend {
   flex: 1;
@@ -491,7 +499,7 @@
   flex-direction: column;
   justify-content: space-between;
   font-size: 0.5625rem;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   min-width: 30px;
 }
 .usage-cost-axis {
@@ -504,12 +512,12 @@
   min-width: 0;
   gap: 4px;
   position: relative;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid hsl(var(--border));
   background: repeating-linear-gradient(
     to top,
     transparent,
     transparent calc(25% - 1px),
-    var(--border) 25%
+    hsl(var(--border)) 25%
   );
 }
 .usage-bar {
@@ -523,7 +531,7 @@
 }
 .usage-bar:hover,
 .usage-bar:focus-visible {
-  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+  background: color-mix(in srgb, hsl(var(--foreground)) 8%, transparent);
 }
 .usage-bar > span {
   display: block;
@@ -547,7 +555,7 @@
 .usage-axis-labels {
   display: flex;
   justify-content: space-between;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   font-size: 0.5625rem;
   margin: 6px 35px 0;
 }
@@ -556,7 +564,7 @@
   align-items: center;
   gap: 15px;
   margin-top: 12px;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   font-size: 0.625rem;
 }
 .usage-chart-key > span {
@@ -572,12 +580,12 @@
 .usage-chart-tooltip {
   min-height: 2.5em;
   margin-top: 9px;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   font-size: 0.625rem;
 }
 .usage-chart-data {
   font-size: 0.6875rem;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   margin-top: 10px;
 }
 .usage-chart-data summary {
@@ -595,7 +603,7 @@
   flex-wrap: wrap;
   gap: 8px;
   padding: 10px 0;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid hsl(var(--border));
 }
 .usage-tiers > div > div {
   display: flex;
@@ -610,7 +618,7 @@
   font-weight: 550;
 }
 .usage-tiers span {
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   font-size: 0.6875rem;
 }
 .usage-tiers meter {
@@ -638,7 +646,7 @@
   font-weight: 550;
 }
 .usage-rank-track {
-  background: var(--muted);
+  background: hsl(var(--muted));
   height: 8px;
   border-radius: 3px;
   overflow: hidden;
@@ -665,7 +673,7 @@
 }
 .usage-page th,
 .usage-page td {
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid hsl(var(--border));
   padding: 11px 9px;
   text-align: right;
   white-space: nowrap;
@@ -675,7 +683,7 @@
   text-align: left;
 }
 .usage-page thead th {
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   font-size: 0.6875rem;
   font-weight: 550;
 }
@@ -691,18 +699,18 @@
   text-overflow: ellipsis;
 }
 .usage-page tbody tr:hover {
-  background: color-mix(in srgb, var(--muted) 45%, transparent);
+  background: color-mix(in srgb, hsl(var(--muted)) 45%, transparent);
 }
 .usage-table-footer {
   display: flex;
   justify-content: flex-end;
   gap: 16px;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   font-size: 0.6875rem;
   padding-top: 11px;
 }
 .usage-table-footer button {
-  color: var(--primary);
+  color: hsl(var(--primary));
 }
 .usage-diversity {
   display: grid;
@@ -711,7 +719,7 @@
 }
 .usage-diversity span {
   font-size: 0.6875rem;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
 }
 .usage-diversity strong {
   display: block;
@@ -721,7 +729,7 @@
 }
 .usage-diversity p {
   font-size: 0.75rem;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
 }
 .usage-provider-shares {
   display: flex;
@@ -733,12 +741,12 @@
   display: flex;
   gap: 20px;
   padding: 8px 12px;
-  background: var(--muted);
+  background: hsl(var(--muted));
   border-radius: 6px;
   font-size: 0.6875rem;
 }
 .usage-note {
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   font-size: 0.6875rem;
   line-height: 1.6;
   margin-top: 12px;
@@ -750,7 +758,7 @@
 }
 .usage-coverage-grid dt {
   font-size: 0.6875rem;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
 }
 .usage-coverage-grid dd {
   margin-top: 4px;
@@ -763,12 +771,12 @@
   gap: 12px 26px;
   padding-top: 15px;
   margin-top: 15px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid hsl(var(--border));
   font-size: 0.6875rem;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
 }
 .usage-cost-sources strong {
-  color: var(--foreground);
+  color: hsl(var(--foreground));
   margin-left: 8px;
 }
 .usage-status {
@@ -776,7 +784,7 @@
   justify-content: space-between;
   gap: 8px;
   font-size: 0.625rem;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   margin-top: -6px;
 }
 .usage-notice {
@@ -785,8 +793,8 @@
   flex-wrap: wrap;
   align-items: center;
   padding: 13px 16px;
-  background: var(--muted);
-  border: 1px solid var(--border);
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
   font-size: 0.75rem;
 }
@@ -795,24 +803,24 @@
 }
 .usage-partial {
   font-size: 0.6875rem;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
 }
 .usage-empty {
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   font-size: 0.75rem;
   text-align: center;
   padding: 20px;
 }
 .usage-loading {
   padding: 50px 20px;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   text-align: center;
 }
 .usage-loading-bar {
   height: 4px;
   width: 120px;
   margin: 0 auto 16px;
-  background: var(--muted);
+  background: hsl(var(--muted));
   border-radius: 3px;
   overflow: hidden;
 }
@@ -825,7 +833,7 @@
   animation: usage-loading 1s ease-in-out infinite alternate;
 }
 .usage-page-footer {
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   font-size: 0.625rem;
   text-align: center;
   padding: 15px;
@@ -945,7 +953,7 @@
   padding: 0;
 }
 .usage-attribution-list > li {
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 0.5rem;
   padding: 0.625rem 0.75rem;
 }
@@ -966,7 +974,7 @@
   overflow-wrap: anywhere;
 }
 .usage-attribution-row span {
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
 }
 .usage-attribution-form {
   display: flex;
@@ -979,13 +987,13 @@
   flex-direction: column;
   gap: 0.25rem;
   flex: 1 1 11rem;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
 }
 .usage-attribution-form input {
-  background: var(--background);
-  border: 1px solid var(--border);
+  background: hsl(var(--background));
+  border: 1px solid hsl(var(--border));
   border-radius: 0.375rem;
-  color: var(--foreground);
+  color: hsl(var(--foreground));
   padding: 0.375rem 0.5rem;
   min-width: 0;
 }

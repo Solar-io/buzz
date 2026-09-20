@@ -377,20 +377,60 @@ Envelope hygiene is unaffected and unchanged: tags carry only `p` and `agent`,
 content is NIP-44 encrypted to the owner, and request observations add only
 latency and fallback and are never added to parent turn totals.
 
-### Found during remediation, NOT fixed — the page's theme tokens do not apply
+### The page's theme tokens did not apply — every themed surface was invisible
 
-`usage.css` consumes the app's semantic theme tokens as bare values —
+`usage.css` consumed the app's semantic theme tokens as bare values —
 `background: var(--card)`, `color: var(--foreground)`,
 `border: 1px solid var(--border)`, and the same for `--muted`, `--accent`,
 `--primary`, `--ring` and `--muted-foreground`. Those tokens hold bare HSL
-triplets (`--card: 220 23.08% 94.9%`) and are consumed everywhere else through
-Tailwind as `hsl(var(--card))`, so every one of these declarations is an invalid
-value and is dropped. The computed background of `.usage-card` in the running
-page is `rgba(0, 0, 0, 0)`: the cards have no surface, no border and no muted
-text of their own, and the page shows through to the app shell's background.
+triplets and are consumed everywhere else in the repo as `hsl(var(--card))`, so
+every one of those declarations was an invalid value and was dropped. The
+computed background of `.usage-card` in the running page was `rgba(0, 0, 0, 0)`:
+the cards had no surface, no border and no muted text of their own, and the page
+showed through to the app shell's background.
 
-This is outside the four defects that were authorized, and fixing it changes how
-the page looks, so it is recorded here rather than changed. It is also why the
-contrast measurements are taken against the nearest non-transparent ancestor
-rather than against `.usage-card` — that is what is actually behind the text
-today, and the measurement stays correct if the tokens are later repaired.
+**78 declarations in `usage.css`** are now wrapped, plus **5 bare `var(--muted)`
+references in `UsageCharts.tsx`** inline styles — the donut's empty state and
+three `color-mix()` heatmap fills, which were invalid for the same reason and
+left the heatmap with no cells at all. The three `--usage-*` dimension tokens are
+the opposite case and stay unwrapped: they hold full hex colours declared in
+`usage.css` itself, and wrapping them is what would break them. `--popover` and
+`--secondary` are never referenced by this page. Nothing was restyled; the fix
+only makes the existing declarations take effect.
+
+### Contrast re-measured against the surfaces that now exist
+
+The earlier light-contrast fix measured against the nearest non-transparent
+ancestor, because that was what was actually behind the text. With real card
+surfaces the backdrop changed, so all six values were re-measured — and the
+basis in the old header comment was wrong twice over: the running Buzz themes
+derive their palette from GitHub Light / GitHub Dark at runtime, so the light
+card is `#ffffff`, not theme.css's static Catppuccin Latte `#eff1f5`, and the
+dark card is `#24292e`, not the `#1a1a1a` page the transparent cards had been
+showing through to.
+
+| Token | Light on `#ffffff` | Dark on `#24292e` |
+|---|---|---|
+| `--usage-input` | 5.35:1 | 4.75:1 |
+| `--usage-output` | 5.37:1 | 7.73:1 |
+| `--usage-cost` | 5.34:1 | 8.02:1 |
+
+All six clear WCAG AA 4.5:1 for normal-size text, so no value needed darkening
+further. Dark `--usage-input` is the tightest and it moved the wrong way — from
+5.64:1 against the page to 4.75:1 against the card — so it is the one to
+re-check if either the card token or that hex ever changes. Row-hover and
+bar-hover blends were checked too (lowest 10.59:1). The dimension colours sit
+only on card surfaces; the `--muted` surfaces they would fall below AA against
+(3.95:1 dark) carry decorative fills, never text.
+
+### The check that was missing
+
+`agent-usage.spec.ts` gains `theme light|dark, every themed surface resolves to
+a real colour`: five samples — card background, card border, page background, a
+`--muted` chip, and one unwrapped `--usage-*` fill — asserted non-transparent,
+then luminance-banded per theme so the light case cannot pass on a dark render.
+Mutating `.usage-card`'s `background` back to bare `var(--card)` fails both
+named tests with `computed to rgba(0, 0, 0, 0)` while all 13 pre-existing tests
+still pass, which is the measurement of why this defect survived a green suite.
+The inverse mutation — wrapping `--usage-input`, a hex token, in `hsl()` — fails
+the fifth sample, so the test pins both directions.

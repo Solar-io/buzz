@@ -287,6 +287,140 @@ for (const theme of ["light", "dark"]) {
   });
 }
 
+/** Surfaces on the analytics page whose colour must actually resolve at
+ *  runtime, and the theme token each one reads.
+ *
+ *  The theme tokens hold bare HSL triplets (`--card: 0 0% 100.0%`), so a
+ *  declaration written `background: var(--card)` is *invalid*: the browser
+ *  discards it and the property falls back to its initial value, which for a
+ *  background is transparent. Nothing throws, no other assertion notices, and
+ *  the page renders with no card surfaces, no borders and no muted panels at
+ *  all. Every reference has to be `hsl(var(--token))`.
+ *
+ *  The three `--usage-*` dimension tokens are the opposite case — they hold
+ *  full hex colours declared in `usage.css` itself, so wrapping *those* in
+ *  `hsl()` is what would break them. The last sample pins one unwrapped.
+ */
+const SURFACE_SAMPLES = [
+  ["Analytics card surface (--card)", ".usage-card", "backgroundColor"],
+  ["Analytics card border (--border)", ".usage-card", "borderTopColor"],
+  ["Page surface (--background)", ".usage-page", "backgroundColor"],
+  [
+    "Provider share chip surface (--muted)",
+    ".usage-provider-shares > span",
+    "backgroundColor",
+  ],
+  [
+    "Input token bar fill (--usage-input)",
+    ".usage-bar-input",
+    "backgroundColor",
+  ],
+] as const;
+
+/** Hardcoded, never read back off the token it pins. Stable because the
+ *  dimension colours are hex literals in `usage.css` rather than palette
+ *  values derived at runtime. */
+const EXPECTED_DIMENSION_FILL: Record<string, string> = {
+  light: "rgb(195, 52, 80)",
+  dark: "rgb(240, 100, 121)",
+};
+
+for (const theme of ["light", "dark"]) {
+  test(`theme ${theme}, every themed surface resolves to a real colour`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 1032 });
+    await page.emulateMedia({
+      colorScheme: theme === "light" ? "light" : "dark",
+    });
+    await page.addInitScript(
+      (value) => {
+        localStorage.setItem("buzz-theme", value);
+      },
+      theme === "light" ? "buzz" : "buzz-dark",
+    );
+    await installMockBridge(page, { usageAnalytics: seed });
+    await page.goto("/#/agents/usage");
+    await expect(page.getByTestId("usage-total")).toHaveText("30.0M");
+    await waitForAnimations(page);
+
+    const measured = await page.evaluate(
+      (samples: [string, string, string][]) => {
+        const luminance = (value: string) => {
+          const [r, g, b] = (value.match(/\d+(\.\d+)?/g) ?? [])
+            .slice(0, 3)
+            .map((channel) => {
+              const unit = Number(channel) / 255;
+              return unit <= 0.04045
+                ? unit / 12.92
+                : ((unit + 0.055) / 1.055) ** 2.4;
+            });
+          return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        };
+        return samples.map(([label, selector, property]) => {
+          const element = document.querySelector(selector);
+          const value = element
+            ? (getComputedStyle(element)[
+                property as "backgroundColor"
+              ] as string)
+            : null;
+          return {
+            label,
+            selector,
+            value,
+            luminance: value === null ? null : luminance(value),
+          };
+        });
+      },
+      SURFACE_SAMPLES as unknown as [string, string, string][],
+    );
+
+    // Guard the harness before trusting it: a selector that stopped matching
+    // would contribute no measurement and the loops below would pass vacuously.
+    expect(measured).toHaveLength(SURFACE_SAMPLES.length);
+    for (const sample of measured) {
+      expect(
+        sample.value,
+        `${sample.selector} is missing from the page, so ${sample.label} was never measured`,
+      ).not.toBeNull();
+    }
+
+    // The defect's exact signature, and the assertion that fails when a theme
+    // token is consumed bare: the declaration is dropped and the property sits
+    // at its initial value.
+    for (const sample of measured) {
+      expect(
+        sample.value,
+        `${sample.label} on ${sample.selector} computed to ${sample.value} — the declaration was discarded, so the surface does not render`,
+      ).not.toMatch(/^(transparent|rgba\(\s*0,\s*0,\s*0,\s*0\s*\))$/);
+    }
+
+    // Theme-discriminating. Without it the light case passes identically when
+    // the dark palette renders, so a surface reading the wrong token would go
+    // unnoticed. Bands rather than exact values, because the Buzz palettes are
+    // derived from the bundled GitHub Light / GitHub Dark themes at runtime.
+    for (const sample of measured.slice(0, 4)) {
+      if (theme === "light") {
+        expect(
+          sample.luminance,
+          `${sample.label} rendered ${sample.value}, too dark for the light theme`,
+        ).toBeGreaterThan(0.6);
+      } else {
+        expect(
+          sample.luminance,
+          `${sample.label} rendered ${sample.value}, too light for the dark theme`,
+        ).toBeLessThan(0.25);
+      }
+    }
+
+    const fill = measured[measured.length - 1];
+    expect(
+      fill.value,
+      `${fill.label} computed to ${fill.value}; the dimension tokens are hex colours and must stay unwrapped`,
+    ).toBe(EXPECTED_DIMENSION_FILL[theme]);
+  });
+}
+
 test("loading and error states expose retry without invented metrics", async ({
   page,
 }) => {

@@ -362,6 +362,17 @@ with a TypeScript lookup table or an id comparison in a component.
   shares is covered. **Both layers are required**: the decision tests were all
   that existed once, and removing the write entirely left 2,948 tests green.
   Any new `*_in_file` boot migration gets the same pair, as `materialize` does.
+- `desktop/tests/e2e/agent-usage.spec.ts` — `theme light|dark, every themed
+  surface resolves to a real colour` pins the rule that **the semantic theme
+  tokens hold bare HSL triplets and must always be read as
+  `hsl(var(--token))`**. A bare `var(--card)` is an invalid colour: the browser
+  drops the declaration, the surface never paints, and nothing else notices —
+  78 declarations in `usage.css` shipped that way under a green suite, leaving
+  the analytics page with no cards, borders or muted panels at all. The
+  `--usage-*` dimension tokens are the opposite case (full hex colours, wrapping
+  them is what breaks them) and the same test pins one unwrapped. Verified by
+  mutation both ways; results in
+  `docs/plans/2026-09-19-agent-usage-analytics.md`.
 - Rust: persona sharing/retention tests pin relay+owner scoping, durable
   enqueue errors, relay rejection/unavailability, and accepted publication.
 - Rust: `definition_validation` and inbound persona tests pin the shared

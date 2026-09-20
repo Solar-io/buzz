@@ -79,7 +79,9 @@ export function Distribution({
           aria-label={`${title}. Exact values in adjacent list.`}
           style={{
             background:
-              total > 0 ? `conic-gradient(${stops.join(",")})` : "var(--muted)",
+              total > 0
+                ? `conic-gradient(${stops.join(",")})`
+                : "hsl(var(--muted))",
           }}
         >
           <div>
@@ -411,8 +413,8 @@ export function Heatmap({
                   style={{
                     background:
                       day.reportCount === 0
-                        ? "var(--muted)"
-                        : `color-mix(in srgb, var(--usage-input) ${Math.max(18, tokenShare(day.usage.totalTokens.value, max.toString()))}%, var(--muted))`,
+                        ? "hsl(var(--muted))"
+                        : `color-mix(in srgb, var(--usage-input) ${Math.max(18, tokenShare(day.usage.totalTokens.value, max.toString()))}%, hsl(var(--muted)))`,
                   }}
                 />
               );
@@ -425,7 +427,7 @@ export function Heatmap({
             <i
               key={value}
               style={{
-                background: `color-mix(in srgb, var(--usage-input) ${value}%, var(--muted))`,
+                background: `color-mix(in srgb, var(--usage-input) ${value}%, hsl(var(--muted)))`,
               }}
             />
           ))}
@@ -485,7 +487,7 @@ export function Heatmap({
               >
                 <span
                   style={{
-                    background: `color-mix(in srgb, var(--usage-input) ${Math.max(day.reportCount ? 20 : 0, tokenShare(day.usage.totalTokens.value, weekdays.reduce((sum, item) => sum + BigInt(item.usage.totalTokens.value ?? "0"), 0n).toString()) * 3)}%, var(--muted))`,
+                    background: `color-mix(in srgb, var(--usage-input) ${Math.max(day.reportCount ? 20 : 0, tokenShare(day.usage.totalTokens.value, weekdays.reduce((sum, item) => sum + BigInt(item.usage.totalTokens.value ?? "0"), 0n).toString()) * 3)}%, hsl(var(--muted)))`,
                   }}
                 />
                 <small>{day.label}</small>
