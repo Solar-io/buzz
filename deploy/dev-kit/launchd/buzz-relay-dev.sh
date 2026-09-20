@@ -50,5 +50,30 @@ done
 docker info >/dev/null 2>&1 || { say "FATAL: docker daemon never became reachable"; exit 1; }
 
 cd "$COMPOSE_DIR"
+# Boot-time overlay list. This MUST stay in step with COMPOSE_FILES in
+# deploy/dev-kit/deploy-buzz-dev.sh — a file present in one and not the other
+# means the stack a reboot brings up differs from the stack a deploy brings up,
+# silently. It has already drifted twice: compose.web.yml was added to the
+# INSTALLED copy on 2026-08-29 and never committed to the repo copy, so the
+# next install-buzz-dev.sh would have reverted it (and the deploy script's own
+# comment records that this exact omission caused the 2026-09-01 outage); and
+# compose.pairing.yml plus compose.push-gateway.yml were never here at all.
+#
+# Each is guarded by `[ -f ]` rather than listed unconditionally: this runs at
+# login with nobody watching, and an overlay missing from the checkout should
+# degrade to a smaller stack rather than fail the whole boot.
+#
+# if/then, NOT `[ -f x ] && arr+=(...)`: under `set -e` a false test makes the
+# compound return 1 and takes the whole script with it.
+EXTRA_COMPOSE=()
+if [ -f compose.web.yml ]; then
+  EXTRA_COMPOSE+=(-f compose.web.yml)
+fi
+if [ -f "$KIT_DIR/compose.pairing.yml" ]; then
+  EXTRA_COMPOSE+=(-f "$KIT_DIR/compose.pairing.yml")
+fi
+if [ -f compose.push-gateway.yml ]; then
+  EXTRA_COMPOSE+=(-f compose.push-gateway.yml)
+fi
 say "bringing up compose project (up -d --wait)"
-exec docker compose -p "$BUZZ_COMPOSE_PROJECT" --env-file .env -f compose.yml -f "$KIT_DIR/compose.loopback.yml" up --wait
+exec docker compose -p "$BUZZ_COMPOSE_PROJECT" --env-file .env -f compose.yml -f "$KIT_DIR/compose.loopback.yml" ${EXTRA_COMPOSE[@]+"${EXTRA_COMPOSE[@]}"} up --wait
