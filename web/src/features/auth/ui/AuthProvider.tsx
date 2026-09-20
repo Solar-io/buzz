@@ -17,6 +17,8 @@ import {
   unlockWithPassphrase,
 } from "@/shared/lib/key-store";
 import { hasNip07Provider } from "@/shared/lib/nostr-signer";
+import { clearAllCardDrafts } from "@/features/channels/lib/cardDraft";
+import { clearAsksCache } from "@/features/home/lib/askCache";
 
 interface AuthContextValue {
   state: AuthState;
@@ -53,6 +55,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
   const forgetDevice = useCallback(async () => {
     await signOut();
+    // Per-identity local data that outlives the key, cleared in the SAME
+    // teardown. Card drafts are unsent user choices — a half-finished
+    // interview left in this browser profile is the previous signer's private
+    // answer handed to whoever signs in next, which is the privacy cost the
+    // local-draft-until-submit model would otherwise introduce. The asks
+    // cache is here for the same reason and has had no other caller.
+    //
+    // After `signOut`, never before: a teardown that ran first and then hit a
+    // failing sign-out would have destroyed state while leaving the identity
+    // in place. Both are best-effort internally and neither throws.
+    await clearAllCardDrafts();
+    await clearAsksCache();
   }, []);
 
   const value = useMemo<AuthContextValue>(() => {

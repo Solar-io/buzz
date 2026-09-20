@@ -1,225 +1,274 @@
-import { useState } from "react";
-import { Check, CornerDownLeft, TriangleAlert } from "lucide-react";
-import { cn } from "@/shared/lib/cn";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Check, TriangleAlert } from "lucide-react";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { sendCardAnswer, sendCardInterviewAnswer } from "../lib/cardAnswer.ts";
 import {
-  ANSWER_LIMITS,
-  type CardAnswerSelection,
-} from "../lib/cardAnswerTag.ts";
+  clearCardDraft,
+  createCardDraftWriter,
+  loadCardDraft,
+} from "../lib/cardDraft.ts";
+import {
+  answerSummary,
+  emptyInterviewState,
+  interviewDraft,
+  interviewView,
+  startInterview,
+  type CardInterviewState,
+} from "../lib/cardInterview.ts";
 import type { TimelineMessage } from "../lib/messageBuffer.ts";
-import type { SendResult } from "../hooks.ts";
+import { CardInterview } from "./CardInterview.tsx";
 
 /**
  * D-035 decision card: renders the `["card", …]` tag payload of a kind 9
- * message as a tappable question — bold title, body, options with the
- * optional "Recommended" marker on the option's right side, plus
- * type-your-own. One tap publishes an ordinary kind 9 reply (NIP-10 e-tag to
- * the card event) whose content is the option's label verbatim, mentioning
- * the card's author so the answer notifies the asker; a typed answer is the
- * same reply with the typed text. Replies read as plain messages in every
- * client and thread under the card wherever threads render.
+ * message as an answerable interview — a stepper that shows one question,
+ * drops the user into the next as soon as one is answered, and publishes ONE
+ * ordinary kind 9 reply carrying both halves of the answer (the deterministic
+ * per-question `content` every plain client reads, and the `card-answer` tag
+ * carrying option ids and the derived `done` flag).
  *
- * The card itself is a render-time view of the tag: it never mutates, and a
- * malformed payload never reaches it (messageBuffer falls back to markdown).
+ * **A v1 card takes exactly this path**, as an interview of length one. That
+ * single-parser/single-renderer property is the spine of the whole design, so
+ * there is deliberately no `card.v` branch anywhere below: one question with
+ * no progress rail IS the v1 card, and the reply it publishes is structurally
+ * identical to what v1 produced except that it now carries ids.
  *
- * v2 interviews (multi-question cards) parse into the same normalized shape;
- * this renderer shows the FIRST question only, which is exactly v1 behaviour
- * for a v1 card. The stepper that walks the rest is a later phase — until it
- * lands, a plain client and this one both see question one, and the full
- * question set is readable in the message's fallback content.
+ * ## Nothing publishes until the user submits
+ *
+ * Answering a question mutates local state and a debounced IndexedDB draft
+ * (`cardDraft.ts`) and sends nothing. A partial interview therefore never
+ * reaches the agent by accident — the failure worth preventing is an agent
+ * acting on 2 of 4 answers as though the interview concluded. Two things
+ * submit: answering the last open question (auto-submit; Sam's flow is
+ * answer-and-advance, so no terminal confirm tap) and the explicit "Send what
+ * I have", which publishes `done:false` and leaves the ask badge LIT.
+ *
+ * ## Terminal only when complete
+ *
+ * A `done:true` submission is terminal and deletes the draft. A `done:false`
+ * one is not: the card stays answerable so completing it later publishes a
+ * second answer, `done:true` wins, and the badge clears then. A relay refusal
+ * keeps the draft and the card interactive, with `result.message` verbatim —
+ * `publish()` RESOLVES `{ok:false}` on a FAILED or an ack timeout rather than
+ * throwing (caught live 9/16), so a caller that treats resolution as success
+ * renders a false sent state.
  */
-export function DecisionCard({ message }: { message: TimelineMessage }) {
+export function DecisionCard({
+  message,
+  onAnswerInChat,
+}: {
+  message: TimelineMessage;
+  /**
+   * The dismiss-and-type path: hand the conversation back to the composer
+   * with the card as the reply target. Absent where replying to the card is
+   * not a navigation the host can perform (a flat thread pane), in which case
+   * the footer link is not rendered rather than rendered dead.
+   */
+  onAnswerInChat?: () => void;
+}) {
   const card = message.card;
-  const question = card?.questions[0];
   const { session } = useRelaySession();
-  const [state, setState] = useState<
-    | { phase: "idle" }
-    | { phase: "sending" }
-    | { phase: "sent"; answer: string }
-    | { phase: "error"; answer: string; message: string }
-  >({ phase: "idle" });
-  const [draft, setDraft] = useState("");
+  const [state, setState] = useState<CardInterviewState>(emptyInterviewState);
+  const [phase, setPhase] = useState<
+    | { kind: "idle" }
+    | { kind: "sending" }
+    | { kind: "sent"; summary: string }
+    | { kind: "partial"; answered: number; total: number }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
+
+  const cardId = message.id;
+  const writer = useMemo(() => createCardDraftWriter(cardId), [cardId]);
+
+  // Restore the draft, once per card. `cancelled` guards the ordinary React
+  // race: the read is async, and a card that scrolls out of the virtualized
+  // timeline mid-read would otherwise have its restored state applied to an
+  // unmounted tree.
+  useEffect(() => {
+    if (!card) {
+      return;
+    }
+    let cancelled = false;
+    void loadCardDraft(cardId).then((stored) => {
+      if (!cancelled) {
+        setState(startInterview(card, stored));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [card, cardId]);
+
+  // Unmount is the one moment a pending debounced write must not be lost —
+  // scrolling a card out of the virtualizer unmounts it.
+  useEffect(() => () => writer.flush(), [writer]);
+
+  const update = useCallback(
+    (next: CardInterviewState) => {
+      setState(next);
+      writer.schedule(next);
+    },
+    [writer],
+  );
 
   /**
-   * Publish one answer. STRUCTURED when we can (option ids + the `done`
-   * flag in a `card-answer` tag, plus the deterministic per-question
-   * content), falling back to the plain-text reply when the builder refuses
-   * the payload.
+   * Publish `current`, which the CALLER supplies.
    *
-   * The fallback covers the refusals the RENDER side cannot see coming — an
-   * answer payload past its own tag budget, say. The id-collision case it
-   * used to exist for is gone: duplicate resolved ids are refused by
-   * `parseCardTags` now, so a card that renders at all has unambiguous ids.
-   * Keeping the fallback still matters, because a plain reply carries no
-   * `card-answer` tag and is COMPLETE by the badge rule — an answer that
-   * cannot be structured must never become an answer that cannot be sent.
-   *
-   * Note this card shows question ONE only (the stepper is a later phase), so
-   * answering a multi-question interview here publishes `done:false` and
-   * correctly leaves the ask lit.
+   * Never re-read from component state or from a latest-state ref: auto-submit
+   * fires inside the same handler that answered the last question, and React
+   * has not re-rendered by then. The first wiring here did read a ref and
+   * published the interview one answer short — every completion went out as
+   * "Answered 3 of 4", and five named tests said so.
    */
-  async function publishAnswer(
-    selection: CardAnswerSelection,
-    plainText: string,
-  ): Promise<SendResult> {
-    if (card) {
-      try {
-        return await sendCardInterviewAnswer(
-          session,
-          { ...message, card },
-          { answers: [selection] },
-        );
-      } catch {
-        // Fall through to the plain-text path.
-      }
-    }
-    return sendCardAnswer(session, message, plainText);
-  }
+  const sending = useRef(false);
 
-  async function reply(selection: CardAnswerSelection, answer: string) {
-    if (state.phase === "sending" || state.phase === "sent") {
+  async function submit(current: CardInterviewState) {
+    if (!card || sending.current || phase.kind === "sent") {
       return;
     }
-    const trimmed = answer.trim();
-    if (!trimmed) {
+    const view = interviewView(card, current);
+    if (!view.canSubmit) {
       return;
     }
-    setState({ phase: "sending" });
+    sending.current = true;
+    setPhase({ kind: "sending" });
     try {
-      // The tag/threadRef rules live in the cardAnswer module (shared with
-      // the Asks inbox row); the ok check here is what makes the sent state
-      // honest — publish() RESOLVES {ok:false} on a relay FAILED or ack
-      // timeout rather than throwing (caught live 9/16).
-      const result = await publishAnswer(selection, trimmed);
+      const result = await sendCardInterviewAnswer(
+        session,
+        { ...message, card },
+        interviewDraft(card, current),
+      );
       if (!result.ok) {
-        setState({
-          phase: "error",
-          answer: trimmed,
+        setPhase({
+          kind: "error",
           message: result.message || "relay rejected the reply",
         });
         return;
       }
-      setState({ phase: "sent", answer: trimmed });
-    } catch (error) {
-      setState({
-        phase: "error",
-        answer: trimmed,
-        message: error instanceof Error ? error.message : String(error),
+      // `done` is DERIVED by the answer builder — this is the only place the
+      // component learns whether the submission closed the interview, and it
+      // is deliberately not re-derived here.
+      if (result.answer?.done === true) {
+        writer.cancel();
+        void clearCardDraft(cardId);
+        setPhase({
+          kind: "sent",
+          summary: card.questions
+            .map((question) =>
+              answerSummary(question, current.answers[question.id]),
+            )
+            .filter((line) => line.length > 0)
+            .join(" · "),
+        });
+        return;
+      }
+      setPhase({
+        kind: "partial",
+        answered: result.answer?.answers.length ?? view.answeredCount,
+        total: card.questions.length,
       });
+    } catch (error) {
+      // The structured builder THROWS on a draft it will not publish. Fall
+      // back to a plain-text reply of the same answers rather than going
+      // dead: a reply with no `card-answer` tag is COMPLETE by the badge
+      // rule, which is exactly v1's behaviour, so an answer that cannot be
+      // structured must never become an answer that cannot be sent.
+      const plain = card.questions
+        .map((question) =>
+          answerSummary(question, current.answers[question.id]),
+        )
+        .filter((line) => line.length > 0)
+        .join(" · ");
+      if (plain.length === 0) {
+        setPhase({
+          kind: "error",
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return;
+      }
+      try {
+        const result = await sendCardAnswer(session, message, plain);
+        if (!result.ok) {
+          setPhase({
+            kind: "error",
+            message: result.message || "relay rejected the reply",
+          });
+          return;
+        }
+        writer.cancel();
+        void clearCardDraft(cardId);
+        setPhase({ kind: "sent", summary: plain });
+      } catch (fallbackError) {
+        setPhase({
+          kind: "error",
+          message:
+            fallbackError instanceof Error
+              ? fallbackError.message
+              : String(fallbackError),
+        });
+      }
+    } finally {
+      sending.current = false;
     }
   }
 
-  if (!card || !question) {
+  if (!card) {
     return null;
   }
+
+  const busy = phase.kind === "sending";
+  const title = card.questions.length > 1 ? card.title : null;
 
   return (
     <div
       data-testid="decision-card"
       className="my-1 max-w-xl rounded-xl border bg-muted/20 px-3 py-2.5"
     >
-      <p className="text-sm font-bold leading-snug">
-        {question.question || card.title}
-      </p>
-      {card.body && (
-        <p className="mt-1 whitespace-pre-wrap text-sm leading-snug text-muted-foreground">
-          {card.body}
+      {title && (
+        <p className="mb-1.5 min-w-0 break-words text-sm font-semibold leading-snug">
+          {/* Author text, bidi-isolated for the reason CardInterview documents. */}
+          <bdi>{title}</bdi>
         </p>
       )}
 
-      {state.phase === "sent" ? (
+      {phase.kind === "sent" ? (
         <p
           data-testid="decision-card-sent"
-          className="mt-2 flex items-center gap-1.5 text-sm font-medium text-primary"
+          className="flex items-start gap-1.5 text-sm font-medium text-primary"
         >
-          <Check className="size-3.5" aria-hidden />
-          You replied: {state.answer}
+          <Check className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+          <span className="min-w-0 break-words">
+            You replied: <bdi>{phase.summary}</bdi>
+          </span>
         </p>
       ) : (
         <>
-          <div className="mt-2 flex flex-col gap-1.5">
-            {question.options.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                data-testid={`decision-card-option-${option.id}`}
-                disabled={state.phase === "sending"}
-                onClick={() =>
-                  reply(
-                    { questionId: question.id, optionIds: [option.id] },
-                    option.label,
-                  )
-                }
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-lg border bg-background px-3 py-2 text-left text-sm",
-                  "transition-colors hover:border-primary/50 hover:bg-primary/5",
-                  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
-                  "disabled:cursor-not-allowed disabled:opacity-60",
-                )}
-              >
-                <span className="min-w-0 flex-1 break-words">
-                  {option.label}
-                </span>
-                {option.recommended === true && (
-                  <span
-                    data-testid="decision-card-recommended"
-                    className="ml-auto shrink-0 rounded bg-accent/50 px-1.5 py-0.5 text-badge font-medium uppercase tracking-wide text-accent-foreground/80"
-                  >
-                    Recommended
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
+          <CardInterview
+            card={card}
+            state={state}
+            onChange={update}
+            onSubmit={(next) => void submit(next)}
+            busy={busy}
+            onAnswerInChat={onAnswerInChat}
+          />
 
-          <form
-            className="mt-1.5 flex items-center gap-1.5"
-            onSubmit={(event) => {
-              event.preventDefault();
-              reply(
-                { questionId: question.id, optionIds: [], text: draft },
-                draft,
-              );
-            }}
-          >
-            <input
-              data-testid="decision-card-input"
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              disabled={state.phase === "sending"}
-              placeholder="Or type your own answer…"
-              aria-label="Type your own answer"
-              // A typed per-question answer is bounded like an option label
-              // (`ANSWER_LIMITS.maxTextChars`), so typing cannot smuggle in
-              // more than choosing could — and so the structured builder
-              // never refuses text this input accepted. The 2000 that used
-              // to be here is the INTERVIEW-level note's bound, a different
-              // field that arrives with the stepper.
-              maxLength={ANSWER_LIMITS.maxTextChars}
-              className="h-8 min-w-0 flex-1 rounded-lg border bg-background px-2.5 text-sm outline-none placeholder:text-muted-foreground/60 focus-visible:border-primary/50"
-            />
-            <button
-              type="submit"
-              data-testid="decision-card-send"
-              disabled={state.phase === "sending" || draft.trim().length === 0}
-              aria-label="Send your own answer"
-              className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+          {phase.kind === "partial" && (
+            <p
+              data-testid="decision-card-partial"
+              className="mt-1.5 text-xs text-muted-foreground"
             >
-              <CornerDownLeft className="size-4" aria-hidden />
-            </button>
-          </form>
-
-          {state.phase === "error" && (
+              Sent {phase.answered} of {phase.total} — the rest are still open.
+            </p>
+          )}
+          {phase.kind === "error" && (
             <p
               data-testid="decision-card-error"
               className="mt-1.5 flex items-center gap-1.5 text-xs text-destructive"
             >
               <TriangleAlert className="size-3.5 shrink-0" aria-hidden />
-              Reply failed ({state.message}) — try again.
+              Reply failed ({phase.message}) — try again.
             </p>
           )}
-          {state.phase === "sending" && (
+          {busy && (
             <p className="mt-1.5 text-xs text-muted-foreground/70">Sending…</p>
           )}
         </>

@@ -362,6 +362,47 @@ Colliding ids are **not** on this list any more. They are refused one layer
 up — see "Resolved ids are unique" — so a card that renders at all already
 has ids an answer can key on.
 
+## How the web client answers one
+
+Not part of the wire contract — a client is free to do something else — but it
+is what an agent's card will actually meet, and two of its properties change
+what an agent should expect to receive.
+
+**A stepper, and a v1 card takes the same path.** One question on screen, its
+options, and a "Something else…" box for a typed answer. Tapping a
+single-select option answers it AND advances; a multi-select ticks and waits
+for **Continue**. A progress rail shows `Question N of M` and each segment
+jumps back to revisit an answer. A v1 card is an interview of length one, so
+it renders as exactly the v1 card did — there is one renderer, no `v` branch.
+
+**Nothing publishes until submit.** Answers accumulate in a local IndexedDB
+draft keyed on the card's event id, debounced; closing the tab mid-interview
+publishes nothing and the draft resumes at the first unanswered question. An
+agent therefore never receives a half interview by accident. Two things
+submit:
+
+| Trigger | Publishes |
+|---|---|
+| answering the last open question | auto-submits, `done:true` — no terminal confirm tap |
+| **Send what I have** (offered once ≥1 answered and ≥1 open) | `done:false`; the ask badge stays **lit** |
+
+A `done:true` reply is terminal in the UI and deletes the draft. A `done:false`
+one is not: the card stays answerable, and finishing it later publishes a
+second answer with `done:true` (see "Superseding an answer"). A relay refusal
+keeps the draft and the card interactive, with the relay's verdict shown
+verbatim.
+
+**Two escape hatches stay open**, both of which produce a reply with NO
+`card-answer` tag — complete by the badge rule, exactly as v1 was:
+"Something else…" per question (that one IS structured, as `t`), and **Answer
+in chat instead**, which hands the card to the thread composer.
+
+**Author text is bidi-isolated at render.** The wire format deliberately does
+not strip RTL overrides, zero-width joiners or combining marks — they are
+author text. Every author-supplied string is rendered inside a `<bdi>`, so a
+crafted label can reorder itself and nothing around it, and everything is
+rendered as text, never markdown.
+
 ## Sending one
 
 ```bash

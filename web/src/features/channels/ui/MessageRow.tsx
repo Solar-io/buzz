@@ -242,7 +242,21 @@ export function MessageRow({
               // D-035: a well-formed card tag replaces the fallback markdown —
               // the content field stays the plain-client rendering of the same
               // question, not something the card view should repeat.
-              <DecisionCard message={message} />
+              //
+              // "Answer in chat instead" is the card's dismiss-and-type escape
+              // hatch, and it is the SAME navigation as the row's ↩: open the
+              // thread on this card, whose pane composer replies to it. The
+              // main composer deliberately carries no threadRef any more (it
+              // always posts top-level, Sam 2026-09-20), so re-aiming it would
+              // be reintroducing exactly the trap that change removed. Where
+              // the row has no `onOpenThread` — a flat thread pane — the link
+              // is not rendered rather than rendered dead.
+              <DecisionCard
+                message={message}
+                onAnswerInChat={
+                  onOpenThread ? () => onOpenThread(message) : undefined
+                }
+              />
             ) : (
               <MarkdownContent
                 content={message.content}
