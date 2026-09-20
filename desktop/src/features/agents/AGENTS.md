@@ -367,7 +367,7 @@ with a TypeScript lookup table or an id comparison in a component.
   tokens hold bare HSL triplets and must always be read as
   `hsl(var(--token))`**. A bare `var(--card)` is an invalid colour: the browser
   drops the declaration, the surface never paints, and nothing else notices —
-  78 declarations in `usage.css` shipped that way under a green suite, leaving
+  79 declarations in `usage.css` shipped that way under a green suite, leaving
   the analytics page with no cards, borders or muted panels at all. The
   `--usage-*` dimension tokens are the opposite case (full hex colours, wrapping
   them is what breaks them) and the same test pins one unwrapped. Verified by
@@ -377,6 +377,39 @@ with a TypeScript lookup table or an id comparison in a component.
   enqueue errors, relay rejection/unavailability, and accepted publication.
 - Rust: `definition_validation` and inbound persona tests pin the shared
   Unicode/control-character policy at local, import, publish, and sync gates.
+
+## Two things that cost a round trip each, so they are written down
+
+**A file that is over the size ceiling but STATIC on `main` becomes a *new*
+ratchet violation the moment you add one line to it.** The gate compares against
+a base commit and reports "file may not grow", so adding a required struct field
+to an exhaustive test fixture in `discovery/tests.rs` (1,819 lines) turned a
+grandfathered file into a fresh failure and took the desktop report from 10
+entries to 12. Splitting a 1,800-line test file to buy back one line is not the
+proportionate fix; buying it back in place is. What worked, in order of
+preference: delete an import the module's own `use super::*` already supplies
+(a child module sees its parent's private imports, so an explicit
+`use std::collections::BTreeMap` next to `use super::*` is dead); inline a
+single-use `let` into the one call that consumed it; and drop a `pub use`
+re-export nothing outside the file reads, naming the module at the call site
+instead. All three are genuine tightenings rather than padding. Note `cargo fmt`
+constrains the shapes available: rustfmt's default `fn_call_width` is 60, so a
+call whose *arguments* exceed 60 characters goes one-per-line however short the
+line would have been.
+
+**A live kind-44200 test needs the agent registered to the owner, or the relay
+refuses the event.** `buzz-relay`'s ingest gate requires the `p` tag to be the
+agent's registered owner (`users.agent_owner_pubkey`), so publishing from a
+freshly generated key fails with `restricted: agent-turn-metric \`p\` tag must
+be the registered owner of this agent`. The registration is materialized from a
+verified NIP-OA `auth` tag, and the ws AUTH handler is one place that does it:
+put `buzz_sdk::nip_oa::compute_auth_tag(owner, agent, "")` on the agent's NIP-42
+AUTH event (the `compute_auth_tag` → `parse_auth_tag` → `Tag::parse` bridge that
+`commands/engrams.rs`'s tests already use). Live relay for this:
+`scripts/start-isolated-test-relay.sh` — its own Compose project, its own
+database, dropped and recreated at launch. Worked example:
+`desktop/src-tauri/src/archive/live_usage_relay_tests.rs`, gated on
+`BUZZ_LIVE_USAGE_RELAY`.
 
 ## Keep this file true
 
