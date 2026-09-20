@@ -13,9 +13,9 @@ use uuid::Uuid;
 
 fn in_memory() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
-    conn.pragma_update(None, "journal_mode", "WAL").unwrap();
     conn.pragma_update(None, "busy_timeout", 5000).unwrap();
     conn.execute_batch(super::store::SCHEMA).unwrap();
+    super::store_migrations::apply_schema_migrations(&conn).unwrap();
     conn
 }
 

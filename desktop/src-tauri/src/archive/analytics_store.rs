@@ -32,8 +32,74 @@ pub(super) fn migrate(conn: &Connection) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+/// Project one archived kind-44200 event into both analytics tables.
+///
+/// Runs entirely inside the caller's transaction — no nested `BEGIN`/`COMMIT` —
+/// so the projection can be written in the SAME transaction as the canonical
+/// `archived_events` insert at ingest (`pipeline.rs`), exactly as
+/// `metric_store::insert_metric_index_row` already is. The request rows are
+/// deleted first so a re-projection of the same event cannot leave stale
+/// observations behind.
+///
+/// An event whose payload does not parse (or does not validate) still gets a
+/// metadata row, carrying the default (empty) telemetry. That is deliberate:
+/// the row records "this event has been projected and had nothing to give",
+/// which is what keeps [`backfill`]'s missing-row query from re-reading it on
+/// every dashboard open.
+pub(super) fn project_event(
+    tx: &Connection,
+    identity: &str,
+    relay: &str,
+    id: &str,
+    raw: &str,
+) -> Result<(), String> {
+    tx.execute(
+        "DELETE FROM agent_request_index WHERE identity_pubkey=?1 AND relay_url=?2 AND event_id=?3",
+        params![identity, relay, id],
+    )
+    .map_err(|e| e.to_string())?;
+    let payload = serde_json::from_str::<AgentTurnMetricPayload>(raw)
+        .ok()
+        .filter(|p| p.validate().is_ok());
+    let mut metadata = Metadata::default();
+    if let Some(payload) = payload {
+        metadata.stop_reason = payload
+            .stop_reason
+            .and_then(|r| serde_json::to_value(r).ok())
+            .and_then(|v| v.as_str().map(str::to_owned));
+        metadata.telemetry = payload.telemetry.unwrap_or_default();
+        metadata.expected_requests = metadata.telemetry.requests.len();
+        for request in &metadata.telemetry.requests {
+            tx.execute("INSERT OR REPLACE INTO agent_request_index
+                      (identity_pubkey,relay_url,event_id,request_id,provider,account_id,model,observation)
+                      VALUES (?1,?2,?3,?4,?5,?6,?7,?8)", params![identity,relay,id,request.id,
+                      request.attribution.provider,request.attribution.account_id,request.model,
+                      serde_json::to_string(request).map_err(|e| e.to_string())?]).map_err(|e| e.to_string())?;
+        }
+        // Requests have their own rebuildable projection.
+        metadata.telemetry.requests.clear();
+    }
+    tx.execute(
+        "INSERT OR REPLACE INTO agent_usage_metadata VALUES (?1,?2,?3,?4)",
+        params![
+            identity,
+            relay,
+            id,
+            serde_json::to_string(&metadata).map_err(|e| e.to_string())?
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Every row and all its request observations commit together. Missing projections
 /// resume from raw events; orphan removal never removes canonical archive data.
+///
+/// This is the read-time repair path, not the primary writer: ingest projects
+/// each kind-44200 event as it is archived, and migration M5 projects everything
+/// archived before that writer existed. Backfill stays as defense in depth for
+/// rows either of those missed (e.g. events archived by a build that predates
+/// the ingest writer).
 pub(super) fn backfill(conn: &Connection, identity: &str, relay: &str) -> Result<(), String> {
     migrate(conn)?;
     let mut cursor = String::new();
@@ -68,38 +134,7 @@ pub(super) fn backfill(conn: &Connection, identity: &str, relay: &str) -> Result
         }
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
         for (id, raw) in missing {
-            tx.execute("DELETE FROM agent_request_index WHERE identity_pubkey=?1 AND relay_url=?2 AND event_id=?3",params![identity,relay,id]).map_err(|e|e.to_string())?;
-            let payload = serde_json::from_str::<AgentTurnMetricPayload>(&raw)
-                .ok()
-                .filter(|p| p.validate().is_ok());
-            let mut metadata = Metadata::default();
-            if let Some(payload) = payload {
-                metadata.stop_reason = payload
-                    .stop_reason
-                    .and_then(|r| serde_json::to_value(r).ok())
-                    .and_then(|v| v.as_str().map(str::to_owned));
-                metadata.telemetry = payload.telemetry.unwrap_or_default();
-                metadata.expected_requests = metadata.telemetry.requests.len();
-                for request in &metadata.telemetry.requests {
-                    tx.execute("INSERT OR REPLACE INTO agent_request_index
-                      (identity_pubkey,relay_url,event_id,request_id,provider,account_id,model,observation)
-                      VALUES (?1,?2,?3,?4,?5,?6,?7,?8)", params![identity,relay,id,request.id,
-                      request.attribution.provider,request.attribution.account_id,request.model,
-                      serde_json::to_string(request).map_err(|e| e.to_string())?]).map_err(|e| e.to_string())?;
-                }
-                // Requests have their own rebuildable projection.
-                metadata.telemetry.requests.clear();
-            }
-            tx.execute(
-                "INSERT OR REPLACE INTO agent_usage_metadata VALUES (?1,?2,?3,?4)",
-                params![
-                    identity,
-                    relay,
-                    id,
-                    serde_json::to_string(&metadata).map_err(|e| e.to_string())?
-                ],
-            )
-            .map_err(|e| e.to_string())?;
+            project_event(&tx, identity, relay, &id, &raw)?;
         }
         tx.commit().map_err(|e| e.to_string())?;
     }

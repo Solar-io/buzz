@@ -428,6 +428,21 @@ pub(super) fn commit_archive(
                 if index_inserted {
                     persisted_agent_metrics += 1;
                 }
+
+                // Project the private telemetry (stop reason + per-request
+                // observations) in the SAME transaction, for the same reason
+                // the metric index is written here: a projection whose only
+                // writer is the dashboard read path does not exist until
+                // somebody opens the dashboard. `INSERT OR REPLACE` keyed on
+                // the event id makes a re-ingest of an already-projected row a
+                // safe rewrite of identical content.
+                super::analytics_store::project_event(
+                    &tx,
+                    identity_pk,
+                    relay_url,
+                    &w.eid,
+                    &w.raw_json,
+                )?;
             }
 
             persisted += 1;
