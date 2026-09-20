@@ -43,17 +43,52 @@ HTTPS_PORT="$(registry_port https 2>/dev/null || echo '')"
 # would then land in the SAME project and fight it for containers and volumes.
 # evie-ui already runs dev and prod co-resident on crichton; assume Buzz will
 # too, and keep the projects disjoint from day one.
-# compose.web.yml is load-bearing: it binds the web bundle into /app/web-dist
-# (BUZZ_WEB_DIR in .env). Without it the relay crash-loops its config check —
-# this exact omission caused the 2026-09-01 outage.
-compose() { (cd "$COMPOSE_DIR" && docker compose -p "$BUZZ_COMPOSE_PROJECT" --env-file .env -f compose.yml -f "$COMPOSE_DIR/compose.web.yml" -f "$BUZZ_KIT_DIR/compose.loopback.yml" -f "$BUZZ_KIT_DIR/compose.pairing.yml" "$@"); }
+# ONE source of truth for the overlay stack. This list used to be typed out
+# verbatim in four places (the compose() helper plus the down/restart/up call
+# sites), which meant adding a file was four edits and forgetting one was
+# silent — a `down` that omits an overlay simply leaves that service running,
+# and an `up` that omits one never starts it. The 2026-09-01 outage was this
+# exact shape: compose.web.yml present in some invocations and not others.
+#
+# Order matters: later files override earlier ones.
+#   compose.yml               upstream base (relay/postgres/redis/minio)
+#   compose.web.yml           load-bearing — binds the web bundle into
+#                             /app/web-dist (BUZZ_WEB_DIR in .env). Without it
+#                             the relay crash-loops its config check; this exact
+#                             omission caused the 2026-09-01 outage.
+#   compose.loopback.yml      pins the relay's publish to 127.0.0.1
+#   compose.pairing.yml       NIP-AB pairing sidecar
+#   compose.push-gateway.yml  the APNs push gateway (D-029), adopted from the
+#                             hand-rolled container deploy/push-gateway-up.sh
+#                             created. Its container_name is pinned, so compose
+#                             adopts the existing `buzz-push-gateway` rather
+#                             than standing a second one alongside it.
+#
+# `compose.yml` is left RELATIVE, exactly as it was: every invocation cds into
+# $COMPOSE_DIR first, and that bare name is what fixes compose's project
+# directory there.
+COMPOSE_FILES=(
+  -f compose.yml
+  -f "$COMPOSE_DIR/compose.web.yml"
+  -f "$BUZZ_KIT_DIR/compose.loopback.yml"
+  -f "$BUZZ_KIT_DIR/compose.pairing.yml"
+  -f "$COMPOSE_DIR/compose.push-gateway.yml"
+)
+# Shell-quoted rendering of the same array, for the `run bash -c "..."` call
+# sites. They go through `run` so that DRY_RUN prints the real command line;
+# keeping the printed form means a dry run still shows every -f it would pass.
+COMPOSE_FILES_Q="$(printf ' %q' "${COMPOSE_FILES[@]}")"
+
+# -p is NOT optional (see the note above). Both spellings below take their file
+# list from COMPOSE_FILES, so there is nothing left to keep in sync by hand.
+compose() { (cd "$COMPOSE_DIR" && docker compose -p "$BUZZ_COMPOSE_PROJECT" --env-file .env "${COMPOSE_FILES[@]}" "$@"); }
 
 case "$MODE" in
   status)
     step "Buzz DEV status"; compose ps; exit 0 ;;
   stop)
     step "Stopping Buzz DEV"
-    run bash -c "cd '$COMPOSE_DIR' && docker compose -p '$BUZZ_COMPOSE_PROJECT' --env-file .env -f compose.yml -f '$COMPOSE_DIR/compose.web.yml' -f '$BUZZ_KIT_DIR/compose.loopback.yml' -f '$BUZZ_KIT_DIR/compose.pairing.yml' down"
+    run bash -c "cd '$COMPOSE_DIR' && docker compose -p '$BUZZ_COMPOSE_PROJECT' --env-file .env$COMPOSE_FILES_Q down"
     launchctl bootout "gui/$(id -u)/com.dev.buzz-relay" 2>/dev/null || true
     log "stopped (volumes preserved — 'docker compose down -v' would destroy data)"
     exit 0 ;;
@@ -69,9 +104,9 @@ step "[2/4] Bring the stack up"
 # `--wait` blocks on every service healthcheck, so a failed start is an
 # immediate non-zero here rather than a mystery 30 seconds later.
 if [ "$MODE" = "restart" ]; then
-  run bash -c "cd '$COMPOSE_DIR' && docker compose -p '$BUZZ_COMPOSE_PROJECT' --env-file .env -f compose.yml -f '$COMPOSE_DIR/compose.web.yml' -f '$BUZZ_KIT_DIR/compose.loopback.yml' -f '$BUZZ_KIT_DIR/compose.pairing.yml' restart"
+  run bash -c "cd '$COMPOSE_DIR' && docker compose -p '$BUZZ_COMPOSE_PROJECT' --env-file .env$COMPOSE_FILES_Q restart"
 else
-  run bash -c "cd '$COMPOSE_DIR' && docker compose -p '$BUZZ_COMPOSE_PROJECT' --env-file .env -f compose.yml -f '$COMPOSE_DIR/compose.web.yml' -f '$BUZZ_KIT_DIR/compose.loopback.yml' -f '$BUZZ_KIT_DIR/compose.pairing.yml' up -d --wait"
+  run bash -c "cd '$COMPOSE_DIR' && docker compose -p '$BUZZ_COMPOSE_PROJECT' --env-file .env$COMPOSE_FILES_Q up -d --wait"
 fi
 
 step "[3/4] Health gate"
