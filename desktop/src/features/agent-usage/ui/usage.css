@@ -1,7 +1,17 @@
+/* The three dimension colours are the only palette this page adds, and they are
+   carried as tokens so the light and dark values live in one place. Both sets
+   must clear WCAG AA 4.5:1 for normal-size text against their own theme's card
+   surface, because they colour values and axis labels, not just chart fills —
+   the light values are measured against Latte's `--card` (#eff1f5), which is
+   the stricter case than pure white. Colour is never the only encoding; every
+   value that carries one also carries its label. */
 .usage-page {
-  --usage-input: #cf4c65;
-  --usage-output: #079a79;
-  --usage-cost: #ba7500;
+  /* 4.73:1 on #eff1f5, 5.35:1 on #fff */
+  --usage-input: #c33450;
+  /* 4.75:1 on #eff1f5, 5.37:1 on #fff */
+  --usage-output: #06795f;
+  /* 4.72:1 on #eff1f5, 5.34:1 on #fff */
+  --usage-cost: #965f00;
   min-width: 0;
   min-height: 0;
   flex: 1;

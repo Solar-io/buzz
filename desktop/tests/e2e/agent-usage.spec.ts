@@ -124,12 +124,34 @@ for (const width of [375, 768, 1024, 1440, 2560]) {
   });
 }
 
+/** Elements whose text colour comes from one of the three usage dimension
+ *  tokens. Named so a failure says which value is unreadable, not just that
+ *  "a ratio was low". */
+const CONTRAST_SAMPLES = [
+  [
+    "Performance band value (--usage-output)",
+    ".usage-summary-band:nth-child(2) dd",
+  ],
+  [
+    "Highlights band value (--usage-input)",
+    ".usage-summary-band:nth-child(3) dd",
+  ],
+  ["Est. cost value (--usage-cost)", ".usage-kpi.usage-cost strong"],
+] as const;
+
 for (const theme of ["light", "dark"]) {
   test(`theme ${theme}, maximum text zoom and reduced motion`, async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1440, height: 1032 });
-    await page.emulateMedia({ reducedMotion: "reduce" });
+    // `colorScheme` is emulated as well as the stored theme: the provider falls
+    // back to following the OS scheme whenever no theme has been stored, so
+    // without this the "light" case can render dark on a dark-scheme host and
+    // the light palette never gets measured at all.
+    await page.emulateMedia({
+      reducedMotion: "reduce",
+      colorScheme: theme === "light" ? "light" : "dark",
+    });
     await page.addInitScript(
       (value) => {
         localStorage.setItem("buzz-theme", value);
@@ -148,6 +170,107 @@ for (const theme of ["light", "dark"]) {
       )
       .toBe("24px");
     await waitForAnimations(page);
+
+    // Prove which theme actually rendered, then prove its dimension colours are
+    // legible on it. Asserting only geometry (as this test once did) passes
+    // identically in both themes and cannot fail on a colour regression.
+    const measured = await page.evaluate(
+      (samples) => {
+        const parse = (value: string): [number, number, number] => {
+          const hex = value.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+          if (hex) {
+            const digits =
+              hex[1].length === 3
+                ? [...hex[1]].map((d) => d + d).join("")
+                : hex[1];
+            return [0, 2, 4].map((i) =>
+              parseInt(digits.slice(i, i + 2), 16),
+            ) as [number, number, number];
+          }
+          const rgb = value.match(/\d+(\.\d+)?/g) ?? [];
+          return [Number(rgb[0]), Number(rgb[1]), Number(rgb[2])];
+        };
+        const luminance = (channels: [number, number, number]) => {
+          const [r, g, b] = channels.map((channel) => {
+            const unit = channel / 255;
+            return unit <= 0.04045
+              ? unit / 12.92
+              : ((unit + 0.055) / 1.055) ** 2.4;
+          });
+          return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        };
+        const contrast = (a: string, b: string) => {
+          const [high, low] = [luminance(parse(a)), luminance(parse(b))].sort(
+            (x, y) => y - x,
+          );
+          return (high + 0.05) / (low + 0.05);
+        };
+        // The colour actually behind the text: the nearest ancestor with a
+        // non-transparent background. Measuring the element's own card would
+        // report `rgba(0, 0, 0, 0)` and silently compare against black.
+        const backdrop = (element: HTMLElement): string => {
+          for (
+            let node: HTMLElement | null = element;
+            node;
+            node = node.parentElement
+          ) {
+            const color = getComputedStyle(node).backgroundColor;
+            const alpha = color.match(/rgba?\([^)]*,\s*([\d.]+)\)/);
+            if (
+              color &&
+              color !== "transparent" &&
+              (!alpha || Number(alpha[1]) > 0)
+            )
+              return color;
+          }
+          return "rgb(255, 255, 255)";
+        };
+        const surface = backdrop(
+          document.querySelector(".usage-summary-band dd") as HTMLElement,
+        );
+        return {
+          surface,
+          surfaceLuminance: luminance(parse(surface)),
+          ratios: samples.map(([label, selector]) => {
+            const element = document.querySelector(
+              selector,
+            ) as HTMLElement | null;
+            return {
+              label,
+              found: element !== null,
+              color: element ? getComputedStyle(element).color : null,
+              ratio: element
+                ? contrast(getComputedStyle(element).color, backdrop(element))
+                : null,
+            };
+          }),
+        };
+      },
+      CONTRAST_SAMPLES as unknown as [string, string][],
+    );
+
+    // Guard against a vacuous pass: every sample must exist and be measured.
+    expect(measured.ratios).toHaveLength(3);
+    for (const sample of measured.ratios) {
+      expect(sample.found, `${sample.label} is missing from the page`).toBe(
+        true,
+      );
+    }
+    // The theme-discriminating fact. Without it the "light" case passes
+    // identically when a dark theme renders, which is how three sub-AA light
+    // values shipped under a green test.
+    if (theme === "light") {
+      expect(measured.surfaceLuminance).toBeGreaterThan(0.9);
+    } else {
+      expect(measured.surfaceLuminance).toBeLessThan(0.1);
+    }
+    for (const sample of measured.ratios) {
+      expect(
+        sample.ratio,
+        `${sample.label} renders ${sample.color} on ${measured.surface} = ${sample.ratio?.toFixed(2)}:1, below WCAG AA 4.5:1`,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+
     expect(
       await page
         .getByTestId("agent-usage-page")
