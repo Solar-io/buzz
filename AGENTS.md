@@ -286,6 +286,16 @@ useRelaySession x11, useTheme x4, hook wiring cases) on a tree that is green
 under the real runner. Do not triage failures from `bun test`; re-run with
 `pnpm test` first.
 
+Shared TS/Rust fixtures: `test-fixtures/` holds corpora that BOTH suites
+execute, so a contract implemented twice cannot drift silently.
+`test-fixtures/decision-cards/` is the current example — the decision-card wire
+format, validated by `web/src/features/channels/lib/decisionCard.ts` and
+mirrored by `crates/buzz-cli/src/commands/card.rs`. Each side asserts the case
+count against `limits.json`, because a fixture path that resolves to nothing
+runs zero cases and reports success. If you change a bound or an error message
+on one side, expect the OTHER suite to go red — that is the mechanism working,
+not a flake; fix both and the fixture together.
+
 Mutation proof: **commit the change before you mutate anything.** Reverting a
 mutation with `git checkout -- <file>` also reverts every uncommitted line in
 that file, so the next mutation runs against a tree missing the code under
