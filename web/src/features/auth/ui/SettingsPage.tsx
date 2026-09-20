@@ -207,6 +207,7 @@ export function SettingsPage({ group }: SettingsPageProps) {
           <SettingsChipRow
             active={active}
             groups={groups}
+            attentionGroup={backupPending ? "security" : undefined}
             onSelect={selectGroup}
           />
         </div>

@@ -188,10 +188,13 @@ export function SettingsNav({
 export function SettingsChipRow({
   active,
   groups,
+  attentionGroup,
   onSelect,
 }: {
   active: SettingsGroupId;
   groups: readonly SettingsGroupMeta[];
+  /** Same signal as the rail: amber dot on the group needing attention. */
+  attentionGroup?: SettingsGroupId;
   onSelect: (id: SettingsGroupId) => void;
 }) {
   return (
@@ -215,6 +218,13 @@ export function SettingsChipRow({
             type="button"
           >
             {group.name}
+            {attentionGroup === group.id ? (
+              <span
+                aria-label="needs attention"
+                className="ml-1.5 inline-block h-2 w-2 rounded-full bg-amber-500 align-middle"
+                data-testid="settings-chip-badge-security"
+              />
+            ) : null}
           </button>
         );
       })}
