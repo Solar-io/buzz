@@ -1,5 +1,13 @@
 export { KeyBackupCard } from "./ui/KeyBackupCard";
-export { OnboardingPane, WelcomeChecklist } from "./ui/WelcomeChecklist";
+export {
+  OnboardingPane,
+  WelcomeChecklist,
+  WelcomeChecklistStrip,
+} from "./ui/WelcomeChecklist";
+export type {
+  ChecklistTarget,
+  WelcomeChecklistChipProps,
+} from "./ui/WelcomeChecklist";
 export { useOnboardingChecklist } from "./useOnboardingChecklist";
 export {
   decryptNcryptsec,
