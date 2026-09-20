@@ -116,9 +116,27 @@ pub struct UsageAttribution {
     /// Private display label for that account.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account_label: Option<String>,
+    /// Whether the owner has confirmed this account identity, as opposed to it
+    /// having been seeded from observed configuration.
+    ///
+    /// `None` means the publisher said nothing, which consumers treat exactly
+    /// like `Some(false)`: unconfirmed. `Some(true)` is a claim only the owner
+    /// can make, so it is invalid without an `account_id` to attach it to — an
+    /// "confirmed nothing" carries no information and would let a publisher
+    /// launder an unattributed turn into an established identity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_confirmed: Option<bool>,
     /// Observed service tier, not inferred from model or account.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<String>,
+}
+
+impl UsageAttribution {
+    /// `true` only when the owner has confirmed this account identity. An
+    /// absent flag is unconfirmed — never treated as an assertion.
+    pub fn is_account_confirmed(&self) -> bool {
+        self.account_confirmed.unwrap_or(false)
+    }
 }
 
 /// One observed provider call, subordinate to (never additive to) turn totals.
@@ -260,6 +278,15 @@ impl AgentTurnMetricPayload {
                     metric_label(field, &format!("{prefix}.{name}"), false)?;
                 }
             }
+            // A confirmation is a claim *about an account*. Without an
+            // `accountId` there is nothing it could confirm, so accepting it
+            // would let a publisher mark an unattributed turn as an
+            // owner-established identity.
+            if value.account_confirmed.is_some() && value.account_id.is_none() {
+                return Err(ObserverPayloadError::InvalidPayload(format!(
+                    "{prefix}.accountConfirmed requires {prefix}.accountId"
+                )));
+            }
             Ok(())
         }
         metric_label(&self.harness, "harness", false)?;
@@ -390,6 +417,94 @@ mod tests {
         p.telemetry.as_mut().unwrap().attribution.provider = None;
         p.telemetry.as_mut().unwrap().requests[0].usage.cost_usd = Some(-1.0);
         assert!(p.validate().is_err());
+    }
+
+    /// `accountConfirmed` is a claim about an account, so it is only valid
+    /// alongside an `accountId`. A publisher must not be able to mark an
+    /// unattributed turn as an owner-established identity.
+    #[test]
+    fn account_confirmed_requires_an_account_id() {
+        let mut p = sample_payload();
+        p.telemetry = Some(UsageTelemetry {
+            attribution: UsageAttribution {
+                account_confirmed: Some(true),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert!(
+            p.validate().is_err(),
+            "a confirmation with no accountId must be rejected"
+        );
+        p.telemetry.as_mut().unwrap().attribution.account_id = Some("seeded-1".into());
+        assert!(p.validate().is_ok());
+        // Explicitly-unconfirmed still needs the account it describes.
+        p.telemetry.as_mut().unwrap().attribution.account_id = None;
+        p.telemetry.as_mut().unwrap().attribution.account_confirmed = Some(false);
+        assert!(p.validate().is_err());
+    }
+
+    /// The same rule applies to a per-request observation, which is the other
+    /// place attribution enters the payload.
+    #[test]
+    fn request_account_confirmed_requires_an_account_id() {
+        let mut p = sample_payload();
+        p.telemetry = Some(UsageTelemetry {
+            request_count: Some(1),
+            requests: vec![RequestObservation {
+                id: "0".into(),
+                model: None,
+                attribution: UsageAttribution {
+                    account_confirmed: Some(true),
+                    ..Default::default()
+                },
+                usage: p.turn.clone().unwrap(),
+                cost_source: None,
+                latency_ms: None,
+                fallback: None,
+            }],
+            ..Default::default()
+        });
+        assert!(p.validate().is_err());
+        p.telemetry.as_mut().unwrap().requests[0]
+            .attribution
+            .account_id = Some("seeded-1".into());
+        assert!(p.validate().is_ok());
+    }
+
+    /// Absence is unconfirmed, and it stays off the wire entirely so older
+    /// consumers see a byte-identical payload.
+    #[test]
+    fn absent_account_confirmed_is_unconfirmed_and_omitted_from_the_wire() {
+        let attribution = UsageAttribution {
+            account_id: Some("seeded-1".into()),
+            ..Default::default()
+        };
+        assert!(!attribution.is_account_confirmed());
+        let json = serde_json::to_string(&attribution).expect("attribution serializes");
+        assert_eq!(json, r#"{"accountId":"seeded-1"}"#);
+        assert!(UsageAttribution {
+            account_confirmed: Some(true),
+            ..attribution.clone()
+        }
+        .is_account_confirmed());
+        assert!(!UsageAttribution {
+            account_confirmed: Some(false),
+            ..attribution
+        }
+        .is_account_confirmed());
+    }
+
+    /// An unknown `accountConfirmed` shape must not make an otherwise valid
+    /// historical event unparseable — forward compatibility per NIP-AM.
+    #[test]
+    fn unknown_attribution_fields_remain_forward_compatible() {
+        let parsed: UsageAttribution = serde_json::from_str(
+            r#"{"accountId":"a","accountLabel":"b","futureField":{"nested":1}}"#,
+        )
+        .expect("unknown fields are ignored");
+        assert_eq!(parsed.account_id.as_deref(), Some("a"));
+        assert_eq!(parsed.account_confirmed, None);
     }
 
     fn sample_payload() -> AgentTurnMetricPayload {
