@@ -454,3 +454,165 @@ test("CARD_LIMITS carries the v2 bounds", () => {
   assert.equal(CARD_LIMITS.maxQuestionChars, 300);
   assert.equal(CARD_LIMITS.maxDescriptionChars, 200);
 });
+
+// ---- TS/Rust contract divergences found by QA on 2026-09-20 ----
+
+test("the trim set is Unicode White_Space + U+FEFF, not JavaScript's", () => {
+  // `String.prototype.trim` strips U+FEFF and leaves U+0085 (NEL); Rust's
+  // `str::trim` does exactly the opposite. Both sides now trim the union, so
+  // a field that is only one of them is empty EVERYWHERE, and a field padded
+  // with both fits its bound everywhere.
+  for (const blank of ["﻿", "\u0085", "﻿\u0085  　"]) {
+    assert.equal(
+      parseCardTags(tagFor({ ...VALID, title: blank })),
+      null,
+      `title ${JSON.stringify(blank)}`,
+    );
+    assert.equal(
+      parseCardTags(
+        tagFor({ ...VALID, options: [{ label: blank }, { label: "B" }] }),
+      ),
+      null,
+      `label ${JSON.stringify(blank)}`,
+    );
+    assert.throws(
+      () => buildCardTag({ ...VALID, title: blank }),
+      /title must be 1-120 characters/,
+      `builder title ${JSON.stringify(blank)}`,
+    );
+  }
+  // At the bound: 120 x's padded with one of each is 122 UTF-16 units on the
+  // wire and exactly 120 after the shared trim — so the card parses AND the
+  // stored title is the trimmed one.
+  const padded = `﻿${"x".repeat(120)}\u0085`;
+  const card = parseCardTags(tagFor({ ...VALID, title: padded }));
+  assert.ok(card, "a padded title trims to the bound");
+  assert.equal(card.title, "x".repeat(120));
+  assert.equal(card.questions[0].question, "x".repeat(120));
+  // One character more is over it, padding or not.
+  assert.equal(
+    parseCardTags(tagFor({ ...VALID, title: `﻿${"x".repeat(121)}\u0085` })),
+    null,
+  );
+});
+
+test("a v1 card IGNORES a per-option description, whatever it holds", () => {
+  // v1 shipped 9/16 with no such field. A v1 card in the wild carrying the
+  // key rendered then and must render now — an unknown key on a v1 payload
+  // can never be a reason to reject the card.
+  for (const junk of [null, 123, true, {}, "", "d".repeat(201)]) {
+    const card = parseCardTags(
+      tagFor({
+        ...VALID,
+        options: [{ label: "A", description: junk }, { label: "B" }],
+      }),
+    );
+    assert.ok(card, `description ${JSON.stringify(junk)} must still render`);
+    assert.equal(card.questions[0].options[0].description, undefined);
+  }
+  // A WELL-FORMED one is ignored too: v1 has one shape, not two.
+  const card = parseCardTags(
+    tagFor({
+      ...VALID,
+      options: [{ label: "A", description: "The safe one" }, { label: "B" }],
+    }),
+  );
+  assert.ok(card);
+  assert.equal(card.questions[0].options[0].description, undefined);
+  assert.ok(
+    !cardFallbackText(card).includes("The safe one"),
+    "an ignored description never reaches the fallback text",
+  );
+  // The builder drops it rather than refusing the send.
+  const built = buildCardTag({
+    ...VALID,
+    options: [{ label: "A", description: "The safe one" }, { label: "B" }],
+  });
+  assert.ok(!built.tag[0][1].includes("description"), built.tag[0][1]);
+  // v2 still validates the same field strictly.
+  assert.equal(
+    parseCardTags(
+      tagFor({
+        ...VALID_V2,
+        questions: [
+          {
+            question: "Which?",
+            options: [
+              { label: "A", description: "d".repeat(201) },
+              { label: "B" },
+            ],
+          },
+        ],
+      }),
+    ),
+    null,
+  );
+});
+
+test("an unpaired surrogate is refused by the builder and the parser", () => {
+  // `JSON.stringify` escapes a lone surrogate instead of failing, so the tag
+  // LOOKS fine and `serde_json` cannot decode it at all — the CLI could not
+  // read back a card this builder emitted.
+  for (const bad of ["\uD800", "\uDC00", "\uD800\uD800", "ok\uD800"]) {
+    assert.throws(
+      () =>
+        buildCardTag({ ...VALID, options: [{ label: bad }, { label: "B" }] }),
+      /payload must not contain unpaired surrogates/,
+      JSON.stringify(bad),
+    );
+    assert.equal(
+      parseCardTags(
+        tagFor({ ...VALID, options: [{ label: bad }, { label: "B" }] }),
+      ),
+      null,
+      JSON.stringify(bad),
+    );
+  }
+  // A PAIRED surrogate is an astral character and rides through untouched —
+  // and so do display-hostile-but-legal characters (RTL override, ZWJ), which
+  // are author text and belong to the render phase.
+  const card = parseCardTags(
+    tagFor({
+      ...VALID,
+      options: [{ label: "🚀 ‮port‍" }, { label: "B" }],
+    }),
+  );
+  assert.ok(card);
+  assert.equal(card.questions[0].options[0].label, "🚀 ‮port‍");
+});
+
+test("the version is a JSON NUMBER equal to 1 or 2, not a spelling of one", () => {
+  // JSON has one number type, so `1.0` and `1e0` ARE `1` here and cannot be
+  // told apart without re-reading the raw text. The Rust builder matches by
+  // value for the same reason — it used to match serde's storage type and
+  // refused `{"v":1.0}` payloads this parser accepts.
+  for (const raw of ['{"v":1.0', '{"v":1e0', '{"v":1']) {
+    const card = parseCardTags([
+      ["card", `${raw},"title":"Q","options":[{"label":"A"},{"label":"B"}]}`],
+    ]);
+    assert.ok(card, raw);
+    assert.equal(card.v, 1);
+  }
+  assert.equal(
+    parseCardTags([
+      ["card", '{"v":1.5,"title":"Q","options":[{"label":"A"},{"label":"B"}]}'],
+    ]),
+    null,
+  );
+  assert.throws(
+    () => buildCardTag({ ...VALID, v: 1.5 }),
+    /unsupported version 1.5/,
+  );
+});
+
+test("a tags array carrying a null element returns null, never a throw", () => {
+  // This module's doc comment promises the parse is total. Nothing on the
+  // card path reaches it today (messageBuffer.ts throws on the same input
+  // first, and that is deliberately out of scope here), but the promise is
+  // this module's to keep.
+  assert.equal(parseCardTags([null, ["h", "chan"]]), null);
+  assert.equal(parseCardTags([undefined]), null);
+  const card = parseCardTags([null, ["card", JSON.stringify(VALID)]]);
+  assert.ok(card, "a good card after a null element still parses");
+  assert.equal(card.title, VALID.title);
+});

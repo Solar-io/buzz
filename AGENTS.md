@@ -296,6 +296,17 @@ runs zero cases and reports success. If you change a bound or an error message
 on one side, expect the OTHER suite to go red — that is the mechanism working,
 not a flake; fix both and the fixture together.
 
+Where a contract is implemented in two languages, **the built-ins are the drift**
+(earned on decision cards, 2026-09-20, all four found by adversarial QA rather
+than by either suite): `String.prototype.trim` and Rust `str::trim` strip
+DIFFERENT characters (JS takes U+FEFF and not U+0085; Rust is the exact
+opposite), `serde_json`'s `as_u64()` rejects `1.0` where JS `=== 1` accepts it,
+and `JSON.stringify` will happily escape a lone surrogate into a payload
+`serde_json` then cannot decode at all. Declare the set/type rule explicitly on
+both sides and cite the other in a comment. The corpus can only catch this if a
+case exercises the RAW author payload — a canonical payload is already
+normalized, so it cannot tell the two trims apart.
+
 Mutation proof: **commit the change before you mutate anything.** Reverting a
 mutation with `git checkout -- <file>` also reverts every uncommitted line in
 that file, so the next mutation runs against a tree missing the code under

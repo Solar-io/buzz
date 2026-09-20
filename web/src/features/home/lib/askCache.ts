@@ -31,6 +31,15 @@ import type { AskItem } from "./askDetection.ts";
 
 const CACHE_VERSION = "v2";
 
+/**
+ * Keys this build has superseded. A version bump orphans the old entry —
+ * nothing reads `asks:v1` any more, so it is never MIS-read, but idb keeps it
+ * forever: a few hundred KB of dead asks per browser profile. Deleted on
+ * first load, which is the only moment the cache is already being touched.
+ * Add the outgoing key here whenever `CACHE_VERSION` moves.
+ */
+const SUPERSEDED_CACHE_KEYS = ["asks:v1"];
+
 /** Stored ask cap — the badge tracks at most this many asks. */
 export const ASKS_CACHE_CAP = 100;
 
@@ -64,7 +73,23 @@ export function asksCacheKey(): string {
   return `asks:${CACHE_VERSION}`;
 }
 
+/** Best-effort eviction of the keys a version bump left behind. */
+export async function dropSupersededAsksCaches(): Promise<void> {
+  for (const key of SUPERSEDED_CACHE_KEYS) {
+    if (key === asksCacheKey()) {
+      continue;
+    }
+    try {
+      await del(key);
+    } catch {
+      // Storage unavailable: the orphan is inert, so this never matters
+      // enough to fail a load over.
+    }
+  }
+}
+
 export async function loadAsksCache(): Promise<AsksCacheEntry | null> {
+  await dropSupersededAsksCaches();
   try {
     const entry = (await get(asksCacheKey())) as AsksCacheEntry | undefined;
     if (
@@ -111,6 +136,14 @@ export function toCachedAsk(ask: AskItem): CachedAsk {
     // version field AND the wire shape, which stopped being "the parsed card
     // plus a version" when v2 landed. `serializeCardPayload` is the inverse
     // of `parseCardTags`, pinned by a round-trip test.
+    //
+    // Which asks the old `JSON.stringify({v: 1, ...card})` actually broke,
+    // measured rather than assumed (QA, 9/20): the spread WINS, so `card.v`
+    // overwrote the leading `1` and a v2 card round-tripped fine. The
+    // casualty was v1 — and v1 is every ask shipped since 9/16. A v1
+    // DecisionCard serialized to `{"v":1,…,"questions":[…]}` with no
+    // `options`, which is exactly what the parser's v1 arm refuses, so the
+    // ask was dropped on read and the badge lost it.
     cardJson: serializeCardPayload(ask.card),
     cardRootId: ask.rootId,
     cardReplyToId: ask.replyToId,

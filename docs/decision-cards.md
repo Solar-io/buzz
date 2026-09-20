@@ -98,6 +98,33 @@ asserted by both suites.
 Ids are render keys, not identity promises: omit them and the reader derives
 positional `"0"`, `"1"`, … .
 
+### String fields
+
+Every string field is bounded in **UTF-16 code units** (JS `.length`; `utf16_len`
+in Rust), so one emoji costs 2.
+
+**Trimming is an explicit set, not the language's default:** Unicode
+`White_Space` **∪ U+FEFF**. Neither built-in is that set and the two disagree in
+both directions — `String.prototype.trim` strips U+FEFF and leaves U+0085 (NEL),
+`str::trim` strips U+0085 and leaves U+FEFF — so each side declares the set
+itself (`CARD_TRIM_CHARS`, same code points in the same order) and never calls
+its own `trim()` on a card field. A field is measured AFTER that trim: a label
+of only U+FEFF is empty and refused by both, and a 120-character title padded
+with either character is still 120.
+
+**Unpaired surrogates are refused** in any string field, by both sides. A lone
+`"\ud800"` is not valid UTF-8: `JSON.stringify` escapes it rather than failing,
+so the tag looks fine, while `serde_json` cannot decode it at all — the CLI
+could not read back a card the web builder had emitted. The two reach that
+refusal at different layers (the web builder checks the payload; Rust's JSON
+decode refuses first) and report the same message.
+
+Everything else rides the wire verbatim, deliberately — including
+display-hostile-but-legal characters like RTL overrides (U+202E), ZWJ (U+200D)
+and combining marks. Those are author text; the answer to them is **bidi
+isolation where a label is rendered**, which belongs to the UI phases, not to
+the wire format.
+
 ### Version rules
 
 - `v` is **optional on input** — every shipped `--card` invocation omits it — and
@@ -106,6 +133,11 @@ positional `"0"`, `"1"`, … .
 - The reader requires `v` and accepts only `1` or `2`. `v: 3`, `v: "2"` and a
   missing `v` all fall back to the `content` text. That is deliberate: a client
   that does not understand a card shows the question rather than half of it.
+- `v` is a JSON **number equal to** 1 or 2 — not a spelling of one. `1`, `1.0`
+  and `1e0` are the same JSON value, and a JS parser cannot tell them apart
+  without re-reading the raw text, so the Rust builder matches by value
+  (integral, in range) rather than by serde's storage type. `1.5` is not a
+  version.
 - A single-question v2 payload may omit `title` (it borrows the question's
   text). More than one question **must** be titled.
 
@@ -130,6 +162,15 @@ but an already-published one still renders:
 | no `title` on a multi-question interview | refuses the send | borrows question one's text |
 
 Each asymmetry is a `parseRaw` case in the corpus, not a comment.
+
+### v1 has no `description`
+
+`description` is a **v2** field. A v1 payload carrying the key is not a v1 card
+with an extra field — v1 shipped on 2026-09-16 without one, so a published v1
+card that happens to carry it must render exactly as it did then. Both sides
+therefore **ignore it on v1**: the reader never validates it (a malformed one
+cannot reject the card) and the builder drops it from canonical v1 output rather
+than refusing the send. On v2 it is part of the format and validated strictly.
 
 ## Sending one
 

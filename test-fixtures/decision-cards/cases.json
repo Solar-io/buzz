@@ -631,6 +631,188 @@
     "fallback": "**Rollout**\n\n**1. Dev or prod first?**\n\nProd is co-resident on crichton; dev is the sandbox.\n\n- Dev\n- Prod\n\n**2. Announce it?**\n\n- Yes\n- No\n\n_Reply with an option or your own answer._"
   },
   {
+    "name": "v1 accept — a title padded with U+FEFF and U+0085 trims to the 120-character bound",
+    "payload": {
+      "v": 1,
+      "title": "\uFEFFxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\u0085",
+      "options": [
+        {
+          "label": "Yes"
+        },
+        {
+          "label": "No"
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "options": [
+        {
+          "label": "Yes"
+        },
+        {
+          "label": "No"
+        }
+      ]
+    },
+    "fallback": "**xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx**\n\n- Yes\n- No\n\n_Reply with an option or your own answer._",
+    "parseRaw": "accept"
+  },
+  {
+    "name": "v2 accept — U+FEFF and U+0085 padding trims a label to 200 and a header to 12",
+    "payload": {
+      "v": 2,
+      "questions": [
+        {
+          "header": "\u0085hhhhhhhhhhhh\uFEFF",
+          "question": "Pick one",
+          "options": [
+            {
+              "label": "\uFEFFyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\u0085"
+            },
+            {
+              "label": "No"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 2,
+      "questions": [
+        {
+          "header": "hhhhhhhhhhhh",
+          "question": "Pick one",
+          "options": [
+            {
+              "label": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+            },
+            {
+              "label": "No"
+            }
+          ]
+        }
+      ]
+    },
+    "fallback": "**Pick one**\n\n- yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\n- No\n\n_Reply with an option or your own answer._",
+    "parseRaw": "accept"
+  },
+  {
+    "name": "v1 accept — the version written 1.0 is the number 1",
+    "payload": {
+      "v": 1.0,
+      "title": "Q",
+      "options": [
+        {
+          "label": "A"
+        },
+        {
+          "label": "B"
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "title": "Q",
+      "options": [
+        {
+          "label": "A"
+        },
+        {
+          "label": "B"
+        }
+      ]
+    },
+    "fallback": "**Q**\n\n- A\n- B\n\n_Reply with an option or your own answer._",
+    "parseRaw": "accept"
+  },
+  {
+    "name": "v1 accept — the version written 1e0 is the number 1",
+    "payloadRaw": "{\"v\":1e0,\"title\":\"Q\",\"options\":[{\"label\":\"A\"},{\"label\":\"B\"}]}",
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "title": "Q",
+      "options": [
+        {
+          "label": "A"
+        },
+        {
+          "label": "B"
+        }
+      ]
+    },
+    "fallback": "**Q**\n\n- A\n- B\n\n_Reply with an option or your own answer._",
+    "parseRaw": "accept"
+  },
+  {
+    "name": "v1 accept — an unparseable `description` on a v1 option is ignored, not a refusal",
+    "payload": {
+      "v": 1,
+      "title": "Q",
+      "options": [
+        {
+          "label": "A",
+          "description": 123
+        },
+        {
+          "label": "B",
+          "description": "ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "title": "Q",
+      "options": [
+        {
+          "label": "A"
+        },
+        {
+          "label": "B"
+        }
+      ]
+    },
+    "fallback": "**Q**\n\n- A\n- B\n\n_Reply with an option or your own answer._",
+    "parseRaw": "accept"
+  },
+  {
+    "name": "v1 accept — a well-formed `description` is dropped from v1 canonical output",
+    "payload": {
+      "v": 1,
+      "title": "Q",
+      "options": [
+        {
+          "label": "A",
+          "description": "The safe one"
+        },
+        {
+          "label": "B"
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "title": "Q",
+      "options": [
+        {
+          "label": "A"
+        },
+        {
+          "label": "B"
+        }
+      ]
+    },
+    "fallback": "**Q**\n\n- A\n- B\n\n_Reply with an option or your own answer._",
+    "parseRaw": "accept"
+  },
+  {
     "name": "reject — v3 is an unknown version",
     "payload": {
       "v": 3,
@@ -1073,5 +1255,62 @@
     "expect": "reject",
     "reason": "body must be at most 4000 characters",
     "parseRaw": "accept"
+  },
+  {
+    "name": "reject — a label that is only U+FEFF is empty after the shared trim",
+    "payload": {
+      "v": 1,
+      "title": "Q",
+      "options": [
+        {
+          "label": "\uFEFF"
+        },
+        {
+          "label": "B"
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "option 1 label must be 1-200 characters"
+  },
+  {
+    "name": "reject — a label that is only U+0085 is empty after the shared trim",
+    "payload": {
+      "v": 1,
+      "title": "Q",
+      "options": [
+        {
+          "label": "\u0085"
+        },
+        {
+          "label": "B"
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "option 1 label must be 1-200 characters"
+  },
+  {
+    "name": "reject — version 1.5 is not the number 1",
+    "payload": {
+      "v": 1.5,
+      "title": "Q",
+      "options": [
+        {
+          "label": "A"
+        },
+        {
+          "label": "B"
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "unsupported version 1.5"
+  },
+  {
+    "name": "reject — a lone surrogate in a label is not valid UTF-8",
+    "payloadRaw": "{\"v\":1,\"title\":\"Q\",\"options\":[{\"label\":\"\\ud800\"},{\"label\":\"B\"}]}",
+    "expect": "reject",
+    "reason": "payload must not contain unpaired surrogates"
   }
 ]

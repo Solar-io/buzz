@@ -123,11 +123,106 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * The ONE trim set for a card string field: Unicode `White_Space` ∪ U+FEFF.
+ *
+ * Neither language's built-in trim is that set, and the two disagree in BOTH
+ * directions: `String.prototype.trim` strips U+FEFF and leaves U+0085 (NEL),
+ * while Rust's `str::trim` (Unicode `White_Space`) strips U+0085 and leaves
+ * U+FEFF. Every card field is trimmed on both sides, so calling either
+ * built-in makes the two validators disagree about what the field even IS —
+ * a `{"label":"\uFEFF"}` the CLI accepted became a card the web parser
+ * returned null for, i.e. a published card that degrades to plain text.
+ *
+ * The mirror is `CARD_TRIM_CHARS` in `crates/buzz-cli/src/commands/card.rs`:
+ * the same code points in the same order. Do not call `.trim()` on a card
+ * field — use `cardTrim`.
+ */
+const CARD_TRIM_CHARS =
+  // Unicode White_Space …
+  "\u0009\u000A\u000B\u000C\u000D\u0020\u0085\u00A0\u1680" +
+  "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A" +
+  "\u2028\u2029\u202F\u205F\u3000" +
+  // … ∪ U+FEFF (ZERO WIDTH NO-BREAK SPACE / BOM), which is NOT White_Space.
+  "\uFEFF";
+
+const CARD_TRIM_SET = new Set(CARD_TRIM_CHARS.split(""));
+
+/** `String.prototype.trim` over `CARD_TRIM_CHARS` instead of ECMAScript's set. */
+function cardTrim(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && CARD_TRIM_SET.has(value[start])) {
+    start += 1;
+  }
+  while (end > start && CARD_TRIM_SET.has(value[end - 1])) {
+    end -= 1;
+  }
+  return value.slice(start, end);
+}
+
+/**
+ * A lone half of a surrogate pair — text that is not valid UTF-8 and cannot
+ * be made valid. `JSON.stringify` does not fail on one (well-formed
+ * stringify escapes it, ES2019), so the tag LOOKS fine while `serde_json`
+ * refuses to decode `"\ud800"` at all: the CLI cannot read back a card this
+ * builder used to emit happily. Both sides refuse a payload carrying one.
+ *
+ * Deliberately NOT extended to display-hostile-but-legal characters (RTL
+ * overrides U+202E, ZWJ U+200D, combining marks): those are author text and
+ * ride the wire verbatim. The answer to them is bidi isolation where a label
+ * is RENDERED — a UI-phase job, not a wire-format one.
+ */
+function hasUnpairedSurrogate(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      // NaN (past the end) fails both comparisons: a trailing high surrogate
+      // is unpaired.
+      if (!(next >= 0xdc00 && next <= 0xdfff)) {
+        return true;
+      }
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Any string anywhere in a payload. Iterative on purpose: a card payload may
+ * legally be 16 KB of JSON, and a recursive walk over a deeply nested one
+ * would trade the parser's null return for a stack overflow — the parse must
+ * stay total.
+ */
+function containsUnpairedSurrogate(value: unknown): boolean {
+  const pending: unknown[] = [value];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (typeof current === "string") {
+      if (hasUnpairedSurrogate(current)) {
+        return true;
+      }
+    } else if (Array.isArray(current)) {
+      for (const entry of current) {
+        pending.push(entry);
+      }
+    } else if (isPlainObject(current)) {
+      for (const entry of Object.values(current)) {
+        pending.push(entry);
+      }
+    }
+  }
+  return false;
+}
+
 function boundedString(value: unknown, maxChars: number): string | null {
   if (typeof value !== "string") {
     return null;
   }
-  const trimmed = value.trim();
+  const trimmed = cardTrim(value);
   if (trimmed.length === 0 || trimmed.length > maxChars) {
     return null;
   }
@@ -149,7 +244,17 @@ function lenientBody(value: unknown, maxChars: number): string | undefined {
   return boundedString(value, maxChars) ?? undefined;
 }
 
-function parseOptions(raw: unknown): DecisionCardOption[] | null {
+/**
+ * `allowDescription` is the v1 promise, not a convenience. v1 has no
+ * per-option `description`, so a v1 card carrying that key must render
+ * exactly as it did before v2 existed — an unknown key on a v1 wire payload
+ * can never be a reason to reject the card. v2 validates the same field
+ * strictly, because there it is part of the format.
+ */
+function parseOptions(
+  raw: unknown,
+  allowDescription: boolean,
+): DecisionCardOption[] | null {
   if (!Array.isArray(raw)) {
     return null;
   }
@@ -175,7 +280,7 @@ function parseOptions(raw: unknown): DecisionCardOption[] | null {
       id: explicitId ?? String(index),
       label,
     };
-    if (candidate.description !== undefined) {
+    if (allowDescription && candidate.description !== undefined) {
       const description = boundedString(
         candidate.description,
         CARD_LIMITS.maxDescriptionChars,
@@ -201,7 +306,7 @@ function parseV1(parsed: Record<string, unknown>): DecisionCard | null {
     return null;
   }
   const body = lenientBody(parsed.body, CARD_LIMITS.maxBodyChars);
-  const options = parseOptions(parsed.options);
+  const options = parseOptions(parsed.options, false);
   if (!options) {
     return null;
   }
@@ -242,7 +347,7 @@ function parseV2(parsed: Record<string, unknown>): DecisionCard | null {
     if (!text) {
       return null;
     }
-    const options = parseOptions(candidate.options);
+    const options = parseOptions(candidate.options, true);
     if (!options) {
       return null;
     }
@@ -309,7 +414,13 @@ function parseV2(parsed: Record<string, unknown>): DecisionCard | null {
  * over-long body degrades to no body for the same reason.
  */
 export function parseCardTags(tags: string[][]): DecisionCard | null {
-  const raw = tags.find((tag) => tag[0] === "card" && tag.length >= 2);
+  // `tag?.[0]` rather than `tag[0]`: the doc comment above promises nothing
+  // throws, and a tags array carrying a null element (a hand-built event, a
+  // decoder that admits one) would otherwise throw here rather than return
+  // null. Nothing on the card path can reach it today — messageBuffer.ts
+  // throws on the same input first — but the promise is this module's, so
+  // the guard is this module's too.
+  const raw = tags.find((tag) => tag?.[0] === "card" && tag.length >= 2);
   if (!raw) {
     return null;
   }
@@ -330,8 +441,17 @@ export function parseCardTags(tags: string[][]): DecisionCard | null {
   if (!isPlainObject(parsed)) {
     return null;
   }
+  // Not valid UTF-8 and unreadable by the Rust side, so it is not a card
+  // here either — the builder refuses the same payload, which keeps
+  // serialize → parse honest rather than adding a fourth asymmetry.
+  if (containsUnpairedSurrogate(parsed)) {
+    return null;
+  }
   // Strict equality on a number: `v: "2"`, `v: 3` and a missing `v` are all
-  // unknown versions and all degrade to the fallback text.
+  // unknown versions and all degrade to the fallback text. JSON has ONE
+  // number type, so this also accepts `1.0` and `1e0` — nothing here can
+  // tell them apart from `1`, and the Rust builder matches that by value
+  // rather than by serde's storage type.
   if (parsed.v === 1) {
     return parseV1(parsed);
   }
@@ -440,7 +560,7 @@ function strictBody(
   if (typeof value !== "string") {
     reject(message);
   }
-  const trimmed = value.trim();
+  const trimmed = cardTrim(value);
   if (trimmed.length === 0) {
     return undefined;
   }
@@ -450,7 +570,18 @@ function strictBody(
   return trimmed;
 }
 
-function buildOptions(raw: unknown, prefix: string): Record<string, unknown>[] {
+/**
+ * `allowDescription` mirrors the parse: v1 has no per-option `description`,
+ * so the builder DROPS the key from canonical v1 output instead of refusing
+ * the send. Refusing would make the builder stricter than the v1 format it
+ * is emitting; dropping keeps the canonical payload a valid v1 card and
+ * keeps the fallback text identical to what v1 has shipped since 9/16.
+ */
+function buildOptions(
+  raw: unknown,
+  prefix: string,
+  allowDescription: boolean,
+): Record<string, unknown>[] {
   if (!Array.isArray(raw)) {
     reject(`${prefix}options must be an array`);
   }
@@ -479,7 +610,7 @@ function buildOptions(raw: unknown, prefix: string): Record<string, unknown>[] {
       if (typeof candidate.id !== "string") {
         reject(`${prefix}option ${index + 1} id must be a string`);
       }
-      const id = candidate.id.trim();
+      const id = cardTrim(candidate.id);
       if (id.length > CARD_LIMITS.maxIdChars) {
         reject(
           `${prefix}option ${index + 1} id must be at most ${CARD_LIMITS.maxIdChars} characters`,
@@ -490,7 +621,7 @@ function buildOptions(raw: unknown, prefix: string): Record<string, unknown>[] {
       }
     }
     entry.label = label;
-    if (candidate.description !== undefined) {
+    if (allowDescription && candidate.description !== undefined) {
       entry.description = requireBounded(
         candidate.description,
         CARD_LIMITS.maxDescriptionChars,
@@ -530,6 +661,14 @@ export function buildCardTag(input: unknown): {
 } {
   if (!isPlainObject(input)) {
     reject("payload must be a JSON object");
+  }
+  // Before any field validation: `JSON.stringify` will happily escape a lone
+  // surrogate into the tag, and `serde_json` cannot decode the result at all
+  // — the CLI could not read back a card this builder emitted. The Rust
+  // mirror reaches the same refusal inside its JSON decode and normalizes to
+  // this same message, which is the reason the corpus pins for both.
+  if (containsUnpairedSurrogate(input)) {
+    reject("payload must not contain unpaired surrogates");
   }
   const version = resolveAuthoredVersion(input);
   const payload = version === 1 ? buildV1Payload(input) : buildV2Payload(input);
@@ -582,7 +721,7 @@ function buildV1Payload(
     CARD_LIMITS.maxBodyChars,
     `body must be at most ${CARD_LIMITS.maxBodyChars} characters`,
   );
-  const options = buildOptions(input.options, "");
+  const options = buildOptions(input.options, "", false);
   const payload: Record<string, unknown> = { v: 1, title };
   if (body) {
     payload.body = body;
@@ -623,7 +762,7 @@ function buildV2Payload(
       if (typeof candidate.id !== "string") {
         reject(`${prefix}id must be a string`);
       }
-      const id = candidate.id.trim();
+      const id = cardTrim(candidate.id);
       if (id.length > CARD_LIMITS.maxIdChars) {
         reject(
           `${prefix}id must be at most ${CARD_LIMITS.maxIdChars} characters`,
@@ -652,7 +791,7 @@ function buildV2Payload(
     if (candidate.multiSelect === true) {
       entry.multiSelect = true;
     }
-    entry.options = buildOptions(candidate.options, prefix);
+    entry.options = buildOptions(candidate.options, prefix, true);
     questions.push(entry);
   }
   const payload: Record<string, unknown> = { v: 2 };
@@ -692,19 +831,20 @@ function buildV2Payload(
  * here — it has no meaning in a linear text rendering.
  */
 export function cardFallbackText(card: DecisionCard): string {
-  const lines: string[] = [`**${card.title.trim()}**`];
-  const body = card.body?.trim();
+  const lines: string[] = [`**${cardTrim(card.title)}**`];
+  const body = card.body === undefined ? undefined : cardTrim(card.body);
   if (body) {
     lines.push("", body);
   }
   const count = card.questions.length;
   for (let index = 0; index < count; index += 1) {
     const question = card.questions[index];
-    const text = question.question.trim();
-    const questionBody = question.body?.trim();
+    const text = cardTrim(question.question);
+    const questionBody =
+      question.body === undefined ? undefined : cardTrim(question.body);
     const implicit =
       count === 1 &&
-      text === card.title.trim() &&
+      text === cardTrim(card.title) &&
       !questionBody &&
       !question.multiSelect;
     if (!implicit) {
@@ -718,9 +858,12 @@ export function cardFallbackText(card: DecisionCard): string {
     lines.push("");
     for (const option of question.options) {
       const marker = option.recommended === true ? " *(Recommended)*" : "";
-      const description = option.description?.trim();
+      const description =
+        option.description === undefined
+          ? undefined
+          : cardTrim(option.description);
       const detail = description ? ` — ${description}` : "";
-      lines.push(`- ${option.label.trim()}${marker}${detail}`);
+      lines.push(`- ${cardTrim(option.label)}${marker}${detail}`);
     }
   }
   lines.push("", "_Reply with an option or your own answer._");

@@ -39,6 +39,7 @@ it.
 {
   "name": "human-readable case name",
   "payload": { … },        // author input (a non-object payload is legal here)
+  "payloadRaw": "…",       // OR the same input as raw JSON TEXT; wins when present
   "expect": "accept" | "reject",
 
   // accept only:
@@ -49,9 +50,20 @@ it.
   "reason": "…",           // substring BOTH implementations' error messages contain
 
   // optional, TypeScript only (Rust ships no parser):
-  "parseRaw": "accept" | "reject"   // what parseCardTags does with `payload` verbatim
+  "parseRaw": "accept" | "reject"   // what parseCardTags does with the RAW payload
 }
 ```
+
+`payloadRaw` exists because some inputs cannot survive a trip through a JSON
+*value*. A lone surrogate (`"\ud800"`) would make **this file** undecodable by
+`serde_json`, and a numeric spelling (`1e0`) is normalized away by both parsers
+— so the case carries the payload as TEXT, escaped once more, and both drivers
+hand that text to the builder verbatim. Exactly one of `payload` /
+`payloadRaw` is required; the count test asserts it.
+
+Invisible trim characters are written as `﻿` / `\u0085` escapes rather than
+as themselves. A raw U+FEFF in a fixture is unreadable in review and one stray
+editor save from vanishing.
 
 `canonical` is compared **structurally**, not as a string: `serde_json::Map` is
 ordered alphabetically by default while `JSON.stringify` preserves insertion
@@ -68,6 +80,13 @@ renders. The fourth is the other direction: an absent version field, which the
 builder defaults to v1 and always emits, and which the parser refuses outright.
 Cases that exercise those carry an explicit `parseRaw` expectation, so each
 asymmetry is a tested fact rather than a comment.
+
+`parseRaw` does a second job: it pins the places the two must **agree** on an
+input the `canonical` payload cannot exercise, because the canonical is already
+normalized. A title padded with U+FEFF and U+0085 is over its bound until both
+sides trim the same set; a v1 `description` is ignored rather than validated; a
+version written `1.0` is the number 1. Without `parseRaw` those only ever reach
+the builder.
 
 For accept cases the TS driver additionally round-trips: the canonical parses,
 `serializeCardPayload` of the parsed card re-parses to an identical card, and

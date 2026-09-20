@@ -62,12 +62,79 @@ fn utf16_len(value: &str) -> usize {
     value.encode_utf16().count()
 }
 
+/// The ONE trim set for a card string field: Unicode `White_Space` ∪ U+FEFF.
+///
+/// Neither language's built-in trim is that set, and the two disagree in BOTH
+/// directions: `str::trim` (Unicode `White_Space`) strips U+0085 and leaves
+/// U+FEFF, while JavaScript's `String.prototype.trim` strips U+FEFF and
+/// leaves U+0085. Every card field is trimmed on both sides, so calling
+/// either built-in makes the two validators disagree about what the field
+/// even IS — this builder accepted `{"label":"\u{FEFF}"}`, emitted the tag,
+/// and the web parser returned null for it: a published card that renders as
+/// plain text.
+///
+/// The mirror is `CARD_TRIM_CHARS` in
+/// `web/src/features/channels/lib/decisionCard.ts` — the same code points in
+/// the same order. Do not call `.trim()` on a card field; use [`card_trim`].
+const CARD_TRIM_CHARS: &[char] = &[
+    // Unicode White_Space …
+    '\u{0009}', '\u{000A}', '\u{000B}', '\u{000C}', '\u{000D}', '\u{0020}', '\u{0085}', '\u{00A0}',
+    '\u{1680}', '\u{2000}', '\u{2001}', '\u{2002}', '\u{2003}', '\u{2004}', '\u{2005}', '\u{2006}',
+    '\u{2007}', '\u{2008}', '\u{2009}', '\u{200A}', '\u{2028}', '\u{2029}', '\u{202F}', '\u{205F}',
+    '\u{3000}',
+    // … ∪ U+FEFF (ZERO WIDTH NO-BREAK SPACE / BOM), which is NOT White_Space.
+    '\u{FEFF}',
+];
+
+/// `str::trim` over [`CARD_TRIM_CHARS`] instead of Unicode `White_Space`.
+fn card_trim(value: &str) -> &str {
+    value.trim_matches(CARD_TRIM_CHARS)
+}
+
 fn usage(message: String) -> CliError {
     CliError::Usage(format!("--card: {message}"))
 }
 
+/// The two `serde_json` decode failures that mean "unpaired surrogate".
+///
+/// Both are raised ONLY by `parse_unicode_escape` (serde_json `src/read.rs`)
+/// and only on the surrogate path: a trailing surrogate with no lead, or a
+/// lead whose partner is missing or is another lead. A merely truncated
+/// escape (`"\u12"`) is an *invalid escape*, a different code — so matching
+/// these two texts does not over-claim. `serde_json::Error` does not expose
+/// its `ErrorCode`, so the message is the only handle;
+/// `card_normalizes_the_serde_surrogate_refusal` pins all three spellings, and
+/// a serde upgrade that reworded them fails that test rather than silently
+/// falling through to "invalid JSON".
+const SERDE_UNPAIRED_SURROGATE: [&str; 2] = [
+    "lone leading surrogate in hex escape",
+    "unexpected end of hex escape",
+];
+
+/// A lone half of a surrogate pair is not valid UTF-8, so `serde_json`
+/// refuses the payload while DECODING it — one layer earlier than the web
+/// builder's explicit check, and with a message about hex escapes rather
+/// than about the card. Normalized here to the web side's refusal, which is
+/// the reason string the shared corpus pins for both implementations.
+///
+/// Rust cannot hold an unpaired surrogate in a `String` at all, so this
+/// decode IS the enforcement point: there is no later field check to add.
+fn json_error(error: &serde_json::Error) -> CliError {
+    let detail = error.to_string();
+    if SERDE_UNPAIRED_SURROGATE
+        .iter()
+        .any(|marker| detail.contains(marker))
+    {
+        usage(format!(
+            "payload must not contain unpaired surrogates ({detail})"
+        ))
+    } else {
+        usage(format!("invalid JSON: {detail}"))
+    }
+}
+
 fn bounded_utf16(value: &str, max_chars: usize) -> Option<String> {
-    let trimmed = value.trim();
+    let trimmed = card_trim(value);
     if trimmed.is_empty() || utf16_len(trimmed) > max_chars {
         None
     } else {
@@ -96,10 +163,7 @@ fn strict_body(
     match value {
         None | Some(Value::Null) => Ok(None),
         Some(raw) => {
-            let text = raw
-                .as_str()
-                .ok_or_else(|| usage(message.to_string()))?
-                .trim();
+            let text = card_trim(raw.as_str().ok_or_else(|| usage(message.to_string()))?);
             if text.is_empty() {
                 Ok(None)
             } else if utf16_len(text) > max_chars {
@@ -155,9 +219,17 @@ struct QuestionView {
     options: Vec<OptionView>,
 }
 
+/// `allow_description` mirrors the web parser: v1 has no per-option
+/// `description`, so a v1 payload carrying that key has it DROPPED from the
+/// canonical output rather than refused. Refusing would make this builder
+/// stricter than the v1 format it is emitting, and the web parser ignores the
+/// key on a v1 card for the same reason — v1 shipped without it, so an
+/// unknown key there can never be a reason to reject the card. v2 validates
+/// the same field strictly, because there it is part of the format.
 fn build_options(
     raw: Option<&Value>,
     prefix: &str,
+    allow_description: bool,
 ) -> Result<(Vec<Value>, Vec<OptionView>), CliError> {
     let raw_options = raw
         .and_then(Value::as_array)
@@ -188,10 +260,9 @@ fn build_options(
         // positional ids — ids are render keys, not identity promises).
         let mut entry = Map::new();
         if let Some(id_value) = option.get("id") {
-            let id = id_value
-                .as_str()
-                .ok_or_else(|| usage(format!("{prefix}option {} id must be a string", index + 1)))?
-                .trim();
+            let id = card_trim(id_value.as_str().ok_or_else(|| {
+                usage(format!("{prefix}option {} id must be a string", index + 1))
+            })?);
             if utf16_len(id) > CARD_MAX_ID_CHARS {
                 return Err(usage(format!(
                     "{prefix}option {} id must be at most {CARD_MAX_ID_CHARS} characters",
@@ -204,7 +275,7 @@ fn build_options(
         }
         entry.insert("label".to_string(), Value::String(label.clone()));
         let mut description = None;
-        if option.get("description").is_some() {
+        if allow_description && option.get("description").is_some() {
             let text = require_bounded(
                 option.get("description"),
                 CARD_MAX_DESCRIPTION_CHARS,
@@ -238,10 +309,16 @@ fn build_options(
 
 /// Which version is the author writing? An explicit `v` wins; with none, a
 /// `questions` key means v2 and anything else means v1.
+///
+/// The version is matched by VALUE, not by serde's storage type. JSON has one
+/// number type, so `1`, `1.0` and `1e0` are the same value and the web
+/// parser (`parsed.v === 1`) cannot tell them apart even in principle —
+/// matching on `as_u64` alone made this builder refuse `{"v":1.0,…}` payloads
+/// the web client renders happily.
 fn resolve_version(obj: &Map<String, Value>) -> Result<u8, CliError> {
     match obj.get("v") {
         None => Ok(if obj.contains_key("questions") { 2 } else { 1 }),
-        Some(value) => match value.as_u64() {
+        Some(value) => match integral_number(value) {
             Some(1) => Ok(1),
             Some(2) => Ok(2),
             _ => Err(usage(format!(
@@ -249,6 +326,26 @@ fn resolve_version(obj: &Map<String, Value>) -> Result<u8, CliError> {
             ))),
         },
     }
+}
+
+/// A JSON number whose value is a small non-negative integer, however it was
+/// written. Non-numbers, fractions and out-of-range values are `None` — the
+/// caller reports them all as an unsupported version.
+fn integral_number(value: &Value) -> Option<u8> {
+    let number = value.as_f64()?;
+    if !number.is_finite() || number < 0.0 || number > f64::from(u8::MAX) {
+        return None;
+    }
+    let truncated = number.trunc();
+    // An exact float comparison on purpose: `1`, `1.0` and `1e0` all decode to
+    // the bit pattern of 1.0 and are equal to their own truncation, while
+    // `1.5` is not. Nothing here is arithmetic, so there is no rounding error
+    // to tolerate.
+    #[allow(clippy::float_cmp)]
+    if truncated != number {
+        return None;
+    }
+    Some(truncated as u8)
 }
 
 fn build_v1(obj: &Map<String, Value>) -> Result<BuiltCard, CliError> {
@@ -262,7 +359,7 @@ fn build_v1(obj: &Map<String, Value>) -> Result<BuiltCard, CliError> {
         CARD_MAX_BODY_CHARS,
         &format!("body must be at most {CARD_MAX_BODY_CHARS} characters"),
     )?;
-    let (options_wire, options_view) = build_options(obj.get("options"), "")?;
+    let (options_wire, options_view) = build_options(obj.get("options"), "", false)?;
 
     let mut payload = Map::new();
     payload.insert("v".to_string(), Value::Number(1.into()));
@@ -314,10 +411,11 @@ fn build_v2(obj: &Map<String, Value>) -> Result<BuiltCard, CliError> {
         )?;
         let mut entry = Map::new();
         if let Some(id_value) = question.get("id") {
-            let id = id_value
-                .as_str()
-                .ok_or_else(|| usage(format!("{prefix}id must be a string")))?
-                .trim();
+            let id = card_trim(
+                id_value
+                    .as_str()
+                    .ok_or_else(|| usage(format!("{prefix}id must be a string")))?,
+            );
             if utf16_len(id) > CARD_MAX_ID_CHARS {
                 return Err(usage(format!(
                     "{prefix}id must be at most {CARD_MAX_ID_CHARS} characters"
@@ -348,7 +446,7 @@ fn build_v2(obj: &Map<String, Value>) -> Result<BuiltCard, CliError> {
         if multi_select {
             entry.insert("multiSelect".to_string(), Value::Bool(true));
         }
-        let (options_wire, options_view) = build_options(question.get("options"), &prefix)?;
+        let (options_wire, options_view) = build_options(question.get("options"), &prefix, true)?;
         entry.insert("options".to_string(), Value::Array(options_wire));
         questions_wire.push(Value::Object(entry));
         questions_view.push(QuestionView {
@@ -455,8 +553,7 @@ fn fallback_text(title: &str, body: Option<&str>, questions: &[QuestionView]) ->
 /// the `["card", …]` tag the web client renders as a tappable question, and
 /// the human-readable fallback content every plain client shows on its own.
 pub(crate) fn build_card_tag(raw: &str) -> Result<(Vec<String>, String), CliError> {
-    let parsed: Value = serde_json::from_str(raw)
-        .map_err(|e| CliError::Usage(format!("--card: invalid JSON: {e}")))?;
+    let parsed: Value = serde_json::from_str(raw).map_err(|e| json_error(&e))?;
     let obj = parsed
         .as_object()
         .ok_or_else(|| usage("payload must be a JSON object".to_string()))?;
@@ -543,7 +640,16 @@ mod tests {
         let mut rejected = 0usize;
         for case in &cases {
             let name = case["name"].as_str().expect("case has a name");
-            let payload = serde_json::to_string(&case["payload"]).expect("payload re-serializes");
+            // `payloadRaw` is the author payload as raw JSON TEXT and wins
+            // when present: some inputs cannot survive a trip through a JSON
+            // VALUE. A lone surrogate would make THIS FILE undecodable by
+            // serde_json, and a numeric spelling (`1e0`) is normalized away by
+            // both parsers. The web driver reads the same field, so neither
+            // side gets an easier input than the other.
+            let payload = match case.get("payloadRaw").and_then(Value::as_str) {
+                Some(raw) => raw.to_string(),
+                None => serde_json::to_string(&case["payload"]).expect("payload re-serializes"),
+            };
             match case["expect"].as_str() {
                 Some("accept") => {
                     let (tag, fallback) = build_card_tag(&payload)
@@ -573,8 +679,8 @@ mod tests {
                 other => panic!("{name}: unknown expect {other:?}"),
             }
         }
-        assert_eq!(accepted, 10, "accept-case count moved");
-        assert_eq!(rejected, 18, "reject-case count moved");
+        assert_eq!(accepted, 16, "accept-case count moved");
+        assert_eq!(rejected, 22, "reject-case count moved");
     }
 
     // ---- Asks inbox authoring guardrail (D-035 follow-on) ----
@@ -781,5 +887,124 @@ mod tests {
         );
         let err = build_card_tag(&fat).unwrap_err();
         assert!(err.to_string().contains("exceeds 16384"));
+    }
+
+    // ---- TS/Rust contract divergences found by QA on 2026-09-20 ----
+
+    #[test]
+    fn card_trims_the_shared_set_not_rust_whitespace() {
+        // U+FEFF is NOT Unicode White_Space, so `str::trim` left it in place
+        // and this builder happily emitted `{"label":"\u{FEFF}"}` — a card
+        // whose label the web parser trims to empty, i.e. a published card
+        // that degrades to plain text. U+0085 is the mirror case: Rust
+        // trimmed it, JavaScript did not.
+        let feff = build_card_tag(
+            "{\"title\":\"Q\",\"options\":[{\"label\":\"\u{FEFF}\"},{\"label\":\"B\"}]}",
+        )
+        .unwrap_err();
+        assert!(feff.to_string().contains("option 1 label must be 1-200"));
+        let nel = build_card_tag(
+            "{\"title\":\"Q\",\"options\":[{\"label\":\"\u{0085}\"},{\"label\":\"B\"}]}",
+        )
+        .unwrap_err();
+        assert!(nel.to_string().contains("option 1 label must be 1-200"));
+
+        // At the bound: 120 x's padded with one of each is 122 UTF-16 units
+        // on the wire and exactly 120 after the shared trim.
+        let padded = format!(
+            "{{\"title\":\"\u{FEFF}{}\u{0085}\",\"options\":[{{\"label\":\"A\"}},{{\"label\":\"B\"}}]}}",
+            "x".repeat(120)
+        );
+        let (tag, _) = build_card_tag(&padded).expect("a padded title trims to the bound");
+        let payload: Value = serde_json::from_str(&tag[1]).unwrap();
+        assert_eq!(payload["title"], "x".repeat(120));
+    }
+
+    #[test]
+    fn card_accepts_any_numeric_spelling_of_the_version() {
+        // JSON has one number type: `1`, `1.0` and `1e0` are the same value,
+        // and the web parser (`parsed.v === 1`) cannot tell them apart. This
+        // side used to match on serde's STORAGE type (`as_u64`) and refused
+        // payloads the web client renders.
+        for raw in [
+            r#"{"v":1.0,"title":"Q","options":[{"label":"A"},{"label":"B"}]}"#,
+            r#"{"v":1e0,"title":"Q","options":[{"label":"A"},{"label":"B"}]}"#,
+        ] {
+            let (tag, _) = build_card_tag(raw).unwrap_or_else(|e| panic!("{raw}: {e}"));
+            let payload: Value = serde_json::from_str(&tag[1]).unwrap();
+            assert_eq!(payload["v"], 1, "{raw}: canonical version");
+        }
+        let (tag, _) = build_card_tag(
+            r#"{"v":2.0,"questions":[{"question":"Q","options":[{"label":"A"},{"label":"B"}]}]}"#,
+        )
+        .expect("2.0 is version 2");
+        let payload: Value = serde_json::from_str(&tag[1]).unwrap();
+        assert_eq!(payload["v"], 2);
+        // A non-integral number is still not a version — this is by VALUE,
+        // not a blanket "any number will do".
+        let fractional =
+            build_card_tag(r#"{"v":1.5,"title":"Q","options":[{"label":"A"},{"label":"B"}]}"#)
+                .unwrap_err();
+        assert!(fractional.to_string().contains("unsupported version 1.5"));
+    }
+
+    #[test]
+    fn card_drops_a_v1_option_description_and_keeps_a_v2_one() {
+        // v1 has no per-option description. Refusing the key would make this
+        // builder stricter than the format it emits, and the web parser
+        // ignores it on a v1 card for the same reason — a v1 card carrying
+        // the key rendered before v2 existed and must keep rendering.
+        let (tag, fallback) = build_card_tag(
+            r#"{"v":1,"title":"Q","options":[{"label":"A","description":"ignored"},{"label":"B"}]}"#,
+        )
+        .expect("a v1 description is dropped, not refused");
+        let payload: Value = serde_json::from_str(&tag[1]).unwrap();
+        assert!(payload["options"][0].get("description").is_none());
+        assert_eq!(
+            fallback,
+            "**Q**\n\n- A\n- B\n\n_Reply with an option or your own answer._"
+        );
+        // Junk in the same field is equally ignored, not a refusal.
+        assert!(build_card_tag(
+            r#"{"v":1,"title":"Q","options":[{"label":"A","description":123},{"label":"B"}]}"#
+        )
+        .is_ok());
+        // v2 still validates it strictly.
+        let over = "d".repeat(201);
+        let err = build_card_tag(&format!(
+            r#"{{"v":2,"questions":[{{"question":"Q","options":[{{"label":"A","description":"{over}"}},{{"label":"B"}}]}}]}}"#
+        ))
+        .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("option 1 description must be 1-200"));
+    }
+
+    #[test]
+    fn card_normalizes_the_serde_surrogate_refusal() {
+        // Rust cannot hold an unpaired surrogate in a String, so serde_json
+        // refuses these while DECODING — one layer earlier than the web
+        // builder's explicit check. All three spellings must reach the same
+        // message, which is the reason the shared corpus pins for both sides.
+        for raw in [
+            r#"{"v":1,"title":"Q","options":[{"label":"\ud800"},{"label":"B"}]}"#,
+            r#"{"v":1,"title":"Q","options":[{"label":"\udc00"},{"label":"B"}]}"#,
+            r#"{"v":1,"title":"Q","options":[{"label":"\ud800\ud800"},{"label":"B"}]}"#,
+        ] {
+            let err = build_card_tag(raw).unwrap_err().to_string();
+            assert!(
+                err.contains("payload must not contain unpaired surrogates"),
+                "{raw}: {err}"
+            );
+        }
+        // An ordinary syntax error still reads as one.
+        let plain = build_card_tag("{\"v\":1,").unwrap_err().to_string();
+        assert!(plain.contains("invalid JSON"), "{plain}");
+        // A PAIRED surrogate is an astral character and rides through.
+        let (tag, _) =
+            build_card_tag(r#"{"v":1,"title":"Q","options":[{"label":"🚀"},{"label":"B"}]}"#)
+                .expect("a paired surrogate is just an emoji");
+        let payload: Value = serde_json::from_str(&tag[1]).unwrap();
+        assert_eq!(payload["options"][0]["label"], "\u{1F680}");
     }
 }
