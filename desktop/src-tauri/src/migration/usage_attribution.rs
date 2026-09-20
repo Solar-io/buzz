@@ -15,37 +15,76 @@
 //! land in the same account by construction rather than by a second rule.
 
 use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use tauri::Manager as _;
 
 use crate::managed_agents::usage_attribution::{
-    gateway_base_url_from_env, seed_absent_attribution, ObservedAgentConfig,
-    UsageAttributionConfig,
+    gateway_base_url_from_env, seed_absent_attribution, ObservedAgentConfig, UsageAttributionConfig,
 };
+
+/// Relative location of the agent store inside a data directory.
+const AGENT_STORE: &str = "agents/managed-agents.json";
 
 /// Seed every unattributed agent record in the current (and, on dev builds, the
 /// canonical) app-data store.
 pub fn seed_usage_attribution_records(app: &tauri::AppHandle) {
     let Ok(current_dir) = app.path().app_data_dir() else {
+        eprintln!(
+            "buzz-desktop: seed-usage-attribution: no app data dir resolved; nothing was seeded"
+        );
         return;
     };
-    let mut dirs = vec![current_dir.clone()];
-    if let Some(canonical) = super::canonical_dev_data_dir(&current_dir) {
+    seed_usage_attribution_in_dirs(&seed_target_dirs(&current_dir));
+}
+
+/// The data directories one seeding pass covers: this instance's own, plus the
+/// canonical dev directory when it exists and is a different directory.
+///
+/// Dev worktree instances symlink their agent store into the canonical dev
+/// directory (`sync_shared_agent_data`), so both entries can name the same
+/// physical file; the second pass then finds every row already decided and
+/// writes nothing. Same list as the sibling reconcilers in [`super`].
+///
+/// Split out from [`seed_usage_attribution_records`] because this is the layer
+/// the boot behaviour actually lives in: a wrong directory list seeds a store
+/// nothing reads, and no test of the per-record decision can see that.
+fn seed_target_dirs(current_dir: &Path) -> Vec<PathBuf> {
+    let mut dirs = vec![current_dir.to_path_buf()];
+    if let Some(canonical) = super::canonical_dev_data_dir(current_dir) {
         if canonical.exists() && canonical != current_dir {
             dirs.push(canonical);
         }
     }
+    dirs
+}
+
+/// Seed the agent store in each of `dirs`, reporting the outcome for every one.
+///
+/// Every branch logs, including the branches that do nothing. A silent no-op is
+/// indistinguishable from never having run at all, and that ambiguity is what
+/// makes a boot-time migration impossible to diagnose from a log.
+fn seed_usage_attribution_in_dirs(dirs: &[PathBuf]) {
     for dir in dirs {
-        let path = dir.join("agents/managed-agents.json");
+        let path = dir.join(AGENT_STORE);
         if path.exists() {
             seed_usage_attribution_in_file(&path);
+        } else {
+            eprintln!(
+                "buzz-desktop: seed-usage-attribution: no agent store at {}",
+                path.display()
+            );
         }
     }
 }
 
-fn seed_usage_attribution_in_file(path: &std::path::Path) {
+fn seed_usage_attribution_in_file(path: &Path) {
     let Ok(content) = std::fs::read_to_string(path) else {
+        eprintln!(
+            "buzz-desktop: seed-usage-attribution: failed to read {}",
+            path.display()
+        );
         return;
     };
     let Ok(mut records) = serde_json::from_str::<Vec<Value>>(&content) else {
@@ -55,8 +94,13 @@ fn seed_usage_attribution_in_file(path: &std::path::Path) {
         );
         return;
     };
+    let total = records.len();
     let seeded = seed_records(&mut records);
     if seeded == 0 {
+        eprintln!(
+            "buzz-desktop: seed-usage-attribution: seeded 0 of {total} records in {}; every record was already decided or had nothing observed",
+            path.display()
+        );
         return;
     }
     match serde_json::to_vec_pretty(&records) {
@@ -65,7 +109,7 @@ fn seed_usage_attribution_in_file(path: &std::path::Path) {
                 eprintln!("buzz-desktop: seed-usage-attribution: {e}");
             } else {
                 eprintln!(
-                    "buzz-desktop: seed-usage-attribution: seeded {seeded} unconfirmed account rows in {}",
+                    "buzz-desktop: seed-usage-attribution: seeded {seeded} of {total} unconfirmed account rows in {}",
                     path.display()
                 );
             }
@@ -157,9 +201,7 @@ fn env_vars(value: Option<&Value>) -> BTreeMap<String, String> {
         .and_then(Value::as_object)
         .map(|map| {
             map.iter()
-                .filter_map(|(key, value)| {
-                    Some((key.clone(), value.as_str().map(str::to_owned)?))
-                })
+                .filter_map(|(key, value)| Some((key.clone(), value.as_str().map(str::to_owned)?)))
                 .collect()
         })
         .unwrap_or_default()
