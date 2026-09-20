@@ -40,6 +40,16 @@ export async function publishAs(
   relayUrl: string,
   secretKey: Uint8Array,
   templates: UnsignedTemplate[],
+  /**
+   * NIP-OA attestation tag (`BUZZ_AUTH_TAG`), appended to the AUTH event.
+   *
+   * Without it an unenrolled key is refused at AUTH with
+   * `restricted: not a relay member`, and every publish that follows comes
+   * back `auth-required: not authenticated` — which reads like a publish
+   * problem and is not. Optional, so the specs that seed with a fresh key
+   * against a membership-free relay are unchanged.
+   */
+  authTag?: string,
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const socket = new WebSocket(relayUrl);
@@ -76,6 +86,13 @@ export async function publishAs(
     socket.onmessage = (message) => {
       const frame = JSON.parse(String(message.data)) as unknown[];
       if (frame[0] === "AUTH" && typeof frame[1] === "string") {
+        const tags: string[][] = [
+          ["relay", relayUrl],
+          ["challenge", frame[1]],
+        ];
+        if (authTag) {
+          tags.push(JSON.parse(authTag) as string[]);
+        }
         socket.send(
           JSON.stringify([
             "AUTH",
@@ -83,10 +100,7 @@ export async function publishAs(
               {
                 kind: 22242,
                 created_at: Math.floor(Date.now() / 1000),
-                tags: [
-                  ["relay", relayUrl],
-                  ["challenge", frame[1]],
-                ],
+                tags,
                 content: "",
               },
               secretKey,

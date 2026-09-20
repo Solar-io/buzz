@@ -20,6 +20,62 @@ globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 globalThis.HTMLElement = dom.window.HTMLElement;
 globalThis.Node = dom.window.Node;
+/**
+ * The portaled sheet is a Radix Dialog, and Radix reaches for browser globals
+ * off `globalThis` rather than off `window` — `getComputedStyle`,
+ * `MutationObserver`, `NodeFilter`, `CustomEvent`. Two distinct gaps:
+ *
+ * - jsdom simply has no `ResizeObserver`, and the dialog's scroll-lock builds
+ *   one unconditionally.
+ * - Node has its OWN `Event`/`CustomEvent`/`EventTarget` classes, and an event
+ *   built from Node's cannot be dispatched on a jsdom node ("parameter 1 is
+ *   not of type 'Event'"). Those must be FORCED to jsdom's, not merely
+ *   defaulted, which is what `FORCE_JSDOM` is for — the same list, and the
+ *   same reason, as `ThreadPanel.test.mjs`.
+ */
+const FORCE_JSDOM = new Set([
+  "CustomEvent",
+  "Event",
+  "EventTarget",
+  "FocusEvent",
+  "KeyboardEvent",
+  "MouseEvent",
+  "MutationObserver",
+  "Node",
+  "NodeFilter",
+  "PointerEvent",
+  "getComputedStyle",
+]);
+for (const key of Object.getOwnPropertyNames(dom.window)) {
+  if (key === "window" || key === "document" || key === "globalThis") {
+    continue;
+  }
+  if (FORCE_JSDOM.has(key) || !(key in globalThis)) {
+    try {
+      Object.defineProperty(globalThis, key, {
+        configurable: true,
+        get: () => dom.window[key],
+      });
+    } catch {
+      // A non-configurable Node global we must not (and need not) shadow.
+    }
+  }
+}
+dom.window.matchMedia ??= () => ({
+  matches: false,
+  addEventListener() {},
+  removeEventListener() {},
+  addListener() {},
+  removeListener() {},
+});
+globalThis.matchMedia = dom.window.matchMedia;
+const SilentResizeObserver = class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
+globalThis.ResizeObserver = SilentResizeObserver;
+dom.window.ResizeObserver = SilentResizeObserver;
 Object.defineProperty(globalThis, "navigator", {
   configurable: true,
   value: dom.window.navigator,
@@ -34,6 +90,13 @@ globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
       return { session: globalThis.__BUZZ_TEST_RELAY_SESSION__ ?? null, status: "open" };
     }
     export function RelaySessionProvider({ children }) { return children ?? null; }
+  `,
+  // The sheet's overlay reads the theme for its scrim opacity, and `useTheme`
+  // THROWS outside its provider. Stubbed rather than wrapped so the component
+  // under test is still mounted bare, exactly as the other cases mount it.
+  "@/shared/theme/ThemeProvider": `
+    export function useTheme() { return { isDark: true }; }
+    export function ThemeProvider({ children }) { return children ?? null; }
   `,
   // An in-memory IndexedDB, so draft persistence is OBSERVABLE here rather
   // than silently swallowed by the real idb-keyval throwing under node.
@@ -90,9 +153,30 @@ async function mount(payload, { id = "card-1", onAnswerInChat, answer } = {}) {
     );
   });
   const find = (testid) => container.querySelector(`[data-testid="${testid}"]`);
+  /**
+   * The phone sheet, which Radix PORTALS to document.body — so it is outside
+   * `container` and its option buttons are unambiguous even though the
+   * (CSS-hidden, jsdom-visible) inline stepper carries the same testids.
+   * Driving the sheet through this root is what stops these cases from
+   * accidentally testing the inline copy instead.
+   */
+  const sheet = () =>
+    dom.window.document.body.querySelector(
+      '[data-testid="card-interview-sheet"]',
+    );
+  const clickIn = async (root, testid) => {
+    assert.ok(root, "the root to click inside must exist");
+    const node = root.querySelector(`[data-testid="${testid}"]`);
+    assert.ok(node, `${testid} must exist inside the given root`);
+    await act(async () => {
+      node.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+  };
   return {
     container,
     find,
+    sheet,
+    clickIn,
     text: () => container.textContent,
     labels: () =>
       Array.from(
@@ -306,6 +390,124 @@ test("answering four questions publishes ONE reply carrying all four", async () 
   );
   // A completed interview deletes its draft: nothing to resume.
   assert.equal(idb.data.has(cardDraftKey("card-1")), false);
+  await mounted.unmount();
+});
+
+test("the phone row is a TILE, and the whole interview runs in the sheet", async () => {
+  // Phase 4's reachability case. Every click here goes through the SHEET's
+  // portaled subtree, not the inline stepper that jsdom also renders (the
+  // `md:` split is CSS, and jsdom has no CSS) — testing the inline copy while
+  // claiming to test the sheet is exactly the replica-under-test failure.
+  idb.data.clear();
+  const calls = installFakeSession();
+  const mounted = await mount(FOUR, { id: "card-phone" });
+
+  const tile = mounted.find("card-summary-tile");
+  assert.ok(tile, "a card row must offer the tile at phone widths");
+  assert.equal(
+    mounted.find("card-summary-answer").textContent,
+    "Answer",
+    "an untouched interview offers Answer, not Resume",
+  );
+  assert.equal(
+    mounted.find("card-summary-progress").textContent,
+    "4 questions · 0 answered",
+  );
+  assert.equal(mounted.sheet(), null, "the sheet is closed until asked for");
+
+  await mounted.click("card-summary-answer");
+  const sheet = mounted.sheet();
+  assert.ok(sheet, "tapping Answer must open the sheet");
+  assert.ok(sheet.textContent.includes("Which surfaces?"), sheet.textContent);
+
+  await mounted.clickIn(sheet, "card-interview-option-web");
+  assert.equal(calls.length, 0, "answering in the sheet publishes nothing");
+  assert.ok(
+    mounted.sheet().textContent.includes("Which extras?"),
+    "the sheet advances in place",
+  );
+  await mounted.clickIn(mounted.sheet(), "card-interview-option-docs");
+  await mounted.clickIn(mounted.sheet(), "card-interview-continue");
+  await mounted.clickIn(mounted.sheet(), "card-interview-option-mon");
+  await mounted.clickIn(mounted.sheet(), "card-interview-option-sam");
+
+  assert.equal(calls.length, 1, "one event for the whole sheet interview");
+  const payload = answerTag(calls[0]);
+  assert.equal(payload.done, true);
+  assert.deepEqual(payload.a, [
+    { q: "scope", o: ["web"] },
+    { q: "extras", o: ["docs"] },
+    { q: "when", o: ["mon"] },
+    { q: "who", o: ["sam"] },
+  ]);
+  // Completing closes the sheet and the row goes terminal — the tile is gone
+  // too, so there is nothing left to tap.
+  assert.equal(mounted.sheet(), null);
+  assert.equal(mounted.find("card-summary-tile"), null);
+  assert.ok(mounted.find("decision-card-sent"), mounted.text());
+  await mounted.unmount();
+});
+
+test("a typed answer can be given entirely inside the sheet", async () => {
+  idb.data.clear();
+  const calls = installFakeSession();
+  const mounted = await mount(FOUR, { id: "card-phone-typed" });
+  await mounted.click("card-summary-answer");
+
+  await mounted.clickIn(mounted.sheet(), "card-interview-something-else");
+  const input = mounted
+    .sheet()
+    .querySelector('[data-testid="card-interview-input"]');
+  assert.ok(input, "the typed-answer box opens inside the sheet");
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(
+      dom.window.HTMLInputElement.prototype,
+      "value",
+    ).set;
+    setter.call(input, "only the iOS shell");
+    input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  });
+  await mounted.clickIn(mounted.sheet(), "card-interview-send-typed");
+
+  await mounted.clickIn(mounted.sheet(), "card-interview-option-tests");
+  await mounted.clickIn(mounted.sheet(), "card-interview-continue");
+  await mounted.clickIn(mounted.sheet(), "card-interview-option-now");
+  await mounted.clickIn(mounted.sheet(), "card-interview-option-nobody");
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(answerTag(calls[0]).a[0], {
+    q: "scope",
+    t: "only the iOS shell",
+  });
+  await mounted.unmount();
+});
+
+test("dismissing the sheet publishes nothing and the tile offers Resume", async () => {
+  // Dismissal is not an answer. The discriminating value is the BUTTON TEXT:
+  // "Resume — 2 of 4" can only come from a draft that survived the close.
+  idb.data.clear();
+  const calls = installFakeSession();
+  const mounted = await mount(FOUR, { id: "card-phone-resume" });
+  await mounted.click("card-summary-answer");
+  await mounted.clickIn(mounted.sheet(), "card-interview-option-both");
+  await mounted.clickIn(mounted.sheet(), "card-interview-option-docs");
+  await mounted.clickIn(mounted.sheet(), "card-interview-continue");
+
+  await mounted.clickIn(mounted.sheet(), "sheet-handle");
+  assert.equal(mounted.sheet(), null, "the handle closes the sheet");
+  assert.equal(calls.length, 0, "closing the sheet publishes NOTHING");
+  assert.equal(
+    mounted.find("card-summary-answer").textContent,
+    "Resume — 2 of 4",
+  );
+  assert.equal(
+    mounted.find("card-summary-progress").textContent,
+    "4 questions · 2 answered",
+  );
+
+  // Reopening resumes at question three, not question one.
+  await mounted.click("card-summary-answer");
+  assert.ok(mounted.sheet().textContent.includes("When?"), "resumed at Q3");
   await mounted.unmount();
 });
 

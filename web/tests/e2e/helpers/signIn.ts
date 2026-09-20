@@ -21,6 +21,16 @@ export async function signIn(
   page: Page,
   path = "/repos",
   secretKey?: Uint8Array,
+  /**
+   * NIP-OA attestation tag, verbatim as `BUZZ_AUTH_TAG` carries it.
+   *
+   * Required against any relay that enforces membership, because channel
+   * membership is not relay membership: a freshly generated key is refused at
+   * the socket with `restricted: not a relay member` before it can publish
+   * anything (measured against the dev relay, 2026-09-20). The form's
+   * "Agent attestation (agents only)" disclosure is the whole enrollment.
+   */
+  authTag?: string,
 ): Promise<void> {
   await page.goto(path);
   await page.getByRole("button", { name: "Enter key manually" }).click();
@@ -30,6 +40,12 @@ export async function signIn(
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByPlaceholder("New passphrase").fill("e2e-passphrase");
   await page.getByPlaceholder("Confirm passphrase").fill("e2e-passphrase");
+  if (authTag) {
+    await page.getByText("Agent attestation (agents only)").click();
+    await page
+      .getByPlaceholder('["auth","…"] — from the agent environment')
+      .fill(authTag);
+  }
   await page.getByRole("button", { name: "Finish" }).click();
   await expect(
     page.getByRole("button", { name: "Enter key manually" }),

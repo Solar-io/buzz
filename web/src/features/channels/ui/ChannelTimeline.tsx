@@ -394,11 +394,9 @@ export function ChannelTimeline({
   const [pinnedDay, setPinnedDay] = useState<string | null>(null);
   const isEmpty = messages.length === 0;
   const pending = pendingIds ?? EMPTY_PENDING;
-  // Decision cards this viewer has already answered, cardId → the answer
-  // event. Computed HERE because this is the component that holds the buffer:
-  // a row sees one message, and the answer is a different event entirely.
-  // Without it an answered card re-arms every time the virtualizer unmounts
-  // and remounts it, which is a scroll away (measured 2026-09-20).
+  // Answered decision cards, cardId → my answer. Computed here because this
+  // is the component holding the buffer; see `lib/cardAnswered.ts` for why a
+  // row cannot derive it. (Kept terse: this file is over the size budget.)
   const cardAnswers = useMemo(
     () => answeredCardReplies(messages, selfPubkey),
     [messages, selfPubkey],

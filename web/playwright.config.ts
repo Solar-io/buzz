@@ -73,6 +73,26 @@ export default defineConfig({
         },
       },
     },
+    /**
+     * Mobile: the decision-card bottom sheet at a phone viewport.
+     *
+     * A project of its own rather than a viewport override on `smoke`,
+     * because the sheet only EXISTS below the `md` breakpoint — running its
+     * spec at Desktop Chrome's 1280 px would find the inline stepper and
+     * assert nothing about the sheet. `devices["iPhone 15"]` also brings the
+     * touch/mobile flags with it, so `dvh` behaves as it does on a phone.
+     *
+     * The spec skips itself when `E2E_RELAY_WS` (and the agent attestation it
+     * needs to reach a membership-enforcing relay) is unset — same contract
+     * as `wake-collapse.spec.ts`.
+     */
+    {
+      name: "mobile",
+      testMatch: ["**/decision-cards-mobile.spec.ts"],
+      use: {
+        ...devices["iPhone 15"],
+      },
+    },
   ],
   webServer: {
     command: `pnpm exec vite preview --port ${PORT} --strictPort --host 127.0.0.1`,
