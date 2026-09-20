@@ -7,6 +7,7 @@
  */
 
 import type { AskItem } from "./askDetection.ts";
+import type { AskInterview } from "./askInterview.ts";
 import type { InboxItem } from "./inboxItem.ts";
 
 export type InboxFilter = "all" | "unread" | "asks" | "mention" | "dm";
@@ -29,14 +30,29 @@ export const INBOX_FILTER_OPTIONS: readonly InboxFilterOption[] = [
  * together ({@link inboxRowSortAt} is the shared sort key). The ask arm
  * carries its display label because the caller has already resolved the
  * channel's display name (DMs are named by participant, not "DM").
+ *
+ * The ask arm is an INTERVIEW, not a card: an agent refines by sending a
+ * second card in the same thread, and those are one thing waiting on the user
+ * (`askInterview.ts`). `row.ask` is the interview's representative — the
+ * newest card still open — so every rule below that reads a card still reads
+ * the right one.
  */
 export type InboxListRow =
   | { kind: "conversation"; item: InboxItem }
-  | { kind: "ask"; ask: AskItem; channelLabel: string };
+  | { kind: "ask"; interview: AskInterview; channelLabel: string };
+
+/** The card an ask row is waiting on. */
+export function askRowCard(
+  row: Extract<InboxListRow, { kind: "ask" }>,
+): AskItem {
+  return row.interview.ask;
+}
 
 /** Newest-activity timestamp for one row — the interleaved sort key. */
 export function inboxRowSortAt(row: InboxListRow): number {
-  return row.kind === "ask" ? row.ask.createdAt : row.item.latestActivityAt;
+  return row.kind === "ask"
+    ? row.interview.ask.createdAt
+    : row.item.latestActivityAt;
 }
 
 export function inboxFilterLabel(filter: InboxFilter): string {
@@ -104,7 +120,7 @@ export function matchesRowFilter(
   filter: InboxFilter,
 ): boolean {
   return row.kind === "ask"
-    ? matchesAskFilter(filter, row.ask.channelType)
+    ? matchesAskFilter(filter, row.interview.ask.channelType)
     : matchesInboxFilter(row.item, filter);
 }
 
@@ -121,7 +137,7 @@ export function matchesRowFilter(
 export function compareInboxRows(a: InboxListRow, b: InboxListRow): number {
   const kindRank = (row: InboxListRow) => (row.kind === "ask" ? 0 : 1);
   const idOf = (row: InboxListRow) =>
-    row.kind === "ask" ? row.ask.id : row.item.conversationId;
+    row.kind === "ask" ? row.interview.id : row.item.conversationId;
   return (
     kindRank(a) - kindRank(b) ||
     inboxRowSortAt(b) - inboxRowSortAt(a) ||

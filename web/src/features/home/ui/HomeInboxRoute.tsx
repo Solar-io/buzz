@@ -50,7 +50,7 @@ export function HomeInboxRoute({
     string | null
   >(null);
 
-  const { feed, loading, asks, probeAsk } = useAsks();
+  const { feed, loading, interviews, probeAsk } = useAsks();
   const { channelRead, inboxRead, markRead, markUnread } = useInboxReadState();
 
   // DM channels are all named "DM" by the relay; the participants are what a
@@ -108,8 +108,10 @@ export function HomeInboxRoute({
   );
 
   // The list interleaves conversations and asks — asks pinned above, newest
-  // activity first (see compareInboxRows for why asks pin). Ask rows carry
-  // their resolved channel label (DMs display by participant).
+  // activity first (see compareInboxRows for why asks pin). One row per
+  // INTERVIEW, not per card: a thread the agent has asked in twice is one
+  // thing waiting on the user (`askInterview.ts`). Ask rows carry their
+  // resolved channel label (DMs display by participant).
   const channelNameById = useMemo(
     () => new Map(inboxChannels.map((channel) => [channel.id, channel])),
     [inboxChannels],
@@ -118,17 +120,17 @@ export function HomeInboxRoute({
     () =>
       [
         ...items.map((item) => ({ kind: "conversation" as const, item })),
-        ...asks.map((ask) => {
-          const channel = channelNameById.get(ask.channelId);
-          const name = channel?.name ?? ask.channelId;
+        ...interviews.map((interview) => {
+          const channel = channelNameById.get(interview.ask.channelId);
+          const name = channel?.name ?? interview.ask.channelId;
           return {
             kind: "ask" as const,
-            ask,
+            interview,
             channelLabel: channel?.type === "dm" ? name : `#${name}`,
           };
         }),
       ].sort(compareInboxRows),
-    [items, asks, channelNameById],
+    [items, interviews, channelNameById],
   );
 
   const counts = useMemo(() => inboxFilterCounts(rows), [rows]);

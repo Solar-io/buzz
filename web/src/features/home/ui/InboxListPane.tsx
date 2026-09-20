@@ -1,6 +1,7 @@
 import type { Profile } from "@/features/channels/hooks";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { cn } from "@/shared/lib/cn";
+import type { AskItem } from "../lib/askDetection.ts";
 import type { InboxFilter, InboxListRow } from "../lib/inboxFilter.ts";
 import { InboxFilterMenu } from "./InboxFilterMenu.tsx";
 import { AskRow } from "./AskRow.tsx";
@@ -52,7 +53,7 @@ export function InboxListPane({
   onSelect: (
     item: Extract<InboxListRow, { kind: "conversation" }>["item"],
   ) => void;
-  onOpenAsk: (ask: Extract<InboxListRow, { kind: "ask" }>["ask"]) => void;
+  onOpenAsk: (ask: AskItem) => void;
   className?: string;
 }) {
   return (
@@ -101,17 +102,17 @@ export function InboxListPane({
               <li
                 key={
                   row.kind === "ask"
-                    ? `ask:${row.ask.id}`
+                    ? `ask:${row.interview.id}`
                     : row.item.conversationId
                 }
               >
                 {row.kind === "ask" ? (
                   <AskRow
-                    ask={row.ask}
+                    interview={row.interview}
                     channelLabel={row.channelLabel}
-                    channelType={row.ask.channelType}
+                    channelType={row.interview.ask.channelType}
                     profiles={profiles}
-                    onOpen={() => onOpenAsk(row.ask)}
+                    onOpen={() => onOpenAsk(row.interview.ask)}
                   />
                 ) : (
                   <InboxRow

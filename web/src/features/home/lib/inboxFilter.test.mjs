@@ -39,22 +39,46 @@ const items = [
   },
 ];
 
-// An ask of the same population: a card waiting on the viewer.
+// An ask of the same population: an interview waiting on the viewer. The row
+// carries the INTERVIEW (one per thread); `interview.ask` is the card it is
+// waiting on.
+function askInterview(ask) {
+  return {
+    id: ask.id,
+    ask,
+    round: 1,
+    rounds: 1,
+    earlier: 0,
+    progress: { answered: 0, total: 1 },
+  };
+}
+const ASK_CARD = {
+  id: "ask-1",
+  channelId: "ch",
+  channelType: "stream",
+  authorPubkey: "aa".repeat(32),
+  createdAt: 250,
+  card: {
+    v: 1,
+    title: "Ship?",
+    questions: [
+      {
+        id: "0",
+        question: "Ship?",
+        multiSelect: false,
+        options: [{ id: "0", label: "Yes" }],
+      },
+    ],
+  },
+};
 const askRow = {
   kind: "ask",
-  ask: {
-    id: "ask-1",
-    channelId: "ch",
-    channelType: "stream",
-    authorPubkey: "aa".repeat(32),
-    createdAt: 250,
-    card: { title: "Ship?", options: [{ id: "0", label: "Yes" }] },
-  },
+  interview: askInterview(ASK_CARD),
   channelLabel: "#ch",
 };
 const askRowLatest = {
   kind: "ask",
-  ask: { ...askRow.ask, id: "ask-2", createdAt: 400 },
+  interview: askInterview({ ...ASK_CARD, id: "ask-2", createdAt: 400 }),
   channelLabel: "#ch",
 };
 
@@ -99,7 +123,11 @@ test("asks show under all/asks/unread, and dm/mention classify by where the ask 
   // A DM ask surfaces under DMs, never Mentions.
   const dmAskRow = {
     kind: "ask",
-    ask: { ...askRow.ask, id: "ask-dm", channelType: "dm" },
+    interview: askInterview({
+      ...ASK_CARD,
+      id: "ask-dm",
+      channelType: "dm",
+    }),
     channelLabel: "someone",
   };
   assert.equal(matchesRowFilter(dmAskRow, "dm"), true);
@@ -123,8 +151,8 @@ test("compareInboxRows pins asks above conversations, newest first within each",
     ["ask", "ask", "conversation", "conversation"],
   );
   // Newest-first within the asks…
-  assert.equal(sorted[0].ask.id, "ask-2");
-  assert.equal(sorted[1].ask.id, "ask-1");
+  assert.equal(sorted[0].interview.ask.id, "ask-2");
+  assert.equal(sorted[1].interview.ask.id, "ask-1");
   // …and within the conversations.
   assert.deepEqual(
     sorted.slice(2).map((row) => row.item.conversationId),
@@ -135,14 +163,9 @@ test("compareInboxRows pins asks above conversations, newest first within each",
   const byRecency = [...mixed].sort(
     (a, b) => inboxRowSortAt(b) - inboxRowSortAt(a),
   );
-  assert.notDeepEqual(
-    sorted.map((row) =>
-      row.kind === "ask" ? row.ask.id : row.item.conversationId,
-    ),
-    byRecency.map((row) =>
-      row.kind === "ask" ? row.ask.id : row.item.conversationId,
-    ),
-  );
+  const idOf = (row) =>
+    row.kind === "ask" ? row.interview.ask.id : row.item.conversationId;
+  assert.notDeepEqual(sorted.map(idOf), byRecency.map(idOf));
 });
 
 test("counts are per filter, not per row", () => {

@@ -20,13 +20,17 @@ import type { Unsubscribe } from "@/shared/api/relay-session";
 import { useInboxMessages } from "./hooks.ts";
 import {
   answeredByMe,
-  asksBadgeCount,
   extractAsks,
   myReplyToCard,
   unansweredAsks,
   type AskChannelInfo,
   type AskItem,
 } from "./lib/askDetection.ts";
+import {
+  askInterviewBadgeCount,
+  groupAskInterviews,
+  type AskInterview,
+} from "./lib/askInterview.ts";
 import { answeredQuestionCount } from "@/features/channels/lib/cardAnswerTag.ts";
 import {
   answerHistoryRequests,
@@ -41,6 +45,7 @@ import {
   nextPersistedEntry,
   recordCachedProgress,
   saveAsksCache,
+  type AskProgress,
   type AsksCacheEntry,
 } from "./lib/askCache.ts";
 
@@ -88,6 +93,8 @@ const ANSWER_HEARTBEAT_MS = 5 * 60 * 1_000;
 const ANSWER_SECOND_SHOT_MS = 10_000;
 /** Burst coalescing: many asks arriving together re-open the REQs once. */
 const TRACKED_SET_DEBOUNCE_MS = 2_000;
+/** Reference-stable empty progress map — a cold cache shares it. */
+const EMPTY_PROGRESS: Readonly<Record<string, AskProgress>> = {};
 
 interface AsksContextValue {
   /** The discovery feed (mentions + DMs) — `HomeInboxRoute` reads this. */
@@ -96,7 +103,19 @@ interface AsksContextValue {
   loading: boolean;
   /** Asks still waiting on the viewer, newest first. */
   asks: AskItem[];
-  /** The sidebar badge: unanswered asks only. */
+  /**
+   * The same asks folded into INTERVIEWS — one entry per thread, showing the
+   * newest card still waiting. This is what the inbox renders and what the
+   * badge counts; `asks` stays the flat set the answer REQs track, because a
+   * still-open earlier round needs watching even though it is not a row.
+   */
+  interviews: AskInterview[];
+  /**
+   * The sidebar badge. Counts INTERVIEWS, not cards, so the number can never
+   * exceed the rows the inbox is able to show — a badge that counts something
+   * a filter (or a fold) hides reads as "one unread item I can't find", which
+   * is the exact complaint `inboxFilter.ts` documents from 2026-09-17.
+   */
   badge: number;
   /**
    * Fire the targeted answer REQ for one card — called when an ask row is
@@ -110,6 +129,7 @@ const AsksContext = createContext<AsksContextValue>({
   feed: [],
   loading: false,
   asks: [],
+  interviews: [],
   badge: 0,
   probeAsk: () => {},
 });
@@ -199,7 +219,16 @@ export function AsksProvider({
     () => unansweredAsks(asks, answered),
     [asks, answered],
   );
-  const badge = asksBadgeCount(asks, answered);
+  // The fold takes EVERY known ask, answered ones included: the `Round N`
+  // chip counts a card's position in its thread, and by the time round 2
+  // arrives round 1 is answered. Feeding it only `unanswered` would make
+  // every follow-up read "Round 1".
+  const progress = cache?.progress ?? EMPTY_PROGRESS;
+  const interviews = useMemo(
+    () => groupAskInterviews(asks, answered, progress),
+    [asks, answered, progress],
+  );
+  const badge = askInterviewBadgeCount(interviews);
 
   // ---- answer-REQ wiring, keyed on the tracked-id SET ----------------------
   const trackedIds = useMemo(
@@ -368,8 +397,8 @@ export function AsksProvider({
   }, [asks, cache]);
 
   const value = useMemo(
-    () => ({ feed, loading, asks: unanswered, badge, probeAsk }),
-    [feed, loading, unanswered, badge, probeAsk],
+    () => ({ feed, loading, asks: unanswered, interviews, badge, probeAsk }),
+    [feed, loading, unanswered, interviews, badge, probeAsk],
   );
 
   return <AsksContext.Provider value={value}>{children}</AsksContext.Provider>;
