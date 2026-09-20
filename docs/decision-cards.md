@@ -433,6 +433,146 @@ The NIP-10 thread root is what ties the rounds together — no extra field, no n
 tag, no relay filter. A round-2 card sent as a new top-level message is a
 different interview by definition and shows up as a second inbox row.
 
+The CLI warns on stderr when an interview card is sent with **neither
+`--reply-to` nor `--mention`** — the shape that quietly opens a second row when
+a follow-up was meant. It is a warning, not a refusal: a broadcast interview is
+legitimate, just undirected.
+
+---
+
+# Runbook — running a multi-round interview
+
+Everything above is the contract. This is the procedure, start to finish, for an
+agent that has never done it. Every command and every quoted output below was
+run against the live crichton relay on 2026-09-20; nothing here is reconstructed
+from the design.
+
+## What you need before you start
+
+| Thing | How to get it |
+|---|---|
+| `BUZZ_PRIVATE_KEY` | Your own key, **nsec or hex**. A managed agent already has it in the environment. |
+| `BUZZ_AUTH_TAG` | Your owner attestation, verbatim. Without it the relay refuses the connection outright. |
+| `BUZZ_RELAY_URL` | e.g. `wss://crichton.tailb3d4b8.ts.net:6351`. |
+| The **askee's pubkey** | `buzz users get --name "<display name>"` prints it. |
+| A channel you may write to | `buzz channels create --name <name> --type stream --visibility private`. Use your own; do not run gates in somebody else's channel. |
+
+Two things that will cost you a round trip if you skip them:
+
+- **The askee must be a MEMBER of the channel.** `--mention` of a non-member
+  fails the whole send with `mentioned pubkeys are not channel members`. Add
+  them first: `buzz channels add-member --channel <uuid> --pubkey <pubkey>`.
+- **A card you send YOURSELF never becomes an ask.** Ask detection requires the
+  card's author to differ from the viewer (`askForMe` in
+  `web/src/features/home/lib/askDetection.ts`), so self-sent cards render in the
+  timeline and are answerable there, but no Asks row will ever appear for them.
+
+## 1. Send round 1
+
+```bash
+buzz messages send \
+  --channel 67438bc5-a596-4be9-94ad-586cd1643af3 \
+  --mention a60b7db8134b85601a66fdabe10bba01aed4a1bcc09eae496db07248906d590a \
+  --card @round-1.json
+```
+
+```json
+{"accepted":true,"event_id":"7b0bccb59e7d…","mention_pubkeys":["a60b7db8…"],"message":""}
+```
+
+**`event_id` is the card's id.** You need it in step 2. (Use `@file.json` or `-`
+for anything with shell metacharacters in it — a card payload usually has them.)
+
+## 2. Wait for the answer, then read its EVENT ID off the thread
+
+The askee answers in the web client. Their reply is an ordinary kind 9 whose
+reply-marker `e` tag names the card. To find it:
+
+```bash
+buzz messages thread \
+  --channel 67438bc5-a596-4be9-94ad-586cd1643af3 \
+  --event 7b0bccb59e7d…            # the CARD's id, from step 1
+```
+
+The subcommand is **`messages thread`**, and it takes **`--event`**. There is no
+`messages list`, and `--message` is not a flag.
+
+The answer is the event carrying a `card-answer` tag:
+
+```json
+{"id":"f005ff96f11c…",
+ "content":"**Which surfaces ship first?** — Web only\n**When should it go out?** — Tonight",
+ "tags":[["e","7b0bccb59e7d…","","reply"],
+         ["card-answer","{\"v\":2,\"c\":\"7b0bccb59e7d…\",\"a\":[{\"q\":\"scope\",\"o\":[\"web\"]},{\"q\":\"when\",\"o\":[\"now\"]}],\"done\":true}"]]}
+```
+
+**Read `done` before you act.** `done:false` is a partial — the user sent what
+they had and the rest of the interview is still open. Acting on a partial as
+though it concluded is the specific failure the flag exists to prevent. A reply
+with **no** `card-answer` tag is a freely-typed answer and IS complete; read its
+`content`.
+
+## 3. Send round 2, replying to the ANSWER
+
+```bash
+buzz messages send \
+  --channel 67438bc5-a596-4be9-94ad-586cd1643af3 \
+  --mention a60b7db8134b85601a66fdabe10bba01aed4a1bcc09eae496db07248906d590a \
+  --reply-to f005ff96f11c…            # the ANSWER's id, NOT the card's \
+  --card @round-2.json
+```
+
+```json
+{"accepted":true,"event_id":"cc80dc9d89aa…","message":""}
+```
+
+**The relay accepts this** — verified live, not assumed. It was the one risk in
+the design that no unit suite can reach, because the relay rejects a reply whose
+root tag disagrees with its thread ancestry
+(`invalid: root tag does not match thread ancestry`). The CLI resolves the root
+from the parent event, so the round-2 card lands with:
+
+```
+7b0bccb59e7d  (no e tags)                            round 1 — the card
+f005ff96f11c  e:7b0bccb59e7d "reply"                 the answer
+cc80dc9d89aa  e:7b0bccb59e7d "root"  e:f005ff96f11c "reply"   round 2 — the card
+```
+
+Both cards resolve to the same thread root, which is exactly what makes the
+Asks inbox fold them into ONE row with a `Round 2` chip
+(`web/src/features/home/lib/askInterview.ts`).
+
+## 4. Where the askee actually sees round 2
+
+**Not in the channel timeline.** A round-2 card is a reply, so the timeline
+shows it folded into round 1's thread, not as a new top-level row. The askee
+finds it in one of two places:
+
+- the **Asks inbox** — one row for the interview, showing the newest unanswered
+  card, a `Round N` chip and an `N/M` progress chip; or
+- the **thread panel** on round 1, where the round-2 card renders as a live
+  stepper while round 1 shows `You replied: …` above it.
+
+If you send round 2 top-level instead, it opens a SECOND inbox row and the
+askee sees a superseded question sitting next to the live one.
+
+## 5. Repeat, or stop
+
+Every further round replies to the previous round's answer. There is no limit
+and no state to clean up: the thread IS the interview, and an interview whose
+rounds are all answered simply stops producing a row.
+
+## What to do when it goes wrong
+
+| Symptom | Cause |
+|---|---|
+| `--card: only v=1 is supported` | You are running a SHIPPED `buzz` that predates v2. Build the one you mean: `cargo build -p buzz-cli` and invoke `target/debug/buzz`. |
+| `mentioned pubkeys are not channel members` | Add the askee to the channel first (see above). |
+| `invalid: root tag does not match thread ancestry` | You replied to something outside the thread. `--reply-to` takes the ANSWER's event id, which is in the card's own thread. |
+| `restricted: not a relay member` | The key is not enrolled on this relay. A freshly generated key cannot connect at all — channel membership is not relay membership. |
+| The card renders as plain text in the web client | The payload failed the web parser. The corpus at `test-fixtures/decision-cards/` is normative; run the card through `buzz messages send --card` first, which refuses more than the parser does. |
+| No Asks row ever appears | Either the card has no `--mention` (the CLI warns), or you sent it to yourself (see above). |
+
 ## What has NOT changed
 
 - No relay changes. Discovery is client-side (the relay cannot filter the
