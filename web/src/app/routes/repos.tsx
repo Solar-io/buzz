@@ -983,6 +983,13 @@ function ChannelBrowser() {
                           }
                         />
                       </div>
+                      {/* No threadRef here — deliberately. With a thread open
+                          in the right pane this composer used to be re-aimed
+                          at it, so typing in the MAIN composer silently filed
+                          the message into the thread. It always posts
+                          top-level now (Sam 2026-09-20); only the thread
+                          pane's own composer targets the thread, and Esc here
+                          is free to do nothing instead of closing it. */}
                       <Composer
                         members={members}
                         onTextChange={messageActions.onComposerText}
@@ -991,15 +998,6 @@ function ChannelBrowser() {
                         editSend={messageActions.editSend}
                         profiles={profiles}
                         strictMentions={strictMentions}
-                        threadRef={
-                          threadRoot
-                            ? {
-                                rootId: threadRoot.id,
-                                replyToId: threadRoot.id,
-                              }
-                            : null
-                        }
-                        onClearThread={() => setThreadRootId(null)}
                         draftKey={current.id}
                         send={send}
                       />

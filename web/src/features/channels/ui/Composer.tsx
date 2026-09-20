@@ -117,7 +117,13 @@ export function Composer({
 }: {
   members: ChannelMember[];
   profiles: Map<string, Profile>;
-  threadRef: ThreadRef | null;
+  /**
+   * When set, every send is threaded under that root (a channel thread pane).
+   * Absent/null — the channel's main composer, which posts top-level even
+   * while a thread is open beside it: only the pane's own composer may target
+   * the thread (Sam 2026-09-20).
+   */
+  threadRef?: ThreadRef | null;
   /**
    * The message the NIP-10 `reply` marker names, when that is a specific
    * message rather than the thread root. The reply target is otherwise
@@ -125,7 +131,12 @@ export function Composer({
    * under. Null means "the thread itself".
    */
   replyTarget?: ComposerReplyTarget | null;
-  onClearThread: () => void;
+  /**
+   * Esc with a thread aimed: the caller drops the mid-thread target, or closes
+   * the pane when the composer already answers the root. Without a threadRef
+   * there is nothing to clear and Esc does nothing.
+   */
+  onClearThread?: () => void;
   onSent?: () => void;
   /** Notified on every text change — the parent broadcasts typing frames. */
   onTextChange?: (text: string) => void;
@@ -657,7 +668,9 @@ export function Composer({
         : await send({
             content: finalContent,
             mentionPubkeys,
-            threadRef,
+            // No prop = top-level post. Null on the wire, not undefined, so
+            // the send path keeps one shape for "not a reply".
+            threadRef: threadRef ?? null,
             // Media tags are derived from final content and appended verbatim
             // by sendChannelMessage, covering imeta and NIP-30 emoji tags.
             mediaTags: [
@@ -774,7 +787,7 @@ export function Composer({
       return;
     }
     if (event.key === "Escape" && threadRef) {
-      onClearThread();
+      onClearThread?.();
       return;
     }
     if (event.key === "Enter" && !event.shiftKey) {
@@ -878,7 +891,7 @@ export function Composer({
         <ComposerReplyBanner
           author={replyTarget.author}
           body={replyTarget.body}
-          onDismiss={onClearThread}
+          onDismiss={() => onClearThread?.()}
         />
       ) : threadRef ? (
         <p className="mb-1 text-xs text-muted-foreground">
