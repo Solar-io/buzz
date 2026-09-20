@@ -192,19 +192,30 @@ them. That is stated rather than presented as coverage.
 
 ### Seeded grouping produced for the 49 records on this machine
 
-| Account id | Agents | Kind |
-|---|---|---|
-| `harness=claude-code-glm` | 33 (17 instances + 16 definitions) | seeded, unconfirmed |
-| `harness=claude;credential=claude-cli-login` | 6 (3 + 3) | seeded, unconfirmed |
-| `harness=claude-code-glm;gateway=token-plan.ap-southeast-1.maas.aliyuncs.com` | 1 definition | seeded, unconfirmed |
-| `harness=buzz-agent;provider=openai-compat;gateway=pilot.tailb3d4b8.ts.net:6250` | 1 definition | seeded, unconfirmed |
-| `harness=buzz-agent;provider=openai-compat` | 1 instance | seeded, unconfirmed |
-| `harness=buzz-agent` | 1 definition | seeded, unconfirmed |
-| *(none)* | 6 — Pollen, Fizz, Honey and their instances | **left unattributed** |
+Measured by running the shipped `seed_records` over a copy of the real
+`managed-agents.json` (49 records): 43 rows seeded, 6 left absent, and a second
+pass wrote 0.
 
-The 21 `opus` and 12 `fable` agents land in one account because the model is
-never a signal. The `runtime=null` builtins are the proof case: they come out of
-seeding with the field **absent**, not with a placeholder.
+| Account id | Agents | Members |
+|---|---|---|
+| `harness=claude-code-glm` | 32 | 16 definitions + their 16 instances (Sheldon Cooper, Bones, Trevor Lefkowitz, Soup Nazi, ESP32, Lord Nikon, Dwight Schrute, Ted Lasso, Gilfoyle, Evie Video Gateway, Rebecca Bloomwood, Cereal Killer, Phantom Phreak, Dinesh, QA Agent, Jared Dunn) |
+| `harness=claude;credential=claude-cli-login` | 6 | Acid Burn, Crash Override, Richard Hendricks — definition + instance each |
+| `harness=claude-code-glm;gateway=token-plan.ap-southeast-1.maas.aliyuncs.com` | 2 | Work KVM definition + instance |
+| `harness=buzz-agent;provider=openai-compat;gateway=pilot.tailb3d4b8.ts.net:6250` | 2 | Evie definition + instance |
+| `harness=buzz-agent` | 1 | Aeryn Local definition |
+| *(absent — no account at all)* | 6 | **Pollen, Fizz, Honey** and their instances |
+
+Every seeded row is `confirmed: false`.
+
+Three things this measurement confirms. The 21 `opus` and 12 `fable`
+`claude-code-glm` agents land in **one** account, because the model is never a
+signal. The Work KVM and Evie *instances* join their definitions' gateway
+accounts even though neither carries `OPENAI_COMPAT_BASE_URL` in its own
+`env_vars` — the definition env layer is resolved exactly as a spawn would
+resolve it, so an instance is never split from the subscription it actually
+uses. And the three `runtime=null` builtins and their instances are the proof
+case: they come out of seeding with the field **absent**, not with a
+placeholder, not in a shared bucket, and not as zero.
 
 Seeding runs last in the boot migration chain (after the steps that materialize
 and reconcile runtime/provider), fills only an *absent* row, and is therefore
