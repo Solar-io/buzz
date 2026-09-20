@@ -1,6 +1,11 @@
 import { del, get, set } from "idb-keyval";
 import type { NostrFilter } from "@/shared/lib/nostr-client";
 import {
+  isPlainObject,
+  parseCardTags,
+  type DecisionCard,
+} from "./decisionCard.ts";
+import {
   DELETE_KIND,
   EDIT_KIND,
   TIMELINE_KINDS,
@@ -71,7 +76,49 @@ export function cacheKey(channelId: string): string {
 }
 
 /**
- * Fill in collection fields a cached message may predate.
+ * Migrate a `card` field cached by a pre-v2-cards build.
+ *
+ * The cache stores the PARSED card, and cards v2 (2026-09-20) changed the
+ * parsed shape: a v1 card used to parse to `{title, body?, options}` and now
+ * parses to `{v, title, questions:[…]}`. Every entry cached before that
+ * deploy carries the OLD shape, and a renderer reading `card.questions.length`
+ * on it blanks the whole app through the error boundary — the same failure
+ * class as the `linkPreviews` incident above, one field later and in the
+ * opposite direction: not a field the renderer requires that the cache never
+ * wrote, but a field whose SHAPE moved under both of them.
+ *
+ * Rather than a second normalization to keep in step with the parser, the
+ * legacy shape is rebuilt into its v1 wire payload and handed to the ONE
+ * parser: the healed card is then exactly what `parseCardTags` produces for
+ * the same event off the relay. A legacy card too broken to survive that
+ * round trip heals to `null`, which renders the message's fallback content —
+ * the same degradation as an unparseable tag, never a crash.
+ */
+function healCachedCard(card: unknown): DecisionCard | null {
+  if (card === null || card === undefined) {
+    return null;
+  }
+  if (isPlainObject(card) && Array.isArray(card.questions)) {
+    // Already the normalized shape. The reference is returned so an intact
+    // entry keeps its identity — see healCachedEntry. The cast goes through
+    // `unknown` because the guard is runtime evidence, not a type proof —
+    // the cache has no schema, so this is exactly as trusted as the read.
+    return card as unknown as DecisionCard;
+  }
+  if (!isPlainObject(card)) {
+    return null;
+  }
+  const payload: Record<string, unknown> = { v: 1, title: card.title };
+  if (card.body !== undefined) {
+    payload.body = card.body;
+  }
+  payload.options = card.options;
+  return parseCardTags([["card", JSON.stringify(payload)]]);
+}
+
+/**
+ * Fill in collection fields a cached message may predate, and migrate a card
+ * cached under a shape the renderer has outgrown.
  *
  * A version bump discards stale entries, but only in the release that
  * remembers to make one — and the failure mode when it is forgotten is not a
@@ -91,7 +138,16 @@ export function healCachedEntry(entry: TimelineCacheEntry): TimelineCacheEntry {
     const needsPreviews = !Array.isArray(message.linkPreviews);
     const needsMentions = !Array.isArray(message.mentionPubkeys);
     const needsImeta = !(message.imetaByUrl instanceof Map);
-    if (!needsPreviews && !needsMentions && !needsImeta) {
+    // `?? null`: an entry cached before the field existed stores `undefined`,
+    // which is null for every purpose here and must NOT count as a repair.
+    const sourceCard = message.card ?? null;
+    const healedCard = healCachedCard(sourceCard);
+    if (
+      !needsPreviews &&
+      !needsMentions &&
+      !needsImeta &&
+      healedCard === sourceCard
+    ) {
       return message;
     }
     repaired = true;
@@ -100,6 +156,7 @@ export function healCachedEntry(entry: TimelineCacheEntry): TimelineCacheEntry {
       linkPreviews: needsPreviews ? [] : message.linkPreviews,
       mentionPubkeys: needsMentions ? [] : message.mentionPubkeys,
       imetaByUrl: needsImeta ? new Map() : message.imetaByUrl,
+      card: healedCard,
     };
   });
   // Identity is preserved when nothing needed repair, so the common path costs

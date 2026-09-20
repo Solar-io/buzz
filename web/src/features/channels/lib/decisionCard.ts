@@ -148,6 +148,19 @@ export function isPlainObject(
 }
 
 /**
+ * May a renderer mount an interview on this card? Everything `parseCardTags`
+ * returns qualifies; this guard exists for cards that did NOT come from the
+ * parser — a timeline-cache entry written before the v2 shape normalized
+ * `questions` (see `healCachedCard` in timelineCache.ts), or any future
+ * drift of the same shape. A card that fails this renders the message's
+ * fallback markdown, which is exactly what a null parse has always meant —
+ * the alternative is `undefined.length` inside a renderer and a blank app.
+ */
+export function isRenderableCard(card: DecisionCard | null): card is DecisionCard {
+  return card !== null && Array.isArray(card.questions);
+}
+
+/**
  * The ONE trim set for a card string field: Unicode `White_Space` ∪ U+FEFF.
  *
  * Neither language's built-in trim is that set, and the two disagree in BOTH

@@ -986,3 +986,42 @@ test("a card with colliding ids is not a card, so the row renders text", async (
   await act(async () => root.unmount());
   container.remove();
 });
+
+test("a pre-v2 cache card shape renders nothing instead of throwing", async () => {
+  // The 2026-09-20 blank-boot crash: a timeline cached before cards v2 holds
+  // the OLD parsed shape — options at the top level, no `questions` — and this
+  // component reads `card.questions.length` unconditionally. The cache now
+  // migrates that shape on load (timelineCache.test.mjs), but the renderer's
+  // guard is what makes the failure a missing card rather than a blank app if
+  // any OTHER path ever hands it an unparse-shaped card.
+  const legacyCard = {
+    title: "Ship the fix tonight?",
+    options: [
+      { id: "0", label: "Yes" },
+      { id: "1", label: "No", recommended: true },
+    ],
+  };
+  const container = dom.window.document.createElement("div");
+  dom.window.document.body.appendChild(container);
+  const root = createRoot(container);
+  await act(async () => {
+    root.render(
+      React.createElement(DecisionCard, {
+        message: {
+          id: "card-legacy",
+          channelId: "ch-1",
+          kind: 9,
+          authorPubkey: "a".repeat(64),
+          createdAt: 1,
+          content: "fallback",
+          card: legacyCard,
+          rootId: null,
+          replyToId: null,
+        },
+      }),
+    );
+  });
+  assert.equal(container.textContent, "");
+  await act(async () => root.unmount());
+  container.remove();
+});

@@ -14,6 +14,7 @@ import type { ReactionGroup } from "../lib/reactions.ts";
 import { UserProfilePopover } from "@/features/profile/ui/UserProfilePopover";
 import { AuthorAvatar } from "./AuthorAvatar.tsx";
 import { DecisionCard } from "./DecisionCard.tsx";
+import { isRenderableCard } from "../lib/decisionCard.ts";
 import { LinkPreviewCards } from "./LinkPreviewCards.tsx";
 import { MarkdownContent } from "./MarkdownContent.tsx";
 import { MessageActionBar } from "./MessageActionBar.tsx";
@@ -248,10 +249,15 @@ export function MessageRow({
                 Sending…
               </span>
             )}
-            {message.card ? (
+            {isRenderableCard(message.card) ? (
               // D-035: a well-formed card tag replaces the fallback markdown —
               // the content field stays the plain-client rendering of the same
               // question, not something the card view should repeat.
+              //
+              // `isRenderableCard` rather than truthiness: a card that did not
+              // come from the parser (a pre-v2 cache shape) must fall through
+              // to the markdown below — the same degradation as a null parse —
+              // instead of reaching a renderer that reads `card.questions`.
               //
               // "Answer in chat instead" is the card's dismiss-and-type escape
               // hatch, and it is the SAME navigation as the row's ↩: open the

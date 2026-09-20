@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { Check, TriangleAlert } from "lucide-react";
-import type { DecisionCard as DecisionCardPayload } from "../lib/decisionCard.ts";
+import {
+  isRenderableCard,
+  type DecisionCard as DecisionCardPayload,
+} from "../lib/decisionCard.ts";
 import type { TimelineMessage } from "../lib/messageBuffer.ts";
 import { useCardAnswerFlow } from "../lib/useCardAnswerFlow.ts";
 import { CardInterview } from "./CardInterview.tsx";
@@ -64,8 +67,15 @@ export function DecisionCard({
 }) {
   // The narrowing guard sits OUTSIDE the stateful body: a card-less message
   // renders nothing, and an early return may not precede hooks.
+  //
+  // `isRenderableCard` rather than truthiness: this component reads
+  // `card.questions` unconditionally, and a card that reached it without
+  // going through the parser (a pre-v2 timeline-cache shape — the 2026-09-20
+  // blank-boot crash) must render nothing rather than take the app down with
+  // it. The timeline row falls back to the markdown content when this
+  // returns null.
   const card = message.card;
-  if (!card) {
+  if (!isRenderableCard(card)) {
     return null;
   }
   return (

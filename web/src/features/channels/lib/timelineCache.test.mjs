@@ -16,6 +16,7 @@ import {
   olderPageFilter,
 } from "./timelineCache.ts";
 import { EDIT_KIND } from "./messageBuffer.ts";
+import { parseCardTags } from "./decisionCard.ts";
 
 function entry(overrides = {}) {
   return {
@@ -288,6 +289,102 @@ test("healCachedEntry does not invent scalar fields", () => {
   // would hide that behind a plausible empty row.
   assert.ok(!Object.hasOwn(healed.messages[0], "someFutureScalar"));
   assert.equal(healed.messages[0].deleted, false);
+});
+
+/**
+ * The 2026-09-20 blank-boot crash, pinned. Cards v2 changed the PARSED card
+ * shape (`{title, body?, options}` → `{v, title, questions:[…]}`) without a
+ * cache bump, so every entry cached by a pre-v2 build reached the renderer
+ * with `questions === undefined` and `card.questions.length` blanked the app
+ * through the error boundary on first paint. The heal rebuilds the legacy
+ * shape through the ONE parser; these tests are the ones that fail by name if
+ * that migration is removed.
+ */
+const LEGACY_V1_CARD = {
+  // Exactly what the 9/16-era parse wrote: no `v`, no `questions`, options at
+  // the top level with ids already filled.
+  title: "Ship the fix tonight?",
+  body: "Root-caused; verification is one reload.",
+  options: [
+    { id: "0", label: "Yes" },
+    { id: "1", label: "No", recommended: true },
+  ],
+};
+
+function cardMessage(id, card) {
+  return { ...msg(id, 20), card, linkPreviews: [], imetaByUrl: new Map() };
+}
+
+test("healCachedEntry migrates a pre-v2 cached card to the normalized shape", () => {
+  const healed = healCachedEntry(
+    entry({ messages: [cardMessage("m-card", LEGACY_V1_CARD)] }),
+  );
+  const card = healed.messages[0].card;
+  // The derivation rules, hardcoded — not recomputed from the heal's output:
+  // one question whose text is the title, ids preserved, recommendation kept.
+  assert.ok(card, "the healed card must exist");
+  assert.equal(card.v, 1);
+  assert.equal(card.questions.length, 1);
+  assert.equal(card.questions[0].question, "Ship the fix tonight?");
+  assert.equal(card.questions[0].id, "0");
+  assert.equal(card.questions[0].multiSelect, false);
+  assert.equal(card.questions[0].options.length, 2);
+  assert.equal(card.questions[0].options[1].label, "No");
+  assert.equal(card.questions[0].options[1].recommended, true);
+  assert.equal(card.body, "Root-caused; verification is one reload.");
+  // And the invariant the migration exists for: the healed card is EXACTLY
+  // what the one parser produces for the same wire payload.
+  const reparsed = parseCardTags([
+    [
+      "card",
+      JSON.stringify({
+        v: 1,
+        title: "Ship the fix tonight?",
+        body: "Root-caused; verification is one reload.",
+        options: [
+          { id: "0", label: "Yes" },
+          { id: "1", label: "No", recommended: true },
+        ],
+      }),
+    ],
+  ]);
+  assert.deepEqual(card, reparsed);
+});
+
+test("healCachedEntry nulls a legacy card too broken to re-parse, keeping the row", () => {
+  const broken = { title: "   ", options: [] };
+  const healed = healCachedEntry(
+    entry({ messages: [cardMessage("m-broken", broken)] }),
+  );
+  const message = healed.messages[0];
+  // Blank title and zero options are not a card; null renders the fallback
+  // markdown — the row itself must survive.
+  assert.equal(message.card, null);
+  assert.equal(message.id, "m-broken");
+  assert.equal(message.content, "m-m-broken");
+});
+
+test("an already-normalized card keeps its identity through the heal", () => {
+  const card = parseCardTags([
+    [
+      "card",
+      JSON.stringify({
+        v: 2,
+        title: "Two questions",
+        questions: [
+          { question: "First?", options: [{ label: "a" }, { label: "b" }] },
+          { question: "Second?", options: [{ label: "c" }, { label: "d" }] },
+        ],
+      }),
+    ],
+  ]);
+  assert.ok(card, "fixture must parse");
+  const message = cardMessage("m-v2", card);
+  const intact = entry({ messages: [message] });
+  const healed = healCachedEntry(intact);
+  // Reference equality: a normalized card must not be cloned on every load.
+  assert.equal(healed, intact);
+  assert.equal(healed.messages[0].card, card);
 });
 
 test("the cache key carries a version, so a shape change can discard old entries", () => {
