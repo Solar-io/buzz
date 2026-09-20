@@ -821,3 +821,30 @@ Two Playwright measurements read as product bugs at 390x844 and are not:
 - **`toBeVisible()` resolves before `slide-in-from-bottom` finishes**, so a
   sheet measured immediately reads ~1561. Wait for the animation to settle
   before asserting geometry.
+
+## Changing a parsed shape that anything CACHES: heal in the same commit, guard totally
+
+Earned on the 2026-09-20 web blank-boot (receipts
+`~/.buzz/WORK_LOGS/CARD_CACHE_HEAL_2026-09-20.md`).
+
+The timeline cache stores whole PARSED messages. Cards v2 changed the parsed
+`DecisionCard` shape without touching the cache, and every entry written by a
+pre-v2 build reached the renderer with `questions === undefined` — blank app,
+error boundary, on first paint, for everyone who had ever opened a channel
+with a card. The 9/04 `linkPreviews` incident was a field the cache never
+wrote; this was a field whose SHAPE moved. Same class. Rule: if a cached
+parsed shape changes, `healCachedEntry` changes in the same commit.
+
+Three sub-traps from the same hour:
+
+- **`!== null` is not a total guard over cached values.** A structured-clone
+  read has no schema; an absent field arrives as `undefined`, outside the
+  declared type. The first hotfix guard threw on exactly the input it existed
+  to stop. Use `!= null` for anything a cache feeds.
+- **`since: cursor` is INCLUSIVE.** The event at the cursor is re-delivered
+  and re-parsed from the wire, so a field planted into the cache on the newest
+  message is legitimately discarded seconds after boot — plant verification
+  fixtures BELOW the cursor, or a working heal reads as a heal-to-null.
+- **`pnpm test` does not typecheck** (`--experimental-strip-types`); the
+  `tsc` in `pnpm build` does. A TS-invalid fix can sit behind a green suite —
+  run the build before you rsync a bundle.
