@@ -36,6 +36,13 @@ COMPOSE_DIR="$BUZZ_CHECKOUT/deploy/compose"
 RELAY_PORT="$(grep -E '^BUZZ_HTTP_PORT=' "$COMPOSE_DIR/.env" | cut -d= -f2-)"
 PAIRING_PORT="$(grep -E '^BUZZ_PAIRING_PORT=' "$COMPOSE_DIR/.env" | cut -d= -f2-)"
 HTTPS_PORT="$(registry_port https 2>/dev/null || echo '')"
+# Same defaults the overlay uses, so the cutover hint below prints a real port
+# whether or not these are pinned in .env.
+# `|| true` is load-bearing under `set -e`: this key is optional, and a grep
+# that matches nothing exits 1 and would kill the script before it printed a
+# single line. (It did, once.)
+GATEWAY_METRICS_PORT="$(grep -E '^BUZZ_PUSH_GATEWAY_METRICS_PORT=' "$COMPOSE_DIR/.env" | cut -d= -f2- || true)"
+GATEWAY_METRICS_PORT="${GATEWAY_METRICS_PORT:-6362}"
 
 # -p is NOT optional. buzz's deploy/compose/compose.yml hardcodes
 # `name: buzz-prod`, so without an explicit project name a DEV stack comes up
@@ -138,9 +145,32 @@ case "$MODE" in
     exit 0 ;;
 esac
 
+# A `buzz-push-gateway` container that predates the compose overlay carries no
+# com.docker.compose.* labels, so compose will not adopt it — it tries to create
+# its own and the daemon refuses the name. Left to itself that surfaces as a
+# bare "Conflict. The container name is already in use", which reads like a bug
+# rather than a one-time migration. Catch it here, before anything starts, and
+# say what to do. Nothing is mutated: this only looks.
+check_gateway_adoption() {
+  local id
+  id="$(docker ps -aq --filter name='^buzz-push-gateway$' 2>/dev/null)" || return 0
+  [ -n "$id" ] || return 0
+  [ -z "$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$id" 2>/dev/null)" ] || return 0
+  die "buzz-push-gateway exists but is not compose-managed; compose will refuse the name.
+  Run the one-time cutover (rename, do not remove — it stays reversible):
+    docker inspect buzz-push-gateway > /tmp/pg-preadopt.json
+    docker rename buzz-push-gateway buzz-push-gateway-preadopt
+    docker stop   buzz-push-gateway-preadopt
+    $0            # re-run this script; compose creates its own
+    curl -fsS --max-time 5 http://127.0.0.1:${GATEWAY_METRICS_PORT}/_readiness
+    docker rm buzz-push-gateway-preadopt     # only after that passes
+  Rollback: docker rm -f buzz-push-gateway; docker rename buzz-push-gateway-preadopt buzz-push-gateway; docker start buzz-push-gateway"
+}
+
 step "[1/4] Compose config validation"
 if [ "$DRY_RUN" = "1" ]; then log "[DRY_RUN] would validate + start"; else
   compose config >/dev/null || die "compose config invalid — fix .env before starting"
+  check_gateway_adoption
   log "config OK"
 fi
 
