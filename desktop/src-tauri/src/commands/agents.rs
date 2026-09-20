@@ -647,7 +647,7 @@ pub async fn create_managed_agent(
             linked_persona.as_ref(),
         )?;
 
-        let record = ManagedAgentRecord {
+        let mut record = ManagedAgentRecord {
             pubkey: pubkey.clone(),
             name: name.clone(),
             persona_id: requested_persona_id.clone(),
@@ -733,10 +733,14 @@ pub async fn create_managed_agent(
                 relay_mesh.clone()
             },
             effort_level: None,
-            // Delete+respawn mints a fresh pubkey; inheriting the definition's
-            // row keeps the owner's confirmed subscription identity alive.
-            usage_attribution: inherited_from_definition(&records, requested_persona_id.as_deref()),
+            usage_attribution: None,
         };
+        // Delete+respawn mints a fresh pubkey; inheriting the definition's row
+        // keeps the owner's confirmed subscription identity alive. Keyed off
+        // the record's OWN persona link rather than a second copy of the
+        // requested id, so there is no parallel expression to fall out of step.
+        record.usage_attribution =
+            inherited_from_definition(&records, record.persona_id.as_deref());
 
         records.push(record);
 
