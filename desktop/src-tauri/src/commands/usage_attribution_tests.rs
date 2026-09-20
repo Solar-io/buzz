@@ -271,3 +271,118 @@ fn overview_serializes_camel_case() {
     assert!(json["unattributed"].is_array());
     assert!(json["declined"].is_array());
 }
+
+
+// ── Confirmation survives restart, edit and respawn ──────────────────────────
+
+/// Delete+respawn re-runs `create_managed_agent` with a fresh pubkey, so the
+/// new record must inherit the definition's row. Without this the owner's
+/// confirmed subscription identity would die with the old pubkey and the agent
+/// would come back looking unattributed.
+#[test]
+fn a_respawned_instance_inherits_its_definitions_confirmed_row() {
+    use crate::managed_agents::usage_attribution::inherited_from_definition;
+
+    let mut definition = record("Acid Burn", "", Some("acid-burn"), Some("claude-code-glm"));
+    definition.usage_attribution = Some(
+        crate::managed_agents::usage_attribution::apply_owner_attribution(
+            Some("zai".into()),
+            Some("zai-coding-plan".into()),
+            Some("Z.ai Coding Plan".into()),
+        )
+        .expect("valid owner edit"),
+    );
+    // A *keyed* record that happens to carry the same slug is an instance, not
+    // a definition, and must never be the source of the inheritance.
+    let mut impostor = record("impostor", "e".repeat(64).as_str(), Some("acid-burn"), None);
+    impostor.usage_attribution = Some(UsageAttributionConfig {
+        account_id: Some("wrong-account".into()),
+        confirmed: true,
+        ..Default::default()
+    });
+    let records = vec![impostor, definition];
+
+    let inherited = inherited_from_definition(&records, Some("acid-burn"))
+        .expect("the definition's row is inherited");
+    assert_eq!(inherited.account_id.as_deref(), Some("zai-coding-plan"));
+    assert_eq!(inherited.account_label.as_deref(), Some("Z.ai Coding Plan"));
+    assert_eq!(inherited.provider.as_deref(), Some("zai"));
+    assert!(
+        inherited.confirmed,
+        "a respawn must not silently downgrade a confirmed identity to seeded"
+    );
+
+    // A definition-less create, and a slug that is not in the store, inherit
+    // nothing — boot-time seeding fills those from observed configuration.
+    assert_eq!(inherited_from_definition(&records, None), None);
+    assert_eq!(inherited_from_definition(&records, Some("nope")), None);
+    // A definition whose owner cleared the row passes the clearing along,
+    // rather than letting the new instance be re-seeded into an account.
+    let mut cleared = record("cleared", "", Some("cleared"), Some("claude"));
+    cleared.usage_attribution =
+        Some(crate::managed_agents::usage_attribution::apply_owner_attribution(None, None, None)
+            .expect("clearing is allowed"));
+    let inherited = inherited_from_definition(&[cleared], Some("cleared"))
+        .expect("an explicit clearing is inherited too");
+    assert!(inherited.is_empty());
+    assert!(inherited.confirmed);
+}
+
+/// Every start and restore re-pins an instance to its definition via
+/// `apply_persona_snapshot`, which mirrors model/provider/runtime. Attribution
+/// is instance-owned after mint, so that mirror must leave it alone — otherwise
+/// confirming one instance would rewrite its siblings, and restarting an
+/// instance would revert the owner's edit to the definition's seeded row.
+#[test]
+fn restarting_an_instance_does_not_rewrite_its_confirmed_row() {
+    use crate::managed_agents::persona_events::apply_persona_snapshot;
+
+    let mut instance = record("Acid Burn", "a".repeat(64).as_str(), None, Some("claude"));
+    instance.persona_id = Some("acid-burn".to_string());
+    instance.usage_attribution = Some(
+        crate::managed_agents::usage_attribution::apply_owner_attribution(
+            Some("anthropic".into()),
+            Some("claude-max-cc1".into()),
+            Some("Claude Max CC1".into()),
+        )
+        .expect("valid owner edit"),
+    );
+    let definition = crate::managed_agents::AgentDefinition {
+        id: "acid-burn".to_string(),
+        display_name: "Acid Burn".to_string(),
+        avatar_url: None,
+        system_prompt: "be useful".to_string(),
+        runtime: Some("claude".to_string()),
+        model: Some("opus".to_string()),
+        provider: None,
+        name_pool: Vec::new(),
+        is_builtin: false,
+        is_active: true,
+        shared: false,
+        source_team: None,
+        source_team_persona_slug: None,
+        catalog_source: None,
+        env_vars: std::collections::BTreeMap::new(),
+        respond_to: None,
+        respond_to_allowlist: Vec::new(),
+        parallelism: None,
+        created_at: String::new(),
+        updated_at: String::new(),
+    };
+
+    apply_persona_snapshot(&mut instance, &definition);
+
+    let row = instance
+        .usage_attribution
+        .as_ref()
+        .expect("the row survives the re-pin");
+    assert_eq!(row.account_id.as_deref(), Some("claude-max-cc1"));
+    assert_eq!(row.account_label.as_deref(), Some("Claude Max CC1"));
+    assert!(
+        row.confirmed,
+        "a restart must not reset the owner's confirmation"
+    );
+    // Sanity: the re-pin really did run and really did mirror other fields, so
+    // this is not a test of a no-op.
+    assert_eq!(instance.model.as_deref(), Some("opus"));
+}
