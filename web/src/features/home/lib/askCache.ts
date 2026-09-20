@@ -1,6 +1,7 @@
 import { del, get, set } from "idb-keyval";
 import {
   parseCardTags,
+  serializeCardPayload,
   type DecisionCard,
 } from "@/features/channels/lib/decisionCard.ts";
 import type { AskItem } from "./askDetection.ts";
@@ -23,10 +24,12 @@ import type { AskItem } from "./askDetection.ts";
  * by the CURRENT parser, and an entry that fails validation degrades to
  * "not an ask" instead of shipping a shape the renderer cannot draw. Bump
  * `CACHE_VERSION` on a shape change (timelineCache's doc tells the story of
- * the bump that was forgotten).
+ * the bump that was forgotten) — "v2" is the decision-card v2 wire format,
+ * whose stored payload is written by `serializeCardPayload` rather than by
+ * re-tagging the parsed card.
  */
 
-const CACHE_VERSION = "v1";
+const CACHE_VERSION = "v2";
 
 /** Stored ask cap — the badge tracks at most this many asks. */
 export const ASKS_CACHE_CAP = 100;
@@ -104,9 +107,11 @@ export function toCachedAsk(ask: AskItem): CachedAsk {
     channelType: ask.channelType,
     authorPubkey: ask.authorPubkey,
     createdAt: ask.createdAt,
-    // Re-tagged as a v=1 card payload: the parse demands the version field,
-    // so storing the bare parsed shape would fail its own replay.
-    cardJson: JSON.stringify({ v: 1, ...ask.card }),
+    // Re-serialized through the decisionCard module: the parse demands the
+    // version field AND the wire shape, which stopped being "the parsed card
+    // plus a version" when v2 landed. `serializeCardPayload` is the inverse
+    // of `parseCardTags`, pinned by a round-trip test.
+    cardJson: serializeCardPayload(ask.card),
     cardRootId: ask.rootId,
     cardReplyToId: ask.replyToId,
   };

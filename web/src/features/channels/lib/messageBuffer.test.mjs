@@ -244,7 +244,9 @@ test("card tag parses onto the message; malformed degrades to null (D-035)", () 
     }),
   );
   assert.equal(withCard.card.title, "Ship the claims fix?");
-  assert.equal(withCard.card.options[1].recommended, true);
+  // A v1 payload normalizes into a one-question interview (decision cards v2).
+  assert.equal(withCard.card.questions.length, 1);
+  assert.equal(withCard.card.questions[0].options[1].recommended, true);
   // The fallback content stays intact — the card REPLACES its rendering,
   // not its data.
   assert.ok(withCard.content.startsWith("**Ship"));

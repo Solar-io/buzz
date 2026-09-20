@@ -17,9 +17,16 @@ import type { TimelineMessage } from "../lib/messageBuffer.ts";
  *
  * The card itself is a render-time view of the tag: it never mutates, and a
  * malformed payload never reaches it (messageBuffer falls back to markdown).
+ *
+ * v2 interviews (multi-question cards) parse into the same normalized shape;
+ * this renderer shows the FIRST question only, which is exactly v1 behaviour
+ * for a v1 card. The stepper that walks the rest is a later phase — until it
+ * lands, a plain client and this one both see question one, and the full
+ * question set is readable in the message's fallback content.
  */
 export function DecisionCard({ message }: { message: TimelineMessage }) {
   const card = message.card;
+  const question = card?.questions[0];
   const { session } = useRelaySession();
   const [state, setState] = useState<
     | { phase: "idle" }
@@ -62,7 +69,7 @@ export function DecisionCard({ message }: { message: TimelineMessage }) {
     }
   }
 
-  if (!card) {
+  if (!card || !question) {
     return null;
   }
 
@@ -71,7 +78,9 @@ export function DecisionCard({ message }: { message: TimelineMessage }) {
       data-testid="decision-card"
       className="my-1 max-w-xl rounded-xl border bg-muted/20 px-3 py-2.5"
     >
-      <p className="text-sm font-bold leading-snug">{card.title}</p>
+      <p className="text-sm font-bold leading-snug">
+        {question.question || card.title}
+      </p>
       {card.body && (
         <p className="mt-1 whitespace-pre-wrap text-sm leading-snug text-muted-foreground">
           {card.body}
@@ -89,7 +98,7 @@ export function DecisionCard({ message }: { message: TimelineMessage }) {
       ) : (
         <>
           <div className="mt-2 flex flex-col gap-1.5">
-            {card.options.map((option) => (
+            {question.options.map((option) => (
               <button
                 key={option.id}
                 type="button"

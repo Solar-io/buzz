@@ -460,13 +460,19 @@ annex, so the arbitration is inspectable from any client."
         /// holder in the claims file (documented escape for a dead holder)
         #[arg(long)]
         supersede: bool,
-        /// Decision card payload (D-035), JSON:
-        /// {"title":…,"body"?:…,"options":[{"id"?:…,"label":…,"recommended"?:true},…]}.
-        /// Sends a kind 9 whose tag carries the card for the web client's tappable
-        /// rendering and whose content carries readable fallback text for plain
+        /// Decision card payload (D-035), JSON. One question (v1):
+        /// {"title":…,"body"?:…,"options":[{"id"?:…,"label":…,"description"?:…,"recommended"?:true},…]}.
+        /// Up to 6 questions answered in sequence (v2):
+        /// {"title":…,"body"?:…,"questions":[{"id"?:…,"header"?:…(<=12 chars),"question":…,
+        /// "body"?:…,"multiSelect"?:true,"options":[…]},…]}  — a "questions" key selects v2.
+        /// Each question takes 2-8 options; a title is required once there is more than
+        /// one question. Sends a kind 9 whose tag carries the card for the web client's
+        /// tappable rendering and whose content carries readable fallback text for plain
         /// clients. '@file.json' reads the payload from a file, '-' from stdin.
         /// With no --content, the fallback text is generated from the card.
         /// Address the card with `--mention <pubkey>` so it lands in the askee's Asks inbox.
+        /// Refine by sending a SECOND card with `--reply-to <the answer's event id>`;
+        /// same thread, so both rounds fold into one Asks row.
         #[arg(long)]
         card: Option<String>,
     },

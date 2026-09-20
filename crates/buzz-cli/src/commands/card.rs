@@ -1,0 +1,785 @@
+//! D-035 decision cards: the authoring half of the `["card", …]` wire format.
+//!
+//! A card is an ordinary kind 9 whose CONTENT is human-readable fallback text
+//! (every plain nostr client, including Buzz Desktop, renders that on its own)
+//! plus one author tag carrying the structure. This module validates the
+//! `--card` payload and builds both halves.
+//!
+//! Two wire versions, one builder:
+//!
+//! * **v1** — a single question: `{"v":1,"title":…,"body"?:…,"options":[…]}`
+//! * **v2** — an interview of up to [`CARD_MAX_QUESTIONS`] questions:
+//!   `{"v":2,"title"?:…,"body"?:…,"questions":[{"question":…,"header"?:…,
+//!   "body"?:…,"multiSelect"?:…,"options":[…]}]}`
+//!
+//! `v` is optional on input (every shipped `--card` invocation omits it) and
+//! always present on output; a `questions` key is what makes an unversioned
+//! payload a v2 one.
+//!
+//! ## Why this file mirrors TypeScript line for line
+//!
+//! The web client has its own validator in
+//! `web/src/features/channels/lib/decisionCard.ts`. Two validators of one wire
+//! format drift, and a drifted pair means the CLI emits cards the web renders
+//! as plain text. v1 guarded against that with a comment. This file instead
+//! shares a fixture corpus with the web suite —
+//! `test-fixtures/decision-cards/{limits,cases}.json`, executed by
+//! [`card_fixture_corpus`] here and by `decisionCardFixtures.test.mjs` there.
+//! Change a bound or an error message on one side only and exactly one suite
+//! goes red.
+//!
+//! Authoring is deliberately STRICTER than the web parse (which tolerates
+//! e.g. two recommended options by keeping the first, or an over-long body by
+//! dropping it): this side refuses the send, so self-contradicting cards never
+//! reach the wire. The corpus's `parseRaw` field records each of those
+//! asymmetries as a tested fact.
+
+use crate::error::CliError;
+use serde_json::{Map, Value};
+
+// Hard bounds. Every one of these is mirrored by
+// `test-fixtures/decision-cards/limits.json`, which `card_limits_match_manifest`
+// asserts against — and which the web client's `CARD_LIMITS` is asserted
+// against by its own suite.
+pub(crate) const CARD_MAX_TAG_UNITS: usize = 16384;
+pub(crate) const CARD_MAX_TITLE_CHARS: usize = 120;
+pub(crate) const CARD_MAX_BODY_CHARS: usize = 4000;
+pub(crate) const CARD_MAX_QUESTIONS: usize = 6;
+pub(crate) const CARD_MAX_QUESTION_CHARS: usize = 300;
+pub(crate) const CARD_MAX_QUESTION_BODY_CHARS: usize = 1000;
+pub(crate) const CARD_MAX_HEADER_CHARS: usize = 12;
+pub(crate) const CARD_MAX_OPTIONS: usize = 8;
+pub(crate) const CARD_MAX_LABEL_CHARS: usize = 200;
+pub(crate) const CARD_MAX_DESCRIPTION_CHARS: usize = 200;
+pub(crate) const CARD_MAX_ID_CHARS: usize = 40;
+
+/// JS `.length` parity: the web validator bounds every string by UTF-16
+/// code units, so this side measures the same way. A Rust `chars().count()`
+/// is smaller for astral characters (emoji count 1 there, 2 here), which
+/// would let the CLI emit a card the web parser then rejects — the exact
+/// drift this builder exists to prevent.
+fn utf16_len(value: &str) -> usize {
+    value.encode_utf16().count()
+}
+
+fn usage(message: String) -> CliError {
+    CliError::Usage(format!("--card: {message}"))
+}
+
+fn bounded_utf16(value: &str, max_chars: usize) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || utf16_len(trimmed) > max_chars {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn require_bounded(
+    value: Option<&Value>,
+    max_chars: usize,
+    message: String,
+) -> Result<String, CliError> {
+    bounded_utf16(value.and_then(Value::as_str).unwrap_or(""), max_chars)
+        .ok_or_else(|| usage(message))
+}
+
+/// A body on the AUTHORING side: absent or blank is fine, over-length is a
+/// refusal. The web parse degrades the same field to "no body" instead —
+/// leniency runs render-side only, so an author never silently ships a card
+/// whose context was truncated away.
+fn strict_body(
+    value: Option<&Value>,
+    max_chars: usize,
+    message: &str,
+) -> Result<Option<String>, CliError> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(raw) => {
+            let text = raw
+                .as_str()
+                .ok_or_else(|| usage(message.to_string()))?
+                .trim();
+            if text.is_empty() {
+                Ok(None)
+            } else if utf16_len(text) > max_chars {
+                Err(usage(message.to_string()))
+            } else {
+                Ok(Some(text.to_string()))
+            }
+        }
+    }
+}
+
+/// The stderr guidance for a decision card sent with no `--mention`.
+///
+/// The web Asks inbox (D-035 follow-on) treats a card as an ASK only when it
+/// p-tags the viewer — outside a 2-party DM there is no leniency to infer the
+/// askee. An unmentioned card is therefore invisible to every Asks inbox; the
+/// agent-side author should know that at send time. A WARNING, not a refusal:
+/// broadcast cards (channel polls) are legitimate and common.
+pub(crate) fn card_without_mention_notice(has_card: bool, mention_count: usize) -> Option<String> {
+    if has_card && mention_count == 0 {
+        Some("note: card has no --mention; it will not appear in any Asks inbox".to_string())
+    } else {
+        None
+    }
+}
+
+/// One validated option, in the shape the fallback text generator needs.
+struct OptionView {
+    label: String,
+    description: Option<String>,
+    recommended: bool,
+}
+
+/// A validated card: the wire payload plus everything the fallback text
+/// generator needs. A named struct rather than a tuple because clippy's
+/// `type_complexity` lint is an error under the repo's `-D warnings` gate.
+struct BuiltCard {
+    payload: Map<String, Value>,
+    /// The title as DISPLAYED — a v2 payload may omit it, in which case it is
+    /// the first question's text and is deliberately absent from `payload`.
+    title: String,
+    body: Option<String>,
+    questions: Vec<QuestionView>,
+}
+
+/// One validated question. A v1 card produces exactly one of these, whose
+/// text is the card's title — the same normalization the web parser applies,
+/// so both sides generate the fallback from one shape.
+struct QuestionView {
+    text: String,
+    body: Option<String>,
+    multi_select: bool,
+    options: Vec<OptionView>,
+}
+
+fn build_options(
+    raw: Option<&Value>,
+    prefix: &str,
+) -> Result<(Vec<Value>, Vec<OptionView>), CliError> {
+    let raw_options = raw
+        .and_then(Value::as_array)
+        .ok_or_else(|| usage(format!("{prefix}options must be an array")))?;
+    if raw_options.len() < 2 || raw_options.len() > CARD_MAX_OPTIONS {
+        return Err(usage(format!(
+            "{prefix}needs 2-{CARD_MAX_OPTIONS} options (got {})",
+            raw_options.len()
+        )));
+    }
+    let mut recommended_count = 0usize;
+    let mut wire: Vec<Value> = Vec::with_capacity(raw_options.len());
+    let mut view: Vec<OptionView> = Vec::with_capacity(raw_options.len());
+    for (index, candidate) in raw_options.iter().enumerate() {
+        let option = candidate
+            .as_object()
+            .ok_or_else(|| usage(format!("{prefix}option {} must be an object", index + 1)))?;
+        let label = require_bounded(
+            option.get("label"),
+            CARD_MAX_LABEL_CHARS,
+            format!(
+                "{prefix}option {} label must be 1-{CARD_MAX_LABEL_CHARS} characters",
+                index + 1
+            ),
+        )?;
+        // Mirror of the web builder: an explicit bounded id rides the wire,
+        // an absent one is omitted entirely (the web parse derives
+        // positional ids — ids are render keys, not identity promises).
+        let mut entry = Map::new();
+        if let Some(id_value) = option.get("id") {
+            let id = id_value
+                .as_str()
+                .ok_or_else(|| usage(format!("{prefix}option {} id must be a string", index + 1)))?
+                .trim();
+            if utf16_len(id) > CARD_MAX_ID_CHARS {
+                return Err(usage(format!(
+                    "{prefix}option {} id must be at most {CARD_MAX_ID_CHARS} characters",
+                    index + 1
+                )));
+            }
+            if !id.is_empty() {
+                entry.insert("id".to_string(), Value::String(id.to_string()));
+            }
+        }
+        entry.insert("label".to_string(), Value::String(label.clone()));
+        let mut description = None;
+        if option.get("description").is_some() {
+            let text = require_bounded(
+                option.get("description"),
+                CARD_MAX_DESCRIPTION_CHARS,
+                format!(
+                    "{prefix}option {} description must be 1-{CARD_MAX_DESCRIPTION_CHARS} characters",
+                    index + 1
+                ),
+            )?;
+            entry.insert("description".to_string(), Value::String(text.clone()));
+            description = Some(text);
+        }
+        let recommended = option.get("recommended").and_then(Value::as_bool) == Some(true);
+        if recommended {
+            recommended_count += 1;
+            entry.insert("recommended".to_string(), Value::Bool(true));
+        }
+        wire.push(Value::Object(entry));
+        view.push(OptionView {
+            label,
+            description,
+            recommended,
+        });
+    }
+    if recommended_count > 1 {
+        return Err(usage(format!(
+            "{prefix}at most one option may be recommended ({recommended_count} marked)"
+        )));
+    }
+    Ok((wire, view))
+}
+
+/// Which version is the author writing? An explicit `v` wins; with none, a
+/// `questions` key means v2 and anything else means v1.
+fn resolve_version(obj: &Map<String, Value>) -> Result<u8, CliError> {
+    match obj.get("v") {
+        None => Ok(if obj.contains_key("questions") { 2 } else { 1 }),
+        Some(value) => match value.as_u64() {
+            Some(1) => Ok(1),
+            Some(2) => Ok(2),
+            _ => Err(usage(format!(
+                "unsupported version {value} (expected 1 or 2)"
+            ))),
+        },
+    }
+}
+
+fn build_v1(obj: &Map<String, Value>) -> Result<BuiltCard, CliError> {
+    let title = require_bounded(
+        obj.get("title"),
+        CARD_MAX_TITLE_CHARS,
+        format!("title must be 1-{CARD_MAX_TITLE_CHARS} characters"),
+    )?;
+    let body = strict_body(
+        obj.get("body"),
+        CARD_MAX_BODY_CHARS,
+        &format!("body must be at most {CARD_MAX_BODY_CHARS} characters"),
+    )?;
+    let (options_wire, options_view) = build_options(obj.get("options"), "")?;
+
+    let mut payload = Map::new();
+    payload.insert("v".to_string(), Value::Number(1.into()));
+    payload.insert("title".to_string(), Value::String(title.clone()));
+    if let Some(ref text) = body {
+        payload.insert("body".to_string(), Value::String(text.clone()));
+    }
+    payload.insert("options".to_string(), Value::Array(options_wire));
+
+    // A v1 card IS an interview of one question whose text is the title —
+    // the same normalization `parseCardTags` performs, so the fallback text
+    // generator below has one shape to render.
+    let questions = vec![QuestionView {
+        text: title.clone(),
+        body: None,
+        multi_select: false,
+        options: options_view,
+    }];
+    Ok(BuiltCard {
+        payload,
+        title,
+        body,
+        questions,
+    })
+}
+
+fn build_v2(obj: &Map<String, Value>) -> Result<BuiltCard, CliError> {
+    let raw_questions = obj
+        .get("questions")
+        .and_then(Value::as_array)
+        .ok_or_else(|| usage("questions must be an array".to_string()))?;
+    if raw_questions.is_empty() || raw_questions.len() > CARD_MAX_QUESTIONS {
+        return Err(usage(format!(
+            "needs 1-{CARD_MAX_QUESTIONS} questions (got {})",
+            raw_questions.len()
+        )));
+    }
+    let mut questions_wire: Vec<Value> = Vec::with_capacity(raw_questions.len());
+    let mut questions_view: Vec<QuestionView> = Vec::with_capacity(raw_questions.len());
+    for (index, candidate) in raw_questions.iter().enumerate() {
+        let prefix = format!("question {} ", index + 1);
+        let question = candidate
+            .as_object()
+            .ok_or_else(|| usage(format!("question {} must be an object", index + 1)))?;
+        let text = require_bounded(
+            question.get("question"),
+            CARD_MAX_QUESTION_CHARS,
+            format!("{prefix}text must be 1-{CARD_MAX_QUESTION_CHARS} characters"),
+        )?;
+        let mut entry = Map::new();
+        if let Some(id_value) = question.get("id") {
+            let id = id_value
+                .as_str()
+                .ok_or_else(|| usage(format!("{prefix}id must be a string")))?
+                .trim();
+            if utf16_len(id) > CARD_MAX_ID_CHARS {
+                return Err(usage(format!(
+                    "{prefix}id must be at most {CARD_MAX_ID_CHARS} characters"
+                )));
+            }
+            if !id.is_empty() {
+                entry.insert("id".to_string(), Value::String(id.to_string()));
+            }
+        }
+        if question.get("header").is_some() {
+            let header = require_bounded(
+                question.get("header"),
+                CARD_MAX_HEADER_CHARS,
+                format!("{prefix}header must be 1-{CARD_MAX_HEADER_CHARS} characters"),
+            )?;
+            entry.insert("header".to_string(), Value::String(header));
+        }
+        entry.insert("question".to_string(), Value::String(text.clone()));
+        let body = strict_body(
+            question.get("body"),
+            CARD_MAX_QUESTION_BODY_CHARS,
+            &format!("{prefix}body must be at most {CARD_MAX_QUESTION_BODY_CHARS} characters"),
+        )?;
+        if let Some(ref text) = body {
+            entry.insert("body".to_string(), Value::String(text.clone()));
+        }
+        let multi_select = question.get("multiSelect").and_then(Value::as_bool) == Some(true);
+        if multi_select {
+            entry.insert("multiSelect".to_string(), Value::Bool(true));
+        }
+        let (options_wire, options_view) = build_options(question.get("options"), &prefix)?;
+        entry.insert("options".to_string(), Value::Array(options_wire));
+        questions_wire.push(Value::Object(entry));
+        questions_view.push(QuestionView {
+            text,
+            body,
+            multi_select,
+            options: options_view,
+        });
+    }
+
+    let mut payload = Map::new();
+    payload.insert("v".to_string(), Value::Number(2.into()));
+    // One question may borrow its title from the question itself; more than
+    // one must be named, or the interview reads as its own first question.
+    // A borrowed title is never written to the wire, so it round-trips
+    // through the web parser as a derivation rather than as data.
+    let title = if obj.get("title").is_some() || questions_view.len() > 1 {
+        let explicit = require_bounded(
+            obj.get("title"),
+            CARD_MAX_TITLE_CHARS,
+            format!("title must be 1-{CARD_MAX_TITLE_CHARS} characters"),
+        )?;
+        payload.insert("title".to_string(), Value::String(explicit.clone()));
+        explicit
+    } else {
+        questions_view[0].text.clone()
+    };
+    let body = strict_body(
+        obj.get("body"),
+        CARD_MAX_BODY_CHARS,
+        &format!("body must be at most {CARD_MAX_BODY_CHARS} characters"),
+    )?;
+    if let Some(ref text) = body {
+        payload.insert("body".to_string(), Value::String(text.clone()));
+    }
+    payload.insert("questions".to_string(), Value::Array(questions_wire));
+    Ok(BuiltCard {
+        payload,
+        title,
+        body,
+        questions: questions_view,
+    })
+}
+
+/// The human-readable content a card event carries alongside the tag.
+///
+/// Byte-identical to the web's `cardFallbackText` — pinned by the shared
+/// corpus, whose every accept case records the exact expected text. The v1
+/// shape is a special case of the v2 one rather than a branch: a lone
+/// question whose text IS the title, with no body and no multi-select hint,
+/// contributes no heading of its own, which is exactly the text v1 has
+/// emitted since 9/16. A question's `header` is a progress-chip label and
+/// deliberately never appears here.
+fn fallback_text(title: &str, body: Option<&str>, questions: &[QuestionView]) -> String {
+    let mut lines: Vec<String> = vec![format!("**{title}**")];
+    if let Some(text) = body {
+        lines.push(String::new());
+        lines.push(text.to_string());
+    }
+    let count = questions.len();
+    for (index, question) in questions.iter().enumerate() {
+        let implicit = count == 1
+            && question.text == title
+            && question.body.is_none()
+            && !question.multi_select;
+        if !implicit {
+            let number = if count > 1 {
+                format!("{}. ", index + 1)
+            } else {
+                String::new()
+            };
+            let hint = if question.multi_select {
+                " _(choose any that apply)_"
+            } else {
+                ""
+            };
+            lines.push(String::new());
+            lines.push(format!("**{number}{}**{hint}", question.text));
+            if let Some(ref text) = question.body {
+                lines.push(String::new());
+                lines.push(text.clone());
+            }
+        }
+        lines.push(String::new());
+        for option in &question.options {
+            let marker = if option.recommended {
+                " *(Recommended)*"
+            } else {
+                ""
+            };
+            let detail = match option.description {
+                Some(ref text) => format!(" — {text}"),
+                None => String::new(),
+            };
+            lines.push(format!("- {}{marker}{detail}", option.label));
+        }
+    }
+    lines.push(String::new());
+    lines.push("_Reply with an option or your own answer._".to_string());
+    lines.join("\n")
+}
+
+/// Validate a `--card` payload and build both halves of the outgoing kind 9:
+/// the `["card", …]` tag the web client renders as a tappable question, and
+/// the human-readable fallback content every plain client shows on its own.
+pub(crate) fn build_card_tag(raw: &str) -> Result<(Vec<String>, String), CliError> {
+    let parsed: Value = serde_json::from_str(raw)
+        .map_err(|e| CliError::Usage(format!("--card: invalid JSON: {e}")))?;
+    let obj = parsed
+        .as_object()
+        .ok_or_else(|| usage("payload must be a JSON object".to_string()))?;
+    let card = match resolve_version(obj)? {
+        1 => build_v1(obj)?,
+        _ => build_v2(obj)?,
+    };
+    let json = serde_json::to_string(&Value::Object(card.payload))
+        .map_err(|e| CliError::Other(format!("--card: serialization failed: {e}")))?;
+    if utf16_len(&json) > CARD_MAX_TAG_UNITS {
+        return Err(usage(format!(
+            "payload exceeds {CARD_MAX_TAG_UNITS} characters after serialization"
+        )));
+    }
+    let tag = vec!["card".to_string(), json];
+    let fallback = fallback_text(&card.title, card.body.as_deref(), &card.questions);
+    Ok((tag, fallback))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The shared wire corpus. `include_str!` registers a rebuild dependency,
+    /// so editing a fixture re-runs these tests without a `cargo clean`.
+    const LIMITS_JSON: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../test-fixtures/decision-cards/limits.json"
+    ));
+    const CASES_JSON: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../test-fixtures/decision-cards/cases.json"
+    ));
+
+    fn manifest(limits: &Value, key: &str) -> usize {
+        limits
+            .get(key)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| panic!("limits.json has no numeric {key}")) as usize
+    }
+
+    #[test]
+    fn card_limits_match_manifest() {
+        // Every bound, against the file the web client's CARD_LIMITS is also
+        // asserted against. Change one number on one side and exactly one of
+        // the two suites fails.
+        let limits: Value = serde_json::from_str(LIMITS_JSON).expect("limits.json parses");
+        assert_eq!(manifest(&limits, "maxTagBytes"), CARD_MAX_TAG_UNITS);
+        assert_eq!(manifest(&limits, "maxTitleChars"), CARD_MAX_TITLE_CHARS);
+        assert_eq!(manifest(&limits, "maxBodyChars"), CARD_MAX_BODY_CHARS);
+        assert_eq!(manifest(&limits, "maxQuestions"), CARD_MAX_QUESTIONS);
+        assert_eq!(
+            manifest(&limits, "maxQuestionChars"),
+            CARD_MAX_QUESTION_CHARS
+        );
+        assert_eq!(
+            manifest(&limits, "maxQuestionBodyChars"),
+            CARD_MAX_QUESTION_BODY_CHARS
+        );
+        assert_eq!(manifest(&limits, "maxHeaderChars"), CARD_MAX_HEADER_CHARS);
+        assert_eq!(manifest(&limits, "maxOptions"), CARD_MAX_OPTIONS);
+        assert_eq!(manifest(&limits, "maxLabelChars"), CARD_MAX_LABEL_CHARS);
+        assert_eq!(
+            manifest(&limits, "maxDescriptionChars"),
+            CARD_MAX_DESCRIPTION_CHARS
+        );
+        assert_eq!(manifest(&limits, "maxIdChars"), CARD_MAX_ID_CHARS);
+    }
+
+    #[test]
+    fn card_fixture_corpus() {
+        let limits: Value = serde_json::from_str(LIMITS_JSON).expect("limits.json parses");
+        let cases: Vec<Value> = serde_json::from_str(CASES_JSON).expect("cases.json parses");
+        // The harness self-check: a fixture path that silently resolved to an
+        // empty list would run zero cases and report success.
+        assert_eq!(
+            cases.len(),
+            manifest(&limits, "caseCount"),
+            "corpus size disagrees with limits.json"
+        );
+        assert!(cases.len() >= 18, "corpus is too small ({})", cases.len());
+
+        let mut accepted = 0usize;
+        let mut rejected = 0usize;
+        for case in &cases {
+            let name = case["name"].as_str().expect("case has a name");
+            let payload = serde_json::to_string(&case["payload"]).expect("payload re-serializes");
+            match case["expect"].as_str() {
+                Some("accept") => {
+                    let (tag, fallback) = build_card_tag(&payload)
+                        .unwrap_or_else(|e| panic!("{name}: expected accept, got {e}"));
+                    assert_eq!(tag[0], "card", "{name}: tag name");
+                    let canonical: Value =
+                        serde_json::from_str(&tag[1]).expect("canonical payload is JSON");
+                    assert_eq!(canonical, case["canonical"], "{name}: canonical payload");
+                    assert_eq!(
+                        fallback,
+                        case["fallback"].as_str().expect("accept case has fallback"),
+                        "{name}: fallback text"
+                    );
+                    accepted += 1;
+                }
+                Some("reject") => {
+                    let error = build_card_tag(&payload)
+                        .expect_err(&format!("{name}: expected reject"))
+                        .to_string();
+                    let reason = case["reason"].as_str().expect("reject case has a reason");
+                    assert!(
+                        error.contains(reason),
+                        "{name}: {error:?} does not contain {reason:?}"
+                    );
+                    rejected += 1;
+                }
+                other => panic!("{name}: unknown expect {other:?}"),
+            }
+        }
+        assert_eq!(accepted, 10, "accept-case count moved");
+        assert_eq!(rejected, 18, "reject-case count moved");
+    }
+
+    // ---- Asks inbox authoring guardrail (D-035 follow-on) ----
+
+    #[test]
+    fn send_card_without_mention_warns() {
+        // A card with zero mentions never lands in an Asks inbox (the web's
+        // askForMe requires the p-tag outside 2-party DMs) — the author must
+        // hear that at send time. Warning, not refusal.
+        let notice = card_without_mention_notice(true, 0)
+            .expect("card without mention must produce a notice");
+        assert!(notice.contains("note: card has no --mention"));
+        assert!(notice.contains("Asks inbox"));
+    }
+
+    #[test]
+    fn send_card_with_mention_or_without_card_does_not_warn() {
+        // Any mention addresses the ask; no card means nothing to warn about.
+        assert!(card_without_mention_notice(true, 1).is_none());
+        assert!(card_without_mention_notice(false, 0).is_none());
+    }
+
+    #[test]
+    fn card_builds_tag_and_fallback_content() {
+        let (tag, fallback) = build_card_tag(
+            r#"{"title":"Ship the claims fix?","body":"Second bounce needed.",
+                "options":[{"id":"now","label":"Relaunch now"},{"label":"Let it ride","recommended":true}]}"#,
+        )
+        .expect("valid card builds");
+        assert_eq!(tag[0], "card");
+        let payload: Value = serde_json::from_str(&tag[1]).unwrap();
+        assert_eq!(payload["v"], 1);
+        assert_eq!(payload["title"], "Ship the claims fix?");
+        assert_eq!(payload["body"], "Second bounce needed.");
+        // Explicit id rides, absent id is omitted (web parse derives positional).
+        assert_eq!(payload["options"][0]["id"], "now");
+        assert!(payload["options"][1].get("id").is_none());
+        assert_eq!(payload["options"][1]["recommended"], true);
+        // Fallback mirrors the web generator byte-for-byte.
+        assert_eq!(
+            fallback,
+            "**Ship the claims fix?**\n\nSecond bounce needed.\n\n- Relaunch now\n- Let it ride *(Recommended)*\n\n_Reply with an option or your own answer._"
+        );
+    }
+
+    #[test]
+    fn card_fallback_without_body_matches_web_shape() {
+        let (_, fallback) =
+            build_card_tag(r#"{"title":"Q","options":[{"label":"A"},{"label":"B"}]}"#).unwrap();
+        assert_eq!(
+            fallback,
+            "**Q**\n\n- A\n- B\n\n_Reply with an option or your own answer._"
+        );
+    }
+
+    #[test]
+    fn card_rejects_two_recommended_options() {
+        let err = build_card_tag(
+            r#"{"title":"Q","options":[{"label":"A","recommended":true},{"label":"B","recommended":true}]}"#,
+        )
+        .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("at most one option may be recommended"));
+    }
+
+    #[test]
+    fn card_rejects_under_two_and_over_eight_options() {
+        let one = build_card_tag(r#"{"title":"Q","options":[{"label":"A"}]}"#).unwrap_err();
+        assert!(one.to_string().contains("needs 2-8 options (got 1)"));
+        let labels: Vec<String> = (0..9).map(|i| format!("{{\"label\":\"o{i}\"}}")).collect();
+        let nine = format!(r#"{{"title":"Q","options":[{}]}}"#, labels.join(","));
+        let err = build_card_tag(&nine).unwrap_err();
+        assert!(err.to_string().contains("needs 2-8 options (got 9)"));
+    }
+
+    #[test]
+    fn card_accepts_v2() {
+        // v2 is the interview format. Split out of the former
+        // `card_rejects_unknown_version_and_oversized_title` when v2 landed:
+        // the version this builder used to refuse is now the one it ships.
+        let (tag, fallback) = build_card_tag(
+            r#"{"v":2,"title":"Ship the claims fix","questions":[
+                 {"id":"scope","header":"Scope","question":"Which surfaces?","multiSelect":true,
+                  "options":[{"id":"web","label":"Web","description":"The SPA","recommended":true},
+                             {"label":"Desktop"}]},
+                 {"question":"When?","options":[{"label":"Now"},{"label":"Later"}]}]}"#,
+        )
+        .expect("a v2 card builds");
+        let payload: Value = serde_json::from_str(&tag[1]).unwrap();
+        assert_eq!(payload["v"], 2);
+        assert_eq!(payload["questions"].as_array().unwrap().len(), 2);
+        assert_eq!(payload["questions"][0]["header"], "Scope");
+        assert_eq!(payload["questions"][0]["multiSelect"], true);
+        assert_eq!(
+            payload["questions"][0]["options"][0]["description"],
+            "The SPA"
+        );
+        // Author order is preserved — a renderer must never re-sort it.
+        assert_eq!(payload["questions"][1]["question"], "When?");
+        assert_eq!(
+            fallback,
+            "**Ship the claims fix**\n\n**1. Which surfaces?** _(choose any that apply)_\n\n- Web *(Recommended)* — The SPA\n- Desktop\n\n**2. When?**\n\n- Now\n- Later\n\n_Reply with an option or your own answer._"
+        );
+    }
+
+    #[test]
+    fn card_rejects_v3() {
+        // The other half of the split: an unknown FUTURE version is still a
+        // refusal, so the version gate did not simply get deleted.
+        let v3 = build_card_tag(r#"{"v":3,"title":"Q","options":[{"label":"A"},{"label":"B"}]}"#)
+            .unwrap_err();
+        assert!(v3.to_string().contains("unsupported version 3"));
+        // A stringly-typed version is not version 2 either.
+        let stringly =
+            build_card_tag(r#"{"v":"2","title":"Q","options":[{"label":"A"},{"label":"B"}]}"#)
+                .unwrap_err();
+        assert!(stringly.to_string().contains("unsupported version"));
+    }
+
+    #[test]
+    fn card_rejects_oversized_title() {
+        let long = "x".repeat(121);
+        let err = build_card_tag(&format!(
+            r#"{{"title":"{long}","options":[{{"label":"A"}},{{"label":"B"}}]}}"#
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("title must be 1-120"));
+    }
+
+    #[test]
+    fn card_rejects_more_than_six_questions() {
+        let question = r#"{"question":"Fine?","options":[{"label":"A"},{"label":"B"}]}"#;
+        let six: Vec<&str> = (0..6).map(|_| question).collect();
+        assert!(build_card_tag(&format!(
+            r#"{{"v":2,"title":"Q","questions":[{}]}}"#,
+            six.join(",")
+        ))
+        .is_ok());
+        let seven: Vec<&str> = (0..7).map(|_| question).collect();
+        let err = build_card_tag(&format!(
+            r#"{{"v":2,"title":"Q","questions":[{}]}}"#,
+            seven.join(",")
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("needs 1-6 questions (got 7)"));
+    }
+
+    #[test]
+    fn card_infers_v2_from_a_questions_key() {
+        // Every shipped `--card` invocation omits `v`; a `questions` key is
+        // the only thing that makes an unversioned payload a v2 one. The
+        // builder always EMITS the version, which is why the web parser can
+        // insist on it.
+        let (tag, _) = build_card_tag(
+            r#"{"questions":[{"question":"Ship tonight?","options":[{"label":"Yes"},{"label":"No"}]}]}"#,
+        )
+        .expect("an unversioned questions payload is v2");
+        let payload: Value = serde_json::from_str(&tag[1]).unwrap();
+        assert_eq!(payload["v"], 2);
+        // A single question borrows its title, and the borrowed title is not
+        // written to the wire — the web parser re-derives it.
+        assert!(payload.get("title").is_none());
+    }
+
+    #[test]
+    fn card_bounds_measure_utf16_units_not_rust_chars() {
+        // The drift proof: 101 rocket emoji are 101 Rust chars (under a naive
+        // 200 bound) but 202 UTF-16 units — the web's JS `.length` rejects
+        // that label, so this side must too or the CLI ships cards the web
+        // renders as fallback text.
+        let emoji_ok: String = "🚀".repeat(99); // 198 UTF-16 units — passes
+        let emoji_over: String = "🚀".repeat(101); // 202 UTF-16 units — rejects
+        let ok = format!(r#"{{"title":"Q","options":[{{"label":"{emoji_ok}"}},{{"label":"B"}}]}}"#);
+        assert!(build_card_tag(&ok).is_ok());
+        let over =
+            format!(r#"{{"title":"Q","options":[{{"label":"{emoji_over}"}},{{"label":"B"}}]}}"#);
+        let err = build_card_tag(&over).unwrap_err();
+        assert!(err.to_string().contains("label must be 1-200"));
+    }
+
+    #[test]
+    fn card_rejects_oversized_serialized_payload() {
+        // The reachable fat-tag path under the v2 cap: six questions, each
+        // with a legal 1000-char body and eight fully described max-length
+        // options, serialize past 16384 units. Every field is individually
+        // legal — this is exactly the authoring mistake the tag cap catches.
+        // (A v1 card can no longer reach it: its worst case is ~6 KB.)
+        let label = "y".repeat(200);
+        let description = "d".repeat(200);
+        let options: Vec<String> = (0..8)
+            .map(|_| format!(r#"{{"label":"{label}","description":"{description}"}}"#))
+            .collect();
+        let question = format!(
+            r#"{{"question":"{}","body":"{}","options":[{}]}}"#,
+            "q".repeat(300),
+            "b".repeat(1000),
+            options.join(",")
+        );
+        let questions: Vec<String> = (0..6).map(|_| question.clone()).collect();
+        let fat = format!(
+            r#"{{"v":2,"title":"Q","questions":[{}]}}"#,
+            questions.join(",")
+        );
+        let err = build_card_tag(&fat).unwrap_err();
+        assert!(err.to_string().contains("exceeds 16384"));
+    }
+}

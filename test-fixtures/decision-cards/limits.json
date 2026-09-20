@@ -1,0 +1,14 @@
+{
+  "maxTagBytes": 16384,
+  "maxTitleChars": 120,
+  "maxBodyChars": 4000,
+  "maxQuestions": 6,
+  "maxQuestionChars": 300,
+  "maxQuestionBodyChars": 1000,
+  "maxHeaderChars": 12,
+  "maxOptions": 8,
+  "maxLabelChars": 200,
+  "maxDescriptionChars": 200,
+  "maxIdChars": 40,
+  "caseCount": 28
+}

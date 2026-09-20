@@ -11,11 +11,47 @@ import {
 } from "./askCache.ts";
 import { loadAsksCache, saveAsksCache } from "./askCache.ts";
 
+// A parsed card, in the normalized decision-cards-v2 shape the cache stores
+// and re-parses (`serializeCardPayload` / `parseCardTags`).
 const card = {
+  v: 1,
   title: "Ship the fix?",
-  options: [
-    { id: "0", label: "Yes", recommended: true },
-    { id: "1", label: "No" },
+  questions: [
+    {
+      id: "0",
+      question: "Ship the fix?",
+      multiSelect: false,
+      options: [
+        { id: "0", label: "Yes", recommended: true },
+        { id: "1", label: "No" },
+      ],
+    },
+  ],
+};
+
+const interview = {
+  v: 2,
+  title: "Ship the fix",
+  questions: [
+    {
+      id: "scope",
+      header: "Scope",
+      question: "Which surfaces?",
+      multiSelect: true,
+      options: [
+        { id: "web", label: "Web", description: "The SPA", recommended: true },
+        { id: "cli", label: "CLI" },
+      ],
+    },
+    {
+      id: "1",
+      question: "When?",
+      options: [
+        { id: "0", label: "Now" },
+        { id: "1", label: "Later" },
+      ],
+      multiSelect: false,
+    },
   ],
 };
 
@@ -32,7 +68,7 @@ const ask = (id, createdAt, overrides = {}) => ({
 const empty = () => ({ asks: [], answered: {}, cursor: 0 });
 
 test("the cache key is versioned — a shape change starts fresh, not corrupt", () => {
-  assert.equal(asksCacheKey(), "asks:v1");
+  assert.equal(asksCacheKey(), "asks:v2");
 });
 
 test("mergeCachedAsks dedupes by id, sorts newest first, and caps at 100", () => {
@@ -112,8 +148,23 @@ test("the stored card round-trips through the current parser", () => {
   const revived = fromCachedAsk(toCachedAsk(item));
   assert.ok(revived, "a valid card must re-parse");
   assert.equal(revived.card.title, card.title);
-  assert.equal(revived.card.options[0].recommended, true);
+  assert.equal(revived.card.questions[0].options[0].recommended, true);
+  assert.deepEqual(revived.card, card);
   assert.equal(revived.channelType, "stream");
+});
+
+test("a v2 interview round-trips through the cache unchanged", () => {
+  // The stored payload is written by `serializeCardPayload`, not by
+  // re-tagging the parsed card — the old `{v:1, ...card}` re-tag produced a
+  // payload the current parser rejects, which would have silently dropped
+  // every multi-question ask from the badge on reload.
+  const item = ask("a", 1, { card: interview });
+  const revived = fromCachedAsk(toCachedAsk(item));
+  assert.ok(revived, "a v2 card must re-parse");
+  assert.deepEqual(revived.card, interview);
+  assert.equal(revived.card.questions.length, 2);
+  assert.equal(revived.card.questions[0].multiSelect, true);
+  assert.equal(revived.card.questions[0].options[0].description, "The SPA");
 });
 
 test("fromCachedAsk refuses a payload the current parser rejects", () => {

@@ -17,35 +17,106 @@
  * to the card event) whose content is the chosen option's label verbatim, so
  * every client reads them and the thread view groups them for free.
  *
- * Payload: {"v":1,"title":string,"body"?:string,
- *           "options":[{"id"?:string,"label":string,"recommended"?:boolean}]}
+ * ## Two wire versions, ONE parsed shape
+ *
+ * v1 (shipped 9/16) is a single question:
+ *
+ *   {"v":1,"title":string,"body"?:string,
+ *    "options":[{"id"?:string,"label":string,"recommended"?:boolean}]}
+ *
+ * v2 is an interview — up to `maxQuestions` questions answered in sequence:
+ *
+ *   {"v":2,"title"?:string,"body"?:string,
+ *    "questions":[{"id"?:string,"header"?:string,"question":string,
+ *                  "body"?:string,"multiSelect"?:boolean,
+ *                  "options":[{"id"?,"label","description"?,"recommended"?}]}]}
+ *
+ * `parseCardTags` NORMALIZES both into one shape: a v1 card is an interview
+ * with exactly one question whose text is the card title. There is therefore
+ * one parser, one bounds validator, one Rust mirror
+ * (`crates/buzz-cli/src/commands/card.rs`) and one renderer — a v2 payload
+ * is never a second code path. The shared fixture corpus under
+ * `test-fixtures/decision-cards/` is executed by BOTH `pnpm test` and
+ * `cargo test -p buzz-cli`, so TS/Rust drift is a failing test rather than a
+ * comment asking people to be careful.
+ *
+ * Field names deliberately mirror Claude Code's `AskUserQuestion` tool
+ * schema (`question`, `header`, `options`, `label`, `description`,
+ * `multiSelect`) so an agent that knows one knows the other.
  */
 
-/** Hard bounds — the parse rejects anything outside them. */
+/**
+ * Hard bounds — the parse rejects anything outside them. Every value here is
+ * mirrored by `test-fixtures/decision-cards/limits.json`, which both this
+ * module's fixture test and the Rust builder's test assert against. Change a
+ * number in one place and exactly one suite goes red.
+ */
 export const CARD_LIMITS = {
-  /** Card tag JSON, in bytes — client-side self-cap (Richard 9/16: the relay
-   * has no generic per-tag bound, so the authoring side owns this). Generous
-   * against the options, tiny against the kind 9 content cap (61,440) so a
-   * card can never crowd out its fallback. */
-  maxTagBytes: 4096,
+  /** Card tag JSON, in UTF-16 units — client-side self-cap (Richard 9/16:
+   * the relay has no generic per-tag bound, so the authoring side owns
+   * this). Raised 4096 → 16384 for v2: six questions of eight described
+   * options do not fit in 4 KB. Still tiny against the kind 9 content cap
+   * (61,440) so a card can never crowd out its fallback. */
+  maxTagBytes: 16384,
+  /** Interview title. */
   maxTitleChars: 120,
+  /** Interview-level body (context for every question). */
   maxBodyChars: 4000,
+  /** Questions per card (v2). */
+  maxQuestions: 6,
+  /** One question's text. */
+  maxQuestionChars: 300,
+  /** One question's own body. */
+  maxQuestionBodyChars: 1000,
+  /** Progress-chip label. Matches Claude Code's `header` bound. */
+  maxHeaderChars: 12,
+  /** Options PER QUESTION. */
   maxOptions: 8,
   maxLabelChars: 200,
+  /** One option's supporting line. */
+  maxDescriptionChars: 200,
   maxIdChars: 40,
 } as const;
 
 export interface DecisionCardOption {
-  /** Stable per-card identity for the option ("0", "1", … when omitted). */
+  /** Stable per-question identity for the option ("0", "1", … when omitted). */
   id: string;
   label: string;
+  description?: string;
   recommended?: boolean;
 }
 
+export interface CardQuestion {
+  /** Always populated — explicit when the author supplied one, else positional. */
+  id: string;
+  /** Short progress-chip label. UI only; never appears in the fallback text. */
+  header?: string;
+  /** The question itself. A v1 card's question is its title. */
+  question: string;
+  /** Question-level detail. A v1 card keeps its body at interview level. */
+  body?: string;
+  /** Always populated; v1 is always false. */
+  multiSelect: boolean;
+  options: DecisionCardOption[];
+}
+
 export interface DecisionCard {
+  /**
+   * Source wire version. Read by `serializeCardPayload` (which must re-emit
+   * the version it was given) and available for telemetry — never branched
+   * on by a renderer, which sees only the normalized shape.
+   */
+  v: 1 | 2;
+  /**
+   * The interview's name. Always populated: a v2 payload may omit it, in
+   * which case it is DERIVED from the first question and may therefore
+   * exceed `maxTitleChars` (a question may be 300 chars). A derived title is
+   * never written back to the wire — see `serializeCardPayload`.
+   */
   title: string;
   body?: string;
-  options: DecisionCardOption[];
+  /** Author order, always ≥1. A v1 card has exactly one. */
+  questions: CardQuestion[];
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -64,14 +135,178 @@ function boundedString(value: unknown, maxChars: number): string | null {
 }
 
 /**
+ * A body field: absent, blank and OVER-LENGTH all degrade to "no body"
+ * rather than rejecting the card. This is v1's shipped behaviour
+ * (`parsed.body === undefined ? undefined : bounded ?? undefined`) and it is
+ * kept deliberately — the title/question and options carry the ask, so a fat
+ * body is a reason to drop the body, not the card. The AUTHORING side is
+ * strict about the same field; leniency only ever runs render-side.
+ */
+function lenientBody(value: unknown, maxChars: number): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return boundedString(value, maxChars) ?? undefined;
+}
+
+function parseOptions(raw: unknown): DecisionCardOption[] | null {
+  if (!Array.isArray(raw)) {
+    return null;
+  }
+  if (raw.length < 2 || raw.length > CARD_LIMITS.maxOptions) {
+    return null;
+  }
+  let recommendedSeen = false;
+  const options: DecisionCardOption[] = [];
+  for (let index = 0; index < raw.length; index += 1) {
+    const candidate: unknown = raw[index];
+    if (!isPlainObject(candidate)) {
+      return null;
+    }
+    const label = boundedString(candidate.label, CARD_LIMITS.maxLabelChars);
+    if (!label) {
+      return null;
+    }
+    const explicitId =
+      candidate.id === undefined
+        ? null
+        : boundedString(candidate.id, CARD_LIMITS.maxIdChars);
+    const option: DecisionCardOption = {
+      id: explicitId ?? String(index),
+      label,
+    };
+    if (candidate.description !== undefined) {
+      const description = boundedString(
+        candidate.description,
+        CARD_LIMITS.maxDescriptionChars,
+      );
+      if (!description) {
+        return null;
+      }
+      option.description = description;
+    }
+    if (candidate.recommended === true && !recommendedSeen) {
+      option.recommended = true;
+      recommendedSeen = true;
+    }
+    options.push(option);
+  }
+  return options;
+}
+
+/** v1 → one question carrying the card's title, body stays interview-level. */
+function parseV1(parsed: Record<string, unknown>): DecisionCard | null {
+  const title = boundedString(parsed.title, CARD_LIMITS.maxTitleChars);
+  if (!title) {
+    return null;
+  }
+  const body = lenientBody(parsed.body, CARD_LIMITS.maxBodyChars);
+  const options = parseOptions(parsed.options);
+  if (!options) {
+    return null;
+  }
+  const question: CardQuestion = {
+    id: "0",
+    question: title,
+    multiSelect: false,
+    options,
+  };
+  const card: DecisionCard = { v: 1, title, questions: [question] };
+  if (body) {
+    card.body = body;
+  }
+  return card;
+}
+
+function parseV2(parsed: Record<string, unknown>): DecisionCard | null {
+  const rawQuestions = parsed.questions;
+  if (!Array.isArray(rawQuestions)) {
+    return null;
+  }
+  if (
+    rawQuestions.length < 1 ||
+    rawQuestions.length > CARD_LIMITS.maxQuestions
+  ) {
+    return null;
+  }
+  const questions: CardQuestion[] = [];
+  for (let index = 0; index < rawQuestions.length; index += 1) {
+    const candidate: unknown = rawQuestions[index];
+    if (!isPlainObject(candidate)) {
+      return null;
+    }
+    const text = boundedString(
+      candidate.question,
+      CARD_LIMITS.maxQuestionChars,
+    );
+    if (!text) {
+      return null;
+    }
+    const options = parseOptions(candidate.options);
+    if (!options) {
+      return null;
+    }
+    const explicitId =
+      candidate.id === undefined
+        ? null
+        : boundedString(candidate.id, CARD_LIMITS.maxIdChars);
+    const question: CardQuestion = {
+      id: explicitId ?? String(index),
+      question: text,
+      multiSelect: candidate.multiSelect === true,
+      options,
+    };
+    if (candidate.header !== undefined) {
+      const header = boundedString(
+        candidate.header,
+        CARD_LIMITS.maxHeaderChars,
+      );
+      if (!header) {
+        return null;
+      }
+      question.header = header;
+    }
+    const body = lenientBody(candidate.body, CARD_LIMITS.maxQuestionBodyChars);
+    if (body) {
+      question.body = body;
+    }
+    questions.push(question);
+  }
+  // The interview title is optional on the wire; an absent one is the first
+  // question's text, so `card.title` is never empty for a renderer. The
+  // authoring side requires an explicit title once there is more than one
+  // question (a two-question interview named after question one reads as a
+  // mistake), so this derivation is only ever reached for a single question.
+  let title: string;
+  if (parsed.title === undefined) {
+    title = questions[0].question;
+  } else {
+    const explicit = boundedString(parsed.title, CARD_LIMITS.maxTitleChars);
+    if (!explicit) {
+      return null;
+    }
+    title = explicit;
+  }
+  const body = lenientBody(parsed.body, CARD_LIMITS.maxBodyChars);
+  const card: DecisionCard = { v: 2, title, questions };
+  if (body) {
+    card.body = body;
+  }
+  return card;
+}
+
+/**
  * Parse the card tag off a signed event's tags. Returns null for: no card
- * tag, non-JSON payloads, wrong version, or any shape outside the bounds —
- * the caller then renders the message's fallback content as plain markdown.
+ * tag, non-JSON payloads, an unknown or missing version, or any shape
+ * outside the bounds — the caller then renders the message's fallback
+ * content as plain markdown. Total by construction: every malformed shape
+ * returns null, nothing throws.
  *
  * Leniency is deliberate and narrow: if an author marks MORE than one option
- * recommended, only the first marker survives (the card still renders and
- * still one-taps; the strict authoring path in `buildCardTag` refuses the
- * send before it can ever hit the wire).
+ * recommended within one question, only the first marker survives (the card
+ * still renders and still one-taps; the strict authoring path in
+ * `buildCardTag` refuses the send before it can ever hit the wire). An
+ * over-long body degrades to no body for the same reason.
  */
 export function parseCardTags(tags: string[][]): DecisionCard | null {
   const raw = tags.find((tag) => tag[0] === "card" && tag.length >= 2);
@@ -92,129 +327,369 @@ export function parseCardTags(tags: string[][]): DecisionCard | null {
   } catch {
     return null;
   }
-  if (!isPlainObject(parsed) || parsed.v !== 1) {
+  if (!isPlainObject(parsed)) {
     return null;
   }
-  const title = boundedString(parsed.title, CARD_LIMITS.maxTitleChars);
-  if (!title) {
-    return null;
+  // Strict equality on a number: `v: "2"`, `v: 3` and a missing `v` are all
+  // unknown versions and all degrade to the fallback text.
+  if (parsed.v === 1) {
+    return parseV1(parsed);
   }
-  const body =
-    parsed.body === undefined
-      ? undefined
-      : (boundedString(parsed.body, CARD_LIMITS.maxBodyChars) ?? undefined);
-  // `body: ""` and whitespace-only bodies degrade to "no body" rather than
-  // rejecting the card — the title and options carry the question.
-  if (!Array.isArray(parsed.options)) {
-    return null;
+  if (parsed.v === 2) {
+    return parseV2(parsed);
   }
-  const optionCount = parsed.options.length;
-  if (optionCount < 2 || optionCount > CARD_LIMITS.maxOptions) {
-    return null;
-  }
-  let recommendedSeen = false;
-  const options: DecisionCardOption[] = [];
-  for (let index = 0; index < optionCount; index += 1) {
-    const candidate = parsed.options[index];
-    if (!isPlainObject(candidate)) {
-      return null;
-    }
-    const label = boundedString(candidate.label, CARD_LIMITS.maxLabelChars);
-    if (!label) {
-      return null;
-    }
-    const explicitId =
-      candidate.id === undefined
-        ? null
-        : boundedString(candidate.id, CARD_LIMITS.maxIdChars);
-    const option: DecisionCardOption = {
-      id: explicitId ?? String(index),
-      label,
-    };
-    if (candidate.recommended === true && !recommendedSeen) {
-      option.recommended = true;
-      recommendedSeen = true;
-    }
-    options.push(option);
-  }
-  return body ? { title, body, options } : { title, options };
+  return null;
 }
 
 /**
- * Authoring-side counterpart: validate strictly and build the wire tag. This
- * is the seam the CLI `--card` flag and any future composer builder call —
- * it REFUSES shapes the parse tolerates (more than one recommended option),
- * so the leniency above stays a rendering guard, never a way to publish a
- * self-contradicting card.
+ * Re-serialize an ALREADY-NORMALIZED card back to its wire payload — the
+ * inverse of `parseCardTags`, pinned by a round-trip test:
+ *
+ *   parseCardTags([["card", serializeCardPayload(c)]])  deep-equals  c
+ *
+ * The asks cache needs this: it stores the raw payload JSON so a reload
+ * re-validates through the CURRENT parser, and `JSON.stringify({v:1,...card})`
+ * only worked while `DecisionCard` WAS the payload minus its version. It is
+ * not the same function as `buildCardTag`, whose input is untrusted author
+ * JSON and which omits ids the author never supplied.
  */
-export function buildCardTag(card: DecisionCard): {
+export function serializeCardPayload(card: DecisionCard): string {
+  if (card.v === 1) {
+    if (card.questions.length !== 1) {
+      throw new Error("a v1 card must carry exactly one question");
+    }
+    const payload: Record<string, unknown> = { v: 1, title: card.title };
+    if (card.body) {
+      payload.body = card.body;
+    }
+    payload.options = card.questions[0].options.map(serializeOption);
+    return JSON.stringify(payload);
+  }
+  const payload: Record<string, unknown> = { v: 2 };
+  // A title equal to the first question's text is exactly what the parser
+  // derives for a title-less payload, so omitting it here round-trips and
+  // keeps a derived title (which may exceed maxTitleChars) off the wire.
+  if (card.title !== card.questions[0]?.question) {
+    payload.title = card.title;
+  }
+  if (card.body) {
+    payload.body = card.body;
+  }
+  payload.questions = card.questions.map((question) => {
+    const entry: Record<string, unknown> = { id: question.id };
+    if (question.header) {
+      entry.header = question.header;
+    }
+    entry.question = question.question;
+    if (question.body) {
+      entry.body = question.body;
+    }
+    if (question.multiSelect) {
+      entry.multiSelect = true;
+    }
+    entry.options = question.options.map(serializeOption);
+    return entry;
+  });
+  return JSON.stringify(payload);
+}
+
+function serializeOption(option: DecisionCardOption): Record<string, unknown> {
+  const entry: Record<string, unknown> = {
+    id: option.id,
+    label: option.label,
+  };
+  if (option.description) {
+    entry.description = option.description;
+  }
+  if (option.recommended === true) {
+    entry.recommended = true;
+  }
+  return entry;
+}
+
+/** Authoring-side failure. Message text is mirrored by the Rust builder. */
+function reject(message: string): never {
+  throw new Error(message);
+}
+
+function requireBounded(
+  value: unknown,
+  maxChars: number,
+  message: string,
+): string {
+  const bounded = boundedString(value, maxChars);
+  if (bounded === null) {
+    reject(message);
+  }
+  return bounded;
+}
+
+/**
+ * A body on the AUTHORING side: absent or blank is fine, over-length is a
+ * refusal. The parse degrades the same field instead — leniency runs
+ * render-side only, so an author never silently ships a truncated card.
+ */
+function strictBody(
+  value: unknown,
+  maxChars: number,
+  message: string,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    reject(message);
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+  if (trimmed.length > maxChars) {
+    reject(message);
+  }
+  return trimmed;
+}
+
+function buildOptions(raw: unknown, prefix: string): Record<string, unknown>[] {
+  if (!Array.isArray(raw)) {
+    reject(`${prefix}options must be an array`);
+  }
+  if (raw.length < 2 || raw.length > CARD_LIMITS.maxOptions) {
+    reject(
+      `${prefix}needs 2-${CARD_LIMITS.maxOptions} options (got ${raw.length})`,
+    );
+  }
+  let recommendedCount = 0;
+  const options: Record<string, unknown>[] = [];
+  for (let index = 0; index < raw.length; index += 1) {
+    const candidate: unknown = raw[index];
+    if (!isPlainObject(candidate)) {
+      reject(`${prefix}option ${index + 1} must be an object`);
+    }
+    const label = requireBounded(
+      candidate.label,
+      CARD_LIMITS.maxLabelChars,
+      `${prefix}option ${index + 1} label must be 1-${CARD_LIMITS.maxLabelChars} characters`,
+    );
+    // Mirror of the Rust builder: an explicit bounded id rides the wire, an
+    // absent one is omitted entirely (the parse derives positional ids — ids
+    // are render keys, not identity promises).
+    const entry: Record<string, unknown> = {};
+    if (candidate.id !== undefined) {
+      if (typeof candidate.id !== "string") {
+        reject(`${prefix}option ${index + 1} id must be a string`);
+      }
+      const id = candidate.id.trim();
+      if (id.length > CARD_LIMITS.maxIdChars) {
+        reject(
+          `${prefix}option ${index + 1} id must be at most ${CARD_LIMITS.maxIdChars} characters`,
+        );
+      }
+      if (id.length > 0) {
+        entry.id = id;
+      }
+    }
+    entry.label = label;
+    if (candidate.description !== undefined) {
+      entry.description = requireBounded(
+        candidate.description,
+        CARD_LIMITS.maxDescriptionChars,
+        `${prefix}option ${index + 1} description must be 1-${CARD_LIMITS.maxDescriptionChars} characters`,
+      );
+    }
+    if (candidate.recommended === true) {
+      recommendedCount += 1;
+      entry.recommended = true;
+    }
+    options.push(entry);
+  }
+  if (recommendedCount > 1) {
+    reject(
+      `${prefix}at most one option may be recommended (${recommendedCount} marked)`,
+    );
+  }
+  return options;
+}
+
+/**
+ * Authoring-side counterpart to the parse: validate an untrusted author
+ * payload strictly and build both halves of the outgoing kind 9 — the
+ * `["card", …]` tag and the human-readable fallback content.
+ *
+ * This is the seam the CLI `--card` flag mirrors
+ * (`crates/buzz-cli/src/commands/card.rs`) and it REFUSES shapes the parse
+ * tolerates (two recommended options, an over-long body), so the leniency
+ * above stays a rendering guard and never a way to publish a
+ * self-contradicting card. The input is the raw payload an author writes —
+ * the same JSON `--card` takes — which is why `v` is optional here and
+ * required by the parse: the builder always EMITS a version.
+ */
+export function buildCardTag(input: unknown): {
   tag: string[][];
   fallbackContent: string;
 } {
-  const title = boundedString(card.title, CARD_LIMITS.maxTitleChars);
-  if (!title) {
-    throw new Error("card title must be 1-120 characters");
+  if (!isPlainObject(input)) {
+    reject("payload must be a JSON object");
   }
-  let body: string | undefined;
-  if (card.body !== undefined && card.body.trim().length > 0) {
-    const bounded = boundedString(card.body, CARD_LIMITS.maxBodyChars);
-    if (bounded === null) {
-      throw new Error("card body must be at most 4000 characters");
-    }
-    body = bounded;
-  }
-  if (
-    !Array.isArray(card.options) ||
-    card.options.length < 2 ||
-    card.options.length > CARD_LIMITS.maxOptions
-  ) {
-    throw new Error("card needs 2-8 options");
-  }
-  const recommended = card.options.filter((o) => o.recommended === true);
-  if (recommended.length > 1) {
-    throw new Error(
-      `at most one option may be recommended (${recommended.length} marked)`,
+  const version = resolveAuthoredVersion(input);
+  const payload = version === 1 ? buildV1Payload(input) : buildV2Payload(input);
+  const json = JSON.stringify(payload);
+  if (json.length > CARD_LIMITS.maxTagBytes) {
+    reject(
+      `payload exceeds ${CARD_LIMITS.maxTagBytes} characters after serialization`,
     );
   }
-  const options = card.options.map((option, index) => {
-    const label = boundedString(option.label, CARD_LIMITS.maxLabelChars);
-    if (!label) {
-      throw new Error(`option ${index + 1} label must be 1-200 characters`);
-    }
-    const entry: Record<string, unknown> = { label };
-    const id =
-      option.id === undefined
-        ? null
-        : boundedString(option.id, CARD_LIMITS.maxIdChars);
-    if (id) {
-      entry.id = id;
-    }
-    if (option.recommended === true) {
-      entry.recommended = true;
-    }
-    return entry;
-  });
-  const payload: Record<string, unknown> = { v: 1, title, options };
+  const tag = [["card", json]];
+  // Generate the fallback from the card as the PARSER sees it, not from the
+  // author's input: the text a plain client reads is then provably the text
+  // for the card the web client renders, with no second normalization to
+  // keep in step.
+  const parsed = parseCardTags(tag);
+  if (!parsed) {
+    reject("internal: built card payload failed its own parse");
+  }
+  return { tag, fallbackContent: cardFallbackText(parsed) };
+}
+
+/**
+ * Which version is the author writing? An explicit `v` wins. With none, a
+ * `questions` key means v2 and anything else means v1 — v1 payloads in the
+ * wild and in every existing `--card` invocation omit the field.
+ */
+function resolveAuthoredVersion(input: Record<string, unknown>): 1 | 2 {
+  if (input.v === undefined) {
+    return input.questions === undefined ? 1 : 2;
+  }
+  if (input.v === 1) {
+    return 1;
+  }
+  if (input.v === 2) {
+    return 2;
+  }
+  reject(`unsupported version ${JSON.stringify(input.v)} (expected 1 or 2)`);
+}
+
+function buildV1Payload(
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const title = requireBounded(
+    input.title,
+    CARD_LIMITS.maxTitleChars,
+    `title must be 1-${CARD_LIMITS.maxTitleChars} characters`,
+  );
+  const body = strictBody(
+    input.body,
+    CARD_LIMITS.maxBodyChars,
+    `body must be at most ${CARD_LIMITS.maxBodyChars} characters`,
+  );
+  const options = buildOptions(input.options, "");
+  const payload: Record<string, unknown> = { v: 1, title };
   if (body) {
     payload.body = body;
   }
-  const tag = ["card", JSON.stringify(payload)];
-  if (tag[1].length > CARD_LIMITS.maxTagBytes) {
-    throw new Error(
-      `card payload exceeds ${CARD_LIMITS.maxTagBytes} bytes after serialization`,
+  payload.options = options;
+  return payload;
+}
+
+function buildV2Payload(
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const rawQuestions = input.questions;
+  if (!Array.isArray(rawQuestions)) {
+    reject("questions must be an array");
+  }
+  if (
+    rawQuestions.length < 1 ||
+    rawQuestions.length > CARD_LIMITS.maxQuestions
+  ) {
+    reject(
+      `needs 1-${CARD_LIMITS.maxQuestions} questions (got ${rawQuestions.length})`,
     );
   }
-  return {
-    tag: [tag],
-    fallbackContent: cardFallbackText({ title, body, options: card.options }),
-  };
+  const questions: Record<string, unknown>[] = [];
+  for (let index = 0; index < rawQuestions.length; index += 1) {
+    const candidate: unknown = rawQuestions[index];
+    const prefix = `question ${index + 1} `;
+    if (!isPlainObject(candidate)) {
+      reject(`question ${index + 1} must be an object`);
+    }
+    const text = requireBounded(
+      candidate.question,
+      CARD_LIMITS.maxQuestionChars,
+      `${prefix}text must be 1-${CARD_LIMITS.maxQuestionChars} characters`,
+    );
+    const entry: Record<string, unknown> = {};
+    if (candidate.id !== undefined) {
+      if (typeof candidate.id !== "string") {
+        reject(`${prefix}id must be a string`);
+      }
+      const id = candidate.id.trim();
+      if (id.length > CARD_LIMITS.maxIdChars) {
+        reject(
+          `${prefix}id must be at most ${CARD_LIMITS.maxIdChars} characters`,
+        );
+      }
+      if (id.length > 0) {
+        entry.id = id;
+      }
+    }
+    if (candidate.header !== undefined) {
+      entry.header = requireBounded(
+        candidate.header,
+        CARD_LIMITS.maxHeaderChars,
+        `${prefix}header must be 1-${CARD_LIMITS.maxHeaderChars} characters`,
+      );
+    }
+    entry.question = text;
+    const body = strictBody(
+      candidate.body,
+      CARD_LIMITS.maxQuestionBodyChars,
+      `${prefix}body must be at most ${CARD_LIMITS.maxQuestionBodyChars} characters`,
+    );
+    if (body) {
+      entry.body = body;
+    }
+    if (candidate.multiSelect === true) {
+      entry.multiSelect = true;
+    }
+    entry.options = buildOptions(candidate.options, prefix);
+    questions.push(entry);
+  }
+  const payload: Record<string, unknown> = { v: 2 };
+  // One question may borrow its title from the question itself; more than
+  // one must be named, or the interview reads as its own first question.
+  if (input.title !== undefined || questions.length > 1) {
+    payload.title = requireBounded(
+      input.title,
+      CARD_LIMITS.maxTitleChars,
+      `title must be 1-${CARD_LIMITS.maxTitleChars} characters`,
+    );
+  }
+  const body = strictBody(
+    input.body,
+    CARD_LIMITS.maxBodyChars,
+    `body must be at most ${CARD_LIMITS.maxBodyChars} characters`,
+  );
+  if (body) {
+    payload.body = body;
+  }
+  payload.questions = questions;
+  return payload;
 }
 
 /**
  * The human-readable content a card event carries alongside the tag. Every
  * plain client renders exactly this — the desktop app today, any nostr
- * reader forever — so it must read as a complete question on its own, with
- * the recommendation visible, not as a corrupted fragment of the card.
+ * reader forever — so it must read as a complete, answerable question set on
+ * its own, with the recommendation visible, not as a corrupted fragment of
+ * the card.
+ *
+ * The v1 shape is a special case of the v2 one, not a branch: a lone
+ * question whose text IS the title and which carries no body and no
+ * multi-select hint adds no heading of its own, which is exactly the text v1
+ * has emitted since 9/16 (byte-identical, pinned by this module's tests and
+ * by the Rust mirror). `header` is a progress-chip label and never appears
+ * here — it has no meaning in a linear text rendering.
  */
 export function cardFallbackText(card: DecisionCard): string {
   const lines: string[] = [`**${card.title.trim()}**`];
@@ -222,11 +697,31 @@ export function cardFallbackText(card: DecisionCard): string {
   if (body) {
     lines.push("", body);
   }
-  lines.push("");
-  for (const option of card.options) {
-    lines.push(
-      `- ${option.label.trim()}${option.recommended === true ? " *(Recommended)*" : ""}`,
-    );
+  const count = card.questions.length;
+  for (let index = 0; index < count; index += 1) {
+    const question = card.questions[index];
+    const text = question.question.trim();
+    const questionBody = question.body?.trim();
+    const implicit =
+      count === 1 &&
+      text === card.title.trim() &&
+      !questionBody &&
+      !question.multiSelect;
+    if (!implicit) {
+      const number = count > 1 ? `${index + 1}. ` : "";
+      const hint = question.multiSelect ? " _(choose any that apply)_" : "";
+      lines.push("", `**${number}${text}**${hint}`);
+      if (questionBody) {
+        lines.push("", questionBody);
+      }
+    }
+    lines.push("");
+    for (const option of question.options) {
+      const marker = option.recommended === true ? " *(Recommended)*" : "";
+      const description = option.description?.trim();
+      const detail = description ? ` — ${description}` : "";
+      lines.push(`- ${option.label.trim()}${marker}${detail}`);
+    }
   }
   lines.push("", "_Reply with an option or your own answer._");
   return lines.join("\n");

@@ -61,12 +61,14 @@ export function AskRow({
   >({ phase: "idle" });
   const label = authorLabel(ask.authorPubkey, profiles);
   const isDm = channelType === "dm";
+  // Phase 1 of the v2 interview: the row previews the FIRST question's
+  // options, which for a v1 card is the whole card. The multi-question
+  // affordance (progress chip, in-row sheet) is a later phase.
+  const options = ask.card.questions[0]?.options ?? [];
   // Preview: the recommended option when one is marked, else the first
   // option — but only the marked one is STYLED as recommended.
-  const recommended = ask.card.options.find(
-    (option) => option.recommended === true,
-  );
-  const preview = recommended ?? ask.card.options[0];
+  const recommended = options.find((option) => option.recommended === true);
+  const preview = recommended ?? options[0];
 
   async function answer(optionLabel: string) {
     if (state.phase === "sending" || state.phase === "sent") {
@@ -172,7 +174,7 @@ export function AskRow({
         </p>
       ) : (
         <div className="mb-2 flex flex-wrap gap-1.5 px-3">
-          {ask.card.options.map((option) => (
+          {options.map((option) => (
             <button
               key={option.id}
               type="button"

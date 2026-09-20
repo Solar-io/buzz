@@ -1,0 +1,1077 @@
+[
+  {
+    "name": "v1 accept — title, body, an explicit id and a recommendation",
+    "payload": {
+      "v": 1,
+      "title": "Ship the claims fix?",
+      "body": "Second bounce needed.",
+      "options": [
+        {
+          "id": "now",
+          "label": "Relaunch now"
+        },
+        {
+          "label": "Let it ride",
+          "recommended": true
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "title": "Ship the claims fix?",
+      "body": "Second bounce needed.",
+      "options": [
+        {
+          "id": "now",
+          "label": "Relaunch now"
+        },
+        {
+          "label": "Let it ride",
+          "recommended": true
+        }
+      ]
+    },
+    "fallback": "**Ship the claims fix?**\n\nSecond bounce needed.\n\n- Relaunch now\n- Let it ride *(Recommended)*\n\n_Reply with an option or your own answer._"
+  },
+  {
+    "name": "v1 accept — no body, ids derived positionally",
+    "payload": {
+      "v": 1,
+      "title": "Ship tonight?",
+      "options": [
+        {
+          "label": "Yes"
+        },
+        {
+          "label": "No"
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "title": "Ship tonight?",
+      "options": [
+        {
+          "label": "Yes"
+        },
+        {
+          "label": "No"
+        }
+      ]
+    },
+    "fallback": "**Ship tonight?**\n\n- Yes\n- No\n\n_Reply with an option or your own answer._"
+  },
+  {
+    "name": "v1 accept — eight options at the cap",
+    "payload": {
+      "v": 1,
+      "title": "Which surface?",
+      "options": [
+        {
+          "label": "a"
+        },
+        {
+          "label": "b"
+        },
+        {
+          "label": "c"
+        },
+        {
+          "label": "d"
+        },
+        {
+          "label": "e"
+        },
+        {
+          "label": "f"
+        },
+        {
+          "label": "g"
+        },
+        {
+          "label": "h"
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "title": "Which surface?",
+      "options": [
+        {
+          "label": "a"
+        },
+        {
+          "label": "b"
+        },
+        {
+          "label": "c"
+        },
+        {
+          "label": "d"
+        },
+        {
+          "label": "e"
+        },
+        {
+          "label": "f"
+        },
+        {
+          "label": "g"
+        },
+        {
+          "label": "h"
+        }
+      ]
+    },
+    "fallback": "**Which surface?**\n\n- a\n- b\n- c\n- d\n- e\n- f\n- g\n- h\n\n_Reply with an option or your own answer._"
+  },
+  {
+    "name": "v1 accept — author omits the version field entirely",
+    "payload": {
+      "title": "Ship tonight?",
+      "options": [
+        {
+          "label": "Yes"
+        },
+        {
+          "label": "No"
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "title": "Ship tonight?",
+      "options": [
+        {
+          "label": "Yes"
+        },
+        {
+          "label": "No"
+        }
+      ]
+    },
+    "fallback": "**Ship tonight?**\n\n- Yes\n- No\n\n_Reply with an option or your own answer._",
+    "parseRaw": "reject"
+  },
+  {
+    "name": "v1 accept — a 99-rocket label is 198 UTF-16 units, inside the 200 bound",
+    "payload": {
+      "v": 1,
+      "title": "Emoji bound",
+      "options": [
+        {
+          "label": "🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀"
+        },
+        {
+          "label": "plain"
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "title": "Emoji bound",
+      "options": [
+        {
+          "label": "🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀"
+        },
+        {
+          "label": "plain"
+        }
+      ]
+    },
+    "fallback": "**Emoji bound**\n\n- 🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀\n- plain\n\n_Reply with an option or your own answer._"
+  },
+  {
+    "name": "v2 accept — one question, no title, title derives from the question",
+    "payload": {
+      "v": 2,
+      "questions": [
+        {
+          "question": "Ship the claims fix?",
+          "options": [
+            {
+              "id": "now",
+              "label": "Relaunch now"
+            },
+            {
+              "label": "Let it ride",
+              "recommended": true
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 2,
+      "questions": [
+        {
+          "question": "Ship the claims fix?",
+          "options": [
+            {
+              "id": "now",
+              "label": "Relaunch now"
+            },
+            {
+              "label": "Let it ride",
+              "recommended": true
+            }
+          ]
+        }
+      ]
+    },
+    "fallback": "**Ship the claims fix?**\n\n- Relaunch now\n- Let it ride *(Recommended)*\n\n_Reply with an option or your own answer._",
+    "parseRaw": "accept"
+  },
+  {
+    "name": "v2 accept — four questions in author order",
+    "payload": {
+      "v": 2,
+      "title": "Ship the claims fix",
+      "body": "Context for every question.",
+      "questions": [
+        {
+          "id": "scope",
+          "question": "Which surfaces?",
+          "options": [
+            {
+              "label": "Web only"
+            },
+            {
+              "label": "Web + desktop"
+            }
+          ]
+        },
+        {
+          "question": "Which extras?",
+          "options": [
+            {
+              "label": "Docs"
+            },
+            {
+              "label": "Tests"
+            }
+          ]
+        },
+        {
+          "question": "When?",
+          "options": [
+            {
+              "label": "Now"
+            },
+            {
+              "label": "After the release"
+            }
+          ]
+        },
+        {
+          "question": "Who reviews?",
+          "options": [
+            {
+              "label": "Sam"
+            },
+            {
+              "label": "Nobody"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 2,
+      "title": "Ship the claims fix",
+      "body": "Context for every question.",
+      "questions": [
+        {
+          "id": "scope",
+          "question": "Which surfaces?",
+          "options": [
+            {
+              "label": "Web only"
+            },
+            {
+              "label": "Web + desktop"
+            }
+          ]
+        },
+        {
+          "question": "Which extras?",
+          "options": [
+            {
+              "label": "Docs"
+            },
+            {
+              "label": "Tests"
+            }
+          ]
+        },
+        {
+          "question": "When?",
+          "options": [
+            {
+              "label": "Now"
+            },
+            {
+              "label": "After the release"
+            }
+          ]
+        },
+        {
+          "question": "Who reviews?",
+          "options": [
+            {
+              "label": "Sam"
+            },
+            {
+              "label": "Nobody"
+            }
+          ]
+        }
+      ]
+    },
+    "fallback": "**Ship the claims fix**\n\nContext for every question.\n\n**1. Which surfaces?**\n\n- Web only\n- Web + desktop\n\n**2. Which extras?**\n\n- Docs\n- Tests\n\n**3. When?**\n\n- Now\n- After the release\n\n**4. Who reviews?**\n\n- Sam\n- Nobody\n\n_Reply with an option or your own answer._"
+  },
+  {
+    "name": "v2 accept — six questions at the cap",
+    "payload": {
+      "v": 2,
+      "title": "Six in a row",
+      "questions": [
+        {
+          "question": "Question 1?",
+          "options": [
+            {
+              "label": "1a"
+            },
+            {
+              "label": "1b"
+            }
+          ]
+        },
+        {
+          "question": "Question 2?",
+          "options": [
+            {
+              "label": "2a"
+            },
+            {
+              "label": "2b"
+            }
+          ]
+        },
+        {
+          "question": "Question 3?",
+          "options": [
+            {
+              "label": "3a"
+            },
+            {
+              "label": "3b"
+            }
+          ]
+        },
+        {
+          "question": "Question 4?",
+          "options": [
+            {
+              "label": "4a"
+            },
+            {
+              "label": "4b"
+            }
+          ]
+        },
+        {
+          "question": "Question 5?",
+          "options": [
+            {
+              "label": "5a"
+            },
+            {
+              "label": "5b"
+            }
+          ]
+        },
+        {
+          "question": "Question 6?",
+          "options": [
+            {
+              "label": "6a"
+            },
+            {
+              "label": "6b"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 2,
+      "title": "Six in a row",
+      "questions": [
+        {
+          "question": "Question 1?",
+          "options": [
+            {
+              "label": "1a"
+            },
+            {
+              "label": "1b"
+            }
+          ]
+        },
+        {
+          "question": "Question 2?",
+          "options": [
+            {
+              "label": "2a"
+            },
+            {
+              "label": "2b"
+            }
+          ]
+        },
+        {
+          "question": "Question 3?",
+          "options": [
+            {
+              "label": "3a"
+            },
+            {
+              "label": "3b"
+            }
+          ]
+        },
+        {
+          "question": "Question 4?",
+          "options": [
+            {
+              "label": "4a"
+            },
+            {
+              "label": "4b"
+            }
+          ]
+        },
+        {
+          "question": "Question 5?",
+          "options": [
+            {
+              "label": "5a"
+            },
+            {
+              "label": "5b"
+            }
+          ]
+        },
+        {
+          "question": "Question 6?",
+          "options": [
+            {
+              "label": "6a"
+            },
+            {
+              "label": "6b"
+            }
+          ]
+        }
+      ]
+    },
+    "fallback": "**Six in a row**\n\n**1. Question 1?**\n\n- 1a\n- 1b\n\n**2. Question 2?**\n\n- 2a\n- 2b\n\n**3. Question 3?**\n\n- 3a\n- 3b\n\n**4. Question 4?**\n\n- 4a\n- 4b\n\n**5. Question 5?**\n\n- 5a\n- 5b\n\n**6. Question 6?**\n\n- 6a\n- 6b\n\n_Reply with an option or your own answer._"
+  },
+  {
+    "name": "v2 accept — multiSelect, headers and option descriptions",
+    "payload": {
+      "v": 2,
+      "title": "Release shape",
+      "questions": [
+        {
+          "header": "Scope",
+          "question": "Which surfaces?",
+          "multiSelect": true,
+          "options": [
+            {
+              "id": "web",
+              "label": "Web",
+              "description": "The SPA and the iOS shell bundle",
+              "recommended": true
+            },
+            {
+              "id": "cli",
+              "label": "CLI",
+              "description": "buzz messages send"
+            }
+          ]
+        },
+        {
+          "header": "Timing",
+          "question": "When?",
+          "options": [
+            {
+              "label": "Tonight"
+            },
+            {
+              "label": "Monday"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 2,
+      "title": "Release shape",
+      "questions": [
+        {
+          "header": "Scope",
+          "question": "Which surfaces?",
+          "multiSelect": true,
+          "options": [
+            {
+              "id": "web",
+              "label": "Web",
+              "description": "The SPA and the iOS shell bundle",
+              "recommended": true
+            },
+            {
+              "id": "cli",
+              "label": "CLI",
+              "description": "buzz messages send"
+            }
+          ]
+        },
+        {
+          "header": "Timing",
+          "question": "When?",
+          "options": [
+            {
+              "label": "Tonight"
+            },
+            {
+              "label": "Monday"
+            }
+          ]
+        }
+      ]
+    },
+    "fallback": "**Release shape**\n\n**1. Which surfaces?** _(choose any that apply)_\n\n- Web *(Recommended)* — The SPA and the iOS shell bundle\n- CLI — buzz messages send\n\n**2. When?**\n\n- Tonight\n- Monday\n\n_Reply with an option or your own answer._"
+  },
+  {
+    "name": "v2 accept — question-level body and explicit question ids",
+    "payload": {
+      "v": 2,
+      "title": "Rollout",
+      "questions": [
+        {
+          "id": "stage",
+          "question": "Dev or prod first?",
+          "body": "Prod is co-resident on crichton; dev is the sandbox.",
+          "options": [
+            {
+              "label": "Dev"
+            },
+            {
+              "label": "Prod"
+            }
+          ]
+        },
+        {
+          "id": "notify",
+          "question": "Announce it?",
+          "options": [
+            {
+              "label": "Yes"
+            },
+            {
+              "label": "No"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 2,
+      "title": "Rollout",
+      "questions": [
+        {
+          "id": "stage",
+          "question": "Dev or prod first?",
+          "body": "Prod is co-resident on crichton; dev is the sandbox.",
+          "options": [
+            {
+              "label": "Dev"
+            },
+            {
+              "label": "Prod"
+            }
+          ]
+        },
+        {
+          "id": "notify",
+          "question": "Announce it?",
+          "options": [
+            {
+              "label": "Yes"
+            },
+            {
+              "label": "No"
+            }
+          ]
+        }
+      ]
+    },
+    "fallback": "**Rollout**\n\n**1. Dev or prod first?**\n\nProd is co-resident on crichton; dev is the sandbox.\n\n- Dev\n- Prod\n\n**2. Announce it?**\n\n- Yes\n- No\n\n_Reply with an option or your own answer._"
+  },
+  {
+    "name": "reject — v3 is an unknown version",
+    "payload": {
+      "v": 3,
+      "title": "Q",
+      "options": [
+        {
+          "label": "A"
+        },
+        {
+          "label": "B"
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "unsupported version 3"
+  },
+  {
+    "name": "reject — a string version is not version 2",
+    "payload": {
+      "v": "2",
+      "title": "Q",
+      "options": [
+        {
+          "label": "A"
+        },
+        {
+          "label": "B"
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "unsupported version \"2\""
+  },
+  {
+    "name": "reject — the payload is not a JSON object",
+    "payload": [
+      "not",
+      "an",
+      "object"
+    ],
+    "expect": "reject",
+    "reason": "payload must be a JSON object"
+  },
+  {
+    "name": "reject — an interview with zero questions",
+    "payload": {
+      "v": 2,
+      "title": "Q",
+      "questions": []
+    },
+    "expect": "reject",
+    "reason": "needs 1-6 questions (got 0)"
+  },
+  {
+    "name": "reject — seven questions is one over the cap",
+    "payload": {
+      "v": 2,
+      "title": "Q",
+      "questions": [
+        {
+          "question": "Q1?",
+          "options": [
+            {
+              "label": "a"
+            },
+            {
+              "label": "b"
+            }
+          ]
+        },
+        {
+          "question": "Q2?",
+          "options": [
+            {
+              "label": "a"
+            },
+            {
+              "label": "b"
+            }
+          ]
+        },
+        {
+          "question": "Q3?",
+          "options": [
+            {
+              "label": "a"
+            },
+            {
+              "label": "b"
+            }
+          ]
+        },
+        {
+          "question": "Q4?",
+          "options": [
+            {
+              "label": "a"
+            },
+            {
+              "label": "b"
+            }
+          ]
+        },
+        {
+          "question": "Q5?",
+          "options": [
+            {
+              "label": "a"
+            },
+            {
+              "label": "b"
+            }
+          ]
+        },
+        {
+          "question": "Q6?",
+          "options": [
+            {
+              "label": "a"
+            },
+            {
+              "label": "b"
+            }
+          ]
+        },
+        {
+          "question": "Q7?",
+          "options": [
+            {
+              "label": "a"
+            },
+            {
+              "label": "b"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "needs 1-6 questions (got 7)"
+  },
+  {
+    "name": "reject — a question with one option",
+    "payload": {
+      "v": 2,
+      "title": "Q",
+      "questions": [
+        {
+          "question": "Only one?",
+          "options": [
+            {
+              "label": "A"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "question 1 needs 2-8 options (got 1)"
+  },
+  {
+    "name": "reject — a question with nine options",
+    "payload": {
+      "v": 2,
+      "title": "Q",
+      "questions": [
+        {
+          "question": "Too many?",
+          "options": [
+            {
+              "label": "a"
+            },
+            {
+              "label": "b"
+            },
+            {
+              "label": "c"
+            },
+            {
+              "label": "d"
+            },
+            {
+              "label": "e"
+            },
+            {
+              "label": "f"
+            },
+            {
+              "label": "g"
+            },
+            {
+              "label": "h"
+            },
+            {
+              "label": "i"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "question 1 needs 2-8 options (got 9)"
+  },
+  {
+    "name": "reject — a 121-character title",
+    "payload": {
+      "v": 1,
+      "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "options": [
+        {
+          "label": "A"
+        },
+        {
+          "label": "B"
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "title must be 1-120 characters"
+  },
+  {
+    "name": "reject — a 301-character question",
+    "payload": {
+      "v": 2,
+      "title": "Q",
+      "questions": [
+        {
+          "question": "Fine?",
+          "options": [
+            {
+              "label": "A"
+            },
+            {
+              "label": "B"
+            }
+          ]
+        },
+        {
+          "question": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+          "options": [
+            {
+              "label": "A"
+            },
+            {
+              "label": "B"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "question 2 text must be 1-300 characters"
+  },
+  {
+    "name": "reject — a 13-character header",
+    "payload": {
+      "v": 2,
+      "title": "Q",
+      "questions": [
+        {
+          "header": "thirteen char",
+          "question": "Fine?",
+          "options": [
+            {
+              "label": "A"
+            },
+            {
+              "label": "B"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "question 1 header must be 1-12 characters"
+  },
+  {
+    "name": "reject — a 201-character option label",
+    "payload": {
+      "v": 1,
+      "title": "Q",
+      "options": [
+        {
+          "label": "A"
+        },
+        {
+          "label": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "option 2 label must be 1-200 characters"
+  },
+  {
+    "name": "reject — a 201-character option description",
+    "payload": {
+      "v": 2,
+      "title": "Q",
+      "questions": [
+        {
+          "question": "Fine?",
+          "options": [
+            {
+              "label": "A",
+              "description": "ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+            },
+            {
+              "label": "B"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "question 1 option 1 description must be 1-200 characters"
+  },
+  {
+    "name": "reject — a 101-rocket label is 202 UTF-16 units, past the 200 bound",
+    "payload": {
+      "v": 1,
+      "title": "Emoji bound",
+      "options": [
+        {
+          "label": "🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀"
+        },
+        {
+          "label": "plain"
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "option 1 label must be 1-200 characters"
+  },
+  {
+    "name": "reject — two recommended options in one question",
+    "payload": {
+      "v": 2,
+      "title": "Q",
+      "questions": [
+        {
+          "question": "Fine?",
+          "options": [
+            {
+              "label": "A",
+              "recommended": true
+            },
+            {
+              "label": "B",
+              "recommended": true
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "at most one option may be recommended (2 marked)",
+    "parseRaw": "accept"
+  },
+  {
+    "name": "reject — a question that is not an object",
+    "payload": {
+      "v": 2,
+      "title": "Q",
+      "questions": [
+        {
+          "question": "Fine?",
+          "options": [
+            {
+              "label": "A"
+            },
+            {
+              "label": "B"
+            }
+          ]
+        },
+        "nope"
+      ]
+    },
+    "expect": "reject",
+    "reason": "question 2 must be an object"
+  },
+  {
+    "name": "reject — options is not an array",
+    "payload": {
+      "v": 1,
+      "title": "Q",
+      "options": "A or B"
+    },
+    "expect": "reject",
+    "reason": "options must be an array"
+  },
+  {
+    "name": "reject — more than one question and no interview title",
+    "payload": {
+      "v": 2,
+      "questions": [
+        {
+          "question": "First?",
+          "options": [
+            {
+              "label": "A"
+            },
+            {
+              "label": "B"
+            }
+          ]
+        },
+        {
+          "question": "Second?",
+          "options": [
+            {
+              "label": "A"
+            },
+            {
+              "label": "B"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "title must be 1-120 characters",
+    "parseRaw": "accept"
+  },
+  {
+    "name": "reject — a 4001-character interview body",
+    "payload": {
+      "v": 1,
+      "title": "Q",
+      "body": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "options": [
+        {
+          "label": "A"
+        },
+        {
+          "label": "B"
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "body must be at most 4000 characters",
+    "parseRaw": "accept"
+  }
+]
