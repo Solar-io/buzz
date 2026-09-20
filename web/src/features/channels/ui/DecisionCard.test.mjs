@@ -1025,3 +1025,33 @@ test("a pre-v2 cache card shape renders nothing instead of throwing", async () =
   await act(async () => root.unmount());
   container.remove();
 });
+
+test("a message cached before cards existed renders nothing instead of throwing", async () => {
+  // `card` ABSENT — `undefined`, outside the declared type. The first guard
+  // version used `card !== null` and threw on exactly this input (caught live
+  // on the deployed bundle: "reading 'questions'"), because the timeline
+  // cache has no schema and pre-cards entries deserialize with the field
+  // missing. The guard must be total over what the cache can hold.
+  const container = dom.window.document.createElement("div");
+  dom.window.document.body.appendChild(container);
+  const root = createRoot(container);
+  await act(async () => {
+    root.render(
+      React.createElement(DecisionCard, {
+        message: {
+          id: "card-absent",
+          channelId: "ch-1",
+          kind: 9,
+          authorPubkey: "a".repeat(64),
+          createdAt: 1,
+          content: "fallback",
+          rootId: null,
+          replyToId: null,
+        },
+      }),
+    );
+  });
+  assert.equal(container.textContent, "");
+  await act(async () => root.unmount());
+  container.remove();
+});

@@ -157,7 +157,12 @@ export function isPlainObject(
  * the alternative is `undefined.length` inside a renderer and a blank app.
  */
 export function isRenderableCard(card: DecisionCard | null): card is DecisionCard {
-  return card !== null && Array.isArray(card.questions);
+  // `!= null`, not `!== null`: the timeline cache has no schema, and a
+  // message cached before the card field existed deserializes with `card`
+  // ABSENT — `undefined`, which the declared type does not admit. A strict
+  // inequality lets it through (`undefined !== null`) and throws one line
+  // later; the loose form rejects both.
+  return card != null && Array.isArray(card.questions);
 }
 
 /**
