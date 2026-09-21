@@ -1353,14 +1353,19 @@ pub fn normalize_events(events: &[serde_json::Value]) -> String {
     let normalized: Vec<serde_json::Value> = events
         .iter()
         .map(|e| {
-            serde_json::json!({
+            let mut row = serde_json::json!({
                 "id": e.get("id").and_then(|v| v.as_str()).unwrap_or(""),
                 "pubkey": e.get("pubkey").and_then(|v| v.as_str()).unwrap_or(""),
                 "kind": e.get("kind").and_then(|v| v.as_u64()).unwrap_or(0),
                 "content": e.get("content").and_then(|v| v.as_str()).unwrap_or(""),
                 "created_at": e.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0),
                 "tags": e.get("tags").cloned().unwrap_or(serde_json::json!([])),
-            })
+            });
+            // Set by `fold_edit_overlays` — presence marks an edited message.
+            if let Some(t) = e.get("edited_at").and_then(|v| v.as_u64()) {
+                row["edited_at"] = serde_json::json!(t);
+            }
+            row
         })
         .collect();
     serde_json::to_string(&normalized).unwrap_or_default()

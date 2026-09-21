@@ -580,7 +580,9 @@ Release a claim with: buzz reactions remove --event <EVENT_ID> --emoji 🔒"
         /// Unix timestamp — return messages after this time
         #[arg(long)]
         since: Option<i64>,
-        /// Comma-separated event kinds to filter (e.g. 1,1984)
+        /// Comma-separated event kinds to filter (e.g. 1,1984). Passing --kinds
+        /// requests a raw view: edit overlays (kind 40003) are NOT folded into
+        /// their target messages.
         #[arg(long)]
         kinds: Option<String>,
     },

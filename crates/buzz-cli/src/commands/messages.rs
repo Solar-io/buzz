@@ -341,17 +341,112 @@ fn format_events(normalized: &str, format: &crate::OutputFormat) -> String {
             let compact: Vec<serde_json::Value> = events
                 .iter()
                 .map(|e| {
-                    serde_json::json!({
+                    let mut row = serde_json::json!({
                         "id": e.get("id").cloned().unwrap_or_default(),
                         "content": e.get("content").cloned().unwrap_or_default(),
                         "created_at": e.get("created_at").cloned().unwrap_or_default(),
-                    })
+                    });
+                    // Only carry `edited_at` on rows an overlay actually touched,
+                    // so its presence is the edited marker in both formats.
+                    if let Some(t) = e.get("edited_at") {
+                        row["edited_at"] = t.clone();
+                    }
+                    row
                 })
                 .collect();
             serde_json::to_string(&compact).unwrap_or_default()
         }
         crate::OutputFormat::Json => normalized.to_string(),
     }
+}
+
+/// First `e`-tag value on an event, if any — the target of a kind 40003 edit.
+fn first_e_tag_target(event: &serde_json::Value) -> Option<String> {
+    event
+        .get("tags")?
+        .as_array()?
+        .iter()
+        .find_map(|t| {
+            let arr = t.as_array()?;
+            if arr.first()?.as_str()? == "e" {
+                Some(arr.get(1)?.as_str()?.to_string())
+            } else {
+                None
+            }
+        })
+}
+
+/// Fold kind 40003 edit overlays into the events they target.
+///
+/// An edit event carries the full replacement content plus an `e` tag naming
+/// its target; the relay enforces edit ownership at ingest, so a stored edit
+/// is authoritative for the target's current content. When several edits
+/// target one event the newest wins (`created_at`, then event id as a
+/// deterministic tie-break), matching how the web client overlays edits
+/// (`web/src/features/channels/hooks.ts`).
+///
+/// `keep_orphan_edits` controls edits whose target is not in `events`: the
+/// timeline views drop them (that message is not being shown, and a bare edit
+/// row is what made `messages edit` read as a silent no-op), while search
+/// keeps them so edited text stays findable.
+fn fold_edit_overlays(events: &mut Vec<serde_json::Value>, keep_orphan_edits: bool) {
+    use std::collections::{HashMap, HashSet};
+
+    // target event id -> (created_at, edit id, replacement content)
+    let mut latest: HashMap<String, (u64, String, String)> = HashMap::new();
+    for event in events.iter() {
+        if event.get("kind").and_then(|k| k.as_u64()) != Some(40003) {
+            continue;
+        }
+        let Some(target) = first_e_tag_target(event) else {
+            continue;
+        };
+        let created_at = event.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0);
+        let id = event
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let content = event
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let better = latest
+            .get(&target)
+            .map(|(prev_ts, prev_id, _)| (created_at, id.as_str()) > (*prev_ts, prev_id.as_str()))
+            .unwrap_or(true);
+        if better {
+            latest.insert(target, (created_at, id, content));
+        }
+    }
+
+    let mut applied_edit_ids: HashSet<String> = HashSet::new();
+    for event in events.iter_mut() {
+        let id = event
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        if let Some((edited_at, edit_id, content)) = latest.get(&id) {
+            applied_edit_ids.insert(edit_id.clone());
+            event["content"] = serde_json::json!(content);
+            event["edited_at"] = serde_json::json!(edited_at);
+        }
+    }
+
+    events.retain(|event| {
+        if event.get("kind").and_then(|k| k.as_u64()) != Some(40003) {
+            return true;
+        }
+        let id = event
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        // Applied edits disappear into their target; unapplied ones follow the
+        // caller's orphan policy.
+        !applied_edit_ids.contains(id) && keep_orphan_edits
+    });
 }
 
 pub async fn cmd_get_messages(
@@ -369,12 +464,14 @@ pub async fn cmd_get_messages(
     let limit = limit.unwrap_or(50).min(200);
 
     let mut filter = serde_json::json!({
-        "kinds": [9, 40002, 40008, 45001, 45003],
+        "kinds": [9, 40002, 40003, 40008, 45001, 45003],
         "#h": [channel_id],
         "limit": limit
     });
 
-    // If specific kinds requested, override
+    // If specific kinds requested, override — and treat that as a request for
+    // the raw view: edit overlays are only folded on the default timeline.
+    let fold_overlays = kinds.is_none();
     if let Some(k) = kinds {
         let kind_list: Vec<u64> = k.split(',').filter_map(|s| s.trim().parse().ok()).collect();
         if !kind_list.is_empty() {
@@ -392,6 +489,9 @@ pub async fn cmd_get_messages(
     let resp = client.query(&filter).await?;
     let mut events: Vec<serde_json::Value> = serde_json::from_str(&resp).unwrap_or_default();
     events.sort_by_key(|e| e.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0));
+    if fold_overlays {
+        fold_edit_overlays(&mut events, false);
+    }
     let normalized = normalize_events(&events);
     println!("{}", format_events(&normalized, format));
     Ok(())
@@ -463,6 +563,9 @@ pub async fn cmd_get_thread(
             .and_then(|value| value.as_u64())
             .unwrap_or(0)
     });
+    // The reply filter already includes kind 40003; fold edits into their
+    // targets so a thread read shows effective content, not stray edit rows.
+    fold_edit_overlays(&mut events, false);
     let normalized = normalize_events(&events);
     println!("{}", format_events(&normalized, format));
     Ok(())
@@ -489,7 +592,7 @@ pub async fn cmd_search(
     };
 
     let mut filter = serde_json::json!({
-        "kinds": [9, 40002, 45001, 45003],
+        "kinds": [9, 40002, 40003, 45001, 45003],
         "limit": limit
     });
     if let Some(q) = query {
@@ -510,6 +613,10 @@ pub async fn cmd_search(
             std::cmp::Reverse(e.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0))
         });
     }
+    // Search must find edited text, so edits ride along; fold one onto its
+    // target when both are in the result, and keep the bare edit row otherwise
+    // (better a strange row than text that cannot be found).
+    fold_edit_overlays(&mut events, true);
     let normalized = normalize_events(&events);
     println!("{}", format_events(&normalized, format));
     Ok(())
@@ -1278,10 +1385,10 @@ pub async fn dispatch(
 mod tests {
     use super::{
         channel_id_from_event, classify_claim, cmd_get_thread, event_mention_pubkeys,
-        find_root_from_tags, match_profiles_by_name, merge_message_mentions, missing_members,
-        normalize_explicit_mentions, parse_member_pubkeys, resolve_names_to_pubkeys,
-        resolve_thread_target, thread_ref_from_event, thread_ref_from_parent_tags, BuzzClient,
-        ClaimState, CliError, Uuid, CLAIM_EMOJI,
+        find_root_from_tags, fold_edit_overlays, match_profiles_by_name, merge_message_mentions,
+        missing_members, normalize_explicit_mentions, parse_member_pubkeys,
+        resolve_names_to_pubkeys, resolve_thread_target, thread_ref_from_event,
+        thread_ref_from_parent_tags, BuzzClient, ClaimState, CliError, Uuid, CLAIM_EMOJI,
     };
     use buzz_sdk::mentions::{
         extract_at_mentions_with_known, extract_at_names, match_names_to_profiles, MentionProfile,
@@ -1295,6 +1402,84 @@ mod tests {
 
     fn lock_reaction(pubkey: &str, created_at: u64) -> serde_json::Value {
         json!({ "kind": 7, "pubkey": pubkey, "content": CLAIM_EMOJI, "created_at": created_at })
+    }
+
+    fn message(id: &str, content: &str, created_at: u64) -> serde_json::Value {
+        json!({
+            "id": id,
+            "kind": 9,
+            "pubkey": PUBKEY,
+            "content": content,
+            "created_at": created_at,
+            "tags": [],
+        })
+    }
+
+    fn edit(id: &str, target: &str, content: &str, created_at: u64) -> serde_json::Value {
+        json!({
+            "id": id,
+            "kind": 40003,
+            "pubkey": PUBKEY,
+            "content": content,
+            "created_at": created_at,
+            "tags": [["h", "00000000-0000-0000-0000-000000000000"], ["e", target]],
+        })
+    }
+
+    #[test]
+    fn edit_overlay_replaces_target_content() {
+        let mut events = vec![
+            message(ID_A, "original text", 1000),
+            edit(ID_B, ID_A, "EDITED text", 2000),
+        ];
+        fold_edit_overlays(&mut events, false);
+        assert_eq!(events.len(), 1, "applied edit must disappear into its target");
+        assert_eq!(events[0]["id"], json!(ID_A));
+        assert_eq!(events[0]["content"], json!("EDITED text"));
+        assert_eq!(events[0]["edited_at"], json!(2000));
+        // The base keeps its own timestamp — editing is not reposting.
+        assert_eq!(events[0]["created_at"], json!(1000));
+    }
+
+    #[test]
+    fn newest_edit_wins_and_tie_breaks_on_id() {
+        let mut events = vec![
+            message(ID_A, "original", 1000),
+            edit("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0001", ID_A, "first", 2000),
+            edit("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0002", ID_A, "second", 2000),
+            edit("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0000", ID_A, "older ts", 1500),
+        ];
+        fold_edit_overlays(&mut events, false);
+        assert_eq!(events.len(), 1);
+        // Same created_at: the higher event id ("…0002") is authoritative.
+        assert_eq!(events[0]["content"], json!("second"));
+    }
+
+    #[test]
+    fn orphan_edit_dropped_in_timeline_kept_in_search() {
+        let orphan = edit(ID_B, "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "lost target", 3000);
+
+        let mut timeline = vec![message(ID_A, "plain", 1000), orphan.clone()];
+        fold_edit_overlays(&mut timeline, false);
+        assert_eq!(timeline.len(), 1, "timeline drops edits whose target is not shown");
+
+        let mut search = vec![message(ID_A, "plain", 1000), orphan];
+        fold_edit_overlays(&mut search, true);
+        assert_eq!(search.len(), 2, "search keeps orphan edits for findability");
+        assert_eq!(search[1]["kind"], json!(40003));
+    }
+
+    #[test]
+    fn events_without_edits_pass_through_unchanged() {
+        let mut events = vec![
+            message(ID_A, "one", 1000),
+            json!({ "id": ID_B, "kind": 7, "pubkey": PUBKEY, "content": "👍", "created_at": 1100, "tags": [] }),
+        ];
+        fold_edit_overlays(&mut events, false);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["content"], json!("one"));
+        assert!(events[0].get("edited_at").is_none());
+        assert!(events[1].get("edited_at").is_none());
     }
 
     #[test]
