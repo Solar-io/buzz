@@ -544,7 +544,7 @@ Release a claim with: buzz reactions remove --event <EVENT_ID> --emoji 🔒"
         /// Event ID of the message to edit (64-char hex)
         #[arg(long)]
         event: String,
-        /// New message content
+        /// New message content — use '-' to read from stdin (like `send`)
         #[arg(long)]
         content: String,
     },
