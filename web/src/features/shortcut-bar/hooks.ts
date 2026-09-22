@@ -39,9 +39,14 @@ import {
   nextShortcutCreatedAt,
   reduceShortcutEvents,
 } from "./lib/shortcutEvent.ts";
+import {
+  linkStorageMode,
+  mutateLocalLinks,
+  readLocalLinks,
+} from "./lib/localLinkStore.ts";
 
 /**
- * The sidebar shortcuts, relay-backed.
+ * The sidebar shortcuts, relay-backed — with a device-local fallback.
  *
  * The data is ONE kind-30078 event per user (NIP-78, `d="shortcut-bar"`),
  * NIP-44-encrypted to self, holding every list. The shape and LWW rules live
@@ -58,6 +63,15 @@ import {
  * means the second publish silently wins. Acceptable for a single-user
  * config surface, and documented as such in the design rather than
  * "solved" with a merge nobody asked for.
+ *
+ * STORAGE BRANCH (`lib/localLinkStore.ts`): with the unlocked local key the
+ * blob above is the store, exactly as before. With any other signer
+ * (extension, web-auth, ephemeral) NIP-44-to-self has no path, and the same
+ * `ShortcutDef[]` list is served from `localStorage` instead — same reducers,
+ * same caps, per-device. The two stores are separate by design and never
+ * merged or migrated; `canUse` stays exposed so callers know which one is
+ * live. A blob this device cannot decrypt blocks only the BLOB store (the
+ * toast below); the local list is always renderable and editable.
  */
 
 /** The bar needs the UNLOCKED LOCAL key — NIP-44-to-self has no NIP-07 path. */
@@ -142,16 +156,17 @@ interface RelayBlobState {
 }
 
 export interface ShortcutBar {
-  /** The sidebar shortcuts, newest blob first. */
+  /** The sidebar shortcuts — the blob's list, or the device-local one. */
   shortcuts: ShortcutDef[];
-  /** True only when the unlocked local key is live (the render gate). */
+  /** True only when the unlocked local key is live (the storage branch). */
   canUse: boolean;
   /** The stored blob exists but is unreadable or from a newer version. */
   blocked: boolean;
   blockedMessage: string | null;
   /**
    * Read → transform → budget-check → encrypt → sign → optimistic → publish,
-   * rolling the optimistic entry back if the relay refuses.
+   * rolling the optimistic entry back if the relay refuses. In fallback mode
+   * the same transform runs against the localStorage list instead.
    */
   mutateShortcuts: (
     fn: (blob: ShortcutBarBlob) => BlobTransform,
@@ -280,12 +295,35 @@ export function useShortcutBar(): ShortcutBar {
   }, [selfPubkey, newest, relayState, optimisticStamp]);
 
   const canUse = signer === "local";
+  const storageMode = linkStorageMode(canUse);
+
+  // The fallback list, read from localStorage on every stamp bump (each
+  // successful local mutation stamps) rather than mirrored into React state:
+  // the store is the state, and a read is cheaper than a shadow copy that
+  // could drift from what another tab wrote.
+  const [localLinksStamp, setLocalLinksStamp] = useState(0);
+  const localLinks = useMemo(() => {
+    // The stamp is the invalidation trigger, not an input — same shape as
+    // the optimistic overlay's memo below.
+    void localLinksStamp;
+    return storageMode === "local" ? readLocalLinks() : [];
+  }, [storageMode, localLinksStamp]);
 
   const mutateShortcuts = useCallback(
     async (
       fn: (blob: ShortcutBarBlob) => BlobTransform,
     ): Promise<ShortcutMutation> => {
+      if (storageMode === "local") {
+        const result = await mutateLocalLinks(fn);
+        if (result.ok) {
+          setLocalLinksStamp((stamp) => stamp + 1);
+        }
+        return result;
+      }
       if (!canUse || !selfPubkey) {
+        // Unreachable while storageMode is derived from canUse in the same
+        // render — kept as the guard for a signer that flipped between the
+        // render and this call.
         return { ok: false, message: NEED_LOCAL_KEY_MESSAGE };
       }
       if (relayState.blocked) {
@@ -338,11 +376,11 @@ export function useShortcutBar(): ShortcutBar {
         message: publishResult.ok ? null : publishResult.message,
       };
     },
-    [canUse, selfPubkey, relayState, session],
+    [storageMode, canUse, selfPubkey, relayState, session],
   );
 
   return {
-    shortcuts: sidebarShortcuts(blob),
+    shortcuts: storageMode === "local" ? localLinks : sidebarShortcuts(blob),
     canUse,
     blocked: relayState.blocked,
     blockedMessage: relayState.blocked ? SHORTCUT_BLOCKED_MESSAGE : null,

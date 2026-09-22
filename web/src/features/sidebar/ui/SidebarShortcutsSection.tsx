@@ -18,21 +18,19 @@ import { SectionHeader } from "@/features/sidebar/ui/SectionHeader";
 import { SidebarNavButton } from "@/features/sidebar/ui/SidebarNavButton";
 
 /**
- * The Sidebar shortcuts section: one row per channel-independent shortcut,
- * in a section of its own below Forums and visually identical to a channel
- * row.
+ * The sidebar Links section: one row per channel-independent link, in a
+ * section of its own below Forums and visually identical to a channel row.
  *
  * These were pills in a channel's header bar, stored per channel. They are
- * now one list belonging to no channel (the reserved `__sidebar__` key in the
- * same encrypted blob), so this section renders wherever the sidebar does.
+ * now one list belonging to no channel, so this section renders wherever the
+ * sidebar does — ALWAYS, empty list included, so the + stays discoverable.
  *
- * Gating is unchanged from the bar it replaces — the list needs the UNLOCKED
- * LOCAL key (NIP-44-to-self has no NIP-07 path), so with anything else live
- * the section renders nothing at all. A blob this device cannot read (a
- * future version, or an undecryptable copy) still shows, but refuses writes
- * with a toast rather than silently failing. The bar's ephemeral (ttl) hide is
- * gone: that was a property of the channel it was pinned to, and there is no
- * channel any more.
+ * Storage follows the signer (`useShortcutBar`): the unlocked local key
+ * keeps the encrypted relay blob (cross-device sync), everything else
+ * (extension, web-auth, ephemeral) gets the same list in localStorage on
+ * this device. The two stores are separate; see `lib/localLinkStore.ts`.
+ * A blob this device cannot read still shows, but refuses BLOB writes with
+ * a toast rather than silently failing — the local list is unaffected.
  *
  * Self-wiring, like the bar was: the sidebar renders it and hands it nothing.
  */
@@ -42,7 +40,7 @@ export function SidebarShortcutsSection({
   /** Raise the in-app dock on a given overlay-mode shortcut id. */
   onOpenOverlay: (shortcutId: string) => void;
 }) {
-  const { shortcuts, canUse, blocked, blockedMessage, mutateShortcuts } =
+  const { shortcuts, blocked, blockedMessage, mutateShortcuts } =
     useShortcutBar();
   const [dialogOpen, setDialogOpen] = useState(false);
   /** null = adding a new shortcut; a def = editing that one. */
@@ -81,10 +79,6 @@ export function SidebarShortcutsSection({
     [shortcuts, blocked, blockedMessage, mutateShortcuts],
   );
 
-  if (!canUse) {
-    return null;
-  }
-
   const confirm = async (input: {
     url: string;
     label: string;
@@ -104,7 +98,7 @@ export function SidebarShortcutsSection({
   return (
     <>
       <SectionHeader
-        label="Shortcuts"
+        label="Links"
         className="mt-4 mb-[4px]"
         onAdd={() => {
           if (blocked) {
@@ -116,7 +110,7 @@ export function SidebarShortcutsSection({
           setEditing(null);
           setDialogOpen(true);
         }}
-        addLabel="Add a shortcut"
+        addLabel="Add a link"
       />
       <ul className="space-y-0.5">
         {shortcuts.map((shortcut) => (

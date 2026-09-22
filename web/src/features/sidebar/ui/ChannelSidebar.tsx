@@ -341,8 +341,8 @@ export function ChannelSidebar({
             </ul>
           </>
         )}
-        {/* Directly below Forums, and self-gating: it renders nothing unless
-            the unlocked local key is live. */}
+        {/* Directly below Forums, and always rendered — storage (encrypted
+            relay blob vs this device's localStorage) follows the signer. */}
         <SidebarShortcutsSection
           onOpenOverlay={actions.onOpenShortcutOverlay}
         />
