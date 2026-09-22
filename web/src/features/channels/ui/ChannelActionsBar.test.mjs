@@ -36,7 +36,7 @@ globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
 const React = (await import("react")).default;
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
-const { ChannelHeader } = await import("./ChannelHeader.tsx");
+const { ChannelActionsBar } = await import("./ChannelActionsBar.tsx");
 
 const SELF = "1".repeat(64);
 const AGENT = "2".repeat(64);
@@ -63,7 +63,7 @@ async function mount(props) {
   dom.window.document.body.appendChild(container);
   const root = createRoot(container);
   await act(async () => {
-    root.render(React.createElement(ChannelHeader, props));
+    root.render(React.createElement(ChannelActionsBar, props));
   });
   return {
     container,
@@ -104,7 +104,6 @@ test("one click invokes the DM call action and leaves the DM in place", async ()
   });
 
   assert.deepEqual(calls, [null]);
-  assert.equal(mounted.container.querySelector("h1").textContent, "Evie");
   await mounted.unmount();
 });
 

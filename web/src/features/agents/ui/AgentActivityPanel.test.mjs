@@ -147,15 +147,25 @@ test("the portrait no longer renders inside the thinking pane", async () => {
     "the thinking pane must not render the portrait block",
   );
 
-  // Header chip: same picture, still the small circular size.
-  const header = container.querySelector("header");
-  assert.ok(header, "panel header renders");
-  const chip = header?.querySelector("img");
-  assert.ok(chip, "header chip renders the picture");
-  const chipClass = chip?.getAttribute("class") ?? "";
-  assert.match(chipClass, /rounded-full/);
-  assert.match(chipClass, /h-5 w-5/, "chip stays size=sm");
-  assert.doesNotMatch(chipClass, /lg:aspect-\[3\/4\]/);
+  // The "Thinking" header bar is gone (Sam, 2026-09-22) — pinned here so it
+  // cannot quietly come back. The agent's identity still reaches the pane
+  // while it is WORKING (avatar + badge above the transcript), and the pane
+  // keeps the close control below lg, where the composer's brain toggle is
+  // underneath the full-screen sheet and unreachable.
+  assert.equal(
+    container.querySelector("header"),
+    null,
+    "the thinking pane must not render a header bar",
+  );
+  assert.equal(
+    container.textContent?.includes("Thinking"),
+    false,
+    'the word "Thinking" must not appear in the pane',
+  );
+  const close = container.querySelector(
+    '[aria-label="Close thinking panel"]',
+  );
+  assert.ok(close, "the mobile close control survives the header removal");
 
   // The transcript still gets its rows (the turn divider from the frame).
   const transcript = container.querySelector("ol");

@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { Link } from "@tanstack/react-router";
 import { Inbox, Search } from "lucide-react";
 import type { Profile } from "@/features/channels/hooks";
 import type { RelaySessionStatus } from "@/shared/api/relay-session";
@@ -34,7 +33,6 @@ import { RelayConnectionCard } from "@/features/sidebar/ui/RelayConnectionCard";
 import { SidebarProfileCard } from "@/features/sidebar/ui/SidebarProfileCard";
 import { InstallAppButton } from "@/features/sidebar/ui/InstallAppButton";
 import type { SidebarMenuItem } from "@/features/sidebar/lib/sidebarMenuItem";
-import { cn } from "@/shared/lib/cn";
 
 /** The sidebar's sections, already filtered and sorted by the shell. */
 export interface ChannelSidebarLists {
@@ -211,27 +209,13 @@ export function ChannelSidebar({
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="channel-sidebar">
-      <div className="flex items-center justify-between px-3 py-2">
-        <span className="px-1 font-semibold">Channels</span>
-        <div className="flex items-center gap-2">
-          <span
-            className={cn(
-              "inline-block h-2 w-2 rounded-full",
-              connected ? "bg-sidebar-primary" : "bg-sidebar-foreground/40",
-            )}
-            title={connected ? "Connected" : "Connecting…"}
-          />
-          <Link
-            to="/repos/settings"
-            className="rounded-md px-2 py-1 text-sm text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-          >
-            Settings
-          </Link>
-        </div>
-      </div>
+      {/* The old header row (the word "Channels", the connection dot, and a
+          Settings link) is gone — Sam, 2026-09-22. Settings still lives in the
+          profile card at the foot of this rail, and the connection state is
+          on the card's own indicator, so nothing became unreachable. */}
       {/* Desktop-style search field: typing here opens the ⌘K search panel
           seeded with what was typed. */}
-      <div className="px-2 pb-2">
+      <div className="px-2 pb-2 pt-2">
         <div className="flex items-center gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/40 px-2 py-1.5">
           <Search
             aria-hidden

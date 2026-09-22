@@ -7,6 +7,7 @@ import {
   type ClipboardEvent,
   type DragEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import { toast } from "sonner";
 import { AtSign, Paperclip, Smile, Users } from "lucide-react";
@@ -49,10 +50,6 @@ import {
   withProgress,
   type QueuedAttachment,
 } from "../lib/attachmentQueue.ts";
-import {
-  channelLabelFromSeed,
-  composerPlaceholder,
-} from "../lib/composerPlaceholder.ts";
 import { uploadBlob } from "@/shared/api/blossom";
 import { EmojiPicker } from "@/shared/ui/EmojiPicker";
 import { useCustomEmoji } from "@/features/custom-emoji/hooks";
@@ -110,8 +107,8 @@ export function Composer({
   onCancelEdit,
   editSend,
   draftKey,
-  channelName,
   placeholder,
+  actionsBar,
   strictMentions = false,
   autoNotify = null,
   send,
@@ -148,13 +145,19 @@ export function Composer({
   /** Channel id the draft belongs to — changing it restores that channel's draft. */
   draftKey?: string;
   /**
-   * Channel display name for the placeholder. Optional: when the caller does
-   * not have it (the channel route passes only the id), it is resolved from
-   * the seeded channel list — see lib/composerPlaceholder.ts.
+   * The only textarea hint left: callers that want one pass it (the thread
+   * pane names its root author, forum views say "Write your post..."). The
+   * main channel composer passes none, so its field is empty.
    */
-  channelName?: string | null;
-  /** Overrides the idle textarea hint (forum views say "Write your post..."). */
   placeholder?: string;
+  /**
+   * Channel controls rendered above the field (the roster, Join, the one-click
+   * DM call, the thinking toggle, the shortcut bar). Only the main channel
+   * composer passes this — a thread pane or a forum has no channel-level
+   * actions of its own. Hidden while an edit is in progress, when the pane is
+   * given over to the edit banner.
+   */
+  actionsBar?: ReactNode;
   strictMentions?: boolean;
   /**
    * A participant every send from this composer should wake WITHOUT the
@@ -822,19 +825,14 @@ export function Composer({
     }
   };
 
-  const channelLabel = useMemo(
-    () =>
-      channelName
-        ? { name: channelName, isDm: false }
-        : channelLabelFromSeed(draftKey),
-    [channelName, draftKey],
-  );
-  const computedPlaceholder = composerPlaceholder({
-    override: placeholder,
-    editing: editingActive,
-    channel: channelLabel,
-    replyToAuthor: replyTarget?.author ?? null,
-  });
+  // No placeholder (Sam, 2026-09-22): the field starts empty of hint text.
+  // Everything the old hint carried is still said, and said louder, elsewhere
+  // in this pane — the edit banner above ("Editing message"), the reply banner
+  // with the quoted body, the auto-notify line, and the thread line. The
+  // channel name is on screen in the header, so repeating it in the field
+  // added a second, quieter source for the same fact. The `placeholder` prop
+  // still wins if a caller passes one (forum views), and `@`/emoji autocomplete
+  // are driven by typing, not by the hint.
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: pointer-only drop target — drag-and-drop has no keyboard or ARIA equivalent; the paperclip button above is the keyboard-accessible attach path.
@@ -954,6 +952,15 @@ export function Composer({
           onSuppress={linkPreviews.suppress}
         />
       )}
+      {/* The channel's controls ride ABOVE the field, on the same line as the
+          formatting icons they sit beside (Sam, 2026-09-22 — Call and Thinking
+          moved here from the removed header bar). They wrap below the icons on
+          a narrow column rather than crushing the field. */}
+      {actionsBar && !editingActive && (
+        <div className="mb-1.5 flex flex-wrap items-center justify-end">
+          {actionsBar}
+        </div>
+      )}
       <div className="flex items-end gap-2">
         <input
           ref={fileInputRef}
@@ -976,7 +983,7 @@ export function Composer({
             ref={textareaRef}
             data-testid="composer-input"
             className="max-h-60 min-h-11 flex-1 resize-none overflow-y-auto bg-transparent px-3 py-2 text-base placeholder:text-muted-foreground focus-visible:outline-hidden"
-            placeholder={computedPlaceholder}
+            placeholder={placeholder}
             rows={1}
             value={text}
             onChange={(event) => {

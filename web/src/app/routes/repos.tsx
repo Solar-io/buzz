@@ -38,7 +38,7 @@ import { useMessageActions } from "@/features/channels/lib/useMessageActions.ts"
 import { paletteActions } from "@/features/channels/lib/paletteActions.ts";
 import { isNativeIOS } from "@/shared/platform/native";
 import { ChannelTimeline } from "@/features/channels/ui/ChannelTimeline";
-import { ChannelHeader } from "@/features/channels/ui/ChannelHeader";
+import { ChannelActionsBar } from "@/features/channels/ui/ChannelActionsBar";
 import { Composer } from "@/features/channels/ui/Composer";
 import { ForumView } from "@/features/channels/ui/ForumView";
 import { MessageToasts } from "@/features/channels/ui/MessageToasts";
@@ -860,66 +860,13 @@ function ChannelBrowser() {
                       picture={dmProfiles.get(dmAgentPubkey)?.avatar}
                     />
                   )}
-                  <ChannelHeader
-                    channel={current}
-                    title={
-                      current.type === "dm"
-                        ? dmName(current.participantPubkeys)
-                        : `# ${current.name}`
-                    }
-                    onStartAgentCall={
-                      dmAgentPubkey && current.type === "dm"
-                        ? (existingHuddleChannelId) =>
-                            huddleSession.startAgentCall({
-                              parentChannelId: current.id,
-                              agentPubkey: dmAgentPubkey,
-                              agentName:
-                                profiles.get(dmAgentPubkey)?.displayName ??
-                                dmAgentPubkey,
-                              existingHuddleChannelId,
-                            })
-                        : undefined
-                    }
-                    agentCallPhase={huddleSession.agentCallPhase}
-                    agentCallError={
-                      huddleSession.agentCallParentChannelId === current.id
-                        ? huddleSession.agentCallError
-                        : null
-                    }
-                    members={members}
-                    profiles={profiles}
-                    presence={presence}
-                    selfPubkey={selfPubkey}
-                    contacts={dmParticipantPubkeys}
-                    onJoinChannel={async () => {
-                      const event = await signNostrEvent({
-                        kind: JOIN_CHANNEL_KIND,
-                        tags: joinChannelTags(current.id),
-                        content: "",
-                      });
-                      const result = await session.publish(event);
-                      if (result.ok) {
-                        toast.success(`Joined #${current.name}`);
-                      } else {
-                        toast.error(
-                          result.message || "The relay refused the join.",
-                        );
-                      }
-                    }}
-                    agentPubkey={dmAgentPubkey}
-                    onOpenThinking={() => {
-                      setRightTab("thinking");
-                      setDmPaneHidden(false);
-                      setThinkingOpen(true);
-                    }}
-                    actions={
-                      <ShortcutBar
-                        channelId={current.id}
-                        ephemeral={current.ttlSeconds !== null}
-                        onOpenOverlay={setShortcutOverlay}
-                      />
-                    }
-                  />
+                  {/* The channel header bar is gone (Sam, 2026-09-22). Its
+                      parts went where they still belong: Join / Members /
+                      the copy-name action to the composer's bottom bar, and
+                      Call / Thinking to that bar's right end. The channel
+                      name, type glyph and description are already in the
+                      sidebar row and the window title, so the bar was a
+                      second copy of the row you just clicked. */}
                   {current.type === "forum" ? (
                     <ForumView
                       channel={current}
@@ -1011,6 +958,70 @@ function ChannelBrowser() {
                         strictMentions={strictMentions}
                         draftKey={current.id}
                         send={send}
+                        actionsBar={
+                          <ChannelActionsBar
+                            channel={current}
+                            title={
+                              current.type === "dm"
+                                ? dmName(current.participantPubkeys)
+                                : `# ${current.name}`
+                            }
+                            onStartAgentCall={
+                              dmAgentPubkey && current.type === "dm"
+                                ? (existingHuddleChannelId) =>
+                                    huddleSession.startAgentCall({
+                                      parentChannelId: current.id,
+                                      agentPubkey: dmAgentPubkey,
+                                      agentName:
+                                        profiles.get(dmAgentPubkey)
+                                          ?.displayName ?? dmAgentPubkey,
+                                      existingHuddleChannelId,
+                                    })
+                                : undefined
+                            }
+                            agentCallPhase={huddleSession.agentCallPhase}
+                            agentCallError={
+                              huddleSession.agentCallParentChannelId ===
+                              current.id
+                                ? huddleSession.agentCallError
+                                : null
+                            }
+                            members={members}
+                            profiles={profiles}
+                            presence={presence}
+                            selfPubkey={selfPubkey}
+                            contacts={dmParticipantPubkeys}
+                            onJoinChannel={async () => {
+                              const event = await signNostrEvent({
+                                kind: JOIN_CHANNEL_KIND,
+                                tags: joinChannelTags(current.id),
+                                content: "",
+                              });
+                              const result = await session.publish(event);
+                              if (result.ok) {
+                                toast.success(`Joined #${current.name}`);
+                              } else {
+                                toast.error(
+                                  result.message ||
+                                    "The relay refused the join.",
+                                );
+                              }
+                            }}
+                            agentPubkey={dmAgentPubkey}
+                            onOpenThinking={() => {
+                              setRightTab("thinking");
+                              setDmPaneHidden(false);
+                              setThinkingOpen(true);
+                            }}
+                            actions={
+                              <ShortcutBar
+                                channelId={current.id}
+                                ephemeral={current.ttlSeconds !== null}
+                                onOpenOverlay={setShortcutOverlay}
+                              />
+                            }
+                          />
+                        }
                       />
                     </>
                   )}
