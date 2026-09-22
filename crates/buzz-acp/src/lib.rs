@@ -2829,11 +2829,30 @@ async fn tokio_main() -> Result<()> {
                             // after `ignore_self` (an agent's own
                             // `buzz canvas set` should not notify itself,
                             // matching message semantics) and before
-                            // `filter::match_event`/`queue.push` (canvas
-                            // events match no subscription rule; without the
-                            // interception they would be silently dropped and
-                            // seated agents would never learn the revision
-                            // moved).
+                            // `filter::match_event`/`queue.push`.
+                            //
+                            // Placement note (corrected 2026-09-22, verifier
+                            // finding F1): an earlier version of this comment
+                            // claimed canvas events "match no subscription
+                            // rule". That is false in `SubscribeMode::All` and
+                            // in Config rules with empty `kinds` — `match_event`
+                            // treats empty kinds as a wildcard
+                            // (`filter.rs` "Kind filter (empty = wildcard)"),
+                            // so on the pre-change harness a canvas write DID
+                            // match, reached `queue.push`, and gave those
+                            // agents an immediate turn carrying the raw
+                            // canvas. Intercepting here therefore makes
+                            // delivery *lazy* for wildcard subscribers: the
+                            // notice now rides the next turn instead of
+                            // triggering one. That is the intended trade —
+                            // a canvas edit is not worth a turn of its own,
+                            // and the notice is better shaped than a raw
+                            // `[Event]` — but it IS a behaviour change for
+                            // that mode, and it is why this comment no longer
+                            // claims universal non-matching. Mentions mode
+                            // (the fleet default) is unaffected: its kind list
+                            // never contained 40100, so those agents gain
+                            // delivery they never had.
                             if kind_u32 == KIND_CANVAS {
                                 let channel_id = buzz_event.channel_id;
                                 if !subscribed_channel_ids.contains(&channel_id) {
