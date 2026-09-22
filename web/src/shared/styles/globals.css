@@ -176,6 +176,86 @@
     --buzz-type-scale: calc(15 / 14);
   }
 
+  /*
+   * Font-family preference: one variable, selected by `data-font-family`
+   * (the values are appearancePrefs.ts's FontFamily union, in its order).
+   * The webfont declarations live in features/settings/ui/fontImports.ts;
+   * each stack keeps the generic kin so a failed or missing webfont still
+   * reads as the chosen family's class rather than snapping back to Inter.
+   * "helvetica" and "georgia" are system stacks by design — no download.
+   */
+  :root {
+    --app-font: "Inter Variable", Inter, "Avenir Next", "Segoe UI", sans-serif;
+  }
+
+  :root[data-font-family="roboto"] {
+    --app-font: "Roboto Variable", "Helvetica Neue", Arial, sans-serif;
+  }
+
+  :root[data-font-family="open-sans"] {
+    --app-font: "Open Sans Variable", "Segoe UI", Arial, sans-serif;
+  }
+
+  :root[data-font-family="lato"] {
+    --app-font: Lato, "Helvetica Neue", Arial, sans-serif;
+  }
+
+  :root[data-font-family="source-sans-3"] {
+    --app-font: "Source Sans 3 Variable", "Segoe UI", Arial, sans-serif;
+  }
+
+  :root[data-font-family="noto-sans"] {
+    --app-font: "Noto Sans Variable", "Segoe UI", Arial, sans-serif;
+  }
+
+  :root[data-font-family="poppins"] {
+    --app-font: Poppins, "Segoe UI", Arial, sans-serif;
+  }
+
+  :root[data-font-family="montserrat"] {
+    --app-font: "Montserrat Variable", "Segoe UI", Arial, sans-serif;
+  }
+
+  :root[data-font-family="raleway"] {
+    --app-font: "Raleway Variable", "Segoe UI", Arial, sans-serif;
+  }
+
+  :root[data-font-family="ubuntu"] {
+    --app-font: Ubuntu, "Segoe UI", Arial, sans-serif;
+  }
+
+  :root[data-font-family="helvetica"] {
+    --app-font: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+
+  :root[data-font-family="georgia"] {
+    --app-font: Georgia, "Times New Roman", Times, serif;
+  }
+
+  :root[data-font-family="merriweather"] {
+    --app-font: "Merriweather Variable", Georgia, serif;
+  }
+
+  :root[data-font-family="pt-serif"] {
+    --app-font: "PT Serif", Georgia, serif;
+  }
+
+  :root[data-font-family="nunito"] {
+    --app-font: "Nunito Variable", "Segoe UI", Arial, sans-serif;
+  }
+
+  :root[data-font-family="work-sans"] {
+    --app-font: "Work Sans Variable", "Segoe UI", Arial, sans-serif;
+  }
+
+  :root[data-font-family="fira-sans"] {
+    --app-font: "Fira Sans", "Segoe UI", Arial, sans-serif;
+  }
+
+  :root[data-font-family="ibm-plex-sans"] {
+    --app-font: "IBM Plex Sans Variable", "Segoe UI", Arial, sans-serif;
+  }
+
   :root[data-conversation-density="compact"] {
     --conversation-body-gap: 0rem;
     --conversation-row-padding-block: 0.25rem;
@@ -586,7 +666,14 @@
 
   body {
     @apply bg-background text-foreground antialiased;
-    font-family: "Inter Variable", Inter, "Avenir Next", "Segoe UI", sans-serif;
+    font-family: var(
+      --app-font,
+      "Inter Variable",
+      Inter,
+      "Avenir Next",
+      "Segoe UI",
+      sans-serif
+    );
     /* Text-rendering baseline ported from the desktop client's
        shared/styles/globals/typography.css: no synthesised weights (Inter
        Variable already ships every weight), text-presentation emoji, no

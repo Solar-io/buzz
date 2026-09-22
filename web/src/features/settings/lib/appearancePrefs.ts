@@ -25,6 +25,37 @@
 /** Device-level type scale. Smaller / Default / Larger = 13 / 14 / 15px. */
 export type FontSize = "smaller" | "default" | "larger";
 
+/**
+ * The app's typeface. Each value names a family the stylesheet knows: the
+ * `:root[data-font-family=…]` rules in globals.css map them to a stack, with
+ * the webfonts themselves declared by `ui/fontImports.ts`.
+ *
+ * Two values are system stacks by design ("helvetica", "georgia") — those
+ * load nothing. Everything else ships via @fontsource (variable where the
+ * family has a variable build, the 400/700 pair where it does not); the
+ * browser still only downloads the one family the attribute selects,
+ * because an unused `@font-face` is a declaration, not a download.
+ */
+export type FontFamily =
+  | "inter"
+  | "roboto"
+  | "open-sans"
+  | "lato"
+  | "source-sans-3"
+  | "noto-sans"
+  | "poppins"
+  | "montserrat"
+  | "raleway"
+  | "ubuntu"
+  | "helvetica"
+  | "georgia"
+  | "merriweather"
+  | "pt-serif"
+  | "nunito"
+  | "work-sans"
+  | "fira-sans"
+  | "ibm-plex-sans";
+
 /** Device-level spacing across conversation surfaces. */
 export type ConversationDensity = "compact" | "comfortable" | "spacious";
 
@@ -66,6 +97,32 @@ export const FONT_SIZE_PREFERENCE: PreferenceSpec<FontSize> = {
   values: ["smaller", "default", "larger"],
 };
 
+export const FONT_FAMILY_PREFERENCE: PreferenceSpec<FontFamily> = {
+  storageKey: "buzz.appearance.fontFamily",
+  attribute: "data-font-family",
+  defaultValue: "inter",
+  values: [
+    "inter",
+    "roboto",
+    "open-sans",
+    "lato",
+    "source-sans-3",
+    "noto-sans",
+    "poppins",
+    "montserrat",
+    "raleway",
+    "ubuntu",
+    "helvetica",
+    "georgia",
+    "merriweather",
+    "pt-serif",
+    "nunito",
+    "work-sans",
+    "fira-sans",
+    "ibm-plex-sans",
+  ],
+};
+
 export const CONVERSATION_DENSITY_PREFERENCE: PreferenceSpec<ConversationDensity> =
   {
     storageKey: "buzz.appearance.conversationDensity",
@@ -105,6 +162,7 @@ export const PROMINENT_ACTIVE_TAB_PREFERENCE: PreferenceSpec<ProminentActiveTab>
 /** Every preference this module owns, for bulk initialization. */
 export const APPEARANCE_PREFERENCES = [
   FONT_SIZE_PREFERENCE,
+  FONT_FAMILY_PREFERENCE,
   CONVERSATION_DENSITY_PREFERENCE,
   LINK_PREVIEW_STYLE_PREFERENCE,
   THREAD_LAYOUT_PREFERENCE,

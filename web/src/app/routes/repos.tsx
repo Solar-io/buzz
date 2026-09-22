@@ -38,8 +38,10 @@ import { useMessageActions } from "@/features/channels/lib/useMessageActions.ts"
 import { paletteActions } from "@/features/channels/lib/paletteActions.ts";
 import { isNativeIOS } from "@/shared/platform/native";
 import { ChannelTimeline } from "@/features/channels/ui/ChannelTimeline";
-import { ChannelActionsBar } from "@/features/channels/ui/ChannelActionsBar";
-import { Composer } from "@/features/channels/ui/Composer";
+import { Composer, type ComposerHandle } from "@/features/channels/ui/Composer";
+import { DmComposerActions } from "@/features/channels/ui/DmComposerActions";
+import { useComposerDictation } from "@/features/channels/useComposerDictation";
+import { useDmRightPane } from "@/features/channels/useDmRightPane";
 import { ForumView } from "@/features/channels/ui/ForumView";
 import { MessageToasts } from "@/features/channels/ui/MessageToasts";
 import { SearchPanel } from "@/features/channels/ui/SearchPanel";
@@ -84,12 +86,6 @@ import { NotificationRuntime } from "@/features/notifications/ui/NotificationRun
 import { ProfileActionsProvider } from "@/features/profile/ProfileActionsContext";
 import { FilesPanel } from "@/features/files/ui/FilesPanel";
 import { ShortcutOverlay } from "@/features/shortcut-bar/ui/ShortcutOverlay";
-import { toast } from "sonner";
-import {
-  JOIN_CHANNEL_KIND,
-  joinChannelTags,
-} from "@/features/channels/lib/channelAdmin.ts";
-import { signNostrEvent } from "@/shared/lib/nostr-signer";
 import { AppShell } from "@/shared/layout/AppShell";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 
@@ -682,10 +678,23 @@ function ChannelBrowser() {
       ),
     [agentFrames, current?.id],
   );
-  const [thinkingOpen, setThinkingOpen] = useState(false);
-  // Desktop DM right-pane dismissal: closing the thinking panel collapses
-  // the pane; the header 🧠 reopens it.
-  const [dmPaneHidden, setDmPaneHidden] = useState(false);
+  // The DM right-pane state (thinking sheet / desktop collapse / tab) plus
+  // the two-way 🧠 and Replies toggles Sam asked for on 2026-09-22. The
+  // show/hide policy lives in features/channels/lib/dmPaneToggles.ts; the
+  // route keeps threadRootId itself (the permalink effect below reads it).
+  const {
+    thinkingOpen,
+    setThinkingOpen,
+    dmPaneHidden,
+    setDmPaneHidden,
+    rightTab,
+    setRightTab,
+    panes,
+  } = useDmRightPane({
+    agentDm: dmAgentPubkey !== null,
+    threadRootId,
+    setThreadRootId,
+  });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
@@ -696,8 +705,13 @@ function ChannelBrowser() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-  // DM right-pane tabs: thinking ↔ thread replies (channels stay thread-only).
-  const [rightTab, setRightTab] = useState<"thinking" | "thread">("thinking");
+  // Composer dictation: the mic button on the actions row streams through
+  // the STT bridge and appends finalized utterances to the composer's draft
+  // via its imperative handle — the route owns the wiring between the two.
+  const composerRef = useRef<ComposerHandle | null>(null);
+  const dictation = useComposerDictation({
+    onFinalTranscript: (text) => composerRef.current?.appendDictation(text),
+  });
   // "Received and working": sticky turn start; the agent's kind-9 reply
   // landing in the channel ends the turn.
   const working = useMemo(
@@ -952,6 +966,7 @@ function ChannelBrowser() {
                           pane's own composer targets the thread, and Esc here
                           is free to do nothing instead of closing it. */}
                       <Composer
+                        ref={composerRef}
                         members={members}
                         onTextChange={messageActions.onComposerText}
                         editing={messageActions.editing}
@@ -962,60 +977,23 @@ function ChannelBrowser() {
                         draftKey={current.id}
                         send={send}
                         actionsBar={
-                          <ChannelActionsBar
+                          <DmComposerActions
                             channel={current}
                             title={
                               current.type === "dm"
                                 ? dmName(current.participantPubkeys)
                                 : `# ${current.name}`
                             }
-                            onStartAgentCall={
-                              dmAgentPubkey && current.type === "dm"
-                                ? (existingHuddleChannelId) =>
-                                    huddleSession.startAgentCall({
-                                      parentChannelId: current.id,
-                                      agentPubkey: dmAgentPubkey,
-                                      agentName:
-                                        profiles.get(dmAgentPubkey)
-                                          ?.displayName ?? dmAgentPubkey,
-                                      existingHuddleChannelId,
-                                    })
-                                : undefined
-                            }
-                            agentCallPhase={huddleSession.agentCallPhase}
-                            agentCallError={
-                              huddleSession.agentCallParentChannelId ===
-                              current.id
-                                ? huddleSession.agentCallError
-                                : null
-                            }
+                            dmAgentPubkey={dmAgentPubkey}
+                            huddleSession={huddleSession}
+                            session={session}
                             members={members}
                             profiles={profiles}
                             presence={presence}
                             selfPubkey={selfPubkey}
                             contacts={dmParticipantPubkeys}
-                            onJoinChannel={async () => {
-                              const event = await signNostrEvent({
-                                kind: JOIN_CHANNEL_KIND,
-                                tags: joinChannelTags(current.id),
-                                content: "",
-                              });
-                              const result = await session.publish(event);
-                              if (result.ok) {
-                                toast.success(`Joined #${current.name}`);
-                              } else {
-                                toast.error(
-                                  result.message ||
-                                    "The relay refused the join.",
-                                );
-                              }
-                            }}
-                            agentPubkey={dmAgentPubkey}
-                            onOpenThinking={() => {
-                              setRightTab("thinking");
-                              setDmPaneHidden(false);
-                              setThinkingOpen(true);
-                            }}
+                            panes={panes}
+                            dictation={dictation}
                           />
                         }
                       />
