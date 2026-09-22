@@ -18,13 +18,18 @@
  * bounded event-id dedupe absorbs that replay overlap, so a reconnect reads
  * as a quiet no-op rather than a second boot.
  *
- * Convergence: a live FOREIGN event that actually advances the merged
- * stores re-arms the same publish debounce a local change would, so this
- * install's slot is republished carrying the union (every active device's
- * coordinate then stays recent enough to sit inside a fresh boot's
- * limit:64 window). Own echoes are dropped by id before decrypt, and a
- * republish can only carry state another device lacked — the exchange
- * terminates instead of ping-ponging.
+ * Convergence: a live event that actually advances the merged stores re-arms
+ * the same publish debounce a local change would, so this install's slot is
+ * republished carrying the union (every active coordinate then stays recent
+ * enough to sit inside a fresh boot's limit:64 window). That includes our
+ * OWN coordinate's blob: boot merges every valid slot it finds, own slot
+ * included (NIP-RS Fetching step 4) — after a reload or a local-store loss
+ * the own-slot event is the recovery record, and it arrives with an id this
+ * session has never seen. The one hard loop-breaker is the CURRENT session's
+ * own publishes: their ids are remembered before the EVENT leaves, so the
+ * relay's echo is dropped before decrypt and can never re-arm the publish.
+ * Every other redelivery is a grow-only no-op, so a recovery advance pays at
+ * most one republish and the exchange terminates instead of ping-ponging.
  *
  * Still v1-scope elsewhere: ONE slot per browser install, no thread/msg
  * hierarchy, no override layer. Each browser writes its own random `d`
@@ -47,7 +52,6 @@ import { loadReadState, saveReadState } from "./readState.ts";
 import {
   KIND_READ_STATE,
   type MergedRemoteReadState,
-  READ_STATE_D_TAG_PREFIX,
   buildPublishPayload,
   buildReadStateEventTags,
   isValidReadStateDTag,
@@ -290,24 +294,6 @@ function isReadStateEvent(
 }
 
 /**
- * Own-slot check: the event sits on THIS install's `d` coordinate, so it is
- * one of our own publishes echoed back or replayed. Dropped before decrypt —
- * merging our own blob back is at best a wasted decrypt and at worst a
- * self-triggered convergence republish.
- */
-function isOwnSlotEvent(
-  event: Pick<SignedNostrEvent, "tags">,
-  slotId: string,
-): boolean {
-  return event.tags.some(
-    (tag) =>
-      Array.isArray(tag) &&
-      tag[0] === "d" &&
-      tag[1] === `${READ_STATE_D_TAG_PREFIX}${slotId}`,
-  );
-}
-
-/**
  * The boot-to-live subscription. Until EOSE (or the 15s valve) accepted
  * events form the boot batch — decrypt failures become nulls and are
  * skipped by the fold, one undecryptable event must not kill the batch, and
@@ -352,12 +338,12 @@ async function bootFetch(state: ReadStateSyncState): Promise<void> {
           event.created_at,
         );
         // Replay / own-echo dedupe BEFORE decrypt: reconnect replays
-        // re-deliver stored events verbatim, and our own publishes come
-        // back on this same REQ — neither may re-enter the merge path.
+        // re-deliver stored events verbatim, and this session's own
+        // publishes come back on this same REQ with ids we remembered
+        // pre-publish — neither may re-enter the merge path. Own-SLOT
+        // events with unseen ids are deliberately NOT dropped here: the
+        // prior session's blob is the recovery record after a reload.
         if (!rememberEventId(state, event.id)) {
-          return;
-        }
-        if (isOwnSlotEvent(event, state.slotId)) {
           return;
         }
         if (!isReadStateEvent(event, state.pubkey)) {
@@ -414,9 +400,8 @@ function scheduleLiveFlush(state: ReadStateSyncState): void {
 
 /**
  * Drain the live queue as ONE batch: a single grow-only merge into both
- * stores, at most one synced event per burst, and — only when a foreign
- * marker actually advanced state — a convergence republish on the shared
- * debounce.
+ * stores, at most one synced event per burst, and — only when the batch
+ * actually advanced state — a convergence republish on the shared debounce.
  */
 async function flushLiveQueue(state: ReadStateSyncState): Promise<void> {
   if (state.liveFlushTimer !== null) {
@@ -434,10 +419,11 @@ async function flushLiveQueue(state: ReadStateSyncState): Promise<void> {
   }
   const advanced = applyMergedRemote(mergePayloadBatch(payloads));
   if (advanced) {
-    // Everything in the live queue passed the own-slot drop, so any advance
-    // came from another device — refresh our slot with the union. Our own
-    // echo of that publish is dropped by id, and the other devices' merges
-    // of it cannot advance them, so the chain terminates.
+    // An advance means local state was behind some slot's blob — another
+    // device's, or our own prior session's after a reload (recovery). Either
+    // way, refresh our slot with the union. The CURRENT session's echoes are
+    // dropped by remembered id, and re-merging any redelivered blob is a
+    // grow-only no-op, so the chain terminates — a recovery pays at most one.
     schedulePublishDebounced(state);
   }
 }

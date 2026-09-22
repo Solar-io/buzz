@@ -496,39 +496,103 @@ test("own echo: the published event fed back on the open subscription is dropped
   );
 });
 
-test("own slot: an event on this install's coordinate is dropped even with a never-seen id", async (t) => {
+test("recovery: a prior-session own-slot event with an unseen id is decrypted and merged at boot (NIP-RS Fetching step 4)", async (t) => {
   const pubkey = "9".repeat(64);
   const { win, ls } = freshHarness(pubkey);
+  const firstSession = fakeSession();
+  initReadStateSync({ session: firstSession, selfPubkey: pubkey });
+  firstSession.eose();
+  const slotId = ownSlotId(ls, pubkey);
+  // "Reload": the in-memory event-id set is gone and the local read-state
+  // store is lost, but the persisted slot id (and the relay's own-slot blob)
+  // survives. A fresh state must merge its own prior blob back.
+  disposeReadStateSync();
   t.after(() => disposeReadStateSync());
-  const session = fakeSession();
 
+  const session = fakeSession();
   initReadStateSync({ session, selfPubkey: pubkey });
-  session.eose();
   session.emit(
     foreignEvent(pubkey, {
-      id: "never-published-by-us",
-      slotId: ownSlotId(ls, pubkey),
-      createdAt: 9_999,
+      id: "prior-session-publish",
+      slotId,
+      createdAt: 4_000,
       content: signerCtl.seal({
         v: 1,
-        client_id: "not-us",
-        contexts: { chHax: 99_999 },
+        client_id: "prior-session",
+        contexts: { chRecovered: 77 },
       }),
     }),
   );
-  await sleep(250);
+  session.eose();
 
+  await waitFor(
+    () => loadReadState().chRecovered === 77,
+    "own-slot recovery blob merged at boot",
+  );
+  assert.equal(win.syncedEventCount(), 1);
+  // The boot restore arms no publish (boot advances never do), so recovery
+  // via boot costs zero publishes — stronger than "one is acceptable".
+  win.dispatchEvent({ type: "pagehide" });
+  await sleep(50);
+  assert.equal(session.published.length, 0, "boot recovery publishes nothing");
+});
+
+test("recovery (live): an unseen own-slot marker after EOSE merges once, pays one convergence republish, and the echo does not loop", async (t) => {
+  const pubkey = "0".repeat(64);
+  const { win, ls } = freshHarness(pubkey);
+  const firstSession = fakeSession();
+  initReadStateSync({ session: firstSession, selfPubkey: pubkey });
+  firstSession.eose();
+  const slotId = ownSlotId(ls, pubkey);
+  disposeReadStateSync();
+  t.after(() => disposeReadStateSync());
+
+  const session = fakeSession();
+  initReadStateSync({ session, selfPubkey: pubkey });
+  session.eose();
+  win.dispatched.length = 0;
+
+  session.emit(
+    foreignEvent(pubkey, {
+      id: "prior-session-live",
+      slotId,
+      createdAt: 4_500,
+      content: signerCtl.seal({
+        v: 1,
+        client_id: "prior-session",
+        contexts: { chLiveRecovery: 88 },
+      }),
+    }),
+  );
+  await waitFor(
+    () => loadReadState().chLiveRecovery === 88,
+    "own-slot recovery marker merged despite the own coordinate",
+  );
+
+  // A recovery advance may pay ONE convergence republish (acceptable).
+  win.dispatchEvent({ type: "pagehide" });
+  await waitFor(() => session.published.length === 1, "one recovery republish");
+  assert.equal(
+    JSON.parse(signerCtl.plaintexts[signerCtl.plaintexts.length - 1]).contexts
+      .chLiveRecovery,
+    88,
+    "republished slot carries the recovered marker",
+  );
+
+  // The relay echoes the republish back. Its id was remembered before the
+  // EVENT left, so the echo is dropped before decrypt and re-arms nothing.
+  const decryptCallsBefore = signerCtl.decryptCalls.length;
+  session.emit(session.published[0]);
+  session.eose();
+  await sleep(250);
   assert.equal(
     signerCtl.decryptCalls.length,
-    0,
-    "own-coordinate event never decrypted",
+    decryptCallsBefore,
+    "echo of the recovery republish not decrypted",
   );
-  assert.equal(
-    loadReadState().chHax,
-    undefined,
-    "own-coordinate event never merged",
-  );
-  assert.equal(win.syncedEventCount(), 0);
+  win.dispatchEvent({ type: "pagehide" });
+  await sleep(50);
+  assert.equal(session.published.length, 1, "the recovery does not loop");
 });
 
 // --- convergence republish -------------------------------------------------
