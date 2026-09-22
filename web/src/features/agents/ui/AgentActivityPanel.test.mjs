@@ -97,7 +97,7 @@ function turnFrame() {
   };
 }
 
-async function mountPanel({ profile, frames = [turnFrame()] }) {
+async function mountPanel({ profile, frames = [turnFrame()], ...rest }) {
   const container = dom.window.document.createElement("div");
   dom.window.document.body.appendChild(container);
   const root = createRoot(container);
@@ -113,6 +113,7 @@ async function mountPanel({ profile, frames = [turnFrame()] }) {
         working: { working: false, startedAt: null },
         mobileOpen: false,
         onCloseMobile: () => {},
+        ...rest,
       }),
     );
   });
@@ -173,6 +174,43 @@ test("the portrait no longer renders inside the thinking pane", async () => {
   assert.ok(
     transcript?.textContent?.includes("Turn"),
     "transcript rows still render",
+  );
+  await unmount();
+});
+
+test("the Replies switch is reachable at EVERY width, not just below lg", async () => {
+  // The header bar's removal (Sam, 2026-09-22) moved the Replies switch into
+  // a floating strip that ALSO carries the mobile close. The close genuinely
+  // belongs below lg only (at lg the pane is docked and the composer's brain
+  // toggle is visible), but the Replies switch does not: in a DM that has
+  // both a thread and an agent it is the ONLY route back to Thinking, and the
+  // reverse route sits on the thread pane. Sharing the close's `lg:hidden`
+  // stranded every desktop reader who switched to Replies — this test exists
+  // because that shipped once.
+  //
+  // The assertion is on the class list, not computed style: jsdom does not
+  // evaluate Tailwind, so a visibility check here would pass on any markup
+  // and prove nothing.
+  const { container, unmount } = await mountPanel({
+    onSelectThreadTab: () => {},
+  });
+  const replies = [...container.querySelectorAll("button")].find(
+    (b) => b.textContent?.trim() === "Replies",
+  );
+  assert.ok(replies, "the Replies switch renders when a thread is available");
+  assert.equal(
+    replies.className.includes("lg:hidden"),
+    false,
+    "the Replies switch must not inherit the close's lg:hidden gate",
+  );
+
+  // The close keeps its own gate — the two are independent.
+  const close = container.querySelector('[aria-label="Close thinking panel"]');
+  assert.ok(close, "the mobile close still renders");
+  assert.equal(
+    close.className.includes("lg:hidden"),
+    true,
+    "the close stays below-lg only",
   );
   await unmount();
 });
