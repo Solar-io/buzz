@@ -212,9 +212,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                     if let (Some(index), Some(files)) = (admin_index, admin_files) {
                         if path.starts_with("/assets/") {
                             let served = files.oneshot(req).await;
-                            return served
-                                .map(IntoResponse::into_response)
-                                .map(|response| with_cache_control(response, ASSET_CACHE_CONTROL));
+                            return served.map(IntoResponse::into_response).map(|response| {
+                                with_cache_control(response, asset_cache_control(&path))
+                            });
                         }
                         if is_admin_spa_path(&path) {
                             return Ok(read_spa_index(&index).await);
@@ -231,7 +231,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                                 .await
                                 .map(IntoResponse::into_response)
                                 .map(|response| {
-                                    with_cache_control(response, ASSET_CACHE_CONTROL)
+                                    with_cache_control(response, asset_cache_control(&path))
                                 })?;
                             // The web client registers its service worker at
                             // root scope, but the script lives inside /assets/
@@ -482,10 +482,21 @@ async fn docs_proxy_handler(
 /// without validators: the body is a few KB.
 pub(crate) const SPA_INDEX_CACHE_CONTROL: &str = "no-cache";
 
-/// `Cache-Control` for `/assets/*`: content-hashed filenames make the files
-/// immutable by construction — a new build ships new hashes, so a year-long
-/// immutable cache is safe and makes repeat loads instant.
+/// `Cache-Control` for content-hashed `/assets/*` files. A new build ships new
+/// hashes, so a year-long immutable cache is safe and makes repeat loads instant.
 pub(crate) const ASSET_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
+
+/// PWA control files keep stable URLs while their contents change between
+/// builds. They must revalidate or an installed app can retain an old manifest
+/// scope or service worker for a year after the live bundle is corrected.
+pub(crate) const PWA_CONTROL_CACHE_CONTROL: &str = "no-cache";
+
+fn asset_cache_control(path: &str) -> &'static str {
+    match path {
+        "/assets/manifest.webmanifest" | "/assets/sw.js" => PWA_CONTROL_CACHE_CONTROL,
+        _ => ASSET_CACHE_CONTROL,
+    }
+}
 
 /// Stamp a static-web response with the given `Cache-Control` value.
 fn with_cache_control(
@@ -825,10 +836,23 @@ mod tests {
     #[test]
     fn static_web_cache_control_pins_the_load_reliability_contract() {
         // Hardcoded strings, not derived: the index MUST revalidate (a stale
-        // index references chunks a deploy deleted), assets MUST be immutable
-        // (content-hashed names change with every build).
+        // index references chunks a deploy deleted), hashed assets MUST be
+        // immutable, and stable-URL PWA control files MUST revalidate.
         assert_eq!(SPA_INDEX_CACHE_CONTROL, "no-cache");
         assert_eq!(ASSET_CACHE_CONTROL, "public, max-age=31536000, immutable");
+        assert_eq!(PWA_CONTROL_CACHE_CONTROL, "no-cache");
+        assert_eq!(
+            asset_cache_control("/assets/index-AbCd1234.js"),
+            ASSET_CACHE_CONTROL
+        );
+        assert_eq!(
+            asset_cache_control("/assets/manifest.webmanifest"),
+            PWA_CONTROL_CACHE_CONTROL
+        );
+        assert_eq!(
+            asset_cache_control("/assets/sw.js"),
+            PWA_CONTROL_CACHE_CONTROL
+        );
 
         // The stamping helper actually sets the header it is given.
         let base = axum::response::Html("<html>".to_string()).into_response();

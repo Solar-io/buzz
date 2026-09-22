@@ -1,7 +1,11 @@
 // Minimal service worker: cache-first for hashed build assets, pass-through
 // for everything else. Enough for PWA installability; relay traffic (WS) is
 // never cached.
-const CACHE = "buzz-web-v1";
+const CACHE = "buzz-web-v2";
+const MUTABLE_PWA_ASSETS = new Set([
+  "/assets/manifest.webmanifest",
+  "/assets/sw.js",
+]);
 
 self.addEventListener("install", () => {
   self.skipWaiting();
@@ -25,7 +29,10 @@ self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET" || url.origin !== self.location.origin) {
     return;
   }
-  if (!url.pathname.startsWith("/assets/")) {
+  if (
+    !url.pathname.startsWith("/assets/") ||
+    MUTABLE_PWA_ASSETS.has(url.pathname)
+  ) {
     return;
   }
   event.respondWith(
