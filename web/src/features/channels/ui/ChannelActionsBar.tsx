@@ -221,6 +221,16 @@ export function ChannelActionsBar({
           {dictation.interimText}
         </span>
       )}
+      {dictation?.error && (
+        <span
+          data-testid="dictation-error"
+          role="alert"
+          title={dictation.error}
+          className="max-w-48 shrink-0 truncate text-2xs text-red-400"
+        >
+          {dictation.error}
+        </span>
+      )}
       {canStartAgentCall && (
         <button
           type="button"

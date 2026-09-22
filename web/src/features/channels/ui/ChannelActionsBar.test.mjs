@@ -361,6 +361,20 @@ test("the dictation mic renders when supported, toggles, and shows interim text"
   assert.ok(interim, "a live transcript line shows while listening");
   assert.equal(interim.textContent, "hello wor");
   await active.unmount();
+
+  const failed = await mount(
+    props({
+      dictation: dictationController({
+        error: "Speech recognition connection closed.",
+      }),
+    }),
+  );
+  const errorLine = failed.container.querySelector(
+    '[data-testid="dictation-error"]',
+  );
+  assert.ok(errorLine, "a bridge failure is said out loud, not swallowed");
+  assert.equal(errorLine.getAttribute("role"), "alert");
+  await failed.unmount();
 });
 
 test("the copy-channel-name action is gone", async () => {
