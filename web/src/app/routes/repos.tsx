@@ -32,6 +32,10 @@ import { useReadStateSync } from "@/features/channels/lib/useReadStateSync.ts";
 import { activeTyping } from "@/features/channels/lib/typing.ts";
 import { clampThreadWidth } from "@/features/channels/lib/threadPanelWidth.ts";
 import { useThreadPaneWidth } from "@/features/channels/lib/useThreadPaneWidth.ts";
+import {
+  PANE_RESIZE_HANDLE_CLASSES,
+  usePointerDrag,
+} from "@/shared/layout/usePointerDrag.ts";
 import { usePermalinkCleanup } from "@/features/channels/lib/usePermalinkCleanup.ts";
 import { useChannelLists } from "@/features/channels/lib/useChannelLists.ts";
 import { useMessageActions } from "@/features/channels/lib/useMessageActions.ts";
@@ -375,6 +379,13 @@ function ChannelBrowser() {
   // on this surface.
   const { setRowEl, shellRowWidth, threadWidth, setThreadWidth } =
     useThreadPaneWidth(channelId, false);
+  // Dragging the side panel's left edge rightward shrinks it (touch-safe).
+  const sidePanelDrag = usePointerDrag({
+    onDrag: (deltaX) =>
+      setThreadWidth((previous) =>
+        clampThreadWidth(previous - deltaX, shellRowWidth()),
+      ),
+  });
   // Auto-tail now lives INSIDE the virtualized timeline (tailKey) — the VList
   // owns its scroll node. The key covers both new messages and channel
   // switches (two channels share a last-message id only in the empty case).
@@ -1014,28 +1025,8 @@ function ChannelBrowser() {
                     // divider line. The handle used to add a second 1px
                     // border 4px beside it — under always-on OS scrollbars
                     // that stack read as "two scrollbars and a sliver".
-                    className="buzz-side-panel-resize-handle relative z-10 hidden w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-white/15 active:bg-white/25 lg:block lg:-ml-px"
-                    onPointerDown={(event) => {
-                      event.preventDefault();
-                      event.currentTarget.setPointerCapture(event.pointerId);
-                    }}
-                    onPointerMove={(event) => {
-                      if (
-                        event.currentTarget.hasPointerCapture(event.pointerId)
-                      ) {
-                        setThreadWidth((previous) =>
-                          clampThreadWidth(
-                            previous - event.movementX,
-                            shellRowWidth(),
-                          ),
-                        );
-                      }
-                    }}
-                    onPointerUp={(event) => {
-                      event.currentTarget.releasePointerCapture(
-                        event.pointerId,
-                      );
-                    }}
+                    className={`buzz-side-panel-resize-handle relative z-10 hidden w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-white/15 active:bg-white/25 lg:block lg:-ml-px ${PANE_RESIZE_HANDLE_CLASSES}`}
+                    {...sidePanelDrag}
                   />
                 )}
                 {threadRoot && (!dmAgentPubkey || rightTab === "thread") && (

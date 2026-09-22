@@ -6,6 +6,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import {
+  PANE_RESIZE_HANDLE_CLASSES,
+  usePointerDrag,
+} from "./usePointerDrag.ts";
 
 /**
  * Two-pane responsive shell: sidebar + main. On small screens the sidebar
@@ -61,6 +65,10 @@ function ResizeHandle({
   onRelease: () => void;
   label: string;
 }) {
+  const drag = usePointerDrag({
+    onDrag: (deltaX) => onDrag(orientation === "right" ? deltaX : -deltaX),
+    onRelease,
+  });
   return (
     // biome-ignore lint/a11y/useFocusableInteractive: pointer-only resize handle; keyboard resize is not implemented
     // biome-ignore lint/a11y/useSemanticElements: pointer-only resize handle; keyboard resize is not implemented
@@ -70,22 +78,10 @@ function ResizeHandle({
       role="separator"
       aria-orientation="vertical"
       className={
-        "group relative z-10 hidden w-1 shrink-0 cursor-col-resize border-sidebar-border bg-transparent transition-colors hover:bg-white/15 active:bg-white/25 md:block " +
+        `group relative z-10 hidden w-1 shrink-0 cursor-col-resize border-sidebar-border bg-transparent transition-colors hover:bg-white/15 active:bg-white/25 md:block ${PANE_RESIZE_HANDLE_CLASSES}` +
         (orientation === "right" ? " -mr-px border-r" : " -ml-px border-l")
       }
-      onPointerDown={(event) => {
-        event.preventDefault();
-        event.currentTarget.setPointerCapture(event.pointerId);
-      }}
-      onPointerMove={(event) => {
-        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-          onDrag(orientation === "right" ? event.movementX : -event.movementX);
-        }
-      }}
-      onPointerUp={(event) => {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-        onRelease();
-      }}
+      {...drag}
     />
   );
 }
