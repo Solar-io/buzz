@@ -913,6 +913,6 @@
 
 @media (pointer: coarse) {
   .buzz-resize-hit::before {
-    inset-inline: -0.875rem;
+    inset-inline: -0.625rem;
   }
 }
