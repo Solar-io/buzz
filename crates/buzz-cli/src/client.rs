@@ -1484,7 +1484,25 @@ pub fn normalize_write_response(raw: &str) -> String {
             .to_string();
         }
     }
-    raw.to_string()
+    // The body carries no verdict. Returning it verbatim made a 2xx with an
+    // unexpected body indistinguishable from a healthy document: `{"ok":true,
+    // "id":"abc"}` is valid JSON a caller reads as success, and raw `<html>` or
+    // an empty body is silence with exit 0. 38 call sites print this directly
+    // (only commands/messages.rs:931 wraps it). Wrap the passthrough so the
+    // ABSENCE of a verdict is explicit and machine-detectable.
+    //
+    // Note: this function only receives the body — it cannot know the status.
+    // `handle_response` is `Ok(resp.text().await?)`, so Ok is gated on the HTTP
+    // status and every 2xx reaches the printer, JSON or not. A caller that needs
+    // to distinguish "landed but unparseable" from "never landed" must use the
+    // EXIT CODE, which is the only signal that holds on both paths.
+    serde_json::json!({
+        "accepted": serde_json::Value::Null,
+        "unnormalized_response": raw,
+        "error": "relay returned a 2xx whose body carried no event_id/accepted — \
+                  the write may have landed; do not retry on this shape",
+    })
+    .to_string()
 }
 
 #[cfg(test)]
@@ -1492,8 +1510,9 @@ mod retry_tests {
     use std::time::Duration;
 
     use super::{
-        env_duration_secs, is_moderation_kind, jitter_delay, parse_retry_hint_text,
-        parse_retry_in_secs, RETRY_BASE_SECS, RETRY_IN_MAX_SECS, RETRY_MAX_ATTEMPTS,
+        env_duration_secs, is_moderation_kind, jitter_delay, normalize_write_response,
+        parse_retry_hint_text, parse_retry_in_secs, RETRY_BASE_SECS, RETRY_IN_MAX_SECS,
+        RETRY_MAX_ATTEMPTS,
     };
 
     // ---- parse_retry_in_secs ----
@@ -1628,6 +1647,80 @@ mod retry_tests {
         // Unset uses the default.
         std::env::remove_var(KEY);
         assert_eq!(env_duration_secs(KEY, 30), Duration::from_secs(30));
+    }
+
+    // ---- normalize_write_response: the output must carry a VERDICT ----
+    //
+    // Reachability (Jared Dunn / Cereal Killer, 2026-09-22): `handle_response`
+    // returns `Ok(resp.text().await?)`, i.e. Ok is gated on the HTTP STATUS and
+    // not on the body being JSON. So any 2xx reaches the printer. 38 call sites
+    // print this function's output directly; one (messages.rs:931) wraps it.
+    //
+    // The failure mode is not that a raw passthrough is unparseable. It is that
+    // it is PARSEABLE AND MUTE: `{"ok":true,"id":"abc"}` reads as a healthy JSON
+    // object to any caller and answers neither "did the write land" nor "what is
+    // the id". A test phrased as "output must be valid JSON" passes on it.
+    //
+    // The contract: for ANY input the output is either (a) a JSON object
+    // carrying `accepted`, or (b) output a documented parser REJECTS.
+
+    fn carries_a_verdict(out: &str) -> bool {
+        serde_json::from_str::<serde_json::Value>(out)
+            .ok()
+            .map(|v| v.get("accepted").is_some())
+            .unwrap_or(false)
+    }
+
+    // Deliberately NO `rejects()` arm. The old passthrough satisfied
+    // "not parseable" for every non-JSON input, so a disjunction
+    // `carries_a_verdict(out) || rejects(out)` was green on the old code for
+    // exactly the rows whose names claim it was silent. Assert the contract
+    // directly: every input yields a document carrying a verdict field.
+    // (Caught by Cereal Killer, 2026-09-22 — 3 of these 5 were green on the
+    // old function, so only 2 discriminated.)
+
+    #[test]
+    fn success_document_carries_accepted() {
+        let out = normalize_write_response(r#"{"event_id":"abc","accepted":true,"message":""}"#);
+        assert!(carries_a_verdict(&out), "normal success body must carry a verdict: {out}");
+    }
+
+    #[test]
+    fn json_body_with_neither_key_is_not_a_silent_success() {
+        // Valid JSON, object, no `accepted`, no `event_id` -- currently passed
+        // through VERBATIM, which is the silent row.
+        let out = normalize_write_response(r#"{"ok":true,"id":"abc"}"#);
+        assert!(
+            carries_a_verdict(&out),
+            "a 2xx body with neither key must carry a verdict field: {out}"
+        );
+    }
+
+    #[test]
+    fn message_only_json_body_is_not_a_silent_success() {
+        let out = normalize_write_response(r#"{"message":"weird 2xx"}"#);
+        assert!(
+            carries_a_verdict(&out),
+            "a message-only 2xx body must carry a verdict field: {out}"
+        );
+    }
+
+    #[test]
+    fn non_json_body_is_not_a_silent_success() {
+        let out = normalize_write_response("<html>proxy error</html>");
+        assert!(
+            carries_a_verdict(&out),
+            "a non-JSON 2xx body must carry a verdict field: {out}"
+        );
+    }
+
+    #[test]
+    fn empty_body_is_not_a_silent_success() {
+        let out = normalize_write_response("");
+        assert!(
+            carries_a_verdict(&out),
+            "an empty 2xx body must carry a verdict field: {out:?}"
+        );
     }
 }
 
