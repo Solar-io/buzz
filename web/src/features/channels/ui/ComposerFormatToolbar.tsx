@@ -11,7 +11,6 @@ import {
   Strikethrough,
 } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
-import { useState } from "react";
 import type { ActiveMarks } from "../lib/composerActiveMarks.ts";
 import {
   applyCode,
@@ -156,51 +155,38 @@ export function ComposerFormatToolbar({
   onApply: (format: FormatFn) => void;
   onCaptureSelection?: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  // Always open at every width (Sam, 2026-09-22): the phone-only
+  // "Text formatting" disclosure made him tap to open and close it.
   return (
-    <>
-      <button
-        type="button"
-        className="mb-1 rounded px-2 py-1 text-xs text-muted-foreground sm:hidden"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((value) => !value)}
-      >
-        Text formatting
-      </button>
-      <div
-        className={cn(
-          className,
-          "mb-1.5 flex-wrap items-center gap-0.5 sm:flex",
-          expanded ? "flex" : "hidden",
-        )}
-        role="toolbar"
-        aria-label="Format message"
-      >
-        {FORMAT_ITEMS.map((item) => {
-          const active = marks[item.mark];
-          return (
-            <button
-              key={item.id}
-              type="button"
-              data-testid={`format-${item.id}`}
-              aria-label={item.label}
-              aria-pressed={active}
-              title={item.title}
-              className={cn(
-                "rounded-md p-1.5 transition-colors disabled:opacity-40",
-                active
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-accent hover:text-foreground",
-              )}
-              disabled={disabled}
-              onPointerDown={onCaptureSelection}
-              onClick={() => onApply(item.apply)}
-            >
-              <item.Icon aria-hidden className="h-4 w-4" />
-            </button>
-          );
-        })}
-      </div>
-    </>
+    <div
+      className={cn(className, "mb-1.5 flex flex-wrap items-center gap-0.5")}
+      role="toolbar"
+      aria-label="Format message"
+    >
+      {FORMAT_ITEMS.map((item) => {
+        const active = marks[item.mark];
+        return (
+          <button
+            key={item.id}
+            type="button"
+            data-testid={`format-${item.id}`}
+            aria-label={item.label}
+            aria-pressed={active}
+            title={item.title}
+            className={cn(
+              "rounded-md p-1.5 transition-colors disabled:opacity-40",
+              active
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+            disabled={disabled}
+            onPointerDown={onCaptureSelection}
+            onClick={() => onApply(item.apply)}
+          >
+            <item.Icon aria-hidden className="h-4 w-4" />
+          </button>
+        );
+      })}
+    </div>
   );
 }

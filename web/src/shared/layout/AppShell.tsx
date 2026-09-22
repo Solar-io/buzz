@@ -89,13 +89,11 @@ function ResizeHandle({
 export function AppShell({
   sidebar,
   title,
-  onBack,
   children,
 }: {
   sidebar: ReactNode;
   /** Current conversation label for the mobile top bar. */
   title?: string | null;
-  onBack?: () => void;
   children: ReactNode;
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -137,17 +135,10 @@ export function AppShell({
 
       {/* Mobile top bar + drawer */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="buzz-shell-navigation flex items-center gap-2 border-b border-border px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))] md:hidden">
-          {onBack && (
-            <button
-              type="button"
-              aria-label="Back"
-              className="rounded-md p-2 hover:bg-accent"
-              onClick={onBack}
-            >
-              ‹
-            </button>
-          )}
+        {/* Phone bar (Sam, 2026-09-22): ONE gray bar — the hamburger and the
+            conversation name, where the old channel header sat. The
+            "Buzz / Name" breadcrumb bar above it is gone. */}
+        <header className="buzz-shell-navigation flex min-h-11 shrink-0 items-center gap-1 border-b border-border bg-secondary px-2 py-1 pt-[max(0.25rem,env(safe-area-inset-top))] md:hidden">
           <button
             type="button"
             aria-label="Open channels"
@@ -166,16 +157,8 @@ export function AppShell({
               <path d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <span className="min-w-0 truncate">
-            {title ? (
-              <>
-                <span className="text-muted-foreground">Buzz</span>
-                <span className="mx-1.5 text-muted-foreground">/</span>
-                <span className="font-semibold">{title}</span>
-              </>
-            ) : (
-              <span className="font-semibold">Buzz</span>
-            )}
+          <span className="min-w-0 truncate font-semibold">
+            {title || "Buzz"}
           </span>
         </header>
         <main className="buzz-content-scrollbar min-h-0 flex-1 overflow-y-auto">

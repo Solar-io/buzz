@@ -797,19 +797,6 @@ function ChannelBrowser() {
         >
           <AppShell
             sidebar={sidebar}
-            onBack={
-              current || view
-                ? () => {
-                    if ((window.history.state?.__TSR_index ?? 0) > 0)
-                      window.history.back();
-                    else
-                      void navigate({
-                        to: "/repos",
-                        search: { view: "inbox" },
-                      });
-                  }
-                : undefined
-            }
             title={
               current
                 ? current.type === "dm"
