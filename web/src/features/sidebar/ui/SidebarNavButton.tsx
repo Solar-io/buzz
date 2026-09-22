@@ -139,7 +139,17 @@ export function SidebarNavButton({
               tabIndex={0}
               aria-label={`Options for ${label}`}
               className={cn(
-                "hidden shrink-0 rounded p-0.5 text-xs text-sidebar-foreground/60 hover:bg-white/10 group-hover/row:block",
+                // Opacity, not display: while the menu is open Radix sets
+                // pointer-events on the rest of the page, the row loses
+                // :hover, and a `hidden` trigger collapses to a zero rect —
+                // the popper then re-anchors at (0,0) and the menu teleports
+                // to the top-left of the window (Sam, 2026-09-22). Staying
+                // in layout keeps the anchor rect real. pointer-events
+                // follow the reveal so the invisible trigger is not a click
+                // trap; focus keeps it visible for the keyboard path.
+                "shrink-0 rounded p-0.5 text-xs text-sidebar-foreground/60 hover:bg-white/10",
+                "pointer-events-none opacity-0 group-hover/row:pointer-events-auto group-hover/row:opacity-100",
+                "focus-visible:pointer-events-auto focus-visible:opacity-100",
                 !unread && !muted && "ml-auto",
               )}
               onClick={(event) => event.stopPropagation()}
