@@ -25,8 +25,8 @@ use std::time::Duration;
 use acp::{AcpClient, EnvVar, McpServer};
 use anyhow::{ensure, Context, Result};
 use buzz_core::kind::{
-    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_STREAM_MESSAGE,
-    KIND_STREAM_REMINDER, KIND_WORKFLOW_APPROVAL_REQUESTED,
+    KIND_CANVAS, KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION,
+    KIND_STREAM_MESSAGE, KIND_STREAM_REMINDER, KIND_WORKFLOW_APPROVAL_REQUESTED,
 };
 use buzz_core::observer::{
     decrypt_observer_payload, encrypt_observer_payload, OBSERVER_FRAME_TELEMETRY,
@@ -41,8 +41,8 @@ use filter::SubscriptionRule;
 use futures_util::FutureExt;
 use nostr::{PublicKey, ToBech32};
 use pool::{
-    AgentPool, ControlSignal, IdleSwitchResult, OwnedAgent, PromptContext, PromptOutcome,
-    PromptResult, PromptSource, SessionState, TimeoutKind,
+    AgentPool, CanvasNotice, ControlSignal, IdleSwitchResult, OwnedAgent, PromptContext,
+    PromptOutcome, PromptResult, PromptSource, SessionState, TimeoutKind,
 };
 use pool_lifecycle::PoolLifecycle;
 use queue::{CancelReason, EventQueue, FlushBatch, QueuedEvent, ThreadTags};
@@ -2418,6 +2418,17 @@ async fn tokio_main() -> Result<()> {
     // and capture it in TaskMeta at dispatch time.
     let mut removed_channels: HashSet<Uuid> = HashSet::new();
 
+    // Canvas changes (kind 40100) that arrived while an agent was checked out.
+    // Idle agents holding a live session for the channel are armed immediately
+    // (pool.note_canvas_changed); a checked-out agent is not reachable until
+    // its task returns, so the newest notice per channel is recorded here and
+    // applied in `handle_prompt_result` — gated on the returning agent holding
+    // a live session for the channel. LWW per channel (overwritten by newer
+    // revisions, never removed on application), so the map is bounded by the
+    // channel count; `SessionState::refresh_channel_canvas` makes re-applying
+    // a lingering entry a no-op once the session state already reflects it.
+    let mut pending_canvas_updates: HashMap<Uuid, CanvasNotice> = HashMap::new();
+
     //
     // One SlotCircuit per agent slot. crash_times entries are pruned to the last
     // CIRCUIT_BREAKER_WINDOW on each respawn attempt. The Vec is indexed by
@@ -2808,6 +2819,72 @@ async fn tokio_main() -> Result<()> {
 
                             if config.ignore_self && buzz_event.event.pubkey.to_hex() == pubkey_hex {
                                 tracing::debug!(channel_id = %buzz_event.channel_id, "dropping self-authored event");
+                                continue;
+                            }
+
+                            // Channel canvas write (kind 40100) — consumed by
+                            // the harness, never a prompt trigger. Delivered on
+                            // the channel subscription (the second filter
+                            // object in send_subscribe). This branch must sit
+                            // after `ignore_self` (an agent's own
+                            // `buzz canvas set` should not notify itself,
+                            // matching message semantics) and before
+                            // `filter::match_event`/`queue.push` (canvas
+                            // events match no subscription rule; without the
+                            // interception they would be silently dropped and
+                            // seated agents would never learn the revision
+                            // moved).
+                            if kind_u32 == KIND_CANVAS {
+                                let channel_id = buzz_event.channel_id;
+                                if !subscribed_channel_ids.contains(&channel_id) {
+                                    tracing::debug!(
+                                        channel_id = %channel_id,
+                                        "canvas event for unsubscribed channel — dropping"
+                                    );
+                                    continue;
+                                }
+                                // DM guard, same fail-closed stance as the
+                                // session-creation canvas path: a confirmed DM
+                                // never receives canvas sections, and an
+                                // unresolved channel type is treated as one.
+                                if is_dm_channel(channel_id, &ctx.channel_info).await {
+                                    tracing::debug!(
+                                        channel_id = %channel_id,
+                                        "canvas event in DM (or unresolved-type) channel — dropping"
+                                    );
+                                    continue;
+                                }
+                                // Fail-open: an invalid/tampered event is
+                                // logged at `warn` inside the validator and
+                                // dropped — never blocks a turn or a send.
+                                let Some(notice) =
+                                    pool::canvas_notice_from_event(&buzz_event.event, channel_id)
+                                else {
+                                    continue;
+                                };
+                                tracing::info!(
+                                    channel_id = %channel_id,
+                                    revision = %notice.revision_id,
+                                    cleared = notice.cleared,
+                                    "channel canvas changed — notifying seated agents"
+                                );
+                                if pool_ready {
+                                    let armed = pool.note_canvas_changed(channel_id, &notice);
+                                    tracing::debug!(
+                                        channel_id = %channel_id,
+                                        armed,
+                                        "canvas change armed on idle agents"
+                                    );
+                                }
+                                // Checked-out agents are armed on their return;
+                                // LWW per channel so a newer revision replaces
+                                // an undelivered older one.
+                                match pending_canvas_updates.get(&channel_id) {
+                                    Some(current) if current.created_at > notice.created_at => {}
+                                    _ => {
+                                        pending_canvas_updates.insert(channel_id, notice);
+                                    }
+                                }
                                 continue;
                             }
 
@@ -3215,6 +3292,7 @@ async fn tokio_main() -> Result<()> {
                     *result,
                     &mut heartbeat_in_flight,
                     &removed_channels,
+                    &pending_canvas_updates,
                     &mut crash_history,
                     &respawn_tx,
                     &mut respawn_tasks,
@@ -4486,6 +4564,7 @@ fn handle_prompt_result(
     mut result: PromptResult,
     heartbeat_in_flight: &mut bool,
     removed_channels: &HashSet<Uuid>,
+    pending_canvas_updates: &HashMap<Uuid, CanvasNotice>,
     crash_history: &mut [SlotCircuit],
     respawn_tx: &mpsc::Sender<RespawnResult>,
     respawn_tasks: &mut tokio::task::JoinSet<()>,
@@ -4646,6 +4725,18 @@ fn handle_prompt_result(
     // only touches idle agents.
     for ch in removed_channels {
         result.agent.state.invalidate_channel(ch);
+    }
+
+    // Apply canvas changes that arrived while this agent was checked out —
+    // the checked-out half of the gap above (note_canvas_changed only reaches
+    // idle agents). Arming is gated on a live session for the channel, and
+    // refresh_channel_canvas's LWW makes re-applying an entry the session
+    // state already reflects (delivered, or superseded by a newer revision
+    // fetched at a replacement session's creation) a no-op.
+    for (ch, notice) in pending_canvas_updates {
+        if result.agent.state.sessions.contains_key(ch) {
+            result.agent.state.refresh_channel_canvas(ch, notice);
+        }
     }
 
     let outcome_label = match &result.outcome {
@@ -7794,6 +7885,7 @@ mod error_outcome_emission_tests {
             result,
             &mut heartbeat_in_flight,
             &removed_channels,
+            &HashMap::new(),
             &mut crash_history,
             &respawn_tx,
             &mut respawn_tasks,
@@ -7805,6 +7897,111 @@ mod error_outcome_emission_tests {
         assert!(returned.state.deliveries[&channel_id]
             .delivered_event_ids
             .contains(steer_event_id));
+    }
+
+    /// A canvas change that arrived while an agent was checked out is armed
+    /// when the agent returns — but only for channels it holds a live session
+    /// in. An agent without a session gets canvas freshness at its next
+    /// session creation, so arming it here would double-deliver.
+    #[tokio::test]
+    async fn pending_canvas_update_arms_on_returning_agent_with_live_session() {
+        let seated_channel = Uuid::new_v4();
+        let unseated_channel = Uuid::new_v4();
+        let mut agent = dummy_agent(0).await;
+        agent
+            .state
+            .sessions
+            .insert(seated_channel, "live-session".into());
+
+        let mut pool = AgentPool::from_slots(vec![None]);
+        let task_id = pool.join_set.spawn(async {}).id();
+        pool.task_map_mut().insert(
+            task_id,
+            crate::pool::TaskMeta {
+                agent_index: 0,
+                channel_id: Some(seated_channel),
+                turn_id: "test-turn-id".into(),
+                recoverable_batch: None,
+                control_tx: None,
+                steer_tx: None,
+                successful_steer_deliveries: HashSet::new(),
+                started_at: std::time::SystemTime::now(),
+                acp_session: None,
+            },
+        );
+
+        // Real signed canvas events through the shared validator, exactly as
+        // the main loop's interception branch builds them.
+        let keys = nostr::Keys::generate();
+        let make_notice = |channel: Uuid| {
+            let event = nostr::EventBuilder::new(
+                nostr::Kind::Custom(buzz_core::kind::KIND_CANVAS as u16),
+                "no pile-ons on owned topics",
+            )
+            .tags([nostr::Tag::parse(["h", &channel.to_string()]).expect("h tag")])
+            .sign_with_keys(&keys)
+            .expect("sign");
+            crate::pool::canvas_notice_from_event(&event, channel).expect("valid canvas notice")
+        };
+        let pending: HashMap<Uuid, CanvasNotice> = HashMap::from([
+            (seated_channel, make_notice(seated_channel)),
+            (unseated_channel, make_notice(unseated_channel)),
+        ]);
+
+        let mut queue = EventQueue::new(config::DedupMode::Queue);
+        let config = test_config();
+        let mut heartbeat_in_flight = false;
+        let removed_channels = HashSet::new();
+        let mut crash_history = vec![SlotCircuit {
+            crash_times: Vec::new(),
+            open_until: None,
+            respawn_in_flight: false,
+        }];
+        let (respawn_tx, _respawn_rx) = mpsc::channel(8);
+        let mut respawn_tasks = tokio::task::JoinSet::new();
+        let result = PromptResult {
+            agent,
+            source: PromptSource::Channel(seated_channel),
+            turn_id: "test-turn-id".into(),
+            outcome: PromptOutcome::Ok(crate::acp::StopReason::EndTurn),
+            batch: None,
+        };
+
+        handle_prompt_result(
+            &mut pool,
+            &mut queue,
+            &config,
+            result,
+            &mut heartbeat_in_flight,
+            &removed_channels,
+            &pending,
+            &mut crash_history,
+            &respawn_tx,
+            &mut respawn_tasks,
+            None,
+            None,
+        );
+
+        let returned = pool.agents_mut()[0].as_ref().expect("returned agent");
+        assert!(
+            returned
+                .state
+                .canvas_pending_notice
+                .contains_key(&seated_channel),
+            "checked-out agent must be armed on return for its live-session channel"
+        );
+        assert!(
+            !returned
+                .state
+                .canvas_pending_notice
+                .contains_key(&unseated_channel),
+            "channel without a live session must not be armed — freshness comes at session creation"
+        );
+        // The returning agent's session survived the application untouched.
+        assert_eq!(
+            returned.state.sessions.get(&seated_channel).unwrap(),
+            "live-session"
+        );
     }
 
     #[tokio::test]
@@ -7868,6 +8065,7 @@ mod error_outcome_emission_tests {
             result,
             &mut heartbeat_in_flight,
             &removed_channels,
+            &HashMap::new(),
             &mut crash_history,
             &respawn_tx,
             &mut respawn_tasks,
@@ -7984,6 +8182,7 @@ mod error_outcome_emission_tests {
             result,
             &mut heartbeat_in_flight,
             &removed_channels,
+            &HashMap::new(),
             &mut crash_history,
             &respawn_tx,
             &mut respawn_tasks,
@@ -8049,6 +8248,7 @@ mod error_outcome_emission_tests {
             result,
             &mut heartbeat_in_flight,
             &removed_channels,
+            &HashMap::new(),
             &mut crash_history,
             &respawn_tx,
             &mut respawn_tasks,
@@ -8220,6 +8420,7 @@ mod error_outcome_emission_tests {
                 result,
                 &mut heartbeat_in_flight,
                 &removed_channels,
+                &HashMap::new(),
                 &mut crash_history,
                 &respawn_tx,
                 &mut respawn_tasks,
@@ -8313,6 +8514,7 @@ mod error_outcome_emission_tests {
                 result,
                 &mut heartbeat_in_flight,
                 &removed_channels,
+                &HashMap::new(),
                 &mut crash_history,
                 &respawn_tx,
                 &mut respawn_tasks,
@@ -8421,6 +8623,7 @@ mod error_outcome_emission_tests {
                 result,
                 &mut heartbeat_in_flight,
                 &removed_channels,
+                &HashMap::new(),
                 &mut crash_history,
                 &respawn_tx,
                 &mut respawn_tasks,
@@ -8515,6 +8718,7 @@ mod error_outcome_emission_tests {
             result,
             &mut heartbeat_in_flight,
             &removed_channels,
+            &HashMap::new(),
             &mut crash_history,
             &respawn_tx,
             &mut respawn_tasks,
@@ -8611,6 +8815,7 @@ mod error_outcome_emission_tests {
             result,
             &mut heartbeat_in_flight,
             &removed_channels,
+            &HashMap::new(),
             &mut crash_history,
             &respawn_tx,
             &mut respawn_tasks,
@@ -8729,6 +8934,7 @@ mod error_outcome_emission_tests {
             result,
             &mut heartbeat_in_flight,
             &removed_channels,
+            &HashMap::new(),
             &mut crash_history,
             &respawn_tx,
             &mut respawn_tasks,
@@ -8864,6 +9070,7 @@ mod error_outcome_emission_tests {
             result,
             &mut heartbeat_in_flight,
             &removed_channels,
+            &HashMap::new(),
             &mut crash_history,
             &respawn_tx,
             &mut respawn_tasks,
@@ -9049,6 +9256,7 @@ mod error_outcome_emission_tests {
             result,
             &mut heartbeat_in_flight,
             &removed_channels,
+            &HashMap::new(),
             &mut crash_history,
             &respawn_tx,
             &mut respawn_tasks,
@@ -9137,6 +9345,7 @@ mod error_outcome_emission_tests {
             result,
             &mut heartbeat_in_flight,
             &removed_channels,
+            &HashMap::new(),
             &mut crash_history,
             &respawn_tx,
             &mut respawn_tasks,

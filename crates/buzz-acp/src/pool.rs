@@ -123,6 +123,62 @@ pub struct ChannelDeliveryState {
     pub delivered_event_ids: HashSet<String>,
 }
 
+/// Cached rendered `[Channel Canvas]` metadata section plus the revision it
+/// was rendered from.
+///
+/// `revision_id`/`created_at` carry the last-write-wins ordering the pushed
+/// canvas-change path needs (see [`SessionState::refresh_channel_canvas`]):
+/// without them, "which revision is this cache?" would have to be re-parsed
+/// out of the rendered section string. `section` is the metadata-only section
+/// the system-prompt path composes (from `render_canvas_section`).
+#[derive(Clone, Debug)]
+pub struct CachedCanvas {
+    pub section: String,
+    pub revision_id: String,
+    pub created_at: u64,
+}
+
+/// One validated canvas revision — the shared currency of the fetch path
+/// (query response → cached section) and the push path (subscription event →
+/// change notice), produced by [`canvas_section_from_event`].
+#[derive(Clone, Debug)]
+pub(crate) struct CanvasRevisionInfo {
+    /// Nostr event id hex — the revision ID shown to agents.
+    pub event_id: String,
+    /// Event `created_at` in seconds — the LWW ordering key.
+    pub created_at: u64,
+    /// RFC3339 (Z) rendering of `created_at`, range-validated by the shared
+    /// validator so neither path re-derives it.
+    pub timestamp: String,
+    /// Raw canvas content. Blank ⇒ the canvas was cleared (see
+    /// [`CanvasNotice::cleared`]).
+    pub content: String,
+}
+
+/// An armed one-shot `[Channel Canvas — updated]` notice for a channel.
+///
+/// Built by [`canvas_notice_from_event`] when a canvas write arrives on the
+/// channel subscription; armed on an agent by
+/// [`SessionState::refresh_channel_canvas`]; delivered as the first section of
+/// the next turn's user message (see `queue::format_prompt`); consumed only
+/// when that turn succeeds.
+#[derive(Clone, Debug)]
+pub struct CanvasNotice {
+    pub channel_id: Uuid,
+    pub revision_id: String,
+    pub created_at: u64,
+    /// RFC3339 (Z) rendering of `created_at` — reused to keep the cached
+    /// metadata section truthful after a refresh.
+    pub timestamp: String,
+    /// True when the revision's content is blank: the canvas was cleared, and
+    /// the notice says so instead of carrying content.
+    pub cleared: bool,
+    /// Pre-rendered `[Channel Canvas — updated]` section. Content is already
+    /// capped at [`CANVAS_NOTICE_CONTENT_CAP_BYTES`] at arm time, so delivery
+    /// is a pass-through string and the per-turn prompt cost is bounded.
+    pub rendered_section: String,
+}
+
 /// Per-channel session IDs, turn counters, and delivery state.
 ///
 /// Separated from `OwnedAgent` so the state machine is testable without
@@ -142,13 +198,29 @@ pub struct SessionState {
     /// channel_id → rendered NIP-AE core prompt section, populated once at
     /// session creation per Tyler's spec (no mid-session refresh).
     pub core_sections: HashMap<Uuid, String>,
-    /// channel_id → rendered `[Channel Canvas]` metadata section.
+    /// channel_id → rendered `[Channel Canvas]` metadata section + revision.
     ///
     /// Populated once before session creation (same lifecycle as `core_sections`).
     /// Absent when the channel has no canvas, the canvas content is blank, or the
     /// fetch fails — all fail open. Cleared on session invalidation alongside
-    /// `core_sections` so the next session picks up any canvas change.
-    pub canvas_sections: HashMap<Uuid, String>,
+    /// `core_sections` so the next session picks up any canvas change. Updated
+    /// in place (never invalidating the session) by
+    /// [`SessionState::refresh_channel_canvas`] when a canvas write arrives for
+    /// a channel this agent is already seated in.
+    pub canvas_sections: HashMap<Uuid, CachedCanvas>,
+    /// channel_id → armed one-shot canvas change notice. Armed by
+    /// [`SessionState::refresh_channel_canvas`] for channels this agent holds a
+    /// live session in; consumed by the first successful turn that carries it.
+    /// Cleared by every invalidation path — a replacement session gets canvas
+    /// freshness at creation, so it must not also receive a change notice.
+    pub canvas_pending_notice: HashMap<Uuid, CanvasNotice>,
+    /// channel_id → `created_at` of the newest canvas notice this channel
+    /// state has already delivered (consumed). The main loop keeps canvas
+    /// changes for checked-out agents in a per-channel LWW map and re-applies
+    /// them on every task return; this watermark is what stops a lingering
+    /// entry from re-arming a revision the session has already been told
+    /// about.
+    pub canvas_notice_delivered_at: HashMap<Uuid, u64>,
     /// Per-channel successful-delivery state. Created with the ACP session and
     /// cleared atomically with every invalidation path.
     pub deliveries: HashMap<Uuid, ChannelDeliveryState>,
@@ -175,6 +247,8 @@ impl SessionState {
         self.turn_counts.remove(channel_id);
         self.core_sections.remove(channel_id);
         self.canvas_sections.remove(channel_id);
+        self.canvas_pending_notice.remove(channel_id);
+        self.canvas_notice_delivered_at.remove(channel_id);
         self.deliveries.remove(channel_id);
         self.sessions.remove(channel_id).is_some()
     }
@@ -188,7 +262,97 @@ impl SessionState {
         self.heartbeat_standing_context_sent = false;
         self.core_sections.clear();
         self.canvas_sections.clear();
+        self.canvas_pending_notice.clear();
+        self.canvas_notice_delivered_at.clear();
         self.deliveries.clear();
+    }
+
+    /// Refresh the cached canvas for a channel and arm the one-shot change
+    /// notice — **without touching the session**.
+    ///
+    /// This is deliberately NOT [`SessionState::invalidate_channel`]:
+    /// invalidation drops `sessions`, `turn_counts`, `core_sections`,
+    /// `canvas_sections`, and `deliveries` — it destroys the agent's live
+    /// conversation context. Losing that context on every canvas edit is the
+    /// exact failure this method exists to avoid (a channel rule added
+    /// mid-conversation must reach seated agents without evicting the
+    /// conversation it is meant to govern), so it touches only the canvas
+    /// cache and the armed notice. The owner-only `!rotate` command remains
+    /// the explicit, human-invoked way to force a fresh session.
+    ///
+    /// Last-write-wins by `created_at` against everything this channel state
+    /// already reflects — the cached revision, an armed-but-undelivered
+    /// notice, and the newest consumed notice. Anything at or older than that
+    /// high-water mark is a stale or replayed revision and is ignored (this
+    /// also makes the main loop's re-application of its per-channel pending
+    /// map idempotent). Returns `true` when the notice was armed.
+    pub fn refresh_channel_canvas(&mut self, channel_id: &Uuid, notice: &CanvasNotice) -> bool {
+        debug_assert_eq!(
+            notice.channel_id, *channel_id,
+            "canvas notice applied to the wrong channel"
+        );
+        let reflected = self
+            .canvas_sections
+            .get(channel_id)
+            .map(|cached| cached.created_at)
+            .unwrap_or(0)
+            .max(
+                self.canvas_pending_notice
+                    .get(channel_id)
+                    .map(|armed| armed.created_at)
+                    .unwrap_or(0),
+            )
+            .max(
+                self.canvas_notice_delivered_at
+                    .get(channel_id)
+                    .copied()
+                    .unwrap_or(0),
+            );
+        if reflected >= notice.created_at {
+            return false;
+        }
+
+        if notice.cleared {
+            // Blank content = cleared canvas: the cache entry must not survive
+            // (an older revision must not be resurrected).
+            self.canvas_sections.remove(channel_id);
+        } else {
+            self.canvas_sections.insert(
+                *channel_id,
+                CachedCanvas {
+                    section: render_canvas_section(
+                        &notice.revision_id,
+                        &notice.timestamp,
+                        &channel_id.to_string(),
+                    ),
+                    revision_id: notice.revision_id.clone(),
+                    created_at: notice.created_at,
+                },
+            );
+        }
+        self.canvas_pending_notice
+            .insert(*channel_id, notice.clone());
+        true
+    }
+
+    /// Consume the armed canvas notice for a channel after the turn that
+    /// carried it completed successfully.
+    ///
+    /// Failed/cancelled/timeout turns leave the notice armed so the retry
+    /// re-renders it — the same commit-only-on-success semantics as
+    /// `pending_delivered_event_ids`. Consumption records the delivered
+    /// revision's `created_at` (see `canvas_notice_delivered_at`) so the
+    /// main-loop pending map cannot re-arm it on a later task return.
+    /// Returns `true` if a notice was consumed.
+    pub fn consume_canvas_notice(&mut self, channel_id: &Uuid) -> bool {
+        match self.canvas_pending_notice.remove(channel_id) {
+            Some(notice) => {
+                self.canvas_notice_delivered_at
+                    .insert(*channel_id, notice.created_at);
+                true
+            }
+            None => false,
+        }
     }
 
     pub(crate) fn mark_channel_delivery_success(
@@ -208,6 +372,7 @@ impl SessionState {
             || self.turn_counts.contains_key(channel_id)
             || self.core_sections.contains_key(channel_id)
             || self.canvas_sections.contains_key(channel_id)
+            || self.canvas_pending_notice.contains_key(channel_id)
             || self.deliveries.contains_key(channel_id)
     }
 }
@@ -910,6 +1075,30 @@ impl AgentPool {
         for slot in &mut self.agents {
             if let Some(agent) = slot.as_mut() {
                 if agent.state.invalidate_channel(&channel_id) {
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    /// Arm a canvas change notice on every idle agent that holds a live
+    /// session for the channel.
+    ///
+    /// Agents without a session for the channel are skipped: their next
+    /// session creation fetches the current canvas anyway, and arming them
+    /// would deliver the same revision twice. Checked-out agents are not
+    /// reachable here — the main loop records the change in its per-channel
+    /// pending map and applies it when the agent returns (see
+    /// `handle_prompt_result` in lib.rs). Returns the number of agents the
+    /// notice was armed on, for logging.
+    pub fn note_canvas_changed(&mut self, channel_id: Uuid, notice: &CanvasNotice) -> usize {
+        let mut count = 0;
+        for slot in &mut self.agents {
+            if let Some(agent) = slot.as_mut() {
+                if agent.state.sessions.contains_key(&channel_id)
+                    && agent.state.refresh_channel_canvas(&channel_id, notice)
+                {
                     count += 1;
                 }
             }
@@ -2416,7 +2605,7 @@ pub async fn run_prompt_task(
     // commit it to `canvas_sections` only after session creation succeeds. This
     // prevents a stale revision A surviving a failed create and being re-used by
     // the next attempt after the canvas was cleared.
-    let mut pending_canvas: Option<(Uuid, String)> = None;
+    let mut pending_canvas: Option<(Uuid, CachedCanvas)> = None;
     let mut huddle_instructions: Option<String> = None;
     // Channel name for the session title, from the same single resolve the
     // canvas DM check uses — see `resolve_new_session_channel_context`.
@@ -2437,8 +2626,8 @@ pub async fn run_prompt_task(
             // A confirmed DM never receives a canvas section; an undeterminable
             // channel type fails closed as a DM for the same reason.
             if needs_canvas && !is_dm {
-                if let Some(section) = fetch_canvas_section(*cid, &ctx.rest_client).await {
-                    pending_canvas = Some((*cid, section));
+                if let Some(cached) = fetch_canvas_section(*cid, &ctx.rest_client).await {
+                    pending_canvas = Some((*cid, cached));
                 }
             }
         }
@@ -2458,8 +2647,12 @@ pub async fn run_prompt_task(
             .state
             .canvas_sections
             .get(cid)
-            .cloned()
-            .or_else(|| pending_canvas.as_ref().map(|(_, s)| s.clone())),
+            .map(|cached| cached.section.clone())
+            .or_else(|| {
+                pending_canvas
+                    .as_ref()
+                    .map(|(_, cached)| cached.section.clone())
+            }),
         PromptSource::Heartbeat => None,
     };
 
@@ -2500,8 +2693,8 @@ pub async fn run_prompt_task(
                         // so prior usage is zero by definition — first turn is reliable.
                         agent.acp.notify_session_spawned(&sid);
                         // Commit canvas only after session creation succeeds (I3).
-                        if let Some((pending_cid, section)) = pending_canvas.take() {
-                            agent.state.canvas_sections.insert(pending_cid, section);
+                        if let Some((pending_cid, cached)) = pending_canvas.take() {
+                            agent.state.canvas_sections.insert(pending_cid, cached);
                         }
                         (sid, true)
                     }
@@ -2891,6 +3084,15 @@ pub async fn run_prompt_task(
                 team_instructions: standing.team_instructions,
                 shared_instructions: standing.shared_instructions,
                 agent_canvas: standing.agent_canvas,
+                // Pre-rendered one-shot canvas change notice, if one is armed
+                // for this channel. Read at prompt-build time and consumed
+                // only on turn success below, mirroring
+                // `pending_delivered_event_ids`.
+                canvas_notice: agent
+                    .state
+                    .canvas_pending_notice
+                    .get(&b.channel_id)
+                    .map(|notice| notice.rendered_section.as_str()),
                 standing_context_sent,
             },
         )
@@ -3147,6 +3349,9 @@ pub async fn run_prompt_task(
                                 standing_sent,
                                 &pending_delivered_event_ids,
                             );
+                            // The turn completed, so the canvas notice it
+                            // carried (if any) is delivered — consume it.
+                            agent.state.consume_canvas_notice(cid);
                         }
                         apply_completed_before_control_signal(
                             &mut agent.state,
@@ -3201,6 +3406,10 @@ pub async fn run_prompt_task(
                     standing_sent,
                     &pending_delivered_event_ids,
                 );
+                // The turn completed, so the canvas notice it carried (if
+                // any) is delivered — consume it. Failed/cancelled/timeout
+                // paths above leave it armed for the retry.
+                agent.state.consume_canvas_notice(cid);
             } else if !agent.has_system_prompt_support() {
                 agent.state.heartbeat_standing_context_sent = true;
             }
@@ -3574,8 +3783,9 @@ fn huddle_instructions_from_query_response(
     (!content.is_empty()).then(|| content.to_owned())
 }
 
-/// Fetch the latest canvas event for `channel_id` and return a rendered
-/// `[Channel Canvas]` metadata section, or `None` if absent/blank/error.
+/// Fetch the latest canvas event for `channel_id` and return the cached
+/// canvas entry (rendered `[Channel Canvas]` metadata section + revision
+/// identity), or `None` if absent/blank/error.
 ///
 /// Failure modes (all fail open — no crash, no block):
 /// * relay returns no event → `None`
@@ -3587,7 +3797,7 @@ fn huddle_instructions_from_query_response(
 ///
 /// Called at most once per new channel session; the result is cached in
 /// `SessionState::canvas_sections` and cleared on session invalidation.
-async fn fetch_canvas_section(channel_id: Uuid, rest: &RestClient) -> Option<String> {
+async fn fetch_canvas_section(channel_id: Uuid, rest: &RestClient) -> Option<CachedCanvas> {
     use nostr::{Alphabet, SingleLetterTag};
 
     let h_tag = SingleLetterTag::lowercase(Alphabet::H);
@@ -3638,7 +3848,8 @@ async fn fetch_canvas_section(channel_id: Uuid, rest: &RestClient) -> Option<Str
     canvas_section_from_query_response(events, &channel_id.to_string())
 }
 
-/// Parse a canvas query response array and render a `[Channel Canvas]` section.
+/// Parse a canvas query response array into a cached canvas entry (rendered
+/// `[Channel Canvas]` section + revision identity).
 ///
 /// Extracted as a pure function so tests can exercise the parsing/validation
 /// logic without async machinery or relay connectivity.
@@ -3649,11 +3860,26 @@ async fn fetch_canvas_section(channel_id: Uuid, rest: &RestClient) -> Option<Str
 pub(crate) fn canvas_section_from_query_response(
     events: &[serde_json::Value],
     channel_uuid: &str,
-) -> Option<String> {
-    let raw = events.first()?;
+) -> Option<CachedCanvas> {
+    let info = canvas_revision_from_query_response(events, channel_uuid)?;
+    let cached = cached_canvas_from_info(info, channel_uuid)?;
+    tracing::info!(
+        target: "canvas::fetch",
+        channel = %channel_uuid,
+        event_id = %cached.revision_id,
+        "injected channel canvas metadata section into system prompt"
+    );
+    Some(cached)
+}
 
-    // Deserialise as a complete Nostr Event. Partial objects (missing pubkey,
-    // sig, kind, or tags) are rejected here rather than trusted implicitly.
+/// Query-path glue: array extraction + deserialisation, then the shared
+/// validator. Partial objects (missing pubkey, sig, kind, or tags) are
+/// rejected at deserialisation rather than trusted implicitly.
+fn canvas_revision_from_query_response(
+    events: &[serde_json::Value],
+    channel_uuid: &str,
+) -> Option<CanvasRevisionInfo> {
+    let raw = events.first()?;
     let event = match serde_json::from_value::<nostr::Event>(raw.clone()) {
         Ok(ev) => ev,
         Err(err) => {
@@ -3666,48 +3892,14 @@ pub(crate) fn canvas_section_from_query_response(
             return None;
         }
     };
+    canvas_section_from_event(&event, channel_uuid)
+}
 
-    // Verify the event's id and signature agree with its content.
-    // A structurally complete but tampered event must not supply trusted metadata.
-    if let Err(err) = event.verify() {
-        tracing::warn!(
-            target: "canvas::fetch",
-            channel = %channel_uuid,
-            %err,
-            "canvas event failed signature verification — emitting no section",
-        );
-        return None;
-    }
-
-    // Validate kind: must be KIND_CANVAS (40100).
-    if event.kind != nostr::Kind::Custom(buzz_core::kind::KIND_CANVAS as u16) {
-        tracing::warn!(
-            target: "canvas::fetch",
-            channel = %channel_uuid,
-            kind = %event.kind.as_u16(),
-            "canvas event has unexpected kind — emitting no section",
-        );
-        return None;
-    }
-
-    // Validate h-tag: must carry the channel UUID we queried.
-    // The REST boundary filters by #h, but we verify here to prevent a
-    // misbehaving relay from injecting a different channel's canvas.
-    let h_tag_matches = event.tags.iter().any(|tag| {
-        let v = tag.as_slice();
-        v.len() >= 2 && v[0] == "h" && v[1] == channel_uuid
-    });
-    if !h_tag_matches {
-        tracing::warn!(
-            target: "canvas::fetch",
-            channel = %channel_uuid,
-            "canvas event is missing expected h-tag — emitting no section",
-        );
-        return None;
-    }
-
-    // Blank content means the canvas was cleared; do not fall back to older events.
-    if event.content.trim().is_empty() {
+/// Wrap a validated revision as a cache entry: blank content means the canvas
+/// was cleared (no section, no cache entry — older revisions are NOT
+/// resurrected), anything else renders the metadata section.
+fn cached_canvas_from_info(info: CanvasRevisionInfo, channel_uuid: &str) -> Option<CachedCanvas> {
+    if info.content.trim().is_empty() {
         tracing::debug!(
             target: "canvas::fetch",
             channel = %channel_uuid,
@@ -3715,8 +3907,67 @@ pub(crate) fn canvas_section_from_query_response(
         );
         return None;
     }
+    Some(CachedCanvas {
+        section: render_canvas_section(&info.event_id, &info.timestamp, channel_uuid),
+        revision_id: info.event_id,
+        created_at: info.created_at,
+    })
+}
 
-    let id = event.id.to_hex();
+/// Validate a kind-40100 canvas event for `channel_uuid` and extract its
+/// revision identity.
+///
+/// Shared by the fetch path ([`canvas_section_from_query_response`]) and the
+/// push path ([`canvas_notice_from_event`]) so both apply identical checks:
+/// signature verification, kind, h-tag channel match, and `created_at` range.
+/// Fail-open: an invalid event is logged at `warn` and returns `None` — a
+/// malformed or tampered canvas must never block a turn or a send.
+///
+/// Blank content is NOT rejected here: it is a legitimate "canvas cleared"
+/// revision, and the two paths legitimately differ on what it means (fetch →
+/// no section; push → cleared change notice).
+pub(crate) fn canvas_section_from_event(
+    event: &nostr::Event,
+    channel_uuid: &str,
+) -> Option<CanvasRevisionInfo> {
+    // Verify the event's id and signature agree with its content.
+    // A structurally complete but tampered event must not supply trusted metadata.
+    if let Err(err) = event.verify() {
+        tracing::warn!(
+            target: "canvas",
+            channel = %channel_uuid,
+            %err,
+            "canvas event failed signature verification — dropping",
+        );
+        return None;
+    }
+
+    // Validate kind: must be KIND_CANVAS (40100).
+    if event.kind != nostr::Kind::Custom(buzz_core::kind::KIND_CANVAS as u16) {
+        tracing::warn!(
+            target: "canvas",
+            channel = %channel_uuid,
+            kind = %event.kind.as_u16(),
+            "canvas event has unexpected kind — dropping",
+        );
+        return None;
+    }
+
+    // Validate h-tag: must carry the channel UUID we subscribed to / queried.
+    // The relay boundary filters by #h, but we verify here to prevent a
+    // misbehaving relay from injecting a different channel's canvas.
+    let h_tag_matches = event.tags.iter().any(|tag| {
+        let v = tag.as_slice();
+        v.len() >= 2 && v[0] == "h" && v[1] == channel_uuid
+    });
+    if !h_tag_matches {
+        tracing::warn!(
+            target: "canvas",
+            channel = %channel_uuid,
+            "canvas event is missing expected h-tag — dropping",
+        );
+        return None;
+    }
 
     // Convert the Nostr timestamp to a UTC RFC3339 string with Z suffix.
     // Use checked conversion: a u64 that exceeds i64::MAX (e.g. Timestamp::max())
@@ -3726,9 +3977,9 @@ pub(crate) fn canvas_section_from_query_response(
         Ok(s) => s,
         Err(_) => {
             tracing::warn!(
-                target: "canvas::fetch",
+                target: "canvas",
                 channel = %channel_uuid,
-                "canvas event created_at overflows i64 — emitting no section",
+                "canvas event created_at overflows i64 — dropping",
             );
             return None;
         }
@@ -3737,22 +3988,107 @@ pub(crate) fn canvas_section_from_query_response(
         Some(dt) => dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         None => {
             tracing::warn!(
-                target: "canvas::fetch",
+                target: "canvas",
                 channel = %channel_uuid,
                 ts_secs,
-                "canvas event has out-of-range created_at — emitting no section",
+                "canvas event has out-of-range created_at — dropping",
             );
             return None;
         }
     };
 
-    tracing::info!(
-        target: "canvas::fetch",
-        channel = %channel_uuid,
-        event_id = %id,
-        "injected channel canvas metadata section into system prompt"
-    );
-    Some(render_canvas_section(&id, &timestamp, channel_uuid))
+    Some(CanvasRevisionInfo {
+        event_id: event.id.to_hex(),
+        created_at: event.created_at.as_secs(),
+        timestamp,
+        content: event.content.clone(),
+    })
+}
+
+/// Byte cap for canvas content inlined into a change notice. Doc-sized
+/// canvases must not silently grow every delivering turn's prompt; the cap
+/// keeps the common case (a short rule) inline and defers full reads to
+/// `buzz canvas get`.
+pub(crate) const CANVAS_NOTICE_CONTENT_CAP_BYTES: usize = 4096;
+
+/// Largest byte index `<= index` that is a UTF-8 char boundary of `s`.
+///
+/// std's `str::floor_char_boundary` is not stable on this toolchain; this is
+/// the same implementation. Truncating canvas content at a raw byte offset
+/// would split a multi-byte character and produce an invalid prompt string.
+fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        s.len()
+    } else {
+        let mut i = index;
+        while i > 0 && !s.is_char_boundary(i) {
+            i -= 1;
+        }
+        i
+    }
+}
+
+/// Render the one-shot `[Channel Canvas — updated]` notice section.
+///
+/// Pure function — kept separate so unit tests can exercise rendering (and
+/// the content cap) without async machinery or relay connectivity. Blank
+/// content renders as a "canvas was cleared" notice; non-blank content is
+/// capped at [`CANVAS_NOTICE_CONTENT_CAP_BYTES`] with a marker naming the
+/// total size and the CLI command for the full read.
+pub(crate) fn render_canvas_notice_section(
+    revision_id: &str,
+    timestamp: &str,
+    channel_uuid: &str,
+    content: &str,
+) -> String {
+    let content = content.trim();
+    let body = if content.is_empty() {
+        "The channel canvas was cleared (blank content).".to_string()
+    } else if content.len() > CANVAS_NOTICE_CONTENT_CAP_BYTES {
+        let cut = floor_char_boundary(content, CANVAS_NOTICE_CONTENT_CAP_BYTES);
+        format!(
+            "{}\n[…truncated, {} bytes total — buzz canvas get --channel {channel_uuid}]",
+            &content[..cut],
+            content.len()
+        )
+    } else {
+        format!("{content}\nFetch current content with: buzz canvas get --channel {channel_uuid}")
+    };
+    format!(
+        "[Channel Canvas — updated]\n\
+         Canvas revision (event ID): {revision_id}\n\
+         Last modified: {timestamp}\n\
+         {body}"
+    )
+}
+
+/// Validate a pushed canvas event and build the armed change notice.
+///
+/// Reuses [`canvas_section_from_event`] so the push path inherits every check
+/// the fetch path applies (signature, kind, h-tag, timestamp range). Returns
+/// `None` for an invalid event — already logged at `warn` by the validator,
+/// the caller just drops it (fail-open). A blank-content event yields a
+/// `cleared` notice rather than `None`: a cleared canvas is a real change
+/// seated agents must hear about, not an error.
+pub(crate) fn canvas_notice_from_event(
+    event: &nostr::Event,
+    channel_id: Uuid,
+) -> Option<CanvasNotice> {
+    let channel_uuid = channel_id.to_string();
+    let info = canvas_section_from_event(event, &channel_uuid)?;
+    Some(CanvasNotice {
+        channel_id,
+        revision_id: info.event_id.clone(),
+        created_at: info.created_at,
+        timestamp: info.timestamp.clone(),
+        cleared: info.content.trim().is_empty(),
+        rendered_section: render_canvas_notice_section(
+            &info.event_id,
+            &info.timestamp,
+            &channel_uuid,
+            &info.content,
+        ),
+    })
 }
 
 /// Render the `[Channel Canvas]` metadata section string.
@@ -7078,6 +7414,183 @@ done"#
         assert!(!next_wire.contains(&new_event_id));
     }
 
+    /// Full delivery path through `run_prompt_task`: an armed canvas notice
+    /// rides the NEXT turn's prompt as a `[Channel Canvas — updated]`
+    /// section, and — after that turn succeeds — the following turn does NOT
+    /// carry it again. Pins the one-shot semantics end to end (arm → render →
+    /// consume) and that the session survives both turns.
+    #[tokio::test]
+    async fn canvas_notice_rides_next_turn_and_is_consumed() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let channel_id = Uuid::new_v4();
+        let keys = Keys::generate();
+        let first = EventBuilder::new(Kind::Custom(9), "first turn sentinel")
+            .sign_with_keys(&keys)
+            .unwrap();
+        let second = EventBuilder::new(Kind::Custom(9), "second turn sentinel")
+            .sign_with_keys(&keys)
+            .unwrap();
+        let batch = |event: nostr::Event| FlushBatch {
+            channel_id,
+            events: vec![crate::queue::BatchEvent {
+                event,
+                prompt_tag: "test".into(),
+                received_at: std::time::Instant::now(),
+            }],
+            cancelled_events: vec![],
+            cancel_reason: None,
+        };
+
+        // Local REST bridge: every query answers an empty event array (no
+        // conversation context, no profile entries).
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind context server");
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let response_body = serde_json::to_string(&serde_json::Value::Array(vec![])).unwrap();
+        let server = tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut request = vec![0; 16 * 1024];
+                let _ = socket.read(&mut request).await;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    response_body.len(), response_body
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+
+        let capture = std::env::temp_dir().join(format!(
+            "buzz-acp-canvas-notice-wire-{}.ndjson",
+            Uuid::new_v4()
+        ));
+        let quoted_capture = capture.to_string_lossy().replace('\'', "'\\''");
+        let script = format!(
+            r#"count=0
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> '{quoted_capture}'
+  printf '%s\n' "{{\"jsonrpc\":\"2.0\",\"id\":$count,\"result\":{{\"stopReason\":\"end_turn\"}}}}"
+  count=$((count + 1))
+done"#
+        );
+        let acp = AcpClient::spawn("bash", &["-c".into(), script], &[], false)
+            .await
+            .expect("spawn wire-capture ACP");
+        let mut agent = OwnedAgent {
+            index: 0,
+            acp,
+            state: SessionState::default(),
+            model_capabilities: None,
+            desired_model: None,
+            model_overridden: false,
+            desired_model_request_id: None,
+            desired_model_pending_ack: false,
+            startup_effort: None,
+            agent_name: "legacy-test-agent".into(),
+            goose_system_prompt_supported: None,
+            protocol_version: 1,
+        };
+        agent
+            .state
+            .sessions
+            .insert(channel_id, "live-session".into());
+        agent
+            .state
+            .deliveries
+            .insert(channel_id, ChannelDeliveryState::default());
+
+        // The canvas changes while the agent is seated — exactly what the
+        // main loop's interception branch does via note_canvas_changed.
+        let notice = make_canvas_notice_at(channel_id, "canvas rule sentinel", 2_000);
+        assert!(agent.state.refresh_channel_canvas(&channel_id, &notice));
+
+        let mut ctx = make_prompt_context_no_owner();
+        ctx.context_message_limit = 0;
+        ctx.rest_client.base_url = base_url.clone();
+        ctx.channel_info = ChannelInfoResolver::new(
+            HashMap::from([(
+                channel_id,
+                crate::relay::ChannelInfo {
+                    name: "test-channel".into(),
+                    channel_type: "public".into(),
+                    description: None,
+                },
+            )]),
+            RestClient {
+                http: reqwest::Client::new(),
+                base_url,
+                keys: ctx.agent_keys.clone(),
+                auth_tag_json: None,
+            },
+        );
+        let ctx = Arc::new(ctx);
+        let (result_tx, mut result_rx) = mpsc::unbounded_channel();
+
+        let mut agent = agent;
+        for (turn_id, b) in [("turn-1", batch(first)), ("turn-2", batch(second))] {
+            run_prompt_task(
+                agent,
+                Some(b),
+                None,
+                Arc::clone(&ctx),
+                result_tx.clone(),
+                None,
+                turn_id.into(),
+            )
+            .await;
+            let result = result_rx.recv().await.expect("prompt result");
+            assert!(matches!(
+                result.outcome,
+                PromptOutcome::Ok(StopReason::EndTurn)
+            ));
+            agent = result.agent;
+        }
+
+        // The session survived both turns and the notice is consumed.
+        assert_eq!(
+            agent.state.sessions.get(&channel_id).unwrap(),
+            "live-session",
+            "canvas delivery must not rotate the session"
+        );
+        assert!(
+            !agent.state.canvas_pending_notice.contains_key(&channel_id),
+            "notice must be consumed after the successful turn that carried it"
+        );
+        agent.acp.shutdown().await;
+        server.abort();
+
+        let requests: Vec<serde_json::Value> = std::fs::read_to_string(&capture)
+            .expect("read captured prompts")
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("captured prompt JSON"))
+            .collect();
+        std::fs::remove_file(&capture).expect("remove prompt capture");
+        assert_eq!(requests.len(), 2);
+        let wire = |index: usize| {
+            requests[index]["params"]["prompt"]
+                .as_array()
+                .expect("prompt blocks")
+                .iter()
+                .filter_map(|block| block["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let first_wire = wire(0);
+        assert!(
+            first_wire.contains("[Channel Canvas — updated]"),
+            "the turn after the change must carry the notice: {first_wire}"
+        );
+        assert!(first_wire.contains("canvas rule sentinel"));
+        assert!(first_wire.contains(&notice.revision_id));
+        let second_wire = wire(1);
+        assert!(second_wire.contains("second turn sentinel"));
+        assert!(
+            !second_wire.contains("[Channel Canvas — updated]"),
+            "the notice is one-shot — turn 2 must not repeat it: {second_wire}"
+        );
+    }
+
     #[tokio::test]
     async fn late_successful_steer_ack_excludes_event_from_next_channel_wire_prompt() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -8845,13 +9358,22 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
 
     // ── canvas_sections cache invalidation ───────────────────────────────────
 
+    /// Test helper: a minimal cached canvas entry.
+    fn cached_canvas(section: &str, revision_id: &str, created_at: u64) -> CachedCanvas {
+        CachedCanvas {
+            section: section.into(),
+            revision_id: revision_id.into(),
+            created_at,
+        }
+    }
+
     #[test]
     fn test_invalidate_channel_clears_canvas_section() {
         let ch = Uuid::new_v4();
         let mut s = SessionState::default();
         s.sessions.insert(ch, "sess".into());
         s.canvas_sections
-            .insert(ch, "[Channel Canvas]\nrev abc".into());
+            .insert(ch, cached_canvas("[Channel Canvas]\nrev abc", "abc", 1));
 
         s.invalidate_channel(&ch);
 
@@ -8864,8 +9386,10 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         let ch_a = Uuid::new_v4();
         let ch_b = Uuid::new_v4();
         let mut s = SessionState::default();
-        s.canvas_sections.insert(ch_a, "canvas-a".into());
-        s.canvas_sections.insert(ch_b, "canvas-b".into());
+        s.canvas_sections
+            .insert(ch_a, cached_canvas("canvas-a", "rev-a", 1));
+        s.canvas_sections
+            .insert(ch_b, cached_canvas("canvas-b", "rev-b", 1));
         s.sessions.insert(ch_a, "sess-a".into());
 
         s.invalidate_all();
@@ -8881,20 +9405,26 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         let mut s = SessionState::default();
         s.sessions.insert(ch_a, "sess-a".into());
         s.sessions.insert(ch_b, "sess-b".into());
-        s.canvas_sections.insert(ch_a, "canvas-a".into());
-        s.canvas_sections.insert(ch_b, "canvas-b".into());
+        s.canvas_sections
+            .insert(ch_a, cached_canvas("canvas-a", "rev-a", 1));
+        s.canvas_sections
+            .insert(ch_b, cached_canvas("canvas-b", "rev-b", 1));
 
         s.invalidate_channel(&ch_a);
 
         assert!(!s.canvas_sections.contains_key(&ch_a));
-        assert_eq!(s.canvas_sections.get(&ch_b).unwrap(), "canvas-b");
+        assert_eq!(
+            s.canvas_sections.get(&ch_b).unwrap().section,
+            "canvas-b".to_string()
+        );
     }
 
     #[test]
     fn test_has_channel_state_true_when_only_canvas_section_present() {
         let ch = Uuid::new_v4();
         let mut s = SessionState::default();
-        s.canvas_sections.insert(ch, "canvas".into());
+        s.canvas_sections
+            .insert(ch, cached_canvas("canvas", "rev", 1));
         assert!(s.has_channel_state(&ch));
     }
 
@@ -8921,13 +9451,17 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         let ev = make_canvas_event_value("# Team instructions\nBe helpful.");
         let id = ev["id"].as_str().unwrap().to_string();
         let result = canvas_section_from_query_response(&[ev], CHANNEL_UUID);
-        let section = result.expect("expected Some");
+        let cached = result.expect("expected Some");
+        let section = &cached.section;
         assert!(section.contains(&id), "section must contain the event id");
         assert!(section.contains("buzz canvas get --channel"));
         assert!(section.contains(CHANNEL_UUID));
         assert!(section.starts_with("[Channel Canvas]"));
         // Timestamp must use Z suffix, not +00:00
         assert!(section.contains('Z'), "timestamp must use Z suffix");
+        // The revision identity travels with the cache entry (LWW key for the
+        // pushed-refresh path).
+        assert_eq!(cached.revision_id, id);
     }
 
     #[test]
@@ -9097,7 +9631,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
     fn test_canvas_section_from_query_response_timestamp_uses_z_suffix() {
         let ev = make_canvas_event_value("instructions");
         let result = canvas_section_from_query_response(&[ev], CHANNEL_UUID);
-        let section = result.expect("valid event must produce a section");
+        let section = &result.expect("valid event must produce a section").section;
         assert!(
             section.contains('Z'),
             "RFC3339 timestamp must use Z suffix, not +00:00"
@@ -9106,6 +9640,403 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             !section.contains("+00:00"),
             "timestamp must not use +00:00 offset"
         );
+    }
+
+    // ── canvas change refresh (pushed kind-40100 events) ────────────────────
+
+    /// Build a real, signed canvas event for `channel` at `created_at` and run
+    /// it through the production notice builder — the same path the main
+    /// loop's interception branch uses.
+    fn make_canvas_notice_at(channel: Uuid, content: &str, created_at: u64) -> CanvasNotice {
+        let keys = Keys::generate();
+        let h_tag = Tag::parse(["h", &channel.to_string()]).expect("h tag");
+        let event = EventBuilder::new(Kind::Custom(buzz_core::kind::KIND_CANVAS as u16), content)
+            .tags([h_tag])
+            .custom_created_at(Timestamp::from(created_at))
+            .sign_with_keys(&keys)
+            .expect("sign");
+        canvas_notice_from_event(&event, channel).expect("valid canvas notice")
+    }
+
+    /// THE PIN on the non-negotiable constraint: a canvas refresh must never
+    /// destroy the session it is trying to serve. `invalidate_channel` drops
+    /// `sessions`, `turn_counts`, `core_sections`, `canvas_sections`, and
+    /// `deliveries` — if `refresh_channel_canvas` ever behaves like it (or
+    /// clears `sessions`), this test fails.
+    #[test]
+    fn canvas_refresh_preserves_session_and_turn_counts() {
+        let ch = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        let mut s = SessionState::default();
+        s.sessions.insert(ch, "sess-1".into());
+        s.sessions.insert(other, "sess-other".into());
+        s.turn_counts.insert(ch, 7);
+        s.core_sections
+            .insert(ch, "[Agent Memory — core]\nkeep me".into());
+        s.deliveries.insert(
+            ch,
+            ChannelDeliveryState {
+                standing_context_sent: true,
+                delivered_event_ids: HashSet::from(["ev-1".to_string()]),
+            },
+        );
+        s.canvas_sections
+            .insert(ch, cached_canvas("[Channel Canvas]\nold", "rev-old", 1_000));
+
+        let notice = make_canvas_notice_at(ch, "# Rule\nno pile-ons on owned topics", 2_000);
+        assert!(
+            s.refresh_channel_canvas(&ch, &notice),
+            "newer revision must apply"
+        );
+
+        // The session and everything that travels with it survive.
+        assert_eq!(
+            s.sessions.get(&ch).unwrap(),
+            "sess-1",
+            "refresh must not touch sessions"
+        );
+        assert_eq!(s.sessions.get(&other).unwrap(), "sess-other");
+        assert_eq!(
+            s.turn_counts.get(&ch),
+            Some(&7),
+            "refresh must not touch turn counts"
+        );
+        let delivery = s.deliveries.get(&ch).expect("delivery state must survive");
+        assert!(delivery.standing_context_sent);
+        assert!(delivery.delivered_event_ids.contains("ev-1"));
+        assert_eq!(
+            s.core_sections.get(&ch).unwrap(),
+            "[Agent Memory — core]\nkeep me"
+        );
+
+        // The canvas cache moved to the new revision and the notice is armed.
+        let cached = s.canvas_sections.get(&ch).expect("cache present");
+        assert_eq!(cached.revision_id, notice.revision_id);
+        assert_eq!(cached.created_at, 2_000);
+        assert!(s.canvas_pending_notice.contains_key(&ch));
+    }
+
+    /// Consumption is the one-shot half of the notice: armed → rides the next
+    /// successful turn → consumed. A re-application of the same revision (the
+    /// main loop keeps per-channel pending entries around for checked-out
+    /// agents and re-applies them on every task return) must NOT re-arm it —
+    /// that is exactly what stops the notice being re-delivered every turn.
+    #[test]
+    fn consume_canvas_notice_clears_only_after_success() {
+        let ch = Uuid::new_v4();
+        let mut s = SessionState::default();
+        s.sessions.insert(ch, "sess-1".into());
+        let notice = make_canvas_notice_at(ch, "rule text", 2_000);
+        assert!(s.refresh_channel_canvas(&ch, &notice));
+        assert!(s.canvas_pending_notice.contains_key(&ch));
+
+        // The turn carrying the notice completed successfully → consume.
+        assert!(s.consume_canvas_notice(&ch));
+        assert!(
+            !s.canvas_pending_notice.contains_key(&ch),
+            "consumed notice must be gone"
+        );
+
+        // Re-applying the delivered revision must not re-arm it.
+        assert!(
+            !s.refresh_channel_canvas(&ch, &notice),
+            "already-delivered revision must be LWW-rejected"
+        );
+        assert!(!s.canvas_pending_notice.contains_key(&ch));
+
+        // A NEWER revision still applies after a consumption.
+        let newer = make_canvas_notice_at(ch, "newer rule", 3_000);
+        assert!(s.refresh_channel_canvas(&ch, &newer));
+        assert!(s.canvas_pending_notice.contains_key(&ch));
+    }
+
+    /// A blank-content canvas event is a valid "cleared" revision: the cache
+    /// entry is removed (an older revision must not be resurrected) and the
+    /// armed notice tells seated agents the canvas was cleared.
+    #[test]
+    fn blank_canvas_clears_cache_and_arms_cleared_notice() {
+        let ch = Uuid::new_v4();
+        let mut s = SessionState::default();
+        s.sessions.insert(ch, "sess-1".into());
+        s.canvas_sections
+            .insert(ch, cached_canvas("[Channel Canvas]\nold", "rev-old", 1_000));
+
+        let notice = make_canvas_notice_at(ch, "   ", 2_000);
+        assert!(notice.cleared, "blank content must classify as cleared");
+        assert!(
+            notice.rendered_section.contains("cleared"),
+            "notice text must say cleared: {}",
+            notice.rendered_section
+        );
+
+        assert!(s.refresh_channel_canvas(&ch, &notice));
+        assert!(
+            !s.canvas_sections.contains_key(&ch),
+            "cleared canvas must remove the cache entry"
+        );
+        let armed = s
+            .canvas_pending_notice
+            .get(&ch)
+            .expect("cleared notice armed");
+        assert!(armed.rendered_section.contains("cleared"));
+        assert_eq!(armed.revision_id, notice.revision_id);
+    }
+
+    /// Stale (older or equal) revisions are LWW-rejected: a replayed or
+    /// reordered canvas event must not clobber a newer armed/delivered state.
+    #[test]
+    fn canvas_refresh_rejects_stale_revisions() {
+        let ch = Uuid::new_v4();
+        let mut s = SessionState::default();
+        s.sessions.insert(ch, "sess-1".into());
+        let fresh = make_canvas_notice_at(ch, "fresh rule", 3_000);
+        assert!(s.refresh_channel_canvas(&ch, &fresh));
+
+        let stale = make_canvas_notice_at(ch, "stale rule", 2_000);
+        assert!(
+            !s.refresh_channel_canvas(&ch, &stale),
+            "older revision must be rejected"
+        );
+        assert_eq!(
+            s.canvas_sections.get(&ch).unwrap().revision_id,
+            fresh.revision_id,
+            "cache must still hold the newer revision"
+        );
+
+        let equal = make_canvas_notice_at(ch, "equal-ts rule", 3_000);
+        assert!(
+            !s.refresh_channel_canvas(&ch, &equal),
+            "equal created_at must keep the incumbent (replay protection)"
+        );
+    }
+
+    /// Session invalidation clears the armed notice: a replacement session
+    /// gets canvas freshness at creation and must not also receive a change
+    /// notice for a revision it already carries.
+    #[test]
+    fn invalidate_channel_clears_armed_canvas_notice() {
+        let ch = Uuid::new_v4();
+        let mut s = SessionState::default();
+        s.sessions.insert(ch, "sess-1".into());
+        let notice = make_canvas_notice_at(ch, "rule text", 2_000);
+        assert!(s.refresh_channel_canvas(&ch, &notice));
+        assert!(s.canvas_pending_notice.contains_key(&ch));
+
+        assert!(s.invalidate_channel(&ch));
+        assert!(
+            !s.canvas_pending_notice.contains_key(&ch),
+            "invalidation must clear the armed notice"
+        );
+        assert!(!s.has_channel_state(&ch));
+    }
+
+    /// The notice content cap is applied when the notice is BUILT (arm time)
+    /// — `rendered_section` ships pre-capped, so the per-turn prompt cost is
+    /// bounded no matter what renders it.
+    #[test]
+    fn canvas_notice_content_is_capped_at_arm_time() {
+        let channel = Uuid::parse_str(CHANNEL_UUID).unwrap();
+        let big = "a".repeat(5_000);
+        let notice = make_canvas_notice_at(channel, &big, 1_750_000_000);
+
+        let lines: Vec<&str> = notice.rendered_section.lines().collect();
+        assert_eq!(lines[0], "[Channel Canvas — updated]");
+        // Line 3 is the content; line 4 the truncation marker.
+        assert!(
+            lines[3].len() <= CANVAS_NOTICE_CONTENT_CAP_BYTES,
+            "capped content must not exceed {} bytes, got {}",
+            CANVAS_NOTICE_CONTENT_CAP_BYTES,
+            lines[3].len()
+        );
+        assert_eq!(lines[3], "a".repeat(CANVAS_NOTICE_CONTENT_CAP_BYTES));
+        assert!(
+            notice.rendered_section.contains("5000 bytes total"),
+            "marker must name the total size: {}",
+            notice.rendered_section
+        );
+        assert!(
+            notice
+                .rendered_section
+                .contains(&format!("buzz canvas get --channel {CHANNEL_UUID}")),
+            "marker must point at the CLI fallback"
+        );
+    }
+
+    /// The cap must cut at a UTF-8 char boundary: 'a' + 2048 × 'é' is 4097
+    /// bytes, so byte 4096 falls mid-character and the floor must keep
+    /// 'a' + 2047 × 'é' (4095 bytes, 2048 chars) rather than split one.
+    #[test]
+    fn canvas_notice_cap_respects_char_boundaries() {
+        let channel = Uuid::parse_str(CHANNEL_UUID).unwrap();
+        let content = format!("a{}", "é".repeat(2_048));
+        let notice = make_canvas_notice_at(channel, &content, 1_750_000_000);
+
+        let content_line = notice
+            .rendered_section
+            .lines()
+            .nth(3)
+            .expect("content line");
+        assert!(
+            content_line.len() <= CANVAS_NOTICE_CONTENT_CAP_BYTES,
+            "capped content must not exceed the cap, got {}",
+            content_line.len()
+        );
+        assert_eq!(
+            content_line.chars().count(),
+            2_048,
+            "cap must keep whole characters only"
+        );
+        assert!(content_line.starts_with('a'));
+        assert!(content_line.ends_with('é'));
+    }
+
+    /// The push path (`canvas_notice_from_event`) must reject exactly what
+    /// the query path (`canvas_section_from_query_response`) rejects — both
+    /// route through the shared validator `canvas_section_from_event`, and
+    /// this pins that equivalence against drift. Fixtures are ones that are
+    /// expressible as a real `nostr::Event` (the push path starts from a
+    /// deserialized event, so purely structural JSON breakage cannot reach
+    /// it — the query-path tests cover that class).
+    #[test]
+    fn canvas_push_path_rejects_what_query_path_rejects() {
+        let keys = Keys::generate();
+        let canvas_kind = buzz_core::kind::KIND_CANVAS as u16;
+        let signed = |content: &str, kind: u16, tags: Vec<Tag>, ts: Option<Timestamp>| {
+            let mut builder = EventBuilder::new(Kind::Custom(kind), content).tags(tags);
+            if let Some(ts) = ts {
+                builder = builder.custom_created_at(ts);
+            }
+            serde_json::to_value(builder.sign_with_keys(&keys).expect("sign")).expect("serialise")
+        };
+        let h_tag = || Tag::parse(["h", CHANNEL_UUID]).expect("h tag");
+        let wrong_h = Tag::parse(["h", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"]).expect("h tag");
+        let tampered = {
+            let mut value = signed("original", canvas_kind, vec![h_tag()], None);
+            value["content"] = serde_json::Value::String("injected".into());
+            value
+        };
+        let fixtures: Vec<(&str, serde_json::Value)> = vec![
+            ("wrong kind", signed("content", 9, vec![h_tag()], None)),
+            (
+                "wrong h-tag",
+                signed("content", canvas_kind, vec![wrong_h], None),
+            ),
+            ("tampered content", tampered),
+            (
+                "created_at overflow",
+                signed(
+                    "content",
+                    canvas_kind,
+                    vec![h_tag()],
+                    Some(Timestamp::max()),
+                ),
+            ),
+        ];
+
+        let channel = Uuid::parse_str(CHANNEL_UUID).unwrap();
+        for (label, value) in fixtures {
+            assert!(
+                canvas_section_from_query_response(std::slice::from_ref(&value), CHANNEL_UUID)
+                    .is_none(),
+                "{label}: query path must reject"
+            );
+            let event: nostr::Event = serde_json::from_value(value.clone())
+                .unwrap_or_else(|e| panic!("{label}: fixture must deserialise as an Event: {e}"));
+            assert!(
+                canvas_notice_from_event(&event, channel).is_none(),
+                "{label}: push path must reject the same event"
+            );
+        }
+    }
+
+    /// Happy-path equivalence: the same signed event produces a query-path
+    /// section and a push-path notice carrying the same revision identity.
+    #[test]
+    fn canvas_push_and_query_paths_agree_on_revision_identity() {
+        let channel = Uuid::parse_str(CHANNEL_UUID).unwrap();
+        let event_value = make_canvas_event_value("# Rule\nbe brief.");
+        let event: nostr::Event = serde_json::from_value(event_value.clone()).expect("event");
+
+        let cached = canvas_section_from_query_response(&[event_value], CHANNEL_UUID)
+            .expect("query path accepts");
+        let notice = canvas_notice_from_event(&event, channel).expect("push path accepts");
+
+        assert_eq!(cached.revision_id, notice.revision_id);
+        assert_eq!(cached.created_at, notice.created_at);
+        assert!(!notice.cleared);
+        assert!(notice.rendered_section.contains("# Rule\nbe brief."));
+    }
+
+    /// `note_canvas_changed` arms only idle agents that hold a live session
+    /// for the channel — agents without one get canvas freshness at their
+    /// next session creation instead.
+    #[tokio::test]
+    async fn note_canvas_changed_arms_only_agents_with_live_sessions() {
+        let ch = Uuid::new_v4();
+        let unseated_channel = Uuid::new_v4();
+        let spawn_idle = |script: &'static str| async move {
+            AcpClient::spawn("bash", &["-c".into(), script.into()], &[], false)
+                .await
+                .expect("spawn idle agent")
+        };
+        let mut seated = OwnedAgent {
+            index: 0,
+            acp: spawn_idle("while IFS= read -r line; do :; done").await,
+            state: SessionState::default(),
+            model_capabilities: None,
+            desired_model: None,
+            model_overridden: false,
+            desired_model_request_id: None,
+            desired_model_pending_ack: false,
+            startup_effort: None,
+            agent_name: "idle-test-agent".into(),
+            goose_system_prompt_supported: None,
+            protocol_version: 1,
+        };
+        seated.state.sessions.insert(ch, "live-session".into());
+        let mut unseated = OwnedAgent {
+            index: 1,
+            acp: spawn_idle("while IFS= read -r line; do :; done").await,
+            state: SessionState::default(),
+            model_capabilities: None,
+            desired_model: None,
+            model_overridden: false,
+            desired_model_request_id: None,
+            desired_model_pending_ack: false,
+            startup_effort: None,
+            agent_name: "idle-test-agent".into(),
+            goose_system_prompt_supported: None,
+            protocol_version: 1,
+        };
+        unseated
+            .state
+            .sessions
+            .insert(unseated_channel, "other-session".into());
+
+        let mut pool = AgentPool::from_slots(vec![Some(seated), Some(unseated)]);
+        let notice = make_canvas_notice_at(ch, "rule text", 2_000);
+        let armed = pool.note_canvas_changed(ch, &notice);
+        assert_eq!(armed, 1, "exactly the seated agent is armed");
+
+        let agents = pool.agents_mut();
+        let seated = agents[0].as_ref().expect("seated agent");
+        assert!(
+            seated.state.canvas_pending_notice.contains_key(&ch),
+            "seated agent must be armed"
+        );
+        assert_eq!(
+            seated.state.sessions.get(&ch).unwrap(),
+            "live-session",
+            "arming must not touch the session"
+        );
+        let unseated = agents[1].as_ref().expect("unseated agent");
+        assert!(
+            unseated.state.canvas_pending_notice.is_empty(),
+            "agent without a session for the channel must not be armed"
+        );
+        for slot in pool.agents_mut().iter_mut().flatten() {
+            slot.acp.shutdown().await;
+        }
     }
 
     // ── new-session channel context (one resolve, two consumers) ─────────────

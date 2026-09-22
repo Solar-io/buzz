@@ -117,8 +117,8 @@ const GATED_OBSERVER_QUEUE_CAP: usize = 256;
 use std::time::Instant;
 
 use buzz_core::kind::{
-    KIND_AGENT_OBSERVER_FRAME, KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION,
-    KIND_TYPING_INDICATOR,
+    KIND_AGENT_OBSERVER_FRAME, KIND_CANVAS, KIND_MEMBER_ADDED_NOTIFICATION,
+    KIND_MEMBER_REMOVED_NOTIFICATION, KIND_TYPING_INDICATOR,
 };
 use futures_util::{SinkExt, StreamExt};
 use nostr::{Event, EventBuilder, Keys, Kind, RelayUrl, Tag};
@@ -3181,11 +3181,26 @@ async fn wait_for_reconnect(
 
 /// Send a NIP-01 REQ for a channel, built from a [`ChannelFilter`].
 ///
-/// - `kinds` is included only when `filter.kinds` is `Some`; `None` = wildcard.
-/// - `#p` is included only when `filter.require_mention` is `true`.
-/// - `#h` is always included (channel-scoped subscription).
-/// - On first subscribe (`since` is `None`) adds `since=now` to avoid replaying
-///   history. On reconnect (`since` is `Some`) subtracts [`SINCE_SKEW_SECS`].
+/// The REQ is a two-filter OR (NIP-01: an event matching ANY filter object in
+/// the REQ is delivered on the subscription):
+///
+/// 1. the message filter built from `filter` — `kinds` only when
+///    `filter.kinds` is `Some` (`None` = wildcard), `#h` always, `#p` only
+///    when `filter.require_mention` is `true`;
+/// 2. a canvas filter (`kinds: [40100]`, same `#h`, no `#p`) so canvas writes
+///    reach the harness on the subscription it already maintains.
+///
+/// The canvas filter must be a separate object: in Mentions mode the message
+/// filter's `kinds` + `#p` conjunction can never match a canvas write, because
+/// canvas events are h-scoped, not p-addressed. Appending the second filter
+/// keeps the same sub id (`ch-<uuid>`), the same `handle_ws_message` routing,
+/// and free reconnect replay (BgState re-issues the stored subscription
+/// wholesale) — a canvas change while the harness is offline is replayed like
+/// any missed message.
+///
+/// - On first subscribe (`since` is `None`) both filters add `since=now` to
+///   avoid replaying history. On reconnect (`since` is `Some`) both subtract
+///   [`SINCE_SKEW_SECS`].
 ///
 /// Returns `true` if the REQ was successfully written to the WebSocket.
 async fn send_subscribe(
@@ -3224,7 +3239,21 @@ async fn send_subscribe(
     };
     req_filter.insert("since".into(), json!(since_ts));
 
-    let req = json!(["REQ", sub_id, Value::Object(req_filter)]);
+    // Canvas filter — appended unconditionally (under a wildcard message
+    // filter it is redundant but harmless). Shares the message filter's
+    // `since` so first subscribe skips canvas history and reconnect replays
+    // exactly the disconnect window, same as messages.
+    let mut canvas_filter = serde_json::Map::new();
+    canvas_filter.insert("kinds".into(), json!([KIND_CANVAS]));
+    canvas_filter.insert("#h".into(), json!([channel_id.to_string()]));
+    canvas_filter.insert("since".into(), json!(since_ts));
+
+    let req = json!([
+        "REQ",
+        sub_id,
+        Value::Object(req_filter),
+        Value::Object(canvas_filter)
+    ]);
 
     match serde_json::to_string(&req) {
         Ok(text) => {
@@ -4486,6 +4515,123 @@ mod tests {
         let frame = next_test_frame(&mut server).await;
         assert_eq!(frame[0], "REQ");
         assert_eq!(frame[1], channel_sub_id(channel_id));
+    }
+
+    /// The channel REQ must be a two-filter OR: the message filter (which in
+    /// Mentions mode carries `#p`) plus a canvas filter selecting kind 40100
+    /// with the same `#h` and NO `#p`. Without the second object, canvas
+    /// writes never reach the subscription: in Mentions mode the
+    /// `kinds` + `#p` conjunction excludes un-addressed events, so a seated
+    /// agent is never told the canvas revision moved.
+    #[tokio::test]
+    async fn channel_req_carries_canvas_filter_without_mention_gate() {
+        let (mut client, mut server) = test_ws_pair().await;
+        let (_cmd_tx, _cmd_rx) = mpsc::channel::<RelayCommand>(1);
+        let state = BgState::new();
+        let channel_id = Uuid::new_v4();
+        let mention_filter = ChannelFilter {
+            kinds: Some(vec![9]),
+            require_mention: true,
+        };
+
+        assert!(
+            send_subscribe(
+                &mut client,
+                &state,
+                channel_id,
+                "agent-pubkey",
+                Some(1_000),
+                &mention_filter
+            )
+            .await
+        );
+
+        let frame = next_test_frame(&mut server).await;
+        assert_eq!(frame[0], "REQ");
+        assert_eq!(frame[1], channel_sub_id(channel_id));
+        let filters = &frame.as_array().expect("REQ is an array")[2..];
+        assert_eq!(
+            filters.len(),
+            2,
+            "channel REQ must carry exactly two filter objects, got: {frame}"
+        );
+
+        let message_filter = filters[0].as_object().expect("message filter object");
+        assert_eq!(
+            message_filter.get("kinds"),
+            Some(&json!([9])),
+            "message filter keeps its kinds"
+        );
+        assert_eq!(
+            message_filter.get("#p"),
+            Some(&json!(["agent-pubkey"])),
+            "Mentions mode keeps #p on the message filter"
+        );
+        assert_eq!(
+            message_filter.get("#h"),
+            Some(&json!([channel_id.to_string()]))
+        );
+
+        let canvas_filter = filters[1].as_object().expect("canvas filter object");
+        assert_eq!(
+            canvas_filter.get("kinds"),
+            Some(&json!([40100])),
+            "canvas filter must select kind 40100 by literal value"
+        );
+        assert_eq!(
+            canvas_filter.get("#h"),
+            Some(&json!([channel_id.to_string()])),
+            "canvas filter stays channel-scoped"
+        );
+        assert!(
+            canvas_filter.get("#p").is_none(),
+            "canvas filter must NOT be gated on #p — canvas writes are h-scoped, not p-addressed"
+        );
+        assert_eq!(
+            canvas_filter.get("since"),
+            Some(&json!(1_000 - SINCE_SKEW_SECS)),
+            "canvas filter replays the same disconnect window as the message filter"
+        );
+    }
+
+    /// All mode: no `#p` anywhere, and the canvas filter is still appended —
+    /// the OR shape must not depend on the mention gate.
+    #[tokio::test]
+    async fn channel_req_carries_canvas_filter_in_all_mode() {
+        let (mut client, mut server) = test_ws_pair().await;
+        let (_cmd_tx, _cmd_rx) = mpsc::channel::<RelayCommand>(1);
+        let state = BgState::new();
+        let channel_id = Uuid::new_v4();
+        let all_filter = ChannelFilter {
+            kinds: Some(vec![9]),
+            require_mention: false,
+        };
+
+        assert!(
+            send_subscribe(
+                &mut client,
+                &state,
+                channel_id,
+                "agent-pubkey",
+                Some(2_000),
+                &all_filter
+            )
+            .await
+        );
+
+        let frame = next_test_frame(&mut server).await;
+        let filters = &frame.as_array().expect("REQ is an array")[2..];
+        assert_eq!(filters.len(), 2, "All mode REQ is also a two-filter OR");
+        assert!(
+            filters[0].get("#p").is_none(),
+            "All mode message filter carries no #p"
+        );
+        assert_eq!(
+            filters[1].get("kinds"),
+            Some(&json!([40100])),
+            "canvas filter present in All mode too"
+        );
+        assert!(filters[1].get("#p").is_none());
     }
 
     #[tokio::test]

@@ -1536,6 +1536,13 @@ pub struct FormatPromptArgs<'a> {
     /// For modern agents (protocol_version >= 2) the section is delivered via
     /// the system role in session/new; omit here to avoid duplication.
     pub agent_canvas: Option<&'a str>,
+    /// Pre-rendered one-shot `[Channel Canvas — updated]` notice, armed by the
+    /// harness when a canvas write (kind 40100) arrives for a channel the
+    /// agent already holds a session in. NOT part of [`StandingContext`]: it
+    /// is ephemeral, per-change, and must reach modern and legacy agents
+    /// alike — so it is emitted even when standing context has been sent.
+    /// Already capped at render time; delivered as the first section.
+    pub canvas_notice: Option<&'a str>,
     /// Set once this session's standing context has already been delivered —
     /// see [`StandingContext`]. Only meaningful for legacy agents; modern
     /// agents are gated by `has_system_prompt_support` regardless.
@@ -1627,14 +1634,17 @@ pub(crate) fn base_section(base_prompt: &str) -> String {
 /// Format a [`FlushBatch`] into the per-section prompt blocks for the agent.
 ///
 /// Produces a stable prompt with these sections (in order):
-/// 0. [`StandingContext`] — `[Base]`, `[Agent Instructions]`, `[Team Instructions]`,
+/// 0. `[Channel Canvas — updated]` — one-shot canvas change notice, present
+///    only on the single turn that delivers it (see
+///    `FormatPromptArgs::canvas_notice`), for modern and legacy agents alike
+/// 1. [`StandingContext`] — `[Base]`, `[Agent Instructions]`, `[Team Instructions]`,
 ///    `[Shared Instructions]`, `[Agent Memory — core]`, `[Channel Canvas]`.
 ///    Legacy agents only, and only
 ///    on the session's first message (see `standing_context_sent`)
-/// 1. `[Context]` — scope, channel name, temporal ground truth (owner-local
+/// 2. `[Context]` — scope, channel name, temporal ground truth (owner-local
 ///    wall clock, UTC, message staleness) and contextual hints for the agent
-/// 2. `[Thread Context]` or `[Conversation Context]` — if fetched
-/// 3. `[Event]` / `[Buzz events]` — the triggering event(s)
+/// 3. `[Thread Context]` or `[Conversation Context]` — if fetched
+/// 4. `[Event]` / `[Buzz events]` — the triggering event(s)
 ///
 /// Each section is returned as its own block rather than one joined string so
 /// the observer frame's size trimmer (`fit_observer_event_to_budget`) elides
@@ -1664,7 +1674,19 @@ pub fn format_prompt(batch: &FlushBatch, args: &FormatPromptArgs<'_>) -> Vec<Str
         .map(|ci| ci.channel_type == "dm")
         .unwrap_or(false);
 
-    let mut sections: Vec<String> = Vec::with_capacity(7);
+    let mut sections: Vec<String> = Vec::with_capacity(8);
+
+    // Canvas change notice — FIRST, above standing context and thread context:
+    // it is ephemeral, high-salience channel governance ("the rules just
+    // changed"), and burying it under the very context it is meant to govern
+    // would defeat it. Emitted for modern and legacy agents alike — unlike
+    // standing context, it is not gated on `has_system_prompt_support` or
+    // `standing_context_sent`, because the system prompt is fixed for the
+    // life of a session and this is the only vehicle that reaches a seated
+    // agent at all.
+    if let Some(notice) = args.canvas_notice {
+        sections.push(notice.to_string());
+    }
 
     // Standing context — base prompt, persona, team instructions, shared
     // instructions, core memory and canvas. Modern agents received all of it
@@ -3027,6 +3049,98 @@ mod tests {
             "later turns must be smaller: {} vs {}",
             later.len(),
             first.len()
+        );
+    }
+
+    /// A canvas change notice must reach BOTH modern agents (system-prompt
+    /// path — the system prompt is fixed at session/new, so a per-change
+    /// notice has no other vehicle) and legacy agents that already received
+    /// their standing context (`standing_context_sent == true`), and it must
+    /// be the FIRST section so it is not buried under thread context.
+    #[test]
+    fn test_format_prompt_includes_canvas_notice_for_modern_and_legacy() {
+        let ch = Uuid::new_v4();
+        let batch = FlushBatch {
+            channel_id: ch,
+            events: vec![BatchEvent {
+                event: make_event("hello"),
+                prompt_tag: "test".into(),
+                received_at: Instant::now(),
+            }],
+            cancelled_events: vec![],
+            cancel_reason: None,
+        };
+        let notice = "[Channel Canvas — updated]\n\
+                      Canvas revision (event ID): deadbeef\n\
+                      Last modified: 2026-09-22T13:32:00Z\n\
+                      Do not pile onto an owned topic.";
+
+        let cases = [
+            (
+                "modern (system-prompt path)",
+                FormatPromptArgs {
+                    has_system_prompt_support: true,
+                    standing_context_sent: true,
+                    canvas_notice: Some(notice),
+                    ..Default::default()
+                },
+            ),
+            (
+                "legacy after standing context",
+                FormatPromptArgs {
+                    has_system_prompt_support: false,
+                    standing_context_sent: true,
+                    canvas_notice: Some(notice),
+                    ..Default::default()
+                },
+            ),
+        ];
+
+        for (label, args) in cases {
+            let sections = format_prompt(&batch, &args);
+            assert!(!sections.is_empty(), "{label}: prompt must have sections");
+            assert!(
+                sections[0].starts_with("[Channel Canvas — updated]"),
+                "{label}: notice must be the FIRST section, got: {:?}",
+                sections.first()
+            );
+            assert!(
+                sections[1].starts_with("[Context]"),
+                "{label}: notice precedes [Context], got: {:?}",
+                sections.get(1)
+            );
+            assert!(
+                sections[0].contains("deadbeef"),
+                "{label}: notice must carry the revision ID"
+            );
+            assert!(
+                sections[0].contains("Do not pile onto an owned topic."),
+                "{label}: notice must carry the content"
+            );
+            // The notice is one-shot — exactly one section carries it.
+            assert_eq!(
+                sections
+                    .iter()
+                    .filter(|s| s.starts_with("[Channel Canvas — updated]"))
+                    .count(),
+                1,
+                "{label}: notice must appear exactly once"
+            );
+        }
+
+        // Absent when nothing is armed — no stub, no header, nothing.
+        let plain = format_prompt(
+            &batch,
+            &FormatPromptArgs {
+                has_system_prompt_support: true,
+                standing_context_sent: true,
+                ..Default::default()
+            },
+        )
+        .join("\n\n");
+        assert!(
+            !plain.contains("[Channel Canvas — updated]"),
+            "no armed notice must mean no section, got: {plain}"
         );
     }
 
