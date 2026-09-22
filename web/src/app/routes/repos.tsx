@@ -692,6 +692,7 @@ function ChannelBrowser() {
     panes,
   } = useDmRightPane({
     agentDm: dmAgentPubkey !== null,
+    channelId: selectedId,
     threadRootId,
     setThreadRootId,
   });
