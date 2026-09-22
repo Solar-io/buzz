@@ -1,7 +1,9 @@
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import type { HuddleSession } from "@/features/huddle/HuddleSessionProvider";
 import type { RelaySession } from "@/shared/api/relay-session";
+import { usePhoneBarSlot, usePhoneLayout } from "@/shared/layout/AppShell";
 import { signNostrEvent } from "@/shared/lib/nostr-signer";
 import type { ChannelMember, Profile } from "../hooks.ts";
 import type { ComposerDictation } from "../useComposerDictation.ts";
@@ -51,7 +53,11 @@ export function DmComposerActions({
   panes: PaneToggles;
   dictation: ComposerDictation;
 }) {
-  return (
+  // On a phone the bar moves up into the gray top bar (Sam, 2026-09-22) —
+  // one instance, portaled, so its call/join state is never duplicated.
+  const phoneBarSlot = usePhoneBarSlot();
+  const phone = usePhoneLayout();
+  const bar = (
     <ChannelActionsBar
       channel={channel}
       title={title}
@@ -96,4 +102,5 @@ export function DmComposerActions({
       dictation={dictation}
     />
   );
+  return phone && phoneBarSlot ? createPortal(bar, phoneBarSlot) : bar;
 }
