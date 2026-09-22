@@ -131,20 +131,27 @@ export const FORMAT_ITEMS: ReadonlyArray<{
 ];
 
 /**
- * Formatting bar above the composer.
+ * Formatting controls on the composer's bottom row.
  *
  * `onMouseDown` is where the selection is captured, not `onClick`: pressing a
  * toolbar button moves focus out of the textarea, and some browsers collapse
  * the selection on the way. The composer re-reads and restores the range, so
  * this only has to fire before focus leaves.
+ *
+ * `className` lands on the row itself, next to `role="toolbar"`. The composer
+ * passes its own spacing there because the channel's controls now share this
+ * row (Sam, 2026-09-22) and the margin belongs to the shared row, not to each
+ * half of it. `twMerge` resolves the collision in favour of the caller.
  */
 export function ComposerFormatToolbar({
   marks,
+  className,
   disabled,
   onApply,
   onCaptureSelection,
 }: {
   marks: ActiveMarks;
+  className?: string;
   disabled?: boolean;
   onApply: (format: FormatFn) => void;
   onCaptureSelection?: () => void;
@@ -162,6 +169,7 @@ export function ComposerFormatToolbar({
       </button>
       <div
         className={cn(
+          className,
           "mb-1.5 flex-wrap items-center gap-0.5 sm:flex",
           expanded ? "flex" : "hidden",
         )}

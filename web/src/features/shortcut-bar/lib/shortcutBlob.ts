@@ -42,8 +42,19 @@ export interface ShortcutBarBlob {
   shortcuts: Record<string, ShortcutDef[]>;
 }
 
-/** Live shortcuts allowed per channel — each pill is chrome on every header. */
-export const MAX_SHORTCUTS_PER_CHANNEL = 12;
+/**
+ * Reserved channel key for the SIDEBAR shortcut list — the one list that does
+ * not belong to a channel.
+ *
+ * A channel id is a UUID, so this key can never collide with a real one. It is
+ * written into the same map rather than a new top-level field so the v1 shape
+ * stays exactly what older clients already read and write: they see one more
+ * "channel" they never render, and their per-channel entries are untouched.
+ */
+export const SHORTCUT_SIDEBAR_KEY = "__sidebar__";
+
+/** Live shortcuts allowed per list — each sidebar row is chrome on every view. */
+export const MAX_SHORTCUTS_PER_LIST = 12;
 /** A pill truncates visually anyway; 32 is the difference between "kept" and a sentence. */
 export const MAX_SHORTCUT_LABEL_CHARS = 32;
 /** Tracking URLs, not blog posts. */
@@ -143,11 +154,17 @@ export function parseShortcutBlob(raw: unknown): ParsedShortcutBlob {
       }
       seen.add(shortcut.id);
       shortcuts.push(shortcut);
-      if (shortcuts.length === MAX_SHORTCUTS_PER_CHANNEL) {
+      if (shortcuts.length === MAX_SHORTCUTS_PER_LIST) {
         break;
       }
     }
-    if (shortcuts.length > 0) {
+    // Per-channel lists prune themselves on read (an empty one carries no
+    // information and older builds leave them behind). The sidebar key is the
+    // exception: an EMPTY array there is a meaningful, authoritative value
+    // ("this list is deliberately empty"), and dropping it on read would make
+    // {@link sidebarShortcuts} fall back to the seed union and resurrect
+    // entries the user removed. It has to survive the round trip.
+    if (shortcuts.length > 0 || channelId === SHORTCUT_SIDEBAR_KEY) {
       blob.shortcuts[channelId] = shortcuts;
     }
   }
@@ -207,22 +224,13 @@ function validateInput(input: {
   return { url, label: label || defaultPanelLabel(url) };
 }
 
-function assemble(
-  blob: ShortcutBarBlob,
-  channelId: string,
-  shortcuts: ShortcutDef[],
-): ShortcutMutationResult {
-  const nextList = shortcuts.slice(0, MAX_SHORTCUTS_PER_CHANNEL);
-  const shortcuts1 = { ...blob.shortcuts };
-  if (nextList.length === 0) {
-    // Prune-on-write: a channel with no shortcuts releases its key entirely,
-    // so dead channels stop leaking through the blob and the payload stays
-    // small.
-    delete shortcuts1[channelId];
-  } else {
-    shortcuts1[channelId] = nextList;
-  }
-  const next: ShortcutBarBlob = { v: 1, shortcuts: shortcuts1 };
+/**
+ * Serialize a candidate blob and refuse it if it breaks the byte budget.
+ *
+ * The budget is the one rule every mutation shares, so it lives here rather
+ * than being restated per reducer.
+ */
+function finish(next: ShortcutBarBlob): ShortcutMutationResult {
   const plaintext = serializeShortcutBlob(next);
   if (blobByteLength(plaintext) > SHORTCUT_BLOB_BUDGET_BYTES) {
     // Never publish an over-budget blob: the relay would take this one and
@@ -230,6 +238,46 @@ function assemble(
     return { ok: false, reason: SHORTCUT_BUDGET_MESSAGE };
   }
   return { ok: true, blob: next };
+}
+
+function assemble(
+  blob: ShortcutBarBlob,
+  channelId: string,
+  shortcuts: ShortcutDef[],
+): ShortcutMutationResult {
+  const nextList = shortcuts.slice(0, MAX_SHORTCUTS_PER_LIST);
+  const shortcuts1 = { ...blob.shortcuts };
+  if (nextList.length === 0) {
+    // Prune-on-write: a list with no shortcuts releases its key entirely,
+    // so dead channels stop leaking through the blob and the payload stays
+    // small.
+    delete shortcuts1[channelId];
+  } else {
+    shortcuts1[channelId] = nextList;
+  }
+  return finish({ v: 1, shortcuts: shortcuts1 });
+}
+
+/**
+ * The sidebar equivalent of {@link assemble} — same cap, same budget, ONE
+ * deliberate difference: an emptied list is written as `[]` rather than
+ * pruned away.
+ *
+ * That is not a style choice. The sidebar's effective list is
+ * `__sidebar__` when present and a seed union of the per-channel lists when
+ * absent (see {@link sidebarShortcuts}). Pruning the key on empty would take
+ * the blob back to "absent" and the union would resurrect every shortcut the
+ * user just removed — removals would silently not stick.
+ */
+function assembleSidebar(
+  blob: ShortcutBarBlob,
+  shortcuts: ShortcutDef[],
+): ShortcutMutationResult {
+  const shortcuts1 = {
+    ...blob.shortcuts,
+    [SHORTCUT_SIDEBAR_KEY]: shortcuts.slice(0, MAX_SHORTCUTS_PER_LIST),
+  };
+  return finish({ v: 1, shortcuts: shortcuts1 });
 }
 
 /**
@@ -245,10 +293,10 @@ export function addShortcut(
   input: { url: string; label?: string; mode?: ShortcutMode },
 ): ShortcutMutationResult {
   const existing = shortcutListFor(blob, channelId);
-  if (existing.length >= MAX_SHORTCUTS_PER_CHANNEL) {
+  if (existing.length >= MAX_SHORTCUTS_PER_LIST) {
     return {
       ok: false,
-      reason: `A channel holds at most ${MAX_SHORTCUTS_PER_CHANNEL} shortcuts.`,
+      reason: `A list holds at most ${MAX_SHORTCUTS_PER_LIST} shortcuts.`,
     };
   }
   const valid = validateInput(input);
@@ -304,6 +352,125 @@ export function removeShortcut(
   return assemble(
     blob,
     channelId,
+    existing.filter((shortcut) => shortcut.id !== id),
+  );
+}
+
+/*
+ * The sidebar list.
+ *
+ * These are the same reducers over the reserved {@link SHORTCUT_SIDEBAR_KEY},
+ * reusing `validateInput` and `assembleSidebar` rather than reimplementing any
+ * of it — validation, the byte budget and the cap therefore behave identically
+ * to every per-channel list. The per-channel lists themselves are never
+ * touched: they keep their data and simply stop being rendered, which is the
+ * rollback path to the previous build.
+ */
+
+/**
+ * The channel-independent shortcuts shown in the sidebar, in blob order.
+ *
+ * Two cases, and the difference is the whole migration:
+ *
+ * - `__sidebar__` is PRESENT (even as `[]`) — authoritative, used verbatim.
+ *   `[]` is a real answer here: the user removed everything, and the list
+ *   stays empty.
+ * - `__sidebar__` is ABSENT — this blob predates the sidebar list, so seed
+ *   from what the user already had. Every per-channel list is concatenated in
+ *   `Object.keys` insertion order (the order the blob was written, so the seed
+ *   is stable across reads) and deduplicated by `(url, mode)`, keeping the
+ *   first occurrence. That collapses "the same shortcut pinned to three
+ *   channels" into one row while leaving two rows for a URL deliberately
+ *   pinned in both modes.
+ *
+ * The seed is computed on READ and never written. Nothing migrates until the
+ * user edits, at which point the first write stores the list they were
+ * looking at. Until then the per-channel keys are the only copy, so a device
+ * that never edits — or one that rolls back to the previous build — still
+ * behaves exactly as before.
+ */
+export function sidebarShortcuts(blob: ShortcutBarBlob): ShortcutDef[] {
+  if (SHORTCUT_SIDEBAR_KEY in blob.shortcuts) {
+    return shortcutListFor(blob, SHORTCUT_SIDEBAR_KEY);
+  }
+  const seen = new Set<string>();
+  const union: ShortcutDef[] = [];
+  for (const [channelId, list] of Object.entries(blob.shortcuts)) {
+    if (channelId === SHORTCUT_SIDEBAR_KEY) {
+      continue;
+    }
+    for (const shortcut of list) {
+      // JSON, not a delimiter join: a URL may contain any printable
+      // character, so no separator is safe to hard-code.
+      const key = JSON.stringify([shortcut.url, shortcut.mode]);
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      union.push(shortcut);
+    }
+  }
+  return union.slice(0, MAX_SHORTCUTS_PER_LIST);
+}
+
+/** Append a shortcut to the sidebar list, or explain why not. */
+export function addSidebarShortcut(
+  blob: ShortcutBarBlob,
+  input: { url: string; label?: string; mode?: ShortcutMode },
+): ShortcutMutationResult {
+  const existing = sidebarShortcuts(blob);
+  if (existing.length >= MAX_SHORTCUTS_PER_LIST) {
+    return {
+      ok: false,
+      reason: `A list holds at most ${MAX_SHORTCUTS_PER_LIST} shortcuts.`,
+    };
+  }
+  const valid = validateInput(input);
+  if (!("url" in valid)) {
+    return valid;
+  }
+  const added: ShortcutDef = {
+    id: nextShortcutId(blob),
+    label: valid.label,
+    url: valid.url,
+    mode: input.mode === "overlay" ? "overlay" : "window",
+  };
+  return assembleSidebar(blob, [...existing, added]);
+}
+
+/** Rewrite one sidebar shortcut in place, keeping its id and position. */
+export function updateSidebarShortcut(
+  blob: ShortcutBarBlob,
+  id: string,
+  input: { url: string; label?: string; mode?: ShortcutMode },
+): ShortcutMutationResult {
+  const existing = sidebarShortcuts(blob);
+  const index = existing.findIndex((shortcut) => shortcut.id === id);
+  if (index === -1) {
+    return { ok: false, reason: "That shortcut no longer exists." };
+  }
+  const valid = validateInput(input);
+  if (!("url" in valid)) {
+    return valid;
+  }
+  const next = [...existing];
+  next[index] = {
+    ...existing[index],
+    label: valid.label,
+    url: valid.url,
+    mode: input.mode === "overlay" ? "overlay" : "window",
+  };
+  return assembleSidebar(blob, next);
+}
+
+/** Remove one sidebar shortcut. An unknown id is a no-op success. */
+export function removeSidebarShortcut(
+  blob: ShortcutBarBlob,
+  id: string,
+): ShortcutMutationResult {
+  const existing = sidebarShortcuts(blob);
+  return assembleSidebar(
+    blob,
     existing.filter((shortcut) => shortcut.id !== id),
   );
 }

@@ -77,7 +77,7 @@ export function ShortcutDialog({
           <DialogDescription>
             {editing
               ? "Update where this shortcut points and how it opens."
-              : "It pins to this channel's bar, for you only."}
+              : "It appears in your sidebar, below Forums, for you only."}
           </DialogDescription>
         </DialogHeader>
         <form

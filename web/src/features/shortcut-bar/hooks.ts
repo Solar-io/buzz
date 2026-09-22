@@ -29,7 +29,7 @@ import {
   emptyShortcutBlob,
   parseShortcutBlob,
   serializeShortcutBlob,
-  shortcutListFor,
+  sidebarShortcuts,
 } from "./lib/shortcutBlob.ts";
 import {
   KIND_SHORTCUT_BAR,
@@ -41,12 +41,17 @@ import {
 } from "./lib/shortcutEvent.ts";
 
 /**
- * The per-channel shortcut bar, relay-backed.
+ * The sidebar shortcuts, relay-backed.
  *
  * The data is ONE kind-30078 event per user (NIP-78, `d="shortcut-bar"`),
- * NIP-44-encrypted to self, holding every channel's shortcuts. The shape and
- * LWW rules live in `lib/shortcutEvent.ts`; this file is the subscription,
- * the decrypt, and the optimistic write overlay.
+ * NIP-44-encrypted to self, holding every list. The shape and LWW rules live
+ * in `lib/shortcutEvent.ts`; this file is the subscription, the decrypt, and
+ * the optimistic write overlay.
+ *
+ * The list this hook exposes is the CHANNEL-INDEPENDENT one, stored under the
+ * reserved `__sidebar__` key — it is what the sidebar renders. Earlier builds
+ * stored a list per channel in the same blob; those keys are still read,
+ * written and preserved untouched, they are simply no longer rendered.
  *
  * Writes are whole-blob replacement with last-write-wins on `created_at`
  * (desktop `readStateManager.ts` pattern): two devices editing between syncs
@@ -137,7 +142,7 @@ interface RelayBlobState {
 }
 
 export interface ShortcutBar {
-  /** This channel's shortcuts, newest blob first. */
+  /** The sidebar shortcuts, newest blob first. */
   shortcuts: ShortcutDef[];
   /** True only when the unlocked local key is live (the render gate). */
   canUse: boolean;
@@ -172,7 +177,7 @@ async function publishQuietly(
   }
 }
 
-export function useShortcutBar(channelId: string): ShortcutBar {
+export function useShortcutBar(): ShortcutBar {
   const { session } = useRelaySession();
   const signer = useActiveSignerSource();
   const [selfPubkey, setSelfPubkey] = useState<string | null>(null);
@@ -337,7 +342,7 @@ export function useShortcutBar(channelId: string): ShortcutBar {
   );
 
   return {
-    shortcuts: shortcutListFor(blob, channelId),
+    shortcuts: sidebarShortcuts(blob),
     canUse,
     blocked: relayState.blocked,
     blockedMessage: relayState.blocked ? SHORTCUT_BLOCKED_MESSAGE : null,
@@ -346,23 +351,28 @@ export function useShortcutBar(channelId: string): ShortcutBar {
 }
 
 /**
- * The shortcut overlay's dock: the channel's overlay-mode shortcuts as the
- * panel registry, with a tab session persisted PER CHANNEL under
+ * The shortcut overlay's dock: the sidebar list's overlay-mode shortcuts as
+ * the panel registry, with ONE global tab session under
  * `buzz:shortcut-overlay-sessions.v1` (iframes still die on close — only the
  * tab LIST survives, same as Files across reloads).
  *
- * `setScope`/`setPanels` run during render, before any subscriber reads: the
- * overlay is unmounted on channel switch, so a scope change always happens
- * on a fresh mount and the emit inside is a no-op in practice.
+ * There is no `setScope` here any more. The registry used to be per channel
+ * and each channel kept its own tabs; the list is channel-independent now, so
+ * a scope per channel would leave every open tab stranded under whichever key
+ * it was opened under. The store is pinned to a single scope instead, which
+ * `dockStore` already supports — a file written by the per-channel build is
+ * read, its other scopes simply never load again.
  */
+const SHORTCUT_DOCK_SCOPE = "sidebar";
+
 const shortcutDockStore = createDockStore({
   storageKey: "buzz:shortcut-overlay-sessions.v1",
+  initialScope: SHORTCUT_DOCK_SCOPE,
 });
 
-export function useShortcutDock(channelId: string): WebPanelDockApi {
-  const { shortcuts } = useShortcutBar(channelId);
+export function useShortcutDock(): WebPanelDockApi {
+  const { shortcuts } = useShortcutBar();
   const store = shortcutDockStore;
-  store.setScope(channelId);
   const panels = useMemo<WebPanelDef[]>(
     () =>
       shortcuts

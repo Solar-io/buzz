@@ -2,25 +2,23 @@ import { useShortcutDock } from "../hooks.ts";
 import { WebPanelDock } from "@/features/webPanels/ui/WebPanelDock";
 
 /**
- * A shortcut's overlay mode: the clicked site fills the main pane as a
+ * A shortcut's overlay mode: the clicked row's site fills the main pane as a
  * WebPanelDock — the same middle-pane layout Files uses, tabs row included —
  * not a dialog.
  *
- * The panel registry is this channel's overlay-mode shortcuts and the tab
- * session persists per channel, so reopening a channel's overlay restores
- * its tab set. `initialPanelId` (the clicked pill) is focused if a tab for
- * it survived, opened otherwise.
+ * The panel registry is the sidebar list's overlay-mode shortcuts and the tab
+ * session is a single global one, so reopening the overlay restores the tab
+ * set whatever conversation is behind it. `initialPanelId` (the clicked row)
+ * is focused if a tab for it survived, opened otherwise.
  */
 export function ShortcutOverlay({
-  channelId,
   initialPanelId,
   onClose,
 }: {
-  channelId: string;
   initialPanelId: string;
   onClose: () => void;
 }) {
-  const dock = useShortcutDock(channelId);
+  const dock = useShortcutDock();
   return (
     <WebPanelDock
       dock={dock}

@@ -11,19 +11,24 @@ import {
 } from "./helpers/mockRelay";
 
 /**
- * The per-channel shortcut bar, driven end to end against a faked relay.
+ * The SIDEBAR shortcuts, driven end to end against a faked relay.
+ *
+ * These were per-channel pills in the channel header; they are now one
+ * channel-independent list rendered as rows in a "Shortcuts" section below
+ * Forums (the reserved `__sidebar__` key in the same encrypted blob). See
+ * `features/shortcut-bar/lib/shortcutBlob.ts` for the shape and the seed.
  *
  * The mock (`helpers/mockRelay.ts`) is not a relay: it answers REQs from a
  * fixed set and acknowledges every publish without checking signatures. What
  * it CAN prove, and what a unit test cannot:
  *
  *  1. the decrypt path is real — the spec seeds a kind-30078 encrypted in
- *     Node with the SAME key the browser enrolls, and the pill that appears
+ *     Node with the SAME key the browser enrolls, and the row that appears
  *     is the proof the client opened it;
  *  2. the publish path is real — the spec takes the event the client
  *     PUBLISHED, decrypts it with the same key, and asserts the exact JSON
  *     blob inside;
- *  3. the bar mounts under the real shell and its overlay really replaces
+ *  3. the section mounts under the real shell and its overlay really replaces
  *     the main pane (the "shipped and dead" check).
  *
  * What only live QA can prove is in the design doc (real relay fan-out,
@@ -32,6 +37,22 @@ import {
 
 const CHANNEL_ID = "5b1f2a34-1111-4222-8333-444455556666";
 const PASSPHRASE = "e2e-passphrase";
+
+/** The Shortcuts section's `+`, which is the header's add button. */
+function addShortcutButton(page: Page) {
+  return page.getByRole("button", { name: "Add a shortcut" });
+}
+
+/**
+ * A shortcut row in the sidebar, found by its label.
+ *
+ * The rows carry no testid of their own (they are the same SidebarNavButton
+ * a channel row uses), so this keys on the visible label and clicks the text,
+ * which bubbles to the row button.
+ */
+function shortcutRow(page: Page, label: string) {
+  return page.getByTestId("channel-sidebar").getByText(label, { exact: true });
+}
 
 /** Enroll `secretKey` at `path` through the real manual-entry form. */
 async function signIn(
@@ -92,13 +113,18 @@ function shortcutBarEvent(
   });
 }
 
-test("a seeded encrypted blob renders as pills, window mode as a real link", async ({
+test("a seeded blob written per-channel seeds the sidebar rows", async ({
   page,
+  context,
 }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
   const secretKey = generateSecretKey();
+  // Deliberately the OLD shape: no `__sidebar__` key, both entries under the
+  // channel. This is exactly what an existing user's blob looks like, so the
+  // spec proves the seed migration against real decrypted ciphertext rather
+  // than a hand-built union.
   await installMockRelay(page, [
     channelEvent(),
     shortcutBarEvent(secretKey, {
@@ -123,20 +149,36 @@ test("a seeded encrypted blob renders as pills, window mode as a real link", asy
   ]);
   await signIn(page, `/repos?c=${CHANNEL_ID}`, secretKey);
 
-  // The decrypt path: ciphertext in, labeled pill out.
-  const overlayPill = page.getByTestId("shortcut-sc:1");
-  await expect(overlayPill).toBeVisible();
-  await expect(overlayPill).toContainText("kept");
-  await expect(overlayPill).toHaveAttribute(
-    "title",
-    "https://kept.example/ — opens in the dock",
-  );
+  // The decrypt path: ciphertext in, a labeled row out — in the SIDEBAR, not
+  // in any channel header.
+  const sidebar = page.getByTestId("channel-sidebar");
+  await expect(sidebar.getByText("Shortcuts")).toBeVisible();
+  const overlayRow = shortcutRow(page, "kept");
+  await expect(overlayRow).toBeVisible();
+  await expect(shortcutRow(page, "docs")).toBeVisible();
 
-  // Window mode is an anchor that opens a real tab, never an iframe.
-  const windowPill = page.getByTestId("shortcut-sc:2");
-  await expect(windowPill).toHaveAttribute("href", "https://docs.example/");
-  await expect(windowPill).toHaveAttribute("target", "_blank");
-  await expect(windowPill).toHaveAttribute("rel", /(^|\s)noopener(\s|$)/);
+  // Overlay mode opens the in-app dock, replacing the main pane.
+  await overlayRow.click();
+  await expect(page.getByTestId("web-panel-dock")).toBeVisible();
+  await expect(page.getByTestId("web-panel-tab-sc:1#1")).toBeVisible();
+  await page.getByTestId("web-panel-dock-close").click();
+
+  // Window mode opens a real browser tab instead of the dock. The popup is
+  // the assertion that separates "opened a tab" from "did nothing".
+  //
+  // `docs.example` is a documentation-reserved host with no server, and this
+  // spec has no business reaching the internet, so the navigation is
+  // fulfilled locally. The URL the browser lands on is still the shortcut's
+  // own — which is the thing under test — and the stub keeps the spec
+  // hermetic and free of DNS flake.
+  await context.route("https://docs.example/**", (route) =>
+    route.fulfill({ status: 200, body: "<!doctype html><title>docs</title>" }),
+  );
+  const popupPromise = context.waitForEvent("page");
+  await shortcutRow(page, "docs").click();
+  const popup = await popupPromise;
+  await expect(popup).toHaveURL("https://docs.example/");
+  await popup.close();
 
   expect(pageErrors).toEqual([]);
 });
@@ -151,7 +193,7 @@ test("the add dialog refuses a hostile scheme with the allowlist error", async (
   const relay = await installMockRelay(page, [channelEvent()]);
   await signIn(page, `/repos?c=${CHANNEL_ID}`, secretKey);
 
-  await page.getByTestId("shortcut-bar-add").click();
+  await addShortcutButton(page).click();
   const dialog = page.getByTestId("shortcut-dialog");
   await expect(dialog).toBeVisible();
 
@@ -182,24 +224,46 @@ test("adding an overlay shortcut publishes the exact encrypted blob and opens th
   const relay = await installMockRelay(page, [channelEvent()]);
   await signIn(page, `/repos?c=${CHANNEL_ID}`, secretKey);
 
-  await page.getByTestId("shortcut-bar-add").click();
+  // Wait for the authenticated socket BEFORE adding.
+  //
+  // The `+` used to live in the channel header, which only exists once a
+  // channel is open — i.e. after the session connected. It is now in the
+  // sidebar, which renders immediately, so a spec can add while the socket is
+  // still authenticating. `session.publish` PARKS an event until the
+  // authenticated flush (relay-session.ts, D-042), so the write still lands —
+  // just later, and `relay.published` is empty in the meantime. Waiting here
+  // makes the assertion below about the write, not about connection timing.
+  await expect(page.getByTestId("channel-sidebar")).toBeVisible();
+  await expect
+    .poll(() => relay.published.length, { timeout: 10_000 })
+    .toBeGreaterThan(0);
+
+  await addShortcutButton(page).click();
   await page.getByTestId("shortcut-url").fill("https://kept.example/");
   await page.getByTestId("shortcut-label").fill("kept");
   await page.getByTestId("shortcut-mode-overlay").check();
   await page.getByTestId("shortcut-submit").click();
 
-  // Optimistic: the pill appears without waiting for a round trip (the mock
+  // Optimistic: the row appears without waiting for a round trip (the mock
   // has no fan-out, so ONLY the optimistic path could have drawn it).
-  const pill = page.getByTestId("shortcut-sc:1");
-  await expect(pill).toBeVisible();
+  await expect(shortcutRow(page, "kept")).toBeVisible();
 
   // The publish is a real kind-30078 on the right coordinate...
+  await expect
+    .poll(
+      () => relay.published.filter((event) => event.kind === 30078).length,
+      { timeout: 10_000 },
+    )
+    .toBe(1);
   const published = relay.published.filter((event) => event.kind === 30078);
-  expect(published.length).toBe(1);
   expect(published[0].tags).toContainEqual(["d", "shortcut-bar"]);
 
   // ...and the spec decrypts its content with the same key and asserts the
   // exact blob — the strongest claim available without a live relay.
+  //
+  // It lands under the RESERVED key, not the open channel's id. That is the
+  // whole change: a shortcut is no longer tied to a channel, and a blob
+  // written here must not put anything under CHANNEL_ID.
   const key = nip44.v2.utils.getConversationKey(
     secretKey,
     getPublicKey(secretKey),
@@ -208,7 +272,7 @@ test("adding an overlay shortcut publishes the exact encrypted blob and opens th
   expect(decrypted).toEqual({
     v: 1,
     shortcuts: {
-      [CHANNEL_ID]: [
+      __sidebar__: [
         {
           id: "sc:1",
           label: "kept",
@@ -219,12 +283,12 @@ test("adding an overlay shortcut publishes the exact encrypted blob and opens th
     },
   });
 
-  // The overlay: the clicked pill's site fills the main pane as a dock.
-  await pill.click();
+  // The overlay: the clicked row's site fills the main pane as a dock.
+  await shortcutRow(page, "kept").click();
   const dock = page.getByTestId("web-panel-dock");
   await expect(dock).toBeVisible();
   await expect(dock.getByTestId(`web-panel-tab-sc:1#1`)).toBeVisible();
-  // No add/remove affordances: the shortcut dock's panels come from the bar.
+  // No add/remove affordances: the shortcut dock's panels come from the list.
   await expect(page.getByTestId("web-panel-add-site")).toHaveCount(0);
   await expect(page.getByTestId("web-panel-remove-sc:1")).toHaveCount(0);
 
@@ -245,22 +309,33 @@ test("a published event re-read on a fresh sign-in renders without optimism", as
   const relay = await installMockRelay(page, [channelEvent()]);
   await signIn(page, `/repos?c=${CHANNEL_ID}`, secretKey);
 
-  await page.getByTestId("shortcut-bar-add").click();
+  // Connected first, for the same reason as the spec above: the sidebar's `+`
+  // is reachable before the socket authenticates, and a publish made in that
+  // window is parked until the flush rather than dropped.
+  await expect(page.getByTestId("channel-sidebar")).toBeVisible();
+  await expect
+    .poll(() => relay.published.length, { timeout: 10_000 })
+    .toBeGreaterThan(0);
+
+  await addShortcutButton(page).click();
   await page.getByTestId("shortcut-url").fill("https://kept.example/");
   await page.getByTestId("shortcut-submit").click();
-  await expect(page.getByTestId("shortcut-sc:1")).toBeVisible();
+  await expect(shortcutRow(page, "kept.example")).toBeVisible();
 
   // Adopt what the client published as stored relay state, then reload the
-  // world: the pill that reappears comes from the relay-copy decrypt path,
+  // world: the row that reappears comes from the relay-copy decrypt path,
   // not from any optimistic overlay (fresh page, fresh module store).
+  await expect
+    .poll(
+      () => relay.published.filter((event) => event.kind === 30078).length,
+      { timeout: 10_000 },
+    )
+    .toBe(1);
   const published = relay.published.filter((event) => event.kind === 30078);
-  expect(published.length).toBe(1);
   relay.add(published[0]);
   await page.reload();
   await expect(page.getByTestId("channel-sidebar")).toBeVisible();
 
-  const pill = page.getByTestId("shortcut-sc:1");
-  await expect(pill).toBeVisible();
-  await expect(pill).toContainText("kept.example");
+  await expect(shortcutRow(page, "kept.example")).toBeVisible();
   expect(pageErrors).toEqual([]);
 });

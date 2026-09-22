@@ -326,49 +326,52 @@ export function AgentActivityPanel({
       data-custom-content-pane="thinking"
       data-thinking-pane
     >
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-secondary px-4">
-        <AuthorAvatar
-          pubkey={agentPubkey}
-          label={agentName}
-          picture={profile?.avatar}
-          size="sm"
-        />
-        <span className="text-base font-semibold">Thinking</span>
-        {working.working && working.startedAt !== null && (
-          <WorkingBadge startedAt={working.startedAt} />
-        )}
-        {onSelectThreadTab && (
-          <button
-            type="button"
-            className="rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
-            onClick={onSelectThreadTab}
-          >
-            Replies
-          </button>
-        )}
-        <span
-          className={
-            "ml-auto inline-block h-2 w-2 rounded-full " +
-            (connected ? "bg-emerald-500" : "bg-muted-foreground/40")
-          }
-          title={connected ? "Live" : "Connecting…"}
-        />
-        <button
-          type="button"
-          aria-label="Close thinking panel"
-          className="rounded p-1 text-sm text-muted-foreground hover:bg-accent"
-          onClick={() => {
-            onCloseMobile();
-            onCloseDesktop?.();
-          }}
-        >
-          ✕
-        </button>
-      </header>
+      {/* The header bar is gone (Sam, 2026-09-22): the avatar and the word
+          "Thinking" were restating what the pane's own chip and the DM you
+          opened it from already say. What was in that bar and is NOT
+          decoration is preserved below — the mobile close, the Replies
+          switch, and the working badge — as a floating strip that only
+          appears when each is actually needed. */}
       <div
         ref={scrollRef}
-        className="buzz-channel-activity-scrollbar min-h-0 flex-1 overflow-y-auto p-3"
+        className="buzz-channel-activity-scrollbar relative min-h-0 flex-1 overflow-y-auto p-3"
       >
+        {/* Below lg the pane is a full-screen sheet, so the composer's own
+            toggle is underneath it and unreachable — these close it. At lg
+            the composer bar's brain toggle does the job, so they hide. */}
+        <div className="absolute right-2 top-2 z-10 flex items-center gap-1 lg:hidden">
+          {onSelectThreadTab && (
+            <button
+              type="button"
+              className="rounded-md bg-card/90 px-2 py-1 text-sm text-muted-foreground backdrop-blur-sm hover:bg-accent hover:text-foreground"
+              onClick={onSelectThreadTab}
+            >
+              Replies
+            </button>
+          )}
+          <button
+            type="button"
+            aria-label="Close thinking panel"
+            className="rounded-md bg-card/90 p-1 text-sm text-muted-foreground backdrop-blur-sm hover:bg-accent"
+            onClick={() => {
+              onCloseMobile();
+              onCloseDesktop?.();
+            }}
+          >
+            ✕
+          </button>
+        </div>
+        {working.working && working.startedAt !== null && (
+          <div className="mb-2 flex items-center gap-2">
+            <AuthorAvatar
+              pubkey={agentPubkey}
+              label={agentName}
+              picture={profile?.avatar}
+              size="sm"
+            />
+            <WorkingBadge startedAt={working.startedAt} />
+          </div>
+        )}
         {/* The portrait lives over the CHAT column now (AgentPortraitOverlay,
             rendered by the DM route): a stationary overlay, not a block at
             the top of this scroll area, where it was only visible at one
