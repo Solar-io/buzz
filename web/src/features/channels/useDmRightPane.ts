@@ -29,6 +29,8 @@ import {
 export function useDmRightPane(options: {
   /** An agent DM is open (both tabs exist). */
   agentDm: boolean;
+  /** The selected conversation — a change forgets the remembered thread root. */
+  channelId: string | undefined;
   threadRootId: string | null;
   /** The route's setter — the Replies toggle can restore a remembered root. */
   setThreadRootId: (id: string | null) => void;
@@ -42,6 +44,15 @@ export function useDmRightPane(options: {
       ? !window.matchMedia("(min-width: 1024px)").matches
       : false,
   );
+
+  // D-1 (QA 2026-09-22): a remembered thread root belongs to the channel it
+  // was opened in. Switching conversations must forget it, or the Replies
+  // toggle stays enabled in a channel where the root can never resolve —
+  // phantom-pressed with no pane. Declared BEFORE the remember effect so a
+  // deep link that sets channel + root in one update still remembers.
+  useEffect(() => {
+    setLastThreadRootId(null);
+  }, [options.channelId]);
 
   useEffect(() => {
     if (options.threadRootId !== null) {
