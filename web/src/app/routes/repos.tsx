@@ -1045,14 +1045,10 @@ function ChannelBrowser() {
                     members={members}
                     profiles={profiles}
                     strictMentions={strictMentions}
-                    threadSummaries={threadSummaries}
                     selfPubkey={selfPubkey}
                     permalinkMessageId={threadPermalinkId}
                     onClose={() => setThreadRootId(null)}
                     send={send}
-                    onSelectThinkingTab={
-                      dmAgentPubkey ? () => setRightTab("thinking") : undefined
-                    }
                   />
                 )}
                 {threadRoot && dmAgentPubkey && rightTab === "thinking" && (
@@ -1062,7 +1058,6 @@ function ChannelBrowser() {
                     members={members}
                     profiles={profiles}
                     strictMentions={strictMentions}
-                    threadSummaries={threadSummaries}
                     selfPubkey={selfPubkey}
                     onClose={() => setThreadRootId(null)}
                     send={send}

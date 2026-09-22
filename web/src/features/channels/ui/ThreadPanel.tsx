@@ -1,29 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import type { MessageBuffer, TimelineMessage } from "../lib/messageBuffer.ts";
 import type { ChannelMember, Profile } from "../hooks.ts";
-import { threadParticipants, threadSummaryLine } from "../lib/threadSummary.ts";
-import {
-  branchSummary,
-  buildThreadIndex,
-  threadDescendants,
-} from "../lib/threadTree.ts";
-import {
-  mergeThreadCounts,
-  type RelayThreadSummaryMap,
-} from "../lib/threadSummaryEvent.ts";
+import { buildThreadIndex, threadDescendants } from "../lib/threadTree.ts";
 import {
   loadThreadReadState,
   markThreadSeen,
   saveThreadReadState,
-  threadSeenAt,
-  threadUnreadCount,
 } from "../lib/threadReadState.ts";
 import { useThreadLayout } from "@/features/settings/lib/appearanceStore.ts";
+import { cn } from "@/shared/lib/cn";
 import { authorLabel, ChannelTimeline } from "./ChannelTimeline.tsx";
 import { Composer } from "./Composer.tsx";
-import { ThreadParticipantStack } from "./ThreadParticipantStack.tsx";
-
-const EMPTY_SUMMARIES: RelayThreadSummaryMap = new Map();
 
 /**
  * Below `lg` a thread is always a full-screen sheet: a third column at
@@ -41,10 +28,12 @@ const THREAD_DOCK_CLASSES =
   "lg:static lg:inset-auto lg:z-auto lg:w-[var(--thread-width)] lg:shrink-0 lg:border-l lg:border-border lg:pt-0";
 
 /**
- * Thread view in the desktop client's shape: a "Thread" header with the reply
- * count, the root message, the thread's replies, and a composer. At lg+ the
- * panel docks right; its width comes from the shared --thread-width CSS
- * variable the shell maintains (drag handle there).
+ * Thread view: the root message, the thread's replies, and a composer. At
+ * lg+ the panel docks right; its width comes from the shared --thread-width
+ * CSS variable the shell maintains (drag handle there). There is no header
+ * band (Sam, 2026-09-22) — the composer row's Replies/brain toggles own
+ * show/hide and tab switching now; the pane keeps only a floating ✕ for the
+ * overlay forms where that row is covered.
  *
  * THE THREAD IS FLAT (Sam 2026-09-20). One click from the main chat shows the
  * whole conversation: the pane renders the root and EVERY descendant of it,
@@ -66,13 +55,7 @@ const THREAD_DOCK_CLASSES =
  *   on the first render and the list can jump straight to it.
  *
  * The tree machinery itself stays in lib/threadTree.ts — the forum views
- * still render threaded, and the index/stats half of the lib still feeds this
- * panel's header counts.
- *
- * The reply count in the header is the whole SUBTREE, reconciled with the
- * relay's materialised `descendant_count` when a kind-39005 overlay has
- * arrived for this root — so a thread whose older replies are outside the
- * loaded buffer still reports its real size.
+ * still render threaded.
  *
  * The composer's NIP-10 shape is constant: `threadRef {rootId, replyToId:
  * rootId}` — the single `["e", root, "", "reply"]` tag `sendChannelMessage`
@@ -88,10 +71,8 @@ export function ThreadPanel({
   selfPubkey,
   onClose,
   send,
-  onSelectThinkingTab,
   mobileOnly,
   strictMentions = false,
-  threadSummaries = EMPTY_SUMMARIES,
   permalinkMessageId = null,
 }: {
   root: TimelineMessage;
@@ -102,19 +83,11 @@ export function ThreadPanel({
   selfPubkey?: string | null;
   onClose: () => void;
   send: ComposerProps["send"];
-  /** DMs offer a Replies ↔ Thinking switch in the header. */
-  onSelectThinkingTab?: () => void;
   /** Overlay on small screens only — used when the DM right pane shows the
    *  thinking tab at lg but a thread was opened from the timeline. */
   mobileOnly?: boolean;
   /** Huddle replies must resolve every identity before they can wake a peer. */
   strictMentions?: boolean;
-  /**
-   * Relay thread counters (kind 39005) from the channel feed. Optional: with
-   * none, every count comes from the loaded buffer, which is a floor rather
-   * than a lie.
-   */
-  threadSummaries?: RelayThreadSummaryMap;
   /**
    * Permalink (?m) target inside THIS thread (D-043): a search jump to a
    * reply opens the thread on its root; this id scrolls the panel's flat
@@ -136,33 +109,15 @@ export function ThreadPanel({
   // reply (parent = another reply) is a row here exactly like a direct one.
   const threadMessages = useMemo(() => [root, ...replies], [root, replies]);
 
-  const localSummary = branchSummary(index, rootId);
-  const counts = mergeThreadCounts(
-    {
-      replyCount: index.statsById.get(rootId)?.directReplyCount ?? 0,
-      descendantCount: localSummary?.replyCount ?? 0,
-      lastReplyAt: localSummary?.lastReplyAt ?? null,
-      participants: localSummary?.participants ?? [],
-    },
-    threadSummaries.get(rootId),
-  );
-
   const lastReply = replies[replies.length - 1] ?? root;
   // Auto-tail (Sam 8/31): thread-heavy agents have long threads — the panel
   // must open on the NEWEST reply, not the root. The timeline's tailKey
   // handles it now that the list is virtualized.
 
-  // Unread replies since this thread was last open.
-  //
-  // The marker is SNAPSHOT on open and then advanced. Reading it live would
-  // make the badge correct for one frame and zero forever after, because the
-  // same panel that displays the count is the thing that marks the thread
-  // read. See lib/threadReadState.ts for why the channel-level read state in
-  // lib/readState.ts cannot answer this question at all.
-  const [seenAtOnOpen, setSeenAtOnOpen] = useState(0);
-  useEffect(() => {
-    setSeenAtOnOpen(threadSeenAt(loadThreadReadState(), rootId));
-  }, [rootId]);
+  // Marking the thread seen on open survives the header's removal: the
+  // per-thread read state is the record of "you were here", and dropping the
+  // write would silently regress it for whatever reads it next (the badge is
+  // gone TODAY; lib/threadReadState.ts and its tests stay live).
   const newestReplyAt = lastReply.createdAt;
   useEffect(() => {
     const state = loadThreadReadState();
@@ -171,13 +126,6 @@ export function ThreadPanel({
       saveThreadReadState(next);
     }
   }, [rootId, newestReplyAt]);
-  const unreadCount = threadUnreadCount(replies, seenAtOnOpen);
-
-  const participants = useMemo(
-    () => threadParticipants(root, replies),
-    [root, replies],
-  );
-  const summary = threadSummaryLine(counts.descendantCount, counts.lastReplyAt);
 
   const rootAuthor = authorLabel(root.authorPubkey, profiles);
   // The composer ALWAYS answers the thread itself — there is no mid-thread
@@ -242,52 +190,24 @@ export function ThreadPanel({
       data-testid="thread-panel"
       data-thread-layout={mobileOnly ? "focus" : layoutMode}
     >
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-secondary px-4">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-foreground">
-              Replies
-            </span>
-            {onSelectThinkingTab && (
-              <button
-                type="button"
-                className="rounded-md px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                onClick={onSelectThinkingTab}
-              >
-                Thinking
-              </button>
-            )}
-            {unreadCount > 0 && (
-              <span
-                data-testid="thread-unread-badge"
-                className="rounded-full bg-primary px-1.5 py-0.5 text-badge font-semibold text-primary-foreground"
-              >
-                {unreadCount} new
-              </span>
-            )}
-          </div>
-          <div className="mt-0.5 flex items-center gap-1.5">
-            <ThreadParticipantStack
-              participants={participants}
-              profiles={profiles}
-            />
-            <span
-              data-testid="thread-summary"
-              className="truncate text-2xs text-muted-foreground"
-            >
-              {summary}
-            </span>
-          </div>
-        </div>
-        <button
-          type="button"
-          aria-label="Close thread"
-          className="shrink-0 rounded p-1 text-sm text-muted-foreground hover:bg-accent"
-          onClick={onClose}
-        >
-          ✕
-        </button>
-      </header>
+      {/* The header band is gone (Sam, 2026-09-22): the composer row's
+          Replies/brain toggles replaced its title, tab switch and unread
+          badge, and the summary line said nothing he needed. The ✕ stays —
+          as a floating overlay, not a band — but only where the sheet covers
+          the composer row and the toggles are unreachable: the full-screen
+          forms (below lg, Focus, mobileOnly). Docked at lg the row toggle
+          and Esc already dismiss. */}
+      <button
+        type="button"
+        aria-label="Close thread"
+        className={cn(
+          "absolute right-3 top-[max(0.75rem,env(safe-area-inset-top))] z-10 rounded p-1 text-sm text-muted-foreground hover:bg-accent",
+          !mobileOnly && layoutMode === "split" && "lg:hidden",
+        )}
+        onClick={onClose}
+      >
+        ✕
+      </button>
       <ChannelTimeline
         messages={threadMessages}
         profiles={profiles}

@@ -467,18 +467,35 @@ test("the composer hint names the root author and Esc closes the pane", async ()
   }
 });
 
-// The header still reports the whole subtree even though nothing is collapsed.
-test("the header counts every descendant and lists the participants", async () => {
+// The header band is gone (Sam 2026-09-22): the composer row's toggles own
+// show/hide and tab switching, so the pane renders NO title, summary line,
+// participant stack, or in-pane Thinking switch — only the floating ✕.
+test("the pane has no header band, only the floating close", async () => {
   const panel = await mountPanel();
   try {
-    const summary = panel.container.querySelector(
-      '[data-testid="thread-summary"]',
-    )?.textContent;
-    assert.match(summary ?? "", /2/, "the header counts both replies");
-    assert.ok(
-      panel.container.querySelector('[data-testid="thread-panel"]'),
-      "the panel is mounted",
+    assert.equal(
+      panel.container.querySelector('[data-testid="thread-summary"]'),
+      null,
+      "the summary line is gone",
     );
+    assert.equal(
+      panel.container.querySelector('[data-testid="thread-unread-badge"]'),
+      null,
+      "the unread badge is gone",
+    );
+    assert.equal(
+      panel.container.querySelector("header"),
+      null,
+      "no header element at all",
+    );
+    const close = panel.container.querySelector('[aria-label="Close thread"]');
+    assert.ok(close, "the floating ✕ remains — the overlay forms need it");
+    await act(async () => {
+      close.dispatchEvent(
+        new dom.window.MouseEvent("click", { bubbles: true }),
+      );
+    });
+    assert.equal(panel.closed(), 1, "and it closes the pane");
   } finally {
     await panel.unmount();
   }
