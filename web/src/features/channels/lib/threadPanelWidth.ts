@@ -28,6 +28,9 @@ export const THREAD_WIDTH_DEFAULT = THREAD_WIDTH_COMFORT_MIN;
 /** The channel column keeps at least this much, so widening the thread
  * never crushes the timeline to a sliver. */
 const CHANNEL_COLUMN_FLOOR = 360;
+/** The channel column a row must leave beside a 600 pane before the 600
+ * comfort floor applies (see `threadWidthFloor`). */
+const CHANNEL_COLUMN_COMFORT = 640;
 
 /** The portrait rail never shrinks below this (readability floor). */
 export const PORTRAIT_RAIL_MIN_WIDTH = 160;
@@ -89,8 +92,21 @@ export function threadWidthMax(rowWidth: number, reservedPx = 0): number {
  * plus a livable channel column. A stale persisted width from before the
  * comfort floor (a 288 min-drag, the old 384 default) is resurrected to 600
  * by this — on wide rows — instead of replaying "very small" on every open.
+ *
+ * "Affords it" means the channel column keeps CHANNEL_COLUMN_COMFORT beside
+ * a 600 pane, not merely its 360 floor. On an iPad (Sam 9/22: ~1084px row)
+ * the old rule pinned the pane at 600 and left the chat ~480px, where the
+ * composer's buttons collided — and the pane could not be dragged narrower.
+ * Rows below that keep the responsive THREAD_WIDTH_MIN floor so the user can
+ * trade pane width for chat width.
  */
 export function threadWidthFloor(rowWidth: number, reservedPx = 0): number {
+  if (
+    rowWidth - reservedPx <
+    THREAD_WIDTH_COMFORT_MIN + CHANNEL_COLUMN_COMFORT
+  ) {
+    return THREAD_WIDTH_MIN;
+  }
   return Math.min(
     THREAD_WIDTH_COMFORT_MIN,
     threadWidthMax(rowWidth, reservedPx),
