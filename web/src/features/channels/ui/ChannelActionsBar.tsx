@@ -216,7 +216,7 @@ export function ChannelActionsBar({
         <span
           data-testid="dictation-interim"
           title="Live transcript — finalized text lands in the composer"
-          className="max-w-48 shrink-0 truncate text-2xs text-muted-foreground"
+          className="max-w-20 shrink-0 truncate text-2xs text-muted-foreground sm:max-w-48"
         >
           {dictation.interimText}
         </span>
@@ -226,7 +226,7 @@ export function ChannelActionsBar({
           data-testid="dictation-error"
           role="alert"
           title={dictation.error}
-          className="max-w-48 shrink-0 truncate text-2xs text-red-400"
+          className="max-w-20 shrink-0 truncate text-2xs text-red-400 sm:max-w-48"
         >
           {dictation.error}
         </span>

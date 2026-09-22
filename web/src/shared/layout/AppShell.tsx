@@ -41,8 +41,8 @@ export function usePhoneBarSlot(): HTMLElement | null {
   return useContext(PhoneBarSlotContext);
 }
 
-/** Below `md` — the widths where the phone bar shows (`md:hidden`). */
-const PHONE_QUERY = "(max-width: 767px)";
+/** Below `md` (48rem) — exactly where the phone bar shows (`md:hidden`). */
+const PHONE_QUERY = "(width < 48rem)";
 
 export function usePhoneLayout(): boolean {
   const [phone, setPhone] = useState(
