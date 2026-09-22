@@ -1,37 +1,46 @@
 import { useEffect, useState } from "react";
-import { Brain, Copy, LogIn, PhoneCall } from "lucide-react";
+import { Brain, LogIn, MessagesSquare } from "lucide-react";
 import { toast } from "sonner";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import { useHuddleRoster } from "@/features/huddle/useHuddleRoster";
 import type { AgentCallPhase } from "@/features/huddle/lib/agentCallFlow.ts";
 import { cn } from "@/shared/lib/cn";
 import type { ChannelMember, Profile } from "../hooks.ts";
+import type { ComposerDictation } from "../useComposerDictation.ts";
+import type { PaneToggles } from "../lib/dmPaneToggles.ts";
 import { ephemeralDisplay } from "../lib/ephemeralChannel.ts";
 import type { PresenceEntry } from "../lib/presence.ts";
 import { ChannelMembersButton } from "./ChannelMembersButton.tsx";
+import { MicGlyph, WaveformGlyph } from "./voiceGlyphs.tsx";
 
 /** Props for {@link ChannelActionsBar}. */
 export interface ChannelActionsBarProps {
   /** The channel currently open in the main pane. */
   channel: ChannelSummary;
   /**
-   * Resolved channel name, used by the copy action and the call button's
-   * label. The visible TITLE is gone with the header bar (Sam, 2026-09-22);
-   * this is now only read aloud and copied.
+   * Resolved channel name, used by the call button's label. The visible
+   * TITLE is gone with the header bar (Sam, 2026-09-22) and the copy-name
+   * action went with his next review round — this is now only read aloud.
    */
   title: string;
   /** Start the one-click DM voice call using a private TTL transport room. */
   onStartAgentCall?: (
     existingHuddleChannelId?: string | null,
   ) => Promise<{ ok: boolean; message: string }>;
-  /** Current one-click call phase, for the button's pending label. */
+  /** Current one-click call phase, for the button's pending state. */
   agentCallPhase?: AgentCallPhase;
   /** Current one-click call failure, shown beside the call button. */
   agentCallError?: string | null;
   /** Set when this DM has an agent counterpart — shows the 🧠 toggle. */
   agentPubkey: string | null;
-  /** Reveal the thinking panel in the right pane. */
-  onOpenThinking: () => void;
+  /**
+   * The two-way panel controls (Sam, 2026-09-22): 🧠 shows/hides the thinking
+   * pane, the Replies button shows/hides the thread pane. Grouped so the pair
+   * cannot be half-wired; derived in `lib/dmPaneToggles.ts`.
+   */
+  panes: PaneToggles;
+  /** Composer dictation controller (the mic button). Rendered when supported. */
+  dictation?: ComposerDictation;
   /** Channel roster (kind 39002) — drives the member count and join state. */
   members?: ChannelMember[];
   /** Profiles for the roster and huddle faces. */
@@ -60,9 +69,11 @@ const NO_PROFILES: Map<string, Profile> = new Map();
  * this does not are the channel NAME (already in the sidebar row and the
  * window title) and the one-line description/topic.
  *
- * Call and Thinking sit at the RIGHT end, per the annotation — they are
- * occasional actions, while the formatting icons immediately to their left
- * are the row the eye already visits every time it types.
+ * The right end is the voice/panel cluster from Sam's 2026-09-22 reference:
+ * the dictation mic and the solid waveform Call button (the Anthropic-style
+ * pair that replaced the old "Call" pill), then the 🧠, then the Replies
+ * toggle immediately right of it. Both panel buttons are two-way — their
+ * pressed state is passed in, their click inverts it.
  */
 export function ChannelActionsBar({
   channel,
@@ -71,7 +82,8 @@ export function ChannelActionsBar({
   agentCallPhase = "idle",
   agentCallError = null,
   agentPubkey,
-  onOpenThinking,
+  panes,
+  dictation,
   members = NO_MEMBERS,
   profiles = NO_PROFILES,
   presence,
@@ -79,6 +91,13 @@ export function ChannelActionsBar({
   onJoinChannel,
   contacts,
 }: ChannelActionsBarProps) {
+  const {
+    thinkingVisible,
+    toggleThinking,
+    threadsVisible,
+    threadsAvailable,
+    toggleThreads,
+  } = panes;
   const [startingAgentCall, setStartingAgentCall] = useState(false);
   const [joining, setJoining] = useState(false);
   const { live } = useHuddleRoster(
@@ -146,21 +165,6 @@ export function ChannelActionsBar({
           {expiry.label}
         </span>
       )}
-      <button
-        type="button"
-        data-testid="copy-channel-name"
-        aria-label={`Copy channel name: ${title}`}
-        title="Copy channel name"
-        className="shrink-0 rounded-full border border-border p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-        onClick={() => {
-          void navigator.clipboard
-            .writeText(title.replace(/^#\s*/, ""))
-            .then(() => toast.success("Channel name copied"))
-            .catch(() => toast.error("Could not copy the channel name."));
-        }}
-      >
-        <Copy aria-hidden className="h-4 w-4" />
-      </button>
       {showJoin && (
         <button
           type="button"
@@ -188,6 +192,45 @@ export function ChannelActionsBar({
           selfPubkey={selfPubkey}
         />
       )}
+      {dictation?.supported && (
+        <button
+          type="button"
+          data-testid="composer-dictation"
+          aria-label={dictation.active ? "Stop dictation" : "Dictate a message"}
+          aria-pressed={dictation.active}
+          title={
+            dictation.active ? "Stop dictation" : "Dictate into the composer"
+          }
+          className={cn(
+            "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border p-0 transition-colors",
+            dictation.active
+              ? "border-red-500/60 bg-red-500/10 text-red-400"
+              : "border-border bg-card text-foreground hover:bg-accent",
+          )}
+          onClick={dictation.toggle}
+        >
+          <MicGlyph className="h-4 w-4" />
+        </button>
+      )}
+      {dictation?.active && dictation.interimText && (
+        <span
+          data-testid="dictation-interim"
+          title="Live transcript — finalized text lands in the composer"
+          className="max-w-48 shrink-0 truncate text-2xs text-muted-foreground"
+        >
+          {dictation.interimText}
+        </span>
+      )}
+      {dictation?.error && (
+        <span
+          data-testid="dictation-error"
+          role="alert"
+          title={dictation.error}
+          className="max-w-48 shrink-0 truncate text-2xs text-red-400"
+        >
+          {dictation.error}
+        </span>
+      )}
       {canStartAgentCall && (
         <button
           type="button"
@@ -199,7 +242,7 @@ export function ChannelActionsBar({
               : "Start a voice call"
           }
           disabled={callInProgress}
-          className="flex shrink-0 items-center gap-1 rounded-full border border-border px-2 py-1 text-2xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary p-0 text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
           onClick={() => {
             if (!onStartAgentCall || callInProgress) {
               return;
@@ -219,10 +262,7 @@ export function ChannelActionsBar({
               .finally(() => setStartingAgentCall(false));
           }}
         >
-          <PhoneCall aria-hidden className="h-4 w-4" />
-          <span className="hidden sm:inline">
-            {callInProgress ? "Calling…" : "Call"}
-          </span>
+          <WaveformGlyph className="h-4 w-4" />
         </button>
       )}
       {agentCallError && canStartAgentCall && (
@@ -234,14 +274,41 @@ export function ChannelActionsBar({
         <button
           type="button"
           data-testid="toggle-thinking-panel"
-          aria-label="Toggle thinking panel"
+          aria-label={
+            thinkingVisible ? "Hide thinking panel" : "Show thinking panel"
+          }
+          aria-pressed={thinkingVisible}
           title="Thinking"
-          className="shrink-0 rounded-full border border-border p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-          onClick={onOpenThinking}
+          className={cn(
+            "shrink-0 rounded-full border border-border p-1.5 transition-colors hover:bg-accent hover:text-foreground",
+            thinkingVisible
+              ? "bg-accent text-foreground"
+              : "text-muted-foreground",
+          )}
+          onClick={toggleThinking}
         >
           <Brain aria-hidden className="h-4 w-4" />
         </button>
       )}
+      <button
+        type="button"
+        data-testid="toggle-threads-panel"
+        aria-label={
+          threadsVisible ? "Hide replies panel" : "Show replies panel"
+        }
+        aria-pressed={threadsVisible}
+        title={threadsAvailable ? "Replies" : "Open a message's replies first"}
+        disabled={!threadsAvailable}
+        className={cn(
+          "shrink-0 rounded-full border border-border p-1.5 transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
+          threadsVisible
+            ? "bg-accent text-foreground"
+            : "text-muted-foreground",
+        )}
+        onClick={toggleThreads}
+      >
+        <MessagesSquare aria-hidden className="h-4 w-4" />
+      </button>
     </div>
   );
 }

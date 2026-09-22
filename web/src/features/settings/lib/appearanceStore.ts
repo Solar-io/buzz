@@ -27,12 +27,14 @@ import { useSyncExternalStore } from "react";
 import {
   APPEARANCE_PREFERENCES,
   CONVERSATION_DENSITY_PREFERENCE,
+  FONT_FAMILY_PREFERENCE,
   FONT_SIZE_PREFERENCE,
   LINK_PREVIEW_STYLE_PREFERENCE,
   PROMINENT_ACTIVE_TAB_PREFERENCE,
   THREAD_LAYOUT_PREFERENCE,
   parsePreference,
   type ConversationDensity,
+  type FontFamily,
   type FontSize,
   type LinkPreviewStyle,
   type PreferenceSpec,
@@ -114,6 +116,7 @@ function createPreferenceStore<Value extends string>(
 }
 
 export const fontSizeStore = createPreferenceStore(FONT_SIZE_PREFERENCE);
+export const fontFamilyStore = createPreferenceStore(FONT_FAMILY_PREFERENCE);
 export const conversationDensityStore = createPreferenceStore(
   CONVERSATION_DENSITY_PREFERENCE,
 );
@@ -129,6 +132,7 @@ export const prominentActiveTabStore = createPreferenceStore(
 
 const STORES = {
   "data-font-size": fontSizeStore,
+  "data-font-family": fontFamilyStore,
   "data-conversation-density": conversationDensityStore,
   "data-link-preview-style": linkPreviewStyleStore,
   "data-thread-layout": threadLayoutStore,
@@ -161,6 +165,10 @@ function usePreference<Value extends string>(
 
 export function useFontSize(): FontSize {
   return usePreference(fontSizeStore, FONT_SIZE_PREFERENCE.defaultValue);
+}
+
+export function useFontFamily(): FontFamily {
+  return usePreference(fontFamilyStore, FONT_FAMILY_PREFERENCE.defaultValue);
 }
 
 export function useConversationDensity(): ConversationDensity {

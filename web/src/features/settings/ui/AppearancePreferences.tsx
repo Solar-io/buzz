@@ -3,11 +3,13 @@ import type { ReactNode } from "react";
 
 import {
   conversationDensityStore,
+  fontFamilyStore,
   fontSizeStore,
   linkPreviewStyleStore,
   setProminentActiveTab,
   threadLayoutStore,
   useConversationDensity,
+  useFontFamily,
   useFontSize,
   useLinkPreviewStyle,
   useProminentActiveTab,
@@ -15,6 +17,7 @@ import {
 } from "../lib/appearanceStore.ts";
 import type {
   ConversationDensity,
+  FontFamily,
   FontSize,
   LinkPreviewStyle,
   ThreadLayout,
@@ -29,12 +32,12 @@ import { SegmentedControl } from "./SegmentedControl.tsx";
  *
  * Every row here drives an existing mechanism rather than introducing one:
  *
- *  - Font size and Conversation density set `data-font-size` /
- *    `data-conversation-density` on `<html>`, which `shared/styles/globals.css`
- *    already selects on. The 13 / 14 / 15px contract is the stylesheet's
- *    (`--buzz-type-scale`), not this file's — no component here knows a pixel
- *    value, which is the rule in this repo's CLAUDE.md and the thing that
- *    keeps Cmd +/- zoom working.
+ *  - Font and Font size set `data-font-family` / `data-font-size` on `<html>`,
+ *    which `shared/styles/globals.css` already selects on (the family through
+ *    the `--app-font` stack variable, the size through `--buzz-type-scale`).
+ *    No component here knows a pixel value or a font stack, which is the rule
+ *    in this repo's CLAUDE.md and the thing that keeps Cmd +/- zoom working.
+ *    Conversation density sets `data-conversation-density` the same way.
  *  - Link previews sets `data-link-preview-style`, which `LinkPreviewCards`
  *    reads to choose its presentation.
  *  - Thread layout sets `data-thread-layout`, which `ThreadPanel` reads to
@@ -55,6 +58,34 @@ const FONT_SIZE_OPTIONS = [
   { value: "default", label: "Default" },
   { value: "larger", label: "Larger" },
 ] as const satisfies readonly { value: FontSize; label: string }[];
+
+/**
+ * The font-family picker's menu, in the spec's own order. A dropdown rather
+ * than a SegmentedControl because eighteen options do not fit a segmented
+ * row; a native select keeps keyboard and screen-reader behaviour for free.
+ * The closed control previews the family for real — it inherits the body
+ * font, which is the very thing the preference changes.
+ */
+const FONT_FAMILY_OPTIONS = [
+  { value: "inter", label: "Inter (default)" },
+  { value: "roboto", label: "Roboto" },
+  { value: "open-sans", label: "Open Sans" },
+  { value: "lato", label: "Lato" },
+  { value: "source-sans-3", label: "Source Sans 3" },
+  { value: "noto-sans", label: "Noto Sans" },
+  { value: "poppins", label: "Poppins" },
+  { value: "montserrat", label: "Montserrat" },
+  { value: "raleway", label: "Raleway" },
+  { value: "ubuntu", label: "Ubuntu" },
+  { value: "helvetica", label: "Helvetica / Arial" },
+  { value: "georgia", label: "Georgia" },
+  { value: "merriweather", label: "Merriweather" },
+  { value: "pt-serif", label: "PT Serif" },
+  { value: "nunito", label: "Nunito" },
+  { value: "work-sans", label: "Work Sans" },
+  { value: "fira-sans", label: "Fira Sans" },
+  { value: "ibm-plex-sans", label: "IBM Plex Sans" },
+] as const satisfies readonly { value: FontFamily; label: string }[];
 
 const CONVERSATION_DENSITY_OPTIONS = [
   { value: "compact", label: "Compact" },
@@ -184,6 +215,7 @@ function ConversationPreview() {
 
 export function AppearancePreferences() {
   const fontSize = useFontSize();
+  const fontFamily = useFontFamily();
   const density = useConversationDensity();
   const linkPreviewStyle = useLinkPreviewStyle();
   const threadLayout = useThreadLayout();
@@ -194,6 +226,28 @@ export function AppearancePreferences() {
       className="divide-y divide-border"
       data-testid="appearance-preferences"
     >
+      <PreferenceRow
+        control={
+          <select
+            aria-label="Font"
+            className="h-9 shrink-0 rounded-lg border border-input/40 bg-background px-3 text-base transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring md:text-sm"
+            data-testid="font-family-control"
+            onChange={(event) =>
+              fontFamilyStore.set(event.target.value as FontFamily)
+            }
+            value={fontFamily}
+          >
+            {FONT_FAMILY_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        }
+        description="Typeface for the whole app. The list previews in the selected font."
+        label="Font"
+        testId="font-family-row"
+      />
       <PreferenceRow
         control={
           <SegmentedControl

@@ -769,6 +769,24 @@ Three more, earned on the Phase 3 gate 2026-09-20:
    There is no `messages list`, and `messages thread` takes `--event`, not
    `--message`. Two wasted calls each.
 
+Two more, earned on the composer round 2026-09-22:
+
+7. **The STT bridge is same-origin and cannot be driven from a dev origin.**
+   `wss://<relay-host>:6361/stt` opens from the deployed origin but fails
+   1006 from `http://localhost:<vite port>` — the bridge (or the layer in
+   front of it) refuses the cross-origin page. Anything mic/voice-shaped can
+   only be live-verified where it is deployed; from a worktree dev server
+   you can prove the button, the mic grant, and the error path, and must
+   lean on the shared `sttBridge.ts` primitives' tests for the wire.
+8. **`pnpm check:file-sizes` resolves its base from `origin/main`**, which in
+   this fork is hundreds of commits diverged — every file then reads as
+   "new" and the 1000-line ceiling ignores grandfathering. Run it with
+   `CHECK_FILE_SIZES_BASE=main` to diff against the local main you branched
+   from. (`biome check`, `check:px-text` and `check:pubkey-truncation`
+   carry pre-existing failures on main in files no agent touched this
+   round — compare against a clean checkout before believing you caused
+   one.)
+
 ## Decision cards on a phone: the inline stepper is not usable (measured 2026-09-20)
 
 Not a virtualizer re-measure quirk, and worth knowing before anyone tries to make

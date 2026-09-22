@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -8,9 +9,10 @@ import {
   type DragEvent,
   type KeyboardEvent,
   type ReactNode,
+  type Ref,
 } from "react";
 import { toast } from "sonner";
-import { AtSign, Paperclip, Smile, Users } from "lucide-react";
+import { AtSign, Paperclip, Smile } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
 import { activeMentionQuery, resolveMentions } from "../lib/mentions.ts";
@@ -64,12 +66,28 @@ import {
 } from "./ComposerReplyBanner.tsx";
 import { ComposerAttachmentTray } from "./ComposerAttachmentTray.tsx";
 import { ComposerLinkPreviewTray } from "./ComposerLinkPreviewTray.tsx";
+import { ComposerSuggestionLists } from "./ComposerSuggestionLists.tsx";
 import { useComposerLinkPreviews } from "../lib/useComposerLinkPreviews.ts";
 import type { ChannelMember, Profile } from "../hooks.ts";
+import type { MentionSuggestion } from "./ComposerSuggestionLists.tsx";
 
 export interface ThreadRef {
   rootId: string;
   replyToId: string;
+}
+
+/**
+ * The imperative surface the composer exposes to its owner (React 19's
+ * ref-as-prop). Today it exists for dictation: the mic button lives on the
+ * actions row the ROUTE renders, while the draft text is composer-local
+ * state, so the route's dictation hook needs a way to append finalized
+ * utterances into the box. Kept as a named handle rather than a callback prop
+ * so the route wires it once with a ref and never re-renders the composer on
+ * its account.
+ */
+export interface ComposerHandle {
+  /** Append finalized dictation text at the end of the draft. */
+  appendDictation: (chunk: string) => void;
 }
 
 /** The message a reply is aimed at, for the composer's quoted banner. */
@@ -84,16 +102,6 @@ interface Selection {
   start: number;
   end: number;
 }
-
-/**
- * One row of the mention autocomplete: a channel member, or the reserved
- * @everyone entry. The everyone row carries no pubkey — the token expands to
- * every member at resolve time (minus the author), so there is nothing to
- * pick and record in mentionPicks.
- */
-type MentionSuggestion =
-  | { kind: "member"; name: string; pubkey: string }
-  | { kind: "everyone"; name: "everyone" };
 
 export function Composer({
   members,
@@ -112,6 +120,7 @@ export function Composer({
   strictMentions = false,
   autoNotify = null,
   send,
+  ref,
 }: {
   members: ChannelMember[];
   profiles: Map<string, Profile>;
@@ -175,6 +184,8 @@ export function Composer({
     threadRef: ThreadRef | null;
     mediaTags: string[][];
   }) => Promise<{ ok: boolean; message: string }>;
+  /** React 19 ref-as-prop; see {@link ComposerHandle}. */
+  ref?: Ref<ComposerHandle>;
 }) {
   const initialDraft = useRef(draftKey ? loadDraftState(draftKey) : null);
   // Drafts saved before attachments stopped showing their markdown in the
@@ -455,6 +466,31 @@ export function Composer({
     applyText(next);
     focusAt(next.length);
   };
+
+  /**
+   * Append one finalized dictation utterance at the end of the draft.
+   *
+   * The mic button is rendered by the route (on the actions row), so this is
+   * the handle it writes through — see `ComposerHandle`. The whole insert
+   * goes through `applyText`, so the parent's typing notification and the
+   * draft persistence see dictated text exactly as typed text.
+   */
+  const appendDictation = useCallback(
+    (chunk: string) => {
+      const trimmed = chunk.trim();
+      if (trimmed === "") {
+        return;
+      }
+      const current = textRef.current;
+      const needsSpace = current.length > 0 && !/\s$/.test(current) ? " " : "";
+      const next = `${current}${needsSpace}${trimmed}`;
+      applyText(next);
+      focusAt(next.length);
+    },
+    [applyText, focusAt],
+  );
+
+  useImperativeHandle(ref, () => ({ appendDictation }), [appendDictation]);
 
   // Rich-text toolbar: apply a format fn to the current selection and restore
   // the selection the fn computed.
@@ -854,60 +890,14 @@ export function Composer({
             : "Drop files to attach"}
         </div>
       )}
-      {suggestions.length > 0 && (
-        <ul className="absolute bottom-full left-3 mb-1 w-64 overflow-hidden rounded-md border border-border bg-popover shadow-lg">
-          {suggestions.map((row, index) => (
-            <li key={row.kind === "member" ? row.pubkey : "everyone"}>
-              <button
-                type="button"
-                className={cn(
-                  "block w-full truncate px-3 py-1.5 text-left text-sm hover:bg-accent",
-                  index === popupIndex && "bg-accent",
-                )}
-                onClick={() =>
-                  applySuggestion(
-                    row.name,
-                    row.kind === "member" ? row.pubkey : undefined,
-                  )
-                }
-              >
-                {row.kind === "member" ? (
-                  `@${row.name}`
-                ) : (
-                  <span className="flex items-center gap-1.5">
-                    <Users
-                      aria-hidden
-                      className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
-                    />
-                    @everyone
-                    <span className="text-muted-foreground">
-                      notify all members
-                    </span>
-                  </span>
-                )}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      {emojiMatches.length > 0 && (
-        <ul className="absolute bottom-full left-3 mb-1 w-64 overflow-hidden rounded-md border border-border bg-popover shadow-lg">
-          {emojiMatches.map((match, index) => (
-            <li key={match.code}>
-              <button
-                type="button"
-                className={cn(
-                  "block w-full truncate px-3 py-1.5 text-left text-sm hover:bg-accent",
-                  index === emojiIndex && "bg-accent",
-                )}
-                onClick={() => applyEmojiMatch(match)}
-              >
-                {match.emoji} {match.code}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+      <ComposerSuggestionLists
+        applyEmojiMatch={applyEmojiMatch}
+        applySuggestion={applySuggestion}
+        emojiIndex={emojiIndex}
+        emojiMatches={emojiMatches}
+        popupIndex={popupIndex}
+        suggestions={suggestions}
+      />
       {editingActive ? (
         <ComposerEditBanner onCancel={() => onCancelEdit?.()} />
       ) : threadRef && replyTarget ? (

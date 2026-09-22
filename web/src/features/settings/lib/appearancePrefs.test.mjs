@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   APPEARANCE_PREFERENCES,
   CONVERSATION_DENSITY_PREFERENCE,
+  FONT_FAMILY_PREFERENCE,
   FONT_SIZE_PREFERENCE,
   LINK_PREVIEW_STYLE_PREFERENCE,
   PROMINENT_ACTIVE_TAB_PREFERENCE,
@@ -21,6 +22,7 @@ import {
  */
 test("storage keys match the desktop client's, character for character", () => {
   assert.equal(FONT_SIZE_PREFERENCE.storageKey, "buzz.appearance.fontSize");
+  assert.equal(FONT_FAMILY_PREFERENCE.storageKey, "buzz.appearance.fontFamily");
   assert.equal(
     CONVERSATION_DENSITY_PREFERENCE.storageKey,
     "buzz.appearance.conversationDensity",
@@ -45,6 +47,7 @@ test("storage keys match the desktop client's, character for character", () => {
 
 test("root attribute names match the ones the stylesheet selects on", () => {
   assert.equal(FONT_SIZE_PREFERENCE.attribute, "data-font-size");
+  assert.equal(FONT_FAMILY_PREFERENCE.attribute, "data-font-family");
   assert.equal(
     CONVERSATION_DENSITY_PREFERENCE.attribute,
     "data-conversation-density",
@@ -208,7 +211,7 @@ test("defaults are the desktop's, and are not merely the first option", () => {
 });
 
 test("every default is one of its own legal values", () => {
-  assert.equal(APPEARANCE_PREFERENCES.length, 5);
+  assert.equal(APPEARANCE_PREFERENCES.length, 6);
   for (const spec of APPEARANCE_PREFERENCES) {
     assert.ok(
       spec.values.includes(spec.defaultValue),
@@ -220,15 +223,60 @@ test("every default is one of its own legal values", () => {
 test("the registry lists each preference once, with distinct keys", () => {
   const keys = APPEARANCE_PREFERENCES.map((spec) => spec.storageKey);
   const attributes = APPEARANCE_PREFERENCES.map((spec) => spec.attribute);
-  assert.equal(new Set(keys).size, 5);
-  assert.equal(new Set(attributes).size, 5);
+  assert.equal(new Set(keys).size, 6);
+  assert.equal(new Set(attributes).size, 6);
   // The store's initializer indexes by attribute; a preference missing from
   // the registry is a preference that is never applied at first paint.
   assert.deepEqual([...attributes].sort(), [
     "data-conversation-density",
+    "data-font-family",
     "data-font-size",
     "data-link-preview-style",
     "data-prominent-active-tab",
     "data-thread-layout",
   ]);
+});
+
+// ── font family ────────────────────────────────────────────────────────────
+
+/**
+ * Same text-check contract as the font-size rules above: the family
+ * preference is carried entirely by CSS, so this proves the stylesheet has a
+ * `--app-font` rule for every value the spec allows — including the DEFAULT
+ * (inter), because the body rule reads the variable and the variable's
+ * fallback must be the same stack, not a second hand-written copy.
+ */
+test("globals.css carries a --app-font rule for every font family, including the default", () => {
+  const css = readFileSync(
+    fileURLToPath(
+      new URL("../../../shared/styles/globals.css", import.meta.url),
+    ),
+    "utf8",
+  );
+  for (const value of FONT_FAMILY_PREFERENCE.values) {
+    const selector =
+      value === FONT_FAMILY_PREFERENCE.defaultValue
+        ? '--app-font: "Inter Variable", Inter, "Avenir Next", "Segoe UI", sans-serif;'
+        : `:root[data-font-family="${value}"]`;
+    assert.ok(
+      css.includes(selector),
+      `globals.css is missing a --app-font rule for ${value}`,
+    );
+  }
+  assert.ok(
+    css.includes("font-family: var("),
+    "the body rule must read --app-font rather than a hardcoded stack",
+  );
+});
+
+test("the font family offers the eighteen families, distinct", () => {
+  assert.equal(FONT_FAMILY_PREFERENCE.values.length, 18);
+  assert.equal(new Set(FONT_FAMILY_PREFERENCE.values).size, 18);
+});
+
+test("parsePreference keeps and rejects font values like any other spec", () => {
+  assert.equal(parsePreference(FONT_FAMILY_PREFERENCE, "roboto"), "roboto");
+  assert.equal(parsePreference(FONT_FAMILY_PREFERENCE, null), "inter");
+  assert.equal(parsePreference(FONT_FAMILY_PREFERENCE, "Roboto"), "inter");
+  assert.equal(parsePreference(FONT_FAMILY_PREFERENCE, "larger"), "inter");
 });
