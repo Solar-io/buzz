@@ -29,6 +29,36 @@ export function useDrawerClose(): () => void {
   return useContext(DrawerCloseContext);
 }
 
+/**
+ * The phone bar's right-hand slot (Sam, 2026-09-22): the conversation's
+ * controls (mic, call, thinking, threads) portal here below `md` so the
+ * composer row under the text box gets its height back. Null until the bar
+ * mounts, and always null at `md`+ where the bar is hidden.
+ */
+const PhoneBarSlotContext = createContext<HTMLElement | null>(null);
+
+export function usePhoneBarSlot(): HTMLElement | null {
+  return useContext(PhoneBarSlotContext);
+}
+
+/** Below `md` — the widths where the phone bar shows (`md:hidden`). */
+const PHONE_QUERY = "(max-width: 767px)";
+
+export function usePhoneLayout(): boolean {
+  const [phone, setPhone] = useState(
+    () => globalThis.matchMedia?.(PHONE_QUERY).matches ?? false,
+  );
+  useEffect(() => {
+    const query = globalThis.matchMedia?.(PHONE_QUERY);
+    if (!query) return;
+    const onChange = () => setPhone(query.matches);
+    onChange();
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+  return phone;
+}
+
 const SIDEBAR_WIDTH_KEY = "buzz.sidebar-width.v1";
 const DEFAULT_SIDEBAR_WIDTH = 232;
 const MIN_SIDEBAR_WIDTH = 200;
@@ -98,6 +128,7 @@ export function AppShell({
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const closeDrawer = () => setDrawerOpen(false);
+  const [phoneBarSlot, setPhoneBarSlot] = useState<HTMLDivElement | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState<number>(() =>
     loadSidebarWidth(),
   );
@@ -157,12 +188,19 @@ export function AppShell({
               <path d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <span className="min-w-0 truncate font-semibold">
+          <span className="min-w-0 flex-1 truncate font-semibold">
             {title || "Buzz"}
           </span>
+          <div
+            ref={setPhoneBarSlot}
+            data-testid="phone-bar-actions"
+            className="flex shrink-0 items-center"
+          />
         </header>
         <main className="buzz-content-scrollbar min-h-0 flex-1 overflow-y-auto">
-          {children}
+          <PhoneBarSlotContext.Provider value={phoneBarSlot}>
+            {children}
+          </PhoneBarSlotContext.Provider>
         </main>
       </div>
 
