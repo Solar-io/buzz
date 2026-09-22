@@ -329,17 +329,30 @@ export function AgentActivityPanel({
       {/* The header bar is gone (Sam, 2026-09-22): the avatar and the word
           "Thinking" were restating what the pane's own chip and the DM you
           opened it from already say. What was in that bar and is NOT
-          decoration is preserved below — the mobile close, the Replies
-          switch, and the working badge — as a floating strip that only
-          appears when each is actually needed. */}
+          decoration is preserved below — the Replies switch, the mobile
+          close, and the working badge — as a floating strip. Each keeps its
+          OWN breakpoint: see the note on the strip itself for why the Replies
+          switch cannot inherit the close's `lg:hidden`. */}
       <div
         ref={scrollRef}
         className="buzz-channel-activity-scrollbar relative min-h-0 flex-1 overflow-y-auto p-3"
       >
-        {/* Below lg the pane is a full-screen sheet, so the composer's own
-            toggle is underneath it and unreachable — these close it. At lg
-            the composer bar's brain toggle does the job, so they hide. */}
-        <div className="absolute right-2 top-2 z-10 flex items-center gap-1 lg:hidden">
+        {/* Two controls, two different reachability problems, so they do NOT
+            share a breakpoint.
+
+            The CLOSE only matters below lg, where this pane is a full-screen
+            sheet covering the composer — whose own brain toggle is therefore
+            underneath it and unreachable. At lg the pane is docked beside the
+            composer, that toggle is visible, and this hides.
+
+            The REPLIES switch is the opposite case and must stay visible at
+            EVERY width. It is the only route from this pane to the thread in a
+            DM that has both a thread and an agent (`onSelectThreadTab` is
+            passed only then), and the reverse route lives on the thread pane.
+            Gating it to `lg:hidden` stranded desktop: a reader who switched to
+            Replies had no way back to Thinking. It was an unqualified child of
+            the old header bar for exactly this reason. */}
+        <div className="absolute right-2 top-2 z-10 flex items-center gap-1">
           {onSelectThreadTab && (
             <button
               type="button"
@@ -352,7 +365,7 @@ export function AgentActivityPanel({
           <button
             type="button"
             aria-label="Close thinking panel"
-            className="rounded-md bg-card/90 p-1 text-sm text-muted-foreground backdrop-blur-sm hover:bg-accent"
+            className="rounded-md bg-card/90 p-1 text-sm text-muted-foreground backdrop-blur-sm hover:bg-accent lg:hidden"
             onClick={() => {
               onCloseMobile();
               onCloseDesktop?.();
