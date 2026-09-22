@@ -933,12 +933,21 @@ export function Composer({
         </p>
       )}
       {!editingActive && (
-        <ComposerFormatToolbar
-          marks={marks}
-          disabled={busy}
-          onApply={applyFormat}
-          onCaptureSelection={syncSelection}
-        />
+        <div className="mb-1.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+          <ComposerFormatToolbar
+            className="mb-0"
+            marks={marks}
+            disabled={busy}
+            onApply={applyFormat}
+            onCaptureSelection={syncSelection}
+          />
+          {/* The channel's controls share this row with the formatting icons —
+              right-aligned, same line (Sam, 2026-09-22: the annotation's arrow
+              lands on the B/I/S/… toolbar, and these were rendering one row
+              above it). Wraps below the icons on a narrow column rather than
+              crushing it. */}
+          {actionsBar}
+        </div>
       )}
       {!editingActive && (
         <ComposerAttachmentTray
@@ -951,15 +960,6 @@ export function Composer({
           cards={linkPreviews.cards}
           onSuppress={linkPreviews.suppress}
         />
-      )}
-      {/* The channel's controls ride ABOVE the field, on the same line as the
-          formatting icons they sit beside (Sam, 2026-09-22 — Call and Thinking
-          moved here from the removed header bar). They wrap below the icons on
-          a narrow column rather than crushing the field. */}
-      {actionsBar && !editingActive && (
-        <div className="mb-1.5 flex flex-wrap items-center justify-end">
-          {actionsBar}
-        </div>
       )}
       <div className="flex items-end gap-2">
         <input
