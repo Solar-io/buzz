@@ -159,6 +159,44 @@ test("regular channels and non-agent DMs have no call entry", async () => {
   await humanDm.unmount();
 });
 
+test("the thinking toggle appears only on an agent DM and opens the pane", async () => {
+  // The 🧠 moved here from the deleted ChannelHeader (Sam, 2026-09-22). Its
+  // gate is the same one the Call button uses — a non-null agentPubkey — and
+  // that gate is the thing worth pinning: a human DM must not grow a toggle
+  // that would open a pane with nothing to show.
+  const opened = [];
+  const agentDm = await mount(
+    props({ onOpenThinking: () => opened.push(true) }),
+  );
+  const toggle = agentDm.container.querySelector(
+    '[data-testid="toggle-thinking-panel"]',
+  );
+  assert.ok(toggle, "an agent DM renders the thinking toggle");
+  await act(async () => {
+    toggle.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  assert.deepEqual(opened, [true], "clicking it reveals the thinking pane");
+  await agentDm.unmount();
+
+  const regular = await mount(
+    props({ channel: channel("stream"), agentPubkey: null }),
+  );
+  assert.equal(
+    regular.container.querySelector('[data-testid="toggle-thinking-panel"]'),
+    null,
+    "a regular channel has no thinking toggle",
+  );
+  await regular.unmount();
+
+  const humanDm = await mount(props({ agentPubkey: null }));
+  assert.equal(
+    humanDm.container.querySelector('[data-testid="toggle-thinking-panel"]'),
+    null,
+    "a human DM has no thinking toggle",
+  );
+  await humanDm.unmount();
+});
+
 after(() => {
   Object.assign(globalThis, {
     window: originals.window,
