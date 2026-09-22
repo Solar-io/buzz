@@ -29,6 +29,7 @@ import {
 } from "@/features/sidebar/lib/collapsedSections.ts";
 import { SectionHeader } from "@/features/sidebar/ui/SectionHeader";
 import { SidebarNavButton } from "@/features/sidebar/ui/SidebarNavButton";
+import { SidebarShortcutsSection } from "@/features/sidebar/ui/SidebarShortcutsSection";
 import { RelayConnectionCard } from "@/features/sidebar/ui/RelayConnectionCard";
 import { SidebarProfileCard } from "@/features/sidebar/ui/SidebarProfileCard";
 import { InstallAppButton } from "@/features/sidebar/ui/InstallAppButton";
@@ -111,6 +112,12 @@ export interface ChannelSidebarActions {
   onOpenFiles: () => void;
   /** Open the inbox view. */
   onOpenInbox: () => void;
+  /**
+   * Raise the in-app dock on an overlay-mode SHORTCUT. Not a channel: the
+   * shortcut list is channel-independent (see SidebarShortcutsSection), so
+   * this is the shell's shortcut overlay, not a conversation.
+   */
+  onOpenShortcutOverlay: (shortcutId: string) => void;
 }
 
 /** Props for {@link ChannelSidebar}. */
@@ -334,6 +341,11 @@ export function ChannelSidebar({
             </ul>
           </>
         )}
+        {/* Directly below Forums, and self-gating: it renders nothing unless
+            the unlocked local key is live. */}
+        <SidebarShortcutsSection
+          onOpenOverlay={actions.onOpenShortcutOverlay}
+        />
         <SectionHeader
           label="Direct messages"
           variant="dm"

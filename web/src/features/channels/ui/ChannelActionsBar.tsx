@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { Brain, Copy, LogIn, PhoneCall } from "lucide-react";
 import { toast } from "sonner";
 import type { ChannelSummary } from "@/features/channels/useChannels";
@@ -44,12 +44,6 @@ export interface ChannelActionsBarProps {
   onJoinChannel?: () => Promise<void> | void;
   /** DM counterparty pubkeys, for the roster's add-member suggestions. */
   contacts?: string[];
-  /**
-   * Feature-owned controls pinned ahead of Join/Members/Call (the shortcut
-   * bar). This component does not import the feature — the shell passes
-   * whatever it wants rendered.
-   */
-  actions?: ReactNode;
 }
 
 const NO_MEMBERS: ChannelMember[] = [];
@@ -84,7 +78,6 @@ export function ChannelActionsBar({
   selfPubkey,
   onJoinChannel,
   contacts,
-  actions,
 }: ChannelActionsBarProps) {
   const [startingAgentCall, setStartingAgentCall] = useState(false);
   const [joining, setJoining] = useState(false);
@@ -153,7 +146,6 @@ export function ChannelActionsBar({
           {expiry.label}
         </span>
       )}
-      {actions}
       <button
         type="button"
         data-testid="copy-channel-name"

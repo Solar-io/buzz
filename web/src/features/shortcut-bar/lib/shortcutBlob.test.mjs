@@ -2,17 +2,22 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  MAX_SHORTCUTS_PER_CHANNEL,
+  MAX_SHORTCUTS_PER_LIST,
   SHORTCUT_BLOB_BUDGET_BYTES,
+  SHORTCUT_SIDEBAR_KEY,
   addShortcut,
+  addSidebarShortcut,
   blobByteLength,
   emptyShortcutBlob,
   nextShortcutId,
   parseShortcutBlob,
   removeShortcut,
+  removeSidebarShortcut,
   serializeShortcutBlob,
   shortcutListFor,
+  sidebarShortcuts,
   updateShortcut,
+  updateSidebarShortcut,
 } from "./shortcutBlob.ts";
 
 const CHANNEL = "5b1f2a34-1111-4222-8333-444455556666";
@@ -133,7 +138,7 @@ test("a hostile URL is refused with a reason at add time", () => {
 
 test("the per-channel cap is enforced at add time", () => {
   let blob = emptyShortcutBlob();
-  for (let index = 0; index < MAX_SHORTCUTS_PER_CHANNEL; index += 1) {
+  for (let index = 0; index < MAX_SHORTCUTS_PER_LIST; index += 1) {
     blob = addOk(blob, CHANNEL, { url: `https://x${index}.example/` });
   }
   const overflow = addShortcut(blob, CHANNEL, {
@@ -145,7 +150,7 @@ test("the per-channel cap is enforced at add time", () => {
 
 test("the cap is per channel, not per blob", () => {
   let blob = emptyShortcutBlob();
-  for (let index = 0; index < MAX_SHORTCUTS_PER_CHANNEL; index += 1) {
+  for (let index = 0; index < MAX_SHORTCUTS_PER_LIST; index += 1) {
     blob = addOk(blob, CHANNEL, { url: `https://x${index}.example/` });
   }
   assert.equal(
@@ -300,4 +305,269 @@ test("ids are allocated across the WHOLE blob and never reused", () => {
   assert.equal(nextShortcutId(blob), "sc:3");
   const grown = addOk(blob, CHANNEL, { url: "https://c.example/" });
   assert.equal(shortcutListFor(grown, CHANNEL)[0].id, "sc:3");
+});
+
+/*
+ * The sidebar list — the channel-independent one under SHORTCUT_SIDEBAR_KEY.
+ */
+
+/** Build a blob holding these per-channel lists, keyed in the given order. */
+function channelBlob(entries) {
+  const blob = emptyShortcutBlob();
+  for (const [channelId, list] of entries) {
+    blob.shortcuts[channelId] = list;
+  }
+  return blob;
+}
+
+function def(id, url, mode = "window", label = "L") {
+  return { id, label, url, mode };
+}
+
+test("addSidebarShortcut writes the reserved key, not a channel", () => {
+  const result = addSidebarShortcut(emptyShortcutBlob(), {
+    url: "https://kept.example/",
+    label: "kept",
+    mode: "overlay",
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.blob.shortcuts, {
+    [SHORTCUT_SIDEBAR_KEY]: [
+      {
+        id: "sc:1",
+        label: "kept",
+        url: "https://kept.example/",
+        mode: "overlay",
+      },
+    ],
+  });
+  assert.equal(SHORTCUT_SIDEBAR_KEY, "__sidebar__");
+});
+
+test("sidebar reducers leave every per-channel list untouched", () => {
+  const channelList = [def("sc:9", "https://channel.example/")];
+  let blob = channelBlob([[CHANNEL, channelList]]);
+  // Ids are blob-wide, so the first sidebar entry is sc:10 — the channel's
+  // sc:9 is taken. That it skips it is itself evidence the allocator sees the
+  // whole blob.
+  const added = addSidebarShortcut(blob, { url: "https://side.example/" });
+  assert.equal(added.ok, true);
+  assert.equal(added.blob.shortcuts[SHORTCUT_SIDEBAR_KEY][1].id, "sc:10");
+  blob = added.blob;
+  blob = updateSidebarShortcut(blob, "sc:10", {
+    url: "https://moved.example/",
+  }).blob;
+  blob = removeSidebarShortcut(blob, "sc:10").blob;
+  // The channel's list is byte-identical through all three sidebar edits —
+  // that is the rollback path, and nothing here may touch it.
+  assert.deepEqual(blob.shortcuts[CHANNEL], channelList);
+  // The sidebar list is the SEED (the channel's own entry, adopted on first
+  // write) minus the one that was added and removed.
+  assert.deepEqual(blob.shortcuts[SHORTCUT_SIDEBAR_KEY], channelList);
+});
+
+test("update rewrites a sidebar entry in place and keeps its id", () => {
+  let blob = addSidebarShortcut(emptyShortcutBlob(), {
+    url: "https://kept.example/",
+    label: "kept",
+    mode: "overlay",
+  }).blob;
+  blob = addSidebarShortcut(blob, { url: "https://second.example/" }).blob;
+  const updated = updateSidebarShortcut(blob, "sc:1", {
+    url: "https://moved.example/",
+    label: "moved",
+    mode: "window",
+  });
+  assert.equal(updated.ok, true);
+  assert.deepEqual(sidebarShortcuts(updated.blob), [
+    {
+      id: "sc:1",
+      label: "moved",
+      url: "https://moved.example/",
+      mode: "window",
+    },
+    {
+      id: "sc:2",
+      label: "second.example",
+      url: "https://second.example/",
+      mode: "window",
+    },
+  ]);
+});
+
+test("update validates like add and refuses a foreign id", () => {
+  const blob = addSidebarShortcut(emptyShortcutBlob(), {
+    url: "https://kept.example/",
+  }).blob;
+  const hostile = updateSidebarShortcut(blob, "sc:1", {
+    url: "javascript:alert(1)",
+  });
+  assert.equal(hostile.ok, false);
+  assert.match(hostile.reason, /http:\/\/ or https:\/\//);
+  const foreign = updateSidebarShortcut(blob, "sc:9", {
+    url: "https://kept.example/",
+  });
+  assert.equal(foreign.ok, false);
+  assert.match(foreign.reason, /no longer exists/);
+});
+
+test("the sidebar cap is enforced and named neutrally", () => {
+  let blob = emptyShortcutBlob();
+  for (let index = 0; index < MAX_SHORTCUTS_PER_LIST; index += 1) {
+    blob = addSidebarShortcut(blob, { url: `https://x${index}.example/` }).blob;
+  }
+  const overflow = addSidebarShortcut(blob, {
+    url: "https://one-more.example/",
+  });
+  assert.equal(overflow.ok, false);
+  assert.match(overflow.reason, /at most 12 shortcuts/);
+});
+
+test("a sidebar add that would exceed the byte budget is refused", () => {
+  // Eleven big entries in the SIDEBAR list — under the 12 cap, so the refusal
+  // can only come from the byte budget, and one small add tips it over.
+  const blob = {
+    v: 1,
+    shortcuts: {
+      [SHORTCUT_SIDEBAR_KEY]: Array.from({ length: 11 }, (_, index) => ({
+        id: `sc:${index + 1}`,
+        label: "y".repeat(1410),
+        url: `https://x${index}.example/`,
+        mode: "window",
+      })),
+    },
+  };
+  const before = blobByteLength(serializeShortcutBlob(blob));
+  assert.ok(
+    before < SHORTCUT_BLOB_BUDGET_BYTES,
+    `precondition: blob must start under budget, was ${before}`,
+  );
+  // Under the cap, so this is not the cap refusing it.
+  assert.ok(sidebarShortcuts(blob).length < MAX_SHORTCUTS_PER_LIST);
+  const result = addSidebarShortcut(blob, {
+    url: "https://final.example/",
+    label: "final",
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /16,384 bytes/);
+});
+
+test("an ABSENT sidebar key seeds the ordered union, deduped by (url, mode)", () => {
+  const blob = channelBlob([
+    [CHANNEL, [def("sc:1", "https://a.example/", "window")]],
+    [OTHER, [def("sc:5", "https://a.example/", "window")]],
+  ]);
+  // Same url AND mode in two channels collapses to ONE row, first one wins...
+  assert.deepEqual(sidebarShortcuts(blob), [
+    def("sc:1", "https://a.example/", "window"),
+  ]);
+
+  // ...but the same url in the OTHER mode is a genuinely different row, so
+  // both survive, in channel-then-list order.
+  const both = channelBlob([
+    [CHANNEL, [def("sc:1", "https://a.example/", "window")]],
+    [OTHER, [def("sc:5", "https://a.example/", "overlay")]],
+  ]);
+  assert.deepEqual(sidebarShortcuts(both), [
+    def("sc:1", "https://a.example/", "window"),
+    def("sc:5", "https://a.example/", "overlay"),
+  ]);
+});
+
+test("the seed follows Object.keys insertion order, not id order", () => {
+  const blob = channelBlob([
+    [OTHER, [def("sc:9", "https://second.example/")]],
+    [CHANNEL, [def("sc:2", "https://first.example/")]],
+  ]);
+  assert.deepEqual(
+    sidebarShortcuts(blob).map((shortcut) => shortcut.url),
+    ["https://second.example/", "https://first.example/"],
+  );
+});
+
+test("an empty seed is an empty list, not a crash", () => {
+  assert.deepEqual(sidebarShortcuts(emptyShortcutBlob()), []);
+});
+
+test("a PRESENT but empty sidebar list is authoritative — removals stick", () => {
+  // The blob still carries channel shortcuts, so a UNION here would
+  // resurrect them. This is the whole reason assembleSidebar exists.
+  const blob = channelBlob([
+    [CHANNEL, [def("sc:1", "https://a.example/", "window")]],
+    [OTHER, [def("sc:2", "https://b.example/", "overlay")]],
+  ]);
+  assert.equal(
+    sidebarShortcuts(blob).length,
+    2,
+    "precondition: seed is 2 rows",
+  );
+
+  const seeded = sidebarShortcuts(blob);
+  let emptied = blob;
+  for (const shortcut of seeded) {
+    const result = removeSidebarShortcut(emptied, shortcut.id);
+    assert.equal(result.ok, true);
+    emptied = result.blob;
+  }
+
+  // Written as [], NEVER deleted — that is what stops the union returning.
+  assert.deepEqual(emptied.shortcuts[SHORTCUT_SIDEBAR_KEY], []);
+  assert.equal(SHORTCUT_SIDEBAR_KEY in emptied.shortcuts, true);
+  assert.deepEqual(sidebarShortcuts(emptied), []);
+  // And it survives the wire, which is where a prune would have done damage.
+  const reparsed = parseShortcutBlob(
+    JSON.parse(serializeShortcutBlob(emptied)),
+  );
+  assert.equal(reparsed.ok, true);
+  assert.deepEqual(reparsed.blob.shortcuts[SHORTCUT_SIDEBAR_KEY], []);
+  assert.deepEqual(sidebarShortcuts(reparsed.blob), []);
+});
+
+test("the sidebar's first write adopts the seed it was showing", () => {
+  // Absent key, two channels, one duplicated url+mode.
+  const blob = channelBlob([
+    [CHANNEL, [def("sc:1", "https://a.example/", "window")]],
+    [
+      OTHER,
+      [
+        def("sc:2", "https://a.example/", "window"),
+        def("sc:3", "https://b.example/", "overlay"),
+      ],
+    ],
+  ]);
+  const result = addSidebarShortcut(blob, { url: "https://c.example/" });
+  assert.equal(result.ok, true);
+  // The stored list is the seed (deduped) plus the new entry.
+  assert.deepEqual(
+    sidebarShortcuts(result.blob).map((shortcut) => shortcut.url),
+    ["https://a.example/", "https://b.example/", "https://c.example/"],
+  );
+});
+
+test("per-channel keys are never migrated away", () => {
+  const seeded = addSidebarShortcut(
+    channelBlob([[CHANNEL, [def("sc:1", "https://a.example/")]]]),
+    { url: "https://b.example/" },
+  ).blob;
+  // Both the new sidebar key AND the original channel key are present: the
+  // channel copy is the rollback path to the previous build.
+  assert.equal(SHORTCUT_SIDEBAR_KEY in seeded.shortcuts, true);
+  assert.equal(CHANNEL in seeded.shortcuts, true);
+  assert.equal(seeded.shortcuts[CHANNEL].length, 1);
+});
+
+test("sidebar ids come from the whole blob, like every other list", () => {
+  // The channel list already holds sc:7. The first sidebar add must therefore
+  // take sc:8 — colliding with the channel's id would mean two rows sharing
+  // an id across surfaces, and the allocator would stop being blob-wide.
+  const blob = channelBlob([[CHANNEL, [def("sc:7", "https://a.example/")]]]);
+  const result = addSidebarShortcut(blob, { url: "https://b.example/" });
+  assert.equal(result.ok, true);
+  const list = sidebarShortcuts(result.blob);
+  // Index 0 is the seeded channel entry; the new one is appended after it.
+  assert.deepEqual(
+    list.map((shortcut) => shortcut.id),
+    ["sc:7", "sc:8"],
+  );
+  assert.equal(list[1].url, "https://b.example/");
 });

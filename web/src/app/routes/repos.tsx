@@ -83,7 +83,6 @@ import { RemindMeLaterProvider } from "@/features/reminders/ui/RemindMeLaterProv
 import { NotificationRuntime } from "@/features/notifications/ui/NotificationRuntime";
 import { ProfileActionsProvider } from "@/features/profile/ProfileActionsContext";
 import { FilesPanel } from "@/features/files/ui/FilesPanel";
-import { ShortcutBar } from "@/features/shortcut-bar/ui/ShortcutBar";
 import { ShortcutOverlay } from "@/features/shortcut-bar/ui/ShortcutOverlay";
 import { toast } from "sonner";
 import {
@@ -432,8 +431,12 @@ function ChannelBrowser() {
   };
   // Files overlay — the desktop's docked Files panel as an iframe layer.
   const [filesOpen, setFilesOpen] = useState(false);
-  // Shortcut-bar overlay — the clicked overlay-mode pill's id, or null. A
-  // channel switch closes it: an overlay is a view OF a channel.
+  // Shortcut overlay — the clicked sidebar shortcut's id, or null. The list
+  // is channel-independent, so this no longer requires an open channel: the
+  // dock's tabs persist globally and reopening restores them.
+  //
+  // A channel switch still closes it. The middle pane shows one thing at a
+  // time, and the tab session is what survives — not the open pane.
   const [shortcutOverlay, setShortcutOverlay] = useState<string | null>(null);
   // Sidebar + buttons: section-header plus buttons open the create dialogs.
   const [newChannelOpen, setNewChannelOpen] = useState(false);
@@ -622,6 +625,7 @@ function ChannelBrowser() {
         onOpenFiles: () => setFilesOpen(true),
         onOpenInbox: () =>
           void navigate({ to: "/repos", search: { view: "inbox" } }),
+        onOpenShortcutOverlay: setShortcutOverlay,
       }}
     />
   );
@@ -790,9 +794,8 @@ function ChannelBrowser() {
           >
             {filesOpen ? (
               <FilesPanel onClose={() => setFilesOpen(false)} />
-            ) : shortcutOverlay !== null && current ? (
+            ) : shortcutOverlay !== null ? (
               <ShortcutOverlay
-                channelId={current.id}
                 initialPanelId={shortcutOverlay}
                 onClose={() => setShortcutOverlay(null)}
               />
@@ -1013,13 +1016,6 @@ function ChannelBrowser() {
                               setDmPaneHidden(false);
                               setThinkingOpen(true);
                             }}
-                            actions={
-                              <ShortcutBar
-                                channelId={current.id}
-                                ephemeral={current.ttlSeconds !== null}
-                                onOpenOverlay={setShortcutOverlay}
-                              />
-                            }
                           />
                         }
                       />
