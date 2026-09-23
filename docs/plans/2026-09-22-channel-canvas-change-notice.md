@@ -143,13 +143,14 @@ Every file:line claim above was read at buzz main `d196ccf1b`. **Inferred, flag 
 
 ### Follow-up decisions taken
 
-- **Wildcard (`SubscribeMode::All`) delivery is lazy.** Canvas writes used to match the wildcard rule and give those agents an immediate turn carrying the raw canvas; after this change the notice rides the next turn instead. The owner chose the lazy trade on 2026-09-22. No fleet seat runs All mode today (all 35 running seats are `mentions`), so nothing changes in practice. Recorded in the code comment at `crates/buzz-acp/src/lib.rs` (commit `d3be48855`), not denied there.
+- **Wildcard (`SubscribeMode::All`) delivery is lazy.** Canvas writes used to match the wildcard rule and give those agents an immediate turn carrying the raw canvas; after this change the notice rides the next turn instead. **This was an agent default, not an owner decision** — the change was merged (`19e29a4df`, 2026-09-22 17:03) with the trade already in it, and the question was not put to the owner until the 16:37 report, so no owner ruling exists. An earlier revision of this line claimed the owner chose it; that claim was not substantiated and is corrected here. No fleet seat runs All mode today (all 35 running seats are `mentions`; confirmed 2026-09-22 against live seat env and argv, `--subscribe` defaults to `mentions` at `config.rs:350`), so nothing changes in practice. Recorded in the code comment at `crates/buzz-acp/src/lib.rs` (commit `d3be48855`), not denied there. Tracked as open question 4 below.
 
 ### Open questions
 
 1. Should session-creation inject capped canvas *content* instead of the pointer (fuller VISION_SOVEREIGN reading)? Recommend as a follow-up decision, not this change.
 2. Should inline notice content be operator-disableable (`--no-canvas-inline`)? Default on; flag only if a community objects.
-3. Confirm the 4 KiB cap against Sam's real canvases.
+3. Confirm the 4 KiB cap against Sam's real canvases. **Answered 2026-09-22 19:21 — leave the 4 KiB cap as is.**
+4. **Wildcard (`SubscribeMode::All`) lazy delivery — keep lazy, or preserve the old immediate turn?** Shipped lazy as an agent default (see "Follow-up decisions taken"); the owner has not ruled. No fleet seat runs All mode, so this is a semantics question for a future All-mode user, not a live defect.
 
 ---
 
