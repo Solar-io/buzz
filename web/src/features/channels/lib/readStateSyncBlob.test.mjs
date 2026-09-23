@@ -310,6 +310,46 @@ test("buildPublishPayload prunes each overlay direction to 500, keep-newest", ()
   );
 });
 
+test("buildPublishPayload trims a real-sized inbox overlay to fit instead of refusing", () => {
+  // Real inbox keys are 64-hex event ids: 500 read entries alone are ~39 KB,
+  // past the 32 KiB ceiling. This used to be a permanent refusal, so a heavy
+  // inbox never synced again (Sam's web slots, 2026-09-23).
+  const hex = (i) => i.toString(16).padStart(64, "0");
+  const inboxRead = {};
+  for (let i = 0; i < MAX_INBOX_MARKERS_PER_DIRECTION; i++) {
+    inboxRead[hex(i)] = 1_790_000_000 + i;
+  }
+  const inboxUnread = { [hex(9999)]: 1_790_000_999 };
+  const contexts = {};
+  for (let i = 0; i < 150; i++) {
+    contexts[`00000000-0000-4000-8000-${i.toString().padStart(12, "0")}`] =
+      1_790_000_000 + i;
+  }
+  const built = buildPublishPayload({
+    clientId: "c",
+    contexts,
+    inboxRead,
+    inboxUnread,
+  });
+  assert.equal(built.ok, true);
+  assert.ok(
+    new TextEncoder().encode(built.payload.plaintext).length <=
+      READ_STATE_MAX_PLAINTEXT_BYTES,
+  );
+  // Contexts are never trimmed.
+  assert.equal(Object.keys(built.payload.blob.contexts).length, 150);
+  // The overlay was cut, keep-newest, and as little as possible.
+  const kept = Object.keys(built.payload.blob.inbox_read).length;
+  assert.ok(kept < MAX_INBOX_MARKERS_PER_DIRECTION, `kept ${kept}`);
+  assert.ok(kept > 300, `kept only ${kept}`);
+  assert.equal(built.payload.blob.inbox_read[hex(0)], undefined);
+  assert.equal(
+    built.payload.blob.inbox_read[hex(MAX_INBOX_MARKERS_PER_DIRECTION - 1)],
+    1_790_000_000 + MAX_INBOX_MARKERS_PER_DIRECTION - 1,
+  );
+  assert.equal(built.payload.blob.inbox_unread[hex(9999)], 1_790_000_999);
+});
+
 test("isValidWebReadStateBlob rejects incoming blobs over the 10k context limit", () => {
   const contexts = {};
   for (let i = 0; i <= MAX_CONTEXTS; i++) {

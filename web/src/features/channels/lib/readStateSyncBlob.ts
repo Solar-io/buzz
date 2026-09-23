@@ -43,9 +43,13 @@ export const MAX_INBOX_MARKERS_PER_DIRECTION = 500;
 /**
  * Hard plaintext ceiling for the published blob. NIP-44 v2 caps plaintext at
  * 65,535 bytes and expands it ~1.4x in ciphertext; 32 KiB keeps the event
- * well inside both while holding thousands of markers. Over budget after
- * pruning is a REFUSAL, not a trim-again — silent further trimming would
- * drop exactly the oldest markers a merge just fought to keep.
+ * well inside both while holding thousands of markers. Channel contexts are
+ * never trimmed to fit: contexts alone over budget is a REFUSAL, because a
+ * dropped channel marker is one a fresh device would show unread again. The
+ * inbox overlay is different — at 500 entries per direction with 64-hex
+ * event-id keys (~78 bytes each) it overflows the ceiling on its own, and a
+ * refusal there meant a heavy inbox never synced again. So the overlay
+ * shrinks, oldest first, until the blob fits.
  */
 export const READ_STATE_MAX_PLAINTEXT_BYTES = 32_768;
 
@@ -172,10 +176,12 @@ export interface ReadStatePublishPayload {
 /**
  * Build the publish blob from the two localStorage stores: prune to the caps
  * (10k contexts, 500 per overlay direction, newest kept), then serialize.
- * Over the 32 KiB plaintext ceiling AFTER pruning is a hard refusal — the
- * caller must not publish, because a publish that silently dropped content
- * would be a merge the merge rule cannot express (max-merge can only grow,
- * so the dropped entries would look deleted).
+ * If that is still over the 32 KiB plaintext ceiling, the inbox overlay is
+ * cut further — both directions to the same newest-N, N as large as fits.
+ * Max-merge is grow-only, so an omitted overlay entry reads as "no news" to
+ * other devices, not as a deletion; the cost is only that a fresh device
+ * does not learn the oldest inbox reads. Contexts alone over the ceiling is
+ * still a hard refusal (see READ_STATE_MAX_PLAINTEXT_BYTES).
  */
 export function buildPublishPayload(args: {
   clientId: string;
@@ -186,36 +192,51 @@ export function buildPublishPayload(args: {
   | { ok: true; payload: ReadStatePublishPayload }
   | { ok: false; reason: string } {
   const contexts = keepNewestMarkers(args.contexts, MAX_CONTEXTS);
-  const inboxRead = keepNewestMarkers(
-    args.inboxRead ?? {},
-    MAX_INBOX_MARKERS_PER_DIRECTION,
-  );
-  const inboxUnread = keepNewestMarkers(
-    args.inboxUnread ?? {},
-    MAX_INBOX_MARKERS_PER_DIRECTION,
-  );
-  // Empty overlay directions are omitted entirely — the blob stays
-  // desktop-shaped (v/client_id/contexts only) for anyone who never touches
-  // the inbox overlay.
-  const blob: WebReadStateBlob = {
-    v: 1,
-    client_id: args.clientId,
-    contexts,
+  const serialize = (perDirection: number) => {
+    const inboxRead = keepNewestMarkers(args.inboxRead ?? {}, perDirection);
+    const inboxUnread = keepNewestMarkers(args.inboxUnread ?? {}, perDirection);
+    // Empty overlay directions are omitted entirely — the blob stays
+    // desktop-shaped (v/client_id/contexts only) for anyone who never
+    // touches the inbox overlay.
+    const blob: WebReadStateBlob = {
+      v: 1,
+      client_id: args.clientId,
+      contexts,
+    };
+    if (Object.keys(inboxRead).length > 0) {
+      blob.inbox_read = inboxRead;
+    }
+    if (Object.keys(inboxUnread).length > 0) {
+      blob.inbox_unread = inboxUnread;
+    }
+    const plaintext = JSON.stringify(blob);
+    return { blob, plaintext, bytes: plaintextByteLength(plaintext) };
   };
-  if (Object.keys(inboxRead).length > 0) {
-    blob.inbox_read = inboxRead;
+  let built = serialize(MAX_INBOX_MARKERS_PER_DIRECTION);
+  if (built.bytes > READ_STATE_MAX_PLAINTEXT_BYTES) {
+    // Largest per-direction overlay size that fits; 0 is contexts alone.
+    let low = 0;
+    let high = MAX_INBOX_MARKERS_PER_DIRECTION - 1;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (serialize(mid).bytes <= READ_STATE_MAX_PLAINTEXT_BYTES) {
+        low = mid;
+      } else {
+        high = mid - 1;
+      }
+    }
+    built = serialize(low);
   }
-  if (Object.keys(inboxUnread).length > 0) {
-    blob.inbox_unread = inboxUnread;
-  }
-  const plaintext = JSON.stringify(blob);
-  if (plaintextByteLength(plaintext) > READ_STATE_MAX_PLAINTEXT_BYTES) {
+  if (built.bytes > READ_STATE_MAX_PLAINTEXT_BYTES) {
     return {
       ok: false,
-      reason: `read-state blob is ${plaintextByteLength(plaintext)} bytes after pruning (cap ${READ_STATE_MAX_PLAINTEXT_BYTES})`,
+      reason: `read-state blob is ${built.bytes} bytes after pruning (cap ${READ_STATE_MAX_PLAINTEXT_BYTES})`,
     };
   }
-  return { ok: true, payload: { blob, plaintext } };
+  return {
+    ok: true,
+    payload: { blob: built.blob, plaintext: built.plaintext },
+  };
 }
 
 /**
