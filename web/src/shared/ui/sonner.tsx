@@ -11,6 +11,12 @@ const Toaster = ({ ...props }: ToasterProps) => {
       theme={isDark ? "dark" : "light"}
       className="toaster group"
       position="top-right"
+      // Sonner makes the toaster full-width below 600px. On a phone that puts
+      // it over the shell's top bar, which is its own kind of collision, so
+      // below md it sits just under the bar instead. 45px is the phone bar's
+      // min-height (AppShell.tsx); this stays a plain value rather than a
+      // class because sonner writes the offset as an inline CSS var.
+      mobileOffset={{ top: "calc(env(safe-area-inset-top) + 52px)", left: 16, right: 16 }}
       toastOptions={{
         classNames: {
           toast:
