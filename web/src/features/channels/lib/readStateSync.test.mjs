@@ -275,6 +275,24 @@ test("boot: batch-merges every slot until EOSE, fires the synced event once, nev
   );
 });
 
+test("boot: existing local markers seed this install's slot without another local change", async (t) => {
+  const pubkey = "8".repeat(64);
+  const { win } = freshHarness(pubkey);
+  t.after(() => disposeReadStateSync());
+  saveReadState({ chExisting: 1_234 });
+  const session = fakeSession();
+
+  initReadStateSync({ session, selfPubkey: pubkey });
+  session.eose();
+
+  await waitFor(() => session.published.length === 1, "boot seed publish");
+  assert.equal(
+    JSON.parse(signerCtl.plaintexts[0]).contexts.chExisting,
+    1_234,
+    "the initial slot carries markers that predate sync initialization",
+  );
+});
+
 test("boot: a decrypt accepted before EOSE but resolving after still lands in the batch", async (t) => {
   const pubkey = "b".repeat(64);
   const { win } = freshHarness(pubkey);
@@ -424,8 +442,8 @@ test("live: a foreign burst with nothing newer than local notifies nothing and p
   await sleep(50);
   assert.equal(
     session.published.length,
-    0,
-    "no advance means no convergence republish",
+    1,
+    "the one boot seed publish is not mistaken for a convergence republish",
   );
 });
 

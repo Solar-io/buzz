@@ -305,6 +305,15 @@ function isReadStateEvent(
  * must still beat them.
  */
 async function bootFetch(state: ReadStateSyncState): Promise<void> {
+  // Snapshot local state before the REQ opens. Only markers that already
+  // existed when sync initialized need a one-time seed; a read performed while
+  // this boot is draining follows the ordinary local-change publish path.
+  const localChannelsAtBoot = loadReadState();
+  const localInboxAtBoot = loadInboxReadState();
+  const hadLocalStateAtBoot =
+    Object.keys(localChannelsAtBoot).length > 0 ||
+    Object.keys(localInboxAtBoot.read).length > 0 ||
+    Object.keys(localInboxAtBoot.unread).length > 0;
   const bootDecrypts: Array<Promise<string | null>> = [];
   let bootDone = false;
   let settle: () => void = () => {};
@@ -385,6 +394,11 @@ async function bootFetch(state: ReadStateSyncState): Promise<void> {
     return;
   }
   applyMergedRemote(mergePayloadBatch(payloads));
+  if (hadLocalStateAtBoot) {
+    // Publish after the boot fold so the slot carries the full merged union;
+    // the open subscription drops its echo by remembered event id.
+    await publishReadState(state);
+  }
 }
 
 /** Arm the one-per-burst live flush timer (no-op while one is pending). */
