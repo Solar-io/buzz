@@ -368,19 +368,47 @@ test("buildPublishPayload omits empty overlay directions (desktop-shaped blob)",
   assert.equal("inbox_unread" in built.payload.blob, false);
 });
 
-test("buildPublishPayload hard-rejects a blob still over 32 KiB after pruning", () => {
-  // 10k contexts at ~40 bytes each is far past the ceiling with no further
-  // prune allowed — a publish here would silently drop content, so refuse.
+test("buildPublishPayload trims oldest channel contexts when contexts alone exceed 32 KiB", () => {
+  // Sam's real web store, 2026-09-23: 652 channel markers, 50,047 bytes —
+  // a permanent refusal before, so that client had never published.
   const contexts = {};
-  for (let i = 0; i < MAX_CONTEXTS; i++) {
-    contexts[`context-key-with-realistic-length-${i}`] = 1_700_000_000 + i;
+  for (let i = 0; i < 700; i++) {
+    contexts[
+      `${i.toString(16).padStart(8, "0")}-0000-4000-8000-${"x".repeat(40)}`
+    ] = 1_790_000_000 + i;
   }
-  const built = buildPublishPayload({ clientId: "c", contexts });
-  assert.equal(built.ok, false);
-  assert.match(built.reason, /32.?768|cap/);
-  assert.equal(
+  assert.ok(
     new TextEncoder().encode(JSON.stringify(contexts)).length >
       READ_STATE_MAX_PLAINTEXT_BYTES,
-    true,
+    "fixture must exceed the ceiling on contexts alone",
   );
+  const built = buildPublishPayload({
+    clientId: "c",
+    contexts,
+    inboxRead: { ["a".repeat(64)]: 1_790_000_500 },
+  });
+  assert.equal(built.ok, true);
+  assert.ok(
+    new TextEncoder().encode(built.payload.plaintext).length <=
+      READ_STATE_MAX_PLAINTEXT_BYTES,
+  );
+  const values = Object.values(built.payload.blob.contexts);
+  assert.ok(
+    values.length > 300 && values.length < 700,
+    `kept ${values.length}`,
+  );
+  // Keep-newest: the highest marker survives, the lowest does not.
+  assert.ok(values.includes(1_790_000_699));
+  assert.ok(!values.includes(1_790_000_000));
+  // The overlay goes first: with contexts alone over budget it is empty.
+  assert.equal("inbox_read" in built.payload.blob, false);
+});
+
+test("buildPublishPayload still refuses a blob that cannot fit even empty", () => {
+  const built = buildPublishPayload({
+    clientId: "c".repeat(READ_STATE_MAX_PLAINTEXT_BYTES),
+    contexts: { ch1: 1 },
+  });
+  assert.equal(built.ok, false);
+  assert.match(built.reason, /32.?768|cap/);
 });

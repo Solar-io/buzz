@@ -43,13 +43,14 @@ export const MAX_INBOX_MARKERS_PER_DIRECTION = 500;
 /**
  * Hard plaintext ceiling for the published blob. NIP-44 v2 caps plaintext at
  * 65,535 bytes and expands it ~1.4x in ciphertext; 32 KiB keeps the event
- * well inside both while holding thousands of markers. Channel contexts are
- * never trimmed to fit: contexts alone over budget is a REFUSAL, because a
- * dropped channel marker is one a fresh device would show unread again. The
- * inbox overlay is different — at 500 entries per direction with 64-hex
- * event-id keys (~78 bytes each) it overflows the ceiling on its own, and a
- * refusal there meant a heavy inbox never synced again. So the overlay
- * shrinks, oldest first, until the blob fits.
+ * well inside both. Over budget, the blob is trimmed rather than refused —
+ * a refusal is permanent (the stores only grow), so a heavy user never syncs
+ * again. Measured 2026-09-23: Sam's web store held 652 channel markers at
+ * 50,047 bytes, so that client had never published once. Trim order: the
+ * inbox overlay first (oldest out), then channel contexts (oldest out).
+ * Max-merge is grow-only, so an omitted marker is "no news" to other
+ * devices, never a deletion; old markers still arrive from any slot that
+ * carries them (the desktop publishes its full set across several slots).
  */
 export const READ_STATE_MAX_PLAINTEXT_BYTES = 32_768;
 
@@ -176,12 +177,11 @@ export interface ReadStatePublishPayload {
 /**
  * Build the publish blob from the two localStorage stores: prune to the caps
  * (10k contexts, 500 per overlay direction, newest kept), then serialize.
- * If that is still over the 32 KiB plaintext ceiling, the inbox overlay is
- * cut further — both directions to the same newest-N, N as large as fits.
- * Max-merge is grow-only, so an omitted overlay entry reads as "no news" to
- * other devices, not as a deletion; the cost is only that a fresh device
- * does not learn the oldest inbox reads. Contexts alone over the ceiling is
- * still a hard refusal (see READ_STATE_MAX_PLAINTEXT_BYTES).
+ * Still over the 32 KiB plaintext ceiling: trim the inbox overlay (both
+ * directions to the same newest-N, N as large as fits), then — if contexts
+ * alone are too big — contexts to the newest-N that fit. See
+ * READ_STATE_MAX_PLAINTEXT_BYTES. Refusal remains only for a blob that
+ * cannot fit even empty.
  */
 export function buildPublishPayload(args: {
   clientId: string;
@@ -191,8 +191,8 @@ export function buildPublishPayload(args: {
 }):
   | { ok: true; payload: ReadStatePublishPayload }
   | { ok: false; reason: string } {
-  const contexts = keepNewestMarkers(args.contexts, MAX_CONTEXTS);
-  const serialize = (perDirection: number) => {
+  const allContexts = keepNewestMarkers(args.contexts, MAX_CONTEXTS);
+  const serialize = (contextCount: number, perDirection: number) => {
     const inboxRead = keepNewestMarkers(args.inboxRead ?? {}, perDirection);
     const inboxUnread = keepNewestMarkers(args.inboxUnread ?? {}, perDirection);
     // Empty overlay directions are omitted entirely — the blob stays
@@ -201,7 +201,7 @@ export function buildPublishPayload(args: {
     const blob: WebReadStateBlob = {
       v: 1,
       client_id: args.clientId,
-      contexts,
+      contexts: keepNewestMarkers(allContexts, contextCount),
     };
     if (Object.keys(inboxRead).length > 0) {
       blob.inbox_read = inboxRead;
@@ -212,22 +212,40 @@ export function buildPublishPayload(args: {
     const plaintext = JSON.stringify(blob);
     return { blob, plaintext, bytes: plaintextByteLength(plaintext) };
   };
-  let built = serialize(MAX_INBOX_MARKERS_PER_DIRECTION);
-  if (built.bytes > READ_STATE_MAX_PLAINTEXT_BYTES) {
-    // Largest per-direction overlay size that fits; 0 is contexts alone.
+  const fits = (candidate: { bytes: number }) =>
+    candidate.bytes <= READ_STATE_MAX_PLAINTEXT_BYTES;
+  /** Largest n in [0, max] whose build fits; 0 when nothing larger does. */
+  const largestFitting = (
+    max: number,
+    build: (n: number) => { bytes: number },
+  ) => {
     let low = 0;
-    let high = MAX_INBOX_MARKERS_PER_DIRECTION - 1;
+    let high = max;
     while (low < high) {
       const mid = Math.ceil((low + high) / 2);
-      if (serialize(mid).bytes <= READ_STATE_MAX_PLAINTEXT_BYTES) {
+      if (fits(build(mid))) {
         low = mid;
       } else {
         high = mid - 1;
       }
     }
-    built = serialize(low);
+    return low;
+  };
+  const contextTotal = Object.keys(allContexts).length;
+  let built = serialize(contextTotal, MAX_INBOX_MARKERS_PER_DIRECTION);
+  if (!fits(built)) {
+    const perDirection = largestFitting(MAX_INBOX_MARKERS_PER_DIRECTION, (n) =>
+      serialize(contextTotal, n),
+    );
+    built = serialize(contextTotal, perDirection);
+    if (!fits(built)) {
+      built = serialize(
+        largestFitting(contextTotal, (n) => serialize(n, 0)),
+        0,
+      );
+    }
   }
-  if (built.bytes > READ_STATE_MAX_PLAINTEXT_BYTES) {
+  if (!fits(built)) {
     return {
       ok: false,
       reason: `read-state blob is ${built.bytes} bytes after pruning (cap ${READ_STATE_MAX_PLAINTEXT_BYTES})`,
