@@ -234,7 +234,10 @@ export function deleteBlockers(
     return "This definition was installed with a team or built in — delete it in the desktop app.";
   }
   for (const team of teams.values()) {
-    if (team.membershipUnknown || team.personaIds.includes(personaId)) {
+    if (team.membershipUnknown) {
+      return `Team "${team.name}" has a member list the web can't read, so ${personaName} might be in it. Check that team in the desktop app first.`;
+    }
+    if (team.personaIds.includes(personaId)) {
       return `${personaName} is still referenced by a team. Remove it from those teams first.`;
     }
   }

@@ -287,14 +287,14 @@ test("deleteBlockers: referenced by a team", () => {
 });
 
 test("deleteBlockers: a membership-unknown team fails closed", () => {
-  assert.equal(
+  assert.match(
     deleteBlockers(
       UUID,
       "Helper",
       [],
       new Map([["t1", team({ membershipUnknown: true })]]),
     ),
-    "Helper is still referenced by a team. Remove it from those teams first.",
+    /has a member list the web can't read, so Helper might be in it/,
   );
 });
 
