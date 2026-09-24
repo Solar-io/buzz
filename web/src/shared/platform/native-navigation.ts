@@ -5,8 +5,20 @@ import { publicAppOrigin } from "../lib/relay-url.ts";
 
 const BuzzLinks = registerPlugin<{
   openExternal(options: { url: string }): Promise<void>;
+  openInApp(options: { url: string }): Promise<void>;
 }>("BuzzLinks");
 const EXTERNAL = new Set(["https:", "http:", "mailto:", "tel:"]);
+
+/** iOS only: open a web-panel site in an in-app Safari sheet (first-party,
+ * shares Safari's cookies) instead of an iframe, where WebKit drops a
+ * cookie-auth site's session. */
+export function openInAppBrowser(url: string): void {
+  void BuzzLinks.openInApp({ url }).catch((error: unknown) =>
+    toast.error(
+      error instanceof Error ? error.message : "Could not open site.",
+    ),
+  );
+}
 
 /** One boundary for raw anchors and window.open. File-viewer handlers run
  * first and preventDefault; in-app route anchors remain in the shared router. */

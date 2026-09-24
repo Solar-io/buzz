@@ -203,9 +203,16 @@ function putWithProgress(
         once: true,
       });
     }
-    // A fresh copy: XHR keeps a reference to the buffer for the life of the
-    // request, and the caller's view may be a slice of a larger ArrayBuffer.
-    request.send(bytes.slice().buffer as ArrayBuffer);
+    // A File, not an ArrayBuffer: on iOS, CapacitorHttp replaces XHR and only
+    // a File body reaches native intact (base64 → dataType "file"); an
+    // ArrayBuffer falls through to its JSON branch and the upload dies as a
+    // network error. Browsers send File bytes as-is. A fresh copy because the
+    // caller's view may be a slice of a larger ArrayBuffer.
+    request.send(
+      new File([bytes.slice()], "upload", {
+        type: headers["Content-Type"] ?? "application/octet-stream",
+      }),
+    );
   });
 }
 
