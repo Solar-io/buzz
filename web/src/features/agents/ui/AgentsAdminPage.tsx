@@ -12,6 +12,7 @@ import { useTeams } from "@/features/agents/useTeams";
 import { useProfiles } from "@/features/channels/hooks";
 import { buildRoster, type RosterRow } from "../lib/roster";
 import { buildRosterGroups, teamNamesByPersonaId } from "../lib/rosterGroups";
+import { observedModels } from "../lib/modelSuggestions";
 import { useAdminCommands, PendingCommandsStrip } from "./AgentAdminPanel";
 import { AgentRosterSidebar, AgentWorkingDot } from "./AgentRosterSidebar";
 import { AgentConfigPanel } from "./AgentConfigPanel";
@@ -85,11 +86,8 @@ export function AgentsAdminPage() {
   );
   const profiles = useProfiles(rosterPubkeys);
   const registryModels = useMemo(
-    () =>
-      Array.from(
-        new Set(registry.map((entry) => entry.model).filter(Boolean)),
-      ).sort(),
-    [registry],
+    () => observedModels(registry, personas),
+    [registry, personas],
   );
 
   const selected: RosterRow | null =
@@ -190,6 +188,7 @@ export function AgentsAdminPage() {
                   session={session}
                   catalogs={catalogs}
                   registryModels={registryModels}
+                  roster={roster}
                   viewerIsOwner={ownedAgentPubkeys.has(selected.pubkey)}
                   onDeleted={() => setMode({ kind: "roster" })}
                 />
