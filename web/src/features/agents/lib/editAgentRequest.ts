@@ -158,7 +158,7 @@ export function buildUpdateCommand(
     }
     if (prefill.personaLinked) {
       return {
-        error: `This agent's ${label} comes from its definition — edit it in the desktop app.`,
+        error: `This agent's ${label} comes from its definition — edit it in the Definition section.`,
       };
     }
     return null;

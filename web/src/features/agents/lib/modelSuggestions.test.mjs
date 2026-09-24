@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   MODEL_SUGGESTIONS_BY_PROVIDER,
   modelSuggestions,
+  observedModels,
 } from "./modelSuggestions.ts";
 
 test("the static mirror is pinned exactly (updating it is deliberate)", () => {
@@ -54,4 +55,21 @@ test("empty provider string is unknown, not a provider named ''", () => {
     "gpt-5.5",
     "solo-model",
   ]);
+});
+
+test("observedModels unions registry and definition models, deduped, sorted, no blanks", () => {
+  const registry = [{ model: "gpt-5.5" }, { model: "" }, { model: "glm-5.3" }];
+  const personas = new Map([
+    ["p1", { model: "zz-persona-only" }],
+    ["p2", { model: "  " }],
+    ["p3", { model: "glm-5.3" }],
+    ["p4", { model: "a-persona-only" }],
+  ]);
+  assert.deepEqual(observedModels(registry, personas), [
+    "a-persona-only",
+    "glm-5.3",
+    "gpt-5.5",
+    "zz-persona-only",
+  ]);
+  assert.deepEqual(observedModels([], new Map()), []);
 });
