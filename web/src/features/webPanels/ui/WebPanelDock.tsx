@@ -5,6 +5,8 @@ import { Link } from "@tanstack/react-router";
 import { useTheme } from "@/shared/theme/ThemeProvider";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
+import { isNativeIOS } from "@/shared/platform/native";
+import { openInAppBrowser } from "@/shared/platform/native-navigation";
 
 import { useWebPanelDock, type WebPanelDockApi } from "../hooks.ts";
 import { findPanel, withThemeParam } from "../lib/panelRegistry.ts";
@@ -102,6 +104,18 @@ export function WebPanelDock({
   );
   const activePanel = findPanel(dock.panels, active?.panelId ?? null);
   const atCap = dock.instances.length >= MAX_PANEL_INSTANCES;
+  // iOS app: no iframes. A framed site is third-party to the app's WKWebView,
+  // and WebKit drops its session cookie there, so a cookie-auth site (stash)
+  // loops back to its login page. Each tab opens in an in-app Safari sheet.
+  const inAppBrowser = isNativeIOS();
+  const activeUrl = activePanel
+    ? withThemeParam(activePanel.url, isDark)
+    : null;
+  useEffect(() => {
+    if (inAppBrowser && activeUrl) {
+      openInAppBrowser(activeUrl);
+    }
+  }, [inAppBrowser, activeUrl]);
 
   // One stall timer per open tab, armed when the tab appears and cancelled on
   // teardown. Arming it from the iframe's `ref` callback instead would re-arm
@@ -208,43 +222,68 @@ export function WebPanelDock({
       </div>
 
       <div className="relative min-h-0 flex-1">
-        {dock.instances.map((instance) => {
-          const panel = findPanel(dock.panels, instance.panelId);
-          if (!panel) {
-            return null;
-          }
-          const selected = instance.instanceId === dock.activeInstanceId;
-          return (
-            <iframe
-              // Inactive frames stay MOUNTED and are hidden with opacity, not
-              // `display: none` or an unmount: keeping the document alive is
-              // what preserves scroll, form state and the embedded site's
-              // session across a tab switch. `inert` takes them out of the
-              // focus order so Tab cannot land inside an invisible frame.
-              className={cn(
-                "absolute inset-0 h-full w-full border-0 bg-background",
-                selected ? "z-10" : "pointer-events-none opacity-0",
-              )}
-              data-testid={`web-panel-frame-${instance.instanceId}`}
-              inert={!selected}
-              key={instance.instanceId}
-              onLoad={() => {
-                loadedRef.current.add(instance.instanceId);
-                setStalled((current) =>
-                  current[instance.instanceId]
-                    ? { ...current, [instance.instanceId]: false }
-                    : current,
-                );
-              }}
-              src={withThemeParam(panel.url, isDark)}
-              title={panel.label}
-            />
-          );
-        })}
+        {inAppBrowser ? (
+          activePanel && activeUrl ? (
+            <div
+              className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center"
+              data-testid="web-panel-in-app"
+            >
+              <p className="max-w-sm text-sm text-muted-foreground">
+                {activePanel.label} opens in an in-app browser on iPhone, so its
+                sign-in works.
+              </p>
+              <Button
+                onClick={() => openInAppBrowser(activeUrl)}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                Open {activePanel.label}
+              </Button>
+            </div>
+          ) : null
+        ) : (
+          dock.instances.map((instance) => {
+            const panel = findPanel(dock.panels, instance.panelId);
+            if (!panel) {
+              return null;
+            }
+            const selected = instance.instanceId === dock.activeInstanceId;
+            return (
+              <iframe
+                // Inactive frames stay MOUNTED and are hidden with opacity, not
+                // `display: none` or an unmount: keeping the document alive is
+                // what preserves scroll, form state and the embedded site's
+                // session across a tab switch. `inert` takes them out of the
+                // focus order so Tab cannot land inside an invisible frame.
+                className={cn(
+                  "absolute inset-0 h-full w-full border-0 bg-background",
+                  selected ? "z-10" : "pointer-events-none opacity-0",
+                )}
+                data-testid={`web-panel-frame-${instance.instanceId}`}
+                inert={!selected}
+                key={instance.instanceId}
+                onLoad={() => {
+                  loadedRef.current.add(instance.instanceId);
+                  setStalled((current) =>
+                    current[instance.instanceId]
+                      ? { ...current, [instance.instanceId]: false }
+                      : current,
+                  );
+                }}
+                src={withThemeParam(panel.url, isDark)}
+                title={panel.label}
+              />
+            );
+          })
+        )}
 
         {dock.instances.length === 0 ? <EmptyDock /> : null}
 
-        {active && stalled[active.instanceId] && activePanel ? (
+        {!inAppBrowser &&
+        active &&
+        stalled[active.instanceId] &&
+        activePanel ? (
           <div
             className="absolute inset-x-0 bottom-0 z-20 flex items-center justify-between gap-3 border-t border-border bg-card/95 px-4 py-2"
             data-testid="web-panel-stalled"
