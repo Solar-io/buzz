@@ -2,14 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Copy } from "lucide-react";
 import { Button } from "@/shared/ui/button";
-import { Input } from "@/shared/ui/input";
 import type { RelaySession } from "@/shared/api/relay-session";
 import type { Profile } from "@/features/channels/hooks";
 import { AuthorAvatar } from "@/features/channels/ui/ChannelTimeline";
-import {
-  sendAgentControl,
-  type AgentControlCommand,
-} from "../lib/agentControl";
+import { uploadBlob } from "@/shared/api/blossom";
+import { acceptAvatarDescriptor } from "../lib/avatarUpload";
+import { modelSuggestions } from "../lib/modelSuggestions";
 import {
   buildUpdateCommand,
   prefillEditForm,
@@ -31,6 +29,8 @@ import {
   TimeoutFields,
 } from "./AgentFormSections";
 import { AgentWorkingDot } from "./AgentRosterSidebar";
+import { DefinitionEditorSection } from "./DefinitionEditorSection";
+import { LiveControlSection } from "./LiveControlSection";
 import {
   MemoryRefreshButton,
   MemorySection,
@@ -46,14 +46,7 @@ import {
  */
 
 const LINKED_QUAD_NOTE =
-  "This agent's prompt, model, and provider come from its definition — edit them in the desktop app.";
-
-function newRequestId(): string {
-  return (
-    globalThis.crypto?.randomUUID?.() ??
-    `req-${Date.now()}-${Math.random().toString(16).slice(2)}`
-  );
-}
+  "Prompt, model, and provider come from this agent's definition — edit them in the Definition section above.";
 
 export function AgentConfigPanel({
   row,
@@ -62,6 +55,7 @@ export function AgentConfigPanel({
   session,
   catalogs,
   registryModels,
+  roster,
   viewerIsOwner,
   onDeleted,
 }: {
@@ -71,6 +65,8 @@ export function AgentConfigPanel({
   session: RelaySession;
   catalogs: DesktopCatalog[];
   registryModels: string[];
+  /** Full roster — the shared-definition count for the Definition editor. */
+  roster: readonly RosterRow[];
   /**
    * Does the viewer own this agent? Drives the read-only NIP-AE memory
    * section only. See {@link MemorySectionBlock} — this is a UX gate, not a
@@ -90,6 +86,7 @@ export function AgentConfigPanel({
   const [busy, setBusy] = useState(false);
   const [requestId, setRequestId] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [avatarUploading, setAvatarUploading] = useState(false);
 
   const set = <K extends keyof EditAgentFormValue>(
     key: K,
@@ -137,6 +134,24 @@ export function AgentConfigPanel({
     }
   };
 
+  const uploadAvatar = async (file: File) => {
+    setAvatarUploading(true);
+    try {
+      const accepted = acceptAvatarDescriptor(await uploadBlob(file));
+      if ("error" in accepted) {
+        toast.error(accepted.error);
+        return;
+      }
+      set("avatarUrl", accepted.url);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not upload that image.",
+      );
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
   const lifecycle = (action: "start" | "stop" | "restart") =>
     void admin.send(
       { action, request: { pubkey: row.pubkey } },
@@ -164,6 +179,16 @@ export function AgentConfigPanel({
   return (
     <div className="space-y-6">
       <IdentitySection row={row} profile={profile} />
+      {row.personaLinked && (
+        <DefinitionEditorSection
+          row={row}
+          roster={roster}
+          session={session}
+          catalogs={catalogs}
+          admin={admin}
+          registryModels={registryModels}
+        />
+      )}
       <IdentityFields
         name={value.name}
         onNameChange={(next) => set("name", next)}
@@ -175,6 +200,8 @@ export function AgentConfigPanel({
         onAvatarUrlChange={
           phase2 ? (next) => set("avatarUrl", next) : undefined
         }
+        onAvatarUpload={phase2 ? (file) => void uploadAvatar(file) : undefined}
+        avatarUploading={avatarUploading}
         avatarNote={
           phase2
             ? "Leave unchanged to keep the current picture; clearing the field resets it to the harness default."
@@ -242,7 +269,11 @@ export function AgentConfigPanel({
           onChange={(next) => set("effort", next)}
         />
       )}
-      <LiveControlSection session={session} agentPubkey={row.pubkey} />
+      <LiveControlSection
+        session={session}
+        agentPubkey={row.pubkey}
+        modelSuggestions={modelSuggestions("", registryModels)}
+      />
       <MemorySectionBlock
         agentPubkey={row.pubkey}
         viewerIsOwner={viewerIsOwner}
@@ -325,10 +356,6 @@ function IdentitySection({
 }
 
 /**
- * Live owner→agent control for the SELECTED agent (no dropdown — the roster
- * is the picker). Same frames the desktop's model picker sends.
- */
-/**
  * Read-only NIP-AE agent memory, mounted in the selected agent's detail pane.
  *
  * The desktop mounts `MemorySection` in its agent profile panel; the web
@@ -364,99 +391,6 @@ function MemorySectionBlock({
       <p className="text-xs text-muted-foreground">
         What this agent has remembered (NIP-AE). Read-only here — memories are
         written by the agent itself.
-      </p>
-    </div>
-  );
-}
-
-function LiveControlSection({
-  session,
-  agentPubkey,
-}: {
-  session: RelaySession;
-  agentPubkey: string;
-}) {
-  const [channelId, setChannelId] = useState("");
-  const [modelId, setModelId] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const run = async (command: AgentControlCommand) => {
-    setBusy(true);
-    try {
-      const result = await sendAgentControl(session, agentPubkey, command);
-      if (result.ok) {
-        toast.success(result.message);
-      } else {
-        toast.error(result.message);
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="space-y-3">
-      <SectionHeading>Live control</SectionHeading>
-      <div className="block space-y-1">
-        <span className="block text-sm text-muted-foreground">
-          Channel id (the conversation the command applies to)
-        </span>
-        <Input
-          aria-label="Channel id"
-          value={channelId}
-          onChange={(event) => setChannelId(event.target.value)}
-          placeholder="channel UUID — copy from the URL ?c=…"
-          className="font-mono text-xs"
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
-        />
-      </div>
-      <div className="flex flex-wrap items-end gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busy || !channelId.trim()}
-          onClick={() =>
-            void run({
-              type: "cancel_turn",
-              channelId: channelId.trim(),
-              requestId: newRequestId(),
-            })
-          }
-        >
-          Cancel current turn
-        </Button>
-        <div className="min-w-0 flex-1 space-y-1">
-          <span className="block text-sm text-muted-foreground">Model id</span>
-          <Input
-            aria-label="Model id"
-            value={modelId}
-            onChange={(event) => setModelId(event.target.value)}
-            placeholder="e.g. glm-5.3"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-          />
-        </div>
-        <Button
-          size="sm"
-          disabled={busy || !modelId.trim() || !channelId.trim()}
-          onClick={() =>
-            void run({
-              type: "switch_model",
-              channelId: channelId.trim(),
-              modelId: modelId.trim(),
-              requestId: newRequestId(),
-            })
-          }
-        >
-          Switch model
-        </Button>
-      </div>
-      <p className="text-xs text-muted-foreground">
-        Commands ride the relay's owner→agent control channel — the same frames
-        the desktop's model picker sends.
       </p>
     </div>
   );

@@ -44,3 +44,21 @@ export function modelSuggestions(
   const mirror = known ?? Object.values(MODEL_SUGGESTIONS_BY_PROVIDER).flat();
   return merged([...mirror, ...registryModels]);
 }
+
+/**
+ * Models actually in use by the owner: the union of the kind-30177 registry
+ * models (unlinked agents) and the kind-30175 definition models (linked
+ * agents, whose slimmed 30177 omits the model). Deduped, sorted, no blanks.
+ */
+export function observedModels(
+  registry: readonly { model: string }[],
+  personas: ReadonlyMap<string, { model: string }>,
+): string[] {
+  const all = [
+    ...registry.map((entry) => entry.model),
+    ...Array.from(personas.values(), (persona) => persona.model),
+  ]
+    .map((model) => model.trim())
+    .filter((model) => model.length > 0);
+  return merged(all);
+}

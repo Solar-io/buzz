@@ -21,6 +21,8 @@ export interface PersonaDefinition {
   runtime: string;
   /** Event created_at — the merge key for replaceable updates. */
   updatedAt: number;
+  /** The raw latest 30175 — the base a web edit republishes from. */
+  event: SignedNostrEvent;
 }
 
 /** Parse one 30175 definition; null for wrong-shape events. */
@@ -50,17 +52,27 @@ export function personaFromEvent(
     provider: str("provider"),
     runtime: str("runtime"),
     updatedAt: event.created_at,
+    event,
   };
 }
 
-/** Newest-wins merge into a definition map (replaceable coordinate = id). */
+/**
+ * Newest-wins merge into a definition map (replaceable coordinate = id).
+ * NIP-33 tiebreak: on equal created_at the lower event id wins.
+ */
 export function mergePersona(
   personas: Map<string, PersonaDefinition>,
   persona: PersonaDefinition,
 ): Map<string, PersonaDefinition> {
   const existing = personas.get(persona.id);
-  if (existing && existing.updatedAt >= persona.updatedAt) {
-    return personas;
+  if (existing) {
+    const newer = persona.updatedAt > existing.updatedAt;
+    const tieWin =
+      persona.updatedAt === existing.updatedAt &&
+      persona.event.id < existing.event.id;
+    if (!newer && !tieWin) {
+      return personas;
+    }
   }
   const next = new Map(personas);
   next.set(persona.id, persona);

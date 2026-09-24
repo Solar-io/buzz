@@ -57,6 +57,8 @@ export function IdentityFields({
   avatarUrl,
   onAvatarUrlChange,
   avatarNote,
+  onAvatarUpload,
+  avatarUploading = false,
 }: {
   name: string;
   onNameChange: (next: string) => void;
@@ -69,6 +71,9 @@ export function IdentityFields({
   onAvatarUrlChange?: (next: string) => void;
   /** Edit mode: explains the keep/clear semantics under the input. */
   avatarNote?: string;
+  /** When present, an Upload button picks an image and hands it here. */
+  onAvatarUpload?: (file: File) => void;
+  avatarUploading?: boolean;
 }) {
   return (
     <div className="space-y-3">
@@ -104,19 +109,42 @@ export function IdentityFields({
           <span className="block text-sm text-muted-foreground">
             Avatar URL
           </span>
-          <Input
-            aria-label="Avatar URL"
-            value={avatarUrl ?? ""}
-            onChange={(event) => onAvatarUrlChange(event.target.value)}
-            placeholder={
-              avatarNote
-                ? "Leave unchanged to keep the current picture"
-                : "https://…"
-            }
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-          />
+          <div className="flex items-center gap-2">
+            <Input
+              aria-label="Avatar URL"
+              value={avatarUrl ?? ""}
+              onChange={(event) => onAvatarUrlChange(event.target.value)}
+              placeholder={
+                avatarNote
+                  ? "Leave unchanged to keep the current picture"
+                  : "https://…"
+              }
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+            />
+            {onAvatarUpload && (
+              <label className="shrink-0">
+                <input
+                  type="file"
+                  accept="image/*"
+                  aria-label="Upload avatar"
+                  className="sr-only"
+                  disabled={avatarUploading}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = "";
+                    if (file) {
+                      onAvatarUpload(file);
+                    }
+                  }}
+                />
+                <span className="inline-flex h-9 cursor-pointer items-center rounded-md border border-input px-3 text-sm hover:bg-accent">
+                  {avatarUploading ? "Uploading…" : "Upload"}
+                </span>
+              </label>
+            )}
+          </div>
           {avatarNote && (
             <span className="block text-xs text-muted-foreground">
               {avatarNote}
@@ -144,6 +172,8 @@ export function ModelProviderFields({
   onCustomArgsChange,
   catalogs,
   harnessKeep,
+  hideHarness = false,
+  labelPrefix = "",
 }: {
   model: string;
   onModelChange: (next: string) => void;
@@ -163,6 +193,10 @@ export function ModelProviderFields({
   catalogs: DesktopCatalog[];
   /** Edit mode prepends "Keep current" to the harness list. */
   harnessKeep?: boolean;
+  /** Definition editor: model/provider only, no harness block. */
+  hideHarness?: boolean;
+  /** Prefix for aria-labels so two instances on one page stay distinct. */
+  labelPrefix?: string;
 }) {
   const listId = useId();
   const providerListId = useId();
@@ -185,7 +219,7 @@ export function ModelProviderFields({
         <div className="min-w-0 flex-1 space-y-1">
           <span className="block text-sm text-muted-foreground">Model</span>
           <Input
-            aria-label="Model"
+            aria-label={`${labelPrefix}Model`}
             value={model}
             onChange={(event) => onModelChange(event.target.value)}
             placeholder="e.g. glm-5.3"
@@ -199,7 +233,7 @@ export function ModelProviderFields({
         <div className="min-w-0 flex-1 space-y-1">
           <span className="block text-sm text-muted-foreground">Provider</span>
           <Input
-            aria-label="Provider"
+            aria-label={`${labelPrefix}Provider`}
             value={provider}
             onChange={(event) => onProviderChange(event.target.value)}
             placeholder="e.g. zai"
@@ -216,14 +250,16 @@ export function ModelProviderFields({
           {quadNote}
         </p>
       )}
-      <HarnessSelect
-        value={harnessId}
-        onChange={onHarnessChange}
-        catalogs={catalogs}
-        ariaLabel="Harness"
-        includeKeep={harnessKeep}
-      />
-      {harnessId === "__custom" && (
+      {!hideHarness && (
+        <HarnessSelect
+          value={harnessId}
+          onChange={onHarnessChange}
+          catalogs={catalogs}
+          ariaLabel="Harness"
+          includeKeep={harnessKeep}
+        />
+      )}
+      {!hideHarness && harnessId === "__custom" && (
         <div className="flex gap-2">
           <div className="min-w-0 flex-1 space-y-1">
             <span className="block text-sm text-muted-foreground">Command</span>

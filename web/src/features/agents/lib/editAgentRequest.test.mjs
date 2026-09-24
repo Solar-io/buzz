@@ -259,7 +259,7 @@ test("linked entry refuses quad edits with the definition error", () => {
   );
   assert.match(
     "error" in promptEdit ? promptEdit.error : "",
-    /comes from its definition/,
+    /comes from its definition — edit it in the Definition section\./,
   );
   const modelEdit = buildUpdateCommand(
     base,
