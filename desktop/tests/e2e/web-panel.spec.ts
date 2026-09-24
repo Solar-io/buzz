@@ -5,7 +5,7 @@ import { installMockBridge } from "../helpers/bridge";
 // The panel URL is a live tailnet origin; e2e must not depend on it (or on
 // its auth), so every request it would make is aborted at the network layer.
 // Assertions read iframe attributes, never iframe content.
-const PANEL_URL = "https://crichton.tailb3d4b8.ts.net:6201/?panel=files";
+const PANEL_URL = "https://crichton.tailb3d4b8.ts.net:6831/";
 
 // This spec covers the IFRAME FALLBACK path only: the e2e build forces
 // `render: "iframe"` (see webPanels.config.ts — plain chromium has no Tauri

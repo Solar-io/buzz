@@ -15,7 +15,7 @@ import {
   resetWebPanelRegistryForTests,
 } from "./webPanelRegistry.ts";
 
-const FILES_URL = "https://crichton.tailb3d4b8.ts.net:6201/?panel=files";
+const FILES_URL = "https://crichton.tailb3d4b8.ts.net:6831/";
 
 function frameSrcOrigins() {
   const csp = tauriConf.app.security.csp;

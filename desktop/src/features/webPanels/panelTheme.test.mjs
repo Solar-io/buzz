@@ -121,8 +121,8 @@ test("collectPanelTheme reads resolved vars, normalises, and derives mode from t
 
 test("frameOrigin pins postMessage targets to the frame's own origin", () => {
   assert.equal(
-    mod.frameOrigin("https://crichton.tailb3d4b8.ts.net:6201/?panel=files"),
-    "https://crichton.tailb3d4b8.ts.net:6201",
+    mod.frameOrigin("https://crichton.tailb3d4b8.ts.net:6831/"),
+    "https://crichton.tailb3d4b8.ts.net:6831",
   );
   assert.equal(mod.frameOrigin("about:blank"), null);
   assert.equal(mod.frameOrigin("not a url"), null);

@@ -80,7 +80,7 @@ export const WEB_PANELS: readonly WebPanelDef[] = [
     label: "Files",
     title: "Files",
     icon: Folder,
-    url: "https://crichton.tailb3d4b8.ts.net:6201/?panel=files",
+    url: "https://crichton.tailb3d4b8.ts.net:6831/",
     render: resolveRenderMode("native", E2E_BUILD_FORCES_IFRAME),
     themePush: true,
   },

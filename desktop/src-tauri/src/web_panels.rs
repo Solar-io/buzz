@@ -100,7 +100,7 @@ struct PanelType {
 const PANEL_TYPES: &[PanelType] = &[PanelType {
     id: "files",
     login_title: "Files login",
-    url: "https://crichton.tailb3d4b8.ts.net:6201/?panel=files",
+    url: "https://crichton.tailb3d4b8.ts.net:6831/",
     theme_push: true,
     extra_frame_origins: &["https://nas.tailb3d4b8.ts.net:6041"],
 }];
@@ -647,7 +647,7 @@ mod tests {
         assert_eq!(title, "Files login");
         assert_eq!(
             url.as_str(),
-            "https://crichton.tailb3d4b8.ts.net:6201/?panel=files"
+            "https://crichton.tailb3d4b8.ts.net:6831/"
         );
     }
 
@@ -695,7 +695,7 @@ mod tests {
         let (_, static_home) = resolve_panel_type(None, "files").expect("static resolves");
         assert_eq!(
             static_home.as_str(),
-            "https://crichton.tailb3d4b8.ts.net:6201/?panel=files"
+            "https://crichton.tailb3d4b8.ts.net:6831/"
         );
         with_custom_store(|_| {
             custom_panels::add_entry(None, "Wiki", "https://wiki.example/docs").expect("seed site");
@@ -772,11 +772,11 @@ mod tests {
 
     #[test]
     fn non_https_urls_are_refused() {
-        let http: tauri::Url = "http://crichton.tailb3d4b8.ts.net:6201/"
+        let http: tauri::Url = "http://crichton.tailb3d4b8.ts.net:6831/"
             .parse()
             .expect("fixture url parses");
         assert!(require_https(&http).is_err());
-        let https: tauri::Url = "https://crichton.tailb3d4b8.ts.net:6201/"
+        let https: tauri::Url = "https://crichton.tailb3d4b8.ts.net:6831/"
             .parse()
             .expect("fixture url parses");
         assert!(require_https(&https).is_ok());
@@ -896,7 +896,7 @@ mod tests {
     #[test]
     fn theme_is_reapplied_only_on_the_panel_origin() {
         let panel = panel_url();
-        let own: tauri::Url = "https://crichton.tailb3d4b8.ts.net:6201/x"
+        let own: tauri::Url = "https://crichton.tailb3d4b8.ts.net:6831/x"
             .parse()
             .expect("parses");
         let office: tauri::Url = "https://nas.tailb3d4b8.ts.net:6041/"
@@ -909,7 +909,7 @@ mod tests {
     }
 
     fn panel_url() -> tauri::Url {
-        "https://crichton.tailb3d4b8.ts.net:6201/?panel=files"
+        "https://crichton.tailb3d4b8.ts.net:6831/"
             .parse()
             .expect("fixture url parses")
     }
@@ -918,9 +918,9 @@ mod tests {
     fn navigation_allows_the_panel_origin_exactly() {
         let panel = panel_url();
         for allowed in [
-            "https://crichton.tailb3d4b8.ts.net:6201/?panel=files",
-            "https://crichton.tailb3d4b8.ts.net:6201/auth/callback?code=x",
-            "https://crichton.tailb3d4b8.ts.net:6201",
+            "https://crichton.tailb3d4b8.ts.net:6831/",
+            "https://crichton.tailb3d4b8.ts.net:6831/auth/callback?code=x",
+            "https://crichton.tailb3d4b8.ts.net:6831",
         ] {
             let url: tauri::Url = allowed.parse().expect("fixture url parses");
             assert!(
@@ -956,11 +956,11 @@ mod tests {
             "https://crichton.tailb3d4b8.ts.net:6202/",
             "https://other.supabase.co/",
             // Non-https schemes.
-            "http://crichton.tailb3d4b8.ts.net:6201/",
+            "http://crichton.tailb3d4b8.ts.net:6831/",
             "http://github.com/",
             "about:blank",
             "data:text/html,hello",
-            "blob:https://crichton.tailb3d4b8.ts.net:6201/x",
+            "blob:https://crichton.tailb3d4b8.ts.net:6831/x",
             "file:///etc/passwd",
             // OAuth hosts on non-default ports.
             "https://github.com:8443/",
@@ -1068,7 +1068,7 @@ mod tests {
         assert_eq!(request.label, "webpanel-files-9");
         assert_eq!(
             request.url.as_str(),
-            "https://crichton.tailb3d4b8.ts.net:6201/?panel=files"
+            "https://crichton.tailb3d4b8.ts.net:6831/"
         );
     }
 }
