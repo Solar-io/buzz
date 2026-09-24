@@ -185,9 +185,13 @@ export function CodeBlock({
         )}
       </button>
 
+      {/* text-foreground is load-bearing: this renders inside `.prose`, whose
+          `pre` colour is the typography plugin's gray-200 — meant for its own
+          dark code background. Over bg-muted that is pale-on-pale in every
+          light theme; unhighlighted blocks and uncoloured tokens inherit it. */}
       <pre
         className={cn(
-          "overflow-x-auto rounded-md border border-border/60 bg-muted/40 font-mono text-sm",
+          "overflow-x-auto rounded-md border border-border/60 bg-muted/40 font-mono text-sm text-foreground",
           language ? "px-3 pt-6 pb-3" : "p-3",
         )}
       >
