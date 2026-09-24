@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { PersonaDefinition } from "../lib/personas";
 import { toast } from "sonner";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
@@ -43,17 +44,9 @@ export function DefinitionEditorSection({
   admin: ReturnType<typeof useAdminCommands>;
   registryModels: string[];
 }) {
-  const persona = row.persona;
-  const [name, setName] = useState(persona?.name ?? "");
-  const [prompt, setPrompt] = useState(persona?.systemPrompt ?? "");
-  const [model, setModel] = useState(persona?.model ?? "");
-  const [provider, setProvider] = useState(persona?.provider ?? "");
-  const [published, setPublished] = useState<SignedNostrEvent | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [restartOffer, setRestartOffer] = useState(false);
-
   const editable = definitionEditable(row);
-  if (!editable.ok || !persona) {
+  const [published, setPublished] = useState<SignedNostrEvent | null>(null);
+  if (!editable.ok || !row.persona) {
     return (
       <div className="space-y-2">
         <SectionHeading>Definition</SectionHeading>
@@ -63,14 +56,65 @@ export function DefinitionEditorSection({
       </div>
     );
   }
+  return (
+    <DefinitionEditor
+      persona={row.persona}
+      sharingRows={agentsSharingDefinition(roster, row.persona.id)}
+      base={definitionBase(row.persona, published)}
+      onPublished={setPublished}
+      session={session}
+      catalogs={catalogs}
+      admin={admin}
+      registryModels={registryModels}
+    />
+  );
+}
 
-  // The newer of the relay's head and our own last publish, so a second
-  // save before the relay echoes still gets a strictly greater created_at.
-  const base =
-    published && published.created_at >= persona.event.created_at
-      ? published
-      : persona.event;
-  const shared = agentsSharingDefinition(roster, persona.id);
+/**
+ * The newer of the relay's head and our own last publish, so a second save
+ * before the relay echoes still gets a strictly greater created_at. Every
+ * definition mutation (edit, share toggle, delete) republishes from this.
+ */
+export function definitionBase(
+  persona: PersonaDefinition,
+  published: SignedNostrEvent | null,
+): SignedNostrEvent {
+  return published && published.created_at >= persona.event.created_at
+    ? published
+    : persona.event;
+}
+
+/**
+ * The definition editor proper — shared by the agent config panel (via the
+ * adapter above) and the standalone Definitions view. The caller owns the
+ * base (see definitionBase) so edits and actions stay monotonic together.
+ */
+export function DefinitionEditor({
+  persona,
+  sharingRows: shared,
+  base,
+  onPublished,
+  session,
+  catalogs,
+  admin,
+  registryModels,
+}: {
+  persona: PersonaDefinition;
+  /** Roster rows linked to this definition (restart offer + count). */
+  sharingRows: readonly RosterRow[];
+  base: SignedNostrEvent;
+  onPublished: (event: SignedNostrEvent) => void;
+  session: RelaySession;
+  catalogs: DesktopCatalog[];
+  admin: ReturnType<typeof useAdminCommands>;
+  registryModels: string[];
+}) {
+  const [name, setName] = useState(persona.name);
+  const [prompt, setPrompt] = useState(persona.systemPrompt);
+  const [model, setModel] = useState(persona.model);
+  const [provider, setProvider] = useState(persona.provider);
+  const [busy, setBusy] = useState(false);
+  const [restartOffer, setRestartOffer] = useState(false);
 
   const save = async () => {
     if (busy) {
@@ -99,7 +143,7 @@ export function DefinitionEditorSection({
         return;
       }
       toast.success("Definition saved");
-      setPublished(signed);
+      onPublished(signed);
       setRestartOffer(true);
     } catch (error) {
       toast.error(

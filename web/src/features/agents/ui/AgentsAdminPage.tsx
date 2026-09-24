@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { ArrowLeft, BookOpen, Plus, Users } from "lucide-react";
+import { ArrowLeft, BookOpen, FileText, Plus, Users } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { Button } from "@/shared/ui/button";
 import { useAuth } from "@/features/auth/ui/AuthProvider";
@@ -17,6 +17,8 @@ import { useAdminCommands, PendingCommandsStrip } from "./AgentAdminPanel";
 import { AgentRosterSidebar, AgentWorkingDot } from "./AgentRosterSidebar";
 import { AgentConfigPanel } from "./AgentConfigPanel";
 import { AgentCreateForm } from "./AgentCreateForm";
+import { DefinitionsPanel } from "./DefinitionsPanel";
+import { ImportSnapshotButton } from "./ImportSnapshotButton";
 import { PersonaCatalogPanel } from "./PersonaCatalogPanel";
 import { TeamsPanel } from "./TeamsPanel";
 
@@ -40,14 +42,17 @@ type Mode =
   | { kind: "create" }
   | { kind: "agent"; pubkey: string }
   | { kind: "catalog" }
+  | { kind: "definitions" }
   | { kind: "teams" };
 
 export function AgentsAdminPage() {
   const { canSign } = useAuth();
   const registry = useAgentRegistry();
   const catalogs = useDesktopCatalogs();
-  const personas = usePersonas();
-  const teams = useTeams();
+  const personasState = usePersonas();
+  const personas = personasState.map;
+  const teamsState = useTeams();
+  const teams = teamsState.map;
   const { session, status } = useRelaySession();
   const admin = useAdminCommands(session, status);
   const [mode, setMode] = useState<Mode>({ kind: "roster" });
@@ -119,6 +124,14 @@ export function AgentsAdminPage() {
           <Button
             size="sm"
             variant="outline"
+            onClick={() => setMode({ kind: "definitions" })}
+          >
+            <FileText aria-hidden className="mr-1 h-4 w-4" />
+            Definitions
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
             onClick={() => setMode({ kind: "teams" })}
           >
             <Users aria-hidden className="mr-1 h-4 w-4" />
@@ -132,6 +145,7 @@ export function AgentsAdminPage() {
             <Plus aria-hidden className="mr-1 h-4 w-4" />
             New agent
           </Button>
+          <ImportSnapshotButton />
           <Button asChild variant="ghost" size="sm">
             <Link to="/repos/settings">Back to settings</Link>
           </Button>
@@ -215,12 +229,35 @@ export function AgentsAdminPage() {
               <PersonaCatalogPanel admin={admin} catalogs={catalogs} />
             </PaneShell>
           )}
+          {mode.kind === "definitions" && (
+            <PaneShell
+              title="Agent definitions"
+              onBack={() => setMode({ kind: "roster" })}
+            >
+              <DefinitionsPanel
+                personas={personas}
+                forget={personasState.forget}
+                teams={teams}
+                roster={roster}
+                session={session}
+                catalogs={catalogs}
+                admin={admin}
+                registryModels={registryModels}
+              />
+            </PaneShell>
+          )}
           {mode.kind === "teams" && (
             <PaneShell
               title="Agent teams"
               onBack={() => setMode({ kind: "roster" })}
             >
-              <TeamsPanel teams={teams} personas={personas} />
+              <TeamsPanel
+                teams={teams}
+                personas={personas}
+                roster={roster}
+                session={session}
+                forget={teamsState.forget}
+              />
             </PaneShell>
           )}
         </div>

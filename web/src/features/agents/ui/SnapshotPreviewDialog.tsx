@@ -8,6 +8,7 @@ import {
   type SnapshotAddFeedback,
 } from "../lib/pendingCommands.ts";
 import { buildSnapshotCreate } from "../lib/snapshotCreateRequest.ts";
+import { readSnapshotFile } from "../lib/snapshotFile.ts";
 import {
   decodeSnapshotBytes,
   fetchSnapshotBytesWeb,
@@ -51,14 +52,33 @@ type DialogState =
   | { phase: "locked"; refusal: string }
   | { phase: "team" };
 
+/** Where the snapshot bytes come from: a timeline card, or a picked file. */
+export type SnapshotSource =
+  | { kind: "card"; card: ResolvedSnapshotCard }
+  | { kind: "file"; filename: string; bytes: Uint8Array };
+
+function decodeState(bytes: Uint8Array): DialogState {
+  const decoded = decodeSnapshotBytes(bytes);
+  if (decoded.kind === "agent") {
+    return { phase: "agent", snapshot: decoded.snapshot };
+  }
+  if (decoded.kind === "locked") {
+    return { phase: "locked", refusal: decoded.refusal };
+  }
+  if (decoded.kind === "team") {
+    return { phase: "team" };
+  }
+  return { phase: "error", error: decoded.error };
+}
+
 export function SnapshotPreviewDialog({
-  card,
+  source,
   sharedBy,
   admin,
   catalogs,
   onClose,
 }: {
-  card: ResolvedSnapshotCard;
+  source: SnapshotSource;
   sharedBy?: string;
   admin: AdminCommandsApi;
   catalogs: DesktopCatalog[];
@@ -71,34 +91,59 @@ export function SnapshotPreviewDialog({
   } | null>(null);
   const inFlight = useRef(false);
 
+  // A file source has no card: its name stands in for the card's labels.
+  const card: Pick<
+    ResolvedSnapshotCard,
+    "displayName" | "filename" | "snapshotKind"
+  > =
+    source.kind === "card"
+      ? source.card
+      : {
+          displayName: source.filename,
+          filename: source.filename,
+          snapshotKind: source.filename.toLowerCase().includes(".team.")
+            ? "team"
+            : "agent",
+        };
+  const fileBytes = source.kind === "file" ? source.bytes : null;
+  const cardSource = source.kind === "card" ? source.card : null;
+
   useEffect(() => {
     let cancelled = false;
     setState({ phase: "fetching" });
     setSent(null);
-    if (card.snapshotKind === "team") {
+    if (fileBytes) {
+      // Local file: same caps + magic checks as the verified fetch (minus
+      // the sha step — the owner picked the file), then the same decoder.
+      const read = readSnapshotFile(card.filename, fileBytes);
+      setState(
+        "error" in read
+          ? { phase: "error", error: read.error }
+          : decodeState(read.bytes),
+      );
+      return;
+    }
+    if (!cardSource) {
+      return;
+    }
+    if (cardSource.snapshotKind === "team") {
       // Team members each need full rule-12 review — desktop-only. No fetch:
       // the download on the card is the byte-accurate path for teams.
       setState({ phase: "team" });
       return;
     }
     fetchSnapshotBytesWeb(
-      card.href,
-      { filename: card.filename, sha256: card.sha256, size: card.size },
+      cardSource.href,
+      {
+        filename: cardSource.filename,
+        sha256: cardSource.sha256,
+        size: cardSource.size,
+      },
       { signedFetch: fetchSignedBytes },
     )
       .then((bytes) => {
-        if (cancelled) {
-          return;
-        }
-        const decoded = decodeSnapshotBytes(bytes);
-        if (decoded.kind === "agent") {
-          setState({ phase: "agent", snapshot: decoded.snapshot });
-        } else if (decoded.kind === "locked") {
-          setState({ phase: "locked", refusal: decoded.refusal });
-        } else if (decoded.kind === "team") {
-          setState({ phase: "team" });
-        } else {
-          setState({ phase: "error", error: decoded.error });
+        if (!cancelled) {
+          setState(decodeState(bytes));
         }
       })
       .catch((error: unknown) => {
@@ -108,14 +153,14 @@ export function SnapshotPreviewDialog({
             error:
               error instanceof Error
                 ? error.message
-                : `Couldn't load this ${card.snapshotKind}. Try again.`,
+                : `Couldn't load this ${cardSource.snapshotKind}. Try again.`,
           });
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [card.href, card.filename, card.sha256, card.size, card.snapshotKind]);
+  }, [cardSource, fileBytes, card.filename]);
 
   const ack = sent ? admin.acks.get(sent.requestId) : undefined;
   // 1s re-render while the command ages without an ack — without a clock the
@@ -172,11 +217,13 @@ export function SnapshotPreviewDialog({
       >
         <header className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-3">
           <h2 className="min-w-0 flex-1 truncate text-base font-semibold">
-            {state.phase === "agent" || state.phase === "fetching"
-              ? card.displayName
-              : card.snapshotKind === "team"
-                ? "Team snapshot"
-                : "Agent snapshot"}
+            {state.phase === "agent" && source.kind === "file"
+              ? state.snapshot.displayName
+              : state.phase === "agent" || state.phase === "fetching"
+                ? card.displayName
+                : card.snapshotKind === "team"
+                  ? "Team snapshot"
+                  : "Agent snapshot"}
           </h2>
           <span className="shrink-0 text-xs text-muted-foreground">
             {card.filename}

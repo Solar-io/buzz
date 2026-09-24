@@ -15,6 +15,10 @@ import {
 } from "../lib/editAgentRequest";
 import { targetForAgent, type RosterRow } from "../lib/roster";
 import { controlsEnabled } from "../lib/adminCommandCapabilities";
+import {
+  apiKeyFieldVisible,
+  providerSecretEnvVar,
+} from "../lib/providerApiKey";
 import type { DesktopCatalog } from "../lib/desktopCatalog";
 import type { useAdminCommands } from "./AgentAdminPanel";
 import {
@@ -31,6 +35,7 @@ import {
 import { AgentWorkingDot } from "./AgentRosterSidebar";
 import { DefinitionEditorSection } from "./DefinitionEditorSection";
 import { LiveControlSection } from "./LiveControlSection";
+import { ProviderApiKeyField } from "./ProviderApiKeyField";
 import {
   MemoryRefreshButton,
   MemorySection,
@@ -112,6 +117,17 @@ export function AgentConfigPanel({
   // >= v2 — an older desktop parses the new fields but drops them at the
   // applier, which is exactly the half-applied state the gate prevents.
   const phase2 = controlsEnabled(catalogs, row.machines);
+  // API key: the effective provider/runtime decide which secret var (if
+  // any) the field targets. Linked → the definition's; else this edit's.
+  const keyProvider = row.persona ? row.persona.provider : value.provider;
+  const keyRuntime = row.persona?.runtime
+    ? row.persona.runtime
+    : value.harnessId !== "__keep" && value.harnessId !== "__custom"
+      ? value.harnessId
+      : null;
+  const keySecret = providerSecretEnvVar(keyProvider);
+  const keyVisible =
+    phase2 && keySecret !== null && apiKeyFieldVisible(keyProvider, keyRuntime);
   const pendingForAgent = admin.pending.filter((entry) =>
     entry.summary.includes(row.name),
   );
@@ -120,15 +136,28 @@ export function AgentConfigPanel({
     if (busy) {
       return;
     }
-    const built = buildUpdateCommand(row.entry, prefill, value);
+    const built = buildUpdateCommand(row.entry, prefill, {
+      ...value,
+      apiKeyEnvVar: keyVisible && keySecret ? keySecret.envVar : null,
+    });
     if ("error" in built) {
       toast.error(built.error);
       return;
     }
+    const keyChanged = keyVisible && value.apiKey.kind !== "keep";
     setBusy(true);
     try {
-      const id = await admin.send(built.command, `Update ${row.name}`, target);
+      // The pending label names the field, never the value.
+      const id = await admin.send(
+        built.command,
+        `Update ${row.name}${keyChanged ? ": API key" : ""}`,
+        target,
+      );
       setRequestId(id);
+      if (id && keyChanged) {
+        // The secret leaves component state as soon as it is sealed + sent.
+        set("apiKey", { kind: "keep" });
+      }
     } finally {
       setBusy(false);
     }
@@ -225,6 +254,15 @@ export function AgentConfigPanel({
         catalogs={catalogs}
         harnessKeep
       />
+      {keyVisible && keySecret && (
+        <ProviderApiKeyField
+          label={keySecret.label}
+          envVar={keySecret.envVar}
+          value={value.apiKey}
+          onChange={(next) => set("apiKey", next)}
+          linked={row.personaLinked}
+        />
+      )}
       <RuntimeFields
         parallelism={value.parallelism}
         onParallelismChange={(next) => set("parallelism", next)}

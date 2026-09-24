@@ -28,7 +28,7 @@ import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 
 export const TEAM_KIND = 30176;
 
-/** The read-only team projection the web panels render. */
+/** The team projection the web panels render. */
 export interface TeamView {
   /** Team id — the event's d tag (stable across replaces). */
   id: string;
@@ -43,6 +43,8 @@ export interface TeamView {
   updatedAt: number;
   /** Event id — the tie-break for mergeTeam (lower id wins a timestamp tie). */
   eventId: string;
+  /** The raw head — the base a web team edit republishes from. */
+  event: SignedNostrEvent;
 }
 
 /** Parse one 30176 team event; null for wrong-shape events. */
@@ -86,6 +88,7 @@ export function teamFromEvent(event: SignedNostrEvent): TeamView | null {
     personaIds,
     updatedAt: event.created_at,
     eventId: event.id,
+    event,
   };
 }
 

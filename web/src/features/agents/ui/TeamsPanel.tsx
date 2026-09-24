@@ -1,12 +1,24 @@
+import { useState } from "react";
+import { Plus } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/shared/ui/button";
+import type { RelaySession } from "@/shared/api/relay-session";
+import { ownPubkey } from "@/shared/lib/nostr-signer";
+import { buildCoordinateDelete } from "../lib/definitionManage.ts";
 import type { PersonaDefinition } from "../lib/personas.ts";
+import type { RosterRow } from "../lib/roster.ts";
+import { teamDeleteBlockers } from "../lib/teamEdit.ts";
 import type { TeamView } from "../lib/teamEvents.ts";
+import { publishSigned } from "./publishSigned.ts";
+import { TeamEditor } from "./TeamEditor.tsx";
 
 /**
- * Read-only teams view (Phase 3 §2.3 B13) — the owner's kind-30176 teams,
- * rendered from relay events only. There are deliberately NO actions here:
- * team create/edit/delete/deploy/share/import are desktop-only surfaces with
- * no protocol behind them (Phase 3 §3.4); a read-only view that hinted at
- * controls it cannot run would violate the honest-controls rule.
+ * The owner's kind-30176 teams, with create / edit / delete. Teams sync to
+ * the owner's desktops through 30176 (desktop's inbound team sync), exactly
+ * like a team created on another of their machines; deploy and team
+ * snapshots stay desktop-only. Delete publishes the desktop-identical a-tag
+ * tombstone and is refused for built-in / directory-backed (non-UUID) teams,
+ * membership-unknown teams, and teams whose members still back agents.
  *
  * Team instructions render as literal text in a <pre> (desktop AGENTS.md
  * rule 12: instructions are executable-adjacent shared text — never the chat
@@ -15,35 +27,96 @@ import type { TeamView } from "../lib/teamEvents.ts";
 export function TeamsPanel({
   teams,
   personas,
+  roster,
+  session,
+  forget,
 }: {
   teams: ReadonlyMap<string, TeamView>;
   personas: ReadonlyMap<string, PersonaDefinition>;
+  roster: readonly RosterRow[];
+  session: RelaySession;
+  forget: (id: string, tombstoneCreatedAt: number) => void;
 }) {
+  const [editing, setEditing] = useState<string | "new" | null>(null);
   const list = [...teams.values()].sort((left, right) =>
     left.name.localeCompare(right.name),
   );
 
-  if (list.length === 0) {
-    return (
-      <div className="space-y-3" data-testid="web-teams-empty">
-        <p className="text-sm text-muted-foreground">
-          No teams yet. Teams you create in the Buzz desktop app appear here.
-        </p>
-        <p className="text-xs text-muted-foreground">
-          Teams group agents you can add to a channel together. This view is
-          read-only.
-        </p>
-      </div>
+  const remove = async (team: TeamView) => {
+    const me = await ownPubkey();
+    if (me !== team.event.pubkey) {
+      toast.error("Only the team's owner can delete it.");
+      return;
+    }
+    const built = buildCoordinateDelete(
+      30176,
+      me,
+      team.id,
+      team.event.created_at,
+      Math.floor(Date.now() / 1000),
     );
-  }
+    if ("error" in built) {
+      toast.error(built.error);
+      return;
+    }
+    const result = await publishSigned(
+      session,
+      built.template,
+      "The relay rejected the deletion.",
+    );
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    forget(team.id, built.template.created_at);
+    toast.success(`Deleted ${team.name}`);
+  };
 
   return (
-    <div className="space-y-3" data-testid="web-teams-list">
-      {list.map((team) => (
-        <TeamCard key={team.id} team={team} personas={personas} />
-      ))}
+    <div
+      className="space-y-3"
+      data-testid={list.length === 0 ? "web-teams-empty" : "web-teams-list"}
+    >
+      {editing === "new" ? (
+        <TeamEditor
+          personas={personas}
+          session={session}
+          onDone={() => setEditing(null)}
+        />
+      ) : (
+        <Button size="sm" onClick={() => setEditing("new")}>
+          <Plus aria-hidden className="mr-1 h-4 w-4" />
+          New team
+        </Button>
+      )}
+      {list.length === 0 && editing !== "new" ? (
+        <p className="text-sm text-muted-foreground">
+          No teams yet. Teams group agents you can add to a channel together.
+        </p>
+      ) : null}
+      {list.map((team) =>
+        editing === team.id ? (
+          <TeamEditor
+            key={team.id}
+            team={team}
+            personas={personas}
+            session={session}
+            onDone={() => setEditing(null)}
+          />
+        ) : (
+          <TeamCard
+            key={team.id}
+            team={team}
+            personas={personas}
+            blocker={teamDeleteBlockers(team, roster)}
+            onEdit={() => setEditing(team.id)}
+            onDelete={() => remove(team)}
+          />
+        ),
+      )}
       <p className="text-xs text-muted-foreground">
-        Teams are created and deployed in the Buzz desktop app.
+        Teams sync to your desktop app. Deploying a team and team snapshots stay
+        in the desktop app.
       </p>
     </div>
   );
@@ -52,10 +125,18 @@ export function TeamsPanel({
 function TeamCard({
   team,
   personas,
+  blocker,
+  onEdit,
+  onDelete,
 }: {
   team: TeamView;
   personas: ReadonlyMap<string, PersonaDefinition>;
+  blocker: string | null;
+  onEdit: () => void;
+  onDelete: () => Promise<void>;
 }) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
   const resolved = team.personaIds
     .map((id) => personas.get(id))
     .filter((persona): persona is PersonaDefinition => persona !== undefined);
@@ -74,6 +155,48 @@ function TeamCard({
           </p>
         ) : null}
       </div>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" onClick={onEdit}>
+          Edit
+        </Button>
+        {confirming ? (
+          <>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={busy}
+              onClick={() => {
+                setBusy(true);
+                void onDelete().finally(() => {
+                  setBusy(false);
+                  setConfirming(false);
+                });
+              }}
+            >
+              Confirm delete
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setConfirming(false)}
+            >
+              Cancel
+            </Button>
+          </>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={blocker !== null}
+            onClick={() => setConfirming(true)}
+          >
+            Delete
+          </Button>
+        )}
+      </div>
+      {blocker ? (
+        <p className="text-xs text-muted-foreground">{blocker}</p>
+      ) : null}
 
       {team.instructions ? (
         <div>

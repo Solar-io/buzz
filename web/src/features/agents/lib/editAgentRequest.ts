@@ -7,6 +7,7 @@ import {
   THINKING_EFFORT_ENV_KEY,
   type EffortSelection,
 } from "./effortControl.ts";
+import { apiKeyPatch, type ApiKeySelection } from "./providerApiKey.ts";
 
 /**
  * Pure edit-form → update-command builder, testable without React. The
@@ -60,6 +61,10 @@ export interface EditAgentFormValue {
   startOnAppLaunch: "keep" | "on" | "off";
   /** Effort select state; see effortControl.ts. */
   effort: EffortSelection;
+  /** Provider API-key control (keep / set / clear); see providerApiKey.ts. */
+  apiKey: ApiKeySelection;
+  /** The env var the API-key control targets; null when the field is hidden. */
+  apiKeyEnvVar: string | null;
 }
 
 export interface EditAgentFormPrefill extends EditAgentFormValue {
@@ -110,6 +115,8 @@ export function prefillEditForm(
     maxTurnDurationSeconds: "",
     startOnAppLaunch: "keep",
     effort: "keep",
+    apiKey: { kind: "keep" },
+    apiKeyEnvVar: null,
     personaLinked: linked,
   };
 }
@@ -286,6 +293,17 @@ export function buildUpdateCommand(
     changed.harness = harness;
   }
 
+  // The API-key pick: a blind set/clear of the provider's secret env var.
+  // Never echoed anywhere — only the envVars/envVarsPatch value carries it.
+  let keyPatch: Record<string, string | null> = {};
+  if (value.apiKeyEnvVar !== null) {
+    const built = apiKeyPatch(value.apiKeyEnvVar, value.apiKey);
+    if (built !== undefined && "error" in built) {
+      return { error: String(built.error) };
+    }
+    keyPatch = (built as Record<string, string | null> | undefined) ?? {};
+  }
+
   if (value.envDirty) {
     const reserved = reservedKeyErrors(value.envRows);
     if (reserved.length > 0) {
@@ -310,11 +328,30 @@ export function buildUpdateCommand(
     } else if (value.effort !== "keep") {
       envVars[THINKING_EFFORT_ENV_KEY] = value.effort;
     }
+    // The API-key pick folds the same way as effort.
+    for (const [key, next] of Object.entries(keyPatch)) {
+      if (next === null) {
+        if (key in envVars) {
+          return {
+            error:
+              "The environment table sets the same key the API-key control would remove.",
+          };
+        }
+      } else {
+        envVars[key] = next;
+      }
+    }
     changed.envVars = envVars;
-  } else if (value.effort !== "keep") {
-    // Clean table: the effort pick rides the patch alone, touching nothing
-    // else in the stored env map.
-    changed.envVarsPatch = effortPatchFromSelection(value.effort);
+  } else {
+    // Clean table: the effort and API-key picks ride ONE patch, touching
+    // nothing else in the stored env map.
+    const patch = {
+      ...(effortPatchFromSelection(value.effort) ?? {}),
+      ...keyPatch,
+    };
+    if (Object.keys(patch).length > 0) {
+      changed.envVarsPatch = patch;
+    }
   }
 
   if (Object.keys(changed).length === 0) {
