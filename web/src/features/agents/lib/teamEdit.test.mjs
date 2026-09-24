@@ -116,7 +116,11 @@ test("update: absent instructions stays absent when left blank", () => {
 test("update: membership edit replaces the list; unchanged list is not a change", () => {
   const result = buildTeamUpdate(
     head(FULL),
-    edits({ description: "D", instructions: "old", personaIds: ["p1", "ghost", "p3"] }),
+    edits({
+      description: "D",
+      instructions: "old",
+      personaIds: ["p1", "ghost", "p3"],
+    }),
     5,
   );
   assert.deepEqual(JSON.parse(result.template.content).persona_ids, [
@@ -127,7 +131,11 @@ test("update: membership edit replaces the list; unchanged list is not a change"
   assert.equal(
     buildTeamUpdate(
       head(FULL),
-      edits({ description: "D", instructions: "old", personaIds: ["p1", "ghost"] }),
+      edits({
+        description: "D",
+        instructions: "old",
+        personaIds: ["p1", "ghost"],
+      }),
       5,
     ).error,
     "No changes to save.",
@@ -147,13 +155,19 @@ test("mergeMemberSelection preserves unresolved ids", () => {
 
 test("update: created_at is monotonic over the head", () => {
   assert.equal(
-    buildTeamUpdate(head(FULL), edits({ name: "N", description: "D", instructions: "old" }), 5)
-      .template.created_at,
+    buildTeamUpdate(
+      head(FULL),
+      edits({ name: "N", description: "D", instructions: "old" }),
+      5,
+    ).template.created_at,
     1001,
   );
   assert.equal(
-    buildTeamUpdate(head(FULL), edits({ name: "N", description: "D", instructions: "old" }), 9000)
-      .template.created_at,
+    buildTeamUpdate(
+      head(FULL),
+      edits({ name: "N", description: "D", instructions: "old" }),
+      9000,
+    ).template.created_at,
     9000,
   );
 });

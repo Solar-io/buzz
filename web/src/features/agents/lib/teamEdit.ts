@@ -125,7 +125,10 @@ export function buildTeamUpdate(
     changed = true;
   }
 
-  if (edits.personaIds !== null && !sameIds(content.persona_ids, edits.personaIds)) {
+  if (
+    edits.personaIds !== null &&
+    !sameIds(content.persona_ids, edits.personaIds)
+  ) {
     content.persona_ids = [...edits.personaIds];
     changed = true;
   }

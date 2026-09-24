@@ -170,15 +170,12 @@ export function injectSnapshotText(
  */
 export const PLACEHOLDER_PNG: Uint8Array = concat([
   new Uint8Array(SIGNATURE),
-  makeChunk(
-    "IHDR",
-    new Uint8Array([0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]),
-  ),
+  makeChunk("IHDR", new Uint8Array([0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0])),
   makeChunk(
     "IDAT",
     new Uint8Array([
-      0x78, 0x01, 0x01, 0x05, 0x00, 0xfa, 0xff, 0, 0, 0, 0, 0, 0x00, 0x05,
-      0x00, 0x01,
+      0x78, 0x01, 0x01, 0x05, 0x00, 0xfa, 0xff, 0, 0, 0, 0, 0, 0x00, 0x05, 0x00,
+      0x01,
     ]),
   ),
   makeChunk("IEND", new Uint8Array(0)),

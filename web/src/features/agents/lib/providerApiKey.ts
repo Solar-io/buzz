@@ -8,26 +8,33 @@
  * clear. Pure, React-free.
  */
 
-const PROVIDER_SECRETS: Readonly<
-  Record<string, { envVar: string; label: string }>
-> = {
-  anthropic: { envVar: "ANTHROPIC_API_KEY", label: "Anthropic API Key" },
-  openai: { envVar: "OPENAI_COMPAT_API_KEY", label: "OpenAI Runtime API Key" },
-  "openai-compat": {
-    envVar: "OPENAI_COMPAT_API_KEY",
-    label: "OpenAI-compatible Runtime API Key",
-  },
-  openrouter: { envVar: "OPENROUTER_API_KEY", label: "OpenRouter API Key" },
-};
+// A Map, not an object literal: a provider string like "toString" must not
+// resolve through the prototype chain.
+const PROVIDER_SECRETS: ReadonlyMap<string, { envVar: string; label: string }> =
+  new Map([
+    ["anthropic", { envVar: "ANTHROPIC_API_KEY", label: "Anthropic API Key" }],
+    [
+      "openai",
+      { envVar: "OPENAI_COMPAT_API_KEY", label: "OpenAI Runtime API Key" },
+    ],
+    [
+      "openai-compat",
+      {
+        envVar: "OPENAI_COMPAT_API_KEY",
+        label: "OpenAI-compatible Runtime API Key",
+      },
+    ],
+    [
+      "openrouter",
+      { envVar: "OPENROUTER_API_KEY", label: "OpenRouter API Key" },
+    ],
+  ]);
 
 /** The provider's secret env var + label, or null (e.g. databricks). */
 export function providerSecretEnvVar(
   provider: string,
 ): { envVar: string; label: string } | null {
-  const key = provider.trim().toLowerCase();
-  return Object.prototype.hasOwnProperty.call(PROVIDER_SECRETS, key)
-    ? PROVIDER_SECRETS[key]
-    : null;
+  return PROVIDER_SECRETS.get(provider.trim().toLowerCase()) ?? null;
 }
 
 /** Runtimes whose LLM provider is selectable (desktop parity). */

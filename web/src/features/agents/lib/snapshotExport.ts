@@ -34,7 +34,9 @@ export const BLANK_QUAD_NOTE =
 function contentObject(persona: PersonaDefinition): Record<string, unknown> {
   try {
     const parsed = JSON.parse(persona.event.content) as unknown;
-    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+    return parsed !== null &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : {};
   } catch {

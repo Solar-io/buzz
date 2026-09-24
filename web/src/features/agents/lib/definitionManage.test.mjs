@@ -57,7 +57,7 @@ test("create: minimal content is exact, prompt kept byte-for-byte, blanks omitte
   assert.equal(result.template.created_at, 5000);
 });
 
-test("create: empty prompt is still written as system_prompt:\"\"", () => {
+test('create: empty prompt is still written as system_prompt:""', () => {
   const result = buildPersonaCreate(input({ systemPrompt: "" }), UUID, 1);
   assert.equal(
     result.template.content,
@@ -109,11 +109,7 @@ test("create: rejects a non-UUID d tag", () => {
 });
 
 test("create: rejects a U+200B prompt with the Rust wording", () => {
-  const result = buildPersonaCreate(
-    input({ systemPrompt: "a​b" }),
-    UUID,
-    1,
-  );
+  const result = buildPersonaCreate(input({ systemPrompt: "a​b" }), UUID, 1);
   assert.equal(
     result.error,
     "Agent instructions contains prohibited invisible or formatting character U+200B",
@@ -129,7 +125,9 @@ test("create: rejects parallelism 0 and 33, accepts 1 and 32", () => {
     buildPersonaCreate(input({ parallelism: 33 }), UUID, 1).error,
     "parallelism 33 is out of range (must be between 1 and 32)",
   );
-  assert.ok("template" in buildPersonaCreate(input({ parallelism: 1 }), UUID, 1));
+  assert.ok(
+    "template" in buildPersonaCreate(input({ parallelism: 1 }), UUID, 1),
+  );
   assert.ok(
     "template" in buildPersonaCreate(input({ parallelism: 32 }), UUID, 1),
   );
@@ -169,7 +167,13 @@ test("share on: appends one shared tag, keeps unknown tags and content bytes", (
 
 test("share off: removes the shared tag, created_at uses now when later", () => {
   const result = buildShareToggle(
-    head({ tags: [["d", UUID], ["shared", "true"], ["zz", "1"]] }),
+    head({
+      tags: [
+        ["d", UUID],
+        ["shared", "true"],
+        ["zz", "1"],
+      ],
+    }),
     false,
     9000,
   );
@@ -201,8 +205,16 @@ test("share on: duplicate shared tags collapse to exactly one", () => {
 test("share: no-op returns an error", () => {
   assert.equal(buildShareToggle(head(), false, 1).error, "Already private.");
   assert.equal(
-    buildShareToggle(head({ tags: [["d", UUID], ["shared", "true"]] }), true, 1)
-      .error,
+    buildShareToggle(
+      head({
+        tags: [
+          ["d", UUID],
+          ["shared", "true"],
+        ],
+      }),
+      true,
+      1,
+    ).error,
     "Already shared.",
   );
 });
@@ -223,10 +235,7 @@ test("isSharedEvent mirrors event_is_shared", () => {
   assert.equal(isSharedEvent({ tags: [["shared", "true"]] }), true);
   assert.equal(isSharedEvent({ tags: [] }), false);
   assert.equal(isSharedEvent({ tags: [["shared", "yes"]] }), false);
-  assert.equal(
-    isSharedEvent({ tags: [["shared", "true", "extra"]] }),
-    false,
-  );
+  assert.equal(isSharedEvent({ tags: [["shared", "true", "extra"]] }), false);
   assert.equal(
     isSharedEvent({
       tags: [

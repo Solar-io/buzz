@@ -456,7 +456,11 @@ export async function sha256Hex(
   ).join("");
 }
 
-export type SnapshotFileKind = "agent-json" | "agent-png" | "team-json" | "team-png";
+export type SnapshotFileKind =
+  | "agent-json"
+  | "agent-png"
+  | "team-json"
+  | "team-png";
 
 export function snapshotKindForFilename(
   filename: string,
