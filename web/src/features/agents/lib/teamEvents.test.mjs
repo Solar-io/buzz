@@ -29,16 +29,15 @@ function teamEvent(content, overrides = {}) {
 }
 
 test("full projection round-trips the published fields", () => {
-  const team = teamFromEvent(
-    teamEvent(
-      JSON.stringify({
-        name: "Test Team",
-        description: "A test team",
-        instructions: "Coordinate carefully.",
-        persona_ids: ["p1", "p2"],
-      }),
-    ),
+  const raw = teamEvent(
+    JSON.stringify({
+      name: "Test Team",
+      description: "A test team",
+      instructions: "Coordinate carefully.",
+      persona_ids: ["p1", "p2"],
+    }),
   );
+  const team = teamFromEvent(raw);
   assert.deepEqual(team, {
     id: "team-123",
     name: "Test Team",
@@ -48,6 +47,7 @@ test("full projection round-trips the published fields", () => {
     personaIds: ["p1", "p2"],
     updatedAt: 1_700_000_000,
     eventId: "e1",
+    event: raw,
   });
 });
 

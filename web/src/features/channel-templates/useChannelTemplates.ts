@@ -156,8 +156,8 @@ export interface RosterCatalog {
 
 /** The owner's personas and teams, flattened into the applier's shapes. */
 export function useRosterCatalog(): RosterCatalog {
-  const personas = usePersonas();
-  const teams = useTeams();
+  const personas = usePersonas().map;
+  const teams = useTeams().map;
 
   return useMemo(() => {
     const personaRows: RosterPersona[] = [...personas.values()]
@@ -179,7 +179,7 @@ export function useRosterCatalog(): RosterCatalog {
 
 /** Display names for teams, keyed by id — the catalog drops them. */
 export function useTeamNames(): Map<string, string> {
-  const teams = useTeams();
+  const teams = useTeams().map;
   return useMemo(
     () => new Map([...teams.values()].map((team) => [team.id, team.name])),
     [teams],

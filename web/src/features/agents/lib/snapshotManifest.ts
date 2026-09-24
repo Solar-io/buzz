@@ -130,7 +130,7 @@ function mib(bytes: Uint8Array): number {
   return Math.floor(bytes.length / (1024 * 1024));
 }
 
-function hasPngMagic(bytes: Uint8Array): boolean {
+export function hasPngMagic(bytes: Uint8Array): boolean {
   return bytes.length >= 4 && PNG_MAGIC.every((b, i) => bytes[i] === b);
 }
 
@@ -456,9 +456,9 @@ export async function sha256Hex(
   ).join("");
 }
 
-type SnapshotFileKind = "agent-json" | "agent-png" | "team-json" | "team-png";
+export type SnapshotFileKind = "agent-json" | "agent-png" | "team-json" | "team-png";
 
-function snapshotKindForFilename(
+export function snapshotKindForFilename(
   filename: string,
 ): { kind: SnapshotFileKind } | { error: string } {
   const lower = filename.toLowerCase();
@@ -479,7 +479,7 @@ function snapshotKindForFilename(
   };
 }
 
-function kindCap(kind: SnapshotFileKind): number {
+export function kindCap(kind: SnapshotFileKind): number {
   switch (kind) {
     case "agent-json":
       return MAX_SNAPSHOT_JSON_BYTES;
@@ -492,7 +492,7 @@ function kindCap(kind: SnapshotFileKind): number {
   }
 }
 
-function kindLabel(kind: SnapshotFileKind): string {
+export function kindLabel(kind: SnapshotFileKind): string {
   switch (kind) {
     case "agent-json":
       return ".agent.json";

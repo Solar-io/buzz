@@ -46,8 +46,10 @@ export function AgentsAdminPage() {
   const { canSign } = useAuth();
   const registry = useAgentRegistry();
   const catalogs = useDesktopCatalogs();
-  const personas = usePersonas();
-  const teams = useTeams();
+  const personasState = usePersonas();
+  const personas = personasState.map;
+  const teamsState = useTeams();
+  const teams = teamsState.map;
   const { session, status } = useRelaySession();
   const admin = useAdminCommands(session, status);
   const [mode, setMode] = useState<Mode>({ kind: "roster" });

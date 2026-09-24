@@ -583,3 +583,117 @@ test("fold-clear colliding with the key in the table is a builder error", () => 
   assert.deepEqual(fine.command.request.envVars, { OTHER_KEY: "v" });
   assert.equal("envVarsPatch" in fine.command.request, false);
 });
+
+// ── Batch 2: provider API key ────────────────────────────────────────────────
+
+test("API key and effort merge into ONE envVarsPatch on a clean table", () => {
+  const base = entry();
+  const prefill = prefillEditForm(base, null);
+  assert.deepEqual(prefill.apiKey, { kind: "keep" });
+  assert.equal(prefill.apiKeyEnvVar, null);
+  const built = buildUpdateCommand(
+    base,
+    prefill,
+    value(prefill, {
+      effort: "high",
+      apiKeyEnvVar: "OPENROUTER_API_KEY",
+      apiKey: { kind: "set", value: " sk-or-1 " },
+    }),
+  );
+  if ("error" in built) {
+    assert.fail(built.error);
+  }
+  assert.deepEqual(built.command.request, {
+    pubkey: PK,
+    envVarsPatch: {
+      BUZZ_AGENT_THINKING_EFFORT: "high",
+      OPENROUTER_API_KEY: "sk-or-1",
+    },
+  });
+
+  const cleared = buildUpdateCommand(
+    base,
+    prefill,
+    value(prefill, {
+      apiKeyEnvVar: "ANTHROPIC_API_KEY",
+      apiKey: { kind: "clear" },
+    }),
+  );
+  assert.deepEqual(cleared.command.request, {
+    pubkey: PK,
+    envVarsPatch: { ANTHROPIC_API_KEY: null },
+  });
+
+  // Keep sends nothing; a hidden field (no env var) ignores a stale pick.
+  assert.equal(
+    buildUpdateCommand(
+      base,
+      prefill,
+      value(prefill, { apiKeyEnvVar: "OPENROUTER_API_KEY" }),
+    ).error,
+    "Nothing changed.",
+  );
+  assert.equal(
+    buildUpdateCommand(
+      base,
+      prefill,
+      value(prefill, { apiKey: { kind: "set", value: "sk" } }),
+    ).error,
+    "Nothing changed.",
+  );
+});
+
+test("API key on a dirty env table folds into the envVars replace", () => {
+  const base = entry();
+  const prefill = prefillEditForm(base, null);
+  const built = buildUpdateCommand(
+    base,
+    prefill,
+    value(prefill, {
+      apiKeyEnvVar: "OPENROUTER_API_KEY",
+      apiKey: { kind: "set", value: "sk-new" },
+      envRows: [
+        row("r1", "OTHER_KEY", "v"),
+        row("r2", "OPENROUTER_API_KEY", "old"),
+      ],
+      envDirty: true,
+    }),
+  );
+  if ("error" in built) {
+    assert.fail(built.error);
+  }
+  assert.deepEqual(built.command.request.envVars, {
+    OTHER_KEY: "v",
+    OPENROUTER_API_KEY: "sk-new",
+  });
+  assert.equal("envVarsPatch" in built.command.request, false);
+});
+
+test("API key clear colliding with the table is an error; empty set is an error", () => {
+  const base = entry();
+  const prefill = prefillEditForm(base, null);
+  assert.equal(
+    buildUpdateCommand(
+      base,
+      prefill,
+      value(prefill, {
+        apiKeyEnvVar: "OPENROUTER_API_KEY",
+        apiKey: { kind: "clear" },
+        envRows: [row("r1", "OPENROUTER_API_KEY", "x")],
+        envDirty: true,
+      }),
+    ).error,
+    "The environment table sets the same key the API-key control would remove.",
+  );
+  assert.equal(
+    buildUpdateCommand(
+      base,
+      prefill,
+      value(prefill, {
+        apiKeyEnvVar: "OPENROUTER_API_KEY",
+        apiKey: { kind: "set", value: "" },
+      }),
+    ).error,
+    "Paste a key, or choose Remove.",
+  );
+});

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { ownPubkey } from "@/shared/lib/nostr-signer";
 import {
@@ -6,11 +6,22 @@ import {
   teamFromEvent,
   type TeamView,
 } from "@/features/agents/lib/teamEvents";
+import {
+  admitAfterTombstone,
+  applyTombstone,
+  withoutKey,
+} from "@/features/agents/lib/tombstones";
+
+export interface TeamsState {
+  map: Map<string, TeamView>;
+  /** Drop a team the web just deleted; see usePersonas `forget`. */
+  forget: (id: string, tombstoneCreatedAt: number) => void;
+}
 
 /**
- * The owner's kind-30176 teams, live from the relay — the read-only source
- * for the teams panel and roster badges. Replaceable events, newest-wins per
- * team id (d tag = team id).
+ * The owner's kind-30176 teams, live from the relay — the source for the
+ * teams panel and roster badges. Replaceable events, newest-wins per team id
+ * (d tag = team id).
  *
  * AUTHOR-SCOPED ON PURPOSE (Phase 3 §0.3 risk decision): 30176 is not
  * shared-gated today (kind.rs calls that an acknowledged gap), but the web
@@ -18,9 +29,10 @@ import {
  * teams view, and author-scoping survives any future owner-private read
  * tightening. Community team browsing is explicitly NOT built.
  */
-export function useTeams(): Map<string, TeamView> {
+export function useTeams(): TeamsState {
   const { session, status } = useRelaySession();
   const [teams, setTeams] = useState<Map<string, TeamView>>(() => new Map());
+  const tombstones = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     if (!session || status !== "open") {
@@ -37,7 +49,10 @@ export function useTeams(): Map<string, TeamView> {
         {
           onEvent: (event) => {
             const team = teamFromEvent(event);
-            if (team) {
+            if (
+              team &&
+              admitAfterTombstone(tombstones.current, team.id, team.updatedAt)
+            ) {
               setTeams((previous) => mergeTeam(previous, team));
             }
           },
@@ -50,5 +65,20 @@ export function useTeams(): Map<string, TeamView> {
     };
   }, [session, status]);
 
-  return teams;
+  const forget = useCallback((id: string, tombstoneCreatedAt: number) => {
+    tombstones.current = applyTombstone(
+      tombstones.current,
+      id,
+      tombstoneCreatedAt,
+    );
+    setTeams((previous) => {
+      const existing = previous.get(id);
+      if (existing && existing.updatedAt > tombstoneCreatedAt) {
+        return previous;
+      }
+      return withoutKey(previous, id);
+    });
+  }, []);
+
+  return { map: teams, forget };
 }
