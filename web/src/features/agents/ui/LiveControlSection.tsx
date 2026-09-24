@@ -39,7 +39,7 @@ export function LiveControlSection({
   agentPubkey: string;
   modelSuggestions: readonly string[];
 }) {
-  const { member, others } = useAgentChannels(agentPubkey);
+  const { member, others, refresh } = useAgentChannels(agentPubkey);
   const [channelId, setChannelId] = useState("");
   const [modelId, setModelId] = useState("");
   const [busy, setBusy] = useState(false);
@@ -150,6 +150,7 @@ export function LiveControlSection({
         session={session}
         agentPubkey={agentPubkey}
         others={others}
+        onAdded={refresh}
       />
     </div>
   );
@@ -159,10 +160,13 @@ function AddToChannel({
   session,
   agentPubkey,
   others,
+  onAdded,
 }: {
   session: RelaySession;
   agentPubkey: string;
   others: readonly { id: string; name: string }[];
+  /** Re-query membership — the relay may not push the new 39002 live. */
+  onAdded: () => void;
 }) {
   const [channelId, setChannelId] = useState("");
   const [busy, setBusy] = useState(false);
@@ -193,6 +197,7 @@ function AddToChannel({
         toast.error(outcome.failures[0].message);
       } else if (outcome.added.length > 0) {
         toast.success(`Added to ${channel.name || channel.id}`);
+        onAdded();
       }
     } catch (error) {
       toast.error(
