@@ -28,6 +28,7 @@ import {
   DOCK_HEIGHT_MIN,
 } from "./webPanelStore";
 import { useNativePanelWebview } from "./useNativePanelWebview";
+import { THEME_FRAME_ATTR, usePanelThemePush } from "./panelTheme";
 
 const NOOP = () => {};
 
@@ -103,6 +104,15 @@ export function WebPanelSubstrate({
     instanceId: activeTab?.instanceId ?? "",
     panelId: activePanel?.id ?? "",
     viewportRef,
+  });
+
+  // Theme push contract v1: the active panel follows Buzz's theme live.
+  usePanelThemePush({
+    enabled: visible && activeTab !== null && activePanel?.themePush === true,
+    native,
+    instanceId: activeTab?.instanceId ?? "",
+    panelId: activePanel?.id ?? "",
+    containerRef: viewportRef,
   });
 
   React.useEffect(
@@ -498,6 +508,9 @@ export function WebPanelSubstrate({
             .map((tab) => (
               <iframe
                 className="buzz-webpanel-frame"
+                {...{
+                  [THEME_FRAME_ATTR]: tab.panel.themePush ? "true" : "false",
+                }}
                 data-inactive={tab.active ? "false" : "true"}
                 key={`${tab.instanceId}:${reloadCounters[tab.instanceId] ?? 0}`}
                 src={tab.panel.url ?? "about:blank"}

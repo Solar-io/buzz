@@ -816,6 +816,7 @@ pub fn run() {
             web_panels::set_web_panel_visible,
             web_panels::destroy_web_panel,
             web_panels::reload_web_panel,
+            web_panels::push_web_panel_theme,
             web_panels::web_panel_back,
             web_panels::web_panel_forward,
             web_panels::web_panel_home,

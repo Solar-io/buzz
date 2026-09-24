@@ -150,8 +150,14 @@ test("rust panel table mirrors the typescript config", async () => {
   const tableMatch = rust.match(/const PANEL_TYPES[^=]*= &\[([\s\S]*?)\];/);
   assert.ok(tableMatch, "web_panels.rs must define the PANEL_TYPES table");
   const entries = [
-    ...tableMatch[1].matchAll(/"([^"]+)"\s*,\s*"[^"]+"\s*,\s*"([^"]+)"/g),
-  ].map((match) => ({ id: match[1], url: match[2] }));
+    ...tableMatch[1].matchAll(
+      /PanelType\s*\{[^}]*?\bid:\s*"([^"]+)"[^}]*?\burl:\s*"([^"]+)"[^}]*?\btheme_push:\s*(true|false)/g,
+    ),
+  ].map((match) => ({
+    id: match[1],
+    url: match[2],
+    themePush: match[3] === "true",
+  }));
   assert.ok(entries.length > 0, "PANEL_TYPES must not be empty");
   assert.equal(
     entries.length,
@@ -168,6 +174,11 @@ test("rust panel table mirrors the typescript config", async () => {
       entries[index].url,
       panel.url,
       `panel url drift at index ${index}`,
+    );
+    assert.equal(
+      entries[index].themePush,
+      panel.themePush === true,
+      `panel theme_push drift at index ${index}`,
     );
   }
 });

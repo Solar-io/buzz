@@ -31,14 +31,14 @@
 //! amendment keeps the invariant above intact: the app webview still sends
 //! only ids, and `list_custom_panels` never returns a URL.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
 use crate::custom_panels;
 
 use tauri::{
-    LogicalPosition, LogicalSize, Manager, Rect, WebviewBuilder, WebviewUrl, WebviewWindowBuilder,
-    Window,
+    webview::PageLoadEvent, LogicalPosition, LogicalSize, Manager, Rect, WebviewBuilder,
+    WebviewUrl, WebviewWindowBuilder, Window,
 };
 
 /// Destroyed instance ids. `ensure` arriving for a tombstoned instance is
@@ -73,15 +73,89 @@ fn panel_webview_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-/// Compile-time registry of panel TYPES: `(panel_id, login_title, url)`.
+/// One compile-time panel TYPE.
+struct PanelType {
+    id: &'static str,
+    login_title: &'static str,
+    url: &'static str,
+    /// Whether Buzz pushes its theme into this panel (theme push contract v1,
+    /// `push_web_panel_theme`). Only first-party panels that implement the
+    /// consumer opt in; owner-added custom sites never receive it.
+    theme_push: bool,
+    /// Extra origins (`https://host[:port]`, exact) the panel webview may
+    /// navigate to, beyond its own origin and the OAuth hops. Exists for
+    /// sub-frames: the Files panel embeds the ONLYOFFICE editor as an iframe
+    /// from the NAS. wry's navigation handler receives only a URL string (no
+    /// main-frame flag — wry 0.55 `wkwebview/navigation.rs`), so the policy
+    /// CANNOT tell a sub-frame from a top-level navigation: an origin listed
+    /// here is also reachable top-level. Keep the list to origins the owner
+    /// runs, one per real embed.
+    extra_frame_origins: &'static [&'static str],
+}
+
+/// Compile-time registry of panel TYPES.
 /// This is the Rust-side mirror of
 /// `desktop/src/features/webPanels/webPanels.config.ts` — the origin-sync
 /// tests in both languages fail the build if the two tables drift.
-const PANEL_TYPES: &[(&str, &str, &str)] = &[(
-    "files",
-    "Files login",
-    "https://crichton.tailb3d4b8.ts.net:6201/?panel=files",
-)];
+const PANEL_TYPES: &[PanelType] = &[PanelType {
+    id: "files",
+    login_title: "Files login",
+    url: "https://crichton.tailb3d4b8.ts.net:6201/?panel=files",
+    theme_push: true,
+    extra_frame_origins: &["https://nas.tailb3d4b8.ts.net:6041"],
+}];
+
+fn static_panel_type(panel_id: &str) -> Option<&'static PanelType> {
+    PANEL_TYPES.iter().find(|panel| panel.id == panel_id)
+}
+
+/// Largest theme payload accepted over IPC (contract v1 says <= 4 KB).
+const MAX_THEME_PAYLOAD_BYTES: usize = 4096;
+
+/// Last theme script per panel TYPE, re-applied on every page load so
+/// reloads, back/forward and login returns get the theme without a
+/// frontend round-trip.
+fn theme_scripts() -> &'static Mutex<HashMap<String, String>> {
+    static SCRIPTS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    SCRIPTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cached_theme_script(panel_id: &str) -> Option<String> {
+    theme_scripts()
+        .lock()
+        .ok()
+        .and_then(|scripts| scripts.get(panel_id).cloned())
+}
+
+/// Build the script that hands a theme payload to the panel page. The
+/// payload is interpolated ONLY as its `serde_json` serialization — never
+/// assembled from fields — so no value can break out of the JSON literal
+/// (JSON is a subset of JS expression syntax). The page validates every
+/// colour itself; this side guarantees only that data stays data.
+fn theme_eval_script(payload: &serde_json::Value) -> Result<String, String> {
+    if !payload.is_object() {
+        return Err("theme payload must be a JSON object".to_string());
+    }
+    let json = serde_json::to_string(payload).map_err(|error| error.to_string())?;
+    if json.len() > MAX_THEME_PAYLOAD_BYTES {
+        return Err(format!(
+            "theme payload is {} bytes; the limit is {MAX_THEME_PAYLOAD_BYTES}",
+            json.len()
+        ));
+    }
+    Ok(format!(
+        "window.__buzzTheme={json};window.dispatchEvent(new CustomEvent('buzz:theme',{{detail:{json}}}));"
+    ))
+}
+
+/// Whether `url` is on the panel's own origin — the theme script only ever
+/// runs in the panel's own pages, never on an OAuth hop or an extra frame
+/// origin that happens to be the top-level document.
+fn is_panel_origin(url: &tauri::Url, panel_url: &tauri::Url) -> bool {
+    url.scheme() == panel_url.scheme()
+        && url.host_str() == panel_url.host_str()
+        && url.port() == panel_url.port()
+}
 
 /// Hosts a panel webview may navigate to beyond its own origin: the
 /// Supabase tenant and GitHub, which is the full path of the login hop.
@@ -119,15 +193,13 @@ fn resolve_panel_type(
     app: Option<&tauri::AppHandle>,
     panel_id: &str,
 ) -> Result<(String, tauri::Url), String> {
-    if let Some((_, title, url)) = PANEL_TYPES
-        .iter()
-        .find(|(known_id, _, _)| *known_id == panel_id)
-    {
-        let url: tauri::Url = url
+    if let Some(panel) = static_panel_type(panel_id) {
+        let url: tauri::Url = panel
+            .url
             .parse()
             .map_err(|error: url::ParseError| error.to_string())?;
         require_https(&url)?;
-        return Ok((title.to_string(), url));
+        return Ok((panel.login_title.to_string(), url));
     }
     if let Some(entry) = custom_panels::find_entry(app, panel_id)? {
         let url: tauri::Url = entry
@@ -153,11 +225,16 @@ pub(crate) fn require_https(url: &tauri::Url) -> Result<(), String> {
 }
 
 /// The navigation policy for a panel webview: allow exactly the panel's own
-/// origin (scheme+host+port) and the OAuth hop hosts over default-port
-/// https. Unparseable or non-https URLs are refused — fail closed, because
-/// a panel webview is a top-level browsing context with the shared cookie
-/// jar attached.
-fn is_navigation_allowed(url: &tauri::Url, panel_url: &tauri::Url) -> bool {
+/// origin (scheme+host+port), the panel type's `extra_frame_origins`
+/// (exact origin match), and the OAuth hop hosts over default-port https.
+/// Unparseable or non-https URLs are refused — fail closed, because a panel
+/// webview is a top-level browsing context with the shared cookie jar
+/// attached.
+fn is_navigation_allowed(
+    url: &tauri::Url,
+    panel_url: &tauri::Url,
+    extra_frame_origins: &[&str],
+) -> bool {
     let Some(host) = url.host_str() else {
         return false;
     };
@@ -168,6 +245,13 @@ fn is_navigation_allowed(url: &tauri::Url, panel_url: &tauri::Url) -> bool {
     // port() normalizes an explicit :443 to None, so this compares origins,
     // not spellings).
     if host == panel_url.host_str().unwrap_or_default() && url.port() == panel_url.port() {
+        return true;
+    }
+    // Exact origin match only: `ascii_serialization()` is `https://host[:port]`
+    // with default ports elided, so a listed origin never matches a
+    // lookalike host, another port, or a userinfo trick.
+    let origin = url.origin().ascii_serialization();
+    if extra_frame_origins.iter().any(|extra| *extra == origin) {
         return true;
     }
     // OAuth hops only over default-port https.
@@ -278,9 +362,33 @@ pub fn ensure_web_panel(
     }
 
     let panel_url = url.clone();
-    let builder =
-        WebviewBuilder::new(label.clone(), WebviewUrl::External(url)).on_navigation(move |url| {
-            let allowed = is_navigation_allowed(url, &panel_url);
+    let load_panel_url = url.clone();
+    let static_panel = static_panel_type(&panel_id);
+    let extra_frame_origins = static_panel.map_or(&[][..], |panel| panel.extra_frame_origins);
+    let theme_panel_id = static_panel
+        .filter(|panel| panel.theme_push)
+        .map(|panel| panel.id);
+    let builder = WebviewBuilder::new(label.clone(), WebviewUrl::External(url))
+        .on_page_load(move |child, payload| {
+            // Re-apply the cached theme after every finished load of the
+            // panel's own pages (reload, back/forward, login return).
+            if payload.event() != PageLoadEvent::Finished {
+                return;
+            }
+            let Some(panel_id) = theme_panel_id else {
+                return;
+            };
+            if !is_panel_origin(payload.url(), &load_panel_url) {
+                return;
+            }
+            if let Some(script) = cached_theme_script(panel_id) {
+                if let Err(error) = child.eval(script) {
+                    eprintln!("webpanel {panel_id}: theme re-apply failed: {error}");
+                }
+            }
+        })
+        .on_navigation(move |url| {
+            let allowed = is_navigation_allowed(url, &panel_url, extra_frame_origins);
             // Ops log: one line per navigation attempt, including blocked
             // ones — the only observable trace of the panel's nav policy.
             println!(
@@ -421,6 +529,41 @@ pub fn web_panel_forward(
     child
         .eval("history.forward()")
         .map_err(|error| error.to_string())
+}
+
+/// Push Buzz's resolved theme (contract v1) into a panel instance, and cache
+/// it per panel type so every later page load re-applies it. Only panel
+/// types that opt in (`theme_push`) accept it. A tombstoned or not-yet-
+/// created instance still updates the cache (the next load applies it).
+#[tauri::command]
+pub fn push_web_panel_theme(
+    webview: tauri::Webview,
+    instance_id: String,
+    panel_id: String,
+    payload: serde_json::Value,
+) -> Result<(), String> {
+    let target = resolve_action_target(&instance_id, &panel_id)?;
+    let script = theme_push_script(&panel_id, &payload)?;
+    if let Ok(mut scripts) = theme_scripts().lock() {
+        scripts.insert(panel_id.clone(), script.clone());
+    }
+    let ActionTarget::Live(label) = target else {
+        return Ok(());
+    };
+    match webview.get_webview(&label) {
+        Some(child) => child.eval(script).map_err(|error| error.to_string()),
+        None => Ok(()),
+    }
+}
+
+/// Validation half of [`push_web_panel_theme`]: an opted-in static panel
+/// type and a well-formed payload, serialized into the eval script.
+fn theme_push_script(panel_id: &str, payload: &serde_json::Value) -> Result<String, String> {
+    match static_panel_type(panel_id) {
+        Some(panel) if panel.theme_push => theme_eval_script(payload),
+        Some(_) => Err(format!("web panel {panel_id} does not take a theme push")),
+        None => Err(format!("unknown or custom web panel: {panel_id}")),
+    }
 }
 
 /// Navigate a panel instance's webview back to the panel's configured home
@@ -586,7 +729,7 @@ mod tests {
         ] {
             let url: tauri::Url = allowed.parse().expect("fixture url parses");
             assert!(
-                is_navigation_allowed(&url, &custom_panel),
+                is_navigation_allowed(&url, &custom_panel, &[]),
                 "{allowed} must be allowed"
             );
         }
@@ -597,7 +740,7 @@ mod tests {
         ] {
             let url: tauri::Url = blocked.parse().expect("fixture url parses");
             assert!(
-                !is_navigation_allowed(&url, &custom_panel),
+                !is_navigation_allowed(&url, &custom_panel, &[]),
                 "{blocked} must be blocked"
             );
         }
@@ -606,7 +749,7 @@ mod tests {
         let hop: tauri::Url = "https://github.com/login/oauth/authorize"
             .parse()
             .expect("fixture url parses");
-        assert!(is_navigation_allowed(&hop, &custom_panel));
+        assert!(is_navigation_allowed(&hop, &custom_panel, &[]));
     }
 
     #[test]
@@ -664,6 +807,107 @@ mod tests {
         assert_eq!(webpanel_label("files-0"), "webpanel-files-0");
     }
 
+    const FILES_FRAMES: &[&str] = &["https://nas.tailb3d4b8.ts.net:6041"];
+
+    #[test]
+    fn files_panel_frame_origins_are_exactly_the_office_server() {
+        let files = static_panel_type("files").expect("files is registered");
+        assert_eq!(files.extra_frame_origins, FILES_FRAMES);
+        assert!(files.theme_push);
+    }
+
+    #[test]
+    fn extra_frame_origins_match_exact_origins_only() {
+        let panel = panel_url();
+        let office: tauri::Url =
+            "https://nas.tailb3d4b8.ts.net:6041/web-apps/apps/api/documents/api.js"
+                .parse()
+                .expect("fixture url parses");
+        assert!(is_navigation_allowed(&office, &panel, FILES_FRAMES));
+        // Without the allowance (every other panel), the office origin is blocked.
+        assert!(!is_navigation_allowed(&office, &panel, &[]));
+        for blocked in [
+            "https://nas.tailb3d4b8.ts.net/",
+            "https://nas.tailb3d4b8.ts.net:6042/",
+            "http://nas.tailb3d4b8.ts.net:6041/",
+            "https://nas.tailb3d4b8.ts.net.evil.example:6041/",
+            "https://evil.example:6041/",
+            "https://user@evil.example/?https://nas.tailb3d4b8.ts.net:6041",
+        ] {
+            let url: tauri::Url = blocked.parse().expect("fixture url parses");
+            assert!(
+                !is_navigation_allowed(&url, &panel, FILES_FRAMES),
+                "{blocked} must be blocked"
+            );
+        }
+    }
+
+    #[test]
+    fn theme_script_interpolates_only_serialized_json() {
+        // Values chosen to break any hand-assembled literal: quotes, a
+        // closing brace + paren, a script end tag, backslashes, newlines.
+        let payload = serde_json::json!({
+            "v": 1,
+            "source": "buzz",
+            "mode": "dark",
+            "tokens": {
+                "background": "red\");alert(1);//",
+                "foreground": "'}));alert(2);({'",
+                "border": "</script><script>alert(3)</script>",
+                "ring": "a\\b\nc",
+            }
+        });
+        let script = theme_eval_script(&payload).expect("object payload builds");
+        let json = serde_json::to_string(&payload).expect("serializes");
+        assert_eq!(
+            script,
+            format!(
+                "window.__buzzTheme={json};window.dispatchEvent(new CustomEvent('buzz:theme',{{detail:{json}}}));"
+            )
+        );
+        // Round-trip: the literal embedded after `__buzzTheme=` parses back
+        // to exactly the payload, so no value escaped into code.
+        let embedded = script
+            .strip_prefix("window.__buzzTheme=")
+            .and_then(|rest| rest.split(";window.dispatchEvent(").next())
+            .expect("script shape");
+        let parsed: serde_json::Value =
+            serde_json::from_str(embedded).expect("embedded JSON parses");
+        assert_eq!(parsed, payload);
+    }
+
+    #[test]
+    fn theme_script_rejects_non_objects_and_oversize() {
+        assert!(theme_eval_script(&serde_json::json!("x")).is_err());
+        assert!(theme_eval_script(&serde_json::json!([1, 2])).is_err());
+        assert!(theme_eval_script(&serde_json::Value::Null).is_err());
+        let big = serde_json::json!({ "v": 1, "pad": "x".repeat(MAX_THEME_PAYLOAD_BYTES) });
+        assert!(theme_eval_script(&big).is_err());
+    }
+
+    #[test]
+    fn theme_push_only_reaches_opted_in_static_panels() {
+        let payload = serde_json::json!({ "v": 1, "mode": "dark", "tokens": {} });
+        assert!(theme_push_script("files", &payload).is_ok());
+        assert!(theme_push_script("site-1", &payload).is_err());
+        assert!(theme_push_script("notes", &payload).is_err());
+    }
+
+    #[test]
+    fn theme_is_reapplied_only_on_the_panel_origin() {
+        let panel = panel_url();
+        let own: tauri::Url = "https://crichton.tailb3d4b8.ts.net:6201/x"
+            .parse()
+            .expect("parses");
+        let office: tauri::Url = "https://nas.tailb3d4b8.ts.net:6041/"
+            .parse()
+            .expect("parses");
+        let hop: tauri::Url = "https://github.com/login".parse().expect("parses");
+        assert!(is_panel_origin(&own, &panel));
+        assert!(!is_panel_origin(&office, &panel));
+        assert!(!is_panel_origin(&hop, &panel));
+    }
+
     fn panel_url() -> tauri::Url {
         "https://crichton.tailb3d4b8.ts.net:6201/?panel=files"
             .parse()
@@ -680,7 +924,7 @@ mod tests {
         ] {
             let url: tauri::Url = allowed.parse().expect("fixture url parses");
             assert!(
-                is_navigation_allowed(&url, &panel),
+                is_navigation_allowed(&url, &panel, FILES_FRAMES),
                 "{allowed} must be allowed"
             );
         }
@@ -696,7 +940,7 @@ mod tests {
         ] {
             let url: tauri::Url = allowed.parse().expect("fixture url parses");
             assert!(
-                is_navigation_allowed(&url, &panel),
+                is_navigation_allowed(&url, &panel, FILES_FRAMES),
                 "{allowed} must be allowed"
             );
         }
@@ -728,13 +972,13 @@ mod tests {
                 continue;
             };
             assert!(
-                !is_navigation_allowed(&url, &panel),
+                !is_navigation_allowed(&url, &panel, FILES_FRAMES),
                 "{blocked} must be blocked"
             );
         }
         // A URL with no host is structurally denied too.
         let no_host: tauri::Url = "data:text/plain,1".parse().expect("fixture parses");
-        assert!(!is_navigation_allowed(&no_host, &panel));
+        assert!(!is_navigation_allowed(&no_host, &panel, FILES_FRAMES));
     }
 
     #[test]
@@ -774,7 +1018,7 @@ mod tests {
         // The TS config is the editing surface; this fails the Rust suite
         // the moment someone adds a panel there without mirroring it here.
         let ts_source = include_str!("../../src/features/webPanels/webPanels.config.ts");
-        for (id, _title, url) in PANEL_TYPES {
+        for PanelType { id, url, .. } in PANEL_TYPES {
             let id_line = format!("id: \"{id}\",");
             let url_line = format!("url: \"{url}\",");
             assert!(

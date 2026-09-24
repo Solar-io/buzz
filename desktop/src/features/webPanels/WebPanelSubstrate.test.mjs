@@ -9,6 +9,9 @@ const dom = new JSDOM("<!doctype html><html><body></body></html>", {
 });
 
 const invokes = [];
+// Theme pushes (contract v1) fire on mount and on theme change; they are
+// recorded separately so the explicit-action assertions below stay exact.
+const themePushes = [];
 // Substrate rendering does not depend on geometry (no patched gBCR: the
 // placeholder reports a zero box and the native loop stays quiet — invoke
 // assertions here are about explicit actions only).
@@ -39,6 +42,10 @@ before(async () => {
   dom.window.HTMLElement.prototype.setPointerCapture = () => {};
   dom.window.__TAURI_INTERNALS__ = {
     invoke(command, args) {
+      if (command === "push_web_panel_theme") {
+        themePushes.push(args);
+        return Promise.resolve(null);
+      }
       invokes.push([command, args]);
       const response = responses[command];
       return Promise.resolve(
@@ -63,6 +70,7 @@ after(() => {
 beforeEach(() => {
   cleanup?.();
   invokes.length = 0;
+  themePushes.length = 0;
   responses = {};
   registry.resetWebPanelRegistryForTests();
   dom.window.localStorage.clear();
@@ -596,4 +604,27 @@ test("iframe fallback keeps reload only — no back/forward/home", () => {
     view.container.querySelectorAll('[aria-label$="home"]').length,
     0,
   );
+});
+
+// ── Theme push (contract v1) ────────────────────────────────────────────
+
+test("a native theme-push panel pushes Buzz's theme on mount and on change", async () => {
+  const root = dom.window.document.documentElement;
+  root.classList.add("dark");
+  root.style.setProperty("--background", "222 47% 11%");
+  fixture();
+  await waitFor(() => assert.equal(themePushes.length, 1));
+  assert.equal(themePushes[0].instanceId, "files-1");
+  assert.equal(themePushes[0].panelId, "files");
+  assert.equal(themePushes[0].payload.mode, "dark");
+  assert.equal(themePushes[0].payload.tokens.background, "hsl(222 47% 11%)");
+
+  root.classList.remove("dark");
+  root.classList.add("light");
+  root.style.setProperty("--background", "0 0% 100%");
+  await waitFor(() => assert.equal(themePushes.length, 2));
+  assert.equal(themePushes[1].payload.mode, "light");
+  assert.equal(themePushes[1].payload.tokens.background, "hsl(0 0% 100%)");
+  root.classList.remove("light");
+  root.style.removeProperty("--background");
 });

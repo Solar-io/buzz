@@ -26,6 +26,12 @@ export type WebPanelDef = {
    * webPanelRegistry). They have no compile-time url and no iframe fallback.
    */
   custom?: boolean;
+  /**
+   * True when the panel implements the theme push contract v1 consumer;
+   * Buzz then pushes its live theme (native: `push_web_panel_theme`,
+   * iframe: postMessage). Mirrors `theme_push` in the Rust `PANEL_TYPES`.
+   */
+  themePush?: boolean;
 };
 
 /**
@@ -76,5 +82,6 @@ export const WEB_PANELS: readonly WebPanelDef[] = [
     icon: Folder,
     url: "https://crichton.tailb3d4b8.ts.net:6201/?panel=files",
     render: resolveRenderMode("native", E2E_BUILD_FORCES_IFRAME),
+    themePush: true,
   },
 ];
