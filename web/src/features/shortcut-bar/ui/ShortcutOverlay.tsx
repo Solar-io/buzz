@@ -12,18 +12,24 @@ import { WebPanelDock } from "@/features/webPanels/ui/WebPanelDock";
  * is focused if a tab for it survived, opened otherwise.
  */
 export function ShortcutOverlay({
+  focusMode,
   initialPanelId,
   onClose,
+  onFocusModeChange,
 }: {
+  focusMode?: boolean;
   initialPanelId: string;
   onClose: () => void;
+  onFocusModeChange?: (focused: boolean) => void;
 }) {
   const dock = useShortcutDock();
   return (
     <WebPanelDock
       dock={dock}
+      focusMode={focusMode}
       initialPanelId={initialPanelId}
       onClose={onClose}
+      onFocusModeChange={onFocusModeChange}
     />
   );
 }
