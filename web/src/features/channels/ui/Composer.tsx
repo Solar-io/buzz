@@ -30,6 +30,7 @@ import {
 import { imageFilesFromClipboard } from "../lib/composerPaste.ts";
 import { loadDraftState, saveDraftState } from "../lib/drafts.ts";
 import { buildImetaTag } from "../lib/imeta.ts";
+import { returnInsertsNewline } from "../lib/returnKey.ts";
 import {
   composeSendContent,
   stripAttachmentsMarkdown,
@@ -855,7 +856,7 @@ export function Composer({
       return;
     }
     if (event.key === "Enter" && !event.shiftKey) {
-      if (window.matchMedia?.("(pointer: coarse)").matches) return;
+      if (returnInsertsNewline(window.matchMedia?.bind(window))) return;
       event.preventDefault();
       void submit();
     }
