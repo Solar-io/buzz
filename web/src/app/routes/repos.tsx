@@ -89,6 +89,7 @@ import { RemindMeLaterProvider } from "@/features/reminders/ui/RemindMeLaterProv
 import { NotificationRuntime } from "@/features/notifications/ui/NotificationRuntime";
 import { ProfileActionsProvider } from "@/features/profile/ProfileActionsContext";
 import { FilesPanel } from "@/features/files/ui/FilesPanel";
+import { useDockFocusMode } from "@/features/webPanels/lib/focusMode";
 import { ShortcutOverlay } from "@/features/shortcut-bar/ui/ShortcutOverlay";
 import { AppShell } from "@/shared/layout/AppShell";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
@@ -438,6 +439,8 @@ function ChannelBrowser() {
   };
   // Files overlay — the desktop's docked Files panel as an iframe layer.
   const [filesOpen, setFilesOpen] = useState(false);
+  // Files dock focus mode: persisted, and only applied while Files is open.
+  const [filesFocus, setFilesFocus] = useDockFocusMode();
   // Shortcut overlay — the clicked sidebar shortcut's id, or null. The list
   // is channel-independent, so this no longer requires an open channel: the
   // dock's tabs persist globally and reopening restores them.
@@ -796,6 +799,7 @@ function ChannelBrowser() {
           }}
         >
           <AppShell
+            chromeless={filesOpen && filesFocus}
             sidebar={sidebar}
             title={
               current
@@ -806,7 +810,11 @@ function ChannelBrowser() {
             }
           >
             {filesOpen ? (
-              <FilesPanel onClose={() => setFilesOpen(false)} />
+              <FilesPanel
+                focusMode={filesFocus}
+                onClose={() => setFilesOpen(false)}
+                onFocusModeChange={setFilesFocus}
+              />
             ) : shortcutOverlay !== null ? (
               <ShortcutOverlay
                 initialPanelId={shortcutOverlay}

@@ -24,7 +24,16 @@ import {
  * still the right thing when *nothing* is configured: asking for one URL is a
  * gentler start than an empty dock with an add button.
  */
-export function FilesPanel({ onClose }: { onClose: () => void }) {
+export function FilesPanel({
+  onClose,
+  focusMode,
+  onFocusModeChange,
+}: {
+  onClose: () => void;
+  /** Dock focus mode — the shell hides its chrome while this is on. */
+  focusMode?: boolean;
+  onFocusModeChange?: (focused: boolean) => void;
+}) {
   const dock = useWebPanelDock();
   // Local state only so the setup form can hand the dock a URL without a
   // reload; the registry itself re-reads the stored value.
@@ -36,7 +45,13 @@ export function FilesPanel({ onClose }: { onClose: () => void }) {
   if (dock.panels.length === 0) {
     return <FilesSetup onClose={onClose} onConfigured={setFilesUrl} />;
   }
-  return <WebPanelDock onClose={onClose} />;
+  return (
+    <WebPanelDock
+      focusMode={focusMode}
+      onClose={onClose}
+      onFocusModeChange={onFocusModeChange}
+    />
+  );
 }
 
 function FilesSetup({
