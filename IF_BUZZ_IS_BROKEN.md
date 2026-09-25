@@ -84,6 +84,12 @@ Tailscale is the macOS app (`/Applications/Tailscale.app`). If serve is missing,
 
 ### 3.4 Agents not answering (relay healthy)
 Agents are children of the Buzz desktop app. Restarting the app restarts all of them. Their state lives on disk and in the relay, so nothing is lost.
+
+**Standard path — `~/.buzz/scripts/buzz-restart.sh`** (Crash Override, 2026-09-24). It quits and relaunches Buzz from a detached launchd job, optionally installs a new bundle (`--install <Buzz.app>`), waits for agents to start and posts the result to #alerts. `--dry-run` tests everything except the quit/relaunch. It needs `BUZZ_PRIVATE_KEY` + `BUZZ_RELAY_URL` (it exits 1 without them), so it is meant for agent seats. A plain Claude Code session only has those if it copies them from a seat's env, so use the manual commands below.
+
+**Keychain trap:** an ad-hoc signed build (`codesign -dv /Applications/Buzz.app` shows `Signature=adhoc`) blocks at launch on a Keychain dialog until someone clicks **Always Allow** on crichton. That kept the agents down for 1h40m on 2026-09-24. `buzz-restart.sh` refuses that case unless you pass `--force`. If Buzz is running but no agent starts, suspect this and ask Sam to click it. Build with `APPLE_SIGNING_IDENTITY="Developer ID Application: Samuel Gallant (ZRXRQEURGW)"` so relaunch needs no hands.
+
+Manual fallback (no Buzz credentials):
 ```bash
 osascript -e 'quit app "Buzz"'; sleep 5
 pgrep -f buzz-acp && echo "stragglers still running"   # if so: pkill -f 'target/release/buzz-acp'
