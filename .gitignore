@@ -14,6 +14,13 @@ __pycache__/
 .env
 .env.local
 .env.*.local
+# Timestamped .env backups written by the deploy scripts. Same secrets as
+# .env and the same 0600 mode, but the names dodged the .env rule above — so
+# seven of them sat UNTRACKED in deploy/compose/, one `git add -A` away from
+# committing live credentials. They also kept the checkout permanently dirty,
+# which the deploy preflight refuses to run on.
+.env.bak-*
+.env.backup-*
 
 # Editor / IDE
 .idea/
