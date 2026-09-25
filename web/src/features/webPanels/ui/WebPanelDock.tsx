@@ -49,7 +49,7 @@ const EMBED_STALL_MS = 8_000;
  * Focus mode is likewise host-owned: a host that passes `onFocusModeChange`
  * gets a maximize button. While `focusMode` is on, the header bar is not
  * rendered (the host hides its own chrome, e.g. the app sidebar), a single
- * floating exit control sits bottom-left, and Escape exits focus instead of
+ * floating exit control sits bottom-right, and Escape exits focus instead of
  * closing the dock. The iframes are siblings of the header, never its
  * children, so dropping the header does not remount them.
  */
@@ -351,13 +351,12 @@ export function WebPanelDock({
         ) : null}
 
         {focused && onFocusModeChange ? (
-          // Bottom-left: embedded file managers keep their toolbars and menus
-          // along the top and their floating actions (upload, new) bottom-
-          // right, so this corner covers the least. 40px hit target for
-          // touch; translucent until hovered/focused so it sits lightly.
+          // Bottom-right (Sam, 2026-09-24): bottom-left covered the start of
+          // document lines. 40px hit target for touch; translucent until
+          // hovered/focused so it sits lightly.
           <button
             aria-label="Exit focus mode"
-            className="absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-[max(0.75rem,env(safe-area-inset-left))] z-30 flex size-10 items-center justify-center rounded-full border border-border bg-background/70 text-muted-foreground opacity-60 shadow-md backdrop-blur transition-opacity hover:opacity-100 focus-visible:opacity-100"
+            className="absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] right-[max(0.75rem,env(safe-area-inset-right))] z-30 flex size-10 items-center justify-center rounded-full border border-border bg-background/70 text-muted-foreground opacity-60 shadow-md backdrop-blur transition-opacity hover:opacity-100 focus-visible:opacity-100"
             data-testid="web-panel-dock-unfocus"
             onClick={() => onFocusModeChange(false)}
             title="Exit focus mode (Esc)"
