@@ -41,6 +41,20 @@ UNITS=(com.dev.buzz-relay com.dev.buzz-relay-watchdog)
 
 say() { printf '[deploy-dev] %s\n' "$*"; }
 
+# Is a launchd label loaded in this user's GUI domain?
+#
+# ⚠️ NOT `launchctl list | grep -q`. Under `set -o pipefail` that reports the
+# OPPOSITE of the truth: grep -q exits the instant it matches, launchctl takes
+# SIGPIPE (141), and pipefail hands the pipeline that 141 — so a LOADED unit
+# reads as not loaded. Measured on 2026-09-25: the first cut of this script
+# printed "com.dev.buzz-relay NOT LOADED" for a unit `launchctl list` was
+# listing at that moment. Capture first, match against the string, no pipe.
+unit_loaded() {
+  local label="$1" listing
+  listing="$(launchctl list 2>/dev/null || true)"
+  grep -q "[[:space:]]${label}\$" <<<"$listing"
+}
+
 # ── READ-ONLY STATUS, HANDLED FIRST ─────────────────────────────────────────
 # This early-exit block is load-bearing beyond convenience: the deploy guard's
 # allowlist (deploy_flags_are_inert) greps THIS FILE for exactly this shape
@@ -52,7 +66,7 @@ for _arg in "$@"; do
     printf 'relay      : %s\n' "$(curl -s -m 5 "$RELAY_URL/_liveness" 2>/dev/null || echo unreachable)"
     printf 'readiness  : %s\n' "$(curl -s -m 5 "$RELAY_URL/_readiness" 2>/dev/null || echo unreachable)"
     for _u in "${UNITS[@]}"; do
-      if launchctl list 2>/dev/null | grep -q "[[:space:]]$_u\$"; then
+      if unit_loaded "$_u"; then
         printf 'unit       : %s loaded\n' "$_u"
       else
         printf 'unit       : %s NOT LOADED\n' "$_u"
@@ -75,7 +89,7 @@ reconcile_units() {
       say "WARN: $plist missing — run ./deploy/dev-kit/install-buzz-dev.sh to write it; skipping"
       continue
     fi
-    if launchctl list 2>/dev/null | grep -q "[[:space:]]$u\$"; then
+    if unit_loaded "$u"; then
       loaded=$((loaded + 1))
       continue
     fi
