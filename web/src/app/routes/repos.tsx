@@ -799,7 +799,7 @@ function ChannelBrowser() {
           }}
         >
           <AppShell
-            chromeless={filesOpen && filesFocus}
+            chromeless={(filesOpen || shortcutOverlay !== null) && filesFocus}
             sidebar={sidebar}
             title={
               current
@@ -817,8 +817,10 @@ function ChannelBrowser() {
               />
             ) : shortcutOverlay !== null ? (
               <ShortcutOverlay
+                focusMode={filesFocus}
                 initialPanelId={shortcutOverlay}
                 onClose={() => setShortcutOverlay(null)}
+                onFocusModeChange={setFilesFocus}
               />
             ) : view === "onboarding" ? (
               <OnboardingPane />
