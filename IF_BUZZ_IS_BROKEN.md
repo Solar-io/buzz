@@ -19,6 +19,7 @@ Written 2026-09-24. Every command below was run on that date and returned the re
 | Push gateway | Mobile push | `buzz-push-gateway`, `:6359` | `deploy/compose/compose.push-gateway.yml` |
 | **Front door** | Tailnet HTTPS | `tailscale serve`: `https://crichton.tailb3d4b8.ts.net:6351` → `:6350` | |
 | **Relay supervisor** | Starts the stack at login | launchd `com.dev.buzz-relay` → `~/.config/dev-services/buzz-relay-dev.sh` (the INSTALLED copy; the repo copy is `deploy/dev-kit/launchd/`) | logs: `~/.evie/buzz/buzz-relay-dev.log`, `.err.log` |
+| **Relay watchdog** | Checks Docker + the relay every 120s and repairs both | launchd `com.dev.buzz-relay-watchdog` → `~/.config/dev-services/buzz-relay-watchdog.sh` (INSTALLED copy; repo copy is `deploy/dev-kit/buzz-relay-watchdog.sh`) | logs: `~/.evie/buzz/buzz-relay-watchdog.log` (silent when healthy — any content is a real event), `.repair.log`, state in `~/.evie/buzz/watchdog/` |
 | **Agents** | Every AI agent (Opus 1, Gilfoyle, …) | Spawned by the **Buzz desktop app** `/Applications/Buzz.app`. It runs one `target/release/buzz-acp` process per agent, and each of those runs `claude-agent-acp` | Agent config: `~/Library/Application Support/xyz.block.buzz.app/agents/managed-agents.json`; per-agent logs: `…/agents/logs/<agent>__<owner>.log` |
 | **buzz-services** | Scheduler: reminders/wakes, the daily edition, alerts, jobs | launchd `com.buzz-services.scheduler`, `.watcher`, `.actions`, `.beat-check` | Repo `~/software_development/projects/buzz-services`; logs in its `logs/` (`scheduler.log`, `watcher.log`) |
 | DB backup | Nightly 1:30 AM dump of Postgres + MinIO | launchd `com.dev.backup-buzz-db` | Dumps: `~/.sysmon/db-dumps/buzz/latest/` (`buzz.dump`, `globals.sql.gz`, `minio-data.tar`, `MANIFEST`) |
@@ -62,6 +63,11 @@ ls -t ~/Library/Application\ Support/xyz.block.buzz.app/agents/logs | head   # n
 ## 3. Fixes, least to most invasive
 
 ### 3.1 Docker Desktop down
+
+**Check the watchdog log first — it may already have tried.** `tail ~/.evie/buzz/buzz-relay-watchdog.log`. That log is silent while everything is healthy, so anything in it is a real event. If it says `standing down, needs a human`, the flap guard has tripped (3 repair attempts in an hour) and it will not try again until the hour rolls off; clear `~/.evie/buzz/watchdog/repairs` once you have fixed the underlying cause.
+
+This case is why the watchdog exists: on 2026-09-25 Docker Desktop was quit from its own UI at 00:24 local and nothing restarted it, so every container vanished while the desktop app and all 23 agents stayed up logging `relay reconnect failed: HTTP error: 502` every 53s for six hours.
+
 ```bash
 open -a Docker        # wait until `docker info` works (up to ~2 min)
 launchctl kickstart gui/$(id -u)/com.dev.buzz-relay   # brings the compose stack back up

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.dev.buzz-relay-watchdog — periodic liveness check for the Buzz DEV relay.
+
+  Companion to com.dev.buzz-relay, which is RunAtLoad-only and therefore only
+  ever acts at login. This unit is the one that notices a mid-day failure.
+
+  StartInterval 120 (not KeepAlive): the script is a one-shot check that exits.
+  KeepAlive would respawn it instantly in a tight loop; the script's own flap
+  guard assumes a spaced cadence.
+
+  Label is com.dev.buzz-*, matching the relay unit, so an evie dev deploy
+  (which boots out ENUMERATED com.dev.evie-* labels only) leaves it alone.
+
+  To enable Discord notifications, add BUZZ_WATCHDOG_WEBHOOK to
+  EnvironmentVariables below. Without it the script logs and repairs silently.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>              <string>com.dev.buzz-relay-watchdog</string>
+  <key>ProgramArguments</key>   <array><string>__WATCHDOG__</string></array>
+  <key>RunAtLoad</key>          <true/>
+  <key>StartInterval</key>      <integer>120</integer>
+  <key>KeepAlive</key>          <false/>
+  <key>ProcessType</key>        <string>Background</string>
+  <key>StandardOutPath</key>    <string>__LOGDIR__/buzz-relay-watchdog.log</string>
+  <key>StandardErrorPath</key>  <string>__LOGDIR__/buzz-relay-watchdog.err.log</string>
+</dict>
+</plist>

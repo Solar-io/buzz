@@ -167,6 +167,20 @@ else
   log "wrote $PLIST (not loaded — deploy-buzz-dev.sh loads it)"
 fi
 
+# The watchdog is a SEPARATE unit from the supervisor above, because the
+# supervisor is RunAtLoad-only and so can only ever act at login. This one runs
+# on an interval and catches a mid-day failure of Docker or the compose project.
+run install -m 0755 "$BUZZ_KIT_DIR/buzz-relay-watchdog.sh" "$DEV_SERVICES_DIR/buzz-relay-watchdog.sh"
+WATCHDOG_PLIST="$HOME/Library/LaunchAgents/com.dev.buzz-relay-watchdog.plist"
+if [ "$DRY_RUN" = "1" ]; then
+  log "[DRY_RUN] would write $WATCHDOG_PLIST"
+else
+  sed -e "s|__WATCHDOG__|$DEV_SERVICES_DIR/buzz-relay-watchdog.sh|g" \
+      -e "s|__LOGDIR__|$BUZZ_RUNTIME_DIR|g" \
+      "$BUZZ_KIT_DIR/launchd/com.dev.buzz-relay-watchdog.plist.template" > "$WATCHDOG_PLIST"
+  log "wrote $WATCHDOG_PLIST (load with: launchctl bootstrap gui/\$(id -u) $WATCHDOG_PLIST)"
+fi
+
 step "[7/7] Done — nothing started"
 cat <<MSG
 
