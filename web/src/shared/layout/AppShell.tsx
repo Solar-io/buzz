@@ -120,8 +120,15 @@ export function AppShell({
   sidebar,
   title,
   children,
+  chromeless = false,
 }: {
   sidebar: ReactNode;
+  /**
+   * Hide the sidebar, its resize handle and the phone bar so `children` get
+   * the whole viewport (Files dock focus mode). The sidebar stays MOUNTED —
+   * it holds the channel subscriptions every pane reads — it is only hidden.
+   */
+  chromeless?: boolean;
   /** Current conversation label for the mobile top bar. */
   title?: string | null;
   children: ReactNode;
@@ -152,24 +159,34 @@ export function AppShell({
           the desktop client's deliberate sidebar/chat two-tone. Width is
           drag-adjustable; the handle doubles as the border. */}
       <aside
-        className="buzz-shell-navigation hidden shrink-0 flex-col bg-sidebar text-sidebar-foreground md:flex"
+        className={
+          chromeless
+            ? "hidden"
+            : "buzz-shell-navigation hidden shrink-0 flex-col bg-sidebar text-sidebar-foreground md:flex"
+        }
+        data-testid="app-shell-sidebar"
         style={{ width: `${sidebarWidth}px` }}
       >
         {sidebar}
       </aside>
-      <ResizeHandle
-        orientation="right"
-        label="Resize channel sidebar"
-        onDrag={(delta) => clampSidebar(sidebarWidth + delta)}
-        onRelease={() => clampSidebar(sidebarWidth)}
-      />
+      {chromeless ? null : (
+        <ResizeHandle
+          orientation="right"
+          label="Resize channel sidebar"
+          onDrag={(delta) => clampSidebar(sidebarWidth + delta)}
+          onRelease={() => clampSidebar(sidebarWidth)}
+        />
+      )}
 
       {/* Mobile top bar + drawer */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Phone bar (Sam, 2026-09-22): ONE gray bar — the hamburger and the
             conversation name, where the old channel header sat. The
             "Buzz / Name" breadcrumb bar above it is gone. */}
-        <header className="buzz-shell-navigation flex min-h-11 shrink-0 items-center gap-1 border-b border-border bg-secondary px-2 py-1 pt-[max(0.25rem,env(safe-area-inset-top))] md:hidden">
+        <header
+          data-testid="app-shell-phone-bar"
+          className={`buzz-shell-navigation ${chromeless ? "hidden" : "flex"} min-h-11 shrink-0 items-center gap-1 border-b border-border bg-secondary px-2 py-1 pt-[max(0.25rem,env(safe-area-inset-top))] md:hidden`}
+        >
           <button
             type="button"
             aria-label="Open channels"

@@ -1,4 +1,13 @@
-import { ExternalLink, Folder, Globe, Plus, Trash2, X } from "lucide-react";
+import {
+  ExternalLink,
+  Folder,
+  Globe,
+  Maximize2,
+  Minimize2,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 
@@ -36,17 +45,31 @@ const EMBED_STALL_MS = 8_000;
  * shortcut-bar overlay passes its own per-channel dock. Site management
  * (`addSite`/`removeSite`) is optional — a dock whose panels come from
  * somewhere else shows no add/remove affordances.
+ *
+ * Focus mode is likewise host-owned: a host that passes `onFocusModeChange`
+ * gets a maximize button. While `focusMode` is on, the header bar is not
+ * rendered (the host hides its own chrome, e.g. the app sidebar), a single
+ * floating exit control sits bottom-right, and Escape exits focus instead of
+ * closing the dock. The iframes are siblings of the header, never its
+ * children, so dropping the header does not remount them.
  */
 export function WebPanelDock({
   onClose,
   dock: dockProp,
   initialPanelId,
+  focusMode = false,
+  onFocusModeChange,
 }: {
   onClose: () => void;
   dock?: WebPanelDockApi;
   /** Panel to open (or focus, if a tab for it survives) on first show. */
   initialPanelId?: string;
+  /** Hide the header so the frame fills the host (host hides its chrome). */
+  focusMode?: boolean;
+  /** Present → the dock offers a maximize toggle. */
+  onFocusModeChange?: (focused: boolean) => void;
 }) {
+  const focused = focusMode && onFocusModeChange !== undefined;
   // Called unconditionally (a conditional hook call is both a rules-of-hooks
   // violation and a render-order hazard); the result is simply unused when
   // the host passes its own dock.
@@ -91,13 +114,19 @@ export function WebPanelDock({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key !== "Escape") {
+        return;
+      }
+      // Escape backs out one level: focus mode first, then the dock.
+      if (focused && onFocusModeChange) {
+        onFocusModeChange(false);
+      } else {
         onClose();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, focused, onFocusModeChange]);
 
   const active = dock.instances.find(
     (instance) => instance.instanceId === dock.activeInstanceId,
@@ -143,83 +172,100 @@ export function WebPanelDock({
       className="flex h-full min-h-0 w-full flex-col bg-background"
       data-testid="web-panel-dock"
     >
-      <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-secondary px-3">
+      {focused ? null : (
         <div
-          className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
-          data-testid="web-panel-tabs"
-          role="tablist"
+          className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-secondary px-3"
+          data-testid="web-panel-dock-header"
         >
-          {dock.instances.map((instance) => {
-            const panel = findPanel(dock.panels, instance.panelId);
-            const selected = instance.instanceId === dock.activeInstanceId;
-            return (
-              <div
-                className={cn(
-                  "flex shrink-0 items-center gap-1 rounded-md border px-2 py-1",
-                  selected
-                    ? "border-border bg-background"
-                    : "border-transparent hover:bg-accent/50",
-                )}
-                key={instance.instanceId}
-              >
-                <button
-                  aria-selected={selected}
-                  className="flex items-center gap-1.5 text-xs"
-                  data-testid={`web-panel-tab-${instance.instanceId}`}
-                  onClick={() => dock.activate(instance.instanceId)}
-                  role="tab"
-                  type="button"
-                >
-                  {panel?.custom ? (
-                    <Globe aria-hidden className="size-3.5" />
-                  ) : (
-                    <Folder aria-hidden className="size-3.5" />
-                  )}
-                  <span className="max-w-32 truncate">
-                    {panel?.label ?? "Unknown"}
-                  </span>
-                </button>
-                <button
-                  aria-label={`Close ${panel?.label ?? "tab"}`}
-                  className="rounded-xs p-0.5 text-muted-foreground hover:text-foreground"
-                  data-testid={`web-panel-close-${instance.instanceId}`}
-                  onClick={() => dock.close(instance.instanceId)}
-                  type="button"
-                >
-                  <X aria-hidden className="size-3" />
-                </button>
-              </div>
-            );
-          })}
-        </div>
-
-        <PanelOpener
-          atCap={atCap}
-          dock={dock}
-          onAddSite={dock.addSite ? () => setAddOpen(true) : undefined}
-        />
-
-        {activePanel ? (
-          <a
-            aria-label={`Open ${activePanel.label} in a new tab`}
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-            href={activePanel.url}
-            rel="noreferrer noopener"
-            target="_blank"
+          <div
+            className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
+            data-testid="web-panel-tabs"
+            role="tablist"
           >
-            <ExternalLink aria-hidden className="size-4" />
-          </a>
-        ) : null}
-        <button
-          aria-label="Close panels"
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-          data-testid="web-panel-dock-close"
-          onClick={onClose}
-          type="button"
-        >
-          <X aria-hidden className="size-4" />
-        </button>
-      </div>
+            {dock.instances.map((instance) => {
+              const panel = findPanel(dock.panels, instance.panelId);
+              const selected = instance.instanceId === dock.activeInstanceId;
+              return (
+                <div
+                  className={cn(
+                    "flex shrink-0 items-center gap-1 rounded-md border px-2 py-1",
+                    selected
+                      ? "border-border bg-background"
+                      : "border-transparent hover:bg-accent/50",
+                  )}
+                  key={instance.instanceId}
+                >
+                  <button
+                    aria-selected={selected}
+                    className="flex items-center gap-1.5 text-xs"
+                    data-testid={`web-panel-tab-${instance.instanceId}`}
+                    onClick={() => dock.activate(instance.instanceId)}
+                    role="tab"
+                    type="button"
+                  >
+                    {panel?.custom ? (
+                      <Globe aria-hidden className="size-3.5" />
+                    ) : (
+                      <Folder aria-hidden className="size-3.5" />
+                    )}
+                    <span className="max-w-32 truncate">
+                      {panel?.label ?? "Unknown"}
+                    </span>
+                  </button>
+                  <button
+                    aria-label={`Close ${panel?.label ?? "tab"}`}
+                    className="rounded-xs p-0.5 text-muted-foreground hover:text-foreground"
+                    data-testid={`web-panel-close-${instance.instanceId}`}
+                    onClick={() => dock.close(instance.instanceId)}
+                    type="button"
+                  >
+                    <X aria-hidden className="size-3" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+
+          <PanelOpener
+            atCap={atCap}
+            dock={dock}
+            onAddSite={dock.addSite ? () => setAddOpen(true) : undefined}
+          />
+
+          {activePanel ? (
+            <a
+              aria-label={`Open ${activePanel.label} in a new tab`}
+              className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+              href={activePanel.url}
+              rel="noreferrer noopener"
+              target="_blank"
+            >
+              <ExternalLink aria-hidden className="size-4" />
+            </a>
+          ) : null}
+          {onFocusModeChange ? (
+            <button
+              aria-label="Focus mode: hide sidebar and tab bar"
+              className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+              data-testid="web-panel-dock-focus"
+              onClick={() => onFocusModeChange(true)}
+              title="Focus mode"
+              type="button"
+            >
+              <Maximize2 aria-hidden className="size-4" />
+            </button>
+          ) : null}
+          <button
+            aria-label="Close panels"
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+            data-testid="web-panel-dock-close"
+            onClick={onClose}
+            type="button"
+          >
+            <X aria-hidden className="size-4" />
+          </button>
+        </div>
+      )}
 
       <div className="relative min-h-0 flex-1">
         {inAppBrowser ? (
@@ -302,6 +348,22 @@ export function WebPanelDock({
               </a>
             </Button>
           </div>
+        ) : null}
+
+        {focused && onFocusModeChange ? (
+          // Bottom-right (Sam, 2026-09-24): bottom-left covered the start of
+          // document lines. 40px hit target for touch; translucent until
+          // hovered/focused so it sits lightly.
+          <button
+            aria-label="Exit focus mode"
+            className="absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] right-[max(0.75rem,env(safe-area-inset-right))] z-30 flex size-10 items-center justify-center rounded-full border border-border bg-background/70 text-muted-foreground opacity-60 shadow-md backdrop-blur transition-opacity hover:opacity-100 focus-visible:opacity-100"
+            data-testid="web-panel-dock-unfocus"
+            onClick={() => onFocusModeChange(false)}
+            title="Exit focus mode (Esc)"
+            type="button"
+          >
+            <Minimize2 aria-hidden className="size-5" />
+          </button>
         ) : null}
       </div>
 
