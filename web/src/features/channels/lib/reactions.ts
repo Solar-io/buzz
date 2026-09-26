@@ -132,6 +132,63 @@ export function reactionGroups(
     .sort((a, b) => b.pubkeys.length - a.pubkeys.length);
 }
 
+/**
+ * The lifecycle reactions buzz-acp puts on a message it picked up
+ * (`crates/buzz-acp/src/pool.rs`): 👀 when the event is queued, 💬 while the
+ * agent is prompting. Both are removed once the turn ends.
+ */
+export const AGENT_SEEN_EMOJI = "👀";
+export const AGENT_RESPONDING_EMOJI = "💬";
+
+/** Read-receipt state shown instead of the agent lifecycle chips. */
+export type AgentReceipt = "seen" | "responding" | null;
+
+/**
+ * Pull agents' 👀 / 💬 out of the chip groups and fold them into one receipt
+ * (rendered as ✓ / ✓✓). Only reactors in `agentPubkeys` count: a person's 👀
+ * stays an ordinary chip, and a group shared by people and agents keeps its
+ * human reactors. With no agent set the groups pass through untouched.
+ */
+export function splitAgentReceipt(
+  groups: ReactionGroup[],
+  agentPubkeys?: ReadonlySet<string> | null,
+): { receipt: AgentReceipt; groups: ReactionGroup[] } {
+  if (!agentPubkeys || agentPubkeys.size === 0) {
+    return { receipt: null, groups };
+  }
+  let seen = false;
+  let responding = false;
+  const rest: ReactionGroup[] = [];
+  for (const group of groups) {
+    const isLifecycle =
+      group.emoji === AGENT_SEEN_EMOJI ||
+      group.emoji === AGENT_RESPONDING_EMOJI;
+    if (!isLifecycle) {
+      rest.push(group);
+      continue;
+    }
+    const humans = group.pubkeys.filter((pubkey) => !agentPubkeys.has(pubkey));
+    if (humans.length < group.pubkeys.length) {
+      if (group.emoji === AGENT_RESPONDING_EMOJI) {
+        responding = true;
+      } else {
+        seen = true;
+      }
+    }
+    if (humans.length > 0) {
+      rest.push(
+        humans.length === group.pubkeys.length
+          ? group
+          : { ...group, pubkeys: humans },
+      );
+    }
+  }
+  return {
+    receipt: responding ? "responding" : seen ? "seen" : null,
+    groups: rest,
+  };
+}
+
 /** Cap on names listed in a chip tooltip before it collapses to a count. */
 const MAX_NAMED_REACTORS = 8;
 

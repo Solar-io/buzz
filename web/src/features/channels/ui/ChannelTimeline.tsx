@@ -33,6 +33,7 @@ import { formatDayLabel } from "../lib/dateFormatters.ts";
 import {
   reactionGroups as groupReactions,
   type ReactionIndex,
+  splitAgentReceipt,
 } from "../lib/reactions.ts";
 import { SYSTEM_MESSAGE_KIND } from "../lib/systemEvent.ts";
 import {
@@ -510,6 +511,10 @@ export function ChannelTimeline({
     lastRenderedAt = message.createdAt;
     rowIndex.set(message.id, rows.length);
     const branch = threadLayout?.summaryById.get(message.id) ?? null;
+    const receiptSplit = splitAgentReceipt(
+      groupReactions(reactions ?? EMPTY_REACTIONS, message.id, selfPubkey),
+      agentPubkeys,
+    );
     const row = (
       <MessageRow
         key={message.id}
@@ -521,11 +526,8 @@ export function ChannelTimeline({
         onOpenThread={onOpenThread}
         showActions={showActions}
         active={!flat && activeRootId === message.id}
-        reactionGroups={groupReactions(
-          reactions ?? EMPTY_REACTIONS,
-          message.id,
-          selfPubkey,
-        )}
+        reactionGroups={receiptSplit.groups}
+        agentReceipt={receiptSplit.receipt}
         onReact={onReact}
         onUnreact={onUnreact}
         onEdit={onEdit}

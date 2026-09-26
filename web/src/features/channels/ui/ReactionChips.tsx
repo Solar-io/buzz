@@ -1,7 +1,11 @@
 import { useCustomEmoji } from "@/features/custom-emoji/hooks";
 import { EmojiText } from "@/features/custom-emoji/ui/EmojiText";
 import { cn } from "@/shared/lib/cn";
-import { describeReactors, type ReactionGroup } from "../lib/reactions.ts";
+import {
+  type AgentReceipt,
+  describeReactors,
+  type ReactionGroup,
+} from "../lib/reactions.ts";
 
 /**
  * Reaction chips under a message.
@@ -26,6 +30,7 @@ export function ReactionChips({
   selfPubkey,
   onReact,
   onUnreact,
+  receipt = null,
 }: {
   messageId: string;
   groups: ReactionGroup[];
@@ -39,17 +44,35 @@ export function ReactionChips({
    * relay already has.
    */
   onUnreact?: (messageId: string, emoji: string) => void;
+  /** Agent read receipt, drawn as ✓ (seen) / ✓✓ (responding). */
+  receipt?: AgentReceipt;
 }) {
   // Read before the early return: a hook cannot sit behind a conditional.
   const palette = useCustomEmoji();
-  if (groups.length === 0) {
+  if (groups.length === 0 && !receipt) {
     return null;
   }
   return (
     <div
-      className="mt-1 flex flex-wrap gap-1"
+      className="mt-1 flex flex-wrap items-center gap-1"
       data-testid={`message-reactions-${messageId}`}
     >
+      {receipt && (
+        <span
+          role="img"
+          aria-label={
+            receipt === "responding" ? "Agent is responding" : "Seen by agent"
+          }
+          title={
+            receipt === "responding" ? "Agent is responding" : "Seen by agent"
+          }
+          data-testid={`agent-receipt-${messageId}`}
+          data-receipt={receipt}
+          className="select-none px-0.5 text-sm font-bold leading-none tracking-[-0.3em] text-green-600 dark:text-green-500"
+        >
+          {receipt === "responding" ? "✓✓" : "✓"}
+        </span>
+      )}
       {groups.map((group) => {
         const mine = group.reactedByCurrentUser;
         const toggles = mine ? Boolean(onUnreact) : Boolean(onReact);

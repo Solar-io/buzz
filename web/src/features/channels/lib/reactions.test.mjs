@@ -11,6 +11,7 @@ import {
   REACTION_DELETE_KIND,
   REACTION_KIND,
   removeReaction,
+  splitAgentReceipt,
   upsertReaction,
 } from "./reactions.ts";
 
@@ -238,4 +239,65 @@ test("pickOwnReactionEventId prefers the newest duplicate", () => {
     }),
     "newer",
   );
+});
+
+test("splitAgentReceipt folds agent 👀 into a seen receipt and drops the chip", () => {
+  const agents = new Set(["agent1"]);
+  const out = splitAgentReceipt(
+    [
+      { emoji: "👀", pubkeys: ["agent1"], reactedByCurrentUser: false },
+      { emoji: "👍", pubkeys: ["human1"], reactedByCurrentUser: false },
+    ],
+    agents,
+  );
+  assert.equal(out.receipt, "seen");
+  assert.deepEqual(
+    out.groups.map((g) => g.emoji),
+    ["👍"],
+  );
+});
+
+test("splitAgentReceipt: agent 💬 wins over 👀 as responding", () => {
+  const out = splitAgentReceipt(
+    [
+      { emoji: "👀", pubkeys: ["agent1"], reactedByCurrentUser: false },
+      { emoji: "💬", pubkeys: ["agent2"], reactedByCurrentUser: false },
+    ],
+    new Set(["agent1", "agent2"]),
+  );
+  assert.equal(out.receipt, "responding");
+  assert.equal(out.groups.length, 0);
+});
+
+test("splitAgentReceipt keeps a human 👀 as a chip and ignores it for the receipt", () => {
+  const out = splitAgentReceipt(
+    [
+      {
+        emoji: "👀",
+        pubkeys: ["human1", "agent1"],
+        reactedByCurrentUser: false,
+      },
+    ],
+    new Set(["agent1"]),
+  );
+  assert.equal(out.receipt, "seen");
+  assert.deepEqual(out.groups, [
+    { emoji: "👀", pubkeys: ["human1"], reactedByCurrentUser: false },
+  ]);
+  const humanOnly = splitAgentReceipt(
+    [{ emoji: "💬", pubkeys: ["human1"], reactedByCurrentUser: false }],
+    new Set(["agent1"]),
+  );
+  assert.equal(humanOnly.receipt, null);
+  assert.equal(humanOnly.groups.length, 1);
+});
+
+test("splitAgentReceipt with no agent set passes groups through", () => {
+  const groups = [
+    { emoji: "👀", pubkeys: ["agent1"], reactedByCurrentUser: false },
+  ];
+  assert.deepEqual(splitAgentReceipt(groups, undefined), {
+    receipt: null,
+    groups,
+  });
 });

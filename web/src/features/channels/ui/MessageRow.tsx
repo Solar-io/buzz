@@ -10,7 +10,7 @@ import {
   formatFullDateTime,
   formatTime,
 } from "../lib/dateFormatters.ts";
-import type { ReactionGroup } from "../lib/reactions.ts";
+import type { AgentReceipt, ReactionGroup } from "../lib/reactions.ts";
 import { UserProfilePopover } from "@/features/profile/ui/UserProfilePopover";
 import { AuthorAvatar } from "./AuthorAvatar.tsx";
 import { DecisionCard } from "./DecisionCard.tsx";
@@ -74,6 +74,7 @@ export function MessageRow({
   onOpenThread,
   active,
   reactionGroups,
+  agentReceipt = null,
   onReact,
   onUnreact,
   onEdit,
@@ -110,6 +111,8 @@ export function MessageRow({
   onOpenThread?: (message: TimelineMessage) => void;
   active: boolean;
   reactionGroups: ReactionGroup[];
+  /** Agent read receipt (✓ seen / ✓✓ responding) for this message. */
+  agentReceipt?: AgentReceipt;
   onReact?: (messageId: string, emoji: string) => void;
   onUnreact?: (messageId: string, emoji: string) => void;
   onEdit?: (message: TimelineMessage) => void;
@@ -300,6 +303,7 @@ export function MessageRow({
             <ReactionChips
               messageId={message.id}
               groups={reactionGroups}
+              receipt={agentReceipt}
               nameOf={(pubkey) => authorLabel(pubkey, profiles)}
               selfPubkey={selfPubkey}
               onReact={onReact}
