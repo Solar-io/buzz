@@ -378,3 +378,133 @@ after(() => {
     Object.defineProperty(globalThis, "navigator", originals.navigator);
   }
 });
+
+// ── Thought rows (plan item 1, Sam 2026-09-26) ─────────────────────────────
+
+let thoughtSeq = 10;
+function thoughtFrame(messageId, text) {
+  thoughtSeq += 1;
+  return {
+    id: `frame-${thoughtSeq}`,
+    createdAt: 1_700_000_000 + thoughtSeq,
+    seq: thoughtSeq,
+    timestamp: "2023-11-14T22:13:20Z",
+    kind: "acp_read",
+    agentIndex: null,
+    channelId: null,
+    sessionId: null,
+    turnId: "t1",
+    payload: {
+      method: "session/update",
+      params: {
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          messageId,
+          content: { type: "text", text },
+        },
+      },
+    },
+  };
+}
+
+const LONG =
+  "Considering the relay replay window. It paces subscriptions with a fixed timer, which idles whenever the relay answers fast, so the tail stretches out. ";
+
+async function renderFrames(panel, frames) {
+  await act(async () => {
+    panel.root.render(
+      React.createElement(AgentActivityPanel, { ...panel.props, frames }),
+    );
+  });
+}
+
+async function mountThoughts(frames) {
+  const container = dom.window.document.createElement("div");
+  dom.window.document.body.appendChild(container);
+  const root = createRoot(container);
+  const props = {
+    agentPubkey: PUBKEY,
+    agentName: "Richard",
+    frames,
+    lockedCount: 0,
+    connected: true,
+    working: { working: true, startedAt: 1_700_000_000 },
+    mobileOpen: false,
+    onCloseMobile: () => {},
+  };
+  await act(async () =>
+    root.render(React.createElement(AgentActivityPanel, props)),
+  );
+  return {
+    container,
+    root,
+    props,
+    rows: () => [...container.querySelectorAll('[data-testid="thought-row"]')],
+    unmount: async () => {
+      await act(async () => root.unmount());
+      container.remove();
+    },
+  };
+}
+
+test("a thought renders as a collapsed one-line row by default", async () => {
+  const panel = await mountThoughts([turnFrame(), thoughtFrame("m1", LONG)]);
+  try {
+    const [row] = panel.rows();
+    assert.ok(row);
+    const button = row.querySelector("button");
+    assert.equal(button.getAttribute("aria-expanded"), "false");
+    assert.equal(row.querySelector('[data-testid="thought-text"]'), null);
+    const preview = row.querySelector('[data-testid="thought-preview"]');
+    assert.match(preview.className, /(^| )truncate( |$)/);
+    assert.ok(preview.textContent.length <= 101, "about 100 chars");
+    assert.match(row.textContent, /Thinking ·/);
+  } finally {
+    await panel.unmount();
+  }
+});
+
+test("streaming chunks never expand a collapsed row; an opened row stays open", async () => {
+  const frames = [turnFrame(), thoughtFrame("m1", LONG)];
+  const panel = await mountThoughts(frames);
+  try {
+    for (let i = 0; i < 3; i++) {
+      frames.push(thoughtFrame("m1", `chunk ${i}. `));
+      await renderFrames(panel, [...frames]);
+    }
+    let [row] = panel.rows();
+    assert.equal(panel.rows().length, 1, "chunks grow one entry");
+    assert.equal(
+      row.querySelector("button").getAttribute("aria-expanded"),
+      "false",
+    );
+    await act(async () => {
+      row
+        .querySelector("button")
+        .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+    [row] = panel.rows();
+    assert.equal(
+      row.querySelector("button").getAttribute("aria-expanded"),
+      "true",
+    );
+    assert.match(
+      row.querySelector('[data-testid="thought-text"]').textContent,
+      /chunk 2\./,
+    );
+    frames.push(thoughtFrame("m1", "more streamed text."));
+    await renderFrames(panel, [...frames]);
+    [row] = panel.rows();
+    assert.equal(
+      row.querySelector("button").getAttribute("aria-expanded"),
+      "true",
+      "stays open while it streams",
+    );
+    assert.match(
+      row.querySelector('[data-testid="thought-text"]').textContent,
+      /more streamed text\./,
+    );
+  } finally {
+    await panel.unmount();
+  }
+});

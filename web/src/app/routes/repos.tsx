@@ -676,6 +676,7 @@ function ChannelBrowser() {
     channelId: selectedId,
     threadRootId,
     setThreadRootId,
+    ownerPubkey: selfPubkey,
   });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

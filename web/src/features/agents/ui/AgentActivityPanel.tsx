@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { BarChart3, Brain } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BarChart3, Brain, ChevronRight } from "lucide-react";
 import type { Profile } from "@/features/channels/hooks";
 import { AuthorAvatar } from "@/features/channels/ui/AuthorAvatar";
 import {
@@ -34,7 +34,22 @@ function statusColor(status: string): string {
   return "text-amber-400";
 }
 
-function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
+/** First ~100 characters of a thought, on one line, for its collapsed row. */
+export function thoughtPreview(text: string): string {
+  const oneLine = text.trim().replace(/\s+/g, " ");
+  return oneLine.length > 100 ? `${oneLine.slice(0, 100)}…` : oneLine;
+}
+
+function TranscriptRow({
+  entry,
+  expanded,
+  onToggle,
+}: {
+  entry: TranscriptEntry;
+  /** Thought rows only: shown in full. Collapsed is the default, always. */
+  expanded: boolean;
+  onToggle: (id: string) => void;
+}) {
   if (entry.type === "turn") {
     return (
       <li className="flex items-center gap-2 py-1 text-xs text-muted-foreground/70">
@@ -78,18 +93,46 @@ function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
       </li>
     );
   }
+  // Thought (plan item 1, Sam 2026-09-26): a one-line collapsed row by
+  // default. Expansion lives in the PANEL keyed by entry id, so streaming
+  // chunks that grow this entry in place never re-expand a collapsed row,
+  // and a row the reader opened stays open while it streams.
   return (
-    <li className="rounded-lg border border-border/60 bg-card/60 px-3 py-2">
-      <div className="mb-0.5 text-xs font-medium text-muted-foreground">
-        <Brain
+    <li
+      className="rounded-lg border border-border/60 bg-card/60 px-2 py-1"
+      data-testid="thought-row"
+    >
+      <button
+        aria-expanded={expanded}
+        className="flex w-full min-w-0 items-center gap-1.5 text-left text-xs text-muted-foreground"
+        onClick={() => onToggle(entry.id)}
+        type="button"
+      >
+        <ChevronRight
           aria-hidden="true"
-          className="mr-1 inline h-3.5 w-3.5 text-muted-foreground"
+          className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
         />
-        Thinking · {entryTime(entry.at)}
-      </div>
-      <p className="break-words whitespace-pre-wrap text-sm leading-5 text-muted-foreground">
-        {entry.text.trim()}
-      </p>
+        <Brain aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+        <span className="shrink-0 font-medium">
+          Thinking · {entryTime(entry.at)}
+        </span>
+        {expanded ? null : (
+          <span
+            className="min-w-0 flex-1 truncate"
+            data-testid="thought-preview"
+          >
+            {thoughtPreview(entry.text)}
+          </span>
+        )}
+      </button>
+      {expanded ? (
+        <p
+          className="mt-1 break-words whitespace-pre-wrap text-sm leading-5 text-muted-foreground"
+          data-testid="thought-text"
+        >
+          {entry.text.trim()}
+        </p>
+      ) : null}
     </li>
   );
 }
@@ -131,6 +174,19 @@ export function AgentActivityPanel({
   onSelectThreadTab?: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Thought rows the reader expanded, by entry id (collapsed by default).
+  const [expandedThoughts, setExpandedThoughts] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const toggleThought = useCallback((id: string) => {
+    setExpandedThoughts((current) => {
+      const next = new Set(current);
+      if (!next.delete(id)) {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
   // Follow-the-tail state (see lib/scrollFollow.ts — the InputFollowState
   // engine the timeline uses, ported here 2026-09-15, D-027): tailing pauses
   // on a reader's upward INPUT (touch/wheel/scrollbar/scroll keys — armed by
@@ -406,7 +462,12 @@ export function AgentActivityPanel({
         )}
         <ol className="space-y-1.5">
           {entries.map((entry) => (
-            <TranscriptRow key={entry.id} entry={entry} />
+            <TranscriptRow
+              entry={entry}
+              expanded={expandedThoughts.has(entry.id)}
+              key={entry.id}
+              onToggle={toggleThought}
+            />
           ))}
         </ol>
         {/*

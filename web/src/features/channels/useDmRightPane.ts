@@ -10,6 +10,18 @@ import {
   type PaneToggles,
   type RightTab,
 } from "./lib/dmPaneToggles.ts";
+import {
+  loadThinkingPaneHidden,
+  saveThinkingPaneHidden,
+} from "./lib/thinkingPanePref.ts";
+
+function paneStorage(): Storage | null {
+  try {
+    return globalThis.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * The DM right-pane state the route used to hold inline, plus the two-way
@@ -34,9 +46,22 @@ export function useDmRightPane(options: {
   threadRootId: string | null;
   /** The route's setter — the Replies toggle can restore a remembered root. */
   setThreadRootId: (id: string | null) => void;
+  /** Whose remembered pane choice applies (plan item 1); null = default. */
+  ownerPubkey?: string | null;
 }) {
+  const owner = options.ownerPubkey ?? null;
   const [thinkingOpen, setThinkingOpen] = useState(false);
-  const [dmPaneHidden, setDmPaneHidden] = useState(false);
+  // Desktop pane: closed by default, and each user's last choice sticks.
+  const [dmPaneHidden, setPaneHiddenState] = useState(() =>
+    loadThinkingPaneHidden(paneStorage(), owner),
+  );
+  useEffect(() => {
+    setPaneHiddenState(loadThinkingPaneHidden(paneStorage(), owner));
+  }, [owner]);
+  const setDmPaneHidden = (hidden: boolean) => {
+    saveThinkingPaneHidden(paneStorage(), owner, hidden);
+    setPaneHiddenState(hidden);
+  };
   const [rightTab, setRightTab] = useState<RightTab>("thinking");
   const [lastThreadRootId, setLastThreadRootId] = useState<string | null>(null);
   const [mobile, setMobile] = useState(() =>
