@@ -215,3 +215,12 @@ test("findPanel resolves by id and tolerates null", () => {
   assert.equal(findPanel(panels, "nope"), null);
   assert.equal(findPanel(panels, null), null);
 });
+
+test("addCustomPanel refuses a bare word typed into the address (QA 2026-09-26)", () => {
+  const refused = addCustomPanel([], { url: "QA-Files" });
+  assert.equal(refused.ok, false);
+  for (const url of ["files.example.net", "localhost:8080", "10.0.0.5:9000"]) {
+    assert.equal(addCustomPanel([], { url }).ok, true, url);
+  }
+  assert.equal(addCustomPanel([], { url: "localhost" }).ok, false);
+});

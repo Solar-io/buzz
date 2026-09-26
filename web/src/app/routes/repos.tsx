@@ -451,7 +451,7 @@ function ChannelBrowser() {
   // always-mounted frame host, and a keep-alive LRU (plan items 3 + 4). A
   // link/Files click shows a page from any state; any conversation
   // navigation hides the layer without unloading its frames.
-  const { web, openFiles, openLink } = useShellWebView(
+  const { web, openFiles, openLink, activeTitle } = useShellWebView(
     `${selectedId ?? ""}|${view ?? ""}`,
   );
   // Sidebar + buttons: section-header plus buttons open the create dialogs.
@@ -486,6 +486,7 @@ function ChannelBrowser() {
     visibleDms: lists.visibleDms,
     hiddenDmIds,
     selfPubkey,
+    webViewOpen: web.state.active !== null,
     openConversation: (id) =>
       void navigate({ to: "/repos", search: { c: id }, replace: true }),
     clearConversation: () =>
@@ -770,11 +771,13 @@ function ChannelBrowser() {
             chromeless={web.state.active !== null && web.state.focus}
             sidebar={sidebar}
             title={
-              current
-                ? current.type === "dm"
-                  ? dmName(current.participantPubkeys)
-                  : `# ${current.name}`
-                : null
+              activeTitle !== null
+                ? activeTitle
+                : current
+                  ? current.type === "dm"
+                    ? dmName(current.participantPubkeys)
+                    : `# ${current.name}`
+                  : null
             }
           >
             <div className="relative h-full min-h-0">

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 
+import { useShortcutBar } from "@/features/shortcut-bar/hooks";
+
 import { type ActiveWebView, useActiveWebView } from "./activeWebStore.ts";
 import { useWebPanelDock } from "./hooks.ts";
 import { pickFilesPanel } from "./lib/activeWebView.ts";
@@ -19,6 +21,8 @@ export function useShellWebView(navKey: string): {
   web: ActiveWebView;
   openFiles: () => void;
   openLink: (linkId: string) => void;
+  /** Label of the page showing (the phone top bar's title), else null. */
+  activeTitle: string | null;
 } {
   const web = useActiveWebView();
   const files = useWebPanelDock();
@@ -42,5 +46,13 @@ export function useShellWebView(navKey: string): {
     (linkId: string) => show({ kind: "link", panelId: linkId }),
     [show],
   );
-  return { web, openFiles, openLink };
+  const { shortcuts } = useShortcutBar();
+  const active = web.state.active;
+  const activeTitle =
+    active === null
+      ? null
+      : active.kind === "link"
+        ? (shortcuts.find((s) => s.id === active.panelId)?.label ?? null)
+        : (files.panels.find((p) => p.id === active.panelId)?.label ?? "Files");
+  return { web, openFiles, openLink, activeTitle };
 }

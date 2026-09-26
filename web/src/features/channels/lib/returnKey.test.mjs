@@ -14,18 +14,36 @@ function device({ coarse, width }) {
 }
 
 test("phone: Return inserts a newline", () => {
-  assert.equal(returnInsertsNewline(device({ coarse: true, width: 390 })), true);
+  assert.equal(
+    returnInsertsNewline(device({ coarse: true, width: 390 })),
+    true,
+  );
 });
 
 test("iPad landscape and portrait: Return sends", () => {
-  assert.equal(returnInsertsNewline(device({ coarse: true, width: 1180 })), false);
-  assert.equal(returnInsertsNewline(device({ coarse: true, width: 820 })), false);
-  assert.equal(returnInsertsNewline(device({ coarse: true, width: 768 })), false);
+  assert.equal(
+    returnInsertsNewline(device({ coarse: true, width: 1180 })),
+    false,
+  );
+  assert.equal(
+    returnInsertsNewline(device({ coarse: true, width: 820 })),
+    false,
+  );
+  assert.equal(
+    returnInsertsNewline(device({ coarse: true, width: 768 })),
+    false,
+  );
 });
 
 test("desktop: Return sends", () => {
-  assert.equal(returnInsertsNewline(device({ coarse: false, width: 390 })), false);
-  assert.equal(returnInsertsNewline(device({ coarse: false, width: 1440 })), false);
+  assert.equal(
+    returnInsertsNewline(device({ coarse: false, width: 390 })),
+    false,
+  );
+  assert.equal(
+    returnInsertsNewline(device({ coarse: false, width: 1440 })),
+    false,
+  );
 });
 
 test("no matchMedia: Return sends", () => {

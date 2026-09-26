@@ -420,3 +420,33 @@ after(() => {
     Object.defineProperty(globalThis, "navigator", originals.navigator);
   }
 });
+
+test("a fresh-but-equal pubkeys array each render keeps ONE kind-0 REQ (QA 2026-09-26)", async () => {
+  // Call sites pass `.map(...)` results, a new array every render; keying the
+  // subscription on array identity reopened it each render (13-19 per load).
+  const session = startSession();
+  const socket = await connectAndOpen(session);
+  let bump;
+  function Probe() {
+    const [, setN] = React.useState(0);
+    bump = () => setN((n) => n + 1);
+    useProfiles([PUBKEY, "b".repeat(64)].reverse().slice());
+    return null;
+  }
+  const container = dom.window.document.createElement("div");
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(React.createElement(Probe)));
+    for (let i = 0; i < 5; i++) {
+      await act(async () => bump());
+    }
+    const kind0Reqs = socket
+      .sentOf("REQ")
+      .filter((frame) => frame[2]?.kinds?.includes(0));
+    assert.equal(kind0Reqs.length, 1, "re-renders must not re-REQ");
+    assert.equal(socket.sentOf("CLOSE").length, 0);
+  } finally {
+    await act(async () => root.unmount());
+    session.close();
+  }
+});

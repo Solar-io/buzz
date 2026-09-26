@@ -1,8 +1,9 @@
 import { buildReactionEmojiTag } from "@/features/custom-emoji/lib/customEmojiTags";
 import type { CustomEmoji } from "@/features/custom-emoji/lib/customEmoji";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { RelaySession } from "@/shared/api/relay-session";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
+import { useStableSortedSet } from "@/shared/lib/useStableSortedSet";
 
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { signNostrEvent } from "@/shared/lib/nostr-signer";
@@ -497,7 +498,7 @@ export function useProfiles(pubkeys: string[]): Map<string, Profile> {
     }
     return seed;
   });
-  const key = useMemo(() => Array.from(new Set(pubkeys)).sort(), [pubkeys]);
+  const key = useStableSortedSet(pubkeys);
   const keyRef = useRef(key);
   keyRef.current = key;
 
@@ -830,7 +831,7 @@ export async function deleteChannel(
 export function usePresence(pubkeys: string[]): Map<string, PresenceEntry> {
   const { session } = useRelaySession();
   const [entries, setEntries] = useState<Map<string, PresenceEntry>>(new Map());
-  const key = useMemo(() => Array.from(new Set(pubkeys)).sort(), [pubkeys]);
+  const key = useStableSortedSet(pubkeys);
   const keyRef = useRef(key);
   keyRef.current = key;
 

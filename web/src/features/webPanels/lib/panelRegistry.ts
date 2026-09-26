@@ -55,9 +55,12 @@ export function normalizePanelUrl(raw: string): string | null {
   if (trimmed.length === 0) {
     return null;
   }
-  const candidate = /^[a-z][a-z0-9+.-]*:/i.test(trimmed)
-    ? trimmed
-    : `https://${trimmed}`;
+  // "host:8080" is a host and port, not a "host:" scheme.
+  const candidate =
+    /^[a-z][a-z0-9+.-]*:/i.test(trimmed) &&
+    !/^[a-z0-9.-]+:\d+(\/|$)/i.test(trimmed)
+      ? trimmed
+      : `https://${trimmed}`;
   let url: URL;
   try {
     url = new URL(candidate);
@@ -71,6 +74,29 @@ export function normalizePanelUrl(raw: string): string | null {
     return null;
   }
   return url.toString();
+}
+
+/**
+ * A user-typed site must name a real host: a dotted name or IP, an IPv6
+ * literal, or localhost with a port. A bare word ("QA-Files") is almost
+ * always a label typed into the address field, not an intranet host
+ * (QA 2026-09-26: it saved as https://qa-files/).
+ */
+export function isPlausibleSiteHost(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  const host = parsed.hostname;
+  if (host.startsWith("[")) {
+    return true;
+  }
+  if (host === "localhost") {
+    return parsed.port !== "";
+  }
+  return host.includes(".") && !host.endsWith(".");
 }
 
 /** Human label for a URL when the user gave none. */
@@ -219,6 +245,12 @@ export function addCustomPanel(
     return {
       ok: false,
       reason: "That is not an http:// or https:// address.",
+    };
+  }
+  if (!isPlausibleSiteHost(url)) {
+    return {
+      ok: false,
+      reason: "Enter a full address, like files.example.net or localhost:8080.",
     };
   }
   if (existing.some((panel) => panel.url === url)) {

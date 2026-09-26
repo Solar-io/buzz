@@ -156,7 +156,9 @@ export function isPlainObject(
  * fallback markdown, which is exactly what a null parse has always meant —
  * the alternative is `undefined.length` inside a renderer and a blank app.
  */
-export function isRenderableCard(card: DecisionCard | null): card is DecisionCard {
+export function isRenderableCard(
+  card: DecisionCard | null,
+): card is DecisionCard {
   // `!= null`, not `!== null`: the timeline cache has no schema, and a
   // message cached before the card field existed deserializes with `card`
   // ABSENT — `undefined`, which the declared type does not admit. A strict

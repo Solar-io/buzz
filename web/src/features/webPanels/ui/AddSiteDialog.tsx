@@ -56,10 +56,10 @@ export function AddSiteDialog({
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className="max-w-md" data-testid="add-site-dialog">
         <DialogHeader>
-          <DialogTitle>Add a site to the dock</DialogTitle>
+          <DialogTitle>Add a Files site</DialogTitle>
           <DialogDescription>
-            It opens in a tab beside Files and stays loaded while you switch
-            away.
+            Pick it from Settings → Files sites; the Files row reopens the one
+            you used last, and it stays loaded while you switch away.
           </DialogDescription>
         </DialogHeader>
         <form

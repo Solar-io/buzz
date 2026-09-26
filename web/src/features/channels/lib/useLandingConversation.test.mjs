@@ -194,3 +194,39 @@ test("every selection is remembered for the next load", async () => {
     await h.unmount();
   }
 });
+
+test("D-025 open: skeleton holds through the navigation (no 'Pick a channel' frame)", async () => {
+  reset();
+  const dms = [{ lastActivity: 5, channel: { id: "dm-a" } }];
+  const h = await mount({ channelIds: ["dm-a"], visibleDms: dms });
+  try {
+    await h.update({ connected: true, samplingSettled: true });
+    assert.deepEqual(h.calls.open, ["dm-a"]);
+    // The navigate has been requested but the URL has not changed yet.
+    assert.equal(
+      h.out().showSkeleton,
+      true,
+      "the empty state must not render between decide and navigate",
+    );
+    await h.update({ selectedId: "dm-a" });
+    assert.equal(h.out().showSkeleton, false);
+  } finally {
+    await h.unmount();
+  }
+});
+
+test("a web page opened while D-025 waits cancels the default-DM auto-open", async () => {
+  reset();
+  const dms = [{ lastActivity: 5, channel: { id: "dm-a" } }];
+  const h = await mount({ channelIds: ["dm-a"], visibleDms: dms });
+  try {
+    await h.update({ webViewOpen: true });
+    await h.update({ connected: true, samplingSettled: true });
+    assert.deepEqual(h.calls.open, [], "the clicked link must stay up");
+    // Closing the page later does not resurrect the auto-open either.
+    await h.update({ webViewOpen: false });
+    assert.deepEqual(h.calls.open, []);
+  } finally {
+    await h.unmount();
+  }
+});

@@ -40,6 +40,7 @@ export function useLandingConversation({
   visibleDms,
   hiddenDmIds,
   selfPubkey,
+  webViewOpen = false,
   openConversation,
   clearConversation,
 }: {
@@ -52,6 +53,8 @@ export function useLandingConversation({
   visibleDms: ReadonlyArray<{ lastActivity: number; channel: { id: string } }>;
   hiddenDmIds: readonly string[];
   selfPubkey: string | null;
+  /** A link / Files page is showing — the user already chose something. */
+  webViewOpen?: boolean;
   /** Replace-navigate to a conversation (the D-025 pick). */
   openConversation: (channelId: string) => void;
   /** Replace-navigate to a bare `/repos` (a stale restore). */
@@ -145,7 +148,9 @@ export function useLandingConversation({
       // A rejected restore is not a choice anyone made.
       userAlreadySelected:
         (selectedId !== undefined && selectedId !== rejectedId) ||
-        view !== undefined,
+        view !== undefined ||
+        // Opening a link or Files is a choice too: never yank it away.
+        webViewOpen,
       connected,
       channelCount: channelIds.length,
       samplingSettled,
@@ -156,15 +161,19 @@ export function useLandingConversation({
       return;
     }
     handledRef.current = true;
-    setLandingResolved(true);
     if (decision.action === "open") {
+      // The skeleton stays up until the navigation lands (selectedId is then
+      // set), so "Pick a channel" never renders for a frame in between.
       openConversation(visibleDms[decision.index].channel.id);
+      return;
     }
+    setLandingResolved(true);
   }, [
     restorePending,
     rejectedId,
     selectedId,
     view,
+    webViewOpen,
     connected,
     channelIds.length,
     samplingSettled,
