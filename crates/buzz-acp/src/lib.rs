@@ -2253,6 +2253,7 @@ async fn tokio_main() -> Result<()> {
         memory_enabled: config.memory_enabled,
         harness_name: crate::config::normalize_agent_command_identity(&config.agent_command),
         relay_url: config.relay_url.clone(),
+        pool_router: config.pool_router.clone(),
     });
 
     if !config.memory_enabled {
@@ -4106,6 +4107,7 @@ mod claim_router_tests {
             memory_enabled: false,
             harness_name: "claim-router-test".to_string(),
             relay_url: "ws://127.0.0.1:3000".to_string(),
+            pool_router: crate::auth_pool::PoolRouter::default(),
         }
     }
 
@@ -5015,6 +5017,8 @@ fn handle_prompt_result(
                 let action = config
                     .pool_router
                     .on_quota_error(&config.persona_env_vars, agent_index);
+                // Best-effort ledger line (flip/exhausted); never fails the turn.
+                config.pool_router.record_quota_event(agent_index, &action);
                 emit_turn_error(&e.to_string(), error_code);
                 match action {
                     auth_pool::OverflowAction::FlipTo(pool_id) => {
@@ -9602,6 +9606,7 @@ mod error_outcome_emission_tests {
             home: Some("/Users/tester".into()),
             parent_gate_env: vec![],
             overflow: auth_pool::OverflowState::default(),
+            events_path: Some(dir.join("pool-events.jsonl")),
         };
         (router, dir)
     }
@@ -9683,6 +9688,40 @@ mod error_outcome_emission_tests {
                 .redirect_for("A", std::time::Instant::now())
                 .as_deref(),
             Some("B")
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn quota_error_flip_appends_pool_event() {
+        let (router, dir) = overflow_router("flipevent");
+        let path = router.events_path.clone().unwrap();
+        std::fs::remove_file(&path).ok();
+        let mut config = test_config();
+        config.pool_router = router.clone();
+        run_error_outcome(&config, agent_err("Internal error", Some("rate_limit"))).await;
+        let lines: Vec<serde_json::Value> = std::fs::read_to_string(&path)
+            .expect("ledger written")
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        let flips: Vec<_> = lines.iter().filter(|l| l["action"] == "flip").collect();
+        assert_eq!(flips.len(), 1, "exactly one flip line: {lines:?}");
+        let f = flips[0];
+        assert_eq!(f["agent"], "Nikon");
+        assert_eq!(f["slot"], 0);
+        assert_eq!(f["assigned"], "A");
+        assert_eq!(f["effective"], "B");
+        assert_eq!(f["reason"], "quota_error");
+        assert!(f["cooldownUntil"].is_string());
+
+        // Second quota error while on B: exhausted line.
+        router.overflow.record_slot_pool(0, Some("B"));
+        run_error_outcome(&config, agent_err("Internal error", Some("rate_limit"))).await;
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.lines().any(|l| l.contains("\"action\":\"exhausted\"")),
+            "exhausted line missing: {text}"
         );
         std::fs::remove_dir_all(&dir).ok();
     }

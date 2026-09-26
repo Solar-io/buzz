@@ -279,6 +279,19 @@ to 128 bytes without control characters; the confirmation flag accepts `1`,
 never upgrade a derived label. The flag is dropped when no `accountId` resolved.
 No credential environment variables are read for attribution.
 
+**`claude-pool:` accounts.** When Buzz ACP's Claude auth-pool routing is active
+for a slot (`~/.buzz/agent-pools.json`), the turn is attributed to the pool the
+slot's process was actually spawned on, after any quota overflow flip:
+`accountId` is `claude-pool:<poolId>` (e.g. `claude-pool:A`), `accountLabel` is
+the pool's configured `label` (the id when unset), and `accountConfirmed` is
+`true`. This overrides the static `BUZZ_USAGE_ACCOUNT_*` values for that turn,
+because the pool file is owner configuration and the spawn env is a direct
+observation. `provider` and every other field are unchanged. When routing is off
+or skipped for the slot, attribution is exactly as described above. Consumers
+MAY group `claude-pool:*` accounts as one subscription family; turns published
+before this stamping existed carry the static identity and remain unattributed
+to a pool.
+
 Buzz Desktop derives all four from an owner-editable structured field on the agent
 record rather than from free-text environment variables, and seeds it from
 configuration it has actually recorded: the runtime profile identifier, the

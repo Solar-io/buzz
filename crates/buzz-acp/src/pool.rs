@@ -854,6 +854,9 @@ pub struct PromptContext {
     /// the desktop keys per (agent, relay) pair, e.g. `session_config_captured`,
     /// mirroring the `managed_agent_runtime_lifecycle` frames.
     pub relay_url: String,
+    /// Claude auth-pool router (shared overflow state); used to stamp the
+    /// slot's effective pool into kind-44200 attribution.
+    pub pool_router: crate::auth_pool::PoolRouter,
 }
 
 impl AgentPool {
@@ -2450,6 +2453,9 @@ pub async fn run_prompt_task(
     control_rx: Option<tokio::sync::oneshot::Receiver<ControlSignal>>,
     turn_id: String,
 ) {
+    // Slot index, captured before `agent` can move: the turn metric stamps
+    // the pool this slot is running on.
+    let metric_slot = agent.index;
     // Is this a channel prompt or a heartbeat?
     let source = match &batch {
         Some(b) => PromptSource::Channel(b.channel_id),
@@ -2868,6 +2874,7 @@ pub async fn run_prompt_task(
                     let usage = agent.acp.take_turn_usage();
                     publish_agent_turn_metric(
                         &ctx,
+                        metric_slot,
                         usage,
                         Some(*cid),
                         &session_id,
@@ -2903,6 +2910,7 @@ pub async fn run_prompt_task(
                             let usage = agent.acp.take_turn_usage();
                             publish_agent_turn_metric(
                                 &ctx,
+                                metric_slot,
                                 usage,
                                 Some(*cid),
                                 &session_id,
@@ -3257,6 +3265,7 @@ pub async fn run_prompt_task(
                                 let usage = agent.acp.take_turn_usage();
                                 publish_agent_turn_metric(
                                     &ctx,
+                                    metric_slot,
                                     usage,
                                     observer_channel_id,
                                     &session_id,
@@ -3293,6 +3302,7 @@ pub async fn run_prompt_task(
                                 let usage = agent.acp.take_turn_usage();
                                 publish_agent_turn_metric(
                                     &ctx,
+                                    metric_slot,
                                     usage,
                                     observer_channel_id,
                                     &session_id,
@@ -3367,6 +3377,7 @@ pub async fn run_prompt_task(
                         let usage = agent.acp.take_turn_usage();
                         publish_agent_turn_metric(
                             &ctx,
+                            metric_slot,
                             usage,
                             observer_channel_id,
                             &session_id,
@@ -3450,6 +3461,7 @@ pub async fn run_prompt_task(
             let usage = agent.acp.take_turn_usage();
             publish_agent_turn_metric(
                 &ctx,
+                metric_slot,
                 usage,
                 observer_channel_id,
                 &session_id,
@@ -3473,6 +3485,7 @@ pub async fn run_prompt_task(
             let usage = agent.acp.take_turn_usage();
             publish_agent_turn_metric(
                 &ctx,
+                metric_slot,
                 usage,
                 observer_channel_id,
                 &session_id,
@@ -3505,6 +3518,7 @@ pub async fn run_prompt_task(
                     let usage = agent.acp.take_turn_usage();
                     publish_agent_turn_metric(
                         &ctx,
+                        metric_slot,
                         usage,
                         observer_channel_id,
                         &session_id,
@@ -3533,6 +3547,7 @@ pub async fn run_prompt_task(
                     let usage = agent.acp.take_turn_usage();
                     publish_agent_turn_metric(
                         &ctx,
+                        metric_slot,
                         usage,
                         observer_channel_id,
                         &session_id,
@@ -3558,6 +3573,7 @@ pub async fn run_prompt_task(
                     let usage = agent.acp.take_turn_usage();
                     publish_agent_turn_metric(
                         &ctx,
+                        metric_slot,
                         usage,
                         observer_channel_id,
                         &session_id,
@@ -3587,6 +3603,7 @@ pub async fn run_prompt_task(
             let usage = agent.acp.take_turn_usage();
             publish_agent_turn_metric(
                 &ctx,
+                metric_slot,
                 usage,
                 observer_channel_id,
                 &session_id,
@@ -3614,6 +3631,7 @@ pub async fn run_prompt_task(
             let usage = agent.acp.take_turn_usage();
             publish_agent_turn_metric(
                 &ctx,
+                metric_slot,
                 usage,
                 observer_channel_id,
                 &session_id,
@@ -5286,6 +5304,7 @@ pub(crate) fn build_turn_metric_counts(
 /// publishing must never fail a turn.
 fn build_agent_turn_metric_payload(
     ctx: &PromptContext,
+    slot: usize,
     usage: &crate::usage::TurnUsage,
     channel_id: Option<uuid::Uuid>,
     turn_id: &str,
@@ -5298,6 +5317,16 @@ fn build_agent_turn_metric_payload(
         crate::usage::telemetry_with_configured_attribution(usage.telemetry.clone(), |name| {
             std::env::var(name)
         });
+    // Claude pool routing active for this slot: the EFFECTIVE pool (after
+    // overflow) is the account that served the turn, so it overrides the
+    // static env attribution. Routing off → unchanged. See NIP-AM
+    // `claude-pool:` convention.
+    if let Some((pool_id, pool_label)) = ctx.pool_router.pool_for_slot(slot) {
+        let t = telemetry.get_or_insert_with(Default::default);
+        t.attribution.account_id = Some(format!("claude-pool:{pool_id}"));
+        t.attribution.account_label = Some(pool_label);
+        t.attribution.account_confirmed = Some(true);
+    }
     if usage.turn_cost_usd.is_some() || usage.cumulative_cost_usd.is_some() {
         let telemetry = telemetry.get_or_insert_with(Default::default);
         if telemetry.cost_source.is_none() {
@@ -5324,6 +5353,7 @@ fn build_agent_turn_metric_payload(
 
 async fn publish_agent_turn_metric(
     ctx: &PromptContext,
+    slot: usize,
     usage: Option<crate::usage::TurnUsage>,
     channel_id: Option<uuid::Uuid>,
     session_id: &str,
@@ -5336,7 +5366,8 @@ async fn publish_agent_turn_metric(
         (Some(u), Some(pk)) => (u, pk),
         _ => return,
     };
-    let payload = build_agent_turn_metric_payload(ctx, &usage, channel_id, turn_id, stop_reason);
+    let payload =
+        build_agent_turn_metric_payload(ctx, slot, &usage, channel_id, turn_id, stop_reason);
     let ciphertext = match buzz_core::agent_turn_metric::encrypt_agent_turn_metric(
         &ctx.agent_keys,
         owner_pk,
@@ -8785,6 +8816,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         // usage = None → early return, no panic.
         publish_agent_turn_metric(
             &ctx,
+            0,
             None,
             None,
             "sess-1",
@@ -8821,6 +8853,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         // owner_pubkey = None → early return, no panic.
         publish_agent_turn_metric(
             &ctx,
+            0,
             Some(usage),
             None,
             "sess-1",
@@ -8861,6 +8894,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         // Will try to publish and fail (no real relay) but must not panic.
         publish_agent_turn_metric(
             &ctx,
+            0,
             Some(usage),
             Some(uuid::Uuid::new_v4()),
             "sess-1",
@@ -8868,6 +8902,104 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             Some(buzz_core::agent_turn_metric::StopReason::EndTurn),
         )
         .await;
+    }
+
+    fn pool_metric_usage(
+        telemetry: Option<buzz_core::agent_turn_metric::UsageTelemetry>,
+    ) -> crate::usage::TurnUsage {
+        crate::usage::TurnUsage {
+            session_id: "sess-pool".into(),
+            turn_seq: 1,
+            delta_reliable: true,
+            turn_input_tokens: Some(10),
+            turn_output_tokens: Some(2),
+            turn_total_tokens: Some(12),
+            turn_cost_usd: None,
+            turn_cache_read_tokens: None,
+            turn_cache_write_tokens: None,
+            cumulative_input_tokens: Some(10),
+            cumulative_output_tokens: Some(2),
+            cumulative_total_tokens: Some(12),
+            cumulative_cost_usd: None,
+            cumulative_cache_read_tokens: None,
+            cumulative_cache_write_tokens: None,
+            model: Some("observed-model".into()),
+            pricing_identity: None,
+            telemetry,
+        }
+    }
+
+    fn static_attribution() -> Option<buzz_core::agent_turn_metric::UsageTelemetry> {
+        let mut t = buzz_core::agent_turn_metric::UsageTelemetry::default();
+        t.attribution.provider = Some("anthropic".into());
+        t.attribution.account_id = Some("static-claude".into());
+        t.attribution.account_label = Some("Static".into());
+        t.attribution.account_confirmed = Some(false);
+        Some(t)
+    }
+
+    /// B1a: with pool routing active, kind-44200 carries the slot's
+    /// EFFECTIVE pool (after overflow), not the static env attribution.
+    #[test]
+    fn turn_metric_carries_effective_pool_after_overflow() {
+        let dir = std::env::temp_dir().join(format!("pool-metric-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = dir.join("agent-pools.json");
+        std::fs::write(
+            &cfg,
+            r#"{"default":"A","pools":{"A":{"label":"main"},"B":{"label":"second","configDir":"/tmp/cc2"}},
+                "overflow":{"enabled":true,"cooldownMinutes":60}}"#,
+        )
+        .unwrap();
+        let mut ctx = make_prompt_context_no_owner();
+        ctx.pool_router = crate::auth_pool::PoolRouter {
+            enabled_for_claude: true,
+            display_name: "Nikon".into(),
+            config_path: Some(cfg),
+            home: Some("/Users/tester".into()),
+            parent_gate_env: vec![],
+            overflow: crate::auth_pool::OverflowState::default(),
+            events_path: None,
+        };
+        let r = &ctx.pool_router;
+        r.decide_for_slot(&[], 1); // spawned on A
+        assert_eq!(
+            r.on_quota_error(&[], 1),
+            crate::auth_pool::OverflowAction::FlipTo("B".into())
+        );
+        r.decide_for_slot(&[], 1); // respawned on B (overflow)
+
+        let usage = pool_metric_usage(static_attribution());
+        let p = build_agent_turn_metric_payload(&ctx, 1, &usage, None, "t-pool", None);
+        let a = &p.telemetry.as_ref().expect("telemetry").attribution;
+        assert_eq!(a.account_id.as_deref(), Some("claude-pool:B"));
+        assert_eq!(a.account_label.as_deref(), Some("second"));
+        assert_eq!(a.account_confirmed, Some(true));
+        assert_eq!(
+            a.provider.as_deref(),
+            Some("anthropic"),
+            "provider untouched"
+        );
+        p.validate().expect("stamped payload stays NIP-AM valid");
+
+        // A slot the router never spawned keeps the static attribution.
+        let p = build_agent_turn_metric_payload(&ctx, 7, &usage, None, "t-other", None);
+        let a = &p.telemetry.as_ref().unwrap().attribution;
+        assert_eq!(a.account_id.as_deref(), Some("static-claude"));
+        assert_eq!(a.account_confirmed, Some(false));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Routing off (default router): attribution is exactly as before.
+    #[test]
+    fn turn_metric_without_pool_routing_keeps_static_attribution() {
+        let ctx = make_prompt_context_no_owner();
+        let usage = pool_metric_usage(static_attribution());
+        let p = build_agent_turn_metric_payload(&ctx, 0, &usage, None, "t", None);
+        let a = &p.telemetry.as_ref().unwrap().attribution;
+        assert_eq!(a.account_id.as_deref(), Some("static-claude"));
+        assert_eq!(a.account_label.as_deref(), Some("Static"));
+        assert_eq!(a.account_confirmed, Some(false));
     }
 
     #[test]
@@ -8898,6 +9030,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
 
         let payload = build_agent_turn_metric_payload(
             &ctx,
+            0,
             &usage,
             None,
             "turn-tier-unknown",
@@ -8945,6 +9078,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         // Must not panic; HTTP submit will fail (no real relay) — that's fine.
         publish_agent_turn_metric(
             &ctx,
+            0,
             Some(usage),
             Some(uuid::Uuid::new_v4()),
             "sess-cancel",
@@ -8986,6 +9120,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         // Will try to publish (encrypt succeeds) and fail HTTP (no relay) — must not panic.
         publish_agent_turn_metric(
             &ctx,
+            0,
             Some(usage),
             Some(uuid::Uuid::new_v4()),
             "sess-ba",
@@ -9257,6 +9392,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             memory_enabled: false,
             harness_name: "goose".to_string(),
             relay_url: "ws://127.0.0.1:3000".to_string(),
+            pool_router: crate::auth_pool::PoolRouter::default(),
         }
     }
 

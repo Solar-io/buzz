@@ -213,6 +213,9 @@ pub fn pool_env(def: &PoolDef, home: Option<&str>) -> Option<(String, String)> {
 pub struct PoolDecision {
     /// Effective pool, `None` when routing is off/skipped.
     pub pool_id: Option<String>,
+    /// The pool the agent is assigned to before any overflow redirect
+    /// (`None` when routing is off).
+    pub assigned: Option<String>,
     /// The env entry to inject, `None` = inherit.
     pub env: Option<(String, String)>,
     pub reason: &'static str,
@@ -222,6 +225,7 @@ impl PoolDecision {
     fn off(reason: &'static str) -> Self {
         Self {
             pool_id: None,
+            assigned: None,
             env: None,
             reason,
         }
@@ -256,6 +260,7 @@ pub fn resolve(
     let Some(assigned) = file.assigned_pool(display_name) else {
         return PoolDecision::off("off_unknown_default");
     };
+    let assigned_id = assigned.clone();
     let (effective, reason) = match overflow.redirect_for(&assigned, now) {
         Some(sibling) if file.overflow.enabled && file.pools.contains_key(&sibling) => {
             (sibling, "overflow")
@@ -268,6 +273,7 @@ pub fn resolve(
         .and_then(|def| pool_env(def, home));
     PoolDecision {
         pool_id: Some(effective),
+        assigned: Some(assigned_id),
         env,
         reason,
     }
@@ -326,6 +332,24 @@ impl OverflowState {
             .exhausted
             .get(assigned)
             .is_some_and(|until| now < *until)
+    }
+
+    /// Pool the slot was last spawned on (after overflow), if routing was
+    /// active for that spawn.
+    pub fn slot_pool(&self, slot: usize) -> Option<String> {
+        self.lock().slot_pool.get(&slot).cloned()
+    }
+
+    /// Time left on the active exhaustion (or redirect) for `assigned`.
+    fn cooldown_remaining(&self, assigned: &str, now: Instant) -> Option<Duration> {
+        let inner = self.lock();
+        let until = inner
+            .exhausted
+            .get(assigned)
+            .copied()
+            .filter(|until| now < *until)
+            .or_else(|| inner.redirect.get(assigned).map(|(_, until)| *until))?;
+        until.checked_duration_since(now)
     }
 
     pub fn record_slot_pool(&self, slot: usize, pool: Option<&str>) {
@@ -387,6 +411,43 @@ impl OverflowState {
     }
 }
 
+/// Env var overriding the pool-event ledger path.
+pub const ENV_EVENTS_PATH: &str = "BUZZ_POOL_EVENTS_PATH";
+
+/// Default ledger path, relative to `$HOME`.
+pub const DEFAULT_EVENTS_RELATIVE: &str = ".buzz/state/pool-events.jsonl";
+
+/// Resolve the pool-event ledger path (env override, else `$HOME` default).
+pub fn events_path(env_override: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
+    if let Some(p) = env_override.map(str::trim).filter(|p| !p.is_empty()) {
+        return Some(PathBuf::from(p));
+    }
+    let home = home.map(str::trim).filter(|h| !h.is_empty())?;
+    Some(Path::new(home).join(DEFAULT_EVENTS_RELATIVE))
+}
+
+struct PoolEvent<'a> {
+    slot: usize,
+    action: &'static str,
+    assigned: Option<&'a str>,
+    effective: Option<&'a str>,
+    reason: &'static str,
+    cooldown: Option<Duration>,
+}
+
+fn append_line(path: &Path, line: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    // One write per line keeps concurrent appenders from interleaving.
+    f.write_all(format!("{line}\n").as_bytes())
+}
+
 /// Router held on `Config`: everything needed to decide a spawn's pool.
 #[derive(Debug, Clone, Default)]
 pub struct PoolRouter {
@@ -397,6 +458,8 @@ pub struct PoolRouter {
     /// Gate vars captured from the harness parent env at startup.
     pub parent_gate_env: Vec<(String, String)>,
     pub overflow: OverflowState,
+    /// Append-only pool-event ledger (`None` = don't record).
+    pub events_path: Option<PathBuf>,
 }
 
 impl PoolRouter {
@@ -417,6 +480,10 @@ impl PoolRouter {
             .iter()
             .filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v)))
             .collect();
+        let events_path = events_path(
+            std::env::var(ENV_EVENTS_PATH).ok().as_deref(),
+            home.as_deref(),
+        );
         Self {
             enabled_for_claude: adapter_is_claude,
             display_name: std::env::var(ENV_AGENT_NAME).unwrap_or_default(),
@@ -424,6 +491,7 @@ impl PoolRouter {
             home,
             parent_gate_env,
             overflow: OverflowState::default(),
+            events_path,
         }
     }
 
@@ -452,6 +520,24 @@ impl PoolRouter {
         let decision = self.decide(persona_env, Instant::now());
         self.overflow
             .record_slot_pool(slot, decision.pool_id.as_deref());
+        if let Some(effective) = decision.pool_id.as_deref() {
+            let cooldown = if decision.reason == "overflow" {
+                decision
+                    .assigned
+                    .as_deref()
+                    .and_then(|a| self.overflow.cooldown_remaining(a, Instant::now()))
+            } else {
+                None
+            };
+            self.append_event(PoolEvent {
+                slot,
+                action: "spawn",
+                assigned: decision.assigned.as_deref(),
+                effective: Some(effective),
+                reason: decision.reason,
+                cooldown,
+            });
+        }
         tracing::info!(
             "auth_pool agent={:?} slot={} pool={} reason={}",
             self.display_name,
@@ -460,6 +546,75 @@ impl PoolRouter {
             decision.reason
         );
         decision
+    }
+
+    /// Effective pool (after overflow) the slot is running on, with its
+    /// label (falls back to the id). `None` when routing is not active for
+    /// this slot — the caller then keeps its static attribution.
+    pub fn pool_for_slot(&self, slot: usize) -> Option<(String, String)> {
+        if !self.enabled_for_claude {
+            return None;
+        }
+        let id = self.overflow.slot_pool(slot)?;
+        let label = self
+            .load_file()
+            .and_then(|f| f.pools.get(&id).and_then(|d| d.label.clone()))
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .unwrap_or_else(|| id.clone());
+        Some((id, label))
+    }
+
+    /// Record the outcome of a quota error on `slot` in the pool-event
+    /// ledger. `Disabled` records nothing (routing was not in play).
+    pub fn record_quota_event(&self, slot: usize, action: &OverflowAction) {
+        let (kind, flipped_to) = match action {
+            OverflowAction::FlipTo(pool) => ("flip", Some(pool.clone())),
+            OverflowAction::Exhausted => ("exhausted", None),
+            OverflowAction::Disabled => return,
+        };
+        let assigned = self
+            .load_file()
+            .and_then(|f| f.assigned_pool(&self.display_name));
+        let cooldown = assigned
+            .as_deref()
+            .and_then(|a| self.overflow.cooldown_remaining(a, Instant::now()));
+        // Flip: the pool the slot is about to run on. Exhausted: the pool it
+        // was running on when the second quota error landed.
+        let effective = flipped_to.or_else(|| self.overflow.slot_pool(slot));
+        self.append_event(PoolEvent {
+            slot,
+            action: kind,
+            assigned: assigned.as_deref(),
+            effective: effective.as_deref(),
+            reason: "quota_error",
+            cooldown,
+        });
+    }
+
+    /// Best-effort JSONL append. Never fails or panics the caller.
+    fn append_event(&self, ev: PoolEvent<'_>) {
+        let Some(path) = self.events_path.as_deref() else {
+            return;
+        };
+        let now = chrono::Utc::now();
+        let cooldown_until = ev
+            .cooldown
+            .and_then(|d| chrono::Duration::from_std(d).ok())
+            .map(|d| (now + d).to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
+        let line = serde_json::json!({
+            "ts": now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            "agent": self.display_name,
+            "slot": ev.slot,
+            "action": ev.action,
+            "assigned": ev.assigned,
+            "effective": ev.effective,
+            "reason": ev.reason,
+            "cooldownUntil": cooldown_until,
+        });
+        if let Err(e) = append_line(path, &line.to_string()) {
+            tracing::debug!(path = %path.display(), error = %e, "auth_pool: pool-event append failed (ignored)");
+        }
     }
 
     /// Handle a quota error from `slot`. `Disabled` when routing is not
@@ -744,6 +899,7 @@ mod tests {
             home: Some(HOME.into()),
             parent_gate_env: vec![], // parent env is clean
             overflow: OverflowState::default(),
+            events_path: None,
         };
         let persona = vec![(
             "ANTHROPIC_BASE_URL".to_string(),
@@ -776,6 +932,7 @@ mod tests {
             home: Some(HOME.into()),
             parent_gate_env: vec![],
             overflow: OverflowState::default(),
+            events_path: None,
         };
         assert_eq!(r.decide_for_slot(&[], 0).env, cc2());
         let glm = vec![(
@@ -788,5 +945,116 @@ mod tests {
         assert_eq!(r.on_quota_error(&[], 0), OverflowAction::FlipTo("A".into()));
         assert_eq!(r.decide(&[], Instant::now()).env, None);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn events_router(tag: &str) -> (PoolRouter, PathBuf) {
+        let dir =
+            std::env::temp_dir().join(format!("auth-pool-events-{tag}-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("agent-pools.json");
+        std::fs::write(
+            &p,
+            r#"{"default":"A","pools":{"A":{"label":"main"},"B":{"label":"second","configDir":"~/cc2"}},
+                "overflow":{"enabled":true,"cooldownMinutes":60}}"#,
+        )
+        .unwrap();
+        let r = PoolRouter {
+            enabled_for_claude: true,
+            display_name: "Nikon".into(),
+            config_path: Some(p),
+            home: Some(HOME.into()),
+            parent_gate_env: vec![],
+            overflow: OverflowState::default(),
+            // Parent dir does not exist yet: the writer must create it.
+            events_path: Some(dir.join("state").join("pool-events.jsonl")),
+        };
+        (r, dir)
+    }
+
+    fn read_events(path: &Path) -> Vec<serde_json::Value> {
+        std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .map(|l| serde_json::from_str(l).expect("valid json line"))
+            .collect()
+    }
+
+    #[test]
+    fn decide_for_slot_appends_spawn_event() {
+        let (r, dir) = events_router("spawn");
+        let path = r.events_path.clone().unwrap();
+        r.decide_for_slot(&[], 2);
+        let ev = read_events(&path);
+        assert_eq!(ev.len(), 1, "one spawn line: {ev:?}");
+        assert_eq!(ev[0]["action"], "spawn");
+        assert_eq!(ev[0]["agent"], "Nikon");
+        assert_eq!(ev[0]["slot"], 2);
+        assert_eq!(ev[0]["assigned"], "A");
+        assert_eq!(ev[0]["effective"], "A");
+        assert_eq!(ev[0]["reason"], "assigned");
+        assert!(ev[0]["cooldownUntil"].is_null());
+        assert!(ev[0]["ts"].as_str().is_some_and(|t| t.ends_with('Z')));
+
+        // After a flip the next spawn is on B, with the redirect's expiry.
+        assert_eq!(r.on_quota_error(&[], 2), OverflowAction::FlipTo("B".into()));
+        r.decide_for_slot(&[], 2);
+        let ev = read_events(&path);
+        assert_eq!(ev.len(), 2);
+        assert_eq!(ev[1]["effective"], "B");
+        assert_eq!(ev[1]["assigned"], "A");
+        assert_eq!(ev[1]["reason"], "overflow");
+        assert!(ev[1]["cooldownUntil"].is_string());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn spawn_event_not_written_when_routing_off() {
+        let (mut r, dir) = events_router("off");
+        r.enabled_for_claude = false;
+        let path = r.events_path.clone().unwrap();
+        r.decide_for_slot(&[], 0);
+        assert!(read_events(&path).is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn unwritable_events_path_never_fails_the_spawn() {
+        let (mut r, dir) = events_router("unwritable");
+        // Parent is a regular file, so create_dir_all fails; must be swallowed.
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, "x").unwrap();
+        r.events_path = Some(blocker.join("pool-events.jsonl"));
+        let d = r.decide_for_slot(&[], 0);
+        assert_eq!(d.pool_id.as_deref(), Some("A"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn pool_for_slot_is_effective_pool_with_label() {
+        let (r, dir) = events_router("forslot");
+        assert_eq!(r.pool_for_slot(0), None, "never spawned: no stamp");
+        r.decide_for_slot(&[], 0);
+        assert_eq!(r.pool_for_slot(0), Some(("A".into(), "main".into())));
+        r.on_quota_error(&[], 0);
+        r.decide_for_slot(&[], 0);
+        assert_eq!(r.pool_for_slot(0), Some(("B".into(), "second".into())));
+        let mut off = r.clone();
+        off.enabled_for_claude = false;
+        assert_eq!(off.pool_for_slot(0), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn events_path_default_and_override() {
+        assert_eq!(
+            events_path(None, Some("/Users/x")),
+            Some(PathBuf::from("/Users/x/.buzz/state/pool-events.jsonl"))
+        );
+        assert_eq!(
+            events_path(Some(" /tmp/e.jsonl "), Some("/Users/x")),
+            Some(PathBuf::from("/tmp/e.jsonl"))
+        );
+        assert_eq!(events_path(None, None), None);
     }
 }
