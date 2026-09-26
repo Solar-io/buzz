@@ -19,6 +19,7 @@ import {
   resolveSuggestionQuery,
 } from "@/features/dms/lib/dmPicker.ts";
 import { useAgentRegistry } from "@/features/agents/useAgentRegistry";
+import { useAvailableAgents } from "@/features/agents/useAvailableAgents";
 import { AgentWorkingDot } from "@/features/agents/ui/AgentsAdminPage";
 import { useProfiles } from "../hooks.ts";
 import {
@@ -63,7 +64,10 @@ export function AddChannelMembersDialog({
   selfPubkey?: string | null;
 }) {
   const { session } = useRelaySession();
+  // Full registry for role tagging (a pasted key is still a bot); the
+  // suggestion list only offers AVAILABLE agents — deleted ones are hidden.
   const agents = useAgentRegistry();
+  const available = useAvailableAgents(contacts);
   const [entry, setEntry] = useState("");
   const [recipients, setRecipients] = useState<string[]>([]);
   const [entryError, setEntryError] = useState<string | null>(null);
@@ -81,8 +85,13 @@ export function AddChannelMembersDialog({
   }, [open]);
 
   const { agents: eligibleAgents, contacts: eligibleContacts } = useMemo(
-    () => excludeCurrentMembers({ agents, contacts, memberPubkeys }),
-    [agents, contacts, memberPubkeys],
+    () =>
+      excludeCurrentMembers({
+        agents: available.agents,
+        contacts: available.contacts,
+        memberPubkeys,
+      }),
+    [available, memberPubkeys],
   );
   const candidatePubkeys = useMemo(
     () => [

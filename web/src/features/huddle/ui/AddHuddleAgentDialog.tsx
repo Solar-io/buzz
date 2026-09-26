@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { useAgentRegistry } from "@/features/agents/useAgentRegistry";
+import { useAvailableAgents } from "@/features/agents/useAvailableAgents";
 import { Button } from "@/shared/ui/button";
 import {
   Dialog,
@@ -56,7 +56,8 @@ export function AddHuddleAgentDialog({
     agentName: string;
   }) => Promise<{ ok: boolean; message: string }>;
 }) {
-  const registry = useAgentRegistry();
+  // Available agents only — deleted/unavailable registrations are hidden.
+  const registry = useAvailableAgents().agents;
   const [adding, setAdding] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);

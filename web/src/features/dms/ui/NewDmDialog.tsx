@@ -12,9 +12,7 @@ import {
   resolveSuggestionQuery,
 } from "../lib/dmPicker.ts";
 import { openDm } from "../hooks";
-import { useAgentRegistry } from "@/features/agents/useAgentRegistry";
-import { useDesktopCatalogs } from "@/features/agents/useDesktopCatalogs";
-import { findStaleAgents } from "@/features/agents/lib/staleAgents";
+import { useAvailableAgents } from "@/features/agents/useAvailableAgents";
 import { AgentWorkingDot } from "@/features/agents/ui/AgentsAdminPage";
 import { useProfiles } from "@/features/channels/hooks";
 
@@ -68,22 +66,16 @@ export function NewDmDialog({
   useEffect(() => {
     void ownPubkey().then(setPubkey);
   }, []);
-  const agents = useAgentRegistry();
-  const catalogs = useDesktopCatalogs();
-  // Why a row is demoted, for the row's tooltip ("older duplicate of X" /
-  // "not reported by any desktop"). Catalog-free until the desktop swap,
-  // the duplicate-name half is deterministic and covers the re-mint pile.
-  const staleReasons = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const stale of findStaleAgents(agents, catalogs)) {
-      map.set(stale.pubkey, stale.reason);
-    }
-    return map;
-  }, [agents, catalogs]);
+  // Deleted / unavailable agents are HIDDEN (shared selector — same list
+  // as the add-to-channel and add-to-huddle pickers), from contacts too.
+  const { agents, contacts: availableContacts } = useAvailableAgents(contacts);
 
   const candidatePubkeys = useMemo(
-    () => Array.from(new Set([...agents.map((a) => a.pubkey), ...contacts])),
-    [agents, contacts],
+    () =>
+      Array.from(
+        new Set([...agents.map((a) => a.pubkey), ...availableContacts]),
+      ),
+    [agents, availableContacts],
   );
   const profiles = useProfiles(candidatePubkeys);
 
@@ -91,25 +83,23 @@ export function NewDmDialog({
     () =>
       buildDmSuggestions({
         agents,
-        contacts,
+        contacts: availableContacts,
         profiles,
         selfPubkey: pubkey,
         filter: "",
-        stalePubkeys: new Set(staleReasons.keys()),
       }),
-    [agents, contacts, profiles, pubkey, staleReasons],
+    [agents, availableContacts, profiles, pubkey],
   );
   const filtered = useMemo(
     () =>
       buildDmSuggestions({
         agents,
-        contacts,
+        contacts: availableContacts,
         profiles,
         selfPubkey: pubkey,
         filter: entry,
-        stalePubkeys: new Set(staleReasons.keys()),
       }),
-    [agents, contacts, profiles, pubkey, entry, staleReasons],
+    [agents, availableContacts, profiles, pubkey, entry],
   );
 
   const addRecipient = (candidate: string) => {
@@ -266,7 +256,6 @@ export function NewDmDialog({
         >
           {filtered.map((suggestion) => {
             const selected = recipients.includes(suggestion.pubkey);
-            const staleReason = staleReasons.get(suggestion.pubkey);
             return (
               <li key={suggestion.pubkey}>
                 <button
@@ -274,14 +263,8 @@ export function NewDmDialog({
                   disabled={selected}
                   aria-label={`Select ${suggestion.label}`}
                   data-testid={`dm-suggestion-${suggestion.pubkey}`}
-                  title={
-                    staleReason
-                      ? `stale: ${staleReason} — ${suggestion.pubkey}`
-                      : suggestion.pubkey
-                  }
-                  className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent disabled:opacity-40 ${
-                    suggestion.stale ? "opacity-50" : ""
-                  }`}
+                  title={suggestion.pubkey}
+                  className="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent disabled:opacity-40"
                   onClick={() => addRecipient(suggestion.pubkey)}
                 >
                   <span className="flex shrink-0 items-center gap-1.5">
@@ -296,14 +279,12 @@ export function NewDmDialog({
                     </span>
                     <span
                       className={
-                        suggestion.stale
-                          ? "rounded bg-amber-500/20 px-1.5 py-0.5 text-badge uppercase tracking-wide text-amber-300"
-                          : suggestion.sublabel === "Agent"
-                            ? "rounded bg-accent px-1.5 py-0.5 text-badge uppercase tracking-wide text-foreground"
-                            : "rounded bg-muted px-1.5 py-0.5 text-badge uppercase tracking-wide text-muted-foreground"
+                        suggestion.sublabel === "Agent"
+                          ? "rounded bg-accent px-1.5 py-0.5 text-badge uppercase tracking-wide text-foreground"
+                          : "rounded bg-muted px-1.5 py-0.5 text-badge uppercase tracking-wide text-muted-foreground"
                       }
                     >
-                      {suggestion.stale ? "stale" : suggestion.sublabel}
+                      {suggestion.sublabel}
                     </span>
                   </span>
                 </button>
