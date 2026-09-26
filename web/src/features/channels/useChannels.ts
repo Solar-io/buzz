@@ -82,6 +82,8 @@ export function useChannels(): {
       { kinds: [39000], limit: 500 },
       {
         onEvent: apply,
+        // The sidebar paints from this; open it first in the boot replay.
+        priority: "critical",
       },
     );
   }, [session, refreshKey]);

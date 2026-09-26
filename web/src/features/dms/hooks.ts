@@ -154,6 +154,8 @@ function useDmActivity(dmIds: string[]): {
             setSettled(true);
           }
         },
+        // The default-conversation pick waits on these batches' EOSE.
+        priority: "critical",
       }),
     );
     return () => {

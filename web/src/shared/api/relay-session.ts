@@ -8,13 +8,17 @@
  * a scripted fake socket.
  */
 
-import type {
-  SignedNostrEvent,
-  UnsignedNostrEvent,
-} from "../lib/nostr-signer.ts";
+import type { SignedNostrEvent } from "../lib/nostr-signer.ts";
+import { authEventTemplate } from "./relay-auth-event.ts";
+
+export { authEventTemplate };
 import { signNostrEvent as defaultSignNostrEvent } from "../lib/nostr-signer.ts";
 import { getAuthTagJson } from "../lib/key-store.ts";
 import type { NostrFilter } from "../lib/nostr-client.ts";
+import {
+  SharedSubscription,
+  canonicalFilterKey,
+} from "./subscription-share.ts";
 
 export type RelaySessionStatus =
   | "idle"
@@ -27,6 +31,12 @@ export type RelaySessionStatus =
 export interface SubscribeOptions {
   onEvent: (event: SignedNostrEvent) => void;
   onEose?: () => void;
+  /**
+   * "critical" subscriptions open first in the post-AUTH replay: the channel
+   * list, the Links list, the open timeline and the DM sampling batch — what
+   * the first screen actually paints from.
+   */
+  priority?: "critical";
 }
 
 export type Unsubscribe = () => void;
@@ -63,6 +73,10 @@ export interface RelaySessionOptions {
   healthSweepIntervalMs?: number;
   /** Delay before auth-race retry N (1-based). Default: exponential backoff. */
   authRetryDelayMs?: (attempt: number) => number;
+  /** Replayed REQs allowed to await EOSE at once. Default {@link REPLAY_WINDOW}. */
+  replayWindow?: number;
+  /** A replay slot frees itself after this long without EOSE. Default 400ms. */
+  replaySlotFallbackMs?: number;
   onStatusChange?: (status: RelaySessionStatus) => void;
 }
 
@@ -91,13 +105,18 @@ const PUBLISH_ACK_TIMEOUT_MS = 15_000;
  */
 const PUBLISH_RETRY_BACKSTOP_MS = 30_000;
 /**
- * Pace between REQ opens during (re)connect replay. The relay closes a
- * connection as a slow client after sustained send-buffer backpressure
- * (grace 15); opening ~40 subscriptions at once on a large dataset hits
- * that before the socket drains. 120ms lets each sub's initial push
- * drain; 40 subs fully live in under five seconds, filling progressively.
+ * Replay window for (re)connect. The relay closes a connection as a slow
+ * client after sustained send-buffer backpressure (grace 15); opening ~40
+ * subscriptions at once on a large dataset hits that before the socket
+ * drains. This used to be a fixed 120ms timer per REQ, which idled when the
+ * relay was fast (EOSE in 3-10ms, yet an 86-sub boot took ~3.7s — plan item
+ * 2.1, 2026-09-26). Now at most REPLAY_WINDOW replayed REQs await their EOSE
+ * at once and the next opens as soon as one answers, so the in-flight
+ * backlog stays bounded (the drain protection) without the idle time. A slot
+ * whose EOSE never comes frees itself after REPLAY_SLOT_FALLBACK_MS.
  */
-const REQ_OPEN_PACE_MS = 120;
+export const REPLAY_WINDOW = 4;
+const REPLAY_SLOT_FALLBACK_MS = 400;
 /** Replays at or below this size open synchronously (no pacing needed). */
 const UNPACED_REPLAY_MAX = 8;
 /**
@@ -179,6 +198,8 @@ interface ActiveSubscription {
   /** Single filter, or several OR'd filters in one REQ (relay caps at 10). */
   filter: NostrFilter | NostrFilter[];
   options: SubscribeOptions;
+  /** The listener fan-out behind this wire sub (see subscription-share.ts). */
+  share: SharedSubscription;
 }
 
 /** Frame body for a REQ: one or more filters spread after the sub id. */
@@ -228,7 +249,17 @@ export class RelaySession {
   private authedByRelay = false;
   private authTimer: ReturnType<typeof setTimeout> | null = null;
   /** Pacing timers for staggered REQ replay; cleared on teardown. */
-  private readonly replayPaceTimers = new Set<ReturnType<typeof setTimeout>>();
+  /** Replayed subs not yet sent, critical first (see REPLAY_WINDOW). */
+  private replayQueue: Array<[string, ActiveSubscription]> = [];
+  /** Replayed subs awaiting EOSE → their fallback timer. */
+  private readonly replayInFlight = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
+  private readonly replayWindow: number;
+  private readonly replaySlotFallbackMs: number;
+  /** Shareable wire subs by canonical filter key (plan item 2.2). */
+  private readonly sharedByKey = new Map<string, string>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
   private manualClose = false;
@@ -284,6 +315,9 @@ export class RelaySession {
     this.healthSweepIntervalMs =
       options.healthSweepIntervalMs ?? DEFAULT_HEALTH_SWEEP_INTERVAL_MS;
     this.authRetryDelayMsFn = options.authRetryDelayMs ?? authRetryDelayMs;
+    this.replayWindow = Math.max(1, options.replayWindow ?? REPLAY_WINDOW);
+    this.replaySlotFallbackMs =
+      options.replaySlotFallbackMs ?? REPLAY_SLOT_FALLBACK_MS;
     this.onStatusChange = options.onStatusChange;
   }
 
@@ -379,7 +413,7 @@ export class RelaySession {
     if (!this.socket || !this.authenticated || this.manualClose) {
       return;
     }
-    if (this.replayPaceTimers.size > 0) {
+    if (this.replayActive()) {
       return;
     }
     for (const [subId, sub] of this.activeSubs) {
@@ -459,7 +493,9 @@ export class RelaySession {
       return;
     }
     if (type === "EOSE") {
-      const sub = this.openSubs.get(String(message[1] ?? ""));
+      const subId = String(message[1] ?? "");
+      const sub = this.openSubs.get(subId);
+      this.releaseReplaySlot(subId);
       sub?.options.onEose?.();
       return;
     }
@@ -491,6 +527,7 @@ export class RelaySession {
       // close reasons (e.g. policy) stay closed.
       const subId = String(message[1] ?? "");
       const reason = String(message[2] ?? "");
+      this.releaseReplaySlot(subId);
       if (this.openSubs.has(subId)) {
         this.openSubs.delete(subId);
         const transient =
@@ -645,53 +682,93 @@ export class RelaySession {
     // Skips duplicates when called twice on one socket (auth grace then a
     // late AUTH challenge) and survives reconnects after teardownSocket.
     //
-    // PACED: opening every REQ in one tight loop floods the relay's send
+    // WINDOWED: opening every REQ in one tight loop floods the relay's send
     // buffer faster than the socket drains — on a large dataset the relay
     // hits sustained backpressure and closes us as a slow client, the
     // reconnect replays the same flood, and the session never settles
     // (observed live: profiles never complete, sidebar goes to hex keys).
-    // Spacing the opens lets each sub's initial push drain first.
+    // At most `replayWindow` replayed REQs await EOSE at once instead.
+    const queued = new Set(this.replayQueue.map(([subId]) => subId));
     const toOpen: Array<[string, ActiveSubscription]> = [];
     for (const [subId, sub] of this.activeSubs) {
-      if (!this.openSubs.has(subId)) {
+      if (
+        !this.openSubs.has(subId) &&
+        !queued.has(subId) &&
+        !this.replayInFlight.has(subId)
+      ) {
         toOpen.push([subId, sub]);
       }
     }
-    const openOne = (index: number) => {
-      const [subId, sub] = toOpen[index];
-      // Socket may have torn down mid-pace, the sub may have closed, or a
-      // concurrent replay may already have opened it.
-      if (
-        !this.socket ||
-        this.statusValue === "closed" ||
-        !this.activeSubs.has(subId) ||
-        this.openSubs.has(subId)
-      ) {
-        return;
-      }
-      this.openSubs.set(subId, sub);
-      // A fresh REQ is a fresh chance — its auth-race budget resets with it.
-      this.authRetryAttempts.delete(subId);
-      this.socket.send(reqFrame(subId, sub.filter));
-    };
-    if (toOpen.length <= UNPACED_REPLAY_MAX) {
-      for (let i = 0; i < toOpen.length; i++) {
-        openOne(i);
+    // Stable sort: critical subs first, creation order otherwise.
+    toOpen.sort(
+      (a, b) =>
+        Number(b[1].options.priority === "critical") -
+        Number(a[1].options.priority === "critical"),
+    );
+    if (toOpen.length <= UNPACED_REPLAY_MAX && !this.replayActive()) {
+      for (const [subId, sub] of toOpen) {
+        this.sendReplayReq(subId, sub);
       }
       return;
     }
-    // Large replay: space EVERY open (index 0 included) so each sub's
-    // initial push drains before the next arrives. Both replay triggers
-    // (AUTH success and the auth-grace flush) can schedule overlapping
-    // timers for the same sub — the openSubs guard in openOne makes the
-    // duplicates no-ops, so exactly one REQ goes out per subscription.
-    for (let i = 0; i < toOpen.length; i++) {
-      const timer = setTimeout(() => {
-        this.replayPaceTimers.delete(timer);
-        openOne(i);
-      }, i * REQ_OPEN_PACE_MS);
-      this.replayPaceTimers.add(timer);
+    this.replayQueue.push(...toOpen);
+    this.pumpReplay();
+  }
+
+  /** True while a windowed replay still has subs queued or awaiting EOSE. */
+  private replayActive(): boolean {
+    return this.replayQueue.length > 0 || this.replayInFlight.size > 0;
+  }
+
+  /** Send one replay REQ unless it became moot; returns whether it went out. */
+  private sendReplayReq(subId: string, sub: ActiveSubscription): boolean {
+    // Socket may have torn down, the sub may have closed, or a concurrent
+    // replay may already have opened it.
+    if (
+      !this.socket ||
+      this.statusValue === "closed" ||
+      !this.activeSubs.has(subId) ||
+      this.openSubs.has(subId)
+    ) {
+      return false;
     }
+    this.openSubs.set(subId, sub);
+    // A fresh REQ is a fresh chance — its auth-race budget resets with it.
+    this.authRetryAttempts.delete(subId);
+    this.socket.send(reqFrame(subId, sub.filter));
+    return true;
+  }
+
+  private pumpReplay(): void {
+    while (
+      this.replayInFlight.size < this.replayWindow &&
+      this.replayQueue.length > 0
+    ) {
+      const next = this.replayQueue.shift();
+      if (!next) {
+        break;
+      }
+      const [subId, sub] = next;
+      if (!this.sendReplayReq(subId, sub)) {
+        continue;
+      }
+      const timer = setTimeout(
+        () => this.releaseReplaySlot(subId),
+        this.replaySlotFallbackMs,
+      );
+      this.replayInFlight.set(subId, timer);
+    }
+  }
+
+  /** EOSE, CLOSED, unsubscribe or the fallback timer frees a replay slot. */
+  private releaseReplaySlot(subId: string): void {
+    const timer = this.replayInFlight.get(subId);
+    if (timer === undefined) {
+      return;
+    }
+    clearTimeout(timer);
+    this.replayInFlight.delete(subId);
+    this.pumpReplay();
   }
 
   /**
@@ -764,10 +841,11 @@ export class RelaySession {
     this.openSubs.clear();
     this.authRetryAttempts.clear();
     this.policyClosedSubs.clear();
-    for (const timer of this.replayPaceTimers) {
+    for (const timer of this.replayInFlight.values()) {
       clearTimeout(timer);
     }
-    this.replayPaceTimers.clear();
+    this.replayInFlight.clear();
+    this.replayQueue = [];
     // D-042: a publish in flight when the socket drops used to fail fast and
     // LOSE the event — the tap at 20:50 9/16 sent into a dying socket and
     // evaporated. The relay answers each client message before reading the
@@ -804,40 +882,78 @@ export class RelaySession {
     this.publishWaiters.clear();
     this.publishRetryQueue.clear();
     this.activeSubs.clear();
+    this.sharedByKey.clear();
     this.setStatus("closed");
   }
 
   /**
    * Subscribe to a filter. Events and EOSE flow through callbacks; call the
    * returned handle to unsubscribe. Subscriptions survive reconnects.
+   *
+   * Identical filters share one wire subscription (plan item 2.2): a late
+   * subscriber is replayed what the shared sub already received (and its
+   * EOSE) on a microtask, then receives live events. The wire sub closes
+   * when its last subscriber leaves.
    */
   subscribe(
     filters: NostrFilter | NostrFilter[],
     options: SubscribeOptions,
   ): Unsubscribe {
+    const key = canonicalFilterKey(filters);
+    const sharedId = this.sharedByKey.get(key);
+    const shared = sharedId ? this.activeSubs.get(sharedId) : undefined;
+    if (sharedId && shared?.share.shareable) {
+      if (options.priority === "critical") {
+        shared.options.priority = "critical";
+      }
+      const remove = shared.share.join(options);
+      return () => {
+        remove();
+        this.releaseIfUnused(sharedId);
+      };
+    }
     const subId = `s${this.nextSubId++}`;
-    const sub: ActiveSubscription = { filter: filters, options };
+    const share = new SharedSubscription(key);
+    const remove = share.found(options);
+    const sub: ActiveSubscription = {
+      filter: filters,
+      options: {
+        onEvent: share.onEvent,
+        onEose: share.onEose,
+        priority: options.priority,
+      },
+      share,
+    };
     this.activeSubs.set(subId, sub);
+    this.sharedByKey.set(key, subId);
     // If not yet authenticated/open, the auth handshake replays this REQ;
     // no need to queue it in `pending` (which is for writes only).
     if (this.authenticated && this.socket) {
       this.openSubs.set(subId, sub);
-      this.socket.send(
-        JSON.stringify([
-          "REQ",
-          subId,
-          ...(Array.isArray(filters) ? filters : [filters]),
-        ]),
-      );
+      this.socket.send(reqFrame(subId, filters));
     }
     return () => {
-      this.activeSubs.delete(subId);
-      this.authRetryAttempts.delete(subId);
-      this.policyClosedSubs.delete(subId);
-      if (this.openSubs.delete(subId)) {
-        this.socket?.send(JSON.stringify(["CLOSE", subId]));
-      }
+      remove();
+      this.releaseIfUnused(subId);
     };
+  }
+
+  /** Close a wire sub once no subscriber is left on it. */
+  private releaseIfUnused(subId: string): void {
+    const sub = this.activeSubs.get(subId);
+    if (!sub || sub.share.size > 0) {
+      return;
+    }
+    if (this.sharedByKey.get(sub.share.key) === subId) {
+      this.sharedByKey.delete(sub.share.key);
+    }
+    this.activeSubs.delete(subId);
+    this.authRetryAttempts.delete(subId);
+    this.policyClosedSubs.delete(subId);
+    this.releaseReplaySlot(subId);
+    if (this.openSubs.delete(subId)) {
+      this.socket?.send(JSON.stringify(["CLOSE", subId]));
+    }
   }
 
   /**
@@ -877,41 +993,4 @@ export class RelaySession {
       }
     });
   }
-}
-
-/**
- * NIP-42 AUTH event template (kind 22242), optionally carrying the NIP-OA
- * `auth` tag that attests an agent key to its owner (required when the relay
- * enforces membership and the signer is an agent rather than a direct member).
- */
-export function authEventTemplate(
-  challenge: string,
-  relayUrl: string,
-  authTagJson?: string | null,
-): Omit<UnsignedNostrEvent, "created_at"> {
-  const tags: string[][] = [
-    ["challenge", challenge],
-    ["relay", relayUrl],
-  ];
-  if (authTagJson) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(authTagJson);
-    } catch {
-      throw new Error("Auth tag is not valid JSON.");
-    }
-    if (
-      !Array.isArray(parsed) ||
-      parsed[0] !== "auth" ||
-      typeof parsed[1] !== "string"
-    ) {
-      throw new Error('Auth tag must be an ["auth","…"] JSON array.');
-    }
-    tags.push(parsed as string[]);
-  }
-  return {
-    kind: 22242,
-    tags,
-    content: "",
-  };
 }

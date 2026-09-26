@@ -265,7 +265,8 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
       }
       unsubscribe = session.subscribe(
         initialSyncFilters(channelId, cached ? cached.cursor : null),
-        { onEvent: applyEvent },
+        // The open timeline is what the first screen paints from.
+        { onEvent: applyEvent, priority: "critical" },
       );
     })();
 

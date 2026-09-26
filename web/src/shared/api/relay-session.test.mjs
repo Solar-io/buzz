@@ -652,31 +652,223 @@ test("auth-race: retries are bounded — after 5 failures the sub stays dead", a
   session.close();
 });
 
-test("replay paces REQ opens so the relay send buffer can drain", async () => {
-  const { session } = makeSession();
-  for (let i = 0; i < 10; i++) {
-    session.subscribe(
-      { kinds: [9], "#h": [`dm-${i}`], limit: 1 },
-      { onEvent: () => {} },
+/** Auto-answer every REQ with EOSE, like a fast relay (3-10ms measured). */
+function autoEose(socket, delayMs = 2) {
+  const send = socket.send.bind(socket);
+  socket.send = (data) => {
+    send(data);
+    const frame = JSON.parse(data);
+    if (frame[0] === "REQ") {
+      setTimeout(() => socket.serverSend(["EOSE", frame[1]]), delayMs);
+    }
+  };
+}
+
+function subscribeMany(session, count, priorityAt = new Set()) {
+  const unsubs = [];
+  for (let i = 0; i < count; i++) {
+    unsubs.push(
+      session.subscribe(
+        { kinds: [9], "#h": [`dm-${i}`], limit: 1 },
+        {
+          onEvent: () => {},
+          ...(priorityAt.has(i) ? { priority: "critical" } : {}),
+        },
+      ),
     );
   }
+  return unsubs;
+}
+
+test("replay window: at most 4 REQs await EOSE; an EOSE opens the next at once", async () => {
+  const { session } = makeSession();
+  subscribeMany(session, 10);
   session.connect();
   const socket = firstSocket();
   socket.emit("open");
-  socket.serverSend(["AUTH", "chal-pace"]);
+  socket.serverSend(["AUTH", "chal-window"]);
   try {
     await tick();
-    // Nothing synchronous; index 0 lands on its 0ms timer, the rest pace.
-    assert.equal(socket.sentOf("REQ").length, 1);
-    await tick(250);
-    assert.equal(socket.sentOf("REQ").length, 3);
-    await tick(120 * 10);
+    assert.equal(socket.sentOf("REQ").length, 4, "the window, not a burst");
+    const first = socket.sentOf("REQ")[0][1];
+    socket.serverSend(["EOSE", first]);
+    assert.equal(socket.sentOf("REQ").length, 5, "EOSE frees a slot now");
+    // No more EOSEs: the per-slot fallback (400ms) keeps the replay moving.
+    await tick(1_500);
     assert.equal(socket.sentOf("REQ").length, 10);
     const ids = socket.sentOf("REQ").map((frame) => frame[1]);
     assert.equal(new Set(ids).size, 10, "each sub opened exactly once");
   } finally {
     session.close();
   }
+});
+
+test("boot replay: 86 subs against a fast relay all go out within 1s of AUTH", async () => {
+  // Plan item 2.1: the old fixed 120ms pacing put the 86th REQ ~10s out
+  // (measured tail ~3.7s live with fewer subs). EOSE-driven, it is bounded
+  // by the relay's answer time, not a timer.
+  const { session } = makeSession();
+  subscribeMany(session, 86);
+  session.connect();
+  const socket = firstSocket();
+  autoEose(socket);
+  socket.emit("open");
+  const authAt = Date.now();
+  socket.serverSend(["AUTH", "chal-boot"]);
+  try {
+    while (socket.sentOf("REQ").length < 86 && Date.now() - authAt < 1_000) {
+      await tick(5);
+    }
+    assert.equal(
+      socket.sentOf("REQ").length,
+      86,
+      `all boot REQs out within 1s (got ${socket.sentOf("REQ").length})`,
+    );
+  } finally {
+    session.close();
+  }
+});
+
+test("replay: critical subscriptions open first", async () => {
+  const { session } = makeSession();
+  subscribeMany(session, 12, new Set([9, 11]));
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  socket.serverSend(["AUTH", "chal-prio"]);
+  try {
+    await tick();
+    const opened = socket.sentOf("REQ").map((frame) => frame[2]["#h"][0]);
+    assert.deepEqual(opened, ["dm-9", "dm-11", "dm-0", "dm-1"]);
+  } finally {
+    session.close();
+  }
+});
+
+test("dedupe: identical filters share ONE wire REQ and both listeners get events", async () => {
+  const { session } = makeSession();
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  socket.serverSend(["AUTH", "chal-dedupe"]);
+  await tick();
+  const a = [];
+  const b = [];
+  // Same filter, different key order and author order: still identical.
+  session.subscribe(
+    { kinds: [0], authors: ["x", "y"] },
+    { onEvent: (e) => a.push(e.id) },
+  );
+  session.subscribe(
+    { authors: ["y", "x"], kinds: [0] },
+    { onEvent: (e) => b.push(e.id) },
+  );
+  await tick();
+  const reqs = socket.sentOf("REQ");
+  assert.equal(reqs.length, 1, "one wire sub for identical filters");
+  socket.serverSend(["EVENT", reqs[0][1], { id: "e1" }]);
+  assert.deepEqual(a, ["e1"]);
+  assert.deepEqual(b, ["e1"]);
+  session.close();
+});
+
+test("dedupe: a late joiner (before EOSE) is replayed buffered events, then goes live", async () => {
+  const { session } = makeSession();
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  socket.serverSend(["AUTH", "chal-late"]);
+  await tick();
+  const early = [];
+  let earlyEose = 0;
+  session.subscribe(
+    { kinds: [0], authors: ["x"] },
+    { onEvent: (e) => early.push(e.id), onEose: () => (earlyEose += 1) },
+  );
+  const subId = socket.sentOf("REQ")[0][1];
+  socket.serverSend(["EVENT", subId, { id: "e1" }]);
+  socket.serverSend(["EVENT", subId, { id: "e2" }]);
+  const late = [];
+  let lateEose = 0;
+  session.subscribe(
+    { kinds: [0], authors: ["x"] },
+    { onEvent: (e) => late.push(e.id), onEose: () => (lateEose += 1) },
+  );
+  assert.deepEqual(late, [], "replay is async (after subscribe returns)");
+  await tick();
+  assert.deepEqual(late, ["e1", "e2"]);
+  socket.serverSend(["EVENT", subId, { id: "e3" }]);
+  socket.serverSend(["EOSE", subId]);
+  assert.deepEqual(early, ["e1", "e2", "e3"]);
+  assert.deepEqual(late, ["e1", "e2", "e3"]);
+  assert.equal(earlyEose, 1);
+  assert.equal(lateEose, 1, "each listener gets its own EOSE");
+  assert.equal(socket.sentOf("REQ").length, 1);
+  session.close();
+});
+
+test("dedupe: after EOSE an identical subscribe re-REQs (refresh semantics kept)", async () => {
+  // Kind 39000 has no live fan-out; useChannels re-subscribes to re-read it
+  // after creating a channel. Joining a group that already EOSE'd would
+  // silently hand it the stale set.
+  const { session } = makeSession();
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  socket.serverSend(["AUTH", "chal-refresh"]);
+  await tick();
+  const filter = { kinds: [39000], limit: 500 };
+  session.subscribe(filter, { onEvent: () => {} });
+  socket.serverSend(["EOSE", socket.sentOf("REQ")[0][1]]);
+  session.subscribe(filter, { onEvent: () => {} });
+  assert.equal(socket.sentOf("REQ").length, 2);
+  session.close();
+});
+
+test("dedupe: the shared wire sub closes only when its LAST listener leaves", async () => {
+  const { session } = makeSession();
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  socket.serverSend(["AUTH", "chal-ref"]);
+  await tick();
+  const filter = { kinds: [30177], authors: ["x"] };
+  const first = session.subscribe(filter, { onEvent: () => {} });
+  const got = [];
+  const second = session.subscribe(filter, {
+    onEvent: (e) => got.push(e.id),
+  });
+  await tick();
+  first();
+  assert.equal(socket.sentOf("CLOSE").length, 0, "still one listener");
+  const subId = socket.sentOf("REQ")[0][1];
+  socket.serverSend(["EVENT", subId, { id: "after-first-left" }]);
+  assert.deepEqual(got, ["after-first-left"]);
+  second();
+  assert.equal(socket.sentOf("CLOSE").length, 1);
+  // A fresh identical subscribe now opens a NEW wire sub.
+  session.subscribe(filter, { onEvent: () => {} });
+  assert.equal(socket.sentOf("REQ").length, 2);
+  session.close();
+});
+
+test("dedupe: a listener that leaves before its replay microtask gets nothing", async () => {
+  const { session } = makeSession();
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  socket.serverSend(["AUTH", "chal-gone"]);
+  await tick();
+  const filter = { kinds: [0], authors: ["z"] };
+  session.subscribe(filter, { onEvent: () => {} });
+  const subId = socket.sentOf("REQ")[0][1];
+  socket.serverSend(["EVENT", subId, { id: "e1" }]);
+  const got = [];
+  const leave = session.subscribe(filter, { onEvent: (e) => got.push(e) });
+  leave();
+  await tick();
+  assert.deepEqual(got, []);
+  session.close();
 });
 
 test("subscribe with a filter array spreads the filters in one REQ frame", async () => {
@@ -837,7 +1029,7 @@ test("health sweep: a policy-closed sub is NOT resurrected", async () => {
   session.close();
 });
 
-test("health sweep stands down while a paced replay is in flight", async () => {
+test("health sweep stands down while a windowed replay is in flight", async () => {
   // >UNPACED_REPLAY_MAX subs on (re)connect ⇒ paced opens; a sweep firing
   // mid-replay must not burst-open the not-yet-opened remainder. A long auth
   // grace keeps the pre-AUTH window free of the grace flush, so the only
@@ -869,16 +1061,17 @@ test("health sweep stands down while a paced replay is in flight", async () => {
       "sweep must not bypass the auth handshake or replay pacing",
     );
     socket.serverSend(["AUTH", "c1"]);
-    // Post-auth: the paced replay opens subs at 120ms intervals. 50ms in,
-    // ONLY the first has opened — a sweep that ignores pacing would have
-    // burst-opened all 12 by then (5ms sweep cadence vs 1.4s of pacing).
+    // Post-auth: the windowed replay opens REPLAY_WINDOW (4) subs and waits
+    // for their EOSE (this fake relay never sends one, so each slot frees on
+    // its 400ms fallback). 50ms in, ONLY the window is open — a sweep that
+    // ignored the window would have burst-opened all 12 by then.
     await tick(50);
     assert.equal(
       socket.sentOf("REQ").length,
-      1,
-      "sweep must not burst-open subs the replay pacing means to stagger",
+      4,
+      "sweep must not burst-open subs the replay window means to stagger",
     );
-    // ...and the paced replay opens all 12 (12 × 120ms pacing ≈ 1.4s).
+    // ...and the fallback timers open the rest (3 rounds × 400ms).
     await tick(2_000);
     assert.equal(socket.sentOf("REQ").length, 12);
   } finally {
