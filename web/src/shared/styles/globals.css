@@ -14,6 +14,19 @@
    at-rules, so placing this above them silently drops the rest of the sheet. */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Hover styles follow ANY hover-capable input, not just the primary one.
+   Tailwind v4's default `hover` variant is `@media (hover: hover)`, which an
+   iPad never matches (its primary input is the touchscreen), even with a
+   trackpad attached. `any-hover` flips to `hover` when a trackpad or mouse
+   is connected, so hover-revealed controls work there too. */
+@custom-variant hover {
+  @media (any-hover: hover) {
+    &:hover {
+      @slot;
+    }
+  }
+}
+
 :root[data-custom-gradient="true"] .buzz-app-shell {
   background: linear-gradient(
     90deg,
@@ -870,7 +883,9 @@
 .buzz-touch-message-trigger {
   display: none;
 }
-@media (hover: none) and (pointer: coarse) {
+/* Touch-only message affordances. `not (any-hover: hover)` keeps them off an
+   iPad with a trackpad attached, where hover already reveals the action bar. */
+@media (hover: none) and (pointer: coarse) and (not (any-hover: hover)) {
   [data-testid^="message-row-"] {
     padding-bottom: 2.75rem;
   }
