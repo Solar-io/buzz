@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/features/auth/ui/AuthProvider";
 import { LoginPage } from "@/features/auth/ui/LoginPage";
 import {
@@ -38,6 +38,9 @@ import {
 } from "@/shared/layout/usePointerDrag.ts";
 import { usePermalinkCleanup } from "@/features/channels/lib/usePermalinkCleanup.ts";
 import { useChannelLists } from "@/features/channels/lib/useChannelLists.ts";
+import { useLandingConversation } from "@/features/channels/lib/useLandingConversation.ts";
+import { restoredLandingTarget } from "@/features/channels/lib/lastConversationScope.ts";
+import { LandingSkeleton } from "@/features/channels/ui/LandingSkeleton";
 import { useMessageActions } from "@/features/channels/lib/useMessageActions.ts";
 import { paletteActions } from "@/features/channels/lib/paletteActions.ts";
 import { isNativeIOS } from "@/shared/platform/native";
@@ -65,7 +68,6 @@ import { useTick } from "@/features/agents/ui/WorkingBadge";
 import { AgentActivityPanel } from "@/features/agents/ui/AgentActivityPanel";
 import { AgentPortraitOverlay } from "@/features/agents/ui/AgentPortraitOverlay";
 import { openDm, useDms } from "@/features/dms/hooks";
-import { decideDefaultConversation } from "@/features/dms/lib/defaultConversation";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
 import {
   hideDm,
@@ -129,6 +131,15 @@ export const Route = createFileRoute("/repos")({
       ? (search.view as ShellView)
       : undefined,
   }),
+  // Plan item 5: a bare /repos lands in the last conversation BEFORE the
+  // first paint, so "Pick a channel" never flashes. Only fires with no c,
+  // view or m — the redirect carries c, which is the loop guard.
+  beforeLoad: ({ search }) => {
+    const target = restoredLandingTarget(search);
+    if (target !== null) {
+      throw redirect({ to: "/repos", search: { c: target }, replace: true });
+    }
+  },
   component: AppRoute,
 });
 
@@ -462,64 +473,24 @@ function ChannelBrowser() {
     hiddenDmIds,
   });
 
-  // Default conversation (D-025): opening the app with nothing selected
-  // lands in the most recently active DM instead of the empty state. The
-  // DM list is activity-sorted by useDms — latest message either direction —
-  // and visibleDms already excludes locally hidden DMs. Runs at most once
-  // per app load: a deep link (?c= / ?view=) or any user selection retires
-  // it, so closing a conversation later never bounces anyone back, and a
-  // user with zero visible DMs keeps the empty state.
-  //
-  // Round 3: the pick waits for the durable sampling window to settle
-  // (EOSE across every per-DM batch) before deciding — a cold PWA start
-  // must not run "most recent" before the samples exist. A 5s hard cap is
-  // the dead-relay escape hatch: past it the decision runs on whatever is
-  // loaded. There is deliberately NO early-fire on the first sample
-  // (first-loaded-wins was the original roulette).
-  const defaultConversationHandled = useRef(false);
-  const [defaultConversationHardCapElapsed, setDefaultConversationHardCap] =
-    useState(false);
-  useEffect(() => {
-    const timer = window.setTimeout(
-      () => setDefaultConversationHardCap(true),
-      5000,
-    );
-    return () => window.clearTimeout(timer);
-  }, []);
-  useEffect(() => {
-    if (defaultConversationHandled.current) return;
-    const decision = decideDefaultConversation({
-      handled: false,
-      userAlreadySelected: selectedId !== undefined || view !== undefined,
-      connected,
-      channelCount: channels.length,
-      samplingSettled: dmSamplingSettled,
-      hardCapElapsed: defaultConversationHardCapElapsed,
-      visibleDms: lists.visibleDms,
-    });
-    if (decision.action === "handled") {
-      // Someone already chose — deep link, restored PWA state, or the user
-      // got there first inside the wait window. Never override a choice.
-      defaultConversationHandled.current = true;
-      return;
-    }
-    if (decision.action !== "open") return;
-    defaultConversationHandled.current = true;
-    void navigate({
-      to: "/repos",
-      search: { c: lists.visibleDms[decision.index].channel.id },
-      replace: true,
-    });
-  }, [
-    connected,
-    channels.length,
-    dmSamplingSettled,
-    defaultConversationHardCapElapsed,
-    lists.visibleDms,
+  // Landing (plan item 5 + D-025): the last-opened conversation restored
+  // by beforeLoad is validated here, D-025 picks the most recently active DM
+  // when nothing was restored, and every selection is remembered.
+  const channelIds = useMemo(() => channels.map((c) => c.id), [channels]);
+  const { showSkeleton: landingSkeleton } = useLandingConversation({
     selectedId,
     view,
-    navigate,
-  ]);
+    connected,
+    channelIds,
+    samplingSettled: dmSamplingSettled,
+    visibleDms: lists.visibleDms,
+    hiddenDmIds,
+    selfPubkey,
+    openConversation: (id) =>
+      void navigate({ to: "/repos", search: { c: id }, replace: true }),
+    clearConversation: () =>
+      void navigate({ to: "/repos", search: {}, replace: true }),
+  });
 
   const selectChannel = (channelId: string) => {
     setThreadRootId(null);
@@ -1061,6 +1032,8 @@ function ChannelBrowser() {
                       />
                     )}
                 </div>
+              ) : landingSkeleton ? (
+                <LandingSkeleton />
               ) : (
                 <div className="flex h-full items-center justify-center p-8">
                   <p className="text-sm text-muted-foreground">
