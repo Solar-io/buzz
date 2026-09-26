@@ -59,6 +59,7 @@ import {
   ProfileSection,
 } from "./settings/MiscSections";
 import { ClaudePoolsSection } from "./settings/ClaudePoolsSection";
+import { FilesSitesSection } from "@/features/webPanels/ui/FilesSitesSection";
 import { SettingsChipRow, SettingsNav } from "./settings/SettingsNav";
 import {
   DEFAULT_SETTINGS_GROUP,
@@ -286,6 +287,7 @@ export function SettingsPage({ group }: SettingsPageProps) {
                 <div className="space-y-4">
                   <LocalArchiveSettingsCard />
                   <FilesUrlSection />
+                  <FilesSitesSection />
                 </div>
               ) : null}
 

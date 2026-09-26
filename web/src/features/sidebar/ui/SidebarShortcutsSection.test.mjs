@@ -150,7 +150,10 @@ function installFakeSession() {
   const calls = [];
   globalThis.__BUZZ_TEST_RELAY_SESSION__ = {
     calls,
-    subscribe() {
+    // Answers like a relay with no stored blob: EOSE and nothing else. The
+    // shared Links store refuses blob writes until the relay has answered.
+    subscribe(_filter, options) {
+      queueMicrotask(() => options.onEose?.());
       return () => {};
     },
     async publish(event) {

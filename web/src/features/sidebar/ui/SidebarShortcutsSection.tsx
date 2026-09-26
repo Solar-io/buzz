@@ -12,6 +12,7 @@ import {
   updateSidebarShortcut,
 } from "@/features/shortcut-bar/lib/shortcutBlob.ts";
 import { useShortcutBar } from "@/features/shortcut-bar/hooks.ts";
+import { useActiveWebView } from "@/features/webPanels/activeWebStore.ts";
 import { ShortcutDialog } from "@/features/shortcut-bar/ui/ShortcutDialog.tsx";
 import { shortcutMenuItems } from "@/features/sidebar/lib/shortcutMenuItems.ts";
 import { SectionHeader } from "@/features/sidebar/ui/SectionHeader";
@@ -42,6 +43,10 @@ export function SidebarShortcutsSection({
 }) {
   const { shortcuts, blocked, blockedMessage, mutateShortcuts } =
     useShortcutBar();
+  // The link whose page the web layer is showing reads as the selected row.
+  const { state: webView } = useActiveWebView();
+  const activeLinkId =
+    webView.active?.kind === "link" ? webView.active.panelId : null;
   const [dialogOpen, setDialogOpen] = useState(false);
   /** null = adding a new shortcut; a def = editing that one. */
   const [editing, setEditing] = useState<ShortcutDef | null>(null);
@@ -116,7 +121,7 @@ export function SidebarShortcutsSection({
         {shortcuts.map((shortcut) => (
           <li key={shortcut.id}>
             <SidebarNavButton
-              selected={false}
+              selected={activeLinkId === shortcut.id}
               label={shortcut.label}
               icon={
                 <Globe

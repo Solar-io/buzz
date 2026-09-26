@@ -2,12 +2,12 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import type { RelaySession } from "@/shared/api/relay-session";
+import type { NostrFilter } from "@/shared/lib/nostr-client";
 import { subscribeAuth } from "@/shared/lib/key-store";
 import {
   activeSignerSource,
@@ -17,9 +17,6 @@ import {
   signNostrEvent,
   type SignedNostrEvent,
 } from "@/shared/lib/nostr-signer";
-import type { WebPanelDockApi } from "@/features/webPanels/hooks";
-import { createDockStore } from "@/features/webPanels/lib/dockStore.ts";
-import type { WebPanelDef } from "@/features/webPanels/lib/panelRegistry.ts";
 
 import {
   SHORTCUT_BLOB_BUDGET_BYTES,
@@ -27,18 +24,15 @@ import {
   type ShortcutBarBlob,
   type ShortcutDef,
   emptyShortcutBlob,
-  parseShortcutBlob,
   serializeShortcutBlob,
   sidebarShortcuts,
 } from "./lib/shortcutBlob.ts";
 import {
   KIND_SHORTCUT_BAR,
-  SHORTCUT_BAR_D_TAG,
-  type ShortcutEventLike,
   buildShortcutEventTags,
   nextShortcutCreatedAt,
-  reduceShortcutEvents,
 } from "./lib/shortcutEvent.ts";
+import { createLinksStore } from "./lib/linksStore.ts";
 import {
   linkStorageMode,
   mutateLocalLinks,
@@ -73,6 +67,46 @@ import {
  * live. A blob this device cannot decrypt blocks only the BLOB store (the
  * toast below); the local list is always renderable and editable.
  */
+
+/**
+ * The one shared Links source: one relay subscription and one decrypt for
+ * every reader (sidebar, web layer, settings), painted from a per-pubkey
+ * seed before the relay answers. See `lib/linksStore.ts`.
+ */
+const linksStore = createLinksStore({
+  subscribe: (filter, options) =>
+    currentSession
+      ? currentSession.subscribe(filter as NostrFilter, options)
+      : () => {},
+  decrypt: async (content, pubkey) =>
+    (await nip44DecryptFrom(content, pubkey)).plaintext,
+  storage: () => {
+    try {
+      return globalThis.localStorage ?? null;
+    } catch {
+      return null;
+    }
+  },
+});
+/** The session the store's next subscribe uses (set just before acquire). */
+let currentSession: RelaySession | null = null;
+const sessionIds = new WeakMap<RelaySession, string>();
+let nextSessionId = 0;
+function sessionId(session: RelaySession): string {
+  let id = sessionIds.get(session);
+  if (!id) {
+    nextSessionId += 1;
+    id = `session-${nextSessionId}`;
+    sessionIds.set(session, id);
+  }
+  return id;
+}
+const EMPTY_BLOB = emptyShortcutBlob();
+
+/** Shown while the relay copy has not arrived; writing over a seed could
+ * clobber an edit made on another device since the seed was taken. */
+const LINKS_LOADING_MESSAGE =
+  "Links are still loading from the relay — try again in a moment.";
 
 /** The bar needs the UNLOCKED LOCAL key — NIP-44-to-self has no NIP-07 path. */
 const NEED_LOCAL_KEY_MESSAGE =
@@ -148,13 +182,6 @@ function useActiveSignerSource(): "local" | "extension" | "ephemeral" {
   return source;
 }
 
-/** The decrypted-or-blocked view of the relay's newest copy. */
-interface RelayBlobState {
-  blob: ShortcutBarBlob;
-  /** A copy exists but this device cannot open it — writes must be refused. */
-  blocked: boolean;
-}
-
 export interface ShortcutBar {
   /** The sidebar shortcuts — the blob's list, or the device-local one. */
   shortcuts: ShortcutDef[];
@@ -196,10 +223,6 @@ export function useShortcutBar(): ShortcutBar {
   const { session } = useRelaySession();
   const signer = useActiveSignerSource();
   const [selfPubkey, setSelfPubkey] = useState<string | null>(null);
-  const [events, setEvents] = useState<ShortcutEventLike[]>([]);
-  // Highest `created_at` the relay has shown us; the next publish is pinned
-  // past it so a slow clock cannot publish a losing write.
-  const maxFetchedRef = useRef(0);
 
   // Resolve the self pubkey reactively: it gates both the subscription's
   // `authors` filter and the encrypt-to-self coordinate.
@@ -216,65 +239,33 @@ export function useShortcutBar(): ShortcutBar {
     return subscribeAuth(resolve);
   }, []);
 
-  // One REQ for the user's single blob: the relay answers with the stored
-  // replaceable event, then keeps the subscription open for live updates.
+  // One shared REQ + decrypt for every reader (see linksStore).
   useEffect(() => {
     if (!selfPubkey) {
-      setEvents([]);
       return;
     }
-    setEvents([]);
-    return session.subscribe(
-      {
-        kinds: [KIND_SHORTCUT_BAR],
-        authors: [selfPubkey],
-        "#d": [SHORTCUT_BAR_D_TAG],
-        limit: 1,
-      },
-      {
-        onEvent: (event: SignedNostrEvent) => {
-          maxFetchedRef.current = Math.max(
-            maxFetchedRef.current,
-            event.created_at,
-          );
-          setEvents((previous) => [...previous, event]);
-        },
-      },
+    currentSession = session;
+    return linksStore.acquire(
+      sessionId(session),
+      selfPubkey,
+      signer === "local",
     );
-  }, [session, selfPubkey]);
-
-  const newest = useMemo(() => reduceShortcutEvents(events), [events]);
-
-  const [relayState, setRelayState] = useState<RelayBlobState>({
-    blob: emptyShortcutBlob(),
-    blocked: false,
-  });
-  useEffect(() => {
-    let alive = true;
-    if (!newest || !selfPubkey || signer !== "local") {
-      setRelayState({ blob: emptyShortcutBlob(), blocked: false });
-      return;
-    }
-    void (async () => {
-      try {
-        const { plaintext } = await nip44DecryptFrom(
-          newest.content,
-          newest.pubkey,
-        );
-        const parsed = parseShortcutBlob(JSON.parse(plaintext));
-        if (alive && parsed.ok) {
-          setRelayState({ blob: parsed.blob, blocked: false });
-          return;
-        }
-      } catch {
-        // Undecryptable here — expose a blocked state.
-      }
-      if (alive) setRelayState({ blob: emptyShortcutBlob(), blocked: true });
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [newest, selfPubkey, signer]);
+  }, [session, selfPubkey, signer]);
+  const links = useSyncExternalStore(
+    linksStore.subscribe,
+    linksStore.getSnapshot,
+    linksStore.getSnapshot,
+  );
+  const mine = links.pubkey !== null && links.pubkey === selfPubkey;
+  const newest = mine ? links.newest : null;
+  const relayState = useMemo(
+    () =>
+      mine && signer === "local"
+        ? { blob: links.blob, blocked: links.blocked }
+        : { blob: EMPTY_BLOB, blocked: false },
+    [mine, signer, links.blob, links.blocked],
+  );
+  const relayLoaded = mine && links.loaded;
 
   const optimisticStamp = useSyncExternalStore(
     subscribeOptimistic,
@@ -326,6 +317,9 @@ export function useShortcutBar(): ShortcutBar {
         // render and this call.
         return { ok: false, message: NEED_LOCAL_KEY_MESSAGE };
       }
+      if (!relayLoaded) {
+        return { ok: false, message: LINKS_LOADING_MESSAGE };
+      }
       if (relayState.blocked) {
         // E6: never clobber a blob this device cannot read — a v1 write over
         // a future-version blob would silently destroy whatever the newer
@@ -360,11 +354,11 @@ export function useShortcutBar(): ShortcutBar {
         tags: buildShortcutEventTags(),
         content: ciphertext,
         created_at: nextShortcutCreatedAt(
-          maxFetchedRef.current,
+          linksStore.getSnapshot().maxFetched,
           Math.floor(Date.now() / 1000),
         ),
       });
-      maxFetchedRef.current = Math.max(maxFetchedRef.current, event.created_at);
+      linksStore.notePublished(event.created_at);
       const previous = optimistic.get(selfPubkey) ?? null;
       setOptimistic(selfPubkey, { at: event.created_at, blob: result.blob });
       const publishResult = await publishQuietly(session, event);
@@ -376,7 +370,7 @@ export function useShortcutBar(): ShortcutBar {
         message: publishResult.ok ? null : publishResult.message,
       };
     },
-    [storageMode, canUse, selfPubkey, relayState, session],
+    [storageMode, canUse, selfPubkey, relayState, relayLoaded, session],
   );
 
   return {
@@ -386,61 +380,4 @@ export function useShortcutBar(): ShortcutBar {
     blockedMessage: relayState.blocked ? SHORTCUT_BLOCKED_MESSAGE : null,
     mutateShortcuts,
   };
-}
-
-/**
- * The shortcut overlay's dock: the sidebar list's overlay-mode shortcuts as
- * the panel registry, with ONE global tab session under
- * `buzz:shortcut-overlay-sessions.v1` (iframes still die on close — only the
- * tab LIST survives, same as Files across reloads).
- *
- * There is no `setScope` here any more. The registry used to be per channel
- * and each channel kept its own tabs; the list is channel-independent now, so
- * a scope per channel would leave every open tab stranded under whichever key
- * it was opened under. The store is pinned to a single scope instead, which
- * `dockStore` already supports — a file written by the per-channel build is
- * read, its other scopes simply never load again.
- */
-const SHORTCUT_DOCK_SCOPE = "sidebar";
-
-const shortcutDockStore = createDockStore({
-  storageKey: "buzz:shortcut-overlay-sessions.v1",
-  initialScope: SHORTCUT_DOCK_SCOPE,
-});
-
-export function useShortcutDock(): WebPanelDockApi {
-  const { shortcuts } = useShortcutBar();
-  const store = shortcutDockStore;
-  const panels = useMemo<WebPanelDef[]>(
-    () =>
-      shortcuts
-        .filter((shortcut) => shortcut.mode === "overlay")
-        .map((shortcut) => ({
-          id: shortcut.id,
-          label: shortcut.label,
-          url: shortcut.url,
-          custom: true,
-        })),
-    [shortcuts],
-  );
-  store.setPanels(panels);
-  const state = useSyncExternalStore(
-    store.subscribe,
-    store.getSnapshot,
-    store.getSnapshot,
-  );
-  return useMemo(
-    () => ({
-      panels,
-      instances: state.instances,
-      activeInstanceId: state.activeInstanceId,
-      open: store.open,
-      focusOrOpen: store.focusOrOpen,
-      close: store.close,
-      activate: store.activate,
-    }),
-    // `store` is a module singleton with stable methods — listed only to
-    // satisfy the reader, never changing.
-    [panels, state],
-  );
 }
