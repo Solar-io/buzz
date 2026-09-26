@@ -23,11 +23,17 @@ use std::path::Path;
 use super::{
     agent_events::build_agent_event,
     persona_events::monotonic_created_at,
-    retention::{get_retained_event, open_retention_db, retain_event, RetainedEvent},
+    retention::{
+        get_retained_event, open_retention_db, retain_event, tombstone_retention_d_tag,
+        RetainedEvent,
+    },
     ManagedAgentRecord,
 };
 use buzz_core_pkg::kind::KIND_MANAGED_AGENT;
 use nostr::JsonUtil;
+
+/// NIP-09 deletion kind; tombstones are retained under `kind = 5`.
+const KIND_DELETE: u32 = 5;
 
 /// Reconcile `managed-agents.json` into kind:30177 events in the retention
 /// store. Boot-time entry point, called from `event_sync::run_event_sync`
@@ -129,6 +135,26 @@ pub(crate) fn retain_agent_record(
 ) -> Result<bool, String> {
     let owner_pubkey = keys.public_key().to_hex();
     let existing = get_retained_event(conn, KIND_MANAGED_AGENT, &owner_pubkey, &record.pubkey)?;
+    // A retained kind:5 tombstone for this coordinate at or after the head
+    // means the relay copy was deleted — typically a delete followed by a
+    // restore of the same key (Evie/Jared, 2026-09-26). The record is in
+    // `managed-agents.json`, so it is live: the head must be re-published
+    // newer than the tombstone even when its content is unchanged.
+    let tombstone_at = get_retained_event(
+        conn,
+        KIND_DELETE,
+        &owner_pubkey,
+        &tombstone_retention_d_tag(KIND_MANAGED_AGENT, &record.pubkey),
+    )?
+    .map(|row| row.created_at);
+    let head_superseded_by_tombstone = match (&existing, tombstone_at) {
+        (Some(head), Some(tombstone)) => tombstone >= head.created_at,
+        _ => false,
+    };
+    let floor = match (existing.as_ref().map(|row| row.created_at), tombstone_at) {
+        (Some(head), Some(tombstone)) => Some(head.max(tombstone)),
+        (head, tombstone) => head.or(tombstone),
+    };
 
     // Build the event first and compare ITS content, so the comparison and
     // the retained row share one serialization of the projection (mirrors
@@ -138,14 +164,13 @@ pub(crate) fn retain_agent_record(
     // timestamp-independent, so the monotonic bump below never forces a
     // spurious republish; an unchanged agent is still a true no-op.
     let event = build_agent_event(record)?
-        .custom_created_at(monotonic_created_at(
-            existing.as_ref().map(|row| row.created_at),
-        ))
+        .custom_created_at(monotonic_created_at(floor))
         .sign_with_keys(keys)
         .map_err(|e| format!("failed to sign event for '{}': {e}", record.name))?;
 
     let content = event.content.clone();
-    if existing.as_ref().is_some_and(|row| row.content == content) {
+    if !head_superseded_by_tombstone && existing.as_ref().is_some_and(|row| row.content == content)
+    {
         return Ok(false);
     }
 

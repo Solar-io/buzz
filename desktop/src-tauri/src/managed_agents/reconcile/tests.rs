@@ -400,3 +400,95 @@ fn retain_agent_record_is_noop_when_unchanged() {
         "no pending_sync churn for an unchanged record"
     );
 }
+
+/// Retain a published (synced) kind:5 tombstone for an agent coordinate.
+fn retain_synced_tombstone(dir: &TempDir, keys: &nostr::Keys, agent: &str, created_at: i64) {
+    let conn = open_retention_db(&dir.path().join("retention.db")).unwrap();
+    retain_event(
+        &conn,
+        &RetainedEvent {
+            kind: KIND_DELETE,
+            pubkey: keys.public_key().to_hex(),
+            d_tag: tombstone_retention_d_tag(KIND_MANAGED_AGENT, agent),
+            content: String::new(),
+            created_at,
+            raw_event: "{}".to_string(),
+            pending_sync: false,
+        },
+    )
+    .unwrap();
+}
+
+fn head(dir: &TempDir, keys: &nostr::Keys, agent: &str) -> Option<RetainedEvent> {
+    let conn = open_retention_db(&dir.path().join("retention.db")).unwrap();
+    get_retained_event(
+        &conn,
+        KIND_MANAGED_AGENT,
+        &keys.public_key().to_hex(),
+        agent,
+    )
+    .unwrap()
+}
+
+fn confirm_publish(dir: &TempDir, keys: &nostr::Keys, agent: &str) {
+    let row = head(dir, keys, agent).unwrap();
+    let conn = open_retention_db(&dir.path().join("retention.db")).unwrap();
+    mark_synced(
+        &conn,
+        row.kind,
+        &row.pubkey,
+        &row.d_tag,
+        row.created_at,
+        &row.content,
+    )
+    .unwrap();
+}
+
+/// Live state 2026-09-26 (Evie 1fa92489…, Jared 72665f7c…): deleted (synced
+/// tombstone, head row purged), then the same key restored into
+/// managed-agents.json. Boot must re-publish a head NEWER than the tombstone
+/// (the relay only soft-deletes versions at or before it), exactly once.
+#[test]
+fn restored_after_delete_republishes_newer_than_tombstone_once() {
+    let dir = TempDir::new().unwrap();
+    let keys = nostr::Keys::generate();
+    let agent = "e".repeat(64);
+    // Future-dated tombstone proves the floor, not wall-clock luck.
+    let tombstone_at = nostr::Timestamp::now().as_secs() as i64 + 10_000;
+    retain_synced_tombstone(&dir, &keys, &agent, tombstone_at);
+    write_store(&dir, &[sample_record(&agent, "Evie")]);
+
+    assert_eq!(reconcile_agents_in_dir(dir.path(), &keys).unwrap(), 1);
+    let row = head(&dir, &keys, &agent).unwrap();
+    assert!(row.pending_sync);
+    assert!(
+        row.created_at > tombstone_at,
+        "{} <= {tombstone_at}",
+        row.created_at
+    );
+
+    confirm_publish(&dir, &keys, &agent);
+    assert_eq!(reconcile_agents_in_dir(dir.path(), &keys).unwrap(), 0);
+}
+
+/// A synced head with unchanged content is normally a no-op — but not when a
+/// tombstone at/after it says the relay copy is gone.
+#[test]
+fn synced_head_older_than_tombstone_is_republished() {
+    let dir = TempDir::new().unwrap();
+    let keys = nostr::Keys::generate();
+    let agent = "f".repeat(64);
+    write_store(&dir, &[sample_record(&agent, "Jared Dunn")]);
+    assert_eq!(reconcile_agents_in_dir(dir.path(), &keys).unwrap(), 1);
+    confirm_publish(&dir, &keys, &agent);
+    let first = head(&dir, &keys, &agent).unwrap().created_at;
+
+    retain_synced_tombstone(&dir, &keys, &agent, first + 5);
+    assert_eq!(reconcile_agents_in_dir(dir.path(), &keys).unwrap(), 1);
+    let row = head(&dir, &keys, &agent).unwrap();
+    assert!(row.pending_sync);
+    assert!(row.created_at > first + 5);
+
+    confirm_publish(&dir, &keys, &agent);
+    assert_eq!(reconcile_agents_in_dir(dir.path(), &keys).unwrap(), 0);
+}
