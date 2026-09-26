@@ -248,7 +248,7 @@ pub fn resolve(
         return PoolDecision::off("skipped_non_claude_adapter");
     }
     if has_custom_auth(parent_env) {
-        return PoolDecision::off("skipped_custom_auth_env");
+        return PoolDecision::off("skipped:custom-auth");
     }
     let Some(file) = file else {
         return PoolDecision::off("off_no_config");
@@ -600,7 +600,7 @@ mod tests {
             let d = res(Some(&standard()), "Gilfoyle", &env, true);
             assert_eq!(d.env, None, "{var}");
             assert_eq!(d.pool_id, None, "{var}");
-            assert_eq!(d.reason, "skipped_custom_auth_env", "{var}");
+            assert_eq!(d.reason, "skipped:custom-auth", "{var}");
         }
     }
 
@@ -725,6 +725,37 @@ mod tests {
         let r = PoolRouter::disabled();
         assert_eq!(r.on_quota_error(&[], 0), OverflowAction::Disabled);
         assert_eq!(r.decide(&[], Instant::now()).env, None);
+    }
+
+    #[test]
+    fn custom_auth_only_in_persona_env_skips_routing() {
+        let dir = std::env::temp_dir().join(format!("auth-pool-persona-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("pools.json");
+        std::fs::write(
+            &p,
+            r#"{"default":"B","pools":{"A":{"configDir":null},"B":{"configDir":"~/cc2"}}}"#,
+        )
+        .unwrap();
+        let r = PoolRouter {
+            enabled_for_claude: true,
+            display_name: "Evie".into(),
+            config_path: Some(p),
+            home: Some(HOME.into()),
+            parent_gate_env: vec![], // parent env is clean
+            overflow: OverflowState::default(),
+        };
+        let persona = vec![(
+            "ANTHROPIC_BASE_URL".to_string(),
+            "http://omniroute".to_string(),
+        )];
+        let d = r.decide_for_slot(&persona, 0);
+        assert_eq!(d.env, None);
+        assert_eq!(d.pool_id, None);
+        assert_eq!(d.reason, "skipped:custom-auth");
+        // Same agent without the persona var WOULD be routed to B.
+        assert_eq!(r.decide(&[], Instant::now()).env, cc2());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
