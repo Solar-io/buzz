@@ -1,3 +1,5 @@
+import { openUrl } from "@tauri-apps/plugin-opener";
+
 import {
   useAgentPoolProbesQuery,
   useAgentPoolsQuery,
@@ -6,13 +8,15 @@ import { effectivePool } from "@/features/agents/claudePoolsPayload";
 import { useManagedAgentsQuery } from "@/features/agents/hooks";
 import { UsageCard } from "./UsageCharts";
 
+/** usage-hub: measured per-account usage and real quota for each pool. */
+export const USAGE_HUB_URL = "https://pilot.tailb3d4b8.ts.net:6770";
+
 /**
  * Both Claude accounts side by side (two-account pool routing). REAL data:
  * the identity `claude auth status --json` reports per pool config dir, and
- * how many agents `~/.buzz/agent-pools.json` routes to each pool. NOT
- * available: remaining weekly quota — the Claude CLI exposes no quota read,
- * and buzz-acp's 429 overflow state lives in each agent process's memory
- * only, so neither is shown as if it were known.
+ * how many agents `~/.buzz/agent-pools.json` routes to each pool. Real
+ * per-account usage, quota and overflow flips live in usage-hub, which
+ * this card links to rather than fetching cross-origin.
  */
 export function ClaudePoolAccounts() {
   const poolsQuery = useAgentPoolsQuery();
@@ -29,8 +33,19 @@ export function ClaudePoolAccounts() {
   return (
     <UsageCard
       title="Claude accounts (pools)"
-      subtitle="Identity is live from claude auth status; remaining weekly quota is not exposed by Claude and is not shown"
+      subtitle="Identity is live from claude auth status"
     >
+      <p className="usage-empty">
+        <a
+          href={USAGE_HUB_URL}
+          onClick={(event) => {
+            event.preventDefault();
+            void openUrl(USAGE_HUB_URL);
+          }}
+        >
+          Real usage and quota per account → usage-hub
+        </a>
+      </p>
       {poolsQuery.isPending && (
         <p className="usage-empty" role="status">
           Loading pools…
@@ -77,9 +92,7 @@ export function ClaudePoolAccounts() {
                       </span>
                       <span>
                         Config dir: {def.configDir ?? "default (~/.claude)"} ·{" "}
-                        {counts.get(id) ?? 0} agent(s) routed here · Weekly
-                        usage remaining: unavailable · Last 429/overflow:
-                        unavailable (per-process, not recorded)
+                        {counts.get(id) ?? 0} agent(s) routed here
                       </span>
                     </div>
                   </div>

@@ -28,6 +28,9 @@ import {
   type ClaudePoolsPayload,
 } from "@/features/agents/lib/claudePools";
 
+/** usage-hub: measured per-account usage and real quota for each pool. */
+export const USAGE_HUB_URL = "https://pilot.tailb3d4b8.ts.net:6770";
+
 const SELECT_CLASS =
   "rounded-md border border-input bg-card px-2 py-1 text-sm disabled:opacity-50";
 
@@ -119,6 +122,15 @@ export function ClaudePoolsSection() {
           </span>
         )}
       </div>
+      <a
+        className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+        data-testid="usage-hub-link"
+        href={USAGE_HUB_URL}
+        rel="noreferrer"
+        target="_blank"
+      >
+        Real usage and quota per account → usage-hub
+      </a>
       {error ? (
         <p className="text-sm text-destructive" role="alert">
           {error}
@@ -232,8 +244,7 @@ function PoolsEditor({
                         (agentPools[a.name] ?? defaultPool) === id,
                     ).length
                   }{" "}
-                  agent(s) · weekly usage remaining: unavailable (Claude exposes
-                  no quota read) · last 429/overflow: unavailable
+                  agent(s)
                 </div>
               </div>
               <Input
