@@ -14,6 +14,7 @@ import { buildClaudePoolsPayload } from "./claudePoolsPayload";
 import {
   buildDesktopCatalogContent,
   catalogAvailability,
+  catalogClaimedAgents,
   type DesktopCatalogHarness,
 } from "./desktopCatalogContent";
 import { useAcpRuntimesQuery, useManagedAgentsQuery } from "./hooks";
@@ -52,10 +53,6 @@ function contentHash(value: string): string {
     hash = Math.imul(hash, 0x01000193);
   }
   return (hash >>> 0).toString(16);
-}
-
-function normalizeRelayUrl(relayUrl: string): string {
-  return relayUrl.trim().replace(/\/+$/, "");
 }
 
 export function useDesktopCatalogPublisher() {
@@ -110,12 +107,13 @@ export function useDesktopCatalogPublisher() {
         source: runtime.source,
         availability: catalogAvailability(runtime.availability),
       }));
-      // Only agents homed on THIS relay — a catalog published to a relay
-      // must not claim agents that live on another community's relay.
-      const relayAgents = managedAgents.filter(
-        (agent) =>
-          normalizeRelayUrl(agent.relayUrl) === normalizeRelayUrl(relayUrl),
-      );
+      // Claim EVERY managed agent with a key (catalog v4). The old filter
+      // compared the legacy stored `relay_url` pin to this relay, but the
+      // runtime ignores that pin — agents-everywhere, #2122
+      // (`effective_agent_relay_url`) — so every agent runs on every
+      // community. Most records carry an empty pin, so v3 claimed 3 of ~18
+      // live agents and the web could not tell live from deleted.
+      const relayAgents = catalogClaimedAgents(managedAgents);
       const agentPubkeys = relayAgents.map((agent) => agent.pubkey);
       const base = buildDesktopCatalogContent({
         machine,

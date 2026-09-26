@@ -40,7 +40,19 @@ import type { AcpAvailabilityStatus } from "@/shared/api/types";
 
 export const DESKTOP_CATALOG_KIND = 30180;
 export const DESKTOP_CATALOG_FORMAT = "buzz-desktop-catalog";
-export const DESKTOP_CATALOG_VERSION = 3;
+export const DESKTOP_CATALOG_VERSION = 4;
+
+/**
+ * v4: `agents` is COMPLETE — every managed agent this desktop holds a key
+ * for, regardless of the legacy per-record `relay_url` pin (which the runtime
+ * ignores, #2122). The web treats "no fresh v4 catalog claims it" as deleted
+ * and hides it; v1–v3 claims were partial and are never read that way.
+ */
+export function catalogClaimedAgents<T extends { pubkey: string }>(
+  agents: readonly T[],
+): T[] {
+  return agents.filter((agent) => agent.pubkey.trim().length > 0);
+}
 
 /** Wire `source` values — the desktop harness catalog's three tiers. */
 export type DesktopCatalogSource = "builtin" | "preset" | "custom";

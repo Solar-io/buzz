@@ -178,12 +178,10 @@ pub async fn unregister_managed_agent(pubkey: String, app: AppHandle) -> Result<
                 .lock()
                 .map_err(|error| error.to_string())?;
             let records = load_managed_agents(&app)?;
-            if records.iter().any(|record| record.pubkey == pubkey) {
-                return Err(format!(
-                    "agent {pubkey} is a local record on this desktop — delete it instead; \
-                     unregister only removes relay registrations this desktop does not own"
-                ));
-            }
+            unregister_local_record_guard(
+                records.iter().map(|record| record.pubkey.as_str()),
+                &pubkey,
+            )?;
             let runtimes = state
                 .managed_agent_processes
                 .lock()
@@ -205,9 +203,41 @@ pub async fn unregister_managed_agent(pubkey: String, app: AppHandle) -> Result<
     .map_err(|e| format!("spawn_blocking failed: {e}"))?
 }
 
+/// The never-unregister-a-managed-agent rule: the web cleanup list is only a
+/// suggestion, this is the enforcement. Case-insensitive so a mixed-case key
+/// from a hand-built request cannot slip past.
+fn unregister_local_record_guard<'a>(
+    local_pubkeys: impl IntoIterator<Item = &'a str>,
+    pubkey: &str,
+) -> Result<(), String> {
+    if local_pubkeys
+        .into_iter()
+        .any(|local| local.eq_ignore_ascii_case(pubkey.trim()))
+    {
+        return Err(format!(
+            "agent {pubkey} is a local record on this desktop — delete it instead; \
+             unregister only removes relay registrations this desktop does not own"
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unregister_guard_never_allows_a_managed_record() {
+        let managed = ["aa".repeat(32), "bb".repeat(32)];
+        let local = || managed.iter().map(String::as_str);
+        let err = unregister_local_record_guard(local(), &"aa".repeat(32)).unwrap_err();
+        assert!(err.contains("local record"), "{err}");
+        // Case and whitespace variants of a managed key are still refused.
+        assert!(unregister_local_record_guard(local(), &"BB".repeat(32)).is_err());
+        assert!(unregister_local_record_guard(local(), &format!(" {} ", "bb".repeat(32))).is_err());
+        // A registration this desktop does not hold may be unregistered.
+        assert!(unregister_local_record_guard(local(), &"cc".repeat(32)).is_ok());
+    }
 
     #[test]
     fn agent_is_running_matches_pubkey_across_relay_urls() {

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildDesktopCatalogContent,
   catalogAvailability,
+  catalogClaimedAgents,
   DESKTOP_CATALOG_KIND,
 } from "./desktopCatalogContent.ts";
 
@@ -42,7 +43,7 @@ test("buildDesktopCatalogContent produces the pinned wire shape", () => {
   // version 3 = the set_claude_pools capability (Claude pool editor).
   assert.deepEqual(content, {
     format: "buzz-desktop-catalog",
-    version: 3,
+    version: 4,
     machine: "crichton.local",
     harnesses: [
       {
@@ -160,4 +161,20 @@ test("deterministic: identical input serializes to identical bytes", () => {
   delete a.updated_at;
   delete b.updated_at;
   assert.equal(JSON.stringify(a), JSON.stringify(b));
+});
+
+test("v4 claims every keyed managed agent, whatever its relay pin", () => {
+  // Live shape 2026-09-26: most records carry an EMPTY relay_url, three are
+  // pinned. v3 filtered on the pin and claimed only the three.
+  const agents = [
+    { pubkey: "aa".repeat(32), relayUrl: "" },
+    { pubkey: "bb".repeat(32), relayUrl: "wss://relay.example:6351" },
+    { pubkey: "cc".repeat(32), relayUrl: "ws://some-other-relay" },
+    { pubkey: "", relayUrl: "" },
+    { pubkey: "   ", relayUrl: "" },
+  ];
+  assert.deepEqual(
+    catalogClaimedAgents(agents).map((agent) => agent.pubkey),
+    ["aa".repeat(32), "bb".repeat(32), "cc".repeat(32)],
+  );
 });
