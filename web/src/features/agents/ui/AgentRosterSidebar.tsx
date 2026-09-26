@@ -10,7 +10,8 @@ import { AuthorAvatar } from "@/features/channels/ui/ChannelTimeline";
 import { useUserStatuses } from "@/features/user-status/hooks";
 import { focusLine } from "@/features/user-status/lib/focusLine.ts";
 import type { UserStatus } from "@/features/user-status/lib/statusEvent.ts";
-import { findStaleAgents } from "../lib/staleAgents";
+import { findCleanupCandidates } from "../lib/availableAgents";
+import type { findStaleAgents } from "../lib/staleAgents";
 import { publishOwnProfile } from "../lib/agentControl";
 import type { RosterRow } from "../lib/roster";
 import type { RosterGroupSection } from "../lib/rosterGroups";
@@ -273,7 +274,7 @@ function StaleCleanupCard({
   admin: Admin;
 }) {
   const stale = useMemo(
-    () => findStaleAgents(registry, catalogs),
+    () => findCleanupCandidates(registry, catalogs),
     [registry, catalogs],
   );
   const [open, setOpen] = useState(false);

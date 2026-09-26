@@ -1,6 +1,6 @@
 import type { AgentRegistryEntry } from "./agentRegistry";
 import type { DesktopCatalog } from "./desktopCatalog";
-import { findStaleAgents } from "./staleAgents.ts";
+import { findStaleAgents, type StaleAgent } from "./staleAgents.ts";
 
 /**
  * The ONE "which agents can I pick" selector — the New-DM, add-to-channel and
@@ -44,6 +44,42 @@ export function freshCatalogs(
   );
 }
 
+/**
+ * The fresh catalogs, iff together they are a COMPLETE claim set: every fresh
+ * catalog is >= v4 (one running pre-v4 desktop makes the union partial — its
+ * unclaimed agents may be live) and the union is non-empty. Otherwise null.
+ */
+export function authoritativeCatalogs(
+  catalogs: readonly DesktopCatalog[],
+  now: number = nowSeconds(),
+): DesktopCatalog[] | null {
+  const fresh = freshCatalogs(catalogs, now);
+  if (
+    fresh.length === 0 ||
+    fresh.some((catalog) => catalog.version < AUTHORITATIVE_CATALOG_VERSION) ||
+    !fresh.some((catalog) => catalog.agents.length > 0)
+  ) {
+    return null;
+  }
+  return fresh;
+}
+
+/**
+ * The Agents-admin "clean up stale registrations" list. Unregister is
+ * destructive, so it is offered ONLY against authoritative catalogs — never
+ * from partial pre-v4 claims or recency (the v3 list offered live Opus, Acid
+ * Burn, Gilfoyle…). The desktop additionally refuses to unregister any of its
+ * own local records.
+ */
+export function findCleanupCandidates(
+  entries: readonly AgentRegistryEntry[],
+  catalogs: readonly DesktopCatalog[],
+  now: number = nowSeconds(),
+): StaleAgent[] {
+  const authoritative = authoritativeCatalogs(catalogs, now);
+  return authoritative ? findStaleAgents([...entries], authoritative) : [];
+}
+
 /** Pubkeys of registry agents that must not be offered in a picker. */
 export function unavailableAgentPubkeys(
   entries: readonly AgentRegistryEntry[],
@@ -51,13 +87,8 @@ export function unavailableAgentPubkeys(
   now: number = nowSeconds(),
 ): Set<string> {
   const fresh = freshCatalogs(catalogs, now);
-  const authoritative = fresh.filter(
-    (catalog) => catalog.version >= AUTHORITATIVE_CATALOG_VERSION,
-  );
-  const authoritativeClaims = new Set(
-    authoritative.flatMap((catalog) => catalog.agents),
-  );
-  if (authoritativeClaims.size > 0) {
+  const authoritative = authoritativeCatalogs(catalogs, now);
+  if (authoritative) {
     // Complete claims: unclaimed and non-keeper duplicates are both gone.
     return new Set(
       findStaleAgents([...entries], authoritative).map((s) => s.pubkey),
