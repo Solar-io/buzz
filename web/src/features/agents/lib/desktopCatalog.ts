@@ -36,6 +36,12 @@ export interface DesktopCatalog {
   harnesses: DesktopCatalogHarness[];
   /** 64-hex pubkeys of agents runnable on that machine. */
   agents: string[];
+  /**
+   * v3: NIP-44 ciphertext sealed to the owner key (Claude pools payload —
+   * home paths, account emails, assignments). Opaque here; only
+   * `claudePools.ts` decrypts it, with the owner signer.
+   */
+  claudePoolsSealed?: string;
   /** Event created_at — the merge key for replaceable updates. */
   updatedAt: number;
 }
@@ -137,6 +143,10 @@ export function desktopCatalogFromEvent(
     harnesses,
     agents: Array.from(new Set(agents)),
     updatedAt: parsed.updated_at,
+    ...(typeof parsed.claude_pools_sealed === "string" &&
+    parsed.claude_pools_sealed.length > 0
+      ? { claudePoolsSealed: parsed.claude_pools_sealed }
+      : {}),
   };
 }
 

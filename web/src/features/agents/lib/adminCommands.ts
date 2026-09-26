@@ -105,6 +105,87 @@ export interface RestartAgentRequest {
   pubkey: string;
 }
 
+/** `~/.buzz/agent-pools.json` — the buzz-acp two-account routing file. */
+export interface ClaudePoolsConfig {
+  version?: number;
+  default: string;
+  pools: Record<string, { label?: string | null; configDir?: string | null }>;
+  /** Agent display name → pool id. Absent names use `default`. */
+  assign: Record<string, string>;
+  overflow: { enabled: boolean; cooldownMinutes: number };
+}
+
+/**
+ * Full-document replace of the pools file on the target desktop. `baseHash`
+ * is the file hash from the sealed catalog block the editor loaded; the
+ * desktop refuses the write if the file changed since (no lost updates).
+ */
+export interface SetClaudePoolsRequest {
+  config: ClaudePoolsConfig;
+  baseHash: string;
+}
+
+/**
+ * Structural parse (mirror of the desktop's `parseClaudePoolsConfig`); the
+ * desktop's Rust validator is the authority on paths and references.
+ */
+export function parseClaudePoolsConfig(
+  value: unknown,
+): ClaudePoolsConfig | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const raw = value as Record<string, unknown>;
+  if (!isText(raw.default) || typeof raw.pools !== "object" || !raw.pools) {
+    return null;
+  }
+  const pools: ClaudePoolsConfig["pools"] = {};
+  for (const [id, def] of Object.entries(raw.pools)) {
+    if (typeof def !== "object" || def === null) {
+      return null;
+    }
+    const entry = def as Record<string, unknown>;
+    const label = entry.label ?? null;
+    const configDir = entry.configDir ?? null;
+    if (
+      (label !== null && !isText(label)) ||
+      (configDir !== null && !isText(configDir))
+    ) {
+      return null;
+    }
+    pools[id] = { label, configDir };
+  }
+  const assign: Record<string, string> = {};
+  if (raw.assign !== undefined) {
+    if (typeof raw.assign !== "object" || raw.assign === null) {
+      return null;
+    }
+    for (const [name, pool] of Object.entries(raw.assign)) {
+      if (!isText(pool)) {
+        return null;
+      }
+      assign[name] = pool;
+    }
+  }
+  const overflow =
+    typeof raw.overflow === "object" && raw.overflow !== null
+      ? (raw.overflow as Record<string, unknown>)
+      : {};
+  return {
+    ...(typeof raw.version === "number" ? { version: raw.version } : {}),
+    default: raw.default,
+    pools,
+    assign,
+    overflow: {
+      enabled: overflow.enabled === true,
+      cooldownMinutes:
+        typeof overflow.cooldownMinutes === "number"
+          ? overflow.cooldownMinutes
+          : 60,
+    },
+  };
+}
+
 export type AdminCommand =
   | { action: "create"; request: CreateAgentRequest }
   | { action: "update"; request: UpdateAgentRequest }
@@ -112,7 +193,8 @@ export type AdminCommand =
   | { action: "unregister"; request: UnregisterAgentRequest }
   | { action: "start"; request: StartAgentRequest }
   | { action: "stop"; request: StopAgentRequest }
-  | { action: "restart"; request: RestartAgentRequest };
+  | { action: "restart"; request: RestartAgentRequest }
+  | { action: "set_claude_pools"; request: SetClaudePoolsRequest };
 
 /** Envelope carried inside the NIP-44-sealed kind-24201 content. */
 export interface AdminCommandEnvelope {
@@ -362,6 +444,17 @@ export function parseAdminCommand(
         request: { pubkey: request.pubkey },
       };
       break;
+    case "set_claude_pools": {
+      const config = parseClaudePoolsConfig(request.config);
+      if (!config || !isText(request.baseHash)) {
+        return null;
+      }
+      command = {
+        action: "set_claude_pools",
+        request: { config, baseHash: request.baseHash },
+      };
+      break;
+    }
     default:
       return null;
   }

@@ -71,7 +71,91 @@ export type OwnerAdminCommand = {
   | { action: "start"; requestId: string; pubkey: string }
   | { action: "stop"; requestId: string; pubkey: string }
   | { action: "restart"; requestId: string; pubkey: string }
+  | {
+      /**
+       * Full-document replace of `~/.buzz/agent-pools.json`. `baseHash` is
+       * the file hash the sender loaded (from the sealed catalog block);
+       * the desktop refuses the write if the file changed since.
+       */
+      action: "set_claude_pools";
+      requestId: string;
+      config: ClaudePoolsConfigWire;
+      baseHash: string;
+    }
 );
+
+export type ClaudePoolsConfigWire = {
+  version?: number;
+  default: string;
+  pools: Record<string, { label?: string | null; configDir?: string | null }>;
+  assign: Record<string, string>;
+  overflow: { enabled: boolean; cooldownMinutes: number };
+};
+
+/**
+ * Structural parse only — the Rust `set_agent_pools` validator is the
+ * authority on paths, pool ids, and references.
+ */
+export function parseClaudePoolsConfig(
+  value: unknown,
+): ClaudePoolsConfigWire | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const raw = value as Record<string, unknown>;
+  if (!isText(raw.default)) {
+    return null;
+  }
+  if (typeof raw.pools !== "object" || raw.pools === null) {
+    return null;
+  }
+  const pools: ClaudePoolsConfigWire["pools"] = {};
+  for (const [id, def] of Object.entries(raw.pools)) {
+    if (typeof def !== "object" || def === null) {
+      return null;
+    }
+    const d = def as Record<string, unknown>;
+    const label = d.label === undefined || d.label === null ? null : d.label;
+    const configDir =
+      d.configDir === undefined || d.configDir === null ? null : d.configDir;
+    if (
+      (label !== null && !isText(label)) ||
+      (configDir !== null && !isText(configDir))
+    ) {
+      return null;
+    }
+    pools[id] = { label, configDir };
+  }
+  const assign: Record<string, string> = {};
+  if (raw.assign !== undefined) {
+    if (typeof raw.assign !== "object" || raw.assign === null) {
+      return null;
+    }
+    for (const [name, pool] of Object.entries(raw.assign)) {
+      if (!isText(pool)) {
+        return null;
+      }
+      assign[name] = pool;
+    }
+  }
+  const overflowRaw =
+    typeof raw.overflow === "object" && raw.overflow !== null
+      ? (raw.overflow as Record<string, unknown>)
+      : {};
+  return {
+    ...(typeof raw.version === "number" ? { version: raw.version } : {}),
+    default: raw.default,
+    pools,
+    assign,
+    overflow: {
+      enabled: overflowRaw.enabled === true,
+      cooldownMinutes:
+        typeof overflowRaw.cooldownMinutes === "number"
+          ? overflowRaw.cooldownMinutes
+          : 60,
+    },
+  };
+}
 
 const PUBKEY_RE = /^[0-9a-f]{64}$/;
 
@@ -298,6 +382,18 @@ export function parseOwnerAdminCommand(
         return null;
       }
       return { ...base, action: envelope.action, pubkey: request.pubkey };
+    case "set_claude_pools": {
+      const config = parseClaudePoolsConfig(request.config);
+      if (!config || !isText(request.baseHash)) {
+        return null;
+      }
+      return {
+        ...base,
+        action: "set_claude_pools",
+        config,
+        baseHash: request.baseHash,
+      };
+    }
     default:
       return null;
   }

@@ -9,6 +9,17 @@ import { DESKTOP_CATALOG_KIND } from "@/features/agents/desktopCatalogContent";
  * existing `sign_event` command → relayClient publish. Nothing new Rust-side.
  */
 
+/**
+ * Seal an owner-only catalog block (e.g. the Claude pools payload) with the
+ * SAME primitive the owner admin channel uses for acks —
+ * `nip44_encrypt_to_self` — so only the owner key can read it. No new crypto.
+ */
+export async function sealCatalogBlockToOwner(
+  plaintext: string,
+): Promise<string> {
+  return invokeTauri<string>("nip44_encrypt_to_self", { plaintext });
+}
+
 export async function buildDesktopCatalogEvent(
   content: string,
   machine: string,

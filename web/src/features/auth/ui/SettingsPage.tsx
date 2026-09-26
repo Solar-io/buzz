@@ -58,6 +58,7 @@ import {
   FilesUrlSection,
   ProfileSection,
 } from "./settings/MiscSections";
+import { ClaudePoolsSection } from "./settings/ClaudePoolsSection";
 import { SettingsChipRow, SettingsNav } from "./settings/SettingsNav";
 import {
   DEFAULT_SETTINGS_GROUP,
@@ -277,6 +278,7 @@ export function SettingsPage({ group }: SettingsPageProps) {
               {active === "agents" ? (
                 <div className="space-y-4">
                   <AgentsSection />
+                  <ClaudePoolsSection />
                 </div>
               ) : null}
 

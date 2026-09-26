@@ -14,6 +14,7 @@ import {
   type UsageSearch,
 } from "../lib/analytics";
 import { AccountAttribution, AccountCoverageNote } from "./UsageAccounts";
+import { ClaudePoolAccounts } from "./ClaudePoolAccounts";
 import { Distribution, Heatmap, RankedModels, Timeline } from "./UsageCharts";
 import { UsageControls } from "./UsageControls";
 import {
@@ -291,6 +292,7 @@ export function AgentUsagePage() {
               />
               <Distribution title="By agent" rows={data.agents} />
             </div>
+            <ClaudePoolAccounts />
             <AccountAttribution />
             <UsageTable
               title="Account breakdown"

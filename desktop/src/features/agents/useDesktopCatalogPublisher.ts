@@ -2,7 +2,15 @@ import * as React from "react";
 
 import { useCommunities } from "@/features/communities/useCommunities";
 import { getMachineHostname } from "@/shared/api/machineIdentity";
-import { publishDesktopCatalog } from "@/shared/api/tauriDesktopCatalog";
+import {
+  publishDesktopCatalog,
+  sealCatalogBlockToOwner,
+} from "@/shared/api/tauriDesktopCatalog";
+import {
+  useAgentPoolProbesQuery,
+  useAgentPoolsQuery,
+} from "./agentPoolsQueries";
+import { buildClaudePoolsPayload } from "./claudePoolsPayload";
 import {
   buildDesktopCatalogContent,
   catalogAvailability,
@@ -54,6 +62,8 @@ export function useDesktopCatalogPublisher() {
   const { activeCommunity } = useCommunities();
   const runtimesQuery = useAcpRuntimesQuery({ enabled: true });
   const managedAgentsQuery = useManagedAgentsQuery();
+  const poolsQuery = useAgentPoolsQuery();
+  const probesQuery = useAgentPoolProbesQuery(poolsQuery.data);
   const lastPublishedHash = React.useRef<string | null>(null);
   const lastPublishAt = React.useRef(0);
   const armedForRelay = React.useRef<string | null>(null);
@@ -63,6 +73,8 @@ export function useDesktopCatalogPublisher() {
   const relayUrl = activeCommunity?.relayUrl ?? null;
   const runtimes = runtimesQuery.data;
   const managedAgents = managedAgentsQuery.data;
+  const pools = poolsQuery.data;
+  const probes = probesQuery.data;
   const dataReady = Boolean(relayUrl && runtimes && managedAgents);
 
   // Boot delay: once per relay, after the data has loaded.
@@ -100,19 +112,38 @@ export function useDesktopCatalogPublisher() {
       }));
       // Only agents homed on THIS relay — a catalog published to a relay
       // must not claim agents that live on another community's relay.
-      const agentPubkeys = managedAgents
-        .filter(
-          (agent) =>
-            normalizeRelayUrl(agent.relayUrl) === normalizeRelayUrl(relayUrl),
-        )
-        .map((agent) => agent.pubkey);
+      const relayAgents = managedAgents.filter(
+        (agent) =>
+          normalizeRelayUrl(agent.relayUrl) === normalizeRelayUrl(relayUrl),
+      );
+      const agentPubkeys = relayAgents.map((agent) => agent.pubkey);
       const base = buildDesktopCatalogContent({
         machine,
         harnesses,
         agentPubkeys,
         updatedAt: 0,
       });
-      const hash = contentHash(JSON.stringify(base));
+      // Owner-only Claude pools block. Hash the PLAINTEXT (NIP-44 output is
+      // randomized per call, so hashing ciphertext would republish every
+      // 60s); seal only when actually publishing. Absent until the pools
+      // file query settles — a missing file still publishes (routing off).
+      const poolsPlaintext = pools
+        ? JSON.stringify(
+            buildClaudePoolsPayload({
+              hash: pools.hash,
+              parseError: pools.parseError,
+              config: pools.config,
+              agents: relayAgents.map((agent) => ({
+                pubkey: agent.pubkey,
+                name: agent.name,
+                agentCommand: agent.agentCommand,
+                envVars: agent.envVars,
+              })),
+              accounts: probes ?? {},
+            }),
+          )
+        : null;
+      const hash = contentHash(JSON.stringify(base) + (poolsPlaintext ?? ""));
       const now = Date.now();
       if (
         (hash === lastPublishedHash.current &&
@@ -122,10 +153,17 @@ export function useDesktopCatalogPublisher() {
         return;
       }
       try {
-        await publishDesktopCatalog(
-          JSON.stringify({ ...base, updated_at: Math.floor(now / 1000) }),
+        const claudePoolsSealed = poolsPlaintext
+          ? await sealCatalogBlockToOwner(poolsPlaintext)
+          : null;
+        const content = buildDesktopCatalogContent({
           machine,
-        );
+          harnesses,
+          agentPubkeys,
+          updatedAt: Math.floor(now / 1000),
+          claudePoolsSealed,
+        });
+        await publishDesktopCatalog(JSON.stringify(content), machine);
         lastPublishedHash.current = hash;
         lastPublishAt.current = now;
       } catch {
@@ -133,5 +171,5 @@ export function useDesktopCatalogPublisher() {
         // 6h heartbeat retries. Never block the shell on it.
       }
     })();
-  }, [armedNonce, relayUrl, runtimes, managedAgents]);
+  }, [armedNonce, relayUrl, runtimes, managedAgents, pools, probes]);
 }

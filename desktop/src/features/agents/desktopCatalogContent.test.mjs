@@ -39,9 +39,10 @@ test("buildDesktopCatalogContent produces the pinned wire shape", () => {
   // Hardcoded expected body — the contract, not a echo of the input order.
   // version 2 = the Phase-2 capability signal (avatar/timeout/start-on-launch
   // edits, envVarsPatch, restart); the web gates its controls on >= 2.
+  // version 3 = the set_claude_pools capability (Claude pool editor).
   assert.deepEqual(content, {
     format: "buzz-desktop-catalog",
-    version: 2,
+    version: 3,
     machine: "crichton.local",
     harnesses: [
       {
@@ -108,6 +109,29 @@ test("the serialized catalog never carries commands, args, env, or paths", () =>
       false,
       `catalog content must not contain ${forbidden}`,
     );
+  }
+});
+
+test("claude pools: only an already-sealed string is carried, never plaintext", () => {
+  const without = buildDesktopCatalogContent({
+    machine: "crichton.local",
+    harnesses: [],
+    agentPubkeys: [AGENT_A],
+    updatedAt: 1,
+  });
+  assert.equal("claude_pools_sealed" in without, false);
+  const sealed = buildDesktopCatalogContent({
+    machine: "crichton.local",
+    harnesses: [],
+    agentPubkeys: [AGENT_A],
+    updatedAt: 1,
+    claudePoolsSealed: "AqCiphertextBase64==",
+  });
+  assert.equal(sealed.claude_pools_sealed, "AqCiphertextBase64==");
+  // The builder has no plaintext input to leak: no pools/assign keys exist.
+  const serialized = JSON.stringify(sealed);
+  for (const forbidden of ['"pools"', '"assign"', '"configDir"', "cc2", "@"]) {
+    assert.equal(serialized.includes(forbidden), false, forbidden);
   }
 });
 

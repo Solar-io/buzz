@@ -29,11 +29,18 @@ import type { AcpAvailabilityStatus } from "@/shared/api/types";
  * avatar/timeout/start-on-launch edits, envVarsPatch, and restart. The web
  * parses any version >= 1 and gates the Phase 2 controls on >= 2 — bump ONLY
  * when a newly-learned capability needs the web to change behavior.
+ *
+ * v3 adds the Claude two-account pool editor: this desktop applies the
+ * `set_claude_pools` admin action, and MAY carry `claude_pools_sealed` — a
+ * NIP-44 ciphertext sealed to the owner's own key (see
+ * `claudePoolsPayload.ts`). The builder only accepts an already-sealed
+ * string: the plaintext (home paths, account emails, assignments) never
+ * enters this function, so it cannot be emitted unsealed by mistake.
  */
 
 export const DESKTOP_CATALOG_KIND = 30180;
 export const DESKTOP_CATALOG_FORMAT = "buzz-desktop-catalog";
-export const DESKTOP_CATALOG_VERSION = 2;
+export const DESKTOP_CATALOG_VERSION = 3;
 
 /** Wire `source` values — the desktop harness catalog's three tiers. */
 export type DesktopCatalogSource = "builtin" | "preset" | "custom";
@@ -90,6 +97,8 @@ export function buildDesktopCatalogContent(input: {
   harnesses: DesktopCatalogHarness[];
   agentPubkeys: string[];
   updatedAt: number;
+  /** NIP-44 ciphertext (owner-sealed) of the ClaudePoolsPayload, or absent. */
+  claudePoolsSealed?: string | null;
 }): {
   format: typeof DESKTOP_CATALOG_FORMAT;
   version: typeof DESKTOP_CATALOG_VERSION;
@@ -97,6 +106,7 @@ export function buildDesktopCatalogContent(input: {
   harnesses: DesktopCatalogHarness[];
   agents: string[];
   updated_at: number;
+  claude_pools_sealed?: string;
 } {
   const machine = input.machine.trim().toLowerCase();
   const harnesses = input.harnesses
@@ -123,5 +133,8 @@ export function buildDesktopCatalogContent(input: {
     harnesses,
     agents,
     updated_at: input.updatedAt,
+    ...(input.claudePoolsSealed
+      ? { claude_pools_sealed: input.claudePoolsSealed }
+      : {}),
   };
 }

@@ -8,6 +8,7 @@ import {
   unregisterManagedAgent,
 } from "@/shared/api/tauriManagedAgents";
 import { relayClient } from "@/shared/api/relayClient";
+import { setAgentPools } from "@/shared/api/tauriAgentPools";
 import {
   decryptOwnerAdminPayload,
   publishOwnerAdminAck,
@@ -164,5 +165,15 @@ async function applyOwnerAdminCommand(
       }
       return command.pubkey;
     }
+    case "set_claude_pools":
+      // Writes ~/.buzz/agent-pools.json only (validated + baseHash-guarded
+      // in Rust). Takes effect on each agent's next wake/restart.
+      await setAgentPools(
+        { ...command.config, version: command.config.version ?? 1 },
+        command.baseHash,
+      );
+      // The pools query polls every 60s, so the republished sealed catalog
+      // block (with the new baseHash) follows without a cross-hook refetch.
+      return null;
   }
 }
