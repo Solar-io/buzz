@@ -107,7 +107,13 @@ pub enum AcpError {
     Protocol(String),
 
     #[error("Agent reported error (code {code}): {message}")]
-    AgentError { code: i64, message: String },
+    AgentError {
+        code: i64,
+        message: String,
+        /// `error.data.errorKind` when the adapter supplied one (e.g.
+        /// claude-agent-acp's `rate_limit` / `billing_error`).
+        error_kind: Option<String>,
+    },
 }
 
 /// Build an [`AcpError::AgentError`] from a JSON-RPC error object,
@@ -120,7 +126,16 @@ fn agent_error_from_json(error: &serde_json::Value) -> AcpError {
         Some(m) => m.to_string(),
         None => error.to_string(),
     };
-    AcpError::AgentError { code, message }
+    let error_kind = error
+        .get("data")
+        .and_then(|d| d.get("errorKind"))
+        .and_then(|k| k.as_str())
+        .map(str::to_string);
+    AcpError::AgentError {
+        code,
+        message,
+        error_kind,
+    }
 }
 
 fn build_initialize_params() -> serde_json::Value {
@@ -6022,7 +6037,7 @@ done
         // not be silently truncated to "unknown error" — the full JSON is preserved.
         let error = serde_json::json!({"code": -32000, "data": "quota exceeded"});
         match super::agent_error_from_json(&error) {
-            AcpError::AgentError { code, message } => {
+            AcpError::AgentError { code, message, .. } => {
                 assert_eq!(code, -32000);
                 assert!(
                     message.contains("quota exceeded"),
@@ -6037,10 +6052,30 @@ done
     fn agent_error_from_json_uses_message_field_when_present() {
         let error = serde_json::json!({"code": -32001, "message": "auth denied"});
         match super::agent_error_from_json(&error) {
-            AcpError::AgentError { code, message } => {
+            AcpError::AgentError { code, message, .. } => {
                 assert_eq!(code, -32001);
                 assert_eq!(message, "auth denied");
             }
+            other => panic!("expected AgentError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn agent_error_from_json_carries_error_kind() {
+        let error = serde_json::json!({
+            "code": -32603,
+            "message": "You've hit your limit · resets 3pm",
+            "data": {"errorKind": "rate_limit"}
+        });
+        match super::agent_error_from_json(&error) {
+            AcpError::AgentError { error_kind, .. } => {
+                assert_eq!(error_kind.as_deref(), Some("rate_limit"));
+            }
+            other => panic!("expected AgentError, got {other:?}"),
+        }
+        let plain = serde_json::json!({"code": -32000, "message": "boom"});
+        match super::agent_error_from_json(&plain) {
+            AcpError::AgentError { error_kind, .. } => assert_eq!(error_kind, None),
             other => panic!("expected AgentError, got {other:?}"),
         }
     }

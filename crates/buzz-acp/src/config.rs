@@ -629,6 +629,10 @@ pub struct Config {
     /// `from_cli()`. `None` when using the compiled-in default or when
     /// `--no-base-prompt` is set.
     pub base_prompt_content: Option<String>,
+    /// Two-account Claude pool router (`~/.buzz/agent-pools.json`). Decides
+    /// the optional `CLAUDE_CONFIG_DIR` each child spawn gets; disabled for
+    /// non-Claude adapters.
+    pub pool_router: crate::auth_pool::PoolRouter,
 }
 
 /// Maximum length, in characters, of a session title sent to the adapter.
@@ -756,6 +760,14 @@ pub(crate) fn normalize_agent_command_identity(command: &str) -> String {
             _ => character,
         })
         .collect()
+}
+
+/// True for the Claude ACP adapters (the only ones pool routing applies to).
+pub(crate) fn is_claude_adapter(command: &str) -> bool {
+    matches!(
+        normalize_agent_command_identity(command).as_str(),
+        "claude-agent-acp" | "claude-code-acp" | "claude-code" | "claudecode"
+    )
 }
 
 fn default_agent_args(command: &str) -> Option<Vec<String>> {
@@ -1209,6 +1221,8 @@ impl Config {
 
         validate_multiple_event_handling(args.multiple_event_handling, args.dedup)?;
 
+        let pool_router = crate::auth_pool::PoolRouter::from_env(is_claude_adapter(&agent_command));
+
         let config = Config {
             keys,
             relay_url: args.relay_url,
@@ -1268,6 +1282,7 @@ impl Config {
             agent_owner: args.agent_owner.map(|s| s.trim().to_ascii_lowercase()),
             no_base_prompt: args.no_base_prompt,
             base_prompt_content,
+            pool_router,
         };
 
         Ok(config)
@@ -1643,6 +1658,7 @@ mod tests {
             agent_owner: None,
             no_base_prompt: false,
             base_prompt_content: None,
+            pool_router: crate::auth_pool::PoolRouter::disabled(),
         }
     }
 

@@ -1,6 +1,7 @@
 #![deny(unsafe_code)]
 
 mod acp;
+mod auth_pool;
 mod claims;
 mod claims_writer;
 mod config;
@@ -2527,7 +2528,7 @@ async fn tokio_main() -> Result<()> {
                 // Harness-owned slot pin: the child's `buzz` CLI sends carry
                 // `BUZZ_ACP_SESSION_ID` so the send-path gate can tell this
                 // slot from a sibling pool's.
-                let env = claims_writer::session_env(config.persona_env_vars.clone(), idx);
+                let env = agent_spawn_env(&config.persona_env_vars, &config.pool_router, idx);
                 let has_codex = config.has_generated_codex_config;
                 let observer = observer.clone();
                 let guard = RespawnGuard::new(idx, respawn_tx.clone());
@@ -4552,6 +4553,56 @@ fn is_auth_error(error: &acp::AcpError) -> bool {
     message.contains("Re-authenticate") || message.contains("API Error: 401")
 }
 
+/// claude-agent-acp's `errorKind` values that mean "this account is out of
+/// quota / rate-limited" — the only errors that trigger pool overflow.
+const QUOTA_ERROR_KINDS: &[&str] = &["rate_limit", "billing_error"];
+
+/// Mirror of the Claude Agent SDK's `USAGE_LIMIT_ERROR_PREFIXES` (the
+/// synthetic usage-limit assistant messages claude-agent-acp surfaces as the
+/// error text). Copied from `@anthropic-ai/claude-agent-sdk` `sdk.d.ts`.
+const USAGE_LIMIT_ERROR_PREFIXES: &[&str] = &[
+    "You've hit your",
+    "You've reached your",
+    "You're out of usage credits",
+    "Your org is out of usage · add funds to continue",
+    "Your org is out of usage · contact your admin",
+    "Your seat type doesn't include usage credits",
+    "Your seat type doesn't include usage",
+    "Your usage allocation has been disabled by your admin",
+    "Your group's usage limit is set to $0",
+    "Fable 5 requires usage credits",
+    "You're out of extra usage",
+    "Your seat type doesn't include extra usage",
+];
+
+/// Returns `true` when `error` means the account hit a quota/rate limit.
+/// Auth errors are never quota errors.
+fn is_quota_error(error: &acp::AcpError) -> bool {
+    let acp::AcpError::AgentError {
+        message,
+        error_kind,
+        ..
+    } = error
+    else {
+        return false;
+    };
+    if is_auth_error(error) {
+        return false;
+    }
+    if error_kind
+        .as_deref()
+        .is_some_and(|k| QUOTA_ERROR_KINDS.contains(&k))
+    {
+        return true;
+    }
+    // The adapter may prefix the text (e.g. "Internal error: ").
+    let text = message.trim();
+    let text = text.strip_prefix("Internal error: ").unwrap_or(text);
+    USAGE_LIMIT_ERROR_PREFIXES
+        .iter()
+        .any(|p| text.starts_with(p))
+}
+
 /// Spawn a task that posts a user-visible failure notice to the relay.
 ///
 /// Shared by the hard-cap immediate dead-letter path and the retries-exhausted
@@ -4960,6 +5011,39 @@ fn handle_prompt_result(
                     tracing::error!("all agents dead — exiting");
                     return LoopAction::Exit;
                 }
+            } else if is_quota_error(e) {
+                let action = config
+                    .pool_router
+                    .on_quota_error(&config.persona_env_vars, agent_index);
+                emit_turn_error(&e.to_string(), error_code);
+                match action {
+                    auth_pool::OverflowAction::FlipTo(pool_id) => {
+                        tracing::warn!(
+                            agent = agent_index,
+                            pool = %pool_id,
+                            error = %e,
+                            "auth_pool quota error — respawning slot on sibling pool"
+                        );
+                        let index = result.agent.index;
+                        spawn_overflow_respawn_task(
+                            result.agent,
+                            config,
+                            &mut crash_history[index],
+                            respawn_tx,
+                            respawn_tasks,
+                            observer,
+                        );
+                    }
+                    other => {
+                        tracing::warn!(
+                            agent = agent_index,
+                            overflow = ?other,
+                            error = %e,
+                            "agent_returned (quota error — no pool overflow)"
+                        );
+                        pool.return_agent(result.agent);
+                    }
+                }
             } else {
                 tracing::warn!(
                     agent = agent_index,
@@ -5065,7 +5149,7 @@ fn recover_panicked_agent(
     let cmd = config.agent_command.clone();
     let args = config.agent_args.clone();
     // Harness-owned slot pin — see the slot-refill path for why.
-    let env = claims_writer::session_env(config.persona_env_vars.clone(), i);
+    let env = agent_spawn_env(&config.persona_env_vars, &config.pool_router, i);
     let has_codex = config.has_generated_codex_config;
     let guard = RespawnGuard::new(i, respawn_tx.clone());
     respawn_tasks.spawn(async move {
@@ -5314,13 +5398,60 @@ fn spawn_respawn_task(
         }
     };
 
+    launch_respawn(
+        old_agent,
+        config,
+        slot,
+        respawn_tx,
+        respawn_tasks,
+        observer,
+        delay,
+    );
+    true
+}
+
+/// Respawn a HEALTHY slot onto the pool the auth-pool router now selects
+/// (quota overflow). Deliberately skips `slot.record_crash()`: a quota
+/// error is not a crash, and counting it would trip the circuit breaker on
+/// an agent that is working fine on the sibling account.
+fn spawn_overflow_respawn_task(
+    old_agent: OwnedAgent,
+    config: &Config,
+    slot: &mut SlotCircuit,
+    respawn_tx: &mpsc::Sender<RespawnResult>,
+    respawn_tasks: &mut tokio::task::JoinSet<()>,
+    observer: Option<observer::ObserverHandle>,
+) {
+    launch_respawn(
+        old_agent,
+        config,
+        slot,
+        respawn_tx,
+        respawn_tasks,
+        observer,
+        Duration::ZERO,
+    );
+}
+
+/// Shared tail of the respawn paths: mark in-flight, then shutdown + delay +
+/// spawn + init in the background.
+fn launch_respawn(
+    old_agent: OwnedAgent,
+    config: &Config,
+    slot: &mut SlotCircuit,
+    respawn_tx: &mpsc::Sender<RespawnResult>,
+    respawn_tasks: &mut tokio::task::JoinSet<()>,
+    observer: Option<observer::ObserverHandle>,
+    delay: Duration,
+) {
+    let index = old_agent.index;
     slot.respawn_in_flight = true;
 
     // Spawn the actual work (shutdown + sleep + spawn + init) off the main loop.
     let cmd = config.agent_command.clone();
     let args = config.agent_args.clone();
     // Harness-owned slot pin — see the slot-refill path for why.
-    let env = claims_writer::session_env(config.persona_env_vars.clone(), index);
+    let env = agent_spawn_env(&config.persona_env_vars, &config.pool_router, index);
     let has_codex = config.has_generated_codex_config;
     let guard = RespawnGuard::new(index, respawn_tx.clone());
     respawn_tasks.spawn(async move {
@@ -5336,8 +5467,6 @@ fn spawn_respawn_task(
         let result = spawn_and_init(&cmd, &args, &env, has_codex, index, observer).await;
         guard.send(result);
     });
-
-    true
 }
 
 fn normalized_agent_name(init_result: &serde_json::Value) -> String {
@@ -5371,6 +5500,22 @@ async fn shutdown_agent_pool(pool: &mut AgentPool) {
     }
 }
 
+/// The env a child agent spawn gets: persona env + the harness-owned slot
+/// pin ([`claims_writer::session_env`]) + the optional `CLAUDE_CONFIG_DIR`
+/// the auth-pool router picks for this slot (none = inherit the default
+/// `~/.claude` account). Used by every spawn site so routing cannot drift.
+fn agent_spawn_env(
+    persona_env: &[(String, String)],
+    router: &auth_pool::PoolRouter,
+    slot: usize,
+) -> Vec<(String, String)> {
+    let mut env = claims_writer::session_env(persona_env.to_vec(), slot);
+    if let Some(entry) = router.decide_for_slot(persona_env, slot).env {
+        env.push(entry);
+    }
+    env
+}
+
 struct PoolStartup {
     agents: u32,
     command: String,
@@ -5380,6 +5525,7 @@ struct PoolStartup {
     model: Option<String>,
     effort_level: Option<String>,
     observer: Option<observer::ObserverHandle>,
+    pool_router: auth_pool::PoolRouter,
 }
 
 impl PoolStartup {
@@ -5393,6 +5539,7 @@ impl PoolStartup {
             model: config.model.clone(),
             effort_level: config.effort_level.clone(),
             observer,
+            pool_router: config.pool_router.clone(),
         }
     }
 }
@@ -5407,7 +5554,7 @@ async fn initialize_agent_pool(
     for i in 0..startup.agents as usize {
         // Harness-owned slot pin (BUZZ_ACP_SESSION_ID), per slot — see
         // claims_writer::session_env.
-        let extra_env = claims_writer::session_env(startup.extra_env.clone(), i);
+        let extra_env = agent_spawn_env(&startup.extra_env, &startup.pool_router, i);
         let spawn_result = AcpClient::spawn(
             &startup.command,
             &startup.args,
@@ -7573,6 +7720,7 @@ mod build_mcp_servers_tests {
             agent_owner: None,
             no_base_prompt: false,
             base_prompt_content: None,
+            pool_router: crate::auth_pool::PoolRouter::disabled(),
         }
     }
 
@@ -7799,6 +7947,7 @@ mod error_outcome_emission_tests {
             agent_owner: None,
             no_base_prompt: false,
             base_prompt_content: None,
+            pool_router: crate::auth_pool::PoolRouter::disabled(),
         }
     }
 
@@ -9159,6 +9308,7 @@ mod error_outcome_emission_tests {
             code: -32000,
             message: "API Error: OAuth access token has expired. Re-authenticate to continue."
                 .to_string(),
+            error_kind: None,
         };
         assert!(
             is_auth_error(&e),
@@ -9171,6 +9321,7 @@ mod error_outcome_emission_tests {
         let e = acp::AcpError::AgentError {
             code: -32000,
             message: "Internal error: API Error: 401 OAuth access token has expired.".to_string(),
+            error_kind: None,
         };
         assert!(
             is_auth_error(&e),
@@ -9183,6 +9334,7 @@ mod error_outcome_emission_tests {
         let e = acp::AcpError::AgentError {
             code: -32601,
             message: "Usage credits required for 1M context — turn on usage credits".to_string(),
+            error_kind: None,
         };
         assert!(
             !is_auth_error(&e),
@@ -9231,6 +9383,7 @@ mod error_outcome_emission_tests {
             code: -32000,
             message: "API Error: 401 OAuth access token has expired. Re-authenticate to continue."
                 .to_string(),
+            error_kind: None,
         };
 
         let agent = dummy_agent(0).await;
@@ -9320,6 +9473,7 @@ mod error_outcome_emission_tests {
         let usage_error = acp::AcpError::AgentError {
             code: -32000,
             message: "Usage credits required for 1M context".to_string(),
+            error_kind: None,
         };
 
         let agent = dummy_agent(0).await;
@@ -9383,6 +9537,182 @@ mod error_outcome_emission_tests {
             1,
             "non-auth application error must preserve the event for retry"
         );
+    }
+
+    // ── auth_pool quota overflow ───────────────────────────────────────────
+
+    fn agent_err(message: &str, kind: Option<&str>) -> acp::AcpError {
+        acp::AcpError::AgentError {
+            code: -32603,
+            message: message.to_string(),
+            error_kind: kind.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn is_quota_error_classifies_error_kinds_and_usage_prefixes() {
+        assert!(is_quota_error(&agent_err(
+            "Internal error",
+            Some("rate_limit")
+        )));
+        assert!(is_quota_error(&agent_err(
+            "Internal error",
+            Some("billing_error")
+        )));
+        assert!(is_quota_error(&agent_err(
+            "You've hit your limit · resets 3pm (America/Chicago)",
+            None
+        )));
+        assert!(is_quota_error(&agent_err(
+            "Internal error: You're out of extra usage",
+            None
+        )));
+        assert!(!is_quota_error(&agent_err(
+            "Internal error",
+            Some("no_result")
+        )));
+        assert!(!is_quota_error(&agent_err("boom", None)));
+        assert!(!is_quota_error(&agent_err(
+            "API Error: 401 OAuth access token has expired. Re-authenticate to continue.",
+            Some("rate_limit")
+        )));
+        assert!(!is_quota_error(&acp::AcpError::Io(std::io::Error::other(
+            "x"
+        ))));
+    }
+
+    /// Router pointed at a temp pools file with overflow on; agent "Nikon"
+    /// is unassigned (default A, inherit), sibling B = /tmp/cc2.
+    fn overflow_router(tag: &str) -> (auth_pool::PoolRouter, std::path::PathBuf) {
+        let dir =
+            std::env::temp_dir().join(format!("buzz-acp-overflow-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("agent-pools.json");
+        std::fs::write(
+            &path,
+            r#"{"version":1,"default":"A",
+                "pools":{"A":{"configDir":null},"B":{"configDir":"/tmp/cc2"}},
+                "overflow":{"enabled":true,"cooldownMinutes":60}}"#,
+        )
+        .unwrap();
+        let router = auth_pool::PoolRouter {
+            enabled_for_claude: true,
+            display_name: "Nikon".into(),
+            config_path: Some(path),
+            home: Some("/Users/tester".into()),
+            parent_gate_env: vec![],
+            overflow: auth_pool::OverflowState::default(),
+        };
+        (router, dir)
+    }
+
+    async fn run_error_outcome(
+        config: &Config,
+        error: acp::AcpError,
+    ) -> (AgentPool, Vec<SlotCircuit>) {
+        let agent = dummy_agent(0).await;
+        let mut pool = AgentPool::from_slots(vec![None]);
+        let task_id = pool.join_set.spawn(async {}).id();
+        pool.task_map_mut().insert(
+            task_id,
+            crate::pool::TaskMeta {
+                agent_index: 0,
+                channel_id: None,
+                turn_id: "t".to_string(),
+                recoverable_batch: None,
+                control_tx: None,
+                steer_tx: None,
+                successful_steer_deliveries: HashSet::new(),
+                started_at: std::time::SystemTime::now(),
+                acp_session: None,
+            },
+        );
+        let mut queue = EventQueue::new(config::DedupMode::Queue);
+        let mut heartbeat_in_flight = true;
+        let mut crash_history = vec![SlotCircuit {
+            crash_times: Vec::new(),
+            open_until: None,
+            respawn_in_flight: false,
+        }];
+        let (respawn_tx, _respawn_rx) = mpsc::channel(8);
+        let mut respawn_tasks = tokio::task::JoinSet::new();
+        let result = PromptResult {
+            agent,
+            source: PromptSource::Heartbeat,
+            turn_id: "t".to_string(),
+            outcome: PromptOutcome::Error(error),
+            batch: None,
+        };
+        handle_prompt_result(
+            &mut pool,
+            &mut queue,
+            config,
+            result,
+            &mut heartbeat_in_flight,
+            &std::collections::HashSet::new(),
+            &HashMap::new(),
+            &mut crash_history,
+            &respawn_tx,
+            &mut respawn_tasks,
+            None,
+            None,
+        );
+        respawn_tasks.abort_all();
+        (pool, crash_history)
+    }
+
+    #[tokio::test]
+    async fn quota_error_overflows_slot_without_recording_crash() {
+        let (router, dir) = overflow_router("flip");
+        let mut config = test_config();
+        config.pool_router = router.clone();
+        let (pool, crash_history) =
+            run_error_outcome(&config, agent_err("Internal error", Some("rate_limit"))).await;
+        assert!(
+            crash_history[0].respawn_in_flight,
+            "quota error with routing active must respawn the slot"
+        );
+        assert!(
+            crash_history[0].crash_times.is_empty(),
+            "overflow respawn must NOT call record_crash"
+        );
+        assert_eq!(pool.live_count(), 0, "agent is not returned to the pool");
+        assert_eq!(
+            router
+                .overflow
+                .redirect_for("A", std::time::Instant::now())
+                .as_deref(),
+            Some("B")
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn non_quota_error_does_not_overflow() {
+        let (router, dir) = overflow_router("nonquota");
+        let mut config = test_config();
+        config.pool_router = router.clone();
+        let (pool, crash_history) = run_error_outcome(
+            &config,
+            agent_err("Usage credits required for 1M context", Some("no_result")),
+        )
+        .await;
+        assert!(!crash_history[0].respawn_in_flight);
+        assert_eq!(pool.live_count(), 1, "agent returned to the pool as before");
+        assert_eq!(
+            router.overflow.redirect_for("A", std::time::Instant::now()),
+            None
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn quota_error_without_routing_behaves_as_before() {
+        let config = test_config(); // pool_router disabled
+        let (pool, crash_history) =
+            run_error_outcome(&config, agent_err("Internal error", Some("rate_limit"))).await;
+        assert!(!crash_history[0].respawn_in_flight);
+        assert_eq!(pool.live_count(), 1);
     }
 }
 
