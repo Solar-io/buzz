@@ -1,3 +1,5 @@
+import { redirect } from "@tanstack/react-router";
+
 import { relayWsUrl } from "@/shared/lib/relay-url";
 
 import {
@@ -45,8 +47,31 @@ export function restoredLandingTarget(search: {
     lastConversationScope(),
   );
   const target = landingRedirectTarget(search, stored);
-  restoredLanding = target !== null ? stored : null;
+  if (target !== null) {
+    restoredLanding = stored;
+  } else if (search.c !== restoredLanding?.channelId) {
+    // beforeLoad runs AGAIN for the redirect's own /repos?c=<restored>; that
+    // second pass must keep the pending restore, or the shell never learns
+    // the id came from storage (QA 2026-09-26: a stale id stuck forever).
+    restoredLanding = null;
+  }
   return target;
+}
+
+/**
+ * The `/repos` route's `beforeLoad`: a bare landing redirects to the last
+ * conversation BEFORE the first paint. Only fires with no c, view or m —
+ * the redirect carries c, which is the loop guard.
+ */
+export function landingBeforeLoad({
+  search,
+}: {
+  search: { c?: string; view?: string; m?: string };
+}): void {
+  const target = restoredLandingTarget(search);
+  if (target !== null) {
+    throw redirect({ to: "/repos", search: { c: target }, replace: true });
+  }
 }
 
 /** The shell takes the pending restore exactly once. */

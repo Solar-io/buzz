@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/features/auth/ui/AuthProvider";
 import { LoginPage } from "@/features/auth/ui/LoginPage";
 import {
@@ -39,7 +39,7 @@ import {
 import { usePermalinkCleanup } from "@/features/channels/lib/usePermalinkCleanup.ts";
 import { useChannelLists } from "@/features/channels/lib/useChannelLists.ts";
 import { useLandingConversation } from "@/features/channels/lib/useLandingConversation.ts";
-import { restoredLandingTarget } from "@/features/channels/lib/lastConversationScope.ts";
+import { landingBeforeLoad } from "@/features/channels/lib/lastConversationScope.ts";
 import { LandingSkeleton } from "@/features/channels/ui/LandingSkeleton";
 import { useMessageActions } from "@/features/channels/lib/useMessageActions.ts";
 import { paletteActions } from "@/features/channels/lib/paletteActions.ts";
@@ -134,12 +134,7 @@ export const Route = createFileRoute("/repos")({
   // Plan item 5: a bare /repos lands in the last conversation BEFORE the
   // first paint, so "Pick a channel" never flashes. Only fires with no c,
   // view or m — the redirect carries c, which is the loop guard.
-  beforeLoad: ({ search }) => {
-    const target = restoredLandingTarget(search);
-    if (target !== null) {
-      throw redirect({ to: "/repos", search: { c: target }, replace: true });
-    }
-  },
+  beforeLoad: landingBeforeLoad,
   component: AppRoute,
 });
 
@@ -166,6 +161,7 @@ function ChannelBrowser() {
     connected,
     refresh: refreshChannels,
     forgetChannel: forgetChannelFromList,
+    loaded: channelsLoaded,
   } = useChannels();
   const navigate = useNavigate({ from: "/repos" });
   const selectedId = Route.useSearch({ select: (s) => s.c });
@@ -477,13 +473,19 @@ function ChannelBrowser() {
   // by beforeLoad is validated here, D-025 picks the most recently active DM
   // when nothing was restored, and every selection is remembered.
   const channelIds = useMemo(() => channels.map((c) => c.id), [channels]);
+  const fallbackChannelIds = useMemo(
+    () => [...lists.starred, ...lists.unstarred].map((c) => c.id),
+    [lists.starred, lists.unstarred],
+  );
   const { showSkeleton: landingSkeleton } = useLandingConversation({
     selectedId,
     view,
     connected,
     channelIds,
     samplingSettled: dmSamplingSettled,
+    channelsLoaded,
     visibleDms: lists.visibleDms,
+    fallbackChannelIds,
     hiddenDmIds,
     selfPubkey,
     webViewOpen: web.state.active !== null,

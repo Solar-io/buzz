@@ -27,6 +27,9 @@ export function useChannels(): {
    *  relay-confirmed delete path. A stale in-flight 39000 from the old REQ
    *  is ignored too, so the row cannot resurrect and re-persist. */
   forgetChannel: (channelId: string) => void;
+  /** The relay answered the channel-list REQ (EOSE) at least once. Before
+   *  that the list is only the seed (or partial) — never a verdict. */
+  loaded: boolean;
 } {
   const { session, status } = useRelaySession();
   const [channels, setChannels] = useState<ChannelSummary[]>(() => {
@@ -45,6 +48,7 @@ export function useChannels(): {
     );
   });
   const [refreshKey, setRefreshKey] = useState(0);
+  const [loaded, setLoaded] = useState(false);
   const refresh = useCallback(() => setRefreshKey((key) => key + 1), []);
   /** Channels evicted this session — the 39000 upsert path must skip them. */
   const forgottenIds = useRef(new Set<string>());
@@ -82,6 +86,7 @@ export function useChannels(): {
       { kinds: [39000], limit: 500 },
       {
         onEvent: apply,
+        onEose: () => setLoaded(true),
         // The sidebar paints from this; open it first in the boot replay.
         priority: "critical",
       },
@@ -102,5 +107,11 @@ export function useChannels(): {
     return () => clearTimeout(timer);
   }, [channels]);
 
-  return { channels, connected: status === "open", refresh, forgetChannel };
+  return {
+    channels,
+    connected: status === "open",
+    refresh,
+    forgetChannel,
+    loaded,
+  };
 }
