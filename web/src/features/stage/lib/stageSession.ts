@@ -22,6 +22,7 @@ import {
   type SpeechEventLike,
 } from "../../huddle/lib/huddleAgentSpeech.ts";
 import { speakableText } from "./speakableText.ts";
+import type { NostrFilter } from "../../../shared/lib/nostr-client.ts";
 import {
   parseStageTag,
   type StagePaletteEntry,
@@ -196,7 +197,7 @@ export function stageHistoryFilter(open: {
   pubkey: string;
   created_at: number;
   channelId: string;
-}): Record<string, unknown> {
+}): NostrFilter {
   return {
     kinds: [9],
     "#h": [open.channelId],
