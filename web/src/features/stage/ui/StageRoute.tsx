@@ -74,6 +74,15 @@ export function useStageReadyBanner(
     }
   }, [channelId, messages, selfPubkey]);
 
+  // Opening a session by ANY route (card, link, the banner itself) answers
+  // its banner: dismiss it for good, so exiting Stage does not bring it back.
+  const bannerOpenId = banner?.openId ?? null;
+  useEffect(() => {
+    if (activeStageId !== null && bannerOpenId === activeStageId) {
+      setBanner(null);
+    }
+  }, [activeStageId, bannerOpenId]);
+
   const visible =
     banner && banner.channelId === channelId && banner.openId !== activeStageId
       ? banner

@@ -23,6 +23,11 @@ import {
 } from "@/features/channels/lib/messageBuffer.ts";
 import { Composer } from "@/features/channels/ui/Composer";
 import { MessageRow } from "@/features/channels/ui/MessageRow";
+import { SYSTEM_MESSAGE_KIND } from "@/features/channels/lib/systemEvent.ts";
+import {
+  describeSystemMessage,
+  SystemMessageRow,
+} from "@/features/channels/ui/SystemMessageRow.tsx";
 import type { AgentSpeechPlayer } from "@/features/voice/useAgentSpeechPlayer";
 import { cn } from "@/shared/lib/cn";
 import type { StageEntryMode } from "../lib/stageLauncher.ts";
@@ -262,7 +267,7 @@ export function StageView(props: StageViewProps) {
       data-testid="stage-chat-pane"
       aria-label="Stage chat"
       className={cn(
-        "flex min-h-0 flex-col bg-background text-foreground",
+        "flex min-h-0 min-w-0 flex-col bg-background text-foreground",
         layout === "split" ? "border-r border-white/10" : "border-t",
       )}
     >
@@ -304,9 +309,18 @@ export function StageView(props: StageViewProps) {
       </header>
       <div
         data-testid="stage-chat-list"
-        className="min-h-0 flex-1 overflow-y-auto px-2 pb-2"
+        className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-2 pb-2 [overflow-wrap:anywhere]"
       >
         {chat.map((message, index) => {
+          // System rows (joins, leaves, tombstones) render exactly as the
+          // timeline renders them — never as their JSON payload; one the
+          // timeline cannot describe renders nothing there, so nothing here.
+          if (message.kind === SYSTEM_MESSAGE_KIND) {
+            const description = describeSystemMessage(message, props.profiles);
+            return description ? (
+              <SystemMessageRow key={message.id} description={description} />
+            ) : null;
+          }
           const previous = chat[index - 1];
           return (
             <MessageRow
@@ -314,6 +328,7 @@ export function StageView(props: StageViewProps) {
               message={message}
               profiles={props.profiles}
               grouped={
+                previous?.kind !== SYSTEM_MESSAGE_KIND &&
                 previous?.authorPubkey === message.authorPubkey &&
                 message.createdAt - previous.createdAt < 300
               }
@@ -477,7 +492,9 @@ export function StageView(props: StageViewProps) {
           {imagePane}
         </div>
       ) : (
-        <div className="grid h-full grid-rows-[minmax(0,2fr)_minmax(0,1fr)]">
+        // Explicit minmax(0,1fr) column: an implicit `auto` column grows to
+        // the widest chat row and pushes Exit/Mute off-screen (QA bug 2).
+        <div className="grid h-full grid-cols-[minmax(0,1fr)] grid-rows-[minmax(0,2fr)_minmax(0,1fr)]">
           {imagePane}
           {chatPane}
         </div>
