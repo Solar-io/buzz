@@ -254,6 +254,7 @@ export function HuddleParticipantsControl({
               key={pubkey}
             >
               <UserProfilePopover
+                showAgentConfig
                 pubkey={pubkey}
                 triggerAriaLabel={`Open profile for ${displayName}`}
                 triggerElement="span"

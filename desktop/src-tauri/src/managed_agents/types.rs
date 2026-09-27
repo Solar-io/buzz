@@ -511,8 +511,7 @@ pub struct ManagedAgentSummary {
     /// Catalog-derived from the effective harness (not the record's stored
     /// field), so the UI always shows what a spawn would actually use.
     pub mcp_command: String,
-    /// Deprecated passthrough of the stored record value; the harness ignores
-    /// it. Kept for wire compatibility.
+    /// Deprecated passthrough (the harness ignores it); kept for wire compat.
     pub turn_timeout_seconds: u64,
     pub idle_timeout_seconds: Option<u64>,
     pub max_turn_duration_seconds: Option<u64>,

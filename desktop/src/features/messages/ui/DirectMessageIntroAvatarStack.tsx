@@ -24,6 +24,7 @@ export function DirectMessageIntroAvatarStack({
     >
       {visibleParticipants.map((participant, index) => (
         <UserProfilePopover
+          showAgentConfig
           key={participant.pubkey}
           pubkey={participant.pubkey}
           triggerAriaLabel={`Open profile for ${participant.displayName}`}

@@ -77,6 +77,7 @@ export function SystemMessageAvatar({
     if (singlePubkey) {
       return (
         <UserProfilePopover
+          showAgentConfig
           botIdenticonValue={isSingleAgent ? actorLabel : undefined}
           pubkey={singlePubkey}
           role={isSingleAgent ? "bot" : undefined}
@@ -125,6 +126,7 @@ export function SystemMessageAvatar({
   );
   return (
     <UserProfilePopover
+      showAgentConfig
       botIdenticonValue={isActorAgent ? actorLabel : undefined}
       pubkey={actorPubkey}
       role={isActorAgent ? "bot" : undefined}

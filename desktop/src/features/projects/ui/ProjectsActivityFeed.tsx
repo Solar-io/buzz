@@ -495,7 +495,11 @@ function ActivityCard({
             />
           )}
           {item.actorPubkey ? (
-            <UserProfilePopover pubkey={item.actorPubkey} triggerElement="span">
+            <UserProfilePopover
+              showAgentConfig
+              pubkey={item.actorPubkey}
+              triggerElement="span"
+            >
               <button
                 aria-label={`View ${actorLabel}'s profile`}
                 className="pointer-events-auto relative z-10 shrink-0 rounded-full focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"

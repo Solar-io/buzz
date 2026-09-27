@@ -121,6 +121,10 @@ export type MockManagedAgentSeed = {
   respondToAllowlist?: string[];
   /** Per-agent env vars seeded into the mock store. */
   envVars?: Record<string, string>;
+  /** Effective model surfaced on the summary (native: definition-resolved). */
+  model?: string | null;
+  /** Resolved display-only effort block (native: `agent_effort.rs`). */
+  effort?: RawManagedAgent["effort"];
 };
 
 type MockManagedAgentRuntimeSeed = {
@@ -954,6 +958,14 @@ type RawManagedAgent = {
   backend_agent_id: string | null;
   respond_to: "owner-only" | "allowlist" | "anyone";
   respond_to_allowlist: string[];
+  effort?: {
+    acp?: string;
+    text_turn?: string;
+    voice_turn?: string;
+    thinking?: string;
+    claude_code?: string;
+    max_context_tokens?: number;
+  } | null;
 };
 
 type RawCreateManagedAgentResponse = {
@@ -1803,6 +1815,7 @@ function cloneManagedAgent(agent: MockManagedAgent): RawManagedAgent {
     respond_to_allowlist: agent.respond_to_allowlist
       ? [...agent.respond_to_allowlist]
       : [],
+    ...(agent.effort ? { effort: { ...agent.effort } } : {}),
   };
 }
 
@@ -2341,7 +2354,7 @@ function buildSeededManagedAgent(seed: MockManagedAgentSeed): MockManagedAgent {
     parallelism: 1,
     system_prompt: null,
     avatar_url: seed.avatarUrl ?? null,
-    model: null,
+    model: seed.model ?? null,
     env_vars: { ...(seed.envVars ?? {}) },
     status,
     pid: status === "running" ? 42000 + mockManagedAgents.length : null,
@@ -2361,6 +2374,7 @@ function buildSeededManagedAgent(seed: MockManagedAgentSeed): MockManagedAgent {
     backend_agent_id: null,
     respond_to: seed.respondTo ?? "owner-only",
     respond_to_allowlist: seed.respondToAllowlist ?? [],
+    ...(seed.effort ? { effort: { ...seed.effort } } : {}),
     private_key_nsec: `nsec1mock${seed.pubkey.slice(0, 20)}`,
     log_lines: [
       `buzz-acp starting: relay=${DEFAULT_RELAY_WS_URL} agent_pubkey=${seed.pubkey} parallelism=1`,

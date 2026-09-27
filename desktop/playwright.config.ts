@@ -52,6 +52,7 @@ export default defineConfig({
         "**/web-panel.spec.ts",
         "**/active-turn-resilience.spec.ts",
         "**/profile-active-turn.spec.ts",
+        "**/agent-avatar-config-card.spec.ts",
         "**/config-bridge-screenshots.spec.ts",
         "**/observer-feed-screenshots.spec.ts",
         "**/core-memory-screenshots.spec.ts",

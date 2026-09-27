@@ -57,6 +57,7 @@ export function AgentActivityCard({
       {/* Header */}
       <div className="flex items-center gap-3">
         <UserProfilePopover
+          showAgentConfig
           botIdenticonValue={displayName}
           pubkey={group.pubkey}
           role={"bot" as const}

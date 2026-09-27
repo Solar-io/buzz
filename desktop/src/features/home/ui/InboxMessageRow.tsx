@@ -189,6 +189,7 @@ export function InboxMessageRow({
         ) : (
           <div className="relative shrink-0">
             <UserProfilePopover
+              showAgentConfig
               botIdenticonValue={message.authorLabel}
               pubkey={message.authorPubkey}
               role={profileRole}
