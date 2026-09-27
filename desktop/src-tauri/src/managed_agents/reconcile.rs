@@ -110,7 +110,10 @@ fn reconcile_agents_in_dir_at(
             continue;
         }
 
-        if retain_agent_record(&conn, keys, record)? {
+        // `records` includes the key-less definitions, so a linked instance
+        // publishes its definition's effort env (layered under its own).
+        let definition_env = super::agent_effort::definition_env_for(record, &records);
+        if retain_agent_record(&conn, keys, record, &definition_env)? {
             reconciled += 1;
         }
     }
@@ -132,6 +135,7 @@ pub(crate) fn retain_agent_record(
     conn: &rusqlite::Connection,
     keys: &nostr::Keys,
     record: &ManagedAgentRecord,
+    definition_env: &std::collections::BTreeMap<String, String>,
 ) -> Result<bool, String> {
     let owner_pubkey = keys.public_key().to_hex();
     let existing = get_retained_event(conn, KIND_MANAGED_AGENT, &owner_pubkey, &record.pubkey)?;
@@ -163,7 +167,7 @@ pub(crate) fn retain_agent_record(
     // it serializes — republishing every agent every boot. Content is
     // timestamp-independent, so the monotonic bump below never forces a
     // spurious republish; an unchanged agent is still a true no-op.
-    let event = build_agent_event(record)?
+    let event = build_agent_event(record, definition_env)?
         .custom_created_at(monotonic_created_at(floor))
         .sign_with_keys(keys)
         .map_err(|e| format!("failed to sign event for '{}': {e}", record.name))?;

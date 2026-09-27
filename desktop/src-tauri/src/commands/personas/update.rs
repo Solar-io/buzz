@@ -205,21 +205,27 @@ pub(super) async fn update_persona_with<R: Send + 'static>(
 
                 if agents_modified {
                     save_managed_agents(&app, &records)?;
-                    // Keep retained kind:30177 identity records in lockstep with
-                    // the rename (#2423): `record.name` is part of the published
-                    // identity projection, so skipping this strands the relay on
-                    // the stale name→pubkey binding until the next boot reconcile.
-                    // Avatar-only edits are excluded — the avatar is not in the
-                    // projection, so retaining would be a guaranteed no-op.
-                    for record in records.iter().filter(|r| renamed.contains(&r.pubkey)) {
-                        crate::commands::agents::retain_managed_agent_pending(&app, &state, record);
-                    }
                 }
 
                 params
             } else {
                 Vec::new()
             };
+
+            // Re-retain EVERY linked instance's kind:30177 (not only renamed
+            // ones), after both the definition and the renamed records are
+            // saved: `record.name` is in the projection (#2423) and the
+            // definition's env feeds each instance's published `effort`. The
+            // retention content diff makes an unchanged instance a no-op.
+            // Raw store read: the projection needs no keys (no keyring hydrate).
+            for record in crate::managed_agents::storage::load_agent_store(&app)?
+                .iter()
+                .filter(|r| {
+                    !r.pubkey.is_empty() && r.persona_id.as_deref() == Some(result.id.as_str())
+                })
+            {
+                crate::commands::agents::retain_managed_agent_pending(&app, &state, record);
+            }
 
             Ok((result, retained, sync_params))
         }

@@ -235,18 +235,15 @@ pub fn build_managed_agent_summary(
     // for other communities are judged in their own community (comparing them
     // against this workspace's relay would flag a spurious restart on every
     // community switch).
-    //
     // Adapter-availability drift (codex only) contributes its own synthetic
     // entry, so an out-of-band adapter change (manual npm install/downgrade)
     // that Phase-1 auto-restart doesn't cover still shows the user what moved.
     // The cache is read-only here — no subprocess is spawned.
-    //
     // Global config drives both the prospective snapshot and the descriptor
     // env layering below — the caller loads it once and passes it in, so
     // list-style callers pay one disk read per call rather than one per record.
 
-    // The prospective side is computed only for a tracked pair: an unstamped
-    // agent has nothing to compare against.
+    // Prospective side only for a tracked pair: an unstamped one has nothing to compare.
     let tracked_spawn = pair_key.as_ref().zip(pair_runtime).map(|(key, runtime)| {
         let current = crate::managed_agents::spawn_snapshot::prospective_spawn_config_snapshot(
             record,
@@ -299,6 +296,8 @@ pub fn build_managed_agent_summary(
         .unwrap_or("")
         .to_string();
 
+    let def_env = super::env_vars::live_persona_env(personas, record.persona_id.as_deref());
+    let effort = super::agent_effort::resolve_agent_effort(record, &def_env);
     Ok(ManagedAgentSummary {
         pubkey: record.pubkey.clone(),
         name: record.name.clone(),
@@ -341,6 +340,7 @@ pub fn build_managed_agent_summary(
         log_path,
         respond_to: record.respond_to,
         respond_to_allowlist: record.respond_to_allowlist.clone(),
+        effort,
     })
 }
 

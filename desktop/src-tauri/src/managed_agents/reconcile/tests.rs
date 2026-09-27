@@ -322,7 +322,7 @@ fn rename_re_retains_identity_record_with_new_name() {
     let pubkey = "9".repeat(64);
     let mut record = sample_record(&pubkey, "Fizz");
 
-    assert!(retain_agent_record(&conn, &keys, &record).unwrap());
+    assert!(retain_agent_record(&conn, &keys, &record, &BTreeMap::new()).unwrap());
     let first = get_retained_event(&conn, KIND_MANAGED_AGENT, &owner, &pubkey)
         .unwrap()
         .unwrap();
@@ -339,7 +339,7 @@ fn rename_re_retains_identity_record_with_new_name() {
 
     record.name = "Spark".to_string();
     assert!(
-        retain_agent_record(&conn, &keys, &record).unwrap(),
+        retain_agent_record(&conn, &keys, &record, &BTreeMap::new()).unwrap(),
         "a renamed record must re-retain its identity record"
     );
 
@@ -372,7 +372,7 @@ fn retain_agent_record_is_noop_when_unchanged() {
     let pubkey = "8".repeat(64);
     let record = sample_record(&pubkey, "steady-agent");
 
-    assert!(retain_agent_record(&conn, &keys, &record).unwrap());
+    assert!(retain_agent_record(&conn, &keys, &record, &BTreeMap::new()).unwrap());
     let row = get_retained_event(
         &conn,
         KIND_MANAGED_AGENT,
@@ -392,7 +392,7 @@ fn retain_agent_record_is_noop_when_unchanged() {
     .unwrap();
 
     assert!(
-        !retain_agent_record(&conn, &keys, &record).unwrap(),
+        !retain_agent_record(&conn, &keys, &record, &BTreeMap::new()).unwrap(),
         "an unchanged projection must not re-retain"
     );
     assert!(
@@ -491,4 +491,67 @@ fn synced_head_older_than_tombstone_is_republished() {
 
     confirm_publish(&dir, &keys, &agent);
     assert_eq!(reconcile_agents_in_dir(dir.path(), &keys).unwrap(), 0);
+}
+
+// ── effort (definition env → linked instance's kind:30177) ───────────────────
+
+/// A definition row (key-less, `slug` = persona id) carrying effort env and a
+/// linked instance with none of its own.
+fn store_with_effort_definition(text_effort: &str) -> Vec<ManagedAgentRecord> {
+    let mut definition = sample_record("", "Evie");
+    definition.slug = Some("evie".to_string());
+    definition.env_vars = BTreeMap::from([
+        ("BUZZ_TEXT_TURN_EFFORT".to_string(), text_effort.to_string()),
+        ("OPENAI_API_KEY".to_string(), "sk-secret".to_string()),
+    ]);
+    let mut instance = sample_record(&"e".repeat(64), "Evie");
+    instance.persona_id = Some("evie".to_string());
+    vec![definition, instance]
+}
+
+fn retained_content(dir: &TempDir, keys: &nostr::Keys) -> String {
+    let conn = open_retention_db(&dir.path().join("retention.db")).unwrap();
+    get_retained_event(
+        &conn,
+        KIND_MANAGED_AGENT,
+        &keys.public_key().to_hex(),
+        &"e".repeat(64),
+    )
+    .unwrap()
+    .unwrap()
+    .content
+}
+
+#[test]
+fn reconcile_linked_instance_publishes_definition_effort() {
+    let dir = TempDir::new().unwrap();
+    let keys = nostr::Keys::generate();
+    write_store(&dir, &store_with_effort_definition("low"));
+    assert_eq!(reconcile_agents_in_dir(dir.path(), &keys).unwrap(), 1);
+    let content = retained_content(&dir, &keys);
+    assert!(
+        content.contains(r#""effort":{"text_turn":"low"}"#),
+        "{content}"
+    );
+    assert!(!content.contains("sk-secret"));
+}
+
+#[test]
+fn reconcile_second_run_is_noop() {
+    let dir = TempDir::new().unwrap();
+    let keys = nostr::Keys::generate();
+    write_store(&dir, &store_with_effort_definition("low"));
+    assert_eq!(reconcile_agents_in_dir(dir.path(), &keys).unwrap(), 1);
+    assert_eq!(reconcile_agents_in_dir(dir.path(), &keys).unwrap(), 0);
+}
+
+#[test]
+fn definition_env_edit_rereconciles_instance() {
+    let dir = TempDir::new().unwrap();
+    let keys = nostr::Keys::generate();
+    write_store(&dir, &store_with_effort_definition("low"));
+    assert_eq!(reconcile_agents_in_dir(dir.path(), &keys).unwrap(), 1);
+    write_store(&dir, &store_with_effort_definition("high"));
+    assert_eq!(reconcile_agents_in_dir(dir.path(), &keys).unwrap(), 1);
+    assert!(retained_content(&dir, &keys).contains(r#""text_turn":"high""#));
 }

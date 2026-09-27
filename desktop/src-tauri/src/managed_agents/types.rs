@@ -565,6 +565,8 @@ pub struct ManagedAgentSummary {
     pub log_path: String,
     pub respond_to: RespondTo,
     pub respond_to_allowlist: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<super::agent_effort::AgentEffortConfig>,
 }
 
 #[derive(Debug, Serialize)]

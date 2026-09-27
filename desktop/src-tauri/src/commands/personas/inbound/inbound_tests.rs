@@ -878,6 +878,7 @@ fn inbound_managed_agent_content(
         parallelism: 1,
         respond_to: crate::managed_agents::RespondTo::OwnerOnly,
         respond_to_allowlist: vec![],
+        effort: None,
     }
 }
 
@@ -910,4 +911,27 @@ fn inbound_definition_less_agent_accepts_visible_multiline_prompt() {
     );
 
     assert!(validate_inbound_managed_agent_definition(&inbound).is_ok());
+}
+
+/// The 30177 `effort` block is display-only: an inbound event carrying it must
+/// never write the local record's env or canonical `effort_level` (the wire
+/// never authors spawn config).
+#[test]
+fn inbound_effort_is_display_only() {
+    let mut content = inbound_managed_agent_content("Agent", Some("persona-local"), None);
+    content.effort = Some(crate::managed_agents::agent_effort::AgentEffortConfig {
+        acp: Some("max".to_string()),
+        text_turn: Some("high".to_string()),
+        ..Default::default()
+    });
+    let mut agents = vec![local_agent()];
+    let before_env = agents[0].env_vars.clone();
+    let before_effort = agents[0].effort_level.clone();
+    apply_inbound_managed_agent(&mut agents, AGENT_PUBKEY, content);
+    assert_eq!(agents[0].name, "Agent", "projected fields still apply");
+    assert_eq!(agents[0].env_vars, before_env, "inbound effort wrote env");
+    assert_eq!(
+        agents[0].effort_level, before_effort,
+        "inbound effort wrote effort_level"
+    );
 }

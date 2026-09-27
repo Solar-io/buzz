@@ -1,0 +1,266 @@
+{
+  "cases": [
+    {
+      "name": "definition env published for linked instance",
+      "record_effort_level": null,
+      "definition_env": {
+        "BUZZ_TEXT_TURN_EFFORT": "low",
+        "BUZZ_VOICE_TURN_EFFORT": "minimal",
+        "BUZZ_AGENT_THINKING_EFFORT": "high",
+        "CLAUDE_CODE_EFFORT_LEVEL": "xhigh",
+        "BUZZ_AGENT_MAX_CONTEXT_TOKENS": "555000"
+      },
+      "agent_env": {},
+      "wire": {
+        "text_turn": "low",
+        "voice_turn": "minimal",
+        "thinking": "high",
+        "claude_code": "xhigh",
+        "max_context_tokens": 555000
+      },
+      "parsed": {
+        "acp": null,
+        "textTurn": "low",
+        "voiceTurn": "minimal",
+        "thinking": "high",
+        "claudeCode": "xhigh",
+        "maxContextTokens": 555000
+      }
+    },
+    {
+      "name": "agent env overrides definition env",
+      "record_effort_level": null,
+      "definition_env": {
+        "BUZZ_ACP_EFFORT_LEVEL": "low",
+        "BUZZ_TEXT_TURN_EFFORT": "low"
+      },
+      "agent_env": {
+        "BUZZ_ACP_EFFORT_LEVEL": "high"
+      },
+      "wire": {
+        "acp": "high",
+        "text_turn": "low"
+      },
+      "parsed": {
+        "acp": "high",
+        "textTurn": "low",
+        "voiceTurn": null,
+        "thinking": null,
+        "claudeCode": null,
+        "maxContextTokens": null
+      }
+    },
+    {
+      "name": "effort_level beats env acp",
+      "record_effort_level": "max",
+      "definition_env": {
+        "BUZZ_ACP_EFFORT_LEVEL": "low"
+      },
+      "agent_env": {},
+      "wire": {
+        "acp": "max"
+      },
+      "parsed": {
+        "acp": "max",
+        "textTurn": null,
+        "voiceTurn": null,
+        "thinking": null,
+        "claudeCode": null,
+        "maxContextTokens": null
+      }
+    },
+    {
+      "name": "unset and blank are absent",
+      "record_effort_level": null,
+      "definition_env": {
+        "BUZZ_TEXT_TURN_EFFORT": "unset",
+        "BUZZ_VOICE_TURN_EFFORT": ""
+      },
+      "agent_env": {},
+      "wire": null,
+      "parsed": null
+    },
+    {
+      "name": "invalid tokens dropped",
+      "record_effort_level": null,
+      "definition_env": {
+        "BUZZ_TEXT_TURN_EFFORT": "High!",
+        "BUZZ_VOICE_TURN_EFFORT": "xxxxxxxxxxxxxxxxx",
+        "BUZZ_AGENT_THINKING_EFFORT": "sk-secret",
+        "CLAUDE_CODE_EFFORT_LEVEL": "medium"
+      },
+      "agent_env": {},
+      "wire": {
+        "claude_code": "medium"
+      },
+      "parsed": {
+        "acp": null,
+        "textTurn": null,
+        "voiceTurn": null,
+        "thinking": null,
+        "claudeCode": "medium",
+        "maxContextTokens": null
+      }
+    },
+    {
+      "name": "surrounding ascii whitespace trimmed on publish",
+      "record_effort_level": null,
+      "definition_env": {
+        "BUZZ_TEXT_TURN_EFFORT": "  medium\t"
+      },
+      "agent_env": {},
+      "wire": {
+        "text_turn": "medium"
+      },
+      "parsed": {
+        "acp": null,
+        "textTurn": "medium",
+        "voiceTurn": null,
+        "thinking": null,
+        "claudeCode": null,
+        "maxContextTokens": null
+      }
+    },
+    {
+      "name": "non-ascii whitespace is not trimmed",
+      "record_effort_level": null,
+      "definition_env": {
+        "BUZZ_TEXT_TURN_EFFORT": " low﻿"
+      },
+      "agent_env": {},
+      "wire": null,
+      "parsed": null
+    },
+    {
+      "name": "max context zero rejected",
+      "record_effort_level": null,
+      "definition_env": {
+        "BUZZ_AGENT_MAX_CONTEXT_TOKENS": "0"
+      },
+      "agent_env": {},
+      "wire": null,
+      "parsed": null
+    },
+    {
+      "name": "max context non-numeric rejected",
+      "record_effort_level": null,
+      "definition_env": {
+        "BUZZ_AGENT_MAX_CONTEXT_TOKENS": "abc"
+      },
+      "agent_env": {},
+      "wire": null,
+      "parsed": null
+    },
+    {
+      "name": "max context signed rejected",
+      "record_effort_level": null,
+      "definition_env": {
+        "BUZZ_AGENT_MAX_CONTEXT_TOKENS": "+5"
+      },
+      "agent_env": {},
+      "wire": null,
+      "parsed": null
+    },
+    {
+      "name": "max context above safe integer rejected",
+      "record_effort_level": null,
+      "definition_env": {
+        "BUZZ_AGENT_MAX_CONTEXT_TOKENS": "9007199254740992"
+      },
+      "agent_env": {},
+      "wire": null,
+      "parsed": null
+    },
+    {
+      "name": "max context from agent env",
+      "record_effort_level": null,
+      "definition_env": {},
+      "agent_env": {
+        "BUZZ_AGENT_MAX_CONTEXT_TOKENS": "555000"
+      },
+      "wire": {
+        "max_context_tokens": 555000
+      },
+      "parsed": {
+        "acp": null,
+        "textTurn": null,
+        "voiceTurn": null,
+        "thinking": null,
+        "claudeCode": null,
+        "maxContextTokens": 555000
+      }
+    },
+    {
+      "name": "all empty has no effort key",
+      "record_effort_level": null,
+      "definition_env": {
+        "OPENAI_API_KEY": "sk-secret"
+      },
+      "agent_env": {},
+      "wire": null,
+      "parsed": null
+    },
+    {
+      "name": "wire not an object",
+      "web_only": true,
+      "wire": "high",
+      "parsed": null
+    },
+    {
+      "name": "wire array",
+      "web_only": true,
+      "wire": [
+        "high"
+      ],
+      "parsed": null
+    },
+    {
+      "name": "wire raw untrimmed token rejected by reader",
+      "web_only": true,
+      "wire": {
+        "acp": " high",
+        "text_turn": "low"
+      },
+      "parsed": {
+        "acp": null,
+        "textTurn": "low",
+        "voiceTurn": null,
+        "thinking": null,
+        "claudeCode": null,
+        "maxContextTokens": null
+      }
+    },
+    {
+      "name": "wire fractional context rejected",
+      "web_only": true,
+      "wire": {
+        "max_context_tokens": 1.5,
+        "acp": "low"
+      },
+      "parsed": {
+        "acp": "low",
+        "textTurn": null,
+        "voiceTurn": null,
+        "thinking": null,
+        "claudeCode": null,
+        "maxContextTokens": null
+      }
+    },
+    {
+      "name": "wire string context rejected",
+      "web_only": true,
+      "wire": {
+        "max_context_tokens": "555000"
+      },
+      "parsed": null
+    },
+    {
+      "name": "wire unset token rejected by reader",
+      "web_only": true,
+      "wire": {
+        "thinking": "unset"
+      },
+      "parsed": null
+    }
+  ]
+}

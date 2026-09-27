@@ -21,12 +21,21 @@
 //! - `backend` — `Provider { config }` is an opaque blob that may hold secrets.
 //! - any runtime field (`runtime_pid`, `last_*`, `backend_agent_id`, …) — these
 //!   mutate on every start/stop and describe transient process state.
+//!
+//! `effort` is the one env-derived field, and it is allowed because it is NOT
+//! env: [`super::agent_effort::resolve_agent_effort`] reads a fixed set of
+//! named effort/context keys and publishes only validated short tokens and a
+//! positive integer. `env_vars` itself stays excluded.
 
 use buzz_core_pkg::kind::KIND_MANAGED_AGENT;
 use nostr::{EventBuilder, Kind, Tag};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
-use super::{ManagedAgentRecord, RespondTo};
+use super::{
+    agent_effort::{resolve_agent_effort, AgentEffortConfig},
+    ManagedAgentRecord, RespondTo,
+};
 
 /// The JSON body stored in a managed-agent event's content field.
 ///
@@ -57,6 +66,12 @@ pub struct ManagedAgentEventContent {
     /// public keys, not secrets.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub respond_to_allowlist: Vec<String>,
+    /// Display-only effort/context knobs (named, validated tokens — see the
+    /// module docs). Appended last and omitted when empty so a record with no
+    /// effort serializes byte-identically to the pre-effort projection.
+    /// Inbound apply never writes this back onto the record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<AgentEffortConfig>,
 }
 
 /// Project a `ManagedAgentRecord` onto the content fields published in
@@ -67,7 +82,13 @@ pub struct ManagedAgentEventContent {
 /// re-publish when only excluded runtime/local fields changed, so an
 /// operational start/stop produces an identical projection and never
 /// republishes.
-pub fn agent_event_content(record: &ManagedAgentRecord) -> ManagedAgentEventContent {
+///
+/// `definition_env` is the live env of the linked definition (empty for a
+/// standalone agent); the agent's own env layers over it for `effort`.
+pub fn agent_event_content(
+    record: &ManagedAgentRecord,
+    definition_env: &BTreeMap<String, String>,
+) -> ManagedAgentEventContent {
     // Slimmed projection (NIP-AP "Slimming: kind:30177"): definition-linked
     // instances resolve prompt/model/provider/source_version through their
     // kind:30175 definition, so those fields are omitted from the wire.
@@ -103,6 +124,7 @@ pub fn agent_event_content(record: &ManagedAgentRecord) -> ManagedAgentEventCont
         parallelism: record.parallelism,
         respond_to: record.respond_to,
         respond_to_allowlist: record.respond_to_allowlist.clone(),
+        effort: resolve_agent_effort(record, definition_env),
     }
 }
 
@@ -110,14 +132,17 @@ pub fn agent_event_content(record: &ManagedAgentRecord) -> ManagedAgentEventCont
 ///
 /// Returns an unsigned `EventBuilder` — the caller signs and submits. The
 /// `d_tag` is the agent's pubkey.
-pub fn build_agent_event(record: &ManagedAgentRecord) -> Result<EventBuilder, String> {
+pub fn build_agent_event(
+    record: &ManagedAgentRecord,
+    definition_env: &BTreeMap<String, String>,
+) -> Result<EventBuilder, String> {
     super::validate_managed_agent_definition_text(
         &record.name,
         record.persona_id.as_deref(),
         record.system_prompt.as_deref(),
     )
     .map_err(|error| format!("Managed agent definition is unsafe to publish: {error}"))?;
-    let content = serde_json::to_string(&agent_event_content(record))
+    let content = serde_json::to_string(&agent_event_content(record, definition_env))
         .map_err(|e| format!("failed to serialize managed-agent content: {e}"))?;
     let tags =
         vec![Tag::parse(["d", record.pubkey.as_str()]).map_err(|e| format!("invalid d-tag: {e}"))?];
@@ -160,7 +185,8 @@ pub fn build_agent_delete(d_tag: &str, owner_pubkey_hex: &str) -> Result<EventBu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
+
+    static NO_ENV: BTreeMap<String, String> = BTreeMap::new();
 
     fn sample_agent() -> ManagedAgentRecord {
         ManagedAgentRecord {
@@ -230,7 +256,7 @@ mod tests {
 
     #[test]
     fn build_agent_event_produces_correct_kind() {
-        let builder = build_agent_event(&sample_agent()).unwrap();
+        let builder = build_agent_event(&sample_agent(), &NO_ENV).unwrap();
         let keys = nostr::Keys::generate();
         let event = builder.sign_with_keys(&keys).unwrap();
         assert_eq!(event.kind.as_u16() as u32, KIND_MANAGED_AGENT);
@@ -241,14 +267,14 @@ mod tests {
         let mut unsafe_name = sample_agent();
         unsafe_name.persona_id = None;
         unsafe_name.name = "Review\u{200B}er".to_string();
-        let error = build_agent_event(&unsafe_name)
+        let error = build_agent_event(&unsafe_name, &NO_ENV)
             .expect_err("publication must reject an invisible agent name");
         assert!(error.contains("U+200B"), "unexpected error: {error}");
 
         let mut unsafe_prompt = sample_agent();
         unsafe_prompt.persona_id = None;
         unsafe_prompt.system_prompt = Some("Review\u{202E} code.".to_string());
-        let error = build_agent_event(&unsafe_prompt)
+        let error = build_agent_event(&unsafe_prompt, &NO_ENV)
             .expect_err("publication must reject bidi formatting in instructions");
         assert!(error.contains("U+202E"), "unexpected error: {error}");
     }
@@ -257,13 +283,13 @@ mod tests {
     fn publication_ignores_inert_linked_record_prompt() {
         let mut linked = sample_agent();
         linked.system_prompt = Some("stale\u{200B} prompt".to_string());
-        build_agent_event(&linked)
+        build_agent_event(&linked, &NO_ENV)
             .expect("linked record prompt is omitted in favor of the validated persona");
     }
 
     #[test]
     fn d_tag_is_agent_pubkey() {
-        let builder = build_agent_event(&sample_agent()).unwrap();
+        let builder = build_agent_event(&sample_agent(), &NO_ENV).unwrap();
         let keys = nostr::Keys::generate();
         let event = builder.sign_with_keys(&keys).unwrap();
         let d = event
@@ -283,7 +309,7 @@ mod tests {
     /// carry secrets, the provider backend blob, env vars, or runtime fields.
     #[test]
     fn content_excludes_secrets_and_runtime_fields() {
-        let json = serde_json::to_string(&agent_event_content(&sample_agent())).unwrap();
+        let json = serde_json::to_string(&agent_event_content(&sample_agent(), &NO_ENV)).unwrap();
 
         // Secrets — must never appear.
         assert!(
@@ -343,7 +369,7 @@ mod tests {
     #[test]
     fn projection_slims_definition_quad_only_when_linked() {
         let linked = sample_agent(); // persona_id: Some
-        let json = serde_json::to_string(&agent_event_content(&linked)).unwrap();
+        let json = serde_json::to_string(&agent_event_content(&linked, &NO_ENV)).unwrap();
         assert!(!json.contains("system_prompt"));
         assert!(!json.contains("\"model\""));
         assert!(!json.contains("\"provider\""));
@@ -354,7 +380,7 @@ mod tests {
 
         let mut standalone = sample_agent();
         standalone.persona_id = None;
-        let json = serde_json::to_string(&agent_event_content(&standalone)).unwrap();
+        let json = serde_json::to_string(&agent_event_content(&standalone, &NO_ENV)).unwrap();
         assert!(json.contains("system_prompt"), "standalone keeps prompt");
         assert!(json.contains("\"model\""), "standalone keeps model");
         assert!(json.contains("\"provider\""), "standalone keeps provider");
@@ -367,8 +393,8 @@ mod tests {
     #[test]
     fn projection_is_deterministic() {
         let agent = sample_agent();
-        let a = serde_json::to_string(&agent_event_content(&agent)).unwrap();
-        let b = serde_json::to_string(&agent_event_content(&agent)).unwrap();
+        let a = serde_json::to_string(&agent_event_content(&agent, &NO_ENV)).unwrap();
+        let b = serde_json::to_string(&agent_event_content(&agent, &NO_ENV)).unwrap();
         assert_eq!(a, b);
     }
 
@@ -384,8 +410,8 @@ mod tests {
         churned.last_error = Some("different error".to_string());
         churned.updated_at = "2099-12-31T00:00:00Z".to_string();
         assert_eq!(
-            agent_event_content(&agent),
-            agent_event_content(&churned),
+            agent_event_content(&agent, &NO_ENV),
+            agent_event_content(&churned, &NO_ENV),
             "runtime field churn must not alter the published projection"
         );
     }
@@ -396,7 +422,10 @@ mod tests {
         let agent = sample_agent();
         let mut edited = agent.clone();
         edited.parallelism += 1;
-        assert_ne!(agent_event_content(&agent), agent_event_content(&edited));
+        assert_ne!(
+            agent_event_content(&agent, &NO_ENV),
+            agent_event_content(&edited, &NO_ENV)
+        );
 
         // Definition-level edit surfaces only for definition-less records —
         // linked records resolve the prompt through their definition.
@@ -405,14 +434,14 @@ mod tests {
         let mut edited = standalone.clone();
         edited.system_prompt = Some("A different prompt.".to_string());
         assert_ne!(
-            agent_event_content(&standalone),
-            agent_event_content(&edited)
+            agent_event_content(&standalone, &NO_ENV),
+            agent_event_content(&edited, &NO_ENV)
         );
         let mut linked_edit = sample_agent();
         linked_edit.system_prompt = Some("A different prompt.".to_string());
         assert_eq!(
-            agent_event_content(&sample_agent()),
-            agent_event_content(&linked_edit),
+            agent_event_content(&sample_agent(), &NO_ENV),
+            agent_event_content(&linked_edit, &NO_ENV),
             "a linked record's local prompt snapshot is not wire state"
         );
     }
@@ -484,5 +513,78 @@ mod tests {
             .tags
             .iter()
             .all(|t| t.as_slice().first().map(String::as_str) != Some("e")));
+    }
+
+    /// A record with no effort must serialize byte-identically to the
+    /// pre-effort projection, or every agent republishes on the next boot.
+    #[test]
+    fn no_effort_projection_bytes_unchanged() {
+        let json = serde_json::to_string(&agent_event_content(&sample_agent(), &NO_ENV)).unwrap();
+        assert_eq!(
+            json,
+            r#"{"name":"Test Agent","persona_id":"persona-1","parallelism":24,"respond_to":"allowlist","respond_to_allowlist":["79be667e"]}"#
+        );
+    }
+
+    /// Env holding a secret AND effort keys: only the named, validated effort
+    /// values reach the wire — never an env key name or the secret.
+    #[test]
+    fn effort_block_carries_only_named_keys() {
+        let mut agent = sample_agent();
+        agent
+            .env_vars
+            .insert("BUZZ_TEXT_TURN_EFFORT".into(), "low".into());
+        agent
+            .env_vars
+            .insert("BUZZ_VOICE_TURN_EFFORT".into(), "sk-secret".into());
+        let definition_env = BTreeMap::from([
+            ("BUZZ_AGENT_THINKING_EFFORT".to_string(), "high".to_string()),
+            ("ANTHROPIC_API_KEY".to_string(), "sk-def-secret".to_string()),
+            (
+                "BUZZ_AGENT_MAX_CONTEXT_TOKENS".to_string(),
+                "555000".to_string(),
+            ),
+        ]);
+        let json = serde_json::to_string(&agent_event_content(&agent, &definition_env)).unwrap();
+        assert!(json.ends_with(
+            r#""effort":{"text_turn":"low","thinking":"high","max_context_tokens":555000}}"#
+        ));
+        for leak in [
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "sk-secret",
+            "sk-def-secret",
+            "BUZZ_",
+            "env_vars",
+        ] {
+            assert!(!json.contains(leak), "leaked {leak}: {json}");
+        }
+    }
+
+    /// Old events (no `effort` key) still parse; new events carry it through.
+    #[test]
+    fn from_event_parses_effort_and_tolerates_old_events() {
+        use nostr::{EventBuilder, JsonUtil, Keys, Kind, Tag};
+        let parse = |content: serde_json::Value| {
+            let event =
+                EventBuilder::new(Kind::Custom(KIND_MANAGED_AGENT as u16), content.to_string())
+                    .tags(vec![Tag::parse(["d", "agentpubkeyhex"]).unwrap()])
+                    .sign_with_keys(&Keys::generate())
+                    .unwrap();
+            managed_agent_content_from_event(&nostr::Event::from_json(event.as_json()).unwrap())
+                .unwrap()
+        };
+        let base = serde_json::json!({"name": "A", "parallelism": 1, "respond_to": "owner-only"});
+        assert_eq!(parse(base.clone()).effort, None);
+        let mut with = base;
+        with["effort"] = serde_json::json!({"acp": "high", "max_context_tokens": 1000});
+        assert_eq!(
+            parse(with).effort,
+            Some(AgentEffortConfig {
+                acp: Some("high".into()),
+                max_context_tokens: Some(1000),
+                ..Default::default()
+            })
+        );
     }
 }
