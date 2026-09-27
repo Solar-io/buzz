@@ -346,4 +346,59 @@ final class NativeVoicePolicyTests: XCTestCase {
             #"{"version":1,"label":"Alice","engine":"eleven","key":"eleven:short"}"#
         ] { XCTAssertNil(NativeVoicePolicy.voiceSelection(content: invalid, tags: tags), invalid) }
     }
+
+    func testVoiceSelectionAcceptsChatterboxKeysOnTheRelayGrammar() {
+        let tags = [["d", "agent-voice"]]
+        let body = { (key: String) in #"{"engine":"chatterbox","key":"\#(key)","label":"Evie","version":1}"# }
+        XCTAssertEqual(NativeVoicePolicy.voiceSelection(content: body("chatterbox:evie"), tags: tags)?.engine, "chatterbox")
+        XCTAssertEqual(NativeVoicePolicy.voiceSelection(content: body("chatterbox:my_voice-2"), tags: tags)?.key, "chatterbox:my_voice-2")
+        for invalid in ["chatterbox:", "chatterbox:Evie", "chatterbox:-x", "chatterbox:" + String(repeating: "a", count: 49), "pocket:evie"] {
+            XCTAssertNil(NativeVoicePolicy.voiceSelection(content: body(invalid), tags: tags), invalid)
+        }
+    }
+
+    func testVoiceAssignmentRequiresOneLowercaseAgentDTag() {
+        let agent = String(repeating: "ab", count: 32)
+        let content = #"{"engine":"chatterbox","key":"chatterbox:evie","label":"Evie","version":1}"#
+        let row = NativeVoicePolicy.voiceAssignment(content: content, tags: [["d", agent]])
+        XCTAssertEqual(row?.agent, agent)
+        XCTAssertEqual(row?.key, "chatterbox:evie")
+        XCTAssertNil(NativeVoicePolicy.voiceAssignment(content: content, tags: [["d", agent.uppercased()]]))
+        XCTAssertNil(NativeVoicePolicy.voiceAssignment(content: content, tags: [["d", "agent-voice"]]))
+        XCTAssertNil(NativeVoicePolicy.voiceAssignment(content: content, tags: [["d", agent], ["d", agent]]))
+        XCTAssertNil(NativeVoicePolicy.voiceAssignment(content: #"{"engine":"chatterbox","key":"chatterbox:evie","label":"Evie","version":2}"#, tags: [["d", agent]]))
+    }
+
+    func testBridgeVoicePrecedenceOverrideOwnerAgentDerived() {
+        let pk = String(repeating: "a", count: 64)
+        let override = (engine: "eleven", voice: "T720RsqorTx4ZZWohrNN")
+        let owner = (engine: "chatterbox", voice: "evie")
+        let own = (engine: "pocket", voice: "anna")
+        func pick(_ o: (engine: String, voice: String)?, _ a: (engine: String, voice: String)?, _ s: (engine: String, voice: String)?) -> String {
+            let v = NativeVoicePolicy.bridgeVoice(pubkey: pk, override: o, assignment: a, selection: s); return v.engine + ":" + v.voice
+        }
+        XCTAssertEqual(pick(override, owner, own), "eleven:T720RsqorTx4ZZWohrNN", "channel override wins")
+        XCTAssertEqual(pick(nil, owner, own), "chatterbox:evie", "owner 30183 beats agent 30182")
+        XCTAssertEqual(pick(nil, nil, own), "pocket:anna", "agent 30182 beats derived")
+        let derived = NativeVoicePolicy.derivedVoice(pk)
+        XCTAssertEqual(derived.engine, "chatterbox")
+        XCTAssertEqual(pick(nil, nil, nil), "chatterbox:" + derived.voice, "derived is chatterbox")
+        XCTAssertEqual(pick(nil, (engine: "pocket", voice: "imported:" + String(repeating: "0", count: 64)), own), "chatterbox:" + derived.voice, "an unrunnable imported key speaks derived")
+    }
+
+    func testDerivedVoiceMatchesTheSharedWebFixture() throws {
+        // Same file web bridgeSpeech.test.mjs reads: <repo>/test-fixtures/voice/.
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../../test-fixtures/voice/derived-agent-voices.json").standardized
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        XCTAssertEqual(fixture["slugs"] as? [String], NativeVoicePolicy.derivedVoiceSlugs)
+        let cases = try XCTUnwrap(fixture["cases"] as? [[String: String]])
+        XCTAssertGreaterThanOrEqual(cases.count, 20)
+        for entry in cases {
+            let pubkey = try XCTUnwrap(entry["pubkey"])
+            let derived = NativeVoicePolicy.derivedVoice(pubkey)
+            XCTAssertEqual(derived.engine, entry["engine"], pubkey)
+            XCTAssertEqual(derived.voice, entry["voice"], pubkey)
+        }
+        XCTAssertEqual(Set(cases.compactMap { $0["voice"] }).count, 11)
+    }
 }

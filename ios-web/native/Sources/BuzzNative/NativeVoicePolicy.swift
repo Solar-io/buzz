@@ -53,10 +53,55 @@ enum NativeVoicePolicy {
         if !current.isEmpty { chunks.append(current) }
         return chunks
     }
+    /// Kind 30182 (the agent's own selection): exactly one `d` = `agent-voice`.
     static func voiceSelection(content: String, tags: [[String]]) -> (engine: String, key: String)? {
         guard tags.filter({ $0.first == "d" }).count == 1,
-              tags.contains(["d", "agent-voice"]),
-              let data = content.data(using: .utf8), let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              tags.contains(["d", "agent-voice"]) else { return nil }
+        return selectionBody(content)
+    }
+
+    /// Kind 30183 (the owner's assignment, web agentVoiceAssignment.ts):
+    /// exactly one `d` = the agent pubkey (64 lowercase hex); content is the
+    /// same body grammar as 30182. The relay admits it only from the agent's
+    /// registered owner, so readers trust a stored row like web does.
+    static func voiceAssignment(content: String, tags: [[String]]) -> (agent: String, engine: String, key: String)? {
+        let d = tags.filter { $0.first == "d" }
+        guard d.count == 1, d[0].count > 1,
+              d[0][1].range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
+              let body = selectionBody(content) else { return nil }
+        return (d[0][1], body.engine, body.key)
+    }
+
+    /// The agent voice slugs a pubkey with no selection draws from. Same
+    /// table, same order and same djb2 index as web `DERIVED_VOICE_SLUGS` /
+    /// `derivedBridgeVoice` (bridgeSpeech.ts); never reorder or grow it.
+    /// Cross-checked against test-fixtures/voice/derived-agent-voices.json.
+    static let derivedVoiceSlugs = ["anna", "vera", "fantine", "charles", "paul", "eponine", "azelma", "george", "mary", "jane", "michael"]
+    static func derivedVoice(_ pubkey: String) -> (engine: String, voice: String) {
+        var hash: Int32 = 5381
+        for byte in pubkey.utf8 { hash = hash &* 33 &+ Int32(byte) }
+        return ("chatterbox", derivedVoiceSlugs[Int(abs(Int64(hash))) % derivedVoiceSlugs.count])
+    }
+
+    /// Bridge request for one agent, web `resolveEffectiveVoice` order:
+    /// channel override > owner 30183 > agent 30182 > derived. An imported
+    /// Pocket key the bridge cannot run speaks the derived voice (web
+    /// `pocket-selected-pending-engine`), it does not fall to a lower layer.
+    static func bridgeVoice(pubkey: String, override: (engine: String, voice: String)?,
+                            assignment: (engine: String, voice: String)?,
+                            selection: (engine: String, voice: String)?) -> (engine: String, voice: String) {
+        if let override { return override }
+        guard let chosen = assignment ?? selection, !chosen.voice.hasPrefix("imported:") else { return derivedVoice(pubkey) }
+        return chosen
+    }
+
+    /// `engine:slug` → (engine, slug) for a key the body grammar accepted.
+    static func split(_ key: (engine: String, key: String)) -> (engine: String, voice: String) {
+        (key.engine, String(key.key.dropFirst(key.engine.count + 1)))
+    }
+
+    private static func selectionBody(_ content: String) -> (engine: String, key: String)? {
+        guard let data = content.data(using: .utf8), let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               nativeInteger(value["version"]) == 1, let label = value["label"] as? String,
               !label.isEmpty, label.utf16.count <= 128,
               !label.unicodeScalars.contains(where: { $0.value <= 31 || $0.value == 127 }),
@@ -64,6 +109,8 @@ enum NativeVoicePolicy {
         if engine == "pocket", key != "pocket:eve",
            key.range(of: "^pocket:(?:[a-z0-9_-]+|imported:[a-f0-9]{64})$", options: .regularExpression) != nil { return (engine, key) }
         if engine == "eleven", key.range(of: "^eleven:[A-Za-z0-9]{10,36}$", options: .regularExpression) != nil { return (engine, key) }
+        // Byte-for-byte the relay's valid_chatterbox_voice_key (web isValidChatterboxKey).
+        if engine == "chatterbox", key.range(of: "^chatterbox:[a-z0-9][a-z0-9_-]{0,47}$", options: .regularExpression) != nil { return (engine, key) }
         return nil
     }
 }

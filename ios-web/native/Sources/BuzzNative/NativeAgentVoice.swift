@@ -26,6 +26,8 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
     private var agents = Set<String>()
     private var relayPubkey: String?
     private var voices: [String: (Int, String, String)] = [:]
+    /// Owner kind-30183 assignments keyed by agent: (created_at, owner, engine, voice).
+    private var assignments: [String: (Int, String, String, String)] = [:]
     private var pendingMessages: [[String: Any]] = []
     private var pendingPublications: [String: [String: Any]] = [:]
     private var seen = Set<String>()
@@ -99,7 +101,7 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
     func setCaptureAllowed(_ value: Bool) { captureAllowed = value; if !value { pcm.removeAll() } }
     func setOutputMuted(_ value: Bool) { outputMuted = value; player?.volume = value ? 0 : 1 }
     func setVoiceOverride(_ value: [String: Any]) {
-        if let engine = value["engine"] as? String, ["pocket", "eleven"].contains(engine), let key = value["key"] as? String, key.hasPrefix(engine + ":") { overrideVoice = (engine, String(key.dropFirst(engine.count + 1))) }
+        if let engine = value["engine"] as? String, ["pocket", "chatterbox", "eleven"].contains(engine), let key = value["key"] as? String, key.hasPrefix(engine + ":") { overrideVoice = (engine, String(key.dropFirst(engine.count + 1))) }
         else { overrideVoice = nil }
     }
     func interruptSpeech() {
@@ -209,13 +211,32 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
             membersDate = created
             agents = Set(tags.filter { $0.count > 3 && $0[0] == "p" && $0[3] == "bot" }.map { $0[1] })
             membersReady = true; relayReady = true; retry = 0
-            if !agents.isEmpty { sendJSON(["REQ", "native-selections", ["kinds": [30182], "authors": Array(agents), "#d": ["agent-voice"]]], socket: socket) }
+            if !agents.isEmpty {
+                sendJSON(["REQ", "native-selections", ["kinds": [30182], "authors": Array(agents), "#d": ["agent-voice"]]], socket: socket)
+                sendJSON(["REQ", "native-assignments", ["kinds": [30183], "#d": Array(agents)]], socket: socket)
+            }
             let buffered = pendingMessages; pendingMessages.removeAll()
             buffered.forEach { process($0, socket) }
         } else if kind == 30182, agents.contains(author),
                   let selection = NativeVoicePolicy.voiceSelection(content: content, tags: tags),
                   let date = event["created_at"] as? Int, date >= (voices[author]?.0 ?? 0) {
             voices[author] = (date, selection.engine, String(selection.key.dropFirst(selection.engine.count + 1)))
+        } else if kind == 30183, let row = NativeVoicePolicy.voiceAssignment(content: content, tags: tags),
+                  agents.contains(row.agent), let date = event["created_at"] as? Int,
+                  date >= (assignments[row.agent]?.0 ?? 0) {
+            let voice = NativeVoicePolicy.split((row.engine, row.key))
+            assignments[row.agent] = (date, author, voice.engine, voice.voice)
+            // A clear is a kind-5 `a` = 30183:<owner>:<agent>; follow the
+            // coordinates we hold so a mid-huddle reset lands live.
+            let coordinates = assignments.map { "30183:\($0.value.1):\($0.key)" }
+            sendJSON(["REQ", "native-assignment-clears", ["kinds": [5], "#a": coordinates]], socket: socket)
+        } else if kind == 5, let date = event["created_at"] as? Int {
+            for tag in tags where tag.count > 1 && tag[0] == "a" {
+                let parts = tag[1].split(separator: ":").map(String.init)
+                guard parts.count == 3, parts[0] == "30183", parts[1] == author,
+                      let row = assignments[parts[2]], row.1 == author, date >= row.0 else { continue }
+                assignments.removeValue(forKey: parts[2])
+            }
         } else if [9, 40002].contains(kind), tags.contains(where: { $0.count > 1 && $0[0] == "h" && $0[1] == channel }) {
             if !membersReady { if pendingMessages.count < 32 { pendingMessages.append(event) }; return }
             guard speech, agents.contains(author), !audioPeers().contains(author), let id = event["id"] as? String,
@@ -302,13 +323,10 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
         guard alive, speech, !speaking, !speechQueue.isEmpty else { return }
         let (author, text) = speechQueue.removeFirst()
         if audioPeers().contains(author) { playNext(); return }
-        let presets = ["anna", "vera", "fantine", "charles", "paul", "eponine", "azelma", "george", "mary", "jane", "michael"]
-        var hash: Int32 = 5381
-        for byte in author.utf8 { hash = hash &* 33 &+ Int32(byte) }
-        let defaultVoice = presets[Int(abs(Int64(hash))) % presets.count]
-        let selection = voices[author]
-        let voiceName = overrideVoice?.1 ?? (selection?.2.hasPrefix("imported:") == false ? selection!.2 : defaultVoice)
-        let engineName = overrideVoice?.0 ?? (selection?.2.hasPrefix("imported:") == false ? selection!.1 : "pocket")
+        let (engineName, voiceName) = NativeVoicePolicy.bridgeVoice(
+            pubkey: author, override: overrideVoice,
+            assignment: assignments[author].map { ($0.2, $0.3) },
+            selection: voices[author].map { ($0.1, $0.2) })
         var request = URLRequest(url: ttsURL); request.httpMethod = "POST"; request.timeoutInterval = Double(text.utf16.count) * 0.09 + 5
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["engine": engineName, "voice": voiceName, "text": text])

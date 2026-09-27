@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
@@ -347,5 +348,29 @@ test("an interrupt stops sources that are already scheduled, and routes at the g
   assert.ok(
     sources.every((source) => source.stopped),
     "every scheduled piece is stopped by the interrupt",
+  );
+});
+
+// Cross-client fixture: iOS NativeVoicePolicyTests reads the SAME file, so
+// web and native derive the same voice for the same pubkey.
+test("derived voices match the shared web/iOS fixture", () => {
+  const fixture = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../../../../test-fixtures/voice/derived-agent-voices.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(fixture.slugs, [...DERIVED_VOICE_SLUGS]);
+  assert.ok(fixture.cases.length >= 20, "fixture has cases");
+  for (const { pubkey, engine, voice } of fixture.cases) {
+    assert.deepEqual(derivedBridgeVoice(pubkey), { engine, voice }, pubkey);
+  }
+  assert.equal(
+    new Set(fixture.cases.map((c) => c.voice)).size,
+    11,
+    "fixture exercises every slot",
   );
 });
