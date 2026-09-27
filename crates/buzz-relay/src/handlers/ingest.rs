@@ -13,20 +13,21 @@ use buzz_auth::Scope;
 use buzz_core::kind::{
     event_kind_u32, is_identity_archive_request_kind, is_parameterized_replaceable,
     is_relay_admin_kind, KIND_AGENT_ENGRAM, KIND_AGENT_PROFILE, KIND_AGENT_TURN_METRIC,
-    KIND_AGENT_VOICE, KIND_AGENT_VOICE_D_TAG, KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_AUTH,
-    KIND_BOOKMARK_LIST, KIND_BOOKMARK_SET, KIND_CANVAS, KIND_CONTACT_LIST, KIND_DELETION,
-    KIND_DESKTOP_CATALOG, KIND_DM_ADD_MEMBER, KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST,
-    KIND_EMOJI_SET, KIND_EVENT_REMINDER, KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST,
-    KIND_FORUM_VOTE, KIND_GIFT_WRAP, KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE,
-    KIND_GIT_PULL_REQUEST, KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_REPO_STATE, KIND_GIT_STATUS_CLOSED,
-    KIND_GIT_STATUS_DRAFT, KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_HUDDLE_ENDED,
-    KIND_HUDDLE_GUIDELINES, KIND_HUDDLE_PARTICIPANT_JOINED, KIND_HUDDLE_PARTICIPANT_LEFT,
-    KIND_HUDDLE_STARTED, KIND_IA_ARCHIVE_REQUEST, KIND_IA_UNARCHIVE_REQUEST, KIND_LONG_FORM,
-    KIND_MANAGED_AGENT, KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION,
-    KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT, KIND_MODERATION_TIMEOUT,
-    KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT, KIND_MUTE_LIST, KIND_NIP29_CREATE_GROUP,
-    KIND_NIP29_DELETE_EVENT, KIND_NIP29_DELETE_GROUP, KIND_NIP29_EDIT_METADATA,
-    KIND_NIP29_JOIN_REQUEST, KIND_NIP29_LEAVE_REQUEST, KIND_NIP29_PUT_USER, KIND_NIP29_REMOVE_USER,
+    KIND_AGENT_VOICE, KIND_AGENT_VOICE_ASSIGNMENT, KIND_AGENT_VOICE_D_TAG, KIND_APPROVAL_DENY,
+    KIND_APPROVAL_GRANT, KIND_AUTH, KIND_BOOKMARK_LIST, KIND_BOOKMARK_SET, KIND_CANVAS,
+    KIND_CONTACT_LIST, KIND_DELETION, KIND_DESKTOP_CATALOG, KIND_DM_ADD_MEMBER, KIND_DM_HIDE,
+    KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET, KIND_EVENT_REMINDER, KIND_FOLLOW_SET,
+    KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE, KIND_GIFT_WRAP, KIND_GIT_ISSUE,
+    KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST, KIND_GIT_REPO_ANNOUNCEMENT,
+    KIND_GIT_REPO_STATE, KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT, KIND_GIT_STATUS_MERGED,
+    KIND_GIT_STATUS_OPEN, KIND_HUDDLE_ENDED, KIND_HUDDLE_GUIDELINES,
+    KIND_HUDDLE_PARTICIPANT_JOINED, KIND_HUDDLE_PARTICIPANT_LEFT, KIND_HUDDLE_STARTED,
+    KIND_IA_ARCHIVE_REQUEST, KIND_IA_UNARCHIVE_REQUEST, KIND_LONG_FORM, KIND_MANAGED_AGENT,
+    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_MODERATION_BAN,
+    KIND_MODERATION_RESOLVE_REPORT, KIND_MODERATION_TIMEOUT, KIND_MODERATION_UNBAN,
+    KIND_MODERATION_UNTIMEOUT, KIND_MUTE_LIST, KIND_NIP29_CREATE_GROUP, KIND_NIP29_DELETE_EVENT,
+    KIND_NIP29_DELETE_GROUP, KIND_NIP29_EDIT_METADATA, KIND_NIP29_JOIN_REQUEST,
+    KIND_NIP29_LEAVE_REQUEST, KIND_NIP29_PUT_USER, KIND_NIP29_REMOVE_USER,
     KIND_NIP43_LEAVE_REQUEST, KIND_NIP65_RELAY_LIST_METADATA, KIND_PERSONA, KIND_PIN_LIST,
     KIND_PRESENCE_UPDATE, KIND_PRIVATE_MANAGED_AGENT, KIND_PRODUCT_FEEDBACK, KIND_PROFILE,
     KIND_PROJECT, KIND_REACTION, KIND_READ_STATE, KIND_REPORT, KIND_STREAM_MESSAGE,
@@ -441,7 +442,8 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         KIND_CONTACT_LIST | KIND_READ_STATE | KIND_USER_STATUS | KIND_AGENT_ENGRAM
         | KIND_EVENT_REMINDER | KIND_PERSONA | KIND_TEAM | KIND_MANAGED_AGENT
         | KIND_DESKTOP_CATALOG | KIND_PRIVATE_MANAGED_AGENT | KIND_TEAM_CATALOG
-        | KIND_VOICE_CATALOG | KIND_AGENT_VOICE | super::push_lease::KIND_PUSH_LEASE => { Ok(Scope::UsersWrite) }
+        | KIND_VOICE_CATALOG | KIND_AGENT_VOICE | KIND_AGENT_VOICE_ASSIGNMENT
+        | super::push_lease::KIND_PUSH_LEASE => { Ok(Scope::UsersWrite) }
         // NIP-AM: agent turn metrics are agent-authored global events (encrypted to owner).
         KIND_AGENT_TURN_METRIC => Ok(Scope::MessagesWrite),
         // NIP-56 reports are ordinary member writes into the mod-only queue.
@@ -670,6 +672,10 @@ pub(crate) fn is_global_only_kind(kind: u32) -> bool {
             // agent's chosen huddle voice, so a stray `h` tag must not
             // channel-scope it either.
             | KIND_AGENT_VOICE
+            // Buzz owner agent-voice assignment (30183): one row per
+            // (owner, agent = `d`). Every listener reads it, so it is
+            // community-global like 30182.
+            | KIND_AGENT_VOICE_ASSIGNMENT
             // NIP-34: git events use `a` tags (repo reference), not `h` tags (channel scope).
             // Parameterized replaceable kinds are keyed by (pubkey, kind, d_tag).
             | KIND_GIT_REPO_ANNOUNCEMENT
@@ -1629,6 +1635,25 @@ const AGENT_VOICE_KEY_MAX: usize = 96;
 /// identifier (observed 20 chars); 48 bounds it with headroom.
 const AGENT_VOICE_ELEVEN_KEY_MAX: usize = 48;
 
+/// The chatterbox key grammar: `chatterbox:` + a slug matching
+/// `^[a-z0-9][a-z0-9_-]{0,47}$` — the Chatterbox service's own voice-id
+/// grammar (it validates the slug before any file access). The relay checks
+/// grammar only, never roster membership: the roster changes at runtime.
+fn valid_chatterbox_voice_key(key: &str) -> bool {
+    let Some(slug) = key.strip_prefix("chatterbox:") else {
+        return false;
+    };
+    let bytes = slug.as_bytes();
+    let Some((first, rest)) = bytes.split_first() else {
+        return false;
+    };
+    (first.is_ascii_lowercase() || first.is_ascii_digit())
+        && rest.len() <= 47
+        && rest
+            .iter()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_' || *b == b'-')
+}
+
 /// The eleven key grammar: `eleven:<alphanumeric id>`, 10-36 id chars.
 fn valid_eleven_voice_key(key: &str) -> bool {
     let Some(id) = key.strip_prefix("eleven:") else {
@@ -1646,7 +1671,7 @@ fn valid_eleven_voice_key(key: &str) -> bool {
 /// row, so the selection grammar is enforced HERE, once, for every reader:
 ///
 /// - `version` is exactly 1 (the store never mixes body formats),
-/// - `engine` is `local-synth`, `pocket`, or `eleven`,
+/// - `engine` is `local-synth`, `pocket`, `eleven`, or `chatterbox`,
 /// - `local-synth` requires a non-empty, bounded, control-free `voiceURI`,
 /// - `pocket` requires a `key` in the catalog's own key grammar
 ///   (`pocket:<slug>`, or the full `pocket:imported:<64 lowercase hex>` form)
@@ -1656,6 +1681,8 @@ fn valid_eleven_voice_key(key: &str) -> bool {
 ///   more than it is publishable,
 /// - `eleven` requires a key in the tts-bridge's ElevenLabs grammar
 ///   (`eleven:<alphanumeric voice id>`, synthesized server-side),
+/// - `chatterbox` requires a key `chatterbox:<slug>` in the Chatterbox
+///   service's slug grammar ([`valid_chatterbox_voice_key`]),
 /// - `label` is a non-empty, bounded, control-free human string.
 ///
 /// Unknown additional fields are allowed: a v1 body may grow optional fields
@@ -1726,9 +1753,21 @@ fn validate_agent_voice_payload(content: &str) -> Result<(), String> {
                 ));
             }
         }
+        "chatterbox" => {
+            let key = object
+                .get("key")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| format!("{LABEL} engine `chatterbox` requires a string `key`"))?;
+            if !valid_chatterbox_voice_key(key) {
+                return Err(format!(
+                    "{LABEL} `key` must be a Chatterbox voice key (`chatterbox:<slug>`)"
+                ));
+            }
+        }
         other => {
             return Err(format!(
-                "{LABEL} `engine` must be `local-synth`, `pocket`, or `eleven` (got `{other}`)"
+                "{LABEL} `engine` must be `local-synth`, `pocket`, `eleven`, or `chatterbox` \
+                 (got `{other}`)"
             ));
         }
     }
@@ -1823,6 +1862,43 @@ fn validate_agent_voice_envelope(event: &Event) -> Result<(), String> {
         ));
     }
     validate_agent_voice_payload(&event.content)
+}
+
+/// Validate the envelope of a kind:30183 owner agent-voice assignment and
+/// return the agent pubkey bytes named by its `d` tag.
+///
+/// Exactly one `d` tag, equal to the agent's pubkey as 64 lowercase hex (one
+/// row per (owner, agent)), plus the same payload grammar as kind:30182
+/// ([`validate_agent_voice_payload`]). Ownership — that the author is the
+/// agent's registered owner — is an async DB check done by the caller.
+fn validate_agent_voice_assignment_envelope(event: &Event) -> Result<Vec<u8>, String> {
+    const LABEL: &str = "agent-voice assignment";
+    let d_values: Vec<Option<&str>> = event
+        .tags
+        .iter()
+        .filter_map(|tag| {
+            let parts = tag.as_slice();
+            (parts.first().map(|name| name.as_str()) == Some("d"))
+                .then(|| parts.get(1).map(|value| value.as_str()))
+        })
+        .collect();
+    if d_values.len() != 1 {
+        return Err(format!(
+            "{LABEL} must have exactly one `d` tag (got {})",
+            d_values.len()
+        ));
+    }
+    let d = d_values[0].unwrap_or_default();
+    let is_lower_hex64 = d.len() == 64
+        && d.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    if !is_lower_hex64 {
+        return Err(format!(
+            "{LABEL} `d` tag must be the agent pubkey as 64 lowercase hex"
+        ));
+    }
+    validate_agent_voice_payload(&event.content)?;
+    hex::decode(d).map_err(|e| format!("{LABEL} `d` tag is not hex: {e}"))
 }
 
 /// Maximum number of member `a` tags on a kind:30621 project.
@@ -3094,6 +3170,30 @@ async fn ingest_event_inner(
     if kind_u32 == KIND_AGENT_VOICE {
         validate_agent_voice_envelope(&event)
             .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+    }
+
+    if kind_u32 == KIND_AGENT_VOICE_ASSIGNMENT {
+        let agent_bytes = validate_agent_voice_assignment_envelope(&event)
+            .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+        // Ownership: the author must be the registered owner of the agent in
+        // `d` — same shape as the kind:44200 check above.
+        let owner_bytes = event.pubkey.to_bytes().to_vec();
+        let is_owner = state
+            .db
+            .is_agent_owner(tenant.community(), &agent_bytes, &owner_bytes)
+            .await
+            .map_err(|e| {
+                IngestError::Internal(format!(
+                    "error: db error checking agent-voice assignment ownership: {e}"
+                ))
+            })?;
+        if !is_owner {
+            return Err(IngestError::AuthFailed(
+                "restricted: agent-voice assignment author must be the registered owner of \
+                 the agent in `d`"
+                    .into(),
+            ));
+        }
     }
 
     if kind_u32 == KIND_PROJECT {
@@ -5422,6 +5522,159 @@ mod tests {
         .to_string()
     }
 
+    fn chatterbox_content(key: &str) -> String {
+        serde_json::json!({
+            "version": 1,
+            "engine": "chatterbox",
+            "key": key,
+            "label": "Evie",
+        })
+        .to_string()
+    }
+
+    /// AC-R1: the chatterbox engine accepts `chatterbox:<slug>` and rejects
+    /// uppercase, empty, overlong (49-char), and path-shaped slugs.
+    #[test]
+    fn agent_voice_chatterbox_key_grammar_matrix() {
+        for good in [
+            "chatterbox:evie",
+            "chatterbox:a",
+            "chatterbox:0x",
+            "chatterbox:iris_2-b",
+        ] {
+            let ev = make_agent_voice_content(&chatterbox_content(good), KIND_AGENT_VOICE_D_TAG);
+            assert!(
+                validate_agent_voice_envelope(&ev).is_ok(),
+                "`{good}` must be accepted"
+            );
+        }
+        // A 48-char slug is the upper bound.
+        let at_bound = format!("chatterbox:{}", "a".repeat(48));
+        let ev = make_agent_voice_content(&chatterbox_content(&at_bound), KIND_AGENT_VOICE_D_TAG);
+        assert!(validate_agent_voice_envelope(&ev).is_ok(), "48-char slug");
+
+        let overlong = format!("chatterbox:{}", "a".repeat(49));
+        for bad in [
+            "chatterbox:Evie",
+            "chatterbox:",
+            overlong.as_str(),
+            "chatterbox:a/b",
+            "chatterbox:../x",
+            "chatterbox:-lead",
+            "chatterbox:_lead",
+            "chatterbox:ev ie",
+            "pocket:evie",
+            "evie",
+        ] {
+            let ev = make_agent_voice_content(&chatterbox_content(bad), KIND_AGENT_VOICE_D_TAG);
+            let err =
+                validate_agent_voice_envelope(&ev).expect_err(&format!("`{bad}` must be rejected"));
+            assert!(err.contains("Chatterbox voice key"), "`{bad}` got: {err}");
+        }
+
+        // Missing key.
+        let no_key =
+            serde_json::json!({"version": 1, "engine": "chatterbox", "label": "x"}).to_string();
+        let ev = make_agent_voice_content(&no_key, KIND_AGENT_VOICE_D_TAG);
+        let err = validate_agent_voice_envelope(&ev).unwrap_err();
+        assert!(err.contains("requires a string `key`"), "got: {err}");
+    }
+
+    /// Backward compatibility: the pre-existing engines still validate
+    /// unchanged alongside the new arm.
+    #[test]
+    fn agent_voice_legacy_engines_still_accepted_with_chatterbox() {
+        for content in [
+            pocket_content("pocket:anna"),
+            eleven_content("eleven:21m00Tcm4TlvDq8ikWAM"),
+            local_synth_content("com.apple.speech.synthesis.voice.Samantha"),
+        ] {
+            let ev = make_agent_voice_content(&content, KIND_AGENT_VOICE_D_TAG);
+            assert!(validate_agent_voice_envelope(&ev).is_ok(), "{content}");
+        }
+    }
+
+    // ─── agent-voice assignment (30183) envelope + scope tests ────────────────
+
+    const AGENT_HEX: &str = "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d";
+
+    fn make_assignment(content: &str, tags: &[&[&str]]) -> Event {
+        make_event_with_tags(KIND_AGENT_VOICE_ASSIGNMENT, content, tags)
+    }
+
+    #[test]
+    fn agent_voice_assignment_requires_users_write_and_is_global_only() {
+        let dummy = make_dummy_event();
+        assert_eq!(
+            required_scope_for_kind(KIND_AGENT_VOICE_ASSIGNMENT, &dummy).unwrap(),
+            Scope::UsersWrite
+        );
+        assert!(is_global_only_kind(KIND_AGENT_VOICE_ASSIGNMENT));
+        assert!(!requires_h_channel_scope(KIND_AGENT_VOICE_ASSIGNMENT));
+    }
+
+    #[test]
+    fn agent_voice_assignment_accepts_agent_hex_d_and_returns_agent_bytes() {
+        let ev = make_assignment(&chatterbox_content("chatterbox:evie"), &[&["d", AGENT_HEX]]);
+        let bytes = validate_agent_voice_assignment_envelope(&ev).expect("valid");
+        assert_eq!(hex::encode(bytes), AGENT_HEX);
+        // Every engine the selection grammar accepts works here too.
+        let ev = make_assignment(&pocket_content("pocket:anna"), &[&["d", AGENT_HEX]]);
+        assert!(validate_agent_voice_assignment_envelope(&ev).is_ok());
+    }
+
+    /// AC-R3: `d` must be exactly 64 lowercase hex, exactly once.
+    #[test]
+    fn agent_voice_assignment_rejects_bad_d() {
+        let content = chatterbox_content("chatterbox:evie");
+        let upper = AGENT_HEX.to_uppercase();
+        let short = &AGENT_HEX[..63];
+        let long = format!("{AGENT_HEX}0");
+        let nonhex = format!("{}g", &AGENT_HEX[..63]);
+        for bad in [
+            upper.as_str(),
+            short,
+            long.as_str(),
+            nonhex.as_str(),
+            "",
+            KIND_AGENT_VOICE_D_TAG,
+        ] {
+            let ev = make_assignment(&content, &[&["d", bad]]);
+            let err = validate_agent_voice_assignment_envelope(&ev)
+                .expect_err(&format!("d=`{bad}` must be rejected"));
+            assert!(err.contains("64 lowercase hex"), "d=`{bad}` got: {err}");
+        }
+        let ev = make_assignment(&content, &[]);
+        let err = validate_agent_voice_assignment_envelope(&ev).unwrap_err();
+        assert!(err.contains("exactly one `d` tag"), "got: {err}");
+        let ev = make_assignment(&content, &[&["d", AGENT_HEX], &["d", AGENT_HEX]]);
+        let err = validate_agent_voice_assignment_envelope(&ev).unwrap_err();
+        assert!(err.contains("exactly one `d` tag"), "got: {err}");
+    }
+
+    /// AC-R3: the payload uses the 30182 grammar.
+    #[test]
+    fn agent_voice_assignment_rejects_invalid_payload() {
+        for bad in [
+            chatterbox_content("chatterbox:Evie"),
+            pocket_content("pocket:eve"),
+            "not json".to_string(),
+            serde_json::json!({
+                "version": 2,
+                "engine": "chatterbox",
+                "key": "chatterbox:evie",
+                "label": "x",
+            })
+            .to_string(),
+        ] {
+            let ev = make_assignment(&bad, &[&["d", AGENT_HEX]]);
+            assert!(
+                validate_agent_voice_assignment_envelope(&ev).is_err(),
+                "payload must be rejected: {bad}"
+            );
+        }
+    }
+
     fn make_agent_voice_content(content: &str, d_tag: &str) -> Event {
         make_event_with_tags(KIND_AGENT_VOICE, content, &[&["d", d_tag]])
     }
@@ -5506,7 +5759,7 @@ mod tests {
         let ev = make_agent_voice_content(&content, KIND_AGENT_VOICE_D_TAG);
         let err = validate_agent_voice_envelope(&ev).unwrap_err();
         assert!(
-            err.contains("`local-synth`, `pocket`, or `eleven`"),
+            err.contains("`local-synth`, `pocket`, `eleven`, or `chatterbox`"),
             "got: {err}"
         );
     }
