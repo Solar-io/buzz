@@ -288,6 +288,39 @@ test("interrupt aborts the prefetched request as well as the current one", async
   player.dispose();
 });
 
+test("a failure mid-chunk aborts the prefetched request", async () => {
+  const ctx = manualContext();
+  const inits = [];
+  const player = createAgentSpeechPlayer({
+    getVoices: () => [],
+    voiceSelectionFor: () => undefined,
+    ttsUrl: () => "https://web.test:6366/tts",
+    createAudioContext: () => ctx,
+    fetchImpl: (_url, init) => {
+      inits.push(init);
+      if (inits.length === 1) {
+        // Headers arrive (200) — so chunk 2 gets prefetched — then the
+        // body stream dies while chunk 1 is being read.
+        const body = new ReadableStream({
+          pull(controller) {
+            controller.error(new Error("bridge stream died"));
+          },
+        });
+        return Promise.resolve(new Response(body, { status: 200 }));
+      }
+      return Promise.resolve(pcmResponse(1));
+    },
+  });
+  const result = await player.speak(THREE_CHUNKS, AGENT);
+  assert.equal(result, "fallback", "the failure dropped to local speech");
+  assert.equal(inits.length, 2, "chunk 2 had been prefetched before failing");
+  assert.ok(
+    inits[1].signal?.aborted,
+    "the failure path must abort the prefetched request",
+  );
+  player.dispose();
+});
+
 test("the owner's 30183 assignment outranks the agent's own 30182 at speak time", async () => {
   const ctx = manualContext();
   const bodies = [];
