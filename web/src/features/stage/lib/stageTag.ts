@@ -318,7 +318,12 @@ function canonicalObject(tag: StageTag): Record<string, unknown> {
         ),
       };
     case "part": {
-      const out: Record<string, unknown> = { v: 1, op: "part", s: tag.s, i: tag.i };
+      const out: Record<string, unknown> = {
+        v: 1,
+        op: "part",
+        s: tag.s,
+        i: tag.i,
+      };
       if (!tag.hold) out.hold = false;
       if (tag.seq !== undefined) out.seq = tag.seq;
       return out;

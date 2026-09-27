@@ -607,10 +607,14 @@ async fn post_showing<B: StageBackend>(
         .ok_or_else(|| usage(format!("frame {i} is not in the palette")))?;
     // Claim the seq and persist the claim BEFORE publishing: a crash between
     // send and save can then only skip a number, never reuse one.
-    let seq = state
-        .next_seq
-        .max(state.showings.len() as u64)
-        .max(state.showings.iter().filter_map(|s| s.seq).max().map_or(0, |m| m + 1));
+    let seq = state.next_seq.max(state.showings.len() as u64).max(
+        state
+            .showings
+            .iter()
+            .filter_map(|s| s.seq)
+            .max()
+            .map_or(0, |m| m + 1),
+    );
     let tag = build_stage_tag(&StageTag::Part {
         s: state.session.clone(),
         i,
