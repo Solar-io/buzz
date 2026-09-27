@@ -14,6 +14,8 @@ import {
   dropCachedReaction,
   mergeCachedReaction,
   olderPageFilter,
+  applyEventToEntry,
+  persistableEntry,
 } from "./timelineCache.ts";
 import { EDIT_KIND } from "./messageBuffer.ts";
 import { parseCardTags } from "./decisionCard.ts";
@@ -24,6 +26,7 @@ function entry(overrides = {}) {
     reactions: new Map(),
     cursor: 0,
     historyExhausted: false,
+    deletedIds: [],
     ...overrides,
   };
 }
@@ -268,6 +271,7 @@ test("healCachedEntry leaves a complete entry byte-for-byte alone", () => {
     reactions: new Map(),
     cursor: 10,
     historyExhausted: false,
+    deletedIds: [],
   };
   const healed = healCachedEntry(entry);
   // Identity, not deep equality: repairing an intact entry would hand the
@@ -405,4 +409,138 @@ test("evictTimelineCache marks exactly the deleted channel for this session", ()
     false,
     "eviction must not leak to other channels",
   );
+});
+
+// --- applyEventToEntry (background-sync plan §4.2, tests T5 / T7) ---------
+
+function ev(id, createdAt, overrides = {}) {
+  return {
+    id,
+    kind: 9,
+    pubkey: "bb",
+    created_at: createdAt,
+    content: `c-${id}`,
+    tags: [["h", "chan"]],
+    sig: "ff",
+    ...overrides,
+  };
+}
+
+function withDeleted(overrides = {}) {
+  return entry({ deletedIds: [], ...overrides });
+}
+
+test("T5 warm: a newer message inserts WITHOUT advancing the cursor", () => {
+  const start = withDeleted({ cursor: 1000, messages: [msg("old", 1000)] });
+  const next = applyEventToEntry(start, ev("new", 1500), "chan", {
+    mode: "warm",
+  });
+  assert.deepEqual(
+    next.messages.map((m) => m.id),
+    ["old", "new"],
+  );
+  assert.equal(next.cursor, 1000);
+});
+
+test("T5 warm: a message older than the cursor leaves the entry untouched (same ref)", () => {
+  const start = withDeleted({ cursor: 1000, messages: [msg("old", 1000)] });
+  const next = applyEventToEntry(start, ev("stale", 900), "chan", {
+    mode: "warm",
+  });
+  assert.equal(next, start);
+});
+
+test("T5 sync mode still advances the cursor (the delta path)", () => {
+  const start = withDeleted({ cursor: 1000 });
+  const next = applyEventToEntry(start, ev("new", 1500), "chan", {
+    mode: "sync",
+  });
+  assert.equal(next.cursor, 1500);
+});
+
+test("T5 delete then re-deliver the original: not re-inserted, in either mode", () => {
+  let e = withDeleted({ cursor: 1000 });
+  e = applyEventToEntry(e, ev("x", 1200), "chan", { mode: "sync" });
+  e = applyEventToEntry(
+    e,
+    ev("del", 1300, { kind: 5, content: "", tags: [["h", "chan"], ["e", "x"]] }),
+    "chan",
+    { mode: "sync" },
+  );
+  assert.equal(e.messages.find((m) => m.id === "x")?.deleted, true);
+  assert.deepEqual(e.deletedIds, ["x"]);
+  // The on-disk form drops the row outright.
+  assert.deepEqual(persistableEntry(e).messages, []);
+  const disk = persistableEntry(e);
+  for (const mode of ["warm", "sync"]) {
+    const again = applyEventToEntry(disk, ev("x", 1200), "chan", { mode });
+    assert.equal(again, disk, `${mode}: deleted id must not resurrect`);
+  }
+});
+
+test("T5 a delete that lands BEFORE its target still blocks the target", () => {
+  let e = withDeleted();
+  e = applyEventToEntry(
+    e,
+    ev("del", 10, { kind: 5, content: "", tags: [["h", "chan"], ["e", "y"]] }),
+    "chan",
+    { mode: "warm" },
+  );
+  const after = applyEventToEntry(e, ev("y", 20), "chan", { mode: "warm" });
+  assert.equal(after, e);
+});
+
+test("T5 warm: other channels' events and repeats are no-ops (same ref)", () => {
+  const start = withDeleted({ messages: [msg("a", 5)] });
+  assert.equal(
+    applyEventToEntry(start, ev("o", 9, { tags: [["h", "other"]] }), "chan", {
+      mode: "warm",
+    }),
+    start,
+  );
+  const withA = applyEventToEntry(start, ev("a", 5), "chan", { mode: "warm" });
+  assert.equal(withA, start);
+});
+
+test("deletedIds is bounded at 200, newest kept", () => {
+  let e = withDeleted();
+  for (let i = 0; i < 205; i++) {
+    e = applyEventToEntry(
+      e,
+      ev(`d${i}`, i, { kind: 5, content: "", tags: [["h", "chan"], ["e", `t${i}`]] }),
+      "chan",
+      { mode: "sync" },
+    );
+  }
+  assert.equal(e.deletedIds.length, 200);
+  assert.equal(e.deletedIds[0], "t5");
+  assert.equal(e.deletedIds[199], "t204");
+});
+
+test("T7 heal: an entry without deletedIds heals to []", () => {
+  const legacy = entry({ messages: [msg("a", 1)] });
+  delete legacy.deletedIds;
+  const healed = healCachedEntry(legacy);
+  assert.deepEqual(healed.deletedIds, []);
+  // …and the healed entry is usable by the reducer (no throw on .includes).
+  const next = applyEventToEntry(healed, ev("b", 2), "chan", { mode: "sync" });
+  assert.deepEqual(
+    next.messages.map((m) => m.id),
+    ["a", "b"],
+  );
+});
+
+test("T7 heal: undefined members in deletedIds are dropped, not thrown on", () => {
+  const odd = entry({ deletedIds: [undefined, "keep", 7] });
+  const healed = healCachedEntry(odd);
+  assert.deepEqual(healed.deletedIds, ["keep"]);
+  const blocked = applyEventToEntry(healed, ev("keep", 3), "chan", {
+    mode: "warm",
+  });
+  assert.equal(blocked, healed);
+});
+
+test("T7 heal: an intact entry keeps its identity", () => {
+  const intact = entry({ deletedIds: ["x"], messages: [] });
+  assert.equal(healCachedEntry(intact), intact);
 });

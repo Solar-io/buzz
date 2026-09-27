@@ -12,26 +12,13 @@ import {
   deleteChannelTags,
   renameChannelTags,
 } from "@/features/channels/lib/channelAdmin.ts";
+import { type MessageBuffer } from "./lib/messageBuffer.ts";
 import {
-  applyOverlay,
-  editTargetFromEvent,
-  timelineMessageFromEvent,
-  upsertMessage,
-  DELETE_KIND,
-  type MessageBuffer,
-} from "./lib/messageBuffer.ts";
-import {
-  systemEventFromContent,
-  tombstoneTargetId,
-  SYSTEM_MESSAGE_KIND,
-} from "./lib/systemEvent.ts";
-import {
-  applyOverlayToCache,
+  applyEventToEntry,
+  emptyTimelineEntry,
   initialSyncFilters,
   loadTimelineCache,
-  mergeCachedMessage,
   dropCachedReaction,
-  mergeCachedReaction,
   olderPageFilter,
   OLDER_PAGE,
   saveTimelineCache,
@@ -43,12 +30,7 @@ import {
   THREAD_SUMMARY_KIND,
   type RelayThreadSummaryMap,
 } from "./lib/threadSummaryEvent.ts";
-import {
-  reactionFromEvent,
-  removeReaction,
-  upsertReaction,
-  type ReactionIndex,
-} from "./lib/reactions.ts";
+import { removeReaction, type ReactionIndex } from "./lib/reactions.ts";
 import { recordTyping, typingFromEvent, type TypingMap } from "./lib/typing.ts";
 import { loadSeed, mergeSeed } from "@/shared/lib/localSeed.ts";
 import {
@@ -128,52 +110,15 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
   }, [flushCache]);
 
   /**
-   * One relay event → buffer state + cache write-through. Shared by the live
-   * sync subscription and scroll-up pagination pages so both paths apply
-   * overlays, reactions and messages identically.
+   * One relay event → timeline state + cache write-through. Shared by the
+   * live sync subscription and scroll-up pagination pages. Messages,
+   * overlays and reactions go through the ONE reducer (`applyEventToEntry`),
+   * so the buffer on screen and the entry on disk can no longer disagree;
+   * typing and thread summaries are session-only view state kept here.
    */
   const applyEvent = useCallback(
     (event: SignedNostrEvent) => {
-      if (event.kind === 40003 || event.kind === 5) {
-        const targetId = editTargetFromEvent(event);
-        if (targetId) {
-          const content = event.kind === 40003 ? event.content : null;
-          setBuffer((previous) =>
-            applyOverlay(previous, event.kind, targetId, content),
-          );
-          if (cacheRef.current) {
-            cacheRef.current = applyOverlayToCache(
-              cacheRef.current,
-              event.kind,
-              targetId,
-              content,
-            );
-            scheduleFlush();
-          }
-        }
-        return;
-      }
-      if (event.kind === 7) {
-        const reaction = reactionFromEvent(event);
-        if (reaction) {
-          setReactions((previous) =>
-            upsertReaction(previous, reaction, event.pubkey),
-          );
-          if (cacheRef.current) {
-            cacheRef.current = mergeCachedReaction(
-              cacheRef.current,
-              reaction,
-              event.pubkey,
-            );
-            scheduleFlush();
-          }
-        }
-        return;
-      }
       if (event.kind === THREAD_SUMMARY_KIND) {
-        // Routed BEFORE the message path on purpose: a 39005 carries an `h`
-        // tag, so `timelineMessageFromEvent` would happily build a row out
-        // of it and spill `{"reply_count":…}` into the conversation.
         const summary = relayThreadSummaryFromEvent(event);
         if (
           summary &&
@@ -194,38 +139,20 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
         }
         return;
       }
-      const message = timelineMessageFromEvent(event);
-      if (!message || message.channelId !== channelId) {
+      const current = cacheRef.current;
+      if (!current || !channelId) {
         return;
       }
-      // A kind-40099 deletion tombstone reports a removal the relay has
-      // ALREADY soft-deleted server-side, so without this the tombstone
-      // would render directly above the message it says was removed. Hide
-      // the target through the same delete path kind 5 uses so the
-      // in-memory buffer and the on-disk cache agree.
-      if (message.kind === SYSTEM_MESSAGE_KIND) {
-        const removedId = tombstoneTargetId(
-          systemEventFromContent(message.content),
-        );
-        if (removedId) {
-          setBuffer((previous) =>
-            applyOverlay(previous, DELETE_KIND, removedId, null),
-          );
-          if (cacheRef.current) {
-            cacheRef.current = applyOverlayToCache(
-              cacheRef.current,
-              DELETE_KIND,
-              removedId,
-              null,
-            );
-          }
-        }
+      const next = applyEventToEntry(current, event, channelId, {
+        mode: "sync",
+      });
+      if (next === current) {
+        return;
       }
-      setBuffer((previous) => upsertMessage(previous, message));
-      if (cacheRef.current) {
-        cacheRef.current = mergeCachedMessage(cacheRef.current, message);
-        scheduleFlush();
-      }
+      cacheRef.current = next;
+      setBuffer(next.messages);
+      setReactions(next.reactions);
+      scheduleFlush();
     },
     [channelId, scheduleFlush],
   );
@@ -253,12 +180,7 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
       if (!alive) {
         return;
       }
-      cacheRef.current = cached ?? {
-        messages: [],
-        reactions: new Map(),
-        cursor: 0,
-        historyExhausted: false,
-      };
+      cacheRef.current = cached ?? emptyTimelineEntry();
       if (cached) {
         setBuffer(cached.messages);
         setReactions(cached.reactions);
