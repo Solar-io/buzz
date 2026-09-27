@@ -13,6 +13,7 @@ import {
   resetCountsForMarkerChanges,
   type ChannelActivity,
   type ChannelActivityMap,
+  type ChannelActivitySubscriptionHandlers,
   type ChannelUnreadCounts,
 } from "./lib/channelActivity.ts";
 
@@ -89,6 +90,8 @@ export function useChannelActivity(
   const handlersRef = useRef(new Set<(entry: ChannelActivityEvent) => void>());
   // Markers the previous effect run saw, for the marker-move zeroing diff.
   const prevMarkersRef = useRef<ReadState | null>(null);
+  // The live batch subscriptions' handlers, for the marker-move recount.
+  const batchHandlersRef = useRef<ChannelActivitySubscriptionHandlers[]>([]);
   // The feed identity (session + id set) the previous run saw: samples reset
   // only when THIS changes, not on marker-only re-runs.
   const prevFeedRef = useRef<{ session: unknown; idsKey: string } | null>(null);
@@ -127,12 +130,15 @@ export function useChannelActivity(
     return ids.map((id) => `${id}:${readMarkers[id] ?? 0}`).join(",");
   }, [idsKey, readMarkers]);
 
-  // Marker-move zeroing (counting mode): opening a channel must clear its
-  // badge NOW. Only channels whose marker advanced are zeroed. This is the
-  // whole reaction to a marker move — the windows are NOT re-opened (that
-  // re-REQ of every channel on every switch was ~1.1 MB per click, plan
-  // §2 scenario B); later arrivals at-or-below the new marker never count
-  // because the handlers read the current marker via readMarkersRef.
+  // Marker-move recount (counting mode): opening a channel must clear its
+  // badge NOW, without re-opening the windows (that re-REQ of every channel
+  // on every switch was ~1.1 MB per click, plan §2 scenario B). A channel
+  // whose marker advanced is zeroed, then recounted from the events its
+  // batch has already seen against the NEW marker — the marker can land
+  // mid-window (read state synced from another device while newer messages
+  // had arrived), and those newer messages are still unread. Later arrivals
+  // count against the current marker because the handlers read it through
+  // readMarkersRef.
   // biome-ignore lint/correctness/useExhaustiveDependencies: markersKey is the trigger; the body reads the ref, which is current by construction
   useEffect(() => {
     const markers = readMarkersRef.current;
@@ -141,12 +147,21 @@ export function useChannelActivity(
       return;
     }
     const previousMarkers = prevMarkersRef.current;
-    if (previousMarkers) {
-      setUnreadCounts((previous) =>
-        resetCountsForMarkerChanges(previous, previousMarkers, markers),
-      );
-    }
     prevMarkersRef.current = markers;
+    if (!previousMarkers) {
+      return;
+    }
+    setUnreadCounts((previous) =>
+      resetCountsForMarkerChanges(previous, previousMarkers, markers),
+    );
+    const advanced = Object.keys(markers).filter(
+      (id) => (previousMarkers[id] ?? 0) < (markers[id] ?? 0),
+    );
+    if (advanced.length > 0) {
+      for (const handlers of batchHandlersRef.current) {
+        handlers.recount(advanced);
+      }
+    }
   }, [markersKey]);
 
   // Re-subscribes only when the feed's identity (session, id set), its mode
@@ -174,23 +189,26 @@ export function useChannelActivity(
       }
     };
     const getMarkers = isCounting ? () => readMarkersRef.current ?? {} : null;
-    const unsubscribes = channelActivityFilterBatches(
+    const batches = channelActivityFilterBatches(
       ids,
       isCounting ? (readMarkersRef.current ?? {}) : undefined,
-    ).map((filters) =>
-      session.subscribe(
-        filters,
-        createChannelActivityHandlers({
-          activityRef,
-          onActivityChange: setActivity,
-          onLiveArrival: fireLive,
-          onUnreadCountsChange: setUnreadCounts,
-          readMarkers: getMarkers,
-          selfPubkey,
-        }),
-      ),
+    ).map((filters) => ({
+      filters,
+      handlers: createChannelActivityHandlers({
+        activityRef,
+        onActivityChange: setActivity,
+        onLiveArrival: fireLive,
+        onUnreadCountsChange: setUnreadCounts,
+        readMarkers: getMarkers,
+        selfPubkey,
+      }),
+    }));
+    batchHandlersRef.current = batches.map((batch) => batch.handlers);
+    const unsubscribes = batches.map(({ filters, handlers }) =>
+      session.subscribe(filters, handlers),
     );
     return () => {
+      batchHandlersRef.current = [];
       for (const unsubscribe of unsubscribes) {
         unsubscribe();
       }

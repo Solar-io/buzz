@@ -257,6 +257,15 @@ export interface ChannelActivityHandlerDeps {
 export interface ChannelActivitySubscriptionHandlers {
   onEvent: (event: SignedNostrEvent) => void;
   onEose: () => void;
+  /**
+   * Re-derive these channels' counts from every event this subscription has
+   * seen, against the CURRENT markers. Called after a marker moves forward:
+   * the marker can land mid-window (read state synced from another device
+   * while newer messages had already arrived), so forcing 0 would hide real
+   * unread messages until some later re-subscribe. Channels this batch has
+   * seen nothing for are left untouched.
+   */
+  recount: (channelIds: readonly string[]) => void;
 }
 
 /**
@@ -308,13 +317,68 @@ export function createChannelActivityHandlers(
     ? new Map()
     : null;
   let backfillClosed = false;
+  // Every distinct event seen per channel (by id, so replay rounds cannot
+  // double it), bounded to the newest UNREAD_COUNT_BUFFER_MAX. Only the
+  // marker-move recount reads it; counting otherwise follows the
+  // backfill/live rules above.
+  const seen: Map<string, Map<string, UnreadCountEvent>> | null = readMarkers
+    ? new Map()
+    : null;
+  const remember = (id: string, entry: ChannelActivity): void => {
+    if (!seen) {
+      return;
+    }
+    let events = seen.get(entry.channelId);
+    if (!events) {
+      events = new Map();
+      seen.set(entry.channelId, events);
+    }
+    events.set(id, { pubkey: entry.pubkey, createdAt: entry.createdAt });
+    if (events.size > UNREAD_COUNT_BUFFER_MAX) {
+      let oldestId: string | null = null;
+      let oldestAt = Number.POSITIVE_INFINITY;
+      for (const [eventId, sample] of events) {
+        if (sample.createdAt < oldestAt) {
+          oldestAt = sample.createdAt;
+          oldestId = eventId;
+        }
+      }
+      if (oldestId !== null) {
+        events.delete(oldestId);
+      }
+    }
+  };
 
   return {
+    recount(channelIds: readonly string[]): void {
+      if (!seen) {
+        return;
+      }
+      const targets = channelIds.filter((id) => seen.has(id));
+      if (targets.length === 0) {
+        return;
+      }
+      onUnreadCountsChange((previous) => {
+        const next = new Map(previous);
+        for (const channelId of targets) {
+          next.set(
+            channelId,
+            countUnreadFromEvents(
+              Array.from(seen.get(channelId)?.values() ?? []),
+              markerFor(channelId),
+              selfPubkey,
+            ),
+          );
+        }
+        return next;
+      });
+    },
     onEvent(event: SignedNostrEvent): void {
       const entry = channelActivityFromEvent(event);
       if (!entry) {
         return;
       }
+      remember(event.id, entry);
       // Buffer BEFORE the strictly-newer guard: the backfill derivation
       // counts the delivered window, and most of that window is at-or-below
       // the newest sample by definition. Stale/duplicate arrivals land here

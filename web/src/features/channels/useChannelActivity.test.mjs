@@ -143,3 +143,41 @@ test("T4 moving one channel's marker sends 0 new REQs, zeroes it, and later arri
   await act(async () => h.root.unmount());
   assert.equal(req.closed, true, "unmount closes the batch");
 });
+
+test("T4 a marker landing MID-window recounts from what was seen: 5 unread, marker passes 2 → 3", async () => {
+  requests.length = 0;
+  const h = await mount({ "ch-a": 100, "ch-b": 100, "ch-c": 100 });
+  assert.equal(requests.length, 1);
+  const [req] = requests;
+  // Two in the backfill, three live after EOSE — the recount must see both.
+  await act(async () => {
+    req.handlers.onEvent(kind9("ch-a", 101, "m1"));
+    req.handlers.onEvent(kind9("ch-a", 102, "m2"));
+    req.handlers.onEose();
+    req.handlers.onEvent(kind9("ch-a", 103, "m3"));
+    req.handlers.onEvent(kind9("ch-a", 104, "m4"));
+    req.handlers.onEvent(kind9("ch-a", 105, "m5"));
+  });
+  assert.equal(h.result.unreadCounts.get("ch-a"), 5);
+
+  // Read state synced from another device: read through 102 only.
+  await h.render({ "ch-a": 102, "ch-b": 100, "ch-c": 100 });
+  assert.equal(requests.length, 1, "still 0 new REQ frames");
+  assert.equal(h.result.unreadCounts.get("ch-a"), 3);
+
+  // A replay round re-delivering the same events must not inflate it.
+  await act(async () => {
+    for (const [id, at] of [
+      ["m1", 101],
+      ["m4", 104],
+      ["m5", 105],
+    ]) {
+      req.handlers.onEvent(kind9("ch-a", at, id));
+    }
+    req.handlers.onEose();
+  });
+  await h.render({ "ch-a": 103, "ch-b": 100, "ch-c": 100 });
+  assert.equal(h.result.unreadCounts.get("ch-a"), 2);
+
+  await act(async () => h.root.unmount());
+});
