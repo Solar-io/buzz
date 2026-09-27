@@ -988,7 +988,8 @@ test.describe("agent stage mode", () => {
     await expect(page.getByTestId("stage-view")).toBeVisible();
     // Let the Stage's history load settle first: a showing that lands while
     // it is still loading is seeded as "late" backlog and never spoken
-    // (reported as BUG-6; racy, so not pinned by its own test).
+    // (was BUG-6, fixed in stageFeed.ts; the wait stays so this test
+    // measures Esc, not the load race).
     await page.waitForTimeout(2_500);
     const id = await publishOne(agentKey, showing(deck, 0, `${title}: long.`));
     await shownAt(page, id);
@@ -1096,17 +1097,12 @@ test.describe("agent stage mode", () => {
       timeout: 5_000,
     });
   });
-  // ── Defects found by this spec (2026-09-26). Each asserts the CORRECT
-  //    behaviour and is marked `test.fail` while the bug stands, so the
-  //    suite stays green and flips loudly ("expected to fail") once fixed. ──
+  // ── Defects found by this spec (2026-09-26), now fixed. Each asserts the
+  //    CORRECT behaviour and was pinned `test.fail` until its fix landed. ──
 
   test("BUG-1 two showings posted in the same second both get staged, in post order", async ({
     page,
   }) => {
-    test.fail(
-      true,
-      "BUG-1: same-second showing with a smaller id is released silently and never staged",
-    );
     test.setTimeout(120_000);
     await page.setViewportSize(LANDSCAPE);
     await stubNetwork(page);
@@ -1152,10 +1148,6 @@ test.describe("agent stage mode", () => {
   test("BUG-2 portrait: a long unbreakable chat line does not push Exit off-screen", async ({
     page,
   }) => {
-    test.fail(
-      true,
-      "BUG-2: stacked grid has an auto column that grows to the widest chat row",
-    );
     test.setTimeout(120_000);
     await page.setViewportSize(PORTRAIT);
     await stubNetwork(page);
@@ -1201,10 +1193,6 @@ test.describe("agent stage mode", () => {
   test("BUG-3 a system event during a Stage renders as a system row, not raw JSON", async ({
     page,
   }) => {
-    test.fail(
-      true,
-      "BUG-3: Stage chat renders system events (member joined, channel created) as their JSON payload",
-    );
     test.setTimeout(120_000);
     await page.setViewportSize(LANDSCAPE);
     await stubNetwork(page);
@@ -1261,10 +1249,6 @@ test.describe("agent stage mode", () => {
   test("BUG-4 exiting a Stage opened from the CARD does not bring its banner back", async ({
     page,
   }) => {
-    test.fail(
-      true,
-      "BUG-4: card entry never dismisses the banner; it reappears on exit",
-    );
     test.setTimeout(120_000);
     await page.setViewportSize(LANDSCAPE);
     await stubNetwork(page);
