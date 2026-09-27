@@ -15,11 +15,15 @@
  *
  * RESOLUTION ORDER (the whole point of the module):
  *
- *   1. this channel's override (pocket / eleven only),
- *   2. the agent's published kind-30182 selection,
- *   3. nothing — the caller's derived Pocket default speaks.
+ *   1. this channel's override (pocket / chatterbox / eleven),
+ *   2. the owner's kind-30183 assignment for the agent,
+ *   3. the agent's own published kind-30182 selection,
+ *   4. nothing — the caller's derived Chatterbox default speaks.
  *
- * With one deliberate subtraction at step 2: a published `local-synth` row
+ * The order itself lives in `voice/lib/voicePrecedence.ts` so the huddle,
+ * Stage, Settings and the hover card cannot drift apart.
+ *
+ * With one deliberate subtraction at steps 2-3: a published `local-synth` row
  * resolves like NO selection. The on-device `speechSynthesis` engine was
  * dropped from the UI (Sam, 2026-09-18: "engines offered: Pocket and
  * ElevenLabs only"), and an old published row naming an OS voice must not
@@ -32,6 +36,7 @@
  */
 
 import type { AgentVoiceSelection } from "../../voice/lib/agentVoiceSelection.ts";
+import { resolveEffectiveVoice } from "../../voice/lib/voicePrecedence.ts";
 
 /**
  * Half-duplex mutes the mic while the agent talks; barge-in leaves it hot
@@ -39,8 +44,13 @@ import type { AgentVoiceSelection } from "../../voice/lib/agentVoiceSelection.ts
  */
 export type HuddleDuplexMode = "half" | "barge";
 
-/** The engines a per-channel override may name — the two the bridge runs. */
-export type HuddleVoiceEngine = "pocket" | "eleven";
+/**
+ * The engines a per-channel override may name — the ones the bridge runs.
+ * `pocket` is no longer OFFERED (the picker's Pocket tab became Chatterbox),
+ * but an override stored before that still decodes and still speaks: the
+ * bridge aliases pocket presets to the same-named Chatterbox voice.
+ */
+export type HuddleVoiceEngine = "pocket" | "chatterbox" | "eleven";
 
 /** A per-channel voice override, in the same shape the bridge consumes. */
 export interface HuddleVoiceOverride {
@@ -78,7 +88,11 @@ function parseVoice(raw: unknown): HuddleVoiceOverride | null {
     return null;
   }
   const candidate = raw as { engine?: unknown; key?: unknown };
-  if (candidate.engine !== "pocket" && candidate.engine !== "eleven") {
+  if (
+    candidate.engine !== "pocket" &&
+    candidate.engine !== "chatterbox" &&
+    candidate.engine !== "eleven"
+  ) {
     return null;
   }
   if (typeof candidate.key !== "string" || candidate.key === "") {
@@ -176,16 +190,8 @@ export function clearHuddlePrefs(
 export function resolveHuddleVoice(
   override: HuddleVoiceOverride | null | undefined,
   published: AgentVoiceSelection | undefined,
+  assignment?: AgentVoiceSelection,
 ): AgentVoiceSelection | undefined {
-  if (override !== null && override !== undefined) {
-    return { engine: override.engine, key: override.key };
-  }
-  if (published === undefined) {
-    return undefined;
-  }
-  if (published.engine === "local-synth") {
-    // Dropped engine: decodes, does not decide. See the module header.
-    return undefined;
-  }
-  return published;
+  return resolveEffectiveVoice({ override, assignment, self: published })
+    .selection;
 }

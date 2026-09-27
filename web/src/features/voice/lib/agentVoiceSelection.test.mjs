@@ -359,7 +359,7 @@ test("wiring: a selection routed at speak time names its source — selected, re
   // Pending ≠ robot: the execution voice is the derived-bridge Pocket
   // default, so the OS synth is unreachable from a pocket selection.
   assert.ok(imported.bridge !== null);
-  assert.equal(imported.bridge.engine, "pocket");
+  assert.equal(imported.bridge.engine, "chatterbox");
   // An eleven selection routes to the same bridge, its own disposition.
   const eleven = speakRoute(AGENT, voices, {
     engine: "eleven",
@@ -374,4 +374,75 @@ test("wiring: a selection routed at speak time names its source — selected, re
   });
   assert.equal(rejected.disposition, "selected-rejected");
   assert.equal(rejected.profile.source, "selected-rejected");
+});
+
+// ── Chatterbox engine (mirrors the relay's `valid_chatterbox_voice_key`) ──
+
+function chatterboxEvent(key) {
+  return selectionEvent({
+    content: JSON.stringify({
+      version: 1,
+      engine: "chatterbox",
+      key,
+      label: "Evie",
+    }),
+  });
+}
+
+test("a chatterbox selection parses with its roster key", () => {
+  const row = parseAgentVoiceEvent(chatterboxEvent("chatterbox:evie"));
+  assert.deepEqual(row.selection, {
+    engine: "chatterbox",
+    key: "chatterbox:evie",
+  });
+  assert.equal(row.label, "Evie");
+});
+
+test("chatterbox parse matrix matches the relay grammar (AC-R1 mirror)", () => {
+  const accepted = [
+    "chatterbox:evie",
+    "chatterbox:a",
+    "chatterbox:0x",
+    "chatterbox:iris_2-b",
+    `chatterbox:a${"b".repeat(47)}`, // 48-char slug: the ceiling
+  ];
+  const rejected = [
+    "chatterbox:Evie", // uppercase
+    "chatterbox:", // empty slug
+    `chatterbox:a${"b".repeat(48)}`, // 49-char slug
+    "chatterbox:a/b", // path separator
+    "chatterbox:-lead", // must start alnum
+    "chatterbox:_lead",
+    "chatterbox:../x",
+    "pocket:evie", // wrong prefix for the engine
+    "chatterbox:evie ", // trailing space
+  ];
+  for (const key of accepted) {
+    assert.ok(parseAgentVoiceEvent(chatterboxEvent(key)), `accept ${key}`);
+  }
+  for (const key of rejected) {
+    assert.equal(
+      parseAgentVoiceEvent(chatterboxEvent(key)),
+      null,
+      `reject ${key}`,
+    );
+  }
+  assert.equal(accepted.length + rejected.length, 14);
+});
+
+test("a chatterbox body without a string key is refused", () => {
+  const event = selectionEvent({
+    content: JSON.stringify({ version: 1, engine: "chatterbox", label: "X" }),
+  });
+  assert.equal(parseAgentVoiceEvent(event), null);
+});
+
+test("wiring: a chatterbox selection routes to chatterbox-bridge with the bare slug", async () => {
+  const { speakRoute } = await import("../../huddle/lib/huddleAgentSpeech.ts");
+  const route = speakRoute("a".repeat(64), [], {
+    engine: "chatterbox",
+    key: "chatterbox:evie",
+  });
+  assert.equal(route.disposition, "chatterbox-bridge");
+  assert.deepEqual(route.bridge, { engine: "chatterbox", voice: "evie" });
 });

@@ -17,11 +17,30 @@ import {
   AGENT_VOICE_D_TAG,
   KIND_AGENT_VOICE,
   parseAgentVoiceEvent,
+  type AgentVoiceSelection,
 } from "@/features/voice/lib/agentVoiceSelection";
+import {
+  KIND_AGENT_VOICE_ASSIGNMENT,
+  parseAgentVoiceAssignmentEvent,
+} from "@/features/voice/lib/agentVoiceAssignment";
+import {
+  summarizeAgentVoice,
+  type VoiceLayerRow,
+} from "@/features/voice/lib/agentVoiceSummary";
 
 export interface AgentConfigCardState {
   rows: AgentConfigRow[];
   loading: boolean;
+  /**
+   * The viewer owns this agent: their own 30177 names it. Gates the profile
+   * card's "Change voice…" (the relay would refuse a non-owner's 30183
+   * anyway; this keeps the button from being offered at all).
+   */
+  viewerIsOwner: boolean;
+  /** The agent's display name from the owner's 30177, when known. */
+  agentName: string | null;
+  /** The owner's current 30183 selection for this agent, if any. */
+  assignedVoice: AgentVoiceSelection | undefined;
 }
 
 /**
@@ -33,13 +52,21 @@ export interface AgentConfigCardState {
  * - the owner's 30177 for this agent (`#d` = agent pubkey)
  * - once that resolves and is definition-linked, the owner's 30175 definition
  * - the agent's own 30182 voice selection (`#d` = `agent-voice`)
+ * - the owner's 30183 voice assignment for it (`#d` = agent pubkey)
+ *
+ * The Voice row is the EFFECTIVE voice under the shared precedence
+ * (owner assignment > agent's choice > derived), with its source:
+ * `Evie (Chatterbox) · set by owner`.
  */
 export function useAgentConfigCard(pubkey: string): AgentConfigCardState {
   const { session, status } = useRelaySession();
   const [entry, setEntry] = useState<AgentRegistryEntry | null>(null);
   const [entryDone, setEntryDone] = useState(false);
   const [persona, setPersona] = useState<PersonaDefinition | null>(null);
-  const [voice, setVoice] = useState<string | null>(null);
+  const [selfVoice, setSelfVoice] = useState<VoiceLayerRow | undefined>();
+  const [assigned, setAssigned] = useState<
+    (VoiceLayerRow & { createdAt: number }) | undefined
+  >();
   // Re-resolving hook (see its docblock): a one-shot ownPubkey() at mount
   // can resolve null before the key store loads and never ask again.
   const owner = useOwnPubkey();
@@ -99,12 +126,56 @@ export function useAgentConfigCard(pubkey: string): AgentConfigCardState {
         onEvent: (event) => {
           const row = parseAgentVoiceEvent(event);
           if (row && row.pubkey === pubkey) {
-            setVoice(row.label);
+            setSelfVoice({ selection: row.selection, label: row.label });
           }
         },
       },
     );
   }, [session, status, pubkey]);
+
+  useEffect(() => {
+    if (!session || status !== "open") {
+      return;
+    }
+    return session.subscribe(
+      {
+        kinds: [KIND_AGENT_VOICE_ASSIGNMENT],
+        "#d": [pubkey.toLowerCase()],
+        limit: 1,
+      },
+      {
+        onEvent: (event) => {
+          const row = parseAgentVoiceAssignmentEvent(event);
+          if (row && row.agentPubkey === pubkey.toLowerCase()) {
+            setAssigned((prev) =>
+              prev && prev.createdAt >= row.createdAt
+                ? prev
+                : {
+                    selection: row.selection,
+                    label: row.label,
+                    createdAt: row.createdAt,
+                  },
+            );
+          }
+        },
+      },
+    );
+  }, [session, status, pubkey]);
+
+  const viewerIsOwner = entry !== null;
+  const voice = useMemo(() => {
+    const summary = summarizeAgentVoice({
+      agentPubkey: pubkey,
+      assignment: assigned,
+      self: selfVoice,
+      // No roster fetch per hover: published rows carry their own label and
+      // the derived slugs capitalize to their roster names.
+      roster: [],
+      // AC-W5 copy: the card says "set by owner" whoever is looking.
+      viewerIsOwner: false,
+    });
+    return `${summary.voice} · ${summary.sourceLabel}`;
+  }, [pubkey, assigned, selfVoice]);
 
   const rows = useMemo(
     () =>
@@ -115,5 +186,11 @@ export function useAgentConfigCard(pubkey: string): AgentConfigCardState {
       }),
     [entry, persona, voice],
   );
-  return { rows, loading: !entryDone && entry === null };
+  return {
+    rows,
+    loading: !entryDone && entry === null,
+    viewerIsOwner,
+    agentName: entry?.name ?? null,
+    assignedVoice: assigned?.selection,
+  };
 }

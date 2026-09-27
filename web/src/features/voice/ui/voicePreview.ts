@@ -29,7 +29,7 @@ import {
 /** What one preview asks the bridge for. */
 export interface VoicePreviewRequest {
   engine: VoiceEngine;
-  /** The selection key, prefix included: `pocket:anna` / `eleven:abc`. */
+  /** The selection key, prefix included: `chatterbox:anna` / `eleven:abc`. */
   key: string;
 }
 
@@ -42,7 +42,7 @@ export interface VoicePreviewer {
 
 /** Strip the engine prefix off a selection key — the bridge wants the bare id. */
 export function bridgeVoiceId(request: VoicePreviewRequest): string {
-  const prefix = `${request.engine === "pocket" ? "pocket" : "eleven"}:`;
+  const prefix = `${request.engine}:`;
   return request.key.startsWith(prefix)
     ? request.key.slice(prefix.length)
     : request.key;

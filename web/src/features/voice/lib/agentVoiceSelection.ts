@@ -10,10 +10,11 @@
  *    the agent identity), community-global, public-read — every
  *    participant's browser must read it to honor the agent's chosen voice.
  *  - `crates/buzz-relay/src/handlers/ingest.rs` — `validate_agent_voice_…`:
- *    engine ∈ {`local-synth`, `pocket`}; `local-synth` requires a non-empty
- *    `voiceURI`; `pocket` requires a key in the catalog's own key grammar
- *    (`isValidVoiceKey` in `voiceCatalog.ts`), minus the banned
- *    `pocket:eve`.
+ *    engine ∈ {`local-synth`, `pocket`, `chatterbox`, `eleven`};
+ *    `local-synth` requires a non-empty `voiceURI`; `pocket` requires a key
+ *    in the catalog's own key grammar (`isValidVoiceKey` in
+ *    `voiceCatalog.ts`), minus the banned `pocket:eve`; `chatterbox`
+ *    requires `chatterbox:<slug>`; `eleven` an `eleven:<id>`.
  *
  * Unlike the 30181 reader (where the relay never parses content), this
  * parser drops everything the relay would refuse: the fold must match the
@@ -39,11 +40,13 @@ export const AGENT_VOICE_D_TAG = "agent-voice";
  * `speechSynthesis` voiceURI from the caller's local English pool; `pocket`
  * is a kind:30181 catalog row key synthesized server-side by the tts bridge
  * (preset slug keys); `eleven` is an ElevenLabs voice id synthesized
- * server-side by the same bridge.
+ * server-side by the same bridge; `chatterbox` is a Chatterbox Turbo voice
+ * slug (`chatterbox:<slug>`) the bridge serves from its roster.
  */
 export type AgentVoiceSelection =
   | { engine: "local-synth"; voiceURI: string }
   | { engine: "pocket"; key: string }
+  | { engine: "chatterbox"; key: string }
   | { engine: "eleven"; key: string };
 
 /** The JSON body of a kind:30182 event. */
@@ -132,6 +135,77 @@ function isValidElevenKey(key: string): boolean {
 }
 
 /**
+ * Chatterbox key grammar: `chatterbox:<slug>`, slug `^[a-z0-9][a-z0-9_-]{0,47}$`
+ * — byte-for-byte the relay's `valid_chatterbox_voice_key`
+ * (crates/buzz-relay/src/handlers/ingest.rs). Grammar only: the roster lives
+ * on the bridge and changes at runtime, so membership is not checked here.
+ */
+export function isValidChatterboxKey(key: string): boolean {
+  return /^chatterbox:[a-z0-9][a-z0-9_-]{0,47}$/.test(key);
+}
+
+/**
+ * Validate a selection BODY (the JSON content shared by kind:30182 and the
+ * owner-authored kind:30183 — the relay reuses one validator for both).
+ * Returns the selection and its label, or `null` for anything the relay
+ * would refuse.
+ */
+export function parseAgentVoiceContent(
+  raw: string,
+): { selection: AgentVoiceSelection; label: string } | null {
+  let content: AgentVoiceSelectionContent;
+  try {
+    content = JSON.parse(raw) as AgentVoiceSelectionContent;
+  } catch {
+    return null;
+  }
+  if (
+    content === null ||
+    typeof content !== "object" ||
+    content.version !== 1 ||
+    typeof content.label !== "string" ||
+    !isBoundedText(content.label, 128)
+  ) {
+    return null;
+  }
+  const label = content.label;
+  if (content.engine === "local-synth") {
+    if (
+      typeof content.voiceURI !== "string" ||
+      !isBoundedText(content.voiceURI, 256)
+    ) {
+      return null;
+    }
+    return {
+      selection: { engine: "local-synth", voiceURI: content.voiceURI },
+      label,
+    };
+  }
+  if (content.engine === "pocket") {
+    if (typeof content.key !== "string" || content.key === EVE_VOICE_KEY) {
+      return null;
+    }
+    if (!isValidSelectionKey(content.key)) {
+      return null;
+    }
+    return { selection: { engine: "pocket", key: content.key }, label };
+  }
+  if (content.engine === "chatterbox") {
+    if (typeof content.key !== "string" || !isValidChatterboxKey(content.key)) {
+      return null;
+    }
+    return { selection: { engine: "chatterbox", key: content.key }, label };
+  }
+  if (content.engine === "eleven") {
+    if (typeof content.key !== "string" || !isValidElevenKey(content.key)) {
+      return null;
+    }
+    return { selection: { engine: "eleven", key: content.key }, label };
+  }
+  return null;
+}
+
+/**
  * Read one kind:30182 event. Returns `null` for anything the reader refuses:
  * unparseable content, a `version` other than 1, an unknown engine, a
  * `local-synth` body without a usable `voiceURI`, a `pocket` body whose key
@@ -145,61 +219,16 @@ export function parseAgentVoiceEvent(
   if (dTags.length !== 1 || dTags[0] !== AGENT_VOICE_D_TAG) {
     return null;
   }
-  let content: AgentVoiceSelectionContent;
-  try {
-    content = JSON.parse(event.content) as AgentVoiceSelectionContent;
-  } catch {
+  const parsed = parseAgentVoiceContent(event.content);
+  if (parsed === null) {
     return null;
   }
-  if (
-    content === null ||
-    typeof content !== "object" ||
-    content.version !== 1 ||
-    typeof content.label !== "string" ||
-    !isBoundedText(content.label, 128)
-  ) {
-    return null;
-  }
-  if (content.engine === "local-synth") {
-    if (
-      typeof content.voiceURI !== "string" ||
-      !isBoundedText(content.voiceURI, 256)
-    ) {
-      return null;
-    }
-    return {
-      pubkey: event.pubkey,
-      createdAt: event.created_at,
-      selection: { engine: "local-synth", voiceURI: content.voiceURI },
-      label: content.label,
-    };
-  }
-  if (content.engine === "pocket") {
-    if (typeof content.key !== "string" || content.key === EVE_VOICE_KEY) {
-      return null;
-    }
-    if (!isValidSelectionKey(content.key)) {
-      return null;
-    }
-    return {
-      pubkey: event.pubkey,
-      createdAt: event.created_at,
-      selection: { engine: "pocket", key: content.key },
-      label: content.label,
-    };
-  }
-  if (content.engine === "eleven") {
-    if (typeof content.key !== "string" || !isValidElevenKey(content.key)) {
-      return null;
-    }
-    return {
-      pubkey: event.pubkey,
-      createdAt: event.created_at,
-      selection: { engine: "eleven", key: content.key },
-      label: content.label,
-    };
-  }
-  return null;
+  return {
+    pubkey: event.pubkey,
+    createdAt: event.created_at,
+    selection: parsed.selection,
+    label: parsed.label,
+  };
 }
 
 /**

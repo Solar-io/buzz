@@ -1,11 +1,15 @@
 import { Settings } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { useElevenVoices, useVoiceCatalog } from "@/features/voice/hooks.ts";
+import {
+  useChatterboxVoices,
+  useElevenVoices,
+} from "@/features/voice/hooks.ts";
 import { VoiceEngineTabs } from "@/features/voice/ui/VoiceEngineTabs.tsx";
 import {
   engineLabel,
   engineVoiceOptions,
+  initialEngine,
   type VoiceEngine,
 } from "@/features/voice/ui/voicePickerOptions.ts";
 import { createVoicePreviewer } from "@/features/voice/ui/voicePreview.ts";
@@ -39,10 +43,9 @@ export function HuddleSettingsPopover({
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [engine, setEngine] = useState<VoiceEngine>(
-    prefs.voice?.engine ?? "pocket",
-  );
-  const { rows, ready: catalogReady } = useVoiceCatalog();
+  const [engine, setEngine] = useState<VoiceEngine>(initialEngine(prefs.voice));
+  const { voices: chatterboxVoices, ready: chatterboxReady } =
+    useChatterboxVoices();
   const { voices: elevenVoices, ready: elevenReady } = useElevenVoices();
   const previewerRef = useRef(createVoicePreviewer());
 
@@ -52,15 +55,17 @@ export function HuddleSettingsPopover({
   }, []);
   useEffect(() => {
     if (open) {
-      setEngine(prefs.voice?.engine ?? "pocket");
+      setEngine(initialEngine(prefs.voice));
     }
-  }, [open, prefs.voice?.engine]);
+  }, [open, prefs.voice]);
 
   const options = useMemo(
-    () => engineVoiceOptions(engine, { catalogRows: rows, elevenVoices }),
-    [engine, rows, elevenVoices],
+    // No target: a channel override covers every agent in the room, so
+    // reserved voices (Evie's) are never offered here.
+    () => engineVoiceOptions(engine, { chatterboxVoices, elevenVoices }),
+    [engine, chatterboxVoices, elevenVoices],
   );
-  const ready = engine === "pocket" ? catalogReady : elevenReady;
+  const ready = engine === "chatterbox" ? chatterboxReady : elevenReady;
 
   return (
     <Popover onOpenChange={setOpen} open={open}>

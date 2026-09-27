@@ -8,8 +8,9 @@
  *  - route selection at speak time (kind-30182 selection → optional
  *    channel override via `resolveHuddleVoice` → `speakRoute`);
  *  - sentence chunking (`chunkSpeakableText`);
- *  - the bridge leg (/tts POST per chunk, watchdog-raced, played through a
- *    gain node so the mute covers already-scheduled audio);
+ *  - the bridge leg (/tts POST per chunk with one-ahead prefetch,
+ *    watchdog-raced, played through a gain node so the mute covers
+ *    already-scheduled audio);
  *  - the local `speechSynthesis` fallback (per-chunk watchdog, settle on
  *    every path exactly once);
  *  - the stop token (`interrupt()` stops NOW, mid-chunk and mid-tail).
@@ -56,6 +57,12 @@ export interface AgentSpeechPlayerDeps {
   getVoices: () => SpeechSynthesisVoice[];
   /** Published kind-30182 selection by LOWERCASE pubkey. */
   voiceSelectionFor: (pubkey: string) => AgentVoiceSelection | undefined;
+  /**
+   * Owner kind-30183 assignment by LOWERCASE agent pubkey — outranks the
+   * agent's own selection (voicePrecedence.ts). Optional: a caller without
+   * it resolves as if no owner assigned anything.
+   */
+  voiceAssignmentFor?: (pubkey: string) => AgentVoiceSelection | undefined;
   /** Default voice override (the huddle's per-channel seam). */
   getVoiceOverride?: () => HuddleVoiceOverride | null;
   /** The /tts bridge URL, resolved per chunk. */
@@ -254,15 +261,16 @@ export function createAgentSpeechPlayer(
     const stopAt = stopToken;
     const stopped = () => stopToken !== stopAt;
     const key = speakerPubkey.toLowerCase();
-    // THE SEAM (D-005 / voice v1): channel override first, then the
-    // published selection, then nothing — and a stale `local-synth` row
-    // counts as nothing (lib/huddlePrefs.ts).
+    // THE SEAM (voicePrecedence.ts): channel override, then the owner's
+    // 30183 assignment, then the agent's own 30182, then nothing — and a
+    // stale `local-synth` row counts as nothing.
     const published = deps.voiceSelectionFor(key);
     const override =
       opts.voiceOverride !== undefined
         ? opts.voiceOverride
         : (deps.getVoiceOverride?.() ?? null);
-    const selected = resolveHuddleVoice(override, published);
+    const assignment = deps.voiceAssignmentFor?.(key);
+    const selected = resolveHuddleVoice(override, published, assignment);
     const voices = deps.getVoices();
     const route = speakRoute(speakerPubkey, voices, selected);
     deps.onRoute?.(key, route);
@@ -285,28 +293,61 @@ export function createAgentSpeechPlayer(
       const context = bridgeContext();
       if (context !== null) {
         let bridgeFailed = false;
+        const doFetch = deps.fetchImpl ?? fetch;
+        /**
+         * One bridge POST, abortable. PREFETCH-ONE-AHEAD (design §6.2):
+         * chunk N+1 is requested as soon as chunk N's response HEADERS
+         * arrive, not after chunk N finished playing — Chatterbox's first
+         * byte is ~0.4 s, and fetching sequentially turned that into an
+         * audible gap between every pair of chunks. At most one prefetched
+         * request is held; an interrupt or failure aborts it.
+         */
+        const startFetch = (chunk: string) => {
+          const controller =
+            typeof AbortController === "undefined"
+              ? null
+              : new AbortController();
+          const promise = doFetch(deps.ttsUrl(), {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              engine: bridgeRequest.engine,
+              voice: bridgeRequest.voice,
+              text: chunk,
+            }),
+            ...(controller === null ? {} : { signal: controller.signal }),
+          });
+          // An aborted or failed prefetch that nobody awaits must not
+          // surface as an unhandled rejection.
+          promise.catch(() => {});
+          return {
+            chunk,
+            promise,
+            cancel: () => {
+              controller?.abort();
+              void promise.then((r) => r.body?.cancel()).catch(() => {});
+            },
+          };
+        };
+        type InFlight = ReturnType<typeof startFetch>;
+        let current: InFlight | null = null;
+        let prefetched: InFlight | null = null;
         try {
-          for (const chunk of utterances) {
+          for (let i = 0; i < utterances.length; i++) {
             if (stopped()) {
               break;
             }
-            const doFetch = deps.fetchImpl ?? fetch;
-            const bridgePromise = doFetch(deps.ttsUrl(), {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({
-                engine: bridgeRequest.engine,
-                voice: bridgeRequest.voice,
-                text: chunk,
-              }),
-            });
+            const chunk = utterances[i];
+            current = prefetched ?? startFetch(chunk);
+            prefetched = null;
             // A hung bridge must not wedge the queue (watchdog), and an
             // interrupt must not wait for the fetch to answer (stop race).
             let wake: () => void = () => {};
+            let watchdog: ReturnType<typeof setTimeout> | null = null;
             const raced = await Promise.race([
-              bridgePromise,
+              current.promise,
               new Promise<never>((_, reject) => {
-                setTimeout(
+                watchdog = setTimeout(
                   () => reject(new Error("bridge fetch watchdog")),
                   watchdogMs(chunk),
                 );
@@ -315,15 +356,34 @@ export function createAgentSpeechPlayer(
                 wake = () => resolve(null);
                 stopWaiters.add(wake);
               }),
-            ]).finally(() => stopWaiters.delete(wake));
+            ]).finally(() => {
+              stopWaiters.delete(wake);
+              if (watchdog !== null) clearTimeout(watchdog);
+            });
             if (raced === null) {
               // Interrupted mid-fetch: drop the body when it lands.
-              void bridgePromise.then((r) => r.body?.cancel()).catch(() => {});
+              current.cancel();
+              current = null;
               break;
             }
             if (!raced.ok) {
               throw new Error(`bridge ${raced.status}`);
             }
+            // Headers are in: request the next chunk NOW so it is
+            // synthesizing while this one plays.
+            if (i + 1 < utterances.length && !stopped()) {
+              prefetched = startFetch(utterances[i + 1]);
+            }
+            const servedEngine = raced.headers?.get?.("x-tts-engine") ?? null;
+            if (servedEngine) {
+              const servedVoice = raced.headers?.get?.("x-tts-voice") ?? null;
+              deps.onRoute?.(key, {
+                ...route,
+                servedEngine,
+                ...(servedVoice ? { servedVoice } : {}),
+              });
+            }
+            current = null;
             await playBridgeResponse(raced, context, {
               shouldStop: stopped,
               scheduleSettle: settleOnClock(context),
@@ -331,7 +391,11 @@ export function createAgentSpeechPlayer(
             });
             deps.onChunkSpoken?.(chunk);
           }
+          prefetched?.cancel();
+          prefetched = null;
         } catch (err) {
+          current?.cancel();
+          prefetched?.cancel();
           bridgeFailed = true;
           console.warn(`${logTag} bridge failed, speaking locally`, err);
         }

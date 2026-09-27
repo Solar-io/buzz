@@ -153,3 +153,23 @@ test("a published local-synth selection resolves like NO selection", () => {
     { engine: "pocket", key: "pocket:mary" },
   );
 });
+
+test("a chatterbox override round-trips, and a stored legacy pocket one still loads", () => {
+  const store = memoryStore();
+  saveHuddlePrefs(store, PARENT, {
+    voice: { engine: "chatterbox", key: "chatterbox:theo" },
+    duplex: "half",
+  });
+  assert.deepEqual(loadHuddlePrefs(store, PARENT).voice, {
+    engine: "chatterbox",
+    key: "chatterbox:theo",
+  });
+  const legacy = memoryStore({
+    [huddlePrefsKey(PARENT)]:
+      '{"voice":{"engine":"pocket","key":"pocket:anna"},"duplex":"half"}',
+  });
+  assert.deepEqual(loadHuddlePrefs(legacy, PARENT).voice, {
+    engine: "pocket",
+    key: "pocket:anna",
+  });
+});

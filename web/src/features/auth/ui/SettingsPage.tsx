@@ -46,6 +46,7 @@ import { ExperimentsCard } from "@/features/settings/ui/ExperimentsCard";
 import { InvitesCard } from "@/features/settings/ui/InvitesCard";
 import { KeyboardShortcutsCard } from "@/features/settings/ui/KeyboardShortcutsCard";
 import { useFeatureEnabled } from "@/features/settings/useFeatureFlags";
+import { AgentVoicesCard } from "@/features/voice/ui/AgentVoicesCard.tsx";
 import { VoiceSettingsCard } from "@/features/voice/ui/VoiceSettingsCard.tsx";
 import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
 
@@ -246,6 +247,7 @@ export function SettingsPage({ group }: SettingsPageProps) {
                     <ProfileSection onOpen={() => setProfileOpen(true)} />
                     <PresenceSettingsCard />
                     <VoiceSettingsCard selfPubkey={self} />
+                    <AgentVoicesCard />
                   </div>
                 </>
               ) : null}

@@ -9,12 +9,16 @@ import {
   DialogTitle,
 } from "@/shared/ui/dialog";
 
-import { useElevenVoices, useVoiceCatalog } from "../hooks.ts";
+import { useChatterboxVoices, useElevenVoices } from "../hooks.ts";
 import type { AgentVoiceSelection } from "../lib/agentVoiceSelection.ts";
+import type { VoicePickerTarget } from "../lib/chatterboxRoster.ts";
 import { VoiceEngineTabs } from "./VoiceEngineTabs.tsx";
 import {
+  FILTER_THRESHOLD,
   engineLabel,
   engineVoiceOptions,
+  filterVoiceOptions,
+  initialEngine,
   sameOption,
   type VoiceEngine,
   type VoicePickerOption,
@@ -65,7 +69,7 @@ export function VoicePickerList({
               <span className="min-w-0 flex-1 truncate text-left text-sm">
                 {option.label}
                 <span className="ml-2 shrink-0 text-2xs text-muted-foreground">
-                  {option.engine === "pocket" ? "pocket" : "elevenlabs"}
+                  {option.detail ?? engineLabel(option.engine).toLowerCase()}
                 </span>
               </span>
               <Button
@@ -97,17 +101,20 @@ export function VoicePickerList({
 }
 
 /**
- * Pick the speaking voice for the signed-in agent.
+ * Pick a speaking voice — for the signed-in identity (`mode="self"`, the
+ * "Your voice" card, publishes kind 30182) or for one of the owner's agents
+ * (`mode="assign"`, the "Agent voices" card and the profile card, publishes
+ * the owner-signed kind 30183). The dialog itself never publishes: the
+ * caller's `onConfirm` decides which kind, so assign mode cannot reach the
+ * 30182 publisher by construction.
  *
- * ENGINE FIRST (Sam, 2026-09-18): a segmented control chooses Pocket or
- * ElevenLabs and the list below shows that engine's voices alone. The
- * browser's own `speechSynthesis` voices are no longer offered at all — see
- * `voicePickerOptions.ts` for why, and `huddlePrefs.ts` for what happens to
- * a kind-30182 row that still names one.
+ * ENGINE FIRST: a segmented control chooses Chatterbox or ElevenLabs and the
+ * list shows that engine's voices alone, with a filter box once the list
+ * outgrows a glance. Reserved voices (Evie's) appear only when assigning to
+ * the agent they belong to (`chatterboxRoster.ts isVoiceOfferedFor`).
  *
  * Every row previews through its OWN engine via the shared previewer
- * (`voicePreview.ts`), which is real bridge synthesis. Confirming publishes
- * the kind:30182 selection for the logged-in identity; `onConfirm` is async
+ * (`voicePreview.ts`), which is real bridge synthesis. `onConfirm` is async
  * and its error surfaces here, because a relay refusal is the one thing
  * this dialog cannot resolve locally.
  */
@@ -116,41 +123,56 @@ export function VoicePickerDialog({
   onOpenChange,
   current,
   onConfirm,
+  mode = "self",
+  target = null,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   current: AgentVoiceSelection | undefined;
   onConfirm: (selection: AgentVoiceSelection, label: string) => Promise<void>;
+  mode?: "self" | "assign";
+  /** The agent being assigned a voice (assign mode). */
+  target?: VoicePickerTarget | null;
 }) {
-  const { rows, ready: catalogReady } = useVoiceCatalog();
+  const { voices: chatterboxVoices, ready: chatterboxReady } =
+    useChatterboxVoices();
   const { voices: elevenVoices, ready: elevenReady } = useElevenVoices();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
   // Open on the engine the current selection uses, so "which one am I on?"
   // is answered by the control itself rather than by reading the list.
-  const [engine, setEngine] = useState<VoiceEngine>(
-    current?.engine === "eleven" ? "eleven" : "pocket",
-  );
+  const [engine, setEngine] = useState<VoiceEngine>(initialEngine(current));
   // The option staged for "Confirm" — clicking Select stages; confirming
   // publishes. Keeps a preview-first flow from publishing as a side effect.
   const [staged, setStaged] = useState<VoicePickerOption | null>(null);
 
+  const currentEngine = current?.engine;
   useEffect(() => {
     if (open) {
       setBusy(false);
       setError(null);
       setStaged(null);
-      setEngine(current?.engine === "eleven" ? "eleven" : "pocket");
+      setQuery("");
+      setEngine(
+        initialEngine(currentEngine ? { engine: currentEngine } : null),
+      );
     }
-  }, [open, current?.engine]);
+  }, [open, currentEngine]);
 
-  const options = useMemo(
+  const assignTarget = mode === "assign" ? target : null;
+  const allOptions = useMemo(
     () =>
       engineVoiceOptions(engine, {
-        catalogRows: rows,
+        chatterboxVoices,
         elevenVoices,
+        target: assignTarget,
       }),
-    [engine, rows, elevenVoices],
+    [engine, chatterboxVoices, elevenVoices, assignTarget],
+  );
+  const options = useMemo(
+    () => filterVoiceOptions(allOptions, query),
+    [allOptions, query],
   );
 
   // One previewer for the dialog's lifetime; its AudioContext is built on
@@ -168,12 +190,7 @@ export function VoicePickerDialog({
     setBusy(true);
     setError(null);
     try {
-      await onConfirm(
-        staged.engine === "pocket"
-          ? { engine: "pocket", key: staged.key }
-          : { engine: "eleven", key: staged.key },
-        staged.label,
-      );
+      await onConfirm({ engine: staged.engine, key: staged.key }, staged.label);
       onOpenChange(false);
     } catch (cause: unknown) {
       setError(
@@ -184,15 +201,20 @@ export function VoicePickerDialog({
     }
   }
 
+  const title =
+    mode === "assign" && target
+      ? `Choose ${target.name}'s voice`
+      : "Choose your voice";
+
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className="max-w-md" data-testid="voice-picker-dialog">
         <DialogHeader>
-          <DialogTitle>Choose your agent voice</DialogTitle>
+          <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
-            Pocket voices are bundled presets; ElevenLabs voices come from the
-            community library. Both are synthesized server-side. Preview any of
-            them, then confirm to publish your selection.
+            {mode === "assign"
+              ? "As this agent's owner, your choice is what every listener hears. Preview any voice, then confirm."
+              : "Binds your own signed-in identity. Chatterbox voices run locally; ElevenLabs voices come from the community library. Preview any of them, then confirm."}
           </DialogDescription>
         </DialogHeader>
 
@@ -210,15 +232,28 @@ export function VoicePickerDialog({
           onChange={(next) => {
             setEngine(next);
             setStaged(null);
+            setQuery("");
           }}
         />
+
+        {allOptions.length > FILTER_THRESHOLD && (
+          <input
+            aria-label="Filter voices"
+            className="w-full rounded-md border border-border bg-background px-2 py-1 text-sm"
+            data-testid="voice-picker-filter"
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Filter voices"
+            type="search"
+            value={query}
+          />
+        )}
 
         <VoicePickerList
           busy={busy}
           current={current}
           engine={engine}
           options={options}
-          ready={engine === "pocket" ? catalogReady : elevenReady}
+          ready={engine === "chatterbox" ? chatterboxReady : elevenReady}
           onPreview={(option) =>
             previewerRef.current.preview({
               engine: option.engine,
