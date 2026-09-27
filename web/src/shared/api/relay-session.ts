@@ -85,6 +85,11 @@ export interface RelaySessionOptions {
   replayWindow?: number;
   /** A replay slot frees itself after this long without EOSE. Default 400ms. */
   replaySlotFallbackMs?: number;
+  /**
+   * A connection must stay up this long before its drop resets the
+   * reconnect backoff. Default {@link STABLE_CONNECTION_MS}.
+   */
+  stableConnectionMs?: number;
   onStatusChange?: (status: RelaySessionStatus) => void;
 }
 
@@ -174,6 +179,13 @@ export function shouldForceReconnect(
   const silentFor = now - lastMessageAt;
   return silentFor >= (tabVisible ? VISIBLE_STALE_MS : BACKGROUND_STALE_MS);
 }
+
+/**
+ * Minimum connected lifetime before a drop resets the reconnect backoff.
+ * Guards the accept-AUTH-then-close loop (a relay that drops us right after
+ * AUTH would otherwise be redialed at the 500ms base forever).
+ */
+const STABLE_CONNECTION_MS = 5_000;
 
 function defaultReconnectDelay(attempt: number): number {
   return Math.min(500 * 2 ** attempt, 15_000);
@@ -272,6 +284,9 @@ export class RelaySession {
   /** The single "foreground" wire sub, if any (see SubscribeOptions). */
   private foregroundSubId: string | null = null;
   private reconnectAttempt = 0;
+  /** When the CURRENT socket completed its connect (flushPending); null if not. */
+  private connectedAt: number | null = null;
+  private readonly stableConnectionMs: number;
   private manualClose = false;
   private readonly nowMs: () => number;
   private readonly livenessIntervalMs: number;
@@ -320,6 +335,8 @@ export class RelaySession {
     this.publishRetryBackstopMs =
       options.publishRetryBackstopMs ?? PUBLISH_RETRY_BACKSTOP_MS;
     this.nowMs = options.nowMs ?? (() => Date.now());
+    this.stableConnectionMs =
+      options.stableConnectionMs ?? STABLE_CONNECTION_MS;
     this.livenessIntervalMs =
       options.livenessIntervalMs ?? DEFAULT_LIVENESS_INTERVAL_MS;
     this.healthSweepIntervalMs =
@@ -698,10 +715,11 @@ export class RelaySession {
       this.authenticated = true;
     }
     // Every successful connect lands here (relay AUTH OK, signer-locked
-    // fallback, or no-challenge grace): the next drop starts the backoff from
-    // its base again instead of compounding across resumes (the measured
-    // 0.5 → 1 → 2 → 4s escalation, background-sync plan §2 scenario H).
-    this.reconnectAttempt = 0;
+    // fallback, or no-challenge grace). Stamp it; handleClose resets the
+    // backoff only if the connection then STAYED up (see STABLE_CONNECTION_MS).
+    // The first stamp wins: a late AUTH after the grace flush is the same
+    // connection.
+    this.connectedAt ??= this.nowMs();
     this.setStatus("open");
     // D-042: parked publishes ride the authenticated flush. Deleted on
     // send — if this socket dies before the OK, teardown re-parks from the
@@ -854,6 +872,19 @@ export class RelaySession {
   }
 
   private readonly handleClose = (): void => {
+    // A connection that stayed up for STABLE_CONNECTION_MS was a real
+    // success: the next drop starts the backoff from its base again instead
+    // of compounding across resumes (the measured 0.5 → 1 → 2 → 4s
+    // escalation, background-sync plan §2 scenario H). One that dropped
+    // sooner — a relay accepting AUTH then closing at once — keeps backing
+    // off, or it would be redialed every 500ms forever.
+    const connectedAt = this.connectedAt;
+    if (
+      connectedAt !== null &&
+      this.nowMs() - connectedAt >= this.stableConnectionMs
+    ) {
+      this.reconnectAttempt = 0;
+    }
     this.teardownSocket();
     if (this.manualClose) {
       this.setStatus("closed");
@@ -887,6 +918,7 @@ export class RelaySession {
     this.authenticated = false;
     this.authedByRelay = false;
     this.lastMessageAt = null;
+    this.connectedAt = null;
     this.openSubs.clear();
     this.authRetryAttempts.clear();
     this.policyClosedSubs.clear();

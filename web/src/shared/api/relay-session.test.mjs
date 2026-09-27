@@ -1120,7 +1120,12 @@ function installFakeDocument(hidden) {
 test("T1 backoff: a successful AUTH resets the redial delay to the 500ms base", async () => {
   // Default reconnect curve (no reconnectDelayMs override) so the literal
   // 500 pins real behaviour: 500·2^attempt, capped at 15s.
-  const { session } = makeSession({ reconnectDelayMs: undefined });
+  let now = 1_000_000;
+  const { session } = makeSession({
+    reconnectDelayMs: undefined,
+    nowMs: () => now,
+    livenessIntervalMs: 0,
+  });
   try {
     session.connect();
     const first = firstSocket();
@@ -1138,11 +1143,39 @@ test("T1 backoff: a successful AUTH resets the redial delay to the 500ms base", 
     second.emit("open");
     second.serverSend(["AUTH", "c2"]);
     await tick();
+    // The connection stays up past the 5s stability bar.
+    now += 5_000;
     // Before the fix this was 1000: attempt kept compounding across successes.
     assert.deepEqual(
       delaysScheduledDuring(() => second.emit("close")),
       [500],
     );
+  } finally {
+    session.close();
+  }
+});
+
+test("T1 backoff: a relay that accepts AUTH then drops at once keeps backing off (no 500ms loop)", async () => {
+  let now = 1_000_000;
+  const { session } = makeSession({
+    reconnectDelayMs: undefined,
+    nowMs: () => now,
+    livenessIntervalMs: 0,
+  });
+  const delays = [];
+  try {
+    session.connect();
+    for (let i = 0; i < 3; i++) {
+      const socket = FakeSocket.instances[i];
+      assert.ok(socket, `dial ${i + 1}`);
+      socket.emit("open");
+      socket.serverSend(["AUTH", `c${i}`]);
+      await tick();
+      now += 100; // up for 100ms only — well under the 5s bar
+      delays.push(...delaysScheduledDuring(() => socket.emit("close")));
+      await tick(delays.at(-1) + 50);
+    }
+    assert.deepEqual(delays, [500, 1000, 2000]);
   } finally {
     session.close();
   }
