@@ -1187,3 +1187,57 @@ test("T2 wake: a HIDDEN wake leaves the backoff timer alone", async () => {
     doc.restore();
   }
 });
+
+test("T3 foreground: the open timeline's REQ goes out first after AUTH, outside the window", async () => {
+  const { session } = makeSession();
+  // 5 critical (dm-0..dm-4) + 5 normal (dm-5..dm-9), then the foreground
+  // timeline created LAST — 11 subs, so the replay is windowed (> 8).
+  subscribeMany(session, 10, new Set([0, 1, 2, 3, 4]));
+  session.subscribe(
+    { kinds: [9], "#h": ["open-channel"], limit: 60 },
+    { onEvent: () => {}, priority: "foreground" },
+  );
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  socket.serverSend(["AUTH", "chal-fg"]);
+  try {
+    await tick();
+    const opened = socket.sentOf("REQ").map((frame) => frame[2]["#h"][0]);
+    // Foreground first, then a FULL window of 4 criticals alongside it —
+    // it did not consume a replay slot.
+    assert.deepEqual(opened, ["open-channel", "dm-0", "dm-1", "dm-2", "dm-3"]);
+  } finally {
+    session.close();
+  }
+});
+
+test("T3 foreground: a newer foreground sub replaces the old one (demoted to critical)", async () => {
+  const { session } = makeSession();
+  subscribeMany(session, 10);
+  session.subscribe(
+    { kinds: [9], "#h": ["old-channel"] },
+    { onEvent: () => {}, priority: "foreground" },
+  );
+  session.subscribe(
+    { kinds: [9], "#h": ["new-channel"] },
+    { onEvent: () => {}, priority: "foreground" },
+  );
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  socket.serverSend(["AUTH", "chal-fg2"]);
+  try {
+    await tick();
+    const opened = socket.sentOf("REQ").map((frame) => frame[2]["#h"][0]);
+    assert.deepEqual(opened, [
+      "new-channel",
+      "old-channel",
+      "dm-0",
+      "dm-1",
+      "dm-2",
+    ]);
+  } finally {
+    session.close();
+  }
+});

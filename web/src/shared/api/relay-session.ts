@@ -35,8 +35,16 @@ export interface SubscribeOptions {
    * "critical" subscriptions open first in the post-AUTH replay: the channel
    * list, the Links list, the open timeline and the DM sampling batch — what
    * the first screen actually paints from.
+   *
+   * "foreground" is the one subscription the user is looking at right now
+   * (the open timeline). At most one exists per session — a newer foreground
+   * subscribe demotes the previous one to critical — and the post-AUTH
+   * replay sends it FIRST and outside the replay window, so it never waits
+   * for a slot behind other criticals (background-sync plan §4.1 item 0.2:
+   * a 255-346ms slot wait was measured on resume). Same idea as desktop's
+   * visible-channel-first replay.
    */
-  priority?: "critical";
+  priority?: "critical" | "foreground";
 }
 
 export type Unsubscribe = () => void;
@@ -261,6 +269,8 @@ export class RelaySession {
   /** Shareable wire subs by canonical filter key (plan item 2.2). */
   private readonly sharedByKey = new Map<string, string>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The single "foreground" wire sub, if any (see SubscribeOptions). */
+  private foregroundSubId: string | null = null;
   private reconnectAttempt = 0;
   private manualClose = false;
   private readonly nowMs: () => number;
@@ -726,6 +736,15 @@ export class RelaySession {
         toOpen.push([subId, sub]);
       }
     }
+    // The foreground sub (what the user is looking at) goes out first and
+    // outside the window: it must not queue behind other criticals.
+    const foregroundIndex = toOpen.findIndex(
+      ([subId]) => subId === this.foregroundSubId,
+    );
+    if (foregroundIndex >= 0) {
+      const [[subId, sub]] = toOpen.splice(foregroundIndex, 1);
+      this.sendReplayReq(subId, sub);
+    }
     // Stable sort: critical subs first, creation order otherwise.
     toOpen.sort(
       (a, b) =>
@@ -913,6 +932,7 @@ export class RelaySession {
     this.publishRetryQueue.clear();
     this.activeSubs.clear();
     this.sharedByKey.clear();
+    this.foregroundSubId = null;
     this.setStatus("closed");
   }
 
@@ -933,7 +953,12 @@ export class RelaySession {
     const sharedId = this.sharedByKey.get(key);
     const shared = sharedId ? this.activeSubs.get(sharedId) : undefined;
     if (sharedId && shared?.share.shareable) {
-      if (options.priority === "critical") {
+      if (options.priority === "foreground") {
+        this.promoteToForeground(sharedId, shared);
+      } else if (
+        options.priority === "critical" &&
+        shared.options.priority !== "foreground"
+      ) {
         shared.options.priority = "critical";
       }
       const remove = shared.share.join(options);
@@ -956,6 +981,9 @@ export class RelaySession {
     };
     this.activeSubs.set(subId, sub);
     this.sharedByKey.set(key, subId);
+    if (options.priority === "foreground") {
+      this.promoteToForeground(subId, sub);
+    }
     // If not yet authenticated/open, the auth handshake replays this REQ;
     // no need to queue it in `pending` (which is for writes only).
     if (this.authenticated && this.socket) {
@@ -968,6 +996,22 @@ export class RelaySession {
     };
   }
 
+  /**
+   * Make `subId` the one foreground sub. The previous holder is demoted to
+   * critical — it was on screen a moment ago, so it still outranks the rest.
+   */
+  private promoteToForeground(subId: string, sub: ActiveSubscription): void {
+    const previousId = this.foregroundSubId;
+    if (previousId && previousId !== subId) {
+      const previous = this.activeSubs.get(previousId);
+      if (previous) {
+        previous.options.priority = "critical";
+      }
+    }
+    sub.options.priority = "foreground";
+    this.foregroundSubId = subId;
+  }
+
   /** Close a wire sub once no subscriber is left on it. */
   private releaseIfUnused(subId: string): void {
     const sub = this.activeSubs.get(subId);
@@ -978,6 +1022,9 @@ export class RelaySession {
       this.sharedByKey.delete(sub.share.key);
     }
     this.activeSubs.delete(subId);
+    if (this.foregroundSubId === subId) {
+      this.foregroundSubId = null;
+    }
     this.authRetryAttempts.delete(subId);
     this.policyClosedSubs.delete(subId);
     this.releaseReplaySlot(subId);
