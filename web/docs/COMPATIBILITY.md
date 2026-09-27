@@ -31,6 +31,7 @@ know exactly what they must modify — and what they can skip.
 | Media: upload, rendering, mosaic, zoomable lightbox, file cards | Stock | Reads NIP-92 `imeta` (`dim`, `m`, `size`, `filename`) off the event; no relay change. |
 | Link previews — rendering a received card, and authoring one | **Built; authoring needs a relay endpoint** | Rendering is a pure client render of the sender's `link-preview` snapshot tags. Authoring cannot be done in a browser at all, so it goes through a new relay unfurl route; see below. |
 | Huddle voice (start/join, Opus) | Stock | 48100/48102 + WebCodecs. |
+| Agent Stage Mode (full-screen picture-led presentation over a channel/DM) | Stock + **External** (TTS bridge) | Wire is kind 9 plus a `["stage", …]` tag (see `NOSTR.md`, corpus `test-fixtures/stage-mode/`); no relay change, and clients that ignore the tag still render every part as a normal image message. Spoken pacing needs the crichton TTS bridge (`:6365`/`:6366`); without it Stage falls back to reading-time pacing. Authored by `buzz stage`. |
 | Profile editor (kind 0) | Stock | |
 | Agent registry view (30177 list, status dots) | Stock | 30177 is community-readable upstream. |
 | Live agent control (switch model, cancel turn) | Stock | Owner→agent 24200 control frames — existing protocol. |

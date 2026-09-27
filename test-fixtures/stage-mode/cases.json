@@ -1,0 +1,1565 @@
+[
+  {
+    "name": "open — one part with dim",
+    "payload": {
+      "v": 1,
+      "op": "open",
+      "title": "Kyoto trip recap",
+      "voice": true,
+      "parts": [
+        {
+          "x": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "url": "https://relay.example/media/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "op": "open",
+      "title": "Kyoto trip recap",
+      "voice": true,
+      "parts": [
+        {
+          "x": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "url": "https://relay.example/media/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        }
+      ]
+    }
+  },
+  {
+    "name": "open — voice absent defaults to true",
+    "payload": {
+      "v": 1,
+      "op": "open",
+      "title": "T",
+      "parts": [
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000001",
+          "url": "https://r.io/1",
+          "m": "image/png"
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "op": "open",
+      "title": "T",
+      "voice": true,
+      "parts": [
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000001",
+          "url": "https://r.io/1",
+          "m": "image/png"
+        }
+      ]
+    }
+  },
+  {
+    "name": "open — voice false kept",
+    "payload": {
+      "v": 1,
+      "op": "open",
+      "title": "T",
+      "voice": false,
+      "parts": [
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000001",
+          "url": "https://r.io/1",
+          "m": "image/png"
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "op": "open",
+      "title": "T",
+      "voice": false,
+      "parts": [
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000001",
+          "url": "https://r.io/1",
+          "m": "image/png"
+        }
+      ]
+    }
+  },
+  {
+    "name": "open — unknown keys are dropped (forward compat)",
+    "payload": {
+      "v": 1,
+      "op": "open",
+      "title": "T",
+      "voice": true,
+      "extra": "x",
+      "parts": [
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000001",
+          "url": "https://r.io/1",
+          "m": "image/png",
+          "note": "hi"
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "op": "open",
+      "title": "T",
+      "voice": true,
+      "parts": [
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000001",
+          "url": "https://r.io/1",
+          "m": "image/png"
+        }
+      ]
+    }
+  },
+  {
+    "name": "open — fifty parts at the cap",
+    "payload": {
+      "v": 1,
+      "op": "open",
+      "title": "Big",
+      "voice": true,
+      "parts": [
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000000",
+          "url": "https://r.io/0",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000001",
+          "url": "https://r.io/1",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000002",
+          "url": "https://r.io/2",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000003",
+          "url": "https://r.io/3",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000004",
+          "url": "https://r.io/4",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000005",
+          "url": "https://r.io/5",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000006",
+          "url": "https://r.io/6",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000007",
+          "url": "https://r.io/7",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000008",
+          "url": "https://r.io/8",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000009",
+          "url": "https://r.io/9",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000a",
+          "url": "https://r.io/10",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000b",
+          "url": "https://r.io/11",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000c",
+          "url": "https://r.io/12",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000d",
+          "url": "https://r.io/13",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000e",
+          "url": "https://r.io/14",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000f",
+          "url": "https://r.io/15",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000010",
+          "url": "https://r.io/16",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000011",
+          "url": "https://r.io/17",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000012",
+          "url": "https://r.io/18",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000013",
+          "url": "https://r.io/19",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000014",
+          "url": "https://r.io/20",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000015",
+          "url": "https://r.io/21",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000016",
+          "url": "https://r.io/22",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000017",
+          "url": "https://r.io/23",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000018",
+          "url": "https://r.io/24",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000019",
+          "url": "https://r.io/25",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001a",
+          "url": "https://r.io/26",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001b",
+          "url": "https://r.io/27",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001c",
+          "url": "https://r.io/28",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001d",
+          "url": "https://r.io/29",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001e",
+          "url": "https://r.io/30",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001f",
+          "url": "https://r.io/31",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000020",
+          "url": "https://r.io/32",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000021",
+          "url": "https://r.io/33",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000022",
+          "url": "https://r.io/34",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000023",
+          "url": "https://r.io/35",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000024",
+          "url": "https://r.io/36",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000025",
+          "url": "https://r.io/37",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000026",
+          "url": "https://r.io/38",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000027",
+          "url": "https://r.io/39",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000028",
+          "url": "https://r.io/40",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000029",
+          "url": "https://r.io/41",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002a",
+          "url": "https://r.io/42",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002b",
+          "url": "https://r.io/43",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002c",
+          "url": "https://r.io/44",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002d",
+          "url": "https://r.io/45",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002e",
+          "url": "https://r.io/46",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002f",
+          "url": "https://r.io/47",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000030",
+          "url": "https://r.io/48",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000031",
+          "url": "https://r.io/49",
+          "m": "image/png"
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "op": "open",
+      "title": "Big",
+      "voice": true,
+      "parts": [
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000000",
+          "url": "https://r.io/0",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000001",
+          "url": "https://r.io/1",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000002",
+          "url": "https://r.io/2",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000003",
+          "url": "https://r.io/3",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000004",
+          "url": "https://r.io/4",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000005",
+          "url": "https://r.io/5",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000006",
+          "url": "https://r.io/6",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000007",
+          "url": "https://r.io/7",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000008",
+          "url": "https://r.io/8",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000009",
+          "url": "https://r.io/9",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000a",
+          "url": "https://r.io/10",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000b",
+          "url": "https://r.io/11",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000c",
+          "url": "https://r.io/12",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000d",
+          "url": "https://r.io/13",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000e",
+          "url": "https://r.io/14",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000f",
+          "url": "https://r.io/15",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000010",
+          "url": "https://r.io/16",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000011",
+          "url": "https://r.io/17",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000012",
+          "url": "https://r.io/18",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000013",
+          "url": "https://r.io/19",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000014",
+          "url": "https://r.io/20",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000015",
+          "url": "https://r.io/21",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000016",
+          "url": "https://r.io/22",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000017",
+          "url": "https://r.io/23",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000018",
+          "url": "https://r.io/24",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000019",
+          "url": "https://r.io/25",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001a",
+          "url": "https://r.io/26",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001b",
+          "url": "https://r.io/27",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001c",
+          "url": "https://r.io/28",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001d",
+          "url": "https://r.io/29",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001e",
+          "url": "https://r.io/30",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001f",
+          "url": "https://r.io/31",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000020",
+          "url": "https://r.io/32",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000021",
+          "url": "https://r.io/33",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000022",
+          "url": "https://r.io/34",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000023",
+          "url": "https://r.io/35",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000024",
+          "url": "https://r.io/36",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000025",
+          "url": "https://r.io/37",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000026",
+          "url": "https://r.io/38",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000027",
+          "url": "https://r.io/39",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000028",
+          "url": "https://r.io/40",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000029",
+          "url": "https://r.io/41",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002a",
+          "url": "https://r.io/42",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002b",
+          "url": "https://r.io/43",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002c",
+          "url": "https://r.io/44",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002d",
+          "url": "https://r.io/45",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002e",
+          "url": "https://r.io/46",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002f",
+          "url": "https://r.io/47",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000030",
+          "url": "https://r.io/48",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000031",
+          "url": "https://r.io/49",
+          "m": "image/png"
+        }
+      ]
+    }
+  },
+  {
+    "name": "open — fifty-one parts rejected",
+    "payload": {
+      "v": 1,
+      "op": "open",
+      "title": "Big",
+      "voice": true,
+      "parts": [
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000000",
+          "url": "https://r.io/0",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000001",
+          "url": "https://r.io/1",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000002",
+          "url": "https://r.io/2",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000003",
+          "url": "https://r.io/3",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000004",
+          "url": "https://r.io/4",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000005",
+          "url": "https://r.io/5",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000006",
+          "url": "https://r.io/6",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000007",
+          "url": "https://r.io/7",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000008",
+          "url": "https://r.io/8",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000009",
+          "url": "https://r.io/9",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000a",
+          "url": "https://r.io/10",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000b",
+          "url": "https://r.io/11",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000c",
+          "url": "https://r.io/12",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000d",
+          "url": "https://r.io/13",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000e",
+          "url": "https://r.io/14",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000f",
+          "url": "https://r.io/15",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000010",
+          "url": "https://r.io/16",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000011",
+          "url": "https://r.io/17",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000012",
+          "url": "https://r.io/18",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000013",
+          "url": "https://r.io/19",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000014",
+          "url": "https://r.io/20",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000015",
+          "url": "https://r.io/21",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000016",
+          "url": "https://r.io/22",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000017",
+          "url": "https://r.io/23",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000018",
+          "url": "https://r.io/24",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000019",
+          "url": "https://r.io/25",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001a",
+          "url": "https://r.io/26",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001b",
+          "url": "https://r.io/27",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001c",
+          "url": "https://r.io/28",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001d",
+          "url": "https://r.io/29",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001e",
+          "url": "https://r.io/30",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001f",
+          "url": "https://r.io/31",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000020",
+          "url": "https://r.io/32",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000021",
+          "url": "https://r.io/33",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000022",
+          "url": "https://r.io/34",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000023",
+          "url": "https://r.io/35",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000024",
+          "url": "https://r.io/36",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000025",
+          "url": "https://r.io/37",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000026",
+          "url": "https://r.io/38",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000027",
+          "url": "https://r.io/39",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000028",
+          "url": "https://r.io/40",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000029",
+          "url": "https://r.io/41",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002a",
+          "url": "https://r.io/42",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002b",
+          "url": "https://r.io/43",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002c",
+          "url": "https://r.io/44",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002d",
+          "url": "https://r.io/45",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002e",
+          "url": "https://r.io/46",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002f",
+          "url": "https://r.io/47",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000030",
+          "url": "https://r.io/48",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000031",
+          "url": "https://r.io/49",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000032",
+          "url": "https://r.io/50",
+          "m": "image/png"
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "too many parts"
+  },
+  {
+    "name": "open — zero parts rejected",
+    "payload": {
+      "v": 1,
+      "op": "open",
+      "title": "T",
+      "voice": true,
+      "parts": []
+    },
+    "expect": "reject",
+    "reason": "at least one part"
+  },
+  {
+    "name": "open — title at 120 UTF-16 units",
+    "payload": {
+      "v": 1,
+      "op": "open",
+      "title": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+      "voice": true,
+      "parts": [
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000001",
+          "url": "https://r.io/1",
+          "m": "image/png"
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "op": "open",
+      "title": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+      "voice": true,
+      "parts": [
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000001",
+          "url": "https://r.io/1",
+          "m": "image/png"
+        }
+      ]
+    }
+  },
+  {
+    "name": "open — title over 120 rejected",
+    "payload": {
+      "v": 1,
+      "op": "open",
+      "title": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+      "voice": true,
+      "parts": [
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000001",
+          "url": "https://r.io/1",
+          "m": "image/png"
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "title"
+  },
+  {
+    "name": "open — title of 60 emoji is 120 units in UTF-16 plus one more rejected",
+    "payload": {
+      "v": 1,
+      "op": "open",
+      "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀x",
+      "voice": true,
+      "parts": [
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000001",
+          "url": "https://r.io/1",
+          "m": "image/png"
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "title"
+  },
+  {
+    "name": "open — whitespace-only title rejected",
+    "payload": {
+      "v": 1,
+      "op": "open",
+      "title": " \t\n",
+      "voice": true,
+      "parts": [
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000001",
+          "url": "https://r.io/1",
+          "m": "image/png"
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "title"
+  },
+  {
+    "name": "open — missing title rejected",
+    "payload": {
+      "v": 1,
+      "op": "open",
+      "voice": true,
+      "parts": [
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000001",
+          "url": "https://r.io/1",
+          "m": "image/png"
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "title"
+  },
+  {
+    "name": "open — voice as string rejected",
+    "payload": {
+      "v": 1,
+      "op": "open",
+      "title": "T",
+      "voice": "true",
+      "parts": [
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000001",
+          "url": "https://r.io/1",
+          "m": "image/png"
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "voice must be a boolean"
+  },
+  {
+    "name": "open — part x not hex rejected",
+    "payload": {
+      "v": 1,
+      "op": "open",
+      "title": "T",
+      "parts": [
+        {
+          "x": "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+          "url": "https://relay.example/media/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png",
+          "m": "image/png"
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "x must be"
+  },
+  {
+    "name": "open — part url not http(s) rejected",
+    "payload": {
+      "v": 1,
+      "op": "open",
+      "title": "T",
+      "parts": [
+        {
+          "x": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "url": "ftp://relay.example/media/a.png",
+          "m": "image/png"
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "url must be"
+  },
+  {
+    "name": "open — part mime not image rejected",
+    "payload": {
+      "v": 1,
+      "op": "open",
+      "title": "T",
+      "parts": [
+        {
+          "x": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "url": "https://relay.example/media/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png",
+          "m": "video/mp4"
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "m must be"
+  },
+  {
+    "name": "open — malformed dim rejected",
+    "payload": {
+      "v": 1,
+      "op": "open",
+      "title": "T",
+      "parts": [
+        {
+          "x": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "url": "https://relay.example/media/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png",
+          "m": "image/png",
+          "dim": "big"
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "dim must be"
+  },
+  {
+    "name": "open — lone surrogate in title rejected",
+    "payloadRaw": "{\"v\":1,\"op\":\"open\",\"title\":\"\\ud800\",\"voice\":true,\"parts\":[{\"x\":\"0000000000000000000000000000000000000000000000000000000000000001\",\"url\":\"https://r.io/1\",\"m\":\"image/png\"}]}",
+    "expect": "reject",
+    "reason": "invalid stage JSON"
+  },
+  {
+    "name": "open — tag JSON over 8192 UTF-16 units rejected",
+    "payload": {
+      "v": 1,
+      "op": "open",
+      "title": "T",
+      "voice": true,
+      "parts": [
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000000",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/0.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000001",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/1.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000002",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/2.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000003",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/3.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000004",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/4.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000005",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/5.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000006",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/6.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000007",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/7.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000008",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/8.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000009",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/9.png",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000a",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/10.png",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000b",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/11.png",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000c",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/12.png",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000d",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/13.png",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000e",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/14.png",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000f",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/15.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000010",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/16.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000011",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/17.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000012",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/18.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000013",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/19.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000014",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/20.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000015",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/21.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000016",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/22.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000017",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/23.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000018",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/24.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000019",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/25.png",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001a",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/26.png",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001b",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/27.png",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001c",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/28.png",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001d",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/29.png",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001e",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/30.png",
+          "m": "image/png"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001f",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/31.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000020",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/32.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000021",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/33.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000022",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/34.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000023",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/35.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000024",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/36.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000025",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/37.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000026",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/38.png",
+          "m": "image/png"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000027",
+          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/39.png",
+          "m": "image/png"
+        }
+      ]
+    },
+    "expect": "reject",
+    "reason": "exceeds 8192"
+  },
+  {
+    "name": "part — hold absent (defaults to true)",
+    "payload": {
+      "v": 1,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": 0
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": 0
+    }
+  },
+  {
+    "name": "part — hold true normalizes to absent",
+    "payload": {
+      "v": 1,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": 3,
+      "hold": true
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": 3
+    }
+  },
+  {
+    "name": "part — hold false kept",
+    "payload": {
+      "v": 1,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": 3,
+      "hold": false
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": 3,
+      "hold": false
+    }
+  },
+  {
+    "name": "part — i at 49 (max palette index)",
+    "payload": {
+      "v": 1,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": 49
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": 49
+    }
+  },
+  {
+    "name": "part — hold 0 rejected",
+    "payload": {
+      "v": 1,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": 0,
+      "hold": 0
+    },
+    "expect": "reject",
+    "reason": "hold must be a boolean"
+  },
+  {
+    "name": "part — hold \"false\" rejected",
+    "payload": {
+      "v": 1,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": 0,
+      "hold": "false"
+    },
+    "expect": "reject",
+    "reason": "hold must be a boolean"
+  },
+  {
+    "name": "part — i written 1.0 rejected",
+    "payloadRaw": "{\"v\":1,\"op\":\"part\",\"s\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"i\":1.0}",
+    "expect": "reject",
+    "reason": "plain non-negative integer"
+  },
+  {
+    "name": "part — i written 1e0 rejected",
+    "payloadRaw": "{\"v\":1,\"op\":\"part\",\"s\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"i\":1e0}",
+    "expect": "reject",
+    "reason": "plain non-negative integer"
+  },
+  {
+    "name": "part — negative i rejected",
+    "payloadRaw": "{\"v\":1,\"op\":\"part\",\"s\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"i\":-1}",
+    "expect": "reject",
+    "reason": "plain non-negative integer"
+  },
+  {
+    "name": "part — fraction in an ignored key still rejected",
+    "payloadRaw": "{\"v\":1,\"op\":\"part\",\"s\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"i\":0,\"extra\":1.5}",
+    "expect": "reject",
+    "reason": "plain non-negative integer"
+  },
+  {
+    "name": "part — i at 50 rejected",
+    "payload": {
+      "v": 1,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": 50
+    },
+    "expect": "reject",
+    "reason": "i must be"
+  },
+  {
+    "name": "part — i as string rejected",
+    "payload": {
+      "v": 1,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": "0"
+    },
+    "expect": "reject",
+    "reason": "i must be"
+  },
+  {
+    "name": "part — missing i rejected",
+    "payload": {
+      "v": 1,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "expect": "reject",
+    "reason": "i must be"
+  },
+  {
+    "name": "part — s not 64 lowercase hex rejected",
+    "payload": {
+      "v": 1,
+      "op": "part",
+      "s": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "i": 0
+    },
+    "expect": "reject",
+    "reason": "s must be"
+  },
+  {
+    "name": "close",
+    "payload": {
+      "v": 1,
+      "op": "close",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "op": "close",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  {
+    "name": "close — missing s rejected",
+    "payload": {
+      "v": 1,
+      "op": "close"
+    },
+    "expect": "reject",
+    "reason": "s must be"
+  },
+  {
+    "name": "v 2 rejected",
+    "payload": {
+      "v": 2,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": 0
+    },
+    "expect": "reject",
+    "reason": "unsupported version"
+  },
+  {
+    "name": "v absent rejected",
+    "payload": {
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": 0
+    },
+    "expect": "reject",
+    "reason": "unsupported version"
+  },
+  {
+    "name": "v written 1.0 rejected",
+    "payloadRaw": "{\"v\":1.0,\"op\":\"close\",\"s\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
+    "expect": "reject",
+    "reason": "plain non-negative integer"
+  },
+  {
+    "name": "unknown op rejected",
+    "payload": {
+      "v": 1,
+      "op": "seek",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "expect": "reject",
+    "reason": "unknown op"
+  },
+  {
+    "name": "non-object payload rejected",
+    "payload": [
+      1,
+      2
+    ],
+    "expect": "reject",
+    "reason": "must be a JSON object"
+  },
+  {
+    "name": "unparseable JSON rejected",
+    "payloadRaw": "{\"v\":1,",
+    "expect": "reject",
+    "reason": "invalid stage JSON"
+  }
+]
