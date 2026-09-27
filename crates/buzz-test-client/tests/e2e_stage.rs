@@ -7,7 +7,7 @@
 //! cargo build -p buzz-cli
 //! RELAY_URL=wss://<relay> \
 //! BUZZ_BIN=target/debug/buzz \
-//! STAGE_E2E_NSEC=nsec1… STAGE_E2E_CHANNEL=<channel uuid> \
+//! [STAGE_E2E_NSEC=nsec1…  # default: BUZZ_PRIVATE_KEY] STAGE_E2E_CHANNEL=<channel uuid> \
 //! [BUZZ_AUTH_TAG='["auth",…]'] \
 //! cargo test -p buzz-test-client --test e2e_stage -- --ignored
 //! ```
@@ -33,12 +33,17 @@ fn env(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| panic!("{name} must be set for this e2e test"))
 }
 
+/// The posting key: `STAGE_E2E_NSEC`, else the ambient `BUZZ_PRIVATE_KEY`.
+fn nsec() -> String {
+    std::env::var("STAGE_E2E_NSEC").unwrap_or_else(|_| env("BUZZ_PRIVATE_KEY"))
+}
+
 fn buzz(args: &[&str], stage_dir: &Path) -> Value {
     let relay = env("RELAY_URL");
     let out = Command::new(env("BUZZ_BIN"))
         .args(args)
         .env("BUZZ_RELAY_URL", &relay)
-        .env("BUZZ_PRIVATE_KEY", env("STAGE_E2E_NSEC"))
+        .env("BUZZ_PRIVATE_KEY", nsec())
         .env("BUZZ_STAGE_DIR", stage_dir)
         // Not a managed session: no hold gate, no session stamp.
         .env_remove("BUZZ_ACP_SESSION_ID")
@@ -116,7 +121,9 @@ async fn stage_open_then_three_nexts_publishes_four_tagged_events() {
         buzz(&["stage", "next", "--session", &session], &stage_dir);
     }
 
-    let keys = Keys::parse(&env("STAGE_E2E_NSEC")).unwrap();
+    // rustls needs a process-wide CryptoProvider for wss:// (see bin/mention.rs).
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let keys = Keys::parse(&nsec()).unwrap();
     let mut client = BuzzTestClient::connect_unauthenticated(&env("RELAY_URL"))
         .await
         .unwrap();
