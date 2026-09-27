@@ -48,6 +48,7 @@ import { ChannelTimeline } from "@/features/channels/ui/ChannelTimeline";
 import { Composer, type ComposerHandle } from "@/features/channels/ui/Composer";
 import { DmComposerActions } from "@/features/channels/ui/DmComposerActions";
 import { useComposerDictation } from "@/features/channels/useComposerDictation";
+import { useTimelinePrefetch } from "@/features/channels/useTimelinePrefetch";
 import { useDmRightPane } from "@/features/channels/useDmRightPane";
 import { ForumView } from "@/features/channels/ui/ForumView";
 import { MessageToasts } from "@/features/channels/ui/MessageToasts";
@@ -199,6 +200,13 @@ function ChannelBrowser() {
   const channelActivity = useChannelActivity(channelActivityIds, {
     readMarkers: readState,
     selfPubkey,
+  });
+  // Idle-prefetch the most recent conversations into the timeline store so
+  // switching to one paints from memory (background-sync plan §4.3).
+  useTimelinePrefetch({
+    channelActivity: channelActivity.activity,
+    dms,
+    openId: current?.id ?? null,
   });
   const newestMessageAt = messages[messages.length - 1]?.createdAt ?? 0;
   useEffect(() => {
