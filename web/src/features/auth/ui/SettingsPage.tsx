@@ -23,6 +23,11 @@ import { useCallback, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 
 import { Button } from "@/shared/ui/button";
+import { usePhoneLayout } from "@/shared/layout/AppShell";
+import {
+  shellSidebarWidth,
+  useShellSidebarWidthVar,
+} from "@/shared/layout/shellCanvas";
 import { LocalArchiveSettingsCard } from "@/features/local-archive";
 import { ChannelTemplatesSettingsCard } from "@/features/channel-templates";
 import { CommunityMembersCard } from "@/features/community-members/ui/CommunityMembersCard";
@@ -156,6 +161,13 @@ export function SettingsPage({ group }: SettingsPageProps) {
       }
     },
     [navigate, selectGroup],
+  );
+
+  // Canvas below the shell mirrors the rail/pane split (see shellCanvas.ts).
+  // 15.5rem = the rail's `w-62`; the rail is hidden below md.
+  const phone = usePhoneLayout();
+  useShellSidebarWidthVar(
+    shellSidebarWidth({ chromeless: false, phone, width: "15.5rem" }),
   );
 
   return (

@@ -10,6 +10,7 @@ import {
   PANE_RESIZE_HANDLE_CLASSES,
   usePointerDrag,
 } from "./usePointerDrag.ts";
+import { shellSidebarWidth, useShellSidebarWidthVar } from "./shellCanvas.ts";
 
 /**
  * Two-pane responsive shell: sidebar + main. On small screens the sidebar
@@ -146,6 +147,15 @@ export function AppShell({
       String(Math.round(sidebarWidth)),
     );
   }, [sidebarWidth]);
+
+  const phone = usePhoneLayout();
+  useShellSidebarWidthVar(
+    shellSidebarWidth({
+      chromeless,
+      phone,
+      width: `${Math.round(sidebarWidth)}px`,
+    }),
+  );
 
   const clampSidebar = useCallback((width: number) => {
     setSidebarWidth(

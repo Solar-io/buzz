@@ -650,6 +650,41 @@
   }
 
   /*
+   * Canvas below the shell (Sam, 2026-09-26). iPad Safari (viewport-fit=cover,
+   * floating toolbar) can paint below the bottom of the h-dvh shell, and that
+   * strip showed flat --background under the sidebar too. Paint html + body
+   * as the shell's own two-tone split so the strip continues each pane.
+   * AppShell / SettingsPage publish --buzz-shell-sidebar-w (0 when the rail
+   * is hidden); see shared/layout/shellCanvas.ts.
+   */
+  html,
+  html body {
+    background: linear-gradient(
+      to right,
+      hsl(var(--sidebar-background)) var(--buzz-shell-sidebar-w, 0px),
+      hsl(var(--background)) 0
+    );
+  }
+
+  /* Custom gradient: the rail is a translucent wash over gradient colour 1,
+     the main pane is the content colour — solid approximations of both. */
+  :root[data-custom-gradient="true"],
+  :root[data-custom-gradient="true"] body {
+    background:
+      linear-gradient(
+        to right,
+        hsl(var(--custom-gradient-nav-wash-hsl) / 0.58)
+          var(--buzz-shell-sidebar-w, 0px),
+        transparent 0
+      ),
+      linear-gradient(
+        to right,
+        var(--custom-gradient-color-1) var(--buzz-shell-sidebar-w, 0px),
+        var(--custom-gradient-content) 0
+      );
+  }
+
+  /*
    * Web-specific, and NOT in the desktop source: the desktop shell is fixed
    * height end-to-end, but this client's route shells are `min-h-dvh`
    * (root.tsx, repos.browse.tsx, the route error boundary) — they are built to
