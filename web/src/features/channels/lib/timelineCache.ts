@@ -86,6 +86,13 @@ export interface TimelineCacheEntry {
    * before the field existed heal to `[]` (healCachedEntry).
    */
   deletedIds: string[];
+  /**
+   * Edits whose target has not arrived yet (target id → newest content),
+   * applied when the target lands. Optional and always read with `?.`, so
+   * entries cached before it existed need no heal. Bounded by
+   * PENDING_EDITS_CAP.
+   */
+  pendingEdits?: Record<string, { content: string; at: number }>;
 }
 
 /** Bound on {@link TimelineCacheEntry.deletedIds}. */
@@ -385,7 +392,12 @@ export function applyEventToEntry(
       return deleteInEntry(entry, targetId);
     }
     const target = entry.messages.find((m) => m.id === targetId);
-    if (!target || (target.edited && target.content === event.content)) {
+    if (!target) {
+      // A delta REQ returns the edit (newer) before its original when the
+      // original sits at the cursor second: hold it until the target lands.
+      return holdPendingEdit(entry, targetId, event);
+    }
+    if (target.edited && target.content === event.content) {
       return entry;
     }
     return {
@@ -418,19 +430,29 @@ export function applyEventToEntry(
       next = deleteInEntry(next, removedId);
     }
   }
+  const existing = next.messages.find((m) => m.id === message.id);
+  if (existing && (existing.edited || existing.deleted)) {
+    // A re-delivered ORIGINAL must not undo an overlay already applied.
+    return next;
+  }
+  // Rule 2 (warm): only rows at-or-after the watermark. An older event
+  // (search, thread, forum read) cannot be known contiguous; inserting it
+  // would make loadOlder — keyed on the oldest row — skip real history.
+  // The sync path also owns rows it already has; a warm copy adds nothing.
+  if (options.mode === "warm" && (message.createdAt < next.cursor || existing)) {
+    return next;
+  }
+  const pending = next.pendingEdits?.[message.id];
+  let incoming = message;
+  if (pending) {
+    incoming = { ...message, content: pending.content, edited: true };
+    const rest = { ...next.pendingEdits };
+    delete rest[message.id];
+    next = { ...next, pendingEdits: rest };
+  }
   if (options.mode === "warm") {
-    // Rule 2: only rows at-or-after the watermark. An older event (search,
-    // thread, forum read) cannot be known contiguous; inserting it would make
-    // loadOlder — keyed on the oldest row — skip real history.
-    if (message.createdAt < next.cursor) {
-      return next;
-    }
-    // The sync path owns rows it already has; a warm copy adds nothing.
-    if (next.messages.some((m) => m.id === message.id)) {
-      return next;
-    }
     let messages = next.messages
-      .concat(message)
+      .concat(incoming)
       .sort((a, b) => a.createdAt - b.createdAt);
     if (messages.length > CACHE_CAP) {
       messages = messages.slice(messages.length - CACHE_CAP);
@@ -438,7 +460,34 @@ export function applyEventToEntry(
     // Rule 1: the cursor is deliberately untouched.
     return { ...next, messages };
   }
-  return mergeCachedMessage(next, message);
+  return mergeCachedMessage(next, incoming);
+}
+
+/** Pending (target-not-yet-seen) edits kept per entry. */
+export const PENDING_EDITS_CAP = 100;
+
+function holdPendingEdit(
+  entry: TimelineCacheEntry,
+  targetId: string,
+  event: SignedNostrEvent,
+): TimelineCacheEntry {
+  const held = entry.pendingEdits?.[targetId];
+  // Newest edit wins; a replayed or older edit changes nothing.
+  if (held && held.at >= event.created_at) {
+    return entry;
+  }
+  const pendingEdits = {
+    ...entry.pendingEdits,
+    [targetId]: { content: event.content, at: event.created_at },
+  };
+  const ids = Object.keys(pendingEdits);
+  if (ids.length > PENDING_EDITS_CAP) {
+    ids
+      .sort((a, b) => pendingEdits[a].at - pendingEdits[b].at)
+      .slice(0, ids.length - PENDING_EDITS_CAP)
+      .forEach((id) => delete pendingEdits[id]);
+  }
+  return { ...entry, pendingEdits };
 }
 
 /**
@@ -601,12 +650,28 @@ export function olderPageFilter(
   channelId: string,
   oldestLoadedCreatedAt: number,
 ): NostrFilter {
-  // `until` is inclusive; step below the oldest loaded row so pages never
-  // overlap what is already on screen.
+  // `until` is inclusive and deliberately AT the oldest loaded row's second:
+  // other messages from that same second are not loaded yet, and stepping
+  // below it skipped them for good. The overlap is deduped by id; see
+  // {@link olderPageExhausted} for when to stop.
   return {
     kinds: [...TIMELINE_KINDS, 7, EDIT_KIND, DELETE_KIND],
     "#h": [channelId],
-    until: Math.max(0, oldestLoadedCreatedAt - 1),
+    until: Math.max(0, oldestLoadedCreatedAt),
     limit: OLDER_PAGE,
   };
+}
+
+/**
+ * Whether an older page shows the channel's start was reached. A short page
+ * (fewer events than the limit) means the relay had nothing more at or below
+ * `until`; a full page that brought no NEW message means only the already
+ * loaded overlap came back. Page size alone is not enough since `until` is
+ * inclusive.
+ */
+export function olderPageExhausted(page: {
+  events: number;
+  newMessages: number;
+}): boolean {
+  return page.events < OLDER_PAGE || page.newMessages === 0;
 }

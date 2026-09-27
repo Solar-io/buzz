@@ -1,10 +1,11 @@
 import { del, get, set } from "idb-keyval";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
-import type { MessageBuffer } from "./messageBuffer.ts";
+import type { MessageBuffer, TimelineMessage } from "./messageBuffer.ts";
 import type { ReactionIndex } from "./reactions.ts";
 import {
   applyEventToEntry,
   cacheKey,
+  CACHE_CAP,
   emptyTimelineEntry,
   INITIAL_PAGE,
   isTimelineCacheEvicted,
@@ -102,6 +103,61 @@ export interface TimelineStore {
   memoryIds(): string[];
 }
 
+/** One disk-index row: last write time and whether it was ever opened. */
+interface IndexRecord {
+  at: number;
+  opened: boolean;
+}
+
+function healIndexRecord(value: unknown): IndexRecord | null {
+  if (typeof value === "number") {
+    // Written before the opened flag existed: treat as opened (safe side).
+    return { at: value, opened: true };
+  }
+  if (value && typeof value === "object") {
+    const record = value as Partial<IndexRecord>;
+    if (typeof record.at === "number") {
+      return { at: record.at, opened: record.opened === true };
+    }
+  }
+  return null;
+}
+
+/**
+ * Merge a (trimmed) view back into the untrimmed entry it came from: every
+ * row of both, the view winning per id (it carries the newer overlays),
+ * rows deleted in the view flagged deleted, and the base's
+ * historyExhausted kept.
+ */
+export function mergeFull(
+  base: TimelineCacheEntry,
+  view: TimelineCacheEntry,
+): TimelineCacheEntry {
+  const byId = new Map<string, TimelineMessage>();
+  for (const message of base.messages) {
+    byId.set(message.id, message);
+  }
+  for (const message of view.messages) {
+    byId.set(message.id, message);
+  }
+  for (const id of view.deletedIds) {
+    const row = byId.get(id);
+    if (row && !row.deleted) {
+      byId.set(id, { ...row, deleted: true });
+    }
+  }
+  let messages = [...byId.values()].sort((a, b) => a.createdAt - b.createdAt);
+  if (messages.length > CACHE_CAP) {
+    messages = messages.slice(messages.length - CACHE_CAP);
+  }
+  return {
+    ...view,
+    messages,
+    cursor: Math.max(base.cursor, view.cursor),
+    historyExhausted: base.historyExhausted,
+  };
+}
+
 /**
  * The cursor the open-time sync REQ should ask from. A synced entry uses its
  * watermark. A never-synced entry (cursor 0) that holds warm rows asks from
@@ -140,7 +196,14 @@ export function createTimelineStore(
   const pendingWrites = new Map<string, TimelineCacheEntry>();
   /** Per-channel write chain: at most one `set` in flight per key. */
   const writeChains = new Map<string, Promise<void>>();
-  let index: Record<string, number> | null = null;
+  /**
+   * The UNTRIMMED entry behind a warm-only view that was capped: the rows
+   * dropped from memory still belong on disk. Persistence and opening merge
+   * the view back into it, so a 60-row warm view never overwrites a larger
+   * saved history (or its historyExhausted flag).
+   */
+  const full = new Map<string, TimelineCacheEntry>();
+  let index: Record<string, IndexRecord> | null = null;
   let indexChain: Promise<void> = Promise.resolve();
 
   const touch = (channelId: string, entry: TimelineCacheEntry) => {
@@ -171,33 +234,49 @@ export function createTimelineStore(
         flushNow(id);
       }
       entries.delete(id);
+      full.delete(id);
     }
   }
 
-  async function readIndex(): Promise<Record<string, number>> {
+  async function readIndex(): Promise<Record<string, IndexRecord>> {
     if (index) {
       return index;
     }
+    const healed: Record<string, IndexRecord> = {};
     try {
       const stored = (await get(INDEX_KEY)) as unknown;
-      index =
-        stored && typeof stored === "object" && !Array.isArray(stored)
-          ? { ...(stored as Record<string, number>) }
-          : {};
+      if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+        for (const [id, value] of Object.entries(stored)) {
+          const record = healIndexRecord(value);
+          if (record) {
+            healed[id] = record;
+          }
+        }
+      }
     } catch {
-      index = {};
+      // Unreadable index: start fresh; eviction resumes from here.
     }
-    return index;
+    index = healed;
+    return healed;
   }
 
   /** Record a write and drop the least-recently-written entries beyond the cap. */
   function recordWrite(channelId: string): Promise<void> {
     indexChain = indexChain.then(async () => {
       const current = await readIndex();
-      current[channelId] = now();
+      current[channelId] = {
+        at: now(),
+        opened: current[channelId]?.opened === true || opened.has(channelId),
+      };
       const ids = Object.keys(current);
       if (ids.length > diskCapacity) {
-        const oldestFirst = ids.sort((a, b) => current[a] - current[b]);
+        // Warm-only entries go first (oldest first), then opened ones: a
+        // channel the user actually read outranks one only ever warmed.
+        const oldestFirst = ids.sort(
+          (a, b) =>
+            Number(current[a].opened) - Number(current[b].opened) ||
+            current[a].at - current[b].at,
+        );
         for (const id of oldestFirst.slice(0, ids.length - diskCapacity)) {
           delete current[id];
           try {
@@ -224,7 +303,8 @@ export function createTimelineStore(
     }
     const entry = entries.get(channelId);
     if (entry) {
-      pendingWrites.set(channelId, entry);
+      const base = full.get(channelId);
+      pendingWrites.set(channelId, base ? mergeFull(base, entry) : entry);
     }
     const previous = writeChains.get(channelId) ?? Promise.resolve();
     const next = previous.then(async () => {
@@ -270,6 +350,8 @@ export function createTimelineStore(
     if (opened.has(channelId) || entry.messages.length <= warmRowCap) {
       return entry;
     }
+    const base = full.get(channelId);
+    full.set(channelId, base ? mergeFull(base, entry) : entry);
     return {
       ...entry,
       messages: entry.messages.slice(entry.messages.length - warmRowCap),
@@ -362,6 +444,13 @@ export function createTimelineStore(
     setOwner(channelId) {
       owners.set(channelId, (owners.get(channelId) ?? 0) + 1);
       opened.add(channelId);
+      // Opening restores the full history behind a trimmed warm view.
+      const base = full.get(channelId);
+      const view = entries.get(channelId);
+      full.delete(channelId);
+      if (base && view) {
+        entries.set(channelId, mergeFull(base, view));
+      }
     },
     releaseOwner(channelId) {
       const count = (owners.get(channelId) ?? 0) - 1;

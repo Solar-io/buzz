@@ -17,7 +17,7 @@ import {
   initialSyncFilters,
   dropCachedReaction,
   olderPageFilter,
-  OLDER_PAGE,
+  olderPageExhausted,
   type TimelineCacheEntry,
 } from "./lib/timelineCache.ts";
 import {
@@ -204,7 +204,8 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
     }
     loadingOlderRef.current = true;
     setLoadingOlder(true);
-    let messageCount = 0;
+    let eventCount = 0;
+    let newMessages = 0;
     let done = false;
     const finish = () => {
       if (done) {
@@ -215,7 +216,7 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
       setLoadingOlder(false);
       // A short page means the channel's start is inside what we just
       // loaded — stop offering pagination, and persist that in the cache.
-      if (messageCount < OLDER_PAGE) {
+      if (olderPageExhausted({ events: eventCount, newMessages })) {
         timelineStore.update(channelId, (entry) =>
           entry.historyExhausted ? entry : { ...entry, historyExhausted: true },
         );
@@ -223,13 +224,17 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
     };
     const unsubscribe = session.subscribe(olderPageFilter(channelId, oldest), {
       onEvent: (event: SignedNostrEvent) => {
+        eventCount++;
         if (
           event.kind !== 20002 &&
           event.kind !== 7 &&
           event.kind !== 40003 &&
-          event.kind !== 5
+          event.kind !== 5 &&
+          !timelineStore
+            .peek(channelId)
+            ?.messages.some((message) => message.id === event.id)
         ) {
-          messageCount++;
+          newMessages++;
         }
         applyEvent(event);
       },

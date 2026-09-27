@@ -137,9 +137,9 @@ test("initialSyncFilters: warm start is a since-delta plus overlay backfill", ()
   assert.equal(coldZero.length, 1, "cursor 0 counts as cold");
 });
 
-test("olderPageFilter steps strictly below the oldest loaded row", () => {
+test("olderPageFilter includes the oldest loaded row's second (same-second rows are not skipped)", () => {
   const f = olderPageFilter("chan", 1_700_000_500);
-  assert.equal(f.until, 1_700_000_499);
+  assert.equal(f.until, 1_700_000_500);
   assert.equal(f.limit, 60);
   assert.equal(f["#h"][0], "chan");
   // Zero floor never goes negative.
@@ -543,4 +543,75 @@ test("T7 heal: undefined members in deletedIds are dropped, not thrown on", () =
 test("T7 heal: an intact entry keeps its identity", () => {
   const intact = entry({ deletedIds: ["x"], messages: [] });
   assert.equal(healCachedEntry(intact), intact);
+});
+
+// --- QA bug 2: edit/original ordering --------------------------------------
+
+function editOf(id, target, createdAt, content) {
+  return ev(id, createdAt, {
+    kind: EDIT_KIND,
+    content,
+    tags: [["h", "chan"], ["e", target]],
+  });
+}
+
+test("QA2 a re-delivered original does not overwrite an applied edit", () => {
+  let e = withDeleted();
+  e = applyEventToEntry(e, ev("orig", 100), "chan", { mode: "sync" });
+  e = applyEventToEntry(e, editOf("ed", "orig", 200, "EDITED"), "chan", {
+    mode: "sync",
+  });
+  e = applyEventToEntry(e, ev("orig", 100), "chan", { mode: "sync" });
+  const row = e.messages.find((m) => m.id === "orig");
+  assert.equal(row.content, "EDITED");
+  assert.equal(row.edited, true);
+});
+
+test("QA2 an edit that arrives BEFORE its target is applied when the target lands", () => {
+  let e = withDeleted({ cursor: 100 });
+  // Delta since the cursor second: the newer edit comes first.
+  e = applyEventToEntry(e, editOf("ed", "orig", 200, "EDITED"), "chan", {
+    mode: "sync",
+  });
+  assert.equal(e.messages.length, 0);
+  e = applyEventToEntry(e, ev("orig", 100), "chan", { mode: "sync" });
+  const row = e.messages.find((m) => m.id === "orig");
+  assert.equal(row.content, "EDITED");
+  assert.equal(row.edited, true);
+  assert.deepEqual(e.pendingEdits, {}, "the held edit is consumed");
+});
+
+test("QA2 an older held edit never replaces a newer one", () => {
+  let e = withDeleted();
+  e = applyEventToEntry(e, editOf("e2", "orig", 300, "NEWEST"), "chan", {
+    mode: "sync",
+  });
+  e = applyEventToEntry(e, editOf("e1", "orig", 200, "older"), "chan", {
+    mode: "sync",
+  });
+  e = applyEventToEntry(e, ev("orig", 100), "chan", { mode: "sync" });
+  assert.equal(e.messages[0].content, "NEWEST");
+});
+
+test("QA2 a deleted row stays deleted when its original is re-delivered", () => {
+  let e = withDeleted();
+  e = applyEventToEntry(e, ev("orig", 100), "chan", { mode: "sync" });
+  e = applyEventToEntry(
+    e,
+    ev("del", 150, { kind: 5, content: "", tags: [["h", "chan"], ["e", "orig"]] }),
+    "chan",
+    { mode: "sync" },
+  );
+  e = applyEventToEntry(e, ev("orig", 100), "chan", { mode: "sync" });
+  assert.equal(e.messages[0].deleted, true);
+});
+
+// --- QA bug 3: older-page exhaustion ---------------------------------------
+
+test("QA3 a full page of only already-loaded overlap means exhausted; a full page with new rows does not", async () => {
+  const { olderPageExhausted } = await import("./timelineCache.ts");
+  assert.equal(olderPageExhausted({ events: 60, newMessages: 0 }), true);
+  assert.equal(olderPageExhausted({ events: 60, newMessages: 30 }), false);
+  // Short page: the relay had nothing more at or below `until`.
+  assert.equal(olderPageExhausted({ events: 59, newMessages: 59 }), true);
 });

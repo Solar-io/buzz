@@ -257,3 +257,83 @@ test("T8 initialFeedState: a peeked entry paints on the FIRST render (no blank r
   assert.equal(initialFeedState(store, "never").messages.length, 0);
   assert.equal(initialFeedState(store, null).messages.length, 0);
 });
+
+// --- QA bug 1: warm trim must never shrink saved history -------------------
+
+function row(id, createdAt, channelId) {
+  return {
+    id,
+    channelId,
+    authorPubkey: "aa",
+    createdAt,
+    content: id,
+    kind: 9,
+    rootId: null,
+    replyToId: null,
+    mentionPubkeys: [],
+    imetaByUrl: new Map(),
+    linkPreviews: [],
+    card: null,
+    edited: false,
+    deleted: false,
+  };
+}
+
+function seedHistory(channelId, count) {
+  idb.data.set(cacheKey(channelId), {
+    messages: Array.from({ length: count }, (_, i) =>
+      row(`h${i}`, i + 1, channelId),
+    ),
+    reactions: new Map(),
+    cursor: count,
+    historyExhausted: true,
+    deletedIds: [],
+  });
+}
+
+test("QA1 a warm write to a 300-row saved channel persists 301 rows and keeps historyExhausted", async () => {
+  seedHistory("big", 300);
+  const store = createTimelineStore({ flushMs: 5 });
+  store.apply("big", ev("warm", 301, "big"), { source: "activity" });
+  await sleep(1);
+  assert.equal(store.peek("big").messages.length, 60, "memory view is capped");
+  await store.flushAll();
+  const disk = idb.data.get(cacheKey("big"));
+  assert.equal(disk.messages.length, 301);
+  assert.equal(disk.historyExhausted, true);
+  assert.equal(disk.cursor, 300, "warm write still never moves the cursor");
+});
+
+test("QA1 opening a warm-trimmed channel restores its full history in memory", async () => {
+  seedHistory("big2", 300);
+  const store = createTimelineStore({ flushMs: 5 });
+  store.apply("big2", ev("warm", 301, "big2"), { source: "activity" });
+  await sleep(1);
+  store.setOwner("big2");
+  const entry = store.peek("big2");
+  assert.equal(entry.messages.length, 301);
+  assert.equal(entry.historyExhausted, true);
+});
+
+test("QA1 index eviction drops warm-only entries before an opened one", async () => {
+  let clock = 0;
+  const store = createTimelineStore({ flushMs: 1, now: () => ++clock });
+  await store.load("reader");
+  store.setOwner("reader");
+  store.apply("reader", ev("r", 10, "reader"), { source: "timeline" });
+  store.releaseOwner("reader");
+  await store.flushAll();
+  for (let i = 0; i < 45; i++) {
+    const id = `w${i}`;
+    await store.load(id);
+    store.apply(id, ev(`m${i}`, 10, id), { source: "activity" });
+    await store.flushAll();
+  }
+  const index = idb.data.get(INDEX_KEY);
+  assert.equal(Object.keys(index).length, 40);
+  assert.equal(idb.data.has(cacheKey("reader")), true, "opened channel kept");
+  for (let i = 0; i < 6; i++) {
+    assert.equal(idb.data.has(cacheKey(`w${i}`)), false, `w${i} evicted`);
+  }
+  assert.equal(idb.data.has(cacheKey("w6")), true);
+});
