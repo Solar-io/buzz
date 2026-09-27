@@ -28,7 +28,12 @@ import { signIn } from "./helpers/signIn";
  *    open, so a single key cannot test it at all.
  *
  * `E2E_BUZZ_BIN` defaults to `../target/debug/buzz` (run `cargo build -p
- * buzz-cli` first). Build the web app with `VITE_RELAY_URL` = the same relay.
+ * buzz-cli` first). Build the web app with `VITE_RELAY_URL` = the same relay
+ * (`VITE_RELAY_URL=$E2E_RELAY_WS pnpm build`) — the preview server serves
+ * `dist/` as built, and a bundle pointed at any other relay fails ALL nine
+ * cases (the viewer never sees the agent's events). The webServer reuses an
+ * already-running preview on `PLAYWRIGHT_PORT`, so make sure a stale one is
+ * not still up.
  * Skips when any required variable is unset.
  *
  * TTS never reaches a real bridge: `**\/tts` is fulfilled with exactly 1.0 s
@@ -849,16 +854,23 @@ test.describe("agent stage mode", () => {
 
     // ── Replay walks from showing #0 ────────────────────────────────────
     // The card is far above now; scroll the timeline up until it mounts.
+    // Scroll with a real WHEEL, not `scrollTop -= n`: the timeline's follow
+    // engine (features/agents/lib/scrollFollow.ts) only pauses tail-follow on
+    // ARMED input (wheel/touch/keys). A programmatic scrollTop is "unarmed
+    // movement", so follow stays on and the next ResizeObserver tick (an
+    // image sizing in, an older page landing) re-pins the view to the newest
+    // row — the card unmounts under the click. That was the intermittent
+    // "Replay never clickable" failure; a user's wheel never hits it.
     const replayCard = page
       .getByTestId("stage-open-card")
       .filter({ hasText: title });
+    const scroller = page.locator("div.buzz-timeline-scrollbar").first();
+    const box = must(await scroller.boundingBox());
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await expect
       .poll(
         async () => {
-          await page.evaluate(() => {
-            const el = document.querySelector("div.buzz-timeline-scrollbar");
-            if (el) el.scrollTop = Math.max(0, el.scrollTop - 600);
-          });
+          await page.mouse.wheel(0, -600);
           return replayCard.count();
         },
         { timeout: 20_000 },
