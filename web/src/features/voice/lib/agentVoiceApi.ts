@@ -12,8 +12,9 @@
  *  - `clearAgentVoiceAssignment` deletes that 30183 by coordinate.
  *
  * Content is byte-identical to the CLI's `selection_body`
- * (crates/buzz-cli/src/commands/voices.rs): `{version, engine, key|voiceURI,
- * label}`.
+ * (crates/buzz-cli/src/commands/voices.rs), keys sorted:
+ * `{engine, key, label, version}` (local-synth, web-only:
+ * `{engine, label, version, voiceURI}`).
  */
 
 import type { RelaySession } from "@/shared/api/relay-session";
@@ -37,14 +38,20 @@ function selectionContent(
   selection: AgentVoiceSelection,
   label: string,
 ): string {
-  return JSON.stringify({
-    version: 1,
-    engine: selection.engine,
-    ...(selection.engine === "local-synth"
-      ? { voiceURI: selection.voiceURI }
-      : { key: selection.key }),
-    label,
-  });
+  // Keys in lexicographic order: the CLI builds this body with serde_json's
+  // default (BTreeMap-backed) `json!`, which serializes keys sorted. Emitting
+  // the same order makes web and CLI content byte-identical, pinned on both
+  // sides by the same hardcoded string.
+  const body: Record<string, string | number> =
+    selection.engine === "local-synth"
+      ? {
+          engine: selection.engine,
+          label,
+          version: 1,
+          voiceURI: selection.voiceURI,
+        }
+      : { engine: selection.engine, key: selection.key, label, version: 1 };
+  return JSON.stringify(body);
 }
 
 /**
