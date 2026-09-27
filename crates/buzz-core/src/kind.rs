@@ -398,6 +398,34 @@ pub const KIND_AGENT_VOICE: u32 = 30182;
 /// One row per author is the whole point — see [`KIND_AGENT_VOICE`].
 pub const KIND_AGENT_VOICE_D_TAG: &str = "agent-voice";
 
+/// Buzz owner-authored agent-voice ASSIGNMENT (kind:30183).
+///
+/// The agent's registered owner sets the voice the agent speaks with, without
+/// the agent having to act. Content is byte-identical grammar to
+/// [`KIND_AGENT_VOICE`] (same engine-tagged selection body), so every engine a
+/// selection may name an assignment may name too.
+///
+/// # Addressing: one row per (owner, agent)
+///
+/// Author = the owner. Exactly one `d` tag, equal to the agent's pubkey as 64
+/// lowercase hex, so an owner holds one live assignment per agent under plain
+/// NIP-33 LWW. Clearing is the generic kind:5 `a`-tag coordinate delete
+/// (`30183:<owner>:<agent>`).
+///
+/// # Access control: owner-write, public-read
+///
+/// Ingest requires [`Scope::UsersWrite`] AND that the author is the
+/// registered owner of the agent named in `d` (`is_agent_owner`), refusing
+/// anyone else with `restricted:`. Community-global (`channel_id = NULL`) and
+/// readable by any authenticated member — every listener must honor it — so
+/// it is in no gated set, like [`KIND_AGENT_VOICE`].
+///
+/// # Precedence (clients)
+///
+/// listener's local channel override > owner assignment (30183) > the agent's
+/// own selection (30182) > the pubkey-derived default.
+pub const KIND_AGENT_VOICE_ASSIGNMENT: u32 = 30183;
+
 // NIP-56 reporting
 /// NIP-56: Report an event, pubkey, or blob to relay moderators (kind:1984).
 ///
@@ -790,6 +818,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_TEAM_CATALOG,
     KIND_VOICE_CATALOG,
     KIND_AGENT_VOICE,
+    KIND_AGENT_VOICE_ASSIGNMENT,
     KIND_PRIVATE_MANAGED_AGENT,
     KIND_REPORT,
     KIND_PRODUCT_FEEDBACK,
@@ -1014,6 +1043,7 @@ const _: () = assert!(is_parameterized_replaceable(KIND_DESKTOP_CATALOG)); // 30
 const _: () = assert!(is_parameterized_replaceable(KIND_TEAM_CATALOG)); // 30178 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_VOICE_CATALOG)); // 30181 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_AGENT_VOICE)); // 30182 ∈ 30000–39999
+const _: () = assert!(is_parameterized_replaceable(KIND_AGENT_VOICE_ASSIGNMENT)); // 30183 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_PRIVATE_MANAGED_AGENT)); // 30179 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_WORKFLOW_DEF)); // 30620 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_EVENT_REMINDER)); // 30300 ∈ 30000–39999
@@ -1306,5 +1336,20 @@ mod tests {
         assert!(!P_GATED_KINDS.contains(&KIND_AGENT_VOICE));
         assert!(!RESULT_GATED_KINDS.contains(&KIND_AGENT_VOICE));
         assert!(!SHARED_GATED_KINDS.contains(&KIND_AGENT_VOICE));
+    }
+
+    /// Kind 30183 is the owner-authored assignment sibling of 30182: NIP-33
+    /// range, out of the relay-only set, out of every gated read set (every
+    /// listener must read it). Hardcodes 30183 so a value change cannot move
+    /// the expectation with the code it pins.
+    #[test]
+    fn agent_voice_assignment_is_public_parameterized_replaceable() {
+        assert_eq!(KIND_AGENT_VOICE_ASSIGNMENT, 30183);
+        assert!(is_parameterized_replaceable(KIND_AGENT_VOICE_ASSIGNMENT));
+        assert!(!is_relay_only_kind(KIND_AGENT_VOICE_ASSIGNMENT));
+        assert!(!AUTHOR_ONLY_KINDS.contains(&KIND_AGENT_VOICE_ASSIGNMENT));
+        assert!(!P_GATED_KINDS.contains(&KIND_AGENT_VOICE_ASSIGNMENT));
+        assert!(!RESULT_GATED_KINDS.contains(&KIND_AGENT_VOICE_ASSIGNMENT));
+        assert!(!SHARED_GATED_KINDS.contains(&KIND_AGENT_VOICE_ASSIGNMENT));
     }
 }

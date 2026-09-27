@@ -1,4 +1,6 @@
-//! `buzz voices` — publish and query kind:30181 voice-catalog events.
+//! `buzz voices` — publish and query kind:30181 voice-catalog events, and
+//! set/read agent voices: the agent's own kind:30182 selection (`select`) and
+//! the owner-authored kind:30183 assignment (`assign`), read back by `get`.
 //!
 //! One event per voice, NIP-33 addressed by `(pubkey, kind, d = voice key)`.
 //! `publish` canonicalizes the source audio through
@@ -17,6 +19,17 @@ use nostr::{EventBuilder, Tag};
 /// `buzz_core::kind::KIND_VOICE_CATALOG`; hardcoded in the wire filters and
 /// deletion coordinate rather than pulling in a `buzz-core` import per use.
 const KIND_VOICE_CATALOG: u32 = 30181;
+
+/// Agent's own voice selection. Mirrors `buzz_core::kind::KIND_AGENT_VOICE`.
+const KIND_AGENT_VOICE: u32 = 30182;
+
+/// Fixed `d` tag of a kind:30182 selection. Mirrors
+/// `buzz_core::kind::KIND_AGENT_VOICE_D_TAG`.
+const AGENT_VOICE_D_TAG: &str = "agent-voice";
+
+/// Owner-authored agent voice assignment (`d` = agent pubkey hex). Mirrors
+/// `buzz_core::kind::KIND_AGENT_VOICE_ASSIGNMENT`.
+const KIND_AGENT_VOICE_ASSIGNMENT: u32 = 30183;
 
 /// Kind-5 deletion request kind (NIP-09).
 const KIND_DELETION: u32 = 5;
@@ -217,6 +230,152 @@ async fn cmd_remove(client: &BuzzClient, key: &str) -> Result<(), CliError> {
     Ok(())
 }
 
+/// Build the engine-tagged v1 selection body for a voice key.
+///
+/// The engine is read off the key prefix; the relay enforces the full grammar
+/// (slug shape, `pocket:eve` ban, eleven id shape), so this only refuses keys
+/// no engine could own. The label defaults to the part after the prefix.
+fn selection_body(key: &str, label: Option<&str>) -> Result<serde_json::Value, CliError> {
+    let (engine, slug) = ["chatterbox", "pocket", "eleven"]
+        .iter()
+        .find_map(|engine| {
+            key.strip_prefix(engine)
+                .and_then(|rest| rest.strip_prefix(':'))
+                .map(|slug| (*engine, slug))
+        })
+        .ok_or_else(|| {
+            CliError::Usage(format!(
+                "voice key must start with `chatterbox:`, `pocket:`, or `eleven:` (got `{key}`)"
+            ))
+        })?;
+    if slug.is_empty() {
+        return Err(CliError::Usage(format!(
+            "voice key `{key}` has an empty id"
+        )));
+    }
+    let label = label.unwrap_or(slug);
+    Ok(serde_json::json!({
+        "version": 1,
+        "engine": engine,
+        "key": key,
+        "label": label,
+    }))
+}
+
+/// Publish the caller's own kind:30182 selection at the fixed `d` tag.
+async fn cmd_select(client: &BuzzClient, key: &str, label: Option<&str>) -> Result<(), CliError> {
+    let body = selection_body(key, label)?;
+    let d_tag = Tag::parse(["d", AGENT_VOICE_D_TAG])
+        .map_err(|e| CliError::Other(format!("tag error: {e}")))?;
+    let builder = EventBuilder::new(
+        nostr::Kind::Custom(KIND_AGENT_VOICE as u16),
+        body.to_string(),
+    )
+    .tag(d_tag);
+    let event = client.sign_event(builder)?;
+    let resp = client.submit_event(event).await?;
+    println!("{}", normalize_write_response(&resp));
+    Ok(())
+}
+
+/// Publish (or clear) the caller's kind:30183 assignment for `agent`.
+///
+/// The relay accepts it only when the caller is the agent's registered owner.
+async fn cmd_assign(
+    client: &BuzzClient,
+    agent: &str,
+    key: Option<&str>,
+    label: Option<&str>,
+    clear: bool,
+) -> Result<(), CliError> {
+    crate::validate::validate_hex64(agent)?;
+    let agent = agent.to_ascii_lowercase();
+    let builder = if clear {
+        let self_hex = client.keys().public_key().to_hex();
+        let coord = format!("{KIND_AGENT_VOICE_ASSIGNMENT}:{self_hex}:{agent}");
+        let a_tag = Tag::parse(["a", coord.as_str()])
+            .map_err(|e| CliError::Other(format!("tag error: {e}")))?;
+        EventBuilder::new(nostr::Kind::Custom(KIND_DELETION as u16), "").tag(a_tag)
+    } else {
+        let key =
+            key.ok_or_else(|| CliError::Usage("a voice key or --clear is required".into()))?;
+        let body = selection_body(key, label)?;
+        let d_tag = Tag::parse(["d", agent.as_str()])
+            .map_err(|e| CliError::Other(format!("tag error: {e}")))?;
+        EventBuilder::new(
+            nostr::Kind::Custom(KIND_AGENT_VOICE_ASSIGNMENT as u16),
+            body.to_string(),
+        )
+        .tag(d_tag)
+    };
+    let event = client.sign_event(builder)?;
+    let resp = client.submit_event(event).await?;
+    println!("{}", normalize_write_response(&resp));
+    Ok(())
+}
+
+/// Newest event by `created_at` (ties: lower id wins, the NIP-01 replaceable rule).
+fn newest(events: Vec<serde_json::Value>) -> Option<serde_json::Value> {
+    events.into_iter().max_by(|a, b| {
+        let ts = |e: &serde_json::Value| e["created_at"].as_u64().unwrap_or(0);
+        let id = |e: &serde_json::Value| e["id"].as_str().unwrap_or("").to_string();
+        ts(a).cmp(&ts(b)).then_with(|| id(b).cmp(&id(a)))
+    })
+}
+
+/// Parse an event's JSON content into a selection object, if it is one.
+fn content_json(event: &serde_json::Value) -> Option<serde_json::Value> {
+    serde_json::from_str(event["content"].as_str()?).ok()
+}
+
+/// Resolve the relay-level precedence: owner assignment > own selection.
+///
+/// (Clients additionally place a listener-local channel override above, and
+/// fall back to the pubkey-derived default below; neither is relay state.)
+fn effective_voice(
+    assignment: Option<&serde_json::Value>,
+    selection: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    if let Some(voice) = assignment.and_then(content_json) {
+        return serde_json::json!({ "source": "owner-assignment", "voice": voice });
+    }
+    if let Some(voice) = selection.and_then(content_json) {
+        return serde_json::json!({ "source": "agent-selection", "voice": voice });
+    }
+    serde_json::json!({ "source": "derived", "voice": serde_json::Value::Null })
+}
+
+/// Read an agent's kind:30183 assignment and kind:30182 selection.
+async fn cmd_get(client: &BuzzClient, agent: &str) -> Result<(), CliError> {
+    crate::validate::validate_hex64(agent)?;
+    let agent = agent.to_ascii_lowercase();
+    let assignment = newest(
+        client
+            .query_all(serde_json::json!({
+                "kinds": [KIND_AGENT_VOICE_ASSIGNMENT],
+                "#d": [agent],
+            }))
+            .await?,
+    );
+    let selection = newest(
+        client
+            .query_all(serde_json::json!({
+                "kinds": [KIND_AGENT_VOICE],
+                "authors": [agent],
+                "#d": [AGENT_VOICE_D_TAG],
+            }))
+            .await?,
+    );
+    let out = serde_json::json!({
+        "agent": agent,
+        "effective": effective_voice(assignment.as_ref(), selection.as_ref()),
+        "assignment": assignment,
+        "selection": selection,
+    });
+    println!("{out}");
+    Ok(())
+}
+
 pub async fn dispatch(cmd: crate::VoicesCmd, client: &BuzzClient) -> Result<(), CliError> {
     use crate::VoicesCmd;
     match cmd {
@@ -240,6 +399,14 @@ pub async fn dispatch(cmd: crate::VoicesCmd, client: &BuzzClient) -> Result<(), 
         }
         VoicesCmd::PublishBundled => cmd_publish_bundled(client).await,
         VoicesCmd::Remove { key } => cmd_remove(client, &key).await,
+        VoicesCmd::Select { key, label } => cmd_select(client, &key, label.as_deref()).await,
+        VoicesCmd::Assign {
+            agent,
+            key,
+            label,
+            clear,
+        } => cmd_assign(client, &agent, key.as_deref(), label.as_deref(), clear).await,
+        VoicesCmd::Get { agent } => cmd_get(client, &agent).await,
     }
 }
 
@@ -268,5 +435,56 @@ mod tests {
         assert_eq!(canonical_duration_seconds(44), 0.0);
         assert_eq!(canonical_duration_seconds(44 + 64_000), 1.0);
         assert_eq!(canonical_duration_seconds(44 + 160_000), 2.5);
+    }
+
+    #[test]
+    fn selection_body_reads_engine_from_key_prefix() {
+        let body = selection_body("chatterbox:evie", None).expect("chatterbox");
+        assert_eq!(body["engine"], "chatterbox");
+        assert_eq!(body["key"], "chatterbox:evie");
+        assert_eq!(body["label"], "evie");
+        assert_eq!(body["version"], 1);
+        let body = selection_body("pocket:anna", Some("Anna")).expect("pocket");
+        assert_eq!(body["engine"], "pocket");
+        assert_eq!(body["label"], "Anna");
+        let body = selection_body("eleven:21m00Tcm4TlvDq8ikWAM", None).expect("eleven");
+        assert_eq!(body["engine"], "eleven");
+    }
+
+    #[test]
+    fn selection_body_refuses_unknown_or_empty_keys() {
+        for bad in ["evie", "siri:aaron", "chatterbox:", "chatterboxevie", ""] {
+            assert!(
+                selection_body(bad, None).is_err(),
+                "`{bad}` must be refused"
+            );
+        }
+    }
+
+    fn event(created_at: u64, id: &str, content: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({ "created_at": created_at, "id": id, "content": content.to_string() })
+    }
+
+    #[test]
+    fn effective_voice_owner_assignment_beats_agent_selection() {
+        let assign = event(1, "a", serde_json::json!({"key": "chatterbox:evie"}));
+        let select = event(2, "b", serde_json::json!({"key": "pocket:anna"}));
+        let eff = effective_voice(Some(&assign), Some(&select));
+        assert_eq!(eff["source"], "owner-assignment");
+        assert_eq!(eff["voice"]["key"], "chatterbox:evie");
+        let eff = effective_voice(None, Some(&select));
+        assert_eq!(eff["source"], "agent-selection");
+        assert_eq!(eff["voice"]["key"], "pocket:anna");
+        let eff = effective_voice(None, None);
+        assert_eq!(eff["source"], "derived");
+    }
+
+    #[test]
+    fn newest_picks_latest_created_at() {
+        let old = event(10, "ff", serde_json::json!({"key": "chatterbox:old"}));
+        let new = event(20, "00", serde_json::json!({"key": "chatterbox:new"}));
+        let picked = newest(vec![old, new]).expect("some");
+        assert_eq!(picked["created_at"], 20);
+        assert!(newest(Vec::new()).is_none());
     }
 }

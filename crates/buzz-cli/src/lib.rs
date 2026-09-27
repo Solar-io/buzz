@@ -242,7 +242,7 @@ enum Cmd {
     /// Community moderation — reports queue, bans, timeouts, audit trail
     #[command(subcommand)]
     Moderation(ModerationCmd),
-    /// Publish and query the community voice catalog (kind 30181)
+    /// Voice catalog (kind 30181) and agent voices: select (30182), assign (30183), get
     #[command(subcommand)]
     Voices(VoicesCmd),
     /// Stage mode — a full-screen picture-led presentation on the Buzz web app.
@@ -369,6 +369,47 @@ pub enum VoicesCmd {
         /// Voice key of the row to remove (your own rows only)
         #[arg(long)]
         key: String,
+    },
+    /// Select your own speaking voice (kind 30182, signed as you)
+    ///
+    /// KEY is `chatterbox:<slug>`, `pocket:<slug>`, or `eleven:<voice id>`.
+    #[command(
+        after_help = "Examples:\n  buzz voices select chatterbox:evie\n  buzz voices select pocket:anna --label Anna"
+    )]
+    Select {
+        /// Voice key (`chatterbox:<slug>`, `pocket:<slug>`, or `eleven:<id>`)
+        key: String,
+        /// Human label (defaults to the key's slug)
+        #[arg(long)]
+        label: Option<String>,
+    },
+    /// Assign an agent's voice as its registered owner (kind 30183)
+    ///
+    /// The relay refuses the write unless you are the agent's registered owner.
+    /// An owner assignment takes precedence over the agent's own selection.
+    #[command(
+        after_help = "Examples:\n  buzz voices assign --agent <HEX> chatterbox:evie\n  buzz voices assign --agent <HEX> --clear"
+    )]
+    Assign {
+        /// Agent pubkey (64 hex)
+        #[arg(long)]
+        agent: String,
+        /// Voice key (`chatterbox:<slug>`, `pocket:<slug>`, or `eleven:<id>`)
+        #[arg(required_unless_present = "clear", conflicts_with = "clear")]
+        key: Option<String>,
+        /// Human label (defaults to the key's slug)
+        #[arg(long, conflicts_with = "clear")]
+        label: Option<String>,
+        /// Remove your assignment for this agent (kind 5 coordinate delete)
+        #[arg(long)]
+        clear: bool,
+    },
+    /// Show an agent's owner assignment, own selection, and effective voice
+    #[command(after_help = "Examples:\n  buzz voices get --agent <HEX>")]
+    Get {
+        /// Agent pubkey (64 hex)
+        #[arg(long)]
+        agent: String,
     },
 }
 
@@ -2419,8 +2460,9 @@ mod tests {
             "stage",
             "upload",
             "users",
-            // Voice-catalog group (kind 30181): list / publish /
-            // publish-bundled / remove.
+            // Voice group: catalog (kind 30181) list / publish /
+            // publish-bundled / remove, plus agent voice select (30182) /
+            // assign (30183) / get.
             "voices",
             "workflows",
         ];

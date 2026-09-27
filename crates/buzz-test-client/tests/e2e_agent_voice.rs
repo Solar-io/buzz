@@ -12,6 +12,10 @@
 //!   full `pocket:imported:<64-hex>` form); `pocket:eve` is refused.
 //! - NIP-33 replacement at the fixed coordinate, and removal via the generic
 //!   kind:5 `a`-tag coordinate delete.
+//! - The `chatterbox` engine (`chatterbox:<slug>`) is accepted.
+//! - Kind 30183 (owner-authored assignment, `d` = agent pubkey hex) is
+//!   accepted from the agent's registered owner (NIP-OA) and refused
+//!   `restricted:` from anyone else.
 //!
 //! # Running
 //!
@@ -23,6 +27,7 @@
 
 use std::time::Duration;
 
+use buzz_sdk::nip_oa;
 use buzz_test_client::BuzzTestClient;
 use nostr::{Alphabet, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag, Timestamp};
 
@@ -336,4 +341,261 @@ async fn client_send(
     event: nostr::Event,
 ) -> buzz_test_client::OkResponse {
     client.send_event(event).await.expect("send event")
+}
+
+// ─── chatterbox engine (30182) ──────────────────────────────────────────────
+
+fn chatterbox_content(key: &str) -> String {
+    serde_json::json!({
+        "version": 1,
+        "engine": "chatterbox",
+        "key": key,
+        "label": "Evie",
+    })
+    .to_string()
+}
+
+/// AC-R1: a `chatterbox:<slug>` selection is accepted; uppercase, empty,
+/// 49-char, and path-shaped slugs are refused with `invalid:`.
+#[tokio::test]
+#[ignore]
+async fn test_agent_voice_chatterbox_grammar() {
+    let url = relay_url();
+    let keys = Keys::generate();
+    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+
+    let ok = client_send(
+        &mut client,
+        agent_voice_event(
+            &keys,
+            &chatterbox_content("chatterbox:evie"),
+            Timestamp::now().as_secs(),
+        ),
+    )
+    .await;
+    assert!(ok.accepted, "chatterbox:evie rejected: {}", ok.message);
+
+    let overlong = format!("chatterbox:{}", "a".repeat(49));
+    for bad in [
+        "chatterbox:Evie",
+        "chatterbox:",
+        overlong.as_str(),
+        "chatterbox:a/b",
+    ] {
+        let ok = client_send(
+            &mut client,
+            agent_voice_event(&keys, &chatterbox_content(bad), Timestamp::now().as_secs()),
+        )
+        .await;
+        assert!(!ok.accepted, "`{bad}` must be rejected");
+        assert!(
+            ok.message.contains("invalid:"),
+            "`{bad}`: expected an `invalid:` refusal, got: {}",
+            ok.message
+        );
+    }
+
+    client.disconnect().await.expect("disconnect");
+}
+
+// ─── owner agent-voice assignment (30183) ───────────────────────────────────
+
+const ASSIGNMENT_KIND: u16 = 30183;
+
+/// Build a NIP-OA auth tag for `agent_keys` signed by `owner_keys`.
+fn make_nip_oa_auth_tag(owner_keys: &Keys, agent_keys: &Keys) -> Tag {
+    let tag_json = nip_oa::compute_auth_tag(owner_keys, &agent_keys.public_key(), "kind=9")
+        .expect("compute_auth_tag");
+    nip_oa::parse_auth_tag(&tag_json).expect("parse_auth_tag")
+}
+
+/// Authenticate `agent_keys` with a NIP-OA tag so the relay records
+/// `owner_keys` as the agent's registered owner, then disconnect.
+async fn register_agent_owner(agent_keys: &Keys, owner_keys: &Keys) {
+    let auth_tag = make_nip_oa_auth_tag(owner_keys, agent_keys);
+    let mut agent = BuzzTestClient::connect_unauthenticated(&relay_url())
+        .await
+        .expect("connect agent unauthenticated");
+    agent
+        .authenticate_with_nip_oa(agent_keys, &auth_tag)
+        .await
+        .expect("NIP-OA auth");
+    agent.disconnect().await.expect("disconnect agent");
+}
+
+fn assignment_event(author: &Keys, d: &str, content: &str, created_at: u64) -> nostr::Event {
+    EventBuilder::new(Kind::Custom(ASSIGNMENT_KIND), content)
+        .tag(Tag::parse(["d", d]).unwrap())
+        .custom_created_at(Timestamp::from(created_at))
+        .sign_with_keys(author)
+        .unwrap()
+}
+
+fn assignment_filter(agent: &Keys) -> Filter {
+    Filter::new()
+        .kind(Kind::Custom(ASSIGNMENT_KIND))
+        .custom_tags(
+            SingleLetterTag::lowercase(Alphabet::D),
+            [agent.public_key().to_hex()],
+        )
+}
+
+async fn read_assignments(reader_keys: &Keys, agent: &Keys) -> Vec<nostr::Event> {
+    let mut reader = BuzzTestClient::connect(&relay_url(), reader_keys)
+        .await
+        .expect("connect reader");
+    let sid = sub_id("assignment");
+    reader
+        .subscribe(&sid, vec![assignment_filter(agent)])
+        .await
+        .expect("subscribe");
+    let events = reader
+        .collect_until_eose(&sid, Duration::from_secs(5))
+        .await
+        .expect("collect");
+    reader.disconnect().await.expect("disconnect reader");
+    events
+}
+
+/// AC-R2: the registered owner's assignment is accepted and publicly
+/// readable by `#d` = agent; a kind:5 coordinate delete clears it.
+#[tokio::test]
+#[ignore]
+async fn test_agent_voice_assignment_owner_accepted_and_clearable() {
+    let owner_keys = Keys::generate();
+    let agent_keys = Keys::generate();
+    let foreign_keys = Keys::generate();
+    register_agent_owner(&agent_keys, &owner_keys).await;
+
+    let agent_hex = agent_keys.public_key().to_hex();
+    let mut owner = BuzzTestClient::connect(&relay_url(), &owner_keys)
+        .await
+        .expect("connect owner");
+    let event = assignment_event(
+        &owner_keys,
+        &agent_hex,
+        &chatterbox_content("chatterbox:evie"),
+        Timestamp::now().as_secs(),
+    );
+    let event_id = event.id;
+    let ok = client_send(&mut owner, event).await;
+    assert!(ok.accepted, "owner assignment rejected: {}", ok.message);
+
+    let events = read_assignments(&foreign_keys, &agent_keys).await;
+    assert_eq!(events.len(), 1, "foreign member must read the assignment");
+    assert_eq!(events[0].id, event_id);
+    assert_eq!(events[0].pubkey, owner_keys.public_key());
+
+    let coord = format!(
+        "{ASSIGNMENT_KIND}:{}:{agent_hex}",
+        owner_keys.public_key().to_hex()
+    );
+    let delete = EventBuilder::new(Kind::Custom(5), "")
+        .tag(Tag::parse(["a", coord.as_str()]).unwrap())
+        .sign_with_keys(&owner_keys)
+        .unwrap();
+    let ok = client_send(&mut owner, delete).await;
+    assert!(ok.accepted, "kind:5 deletion rejected: {}", ok.message);
+    owner.disconnect().await.expect("disconnect owner");
+
+    let events = read_assignments(&foreign_keys, &agent_keys).await;
+    assert!(
+        events.is_empty(),
+        "a kind:5 coordinate delete must clear the assignment, got {}",
+        events.len()
+    );
+}
+
+/// AC-R2: the same assignment from a key that is NOT the agent's registered
+/// owner is refused `restricted:`, and so is one naming an agent with no
+/// registered owner at all.
+#[tokio::test]
+#[ignore]
+async fn non_owner_assignment_is_restricted() {
+    let owner_keys = Keys::generate();
+    let agent_keys = Keys::generate();
+    let intruder_keys = Keys::generate();
+    register_agent_owner(&agent_keys, &owner_keys).await;
+
+    let mut intruder = BuzzTestClient::connect(&relay_url(), &intruder_keys)
+        .await
+        .expect("connect intruder");
+    let ok = client_send(
+        &mut intruder,
+        assignment_event(
+            &intruder_keys,
+            &agent_keys.public_key().to_hex(),
+            &chatterbox_content("chatterbox:evie"),
+            Timestamp::now().as_secs(),
+        ),
+    )
+    .await;
+    assert!(!ok.accepted, "a non-owner assignment must be rejected");
+    assert!(
+        ok.message.contains("restricted:"),
+        "expected a `restricted:` refusal, got: {}",
+        ok.message
+    );
+
+    // An unowned pubkey has no owner to match.
+    let unowned = Keys::generate();
+    let ok = client_send(
+        &mut intruder,
+        assignment_event(
+            &intruder_keys,
+            &unowned.public_key().to_hex(),
+            &chatterbox_content("chatterbox:evie"),
+            Timestamp::now().as_secs(),
+        ),
+    )
+    .await;
+    assert!(
+        !ok.accepted,
+        "assignment for an unowned agent must be rejected"
+    );
+    assert!(ok.message.contains("restricted:"), "got: {}", ok.message);
+    intruder.disconnect().await.expect("disconnect intruder");
+
+    assert!(
+        read_assignments(&owner_keys, &agent_keys).await.is_empty(),
+        "a refused assignment must not be stored"
+    );
+}
+
+/// AC-R3: a `d` that is not 64 lowercase hex, or an invalid payload, is
+/// refused `invalid:` — even from the registered owner.
+#[tokio::test]
+#[ignore]
+async fn test_agent_voice_assignment_rejects_bad_d_and_payload() {
+    let owner_keys = Keys::generate();
+    let agent_keys = Keys::generate();
+    register_agent_owner(&agent_keys, &owner_keys).await;
+    let agent_hex = agent_keys.public_key().to_hex();
+
+    let mut owner = BuzzTestClient::connect(&relay_url(), &owner_keys)
+        .await
+        .expect("connect owner");
+    let good = chatterbox_content("chatterbox:evie");
+    let upper = agent_hex.to_uppercase();
+    let cases: Vec<(String, String)> = vec![
+        (upper, good.clone()),
+        (agent_hex[..63].to_string(), good.clone()),
+        (D_TAG.to_string(), good.clone()),
+        (agent_hex.clone(), chatterbox_content("chatterbox:Evie")),
+        (agent_hex.clone(), pocket_content("pocket:eve")),
+    ];
+    for (d, content) in cases {
+        let ok = client_send(
+            &mut owner,
+            assignment_event(&owner_keys, &d, &content, Timestamp::now().as_secs()),
+        )
+        .await;
+        assert!(!ok.accepted, "d=`{d}` content={content} must be rejected");
+        assert!(
+            ok.message.contains("invalid:"),
+            "d=`{d}`: expected an `invalid:` refusal, got: {}",
+            ok.message
+        );
+    }
+    owner.disconnect().await.expect("disconnect owner");
 }

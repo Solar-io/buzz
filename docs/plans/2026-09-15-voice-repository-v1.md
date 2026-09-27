@@ -339,3 +339,36 @@ call-site wiring into `useHuddleAgentSpeech` is a separate, one-line change
 that passes `agentVoiceSelectionFor(pubkey)` as the future `selected?`
 parameter of `speechVoiceProfile` — §11's "untouched" constraint still holds
 until that seat lands.
+
+## 14. Addendum (2026-09-27): `chatterbox` engine + kind 30183 owner voice ASSIGNMENT
+
+Design: Chatterbox-all-voices §4 (PR4). Two relay changes, both additive.
+
+**30182 gains a fourth engine, `chatterbox`.** Body
+`{"version":1,"engine":"chatterbox","key":"chatterbox:<slug>","label":…}`,
+slug `^[a-z0-9][a-z0-9_-]{0,47}$` — the Chatterbox service's own voice-id
+grammar (`valid_chatterbox_voice_key`). The relay checks grammar only, never
+roster membership (the roster changes at runtime; unknown slugs are handled
+by the service's tombstones and the tts-bridge Pocket fallback). Existing
+`pocket:`/`eleven:`/`local-synth` rows are unchanged and still valid; the
+bridge aliases `pocket:<preset>` to Chatterbox, so no row is rewritten.
+
+**Kind: `KIND_AGENT_VOICE_ASSIGNMENT = 30183`** (parameterized-replaceable).
+The agent's registered OWNER sets the agent's voice without the agent acting.
+- Author = owner; exactly one `d` tag = the agent pubkey as 64 lowercase hex
+  (one row per (owner, agent)). Clearing is a kind:5 `a`-tag coordinate
+  delete `30183:<owner>:<agent>`.
+- Content: byte-identical grammar to 30182 (`validate_agent_voice_payload`).
+- Ingest: `UsersWrite`, community-global, and
+  `is_agent_owner(community, d_agent, event.pubkey)` — otherwise
+  `restricted: agent-voice assignment author must be the registered owner of
+  the agent in `d``. Same shape as the kind:44200 ownership check.
+- Access: public-read, in no gated set (every listener must honor it).
+
+**Precedence (all clients):** listener's local channel override > owner
+assignment (30183) > agent's own selection (30182, `local-synth` counts as
+none) > pubkey-derived default.
+
+**CLI:** `buzz voices select <key>` (30182 as self), `buzz voices assign
+--agent <hex> <key>` / `--clear` (30183 as owner), `buzz voices get --agent
+<hex>` (prints both rows and the relay-level effective voice).
