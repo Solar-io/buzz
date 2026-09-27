@@ -643,7 +643,7 @@ test("no selection routes the derived Pocket default through the bridge", () => 
   assert.equal(route.disposition, "derived-bridge");
   assert.equal(route.profile.source, "derived");
   assert.ok(route.bridge !== null, "the bridge request must be populated");
-  assert.equal(route.bridge.engine, "pocket");
+  assert.equal(route.bridge.engine, "chatterbox");
   // Byte-for-byte the pre-seam LOCAL behavior when nothing is selected:
   // the local profile is still the derived draw (it is the fallback when
   // the bridge cannot execute).
@@ -659,7 +659,7 @@ test("AC1: no selection over 50 pubkeys is derived-bridge, deterministic, never 
     const route = speakRoute(pk, [], undefined);
     assert.equal(route.disposition, "derived-bridge");
     assert.ok(route.bridge !== null, `pubkey ${i}: bridge must be non-null`);
-    assert.equal(route.bridge.engine, "pocket");
+    assert.equal(route.bridge.engine, "chatterbox");
     // The drawn voice is one of the 11 publishable presets — hardcoded
     // here, so a preset rename in DERIVED_POCKET_PRESETS fails THIS test
     // (the mutation gate), not an agent's voice someday.
@@ -697,7 +697,7 @@ test("AC2: an imported pocket selection executes the derived-bridge default", ()
   // ...but the EXECUTION voice is the derived-bridge Pocket default —
   // the OS-synth path is no longer reachable from a pocket selection.
   assert.ok(route.bridge !== null, "the bridge request must be populated");
-  assert.equal(route.bridge.engine, "pocket");
+  assert.equal(route.bridge.engine, "chatterbox");
   assert.notEqual(route.bridge.voice, "eve");
   assert.deepEqual(route.bridge, derivedBridgeVoice(AGENT));
 });

@@ -328,7 +328,15 @@ test("wiring: a no-selection agent speaks through the bridge, not the robot, dis
   const pcm = new Uint8Array(20);
   globalThis.fetch = (url, init) => {
     bridgeCalls.push({ url: String(url), init });
-    return Promise.resolve(new Response(pcm, { status: 200 }));
+    return Promise.resolve(
+      new Response(pcm, {
+        status: 200,
+        headers: {
+          "x-tts-engine": "chatterbox",
+          "x-tts-voice": "chatterbox:served",
+        },
+      }),
+    );
   };
   dom.window.AudioContext = FakeAudioContext;
   try {
@@ -346,7 +354,7 @@ test("wiring: a no-selection agent speaks through the bridge, not the robot, dis
     );
     assert.equal(bridgeCalls[0].init.method, "POST");
     const body = JSON.parse(bridgeCalls[0].init.body);
-    assert.equal(body.engine, "pocket");
+    assert.equal(body.engine, "chatterbox");
     assert.equal(body.voice, expectedVoice);
     assert.equal(body.text, "Ready when you are.");
     // THE point of the rework: the robot never speaks this reply.
@@ -360,9 +368,14 @@ test("wiring: a no-selection agent speaks through the bridge, not the robot, dis
     assert.equal(route.disposition, "derived-bridge");
     assert.equal(route.profile.source, "derived");
     assert.deepEqual(route.bridge, {
-      engine: "pocket",
+      engine: "chatterbox",
       voice: expectedVoice,
     });
+    // The bridge's x-tts-engine / x-tts-voice headers are recorded on the
+    // route: the request engine alone cannot tell Chatterbox from a Pocket
+    // fallback.
+    assert.equal(route.servedEngine, "chatterbox");
+    assert.equal(route.servedVoice, "chatterbox:served");
     await harness.unmount();
   } finally {
     globalThis.fetch = realFetch;

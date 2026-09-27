@@ -107,6 +107,25 @@ globalThis.__BUZZ_TEST_RELAY_SESSION__ = {
       ) {
         options.onEvent(agentEvent());
       }
+      if (
+        list.some((f) => f.kinds?.includes(30183) && f["#d"]?.includes(AGENT))
+      ) {
+        // The owner's voice assignment for this agent (kind 30183).
+        options.onEvent({
+          id: "d".repeat(64),
+          pubkey: OWNER,
+          kind: 30183,
+          created_at: 1_000,
+          tags: [["d", AGENT]],
+          content: JSON.stringify({
+            version: 1,
+            engine: "chatterbox",
+            key: "chatterbox:evie",
+            label: "Evie",
+          }),
+          sig: "f".repeat(128),
+        });
+      }
       options.onEose?.();
     });
     return () => {};
@@ -283,6 +302,16 @@ test("avatar hover: closed at 499 ms, open with rows at 500 ms, leave closes", a
     assert.match(open.textContent, /claude-opus-5-5/);
     assert.match(open.textContent, /medium/);
     assert.match(open.textContent, /Text-turn effort/);
+    // AC-W5: the effective voice with its source, owner row winning.
+    const voiceRow = open.querySelector(
+      '[data-testid="agent-config-row-voice"]',
+    );
+    assert.ok(voiceRow, "the Voice row renders");
+    assert.match(voiceRow.textContent, /Evie \(Chatterbox\) · set by owner/);
+    assert.ok(
+      open.querySelector('[data-testid="agent-config-change-voice"]') === null,
+      "the hover card stays read-only",
+    );
     await hoverLeave(row.avatar);
     await flush();
     assert.ok(card() === null, "pointerleave closes the card");
@@ -298,7 +327,7 @@ test("no subscriptions before the avatar is hovered (per-row cost)", async () =>
   const row = await mountRow();
   try {
     const configKinds = (f) =>
-      [30177, 30175, 30182].some((k) => f.kinds?.includes(k));
+      [30177, 30175, 30182, 30183].some((k) => f.kinds?.includes(k));
     assert.equal(subscribeCalls.flat().filter(configKinds).length, 0);
     await hoverEnter(row.avatar);
     await flush();
@@ -371,6 +400,10 @@ test("clicking the avatar shows the agent section; clicking the name does not", 
     );
     assert.ok(section(), "avatar profile card carries the agent section");
     assert.match(section().textContent, /claude-opus-5-5/);
+    assert.ok(
+      section().querySelector('[data-testid="agent-config-change-voice"]'),
+      "the OWNER's profile card offers Change voice…",
+    );
   } finally {
     await row.unmount();
   }

@@ -38,9 +38,25 @@ const { engineVoiceOptions } = await import("./voicePickerOptions.ts");
 // FIXTURES: two catalog rows and three bridge voices, run through the REAL
 // engine filter so the test exercises production shaping, not a copy.
 const SOURCES = {
-  catalogRows: [
-    { content: { key: "pocket:azelma", displayName: "Azelma" } },
-    { content: { key: "pocket:april", displayName: "April" } },
+  chatterboxVoices: [
+    {
+      key: "chatterbox:azelma",
+      slug: "azelma",
+      label: "Azelma",
+      gender: "female",
+      style: "VCTK reader",
+      reserved: false,
+      reservedFor: null,
+    },
+    {
+      key: "chatterbox:april",
+      slug: "april",
+      label: "April",
+      gender: "",
+      style: "",
+      reserved: false,
+      reservedFor: null,
+    },
   ],
   elevenVoices: [
     { id: "T720", label: "Amara" },
@@ -69,13 +85,13 @@ async function mount(element) {
 
 function list(props) {
   return React.createElement(VoicePickerList, {
-    options: engineVoiceOptions("pocket", SOURCES),
+    options: engineVoiceOptions("chatterbox", SOURCES),
     current: undefined,
     onPreview: () => {},
     onSelect: () => {},
     busy: false,
     ready: true,
-    engine: "pocket",
+    engine: "chatterbox",
     ...props,
   });
 }
@@ -91,7 +107,16 @@ test("the picker renders the CHOSEN engine's rows and none of the other's", asyn
   const pocketText = pocket.container.textContent;
   assert.match(pocketText, /Azelma/);
   assert.match(pocketText, /April/);
-  assert.ok(!pocketText.includes("Amara"), "no ElevenLabs row under Pocket");
+  assert.ok(
+    !pocketText.includes("Amara"),
+    "no ElevenLabs row under Chatterbox",
+  );
+  assert.match(pocketText, /female · VCTK reader/, "gender · style detail");
+  assert.match(
+    pocketText,
+    /chatterbox/,
+    "a row with no detail names its engine",
+  );
   assert.ok(!pocketText.includes("on-device"), "on-device is gone entirely");
   await pocket.unmount();
 
@@ -106,7 +131,10 @@ test("the picker renders the CHOSEN engine's rows and none of the other's", asyn
   );
   const elevenText = eleven.container.textContent;
   assert.match(elevenText, /Amara/);
-  assert.ok(!elevenText.includes("Azelma"), "no Pocket row under ElevenLabs");
+  assert.ok(
+    !elevenText.includes("Azelma"),
+    "no Chatterbox row under ElevenLabs",
+  );
   await eleven.unmount();
 });
 
@@ -125,7 +153,7 @@ test("every rendered row offers Preview and Select", async () => {
 
 test("the current selection renders as Selected and others as Select", async () => {
   const { container, unmount } = await mount(
-    list({ current: { engine: "pocket", key: "pocket:april" } }),
+    list({ current: { engine: "chatterbox", key: "chatterbox:april" } }),
   );
   assert.deepEqual(
     [...container.querySelectorAll('[data-testid="voice-picker-select"]')].map(
@@ -158,17 +186,17 @@ test("the loading state names itself before EOSE, the empty state after", async 
   const empty = await mount(list({ options: [], ready: true }));
   assert.match(
     empty.container.textContent,
-    /No Pocket voices are available/,
+    /No Chatterbox voices are available/,
     "an empty list after EOSE must read as empty, not as loading",
   );
   await empty.unmount();
 });
 
-test("the engine tabs offer exactly Pocket and ElevenLabs, and report the active one", async () => {
+test("the engine tabs offer exactly Chatterbox and ElevenLabs, and report the active one", async () => {
   const chosen = [];
   const { container, unmount } = await mount(
     React.createElement(VoiceEngineTabs, {
-      engine: "pocket",
+      engine: "chatterbox",
       onChange: (engine) => chosen.push(engine),
     }),
   );
@@ -178,7 +206,7 @@ test("the engine tabs offer exactly Pocket and ElevenLabs, and report the active
   assert.equal(buttons.length, 2, "two engines, no third");
   assert.deepEqual(
     buttons.map((button) => button.textContent),
-    ["Pocket", "ElevenLabs"],
+    ["Chatterbox", "ElevenLabs"],
   );
   assert.deepEqual(
     buttons.map((button) => button.getAttribute("aria-pressed")),

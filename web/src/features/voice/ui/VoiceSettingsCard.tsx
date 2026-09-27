@@ -13,25 +13,33 @@ import { VoicePickerDialog } from "./VoicePickerDialog.tsx";
 
 function describeSelection(selection: AgentVoiceSelection | undefined): string {
   if (selection === undefined) {
-    return "Derived from your key — every agent gets its own stable Pocket voice.";
+    return "Derived from your key — a stable Chatterbox voice.";
   }
   if (selection.engine === "pocket") {
-    return `Pocket voice ${selection.key}`;
+    return `Pocket voice ${selection.key} (spoken by its Chatterbox twin)`;
+  }
+  if (selection.engine === "chatterbox") {
+    return `Chatterbox voice ${selection.key}`;
   }
   if (selection.engine === "eleven") {
     return `ElevenLabs voice ${selection.key}`;
   }
   // A published on-device row from before the engine was dropped. It still
   // decodes, but it no longer decides: `resolveHuddleVoice` treats it as no
-  // selection at all, so the derived Pocket default is what actually speaks
+  // selection at all, so the derived Chatterbox default is what actually speaks
   // (huddle/lib/huddlePrefs.ts). Say so rather than naming a voice nobody
   // will hear.
-  return `On-device voice ${selection.voiceURI} — no longer supported; the derived Pocket voice speaks instead.`;
+  return `On-device voice ${selection.voiceURI} — no longer supported; the derived Chatterbox voice speaks instead.`;
 }
 
 /**
- * "Agent voice" — the settings surface for the signed-in agent's speaking
- * voice in huddles.
+ * "Your voice" — the settings surface for the SIGNED-IN IDENTITY's own
+ * speaking voice (kind 30182, author = you).
+ *
+ * Formerly titled "Agent voice", which read as "set my agent's voice" and
+ * made Sam publish a 30182 for his own key on 2026-09-18. Retitled per the
+ * 9/18 commitment; per-agent voices live in the "Agent voices" card, which
+ * publishes the owner-signed kind 30183 instead.
  *
  * Lives in Settings rather than the huddle bar because the selection is a
  * property of the AGENT, not of one call: the same voice speaks in every
@@ -83,7 +91,7 @@ export function VoiceSettingsCard({
       data-testid="settings-agent-voice"
     >
       <div className="flex items-center justify-between gap-4">
-        <h2 className="font-medium">Agent voice</h2>
+        <h2 className="font-medium">Your voice</h2>
         <Button
           data-testid="agent-voice-choose"
           onClick={() => setPickerOpen(true)}
@@ -94,6 +102,10 @@ export function VoiceSettingsCard({
           Choose voice…
         </Button>
       </div>
+      <p className="text-xs text-muted-foreground">
+        Binds your own identity (used when agents read your messages aloud). To
+        change an agent's voice, use Agent voices below.
+      </p>
       <p className="text-sm text-muted-foreground">
         {describeSelection(current)}
         {currentRow !== undefined ? ` — set as “${currentRow.label}”.` : ""}

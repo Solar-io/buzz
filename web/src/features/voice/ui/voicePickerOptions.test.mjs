@@ -1,41 +1,138 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  FILTER_THRESHOLD,
   PREVIEW_SAMPLE_TEXT,
   VOICE_ENGINES,
+  chatterboxVoiceOptions,
   elevenVoiceOptions,
   engineLabel,
   engineVoiceOptions,
-  pocketVoiceOptions,
+  filterVoiceOptions,
+  initialEngine,
   sameOption,
 } from "./voicePickerOptions.ts";
+import { parseChatterboxRoster } from "../lib/chatterboxRoster.ts";
 
-const CATALOG_ROWS = [
-  { content: { key: "pocket:azelma", displayName: "Azelma" } },
-  { content: { key: "pocket:april", displayName: "April" } },
-];
+// Roster fixture in the bridge's real wire shape (GET /voices/chatterbox,
+// captured 2026-09-27): reserved voices carry NO reservedFor pubkey.
+const ROSTER = parseChatterboxRoster({
+  revision: 2,
+  voices: [
+    {
+      key: "chatterbox:anna",
+      slug: "anna",
+      label: "Anna",
+      gender: "female",
+      style: "VCTK reader",
+      reserved: false,
+    },
+    {
+      key: "chatterbox:theo",
+      slug: "theo",
+      label: "Theo",
+      gender: "male",
+      style: "neutral",
+      reserved: false,
+    },
+    {
+      key: "chatterbox:eve",
+      slug: "eve",
+      label: "Eve",
+      gender: "female",
+      style: "alias target only",
+      reserved: true,
+    },
+    {
+      key: "chatterbox:evie",
+      slug: "evie",
+      label: "Evie",
+      gender: "female",
+      style: "bright, conversational",
+      reserved: true,
+    },
+    { key: "chatterbox:Bad", label: "dropped: invalid key" },
+  ],
+});
 const ELEVEN_VOICES = [
   { id: "T720RsqorTx4ZZWohrNN", label: "Amara" },
   { id: "ZZ11aaBB", label: "Rook" },
   { id: "CC22ddEE", label: "Wren" },
 ];
-const SOURCES = { catalogRows: CATALOG_ROWS, elevenVoices: ELEVEN_VOICES };
+const SOURCES = { chatterboxVoices: ROSTER, elevenVoices: ELEVEN_VOICES };
+const EVIE = { pubkey: "e".repeat(64), name: "Evie" };
+const RICHARD = { pubkey: "f".repeat(64), name: "Richard Hendricks" };
 
 // ── Engines ────────────────────────────────────────────────────────────────
 
-test("exactly two engines are offered, and on-device is not one of them", () => {
-  assert.deepEqual([...VOICE_ENGINES], ["pocket", "eleven"]);
-  assert.equal(engineLabel("pocket"), "Pocket");
+test("Chatterbox replaces Pocket: exactly Chatterbox then ElevenLabs", () => {
+  assert.deepEqual([...VOICE_ENGINES], ["chatterbox", "eleven"]);
+  assert.equal(engineLabel("chatterbox"), "Chatterbox");
   assert.equal(engineLabel("eleven"), "ElevenLabs");
 });
 
-// ── Pocket / ElevenLabs options ────────────────────────────────────────────
+test("the picker opens on ElevenLabs only for an eleven row, else Chatterbox", () => {
+  assert.equal(initialEngine(undefined), "chatterbox");
+  assert.equal(initialEngine({ engine: "pocket" }), "chatterbox");
+  assert.equal(initialEngine({ engine: "chatterbox" }), "chatterbox");
+  assert.equal(initialEngine({ engine: "eleven" }), "eleven");
+});
 
-test("catalog rows become pocket options keyed by their row key", () => {
-  assert.deepEqual(pocketVoiceOptions(CATALOG_ROWS), [
-    { engine: "pocket", key: "pocket:azelma", label: "Azelma" },
-    { engine: "pocket", key: "pocket:april", label: "April" },
-  ]);
+// ── Roster parse ───────────────────────────────────────────────────────────
+
+test("the roster parse drops rows whose key fails the relay grammar", () => {
+  assert.equal(ROSTER.length, 4, "4 valid rows; the uppercase key is dropped");
+  assert.ok(!ROSTER.some((voice) => voice.key === "chatterbox:Bad"));
+});
+
+// ── Chatterbox options + the reserved-voice policy ─────────────────────────
+
+test("self mode hides every reserved voice (eve AND evie)", () => {
+  const options = chatterboxVoiceOptions(ROSTER, null);
+  assert.deepEqual(
+    options.map((option) => option.key),
+    ["chatterbox:anna", "chatterbox:theo"],
+  );
+  assert.deepEqual(options[0], {
+    engine: "chatterbox",
+    key: "chatterbox:anna",
+    label: "Anna",
+    detail: "female · VCTK reader",
+  });
+});
+
+test("Evie's voice is offered ONLY when the target is the Evie agent", () => {
+  const forEvie = chatterboxVoiceOptions(ROSTER, EVIE).map((o) => o.key);
+  assert.ok(forEvie.includes("chatterbox:evie"), "offered on Evie's row");
+  assert.ok(!forEvie.includes("chatterbox:eve"), "eve has no agent of its own");
+  assert.equal(forEvie.length, 3);
+  const forRichard = chatterboxVoiceOptions(ROSTER, RICHARD).map((o) => o.key);
+  assert.ok(!forRichard.includes("chatterbox:evie"), "never on anyone else");
+  assert.equal(forRichard.length, 2);
+});
+
+test("a roster reservedFor pubkey is authoritative over the name match", () => {
+  const [pinned] = parseChatterboxRoster({
+    voices: [
+      {
+        key: "chatterbox:evie",
+        label: "Evie",
+        reserved: true,
+        reservedFor: EVIE.pubkey.toUpperCase(),
+      },
+    ],
+  });
+  // Same name, different key: refused. Different name, right key: offered.
+  assert.equal(
+    chatterboxVoiceOptions([pinned], { pubkey: "a".repeat(64), name: "Evie" })
+      .length,
+    0,
+  );
+  assert.equal(
+    chatterboxVoiceOptions([pinned], { pubkey: EVIE.pubkey, name: "Other" })
+      .length,
+    1,
+  );
 });
 
 test("bridge voice rows become eleven options with the eleven: key prefix", () => {
@@ -51,77 +148,78 @@ test("bridge voice rows become eleven options with the eleven: key prefix", () =
 // ── THE ENGINE FILTER ──────────────────────────────────────────────────────
 
 test("engineVoiceOptions returns the chosen engine's voices and ONLY those", () => {
-  const pocket = engineVoiceOptions("pocket", SOURCES);
-  // Count guard first: a filter that returned nothing would otherwise pass
-  // every "no eleven rows here" assertion vacuously.
-  assert.equal(pocket.length, 2, "both catalog rows");
-  assert.ok(
-    pocket.every((option) => option.engine === "pocket"),
-    "no eleven row may appear under Pocket",
-  );
-  assert.deepEqual(
-    pocket.map((option) => option.label),
-    ["Azelma", "April"],
-  );
-  assert.ok(!pocket.some((option) => option.label === "Amara"));
-
+  const chatterbox = engineVoiceOptions("chatterbox", SOURCES);
+  assert.equal(chatterbox.length, 2, "the two unreserved roster rows");
+  assert.ok(chatterbox.every((option) => option.engine === "chatterbox"));
   const eleven = engineVoiceOptions("eleven", SOURCES);
   assert.equal(eleven.length, 3, "all three bridge voices");
-  assert.ok(
-    eleven.every((option) => option.engine === "eleven"),
-    "no pocket row may appear under ElevenLabs",
-  );
-  assert.deepEqual(
-    eleven.map((option) => option.label),
-    ["Amara", "Rook", "Wren"],
-  );
-  assert.ok(!eleven.some((option) => option.label === "Azelma"));
+  assert.ok(eleven.every((option) => option.engine === "eleven"));
+  const keys = new Set(chatterbox.map((option) => option.key));
+  assert.ok(eleven.every((option) => !keys.has(option.key)));
+});
 
-  // The two lists are disjoint — the flat combined list is gone.
-  const pocketKeys = new Set(pocket.map((option) => option.key));
-  assert.ok(eleven.every((option) => !pocketKeys.has(option.key)));
+test("engineVoiceOptions threads the assign target to the reserved policy", () => {
+  const keys = engineVoiceOptions("chatterbox", {
+    ...SOURCES,
+    target: EVIE,
+  }).map((option) => option.key);
+  assert.ok(keys.includes("chatterbox:evie"));
 });
 
 test("an engine with no rows yields an empty list, not the other engine's", () => {
   assert.deepEqual(
     engineVoiceOptions("eleven", {
-      catalogRows: CATALOG_ROWS,
+      chatterboxVoices: ROSTER,
       elevenVoices: [],
     }),
     [],
-    "a keyless bridge shows no voices, never the pocket ones",
   );
   assert.deepEqual(
-    engineVoiceOptions("pocket", {
-      catalogRows: [],
+    engineVoiceOptions("chatterbox", {
+      chatterboxVoices: [],
       elevenVoices: ELEVEN_VOICES,
     }),
     [],
   );
 });
 
+test("the filter matches label and detail, case-insensitively", () => {
+  const options = chatterboxVoiceOptions(ROSTER, EVIE);
+  assert.deepEqual(
+    filterVoiceOptions(options, "MALE").map((o) => o.key),
+    // "female" contains "male": every row with a gender matches.
+    ["chatterbox:anna", "chatterbox:theo", "chatterbox:evie"],
+  );
+  assert.deepEqual(
+    filterVoiceOptions(options, "neutral").map((o) => o.key),
+    ["chatterbox:theo"],
+  );
+  assert.equal(filterVoiceOptions(options, "  ").length, 3);
+  assert.equal(FILTER_THRESHOLD, 12);
+});
+
 // ── Same-option comparison ─────────────────────────────────────────────────
 
 test("sameOption distinguishes engine, target, and undefined", () => {
-  const pocket = { engine: "pocket", key: "pocket:a", label: "A" };
-  const pocketTwin = { engine: "pocket", key: "pocket:a" };
-  const pocketOther = { engine: "pocket", key: "pocket:b", label: "B" };
-  const eleven = { engine: "eleven", key: "eleven:a", label: "A" };
-  assert.ok(sameOption(pocket, pocketTwin));
-  assert.ok(!sameOption(pocket, pocketOther));
-  assert.ok(!sameOption(pocket, eleven), "same key, different engine");
-  assert.ok(!sameOption(pocket, undefined));
+  const cb = { engine: "chatterbox", key: "chatterbox:a", label: "A" };
+  const cbTwin = { engine: "chatterbox", key: "chatterbox:a" };
+  const cbOther = { engine: "chatterbox", key: "chatterbox:b" };
+  const eleven = { engine: "eleven", key: "chatterbox:a", label: "A" };
+  assert.ok(sameOption(cb, cbTwin));
+  assert.ok(!sameOption(cb, cbOther));
+  assert.ok(!sameOption(cb, eleven), "same key, different engine");
+  assert.ok(!sameOption(cb, undefined));
   assert.ok(!sameOption(undefined, eleven));
 });
 
 test("a stored on-device selection matches no offered row", () => {
-  // The dropped engine: nothing in a picker can be it, so the comparison
-  // must never light a row up as "Selected".
   const stored = { engine: "local-synth", voiceURI: "uri:samantha" };
-  for (const option of [
-    ...engineVoiceOptions("pocket", SOURCES),
+  const all = [
+    ...engineVoiceOptions("chatterbox", SOURCES),
     ...engineVoiceOptions("eleven", SOURCES),
-  ]) {
+  ];
+  assert.equal(all.length, 5);
+  for (const option of all) {
     assert.ok(!sameOption(option, stored), `${option.key} must not match`);
   }
   assert.ok(!sameOption(stored, stored), "not even against itself");

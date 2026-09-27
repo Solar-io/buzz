@@ -10,6 +10,15 @@ import {
   type AgentVoiceSelectionRow,
 } from "./lib/agentVoiceSelection.ts";
 import {
+  KIND_AGENT_VOICE_ASSIGNMENT,
+  reduceAgentVoiceAssignmentEvents,
+  type AgentVoiceAssignmentRow,
+} from "./lib/agentVoiceAssignment.ts";
+import {
+  parseChatterboxRoster,
+  type ChatterboxVoice,
+} from "./lib/chatterboxRoster.ts";
+import {
   KIND_VOICE_CATALOG,
   reduceVoiceCatalogEvents,
   type CatalogEventLike,
@@ -138,6 +147,91 @@ export function useElevenVoices(): {
       })
       .catch(() => {
         // Keyless or unreachable: the picker simply shows the other engines.
+        setVoices([]);
+      })
+      .finally(() => setReady(true));
+    return () => controller.abort();
+  }, []);
+  return { voices, ready };
+}
+
+/**
+ * Live owner voice assignments (kind 30183), folded per AGENT pubkey.
+ *
+ * Same subscription shape as {@link useAgentVoiceSelections}. Rows are
+ * relay-verified at write time (`is_agent_owner`), so the fold does not
+ * re-check ownership. `ingest` lets a surface that just published a clear
+ * (kind-5 coordinate delete) apply it locally at once — a live REQ on
+ * kind 30183 never delivers the deletion itself.
+ */
+export function useAgentVoiceAssignments(): {
+  byAgent: Map<string, AgentVoiceAssignmentRow>;
+  ready: boolean;
+  assignmentFor: (agentPubkey: string) => AgentVoiceSelection | undefined;
+  ingest: (event: AgentVoiceEventLike & { kind?: number }) => void;
+} {
+  const { session } = useRelaySession();
+  const [events, setEvents] = useState<
+    (AgentVoiceEventLike & { kind?: number })[]
+  >([]);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    setEvents([]);
+    setReady(false);
+    return session.subscribe(
+      { kinds: [KIND_AGENT_VOICE_ASSIGNMENT], limit: 500 },
+      {
+        onEvent: (event: SignedNostrEvent) => {
+          setEvents((previous) => [...previous, event]);
+        },
+        onEose: () => setReady(true),
+      },
+    );
+  }, [session]);
+
+  const byAgent = useMemo(
+    () => reduceAgentVoiceAssignmentEvents(events),
+    [events],
+  );
+  const assignmentFor = useCallback(
+    (agentPubkey: string) => byAgent.get(agentPubkey.toLowerCase())?.selection,
+    [byAgent],
+  );
+  const ingest = useCallback(
+    (event: AgentVoiceEventLike & { kind?: number }) =>
+      setEvents((previous) => [...previous, event]),
+    [],
+  );
+  return { byAgent, ready, assignmentFor, ingest };
+}
+
+/**
+ * The tts bridge's Chatterbox roster (`GET /voices/chatterbox`) — the voices
+ * the picker offers and the labels every surface shows. Plain fetch like
+ * {@link useElevenVoices}; the bridge caches the service's roster for 60 s
+ * and serves the last good copy (`stale: true`) when the service is down.
+ */
+export function useChatterboxVoices(): {
+  voices: ChatterboxVoice[];
+  ready: boolean;
+} {
+  const [voices, setVoices] = useState<ChatterboxVoice[]>([]);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const controller = new AbortController();
+    fetch(new URL("/voices/chatterbox", speechServiceUrl("tts")).href, {
+      signal: controller.signal,
+    })
+      .then((res) =>
+        res.ok ? res.json() : Promise.reject(new Error(`bridge ${res.status}`)),
+      )
+      .then((body: unknown) => setVoices(parseChatterboxRoster(body)))
+      .catch(() => {
+        // Unreachable bridge: the picker shows its empty state.
         setVoices([]);
       })
       .finally(() => setReady(true));

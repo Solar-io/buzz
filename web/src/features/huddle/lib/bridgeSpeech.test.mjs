@@ -6,6 +6,7 @@ import {
   BRIDGE_SAMPLE_RATE,
   chunkToInt16Pieces,
   DERIVED_POCKET_PRESETS,
+  DERIVED_VOICE_SLUGS,
   derivedBridgeVoice,
   int16ToFloat32,
   playBridgeResponse,
@@ -27,6 +28,10 @@ test("selectionToBridgeRequest maps engines", () => {
       engine: "pocket",
       voice: "azelma",
     },
+  );
+  assert.deepEqual(
+    selectionToBridgeRequest({ engine: "chatterbox", key: "chatterbox:evie" }),
+    { engine: "chatterbox", voice: "evie" },
   );
   assert.deepEqual(
     selectionToBridgeRequest({
@@ -184,9 +189,10 @@ test("derivedBridgeVoice is deterministic, from presets, never eve", () => {
     // Synthetic pubkeys: hex-ish strings of varying content.
     const pk = (i.toString(16).padStart(2, "0") + "abcdef0123456789").repeat(2);
     const req = derivedBridgeVoice(pk);
-    assert.equal(req.engine, "pocket");
-    assert.ok(DERIVED_POCKET_PRESETS.includes(req.voice));
+    assert.equal(req.engine, "chatterbox");
+    assert.ok(DERIVED_VOICE_SLUGS.includes(req.voice));
     assert.notEqual(req.voice, "eve");
+    assert.notEqual(req.voice, "evie");
     seen.add(req.voice);
     // Determinism: same key, same voice.
     assert.deepEqual(derivedBridgeVoice(pk), req);
@@ -195,7 +201,48 @@ test("derivedBridgeVoice is deterministic, from presets, never eve", () => {
   assert.ok(seen.size >= 4, `expected spread, got ${[...seen].join(",")}`);
 });
 
-test("DERIVED_POCKET_PRESETS equals the hardcoded 11-slug list (drift guard)", () => {
+// The pre-Chatterbox draw, reimplemented HERE from the shipped algorithm
+// (djb2 over the pubkey, |h| % 11, over the hardcoded 11-list) — NOT
+// imported — so a reorder or regrowth of DERIVED_VOICE_SLUGS, or any change
+// to the hash, fails the continuity test below by name.
+const LEGACY_POCKET_ORDER = [
+  "anna",
+  "vera",
+  "fantine",
+  "charles",
+  "paul",
+  "eponine",
+  "azelma",
+  "george",
+  "mary",
+  "jane",
+  "michael",
+];
+function legacyPocketDraw(pubkey) {
+  let h = 5381;
+  for (let i = 0; i < pubkey.length; i++) {
+    h = ((h << 5) + h + pubkey.charCodeAt(i)) | 0;
+  }
+  return LEGACY_POCKET_ORDER[Math.abs(h) % LEGACY_POCKET_ORDER.length];
+}
+
+test("AC-W2: the Chatterbox derived default keeps every agent's legacy Pocket slug (50 pubkeys)", () => {
+  let checked = 0;
+  for (let i = 0; i < 50; i++) {
+    const pk = `${(i * 7919).toString(16).padStart(8, "0")}`.repeat(8);
+    const req = derivedBridgeVoice(pk);
+    assert.equal(req.engine, "chatterbox");
+    assert.equal(req.voice, legacyPocketDraw(pk), `identity drift for ${pk}`);
+    checked += 1;
+  }
+  assert.equal(checked, 50);
+});
+
+test("DERIVED_POCKET_PRESETS is the same table as DERIVED_VOICE_SLUGS (legacy alias)", () => {
+  assert.equal(DERIVED_POCKET_PRESETS, DERIVED_VOICE_SLUGS);
+});
+
+test("DERIVED_VOICE_SLUGS equals the hardcoded 11-slug list (drift guard)", () => {
   // MUTATION GATE (voice-picker-v2 §4 AC3): rename a slug in
   // DERIVED_POCKET_PRESETS and THIS test fails by name. The list is
   // hardcoded, never derived from the constant it pins — and it must stay
@@ -203,7 +250,7 @@ test("DERIVED_POCKET_PRESETS equals the hardcoded 11-slug list (drift guard)", (
   // (eve excluded), matching the /voices/pocket roster the bridge serves
   // and the voicecheck gate asserts.
   assert.deepEqual(
-    [...DERIVED_POCKET_PRESETS],
+    [...DERIVED_VOICE_SLUGS],
     [
       "anna",
       "vera",

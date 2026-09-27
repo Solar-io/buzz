@@ -25,7 +25,7 @@ export function ttsBridgeUrl(hostname: string): string {
 
 /** What one selection asks the bridge for. */
 export interface BridgeSpeakRequest {
-  engine: "pocket" | "eleven";
+  engine: "pocket" | "chatterbox" | "eleven";
   voice: string;
 }
 
@@ -40,6 +40,7 @@ export interface BridgeSpeakRequest {
  *    Pocket default instead (disposition
  *    `pocket-selected-pending-engine`), so the OS robot is never the
  *    fallback for an imported selection.
+ *  - `chatterbox:<slug>` → Chatterbox roster slug;
  *  - `eleven:<voiceid>` → ElevenLabs voice id.
  */
 export function selectionToBridgeRequest(
@@ -51,6 +52,12 @@ export function selectionToBridgeRequest(
     }
     return { engine: "pocket", voice: selection.key.slice("pocket:".length) };
   }
+  if (selection.engine === "chatterbox") {
+    return {
+      engine: "chatterbox",
+      voice: selection.key.slice("chatterbox:".length),
+    };
+  }
   if (selection.engine === "eleven") {
     return { engine: "eleven", voice: selection.key.slice("eleven:".length) };
   }
@@ -58,12 +65,14 @@ export function selectionToBridgeRequest(
 }
 
 /**
- * The bundled Pocket presets an agent with NO published selection draws
- * from — the shipped 11 minus `pocket:eve`, which is excluded from the
- * default draw for consistency with its catalog-publication ban. Order
- * mirrors `crates/buzz-voice/src/bundled.rs`.
+ * The voice slugs an agent with NO selection draws from — the shipped 11
+ * Pocket presets minus `eve` (and never `evie`), each of which also exists
+ * as a Chatterbox voice cloned from the SAME clip, so the draw keeps every
+ * agent's identity across the engine switch. Order mirrors
+ * `crates/buzz-voice/src/bundled.rs` and must NEVER be reordered or grown:
+ * either reshuffles every agent's voice (design §4.5). Pinned by test.
  */
-export const DERIVED_POCKET_PRESETS: readonly string[] = [
+export const DERIVED_VOICE_SLUGS: readonly string[] = [
   "anna",
   "vera",
   "fantine",
@@ -77,6 +86,9 @@ export const DERIVED_POCKET_PRESETS: readonly string[] = [
   "michael",
 ];
 
+/** @deprecated legacy name — the same table, see {@link DERIVED_VOICE_SLUGS}. */
+export const DERIVED_POCKET_PRESETS = DERIVED_VOICE_SLUGS;
+
 /**
  * The bridge request for an agent that never published a selection.
  *
@@ -86,14 +98,15 @@ export const DERIVED_POCKET_PRESETS: readonly string[] = [
  * Pocket preset, drawn deterministically from the pubkey so co-speakers
  * still sound different without anyone configuring anything (the same
  * differentiation intent as the derived pitch-spread, one level up).
+ * Since 2026-09-27 the engine is Chatterbox (same slug, same clip).
  */
 export function derivedBridgeVoice(pubkey: string): BridgeSpeakRequest {
   let h = 5381;
   for (let i = 0; i < pubkey.length; i++) {
     h = ((h << 5) + h + pubkey.charCodeAt(i)) | 0;
   }
-  const index = Math.abs(h) % DERIVED_POCKET_PRESETS.length;
-  return { engine: "pocket", voice: DERIVED_POCKET_PRESETS[index] };
+  const index = Math.abs(h) % DERIVED_VOICE_SLUGS.length;
+  return { engine: "chatterbox", voice: DERIVED_VOICE_SLUGS[index] };
 }
 
 /**

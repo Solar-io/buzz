@@ -161,3 +161,156 @@ test("statechange listeners hear the context state", async () => {
   assert.deepEqual(seen, ["suspended"]);
   player.dispose();
 });
+
+// ── Prefetch-one-ahead (design §6.2, AC-W3) ────────────────────────────────
+
+// Three sentences of ~150 chars each: chunkSpeakableText (200-char cap)
+// yields exactly three chunks — asserted, so a chunker change cannot turn
+// these tests vacuous.
+const SENTENCE = (n) =>
+  `Sentence ${n} is deliberately long so that the chunker keeps it as its own utterance, well past half of the two hundred character cap here.`;
+const THREE_CHUNKS = [SENTENCE(1), SENTENCE(2), SENTENCE(3)].join(" ");
+
+/** A context whose clock is WALL time — tail gating then behaves for real. */
+function wallClockContext() {
+  const t0 = Date.now();
+  const ctx = {
+    get currentTime() {
+      return (Date.now() - t0) / 1000;
+    },
+    destination: {},
+    sources: [],
+    createGain() {
+      return { gain: { value: 1 }, connect() {} };
+    },
+    createBuffer: (_ch, length) => ({ length, copyToChannel() {} }),
+    createBufferSource() {
+      const src = {
+        buffer: null,
+        connect() {},
+        start(when) {
+          ctx.sources.push({
+            when,
+            dur: src.buffer.length / BRIDGE_SAMPLE_RATE,
+          });
+        },
+        stop() {},
+      };
+      return src;
+    },
+    resume: () => Promise.resolve(),
+  };
+  return ctx;
+}
+
+test("the chunk fixture really is three chunks", async () => {
+  const { chunkSpeakableText } = await import(
+    "../huddle/lib/huddleAgentSpeech.ts"
+  );
+  assert.equal(chunkSpeakableText(THREE_CHUNKS).length, 3);
+});
+
+test("AC-W3: chunk 2 is fetched before chunk 1 finishes playing", async () => {
+  const ctx = wallClockContext();
+  const fetchAt = [];
+  const spokenAt = [];
+  const player = createAgentSpeechPlayer({
+    getVoices: () => [],
+    voiceSelectionFor: () => undefined,
+    ttsUrl: () => "https://web.test:6366/tts",
+    createAudioContext: () => ctx,
+    fetchImpl: () => {
+      fetchAt.push(Date.now());
+      return Promise.resolve(pcmResponse(0.3));
+    },
+    onChunkSpoken: () => spokenAt.push(Date.now()),
+  });
+  const result = await player.speak(THREE_CHUNKS, AGENT);
+  assert.equal(result, "spoken");
+  assert.equal(fetchAt.length, 3, "one POST per chunk, no more");
+  assert.equal(spokenAt.length, 3);
+  assert.ok(
+    fetchAt[1] < spokenAt[0],
+    `fetch #2 (${fetchAt[1]}) must start before chunk #1 settles (${spokenAt[0]})`,
+  );
+  assert.ok(fetchAt[2] < spokenAt[1], "fetch #3 before chunk #2 settles");
+  player.dispose();
+});
+
+test("AC-W3: a 250 ms bridge first-byte leaves < 100 ms between chunks", async () => {
+  const ctx = wallClockContext();
+  const player = createAgentSpeechPlayer({
+    getVoices: () => [],
+    voiceSelectionFor: () => undefined,
+    ttsUrl: () => "https://web.test:6366/tts",
+    createAudioContext: () => ctx,
+    // Chatterbox-like latency: headers after 250 ms, then 0.4 s of audio.
+    fetchImpl: () =>
+      new Promise((resolve) =>
+        setTimeout(() => resolve(pcmResponse(0.4)), 250),
+      ),
+  });
+  const result = await player.speak(THREE_CHUNKS, AGENT);
+  assert.equal(result, "spoken");
+  const sources = [...ctx.sources].sort((a, b) => a.when - b.when);
+  // 0.4 s per chunk in ≤0.25 s pieces → 2 pieces per chunk, 6 in all.
+  assert.equal(sources.length, 6, "every chunk's audio was scheduled");
+  let maxGap = 0;
+  for (let i = 1; i < sources.length; i++) {
+    const prevEnd = sources[i - 1].when + sources[i - 1].dur;
+    maxGap = Math.max(maxGap, sources[i].when - prevEnd);
+  }
+  // Sequential fetching would leave ≥ 250 ms (the fetch latency) here.
+  assert.ok(maxGap < 0.1, `inter-chunk gap ${maxGap.toFixed(3)} s`);
+  player.dispose();
+});
+
+test("interrupt aborts the prefetched request as well as the current one", async () => {
+  const ctx = manualContext();
+  const inits = [];
+  const player = createAgentSpeechPlayer({
+    getVoices: () => [],
+    voiceSelectionFor: () => undefined,
+    ttsUrl: () => "https://web.test:6366/tts",
+    createAudioContext: () => ctx,
+    fetchImpl: (_url, init) => {
+      inits.push(init);
+      return Promise.resolve(pcmResponse(1));
+    },
+  });
+  const pending = player.speak(THREE_CHUNKS, AGENT);
+  await tick(100);
+  // Clock frozen at 0: chunk 1 is still "playing" and chunk 2 is prefetched.
+  assert.equal(inits.length, 2, "exactly one request held ahead");
+  player.interrupt();
+  assert.equal(await pending, "stopped");
+  assert.ok(inits[1].signal?.aborted, "the prefetched request was aborted");
+  player.dispose();
+});
+
+test("the owner's 30183 assignment outranks the agent's own 30182 at speak time", async () => {
+  const ctx = manualContext();
+  const bodies = [];
+  const player = createAgentSpeechPlayer({
+    getVoices: () => [],
+    voiceSelectionFor: () => ({ engine: "pocket", key: "pocket:anna" }),
+    voiceAssignmentFor: (pk) =>
+      pk === AGENT
+        ? { engine: "chatterbox", key: "chatterbox:evie" }
+        : undefined,
+    ttsUrl: () => "https://web.test:6366/tts",
+    createAudioContext: () => ctx,
+    fetchImpl: (_url, init) => {
+      bodies.push(JSON.parse(init.body));
+      return Promise.resolve(pcmResponse(0.1));
+    },
+  });
+  const pending = player.speak("Hello there.", AGENT.toUpperCase());
+  await tick(100);
+  ctx.now = 5;
+  assert.equal(await pending, "spoken");
+  assert.equal(bodies.length, 1);
+  assert.equal(bodies[0].engine, "chatterbox");
+  assert.equal(bodies[0].voice, "evie");
+  player.dispose();
+});

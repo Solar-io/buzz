@@ -17,7 +17,11 @@ globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
   `,
 };
 
-const { publishAgentVoiceSelection } = await import("./agentVoiceApi.ts");
+const {
+  clearAgentVoiceAssignment,
+  publishAgentVoiceAssignment,
+  publishAgentVoiceSelection,
+} = await import("./agentVoiceApi.ts");
 const { KIND_AGENT_VOICE, AGENT_VOICE_D_TAG } = await import(
   "./agentVoiceSelection.ts"
 );
@@ -128,4 +132,94 @@ test("a relay refusal throws with the relay's message", async () => {
     ),
     /requires a string `label`/,
   );
+});
+
+// ── Owner assignment (kind 30183) ──────────────────────────────────────────
+
+const AGENT_HEX = "b".repeat(64);
+
+function recordingSigner(signed) {
+  globalThis.__BUZZ_TEST_SIGNER__ = async (template) => {
+    signed.push(template);
+    return {
+      ...template,
+      id: "e".repeat(64),
+      pubkey: SELF,
+      sig: "s".repeat(128),
+    };
+  };
+}
+
+test("an assignment signs kind 30183 with d = the agent, CLI-identical body", async () => {
+  const signed = [];
+  recordingSigner(signed);
+  const session = fakeSession();
+  await publishAgentVoiceAssignment(
+    session,
+    AGENT_HEX.toUpperCase(),
+    { engine: "chatterbox", key: "chatterbox:evie" },
+    "Evie",
+  );
+  assert.equal(signed.length, 1);
+  assert.equal(signed[0].kind, 30183);
+  assert.deepEqual(signed[0].tags, [["d", AGENT_HEX]], "d lowercased");
+  // Key order matches crates/buzz-cli/src/commands/voices.rs selection_body
+  // (serde_json object: version, engine, key, label).
+  assert.equal(
+    signed[0].content,
+    '{"version":1,"engine":"chatterbox","key":"chatterbox:evie","label":"Evie"}',
+  );
+  assert.equal(session.published.length, 1);
+});
+
+test("an assignment refuses a malformed agent pubkey before signing", async () => {
+  const signed = [];
+  recordingSigner(signed);
+  await assert.rejects(
+    publishAgentVoiceAssignment(
+      fakeSession(),
+      "not-hex",
+      { engine: "chatterbox", key: "chatterbox:evie" },
+      "Evie",
+    ),
+    /64 hex/,
+  );
+  assert.equal(signed.length, 0);
+});
+
+test("a non-owner refusal surfaces the relay's restricted: message", async () => {
+  recordingSigner([]);
+  const refusing = {
+    async publish() {
+      return {
+        ok: false,
+        message:
+          "restricted: agent-voice assignment author must be the registered owner",
+      };
+    },
+  };
+  await assert.rejects(
+    publishAgentVoiceAssignment(
+      refusing,
+      AGENT_HEX,
+      { engine: "chatterbox", key: "chatterbox:evie" },
+      "Evie",
+    ),
+    /restricted: agent-voice assignment/,
+  );
+});
+
+test("clearing publishes a kind-5 coordinate delete of 30183:<owner>:<agent>", async () => {
+  const signed = [];
+  recordingSigner(signed);
+  const session = fakeSession();
+  const deletion = await clearAgentVoiceAssignment(session, SELF, AGENT_HEX);
+  assert.equal(signed[0].kind, 5);
+  assert.deepEqual(signed[0].tags, [["a", `30183:${SELF}:${AGENT_HEX}`]]);
+  assert.equal(
+    deletion.kind,
+    5,
+    "the signed deletion is returned for local folding",
+  );
+  assert.equal(session.published.length, 1);
 });
