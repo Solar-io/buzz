@@ -15,6 +15,10 @@ import {
   type ChannelActivityMap,
   type ChannelUnreadCounts,
 } from "./lib/channelActivity.ts";
+import { timelineStore, warmTap } from "./lib/timelineStore.ts";
+
+/** Warm tap: every kind-9 this feed carries lands in the timeline store. */
+const warmFromActivity = warmTap(timelineStore, "activity");
 
 /** A live arrival from {@link useChannelActivity}'s feed. */
 export type ChannelActivityEvent = ChannelActivity;
@@ -187,6 +191,7 @@ export function useChannelActivity(
           onUnreadCountsChange: setUnreadCounts,
           readMarkers: getMarkers,
           selfPubkey,
+          onRawEvent: warmFromActivity,
         }),
       ),
     );

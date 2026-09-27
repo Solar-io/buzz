@@ -449,6 +449,26 @@ export function initialFeedState(
   return snapshotOf(channelId, entry);
 }
 
+/**
+ * A warm tap for a feed that already receives kind-9 events: routes each
+ * one to its channel's store entry (by `h` tag) under `source`. The store
+ * enforces the warm rules; the tap only carries provenance.
+ */
+export function warmTap(
+  store: Pick<TimelineStore, "apply">,
+  source: Exclude<TimelineEventSource, "timeline" | "prefetch">,
+): (event: SignedNostrEvent) => void {
+  return (event) => {
+    if (event.kind !== 9) {
+      return;
+    }
+    const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
+    if (channelId) {
+      store.apply(channelId, event, { source });
+    }
+  };
+}
+
 /** Capacitor's native bridge marks the iOS shell on the global. */
 function nativeIOS(): boolean {
   const capacitor = (

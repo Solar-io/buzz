@@ -12,6 +12,12 @@ import {
   type DmLastMessage,
 } from "./lib/dmActivity.ts";
 import { extractOpenDmChannelId } from "./lib/dmInput.ts";
+import {
+  timelineStore,
+  warmTap,
+} from "@/features/channels/lib/timelineStore.ts";
+
+const warmFromDms = warmTap(timelineStore, "dms");
 
 export interface DmSummary {
   channel: ChannelSummary;
@@ -127,6 +133,9 @@ function useDmActivity(dmIds: string[]): {
       session.subscribe(filters, {
         onEvent: (event) => {
           if (event.kind !== DM_ACTIVITY_KIND) return;
+          // Warm tap: the newest DM message lands in the timeline store, so
+          // opening the DM paints it without waiting on the network.
+          warmFromDms(event);
           setEvents((previous) => {
             const id = event.tags.find((tag) => tag[0] === "h")?.[1];
             if (!id) {

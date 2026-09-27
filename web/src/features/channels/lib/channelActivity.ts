@@ -251,6 +251,13 @@ export interface ChannelActivityHandlerDeps {
    */
   readMarkers: (() => ReadState) | null;
   selfPubkey: string | null;
+  /**
+   * Warm tap (background-sync plan §4.2): every raw kind-9 event this feed
+   * receives, before any sample/count filtering, so the shared timeline
+   * store can hold the message before the user opens its channel. Optional
+   * — the feed's own semantics never depend on it.
+   */
+  onRawEvent?: (event: SignedNostrEvent) => void;
 }
 
 /** The SubscribeOptions-shaped pair the relay session calls into. */
@@ -301,6 +308,7 @@ export function createChannelActivityHandlers(
     onUnreadCountsChange,
     readMarkers,
     selfPubkey,
+    onRawEvent,
   } = deps;
   const markerFor = (channelId: string): number =>
     readMarkers?.()[channelId] ?? 0;
@@ -311,6 +319,12 @@ export function createChannelActivityHandlers(
 
   return {
     onEvent(event: SignedNostrEvent): void {
+      // Every delivered kind-9 — including replays and at-or-below-sample
+      // arrivals the sample map drops below — is a message the timeline
+      // store may not have yet; the store's own rules decide what sticks.
+      if (event.kind === 9) {
+        onRawEvent?.(event);
+      }
       const entry = channelActivityFromEvent(event);
       if (!entry) {
         return;
