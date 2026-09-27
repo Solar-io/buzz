@@ -232,8 +232,13 @@ export function useHuddleVoiceMode(options: {
      * spoken text (lib/voiceTranscript.ts header).
      */
     const publishFinal = (text: string) => {
-      onFinalRef.current(markVoiceFinal(text));
+      (teardownSink ?? onFinalRef.current)(markVoiceFinal(text));
     };
+    // The sink this session started with. By cleanup time onFinalRef already
+    // holds the NEXT render's callback (bound to the new channel, or "" after
+    // leaving), so the teardown flush must publish through this one instead.
+    const sessionSink = onFinalRef.current;
+    let teardownSink: ((text: string) => void) | null = null;
 
     /** Clean-path finals wait here until he stops talking (header). */
     const merger = new FinalMerger(publishFinal, {
@@ -410,7 +415,9 @@ export function useHuddleVoiceMode(options: {
 
     return () => {
       disposed = true;
-      // Stop/teardown: buffered clean-path words publish, never vanish.
+      // Stop/teardown: buffered clean-path words publish, never vanish —
+      // into the channel this session belonged to.
+      teardownSink = sessionSink;
       merger.flush();
       if (reconnectTimer !== null) {
         window.clearTimeout(reconnectTimer);
