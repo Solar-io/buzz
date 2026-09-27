@@ -115,7 +115,10 @@ export function derivedBridgeVoice(pubkey: string): BridgeSpeakRequest {
  * Two hardening rules earned the hard way (tts-lab, 2026-09-18):
  *  1. `new Int16Array(buffer, byteOffset, …)` THROWS on an odd byteOffset —
  *     fetch chunk boundaries are byte-aligned to nothing, so every chunk is
- *     COPIED into a fresh (offset-0) buffer before framing.
+ *     COPIED into a fresh (offset-0) buffer before framing. A trailing odd
+ *     byte is ignored HERE; the stream loop must carry it into the next
+ *     chunk via {@link alignPcmChunk} (dropping it misframes every later
+ *     sample into full-scale static — the "random hiss", 2026-09-27).
  *  2. A giant single-chunk buffer (qwen serves whole files; pocket streams,
  *     eleven streams) scheduled as one source is the loud-garbage failure
  *     shape — pieces of ≤0.25 s schedule and settle like streaming audio.
@@ -133,6 +136,28 @@ export function chunkToInt16Pieces(
     pieces.push(view.subarray(off, Math.min(off + maxSamples, view.length)));
   }
   return pieces;
+}
+
+/**
+ * Join a carried-over byte (if any) with the next network chunk and split
+ * off the new odd trailing byte, so PCM16 framing stays aligned across
+ * reads. Returns the even-length bytes to frame and the byte to carry.
+ */
+export function alignPcmChunk(
+  carry: Uint8Array | null,
+  value: Uint8Array,
+): { aligned: Uint8Array; carry: Uint8Array | null } {
+  let joined = value;
+  if (carry && carry.byteLength > 0) {
+    joined = new Uint8Array(carry.byteLength + value.byteLength);
+    joined.set(carry, 0);
+    joined.set(value, carry.byteLength);
+  }
+  const usable = joined.byteLength - (joined.byteLength % 2);
+  return {
+    aligned: joined.subarray(0, usable),
+    carry: usable < joined.byteLength ? joined.slice(usable) : null,
+  };
 }
 
 /** The scheduling piece size: 0.25 s of 24 kHz audio. */
@@ -237,6 +262,7 @@ export async function playBridgeResponse(
     scheduled.length = 0;
   };
 
+  let carry: Uint8Array | null = null;
   while (true) {
     if (shouldStop()) {
       try {
@@ -249,7 +275,9 @@ export async function playBridgeResponse(
     }
     const { done, value } = await reader.read();
     if (done) break;
-    for (const piece of chunkToInt16Pieces(value, BRIDGE_PIECE_SAMPLES)) {
+    const framed = alignPcmChunk(carry, value);
+    carry = framed.carry;
+    for (const piece of chunkToInt16Pieces(framed.aligned, BRIDGE_PIECE_SAMPLES)) {
       const f32 = int16ToFloat32(piece);
       const buf = audioContext.createBuffer(1, f32.length, BRIDGE_SAMPLE_RATE);
       buf.copyToChannel(f32, 0);

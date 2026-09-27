@@ -141,6 +141,55 @@ test("playBridgeResponse schedules pieces and settles after the tail", async () 
   assert.ok(settleCalls[0] >= 30);
 });
 
+test("playBridgeResponse keeps PCM16 aligned when network chunks split on odd bytes", async () => {
+  // Distinct samples, split at ODD byte boundaries (3, then 5, then the
+  // rest). Dropping a straddling byte misframes every later sample into
+  // byte-swapped static — the 2026-09-27 "random hiss".
+  const expected = [];
+  for (let i = 0; i < 40; i++) expected.push(((i * 997) % 60000) - 30000);
+  const pcm = new Uint8Array(Int16Array.from(expected).buffer);
+  const cuts = [3, 8, 21, pcm.length];
+  let now = 0;
+  const decoded = [];
+  const ctx = {
+    get currentTime() {
+      return now;
+    },
+    destination: {},
+    createBuffer: (_ch, length) => ({
+      length,
+      copyToChannel(f32) {
+        for (const v of f32) decoded.push(Math.round(v * 32768));
+      },
+    }),
+    createBufferSource: () => ({
+      buffer: null,
+      connect() {},
+      start(when) {
+        now = Math.max(now, when);
+      },
+    }),
+  };
+  const body = new ReadableStream({
+    start(controller) {
+      let prev = 0;
+      for (const cut of cuts) {
+        controller.enqueue(pcm.slice(prev, cut));
+        prev = cut;
+      }
+      controller.close();
+    },
+  });
+  await playBridgeResponse({ body }, ctx, {
+    scheduleSettle: (_ms, fn) => {
+      const t = setTimeout(fn, 0);
+      return () => clearTimeout(t);
+    },
+  });
+  assert.equal(decoded.length, expected.length, "no sample lost or invented");
+  assert.deepEqual(decoded, expected);
+});
+
 test("playBridgeResponse stops when shouldStop signals", async () => {
   let now = 0;
   const ctx = {
