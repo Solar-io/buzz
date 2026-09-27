@@ -276,7 +276,7 @@ test("avatar hover: closed at 499 ms, open with rows at 500 ms, leave closes", a
     await hoverEnter(row.avatar);
     await flush();
     await advance(499);
-    assert.equal(card(), null, "must not open before the 500 ms dwell");
+    assert.ok(card() === null, "must not open before the 500 ms dwell");
     await advance(1);
     const open = card();
     assert.ok(open, "card opens at 500 ms");
@@ -285,7 +285,7 @@ test("avatar hover: closed at 499 ms, open with rows at 500 ms, leave closes", a
     assert.match(open.textContent, /Text-turn effort/);
     await hoverLeave(row.avatar);
     await flush();
-    assert.equal(card(), null, "pointerleave closes the card");
+    assert.ok(card() === null, "pointerleave closes the card");
   } finally {
     await row.unmount();
     mock.timers.reset();
@@ -318,7 +318,7 @@ test("touch pointer never opens the hover card", async () => {
   try {
     await hoverEnter(row.avatar, "touch");
     await advance(1_000);
-    assert.equal(card(), null);
+    assert.ok(card() === null);
   } finally {
     await row.unmount();
     mock.timers.reset();
@@ -332,7 +332,7 @@ test("hovering the NAME never renders the agent config card", async () => {
   try {
     await hoverEnter(row.name);
     await advance(1_000);
-    assert.equal(card(), null);
+    assert.ok(card() === null);
   } finally {
     await row.unmount();
     mock.timers.reset();
@@ -344,15 +344,16 @@ test("a non-agent author gets no hover card", async () => {
   mock.timers.enable({ apis: ["setTimeout"] });
   const row = await mountRow({ isAgent: false });
   try {
-    assert.equal(
+    // Compare as booleans: a failing equal() on a jsdom node deep-inspects
+    // the whole document and never finishes.
+    assert.ok(
       row.container.querySelector(
         `[data-testid="agent-avatar-hover-${AGENT}"]`,
-      ),
-      null,
+      ) === null,
     );
     await hoverEnter(row.avatar);
     await advance(1_000);
-    assert.equal(card(), null);
+    assert.ok(card() === null);
   } finally {
     await row.unmount();
     mock.timers.reset();
@@ -380,7 +381,7 @@ test("clicking the avatar shows the agent section; clicking the name does not", 
       dom.window.document.querySelector('[data-testid="user-profile-popover"]'),
       "name click opens the profile card",
     );
-    assert.equal(section(), null, "name profile card has no agent section");
+    assert.ok(section() === null, "name profile card has no agent section");
   } finally {
     await fresh.unmount();
   }
