@@ -530,6 +530,7 @@ export const MessageRow = React.memo(
       continuationTimestampGutter
     ) : message.pubkey ? (
       <UserProfilePopover
+        showAgentConfig
         pubkey={message.pubkey}
         role={profilePopoverRole}
         botIdenticonValue={message.author}

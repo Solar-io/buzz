@@ -7,6 +7,7 @@ import {
   fromRawInstallRuntimeResult,
   type RawInstallRuntimeResult,
 } from "@/shared/api/installTypes";
+import { fromRawAgentEffort } from "@/shared/api/agentEffort";
 import type {
   AddChannelMembersInput,
   AddChannelMembersResult,
@@ -155,6 +156,7 @@ export type RawManagedAgent = {
   // Pre-feature fixtures may omit these; mapped to "owner-only"/[] in fromRawManagedAgent.
   respond_to?: ManagedAgent["respondTo"];
   respond_to_allowlist?: string[];
+  effort?: import("./agentEffort").RawAgentEffort | null;
 };
 
 type RawCreateManagedAgentResponse = {
@@ -301,8 +303,7 @@ export async function invokeTauri<T>(
     return await tauriInvoke<T>(command, args);
   } catch (error) {
     const err = toTauriError(error);
-    // Rust emits `relay rate-limited:` for HTTP 429 responses. Activate the
-    // shared gate so the TS relay client backs off for the same window.
+    // Rust emits `relay rate-limited:` on 429: gate the TS client for the window.
     applyTauriRateLimitIfNeeded(err.message);
     throw err;
   }
@@ -317,9 +318,8 @@ export function fromRawFeedItem(item: RawFeedItem) {
     createdAt: item.created_at,
     channelId: item.channel_id,
     channelName: item.channel_name,
-    // Canonicalize the wire `null` to undefined so FeedItem's optional
-    // channelType contract holds at runtime (enrichment and the DM
-    // notification filter both key off `=== undefined`).
+    // Wire `null` → undefined: FeedItem's optional channelType contract (the
+    // enrichment and DM notification filter key off `=== undefined`).
     channelType: item.channel_type ?? undefined,
     tags: item.tags,
     category: item.category,
@@ -407,9 +407,8 @@ export async function getCanvas(channelId: string): Promise<CanvasResponse> {
   });
   return {
     content: response.content,
-    // Normalize absent keys to null: ensureWelcomeCanvas treats null as
-    // "no canvas yet", and `undefined !== null` would make every fresh
-    // channel look already-seeded.
+    // Absent keys → null: ensureWelcomeCanvas treats null as "no canvas yet";
+    // `undefined !== null` would make every fresh channel look seeded.
     updatedAt: response.updated_at ?? null,
     author: response.author ?? null,
   };
@@ -669,6 +668,7 @@ export function fromRawManagedAgent(agent: RawManagedAgent): ManagedAgent {
     backendAgentId: agent.backend_agent_id,
     respondTo: agent.respond_to ?? "owner-only",
     respondToAllowlist: agent.respond_to_allowlist ?? [],
+    effort: fromRawAgentEffort(agent.effort),
   };
 }
 

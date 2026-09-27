@@ -132,6 +132,7 @@ function RelayMemberRow({
       data-testid={`relay-member-row-${member.pubkey}`}
     >
       <UserProfilePopover
+        showAgentConfig
         pubkey={member.pubkey}
         triggerAriaLabel={`Open profile for ${displayName}`}
         triggerElement="span"

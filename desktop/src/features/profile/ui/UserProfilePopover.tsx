@@ -38,7 +38,7 @@ import { BotIdenticon } from "@/features/messages/ui/BotIdenticon";
 import { useNow } from "@/shared/lib/useNow";
 import { Button } from "@/shared/ui/button";
 import { Spinner } from "@/shared/ui/spinner";
-import { resolveModelLabel } from "@/features/agents/lib/formatAgentModelLabel";
+import { AgentConfigSection } from "@/features/profile/ui/AgentConfigSection";
 
 type UserProfilePopoverProps = {
   children: React.ReactNode;
@@ -54,28 +54,15 @@ type UserProfilePopoverProps = {
   role?: string;
   /** Value used to generate the BotIdenticon glyph (typically the author name). */
   botIdenticonValue?: string;
+  /**
+   * Show the agent config rows (model, runtime, effort, voice). Pass it ONLY
+   * from an avatar trigger — the owner asked that hovering a NAME (message
+   * author, @mention, pulse/forum/inbox names) never shows agent config.
+   */
+  showAgentConfig?: boolean;
 };
 
 const HOVER_CLOSE_DELAY_MS = 200;
-
-const RUNTIME_LABELS: Record<string, string> = {
-  goose: "Goose",
-  "claude-code": "Claude Code",
-  "codex-acp": "Codex",
-  aider: "Aider",
-};
-
-function runtimeLabel(command: string): string {
-  return RUNTIME_LABELS[command] ?? command;
-}
-
-function InfoBadge({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center rounded-full bg-muted/50 px-2 py-0.5 text-xs text-muted-foreground">
-      {children}
-    </span>
-  );
-}
 
 const TEXT_SWAP_BASE_CLASS =
   "col-start-1 row-start-1 min-w-0 truncate transition-[opacity,filter] duration-[250ms] ease-in-out motion-reduce:transition-none";
@@ -129,6 +116,7 @@ export function UserProfilePopover({
   enableHoverPopover = true,
   role,
   botIdenticonValue,
+  showAgentConfig = false,
 }: UserProfilePopoverProps) {
   const [open, setOpen] = React.useState(false);
   const hoverTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
@@ -225,6 +213,7 @@ export function UserProfilePopover({
           pubkey={pubkey}
           role={role}
           setOpen={setOpen}
+          showAgentConfig={showAgentConfig}
         />
       ) : null}
     </Popover>
@@ -247,6 +236,7 @@ function UserProfilePopoverBody({
   pubkey,
   role,
   setOpen,
+  showAgentConfig,
 }: {
   botIdenticonValue?: string;
   canOpenProfilePanel: boolean;
@@ -257,6 +247,7 @@ function UserProfilePopoverBody({
   pubkey: string;
   role?: string;
   setOpen: (open: boolean) => void;
+  showAgentConfig: boolean;
 }) {
   const profileQuery = useUserProfileQuery(pubkey);
   const usersBatchQuery = useUsersBatchQuery([pubkey]);
@@ -448,26 +439,12 @@ function UserProfilePopoverBody({
           </div>
         )}
 
-        {isBotProfile && (managedAgent || relayAgent) ? (
-          <div className="flex flex-wrap gap-1.5">
-            {managedAgent?.agentCommand ? (
-              <InfoBadge>{runtimeLabel(managedAgent.agentCommand)}</InfoBadge>
-            ) : relayAgent?.agentType ? (
-              <InfoBadge>{runtimeLabel(relayAgent.agentType)}</InfoBadge>
-            ) : null}
-            {managedAgent?.model ? (
-              <InfoBadge>
-                {resolveModelLabel(
-                  managedAgent.model,
-                  null,
-                  managedAgent.provider,
-                )}
-              </InfoBadge>
-            ) : null}
-            {managedAgent?.acpCommand ? (
-              <InfoBadge>ACP: {managedAgent.acpCommand}</InfoBadge>
-            ) : null}
-          </div>
+        {showAgentConfig && isBotProfile && (managedAgent || relayAgent) ? (
+          <AgentConfigSection
+            managedAgent={managedAgent ?? null}
+            pubkey={pubkey}
+            relayAgentType={relayAgent?.agentType ?? null}
+          />
         ) : null}
 
         {activeTurns.length > 0 ? (

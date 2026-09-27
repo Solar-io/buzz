@@ -366,11 +366,9 @@ export type ManagedAgent = {
   backendAgentId: string | null;
   /** Who the agent should respond to. Maps to `buzz-acp --respond-to`. */
   respondTo: RespondToMode;
-  /**
-   * Normalized 64-char lowercase hex pubkeys. Used only when `respondTo` is
-   * `"allowlist"`. Preserved across mode toggles.
-   */
+  /** Normalized hex pubkeys, used only for `"allowlist"`; kept across toggles. */
   respondToAllowlist: string[];
+  effort?: import("./agentEffort").AgentEffort | null; // display-only, see agentEffort.ts
 };
 
 /** Inbound author gate mode. Mirrors buzz-acp's --respond-to CLI flag. */

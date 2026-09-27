@@ -77,7 +77,11 @@ function ReplyParentContext({
     <div className="mt-2 truncate rounded-xl border border-border/50 bg-muted/25 px-3 py-2 text-xs text-muted-foreground">
       {parentNote ? (
         <div className="flex min-w-0 items-center gap-1.5">
-          <UserProfilePopover pubkey={parentNote.pubkey} triggerElement="span">
+          <UserProfilePopover
+            showAgentConfig
+            pubkey={parentNote.pubkey}
+            triggerElement="span"
+          >
             <button
               className="flex shrink-0 rounded-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               type="button"
@@ -158,6 +162,7 @@ export function NoteCard({
   return (
     <article className="flex items-start gap-2.5 rounded-2xl px-1 pb-1 pt-4 sm:px-2">
       <UserProfilePopover
+        showAgentConfig
         botIdenticonValue={displayName}
         pubkey={note.pubkey}
         role={isAgent ? "bot" : undefined}

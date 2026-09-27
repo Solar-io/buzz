@@ -81,7 +81,11 @@ export function ProjectPeopleStack({
             key={pubkey}
             style={{ zIndex: visible.length - index }}
           >
-            <UserProfilePopover pubkey={pubkey} triggerElement="span">
+            <UserProfilePopover
+              showAgentConfig
+              pubkey={pubkey}
+              triggerElement="span"
+            >
               <button
                 aria-label={`View ${label}'s profile`}
                 className="inline-flex rounded-full focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"

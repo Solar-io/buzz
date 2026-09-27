@@ -52,6 +52,7 @@ export function ProjectEntityFacepile({
         }
         return (
           <UserProfilePopover
+            showAgentConfig
             key={pubkey}
             pubkey={pubkey}
             triggerElement="span"

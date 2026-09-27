@@ -12,6 +12,7 @@ import {
 } from "../lib/dateFormatters.ts";
 import type { AgentReceipt, ReactionGroup } from "../lib/reactions.ts";
 import { UserProfilePopover } from "@/features/profile/ui/UserProfilePopover";
+import { AgentAvatarHoverCard } from "./AgentAvatarHoverCard.tsx";
 import { AuthorAvatar } from "./AuthorAvatar.tsx";
 import { DecisionCard } from "./DecisionCard.tsx";
 import { isRenderableCard } from "../lib/decisionCard.ts";
@@ -156,16 +157,29 @@ export function MessageRow({
   // testid, highlight flash, permalink scroll) stays theirs so a jump to a
   // wake row behaves like a jump to any message.
   const wake = isScheduledWake(message);
+  const avatar = (
+    <AuthorAvatar
+      pubkey={message.authorPubkey}
+      label={label}
+      picture={profiles.get(message.authorPubkey)?.avatar}
+    />
+  );
   // Avatar and author name are the two things a reader points at to ask "who
   // is this?", and until now both were inert. They share one card so the two
-  // answers cannot drift.
-  const profileCard = (children: ReactNode, triggerClassName?: string) => (
+  // answers cannot drift. Agent config (model, effort…) rides the AVATAR only
+  // (owner ask): the hover card wraps it, and `showAgentConfig` is the tap path.
+  const profileCard = (
+    children: ReactNode,
+    triggerClassName?: string,
+    showAgentConfig = false,
+  ) => (
     <UserProfilePopover
       fallbackLabel={label}
       onOpenDm={onOpenDm}
       picture={profiles.get(message.authorPubkey)?.avatar}
       pubkey={message.authorPubkey}
       selfPubkey={selfPubkey}
+      showAgentConfig={showAgentConfig}
       triggerClassName={triggerClassName}
     >
       {children}
@@ -201,15 +215,12 @@ export function MessageRow({
               <div className="flex justify-end pt-0.5 opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100">
                 <MessageTimestamp createdAt={message.createdAt} gutter />
               </div>
+            ) : isAgent ? (
+              <AgentAvatarHoverCard label={label} pubkey={message.authorPubkey}>
+                {profileCard(avatar, "rounded-full", true)}
+              </AgentAvatarHoverCard>
             ) : (
-              profileCard(
-                <AuthorAvatar
-                  pubkey={message.authorPubkey}
-                  label={label}
-                  picture={profiles.get(message.authorPubkey)?.avatar}
-                />,
-                "rounded-full",
-              )
+              profileCard(avatar, "rounded-full")
             )}
           </div>
           <div className="min-w-0 flex-1">

@@ -981,10 +981,8 @@ function ChannelBrowser() {
                       // biome-ignore lint/a11y/useAriaPropsForRole: drag handle is not a value slider; aria-valuenow would be meaningless
                       role="separator"
                       aria-orientation="vertical"
-                      // No border of its own: the pane's border-l is the one
-                      // divider line. The handle used to add a second 1px
-                      // border 4px beside it — under always-on OS scrollbars
-                      // that stack read as "two scrollbars and a sliver".
+                      // No border of its own: the pane's border-l is the one divider (a
+                      // second 1px border read as "two scrollbars and a sliver").
                       className={`buzz-side-panel-resize-handle relative z-10 hidden w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-white/15 active:bg-white/25 lg:block lg:-ml-px ${PANE_RESIZE_HANDLE_CLASSES}`}
                       {...sidePanelDrag}
                     />
@@ -995,6 +993,7 @@ function ChannelBrowser() {
                       buffer={messages}
                       members={members}
                       profiles={profiles}
+                      agentPubkeys={agentPubkeys}
                       strictMentions={strictMentions}
                       selfPubkey={selfPubkey}
                       permalinkMessageId={threadPermalinkId}
@@ -1008,6 +1007,7 @@ function ChannelBrowser() {
                       buffer={messages}
                       members={members}
                       profiles={profiles}
+                      agentPubkeys={agentPubkeys}
                       strictMentions={strictMentions}
                       selfPubkey={selfPubkey}
                       onClose={() => setThreadRootId(null)}

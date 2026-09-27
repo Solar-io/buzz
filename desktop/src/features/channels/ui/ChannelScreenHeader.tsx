@@ -193,6 +193,7 @@ export function ChannelScreenHeader({
             />
           ) : activeDmParticipant ? (
             <UserProfilePopover
+              showAgentConfig
               pubkey={activeDmParticipant.pubkey}
               triggerAriaLabel={`Open profile for ${activeChannelTitle}`}
               triggerElement="span"
@@ -254,6 +255,7 @@ function DmHeaderParticipantStack({
     >
       {visibleParticipants.map((participant, index) => (
         <UserProfilePopover
+          showAgentConfig
           key={participant.pubkey}
           pubkey={participant.pubkey}
           triggerAriaLabel={`Open profile for ${participant.displayName}`}

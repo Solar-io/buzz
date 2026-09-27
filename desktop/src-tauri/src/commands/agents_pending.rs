@@ -35,7 +35,12 @@ pub(crate) fn retain_managed_agent_pending(
         // Shared engine with the boot-time reconcile: projection content diff
         // (no republish for runtime-only churn) + monotonic created_at bump
         // past the retained head (NIP-AP step 3).
-        retain_agent_record(&conn, &scope.owner_keys, record).map(|_| ())
+        // Read-only store load (never `load_personas`, which may save): the
+        // linked definition's env feeds the published `effort` block.
+        let definitions = crate::managed_agents::storage::load_agent_definitions(app)?;
+        let definition_env =
+            crate::managed_agents::agent_effort::definition_env_for(record, &definitions);
+        retain_agent_record(&conn, &scope.owner_keys, record, &definition_env).map(|_| ())
     })();
     if let Err(e) = result {
         eprintln!("buzz-desktop: agent-retain: {e}");

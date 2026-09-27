@@ -14,6 +14,7 @@ import { labelledName } from "../lib/userLabels.ts";
 import { useProfileActions } from "../ProfileActionsContext.tsx";
 import { useFollow, useOwnContactList } from "../useContacts.ts";
 import { useUserLabels } from "../useUserLabels.ts";
+import { AgentConfigSection } from "./AgentConfigSection.tsx";
 import { CopyableNpub } from "./CopyableNpub.tsx";
 import { ProfileAvatar } from "./ProfileAvatar.tsx";
 import { ProfileDialog } from "./ProfileDialog.tsx";
@@ -51,6 +52,7 @@ export function UserProfilePopover({
   onOpenDm,
   triggerClassName,
   triggerAriaLabel,
+  showAgentConfig = false,
   children,
 }: {
   pubkey: string;
@@ -63,6 +65,11 @@ export function UserProfilePopover({
   onOpenDm?: (pubkey: string) => void;
   triggerClassName?: string;
   triggerAriaLabel?: string;
+  /**
+   * Show the agent config section (model, effort, voice…). Only an agent's
+   * AVATAR trigger passes this — the owner asked that names never show it.
+   */
+  showAgentConfig?: boolean;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -101,6 +108,7 @@ export function UserProfilePopover({
             pubkey={pubkey}
             selfPubkey={selfPubkey}
             setOpen={setOpen}
+            showAgentConfig={showAgentConfig}
           />
         )}
       </Popover>
@@ -126,6 +134,7 @@ function UserProfilePopoverBody({
   pubkey,
   selfPubkey,
   setOpen,
+  showAgentConfig,
 }: {
   fallbackLabel: string;
   onOpenDm?: (pubkey: string) => void;
@@ -135,6 +144,7 @@ function UserProfilePopoverBody({
   pubkey: string;
   selfPubkey?: string | null;
   setOpen: (open: boolean) => void;
+  showAgentConfig: boolean;
 }) {
   const { metadata, loading } = useProfileMetadata(pubkey);
   const shellActions = useProfileActions();
@@ -199,6 +209,8 @@ function UserProfilePopoverBody({
         <CopyableNpub className="-ml-1 self-start" pubkey={pubkey} />
 
         <PresenceStatusRow pubkey={pubkey} />
+
+        {showAgentConfig && <AgentConfigSection pubkey={pubkey} />}
 
         {loading && !about ? (
           <Skeleton className="h-4 w-40" />

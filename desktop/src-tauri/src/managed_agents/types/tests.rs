@@ -759,7 +759,40 @@ fn summary_fixture(
         log_path: String::new(),
         respond_to: RespondTo::OwnerOnly,
         respond_to_allowlist: Vec::new(),
+        effort: None,
     }
+}
+
+/// The summary's `effort` is the definition env resolved through the same
+/// `live_persona_env` slice `build_managed_agent_summary` passes, and it is
+/// omitted from the wire when nothing is set.
+#[test]
+fn summary_effort_resolves_from_definition_env() {
+    use crate::managed_agents::{agent_effort::resolve_agent_effort, env_vars::live_persona_env};
+    let mut definition: super::ManagedAgentRecord = serde_json::from_value(serde_json::json!({
+        "pubkey": "", "name": "Evie", "slug": "evie", "relay_url": "", "acp_command": "buzz-acp",
+        "agent_command": "goose", "agent_args": [], "mcp_command": "", "turn_timeout_seconds": 320,
+        "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+        "last_started_at": null, "last_stopped_at": null, "last_exit_code": null, "last_error": null
+    }))
+    .unwrap();
+    definition
+        .env_vars
+        .insert("BUZZ_TEXT_TURN_EFFORT".into(), "low".into());
+    let mut instance = definition.clone();
+    instance.pubkey = "aa".repeat(32);
+    instance.env_vars.clear();
+    instance.persona_id = Some("evie".into());
+    let personas = vec![definition.to_definition_view().unwrap()];
+    let env = live_persona_env(&personas, instance.persona_id.as_deref());
+    let mut summary = summary_fixture(Vec::new());
+    assert!(serde_json::to_value(&summary)
+        .unwrap()
+        .get("effort")
+        .is_none());
+    summary.effort = resolve_agent_effort(&instance, &env);
+    let wire = serde_json::to_value(&summary).unwrap();
+    assert_eq!(wire["effort"], serde_json::json!({"text_turn": "low"}));
 }
 
 #[test]

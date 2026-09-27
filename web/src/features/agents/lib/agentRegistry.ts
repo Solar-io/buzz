@@ -28,6 +28,58 @@ export interface AgentRegistryEntry {
   respondToAllowlist: string[];
   /** Event created_at — the merge key for replaceable updates. */
   updatedAt: number;
+  /** Display-only effort/context knobs (30177 `effort`); null when absent. */
+  effort: AgentEffort | null;
+}
+
+/**
+ * The 30177 `effort` block — named, validated knobs the desktop publishes
+ * (`desktop/src-tauri/src/managed_agents/agent_effort.rs`). Never env.
+ */
+export interface AgentEffort {
+  acp: string | null;
+  textTurn: string | null;
+  voiceTurn: string | null;
+  thinking: string | null;
+  claudeCode: string | null;
+  maxContextTokens: number | null;
+}
+
+// Same token rule the Rust writer publishes under. Deliberately NO trim here:
+// the writer trims (ASCII whitespace only) before publishing, so a padded
+// token on the wire is malformed and dropped — see AGENTS.md "the built-ins
+// are the drift". Shared corpus: test-fixtures/agent-effort/cases.json.
+const EFFORT_TOKEN = /^[a-z]{1,16}$/;
+
+/** Parse a raw 30177 `effort` value; null for missing/junk/all-empty. */
+export function parseAgentEffort(raw: unknown): AgentEffort | null {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  const record = raw as Record<string, unknown>;
+  const token = (key: string): string | null => {
+    const value = record[key];
+    return typeof value === "string" &&
+      EFFORT_TOKEN.test(value) &&
+      value !== "unset"
+      ? value
+      : null;
+  };
+  const context = record.max_context_tokens;
+  const effort: AgentEffort = {
+    acp: token("acp"),
+    textTurn: token("text_turn"),
+    voiceTurn: token("voice_turn"),
+    thinking: token("thinking"),
+    claudeCode: token("claude_code"),
+    maxContextTokens:
+      typeof context === "number" &&
+      Number.isSafeInteger(context) &&
+      context > 0
+        ? context
+        : null,
+  };
+  return Object.values(effort).some((value) => value !== null) ? effort : null;
 }
 
 /** Parse one 30177 projection; null for wrong-shape events. */
@@ -69,6 +121,7 @@ export function agentFromEvent(
       ? allowlist.filter((pk): pk is string => typeof pk === "string")
       : [],
     updatedAt: event.created_at,
+    effort: parseAgentEffort(parsed.effort),
   };
 }
 

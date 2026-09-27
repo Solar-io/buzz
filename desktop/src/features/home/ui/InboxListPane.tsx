@@ -360,6 +360,7 @@ export function InboxListPane({
               data-inbox-profile-trigger="true"
             >
               <UserProfilePopover
+                showAgentConfig
                 botIdenticonValue={item.senderLabel}
                 pubkey={item.item.pubkey}
                 role={profileRole}
