@@ -10,6 +10,7 @@ import {
   parseBridgeEvent,
   PcmBatcher,
 } from "./lib/sttBridge.ts";
+import { FinalMerger } from "./lib/finalCoalescer.ts";
 import { speechServiceUrl } from "@/shared/lib/relay-url";
 import {
   DUPLICATE_WINDOW,
@@ -65,6 +66,16 @@ import {
  * exactly as before; teardown discards any holds still pending, so a
  * stale hold can never publish.
  *
+ * Coalescing (`lib/finalCoalescer.ts`): the bridge ends an utterance on a
+ * pause, so one spoken thought can arrive as several finals. A gated final
+ * is BUFFERED and the run publishes as ONE message after MERGE_MS with no
+ * new partial or final (or at the 30 s cap, or on stop/teardown/socket
+ * close — buffered words are never dropped). Order: gate -> coalesce ->
+ * publish, with the echo hold as a bypass: a final landing while the avatar
+ * is not quiet first flushes the clean buffer, then goes to the hold ALONE.
+ * So only finals that arrived with the avatar quiet are ever merged, and an
+ * echo can never be joined onto real speech and slip past suppression.
+ *
  * Drop handling: a close without a fatal error reconnects after 250 ms,
  * up to 3 attempts per incident (a successful `ready` resets the budget);
  * beyond that the error is surfaced and the toggle latches off — the same
@@ -118,8 +129,9 @@ export function useHuddleVoiceMode(options: {
   /** The huddle channel; null (not connected) disables the hook entirely. */
   channelId: string | null;
   /**
-   * Publish one gated final transcript. Called synchronously per final; the
-   * caller owns the send path and error surfacing.
+   * Publish one gated transcript — a merged run of finals (see Coalescing
+   * above), not one call per bridge final. The caller owns the send path
+   * and error surfacing.
    */
   onFinalTranscript: (text: string) => void;
   /**
@@ -223,6 +235,13 @@ export function useHuddleVoiceMode(options: {
       onFinalRef.current(markVoiceFinal(text));
     };
 
+    /** Clean-path finals wait here until he stops talking (header). */
+    const merger = new FinalMerger(publishFinal, {
+      now: () => Date.now(),
+      setTimer: (fn, ms) => window.setTimeout(fn, ms),
+      clearTimer: (id) => window.clearTimeout(id),
+    });
+
     /**
      * Drain held finals once the avatar has been quiet past the tail.
      * Layer 2 decides each one: a close match to an utterance the avatar
@@ -279,6 +298,7 @@ export function useHuddleVoiceMode(options: {
             return;
           case "partial":
             setInterimText(bridgeEvent.text);
+            merger.partial();
             return;
           case "final": {
             const gate = gateFinalTranscript(bridgeEvent.text, recentFinals);
@@ -293,6 +313,9 @@ export function useHuddleVoiceMode(options: {
             // after it stopped — the mic is probably hearing the browser's
             // own speechSynthesis. Hold the final; Layer 2 decides at drain.
             if (avatarNotQuiet()) {
+              // Never merge across the echo boundary: what was buffered
+              // while the avatar was quiet is real speech and goes now.
+              merger.flush();
               if (pendingEchoFinals.length === 0) {
                 pendingHoldStartedAt = Date.now();
               }
@@ -305,7 +328,7 @@ export function useHuddleVoiceMode(options: {
               }
               return;
             }
-            publishFinal(gate.text);
+            merger.final(gate.text);
             return;
           }
           case "done":
@@ -333,6 +356,8 @@ export function useHuddleVoiceMode(options: {
         }
         transition({ type: "ended" });
         setInterimText("");
+        // A dropped session sends no more finals for this run; publish it.
+        merger.flush();
         // One connection = one session: the next socket starts cold.
         ready = false;
         batcher = new PcmBatcher();
@@ -385,6 +410,8 @@ export function useHuddleVoiceMode(options: {
 
     return () => {
       disposed = true;
+      // Stop/teardown: buffered clean-path words publish, never vanish.
+      merger.flush();
       if (reconnectTimer !== null) {
         window.clearTimeout(reconnectTimer);
         reconnectTimer = null;
