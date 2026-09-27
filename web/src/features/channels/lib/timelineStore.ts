@@ -1,5 +1,7 @@
 import { del, get, set } from "idb-keyval";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
+import type { MessageBuffer } from "./messageBuffer.ts";
+import type { ReactionIndex } from "./reactions.ts";
 import {
   applyEventToEntry,
   cacheKey,
@@ -402,6 +404,49 @@ export function createTimelineStore(
       return [...entries.keys()];
     },
   };
+}
+
+/** What a timeline view renders from one store entry. */
+export interface FeedSnapshot {
+  channelId: string | null;
+  messages: MessageBuffer;
+  reactions: ReactionIndex;
+  historyExhausted: boolean;
+}
+
+const EMPTY_MESSAGES: MessageBuffer = [];
+const EMPTY_REACTIONS: ReactionIndex = new Map();
+
+export function snapshotOf(
+  channelId: string | null,
+  entry: TimelineCacheEntry,
+): FeedSnapshot {
+  return {
+    channelId,
+    messages: entry.messages,
+    reactions: entry.reactions,
+    historyExhausted: entry.historyExhausted,
+  };
+}
+
+/**
+ * The first-render state of a timeline view: the store's memory entry when
+ * there is one (no blank frame on a switch), else empty. Pure over `peek`.
+ */
+export function initialFeedState(
+  store: Pick<TimelineStore, "peek">,
+  channelId: string | null,
+): FeedSnapshot {
+  const entry = channelId ? store.peek(channelId) : null;
+  if (!entry) {
+    return {
+      channelId,
+      messages: EMPTY_MESSAGES,
+      reactions: EMPTY_REACTIONS,
+      historyExhausted: false,
+    };
+  }
+  return snapshotOf(channelId, entry);
 }
 
 /** Capacitor's native bridge marks the iOS shell on the global. */

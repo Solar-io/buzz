@@ -242,3 +242,18 @@ test("subscribers see every committed change", async () => {
   store.apply("s", ev("b", 2, "s"), { source: "timeline" });
   assert.deepEqual(seen, [1]);
 });
+
+test("T8 initialFeedState: a peeked entry paints on the FIRST render (no blank reset)", async () => {
+  const { initialFeedState } = await import("./timelineStore.ts");
+  const store = createTimelineStore({ flushMs: 5 });
+  await store.load("seen");
+  store.apply("seen", ev("m1", 1, "seen"), { source: "timeline" });
+  store.apply("seen", ev("m2", 2, "seen"), { source: "timeline" });
+  store.apply("seen", ev("m3", 3, "seen"), { source: "activity" });
+  const first = initialFeedState(store, "seen");
+  assert.equal(first.messages.length, 3);
+  assert.equal(first.channelId, "seen");
+  // A miss (never loaded) and no channel are empty, not errors.
+  assert.equal(initialFeedState(store, "never").messages.length, 0);
+  assert.equal(initialFeedState(store, null).messages.length, 0);
+});
