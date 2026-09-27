@@ -70,12 +70,7 @@ import { AgentActivityPanel } from "@/features/agents/ui/AgentActivityPanel";
 import { AgentPortraitOverlay } from "@/features/agents/ui/AgentPortraitOverlay";
 import { openDm, useDms } from "@/features/dms/hooks";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
-import {
-  hideDm,
-  loadHiddenDms,
-  saveHiddenDms,
-  unhideDm,
-} from "@/features/dms/lib/hiddenDms.ts";
+import { useHiddenDms } from "@/features/dms/useHiddenDms.ts";
 import { channelMenuItems } from "@/features/sidebar/lib/channelMenuItems.ts";
 import { ChannelSidebar } from "@/features/sidebar/ui/ChannelSidebar";
 import type { ChannelSidebarProps } from "@/features/sidebar/ui/ChannelSidebar";
@@ -434,15 +429,10 @@ function ChannelBrowser() {
   // Sidebar + buttons: section-header plus buttons open the create dialogs.
   const [newChannelOpen, setNewChannelOpen] = useState(false);
   const [newDmOpen, setNewDmOpen] = useState(false);
-  // Hidden DMs — local-only (the desktop's hide_dm equivalent); re-opening
-  // the DM via the new-DM flow un-hides it.
-  const [hiddenDmIds, setHiddenDmIds] = useState<string[]>(() =>
-    loadHiddenDms(window.localStorage),
-  );
-  const persistHiddenDms = (ids: string[]) => {
-    setHiddenDmIds(ids);
-    saveHiddenDms(window.localStorage, ids);
-  };
+  // Hidden DMs — relay-synced (NIP-DV: 41012 hide, 30622 snapshot);
+  // re-opening the DM via the new-DM flow (41010) un-hides it.
+  const hiddenDms = useHiddenDms(session, selfPubkey);
+  const hiddenDmIds = hiddenDms.hiddenDmIds;
   const lists = useChannelLists({
     channels: unfilteredChannels,
     dms,
@@ -512,9 +502,7 @@ function ChannelBrowser() {
   };
   const onDmOpened = (channelId: string) => {
     // Re-opening a hidden DM restores it to the list.
-    if (hiddenDmIds.includes(channelId)) {
-      persistHiddenDms(unhideDm(hiddenDmIds, channelId));
-    }
+    hiddenDms.markOpened(channelId);
     web.hide();
     void navigate({ to: "/repos", search: { c: channelId } });
     // The relay stores the DM's 39000 in a spawned task with no
@@ -525,7 +513,7 @@ function ChannelBrowser() {
     window.setTimeout(refreshChannels, 2000);
   };
   const onHideDm = (channelId: string) => {
-    persistHiddenDms(hideDm(hiddenDmIds, channelId));
+    hiddenDms.hide(channelId);
     if (selectedId === channelId) {
       closeChannel();
     }
