@@ -1274,3 +1274,185 @@ test("T3 foreground: a newer foreground sub replaces the old one (demoted to cri
     session.close();
   }
 });
+
+// --- background priority (background-sync plan §4.3, test T10) ------------
+
+function hOf(frame) {
+  return frame[2]["#h"][0];
+}
+
+test("T10 background: 3 queued subs go out strictly after criticals + foreground, ONE at a time, next only after EOSE", async () => {
+  const { session } = makeSession();
+  const drained = [];
+  session.onReplayDrained(() => drained.push(true));
+  for (const id of ["bg-a", "bg-b", "bg-c"]) {
+    session.subscribe(
+      { kinds: [9], "#h": [id], limit: 60 },
+      { onEvent: () => {}, priority: "background" },
+    );
+  }
+  // 10 regular subs (5 critical) + 1 foreground: a windowed replay (> 8).
+  subscribeMany(session, 10, new Set([0, 1, 2, 3, 4]));
+  session.subscribe(
+    { kinds: [9], "#h": ["open-channel"], limit: 60 },
+    { onEvent: () => {}, priority: "foreground" },
+  );
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  socket.serverSend(["AUTH", "chal-bg"]);
+  try {
+    await tick();
+    const reqs = () => socket.sentOf("REQ");
+    // A background subscribe DURING the windowed replay must wait too.
+    session.subscribe(
+      { kinds: [9], "#h": ["bg-late"], limit: 60 },
+      { onEvent: () => {}, priority: "background" },
+    );
+    assert.deepEqual(
+      reqs().map(hOf).filter((h) => h.startsWith("bg-")),
+      [],
+      "no background REQ while the replay is mid-flight",
+    );
+    // Answer every non-background REQ as it goes out, until the replay drains.
+    const answered = new Set();
+    for (let guard = 0; guard < 50; guard++) {
+      const pending = reqs().filter(
+        (frame) => !hOf(frame).startsWith("bg-") && !answered.has(frame[1]),
+      );
+      if (pending.length === 0) break;
+      for (const frame of pending) {
+        answered.add(frame[1]);
+        socket.serverSend(["EOSE", frame[1]]);
+      }
+    }
+    const order = reqs().map(hOf);
+    assert.equal(order.length, 12, "11 regular + exactly ONE background");
+    assert.equal(order[11], "bg-a");
+    assert.deepEqual(
+      order.slice(0, 11).filter((h) => h.startsWith("bg-")),
+      [],
+      "no background REQ before every regular one",
+    );
+    assert.equal(drained.length, 1, "replay-drained fired once");
+    // Next background only after the in-flight one's EOSE.
+    socket.serverSend(["EOSE", reqs()[11][1]]);
+    assert.equal(hOf(reqs()[12]), "bg-b");
+    assert.equal(reqs().length, 13);
+    socket.serverSend(["EOSE", reqs()[12][1]]);
+    assert.equal(hOf(reqs()[13]), "bg-c");
+    assert.equal(reqs().length, 14);
+  } finally {
+    session.close();
+  }
+});
+
+test("T10 background: a foreground subscriber joining a queued background filter sends it at once", async () => {
+  const { session } = makeSession();
+  session.connect();
+  const socket = firstSocket();
+  socket.emit("open");
+  socket.serverSend(["AUTH", "chal-bg2"]);
+  try {
+    await tick();
+    const filter = { kinds: [9], "#h": ["tap"], limit: 60 };
+    session.subscribe(
+      { kinds: [9], "#h": ["busy"] },
+      { onEvent: () => {}, priority: "background" },
+    );
+    session.subscribe(filter, { onEvent: () => {}, priority: "background" });
+    // "busy" holds the one slot; "tap" waits.
+    assert.deepEqual(socket.sentOf("REQ").map(hOf), ["busy"]);
+    session.subscribe(filter, { onEvent: () => {}, priority: "foreground" });
+    assert.deepEqual(socket.sentOf("REQ").map(hOf), ["busy", "tap"]);
+  } finally {
+    session.close();
+  }
+});
+
+// --- native iOS resume (background-sync plan §4.4, test T12) --------------
+
+test("T12 native iOS: hidden > 20s → the wake tears down and redials without waiting for staleness", async () => {
+  const doc = installFakeDocument(false);
+  let now = 1_000_000;
+  const { session } = makeSession({
+    nowMs: () => now,
+    isNativeIOS: () => true,
+    livenessIntervalMs: 0,
+    healthSweepIntervalMs: 0,
+  });
+  try {
+    session.connect();
+    const first = firstSocket();
+    first.emit("open");
+    first.serverSend(["AUTH", "c1"]);
+    await tick();
+    globalThis.document.hidden = true;
+    doc.wakeListeners[0]();
+    now += 21_000;
+    // The socket even "heard" something recently: staleness alone would
+    // never redial here (60s visible threshold).
+    first.serverSend(["NOTICE", "hello"]);
+    globalThis.document.hidden = false;
+    doc.wakeListeners[0]();
+    assert.equal(FakeSocket.instances.length, 2);
+  } finally {
+    session.close();
+    doc.restore();
+  }
+});
+
+test("T12 native iOS: a short hide (10s) keeps the socket", async () => {
+  const doc = installFakeDocument(false);
+  let now = 1_000_000;
+  const { session } = makeSession({
+    nowMs: () => now,
+    isNativeIOS: () => true,
+    livenessIntervalMs: 0,
+    healthSweepIntervalMs: 0,
+  });
+  try {
+    session.connect();
+    const first = firstSocket();
+    first.emit("open");
+    first.serverSend(["AUTH", "c1"]);
+    await tick();
+    globalThis.document.hidden = true;
+    doc.wakeListeners[0]();
+    now += 10_000;
+    first.serverSend(["NOTICE", "hello"]);
+    globalThis.document.hidden = false;
+    doc.wakeListeners[0]();
+    assert.equal(FakeSocket.instances.length, 1);
+  } finally {
+    session.close();
+    doc.restore();
+  }
+});
+
+test("T12 a browser (not native iOS) keeps the socket after a long hide", async () => {
+  const doc = installFakeDocument(false);
+  let now = 1_000_000;
+  const { session } = makeSession({
+    nowMs: () => now,
+    livenessIntervalMs: 0,
+    healthSweepIntervalMs: 0,
+  });
+  try {
+    session.connect();
+    const first = firstSocket();
+    first.emit("open");
+    first.serverSend(["AUTH", "c1"]);
+    await tick();
+    globalThis.document.hidden = true;
+    doc.wakeListeners[0]();
+    now += 30_000;
+    first.serverSend(["NOTICE", "hello"]);
+    globalThis.document.hidden = false;
+    doc.wakeListeners[0]();
+    assert.equal(FakeSocket.instances.length, 1);
+  } finally {
+    session.close();
+    doc.restore();
+  }
+});

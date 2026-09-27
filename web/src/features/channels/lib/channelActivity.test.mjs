@@ -458,3 +458,55 @@ test("T4 a marker move under live handlers: <= marker never counts, > marker cou
   feed.handlers.onEvent(relayEvent({ created_at: 301 }));
   assert.equal(feed.counts().get("ch1"), 2, "301 > marker: +1");
 });
+
+// --- warm tap (background-sync plan §4.2, test T9) ------------------------
+
+function tappedHandlers(onRawEvent) {
+  return createChannelActivityHandlers({
+    activityRef: { current: new Map() },
+    onActivityChange: () => {},
+    onLiveArrival: () => {},
+    onUnreadCountsChange: () => {},
+    readMarkers: () => ({}),
+    selfPubkey: SELF,
+    onRawEvent,
+  });
+}
+
+test("T9 a kind-9 for channel X reaches timelineStore.apply with source 'activity'; kind 7 does not", async () => {
+  const { warmTap } = await import("./timelineStore.ts");
+  const calls = [];
+  const fakeStore = {
+    apply: (channelId, event, options) =>
+      calls.push([channelId, event.id, options.source]),
+  };
+  const handlers = tappedHandlers(warmTap(fakeStore, "activity"));
+  handlers.onEvent(relayEvent({ id: "m1", channelId: "X", created_at: 10 }));
+  handlers.onEvent({
+    ...relayEvent({ id: "r1", channelId: "X", created_at: 11 }),
+    kind: 7,
+  });
+  // A re-delivered (at-or-below-sample) message is still tapped: the store,
+  // not the sample map, decides whether it is new to the timeline.
+  handlers.onEvent(relayEvent({ id: "m1", channelId: "X", created_at: 10 }));
+  assert.deepEqual(calls, [
+    ["X", "m1", "activity"],
+    ["X", "m1", "activity"],
+  ]);
+});
+
+test("T9 the tap into a real store skips the OWNED channel and warms the rest", async () => {
+  const { createTimelineStore, warmTap } = await import("./timelineStore.ts");
+  const store = createTimelineStore({ flushMs: 60_000 });
+  await store.load("open");
+  await store.load("other");
+  store.setOwner("open");
+  const handlers = tappedHandlers(warmTap(store, "activity"));
+  handlers.onEvent(relayEvent({ id: "a", channelId: "open", created_at: 5 }));
+  handlers.onEvent(relayEvent({ id: "b", channelId: "other", created_at: 5 }));
+  assert.equal(store.peek("open").messages.length, 0);
+  assert.deepEqual(
+    store.peek("other").messages.map((m) => m.id),
+    ["b"],
+  );
+});

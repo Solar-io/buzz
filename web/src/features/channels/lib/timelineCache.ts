@@ -1,19 +1,28 @@
 import { del, get, set } from "idb-keyval";
 import type { NostrFilter } from "@/shared/lib/nostr-client";
+import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import {
   isPlainObject,
   parseCardTags,
   type DecisionCard,
 } from "./decisionCard.ts";
 import {
+  applyOverlay,
   DELETE_KIND,
   EDIT_KIND,
+  editTargetFromEvent,
   TIMELINE_KINDS,
+  timelineMessageFromEvent,
   type MessageBuffer,
   type TimelineMessage,
 } from "./messageBuffer.ts";
 import { THREAD_SUMMARY_KIND } from "./threadSummaryEvent.ts";
-import type { ReactionIndex } from "./reactions.ts";
+import { reactionFromEvent, type ReactionIndex } from "./reactions.ts";
+import {
+  SYSTEM_MESSAGE_KIND,
+  systemEventFromContent,
+  tombstoneTargetId,
+} from "./systemEvent.ts";
 
 /**
  * Persistent per-channel timeline cache (IndexedDB via idb-keyval).
@@ -69,6 +78,35 @@ export interface TimelineCacheEntry {
   cursor: number;
   /** Older pagination already returned a short page — history start reached. */
   historyExhausted: boolean;
+  /**
+   * Ids this client has seen deleted (kind 5 / 40099 tombstone), newest last,
+   * bounded at {@link DELETED_IDS_CAP}. The reducer refuses to (re-)insert a
+   * listed id, so a re-delivered original — a warm feed that never saw the
+   * delete, a replay — cannot resurrect a row deleted here. Entries cached
+   * before the field existed heal to `[]` (healCachedEntry).
+   */
+  deletedIds: string[];
+  /**
+   * Edits whose target has not arrived yet (target id → newest content),
+   * applied when the target lands. Optional and always read with `?.`, so
+   * entries cached before it existed need no heal. Bounded by
+   * PENDING_EDITS_CAP.
+   */
+  pendingEdits?: Record<string, { content: string; at: number }>;
+}
+
+/** Bound on {@link TimelineCacheEntry.deletedIds}. */
+export const DELETED_IDS_CAP = 200;
+
+/** A fresh, never-synced entry (cursor 0 → the next sync asks for a first page). */
+export function emptyTimelineEntry(): TimelineCacheEntry {
+  return {
+    messages: [],
+    reactions: new Map(),
+    cursor: 0,
+    historyExhausted: false,
+    deletedIds: [],
+  };
 }
 
 export function cacheKey(channelId: string): string {
@@ -159,9 +197,25 @@ export function healCachedEntry(entry: TimelineCacheEntry): TimelineCacheEntry {
       card: healedCard,
     };
   });
+  // `deletedIds` (2026-09-27) postdates every entry cached before it: absent
+  // heals to `[]`; a non-string member (never written by this build, but the
+  // cache has no schema) is dropped rather than trusted.
+  const sourceDeleted: unknown = (entry as { deletedIds?: unknown }).deletedIds;
+  let deletedIds: string[];
+  if (sourceDeleted == null || !Array.isArray(sourceDeleted)) {
+    deletedIds = [];
+    repaired = true;
+  } else if (sourceDeleted.every((id) => typeof id === "string")) {
+    deletedIds = sourceDeleted as string[];
+  } else {
+    deletedIds = sourceDeleted.filter(
+      (id): id is string => typeof id === "string",
+    );
+    repaired = true;
+  }
   // Identity is preserved when nothing needed repair, so the common path costs
   // no new object and no re-render downstream.
-  return repaired ? { ...entry, messages } : entry;
+  return repaired ? { ...entry, messages, deletedIds } : entry;
 }
 
 export async function loadTimelineCache(
@@ -196,7 +250,7 @@ export async function saveTimelineCache(
     return;
   }
   try {
-    await set(cacheKey(channelId), entry);
+    await set(cacheKey(channelId), persistableEntry(entry));
   } catch {
     // Storage full or blocked: caching is an optimization, never fatal.
   }
@@ -264,6 +318,189 @@ export function mergeCachedMessage(
   }
   const cursor = Math.max(entry.cursor, message.createdAt);
   return { ...entry, messages, cursor };
+}
+
+/** How {@link applyEventToEntry} treats an incoming message. */
+export type ApplyMode =
+  /**
+   * The channel's own sync REQ (open timeline, delta, prefetch, older page):
+   * the event is part of a contiguous window, so the watermark advances.
+   */
+  | "sync"
+  /**
+   * A message that reached the client through some OTHER feed (unread
+   * activity, DM sampler). It says nothing about the span between the cursor
+   * and itself, so it may paint but must never move the cursor — the next
+   * sync's `since: cursor` still has to fetch that span.
+   */
+  | "warm";
+
+function recordDeleted(entry: TimelineCacheEntry, id: string): string[] {
+  if (entry.deletedIds.includes(id)) {
+    return entry.deletedIds;
+  }
+  const next = entry.deletedIds.concat(id);
+  return next.length > DELETED_IDS_CAP
+    ? next.slice(next.length - DELETED_IDS_CAP)
+    : next;
+}
+
+/** Delete overlay in VIEW form: the row stays, flagged, and the id is remembered. */
+function deleteInEntry(
+  entry: TimelineCacheEntry,
+  targetId: string,
+): TimelineCacheEntry {
+  const deletedIds = recordDeleted(entry, targetId);
+  const existing = entry.messages.find((m) => m.id === targetId);
+  const messages =
+    existing && !existing.deleted
+      ? applyOverlay(entry.messages, DELETE_KIND, targetId, null)
+      : entry.messages;
+  if (messages === entry.messages && deletedIds === entry.deletedIds) {
+    return entry;
+  }
+  return { ...entry, messages, deletedIds };
+}
+
+/**
+ * One relay event → the next timeline entry. Pure; returns the SAME
+ * reference when the event changes nothing, so callers can skip re-renders
+ * and disk writes on replayed traffic.
+ *
+ * This is the one reducer for timeline state: the open timeline's sync sub,
+ * scroll-up pages, idle prefetch and the warm taps all go through it
+ * (background-sync plan §4.2). Deletes are kept in VIEW form — the row stays
+ * with `deleted: true` so the timeline can render its placeholder — and
+ * {@link persistableEntry} strips them before anything reaches disk, so a
+ * deleted row still never resurrects from cache.
+ *
+ * Typing (20002) and thread summaries (39005) are session-only view state;
+ * they are the caller's to handle and are ignored here.
+ */
+export function applyEventToEntry(
+  entry: TimelineCacheEntry,
+  event: SignedNostrEvent,
+  channelId: string,
+  options: { mode: ApplyMode },
+): TimelineCacheEntry {
+  if (event.kind === EDIT_KIND || event.kind === DELETE_KIND) {
+    const targetId = editTargetFromEvent(event);
+    if (!targetId) {
+      return entry;
+    }
+    if (event.kind === DELETE_KIND) {
+      return deleteInEntry(entry, targetId);
+    }
+    const target = entry.messages.find((m) => m.id === targetId);
+    if (!target) {
+      // A delta REQ returns the edit (newer) before its original when the
+      // original sits at the cursor second: hold it until the target lands.
+      return holdPendingEdit(entry, targetId, event);
+    }
+    if (target.edited && target.content === event.content) {
+      return entry;
+    }
+    return {
+      ...entry,
+      messages: applyOverlay(entry.messages, EDIT_KIND, targetId, event.content),
+    };
+  }
+  if (event.kind === 7) {
+    const reaction = reactionFromEvent(event);
+    return reaction ? mergeCachedReaction(entry, reaction, event.pubkey) : entry;
+  }
+  // 39005 carries an `h` tag, so the message parser would build a row out of
+  // it — it must be routed away before the message path.
+  if (event.kind === THREAD_SUMMARY_KIND || event.kind === 20002) {
+    return entry;
+  }
+  const message = timelineMessageFromEvent(event);
+  if (!message || message.channelId !== channelId) {
+    return entry;
+  }
+  if (entry.deletedIds.includes(message.id)) {
+    return entry;
+  }
+  let next = entry;
+  // A 40099 tombstone reports a removal the relay already made: hide the
+  // target through the same delete path kind 5 uses.
+  if (message.kind === SYSTEM_MESSAGE_KIND) {
+    const removedId = tombstoneTargetId(systemEventFromContent(message.content));
+    if (removedId) {
+      next = deleteInEntry(next, removedId);
+    }
+  }
+  const existing = next.messages.find((m) => m.id === message.id);
+  if (existing && (existing.edited || existing.deleted)) {
+    // A re-delivered ORIGINAL must not undo an overlay already applied.
+    return next;
+  }
+  // Rule 2 (warm): only rows at-or-after the watermark. An older event
+  // (search, thread, forum read) cannot be known contiguous; inserting it
+  // would make loadOlder — keyed on the oldest row — skip real history.
+  // The sync path also owns rows it already has; a warm copy adds nothing.
+  if (options.mode === "warm" && (message.createdAt < next.cursor || existing)) {
+    return next;
+  }
+  const pending = next.pendingEdits?.[message.id];
+  let incoming = message;
+  if (pending) {
+    incoming = { ...message, content: pending.content, edited: true };
+    const rest = { ...next.pendingEdits };
+    delete rest[message.id];
+    next = { ...next, pendingEdits: rest };
+  }
+  if (options.mode === "warm") {
+    let messages = next.messages
+      .concat(incoming)
+      .sort((a, b) => a.createdAt - b.createdAt);
+    if (messages.length > CACHE_CAP) {
+      messages = messages.slice(messages.length - CACHE_CAP);
+    }
+    // Rule 1: the cursor is deliberately untouched.
+    return { ...next, messages };
+  }
+  return mergeCachedMessage(next, incoming);
+}
+
+/** Pending (target-not-yet-seen) edits kept per entry. */
+export const PENDING_EDITS_CAP = 100;
+
+function holdPendingEdit(
+  entry: TimelineCacheEntry,
+  targetId: string,
+  event: SignedNostrEvent,
+): TimelineCacheEntry {
+  const held = entry.pendingEdits?.[targetId];
+  // Newest edit wins; a replayed or older edit changes nothing.
+  if (held && held.at >= event.created_at) {
+    return entry;
+  }
+  const pendingEdits = {
+    ...entry.pendingEdits,
+    [targetId]: { content: event.content, at: event.created_at },
+  };
+  const ids = Object.keys(pendingEdits);
+  if (ids.length > PENDING_EDITS_CAP) {
+    ids
+      .sort((a, b) => pendingEdits[a].at - pendingEdits[b].at)
+      .slice(0, ids.length - PENDING_EDITS_CAP)
+      .forEach((id) => delete pendingEdits[id]);
+  }
+  return { ...entry, pendingEdits };
+}
+
+/**
+ * The on-disk form of an entry: rows deleted in this session are dropped
+ * outright (view-form `deleted: true` rows must not resurrect from disk).
+ */
+export function persistableEntry(
+  entry: TimelineCacheEntry,
+): TimelineCacheEntry {
+  if (!entry.messages.some((m) => m.deleted)) {
+    return entry;
+  }
+  return { ...entry, messages: entry.messages.filter((m) => !m.deleted) };
 }
 
 /**
@@ -413,12 +650,28 @@ export function olderPageFilter(
   channelId: string,
   oldestLoadedCreatedAt: number,
 ): NostrFilter {
-  // `until` is inclusive; step below the oldest loaded row so pages never
-  // overlap what is already on screen.
+  // `until` is inclusive and deliberately AT the oldest loaded row's second:
+  // other messages from that same second are not loaded yet, and stepping
+  // below it skipped them for good. The overlap is deduped by id; see
+  // {@link olderPageExhausted} for when to stop.
   return {
     kinds: [...TIMELINE_KINDS, 7, EDIT_KIND, DELETE_KIND],
     "#h": [channelId],
-    until: Math.max(0, oldestLoadedCreatedAt - 1),
+    until: Math.max(0, oldestLoadedCreatedAt),
     limit: OLDER_PAGE,
   };
+}
+
+/**
+ * Whether an older page shows the channel's start was reached. A short page
+ * (fewer events than the limit) means the relay had nothing more at or below
+ * `until`; a full page that brought no NEW message means only the already
+ * loaded overlap came back. Page size alone is not enough since `until` is
+ * inclusive.
+ */
+export function olderPageExhausted(page: {
+  events: number;
+  newMessages: number;
+}): boolean {
+  return page.events < OLDER_PAGE || page.newMessages === 0;
 }

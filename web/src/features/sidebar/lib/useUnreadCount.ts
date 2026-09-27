@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
+import {
+  timelineStore,
+  warmTap,
+} from "@/features/channels/lib/timelineStore.ts";
+
+const warmFromUnread = warmTap(timelineStore, "unread");
 
 /**
  * Unread count for a DM row: one bounded one-shot REQ counting the other
@@ -56,6 +62,9 @@ export function useUnreadCount(
       { kinds: [9], "#h": [channelId], since: lastSeenAt, limit: 200 },
       {
         onEvent: (event: SignedNostrEvent) => {
+          // Warm tap: these ARE the DM's unread messages — exactly what the
+          // user is about to open.
+          warmFromUnread(event);
           if (event.pubkey !== selfPubkey) {
             seen += 1;
             setCount(seen);

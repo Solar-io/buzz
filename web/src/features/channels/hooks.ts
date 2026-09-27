@@ -12,43 +12,28 @@ import {
   deleteChannelTags,
   renameChannelTags,
 } from "@/features/channels/lib/channelAdmin.ts";
+import { type MessageBuffer } from "./lib/messageBuffer.ts";
 import {
-  applyOverlay,
-  editTargetFromEvent,
-  timelineMessageFromEvent,
-  upsertMessage,
-  DELETE_KIND,
-  type MessageBuffer,
-} from "./lib/messageBuffer.ts";
-import {
-  systemEventFromContent,
-  tombstoneTargetId,
-  SYSTEM_MESSAGE_KIND,
-} from "./lib/systemEvent.ts";
-import {
-  applyOverlayToCache,
   initialSyncFilters,
-  loadTimelineCache,
-  mergeCachedMessage,
   dropCachedReaction,
-  mergeCachedReaction,
   olderPageFilter,
-  OLDER_PAGE,
-  saveTimelineCache,
+  olderPageExhausted,
   type TimelineCacheEntry,
 } from "./lib/timelineCache.ts";
+import {
+  initialFeedState,
+  snapshotOf,
+  syncCursor,
+  timelineStore,
+  type FeedSnapshot,
+} from "./lib/timelineStore.ts";
 import {
   mergeRelayThreadSummary,
   relayThreadSummaryFromEvent,
   THREAD_SUMMARY_KIND,
   type RelayThreadSummaryMap,
 } from "./lib/threadSummaryEvent.ts";
-import {
-  reactionFromEvent,
-  removeReaction,
-  upsertReaction,
-  type ReactionIndex,
-} from "./lib/reactions.ts";
+import { type ReactionIndex } from "./lib/reactions.ts";
 import { recordTyping, typingFromEvent, type TypingMap } from "./lib/typing.ts";
 import { loadSeed, mergeSeed } from "@/shared/lib/localSeed.ts";
 import {
@@ -90,90 +75,43 @@ export interface ChannelFeed {
 }
 
 /**
- * Cache write-through interval: batching disk writes keeps a busy channel
- * from re-serializing the whole buffer per message.
+ * Live timeline for one channel: a VIEW over the shared timeline store
+ * (background-sync plan §4.2). The first render paints synchronously from
+ * the store's memory (`initialFeedState`) — a channel whose newest message
+ * already reached the client through the activity/DM feeds shows it with no
+ * blank frame and no IndexedDB wait. IndexedDB is read only when memory
+ * misses. The channel's sync subscription then asks for the delta since the
+ * entry's cursor at foreground priority, and every event goes through the
+ * store's one reducer; the store owns write-behind persistence.
  */
-const CACHE_FLUSH_MS = 1_000;
-
 export function useChannelMessages(channelId: string | null): ChannelFeed {
   const { session } = useRelaySession();
-  const [buffer, setBuffer] = useState<MessageBuffer>([]);
-  const [reactions, setReactions] = useState<ReactionIndex>(() => new Map());
+  const [view, setView] = useState<FeedSnapshot>(() =>
+    initialFeedState(timelineStore, channelId),
+  );
+  // A channel switch re-derives the view DURING render from the store's
+  // memory, so the first frame for the new channel already has its rows —
+  // never an empty reset followed by an async refill.
+  let current = view;
+  if (view.channelId !== channelId) {
+    current = initialFeedState(timelineStore, channelId);
+    setView(current);
+  }
   const [typing, setTyping] = useState<TypingMap>(() => new Map());
   const [threadSummaries, setThreadSummaries] = useState<RelayThreadSummaryMap>(
     () => new Map(),
   );
-  const [historyExhausted, setHistoryExhausted] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
-  /** Cache state mirror — updated synchronously with every buffer change. */
-  const cacheRef = useRef<TimelineCacheEntry | null>(null);
-  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadingOlderRef = useRef(false);
 
-  const flushCache = useCallback(() => {
-    if (flushTimer.current) {
-      clearTimeout(flushTimer.current);
-      flushTimer.current = null;
-    }
-    if (cacheRef.current && channelId) {
-      void saveTimelineCache(channelId, cacheRef.current);
-    }
-  }, [channelId]);
-
-  const scheduleFlush = useCallback(() => {
-    if (flushTimer.current) {
-      clearTimeout(flushTimer.current);
-    }
-    flushTimer.current = setTimeout(flushCache, CACHE_FLUSH_MS);
-  }, [flushCache]);
-
   /**
-   * One relay event → buffer state + cache write-through. Shared by the live
-   * sync subscription and scroll-up pagination pages so both paths apply
-   * overlays, reactions and messages identically.
+   * One relay event → the store (messages, overlays, reactions) or local
+   * session-only view state (typing, thread summaries). Shared by the sync
+   * subscription and scroll-up pages.
    */
   const applyEvent = useCallback(
     (event: SignedNostrEvent) => {
-      if (event.kind === 40003 || event.kind === 5) {
-        const targetId = editTargetFromEvent(event);
-        if (targetId) {
-          const content = event.kind === 40003 ? event.content : null;
-          setBuffer((previous) =>
-            applyOverlay(previous, event.kind, targetId, content),
-          );
-          if (cacheRef.current) {
-            cacheRef.current = applyOverlayToCache(
-              cacheRef.current,
-              event.kind,
-              targetId,
-              content,
-            );
-            scheduleFlush();
-          }
-        }
-        return;
-      }
-      if (event.kind === 7) {
-        const reaction = reactionFromEvent(event);
-        if (reaction) {
-          setReactions((previous) =>
-            upsertReaction(previous, reaction, event.pubkey),
-          );
-          if (cacheRef.current) {
-            cacheRef.current = mergeCachedReaction(
-              cacheRef.current,
-              reaction,
-              event.pubkey,
-            );
-            scheduleFlush();
-          }
-        }
-        return;
-      }
       if (event.kind === THREAD_SUMMARY_KIND) {
-        // Routed BEFORE the message path on purpose: a 39005 carries an `h`
-        // tag, so `timelineMessageFromEvent` would happily build a row out
-        // of it and spill `{"reply_count":…}` into the conversation.
         const summary = relayThreadSummaryFromEvent(event);
         if (
           summary &&
@@ -194,96 +132,62 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
         }
         return;
       }
-      const message = timelineMessageFromEvent(event);
-      if (!message || message.channelId !== channelId) {
-        return;
-      }
-      // A kind-40099 deletion tombstone reports a removal the relay has
-      // ALREADY soft-deleted server-side, so without this the tombstone
-      // would render directly above the message it says was removed. Hide
-      // the target through the same delete path kind 5 uses so the
-      // in-memory buffer and the on-disk cache agree.
-      if (message.kind === SYSTEM_MESSAGE_KIND) {
-        const removedId = tombstoneTargetId(
-          systemEventFromContent(message.content),
-        );
-        if (removedId) {
-          setBuffer((previous) =>
-            applyOverlay(previous, DELETE_KIND, removedId, null),
-          );
-          if (cacheRef.current) {
-            cacheRef.current = applyOverlayToCache(
-              cacheRef.current,
-              DELETE_KIND,
-              removedId,
-              null,
-            );
-          }
-        }
-      }
-      setBuffer((previous) => upsertMessage(previous, message));
-      if (cacheRef.current) {
-        cacheRef.current = mergeCachedMessage(cacheRef.current, message);
-        scheduleFlush();
+      if (channelId) {
+        timelineStore.apply(channelId, event, { source: "timeline" });
       }
     },
-    [channelId, scheduleFlush],
+    [channelId],
   );
 
   useEffect(() => {
-    setBuffer([]);
-    setReactions(new Map());
     setTyping(new Map());
     setThreadSummaries(new Map());
-    setHistoryExhausted(false);
     setLoadingOlder(false);
     loadingOlderRef.current = false;
-    cacheRef.current = null;
     if (!channelId) {
       return;
     }
 
     let alive = true;
     let unsubscribe: (() => void) | undefined;
-
-    void (async () => {
-      // Seed from disk first: the cursor decides what the sync REQ must ask
-      // for, and a warm cache paints the timeline before the network moves.
-      const cached = await loadTimelineCache(channelId);
-      if (!alive) {
-        return;
-      }
-      cacheRef.current = cached ?? {
-        messages: [],
-        reactions: new Map(),
-        cursor: 0,
-        historyExhausted: false,
-      };
-      if (cached) {
-        setBuffer(cached.messages);
-        setReactions(cached.reactions);
-        setHistoryExhausted(cached.historyExhausted);
-      }
+    // Owning the channel stops warm writes to it: from here the sync sub is
+    // the only writer, which is what keeps its cursor semantics exact.
+    timelineStore.setOwner(channelId);
+    const stopListening = timelineStore.subscribe(channelId, (entry) => {
+      setView(snapshotOf(channelId, entry));
+    });
+    const startSync = (entry: TimelineCacheEntry) => {
+      setView(snapshotOf(channelId, entry));
       unsubscribe = session.subscribe(
-        initialSyncFilters(channelId, cached ? cached.cursor : null),
+        initialSyncFilters(channelId, syncCursor(entry)),
         // The open timeline is what the user is looking at: it replays first,
         // outside the replay window, after every (re)connect.
         { onEvent: applyEvent, priority: "foreground" },
       );
-    })();
+    };
+
+    const peeked = timelineStore.peek(channelId);
+    if (peeked) {
+      // Memory hit: no await between the click and the sync REQ.
+      startSync(peeked);
+    } else {
+      void timelineStore.load(channelId).then((entry) => {
+        if (alive) {
+          startSync(entry);
+        }
+      });
+    }
 
     return () => {
       alive = false;
       unsubscribe?.();
-      if (flushTimer.current) {
-        clearTimeout(flushTimer.current);
-        flushTimer.current = null;
-      }
-      if (cacheRef.current) {
-        void saveTimelineCache(channelId, cacheRef.current);
-      }
+      stopListening();
+      timelineStore.releaseOwner(channelId);
     };
   }, [session, channelId, applyEvent]);
+
+  const buffer = current.messages;
+  const historyExhausted = current.historyExhausted;
 
   const loadOlder = useCallback(() => {
     if (
@@ -300,7 +204,8 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
     }
     loadingOlderRef.current = true;
     setLoadingOlder(true);
-    let messageCount = 0;
+    let eventCount = 0;
+    let newMessages = 0;
     let done = false;
     const finish = () => {
       if (done) {
@@ -311,26 +216,25 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
       setLoadingOlder(false);
       // A short page means the channel's start is inside what we just
       // loaded — stop offering pagination, and persist that in the cache.
-      if (messageCount < OLDER_PAGE) {
-        setHistoryExhausted(true);
-        if (cacheRef.current) {
-          cacheRef.current = {
-            ...cacheRef.current,
-            historyExhausted: true,
-          };
-          void saveTimelineCache(channelId, cacheRef.current);
-        }
+      if (olderPageExhausted({ events: eventCount, newMessages })) {
+        timelineStore.update(channelId, (entry) =>
+          entry.historyExhausted ? entry : { ...entry, historyExhausted: true },
+        );
       }
     };
     const unsubscribe = session.subscribe(olderPageFilter(channelId, oldest), {
       onEvent: (event: SignedNostrEvent) => {
+        eventCount++;
         if (
           event.kind !== 20002 &&
           event.kind !== 7 &&
           event.kind !== 40003 &&
-          event.kind !== 5
+          event.kind !== 5 &&
+          !timelineStore
+            .peek(channelId)
+            ?.messages.some((message) => message.id === event.id)
         ) {
-          messageCount++;
+          newMessages++;
         }
         applyEvent(event);
       },
@@ -347,31 +251,26 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
    * Optimistically drop the viewer's own reaction from live state and cache.
    *
    * The relay confirmation cannot do this for us: a reaction removal is a
-   * kind-5 whose target is the *reaction* event, and `applyEvent` routes
-   * kind-5 to the message overlay path, which no-ops because no message
-   * carries that id. Without this the chip would sit there until reload, and
+   * kind-5 whose target is the *reaction* event, and the reducer routes
+   * kind-5 to the message delete path, which cannot match a reaction id.
+   * Without this the chip would sit there until reload, and
    * `dropCachedReaction` is what stops the reload repainting it from disk.
    */
   const forgetOwnReaction = useCallback(
     (targetId: string, emoji: string, selfPubkey: string) => {
-      setReactions((previous) =>
-        removeReaction(previous, targetId, emoji, selfPubkey),
-      );
-      if (cacheRef.current) {
-        cacheRef.current = dropCachedReaction(
-          cacheRef.current,
-          { targetId, emoji },
-          selfPubkey,
-        );
-        scheduleFlush();
+      if (!channelId) {
+        return;
       }
+      timelineStore.update(channelId, (entry) =>
+        dropCachedReaction(entry, { targetId, emoji }, selfPubkey),
+      );
     },
-    [scheduleFlush],
+    [channelId],
   );
 
   return {
     messages: buffer,
-    reactions,
+    reactions: current.reactions,
     typing,
     threadSummaries,
     loadOlder,

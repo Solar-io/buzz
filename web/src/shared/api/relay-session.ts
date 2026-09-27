@@ -43,8 +43,14 @@ export interface SubscribeOptions {
    * for a slot behind other criticals (background-sync plan §4.1 item 0.2:
    * a 255-346ms slot wait was measured on resume). Same idea as desktop's
    * visible-channel-first replay.
+   *
+   * "background" is idle prefetch (background-sync plan §4.3): it never
+   * competes with what the user is waiting for. Background subs open only
+   * once the post-AUTH replay has drained, ONE at a time, each holding its
+   * slot until EOSE/CLOSED (or {@link BACKGROUND_SLOT_FALLBACK_MS}). A
+   * non-background subscriber joining the same filter promotes it.
    */
-  priority?: "critical" | "foreground";
+  priority?: "critical" | "foreground" | "background";
 }
 
 export type Unsubscribe = () => void;
@@ -90,6 +96,16 @@ export interface RelaySessionOptions {
    * reconnect backoff. Default {@link STABLE_CONNECTION_MS}.
    */
   stableConnectionMs?: number;
+  /** A background slot frees itself after this long without EOSE. Default 3s. */
+  backgroundSlotFallbackMs?: number;
+  /**
+   * True inside the native iOS shell, where a long hide means the OS
+   * suspended JS and killed the socket (see NATIVE_RESUME_REDIAL_MS).
+   * Default: never.
+   */
+  isNativeIOS?: () => boolean;
+  /** Hidden longer than this on native iOS → redial on wake. Default 20s. */
+  nativeResumeRedialMs?: number;
   onStatusChange?: (status: RelaySessionStatus) => void;
 }
 
@@ -130,6 +146,16 @@ const PUBLISH_RETRY_BACKSTOP_MS = 30_000;
  */
 export const REPLAY_WINDOW = 4;
 const REPLAY_SLOT_FALLBACK_MS = 400;
+/** Background (prefetch) REQs in flight at once. */
+export const BACKGROUND_WINDOW = 1;
+const BACKGROUND_SLOT_FALLBACK_MS = 3_000;
+/**
+ * iOS suspends JS in the background and the socket dies with it, but the
+ * close event may never arrive — the zombie would otherwise sit until the
+ * 60s visible-stale probe. After a hide this long, the wake tears down and
+ * redials at once (background-sync plan §4.4).
+ */
+const NATIVE_RESUME_REDIAL_MS = 20_000;
 /** Replays at or below this size open synchronously (no pacing needed). */
 const UNPACED_REPLAY_MAX = 8;
 /**
@@ -287,6 +313,21 @@ export class RelaySession {
   /** When the CURRENT socket completed its connect (flushPending); null if not. */
   private connectedAt: number | null = null;
   private readonly stableConnectionMs: number;
+  /** Background subs waiting for the replay to drain, oldest first. */
+  private backgroundQueue: string[] = [];
+  /** The one background sub awaiting EOSE, and its fallback timer. */
+  private backgroundInFlight: {
+    subId: string;
+    timer: ReturnType<typeof setTimeout>;
+  } | null = null;
+  private readonly backgroundSlotFallbackMs: number;
+  /** Listeners for "the post-AUTH replay has drained" (once per socket). */
+  private readonly replayDrainedListeners = new Set<() => void>();
+  private replayDrainedEmitted = false;
+  private readonly isNativeIOS: () => boolean;
+  private readonly nativeResumeRedialMs: number;
+  /** When the document was last hidden (null while visible). */
+  private hiddenAt: number | null = null;
   private manualClose = false;
   private readonly nowMs: () => number;
   private readonly livenessIntervalMs: number;
@@ -337,6 +378,11 @@ export class RelaySession {
     this.nowMs = options.nowMs ?? (() => Date.now());
     this.stableConnectionMs =
       options.stableConnectionMs ?? STABLE_CONNECTION_MS;
+    this.backgroundSlotFallbackMs =
+      options.backgroundSlotFallbackMs ?? BACKGROUND_SLOT_FALLBACK_MS;
+    this.isNativeIOS = options.isNativeIOS ?? (() => false);
+    this.nativeResumeRedialMs =
+      options.nativeResumeRedialMs ?? NATIVE_RESUME_REDIAL_MS;
     this.livenessIntervalMs =
       options.livenessIntervalMs ?? DEFAULT_LIVENESS_INTERVAL_MS;
     this.healthSweepIntervalMs =
@@ -416,6 +462,9 @@ export class RelaySession {
   }
 
   private readonly handleWake = (): void => {
+    if (this.redialAfterNativeSuspend()) {
+      return;
+    }
     this.redialIfBackingOff();
     this.probeLiveness();
     // Waking (tab visible again / network online) is also the moment a
@@ -448,6 +497,11 @@ export class RelaySession {
       if (this.openSubs.has(subId) || this.policyClosedSubs.has(subId)) {
         continue;
       }
+      if (sub.options.priority === "background") {
+        // Background subs keep their one-at-a-time slot even when swept.
+        this.enqueueBackground(subId);
+        continue;
+      }
       // A pending auth-race retry may also fire; a duplicate REQ under the
       // same sub id just replaces the filter, and the retry's own send is
       // guarded by openSubs — so at most one REQ lands either way.
@@ -455,6 +509,7 @@ export class RelaySession {
       this.authRetryAttempts.delete(subId);
       this.socket.send(reqFrame(subId, sub.filter));
     }
+    this.pumpBackground();
   }
 
   /**
@@ -476,6 +531,41 @@ export class RelaySession {
     clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     this.openSocket();
+  }
+
+  /**
+   * Hidden-duration bookkeeping, and the native-iOS resume redial: after a
+   * hide longer than {@link NATIVE_RESUME_REDIAL_MS} in the iOS shell the
+   * socket is presumed dead (iOS suspended the process), so a visible wake
+   * tears it down and redials NOW rather than probing it for up to 60s.
+   * Returns true when it redialed.
+   */
+  private redialAfterNativeSuspend(): boolean {
+    if (typeof document === "undefined") {
+      return false;
+    }
+    if (document.hidden) {
+      this.hiddenAt ??= this.nowMs();
+      return false;
+    }
+    const hiddenAt = this.hiddenAt;
+    this.hiddenAt = null;
+    if (
+      hiddenAt === null ||
+      this.manualClose ||
+      !this.socket ||
+      !this.isNativeIOS() ||
+      this.nowMs() - hiddenAt <= this.nativeResumeRedialMs
+    ) {
+      return false;
+    }
+    const dead = this.socket;
+    this.teardownSocket();
+    dead.close();
+    this.reconnectAttempt = 0;
+    this.setStatus("reconnecting");
+    this.openSocket();
+    return true;
   }
 
   private probeLiveness(): void {
@@ -545,6 +635,7 @@ export class RelaySession {
       const subId = String(message[1] ?? "");
       const sub = this.openSubs.get(subId);
       this.releaseReplaySlot(subId);
+      this.releaseBackgroundSlot(subId);
       sub?.options.onEose?.();
       return;
     }
@@ -577,6 +668,7 @@ export class RelaySession {
       const subId = String(message[1] ?? "");
       const reason = String(message[2] ?? "");
       this.releaseReplaySlot(subId);
+      this.releaseBackgroundSlot(subId);
       if (this.openSubs.has(subId)) {
         this.openSubs.delete(subId);
         const transient =
@@ -751,7 +843,12 @@ export class RelaySession {
         !queued.has(subId) &&
         !this.replayInFlight.has(subId)
       ) {
-        toOpen.push([subId, sub]);
+        if (sub.options.priority === "background") {
+          // Background goes LAST, one at a time, after the replay drains.
+          this.enqueueBackground(subId);
+        } else {
+          toOpen.push([subId, sub]);
+        }
       }
     }
     // The foreground sub (what the user is looking at) goes out first and
@@ -773,10 +870,109 @@ export class RelaySession {
       for (const [subId, sub] of toOpen) {
         this.sendReplayReq(subId, sub);
       }
+      this.afterReplayProgress();
       return;
     }
     this.replayQueue.push(...toOpen);
     this.pumpReplay();
+    this.afterReplayProgress();
+  }
+
+  /**
+   * Subscribe to "the post-AUTH replay has drained": everything the user
+   * could be waiting on has been (re-)requested. Fires once per connected
+   * socket — the idle-prefetch trigger. Returns an unregister fn.
+   */
+  onReplayDrained(listener: () => void): () => void {
+    this.replayDrainedListeners.add(listener);
+    return () => {
+      this.replayDrainedListeners.delete(listener);
+    };
+  }
+
+  /** True while the socket is connected and past AUTH. */
+  get isReady(): boolean {
+    return this.socket !== null && this.authenticated;
+  }
+
+  /** Once the replay is idle: announce the drain (once) and start background. */
+  private afterReplayProgress(): void {
+    if (!this.socket || !this.authenticated || this.replayActive()) {
+      return;
+    }
+    if (!this.replayDrainedEmitted) {
+      this.replayDrainedEmitted = true;
+      for (const listener of [...this.replayDrainedListeners]) {
+        listener();
+      }
+    }
+    this.pumpBackground();
+  }
+
+  private enqueueBackground(subId: string): void {
+    if (
+      this.backgroundInFlight?.subId === subId ||
+      this.backgroundQueue.includes(subId)
+    ) {
+      return;
+    }
+    this.backgroundQueue.push(subId);
+  }
+
+  /**
+   * Open the next background sub if the lane is free: socket authenticated,
+   * replay drained, and fewer than {@link BACKGROUND_WINDOW} in flight.
+   */
+  private pumpBackground(): void {
+    if (
+      !this.socket ||
+      !this.authenticated ||
+      this.manualClose ||
+      this.replayActive()
+    ) {
+      return;
+    }
+    while (
+      (this.backgroundInFlight ? 1 : 0) < BACKGROUND_WINDOW &&
+      this.backgroundQueue.length > 0
+    ) {
+      const subId = this.backgroundQueue.shift() as string;
+      const sub = this.activeSubs.get(subId);
+      if (!sub || sub.options.priority !== "background") {
+        continue;
+      }
+      if (!this.sendReplayReq(subId, sub)) {
+        continue;
+      }
+      const timer = setTimeout(
+        () => this.releaseBackgroundSlot(subId),
+        this.backgroundSlotFallbackMs,
+      );
+      this.backgroundInFlight = { subId, timer };
+    }
+  }
+
+  /** EOSE, CLOSED, unsubscribe, promotion or the fallback frees the slot. */
+  private releaseBackgroundSlot(subId: string): void {
+    if (this.backgroundInFlight?.subId !== subId) {
+      return;
+    }
+    clearTimeout(this.backgroundInFlight.timer);
+    this.backgroundInFlight = null;
+    this.pumpBackground();
+  }
+
+  /**
+   * A non-background subscriber joined a background wire sub: it is no
+   * longer idle work. Leave the background lane and open now if waiting.
+   */
+  private leaveBackground(subId: string, sub: ActiveSubscription): void {
+    this.backgroundQueue = this.backgroundQueue.filter((id) => id !== subId);
+    this.releaseBackgroundSlot(subId);
+    if (this.authenticated && this.socket && !this.openSubs.has(subId)) {
+      this.openSubs.set(subId, sub);
+      this.socket.send(reqFrame(subId, sub.filter));
+    }
   }
 
   /** True while a windowed replay still has subs queued or awaiting EOSE. */
@@ -833,6 +1029,7 @@ export class RelaySession {
     clearTimeout(timer);
     this.replayInFlight.delete(subId);
     this.pumpReplay();
+    this.afterReplayProgress();
   }
 
   /**
@@ -927,6 +1124,13 @@ export class RelaySession {
     }
     this.replayInFlight.clear();
     this.replayQueue = [];
+    if (this.backgroundInFlight) {
+      clearTimeout(this.backgroundInFlight.timer);
+      this.backgroundInFlight = null;
+    }
+    // Still-active background subs are re-queued by the next replay.
+    this.backgroundQueue = [];
+    this.replayDrainedEmitted = false;
     // D-042: a publish in flight when the socket drops used to fail fast and
     // LOSE the event — the tap at 20:50 9/16 sent into a dying socket and
     // evaporated. The relay answers each client message before reading the
@@ -985,6 +1189,7 @@ export class RelaySession {
     const sharedId = this.sharedByKey.get(key);
     const shared = sharedId ? this.activeSubs.get(sharedId) : undefined;
     if (sharedId && shared?.share.shareable) {
+      const wasBackground = shared.options.priority === "background";
       if (options.priority === "foreground") {
         this.promoteToForeground(sharedId, shared);
       } else if (
@@ -992,6 +1197,13 @@ export class RelaySession {
         shared.options.priority !== "foreground"
       ) {
         shared.options.priority = "critical";
+      } else if (wasBackground && options.priority !== "background") {
+        shared.options.priority = undefined;
+      }
+      if (wasBackground && shared.options.priority !== "background") {
+        // Someone is waiting on this filter now (e.g. the push-tap prefetch
+        // joined by the timeline it opened): it is no longer idle work.
+        this.leaveBackground(sharedId, shared);
       }
       const remove = shared.share.join(options);
       return () => {
@@ -1016,9 +1228,14 @@ export class RelaySession {
     if (options.priority === "foreground") {
       this.promoteToForeground(subId, sub);
     }
-    // If not yet authenticated/open, the auth handshake replays this REQ;
-    // no need to queue it in `pending` (which is for writes only).
-    if (this.authenticated && this.socket) {
+    if (options.priority === "background") {
+      // Idle work waits for its lane (replay drained, one in flight); before
+      // AUTH the replay queues it the same way.
+      this.enqueueBackground(subId);
+      this.pumpBackground();
+    } else if (this.authenticated && this.socket) {
+      // If not yet authenticated/open, the auth handshake replays this REQ;
+      // no need to queue it in `pending` (which is for writes only).
       this.openSubs.set(subId, sub);
       this.socket.send(reqFrame(subId, filters));
     }
@@ -1060,6 +1277,8 @@ export class RelaySession {
     this.authRetryAttempts.delete(subId);
     this.policyClosedSubs.delete(subId);
     this.releaseReplaySlot(subId);
+    this.backgroundQueue = this.backgroundQueue.filter((id) => id !== subId);
+    this.releaseBackgroundSlot(subId);
     if (this.openSubs.delete(subId)) {
       this.socket?.send(JSON.stringify(["CLOSE", subId]));
     }

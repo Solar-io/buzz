@@ -7,6 +7,8 @@ import { nip44EncryptTo, signNostrEvent } from "@/shared/lib/nostr-signer";
 import { nip98Headers } from "@/shared/lib/nip98";
 import { relayHttpBaseUrl, relayWsUrl } from "@/shared/lib/relay-url";
 import { router } from "@/app/router";
+import { prefetchTimeline } from "@/features/channels/lib/timelinePrefetch.ts";
+import { timelineStore } from "@/features/channels/lib/timelineStore.ts";
 import { readNativeServices } from "./config";
 import { BuzzPush, isNativeIOS } from "./native";
 import {
@@ -50,6 +52,7 @@ function useNativePushService() {
 export function NativePushRuntime() {
   const { canSign } = useAuth();
   const service = useNativePushService();
+  const { session } = useRelaySession();
   const resolving = useRef(false);
   useEffect(() => {
     if (!isNativeIOS() || !canSign) return;
@@ -91,6 +94,18 @@ export function NativePushRuntime() {
           };
           if (value.v !== 1 || !/^[a-f0-9]{64}$/.test(value.event_id))
             throw new Error("Invalid notification response.");
+          if (value.channel_id) {
+            // Start the tapped channel's delta NOW, at foreground priority,
+            // rather than when the route mounts: after a long background the
+            // REQ is then first on the wire once AUTH completes. A warm
+            // channel already paints from the store on navigate.
+            void prefetchTimeline(
+              timelineStore,
+              session,
+              value.channel_id,
+              "foreground",
+            );
+          }
           await router.navigate({
             to: "/repos",
             search: value.channel_id
@@ -127,7 +142,7 @@ export function NativePushRuntime() {
       void token.then((handle) => handle.remove());
       void notification.then((handle) => handle.remove());
     };
-  }, [canSign, service]);
+  }, [canSign, service, session]);
   return null;
 }
 

@@ -8,6 +8,7 @@ import {
 } from "react";
 import { RelaySession, type RelaySessionStatus } from "./relay-session";
 import { relayWsUrl } from "../lib/relay-url";
+import { isNativeIOS } from "../platform/native";
 
 interface RelaySessionContextValue {
   session: RelaySession;
@@ -32,6 +33,7 @@ export function RelaySessionProvider({
     () =>
       new RelaySession({
         wsUrl: relayWsUrl(),
+        isNativeIOS,
         onStatusChange: (next) => setStatus(next),
       }),
     [],
