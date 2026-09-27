@@ -8,34 +8,20 @@ import {
 } from "react";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import {
-  chunkSpeakableText,
   classifySpeakableAgentText,
   createOrderedSpeaker,
   huddleAgentSpeechFilter,
-  rankVoices,
-  resolveProfileVoice,
   shouldSpeakLocally,
-  speakRoute,
   SPEECH_REPLAY_WINDOW_SECONDS,
   type SpeakRoute,
-  watchdogMs,
 } from "./lib/huddleAgentSpeech.ts";
-import {
-  playBridgeResponse,
-  type BridgeAudioContextLike,
-} from "./lib/bridgeSpeech.ts";
-import { speechServiceUrl } from "@/shared/lib/relay-url";
 import { botPubkeys } from "./lib/huddleMembers.ts";
-import {
-  resolveHuddleVoice,
-  type HuddleVoiceOverride,
-} from "./lib/huddlePrefs.ts";
-import { applySinkId } from "./lib/huddleAudioGraph.ts";
+import type { HuddleVoiceOverride } from "./lib/huddlePrefs.ts";
 import {
   recordUtterance,
   type AgentSpeechActivity,
 } from "./lib/voiceTranscript.ts";
-import { useAgentVoiceSelections } from "../voice/hooks.ts";
+import { useAgentSpeechPlayer } from "../voice/useAgentSpeechPlayer.ts";
 import type { HuddleMemberSnapshot } from "./useHuddleMemberSnapshot";
 
 /**
@@ -160,24 +146,6 @@ export function useHuddleAgentSpeech(options: {
   const selfPubkeyRef = useRef(selfPubkey);
   selfPubkeyRef.current = selfPubkey;
 
-  // The speak-time seam: the agents' published kind-30182 voice selections,
-  // folded LWW per pubkey by the voice feature's live subscription. A ref,
-  // like the values above — the speaker closure is created once and must
-  // read the CURRENT selections at utterance time, because selections
-  // arrive (and change) after it exists.
-  const { agentVoiceSelectionFor } = useAgentVoiceSelections();
-  const voiceSelectionForRef = useRef(agentVoiceSelectionFor);
-  voiceSelectionForRef.current = agentVoiceSelectionFor;
-  // Same treatment for the channel override: the speaker closure is built
-  // once and must read the CURRENT override at utterance time.
-  const voiceOverrideRef = useRef<HuddleVoiceOverride | null>(
-    options.voiceOverride ?? null,
-  );
-  voiceOverrideRef.current = options.voiceOverride ?? null;
-  /** Chosen speaker + local mute for agent audio; applied to the bridge ctx. */
-  const outputDeviceIdRef = useRef("");
-  const mutedRef = useRef(false);
-
   // Echo-suppression state. The ref is the SOURCE OF TRUTH for "is the
   // avatar audible right now": synthesis starts and stops update it in the
   // same task, so an STT final arriving mid-utterance sees `speaking: true`
@@ -193,293 +161,44 @@ export function useHuddleAgentSpeech(options: {
   const speakRoutesRef = useRef(new Map<string, SpeakRoute>());
 
   /**
-   * The engine's voice list, RANKED (`rankVoices`) and loaded
-   * asynchronously — `getVoices()` returns [] until `voiceschanged` fires.
-   * A ref, not state: only the speak closure reads it, at utterance time.
-   * Selection is deterministic from the agent pubkey when the agent has
-   * published no voice selection; a published selection (kind 30182)
-   * overrides it at speak time (`speechVoiceProfile`'s selected input),
-   * so the same agent is the same voice on every call — the fix for
-   * "one voice said it, half the time it was another".
+   * The shared agent-speech player (voice/useAgentSpeechPlayer): route
+   * selection (kind-30182 selection, then this channel's override via
+   * `resolveHuddleVoice`), chunking, the /tts bridge leg through a mutable
+   * gain, the local-synth fallback, watchdogs and the stop token all live
+   * there. This hook keeps what is huddle-specific: the subscription,
+   * membership gating, roster suppression and echo-suppression records.
    */
-  const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
-  useEffect(() => {
-    if (!supported) {
-      return;
-    }
-    const synth = window.speechSynthesis;
-    const load = () => {
-      voicesRef.current = rankVoices(synth.getVoices());
-    };
-    load();
-    synth.addEventListener?.("voiceschanged", load);
-    return () => {
-      synth.removeEventListener?.("voiceschanged", load);
-    };
-  }, [supported]);
-
-  /**
-   * Mid-reply stop. Bumped by every disable/teardown; a running reply's
-   * chunk loop checks it before each sentence, and the in-flight chunk's
-   * settle is invoked immediately through `activeSettleRef` — so
-   * "stop reading" stops NOW, not when the watchdog gives up on an engine
-   * that fires neither onend nor onerror after `cancel()`.
-   */
-  const stopTokenRef = useRef(0);
-  const activeSettleRef = useRef<(() => void) | null>(null);
-  const stopSpeechNow = useCallback(() => {
-    stopTokenRef.current += 1;
-    activeSettleRef.current?.();
-    activeSettleRef.current = null;
-    if (speechSynthesisSupported()) {
-      window.speechSynthesis.cancel();
-    }
-  }, []);
-
-  // The bridge engine's AudioContext, created on first bridge speech (the
-  // enable toggle is the user gesture that unlocks audio). 24 kHz preferred
-  // — matching the bridge PCM — with the browser default as fallback:
-  // buffers carry their own rate and are resampled either way.
-  const bridgeCtxRef = useRef<BridgeAudioContextLike | null>(null);
-  /** The gain every bridge piece plays through, so the mute covers the tail. */
-  const bridgeGainRef = useRef<GainNode | null>(null);
-  const bridgeContext = useCallback((): BridgeAudioContextLike | null => {
-    if (
-      typeof window === "undefined" ||
-      typeof window.AudioContext === "undefined"
-    ) {
-      return null;
-    }
-    if (bridgeCtxRef.current === null) {
-      let created: AudioContext;
-      try {
-        created = new window.AudioContext({ sampleRate: 24_000 });
-      } catch {
-        created = new window.AudioContext();
-      }
-      bridgeCtxRef.current = created as unknown as BridgeAudioContextLike;
-      // One gain for agent audio, mirroring the room's: muting has to
-      // silence what is already scheduled, not only what arrives next.
-      try {
-        const gain = created.createGain();
-        gain.gain.value = mutedRef.current ? 0 : 1;
-        gain.connect(created.destination);
-        bridgeGainRef.current = gain;
-      } catch {
-        bridgeGainRef.current = null;
-      }
-      if (outputDeviceIdRef.current !== "") {
-        void applySinkId(created, outputDeviceIdRef.current);
-      }
-    }
-    void (bridgeCtxRef.current as unknown as AudioContext).resume?.();
-    return bridgeCtxRef.current;
-  }, []);
-
-  /** Send agent audio to a chosen speaker; remembered for a later context. */
-  const setOutputDevice = useCallback((deviceId: string) => {
-    outputDeviceIdRef.current = deviceId;
-    const ctx = bridgeCtxRef.current;
-    if (ctx !== null) {
-      void applySinkId(ctx, deviceId);
-    }
-  }, []);
-
-  /**
-   * Silence agent audio at this browser. The bridge leg goes through the
-   * gain; the local-synth fallback has no graph to route, so its utterances
-   * are built at volume 0 instead.
-   */
-  const setMuted = useCallback((muted: boolean) => {
-    mutedRef.current = muted;
-    const gain = bridgeGainRef.current;
-    if (gain) {
-      gain.gain.value = muted ? 0 : 1;
-    }
-  }, []);
+  const player = useAgentSpeechPlayer({
+    voiceOverride: options.voiceOverride ?? null,
+    logTag: "[huddle-agent-speech]",
+    onRoute: (pubkeyLower, route) => {
+      speakRoutesRef.current.set(pubkeyLower, route);
+    },
+    onSpeakingChange: (next) => {
+      speechActivityRef.current.speaking = next;
+      setSpeaking(next);
+    },
+    onChunkSpoken: (chunk) => {
+      // Chunk-level echo records: a sentence settles when it stops
+      // sounding, which is exactly the timing the echo-hold drain
+      // compares against — better than one settle time per reply.
+      speechActivityRef.current.utterances = recordUtterance(
+        speechActivityRef.current.utterances,
+        chunk,
+        Date.now(),
+      );
+    },
+  });
+  const stopSpeechNow = player.interrupt;
+  const setOutputDevice = player.setOutputDevice;
+  const setMuted = player.setMuted;
 
   const speaker = useMemo(
     () =>
       createOrderedSpeaker(async (text, speakerPubkey) => {
-        if (!speechSynthesisSupported()) {
-          return;
-        }
-        const stopAt = stopTokenRef.current;
-        // THE SEAM (D-005 / voice v1): the agent's published selection —
-        // if any — decides the voice. The fold keys selections by LOWERCASE
-        // pubkey, so look up with the same normalization the speech path
-        // already uses. `speakRoute` owns the whole decision: `route.bridge`
-        // is the server-side request when one speaks (below), and
-        // `route.profile` is what the local synthesizer uses otherwise; the
-        // disposition is what the wiring assertion reads.
-        const published = voiceSelectionForRef.current(
-          speakerPubkey.toLowerCase(),
-        );
-        // Channel override first, then the published selection, then
-        // nothing — and a stale `local-synth` row counts as nothing
-        // (lib/huddlePrefs.ts).
-        const selected = resolveHuddleVoice(
-          voiceOverrideRef.current,
-          published,
-        );
-        const route = speakRoute(speakerPubkey, voicesRef.current, selected);
-        speakRoutesRef.current.set(speakerPubkey.toLowerCase(), route);
-        const profile = route.profile;
-        const voice = resolveProfileVoice(profile, voicesRef.current);
-        // Sentence-sized chunks: Chromium stalls single utterances past
-        // ~15 s, so a long reply must never be ONE utterance. Chunks also
-        // bound the watchdog and make cancellation land between sentences.
-        const chunks = chunkSpeakableText(text);
-        const utterances = chunks.length > 0 ? chunks : [text];
-        speechActivityRef.current.speaking = true;
-        setSpeaking(true);
-
-        // Bridge engines (pocket presets, ElevenLabs — and the DERIVED
-        // default for agents with no selection, which used to be the OS
-        // robot): `route.bridge` IS the decision, made by `speakRoute` —
-        // execute it, or fall to the local-synth path below. A bridge
-        // failure must not mute the reply — the local-synth path speaks it
-        // with the derived profile and the disposition is corrected to say
-        // so. A browser with no AudioContext at all corrects
-        // `derived-bridge` to `derived` — the only place that disposition
-        // still originates.
-        const bridgeRequest = route.bridge;
-        if (bridgeRequest !== null) {
-          const ctx = bridgeContext();
-          if (ctx !== null) {
-            let bridgeFailed = false;
-            try {
-              for (const chunk of utterances) {
-                if (stopTokenRef.current !== stopAt) {
-                  break;
-                }
-                const bridgeUrl = speechServiceUrl("tts");
-                const bridgePromise = fetch(bridgeUrl, {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({
-                    engine: bridgeRequest.engine,
-                    voice: bridgeRequest.voice,
-                    text: chunk,
-                  }),
-                });
-                // Same watchdog family as the synth path: a hung bridge
-                // must not wedge the speaker queue.
-                const raced = await Promise.race([
-                  bridgePromise,
-                  new Promise<never>((_, reject) => {
-                    window.setTimeout(
-                      () => reject(new Error("bridge fetch watchdog")),
-                      watchdogMs(chunk),
-                    );
-                  }),
-                ]);
-                if (!raced.ok) {
-                  throw new Error(`bridge ${raced.status}`);
-                }
-                await playBridgeResponse(raced, ctx, {
-                  shouldStop: () => stopTokenRef.current !== stopAt,
-                  ...(bridgeGainRef.current === null
-                    ? {}
-                    : { destination: bridgeGainRef.current }),
-                });
-                speechActivityRef.current.utterances = recordUtterance(
-                  speechActivityRef.current.utterances,
-                  chunk,
-                  Date.now(),
-                );
-              }
-            } catch (err) {
-              bridgeFailed = true;
-              console.warn(
-                "[huddle-agent-speech] bridge failed, speaking locally",
-                err,
-              );
-            }
-            if (!bridgeFailed) {
-              speechActivityRef.current.speaking = false;
-              setSpeaking(false);
-              return;
-            }
-            speakRoutesRef.current.set(speakerPubkey.toLowerCase(), {
-              disposition: "bridge-error-fallback",
-              profile,
-              bridge: null,
-            });
-            // fall through: the local-synth loop below speaks this reply
-          } else if (route.disposition === "derived-bridge") {
-            speakRoutesRef.current.set(speakerPubkey.toLowerCase(), {
-              disposition: "derived",
-              profile,
-              bridge: null,
-            });
-            // fall through: the local-synth loop below speaks this reply
-          }
-        }
-
-        try {
-          for (const chunk of utterances) {
-            if (stopTokenRef.current !== stopAt) {
-              break;
-            }
-            // One chunk = one utterance, settling on EVERY path exactly
-            // once: onend, onerror, its own watchdog, or a forced stop —
-            // a browser that fires neither event (cancel() and
-            // synthesis-failure paths do this) must not wedge the reply.
-            await new Promise<void>((resolve) => {
-              const utterance = new SpeechSynthesisUtterance(chunk);
-              if (voice) {
-                utterance.voice = voice;
-              } else {
-                // Voiceless path — no English voice on this system, or the
-                // profile's voice vanished from the live list. Tag the text
-                // English so the engine's default machinery matches the
-                // words, rather than reading English through whatever
-                // locale the default voice carries.
-                utterance.lang = "en";
-              }
-              utterance.rate = profile.rate;
-              utterance.pitch = profile.pitch;
-              // The local fallback has no gain node to route through, so
-              // the speaker mute has to land on the utterance itself.
-              utterance.volume = mutedRef.current ? 0 : 1;
-              let settled = false;
-              let watchdog: number | null = null;
-              const finish = () => {
-                if (settled) {
-                  return;
-                }
-                settled = true;
-                if (watchdog !== null) {
-                  window.clearTimeout(watchdog);
-                  watchdog = null;
-                }
-                if (activeSettleRef.current === finish) {
-                  activeSettleRef.current = null;
-                }
-                resolve();
-              };
-              watchdog = window.setTimeout(finish, watchdogMs(chunk));
-              utterance.onend = finish;
-              utterance.onerror = finish;
-              activeSettleRef.current = finish;
-              window.speechSynthesis.speak(utterance);
-            });
-            // Chunk-level echo records: a sentence settles when it stops
-            // sounding, which is exactly the timing the echo-hold drain
-            // compares against — better than one settle time per reply.
-            speechActivityRef.current.utterances = recordUtterance(
-              speechActivityRef.current.utterances,
-              chunk,
-              Date.now(),
-            );
-          }
-        } finally {
-          speechActivityRef.current.speaking = false;
-          setSpeaking(false);
-        }
+        await player.speak(text, speakerPubkey);
       }),
-    [bridgeContext],
+    [player],
   );
 
   const interrupt = useCallback(() => {
@@ -544,17 +263,13 @@ export function useHuddleAgentSpeech(options: {
     return () => {
       unsubscribe();
       speaker.cancel();
-      stopSpeechNow();
-      // Release the TTS context with the call (QA 2026-09-18, defect 2):
-      // the room context is closed by useHuddleAudio.teardown, but this one
-      // was created lazily here and stayed open for the life of the tab,
-      // holding the output device after Leave.
-      const ctx = bridgeCtxRef.current;
-      bridgeCtxRef.current = null;
-      bridgeGainRef.current = null;
-      void ctx?.close?.().catch(() => {});
+      // Stop, and release the TTS context with the call (QA 2026-09-18,
+      // defect 2): the room context is closed by useHuddleAudio.teardown,
+      // but this one is created lazily by the player and would otherwise
+      // stay open for the life of the tab, holding the output device.
+      player.dispose();
     };
-  }, [session, channelId, speaker, stopSpeechNow]);
+  }, [session, channelId, speaker, player]);
 
   const suppressedAgents = useMemo(
     () =>
