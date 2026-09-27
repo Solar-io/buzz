@@ -94,6 +94,13 @@ export interface HuddleAgentSpeech {
   setOutputDevice: (deviceId: string) => void;
   /** Silence agent audio at this browser (the dock's speaker button). */
   setMuted: (muted: boolean) => void;
+  /**
+   * Stage-owned suppression of AGENT speech only (Stage coexistence). True
+   * stops the current reply and drops every reply that arrives while set;
+   * false lifts it. Never touches the user's speaker mute (`setMuted`) or
+   * room audio — a user-muted huddle stays muted after Stage exits.
+   */
+  setSuppressed: (suppressed: boolean) => void;
 }
 
 function speechSynthesisSupported(): boolean {
@@ -210,6 +217,15 @@ export function useHuddleAgentSpeech(options: {
     setSpeaking(false);
   }, [speaker, stopSpeechNow]);
 
+  const suppressedRef = useRef(false);
+  const setSuppressed = useCallback(
+    (next: boolean) => {
+      suppressedRef.current = next;
+      if (next) interrupt();
+    },
+    [interrupt],
+  );
+
   const setEnabled = useCallback(
     (next: boolean) => {
       setEnabledState(next);
@@ -237,6 +253,11 @@ export function useHuddleAgentSpeech(options: {
             return;
           }
           seen.add(event.id);
+          // Stage is presenting: drop (not queue) — a backlog must not start
+          // talking the moment Stage exits.
+          if (suppressedRef.current) {
+            return;
+          }
           // FAIL-CLOSED: with no membership snapshot yet, nobody is a known
           // agent and nothing is spoken. Never "speak it and check later".
           if (!membershipKnownRef.current) {
@@ -290,5 +311,6 @@ export function useHuddleAgentSpeech(options: {
     interrupt,
     setOutputDevice,
     setMuted,
+    setSuppressed,
   };
 }

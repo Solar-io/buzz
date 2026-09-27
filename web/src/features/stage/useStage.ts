@@ -7,6 +7,7 @@ import {
   type StagePacer,
 } from "./lib/stagePacing.ts";
 import { createDeckPreloader, type DeckPreloader } from "./lib/stagePreload.ts";
+import { createStageFeed, type StageFeed } from "./lib/stageFeed.ts";
 import type { StageSession, StageShowing } from "./lib/stageSession.ts";
 import type { StageEntryMode } from "./lib/stageLauncher.ts";
 
@@ -15,7 +16,8 @@ export const STAGE_MUTED_KEY = "buzz.stage.muted";
 /** The slice of the huddle's agent speech Stage needs (§8 coexistence). */
 export interface HuddleSpeechLike {
   interrupt: () => void;
-  setMuted: (muted: boolean) => void;
+  /** Agent-speech-only suppression; never the user's mute or the room. */
+  setSuppressed: (suppressed: boolean) => void;
 }
 
 export function loadStageMuted(): boolean {
@@ -121,7 +123,7 @@ export function useStage(options: {
   const [audioLocked, setAudioLocked] = useState(false);
   const pacerRef = useRef<StagePacer<StageShowing> | null>(null);
   const preloaderRef = useRef<DeckPreloader | null>(null);
-  const seededRef = useRef(false);
+  const feedRef = useRef<StageFeed<StageShowing> | null>(null);
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
 
@@ -153,7 +155,7 @@ export function useStage(options: {
       },
     });
     pacerRef.current = pacer;
-    seededRef.current = false;
+    feedRef.current = null;
     player.setMuted(mutedRef.current);
     return () => {
       pacer.dispose();
@@ -173,18 +175,19 @@ export function useStage(options: {
     preloaderRef.current?.enqueue(palette.map((entry) => entry.url));
   }, [ready, palette]);
 
-  // Seed from history once, then feed live arrivals.
+  // Seed from history once, then feed live arrivals. Showings that arrive
+  // live while history is still loading stay live (stageFeed.ts).
   const showings = session?.showings;
   useEffect(() => {
     const pacer = pacerRef.current;
     if (!ready || !pacer || !showings) return;
-    if (!seededRef.current) {
-      if (!historyLoaded) return;
-      seededRef.current = true;
-      pacer.seed(showings, entryMode === "replay" ? "replay" : "late");
-      return;
+    if (!feedRef.current) {
+      feedRef.current = createStageFeed(pacer, {
+        mode: entryMode === "replay" ? "replay" : "late",
+        nowSec: Math.floor(Date.now() / 1000),
+      });
     }
-    for (const showing of showings) pacer.arrive(showing);
+    feedRef.current.update(showings, historyLoaded);
   }, [showings, historyLoaded, entryMode, ready]);
 
   // AudioContext state → reading-time pacing + "Tap to resume audio".
@@ -204,11 +207,15 @@ export function useStage(options: {
   const huddleRef = useRef(huddleSpeech);
   huddleRef.current = huddleSpeech;
   const huddleActive = huddleSpeech != null;
+  // A Stage-owned suppression of AGENT speech only: the user's speaker mute
+  // and the room's (human) audio are never touched, so a huddle the user
+  // muted stays muted after Stage exits, and humans stay audible during it.
   useEffect(() => {
     if (!ready || !huddleActive) return;
-    huddleRef.current?.interrupt();
-    huddleRef.current?.setMuted(true);
-    return () => huddleRef.current?.setMuted(false);
+    const speech = huddleRef.current;
+    speech?.interrupt();
+    speech?.setSuppressed(true);
+    return () => huddleRef.current?.setSuppressed(false);
   }, [ready, huddleActive]);
 
   useWakeLock(ready);

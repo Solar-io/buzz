@@ -28,6 +28,9 @@ final class NativeHuddle {
     private var held = false
     private var interrupted = false
     private var outputMuted = false
+    /// Stage-owned: silences AGENT speech only. Never touches `outputMuted` (the
+    /// user's speaker mute, which also silences the room) or `speechEnabled`.
+    private var speechSuppressed = false
     private var micLevel = -127
     private var levels: [String: Int] = [:]
     private var lastMeter = Date.distantPast
@@ -106,7 +109,7 @@ final class NativeHuddle {
         }
     }
 
-    func configure(muted: Bool?, speaker: Bool?, voiceEnabled: Bool?, speechEnabled: Bool?, held: Bool?, outputMuted: Bool? = nil, duplex: String? = nil, voiceOverride: [String: Any]? = nil, interrupt: Bool = false) throws {
+    func configure(muted: Bool?, speaker: Bool?, voiceEnabled: Bool?, speechEnabled: Bool?, held: Bool?, outputMuted: Bool? = nil, duplex: String? = nil, voiceOverride: [String: Any]? = nil, interrupt: Bool = false, speechSuppressed: Bool? = nil) throws {
         self.voiceEnabled = voice?.enabled ?? false
         if (voiceEnabled == true || speechEnabled == true) && voice == nil { throw NativeError.message("Configure speech service addresses before enabling agent voice.") }
         if let muted { self.muted = muted }
@@ -121,8 +124,12 @@ final class NativeHuddle {
         if let duplex { voice?.duplex = duplex == "barge" ? "barge" : "half" }
         if let voiceOverride { voice?.setVoiceOverride(voiceOverride) }
         if interrupt { voice?.interruptSpeech() }
+        if let speechSuppressed {
+            self.speechSuppressed = speechSuppressed
+            if speechSuppressed { voice?.interruptSpeech() }
+        }
         try engine?.setMuted(self.muted || self.held || ((voice?.speaking ?? false) && voice?.duplex != "barge"))
-        voice?.configure(voice: self.voiceEnabled, speech: self.speechEnabled, capture: !self.muted && !self.held && !interrupted)
+        voice?.configure(voice: self.voiceEnabled, speech: self.speechEnabled && !self.speechSuppressed, capture: !self.muted && !self.held && !interrupted)
         emit()
     }
 
@@ -132,7 +139,7 @@ final class NativeHuddle {
         voice?.stop(); voice = nil
         engine?.stop(); engine = nil
         peers.removeAll(); channel = nil; parent = nil; relayURL = nil
-        status = "idle"; voiceEnabled = false; speechEnabled = false
+        status = "idle"; voiceEnabled = false; speechEnabled = false; speechSuppressed = false
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         emit()
     }

@@ -366,6 +366,61 @@ test("portrait: stacked, image (2/3) above chat (1/3)", async () => {
   await view.unmount();
 });
 
+test("bug2 portrait: one explicit minmax(0,1fr) column; chat rows break long words", async () => {
+  splitMatches = false;
+  globalThis.__STAGE_HISTORY__ = [openEvent({ voice: false }), partEvent(1, 0)];
+  const view = await mount({ messages: [], player: fakePlayer() });
+  const grid = view.q("stage-view").firstElementChild;
+  // jsdom has no layout: the e2e BUG-2 test measures the real geometry;
+  // this pins the two rules that produce it.
+  assert.ok(
+    grid.className.split(/\s+/).includes("grid-cols-[minmax(0,1fr)]"),
+    `stacked grid needs an explicit column: ${grid.className}`,
+  );
+  const list = view.q("stage-chat-list");
+  assert.ok(list.className.includes("[overflow-wrap:anywhere]"));
+  assert.ok(list.className.split(/\s+/).includes("min-w-0"));
+  assert.ok(
+    view.q("stage-chat-pane").className.split(/\s+/).includes("min-w-0"),
+  );
+  splitMatches = true;
+  await view.unmount();
+});
+
+test("bug3: a system event in the session window renders as a system row, not JSON", async () => {
+  const open = openEvent({ voice: false });
+  globalThis.__STAGE_HISTORY__ = [open, partEvent(1, 0)];
+  const system = {
+    id: hex(0xc01),
+    pubkey: AGENT,
+    kind: 40099,
+    created_at: T0 + 2,
+    content: JSON.stringify({
+      type: "member_joined",
+      actor: AGENT,
+      target: ME,
+    }),
+    tags: [["h", CHANNEL]],
+    sig: "0".repeat(128),
+  };
+  const unknown = {
+    ...system,
+    id: hex(0xc02),
+    content: JSON.stringify({ type: "something_new" }),
+  };
+  const view = await mount({
+    messages: toMessages([open, partEvent(1, 0), system, unknown]),
+    player: fakePlayer(),
+  });
+  const list = view.q("stage-chat-list");
+  const rows = list.querySelectorAll('[data-testid="system-message-row"]');
+  assert.equal(rows.length, 1, "the describable system event renders once");
+  assert.match(rows[0].textContent, /added by/);
+  assert.doesNotMatch(list.textContent, /"type"/, "no raw JSON payload");
+  assert.equal(view.chatHas(system.id), false, "not a message row");
+  await view.unmount();
+});
+
 test("cold link shows Tap to start; the tap unlocks audio, then stages", async () => {
   globalThis.__STAGE_HISTORY__ = [openEvent({ voice: false }), partEvent(1, 0)];
   const player = fakePlayer();
@@ -460,8 +515,32 @@ test("M toggles mute: persisted, player gain muted, aria-pressed", async () => {
   await view.unmount();
 });
 
-function BannerProbe({ messages, selfPubkey, out }) {
-  const { banner } = useStageReadyBanner(CHANNEL, messages, selfPubkey, null);
+test("bug5: a user-muted huddle stays muted after Stage exits; only agent speech is suppressed", async () => {
+  globalThis.__STAGE_HISTORY__ = [openEvent({ voice: false }), partEvent(1, 0)];
+  // The huddle speech object as the dock sees it: the user muted the
+  // speaker BEFORE Stage (which, on native iOS, mutes the whole room).
+  const huddle = { userMuted: true, suppressed: [], interrupts: 0 };
+  const huddleSpeech = {
+    interrupt: () => {
+      huddle.interrupts += 1;
+    },
+    setMuted: (muted) => {
+      huddle.userMuted = muted;
+    },
+    setSuppressed: (on) => huddle.suppressed.push(on),
+  };
+  const view = await mount({ messages: [], player: fakePlayer() });
+  await view.render({ huddleSpeech });
+  assert.ok(huddle.interrupts >= 1, "agent speech stopped on entry");
+  assert.deepEqual(huddle.suppressed, [true]);
+  assert.equal(huddle.userMuted, true);
+  await view.unmount();
+  assert.deepEqual(huddle.suppressed, [true, false], "suppression lifted");
+  assert.equal(huddle.userMuted, true, "the user's mute is untouched");
+});
+
+function BannerProbe({ messages, selfPubkey, out, active = null }) {
+  const { banner } = useStageReadyBanner(CHANNEL, messages, selfPubkey, active);
   out.banner = banner;
   return null;
 }
@@ -490,5 +569,35 @@ test("banner: a live open from someone else raises 'Stage ready'; history and se
   const fresh = openEvent({ id: hex(0xc3), at: T0 + 9 });
   await renderProbe([old, mine, fresh]);
   assert.deepEqual(out.banner, { openId: fresh.id, title: "Deck" });
+  await act(async () => root.unmount());
+});
+
+test("bug4: opening the session by any route dismisses its banner; exit does not bring it back", async () => {
+  const out = {};
+  const container = dom.window.document.createElement("div");
+  const root = createRoot(container);
+  const old = openEvent({ id: hex(0xd1) });
+  const fresh = openEvent({ id: hex(0xd2), at: T0 + 9 });
+  const renderProbe = async (events, active) => {
+    await act(async () => {
+      root.render(
+        React.createElement(BannerProbe, {
+          messages: toMessages(events),
+          selfPubkey: ME,
+          out,
+          active,
+        }),
+      );
+    });
+  };
+  await renderProbe([old], null);
+  await renderProbe([old, fresh], null);
+  assert.equal(out.banner?.openId, fresh.id, "banner raised");
+  // Opened from the CARD (not the banner): ?stage=<id> is set.
+  await renderProbe([old, fresh], fresh.id);
+  assert.equal(out.banner, null, "hidden while watching");
+  // Exit: ?stage cleared.
+  await renderProbe([old, fresh], null);
+  assert.equal(out.banner, null, "exit must not bring the banner back");
   await act(async () => root.unmount());
 });

@@ -192,6 +192,25 @@ async function mountHook(voiceOverride) {
   };
 }
 
+test("bug5: setSuppressed drops agent replies while set and never flips the speaker mute", async () => {
+  spoken.length = 0;
+  const harness = await mountHook();
+  await act(async () => harness.captured.current.setEnabled(true));
+  await harness.flush();
+  await act(async () => harness.captured.current.setSuppressed(true));
+  harness.deliverSpeakableMessage();
+  await harness.flush();
+  assert.equal(spoken.length, 0, "a reply during Stage is not spoken");
+  await act(async () => harness.captured.current.setSuppressed(false));
+  await harness.flush();
+  assert.equal(spoken.length, 0, "nor replayed when Stage exits");
+  const speechSub = subscriptions.find((sub) => sub.filter["#h"]);
+  speechSub.handlers.onEvent(speakableMessage({ id: "f".repeat(64) }));
+  await harness.flush();
+  assert.equal(spoken.length, 1, "the next reply after exit speaks");
+  await harness.unmount();
+});
+
 async function mountEnabledAndSpeak(selection, voiceOverride) {
   spoken.length = 0; // tests assert exactly-one-utterance
   const harness = await mountHook(voiceOverride);
