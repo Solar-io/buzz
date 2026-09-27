@@ -245,6 +245,87 @@ enum Cmd {
     /// Publish and query the community voice catalog (kind 30181)
     #[command(subcommand)]
     Voices(VoicesCmd),
+    /// Stage mode — a full-screen picture-led presentation on the Buzz web app.
+    ///
+    /// Open a session with a deck (a palette of frames), then reach for the
+    /// frame that matches the moment with `stage show --index/--label`.
+    /// `stage next` / `stage run` walk the deck in order for scripted decks.
+    /// Every showing is a normal message with its image, visible everywhere.
+    #[command(subcommand)]
+    Stage(StageCmd),
+}
+
+#[derive(Subcommand)]
+pub enum StageCmd {
+    /// Upload every deck image, then publish the stage open message. Prints {session,total,palette}.
+    ///
+    /// Deck JSON: {"title":"…","voice":true,"parts":[{"label":"…","text":"…","image":"./a.png"}]}.
+    /// `image` is a local path (relative to the deck file) or a content-addressed
+    /// media URL on this relay. Nothing is published unless every image uploads
+    /// or verifies.
+    Open {
+        /// Channel UUID, name, or #slug (a DM works too)
+        #[arg(long)]
+        channel: String,
+        /// Deck file path, or '-' for stdin
+        #[arg(long)]
+        deck: String,
+        /// Override the deck's voice setting: on | off
+        #[arg(long)]
+        voice: Option<String>,
+        /// Pubkey to mention on the open message (hex or npub; repeatable)
+        #[arg(long = "mention")]
+        mentions: Vec<String>,
+    },
+    /// Show one frame now (the normal verb). Hold defaults OFF: it appears immediately.
+    Show {
+        /// Session id printed by `stage open`
+        #[arg(long)]
+        session: String,
+        /// Palette index to show
+        #[arg(long, conflicts_with = "label")]
+        index: Option<usize>,
+        /// Exact frame label from the deck
+        #[arg(long)]
+        label: Option<String>,
+        /// Paragraph for this showing (overrides the deck text); '-' reads stdin
+        #[arg(long)]
+        text: Option<String>,
+        /// on = wait for the previous showing to finish speaking; off (default) = show now
+        #[arg(long)]
+        hold: Option<String>,
+    },
+    /// Post the next never-shown frame(s) in deck order, hold ON (scripted decks). Exit 7 when none remain.
+    Next {
+        #[arg(long)]
+        session: String,
+        /// How many frames to post
+        #[arg(long, default_value_t = 1)]
+        count: usize,
+    },
+    /// Open a deck and post every frame in order with a dwell between (blocks for the whole deck).
+    Run {
+        #[arg(long)]
+        channel: String,
+        #[arg(long)]
+        deck: String,
+        /// Pause between frames: 'auto' (≈ speech length) or seconds
+        #[arg(long, default_value = "auto")]
+        dwell: String,
+        /// Override the deck's voice setting: on | off
+        #[arg(long)]
+        voice: Option<String>,
+    },
+    /// Print the palette (index, label, preview, shown count) and showings as JSON
+    Status {
+        #[arg(long)]
+        session: String,
+    },
+    /// Publish the stage close message and end the session
+    Close {
+        #[arg(long)]
+        session: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2186,6 +2267,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Mem(sub) => commands::mem::dispatch(sub, &client).await,
         Cmd::Moderation(sub) => commands::moderation::dispatch(sub, &client, &cli.format).await,
         Cmd::Voices(sub) => commands::voices::dispatch(sub, &client).await,
+        Cmd::Stage(sub) => commands::stage::dispatch(sub, &client).await,
         Cmd::Pack(_) => unreachable!("handled above"),
     }
 }
@@ -2333,6 +2415,8 @@ mod tests {
             "reactions",
             "repos",
             "social",
+            // Agent Stage Mode: open / show / next / run / status / close.
+            "stage",
             "upload",
             "users",
             // Voice-catalog group (kind 30181): list / publish /

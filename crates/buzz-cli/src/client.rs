@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use crate::error::CliError;
 
 /// Descriptor returned by the relay after a successful upload.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BlobDescriptor {
     /// Public URL of the uploaded blob.
     pub url: String,
@@ -34,6 +34,13 @@ pub struct BlobDescriptor {
     /// Duration in seconds for video/audio (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<f64>,
+}
+
+/// What a media `HEAD` told us about an existing blob.
+#[derive(Debug, Clone, Default)]
+pub struct MediaHead {
+    pub mime: Option<String>,
+    pub size: Option<u64>,
 }
 
 /// Build an `imeta` tag array from a BlobDescriptor (NIP-92 media metadata).
@@ -1268,6 +1275,43 @@ impl BuzzClient {
             }
         })
         .await
+    }
+
+    /// Check that a relay media blob exists, with BUD-01 `t=get` auth, without
+    /// downloading it. `Ok(None)` = the relay answered 404. Only same-relay
+    /// `/media/<sha256>[.ext]` URLs are accepted (as for `download_media`).
+    pub async fn head_media(&self, input: &str) -> Result<Option<MediaHead>, CliError> {
+        let url = media_url_from_input(&self.relay_url, input)?;
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| CliError::Other(format!("http client init failed: {e}")))?;
+        let auth_header = sign_blossom_get(&self.keys, &url)?;
+        let resp = self
+            .with_auth_tag(client.head(&url).header("Authorization", auth_header))
+            .send()
+            .await?;
+        let status = resp.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !status.is_success() {
+            return Err(CliError::Relay {
+                status: status.as_u16(),
+                body: format!("HEAD {url} failed"),
+            });
+        }
+        let header = |name: &str| {
+            resp.headers()
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string)
+        };
+        Ok(Some(MediaHead {
+            mime: header("content-type"),
+            size: header("content-length").and_then(|v| v.parse().ok()),
+        }))
     }
 
     /// Download a Blossom media blob using BUD-01 `t=get` auth.

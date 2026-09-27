@@ -93,6 +93,19 @@ export default defineConfig({
         ...devices["iPhone 15"],
       },
     },
+    /**
+     * Stage mode: a live relay, two identities and the real `buzz` CLI (see
+     * the spec header). Desktop Chrome; each test sets its own iPad-sized
+     * viewport (1180×820 landscape / 820×1180 portrait). No autoplay flag on
+     * purpose — U2 asserts the Open tap itself unlocks audio.
+     */
+    {
+      name: "stage",
+      testMatch: ["**/stage-mode.spec.ts"],
+      use: {
+        ...devices["Desktop Chrome"],
+      },
+    },
   ],
   webServer: {
     command: `pnpm exec vite preview --port ${PORT} --strictPort --host 127.0.0.1`,

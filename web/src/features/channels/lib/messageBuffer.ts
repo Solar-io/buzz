@@ -4,6 +4,7 @@ import { linkPreviewsFromTags, type LinkPreview } from "./linkPreview.ts";
 import { parseCardTags, type DecisionCard } from "./decisionCard.ts";
 import { parseCardAnswerTags, type CardAnswer } from "./cardAnswerTag.ts";
 import { SYSTEM_MESSAGE_KIND } from "./systemEvent.ts";
+import { parseStageTag, type StageTag } from "../../stage/lib/stageTag.ts";
 
 /**
  * Kinds that render their own row in a channel timeline.
@@ -89,6 +90,13 @@ export interface TimelineMessage {
    * can never mutate the answer the tag froze at send time.
    */
   cardAnswer: CardAnswer | null;
+  /**
+   * Agent Stage Mode tag (`["stage", …]`), when present and well-formed —
+   * open / part / close. Null (or absent, for rows restored from an older
+   * timeline cache) renders the fallback content as ordinary markdown. A
+   * construction-time constant, like `card`.
+   */
+  stage?: StageTag | null;
   /** Edit overlay present (renders the "(edited)" marker). */
   edited: boolean;
   /** Deleted via kind 5 — rows hide rather than render. */
@@ -152,6 +160,9 @@ export function timelineMessageFromEvent(
     // look identical to no tag at all, which is exactly the distinction the
     // badge rule depends on.
     cardAnswer: parseCardAnswerTags(event.tags),
+    stage: event.tags.some((tag) => tag[0] === "stage")
+      ? parseStageTag(event.tags)
+      : null,
     edited: false,
     deleted: false,
   };

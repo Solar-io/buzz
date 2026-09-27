@@ -288,6 +288,10 @@ export function useNativeHuddleCall({
       interrupt: () => configure({ interrupt: true }),
       setOutputDevice: (device) => configure({ speaker: device === "speaker" }),
       setMuted: (muted) => configure({ speakerMuted: muted }),
+      // Agent speech only: the room (humans) and the user's speaker mute
+      // are untouched.
+      setSuppressed: (suppressed) =>
+        configure({ speechSuppressed: suppressed }),
     },
   };
 }

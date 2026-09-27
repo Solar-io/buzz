@@ -22,6 +22,11 @@ import { MessageActionBar } from "./MessageActionBar.tsx";
 import { ReactionChips } from "./ReactionChips.tsx";
 import { ScheduledWakeRow } from "./ScheduledWakeRow.tsx";
 import { isScheduledWake } from "../lib/wakeMessage.ts";
+import {
+  StageOpenCard,
+  stageOpenCardTag,
+} from "@/features/stage/ui/StageOpenCard";
+import { StagePartChip } from "@/features/stage/ui/StagePartChip";
 
 /** Desktop parity: the timestamp tooltip waits half a second before opening. */
 const TIMESTAMP_TOOLTIP_DELAY_MS = 500;
@@ -288,6 +293,11 @@ export function MessageRow({
                   onOpenThread ? () => onOpenThread(message) : undefined
                 }
               />
+            ) : stageOpenCardTag(message) ? (
+              // Agent Stage Mode: a well-formed open tag renders the Stage
+              // card; a malformed one parsed to null and falls through to the
+              // fallback markdown, like a card. Parts stay ordinary rows.
+              <StageOpenCard message={message} />
             ) : (
               <MarkdownContent
                 content={message.content}
@@ -296,6 +306,7 @@ export function MessageRow({
                 snapshotSharedBy={label}
               />
             )}
+            <StagePartChip message={message} />
             {message.edited && (
               <span className="ml-1 align-baseline text-xs text-muted-foreground/70">
                 (edited)

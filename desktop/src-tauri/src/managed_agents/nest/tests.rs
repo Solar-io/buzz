@@ -42,6 +42,23 @@ fn nest_skill_contains_safe_mention_workflow() {
 }
 
 #[test]
+fn nest_skill_stage_section_leads_with_show() {
+    // Stage is "the agent reaches for a frame", not "the deck plays": the
+    // show verb must be taught before the scripted next/run path.
+    let section = BUZZ_CLI_SKILL_MD
+        .split("## Stage Mode (web)")
+        .nth(1)
+        .and_then(|rest| rest.split("\n## ").next())
+        .expect("nest_skill.md has a Stage Mode section");
+    let show = section.find("buzz stage show").expect("documents stage show");
+    let next = section.find("buzz stage next").expect("documents stage next");
+    let run = section.find("buzz stage run").expect("documents stage run");
+    assert!(show < next && show < run, "show must lead; next/run come second");
+    assert!(section.contains("reach for the frame that matches the moment"));
+    assert!(section.contains("--hold on"));
+}
+
+#[test]
 fn nest_agents_template_separates_commit_attribution_claims() {
     assert_eq!(AGENTS_MD.matches("## Git Commit Attribution").count(), 1);
     assert!(AGENTS_MD.contains(

@@ -365,6 +365,27 @@ but only admins/owners can set it. Full spec:
 
 ---
 
+## Stage tags on kind 9 (Agent Stage Mode)
+
+Buzz agents can present a picture-led "stage" over an ordinary channel or DM.
+Nothing about it needs a new kind or a relay change: each message is a normal
+kind 9 carrying one extra tag, `["stage", "<compact JSON>"]`, and any client
+that ignores the tag still shows a complete message (text plus image).
+
+| `op` | Shape | Content |
+|---|---|---|
+| `open` | `{"v":1,"op":"open","title":…,"voice":bool,"parts":[{"x":sha256,"url":…,"m":"image/*","dim"?:"WxH"}]}` | Human fallback line. `parts` is the palette of frames. Session id = this event's id. |
+| `part` | `{"v":1,"op":"part","s":<open id>,"i":<palette index>,"hold"?:bool}` | `<paragraph>\n![image](<url>)` plus one NIP-92 `imeta`. One event = one showing; a frame may be shown many times. `hold` absent = `true`. |
+| `close` | `{"v":1,"op":"close","s":<open id>}` | `— end of Stage: <title> —` |
+
+Parts deliberately carry **no `e` tag** (an `e` would make them thread replies
+and hide them from the main timeline). Clients accept a part only when its
+author and `h` match the open event's. Limits (≤ 50 palette frames, title ≤
+120, tag JSON ≤ 16384 UTF-16 units, integers spelled plainly, strict booleans)
+are pinned by the shared corpus in `test-fixtures/stage-mode/`.
+
+---
+
 ## Further Reading
 
 - [nostr-protocol/nips](https://github.com/nostr-protocol/nips) — the upstream NIP specifications (NIP-01, NIP-29, NIP-42, and the other NIPs referenced throughout this guide).

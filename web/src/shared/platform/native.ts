@@ -115,6 +115,8 @@ export const BuzzHuddle = registerPlugin<{
     duplex?: "half" | "barge";
     voiceOverride?: { engine?: string; key?: string };
     interrupt?: boolean;
+    /** Stage-owned: silence AGENT speech only (not the room, not mute). */
+    speechSuppressed?: boolean;
   }): Promise<void>;
   addListener(
     event: "state",

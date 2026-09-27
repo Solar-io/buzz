@@ -94,43 +94,16 @@ import { useShellWebView } from "@/features/webPanels/useShellWebView";
 import { WebLayer } from "@/features/webPanels/ui/WebLayer";
 import { AppShell } from "@/shared/layout/AppShell";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
+import { StageRoute } from "@/features/stage/ui/StageRoute";
+import { validateReposSearch } from "../reposSearch.ts";
 
 /**
  * The app lives at /repos — the one browser-servable path the relay's
  * public-bundle fallback guarantees on the stock image (with the git web GUI
  * flag on). Everything else is client-side navigation from here.
  */
-/**
- * Panes the shell can show instead of a channel.
- *
- * These are `?view=` rather than routes because a route unmounts the sidebar,
- * and the sidebar is what holds the channel subscriptions every pane reads
- * from. It also keeps each pane linkable.
- */
-const SHELL_VIEWS = [
-  "inbox",
-  "workflows",
-  "pulse",
-  "reminders",
-  "projects",
-  "onboarding",
-] as const;
-type ShellView = (typeof SHELL_VIEWS)[number];
-
 export const Route = createFileRoute("/repos")({
-  validateSearch: (
-    search: Record<string, unknown>,
-  ): { c?: string; m?: string; view?: ShellView } => ({
-    c: typeof search.c === "string" ? search.c : undefined,
-    // Permalink target: scroll to and flash this message once it loads.
-    m: typeof search.m === "string" ? search.m : undefined,
-    // The inbox is a view of the same shell, not a separate route: a route
-    // would unmount the sidebar, and the shell is what holds the channel
-    // subscriptions every pane reads from.
-    view: SHELL_VIEWS.includes(search.view as ShellView)
-      ? (search.view as ShellView)
-      : undefined,
-  }),
+  validateSearch: validateReposSearch,
   // Plan item 5: a bare /repos lands in the last conversation BEFORE the
   // first paint, so "Pick a channel" never flashes. Only fires with no c,
   // view or m — the redirect carries c, which is the loop guard.
@@ -734,6 +707,10 @@ function ChannelBrowser() {
         be on; in the sidebar it died wherever the sidebar unmounted. It takes
         the shell's channel list rather than opening a second kind:39000 REQ. */}
       <NotificationRuntime selfPubkey={selfPubkey} channels={channels} />
+      <StageRoute
+        {...{ messages, members, profiles, send, selfPubkey }}
+        channelId={current?.id ?? null}
+      />
       {/* Same mount discipline as NotificationRuntime: once at the shell, so
         toasts survive every view. The channel side consumes the shell's
         shared activity feed; the DM side opens the feed's DM-scoped twin. */}
