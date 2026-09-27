@@ -1,0 +1,158 @@
+{
+  "comment": "Derived agent voice (no 30182/30183): chatterbox + DERIVED_VOICE_SLUGS[|djb2(pubkey)| % 11]. Consumed by web bridgeSpeech.test.mjs and iOS NativeVoicePolicyTests. Regenerate ONLY if the table is deliberately changed (it must never be).",
+  "slugs": [
+    "anna",
+    "vera",
+    "fantine",
+    "charles",
+    "paul",
+    "eponine",
+    "azelma",
+    "george",
+    "mary",
+    "jane",
+    "michael"
+  ],
+  "cases": [
+    {
+      "pubkey": "0000001100000011000000110000001100000011000000110000001100000011",
+      "engine": "chatterbox",
+      "voice": "mary"
+    },
+    {
+      "pubkey": "00001f0000001f0000001f0000001f0000001f0000001f0000001f0000001f00",
+      "engine": "chatterbox",
+      "voice": "mary"
+    },
+    {
+      "pubkey": "00003def00003def00003def00003def00003def00003def00003def00003def",
+      "engine": "chatterbox",
+      "voice": "vera"
+    },
+    {
+      "pubkey": "00005cde00005cde00005cde00005cde00005cde00005cde00005cde00005cde",
+      "engine": "chatterbox",
+      "voice": "michael"
+    },
+    {
+      "pubkey": "00007bcd00007bcd00007bcd00007bcd00007bcd00007bcd00007bcd00007bcd",
+      "engine": "chatterbox",
+      "voice": "charles"
+    },
+    {
+      "pubkey": "00009abc00009abc00009abc00009abc00009abc00009abc00009abc00009abc",
+      "engine": "chatterbox",
+      "voice": "michael"
+    },
+    {
+      "pubkey": "0000b9ab0000b9ab0000b9ab0000b9ab0000b9ab0000b9ab0000b9ab0000b9ab",
+      "engine": "chatterbox",
+      "voice": "michael"
+    },
+    {
+      "pubkey": "0000d89a0000d89a0000d89a0000d89a0000d89a0000d89a0000d89a0000d89a",
+      "engine": "chatterbox",
+      "voice": "eponine"
+    },
+    {
+      "pubkey": "0000f7890000f7890000f7890000f7890000f7890000f7890000f7890000f789",
+      "engine": "chatterbox",
+      "voice": "charles"
+    },
+    {
+      "pubkey": "0001167800011678000116780001167800011678000116780001167800011678",
+      "engine": "chatterbox",
+      "voice": "michael"
+    },
+    {
+      "pubkey": "0001356700013567000135670001356700013567000135670001356700013567",
+      "engine": "chatterbox",
+      "voice": "mary"
+    },
+    {
+      "pubkey": "0001545600015456000154560001545600015456000154560001545600015456",
+      "engine": "chatterbox",
+      "voice": "eponine"
+    },
+    {
+      "pubkey": "0001734500017345000173450001734500017345000173450001734500017345",
+      "engine": "chatterbox",
+      "voice": "mary"
+    },
+    {
+      "pubkey": "0001923400019234000192340001923400019234000192340001923400019234",
+      "engine": "chatterbox",
+      "voice": "azelma"
+    },
+    {
+      "pubkey": "0001b1230001b1230001b1230001b1230001b1230001b1230001b1230001b123",
+      "engine": "chatterbox",
+      "voice": "vera"
+    },
+    {
+      "pubkey": "0001d0120001d0120001d0120001d0120001d0120001d0120001d0120001d012",
+      "engine": "chatterbox",
+      "voice": "vera"
+    },
+    {
+      "pubkey": "0001ef010001ef010001ef010001ef010001ef010001ef010001ef010001ef01",
+      "engine": "chatterbox",
+      "voice": "jane"
+    },
+    {
+      "pubkey": "00020df000020df000020df000020df000020df000020df000020df000020df0",
+      "engine": "chatterbox",
+      "voice": "vera"
+    },
+    {
+      "pubkey": "00022cdf00022cdf00022cdf00022cdf00022cdf00022cdf00022cdf00022cdf",
+      "engine": "chatterbox",
+      "voice": "george"
+    },
+    {
+      "pubkey": "00024bce00024bce00024bce00024bce00024bce00024bce00024bce00024bce",
+      "engine": "chatterbox",
+      "voice": "jane"
+    },
+    {
+      "pubkey": "00026abd00026abd00026abd00026abd00026abd00026abd00026abd00026abd",
+      "engine": "chatterbox",
+      "voice": "paul"
+    },
+    {
+      "pubkey": "000289ac000289ac000289ac000289ac000289ac000289ac000289ac000289ac",
+      "engine": "chatterbox",
+      "voice": "paul"
+    },
+    {
+      "pubkey": "0002a89b0002a89b0002a89b0002a89b0002a89b0002a89b0002a89b0002a89b",
+      "engine": "chatterbox",
+      "voice": "anna"
+    },
+    {
+      "pubkey": "0002c78a0002c78a0002c78a0002c78a0002c78a0002c78a0002c78a0002c78a",
+      "engine": "chatterbox",
+      "voice": "fantine"
+    },
+    {
+      "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "engine": "chatterbox",
+      "voice": "charles"
+    },
+    {
+      "pubkey": "0000000000000000000000000000000000000000000000000000000000000000",
+      "engine": "chatterbox",
+      "voice": "charles"
+    },
+    {
+      "pubkey": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "engine": "chatterbox",
+      "voice": "george"
+    },
+    {
+      "pubkey": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "engine": "chatterbox",
+      "voice": "george"
+    }
+  ]
+}

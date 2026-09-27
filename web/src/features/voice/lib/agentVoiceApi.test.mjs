@@ -98,6 +98,11 @@ test("publishing a pocket selection carries the catalog key, not a voiceURI", as
     "Azelma",
   );
 
+  assert.equal(
+    signed[0].content,
+    '{"engine":"pocket","key":"pocket:azelma","label":"Azelma","version":1}',
+    "30182 content uses the CLI's sorted key order",
+  );
   const body = JSON.parse(signed[0].content);
   assert.deepEqual(body, {
     version: 1,
@@ -163,11 +168,13 @@ test("an assignment signs kind 30183 with d = the agent, CLI-identical body", as
   assert.equal(signed.length, 1);
   assert.equal(signed[0].kind, 30183);
   assert.deepEqual(signed[0].tags, [["d", AGENT_HEX]], "d lowercased");
-  // Key order matches crates/buzz-cli/src/commands/voices.rs selection_body
-  // (serde_json object: version, engine, key, label).
+  // Byte-identical to the CLI: crates/buzz-cli/src/commands/voices.rs
+  // selection_body is a serde_json `json!` (no preserve_order feature), so
+  // keys serialize SORTED. The same literal is pinned there by
+  // `selection_body_wire_bytes_are_key_sorted`.
   assert.equal(
     signed[0].content,
-    '{"version":1,"engine":"chatterbox","key":"chatterbox:evie","label":"Evie"}',
+    '{"engine":"chatterbox","key":"chatterbox:evie","label":"Evie","version":1}',
   );
   assert.equal(session.published.length, 1);
 });

@@ -68,17 +68,22 @@ export interface VoicePickerTarget {
  * row of the agent it belongs to. Picker policy, not a relay rule.
  *
  * The bridge's live roster marks `evie` and `eve` reserved but carries no
- * `reservedFor` pubkey, so ownership falls back to the voice's LABEL equal
- * to the target agent's name ("Evie" ↔ the agent named Evie). When the
- * roster does name a `reservedFor` pubkey, that is authoritative instead.
- * With no target (self mode) every reserved voice is hidden; `eve` has no
- * agent of its own and is therefore never offered — mirroring its existing
- * publication ban.
+ * `reservedFor` pubkey. A roster `reservedFor` pubkey is authoritative when
+ * present; otherwise ownership falls back to a name match that ONLY maps
+ * the `evie` slug to the agent named Evie. With no target (self mode) every
+ * reserved voice is hidden. `eve` is never offered to anyone, reserved flag
+ * or not — mirroring its existing publication ban.
  */
 export function isVoiceOfferedFor(
   voice: ChatterboxVoice,
   target: VoicePickerTarget | null,
 ): boolean {
+  // `eve` is never offered, to anyone, whatever the roster says (its
+  // publication ban). Checked before `reserved` so a roster that forgets the
+  // flag cannot leak it either.
+  if (voice.slug === NEVER_OFFERED_SLUG) {
+    return false;
+  }
   if (!voice.reserved) {
     return true;
   }
@@ -88,8 +93,21 @@ export function isVoiceOfferedFor(
   if (voice.reservedFor !== null) {
     return voice.reservedFor === target.pubkey.toLowerCase();
   }
-  return voice.label.trim().toLowerCase() === target.name.trim().toLowerCase();
+  // Name fallback is deliberately narrow: only the `evie` voice, only for
+  // the agent literally named Evie. Any other reserved voice without a
+  // `reservedFor` pubkey is offered to nobody (an agent named "Eve" or
+  // named after some future reserved label must not match by accident).
+  const owner = NAME_FALLBACK_OWNERS[voice.slug];
+  return owner !== undefined && target.name.trim().toLowerCase() === owner;
 }
+
+/** Never offered by any picker (design §3.3: alias target only). */
+const NEVER_OFFERED_SLUG = "eve";
+
+/** Reserved slug → the (lowercase) agent name allowed by the name fallback. */
+const NAME_FALLBACK_OWNERS: Readonly<Record<string, string>> = {
+  evie: "evie",
+};
 
 function engineName(engine: AgentVoiceSelection["engine"]): string {
   switch (engine) {

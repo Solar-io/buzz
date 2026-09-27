@@ -452,6 +452,17 @@ mod tests {
     }
 
     #[test]
+    fn selection_body_wire_bytes_are_key_sorted() {
+        // The web client (web/src/features/voice/lib/agentVoiceApi.ts)
+        // hardcodes this exact string; both sides must stay byte-identical.
+        let body = selection_body("chatterbox:evie", Some("Evie")).expect("chatterbox");
+        assert_eq!(
+            body.to_string(),
+            r#"{"engine":"chatterbox","key":"chatterbox:evie","label":"Evie","version":1}"#
+        );
+    }
+
+    #[test]
     fn selection_body_refuses_unknown_or_empty_keys() {
         for bad in ["evie", "siri:aaron", "chatterbox:", "chatterboxevie", ""] {
             assert!(

@@ -111,6 +111,45 @@ test("Evie's voice is offered ONLY when the target is the Evie agent", () => {
   assert.equal(forRichard.length, 2);
 });
 
+test("eve is never offered — not to an agent named Eve, not via reservedFor, not unflagged", () => {
+  const EVE_AGENT = { pubkey: "d".repeat(64), name: "Eve" };
+  const byName = chatterboxVoiceOptions(ROSTER, EVE_AGENT).map((o) => o.key);
+  assert.ok(
+    !byName.includes("chatterbox:eve"),
+    "name match must not offer eve",
+  );
+  const leaky = parseChatterboxRoster({
+    voices: [
+      {
+        key: "chatterbox:eve",
+        label: "Eve",
+        reserved: true,
+        reservedFor: EVE_AGENT.pubkey,
+      },
+      { key: "chatterbox:eve", label: "Eve", reserved: false },
+    ],
+  });
+  assert.equal(chatterboxVoiceOptions(leaky, EVE_AGENT).length, 0);
+  assert.equal(chatterboxVoiceOptions(leaky, null).length, 0);
+});
+
+test("the name fallback only maps evie → Evie; other reserved voices match nobody by name", () => {
+  const roster = parseChatterboxRoster({
+    voices: [{ key: "chatterbox:zed", label: "Zed", reserved: true }],
+  });
+  assert.equal(
+    chatterboxVoiceOptions(roster, { pubkey: "c".repeat(64), name: "Zed" })
+      .length,
+    0,
+    "a reserved voice with no reservedFor is not offered to a same-named agent",
+  );
+  const forEvie = chatterboxVoiceOptions(ROSTER, {
+    pubkey: "c".repeat(64),
+    name: "  EVIE ",
+  }).map((o) => o.key);
+  assert.ok(forEvie.includes("chatterbox:evie"));
+});
+
 test("a roster reservedFor pubkey is authoritative over the name match", () => {
   const [pinned] = parseChatterboxRoster({
     voices: [
