@@ -4,7 +4,8 @@
  *
  * The manifest is a PALETTE (frames available), not the show length. The
  * session is an ordered SEQUENCE OF SHOWINGS: one per valid part event,
- * sorted by `created_at` with the event id as tiebreak. A frame may be shown
+ * sorted by `created_at`, then `seq` when both carry one (the CLI's
+ * per-session posting counter), then the event id. A frame may be shown
  * any number of times, in any order — there is no dedupe by `i` and no
  * implicit end on the last index. A session ends only on a valid `close`.
  *
@@ -59,6 +60,8 @@ export interface StageShowing {
   /** The part's OWN image (authoritative), falling back to the palette. */
   imageUrl: string;
   createdAt: number;
+  /** The part tag's optional posting counter (same-second tiebreak). */
+  seq?: number;
 }
 
 export interface StageSession {
@@ -106,12 +109,19 @@ function withinWindow(open: StageEventLike, event: StageEventLike): boolean {
   );
 }
 
-/** Deterministic post order: created_at, then event id. */
+/**
+ * Deterministic post order: created_at, then seq when BOTH showings carry
+ * one, then event id. `created_at` is whole seconds, so without seq two posts
+ * in the same second would order by (random) id — not by when they were sent.
+ */
 export function compareShowings(
-  a: { createdAt: number; eventId: string },
-  b: { createdAt: number; eventId: string },
+  a: { createdAt: number; eventId: string; seq?: number },
+  b: { createdAt: number; eventId: string; seq?: number },
 ): number {
   if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+  if (a.seq !== undefined && b.seq !== undefined && a.seq !== b.seq) {
+    return a.seq - b.seq;
+  }
   return a.eventId < b.eventId ? -1 : a.eventId > b.eventId ? 1 : 0;
 }
 
@@ -172,6 +182,7 @@ export function reduceStageSession(
       speakText: speakableText(speechEvent),
       imageUrl: own ?? palette.url,
       createdAt: event.created_at,
+      ...(tag.seq === undefined ? {} : { seq: tag.seq }),
     });
   }
 

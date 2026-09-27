@@ -56,7 +56,7 @@ test("the stage corpus is fully loaded — the count guards an empty harness", (
 
 test("every accept case parses and rebuilds to its exact canonical", () => {
   const accepted = cases.filter((entry) => entry.expect === "accept");
-  assert.equal(accepted.length, 12, "accept-case count moved");
+  assert.equal(accepted.length, 15, "accept-case count moved");
   for (const testCase of accepted) {
     const result = parseStagePayload(rawOf(testCase));
     assert.ok(result.ok, `${testCase.name}: ${result.reason}`);
@@ -73,7 +73,7 @@ test("every accept case parses and rebuilds to its exact canonical", () => {
 
 test("every reject case is refused, with the shared reason", () => {
   const rejected = cases.filter((entry) => entry.expect === "reject");
-  assert.equal(rejected.length, 30, "reject-case count moved");
+  assert.equal(rejected.length, 34, "reject-case count moved");
   for (const testCase of rejected) {
     const result = parseStagePayload(rawOf(testCase));
     assert.equal(result.ok, false, `${testCase.name}: expected reject`);

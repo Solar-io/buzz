@@ -320,6 +320,9 @@ pub(crate) struct ShowingState {
     pub i: usize,
     pub hold: bool,
     pub at: u64,
+    /// The `seq` written into this showing's part tag.
+    #[serde(default)]
+    pub seq: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -332,6 +335,10 @@ pub(crate) struct StageState {
     pub palette: Vec<FrameState>,
     pub showings: Vec<ShowingState>,
     pub closed: bool,
+    /// Next part-tag `seq`. Monotonic per session across show/next/run; state
+    /// files written before seq existed resume past their recorded showings.
+    #[serde(default)]
+    pub next_seq: u64,
 }
 
 /// `$BUZZ_STAGE_DIR`, else `$HOME/.buzz/stage`.
@@ -576,6 +583,7 @@ pub(crate) async fn open_session<B: StageBackend>(
             .collect(),
         showings: Vec::new(),
         closed: false,
+        next_seq: 0,
     };
     save_state(base, &state)?;
     Ok(state)
@@ -597,11 +605,20 @@ async fn post_showing<B: StageBackend>(
         .palette
         .get(i)
         .ok_or_else(|| usage(format!("frame {i} is not in the palette")))?;
+    // Claim the seq and persist the claim BEFORE publishing: a crash between
+    // send and save can then only skip a number, never reuse one.
+    let seq = state
+        .next_seq
+        .max(state.showings.len() as u64)
+        .max(state.showings.iter().filter_map(|s| s.seq).max().map_or(0, |m| m + 1));
     let tag = build_stage_tag(&StageTag::Part {
         s: state.session.clone(),
         i,
         hold,
+        seq: Some(seq),
     })?;
+    state.next_seq = seq + 1;
+    save_state(base, state)?;
     let content = text
         .filter(|t| !is_blank(t))
         .or_else(|| frame.text.clone())
@@ -621,6 +638,7 @@ async fn post_showing<B: StageBackend>(
         i,
         hold,
         at: now_secs(),
+        seq: Some(seq),
     });
     save_state(base, state)?;
     Ok(event_id)

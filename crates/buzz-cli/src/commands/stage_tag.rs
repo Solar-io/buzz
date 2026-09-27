@@ -14,6 +14,7 @@
 //!   would already refuse `1.0` here, but JS `JSON.parse` cannot, and an
 //!   ignored key would otherwise be judged differently on each side.
 //! - Booleans: `voice` / `hold` must be JSON booleans.
+//! - `seq` (optional, part only): integer in `[0, STAGE_MAX_SEQ]` (2^53-1).
 //! - Blank title: every char in ` \t\n\r` — explicit set, not `str::trim`.
 //! - Lengths: UTF-16 code units (JS `.length` parity).
 //! - Lone surrogates: `serde_json` refuses them; the web side refuses them
@@ -28,6 +29,9 @@ pub(crate) const STAGE_MAX_TAG_UNITS: usize = 16384;
 pub(crate) const STAGE_MAX_TITLE_CHARS: usize = 120;
 pub(crate) const STAGE_MAX_PARTS: usize = 50;
 pub(crate) const STAGE_MAX_URL_CHARS: usize = 2048;
+/// Largest `seq` either side accepts: 2^53-1, the last integer JS numbers
+/// hold exactly, so both parsers compare the same value.
+pub(crate) const STAGE_MAX_SEQ: u64 = 9_007_199_254_740_991;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PaletteEntry {
@@ -52,6 +56,9 @@ pub enum StageTag {
         i: usize,
         /// Absent on the wire means `true`.
         hold: bool,
+        /// Optional per-session posting counter (CLI-written, monotonic across
+        /// show/next/run). Orders same-second showings when both carry one.
+        seq: Option<u64>,
     },
     Close {
         s: String,
@@ -255,7 +262,18 @@ pub fn parse_stage_payload(raw: &str) -> Result<StageTag, CliError> {
                 }
             };
             let hold = read_bool(&obj, "hold")?;
-            Ok(StageTag::Part { s, i, hold })
+            let seq = match obj.get("seq") {
+                None => None,
+                Some(v) => match v.as_u64() {
+                    Some(n) if n <= STAGE_MAX_SEQ => Some(n),
+                    _ => {
+                        return Err(usage(format!(
+                            "seq must be an integer in [0, {STAGE_MAX_SEQ}]"
+                        )))
+                    }
+                },
+            };
+            Ok(StageTag::Part { s, i, hold, seq })
         }
         Some("close") => Ok(StageTag::Close {
             s: read_session(&obj)?,
@@ -274,10 +292,13 @@ fn canonical_json(tag: &StageTag) -> Value {
         } => serde_json::json!({
             "v": 1, "op": "open", "title": title, "voice": voice, "parts": parts,
         }),
-        StageTag::Part { s, i, hold } => {
+        StageTag::Part { s, i, hold, seq } => {
             let mut v = serde_json::json!({ "v": 1, "op": "part", "s": s, "i": i });
             if !hold {
                 v["hold"] = Value::Bool(false);
+            }
+            if let Some(seq) = seq {
+                v["seq"] = Value::from(*seq);
             }
             v
         }
@@ -321,8 +342,9 @@ mod tests {
         assert_eq!(manifest(&limits, "maxTitleChars"), STAGE_MAX_TITLE_CHARS);
         assert_eq!(manifest(&limits, "maxParts"), STAGE_MAX_PARTS);
         assert_eq!(manifest(&limits, "maxUrlChars"), STAGE_MAX_URL_CHARS);
+        assert_eq!(manifest(&limits, "maxSeq") as u64, STAGE_MAX_SEQ);
         // Every key accounted for — a bound added to the file only fails here.
-        assert_eq!(limits.as_object().map(Map::len), Some(5));
+        assert_eq!(limits.as_object().map(Map::len), Some(6));
     }
 
     #[test]
@@ -370,8 +392,8 @@ mod tests {
                 other => panic!("{name}: unknown expect {other:?}"),
             }
         }
-        assert_eq!(accepted, 12, "accept-case count moved");
-        assert_eq!(rejected, 30, "reject-case count moved");
+        assert_eq!(accepted, 15, "accept-case count moved");
+        assert_eq!(rejected, 34, "reject-case count moved");
     }
 
     #[test]
@@ -384,16 +406,19 @@ mod tests {
             StageTag::Part {
                 s: s.clone(),
                 i: 2,
-                hold: true
+                hold: true,
+                seq: None
             }
         );
         let off = StageTag::Part {
             s,
             i: 2,
             hold: false,
+            seq: Some(7),
         };
         let built = build_stage_tag(&off).expect("builds");
         assert!(built[1].contains(r#""hold":false"#));
+        assert!(built[1].contains(r#""seq":7"#));
         assert_eq!(parse_stage_payload(&built[1]).expect("reparses"), off);
     }
 }

@@ -363,7 +363,7 @@ fn show_by_label_posts_a_held_off_showing_with_its_image() {
     assert!(sent.mentions.is_empty());
     assert_eq!(
         tag_json(&sent.tag),
-        serde_json::json!({"v":1,"op":"part","s":session,"i":1,"hold":false})
+        serde_json::json!({"v":1,"op":"part","s":session,"i":1,"hold":false,"seq":0})
     );
 
     // The same frame again, held, with new words: a second showing.
@@ -380,7 +380,7 @@ fn show_by_label_posts_a_held_off_showing_with_its_image() {
     assert_eq!(sent.content, "Again.");
     assert_eq!(
         tag_json(&sent.tag),
-        serde_json::json!({"v":1,"op":"part","s":session,"i":1})
+        serde_json::json!({"v":1,"op":"part","s":session,"i":1,"seq":1})
     );
     let state = load_state(base.path(), &session).unwrap();
     assert_eq!(state.showings.len(), 2);
@@ -465,6 +465,58 @@ fn next_walks_unshown_frames_held_then_exhausts() {
     assert_eq!(backend.sends(), sends);
 }
 
+fn sent_seqs(backend: &FakeBackend) -> Vec<u64> {
+    backend
+        .sent
+        .borrow()
+        .iter()
+        .filter_map(|p| tag_json(&p.tag).get("seq").and_then(Value::as_u64))
+        .collect()
+}
+
+#[test]
+fn seq_is_distinct_and_monotonic_across_show_and_next() {
+    let base = tempfile::tempdir().unwrap();
+    let backend = FakeBackend::default();
+    let session = opened(&backend, base.path());
+    // `next --count 3` in one call: three distinct, increasing seqs.
+    run(next_frames(&backend, base.path(), &session, 3)).unwrap();
+    assert_eq!(sent_seqs(&backend), vec![0, 1, 2]);
+    // A later `show` (fresh process = state reloaded from disk) continues.
+    run(show_frame(
+        &backend,
+        base.path(),
+        &session,
+        FrameSelector::Index(0),
+        None,
+        true,
+    ))
+    .unwrap();
+    assert_eq!(sent_seqs(&backend), vec![0, 1, 2, 3]);
+    let state = load_state(base.path(), &session).unwrap();
+    assert_eq!(state.next_seq, 4);
+    let recorded: Vec<Option<u64>> = state.showings.iter().map(|s| s.seq).collect();
+    assert_eq!(recorded, vec![Some(0), Some(1), Some(2), Some(3)]);
+}
+
+#[test]
+fn seq_resumes_past_showings_in_a_pre_seq_state_file() {
+    let base = tempfile::tempdir().unwrap();
+    let backend = FakeBackend::default();
+    let session = opened(&backend, base.path());
+    run(next_frames(&backend, base.path(), &session, 2)).unwrap();
+    // Simulate a state file written before `seq` existed.
+    let path = base.path().join(format!("{session}.json"));
+    let mut raw: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    raw.as_object_mut().unwrap().remove("next_seq");
+    for showing in raw["showings"].as_array_mut().unwrap() {
+        showing.as_object_mut().unwrap().remove("seq");
+    }
+    std::fs::write(&path, raw.to_string()).unwrap();
+    run(next_frames(&backend, base.path(), &session, 1)).unwrap();
+    assert_eq!(sent_seqs(&backend), vec![0, 1, 2], "never reuses a seq");
+}
+
 #[test]
 fn close_publishes_once_and_blocks_further_showings() {
     let base = tempfile::tempdir().unwrap();
@@ -524,8 +576,10 @@ fn state_round_trips_atomically_and_rejects_bad_ids() {
             i: 0,
             hold: false,
             at: 5,
+            seq: Some(0),
         }],
         closed: false,
+        next_seq: 1,
     };
     save_state(&dir, &state).unwrap();
     assert_eq!(load_state(&dir, &state.session).unwrap(), state);

@@ -216,3 +216,34 @@ test("history filter is the §4.4 h + authors window query", () => {
     },
   );
 });
+
+test("bug1: same-second showings order by seq when both carry one, else id", () => {
+  const tagged = (i, id, seqValue) =>
+    part(i, {
+      id,
+      created_at: T0 + 7,
+      rawTag: buildStageTag({
+        v: 1,
+        op: "part",
+        s: OPEN_ID,
+        i,
+        hold: true,
+        ...(seqValue === undefined ? {} : { seq: seqValue }),
+      }),
+    });
+  const first = tagged(0, hex(0xff), 0); // posted first, larger id
+  const second = tagged(1, hex(0x03), 1); // posted second, smaller id
+  const session = reduceStageSession(openEvent(), [second, first]);
+  assert.deepEqual(
+    session.showings.map((s) => s.eventId),
+    [first.id, second.id],
+  );
+  assert.equal(session.showings[0].seq, 0);
+  // Without seq on one side, the id tiebreak still applies.
+  const legacy = tagged(1, hex(0x02));
+  const mixed = reduceStageSession(openEvent(), [first, legacy]);
+  assert.deepEqual(
+    mixed.showings.map((s) => s.eventId),
+    [legacy.id, first.id],
+  );
+});

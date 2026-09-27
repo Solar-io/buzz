@@ -307,3 +307,46 @@ test("image gate: release waits for imageReady, capped at 3 s", async () => {
   await h.clock.advance(1);
   assert.equal(h.current(), "p1");
 });
+
+test("bug1: a live same-second showing with a smaller id is queued, never silently released", async () => {
+  const h = harness();
+  // Same created_at; the later post has the SMALLER id, so its sort key
+  // puts it before what is on stage.
+  h.pacer.arrive(showing("z", { createdAt: 5 }));
+  await flush();
+  assert.equal(h.current(), "z");
+  h.pacer.arrive(showing("a", { createdAt: 5 }));
+  await flush();
+  assert.equal(h.pacer.state().queued, 1, "the live arrival waits its turn");
+  await h.finishSpeaking("z");
+  await h.clock.advance(STAGE_GAP_MS);
+  assert.equal(h.current(), "a", "and is staged after the current one");
+  assert.deepEqual(h.calls, ["z", "a"], "and spoken");
+});
+
+test("bug1: a live unheld showing that sorts before current still stages", async () => {
+  const h = harness();
+  h.pacer.arrive(showing("z", { createdAt: 5 }));
+  await flush();
+  h.pacer.arrive(showing("a", { createdAt: 5, hold: false }));
+  await flush();
+  assert.equal(h.current(), "a");
+  assert.deepEqual(h.calls, ["z", "a"]);
+});
+
+test("bug1: replay orders same-second showings by seq, then id", async () => {
+  const h = harness({ voice: false });
+  h.pacer.seed(
+    [
+      showing("a", { createdAt: 5, seq: 2 }),
+      showing("z", { createdAt: 5, seq: 1 }),
+      showing("m", { createdAt: 4, seq: 9 }),
+    ],
+    "replay",
+  );
+  await flush();
+  assert.deepEqual(
+    h.pacer.state().showings.map((s) => s.eventId),
+    ["m", "z", "a"],
+  );
+});

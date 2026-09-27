@@ -2281,5 +2281,97 @@
     "payloadRaw": "{\"v\":1,",
     "expect": "reject",
     "reason": "invalid stage JSON"
+  },
+  {
+    "name": "part — seq 0 kept",
+    "payload": {
+      "v": 1,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": 0,
+      "seq": 0
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": 0,
+      "seq": 0
+    }
+  },
+  {
+    "name": "part — seq with hold false kept",
+    "payload": {
+      "v": 1,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": 2,
+      "hold": false,
+      "seq": 42
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": 2,
+      "hold": false,
+      "seq": 42
+    }
+  },
+  {
+    "name": "part — seq at max (2^53-1) kept",
+    "payload": {
+      "v": 1,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": 0,
+      "seq": 9007199254740991
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": 0,
+      "seq": 9007199254740991
+    }
+  },
+  {
+    "name": "part — seq above 2^53-1 rejected",
+    "payloadRaw": "{\"v\":1,\"op\":\"part\",\"s\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"i\":0,\"seq\":9007199254740992}",
+    "expect": "reject",
+    "reason": "seq must be an integer"
+  },
+  {
+    "name": "part — seq \"3\" rejected",
+    "payload": {
+      "v": 1,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": 0,
+      "seq": "3"
+    },
+    "expect": "reject",
+    "reason": "seq must be an integer"
+  },
+  {
+    "name": "part — seq true rejected",
+    "payload": {
+      "v": 1,
+      "op": "part",
+      "s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "i": 0,
+      "seq": true
+    },
+    "expect": "reject",
+    "reason": "seq must be an integer"
+  },
+  {
+    "name": "part — seq -1 rejected",
+    "payloadRaw": "{\"v\":1,\"op\":\"part\",\"s\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"i\":0,\"seq\":-1}",
+    "expect": "reject",
+    "reason": "every number must be a plain non-negative integer"
   }
 ]

@@ -24,11 +24,19 @@
  * silently releases every EARLIER queued held showing (visible in chat,
  * never staged, never spoken) so chat never shows posts out of order.
  *
+ * Ordering: `seed` (history / replay) sorts by the post-order key
+ * (`compareShowings`: created_at, seq, id). A LIVE `arrive` never lands
+ * inside the released prefix — whatever its key says, it arrived after what
+ * is already on stage, so it queues (or, unheld, stages) after it. Live
+ * arrival order beats the key for anything not yet staged, so a live
+ * showing is never silently released.
+ *
  * Speak-once is keyed by the showing's eventId (frames repeat, so `i` is
  * not a key). Unmuting never re-speaks the current showing.
  */
 
 import { watchdogMs as defaultWatchdogMs } from "../../huddle/lib/huddleAgentSpeech.ts";
+import { compareShowings } from "./stageSession.ts";
 
 /** Silence between one showing finishing and the next being released. */
 export const STAGE_GAP_MS = 600;
@@ -52,6 +60,8 @@ export interface PacerShowing {
   hold: boolean;
   speakText: string;
   createdAt: number;
+  /** Optional CLI posting counter — see `compareShowings`. */
+  seq?: number;
 }
 
 export interface PacerClock {
@@ -292,14 +302,16 @@ export function createStagePacer<T extends PacerShowing>(
     releaseNextHeld();
   }
 
-  /** Sorted insert; an item older than the released prefix is released silently. */
-  function insert(showing: T): number {
+  /**
+   * Sorted insert by the post-order key, never before `floor`. Seed passes 0
+   * (pure key order); a live arrival passes the released count, so it can
+   * only ever join the unreleased queue.
+   */
+  function insert(showing: T, floor = 0): number {
     let position = list.length;
     while (
-      position > 0 &&
-      (list[position - 1].createdAt > showing.createdAt ||
-        (list[position - 1].createdAt === showing.createdAt &&
-          list[position - 1].eventId > showing.eventId))
+      position > floor &&
+      compareShowings(list[position - 1], showing) > 0
     ) {
       position -= 1;
     }
@@ -348,11 +360,9 @@ export function createStagePacer<T extends PacerShowing>(
   return {
     arrive(showing) {
       if (disposed || known.has(showing.eventId)) return;
-      const releasedBefore = released;
-      const position = insert(showing);
-      // An unheld showing older than the released prefix is stale history:
-      // insert() already released it silently.
-      if (!showing.hold && position >= releasedBefore) {
+      // Live: never inside the released prefix (see the header).
+      const position = insert(showing, released);
+      if (!showing.hold) {
         arriveUnheld(position);
         return;
       }

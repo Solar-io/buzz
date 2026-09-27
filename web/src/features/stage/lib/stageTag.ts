@@ -23,6 +23,7 @@
  *   scans the raw text (`hasNonPlainNumber`), and the Rust side runs the same
  *   scanner. Applies to ignored keys too, or the two would disagree there.
  * - Booleans: `voice` / `hold` must be JSON `true`/`false` (never `0`, `"false"`).
+ * - `seq` (optional, part only): integer in `[0, maxSeq]` (2^53-1).
  * - Whitespace: a title is blank when every char is one of ` \t\n\r` — an
  *   explicit set, not `trim()` (JS and Rust trim different characters).
  * - Lengths: UTF-16 code units (JS `.length`; Rust `encode_utf16().count()`).
@@ -35,6 +36,8 @@ export const STAGE_LIMITS = {
   maxTitleChars: 120,
   maxParts: 50,
   maxUrlChars: 2048,
+  /** 2^53-1: the largest integer a JS number holds exactly (Rust mirror). */
+  maxSeq: 9007199254740991,
 } as const;
 
 export type StagePaletteEntry = {
@@ -63,6 +66,12 @@ export type StagePartTag = {
   i: number;
   /** Absent on the wire means true. Always materialized after parsing. */
   hold: boolean;
+  /**
+   * Optional per-session posting counter written by the CLI (monotonic across
+   * show/next/run). Breaks same-second `created_at` ties when both showings
+   * carry one. Absent = unknown (older senders).
+   */
+  seq?: number;
 };
 
 export type StageCloseTag = { v: 1; op: "close"; s: string };
@@ -242,7 +251,19 @@ export function parseStagePayload(raw: string): StageParseResult {
       }
       const hold = readBool(obj, "hold");
       if (typeof hold === "string") return fail(hold);
-      return { ok: true, tag: { v: 1, op: "part", s, i: obj.i, hold } };
+      const tag: StagePartTag = { v: 1, op: "part", s, i: obj.i, hold };
+      if (obj.seq !== undefined) {
+        if (
+          typeof obj.seq !== "number" ||
+          !Number.isInteger(obj.seq) ||
+          obj.seq < 0 ||
+          obj.seq > STAGE_LIMITS.maxSeq
+        ) {
+          return fail(`seq must be an integer in [0, ${STAGE_LIMITS.maxSeq}]`);
+        }
+        tag.seq = obj.seq;
+      }
+      return { ok: true, tag };
     }
     case "close": {
       const s = readSession(obj);
@@ -296,10 +317,12 @@ function canonicalObject(tag: StageTag): Record<string, unknown> {
             : { x: p.x, url: p.url, m: p.m, dim: p.dim },
         ),
       };
-    case "part":
-      return tag.hold
-        ? { v: 1, op: "part", s: tag.s, i: tag.i }
-        : { v: 1, op: "part", s: tag.s, i: tag.i, hold: false };
+    case "part": {
+      const out: Record<string, unknown> = { v: 1, op: "part", s: tag.s, i: tag.i };
+      if (!tag.hold) out.hold = false;
+      if (tag.seq !== undefined) out.seq = tag.seq;
+      return out;
+    }
     case "close":
       return { v: 1, op: "close", s: tag.s };
   }
