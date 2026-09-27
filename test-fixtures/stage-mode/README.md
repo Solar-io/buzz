@@ -20,6 +20,9 @@ to nothing is a loud failure rather than zero cases passing.
 
 Lengths are UTF-16 code units on both sides.
 
+`maxSeq` (2^53-1) bounds the optional part-tag `seq`: the largest integer a
+JS number holds exactly, so both parsers compare the same value.
+
 Note: with real relay media URLs (~110 chars) a manifest row is ~200 units,
 so a full 50-frame deck is ~10-12 KB. The cap is 16384 units (raised from
 8192, which bound at roughly 35-40 frames) so `maxParts` binds first for real
@@ -39,7 +42,8 @@ decks. The builder refuses an over-cap manifest before anything is published.
 ```
 
 Accept: parse the raw value, rebuild it, compare structurally to `canonical`
-(known keys only; `hold` omitted when true; `voice` always emitted).
+(known keys only; `hold` omitted when true; `seq` kept when present;
+`voice` always emitted).
 
 ## Adding a case
 
