@@ -528,7 +528,7 @@ pub(crate) async fn open_session<B: StageBackend>(
     let channel = backend.resolve_channel(&args.channel).await?;
     // 2. Every image onto / verified on the relay, before anything is sent.
     let media = prepare_media(backend, &deck).await?;
-    // 3. The manifest — `build_stage_tag` enforces the 8192-unit cap, still
+    // 3. The manifest — `build_stage_tag` enforces the 16384-unit cap, still
     //    before any publish.
     let palette: Vec<PaletteEntry> = media
         .iter()

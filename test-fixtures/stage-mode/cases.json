@@ -643,6 +643,626 @@
     }
   },
   {
+    "name": "open — fifty frames with real relay media URLs (~10 KB) accepted",
+    "payload": {
+      "v": 1,
+      "op": "open",
+      "title": "Fifty real relay URLs",
+      "voice": true,
+      "parts": [
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000000",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000000.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000001",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000001.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000002",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000002.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000003",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000003.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000004",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000004.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000005",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000005.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000006",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000006.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000007",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000007.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000008",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000008.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000009",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000009.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000a",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000000a.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000b",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000000b.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000c",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000000c.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000d",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000000d.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000e",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000000e.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000f",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000000f.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000010",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000010.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000011",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000011.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000012",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000012.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000013",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000013.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000014",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000014.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000015",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000015.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000016",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000016.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000017",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000017.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000018",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000018.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000019",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000019.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001a",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000001a.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001b",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000001b.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001c",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000001c.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001d",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000001d.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001e",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000001e.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001f",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000001f.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000020",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000020.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000021",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000021.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000022",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000022.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000023",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000023.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000024",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000024.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000025",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000025.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000026",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000026.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000027",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000027.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000028",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000028.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000029",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000029.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002a",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000002a.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002b",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000002b.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002c",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000002c.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002d",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000002d.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002e",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000002e.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002f",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000002f.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000030",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000030.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000031",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000031.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        }
+      ]
+    },
+    "expect": "accept",
+    "canonical": {
+      "v": 1,
+      "op": "open",
+      "title": "Fifty real relay URLs",
+      "voice": true,
+      "parts": [
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000000",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000000.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000001",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000001.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000002",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000002.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000003",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000003.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000004",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000004.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000005",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000005.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000006",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000006.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000007",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000007.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000008",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000008.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000009",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000009.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000a",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000000a.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000b",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000000b.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000c",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000000c.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000d",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000000d.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000e",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000000e.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000000f",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000000f.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000010",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000010.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000011",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000011.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000012",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000012.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000013",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000013.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000014",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000014.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000015",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000015.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000016",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000016.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000017",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000017.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000018",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000018.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000019",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000019.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001a",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000001a.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001b",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000001b.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001c",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000001c.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001d",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000001d.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001e",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000001e.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000001f",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000001f.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000020",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000020.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000021",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000021.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000022",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000022.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000023",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000023.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000024",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000024.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000025",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000025.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000026",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000026.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000027",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000027.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000028",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000028.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000029",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000029.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002a",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000002a.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002b",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000002b.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002c",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000002c.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002d",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000002d.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002e",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000002e.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002f",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000002f.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000030",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000030.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000031",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000031.png",
+          "m": "image/png",
+          "dim": "2048x1536"
+        }
+      ]
+    }
+  },
+  {
     "name": "open — fifty-one parts rejected",
     "payload": {
       "v": 1,
@@ -1117,7 +1737,7 @@
     "reason": "invalid stage JSON"
   },
   {
-    "name": "open — tag JSON over 8192 UTF-16 units rejected",
+    "name": "open — tag JSON over 16384 UTF-16 units rejected",
     "payload": {
       "v": 1,
       "op": "open",
@@ -1126,208 +1746,308 @@
       "parts": [
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000000",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/0.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000000.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000001",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/1.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000001.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000002",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/2.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000002.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000003",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/3.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000003.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000004",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/4.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000004.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000005",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/5.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000005.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000006",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/6.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000006.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000007",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/7.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000007.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000008",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/8.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000008.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000009",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/9.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000009.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "000000000000000000000000000000000000000000000000000000000000000a",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/10.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000000a.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "000000000000000000000000000000000000000000000000000000000000000b",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/11.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000000b.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "000000000000000000000000000000000000000000000000000000000000000c",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/12.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000000c.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "000000000000000000000000000000000000000000000000000000000000000d",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/13.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000000d.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "000000000000000000000000000000000000000000000000000000000000000e",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/14.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000000e.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "000000000000000000000000000000000000000000000000000000000000000f",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/15.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000000f.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000010",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/16.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000010.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000011",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/17.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000011.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000012",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/18.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000012.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000013",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/19.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000013.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000014",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/20.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000014.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000015",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/21.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000015.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000016",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/22.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000016.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000017",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/23.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000017.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000018",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/24.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000018.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000019",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/25.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000019.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "000000000000000000000000000000000000000000000000000000000000001a",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/26.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000001a.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "000000000000000000000000000000000000000000000000000000000000001b",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/27.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000001b.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "000000000000000000000000000000000000000000000000000000000000001c",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/28.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000001c.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "000000000000000000000000000000000000000000000000000000000000001d",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/29.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000001d.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "000000000000000000000000000000000000000000000000000000000000001e",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/30.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000001e.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "000000000000000000000000000000000000000000000000000000000000001f",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/31.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000001f.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000020",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/32.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000020.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000021",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/33.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000021.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000022",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/34.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000022.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000023",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/35.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000023.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000024",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/36.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000024.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000025",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/37.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000025.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000026",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/38.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000026.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         },
         {
           "x": "0000000000000000000000000000000000000000000000000000000000000027",
-          "url": "https://relay.example/media/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp/39.png",
-          "m": "image/png"
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000027.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000028",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000028.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000029",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000029.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002a",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000002a.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002b",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000002b.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002c",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000002c.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002d",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000002d.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002e",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000002e.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "000000000000000000000000000000000000000000000000000000000000002f",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/000000000000000000000000000000000000000000000000000000000000002f.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000030",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000030.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
+        },
+        {
+          "x": "0000000000000000000000000000000000000000000000000000000000000031",
+          "url": "https://crichton.tailb3d4b8.ts.net:6351/media/0000000000000000000000000000000000000000000000000000000000000031.png?p=pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "m": "image/png",
+          "dim": "2048x1536"
         }
       ]
     },
     "expect": "reject",
-    "reason": "exceeds 8192"
+    "reason": "exceeds 16384"
   },
   {
     "name": "part — hold absent (defaults to true)",

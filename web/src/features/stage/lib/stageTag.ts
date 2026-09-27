@@ -31,7 +31,7 @@
  */
 
 export const STAGE_LIMITS = {
-  maxTagUnits: 8192,
+  maxTagUnits: 16384,
   maxTitleChars: 120,
   maxParts: 50,
   maxUrlChars: 2048,

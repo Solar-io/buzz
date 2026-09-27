@@ -381,7 +381,7 @@ that ignores the tag still shows a complete message (text plus image).
 Parts deliberately carry **no `e` tag** (an `e` would make them thread replies
 and hide them from the main timeline). Clients accept a part only when its
 author and `h` match the open event's. Limits (≤ 50 palette frames, title ≤
-120, tag JSON ≤ 8192 UTF-16 units, integers spelled plainly, strict booleans)
+120, tag JSON ≤ 16384 UTF-16 units, integers spelled plainly, strict booleans)
 are pinned by the shared corpus in `test-fixtures/stage-mode/`.
 
 ---

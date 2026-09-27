@@ -24,7 +24,7 @@ use serde_json::{Map, Value};
 
 // Mirrored by `test-fixtures/stage-mode/limits.json` (asserted below) and by
 // `STAGE_LIMITS` in stageTag.ts (asserted by the web suite).
-pub(crate) const STAGE_MAX_TAG_UNITS: usize = 8192;
+pub(crate) const STAGE_MAX_TAG_UNITS: usize = 16384;
 pub(crate) const STAGE_MAX_TITLE_CHARS: usize = 120;
 pub(crate) const STAGE_MAX_PARTS: usize = 50;
 pub(crate) const STAGE_MAX_URL_CHARS: usize = 2048;
@@ -370,7 +370,7 @@ mod tests {
                 other => panic!("{name}: unknown expect {other:?}"),
             }
         }
-        assert_eq!(accepted, 11, "accept-case count moved");
+        assert_eq!(accepted, 12, "accept-case count moved");
         assert_eq!(rejected, 30, "reject-case count moved");
     }
 

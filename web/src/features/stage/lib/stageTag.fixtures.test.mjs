@@ -56,7 +56,7 @@ test("the stage corpus is fully loaded — the count guards an empty harness", (
 
 test("every accept case parses and rebuilds to its exact canonical", () => {
   const accepted = cases.filter((entry) => entry.expect === "accept");
-  assert.equal(accepted.length, 11, "accept-case count moved");
+  assert.equal(accepted.length, 12, "accept-case count moved");
   for (const testCase of accepted) {
     const result = parseStagePayload(rawOf(testCase));
     assert.ok(result.ok, `${testCase.name}: ${result.reason}`);

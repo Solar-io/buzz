@@ -21,8 +21,9 @@ to nothing is a loud failure rather than zero cases passing.
 Lengths are UTF-16 code units on both sides.
 
 Note: with real relay media URLs (~110 chars) a manifest row is ~200 units,
-so the 8192-unit tag cap binds before `maxParts` (roughly 35-40 frames). The
-builder refuses an over-cap manifest before anything is published.
+so a full 50-frame deck is ~10-12 KB. The cap is 16384 units (raised from
+8192, which bound at roughly 35-40 frames) so `maxParts` binds first for real
+decks. The builder refuses an over-cap manifest before anything is published.
 
 ## `cases.json`
 
