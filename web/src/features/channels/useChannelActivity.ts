@@ -36,8 +36,8 @@ export interface UseChannelActivityResult {
 }
 
 /**
- * Counting-mode inputs: the feed re-REQs whenever a subscribed channel's read
- * marker moves (or identity lands), so counts stay honest across sessions.
+ * Counting-mode inputs. A marker move zeroes that channel's count without
+ * re-REQing; identity landing (selfPubkey) re-subscribes and re-derives.
  */
 export interface ChannelActivityCounting {
   /** Per-channel read markers (localStorage read state). */
@@ -56,28 +56,22 @@ export interface ChannelActivityCounting {
  * message toasts toast from; DM rows keep their own feed (useDms).
  *
  * Resubscribes only when the id SET changes (joined key), like the DM hook —
- * plus, in counting mode, when a subscribed channel's read marker changes:
- * the per-channel windows are `{since: marker, limit: 200}` (the DM
- * unread-count hook's bounded shape), so a marker move must re-open them at
- * the new `since` or the counts would keep growing against a stale marker.
+ * NOT when a read marker moves. In counting mode the per-channel windows open
+ * at `{since: marker, limit}` as of subscribe time; a marker move only zeroes
+ * the moved channel's count, and every later count decision reads the
+ * current marker through a getter (background-sync plan §4.1 item 0.3: the
+ * old per-move re-REQ of every channel cost ~1.1 MB per channel switch).
  *
  * Counting (sidebar feed): event/EOSE handling lives in
  * createChannelActivityHandlers (channelActivity.ts) — the backfill window
  * derives counts at the subscription's first EOSE, live strictly-newer
  * foreign arrivals increment after that, and reconnect replays stay
- * exactly-once through the newest-wins sample map. A channel whose marker
- * advanced is zeroed immediately, ahead of the re-REQ; its fresh handlers
- * re-enter backfill and re-derive at EOSE. Sampling (toast-only feeds, no
- * `counting` argument): limit:1 filters, no count state — identical to the
- * feed before counts existed.
+ * exactly-once through the newest-wins sample map. Sampling (toast-only
+ * feeds, no `counting` argument): limit:1 filters, no count state.
  *
- * SAMPLES SURVIVE marker-only re-runs: every message arriving in the VIEWED
- * channel advances its marker and re-opens this feed, so wiping the sample
- * map there would blank every other row's unread dot until the re-REQ's
- * EOSE landed (a whole-sidebar flicker per arriving message on a busy
- * channel). Samples reset only when the feed's own identity changes
- * (session or id set); preserved samples also shield replayed backfill from
- * the live-arrival path, exactly as they do across reconnects.
+ * Samples reset only when the feed's own identity changes (session or id
+ * set); preserved samples also shield replayed backfill from the
+ * live-arrival path, exactly as they do across reconnects.
  */
 export function useChannelActivity(
   channelIds: string[],
@@ -117,10 +111,14 @@ export function useChannelActivity(
 
   const readMarkers = counting?.readMarkers ?? null;
   const selfPubkey = counting?.selfPubkey ?? null;
+  const isCounting = readMarkers !== null;
+  // The handlers read markers through this ref (a getter), never a closure:
+  // a marker move must not re-create them, or re-REQ anything.
+  const readMarkersRef = useRef<ReadState | null>(readMarkers);
+  readMarkersRef.current = readMarkers;
 
   // Marker map restricted to the subscribed ids, as a string: unrelated
-  // channels' markers must not re-open the feed, and a stable string keeps
-  // the effect key referentially sound.
+  // channels' markers must not trigger the zeroing pass.
   const markersKey = useMemo(() => {
     if (!readMarkers) {
       return "";
@@ -129,15 +127,36 @@ export function useChannelActivity(
     return ids.map((id) => `${id}:${readMarkers[id] ?? 0}`).join(",");
   }, [idsKey, readMarkers]);
 
-  // markersKey is a dep by design: it is the re-subscription gate (a marker
-  // move re-opens the windows at the new `since`) while readMarkers — the
-  // object the body reads — only re-runs this effect when a SUBSCRIBED
-  // channel's marker moved, so opening a DM never re-REQs the channel feed.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: markersKey gates re-subscription; removing it would key the effect on the raw object and re-REQ on unrelated marker changes
+  // Marker-move zeroing (counting mode): opening a channel must clear its
+  // badge NOW. Only channels whose marker advanced are zeroed. This is the
+  // whole reaction to a marker move — the windows are NOT re-opened (that
+  // re-REQ of every channel on every switch was ~1.1 MB per click, plan
+  // §2 scenario B); later arrivals at-or-below the new marker never count
+  // because the handlers read the current marker via readMarkersRef.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: markersKey is the trigger; the body reads the ref, which is current by construction
+  useEffect(() => {
+    const markers = readMarkersRef.current;
+    if (!markers) {
+      prevMarkersRef.current = null;
+      return;
+    }
+    const previousMarkers = prevMarkersRef.current;
+    if (previousMarkers) {
+      setUnreadCounts((previous) =>
+        resetCountsForMarkerChanges(previous, previousMarkers, markers),
+      );
+    }
+    prevMarkersRef.current = markers;
+  }, [markersKey]);
+
+  // Re-subscribes only when the feed's identity (session, id set), its mode
+  // or the viewer changes — never on a marker move. The initial `since` is
+  // the marker at subscribe time; a reconnect replays that same window,
+  // bounded by the per-channel limit, and its re-delivered events are
+  // deduped by the sample map.
   useEffect(() => {
     const ids = idsKey ? idsKey.split(",") : [];
-    // Reset the sample map only when the feed's identity changes; a
-    // marker-only re-run keeps every sample (see the doc comment above).
+    // Reset the sample map only when the feed's identity changes.
     const feedChanged =
       prevFeedRef.current?.session !== session ||
       prevFeedRef.current?.idsKey !== idsKey;
@@ -149,26 +168,15 @@ export function useChannelActivity(
     if (ids.length === 0) {
       return;
     }
-    // Marker-move zeroing (counting mode): opening a channel must clear its
-    // badge NOW, not when the re-REQ's EOSE lands. Only channels whose
-    // marker advanced are zeroed, so sibling badges survive the re-REQ.
-    if (readMarkers) {
-      const previousMarkers = prevMarkersRef.current;
-      if (previousMarkers) {
-        setUnreadCounts((previous) =>
-          resetCountsForMarkerChanges(previous, previousMarkers, readMarkers),
-        );
-      }
-      prevMarkersRef.current = readMarkers;
-    }
     const fireLive = (entry: ChannelActivity) => {
       for (const handler of handlersRef.current) {
         handler(entry);
       }
     };
+    const getMarkers = isCounting ? () => readMarkersRef.current ?? {} : null;
     const unsubscribes = channelActivityFilterBatches(
       ids,
-      readMarkers ?? undefined,
+      isCounting ? (readMarkersRef.current ?? {}) : undefined,
     ).map((filters) =>
       session.subscribe(
         filters,
@@ -177,7 +185,7 @@ export function useChannelActivity(
           onActivityChange: setActivity,
           onLiveArrival: fireLive,
           onUnreadCountsChange: setUnreadCounts,
-          readMarkers,
+          readMarkers: getMarkers,
           selfPubkey,
         }),
       ),
@@ -187,7 +195,7 @@ export function useChannelActivity(
         unsubscribe();
       }
     };
-  }, [session, idsKey, markersKey, readMarkers, selfPubkey]);
+  }, [session, idsKey, isCounting, selfPubkey]);
 
   return { activity, unreadCounts, onLiveEvent };
 }
