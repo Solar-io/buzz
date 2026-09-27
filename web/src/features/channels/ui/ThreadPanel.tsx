@@ -74,6 +74,7 @@ export function ThreadPanel({
   mobileOnly,
   strictMentions = false,
   permalinkMessageId = null,
+  agentPubkeys,
 }: {
   root: TimelineMessage;
   buffer: MessageBuffer;
@@ -95,6 +96,8 @@ export function ThreadPanel({
    * elsewhere.
    */
   permalinkMessageId?: string | null;
+  /** Agent authors — forwarded so thread rows get the agent badge + card. */
+  agentPubkeys?: ReadonlySet<string>;
 }) {
   const layoutMode = useThreadLayout();
   const rootId = root.id;
@@ -215,6 +218,7 @@ export function ThreadPanel({
         // Flat rows, no tree layout, and no onOpenThread: an in-pane ↩ would
         // only promise a mid-thread parent the composer no longer sends.
         selfPubkey={selfPubkey}
+        agentPubkeys={agentPubkeys}
         flat
         tailKey={`${rootId}:${lastReply.id}:${threadMessages.length}`}
         highlightId={permalinkMessageId}

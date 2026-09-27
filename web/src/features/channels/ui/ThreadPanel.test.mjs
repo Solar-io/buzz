@@ -285,6 +285,7 @@ async function mountPanel(options = {}) {
           members: options.members ?? [],
           profiles: options.profiles ?? new Map(),
           selfPubkey: options.selfPubkey ?? null,
+          agentPubkeys: options.agentPubkeys,
           onClose: () => {
             closed += 1;
           },
@@ -753,5 +754,19 @@ test("deleted messages drive the author set, not just hide rows", async () => {
     );
   } finally {
     await panelB.unmount();
+  }
+});
+
+test("the panel forwards agentPubkeys to the timeline", async () => {
+  const agents = new Set([BOB]);
+  const panel = await mountPanel({ agentPubkeys: agents });
+  try {
+    assert.equal(
+      globalThis.__BUZZ_TEST_TIMELINE_PROPS__.agentPubkeys,
+      agents,
+      "thread rows need the agent set for the badge and avatar card",
+    );
+  } finally {
+    await panel.unmount();
   }
 });

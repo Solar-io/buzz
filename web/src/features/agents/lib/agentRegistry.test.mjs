@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { agentFromEvent, mergeAgentEntry } from "./agentRegistry.ts";
+import { readFileSync } from "node:fs";
+import {
+  agentFromEvent,
+  mergeAgentEntry,
+  parseAgentEffort,
+} from "./agentRegistry.ts";
 
 const D = "aa".repeat(32);
 const OTHER = "bb".repeat(32);
@@ -93,4 +98,66 @@ test("mergeAgentEntry keys distinct agents separately", () => {
     agentFromEvent(event({ tags: [["d", OTHER]] })),
   );
   assert.equal(registry.size, 2);
+});
+
+// ── effort (30177 display-only knobs) ────────────────────────────────────────
+
+function effortFixture(name) {
+  return JSON.parse(
+    readFileSync(
+      new URL(
+        `../../../../../test-fixtures/agent-effort/${name}`,
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+}
+
+test("agentFromEvent parses the effort block", () => {
+  const content = JSON.parse(event().content);
+  content.effort = {
+    acp: "high",
+    text_turn: "low",
+    max_context_tokens: 555000,
+  };
+  const entry = agentFromEvent(event({ content: JSON.stringify(content) }));
+  assert.deepEqual(entry.effort, {
+    acp: "high",
+    textTurn: "low",
+    voiceTurn: null,
+    thinking: null,
+    claudeCode: null,
+    maxContextTokens: 555000,
+  });
+});
+
+test("agentFromEvent: an old event without effort parses to effort null", () => {
+  const entry = agentFromEvent(event());
+  assert.ok(entry);
+  assert.equal(entry.effort, null);
+});
+
+test("parseAgentEffort drops junk tokens and non-objects", () => {
+  assert.equal(parseAgentEffort(undefined), null);
+  assert.equal(parseAgentEffort("high"), null);
+  assert.equal(
+    parseAgentEffort({ acp: "High!", thinking: "x".repeat(17) }),
+    null,
+  );
+  assert.equal(parseAgentEffort({ env_vars: { K: "v" } }), null);
+});
+
+test("parseAgentEffort matches the shared agent-effort corpus", () => {
+  const { cases } = effortFixture("cases.json");
+  const limits = effortFixture("limits.json");
+  assert.equal(cases.length, limits.cases);
+  assert.ok(cases.length > 0);
+  for (const testCase of cases) {
+    assert.deepEqual(
+      parseAgentEffort(testCase.wire),
+      testCase.parsed,
+      testCase.name,
+    );
+  }
 });
