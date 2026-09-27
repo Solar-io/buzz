@@ -266,8 +266,9 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
       }
       unsubscribe = session.subscribe(
         initialSyncFilters(channelId, cached ? cached.cursor : null),
-        // The open timeline is what the first screen paints from.
-        { onEvent: applyEvent, priority: "critical" },
+        // The open timeline is what the user is looking at: it replays first,
+        // outside the replay window, after every (re)connect.
+        { onEvent: applyEvent, priority: "foreground" },
       );
     })();
 

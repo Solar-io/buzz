@@ -35,8 +35,16 @@ export interface SubscribeOptions {
    * "critical" subscriptions open first in the post-AUTH replay: the channel
    * list, the Links list, the open timeline and the DM sampling batch — what
    * the first screen actually paints from.
+   *
+   * "foreground" is the one subscription the user is looking at right now
+   * (the open timeline). At most one exists per session — a newer foreground
+   * subscribe demotes the previous one to critical — and the post-AUTH
+   * replay sends it FIRST and outside the replay window, so it never waits
+   * for a slot behind other criticals (background-sync plan §4.1 item 0.2:
+   * a 255-346ms slot wait was measured on resume). Same idea as desktop's
+   * visible-channel-first replay.
    */
-  priority?: "critical";
+  priority?: "critical" | "foreground";
 }
 
 export type Unsubscribe = () => void;
@@ -77,6 +85,11 @@ export interface RelaySessionOptions {
   replayWindow?: number;
   /** A replay slot frees itself after this long without EOSE. Default 400ms. */
   replaySlotFallbackMs?: number;
+  /**
+   * A connection must stay up this long before its drop resets the
+   * reconnect backoff. Default {@link STABLE_CONNECTION_MS}.
+   */
+  stableConnectionMs?: number;
   onStatusChange?: (status: RelaySessionStatus) => void;
 }
 
@@ -166,6 +179,13 @@ export function shouldForceReconnect(
   const silentFor = now - lastMessageAt;
   return silentFor >= (tabVisible ? VISIBLE_STALE_MS : BACKGROUND_STALE_MS);
 }
+
+/**
+ * Minimum connected lifetime before a drop resets the reconnect backoff.
+ * Guards the accept-AUTH-then-close loop (a relay that drops us right after
+ * AUTH would otherwise be redialed at the 500ms base forever).
+ */
+const STABLE_CONNECTION_MS = 5_000;
 
 function defaultReconnectDelay(attempt: number): number {
   return Math.min(500 * 2 ** attempt, 15_000);
@@ -261,7 +281,12 @@ export class RelaySession {
   /** Shareable wire subs by canonical filter key (plan item 2.2). */
   private readonly sharedByKey = new Map<string, string>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The single "foreground" wire sub, if any (see SubscribeOptions). */
+  private foregroundSubId: string | null = null;
   private reconnectAttempt = 0;
+  /** When the CURRENT socket completed its connect (flushPending); null if not. */
+  private connectedAt: number | null = null;
+  private readonly stableConnectionMs: number;
   private manualClose = false;
   private readonly nowMs: () => number;
   private readonly livenessIntervalMs: number;
@@ -310,6 +335,8 @@ export class RelaySession {
     this.publishRetryBackstopMs =
       options.publishRetryBackstopMs ?? PUBLISH_RETRY_BACKSTOP_MS;
     this.nowMs = options.nowMs ?? (() => Date.now());
+    this.stableConnectionMs =
+      options.stableConnectionMs ?? STABLE_CONNECTION_MS;
     this.livenessIntervalMs =
       options.livenessIntervalMs ?? DEFAULT_LIVENESS_INTERVAL_MS;
     this.healthSweepIntervalMs =
@@ -389,6 +416,7 @@ export class RelaySession {
   }
 
   private readonly handleWake = (): void => {
+    this.redialIfBackingOff();
     this.probeLiveness();
     // Waking (tab visible again / network online) is also the moment a
     // long-backgrounded page is finally LOOKED at — reconcile subscriptions
@@ -427,6 +455,27 @@ export class RelaySession {
       this.authRetryAttempts.delete(subId);
       this.socket.send(reqFrame(subId, sub.filter));
     }
+  }
+
+  /**
+   * A wake (tab visible / network online) while a reconnect backoff timer is
+   * pending means the user is looking at the app NOW — waiting out a 0.5-15s
+   * backoff there was the bulk of the resume-to-paint delay (background-sync
+   * plan §2, scenarios F/G). probeLiveness cannot help: it returns early when
+   * there is no socket. Hidden tabs keep backing off (no one is looking, and a
+   * genuinely down relay should not be hammered from a background tab).
+   */
+  private redialIfBackingOff(): void {
+    if (this.manualClose || this.socket || !this.reconnectTimer) {
+      return;
+    }
+    const visible = typeof document === "undefined" || !document.hidden;
+    if (!visible) {
+      return;
+    }
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.openSocket();
   }
 
   private probeLiveness(): void {
@@ -665,6 +714,12 @@ export class RelaySession {
       // Grace expired without a challenge: relay does not require AUTH.
       this.authenticated = true;
     }
+    // Every successful connect lands here (relay AUTH OK, signer-locked
+    // fallback, or no-challenge grace). Stamp it; handleClose resets the
+    // backoff only if the connection then STAYED up (see STABLE_CONNECTION_MS).
+    // The first stamp wins: a late AUTH after the grace flush is the same
+    // connection.
+    this.connectedAt ??= this.nowMs();
     this.setStatus("open");
     // D-042: parked publishes ride the authenticated flush. Deleted on
     // send — if this socket dies before the OK, teardown re-parks from the
@@ -698,6 +753,15 @@ export class RelaySession {
       ) {
         toOpen.push([subId, sub]);
       }
+    }
+    // The foreground sub (what the user is looking at) goes out first and
+    // outside the window: it must not queue behind other criticals.
+    const foregroundIndex = toOpen.findIndex(
+      ([subId]) => subId === this.foregroundSubId,
+    );
+    if (foregroundIndex >= 0) {
+      const [[subId, sub]] = toOpen.splice(foregroundIndex, 1);
+      this.sendReplayReq(subId, sub);
     }
     // Stable sort: critical subs first, creation order otherwise.
     toOpen.sort(
@@ -808,6 +872,19 @@ export class RelaySession {
   }
 
   private readonly handleClose = (): void => {
+    // A connection that stayed up for STABLE_CONNECTION_MS was a real
+    // success: the next drop starts the backoff from its base again instead
+    // of compounding across resumes (the measured 0.5 → 1 → 2 → 4s
+    // escalation, background-sync plan §2 scenario H). One that dropped
+    // sooner — a relay accepting AUTH then closing at once — keeps backing
+    // off, or it would be redialed every 500ms forever.
+    const connectedAt = this.connectedAt;
+    if (
+      connectedAt !== null &&
+      this.nowMs() - connectedAt >= this.stableConnectionMs
+    ) {
+      this.reconnectAttempt = 0;
+    }
     this.teardownSocket();
     if (this.manualClose) {
       this.setStatus("closed");
@@ -816,7 +893,10 @@ export class RelaySession {
     const delay = this.reconnectDelayMs(this.reconnectAttempt);
     this.reconnectAttempt += 1;
     this.setStatus("reconnecting");
-    this.reconnectTimer = setTimeout(() => this.openSocket(), delay);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.openSocket();
+    }, delay);
   };
 
   private readonly handleError = (): void => {
@@ -838,6 +918,7 @@ export class RelaySession {
     this.authenticated = false;
     this.authedByRelay = false;
     this.lastMessageAt = null;
+    this.connectedAt = null;
     this.openSubs.clear();
     this.authRetryAttempts.clear();
     this.policyClosedSubs.clear();
@@ -883,6 +964,7 @@ export class RelaySession {
     this.publishRetryQueue.clear();
     this.activeSubs.clear();
     this.sharedByKey.clear();
+    this.foregroundSubId = null;
     this.setStatus("closed");
   }
 
@@ -903,7 +985,12 @@ export class RelaySession {
     const sharedId = this.sharedByKey.get(key);
     const shared = sharedId ? this.activeSubs.get(sharedId) : undefined;
     if (sharedId && shared?.share.shareable) {
-      if (options.priority === "critical") {
+      if (options.priority === "foreground") {
+        this.promoteToForeground(sharedId, shared);
+      } else if (
+        options.priority === "critical" &&
+        shared.options.priority !== "foreground"
+      ) {
         shared.options.priority = "critical";
       }
       const remove = shared.share.join(options);
@@ -926,6 +1013,9 @@ export class RelaySession {
     };
     this.activeSubs.set(subId, sub);
     this.sharedByKey.set(key, subId);
+    if (options.priority === "foreground") {
+      this.promoteToForeground(subId, sub);
+    }
     // If not yet authenticated/open, the auth handshake replays this REQ;
     // no need to queue it in `pending` (which is for writes only).
     if (this.authenticated && this.socket) {
@@ -938,6 +1028,22 @@ export class RelaySession {
     };
   }
 
+  /**
+   * Make `subId` the one foreground sub. The previous holder is demoted to
+   * critical — it was on screen a moment ago, so it still outranks the rest.
+   */
+  private promoteToForeground(subId: string, sub: ActiveSubscription): void {
+    const previousId = this.foregroundSubId;
+    if (previousId && previousId !== subId) {
+      const previous = this.activeSubs.get(previousId);
+      if (previous) {
+        previous.options.priority = "critical";
+      }
+    }
+    sub.options.priority = "foreground";
+    this.foregroundSubId = subId;
+  }
+
   /** Close a wire sub once no subscriber is left on it. */
   private releaseIfUnused(subId: string): void {
     const sub = this.activeSubs.get(subId);
@@ -948,6 +1054,9 @@ export class RelaySession {
       this.sharedByKey.delete(sub.share.key);
     }
     this.activeSubs.delete(subId);
+    if (this.foregroundSubId === subId) {
+      this.foregroundSubId = null;
+    }
     this.authRetryAttempts.delete(subId);
     this.policyClosedSubs.delete(subId);
     this.releaseReplaySlot(subId);

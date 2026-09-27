@@ -32,6 +32,15 @@ export const MAX_FILTERS_PER_REQ = 10;
 export const UNREAD_COUNT_SAMPLE_LIMIT = 200;
 
 /**
+ * Window size for a channel with NO read marker (`since: 0`, never read).
+ * Its whole history is "unread", and the badge caps at 99+ anyway, so
+ * UNREAD_COUNT_CAP + 1 messages is all the display can use — fetching 200
+ * per never-read channel on every (re)subscribe was pure transfer cost
+ * (background-sync plan §4.1 item 0.3).
+ */
+export const UNREAD_COUNT_NEVER_READ_LIMIT = 100;
+
+/**
  * Ceiling on the in-memory per-channel sample buffer the counting feed keeps
  * between EOSEs. Reconnects re-REQ the window and re-derive the count from
  * the buffer, so it must out-size UNREAD_COUNT_SAMPLE_LIMIT by a live-arrival
@@ -88,7 +97,8 @@ export interface ChannelActivityFilter {
  * - Counting (markers given): `{kinds:[9], #h:[id], since: marker ?? 0,
  *   limit: UNREAD_COUNT_SAMPLE_LIMIT}` — the DM unread-count hook's bounded
  *   window, kept live, so the sidebar can count foreign messages newer than
- *   each channel's read marker.
+ *   each channel's read marker. A channel with no marker gets
+ *   UNREAD_COUNT_NEVER_READ_LIMIT (the display cap + 1) instead.
  */
 export function channelActivityFilterBatches(
   channelIds: string[],
@@ -103,7 +113,10 @@ export function channelActivityFilterBatches(
               kinds: [KIND_CHAT_MESSAGE],
               "#h": [id],
               since: readMarkers[id] ?? 0,
-              limit: UNREAD_COUNT_SAMPLE_LIMIT,
+              limit:
+                readMarkers[id] == null
+                  ? UNREAD_COUNT_NEVER_READ_LIMIT
+                  : UNREAD_COUNT_SAMPLE_LIMIT,
             }
           : { kinds: [KIND_CHAT_MESSAGE], "#h": [id], limit: 1 },
       ),
@@ -230,8 +243,13 @@ export interface ChannelActivityHandlerDeps {
   onUnreadCountsChange: (
     updater: (previous: ChannelUnreadCounts) => ChannelUnreadCounts,
   ) => void;
-  /** null readMarkers = sampling mode: newest-message samples, no counts. */
-  readMarkers: ReadState | null;
+  /**
+   * null = sampling mode: newest-message samples, no counts. Otherwise a
+   * GETTER for the current read markers, read at every count decision — so
+   * a marker move takes effect without re-creating the handlers (and
+   * without re-REQing every channel's window; see useChannelActivity).
+   */
+  readMarkers: (() => ReadState) | null;
   selfPubkey: string | null;
 }
 
@@ -239,6 +257,15 @@ export interface ChannelActivityHandlerDeps {
 export interface ChannelActivitySubscriptionHandlers {
   onEvent: (event: SignedNostrEvent) => void;
   onEose: () => void;
+  /**
+   * Re-derive these channels' counts from every event this subscription has
+   * seen, against the CURRENT markers. Called after a marker moves forward:
+   * the marker can land mid-window (read state synced from another device
+   * while newer messages had already arrived), so forcing 0 would hide real
+   * unread messages until some later re-subscribe. Channels this batch has
+   * seen nothing for are left untouched.
+   */
+  recount: (channelIds: readonly string[]) => void;
 }
 
 /**
@@ -268,9 +295,10 @@ export interface ChannelActivitySubscriptionHandlers {
  *   its live-incremented value. An event the client MISSED while offline
  *   still beats the sample, increments once, and is never double-counted.
  *
- * A marker change re-runs the owning effect with fresh handlers, so the new
- * windows re-enter backfill and re-derive at their EOSE (see
- * useChannelActivity).
+ * A marker change does NOT re-create these handlers or re-REQ the window:
+ * the owning hook zeroes the moved channel's count, and every later count
+ * decision reads the current marker through the `readMarkers` getter, so
+ * arrivals at-or-below the new marker never count (see useChannelActivity).
  */
 export function createChannelActivityHandlers(
   deps: ChannelActivityHandlerDeps,
@@ -283,17 +311,74 @@ export function createChannelActivityHandlers(
     readMarkers,
     selfPubkey,
   } = deps;
+  const markerFor = (channelId: string): number =>
+    readMarkers?.()[channelId] ?? 0;
   let window: Map<string, UnreadCountEvent[]> | null = readMarkers
     ? new Map()
     : null;
   let backfillClosed = false;
+  // Every distinct event seen per channel (by id, so replay rounds cannot
+  // double it), bounded to the newest UNREAD_COUNT_BUFFER_MAX. Only the
+  // marker-move recount reads it; counting otherwise follows the
+  // backfill/live rules above.
+  const seen: Map<string, Map<string, UnreadCountEvent>> | null = readMarkers
+    ? new Map()
+    : null;
+  const remember = (id: string, entry: ChannelActivity): void => {
+    if (!seen) {
+      return;
+    }
+    let events = seen.get(entry.channelId);
+    if (!events) {
+      events = new Map();
+      seen.set(entry.channelId, events);
+    }
+    events.set(id, { pubkey: entry.pubkey, createdAt: entry.createdAt });
+    if (events.size > UNREAD_COUNT_BUFFER_MAX) {
+      let oldestId: string | null = null;
+      let oldestAt = Number.POSITIVE_INFINITY;
+      for (const [eventId, sample] of events) {
+        if (sample.createdAt < oldestAt) {
+          oldestAt = sample.createdAt;
+          oldestId = eventId;
+        }
+      }
+      if (oldestId !== null) {
+        events.delete(oldestId);
+      }
+    }
+  };
 
   return {
+    recount(channelIds: readonly string[]): void {
+      if (!seen) {
+        return;
+      }
+      const targets = channelIds.filter((id) => seen.has(id));
+      if (targets.length === 0) {
+        return;
+      }
+      onUnreadCountsChange((previous) => {
+        const next = new Map(previous);
+        for (const channelId of targets) {
+          next.set(
+            channelId,
+            countUnreadFromEvents(
+              Array.from(seen.get(channelId)?.values() ?? []),
+              markerFor(channelId),
+              selfPubkey,
+            ),
+          );
+        }
+        return next;
+      });
+    },
     onEvent(event: SignedNostrEvent): void {
       const entry = channelActivityFromEvent(event);
       if (!entry) {
         return;
       }
+      remember(event.id, entry);
       // Buffer BEFORE the strictly-newer guard: the backfill derivation
       // counts the delivered window, and most of that window is at-or-below
       // the newest sample by definition. Stale/duplicate arrivals land here
@@ -319,7 +404,7 @@ export function createChannelActivityHandlers(
               incrementUnreadCount(
                 counts.get(entry.channelId),
                 entry,
-                readMarkers[entry.channelId] ?? 0,
+                markerFor(entry.channelId),
                 selfPubkey,
               ),
             );
@@ -344,11 +429,7 @@ export function createChannelActivityHandlers(
         for (const [channelId, samples] of buffered) {
           next.set(
             channelId,
-            countUnreadFromEvents(
-              samples,
-              readMarkers[channelId] ?? 0,
-              selfPubkey,
-            ),
+            countUnreadFromEvents(samples, markerFor(channelId), selfPubkey),
           );
         }
         return next;

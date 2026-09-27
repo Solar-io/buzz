@@ -213,7 +213,7 @@ test("channelActivityFilterBatches counting mode scopes each filter to its read 
     c: 9999,
   });
   // Marker known: the window opens at the marker. Marker unknown: since 0
-  // (the never-read case — the count caps at what limit:200 returns).
+  // (the never-read case — limit 100: the badge caps at 99+ anyway).
   assert.deepEqual(batches[0][0], {
     kinds: [9],
     "#h": ["a"],
@@ -224,8 +224,24 @@ test("channelActivityFilterBatches counting mode scopes each filter to its read 
     kinds: [9],
     "#h": ["b"],
     since: 0,
-    limit: 200,
+    limit: 100,
   });
+});
+
+test("T4b never-read channels open a limit-100 window; read ones keep 200", () => {
+  const [batch] = channelActivityFilterBatches(["read", "never", "zero"], {
+    read: 5,
+    zero: 0,
+  });
+  assert.deepEqual(
+    batch.map((filter) => [filter["#h"][0], filter.since, filter.limit]),
+    [
+      ["read", 5, 200],
+      ["never", 0, 100],
+      // A real marker of 0 is still a marker.
+      ["zero", 0, 200],
+    ],
+  );
 });
 
 test("countUnreadFromEvents counts foreign post-marker arrivals only", () => {
@@ -326,10 +342,14 @@ function driveFeed(readMarkers, selfPubkey) {
     onUnreadCountsChange: (updater) => {
       counts = updater(counts);
     },
-    readMarkers,
+    // The factory takes a GETTER; `markers` stays mutable so a test can
+    // move a marker under live handlers, as the hook's ref does.
+    readMarkers: readMarkers ? () => markers.current : null,
     selfPubkey,
   });
+  const markers = { current: readMarkers };
   return {
+    markers,
     handlers,
     counts: () => counts,
     activity: () => activityRef.current,
@@ -422,4 +442,19 @@ test("self arrivals update the sample but never the count, live or replayed", ()
   feed.handlers.onEvent(relayEvent({ created_at: 110, pubkey: SELF }));
   feed.handlers.onEose();
   assert.equal(feed.counts().get("ch1"), 1);
+});
+
+test("T4 a marker move under live handlers: <= marker never counts, > marker counts once", () => {
+  const feed = driveFeed({ ch1: 100 }, SELF);
+  feed.handlers.onEvent(relayEvent({ created_at: 150 }));
+  feed.handlers.onEose();
+  assert.equal(feed.counts().get("ch1"), 1);
+  // The viewer opens ch1: the hook zeroes the count and moves the marker —
+  // with NO re-subscription, so these same handlers keep running.
+  feed.markers.current = { ch1: 300 };
+  // Arrival newer than the sample (150) but at-or-below the new marker.
+  feed.handlers.onEvent(relayEvent({ created_at: 300 }));
+  assert.equal(feed.counts().get("ch1"), 1, "300 <= marker 300: not unread");
+  feed.handlers.onEvent(relayEvent({ created_at: 301 }));
+  assert.equal(feed.counts().get("ch1"), 2, "301 > marker: +1");
 });
