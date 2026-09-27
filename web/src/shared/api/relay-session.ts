@@ -389,6 +389,7 @@ export class RelaySession {
   }
 
   private readonly handleWake = (): void => {
+    this.redialIfBackingOff();
     this.probeLiveness();
     // Waking (tab visible again / network online) is also the moment a
     // long-backgrounded page is finally LOOKED at — reconcile subscriptions
@@ -427,6 +428,27 @@ export class RelaySession {
       this.authRetryAttempts.delete(subId);
       this.socket.send(reqFrame(subId, sub.filter));
     }
+  }
+
+  /**
+   * A wake (tab visible / network online) while a reconnect backoff timer is
+   * pending means the user is looking at the app NOW — waiting out a 0.5-15s
+   * backoff there was the bulk of the resume-to-paint delay (background-sync
+   * plan §2, scenarios F/G). probeLiveness cannot help: it returns early when
+   * there is no socket. Hidden tabs keep backing off (no one is looking, and a
+   * genuinely down relay should not be hammered from a background tab).
+   */
+  private redialIfBackingOff(): void {
+    if (this.manualClose || this.socket || !this.reconnectTimer) {
+      return;
+    }
+    const visible = typeof document === "undefined" || !document.hidden;
+    if (!visible) {
+      return;
+    }
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.openSocket();
   }
 
   private probeLiveness(): void {
@@ -665,6 +687,11 @@ export class RelaySession {
       // Grace expired without a challenge: relay does not require AUTH.
       this.authenticated = true;
     }
+    // Every successful connect lands here (relay AUTH OK, signer-locked
+    // fallback, or no-challenge grace): the next drop starts the backoff from
+    // its base again instead of compounding across resumes (the measured
+    // 0.5 → 1 → 2 → 4s escalation, background-sync plan §2 scenario H).
+    this.reconnectAttempt = 0;
     this.setStatus("open");
     // D-042: parked publishes ride the authenticated flush. Deleted on
     // send — if this socket dies before the OK, teardown re-parks from the
@@ -816,7 +843,10 @@ export class RelaySession {
     const delay = this.reconnectDelayMs(this.reconnectAttempt);
     this.reconnectAttempt += 1;
     this.setStatus("reconnecting");
-    this.reconnectTimer = setTimeout(() => this.openSocket(), delay);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.openSocket();
+    }, delay);
   };
 
   private readonly handleError = (): void => {

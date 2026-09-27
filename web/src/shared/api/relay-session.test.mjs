@@ -1079,3 +1079,111 @@ test("health sweep stands down while a windowed replay is in flight", async () =
     session.close();
   }
 });
+
+/**
+ * Record the delay of every setTimeout scheduled while `fn` runs
+ * synchronously (the timers still run normally).
+ */
+function delaysScheduledDuring(fn) {
+  const original = globalThis.setTimeout;
+  const delays = [];
+  globalThis.setTimeout = (cb, ms, ...rest) => {
+    delays.push(ms);
+    return original(cb, ms, ...rest);
+  };
+  try {
+    fn();
+  } finally {
+    globalThis.setTimeout = original;
+  }
+  return delays;
+}
+
+function installFakeDocument(hidden) {
+  const previous = globalThis.document;
+  const wakeListeners = [];
+  globalThis.document = {
+    hidden,
+    addEventListener: (type, listener) => {
+      if (type === "visibilitychange") wakeListeners.push(listener);
+    },
+    removeEventListener: () => {},
+  };
+  return {
+    wakeListeners,
+    restore: () => {
+      globalThis.document = previous;
+    },
+  };
+}
+
+test("T1 backoff: a successful AUTH resets the redial delay to the 500ms base", async () => {
+  // Default reconnect curve (no reconnectDelayMs override) so the literal
+  // 500 pins real behaviour: 500·2^attempt, capped at 15s.
+  const { session } = makeSession({ reconnectDelayMs: undefined });
+  try {
+    session.connect();
+    const first = firstSocket();
+    first.emit("open");
+    first.serverSend(["AUTH", "c1"]);
+    await tick();
+    assert.deepEqual(
+      delaysScheduledDuring(() => first.emit("close")),
+      [500],
+    );
+    // Wait out the first redial, then reconnect successfully.
+    await tick(600);
+    const second = FakeSocket.instances[1];
+    assert.ok(second, "redialed after the first backoff");
+    second.emit("open");
+    second.serverSend(["AUTH", "c2"]);
+    await tick();
+    // Before the fix this was 1000: attempt kept compounding across successes.
+    assert.deepEqual(
+      delaysScheduledDuring(() => second.emit("close")),
+      [500],
+    );
+  } finally {
+    session.close();
+  }
+});
+
+test("T2 wake: a visible wake during a pending backoff redials immediately", async () => {
+  const doc = installFakeDocument(false);
+  // Long backoff: the redial must NOT come from the timer.
+  const { session } = makeSession({ reconnectDelayMs: () => 60_000 });
+  try {
+    session.connect();
+    const first = firstSocket();
+    first.emit("open");
+    first.serverSend(["AUTH", "c1"]);
+    await tick();
+    first.emit("close");
+    assert.equal(FakeSocket.instances.length, 1, "backoff pending, no redial");
+    assert.equal(doc.wakeListeners.length, 1);
+    doc.wakeListeners[0]();
+    // Synchronously, at t+0 — not after the 60s timer.
+    assert.equal(FakeSocket.instances.length, 2);
+  } finally {
+    session.close();
+    doc.restore();
+  }
+});
+
+test("T2 wake: a HIDDEN wake leaves the backoff timer alone", async () => {
+  const doc = installFakeDocument(true);
+  const { session } = makeSession({ reconnectDelayMs: () => 60_000 });
+  try {
+    session.connect();
+    const first = firstSocket();
+    first.emit("open");
+    first.serverSend(["AUTH", "c1"]);
+    await tick();
+    first.emit("close");
+    doc.wakeListeners[0]();
+    assert.equal(FakeSocket.instances.length, 1);
+  } finally {
+    session.close();
+    doc.restore();
+  }
+});
