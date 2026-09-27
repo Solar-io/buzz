@@ -66,6 +66,12 @@ pub enum CliError {
     #[error("indeterminate read: {0}")]
     Indeterminate(String),
 
+    /// A finite sequence has nothing left to give (e.g. `buzz stage next`
+    /// when every palette frame has been shown). Not a failure of the
+    /// command's inputs — exit 7, never retryable.
+    #[error("exhausted: {0}")]
+    Exhausted(String),
+
     /// Catch-all for unexpected failures
     #[error("{0}")]
     Other(String),
@@ -119,7 +125,8 @@ pub fn is_retryable_error(e: &CliError) -> bool {
 /// Map CliError to process exit code.
 /// 0=success (not an error), 1=user/not-found, 2=network/relay, 3=auth,
 /// 4=other, 5=write conflict (NIP-33 dominated head), 6=held (send-path
-/// gate: another managed session of you is mid-turn in the channel).
+/// gate: another managed session of you is mid-turn in the channel),
+/// 7=exhausted (a finite sequence such as a stage deck has nothing left).
 pub fn exit_code(e: &CliError) -> i32 {
     match e {
         CliError::Usage(_) => 1,
@@ -138,6 +145,7 @@ pub fn exit_code(e: &CliError) -> i32 {
         CliError::DeliveryUnknown(_) => 2,
         CliError::Indeterminate(_) => 2,
         CliError::Held { .. } => 6,
+        CliError::Exhausted(_) => 7,
         CliError::Other(_) => 4,
     }
 }
@@ -167,6 +175,7 @@ pub fn print_error(e: &CliError) {
         CliError::NotFound(_) => "not_found",
         CliError::DeliveryUnknown(_) => "delivery_unknown",
         CliError::Indeterminate(_) => "indeterminate",
+        CliError::Exhausted(_) => "exhausted",
         CliError::Other(_) => "error",
     };
     let mut obj = serde_json::json!({

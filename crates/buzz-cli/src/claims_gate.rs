@@ -486,7 +486,7 @@ fn lock_sidecar(path: &std::path::Path) -> PathBuf {
 
 /// Write `body` to `.<name>.tmp` beside `path`, then rename over it — atomic
 /// on macOS/Linux, so a concurrent reader never sees a torn document.
-fn atomic_write(path: &std::path::Path, body: &str) -> std::io::Result<()> {
+pub(crate) fn atomic_write(path: &std::path::Path, body: &str) -> std::io::Result<()> {
     #[cfg(unix)]
     let tmp = {
         let mut tmp_name = path

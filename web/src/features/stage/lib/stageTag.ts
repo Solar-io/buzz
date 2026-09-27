@@ -140,9 +140,7 @@ function readSession(obj: Record<string, unknown>): string | null {
   return typeof obj.s === "string" && HEX64.test(obj.s) ? obj.s : null;
 }
 
-function parsePalette(
-  raw: unknown,
-): StagePaletteEntry[] | { reason: string } {
+function parsePalette(raw: unknown): StagePaletteEntry[] | { reason: string } {
   if (!Array.isArray(raw)) return { reason: "parts must be an array" };
   if (raw.length === 0) return { reason: "open needs at least one part" };
   if (raw.length > STAGE_LIMITS.maxParts) {
@@ -272,7 +270,9 @@ function containsLoneSurrogate(value: unknown): boolean {
  * The first valid `stage` tag on an event, or null. Malformed tags degrade to
  * plain rendering — never a broken Stage.
  */
-export function parseStageTag(tags: readonly (readonly string[])[]): StageTag | null {
+export function parseStageTag(
+  tags: readonly (readonly string[])[],
+): StageTag | null {
   for (const tag of tags) {
     if (tag?.[0] !== "stage" || typeof tag[1] !== "string") continue;
     const result = parseStagePayload(tag[1]);

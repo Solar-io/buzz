@@ -726,6 +726,19 @@ pub struct SendMessageParams {
     /// client's tappable rendering; empty content falls back to text generated
     /// from the card.
     pub card: Option<String>,
+    /// Agent Stage Mode: one validated `["stage", …]` tag plus (for parts) an
+    /// already-uploaded image. Set only by `buzz stage`, never from argv.
+    pub stage: Option<StageAttachment>,
+}
+
+/// What `buzz stage` hands the send path. The image was uploaded (or its
+/// relay blob verified) before the session opened, so the send path writes
+/// its `imeta` and `![image](url)` line WITHOUT re-uploading — the same bytes
+/// `--file` would have produced.
+pub struct StageAttachment {
+    /// `["stage", "<json>"]`, already validated by `stage_tag::build_stage_tag`.
+    pub tag: Vec<String>,
+    pub media: Option<crate::client::BlobDescriptor>,
 }
 
 /// The message kinds the send-path hold gate and the identity stamp apply
@@ -734,10 +747,49 @@ fn is_agent_message_kind(kind: Option<u16>) -> bool {
     matches!(kind, None | Some(9) | Some(45001) | Some(45003))
 }
 
-pub async fn cmd_send_message(
+/// Stage: write the pre-uploaded image exactly as `--file` writes one (one
+/// `imeta` + a `![image](url)` line) and hand back the stage tag, which the
+/// caller appends after every imeta.
+fn attach_stage_media(
+    stage: Option<StageAttachment>,
+    media_tags: &mut Vec<Vec<String>>,
+    media_content: &mut String,
+) -> Option<Vec<String>> {
+    let stage = stage?;
+    if let Some(desc) = &stage.media {
+        media_tags.push(crate::client::build_imeta_tag(desc));
+        media_content.push_str("\n![image](");
+        media_content.push_str(&desc.url);
+        media_content.push(')');
+    }
+    Some(stage.tag)
+}
+
+/// Body text plus attachment lines. Text-less (image-only stage showing)
+/// content starts at the image line rather than with a blank line.
+fn compose_final_content(content: &str, media_content: &str) -> String {
+    if media_content.is_empty() {
+        content.to_string()
+    } else if content.trim().is_empty() {
+        media_content.trim_start_matches('\n').to_string()
+    } else {
+        format!("{content}{media_content}")
+    }
+}
+
+pub async fn cmd_send_message(client: &BuzzClient, p: SendMessageParams) -> Result<(), CliError> {
+    let output = send_message(client, p).await?;
+    println!("{output}");
+    Ok(())
+}
+
+/// The whole `messages send` path, returning the JSON it would print. Shared
+/// with `buzz stage`, so stage events get the identical hold gate, mention
+/// preflight, tag ordering and session stamp.
+pub(crate) async fn send_message(
     client: &BuzzClient,
     mut p: SendMessageParams,
-) -> Result<(), CliError> {
+) -> Result<serde_json::Value, CliError> {
     // Allow '-' to read content from stdin. This keeps callers from having to
     // jam shell-metacharacter-heavy text (backticks, $vars, etc.) through argv
     // quoting — the source of countless self-inflicted command-substitution
@@ -764,7 +816,14 @@ pub async fn cmd_send_message(
         }
         None => None,
     };
-    if card_tag.is_none() && p.content.trim().is_empty() {
+    if card_tag.is_some() && p.stage.is_some() {
+        return Err(CliError::Usage(
+            "a message carries at most one of --card / a stage tag".into(),
+        ));
+    }
+    // A stage showing may be image-only: its image line is the content.
+    let has_stage_media = p.stage.as_ref().is_some_and(|s| s.media.is_some());
+    if card_tag.is_none() && !has_stage_media && p.content.trim().is_empty() {
         return Err(CliError::Usage(
             "--content is required (or pass --card, which generates it)".into(),
         ));
@@ -856,16 +915,17 @@ pub async fn cmd_send_message(
         media_content.push_str(&desc.url);
         media_content.push(')');
     }
-    let final_content = if media_content.is_empty() {
-        p.content.clone()
-    } else {
-        format!("{}{media_content}", p.content)
-    };
+    let stage_tag = attach_stage_media(p.stage.take(), &mut media_tags, &mut media_content);
+    let final_content = compose_final_content(&p.content, &media_content);
 
     // D-035 card tag rides AFTER imeta attachments and BEFORE the session
     // stamp (send-gate review criterion, CK 9/16) — one validated extra
     // tag, no arbitrary passthrough opened alongside it.
     if let Some(tag) = card_tag {
+        media_tags.push(tag);
+    }
+    // The stage tag takes the card's slot: after imeta, before the stamp.
+    if let Some(tag) = stage_tag {
         media_tags.push(tag);
     }
 
@@ -938,8 +998,7 @@ pub async fn cmd_send_message(
             object.insert("session_slot".into(), serde_json::json!(slot));
         }
     }
-    println!("{output}");
-    Ok(())
+    Ok(output)
 }
 
 pub struct SendDiffParams {
@@ -1258,6 +1317,7 @@ pub async fn dispatch(
                     mentions,
                     supersede,
                     card,
+                    stage: None,
                 },
             )
             .await
@@ -1386,7 +1446,7 @@ pub async fn dispatch(
 
 #[cfg(test)]
 mod tests {
-    use super::{
+    use super::{attach_stage_media, compose_final_content, StageAttachment, 
         channel_id_from_event, classify_claim, cmd_get_thread, event_mention_pubkeys,
         find_root_from_tags, fold_edit_overlays, match_profiles_by_name, merge_message_mentions,
         missing_members, normalize_explicit_mentions, parse_member_pubkeys,
@@ -1427,6 +1487,47 @@ mod tests {
             "created_at": created_at,
             "tags": [["h", "00000000-0000-0000-0000-000000000000"], ["e", target]],
         })
+    }
+
+    #[test]
+    fn stage_attachment_writes_imeta_and_image_line_like_file() {
+        let desc = crate::client::BlobDescriptor {
+            url: "https://r.example/media/abc.png".into(),
+            sha256: "abc".into(),
+            size: 3,
+            mime_type: "image/png".into(),
+            uploaded: 0,
+            dim: None,
+            blurhash: None,
+            thumb: None,
+            duration: None,
+        };
+        let mut tags = Vec::new();
+        let mut media = String::new();
+        let tag = attach_stage_media(
+            Some(StageAttachment {
+                tag: vec!["stage".into(), "{}".into()],
+                media: Some(desc.clone()),
+            }),
+            &mut tags,
+            &mut media,
+        );
+        assert_eq!(tag, Some(vec!["stage".to_string(), "{}".to_string()]));
+        assert_eq!(tags, vec![crate::client::build_imeta_tag(&desc)]);
+        assert_eq!(
+            compose_final_content("Para.", &media),
+            "Para.\n![image](https://r.example/media/abc.png)"
+        );
+        assert_eq!(
+            compose_final_content("", &media),
+            "![image](https://r.example/media/abc.png)"
+        );
+        assert_eq!(compose_final_content("just text", ""), "just text");
+        // No stage: nothing added.
+        let mut none_tags = Vec::new();
+        let mut none_media = String::new();
+        assert!(attach_stage_media(None, &mut none_tags, &mut none_media).is_none());
+        assert!(none_tags.is_empty() && none_media.is_empty());
     }
 
     #[test]

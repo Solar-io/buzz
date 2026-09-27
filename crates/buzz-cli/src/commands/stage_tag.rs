@@ -179,9 +179,11 @@ fn parse_palette(raw: Option<&Value>) -> Result<Vec<PaletteEntry>, CliError> {
             {
                 u.to_string()
             }
-            _ => return Err(usage(format!(
+            _ => {
+                return Err(usage(format!(
                 "parts[{index}].url must be an http(s) URL of at most {STAGE_MAX_URL_CHARS} chars"
-            ))),
+            )))
+            }
         };
         let m = match row.get("m").and_then(Value::as_str) {
             Some(m) if m.starts_with("image/") && utf16_len(m) <= 100 => m.to_string(),

@@ -17,7 +17,10 @@ import {
 function fixture(name) {
   return JSON.parse(
     readFileSync(
-      new URL(`../../../../../test-fixtures/stage-mode/${name}`, import.meta.url),
+      new URL(
+        `../../../../../test-fixtures/stage-mode/${name}`,
+        import.meta.url,
+      ),
       "utf8",
     ),
   );
@@ -61,7 +64,9 @@ test("every accept case parses and rebuilds to its exact canonical", () => {
     assert.equal(name, "stage");
     assert.deepEqual(JSON.parse(json), testCase.canonical, testCase.name);
     // The canonical itself round-trips to the same parsed tag.
-    const again = parseStageTag([["stage", JSON.stringify(testCase.canonical)]]);
+    const again = parseStageTag([
+      ["stage", JSON.stringify(testCase.canonical)],
+    ]);
     assert.deepEqual(again, result.tag, `${testCase.name}: round-trip`);
   }
 });
@@ -76,19 +81,34 @@ test("every reject case is refused, with the shared reason", () => {
       result.reason.includes(testCase.reason),
       `${testCase.name}: ${JSON.stringify(result.reason)} does not contain ${JSON.stringify(testCase.reason)}`,
     );
-    assert.equal(parseStageTag([["stage", rawOf(testCase)]]), null, testCase.name);
+    assert.equal(
+      parseStageTag([["stage", rawOf(testCase)]]),
+      null,
+      testCase.name,
+    );
   }
 });
 
 test("hold is materialized: absent → true, false kept", () => {
   const s = "a".repeat(64);
-  assert.equal(parseStageTag([["stage", `{"v":1,"op":"part","s":"${s}","i":0}`]]).hold, true);
   assert.equal(
-    parseStageTag([["stage", `{"v":1,"op":"part","s":"${s}","i":0,"hold":false}`]]).hold,
+    parseStageTag([["stage", `{"v":1,"op":"part","s":"${s}","i":0}`]]).hold,
+    true,
+  );
+  assert.equal(
+    parseStageTag([
+      ["stage", `{"v":1,"op":"part","s":"${s}","i":0,"hold":false}`],
+    ]).hold,
     false,
   );
 });
 
 test("parseStageTag ignores other tags and returns null with no stage tag", () => {
-  assert.equal(parseStageTag([["imeta", "url x"], ["h", "c"]]), null);
+  assert.equal(
+    parseStageTag([
+      ["imeta", "url x"],
+      ["h", "c"],
+    ]),
+    null,
+  );
 });
