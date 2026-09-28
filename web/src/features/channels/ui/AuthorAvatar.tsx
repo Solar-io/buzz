@@ -26,6 +26,7 @@ export function AuthorAvatar({
   picture,
   size = "md",
   shape = "circle",
+  className,
 }: {
   pubkey: string;
   label: string;
@@ -37,6 +38,8 @@ export function AuthorAvatar({
    * ignored there — the frame is full-width and responsive.
    */
   shape?: "circle" | "portrait";
+  /** Extra classes for the circle variant (merged last, so they can override the box and radius). */
+  className?: string;
 }) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   useEffect(() => {
@@ -91,7 +94,7 @@ export function AuthorAvatar({
       <img
         src={objectUrl}
         alt=""
-        className={cn("rounded-full object-cover", box)}
+        className={cn("rounded-full object-cover", box, className)}
       />
     );
   }
@@ -107,6 +110,7 @@ export function AuthorAvatar({
         "flex select-none items-center justify-center rounded-full font-semibold shadow-xs",
         box,
         isDm ? "dm-identicon" : avatarPaletteClass(label),
+        className,
       )}
     >
       {getInitials(label)}

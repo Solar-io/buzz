@@ -17,11 +17,11 @@ export function InstallAppButton() {
     return null;
   }
   return (
-    <div className="px-3 pb-1">
+    <div>
       <button
         type="button"
         data-testid="install-app-button"
-        className="flex w-full items-center gap-2 rounded-[8px] px-2 py-1.5 text-left text-sm text-sidebar-foreground/70 transition-colors hover:bg-white/5 hover:text-foreground"
+        className="flex h-8 w-full items-center gap-2.5 rounded-[7px] px-2.5 text-left text-sm text-sidebar-foreground/80 transition-colors hover:bg-sidebar-foreground/5 hover:text-sidebar-foreground"
         onClick={install.prompt}
       >
         <Download aria-hidden className="h-4 w-4 shrink-0" />

@@ -3,27 +3,28 @@ import { cn } from "@/shared/lib/cn";
 
 /** Props for {@link DmTimerPill}. */
 export interface DmTimerPillProps {
-  /** Turn start in unix seconds — also seeds the pulse phase. */
+  /** Turn start in unix seconds. */
   startedAt: number;
   /** Current time in unix seconds. */
   now: number;
-  /** Inverts the pill on the selected row. */
-  selected: boolean;
+  /** Selected rows inherit the active row's colour, muted by opacity. */
+  selected?: boolean;
 }
 
 /**
- * DM-list timer pill (dm-list-spec.md §6): 15px fully-rounded pill,
- * ~9% accent background, accent text; the whole element pulses
- * 0.8 → 1.0 → 0.8 with a phase tied to its own countdown (negative
- * animation-delay), and inverts on the selected row.
+ * The DM row's working time. Left-nav redesign (2026-09-28): plain grey 11px
+ * text, no pill, no pulse — the row was too loud with a tinted pill beside
+ * the accent unread badge. The name is kept so the call sites and the
+ * dm-list-spec references still line up.
  */
 export function DmTimerPill({ startedAt, now, selected }: DmTimerPillProps) {
-  const period = 2.4;
-  const elapsed = Math.max(0, now - startedAt);
   return (
     <span
-      className={cn("dm-timer-pill", selected && "dm-timer-pill-selected")}
-      style={{ animationDelay: `-${(elapsed % period).toFixed(2)}s` }}
+      data-testid="dm-row-time"
+      className={cn(
+        "shrink-0 text-2xs font-normal tabular-nums",
+        selected ? "opacity-60" : "text-sidebar-foreground/50",
+      )}
     >
       {formatElapsed(startedAt, now)}
     </span>

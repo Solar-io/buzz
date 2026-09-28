@@ -33,7 +33,9 @@ export function formatResetDay(iso: string, timeZone?: string): string {
       hour: "numeric",
       hour12: true,
       timeZone,
-    }).formatToParts(new Date(Math.round(Date.parse(iso) / 3_600_000) * 3_600_000));
+    }).formatToParts(
+      new Date(Math.round(Date.parse(iso) / 3_600_000) * 3_600_000),
+    );
     const part = (type: string) =>
       parts.find((entry) => entry.type === type)?.value ?? "";
     return `${part("weekday")} ${part("hour")} ${part("dayPeriod")}`.trim();
@@ -60,39 +62,38 @@ function worstAccount(pace: Pace): PaceAccount | undefined {
   return pace.accounts.find((account) => account.status === pace.status);
 }
 
-/** Headline, e.g. "On pace · next reset Tue 8 AM (A)". */
-export function headlineFor(
-  pace: Pace,
-  timeZone?: string,
-  now: number = Date.now(),
-): string {
+/**
+ * Short headline for the footer strip, e.g. "A runs out before reset" or
+ * "On pace". The next reset moved into the strip's expanded details
+ * ({@link nextResetLabel}) in the left-nav redesign.
+ */
+export function headlineFor(pace: Pace, now: number = Date.now()): string {
   const worst = worstAccount(pace);
   const id = worst?.id ?? "An account";
-  let lead: string;
   switch (pace.status) {
     case "ok":
-      lead = "On pace";
-      break;
+      return "On pace";
     case "warn":
-      lead = `${id} would run out before its reset`;
-      break;
-    case "critical":
+      return `${id} runs out before reset`;
+    case "critical": {
       if (worst && worst.usedFraction !== null && worst.usedFraction >= 1) {
-        lead = `${id} is out`;
-      } else {
-        const eta = worst?.etaFullAt
-          ? formatCountdown(worst.etaFullAt, now).replace(/^in /, "")
-          : "";
-        lead = eta ? `${id} runs out in ~${eta}` : `${id} is about to run out`;
+        return `${id} is out`;
       }
-      break;
+      const eta = worst?.etaFullAt
+        ? formatCountdown(worst.etaFullAt, now).replace(/^in /, "")
+        : "";
+      return eta ? `${id} runs out in ~${eta}` : `${id} is about to run out`;
+    }
     default:
-      lead = "Pace unknown";
+      return "Pace unknown";
   }
-  if (!pace.nextReset) return lead;
+}
+
+/** "Tue 8 AM (A)" for the details' Next reset row; "" when unknown. */
+export function nextResetLabel(pace: Pace, timeZone?: string): string {
+  if (!pace.nextReset) return "";
   const day = formatResetDay(pace.nextReset.resetsAt, timeZone);
-  if (!day) return lead;
-  return `${lead} · next reset ${day} (${pace.nextReset.account})`;
+  return day ? `${day} (${pace.nextReset.account})` : "";
 }
 
 /** Why an account has no number — never "0%". */

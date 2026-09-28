@@ -93,14 +93,30 @@ async function render(result) {
 // Fixed clock: 2026-09-28T18:48Z (A resets in 18.2h, B in ~73h).
 const NOW = Date.parse("2026-09-28T18:48:00Z");
 
-test("ok: headline, two bars, tick at week-elapsed, headroom, hub link", async () => {
-  const { container, root } = await render(pace({}));
-  assert.equal(
-    container.querySelector('[data-testid="pace-headline"]').textContent,
-    "On pace · next reset Tue 8 AM (A)",
+const q = (container, testid) =>
+  container.querySelector(`[data-testid="${testid}"]`);
+
+async function expand(container) {
+  await act(async () => {
+    q(container, "pace-toggle").dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true }),
+    );
+  });
+}
+
+function details(container) {
+  return [...container.querySelectorAll('[data-testid="pace-detail"]')].map(
+    (row) => [...row.children].map((cell) => cell.textContent).join(" = "),
   );
-  const bars = container.querySelectorAll('[data-testid="pace-bar"]');
-  assert.equal(bars.length, 2);
+}
+
+test("ok, collapsed: short headline, A/B bars with percent and tick, no details", async () => {
+  const { container, root } = await render(pace({}));
+  assert.equal(q(container, "pace-headline").textContent, "On pace");
+  assert.equal(
+    container.querySelectorAll('[data-testid="pace-bar"]').length,
+    2,
+  );
   const rowA = container.querySelector('[data-account="A"]');
   assert.equal(
     rowA.querySelector('[data-testid="pace-tick"]').style.left,
@@ -111,20 +127,133 @@ test("ok: headline, two bars, tick at week-elapsed, headroom, hub link", async (
     "92%",
   );
   assert.equal(
-    container.querySelector('[data-testid="pace-secondary"]').textContent,
-    "~1.0 accounts left",
+    rowA.querySelector('[data-testid="pace-percent"]').textContent,
+    "92%",
   );
-  const link = container.querySelector('[data-testid="claude-pace-card"]');
+  const rowB = container.querySelector('[data-account="B"]');
+  assert.equal(
+    rowB.querySelector('[data-testid="pace-percent"]').textContent,
+    "6%",
+  );
+  assert.equal(q(container, "pace-details"), null, "collapsed hides details");
+  assert.equal(q(container, "pace-hub-link"), null);
+  assert.equal(
+    q(container, "pace-toggle").getAttribute("aria-expanded"),
+    "false",
+  );
+  await act(async () => root.unmount());
+});
+
+test("the strip is flat: no card border, no shadow", async () => {
+  const { container, root } = await render(pace({}));
+  const strip = q(container, "claude-pace-card");
+  assert.equal(strip.tagName, "DIV", "the strip is no longer one big link");
+  for (const cls of strip.classList) {
+    assert.doesNotMatch(cls, /^(shadow|border)/, `unexpected ${cls}`);
+  }
+  await act(async () => root.unmount());
+});
+
+test("clicking expands the details and the hub link; clicking again collapses", async () => {
+  const { container, root } = await render(pace({}));
+  await expand(container);
+  assert.equal(
+    q(container, "pace-toggle").getAttribute("aria-expanded"),
+    "true",
+  );
+  assert.deepEqual(details(container), [
+    "A resets = in 18h",
+    "B resets = in 3d",
+    "Next reset = Tue 8 AM (A)",
+    "Accounts left = ~1.0",
+  ]);
+  const link = q(container, "pace-hub-link");
   assert.equal(link.tagName, "A");
   assert.equal(
     link.getAttribute("href"),
     "https://pilot.tailb3d4b8.ts.net:6770",
   );
   assert.equal(link.getAttribute("target"), "_blank");
+  await expand(container);
+  assert.equal(q(container, "pace-details"), null);
   await act(async () => root.unmount());
 });
 
-test("stale B reads 'unknown', never 0%", async () => {
+test("per-account fill colour follows that account's status", async () => {
+  const { container, root } = await render(
+    pace({
+      status: "warn",
+      accounts: [
+        account({ status: "warn", projectedAtReset: 1.03 }),
+        account({
+          id: "B",
+          isDefault: false,
+          usedFraction: 0.06,
+          resetsAt: "2026-10-01T20:00:00Z",
+          elapsedFraction: 0.42,
+          status: "ok",
+        }),
+      ],
+    }),
+  );
+  const fill = (id) =>
+    container.querySelector(`[data-account="${id}"] [data-testid="pace-fill"]`);
+  assert.ok(fill("A").classList.contains("bg-amber-500"), "warn A is amber");
+  assert.ok(
+    fill("B").classList.contains("bg-sidebar-active"),
+    "ok B is accent",
+  );
+  assert.ok(!fill("B").classList.contains("bg-amber-500"));
+  await act(async () => root.unmount());
+});
+
+test("a warn B is amber too: colour is not pinned to the letter", async () => {
+  const { container, root } = await render(
+    pace({
+      status: "warn",
+      accounts: [
+        account({}),
+        account({ id: "B", isDefault: false, status: "critical" }),
+      ],
+    }),
+  );
+  const fill = (id) =>
+    container.querySelector(`[data-account="${id}"] [data-testid="pace-fill"]`);
+  assert.ok(fill("A").classList.contains("bg-sidebar-active"));
+  assert.ok(fill("B").classList.contains("bg-amber-500"));
+  await act(async () => root.unmount());
+});
+
+test("warn: headline is the short 'runs out before reset', in the warn colour", async () => {
+  const { container, root } = await render(
+    pace({
+      status: "warn",
+      accounts: [account({ status: "warn", projectedAtReset: 1.03 })],
+    }),
+  );
+  const headline = q(container, "pace-headline");
+  assert.equal(headline.textContent, "A runs out before reset");
+  assert.ok(headline.classList.contains("text-amber-600"));
+  assert.ok(headline.classList.contains("dark:text-amber-400"));
+  await act(async () => root.unmount());
+});
+
+test("critical keeps its own (red) headline colour", async () => {
+  const { container, root } = await render(
+    pace({
+      status: "critical",
+      accounts: [
+        account({ status: "critical", usedFraction: 1, projectedAtReset: 1 }),
+      ],
+    }),
+  );
+  const headline = q(container, "pace-headline");
+  assert.equal(headline.textContent, "A is out");
+  assert.ok(headline.classList.contains("text-red-600"));
+  await act(async () => root.unmount());
+});
+
+test("stale B reads unknown, never 0%", async () => {
   const { container, root } = await render(
     pace({
       headroomAccounts: 0.08,
@@ -146,48 +275,39 @@ test("stale B reads 'unknown', never 0%", async () => {
     }),
   );
   const rowB = container.querySelector('[data-account="B"]');
-  assert.match(rowB.textContent, /unknown/);
-  assert.equal(
-    rowB.querySelector(".text-2xs").textContent,
-    "B unknown (stale) · resets in 3d",
-  );
-  assert.doesNotMatch(rowB.textContent, /B 0%/);
+  const percent = rowB.querySelector('[data-testid="pace-percent"]');
+  assert.equal(percent.textContent, "?");
+  assert.equal(percent.getAttribute("title"), "unknown (stale)");
+  assert.doesNotMatch(rowB.textContent, /0%/);
   assert.equal(rowB.querySelector('[data-testid="pace-fill"]'), null);
-  assert.equal(
-    container.querySelector('[data-testid="pace-secondary"]').textContent,
-    "~0.1 accounts left +?",
-  );
+  await expand(container);
+  assert.deepEqual(details(container), [
+    "A resets = in 18h",
+    "B resets = unknown (stale) · in 3d",
+    "Next reset = Tue 8 AM (A)",
+    "Accounts left = ~0.1 +?",
+  ]);
   await act(async () => root.unmount());
 });
 
-test("warn: headline says who would run out, in the warn colour", async () => {
-  const { container, root } = await render(
-    pace({
-      status: "warn",
-      accounts: [account({ status: "warn", projectedAtReset: 1.03 })],
-    }),
-  );
-  const headline = container.querySelector('[data-testid="pace-headline"]');
-  assert.match(headline.textContent, /A would run out/);
-  assert.ok(headline.classList.contains("text-amber-600"));
-  await act(async () => root.unmount());
-});
-
-test("bad dates from the hub render the card without throwing", async () => {
+test("bad dates from the hub render the strip without throwing", async () => {
   const { container, root } = await render(
     pace({
       nextReset: { account: "A", resetsAt: "not-a-date" },
       accounts: [account({ resetsAt: "garbage" })],
     }),
   );
+  assert.equal(q(container, "pace-headline").textContent, "On pace");
   assert.equal(
-    container.querySelector('[data-testid="pace-headline"]').textContent,
-    "On pace",
+    container.querySelector('[data-account="A"] [data-testid="pace-percent"]')
+      .textContent,
+    "92%",
   );
-  assert.equal(
-    container.querySelector('[data-account="A"] .text-2xs').textContent,
-    "A 92%",
-  );
+  await expand(container);
+  assert.deepEqual(details(container), [
+    "A resets = unknown",
+    "Accounts left = ~1.0",
+  ]);
   await act(async () => root.unmount());
 });
 
@@ -201,13 +321,12 @@ test("a failed refresh keeps the last payload, dimmed with 'as of'", async () =>
   await act(async () => {
     document.dispatchEvent(new window.Event("visibilitychange"));
   });
-  const card = container.querySelector('[data-testid="claude-pace-card"]');
-  assert.ok(card, "card still rendered after a failed refresh");
-  assert.ok(card.classList.contains("opacity-60"));
-  assert.match(
-    container.querySelector('[data-testid="pace-secondary"]').textContent,
-    /^~1\.0 accounts left · as of \d\d:\d\d$/,
-  );
+  const strip = q(container, "claude-pace-card");
+  assert.ok(strip, "strip still rendered after a failed refresh");
+  assert.ok(strip.classList.contains("opacity-60"));
+  await expand(container);
+  const asOf = details(container).find((row) => row.startsWith("As of"));
+  assert.match(asOf, /^As of = \d\d:\d\d$/);
   await act(async () => root.unmount());
 });
 

@@ -95,11 +95,11 @@ export function DmNavRow({
       type="button"
       data-active={selected ? "true" : "false"}
       className={cn(
-        // dm-list-spec.md §3: 32px rows, 8px-radius highlight inset 6px,
-        // 24px avatar at 14px (8px inside the highlight), 8px avatar→label
-        // gap, 4px badge inset on the right.
-        "flex h-8 w-full items-center gap-2 rounded-[8px] pl-2 pr-1 text-left transition-colors",
-        "hover:bg-white/5",
+        // Left-nav redesign (2026-09-28): the nav-row recipe — 32px, 7px
+        // radius, 10px gap, padding 0 8px 0 10px — with a 22px avatar in the
+        // icon slot.
+        "flex h-8 w-full items-center gap-2.5 rounded-[7px] pr-2 pl-2.5 text-left transition-colors",
+        "hover:bg-sidebar-foreground/5",
         // §5: flat solid accent fill, no ring, contrasting label. The class
         // resolves to that same fill unless the Prominent active tab
         // preference is on (shared/styles/globals.css).
@@ -119,51 +119,48 @@ export function DmNavRow({
             label={avatarLabel}
             picture={profiles.get(avatarPubkey)?.avatar}
             size="dm"
+            // 22px rounded square (6px radius) per the left-nav redesign.
+            className="size-5.5 rounded-[6px]"
           />
         )}
-        {/* Presence dot at the avatar's 45° bottom-right, ringed in the page
-            background (cut-out), 1:1 rows only.
-            12px, not the dm-list spec's 6px. The ring is a cut-out on every
-            side, so the original 6px dot with a 1.5px ring showed roughly 3px
-            of actual colour — reported as "barely viewable", and the
-            agent-live dot is the one people look for. 12px with a 2px ring
-            leaves 8px. Desktop's own bot presence dot is 18px, so 6px was
-            never the right parity target. */}
+        {/* Presence dot at the avatar's bottom-right, ringed in the sidebar
+            ground (cut-out), 1:1 rows only. Left-nav redesign: 9px with a
+            2px ring, sized to the 22px square avatar. */}
         {others.length <= 1 && presence && (
           <span
             title={presence.status}
             className={cn(
-              "absolute -bottom-[2px] -right-[2px] h-3 w-3 rounded-full border-2 border-sidebar",
+              "absolute -bottom-[2px] -right-[2px] size-2.25 rounded-full border-2 border-sidebar",
               presenceDotClass(presence.status),
             )}
           />
         )}
       </span>
-      <span
-        className={cn(
-          "min-w-0 flex-1 truncate text-sm",
-          // Read / unread / selected, from the sidebar tokens rather than
-          // the sampled literals they were pinned to.
-          selected
-            ? "buzz-sidebar-active-label"
-            : unread
-              ? "font-semibold text-sidebar-foreground"
-              : "font-normal text-sidebar-foreground/70",
-        )}
-      >
-        {name}
-        {/* Focus token rides the name line, inline inside the same
-            truncating span: the name keeps its left position and the badge /
-            timer pill are shrink-0 siblings, so the only thing a narrow row
-            can ever clip is the END of this combined line — never the pill
-            or badge. text-2xs matches the row's existing meta-text size
-            (unread badge, identicon), so the token reads as metadata rather
-            than competing with the name. Text-only: no emoji, no age. */}
+      <span className="flex min-w-0 flex-1 items-baseline gap-1.5 overflow-hidden">
+        <span
+          className={cn(
+            "max-w-full flex-none truncate text-sm",
+            // Read / unread / selected, from the sidebar tokens rather than
+            // the sampled literals they were pinned to.
+            selected
+              ? "buzz-sidebar-active-label"
+              : unread
+                ? "font-semibold text-sidebar-foreground"
+                : "font-normal text-sidebar-foreground/80",
+          )}
+        >
+          {name}
+        </span>
+        {/* Status snippet (focus token): grey 12px, and the part of the row
+            that truncates — the name keeps its width, and the time / badge
+            are shrink-0 siblings, so a narrow row clips only this snippet.
+            Text-only: no emoji, no age. */}
         {focus !== null && (
           <span
+            data-testid="dm-row-status"
             title="Current project focus (self-reported status)"
             className={cn(
-              "ml-1.5 text-2xs font-normal",
+              "min-w-0 truncate text-xs font-normal",
               // Selected rows: INHERIT the active row's color (set by
               // .buzz-sidebar-active-row from the theme tokens) and mute with
               // opacity — correct on both surfaces the preference can produce
@@ -179,7 +176,7 @@ export function DmNavRow({
         )}
       </span>
       {(active || unread) && (
-        <span className="flex shrink-0 items-center gap-2">
+        <span className="flex shrink-0 items-center gap-2.5">
           {active && (
             <DmTimerPill
               startedAt={
@@ -189,20 +186,20 @@ export function DmNavRow({
               selected={selected}
             />
           )}
-          {/* §7: 20px badge; the reference shows badge and pill together —
-              an unread row keeps its badge even while the agent works.
-              §6: the pill's right edge stays fixed whether or not a badge
-              is present — the 20px slot always reserves it. */}
-          {unread ? (
-            <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-sidebar-active px-1 text-2xs font-semibold leading-none tabular-nums text-sidebar-active-foreground">
+          {/* 18px accent pill; an unread row keeps its badge even while the
+              agent works. No reserved slot when read — the time sits flush
+              right, as in the redesign. */}
+          {unread && (
+            <span
+              data-testid="dm-row-badge"
+              className="flex h-4.5 min-w-4.5 shrink-0 items-center justify-center rounded-full bg-sidebar-active px-[5px] text-2xs font-semibold leading-none tabular-nums text-sidebar-active-foreground"
+            >
               {unreadCount != null && unreadCount > 0
                 ? unreadCount > 99
                   ? "99+"
                   : unreadCount
                 : ""}
             </span>
-          ) : (
-            <span className="size-5 shrink-0" aria-hidden />
           )}
         </span>
       )}

@@ -14,6 +14,9 @@ export default {
         "2xs": "calc(var(--buzz-type-rem) * 0.6875)", // 11px at 16px type rem
         "3xs": "calc(var(--buzz-type-rem) * 0.5)", // 8px at 16px type rem
         badge: "calc(var(--buzz-type-rem) * 0.625)", // 10px at 16px type rem
+        // 13px at 16px type rem — sidebar secondary rows (left-nav redesign
+        // "N more" row), between text-xs (12) and text-sm (14).
+        "sidebar-meta": "calc(var(--buzz-type-rem) * 0.8125)",
         // Shared channel, DM, thread, and composer type. Variables keep app-wide
         // font size and keyboard zoom consistent without branching components.
         message: [

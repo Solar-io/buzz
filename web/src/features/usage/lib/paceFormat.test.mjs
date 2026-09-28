@@ -56,7 +56,7 @@ test("headlineFor critical on an exhausted account says it is out", () => {
       },
     ],
   };
-  assert.equal(headlineFor(pace, "UTC", NOW), "A is out");
+  assert.equal(headlineFor(pace, NOW), "A is out");
 });
 
 test("headlineFor critical names the account and its ETA", () => {
@@ -82,5 +82,5 @@ test("headlineFor critical names the account and its ETA", () => {
       },
     ],
   };
-  assert.equal(headlineFor(pace, "UTC", NOW), "A runs out in ~3h");
+  assert.equal(headlineFor(pace, NOW), "A runs out in ~3h");
 });

@@ -29,13 +29,6 @@ const rules = [
 // them off that spec silently, so they are held here to be revisited
 // deliberately with the spec in hand, together with the sampled colours.
 const overrides = new Set([
-  // src/features/sidebar/ui/ChannelSidebar.tsx:158 — ⌘K hint kbd chip.
-  "src/features/sidebar/ui/ChannelSidebar.tsx:text-[10px]",
-  // src/features/sidebar/ui/ChannelSidebar.tsx:223,247 — section labels,
-  // paired with the sampled `text-[#8E96B0]`.
-  "src/features/sidebar/ui/ChannelSidebar.tsx:text-[13px]",
-  // src/features/sidebar/ui/SectionHeader.tsx:42 — same section-label recipe.
-  "src/features/sidebar/ui/SectionHeader.tsx:text-[13px]",
   // src/features/channels/ui/ChannelTimeline.tsx:156,158 — avatar initials
   // sized to their disc; :615,619 — broadcast tag and event-id chip.
   "src/features/channels/ui/ChannelTimeline.tsx:text-[10px]",

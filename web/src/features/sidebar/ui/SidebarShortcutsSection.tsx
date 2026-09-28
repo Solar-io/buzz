@@ -15,7 +15,7 @@ import { useShortcutBar } from "@/features/shortcut-bar/hooks.ts";
 import { useActiveWebView } from "@/features/webPanels/activeWebStore.ts";
 import { ShortcutDialog } from "@/features/shortcut-bar/ui/ShortcutDialog.tsx";
 import { shortcutMenuItems } from "@/features/sidebar/lib/shortcutMenuItems.ts";
-import { SectionHeader } from "@/features/sidebar/ui/SectionHeader";
+import { SidebarSection } from "@/features/sidebar/ui/SidebarSection";
 import { SidebarNavButton } from "@/features/sidebar/ui/SidebarNavButton";
 
 /**
@@ -37,9 +37,18 @@ import { SidebarNavButton } from "@/features/sidebar/ui/SidebarNavButton";
  */
 export function SidebarShortcutsSection({
   onOpenOverlay,
+  collapsed,
+  onToggleCollapsed,
 }: {
   /** Raise the in-app dock on a given overlay-mode shortcut id. */
   onOpenOverlay: (shortcutId: string) => void;
+  /**
+   * Controlled fold state from the sidebar's per-device prefs (Links
+   * defaults collapsed there). Omitted, the section folds locally and starts
+   * open — the standalone mount the section's own tests use.
+   */
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }) {
   const { shortcuts, blocked, blockedMessage, mutateShortcuts } =
     useShortcutBar();
@@ -100,11 +109,42 @@ export function SidebarShortcutsSection({
     return { ok: false as const, reason: result.message ?? "Could not save." };
   };
 
+  const [localCollapsed, setLocalCollapsed] = useState(false);
+  const isFolded = collapsed ?? localCollapsed;
+
   return (
     <>
-      <SectionHeader
+      <SidebarSection
         label="Links"
-        className="mt-4 mb-[4px]"
+        items={shortcuts}
+        getKey={(shortcut) => shortcut.id}
+        isSelected={(shortcut) => activeLinkId === shortcut.id}
+        collapsed={isFolded}
+        onToggleCollapsed={
+          onToggleCollapsed ?? (() => setLocalCollapsed((value) => !value))
+        }
+        renderItem={(shortcut) => (
+          <SidebarNavButton
+            selected={activeLinkId === shortcut.id}
+            label={shortcut.label}
+            icon={
+              <Globe
+                aria-hidden
+                className="size-3.75 shrink-0 text-sidebar-foreground/60"
+              />
+            }
+            onSelect={() => {
+              if (shortcut.mode === "overlay") {
+                onOpenOverlay(shortcut.id);
+                return;
+              }
+              // A new tab, never this window: the shortcut is a destination,
+              // and navigating away would drop the conversation behind it.
+              window.open(shortcut.url, "_blank", "noopener,noreferrer");
+            }}
+            menuItems={menuItems.get(shortcut.id)}
+          />
+        )}
         onAdd={() => {
           if (blocked) {
             toast.error(
@@ -117,32 +157,6 @@ export function SidebarShortcutsSection({
         }}
         addLabel="Add a link"
       />
-      <ul className="space-y-0.5">
-        {shortcuts.map((shortcut) => (
-          <li key={shortcut.id}>
-            <SidebarNavButton
-              selected={activeLinkId === shortcut.id}
-              label={shortcut.label}
-              icon={
-                <Globe
-                  aria-hidden
-                  className="h-4 w-4 shrink-0 text-sidebar-foreground/70"
-                />
-              }
-              onSelect={() => {
-                if (shortcut.mode === "overlay") {
-                  onOpenOverlay(shortcut.id);
-                  return;
-                }
-                // A new tab, never this window: the shortcut is a destination,
-                // and navigating away would drop the conversation behind it.
-                window.open(shortcut.url, "_blank", "noopener,noreferrer");
-              }}
-              menuItems={menuItems.get(shortcut.id)}
-            />
-          </li>
-        ))}
-      </ul>
       <ShortcutDialog
         editing={editing}
         onConfirm={confirm}

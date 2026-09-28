@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  DEFAULT_COLLAPSED_SECTIONS,
   isCollapsed,
   loadCollapsedSections,
   saveCollapsedSections,
@@ -38,7 +39,9 @@ test("toggleSection does not mutate its input", () => {
 });
 
 test("toggling one section leaves the others alone", () => {
-  const result = toggleSection(["channels", "forums"], "forums");
+  // "dms" defaults open, so expanding it just drops its id. (A
+  // default-collapsed section expands to an open marker; see below.)
+  const result = toggleSection(["channels", "dms"], "dms");
   assert.deepEqual(result, ["channels"]);
 });
 
@@ -90,4 +93,40 @@ test("non-string entries are dropped rather than trusted", () => {
 test("absent storage is tolerated in both directions", () => {
   assert.deepEqual(loadCollapsedSections(undefined), []);
   assert.doesNotThrow(() => saveCollapsedSections(["channels"], undefined));
+});
+
+test("Forums and Links start collapsed for a viewer who never touched them", () => {
+  assert.deepEqual([...DEFAULT_COLLAPSED_SECTIONS].sort(), ["forums", "links"]);
+  assert.equal(isCollapsed([], "forums"), true);
+  assert.equal(isCollapsed([], "links"), true);
+  assert.equal(isCollapsed([], "channels"), false);
+  assert.equal(isCollapsed([], "dms"), false);
+  assert.equal(isCollapsed([], "starred"), false);
+});
+
+test("opening a default-collapsed section persists as an open marker", () => {
+  const opened = toggleSection([], "forums");
+  assert.deepEqual(opened, ["open:forums"]);
+  assert.equal(isCollapsed(opened, "forums"), false);
+  const closed = toggleSection(opened, "forums");
+  assert.deepEqual(closed, ["forums"]);
+  assert.equal(isCollapsed(closed, "forums"), true);
+  assert.equal(isCollapsed(toggleSection(closed, "forums"), "forums"), false);
+});
+
+test("prefs stored before defaults existed still read the same", () => {
+  // Old shape: a bare id means collapsed. It must stay collapsed, and
+  // toggling it must open it rather than land back on the default.
+  assert.equal(isCollapsed(["forums"], "forums"), true);
+  assert.equal(isCollapsed(["channels"], "channels"), true);
+  assert.equal(
+    isCollapsed(toggleSection(["forums"], "forums"), "forums"),
+    false,
+  );
+});
+
+test("an open marker survives a storage round-trip", () => {
+  const storage = fakeStorage();
+  saveCollapsedSections(toggleSection([], "links"), storage);
+  assert.equal(isCollapsed(loadCollapsedSections(storage), "links"), false);
 });

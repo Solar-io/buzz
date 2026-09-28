@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { Inbox, Search } from "lucide-react";
 import type { Profile } from "@/features/channels/hooks";
 import type { RelaySessionStatus } from "@/shared/api/relay-session";
@@ -27,7 +27,11 @@ import {
   toggleSection,
   type CollapsedSections,
 } from "@/features/sidebar/lib/collapsedSections.ts";
-import { SectionHeader } from "@/features/sidebar/ui/SectionHeader";
+import {
+  SIDEBAR_LIST_OPTIONS,
+  sortUnreadFirst,
+} from "@/features/sidebar/lib/sectionList.ts";
+import { SidebarSection } from "@/features/sidebar/ui/SidebarSection";
 import { SidebarNavButton } from "@/features/sidebar/ui/SidebarNavButton";
 import { SidebarShortcutsSection } from "@/features/sidebar/ui/SidebarShortcutsSection";
 import { RelayConnectionCard } from "@/features/sidebar/ui/RelayConnectionCard";
@@ -215,19 +219,91 @@ export function ChannelSidebar({
   const rowUnreadCount = (channel: ChannelSummary) =>
     readState.unreadCounts.get(channel.id) ?? null;
 
+  const channelSelected = (channel: ChannelSummary) =>
+    channel.id === selectedId;
+  // DM rows keep their own activity feed and stay on lastMessage logic. Own
+  // messages (e.g. sent from another device) never dot your row — parity
+  // with channel rows, whose channelUnreadSignal ignores self-authored
+  // activity.
+  const dmUnread = ({ channel, lastMessage }: DmSummary) =>
+    lastMessage && lastMessage.authorPubkey !== dmIdentity.selfPubkey
+      ? isUnread(readState.read, channel.id, lastMessage.created_at)
+      : false;
+  // Unread channels float to the top of Channels (SIDEBAR_LIST_OPTIONS);
+  // the incoming order is kept within each group.
+  const channelRows = SIDEBAR_LIST_OPTIONS.unreadFirst
+    ? sortUnreadFirst(lists.unstarred, rowUnread)
+    : lists.unstarred;
+
+  const renderChannel =
+    (glyph: (channel: ChannelSummary) => ReactNode) =>
+    (channel: ChannelSummary) => (
+      <SidebarNavButton
+        selected={channel.id === selectedId}
+        label={channel.name}
+        icon={glyph(channel)}
+        unread={rowUnread(channel)}
+        unreadCount={rowUnreadCount(channel)}
+        muted={isMuted(readState.prefs, channel.id)}
+        onSelect={() => actions.onSelectChannel(channel.id)}
+        menuItems={actions.channelMenuItems(channel)}
+      />
+    );
+  const channelRow = renderChannel((channel) => (
+    <ChannelGlyph isPrivate={channel.isPrivate} />
+  ));
+  const forumRow = renderChannel(() => <ChannelForum />);
+
+  const renderDm = (dm: DmSummary) => {
+    const { channel } = dm;
+    // The row's "about" agent: first non-self participant (its avatar/pulse
+    // pubkey — DmNavRow's `others[0]` picks the same one; dedupe never moves
+    // the FIRST non-self entry), falling back to participants[0] for a
+    // self-only DM.
+    const partnerPubkey =
+      channel.participantPubkeys.find((pk) => pk !== dmIdentity.selfPubkey) ??
+      channel.participantPubkeys[0] ??
+      "";
+    return (
+      <DmNavRow
+        selected={channel.id === selectedId}
+        channelId={channel.id}
+        lastSeenAt={readState.read[channel.id] ?? null}
+        unread={dmUnread(dm)}
+        participants={channel.participantPubkeys}
+        selfPubkey={dmIdentity.selfPubkey}
+        profiles={dmIdentity.profiles}
+        status={dmStatuses.get(partnerPubkey) ?? null}
+        presence={channel.participantPubkeys
+          .filter((pk) => pk !== dmIdentity.selfPubkey)
+          .map((pk) => dmIdentity.presence.get(pk))
+          .find((entry) => entry != null)}
+        onSelect={() => actions.onSelectChannel(channel.id)}
+        menuItems={[
+          {
+            label: "Remove from list",
+            danger: true,
+            onSelect: () => actions.onHideDm(channel.id),
+          },
+        ]}
+      />
+    );
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="channel-sidebar">
-      {/* The old header row (the word "Channels", the connection dot, and a
-          Settings link) is gone — Sam, 2026-09-22. Settings still lives in the
-          profile card at the foot of this rail, and the connection state is
-          on the card's own indicator, so nothing became unreachable. */}
-      {/* Desktop-style search field: typing here opens the ⌘K search panel
-          seeded with what was typed. */}
-      <div className="px-2 pb-2 pt-2">
-        <div className="flex items-center gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/40 px-2 py-1.5">
+      {/* Fixed header: the ⌘K search field, then the Inbox row 6px below it.
+          The old header row (the word "Channels", the connection dot, and a
+          Settings link) is gone — Sam, 2026-09-22. Settings still lives in
+          the profile row at the foot of this rail, and the connection state
+          is on its indicator, so nothing became unreachable. */}
+      <div className="flex flex-col px-2.5 pt-3 pb-1.5">
+        {/* Desktop-style search field: typing here opens the ⌘K search
+            panel seeded with what was typed. */}
+        <div className="flex h-8.5 items-center gap-2 rounded-[8px] border border-sidebar-border bg-sidebar-accent/60 pr-2 pl-2.5">
           <Search
             aria-hidden
-            className="h-4 w-4 shrink-0 text-muted-foreground"
+            className="size-3.75 shrink-0 text-sidebar-foreground/60"
           />
           <input
             value={search.query}
@@ -235,203 +311,122 @@ export function ChannelSidebar({
             onFocus={search.onFocus}
             placeholder="Search"
             aria-label="Search messages"
-            className="w-full bg-transparent text-sm outline-hidden placeholder:text-muted-foreground"
+            className="w-full bg-transparent text-sm outline-hidden placeholder:text-sidebar-foreground/60"
           />
-          <kbd className="hidden rounded border border-border px-1 font-sans text-[10px] text-muted-foreground sm:block">
+          <kbd className="hidden rounded-[5px] border border-sidebar-border px-[5px] py-px font-sans text-2xs text-sidebar-foreground/60 sm:block">
             ⌘K
           </kbd>
         </div>
+        {/* Above the sections, like the desktop's primary nav: the inbox is
+            a destination, not one channel among many. */}
+        <div className="mt-1.5">
+          <SidebarNavButton
+            selected={inboxSelected}
+            label="Inbox"
+            icon={<Inbox aria-hidden className="size-4 shrink-0" />}
+            unread={asksCount > 0}
+            unreadCount={asksCount}
+            onSelect={actions.onOpenInbox}
+          />
+        </div>
       </div>
       <RelayConnectionCard status={relayStatus} />
-      <nav className="buzz-sidebar-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-        {/* Above the sections, like the desktop's primary nav: the inbox is a
-            destination, not one channel among many. */}
-        <ul className="mb-2 space-y-0.5">
-          <li>
-            <SidebarNavButton
-              selected={inboxSelected}
-              label="Inbox"
-              icon={<Inbox aria-hidden className="h-4 w-4 shrink-0" />}
-              unread={asksCount > 0}
-              unreadCount={asksCount}
-              onSelect={actions.onOpenInbox}
-            />
-          </li>
-        </ul>
+      {/* The only scrolling region: the footer below is a sibling, so the
+          list scrolls above it and never under it. */}
+      <nav className="buzz-sidebar-scrollbar flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-2.5 pt-1 pb-3">
         {channelCount === 0 && (
-          <p className="px-2 py-4 text-sm text-muted-foreground">
+          <p className="px-2 py-4 text-sm text-sidebar-foreground/60">
             {connected
               ? "No channels visible yet."
               : "Connecting to the relay…"}
           </p>
         )}
         {lists.starred.length > 0 && (
-          <>
-            <SectionHeader label="Starred" />
-            <ul className="space-y-0.5">
-              {lists.starred.map((channel) => (
-                <li key={channel.id}>
-                  <SidebarNavButton
-                    selected={channel.id === selectedId}
-                    label={channel.name}
-                    icon={<ChannelGlyph isPrivate={channel.isPrivate} />}
-                    unread={rowUnread(channel)}
-                    unreadCount={rowUnreadCount(channel)}
-                    muted={isMuted(readState.prefs, channel.id)}
-                    onSelect={() => actions.onSelectChannel(channel.id)}
-                    menuItems={actions.channelMenuItems(channel)}
-                  />
-                </li>
-              ))}
-            </ul>
-          </>
+          // Not in the redesign; kept, with the same section treatment.
+          <SidebarSection
+            label="Starred"
+            items={lists.starred}
+            getKey={(channel) => channel.id}
+            renderItem={channelRow}
+            isSelected={channelSelected}
+            isUnread={rowUnread}
+            collapsed={isCollapsed(collapsed, "starred")}
+            onToggleCollapsed={() => toggle("starred")}
+          />
         )}
-        <SectionHeader
+        <SidebarSection
           label="Channels"
-          className={lists.starred.length > 0 ? "mt-4" : undefined}
-          onAdd={() => dialogs.onNewChannelOpenChange(true)}
-          addLabel="New channel"
-          collapsible
+          items={channelRows}
+          getKey={(channel) => channel.id}
+          renderItem={channelRow}
+          isSelected={channelSelected}
+          isUnread={rowUnread}
           collapsed={isCollapsed(collapsed, "channels")}
           onToggleCollapsed={() => toggle("channels")}
-          itemCount={lists.unstarred.length}
-        />
-        <NewChannelDialog
-          open={dialogs.newChannelOpen}
-          onOpenChange={dialogs.onNewChannelOpenChange}
-          onCreated={actions.onChannelCreated}
-        />
-        {!isCollapsed(collapsed, "channels") && (
-          <ul className="space-y-0.5">
-            {lists.unstarred.map((channel) => (
-              <li key={channel.id}>
-                <SidebarNavButton
-                  selected={channel.id === selectedId}
-                  label={channel.name}
-                  icon={<ChannelGlyph isPrivate={channel.isPrivate} />}
-                  unread={rowUnread(channel)}
-                  unreadCount={rowUnreadCount(channel)}
-                  muted={isMuted(readState.prefs, channel.id)}
-                  onSelect={() => actions.onSelectChannel(channel.id)}
-                  menuItems={actions.channelMenuItems(channel)}
-                />
-              </li>
-            ))}
-          </ul>
-        )}
-        {lists.forums.length > 0 && (
-          <>
-            <p className="mt-4 mb-[4px] flex h-8 items-center pl-[6px] pr-2 text-[13px] font-medium normal-case tracking-normal text-sidebar-foreground/60">
-              Forums
-            </p>
-            <ul className="space-y-0.5">
-              {lists.forums.map((channel) => (
-                <li key={channel.id}>
-                  <SidebarNavButton
-                    selected={channel.id === selectedId}
-                    label={channel.name}
-                    icon={<ChannelForum />}
-                    unread={rowUnread(channel)}
-                    unreadCount={rowUnreadCount(channel)}
-                    muted={isMuted(readState.prefs, channel.id)}
-                    onSelect={() => actions.onSelectChannel(channel.id)}
-                    menuItems={actions.channelMenuItems(channel)}
-                  />
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-        {/* Directly below Forums, and always rendered — storage (encrypted
-            relay blob vs this device's localStorage) follows the signer. */}
-        <SidebarShortcutsSection
-          onOpenOverlay={actions.onOpenShortcutOverlay}
-        />
-        <SectionHeader
+          onAdd={() => dialogs.onNewChannelOpenChange(true)}
+          addLabel="New channel"
+        >
+          <NewChannelDialog
+            open={dialogs.newChannelOpen}
+            onOpenChange={dialogs.onNewChannelOpenChange}
+            onCreated={actions.onChannelCreated}
+          />
+        </SidebarSection>
+        <SidebarSection
           label="Direct messages"
-          variant="dm"
-          className="mt-4 mb-[4px]"
-          onAdd={() => dialogs.onNewDmOpenChange(true)}
-          addLabel="New direct message"
-          collapsible
+          items={lists.visibleDms}
+          getKey={(dm) => dm.channel.id}
+          renderItem={renderDm}
+          isSelected={(dm) => dm.channel.id === selectedId}
+          isUnread={dmUnread}
           collapsed={isCollapsed(collapsed, "dms")}
           onToggleCollapsed={() => toggle("dms")}
-          itemCount={lists.visibleDms.length}
-        />
-        <NewDmDialog
-          open={dialogs.newDmOpen}
-          onOpenChange={dialogs.onNewDmOpenChange}
-          contacts={dmIdentity.contacts}
-          onOpened={actions.onDmOpened}
-        />
-        {lists.dms.length > 0 && lists.visibleDms.length === 0 && (
-          <p className="px-2 py-2 text-xs text-muted-foreground">
-            All DMs hidden — use + to start one.
-          </p>
+          onAdd={() => dialogs.onNewDmOpenChange(true)}
+          addLabel="New direct message"
+        >
+          <NewDmDialog
+            open={dialogs.newDmOpen}
+            onOpenChange={dialogs.onNewDmOpenChange}
+            contacts={dmIdentity.contacts}
+            onOpened={actions.onDmOpened}
+          />
+          {lists.dms.length > 0 && lists.visibleDms.length === 0 && (
+            <p className="px-2.5 py-2 text-xs text-sidebar-foreground/60">
+              All DMs hidden — use + to start one.
+            </p>
+          )}
+        </SidebarSection>
+        {lists.forums.length > 0 && (
+          <SidebarSection
+            label="Forums"
+            items={lists.forums}
+            getKey={(channel) => channel.id}
+            renderItem={forumRow}
+            isSelected={channelSelected}
+            isUnread={rowUnread}
+            collapsed={isCollapsed(collapsed, "forums")}
+            onToggleCollapsed={() => toggle("forums")}
+          />
         )}
-        {!isCollapsed(collapsed, "dms") && lists.visibleDms.length > 0 && (
-          <ul className="-mx-0.5 space-y-1">
-            {lists.visibleDms.map(({ channel, lastMessage }) => {
-              // The row's "about" agent: first non-self participant (its
-              // avatar/pulse pubkey — DmNavRow's `others[0]` picks the same
-              // one; dedupe never moves the FIRST non-self entry), falling
-              // back to participants[0] for a self-only DM.
-              const partnerPubkey =
-                channel.participantPubkeys.find(
-                  (pk) => pk !== dmIdentity.selfPubkey,
-                ) ??
-                channel.participantPubkeys[0] ??
-                "";
-              return (
-                <li key={channel.id}>
-                  <DmNavRow
-                    selected={channel.id === selectedId}
-                    channelId={channel.id}
-                    lastSeenAt={readState.read[channel.id] ?? null}
-                    unread={
-                      // Own messages (e.g. sent from another device) never
-                      // dot your row — parity with channel rows, whose
-                      // channelUnreadSignal ignores self-authored activity.
-                      lastMessage &&
-                      lastMessage.authorPubkey !== dmIdentity.selfPubkey
-                        ? isUnread(
-                            readState.read,
-                            channel.id,
-                            lastMessage.created_at,
-                          )
-                        : false
-                    }
-                    participants={channel.participantPubkeys}
-                    selfPubkey={dmIdentity.selfPubkey}
-                    profiles={dmIdentity.profiles}
-                    status={dmStatuses.get(partnerPubkey) ?? null}
-                    presence={channel.participantPubkeys
-                      .filter((pk) => pk !== dmIdentity.selfPubkey)
-                      .map((pk) => dmIdentity.presence.get(pk))
-                      .find((entry) => entry != null)}
-                    onSelect={() => actions.onSelectChannel(channel.id)}
-                    menuItems={[
-                      {
-                        label: "Remove from list",
-                        danger: true,
-                        onSelect: () => actions.onHideDm(channel.id),
-                      },
-                    ]}
-                  />
-                </li>
-              );
-            })}
-          </ul>
-        )}
+        {/* Always rendered — storage (encrypted relay blob vs this device's
+            localStorage) follows the signer. Defaults collapsed. */}
+        <SidebarShortcutsSection
+          onOpenOverlay={actions.onOpenShortcutOverlay}
+          collapsed={isCollapsed(collapsed, "links")}
+          onToggleCollapsed={() => toggle("links")}
+        />
       </nav>
-      <ClaudePaceCard />
-      <InstallAppButton />
-      <SidebarProfileCard
-        selfPubkey={dmIdentity.selfPubkey}
-        profiles={dmIdentity.profiles}
-        connected={connected}
-        onOpenFiles={actions.onOpenFiles}
-      />
+      {/* Fixed footer: usage strip above the user row, 1px top border. */}
+      <footer className="flex flex-col gap-1.5 border-t border-sidebar-border px-2.5 pt-2 pb-2.5">
+        <ClaudePaceCard />
+        <InstallAppButton />
+        <SidebarProfileCard
+          selfPubkey={dmIdentity.selfPubkey}
+          profiles={dmIdentity.profiles}
+          connected={connected}
+          onOpenFiles={actions.onOpenFiles}
+        />
+      </footer>
     </div>
   );
 }

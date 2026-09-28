@@ -11,7 +11,7 @@ export function ChannelGlyph({ isPrivate }: ChannelGlyphProps) {
   return (
     <Glyph
       aria-hidden="true"
-      className="h-4 w-4 shrink-0 text-sidebar-foreground/60"
+      className="size-3.75 shrink-0 text-sidebar-foreground/60"
     />
   );
 }
@@ -21,7 +21,7 @@ export function ChannelForum() {
   return (
     <MessageSquareText
       aria-hidden="true"
-      className="h-4 w-4 shrink-0 text-sidebar-foreground/60"
+      className="size-3.75 shrink-0 text-sidebar-foreground/60"
     />
   );
 }

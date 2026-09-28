@@ -72,8 +72,8 @@ export function SidebarNavButton({
       className={cn(
         // Same desktop row recipe as the DM list (SidebarMenuButton h-8
         // text-sm): the sections read as one surface.
-        "group/row flex h-8 w-full items-center gap-2 truncate rounded-[8px] px-2 text-left text-sm transition-colors",
-        "hover:bg-white/5 hover:text-foreground",
+        "group/row flex h-8 w-full items-center gap-2.5 truncate rounded-[7px] pr-2 pl-2.5 text-left text-sm transition-colors",
+        "hover:bg-sidebar-foreground/5 hover:text-sidebar-foreground",
         // `buzz-sidebar-active-row` paints the token-driven selection surface
         // and color — quiet gray by default, solid mauve under the Prominent
         // active tab preference (shared/styles/globals.css).
@@ -94,7 +94,7 @@ export function SidebarNavButton({
             ? "buzz-sidebar-active-label"
             : unread
               ? "font-semibold text-sidebar-foreground"
-              : "font-normal text-sidebar-foreground/70",
+              : "font-normal text-sidebar-foreground/80",
         )}
       >
         {label}
@@ -111,7 +111,7 @@ export function SidebarNavButton({
         // design; the dot below remains the fallback while no count exists.
         <span
           className={cn(
-            "flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-sidebar-active px-1 text-2xs font-semibold leading-none tabular-nums text-sidebar-active-foreground",
+            "flex h-4.5 min-w-4.5 shrink-0 items-center justify-center rounded-full bg-sidebar-active px-[5px] text-2xs font-semibold leading-none tabular-nums text-sidebar-active-foreground",
             !muted && "ml-auto",
           )}
         >
@@ -147,7 +147,7 @@ export function SidebarNavButton({
                 // in layout keeps the anchor rect real. pointer-events
                 // follow the reveal so the invisible trigger is not a click
                 // trap; focus keeps it visible for the keyboard path.
-                "shrink-0 rounded p-0.5 text-xs text-sidebar-foreground/60 hover:bg-white/10",
+                "shrink-0 rounded p-0.5 text-xs text-sidebar-foreground/60 hover:bg-sidebar-foreground/10",
                 "pointer-events-none opacity-0 group-hover/row:pointer-events-auto group-hover/row:opacity-100",
                 "focus-visible:pointer-events-auto focus-visible:opacity-100",
                 !unread && !muted && "ml-auto",

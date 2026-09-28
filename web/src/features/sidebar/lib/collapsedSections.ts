@@ -6,8 +6,9 @@
  * between reach and overview is completely different.
  *
  * Stored as a list of collapsed ids rather than a map of booleans, so a
- * section that has never been touched is simply absent and defaults to open.
- * A new section therefore appears expanded for existing users instead of
+ * section that has never been touched is simply absent and takes its
+ * default (open, unless listed in DEFAULT_COLLAPSED_SECTIONS below). A new
+ * section therefore takes its default for existing users instead of
  * inheriting whatever a stale key happened to hold.
  */
 
@@ -43,19 +44,47 @@ export function saveCollapsedSections(
   }
 }
 
+/**
+ * Sections that start COLLAPSED for a viewer who has never touched them
+ * (left-nav redesign: Forums and Links are secondary). Everything else
+ * defaults open.
+ *
+ * The stored list keeps its shape: a default-open section is collapsed by
+ * its bare id (as before), and a default-collapsed section is opened by an
+ * `open:<id>` marker. Prefs written before defaults existed therefore read
+ * the same — a stored "forums" still means collapsed — and a section added
+ * to this list later folds for existing users only until they open it.
+ */
+export const DEFAULT_COLLAPSED_SECTIONS: readonly string[] = [
+  "forums",
+  "links",
+];
+
+const OPEN_PREFIX = "open:";
+
 export function isCollapsed(
   collapsed: CollapsedSections,
   sectionId: string,
+  defaults: readonly string[] = DEFAULT_COLLAPSED_SECTIONS,
 ): boolean {
-  return collapsed.includes(sectionId);
+  if (collapsed.includes(sectionId)) return true;
+  return (
+    defaults.includes(sectionId) &&
+    !collapsed.includes(`${OPEN_PREFIX}${sectionId}`)
+  );
 }
 
 /** Toggle one section, returning a new list. */
 export function toggleSection(
   collapsed: CollapsedSections,
   sectionId: string,
+  defaults: readonly string[] = DEFAULT_COLLAPSED_SECTIONS,
 ): CollapsedSections {
-  return collapsed.includes(sectionId)
-    ? collapsed.filter((id) => id !== sectionId)
-    : [...collapsed, sectionId];
+  const openMarker = `${OPEN_PREFIX}${sectionId}`;
+  const rest = collapsed.filter((id) => id !== sectionId && id !== openMarker);
+  if (isCollapsed(collapsed, sectionId, defaults)) {
+    // Opening: a default-collapsed section needs the explicit marker.
+    return defaults.includes(sectionId) ? [...rest, openMarker] : rest;
+  }
+  return [...rest, sectionId];
 }

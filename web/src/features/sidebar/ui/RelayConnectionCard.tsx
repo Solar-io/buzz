@@ -104,7 +104,7 @@ export function RelayConnectionCard({ status }: RelayConnectionCardProps) {
     <div
       role="status"
       data-testid="relay-connection-card"
-      className="mx-2 mb-2 rounded-md border border-sidebar-border bg-sidebar-accent/60 p-2.5"
+      className="mx-2.5 mb-2 rounded-md border border-sidebar-border bg-sidebar-accent/60 p-2.5"
     >
       <div className="flex items-start gap-2">
         <WifiOff

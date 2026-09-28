@@ -129,19 +129,20 @@ export function SidebarProfileCard({
   };
 
   return (
-    <div className="border-t border-sidebar-border p-2">
+    // The footer (ChannelSidebar) owns the top border and padding.
+    <div>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <button
             type="button"
             aria-label={`You: ${label}. Open your menu.`}
             className={cn(
-              "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left",
-              "hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+              "flex w-full items-center gap-2.5 rounded-[8px] px-2.5 py-1 text-left",
+              "hover:bg-sidebar-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
             )}
           >
             <span className="relative shrink-0">
-              <Avatar className="size-7">
+              <Avatar className="size-7.5 rounded-[8px]">
                 {profile?.avatar && <AvatarImage src={profile.avatar} alt="" />}
                 <AvatarFallback className="text-2xs">{initials}</AvatarFallback>
               </Avatar>
@@ -151,13 +152,13 @@ export function SidebarProfileCard({
                 className={cn(
                   // Ringed in the sidebar's own ground so the dot reads as a
                   // cutout rather than a sticker, matching the desktop.
-                  "absolute right-0 bottom-0 size-2.5 rounded-full ring-2 ring-sidebar",
+                  "absolute -right-0.5 -bottom-0.5 size-2.75 rounded-full ring-2 ring-sidebar",
                   connected ? "bg-emerald-500" : "bg-sidebar-foreground/40",
                 )}
               />
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium text-sidebar-foreground">
+              <span className="block truncate text-sm leading-tight font-semibold text-sidebar-foreground">
                 {label}
               </span>
               {/* A status the viewer wrote outranks the socket state: it is
@@ -165,17 +166,21 @@ export function SidebarProfileCard({
                   string stays available on the dot's tooltip. */}
               {selfStatus ? (
                 <span
-                  className="block truncate text-2xs text-sidebar-foreground/60"
+                  className="block truncate text-xs leading-tight text-sidebar-foreground/60"
                   data-testid="sidebar-self-status"
                 >
                   {statusLabel(selfStatus)}
                 </span>
               ) : (
-                <span className="block truncate text-2xs text-sidebar-foreground/60">
+                <span className="block truncate text-xs leading-tight text-sidebar-foreground/60">
                   {connected ? "Connected" : "Connecting…"}
                 </span>
               )}
             </span>
+            <Settings
+              aria-hidden
+              className="size-4 shrink-0 text-sidebar-foreground/50"
+            />
           </button>
         </PopoverTrigger>
         <PopoverContent align="start" side="top" className="w-56 p-1">

@@ -15,7 +15,7 @@ export function GroupAvatar({ count, dm }: GroupAvatarProps) {
     // sampled literals (#191926 / #C5CFF2) that ignored the active theme.
     // 11px semibold per the desktop source (text-2xs).
     return (
-      <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-sidebar-accent text-2xs font-semibold leading-none text-sidebar-accent-foreground">
+      <span className="flex size-5.5 shrink-0 items-center justify-center rounded-[6px] bg-sidebar-accent text-2xs font-semibold leading-none text-sidebar-accent-foreground">
         <span className="translate-x-px leading-none">{count}</span>
       </span>
     );
