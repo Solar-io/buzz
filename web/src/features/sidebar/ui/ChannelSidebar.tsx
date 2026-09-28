@@ -33,6 +33,7 @@ import { SidebarShortcutsSection } from "@/features/sidebar/ui/SidebarShortcutsS
 import { RelayConnectionCard } from "@/features/sidebar/ui/RelayConnectionCard";
 import { SidebarProfileCard } from "@/features/sidebar/ui/SidebarProfileCard";
 import { InstallAppButton } from "@/features/sidebar/ui/InstallAppButton";
+import { ClaudePaceCard } from "@/features/usage/ui/ClaudePaceCard";
 import type { SidebarMenuItem } from "@/features/sidebar/lib/sidebarMenuItem";
 
 /** The sidebar's sections, already filtered and sorted by the shell. */
@@ -423,6 +424,7 @@ export function ChannelSidebar({
           </ul>
         )}
       </nav>
+      <ClaudePaceCard />
       <InstallAppButton />
       <SidebarProfileCard
         selfPubkey={dmIdentity.selfPubkey}

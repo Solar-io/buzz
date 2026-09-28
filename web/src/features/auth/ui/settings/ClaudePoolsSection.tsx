@@ -28,8 +28,9 @@ import {
   type ClaudePoolsPayload,
 } from "@/features/agents/lib/claudePools";
 
-/** usage-hub: measured per-account usage and real quota for each pool. */
-export const USAGE_HUB_URL = "https://pilot.tailb3d4b8.ts.net:6770";
+import { USAGE_HUB_URL } from "@/features/usage/lib/usageHub";
+
+export { USAGE_HUB_URL };
 
 const SELECT_CLASS =
   "rounded-md border border-input bg-card px-2 py-1 text-sm disabled:opacity-50";
