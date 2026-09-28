@@ -63,6 +63,38 @@ test("parsePace keeps both valid accounts and leaves unknown usage null", () => 
   });
 });
 
+test("parsePace drops a nextReset whose resetsAt is not a date", () => {
+  const pace = parsePace({
+    ...LIVE_SHAPED,
+    nextReset: { account: "A", resetsAt: "not-a-date" },
+  });
+  assert.ok(pace);
+  assert.equal(pace.nextReset, null);
+  assert.equal(pace.accounts.length, 2);
+});
+
+test("parsePace turns a non-finite usedFraction into null", () => {
+  const [a] = LIVE_SHAPED.accounts;
+  const pace = parsePace({
+    ...LIVE_SHAPED,
+    accounts: [{ ...a, usedFraction: Number.NaN }],
+  });
+  assert.equal(pace.accounts.length, 1);
+  assert.equal(pace.accounts[0].usedFraction, null);
+});
+
+test("parsePace drops an account with an unrecognised status", () => {
+  const [a, b] = LIVE_SHAPED.accounts;
+  const pace = parsePace({
+    ...LIVE_SHAPED,
+    accounts: [a, { ...b, status: "panic" }],
+  });
+  assert.deepEqual(
+    pace.accounts.map((account) => account.id),
+    ["A"],
+  );
+});
+
 test("parsePace rejects a non-v1 payload", () => {
   assert.equal(parsePace({ ...LIVE_SHAPED, v: 2 }), null);
   assert.equal(parsePace(null), null);

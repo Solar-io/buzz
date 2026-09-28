@@ -81,11 +81,17 @@ async function render(result) {
   const root = createRoot(container);
   await act(async () => {
     root.render(
-      React.createElement(mod.ClaudePaceCard, { timeZone: "America/Chicago" }),
+      React.createElement(mod.ClaudePaceCard, {
+        timeZone: "America/Chicago",
+        now: NOW,
+      }),
     );
   });
   return { container, root };
 }
+
+// Fixed clock: 2026-09-28T18:48Z (A resets in 18.2h, B in ~73h).
+const NOW = Date.parse("2026-09-28T18:48:00Z");
 
 test("ok: headline, two bars, tick at week-elapsed, headroom, hub link", async () => {
   const { container, root } = await render(pace({}));
@@ -129,6 +135,7 @@ test("stale B reads 'unknown', never 0%", async () => {
           id: "B",
           isDefault: false,
           state: "stale",
+          resetsAt: "2026-10-01T20:00:00Z",
           usedFraction: null,
           elapsedFraction: null,
           projectedAtReset: null,
@@ -140,6 +147,10 @@ test("stale B reads 'unknown', never 0%", async () => {
   );
   const rowB = container.querySelector('[data-account="B"]');
   assert.match(rowB.textContent, /unknown/);
+  assert.equal(
+    rowB.querySelector(".text-2xs").textContent,
+    "B unknown (stale) · resets in 3d",
+  );
   assert.doesNotMatch(rowB.textContent, /B 0%/);
   assert.equal(rowB.querySelector('[data-testid="pace-fill"]'), null);
   assert.equal(
@@ -159,6 +170,44 @@ test("warn: headline says who would run out, in the warn colour", async () => {
   const headline = container.querySelector('[data-testid="pace-headline"]');
   assert.match(headline.textContent, /A would run out/);
   assert.ok(headline.classList.contains("text-amber-400"));
+  await act(async () => root.unmount());
+});
+
+test("bad dates from the hub render the card without throwing", async () => {
+  const { container, root } = await render(
+    pace({
+      nextReset: { account: "A", resetsAt: "not-a-date" },
+      accounts: [account({ resetsAt: "garbage" })],
+    }),
+  );
+  assert.equal(
+    container.querySelector('[data-testid="pace-headline"]').textContent,
+    "On pace",
+  );
+  assert.equal(
+    container.querySelector('[data-account="A"] .text-2xs').textContent,
+    "A 92%",
+  );
+  await act(async () => root.unmount());
+});
+
+test("a failed refresh keeps the last payload, dimmed with 'as of'", async () => {
+  const { container, root } = await render(pace({}));
+  globalThis.__PACE_TEST_RESULT__ = null;
+  Object.defineProperty(document, "visibilityState", {
+    value: "visible",
+    configurable: true,
+  });
+  await act(async () => {
+    document.dispatchEvent(new window.Event("visibilitychange"));
+  });
+  const card = container.querySelector('[data-testid="claude-pace-card"]');
+  assert.ok(card, "card still rendered after a failed refresh");
+  assert.ok(card.classList.contains("opacity-60"));
+  assert.match(
+    container.querySelector('[data-testid="pace-secondary"]').textContent,
+    /^~1\.0 accounts left · as of \d\d:\d\d$/,
+  );
   await act(async () => root.unmount());
 });
 

@@ -64,6 +64,13 @@ function strOrNull(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+/** ISO timestamp that `Date` can actually parse; anything else is null. */
+function dateOrNull(value: unknown): string | null {
+  return typeof value === "string" && Number.isFinite(Date.parse(value))
+    ? value
+    : null;
+}
+
 function parseAccount(raw: unknown): PaceAccount | null {
   if (!isRecord(raw)) return null;
   if (typeof raw.id !== "string" || raw.id === "") return null;
@@ -74,10 +81,10 @@ function parseAccount(raw: unknown): PaceAccount | null {
     isDefault: raw.isDefault === true,
     state: raw.state as PaceAccountState,
     usedFraction: numOrNull(raw.usedFraction),
-    resetsAt: strOrNull(raw.resetsAt),
+    resetsAt: dateOrNull(raw.resetsAt),
     elapsedFraction: numOrNull(raw.elapsedFraction),
     projectedAtReset: numOrNull(raw.projectedAtReset),
-    etaFullAt: strOrNull(raw.etaFullAt),
+    etaFullAt: dateOrNull(raw.etaFullAt),
     basis: strOrNull(raw.basis),
     status: raw.status as PaceStatus,
   };
@@ -94,15 +101,9 @@ export function parsePace(json: unknown): Pace | null {
     .map(parseAccount)
     .filter((account): account is PaceAccount => account !== null);
   let nextReset: Pace["nextReset"] = null;
-  if (
-    isRecord(json.nextReset) &&
-    typeof json.nextReset.account === "string" &&
-    typeof json.nextReset.resetsAt === "string"
-  ) {
-    nextReset = {
-      account: json.nextReset.account,
-      resetsAt: json.nextReset.resetsAt,
-    };
+  if (isRecord(json.nextReset) && typeof json.nextReset.account === "string") {
+    const resetsAt = dateOrNull(json.nextReset.resetsAt);
+    if (resetsAt) nextReset = { account: json.nextReset.account, resetsAt };
   }
   return {
     v: 1,

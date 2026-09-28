@@ -74,16 +74,19 @@ function AccountRow({ account, now }: { account: PaceAccount; now: number }) {
     account.state === "known" && account.usedFraction !== null
       ? account.usedFraction
       : null;
-  const countdown =
-    used !== null && account.resetsAt
-      ? ` · resets ${formatCountdown(account.resetsAt, now)}`
+  // Every account gets its own countdown, known or not, when the hub gave a
+  // future reset time (an unknown account still resets on schedule).
+  const until =
+    account.resetsAt && Date.parse(account.resetsAt) > now
+      ? formatCountdown(account.resetsAt, now)
       : "";
+  const countdown = until ? ` · resets ${until}` : "";
   return (
     <div data-testid="pace-row" data-account={account.id}>
       <div className="text-2xs text-sidebar-foreground/60">
         {used !== null
           ? `${account.id} ${Math.round(used * 100)}%${countdown}`
-          : `${account.id} ${unknownLabel(account)}`}
+          : `${account.id} ${unknownLabel(account)}${countdown}`}
       </div>
       <div
         data-testid="pace-bar"
@@ -166,7 +169,14 @@ export function ClaudePaceCardView({
 }
 
 /** Sidebar pace card; renders nothing until usage-hub answers. */
-export function ClaudePaceCard({ timeZone }: { timeZone?: string } = {}) {
+export function ClaudePaceCard({
+  timeZone,
+  now,
+}: {
+  /** Test seams; the sidebar mount passes neither. */
+  timeZone?: string;
+  now?: number;
+} = {}) {
   const loaded = usePace();
   if (!loaded) return null;
   return (
@@ -175,6 +185,7 @@ export function ClaudePaceCard({ timeZone }: { timeZone?: string } = {}) {
       asOf={loaded.asOf}
       stale={loaded.stale}
       timeZone={timeZone}
+      now={now}
     />
   );
 }

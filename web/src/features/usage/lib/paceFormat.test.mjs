@@ -21,6 +21,37 @@ test("formatCountdown: minutes, hours, days", () => {
   assert.equal(formatCountdown(at(45 * 60_000), NOW), "in 45m");
 });
 
+test("formatters return '' for unparseable dates instead of throwing", () => {
+  assert.equal(formatResetDay("not-a-date", "America/Chicago"), "");
+  assert.equal(formatCountdown("not-a-date", NOW), "");
+});
+
+test("headlineFor critical on an exhausted account says it is out", () => {
+  const pace = {
+    v: 1,
+    computedAt: "",
+    status: "critical",
+    nextReset: null,
+    headroomAccounts: 0,
+    headroomPartial: false,
+    accounts: [
+      {
+        id: "A",
+        isDefault: true,
+        state: "known",
+        usedFraction: 1,
+        resetsAt: null,
+        elapsedFraction: 0.9,
+        projectedAtReset: 1,
+        etaFullAt: new Date(NOW + 3 * HOUR).toISOString(),
+        basis: "trailing-24h",
+        status: "critical",
+      },
+    ],
+  };
+  assert.equal(headlineFor(pace, "UTC", NOW), "A is out");
+});
+
 test("headlineFor critical names the account and its ETA", () => {
   const pace = {
     v: 1,

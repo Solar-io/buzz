@@ -7,36 +7,52 @@ import type { Pace, PaceAccount } from "./usageHub.ts";
 
 const HOUR_MS = 3_600_000;
 
-/** `<1h` → "in 45m", `<48h` → "in 19h", otherwise "in 4d". */
+/**
+ * `<1h` → "in 45m", `<48h` → "in 19h", otherwise "in 4d". An unparseable
+ * date yields "" — the card must never throw on bad hub data.
+ */
 export function formatCountdown(resetsAt: string, now: number): string {
-  const remaining = Math.max(0, Date.parse(resetsAt) - now);
+  const at = Date.parse(resetsAt);
+  if (!Number.isFinite(at) || !Number.isFinite(now)) return "";
+  const remaining = Math.max(0, at - now);
   if (remaining < HOUR_MS) return `in ${Math.floor(remaining / 60_000)}m`;
   const hours = remaining / HOUR_MS;
   if (hours < 48) return `in ${Math.floor(hours)}h`;
   return `in ${Math.floor(hours / 24)}d`;
 }
 
-/** "Tue 8 AM" in the given zone (viewer's zone when omitted). */
+/**
+ * "Tue 8 AM" in the given zone (viewer's zone when omitted). "" for an
+ * unparseable date or an unknown zone — Intl throws RangeError on both.
+ */
 export function formatResetDay(iso: string, timeZone?: string): string {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    weekday: "short",
-    hour: "numeric",
-    hour12: true,
-    timeZone,
-  }).formatToParts(new Date(iso));
-  const part = (type: string) =>
-    parts.find((entry) => entry.type === type)?.value ?? "";
-  return `${part("weekday")} ${part("hour")} ${part("dayPeriod")}`.trim();
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      weekday: "short",
+      hour: "numeric",
+      hour12: true,
+      timeZone,
+    }).formatToParts(new Date(iso));
+    const part = (type: string) =>
+      parts.find((entry) => entry.type === type)?.value ?? "";
+    return `${part("weekday")} ${part("hour")} ${part("dayPeriod")}`.trim();
+  } catch {
+    return "";
+  }
 }
 
-/** "HH:MM" for the stale "as of" note. */
+/** "HH:MM" for the stale "as of" note; "" if it cannot be formatted. */
 export function formatClock(ms: number, timeZone?: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone,
-  }).format(new Date(ms));
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone,
+    }).format(new Date(ms));
+  } catch {
+    return "";
+  }
 }
 
 function worstAccount(pace: Pace): PaceAccount | undefined {
@@ -62,11 +78,11 @@ export function headlineFor(
     case "critical":
       if (worst && worst.usedFraction !== null && worst.usedFraction >= 1) {
         lead = `${id} is out`;
-      } else if (worst?.etaFullAt) {
-        const eta = formatCountdown(worst.etaFullAt, now).replace(/^in /, "");
-        lead = `${id} runs out in ~${eta}`;
       } else {
-        lead = `${id} is about to run out`;
+        const eta = worst?.etaFullAt
+          ? formatCountdown(worst.etaFullAt, now).replace(/^in /, "")
+          : "";
+        lead = eta ? `${id} runs out in ~${eta}` : `${id} is about to run out`;
       }
       break;
     default:
@@ -74,6 +90,7 @@ export function headlineFor(
   }
   if (!pace.nextReset) return lead;
   const day = formatResetDay(pace.nextReset.resetsAt, timeZone);
+  if (!day) return lead;
   return `${lead} · next reset ${day} (${pace.nextReset.account})`;
 }
 
