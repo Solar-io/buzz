@@ -962,3 +962,28 @@ fn databricks_static_token_error_redacts_echoed_token() {
         "error lost its remediation: {error}"
     );
 }
+
+#[test]
+fn normalize_agent_models_reads_acp_option_name_label() {
+    // Shape emitted by claude-agent-acp 0.79 via `buzz-acp models --json`.
+    let raw = serde_json::json!({
+        "agent": { "name": "@agentclientprotocol/claude-agent-acp", "version": "0.79.0" },
+        "stable": { "configOptions": [{
+            "category": "model", "id": "model", "type": "select", "currentValue": "opus",
+            "options": [
+                { "value": "opus", "name": "Opus 5.5", "description": "Most capable for ambitious work" },
+                { "value": "legacy", "displayName": "Legacy Label" }
+            ]
+        }]},
+        "unstable": null
+    });
+    let response = normalize_agent_models(&raw, None);
+    assert_eq!(response.models.len(), 2);
+    assert_eq!(response.models[0].id, "opus");
+    assert_eq!(response.models[0].name.as_deref(), Some("Opus 5.5"));
+    assert_eq!(
+        response.models[0].description.as_deref(),
+        Some("Most capable for ambitious work")
+    );
+    assert_eq!(response.models[1].name.as_deref(), Some("Legacy Label"));
+}

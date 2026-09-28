@@ -735,13 +735,20 @@ pub(super) fn normalize_agent_models(
                 for o in options {
                     if let Some(value) = o.get("value").and_then(|v| v.as_str()) {
                         if seen_ids.insert(value.to_string()) {
+                            // ACP SessionConfigSelectOption carries the label in
+                            // `name` (claude-agent-acp: value "opus", name "Opus 5.5").
+                            // `displayName` is accepted for older adapters.
                             models.push(AgentModelInfo {
                                 id: value.to_string(),
                                 name: o
-                                    .get("displayName")
+                                    .get("name")
+                                    .or_else(|| o.get("displayName"))
                                     .and_then(|v| v.as_str())
                                     .map(str::to_string),
-                                description: None,
+                                description: o
+                                    .get("description")
+                                    .and_then(|v| v.as_str())
+                                    .map(str::to_string),
                             });
                         }
                     }
