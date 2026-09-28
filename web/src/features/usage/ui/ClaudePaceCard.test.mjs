@@ -169,7 +169,7 @@ test("warn: headline says who would run out, in the warn colour", async () => {
   );
   const headline = container.querySelector('[data-testid="pace-headline"]');
   assert.match(headline.textContent, /A would run out/);
-  assert.ok(headline.classList.contains("text-amber-400"));
+  assert.ok(headline.classList.contains("text-amber-600"));
   await act(async () => root.unmount());
 });
 

@@ -18,16 +18,16 @@ const REFRESH_MS = 5 * 60_000;
 const TIMEOUT_MS = 8_000;
 
 const HEADLINE_CLASS: Record<PaceStatus, string> = {
-  ok: "text-sidebar-foreground/70",
-  warn: "text-amber-400",
-  critical: "text-red-400",
-  unknown: "text-sidebar-foreground/50",
+  ok: "text-sidebar-foreground",
+  warn: "text-amber-600 dark:text-amber-400",
+  critical: "text-red-600 dark:text-red-400",
+  unknown: "text-sidebar-foreground/80",
 };
 
 const FILL_CLASS: Record<PaceStatus, string> = {
-  ok: "bg-sidebar-foreground/50",
-  warn: "bg-amber-400",
-  critical: "bg-red-400",
+  ok: "bg-sidebar-primary",
+  warn: "bg-amber-500",
+  critical: "bg-red-500",
   unknown: "bg-transparent",
 };
 
@@ -83,14 +83,14 @@ function AccountRow({ account, now }: { account: PaceAccount; now: number }) {
   const countdown = until ? ` · resets ${until}` : "";
   return (
     <div data-testid="pace-row" data-account={account.id}>
-      <div className="text-2xs text-sidebar-foreground/60">
+      <div className="text-2xs text-sidebar-foreground/85">
         {used !== null
           ? `${account.id} ${Math.round(used * 100)}%${countdown}`
           : `${account.id} ${unknownLabel(account)}${countdown}`}
       </div>
       <div
         data-testid="pace-bar"
-        className="relative mt-0.5 h-1 w-full rounded-full bg-white/10"
+        className="relative mt-0.5 h-1.5 w-full rounded-full bg-sidebar-foreground/15"
       >
         {used !== null ? (
           <div
@@ -102,7 +102,7 @@ function AccountRow({ account, now }: { account: PaceAccount; now: number }) {
         {used !== null && account.elapsedFraction !== null ? (
           <div
             data-testid="pace-tick"
-            className="absolute -top-0.5 h-2 w-px bg-sidebar-foreground/80"
+            className="absolute -top-0.5 h-2.5 w-0.5 rounded-full bg-sidebar-foreground"
             style={{ left: `${(account.elapsedFraction * 100).toFixed(1)}%` }}
           />
         ) : null}
@@ -132,20 +132,20 @@ export function ClaudePaceCardView({
         }`
       : null;
   return (
-    <div className="px-3 pb-1">
+    <div className="px-2 pb-2 pt-1">
       <a
         href={USAGE_HUB_URL}
         target="_blank"
         rel="noreferrer"
         data-testid="claude-pace-card"
-        className={`block space-y-1 rounded-[8px] px-2 py-1.5 transition-colors hover:bg-white/5 ${
+        className={`block space-y-1.5 rounded-lg border border-sidebar-border bg-sidebar-accent/60 px-3 py-2 shadow-sm transition-colors hover:bg-sidebar-accent ${
           stale ? "opacity-60" : ""
         }`}
       >
         <div
           data-testid="pace-headline"
           data-status={pace.status}
-          className={`text-xs ${HEADLINE_CLASS[pace.status]}`}
+          className={`text-xs font-medium ${HEADLINE_CLASS[pace.status]}`}
         >
           {headlineFor(pace, timeZone, now)}
         </div>
@@ -155,7 +155,7 @@ export function ClaudePaceCardView({
         {headroom || stale ? (
           <div
             data-testid="pace-secondary"
-            className="text-2xs text-sidebar-foreground/50"
+            className="text-2xs text-sidebar-foreground/70"
           >
             {headroom}
             {stale
