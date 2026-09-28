@@ -1,7 +1,8 @@
 import type { SidebarMenuItem } from "./sidebarMenuItem.ts";
 
 /**
- * The menu a sidebar shortcut row offers: Edit… and Remove.
+ * The menu a sidebar shortcut row offers: the Favorites toggle (when the
+ * sidebar wires favorites), Edit… and Remove.
  *
  * A plain list, like `channelMenuItems` — both the right-click menu and the
  * `⋯` overflow render the same shape. The labels are the shortcut bar's own
@@ -10,8 +11,10 @@ import type { SidebarMenuItem } from "./sidebarMenuItem.ts";
 export function shortcutMenuItems(actions: {
   onEdit: () => void;
   onRemove: () => void;
+  favorite?: SidebarMenuItem;
 }): SidebarMenuItem[] {
   return [
+    ...(actions.favorite ? [actions.favorite] : []),
     { label: "Edit…", onSelect: actions.onEdit },
     { label: "Remove", danger: true, onSelect: actions.onRemove },
   ];

@@ -13,6 +13,7 @@ import {
 } from "@/features/channels/useChannels";
 import {
   loadChannelPrefs,
+  setFavorite,
   type ChannelPrefs,
 } from "@/features/channels/lib/channelPrefs.ts";
 import { sendPresence, usePresence } from "@/features/channels/hooks";
@@ -378,7 +379,7 @@ function ChannelBrowser() {
       ? null
       : `${channelId}:${lastMessageId}`;
 
-  // Viewer-side channel prefs (starred / muted), local like the desktop's DB.
+  // Viewer-side prefs (favorites / muted), local like the desktop's DB.
   const [channelPrefs, setChannelPrefs] = useState<ChannelPrefs>(() =>
     loadChannelPrefs(),
   );
@@ -444,10 +445,6 @@ function ChannelBrowser() {
   // by beforeLoad is validated here, D-025 picks the most recently active DM
   // when nothing was restored, and every selection is remembered.
   const channelIds = useMemo(() => channels.map((c) => c.id), [channels]);
-  const fallbackChannelIds = useMemo(
-    () => [...lists.starred, ...lists.unstarred].map((c) => c.id),
-    [lists.starred, lists.unstarred],
-  );
   const { showSkeleton: landingSkeleton } = useLandingConversation({
     selectedId,
     view,
@@ -456,7 +453,7 @@ function ChannelBrowser() {
     samplingSettled: dmSamplingSettled,
     channelsLoaded,
     visibleDms: lists.visibleDms,
-    fallbackChannelIds,
+    fallbackChannelIds: lists.landingChannelIds,
     hiddenDmIds,
     selfPubkey,
     webViewOpen: web.state.active !== null,
@@ -525,13 +522,7 @@ function ChannelBrowser() {
       inboxSelected={view === "inbox"}
       channelCount={channels.length}
       selectedId={selectedId}
-      lists={{
-        starred: lists.starred,
-        unstarred: lists.unstarred,
-        forums: lists.forums,
-        dms,
-        visibleDms: lists.visibleDms,
-      }}
+      lists={{ ...lists, dms }}
       readState={{
         prefs: channelPrefs,
         read: readState,
@@ -571,6 +562,8 @@ function ChannelBrowser() {
         onChannelCreated,
         onDmOpened,
         onHideDm,
+        onSetFavorite: (ref, on) =>
+          setChannelPrefs((prefs) => setFavorite(prefs, ref, on)),
         onOpenFiles: openFiles,
         onOpenInbox: () =>
           void navigate({ to: "/repos", search: { view: "inbox" } }),

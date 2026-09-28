@@ -3,8 +3,10 @@ import { Inbox, Search } from "lucide-react";
 import type { Profile } from "@/features/channels/hooks";
 import type { RelaySessionStatus } from "@/shared/api/relay-session";
 import {
+  isFavorite,
   isMuted,
   type ChannelPrefs,
+  type FavoriteRef,
 } from "@/features/channels/lib/channelPrefs.ts";
 import {
   isChannelRowUnread,
@@ -33,19 +35,28 @@ import {
 } from "@/features/sidebar/lib/sectionList.ts";
 import { SidebarSection } from "@/features/sidebar/ui/SidebarSection";
 import { SidebarNavButton } from "@/features/sidebar/ui/SidebarNavButton";
-import { SidebarShortcutsSection } from "@/features/sidebar/ui/SidebarShortcutsSection";
+import {
+  SidebarLinksSection,
+  useSidebarLinks,
+} from "@/features/sidebar/ui/SidebarShortcutsSection";
+import { favoriteMenuItem } from "@/features/sidebar/lib/favoriteMenuItem.ts";
+import {
+  sectionSidebar,
+  type FavoriteItem,
+} from "@/features/sidebar/lib/favorites.ts";
 import { RelayConnectionCard } from "@/features/sidebar/ui/RelayConnectionCard";
 import { SidebarProfileCard } from "@/features/sidebar/ui/SidebarProfileCard";
 import { InstallAppButton } from "@/features/sidebar/ui/InstallAppButton";
 import { ClaudePaceCard } from "@/features/usage/ui/ClaudePaceCard";
 import type { SidebarMenuItem } from "@/features/sidebar/lib/sidebarMenuItem";
 
-/** The sidebar's sections, already filtered and sorted by the shell. */
+/**
+ * The sidebar's source lists, already filtered and sorted by the shell.
+ * Favorites are pulled out of them here (`sectionSidebar`).
+ */
 export interface ChannelSidebarLists {
-  /** Channels the viewer starred, ahead of the main list. */
-  starred: ChannelSummary[];
-  /** Everything else in the Channels section. */
-  unstarred: ChannelSummary[];
+  /** Stream channels — Channels, minus favorites. */
+  streams: ChannelSummary[];
   /** Forum-type channels, which get their own section and body. */
   forums: ChannelSummary[];
   /** Every DM, hidden ones included — drives the "all hidden" copy. */
@@ -56,7 +67,7 @@ export interface ChannelSidebarLists {
 
 /** Viewer-side state deciding which rows read as unread. */
 export interface ChannelSidebarReadState {
-  /** Starred / muted prefs; muted rows never show an unread dot. */
+  /** Favorites / muted prefs; muted rows never show an unread dot. */
   prefs: ChannelPrefs;
   /** Per-channel read markers. */
   read: ReadState;
@@ -113,6 +124,8 @@ export interface ChannelSidebarActions {
   onDmOpened: (channelId: string) => void;
   /** Hide a DM from this viewer's list. */
   onHideDm: (channelId: string) => void;
+  /** Add (true) / remove (false) a DM or link favorite — idempotent. */
+  onSetFavorite: (ref: FavoriteRef, favorite: boolean) => void;
   /** Raise the Files overlay. */
   onOpenFiles: () => void;
   /** Open the inbox view. */
@@ -156,7 +169,7 @@ export interface ChannelSidebarProps {
 }
 
 /**
- * The app's left rail: connection state, the ⌘K search field, the starred /
+ * The app's left rail: connection state, the ⌘K search field, the favorites /
  * channel / forum / DM sections, and the Files + Agents footer.
  */
 export function ChannelSidebar({
@@ -200,6 +213,23 @@ export function ChannelSidebar({
   }, [lists.visibleDms, dmIdentity.selfPubkey]);
   const dmStatuses = useUserStatuses(dmPartnerPubkeys);
 
+  const prefs = readState.prefs;
+  const links = useSidebarLinks({
+    onOpenOverlay: actions.onOpenShortcutOverlay,
+    favorites: {
+      isFavorite: (id) => isFavorite(prefs, { kind: "link", id }),
+      set: (id, on) => actions.onSetFavorite({ kind: "link", id }, on),
+    },
+  });
+  // Favorited items leave their home sections for Favorites (add order).
+  const sections = sectionSidebar({
+    streams: lists.streams,
+    forums: lists.forums,
+    dms: lists.visibleDms,
+    shortcuts: links.shortcuts,
+    favorites: prefs.favorites,
+  });
+
   // Unread dot for channel/forum rows: read marker vs the newest
   // sampled MESSAGE (self-authored samples excluded — see
   // channelUnreadSignal), falling back to metadata for unsampled channels.
@@ -232,8 +262,8 @@ export function ChannelSidebar({
   // Unread channels float to the top of Channels (SIDEBAR_LIST_OPTIONS);
   // the incoming order is kept within each group.
   const channelRows = SIDEBAR_LIST_OPTIONS.unreadFirst
-    ? sortUnreadFirst(lists.unstarred, rowUnread)
-    : lists.unstarred;
+    ? sortUnreadFirst(sections.channels, rowUnread)
+    : sections.channels;
 
   const renderChannel =
     (glyph: (channel: ChannelSummary) => ReactNode) =>
@@ -264,6 +294,8 @@ export function ChannelSidebar({
       channel.participantPubkeys.find((pk) => pk !== dmIdentity.selfPubkey) ??
       channel.participantPubkeys[0] ??
       "";
+    const dmRef: FavoriteRef = { kind: "channel", id: channel.id };
+    const dmFavorite = isFavorite(prefs, dmRef);
     return (
       <DmNavRow
         selected={channel.id === selectedId}
@@ -280,6 +312,9 @@ export function ChannelSidebar({
           .find((entry) => entry != null)}
         onSelect={() => actions.onSelectChannel(channel.id)}
         menuItems={[
+          favoriteMenuItem(dmFavorite, () =>
+            actions.onSetFavorite(dmRef, !dmFavorite),
+          ),
           {
             label: "Remove from list",
             danger: true,
@@ -288,6 +323,36 @@ export function ChannelSidebar({
         ]}
       />
     );
+  };
+
+  // A favorite renders the row its home section would (DM rows look like DM
+  // rows, links like links), carrying the same menu with the toggle flipped.
+  const renderFavorite = (item: FavoriteItem) => {
+    switch (item.kind) {
+      case "channel":
+        return channelRow(item.channel);
+      case "forum":
+        return forumRow(item.channel);
+      case "dm":
+        return renderDm(item.dm);
+      case "link":
+        return links.renderLink(item.shortcut);
+    }
+  };
+  const favoriteSelected = (item: FavoriteItem) =>
+    item.kind === "link"
+      ? links.isSelected(item.shortcut)
+      : item.key === selectedId;
+  const favoriteUnread = (item: FavoriteItem) => {
+    switch (item.kind) {
+      case "channel":
+      case "forum":
+        return rowUnread(item.channel);
+      case "dm":
+        return dmUnread(item.dm);
+      case "link":
+        return false;
+    }
   };
 
   return (
@@ -341,17 +406,18 @@ export function ChannelSidebar({
               : "Connecting to the relay…"}
           </p>
         )}
-        {lists.starred.length > 0 && (
-          // Not in the redesign; kept, with the same section treatment.
+        {sections.favorites.length > 0 && (
+          // Channels, forums, DMs and links the viewer pinned, in add order
+          // (never unread-sorted). Replaced the channel-only Starred.
           <SidebarSection
-            label="Starred"
-            items={lists.starred}
-            getKey={(channel) => channel.id}
-            renderItem={channelRow}
-            isSelected={channelSelected}
-            isUnread={rowUnread}
-            collapsed={isCollapsed(collapsed, "starred")}
-            onToggleCollapsed={() => toggle("starred")}
+            label="Favorites"
+            items={sections.favorites}
+            getKey={(item) => item.key}
+            renderItem={renderFavorite}
+            isSelected={favoriteSelected}
+            isUnread={favoriteUnread}
+            collapsed={isCollapsed(collapsed, "favorites")}
+            onToggleCollapsed={() => toggle("favorites")}
           />
         )}
         <SidebarSection
@@ -374,7 +440,7 @@ export function ChannelSidebar({
         </SidebarSection>
         <SidebarSection
           label="Direct messages"
-          items={lists.visibleDms}
+          items={sections.dms}
           getKey={(dm) => dm.channel.id}
           renderItem={renderDm}
           isSelected={(dm) => dm.channel.id === selectedId}
@@ -396,10 +462,10 @@ export function ChannelSidebar({
             </p>
           )}
         </SidebarSection>
-        {lists.forums.length > 0 && (
+        {sections.forums.length > 0 && (
           <SidebarSection
             label="Forums"
-            items={lists.forums}
+            items={sections.forums}
             getKey={(channel) => channel.id}
             renderItem={forumRow}
             isSelected={channelSelected}
@@ -410,8 +476,9 @@ export function ChannelSidebar({
         )}
         {/* Always rendered — storage (encrypted relay blob vs this device's
             localStorage) follows the signer. Defaults collapsed. */}
-        <SidebarShortcutsSection
-          onOpenOverlay={actions.onOpenShortcutOverlay}
+        <SidebarLinksSection
+          links={links}
+          items={sections.links}
           collapsed={isCollapsed(collapsed, "links")}
           onToggleCollapsed={() => toggle("links")}
         />

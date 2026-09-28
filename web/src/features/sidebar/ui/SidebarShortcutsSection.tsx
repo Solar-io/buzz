@@ -1,5 +1,5 @@
 import { Globe } from "lucide-react";
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import type {
@@ -14,17 +14,36 @@ import {
 import { useShortcutBar } from "@/features/shortcut-bar/hooks.ts";
 import { useActiveWebView } from "@/features/webPanels/activeWebStore.ts";
 import { ShortcutDialog } from "@/features/shortcut-bar/ui/ShortcutDialog.tsx";
+import { favoriteMenuItem } from "@/features/sidebar/lib/favoriteMenuItem.ts";
 import { shortcutMenuItems } from "@/features/sidebar/lib/shortcutMenuItems.ts";
 import { SidebarSection } from "@/features/sidebar/ui/SidebarSection";
 import { SidebarNavButton } from "@/features/sidebar/ui/SidebarNavButton";
 
+/** Favorites wiring for link rows; omitted, link menus carry no toggle. */
+export interface SidebarLinkFavorites {
+  isFavorite: (shortcutId: string) => boolean;
+  /** Idempotent: add (true) or remove (false). */
+  set: (shortcutId: string, favorite: boolean) => void;
+}
+
+/** Everything a Links row or section needs — see {@link useSidebarLinks}. */
+export interface SidebarLinks {
+  shortcuts: ShortcutDef[];
+  isSelected: (shortcut: ShortcutDef) => boolean;
+  /** The Links row — also what Favorites renders for a favorited link. */
+  renderLink: (shortcut: ShortcutDef) => ReactNode;
+  onAdd: () => void;
+  /** The add / edit dialog. Render it exactly once. */
+  dialog: ReactNode;
+}
+
 /**
- * The sidebar Links section: one row per channel-independent link, in a
- * section of its own below Forums and visually identical to a channel row.
+ * The Links data, row renderer, menus and add/edit dialog.
  *
- * These were pills in a channel's header bar, stored per channel. They are
- * now one list belonging to no channel, so this section renders wherever the
- * sidebar does — ALWAYS, empty list included, so the + stays discoverable.
+ * A hook rather than section state so the sidebar can render a favorited
+ * link's row in Favorites with the same menu (and the same Edit… dialog) it
+ * has under Links. The data is the shared Links store (`useShortcutBar`), so
+ * one list serves every reader.
  *
  * Storage follows the signer (`useShortcutBar`): the unlocked local key
  * keeps the encrypted relay blob (cross-device sync), everything else
@@ -32,24 +51,15 @@ import { SidebarNavButton } from "@/features/sidebar/ui/SidebarNavButton";
  * this device. The two stores are separate; see `lib/localLinkStore.ts`.
  * A blob this device cannot read still shows, but refuses BLOB writes with
  * a toast rather than silently failing — the local list is unaffected.
- *
- * Self-wiring, like the bar was: the sidebar renders it and hands it nothing.
  */
-export function SidebarShortcutsSection({
+export function useSidebarLinks({
   onOpenOverlay,
-  collapsed,
-  onToggleCollapsed,
+  favorites,
 }: {
   /** Raise the in-app dock on a given overlay-mode shortcut id. */
   onOpenOverlay: (shortcutId: string) => void;
-  /**
-   * Controlled fold state from the sidebar's per-device prefs (Links
-   * defaults collapsed there). Omitted, the section folds locally and starts
-   * open — the standalone mount the section's own tests use.
-   */
-  collapsed?: boolean;
-  onToggleCollapsed?: () => void;
-}) {
+  favorites?: SidebarLinkFavorites;
+}): SidebarLinks {
   const { shortcuts, blocked, blockedMessage, mutateShortcuts } =
     useShortcutBar();
   // The link whose page the web layer is showing reads as the selected row.
@@ -66,6 +76,14 @@ export function SidebarShortcutsSection({
         shortcuts.map((shortcut) => [
           shortcut.id,
           shortcutMenuItems({
+            favorite: favorites
+              ? favoriteMenuItem(favorites.isFavorite(shortcut.id), () =>
+                  favorites.set(
+                    shortcut.id,
+                    !favorites.isFavorite(shortcut.id),
+                  ),
+                )
+              : undefined,
             onEdit: () => {
               if (blocked) {
                 toast.error(
@@ -84,13 +102,17 @@ export function SidebarShortcutsSection({
                   toast.error(
                     result.message ?? "Could not remove the shortcut.",
                   );
+                  return;
                 }
+                // A removed link leaves Favorites too, so a later link that
+                // happens to reuse its id never arrives pre-favorited.
+                favorites?.set(shortcut.id, false);
               });
             },
           }),
         ]),
       ),
-    [shortcuts, blocked, blockedMessage, mutateShortcuts],
+    [shortcuts, blocked, blockedMessage, mutateShortcuts, favorites],
   );
 
   const confirm = async (input: {
@@ -109,60 +131,124 @@ export function SidebarShortcutsSection({
     return { ok: false as const, reason: result.message ?? "Could not save." };
   };
 
-  const [localCollapsed, setLocalCollapsed] = useState(false);
-  const isFolded = collapsed ?? localCollapsed;
-
-  return (
-    <>
-      <SidebarSection
-        label="Links"
-        items={shortcuts}
-        getKey={(shortcut) => shortcut.id}
-        isSelected={(shortcut) => activeLinkId === shortcut.id}
-        collapsed={isFolded}
-        onToggleCollapsed={
-          onToggleCollapsed ?? (() => setLocalCollapsed((value) => !value))
+  const renderLink = (shortcut: ShortcutDef) => (
+    <SidebarNavButton
+      selected={activeLinkId === shortcut.id}
+      label={shortcut.label}
+      icon={
+        <Globe
+          aria-hidden
+          className="size-3.75 shrink-0 text-sidebar-foreground/60"
+        />
+      }
+      onSelect={() => {
+        if (shortcut.mode === "overlay") {
+          onOpenOverlay(shortcut.id);
+          return;
         }
-        renderItem={(shortcut) => (
-          <SidebarNavButton
-            selected={activeLinkId === shortcut.id}
-            label={shortcut.label}
-            icon={
-              <Globe
-                aria-hidden
-                className="size-3.75 shrink-0 text-sidebar-foreground/60"
-              />
-            }
-            onSelect={() => {
-              if (shortcut.mode === "overlay") {
-                onOpenOverlay(shortcut.id);
-                return;
-              }
-              // A new tab, never this window: the shortcut is a destination,
-              // and navigating away would drop the conversation behind it.
-              window.open(shortcut.url, "_blank", "noopener,noreferrer");
-            }}
-            menuItems={menuItems.get(shortcut.id)}
-          />
-        )}
-        onAdd={() => {
-          if (blocked) {
-            toast.error(
-              blockedMessage ?? "Shortcut data unreadable on this device.",
-            );
-            return;
-          }
-          setEditing(null);
-          setDialogOpen(true);
-        }}
-        addLabel="Add a link"
-      />
+        // A new tab, never this window: the shortcut is a destination,
+        // and navigating away would drop the conversation behind it.
+        window.open(shortcut.url, "_blank", "noopener,noreferrer");
+      }}
+      menuItems={menuItems.get(shortcut.id)}
+    />
+  );
+
+  return {
+    shortcuts,
+    isSelected: (shortcut) => activeLinkId === shortcut.id,
+    renderLink,
+    onAdd: () => {
+      if (blocked) {
+        toast.error(
+          blockedMessage ?? "Shortcut data unreadable on this device.",
+        );
+        return;
+      }
+      setEditing(null);
+      setDialogOpen(true);
+    },
+    dialog: (
       <ShortcutDialog
         editing={editing}
         onConfirm={confirm}
         onOpenChange={setDialogOpen}
         open={dialogOpen}
       />
+    ),
+  };
+}
+
+/**
+ * The Links section, given its wiring ({@link useSidebarLinks}) and the rows
+ * to show — the sidebar passes the links NOT in Favorites. Renders the
+ * add/edit dialog, so render this once per `links`.
+ */
+export function SidebarLinksSection({
+  links,
+  items,
+  collapsed,
+  onToggleCollapsed,
+}: {
+  links: SidebarLinks;
+  items: readonly ShortcutDef[];
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
+}) {
+  return (
+    <>
+      <SidebarSection
+        label="Links"
+        items={items}
+        getKey={(shortcut) => shortcut.id}
+        isSelected={links.isSelected}
+        collapsed={collapsed}
+        onToggleCollapsed={onToggleCollapsed}
+        renderItem={links.renderLink}
+        onAdd={links.onAdd}
+        addLabel="Add a link"
+      />
+      {links.dialog}
     </>
+  );
+}
+
+/**
+ * The sidebar Links section, self-wired: one row per channel-independent
+ * link, visually identical to a channel row.
+ *
+ * These were pills in a channel's header bar, stored per channel. They are
+ * now one list belonging to no channel, so this section renders wherever the
+ * sidebar does — ALWAYS, empty list included, so the + stays discoverable.
+ *
+ * Standalone mount (no favorites): the channel sidebar itself composes
+ * {@link useSidebarLinks} + {@link SidebarLinksSection} so favorited links
+ * can move into Favorites.
+ */
+export function SidebarShortcutsSection({
+  onOpenOverlay,
+  collapsed,
+  onToggleCollapsed,
+}: {
+  /** Raise the in-app dock on a given overlay-mode shortcut id. */
+  onOpenOverlay: (shortcutId: string) => void;
+  /**
+   * Controlled fold state. Omitted, the section folds locally and starts
+   * open — the standalone mount the section's own tests use.
+   */
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
+}) {
+  const links = useSidebarLinks({ onOpenOverlay });
+  const [localCollapsed, setLocalCollapsed] = useState(false);
+  return (
+    <SidebarLinksSection
+      links={links}
+      items={links.shortcuts}
+      collapsed={collapsed ?? localCollapsed}
+      onToggleCollapsed={
+        onToggleCollapsed ?? (() => setLocalCollapsed((value) => !value))
+      }
+    />
   );
 }

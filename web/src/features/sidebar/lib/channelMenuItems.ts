@@ -12,10 +12,12 @@ import {
 import { clearDraft } from "@/features/channels/lib/drafts.ts";
 import {
   forgetChannel,
+  isFavorite,
+  toggleFavorite,
   toggleMuted,
-  toggleStarred,
   type ChannelPrefs,
 } from "@/features/channels/lib/channelPrefs.ts";
+import { favoriteMenuItem } from "@/features/sidebar/lib/favoriteMenuItem.ts";
 import {
   forgetChannel as forgetChannelRead,
   markSeen,
@@ -32,7 +34,7 @@ import type { SidebarMenuItem } from "@/features/sidebar/lib/sidebarMenuItem";
 export interface ChannelMenuDeps {
   /** Live relay session — rename / delete / leave publish through it. */
   session: RelaySession;
-  /** Viewer-side starred / muted prefs. */
+  /** Viewer-side favorites / muted prefs. */
   channelPrefs: ChannelPrefs;
   setChannelPrefs: Dispatch<SetStateAction<ChannelPrefs>>;
   /** Read markers — "Mark read" writes one. */
@@ -47,7 +49,7 @@ export interface ChannelMenuDeps {
   onCloseChannel: () => void;
 }
 
-/** Context menu per channel: star / mark read / mute / leave. */
+/** Context menu per channel: favorite / mark read / mute / leave. */
 export function channelMenuItems(
   channel: ChannelSummary,
   {
@@ -62,13 +64,13 @@ export function channelMenuItems(
   }: ChannelMenuDeps,
 ): SidebarMenuItem[] {
   return [
-    {
-      label: channelPrefs.starred.includes(channel.id)
-        ? "Unstar"
-        : "Star channel",
-      onSelect: () =>
-        setChannelPrefs((prefs) => toggleStarred(prefs, channel.id)),
-    },
+    favoriteMenuItem(
+      isFavorite(channelPrefs, { kind: "channel", id: channel.id }),
+      () =>
+        setChannelPrefs((prefs) =>
+          toggleFavorite(prefs, { kind: "channel", id: channel.id }),
+        ),
+    ),
     {
       label: "Mark read",
       onSelect: () => {

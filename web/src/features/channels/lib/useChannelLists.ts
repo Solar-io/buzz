@@ -1,5 +1,8 @@
 import { useMemo } from "react";
-import type { ChannelPrefs } from "@/features/channels/lib/channelPrefs.ts";
+import {
+  favoriteChannelIds,
+  type ChannelPrefs,
+} from "@/features/channels/lib/channelPrefs.ts";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import type { DmSummary } from "@/features/dms/hooks";
 
@@ -9,20 +12,24 @@ export interface ChannelListsInput {
   channels: ChannelSummary[];
   /** Every DM, newest activity first. */
   dms: DmSummary[];
-  /** Viewer's starred / muted prefs. */
+  /** Viewer's favorites / muted prefs (landing-fallback order only). */
   channelPrefs: ChannelPrefs;
   /** DM channel ids the viewer hid locally. */
   hiddenDmIds: string[];
 }
 
-/** The sidebar's sections, filtered and sorted. */
+/**
+ * The sidebar's source lists, filtered and sorted. Favorites are NOT split
+ * out here — the sidebar does that (`sectionSidebar`), because Favorites
+ * also holds Links, which the sidebar reads itself.
+ */
 export interface ChannelLists {
-  /** Starred channels, ahead of the main list. */
-  starred: ChannelSummary[];
-  /** Everything else in the Channels section. */
-  unstarred: ChannelSummary[];
+  /** Stream channels (the Channels section's candidates), by name. */
+  streams: ChannelSummary[];
   /** Forum-type channels — their own section and their own body. */
   forums: ChannelSummary[];
+  /** Non-DM landing fallback: favorited streams first, then the rest. */
+  landingChannelIds: string[];
   /** DMs the viewer has not hidden locally. */
   visibleDms: DmSummary[];
 }
@@ -53,7 +60,7 @@ export function useChannelLists({
         ),
     [channels],
   );
-  const visibleChannels = useMemo(
+  const streams = useMemo(
     () => permanentChannels.filter((channel) => channel.type !== "forum"),
     [permanentChannels],
   );
@@ -61,23 +68,17 @@ export function useChannelLists({
     () => permanentChannels.filter((channel) => channel.type === "forum"),
     [permanentChannels],
   );
-  const starred = useMemo(
-    () =>
-      visibleChannels.filter((channel) =>
-        channelPrefs.starred.includes(channel.id),
-      ),
-    [visibleChannels, channelPrefs],
-  );
-  const unstarred = useMemo(
-    () =>
-      visibleChannels.filter(
-        (channel) => !channelPrefs.starred.includes(channel.id),
-      ),
-    [visibleChannels, channelPrefs],
-  );
+  const landingChannelIds = useMemo(() => {
+    const favorites = new Set(favoriteChannelIds(channelPrefs));
+    const ids = streams.map((channel) => channel.id);
+    return [
+      ...ids.filter((id) => favorites.has(id)),
+      ...ids.filter((id) => !favorites.has(id)),
+    ];
+  }, [streams, channelPrefs]);
   const visibleDms = useMemo(
     () => dms.filter(({ channel }) => !hiddenDmIds.includes(channel.id)),
     [dms, hiddenDmIds],
   );
-  return { starred, unstarred, forums, visibleDms };
+  return { streams, forums, landingChannelIds, visibleDms };
 }

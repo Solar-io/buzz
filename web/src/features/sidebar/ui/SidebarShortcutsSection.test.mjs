@@ -368,3 +368,140 @@ test("a local-key signer's add publishes the blob and does NOT write localStorag
     await view.unmount();
   }
 });
+
+const { SidebarLinksSection, useSidebarLinks } = await import(
+  "./SidebarShortcutsSection.tsx"
+);
+const { isFavorite, loadChannelPrefs, setFavorite } = await import(
+  "@/features/channels/lib/channelPrefs.ts"
+);
+const { sectionSidebar } = await import("@/features/sidebar/lib/favorites.ts");
+
+/**
+ * The channel sidebar's composition, minus everything but Links: the real
+ * hook + section, the real prefs reducers, and the real sectioning — so a
+ * link favorited through its row menu leaves the Links rows.
+ */
+function FavoritesHarness({ onPrefs }) {
+  const [prefs, setPrefs] = React.useState(() => loadChannelPrefs());
+  onPrefs(prefs);
+  const links = useSidebarLinks({
+    onOpenOverlay: () => {},
+    favorites: {
+      isFavorite: (id) => isFavorite(prefs, { kind: "link", id }),
+      set: (id, on) =>
+        setPrefs((previous) => setFavorite(previous, { kind: "link", id }, on)),
+    },
+  });
+  const sections = sectionSidebar({
+    streams: [],
+    forums: [],
+    dms: [],
+    shortcuts: links.shortcuts,
+    favorites: prefs.favorites,
+  });
+  return React.createElement(
+    "div",
+    null,
+    React.createElement(
+      "ul",
+      { "data-testid": "favorites" },
+      sections.favorites.map((item) =>
+        React.createElement(
+          "li",
+          { key: item.key },
+          links.renderLink(item.shortcut),
+        ),
+      ),
+    ),
+    React.createElement(SidebarLinksSection, {
+      links,
+      items: sections.links,
+      collapsed: false,
+      onToggleCollapsed: () => {},
+    }),
+  );
+}
+
+async function chooseMenuItem(container, rowLabel, itemLabel) {
+  const trigger = container.querySelector(
+    `span[role="button"][aria-label="Options for ${rowLabel}"]`,
+  );
+  assert.ok(trigger, `the ⋯ trigger for ${rowLabel}`);
+  await act(async () => {
+    trigger.dispatchEvent(
+      new dom.window.KeyboardEvent("keydown", {
+        key: "ArrowDown",
+        bubbles: true,
+      }),
+    );
+  });
+  const item = Array.from(
+    dom.window.document.body.querySelectorAll('[role="menuitem"]'),
+  ).find((node) => node.textContent === itemLabel);
+  assert.ok(item, `the ${rowLabel} menu offers ${itemLabel}`);
+  await act(async () => {
+    item.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+}
+
+test("a link favorited from its menu moves to Favorites and back; removing it forgets the favorite", async () => {
+  installFakeSession();
+  globalThis.__BUZZ_TEST_SIGNER_SOURCE__ = "extension";
+  dom.window.localStorage.clear();
+  for (const label of ["Roadmap", "Status"]) {
+    await mutateLocalLinks((blob) =>
+      addSidebarShortcut(blob, { url: `https://x.example/${label}`, label }),
+    );
+  }
+  const container = dom.window.document.createElement("div");
+  dom.window.document.body.appendChild(container);
+  const root = createRoot(container);
+  let prefs = null;
+  await act(async () => {
+    root.render(
+      React.createElement(FavoritesHarness, {
+        onPrefs: (next) => {
+          prefs = next;
+        },
+      }),
+    );
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  const rowsIn = (selector) =>
+    Array.from(
+      container.querySelectorAll(`${selector} button[data-active]`),
+    ).map((row) => row.textContent.replace("⋯", ""));
+  const favoriteRows = () => rowsIn('[data-testid="favorites"]');
+  const linkRows = () => rowsIn('section[aria-label="Links"]');
+  try {
+    assert.deepEqual(linkRows(), ["Roadmap", "Status"]);
+    assert.deepEqual(favoriteRows(), []);
+
+    await chooseMenuItem(container, "Status", "Add to Favorites");
+    assert.deepEqual(favoriteRows(), ["Status"], "Status is a favorite");
+    assert.deepEqual(linkRows(), ["Roadmap"], "and left Links");
+    assert.equal(prefs.favorites.length, 1);
+    assert.equal(prefs.favorites[0].kind, "link");
+    assert.match(
+      prefs.favorites[0].id,
+      /^sc:/,
+      "keyed by the shortcut id, not its label",
+    );
+
+    await chooseMenuItem(container, "Status", "Remove from Favorites");
+    assert.deepEqual(favoriteRows(), []);
+    assert.deepEqual(linkRows(), ["Roadmap", "Status"], "back home");
+
+    await chooseMenuItem(container, "Roadmap", "Add to Favorites");
+    assert.deepEqual(favoriteRows(), ["Roadmap"]);
+    await chooseMenuItem(container, "Roadmap", "Remove");
+    assert.deepEqual(favoriteRows(), [], "the removed link is gone");
+    assert.deepEqual(prefs.favorites, [], "and its favorite was forgotten");
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+  }
+});
