@@ -27,12 +27,13 @@ export function formatCountdown(resetsAt: string, now: number): string {
  */
 export function formatResetDay(iso: string, timeZone?: string): string {
   try {
+    // The CLI reports resets like 7:59; round to the nearest hour so it reads "8 AM".
     const parts = new Intl.DateTimeFormat("en-US", {
       weekday: "short",
       hour: "numeric",
       hour12: true,
       timeZone,
-    }).formatToParts(new Date(iso));
+    }).formatToParts(new Date(Math.round(Date.parse(iso) / 3_600_000) * 3_600_000));
     const part = (type: string) =>
       parts.find((entry) => entry.type === type)?.value ?? "";
     return `${part("weekday")} ${part("hour")} ${part("dayPeriod")}`.trim();

@@ -14,6 +14,13 @@ test("formatResetDay honours the viewer time zone", () => {
   assert.equal(formatResetDay("2026-09-29T13:00:00Z", "UTC"), "Tue 1 PM");
 });
 
+test("formatResetDay rounds a 7:59 reset to the nearest hour", () => {
+  assert.equal(
+    formatResetDay("2026-09-29T12:59:00Z", "America/Chicago"),
+    "Tue 8 AM",
+  );
+});
+
 test("formatCountdown: minutes, hours, days", () => {
   const at = (ms) => new Date(NOW + ms).toISOString();
   assert.equal(formatCountdown(at(18.2 * HOUR), NOW), "in 18h");
