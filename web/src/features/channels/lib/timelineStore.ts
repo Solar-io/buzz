@@ -483,8 +483,8 @@ export function createTimelineStore(
     },
     async flushAll() {
       await Promise.all(
-        [...new Set([...flushTimers.keys(), ...writeChains.keys()])].map(
-          (id) => flushNow(id),
+        [...new Set([...flushTimers.keys(), ...writeChains.keys()])].map((id) =>
+          flushNow(id),
         ),
       );
       await indexChain;

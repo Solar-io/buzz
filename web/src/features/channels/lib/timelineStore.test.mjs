@@ -182,7 +182,11 @@ test("T6 write-behind coalesces 5 applies into ONE set", async () => {
   for (let i = 0; i < 5; i++) {
     store.apply("busy", ev(`b${i}`, 100 + i, "busy"), { source: "timeline" });
   }
-  assert.equal(setsOf(cacheKey("busy")), 0, "nothing written before the debounce");
+  assert.equal(
+    setsOf(cacheKey("busy")),
+    0,
+    "nothing written before the debounce",
+  );
   await sleep(60);
   assert.equal(setsOf(cacheKey("busy")), 1);
   assert.equal(idb.data.get(cacheKey("busy")).messages.length, 5);

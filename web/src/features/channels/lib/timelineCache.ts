@@ -402,12 +402,19 @@ export function applyEventToEntry(
     }
     return {
       ...entry,
-      messages: applyOverlay(entry.messages, EDIT_KIND, targetId, event.content),
+      messages: applyOverlay(
+        entry.messages,
+        EDIT_KIND,
+        targetId,
+        event.content,
+      ),
     };
   }
   if (event.kind === 7) {
     const reaction = reactionFromEvent(event);
-    return reaction ? mergeCachedReaction(entry, reaction, event.pubkey) : entry;
+    return reaction
+      ? mergeCachedReaction(entry, reaction, event.pubkey)
+      : entry;
   }
   // 39005 carries an `h` tag, so the message parser would build a row out of
   // it — it must be routed away before the message path.
@@ -425,7 +432,9 @@ export function applyEventToEntry(
   // A 40099 tombstone reports a removal the relay already made: hide the
   // target through the same delete path kind 5 uses.
   if (message.kind === SYSTEM_MESSAGE_KIND) {
-    const removedId = tombstoneTargetId(systemEventFromContent(message.content));
+    const removedId = tombstoneTargetId(
+      systemEventFromContent(message.content),
+    );
     if (removedId) {
       next = deleteInEntry(next, removedId);
     }
@@ -439,7 +448,10 @@ export function applyEventToEntry(
   // (search, thread, forum read) cannot be known contiguous; inserting it
   // would make loadOlder — keyed on the oldest row — skip real history.
   // The sync path also owns rows it already has; a warm copy adds nothing.
-  if (options.mode === "warm" && (message.createdAt < next.cursor || existing)) {
+  if (
+    options.mode === "warm" &&
+    (message.createdAt < next.cursor || existing)
+  ) {
     return next;
   }
   const pending = next.pendingEdits?.[message.id];

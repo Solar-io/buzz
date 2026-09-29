@@ -463,7 +463,14 @@ test("T5 delete then re-deliver the original: not re-inserted, in either mode", 
   e = applyEventToEntry(e, ev("x", 1200), "chan", { mode: "sync" });
   e = applyEventToEntry(
     e,
-    ev("del", 1300, { kind: 5, content: "", tags: [["h", "chan"], ["e", "x"]] }),
+    ev("del", 1300, {
+      kind: 5,
+      content: "",
+      tags: [
+        ["h", "chan"],
+        ["e", "x"],
+      ],
+    }),
     "chan",
     { mode: "sync" },
   );
@@ -482,7 +489,14 @@ test("T5 a delete that lands BEFORE its target still blocks the target", () => {
   let e = withDeleted();
   e = applyEventToEntry(
     e,
-    ev("del", 10, { kind: 5, content: "", tags: [["h", "chan"], ["e", "y"]] }),
+    ev("del", 10, {
+      kind: 5,
+      content: "",
+      tags: [
+        ["h", "chan"],
+        ["e", "y"],
+      ],
+    }),
     "chan",
     { mode: "warm" },
   );
@@ -507,7 +521,14 @@ test("deletedIds is bounded at 200, newest kept", () => {
   for (let i = 0; i < 205; i++) {
     e = applyEventToEntry(
       e,
-      ev(`d${i}`, i, { kind: 5, content: "", tags: [["h", "chan"], ["e", `t${i}`]] }),
+      ev(`d${i}`, i, {
+        kind: 5,
+        content: "",
+        tags: [
+          ["h", "chan"],
+          ["e", `t${i}`],
+        ],
+      }),
       "chan",
       { mode: "sync" },
     );
@@ -551,7 +572,10 @@ function editOf(id, target, createdAt, content) {
   return ev(id, createdAt, {
     kind: EDIT_KIND,
     content,
-    tags: [["h", "chan"], ["e", target]],
+    tags: [
+      ["h", "chan"],
+      ["e", target],
+    ],
   });
 }
 
@@ -598,7 +622,14 @@ test("QA2 a deleted row stays deleted when its original is re-delivered", () => 
   e = applyEventToEntry(e, ev("orig", 100), "chan", { mode: "sync" });
   e = applyEventToEntry(
     e,
-    ev("del", 150, { kind: 5, content: "", tags: [["h", "chan"], ["e", "orig"]] }),
+    ev("del", 150, {
+      kind: 5,
+      content: "",
+      tags: [
+        ["h", "chan"],
+        ["e", "orig"],
+      ],
+    }),
     "chan",
     { mode: "sync" },
   );

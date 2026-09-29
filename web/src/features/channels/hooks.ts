@@ -12,7 +12,7 @@ import {
   deleteChannelTags,
   renameChannelTags,
 } from "@/features/channels/lib/channelAdmin.ts";
-import { type MessageBuffer } from "./lib/messageBuffer.ts";
+import type { MessageBuffer } from "./lib/messageBuffer.ts";
 import {
   initialSyncFilters,
   dropCachedReaction,
@@ -33,7 +33,7 @@ import {
   THREAD_SUMMARY_KIND,
   type RelayThreadSummaryMap,
 } from "./lib/threadSummaryEvent.ts";
-import { type ReactionIndex } from "./lib/reactions.ts";
+import type { ReactionIndex } from "./lib/reactions.ts";
 import { recordTyping, typingFromEvent, type TypingMap } from "./lib/typing.ts";
 import { loadSeed, mergeSeed } from "@/shared/lib/localSeed.ts";
 import {

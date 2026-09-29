@@ -4,63 +4,63 @@ import { test } from "node:test";
 import { threadPartner } from "./threadPartner.ts";
 
 const SAM = "5".repeat(64);
-const OPUS = "0".repeat(64);
-const OPUS1 = "1".repeat(64);
+const X = "0".repeat(64);
+const Y = "1".repeat(64);
 const ALICE = "a".repeat(64);
-const AGENTS = new Set([OPUS, OPUS1]);
+const BOB = "b".repeat(64);
+const AGENTS = new Set([X, Y]);
 
 const thread = (...authors) =>
-  authors.map((authorPubkey) =>
-    typeof authorPubkey === "string" ? { authorPubkey } : authorPubkey,
+  authors.map((author) =>
+    typeof author === "string" ? { authorPubkey: author } : author,
   );
+const partner = (...authors) => threadPartner(thread(...authors), SAM, AGENTS);
 
-test("Sam's 2026-09-29 thread: an earlier second agent no longer blocks the partner", () => {
-  // Opus root, Opus 1 answers once, Opus follows up; then Sam and Opus talk.
-  const messages = thread(OPUS, OPUS1, OPUS, SAM, OPUS, SAM);
-  assert.equal(threadPartner(messages, SAM, AGENTS), OPUS);
+test("Sam's 2026-09-29 thread: an earlier second agent no longer blocks the default", () => {
+  assert.equal(partner(X, Y, X, SAM, X, SAM), X);
 });
 
-test("the responder wins over whoever the viewer first answered", () => {
+test("his first reply in that thread already defaults to the newest agent", () => {
+  assert.equal(partner(X, Y, X), X);
+});
+
+test("a one-off second agent after Sam joined doesn't switch it off for good", () => {
+  assert.equal(partner(X, SAM, Y, SAM, X, SAM), X);
+  assert.equal(partner(X, SAM, Y, SAM, X), X);
+});
+
+test("two different agents since Sam's last message: no default", () => {
+  assert.equal(partner(X, SAM, X, Y), null);
+  assert.equal(partner(SAM, Y, X), null);
+});
+
+test("the agent rule never picks a human", () => {
+  assert.equal(partner(X, ALICE, SAM), X, "agent root, human comment");
   assert.equal(
-    threadPartner(thread(OPUS, OPUS1, SAM, OPUS), SAM, AGENTS),
-    OPUS,
+    partner(ALICE, BOB, SAM),
+    null,
+    "human-only three-person thread",
   );
-  assert.equal(threadPartner(thread(OPUS, OPUS1, SAM), SAM, AGENTS), OPUS1);
+  assert.equal(partner(ALICE), null, "human root, Sam hasn't posted");
 });
 
-test("two-person threads still tag the other side, both directions", () => {
+test("two-person threads still tag the other side, human or agent", () => {
   assert.equal(threadPartner(thread(ALICE, SAM), SAM), ALICE);
   assert.equal(threadPartner(thread(ALICE, SAM), ALICE), SAM);
+  assert.equal(partner(SAM, X), X);
 });
 
-test("a second voice after the viewer joined means no default", () => {
+test("without the agent set only the two-person rule applies", () => {
+  assert.equal(threadPartner(thread(X), SAM), null);
+  assert.equal(threadPartner(thread(X, Y, X, SAM, X), SAM), null);
+});
+
+test("solo threads and deleted messages", () => {
+  assert.equal(partner(SAM, SAM), null);
+  assert.equal(partner({ authorPubkey: X, deleted: true }, SAM), null);
   assert.equal(
-    threadPartner(thread(OPUS, SAM, OPUS, OPUS1), SAM, AGENTS),
-    null,
+    partner(X, SAM, { authorPubkey: Y, deleted: true }, X),
+    X,
+    "a deleted second-agent reply doesn't block the default",
   );
-  assert.equal(threadPartner(thread(SAM, OPUS, OPUS1), SAM, AGENTS), null);
-});
-
-test("viewer never posted: a single agent author is the partner, a human is not", () => {
-  assert.equal(threadPartner(thread(OPUS, OPUS), SAM, AGENTS), OPUS);
-  assert.equal(threadPartner(thread(ALICE), SAM, AGENTS), null);
-  assert.equal(
-    threadPartner(thread(OPUS), SAM),
-    null,
-    "no agent set, no guess",
-  );
-  assert.equal(threadPartner(thread(OPUS, OPUS1), SAM, AGENTS), null);
-});
-
-test("solo threads and deleted-only partners tag nobody", () => {
-  assert.equal(threadPartner(thread(SAM, SAM), SAM, AGENTS), null);
-  const gone = thread({ authorPubkey: OPUS, deleted: true }, SAM);
-  assert.equal(threadPartner(gone, SAM, AGENTS), null);
-  const stillHere = thread(
-    OPUS,
-    SAM,
-    { authorPubkey: OPUS1, deleted: true },
-    OPUS,
-  );
-  assert.equal(threadPartner(stillHere, SAM, AGENTS), OPUS);
 });

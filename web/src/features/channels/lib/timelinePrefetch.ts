@@ -140,8 +140,7 @@ export async function prefetchTimeline(
   unsubscribe = session.subscribe(
     initialSyncFilters(channelId, syncCursor(entry)),
     {
-      onEvent: (event) =>
-        store.apply(channelId, event, { source: "prefetch" }),
+      onEvent: (event) => store.apply(channelId, event, { source: "prefetch" }),
       onEose: finish,
       priority,
     },
