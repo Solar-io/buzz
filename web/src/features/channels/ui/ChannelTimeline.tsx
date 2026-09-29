@@ -36,6 +36,7 @@ import {
   splitAgentReceipt,
 } from "../lib/reactions.ts";
 import { SYSTEM_MESSAGE_KIND } from "../lib/systemEvent.ts";
+import { usePermalinkScroll } from "../lib/usePermalinkScroll.ts";
 import {
   threadIndentRem,
   type ThreadBranchSummary,
@@ -106,6 +107,7 @@ export function ChannelTimeline({
   agentPubkeys,
   highlightId,
   scrollToMessageId,
+  onScrollToMessageSettled,
   unreadBefore,
   typingNames,
   pendingIds,
@@ -173,9 +175,11 @@ export function ChannelTimeline({
    * not carry a search-result jump: the list has to scroll first. Fires once
    * per distinct id; follow disarms for the jump (a deliberate "take me
    * there" is reader intent — it resumes when the reader returns to the
-   * bottom).
+   * bottom). See lib/usePermalinkScroll.ts.
    */
   scrollToMessageId?: string | null;
+  /** The jump target was verified in view — the route may drop `?m=`. */
+  onScrollToMessageSettled?: (id: string) => void;
   /** createdAt of the first UNSEEN message — renders the unread divider. */
   unreadBefore?: number | null;
   /** Display names of people typing in this channel (footer row). */
@@ -731,60 +735,24 @@ export function ChannelTimeline({
     };
   }, [tailKey]);
 
-  // Permalink jump (D-043): see the `scrollToMessageId` prop. Same
-  // double-rAF + settle passes as the auto-tail — freshly mounted rows must
-  // be measured before the align lands. The loadingOlder row, when present,
-  // is prepended and shifts every row index by one.
-  //
-  // D-050: the target's row may not exist on the FIRST render after the id
-  // arrives — a thread panel seeds its expansion set in an effect that lands
-  // after the first paint, and a cross-channel permalink waits on cache
-  // hydration. Bailing then was a silent no-op (live: a card-answer hit
-  // opened the right thread and stayed tail-anchored). Retry briefly until
-  // the row materializes; give up after the window below.
-  const lastJumpRef = useRef<string | null>(null);
-  const JUMP_ROW_RETRY_MS = 1_500;
-  useEffect(() => {
-    if (
-      !scrollToMessageId ||
-      lastJumpRef.current === scrollToMessageId ||
-      pagePhase.current !== "idle"
-    ) {
-      return;
-    }
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let attempts = 0;
-    const attempt = () => {
-      const base = rowIndexRef.current?.get(scrollToMessageId);
-      if (base === undefined) {
-        attempts += 1;
-        if (attempts * 50 <= JUMP_ROW_RETRY_MS) {
-          timer = setTimeout(attempt, 50);
-        }
-        return;
-      }
-      lastJumpRef.current = scrollToMessageId;
+  // Permalink jump (D-043/D-050): the index is re-resolved on every pass —
+  // the buffer can grow under the jump (in-app nav: short memory buffer,
+  // full history a frame later) — and settles only once the row is in view.
+  // The loadingOlder row, when present, is prepended: every index +1.
+  usePermalinkScroll({
+    targetId: scrollToMessageId,
+    listRef,
+    indexOf: (id) => {
+      const base = rowIndexRef.current?.get(id);
+      return base === undefined ? undefined : base + (loadingOlder ? 1 : 0);
+    },
+    blocked: () => pagePhase.current !== "idle",
+    onJump: () => {
       followRef.current.follow = false;
-      const index = base + (loadingOlder ? 1 : 0);
-      const jump = () => {
-        listRef.current?.scrollToIndex(index, { align: "center" });
-      };
-      const raf = requestAnimationFrame(() => requestAnimationFrame(jump));
-      const settle = window.setTimeout(jump, 250);
-      cleanup = () => {
-        cancelAnimationFrame(raf);
-        window.clearTimeout(settle);
-      };
-    };
-    let cleanup: (() => void) | null = null;
-    attempt();
-    return () => {
-      if (timer) {
-        clearTimeout(timer);
-      }
-      cleanup?.();
-    };
-  }, [scrollToMessageId, loadingOlder]);
+    },
+    onSettled: onScrollToMessageSettled,
+    restartKey: loadingOlder,
+  });
 
   // Follow tick: a NATIVE capture-phase scroll listener on the wrapper div,
   // attached in an effect — not a React prop. Measured live: native capture

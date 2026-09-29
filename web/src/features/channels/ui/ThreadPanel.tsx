@@ -75,6 +75,7 @@ export function ThreadPanel({
   mobileOnly,
   strictMentions = false,
   permalinkMessageId = null,
+  onPermalinkSettled,
   agentPubkeys,
 }: {
   root: TimelineMessage;
@@ -97,6 +98,8 @@ export function ThreadPanel({
    * elsewhere.
    */
   permalinkMessageId?: string | null;
+  /** The reply was verified in view — the route may drop `?m=`. */
+  onPermalinkSettled?: (id: string) => void;
   /** Agent authors — forwarded so thread rows get the agent badge + card. */
   agentPubkeys?: ReadonlySet<string>;
 }) {
@@ -200,6 +203,7 @@ export function ThreadPanel({
         tailKey={`${rootId}:${lastReply.id}:${threadMessages.length}`}
         highlightId={permalinkMessageId}
         scrollToMessageId={permalinkMessageId}
+        onScrollToMessageSettled={onPermalinkSettled}
       />
       <Composer
         members={members}

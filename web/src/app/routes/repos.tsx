@@ -224,10 +224,8 @@ function ChannelBrowser() {
     selfPubkey,
   });
   const { send } = messageActions;
-  // Permalink target (?m=): once the message is in the buffer the row scrolls
-  // itself into view and flashes; then m is dropped from the URL so later
-  // arrivals don't fight the auto-tail scroll. Hits older than the fetch
-  // window never enter the buffer — a 4s fallback still cleans the URL.
+  // Permalink target (?m=): the timeline scrolls it into view and flashes it;
+  // m is dropped only once it LANDED (see usePermalinkCleanup).
   const permalinkReady =
     permalinkMessageId != null &&
     messages.some((m) => m.id === permalinkMessageId);
@@ -265,9 +263,8 @@ function ChannelBrowser() {
       topLevelId,
     };
   }, [permalinkMessageId, messages]);
-  // Drop ?m= from the URL once the jump has landed (or 4s in, if the target
-  // never enters the buffer) — see the extracted hook for the two timers.
-  usePermalinkCleanup({
+  // Drop ?m= once the jump reports it landed (or 4s without progress).
+  const onPermalinkSettled = usePermalinkCleanup({
     permalinkMessageId,
     permalinkReady,
     selectedId,
@@ -870,6 +867,7 @@ function ChannelBrowser() {
                             scrollToMessageId={
                               permalinkJump?.topLevelId ?? null
                             }
+                            onScrollToMessageSettled={onPermalinkSettled}
                             typingNames={typingNames}
                             tailKey={tailKey}
                             onLoadOlder={loadOlder}
@@ -956,6 +954,7 @@ function ChannelBrowser() {
                       strictMentions={strictMentions}
                       selfPubkey={selfPubkey}
                       permalinkMessageId={threadPermalinkId}
+                      onPermalinkSettled={onPermalinkSettled}
                       onClose={() => setThreadRootId(null)}
                       send={send}
                     />
