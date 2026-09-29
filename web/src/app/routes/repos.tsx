@@ -73,9 +73,8 @@ import { openDm, useDms } from "@/features/dms/hooks";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
 import { useHiddenDms } from "@/features/dms/useHiddenDms.ts";
 import { channelMenuItems } from "@/features/sidebar/lib/channelMenuItems.ts";
-import { ChannelSidebar } from "@/features/sidebar/ui/ChannelSidebar";
-import type { ChannelSidebarProps } from "@/features/sidebar/ui/ChannelSidebar";
-import { AsksProvider, useAsks } from "@/features/home/AsksProvider";
+import { SidebarWithBadges } from "@/features/sidebar/ui/SidebarWithBadges";
+import { AsksProvider } from "@/features/home/AsksProvider";
 import { HomeInboxRoute } from "@/features/home/ui/HomeInboxRoute";
 import { WorkflowsPage } from "@/features/workflows/ui/WorkflowsPage";
 import { OnboardingPane } from "@/features/onboarding";
@@ -114,15 +113,6 @@ function AppRoute() {
     return <LoginPage />;
   }
   return <ChannelBrowser />;
-}
-
-/**
- * The sidebar's asks badge comes from the shell-level AsksProvider context;
- * the sidebar itself stays context-free (every other input arrives by prop).
- */
-function SidebarWithAsks(props: Omit<ChannelSidebarProps, "asksCount">) {
-  const { badge } = useAsks();
-  return <ChannelSidebar {...props} asksCount={badge} />;
 }
 
 function ChannelBrowser() {
@@ -516,10 +506,11 @@ function ChannelBrowser() {
     }
   };
   const sidebar = (
-    <SidebarWithAsks
+    <SidebarWithBadges
       connected={connected}
       relayStatus={relayStatus}
       inboxSelected={view === "inbox"}
+      remindersSelected={view === "reminders"}
       channelCount={channels.length}
       selectedId={selectedId}
       lists={{ ...lists, dms }}
@@ -567,6 +558,8 @@ function ChannelBrowser() {
         onOpenFiles: openFiles,
         onOpenInbox: () =>
           void navigate({ to: "/repos", search: { view: "inbox" } }),
+        onOpenReminders: () =>
+          void navigate({ to: "/repos", search: { view: "reminders" } }),
         onOpenShortcutOverlay: openLink,
       }}
     />

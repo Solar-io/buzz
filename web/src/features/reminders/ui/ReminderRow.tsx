@@ -6,9 +6,10 @@ import { cn } from "@/shared/lib/cn";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { Button } from "@/shared/ui/button";
 
-import { useReminderMutations } from "../hooks.ts";
+import { useReminderMutations, useReminderSummary } from "../hooks.ts";
 import { formatDueLabel } from "../lib/reminderFilters.ts";
 import { hasNavigableTarget } from "../lib/reminderNavigation.ts";
+import { displayText } from "../lib/reminderSummary.ts";
 import type { Reminder } from "../lib/reminderTypes.ts";
 import { SnoozeMenu } from "./SnoozeMenu.tsx";
 
@@ -50,6 +51,13 @@ export function ReminderRow({
       truncatePubkey(reminder.content.target.authorPubkey)
     : null;
 
+  // Note first, verbatim; then the message it is about — as a 1-2 sentence AI
+  // summary when the preview is long, else the (truncated) preview. The row
+  // never waits on the summary service and a failure stays silent.
+  const note = reminder.content.note?.trim() || null;
+  const summaryState = useReminderSummary(reminder);
+  const about = displayText(reminder, summaryState ?? { status: "loading" });
+
   const act = (run: () => void, success: string) => {
     if (busy) {
       return;
@@ -90,20 +98,42 @@ export function ReminderRow({
           ) : null}
         </div>
 
-        <p
-          className={cn(
-            "mt-0.5 break-words text-sm",
-            isDone ? "text-muted-foreground line-through" : "text-foreground",
-          )}
-        >
-          {reminder.content.note?.trim() ||
-            reminder.content.target?.preview ||
-            "Reminder"}
-        </p>
+        {note || !about ? (
+          <p
+            className={cn(
+              "mt-0.5 break-words text-sm",
+              isDone ? "text-muted-foreground line-through" : "text-foreground",
+            )}
+          >
+            {note || "Reminder"}
+          </p>
+        ) : null}
 
-        {reminder.content.note?.trim() && reminder.content.target?.preview ? (
-          <p className="mt-0.5 truncate text-2xs text-muted-foreground">
-            {reminder.content.target.preview}
+        {about ? (
+          <p
+            className={cn(
+              "mt-0.5 line-clamp-2 break-words",
+              note
+                ? "text-2xs text-muted-foreground"
+                : cn(
+                    "text-sm",
+                    isDone
+                      ? "text-muted-foreground line-through"
+                      : "text-foreground",
+                  ),
+            )}
+            data-testid={`reminder-about-${reminder.id}`}
+          >
+            {about.isSummary ? (
+              <span
+                className="mr-1 inline-block rounded bg-muted px-1 py-px align-middle text-3xs font-medium uppercase leading-none tracking-wide text-muted-foreground"
+                data-testid={`reminder-ai-${reminder.id}`}
+                title="AI-generated summary of the message"
+              >
+                AI
+              </span>
+            ) : null}
+            {about.text}
           </p>
         ) : null}
       </div>

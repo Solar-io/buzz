@@ -1,5 +1,5 @@
 import { type ReactNode, useMemo, useState } from "react";
-import { Inbox, Search } from "lucide-react";
+import { Bell, Inbox, Search } from "lucide-react";
 import type { Profile } from "@/features/channels/hooks";
 import type { RelaySessionStatus } from "@/shared/api/relay-session";
 import {
@@ -130,6 +130,8 @@ export interface ChannelSidebarActions {
   onOpenFiles: () => void;
   /** Open the inbox view. */
   onOpenInbox: () => void;
+  /** Open the reminders view (?view=reminders). */
+  onOpenReminders: () => void;
   /**
    * Raise the in-app dock on an overlay-mode SHORTCUT. Not a channel: the
    * shortcut list is channel-independent (see SidebarShortcutsSection), so
@@ -160,6 +162,10 @@ export interface ChannelSidebarProps {
    * number so it is live on every view, not just inside the inbox.
    */
   asksCount: number;
+  /** The reminders view is the active pane. */
+  remindersSelected: boolean;
+  /** Reminders due right now — the Reminders row's count badge. 0 renders nothing. */
+  remindersCount: number;
   lists: ChannelSidebarLists;
   readState: ChannelSidebarReadState;
   search: ChannelSidebarSearch;
@@ -179,6 +185,8 @@ export function ChannelSidebar({
   selectedId,
   inboxSelected,
   asksCount,
+  remindersSelected,
+  remindersCount,
   lists,
   readState,
   search,
@@ -392,6 +400,14 @@ export function ChannelSidebar({
             unread={asksCount > 0}
             unreadCount={asksCount}
             onSelect={actions.onOpenInbox}
+          />
+          <SidebarNavButton
+            selected={remindersSelected}
+            label="Reminders"
+            icon={<Bell aria-hidden className="size-4 shrink-0" />}
+            unread={remindersCount > 0}
+            unreadCount={remindersCount}
+            onSelect={actions.onOpenReminders}
           />
         </div>
       </div>
