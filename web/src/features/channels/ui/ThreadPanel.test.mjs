@@ -690,6 +690,64 @@ test("an explicit third-party mention comes first, the auto-tag appends after it
   }
 });
 
+// Sam 2026-09-29: "in a thread with only one agent I want the reply to
+// default to the agent I'm talking with." His real thread had an early second
+// agent in it (three authors), which the two-person rule refused.
+function partnerFixture() {
+  const events = [
+    [ALICE, 1_000, "agent root", []],
+    [CAROL, 1_010, "second agent, once", [["e", "root-event", "", "reply"]]],
+    [BOB, 1_020, "viewer joins", [["e", "root-event", "", "reply"]]],
+    [ALICE, 1_030, "agent answers", [["e", "root-event", "", "reply"]]],
+  ].map(([pubkey, createdAt, content, tags], index) =>
+    channelEvent({
+      id: index === 0 ? "root-event" : `reply-${index}`,
+      pubkey,
+      createdAt,
+      content,
+      tags,
+    }),
+  );
+  const messages = events.map(timelineMessageFromEvent);
+  return { root: messages[0], buffer: messages };
+}
+
+test("the agent the viewer is talking with is tagged despite an earlier second agent", async () => {
+  const panel = await mountPanel({
+    fixture: partnerFixture,
+    selfPubkey: BOB,
+    agentPubkeys: new Set([ALICE, CAROL]),
+    profiles: new Map([[ALICE, { name: "Alice", displayName: "Alice Coil" }]]),
+  });
+  try {
+    assert.match(
+      panel.container.querySelector('[data-testid="composer-auto-notify"]')
+        ?.textContent ?? "",
+      /^Alice Coil will be notified$/,
+    );
+    await panel.type("no tag typed");
+    await panel.send();
+    assert.deepEqual(panel.sent[0].mentionPubkeys, [ALICE]);
+  } finally {
+    await panel.unmount();
+  }
+});
+
+test("a first reply to a single agent's post tags that agent", async () => {
+  const panel = await mountPanel({
+    fixture: soloFixture,
+    selfPubkey: BOB,
+    agentPubkeys: new Set([ALICE]),
+  });
+  try {
+    await panel.type("replying to the agent's post");
+    await panel.send();
+    assert.deepEqual(panel.sent[0].mentionPubkeys, [ALICE]);
+  } finally {
+    await panel.unmount();
+  }
+});
+
 // The deleted-author filter, both sides. threadDescendants keeps deleted rows
 // (their children must stay attached), so the author set is computed over
 // non-deleted messages only — a deletion must RETRACT the author whose every
