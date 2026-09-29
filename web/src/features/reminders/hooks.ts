@@ -17,6 +17,12 @@ import {
   snoozeReminder,
 } from "./lib/reminderService.ts";
 import {
+  fetchReminderSummary,
+  type SummaryState,
+  summaryBridgeUrl,
+  summaryInputFor,
+} from "./lib/reminderSummary.ts";
+import {
   KIND_EVENT_REMINDER,
   type Reminder,
   type ReminderTarget,
@@ -149,4 +155,42 @@ export function useReminderMutations(selfPubkey: string | null) {
   });
 
   return { create, snooze, complete, cancel };
+}
+
+/**
+ * The AI summary state for one reminder's long preview, or null when the
+ * reminder needs no summary (no preview, or one short enough to show as-is).
+ *
+ * In-memory only: `staleTime: Infinity` because a preview never changes for a
+ * given text, and nothing here is persisted — the query cache is the only
+ * copy of the decrypted text or its summary. `retry: false` because a failure
+ * is silent (the row keeps its truncated preview) and the bridge already
+ * retries upstream once; hammering it from every row would not help.
+ */
+export function useReminderSummary(reminder: Reminder): SummaryState | null {
+  const text = summaryInputFor(reminder);
+  const query = useQuery<string | null>({
+    enabled: text !== null,
+    queryKey: ["reminder-summary", text],
+    queryFn: ({ signal }) =>
+      fetchReminderSummary(
+        reminder,
+        summaryBridgeUrl(window.location.hostname),
+        fetch,
+        signal,
+      ),
+    staleTime: Number.POSITIVE_INFINITY,
+    gcTime: 30 * 60 * 1_000,
+    retry: false,
+  });
+  if (text === null) {
+    return null;
+  }
+  if (query.isError) {
+    return { status: "error" };
+  }
+  if (query.data) {
+    return { status: "ready", summary: query.data };
+  }
+  return { status: "loading" };
 }
