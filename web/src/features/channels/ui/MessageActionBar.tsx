@@ -6,6 +6,7 @@ import {
   EllipsisVertical,
   Link2,
   Pencil,
+  Plus,
   SmilePlus,
   Trash2,
   X,
@@ -31,8 +32,9 @@ import { QUICK_REACTIONS } from "../lib/reactions.ts";
  * keyboard: tabbing into a button that is `opacity-0` and
  * `pointer-events-none` leaves the user operating an invisible control.
  *
- * The pill carries the frequent, one-click actions (react, reply, copy link).
- * Everything rarer — edit, delete, remind — lives behind the overflow menu,
+ * The pill carries the frequent, one-click actions (react, reply, copy link,
+ * and "+" for a one-day reminder). Everything rarer — edit, delete, remind at
+ * a chosen time — lives behind the overflow menu,
  * matching the desktop's "More actions" dropdown. (This resolves the former
  * `TODO(primitives)`: `shared/ui/dropdown-menu` has since landed in the web
  * client.)
@@ -94,7 +96,15 @@ export function MessageActionBar({
   onEdit?: () => void;
   onDelete?: () => void;
 }) {
-  const { openReminder } = useRemindMeLater();
+  const { openReminder, quickRemind, quickRemindPending } = useRemindMeLater();
+  // One target for both reminder entry points, so "+" and "Remind me later"
+  // cannot drift apart on what they point at.
+  const reminderTarget = () => ({
+    eventId: messageId,
+    channelId: channelId ?? "",
+    preview: messagePreview ?? "",
+    authorPubkey: authorPubkey ?? "",
+  });
   const [pickerOpen, setPickerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [touchExpanded, setTouchExpanded] = useState(false);
@@ -306,6 +316,21 @@ export function MessageActionBar({
           </button>
         )}
 
+        {/* One-click reminder, due in one day (Sam 2026-09-29). Unconditional
+          for the same reason as the overflow menu's "Remind me later":
+          reminders are offered on every message, whoever wrote it. */}
+        <button
+          type="button"
+          aria-label="Add to reminders (1 day)"
+          title="Add to reminders (1 day)"
+          data-testid={`quick-remind-message-${messageId}`}
+          className={cn(ACTION_BUTTON_CLASS, "disabled:opacity-50")}
+          disabled={quickRemindPending}
+          onClick={() => quickRemind(reminderTarget())}
+        >
+          <Plus className={ACTION_ICON_CLASS} aria-hidden="true" />
+        </button>
+
         {/* Always mounted: "Remind me later" is offered on every message,
           authored by anyone — the rarer edit/delete items gate themselves
           inside. Wrapping this menu in a condition would silently revoke
@@ -339,14 +364,7 @@ export function MessageActionBar({
           <DropdownMenuContent align="end">
             <DropdownMenuItem
               data-testid={`remind-message-${messageId}`}
-              onClick={() =>
-                openReminder({
-                  eventId: messageId,
-                  channelId: channelId ?? "",
-                  preview: messagePreview ?? "",
-                  authorPubkey: authorPubkey ?? "",
-                })
-              }
+              onClick={() => openReminder(reminderTarget())}
             >
               <Clock className={ACTION_ICON_CLASS} aria-hidden="true" />
               Remind me later
