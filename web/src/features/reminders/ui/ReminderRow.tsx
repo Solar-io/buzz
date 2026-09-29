@@ -7,7 +7,7 @@ import { truncatePubkey } from "@/shared/lib/pubkey";
 import { Button } from "@/shared/ui/button";
 
 import { useReminderMutations, useReminderSummary } from "../hooks.ts";
-import { formatDueLabel } from "../lib/reminderFilters.ts";
+import { formatDueClock, formatDueLabel } from "../lib/reminderFilters.ts";
 import { hasNavigableTarget } from "../lib/reminderNavigation.ts";
 import { displayText } from "../lib/reminderSummary.ts";
 import type { Reminder } from "../lib/reminderTypes.ts";
@@ -93,7 +93,8 @@ export function ReminderRow({
               className={cn(overdue && "font-medium text-destructive")}
               data-testid={`reminder-due-${reminder.id}`}
             >
-              {formatDueLabel(reminder.notBefore, now)}
+              {formatDueLabel(reminder.notBefore, now)} ·{" "}
+              {formatDueClock(reminder.notBefore, now)}
             </span>
           ) : null}
         </div>

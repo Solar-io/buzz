@@ -5,6 +5,7 @@ import {
   countDue,
   dueSince,
   endOfLocalDay,
+  formatDueClock,
   formatDueLabel,
   groupReminders,
   isDue,
@@ -197,4 +198,45 @@ test("formatDueLabel says overdue for the past and in-N for the future", () => {
   assert.equal(formatDueLabel(NOW + 900, NOW), "in 15m");
   assert.equal(formatDueLabel(NOW + 10_800, NOW), "in 3h");
   assert.equal(formatDueLabel(NOW + 259_200, NOW), "in 3d");
+});
+
+/** Local wall-clock instant → unix seconds, so fixtures read as clock times. */
+const local = (y, mo, d, h, mi) =>
+  new Date(y, mo - 1, d, h, mi).getTime() / 1_000;
+
+test("formatDueClock names the local day and clock time", () => {
+  const now = local(2026, 9, 29, 11, 10);
+  assert.equal(
+    formatDueClock(local(2026, 9, 30, 11, 10), now, "en-US"),
+    "tomorrow 11:10 AM",
+  );
+  assert.equal(
+    formatDueClock(local(2026, 9, 29, 16, 5), now, "en-US"),
+    "today 4:05 PM",
+  );
+  assert.equal(
+    formatDueClock(local(2026, 9, 28, 9, 0), now, "en-US"),
+    "yesterday 9:00 AM",
+  );
+  assert.equal(
+    formatDueClock(local(2026, 10, 5, 9, 0), now, "en-US"),
+    "Mon, Oct 5 9:00 AM",
+  );
+  assert.equal(
+    formatDueClock(local(2027, 1, 4, 9, 0), now, "en-US"),
+    "Mon, Jan 4, 2027 9:00 AM",
+  );
+});
+
+test("formatDueClock compares calendar days, not 24h windows", () => {
+  const lateNight = local(2026, 9, 29, 23, 0);
+  assert.equal(
+    formatDueClock(local(2026, 9, 30, 1, 0), lateNight, "en-US"),
+    "tomorrow 1:00 AM",
+  );
+  const earlyMorning = local(2026, 9, 29, 0, 30);
+  assert.equal(
+    formatDueClock(local(2026, 9, 29, 23, 30), earlyMorning, "en-US"),
+    "today 11:30 PM",
+  );
 });
