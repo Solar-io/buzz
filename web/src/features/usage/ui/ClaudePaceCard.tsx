@@ -10,9 +10,11 @@ import {
   USAGE_HUB_URL,
 } from "@/features/usage/lib/usageHub";
 import {
+  activeStatus,
   formatClock,
   formatCountdown,
   headlineFor,
+  isParked,
   nextResetLabel,
   unknownLabel,
 } from "@/features/usage/lib/paceFormat";
@@ -38,6 +40,9 @@ const FILL_CLASS: Record<PaceStatus, string> = {
   critical: "bg-amber-500",
   unknown: "bg-transparent",
 };
+
+/** Fill for an account the load balancer has switched away from. */
+const PARKED_FILL_CLASS = "bg-sidebar-foreground/30";
 
 type Loaded = { pace: Pace; asOf: number; stale: boolean };
 
@@ -84,16 +89,26 @@ function usedOf(account: PaceAccount): number | null {
 }
 
 /** One bar row in the strip's `14px 1fr 32px` grid: label, bar, percent. */
-function AccountBar({ account }: { account: PaceAccount }) {
+function AccountBar({
+  account,
+  parked,
+}: {
+  account: PaceAccount;
+  parked: boolean;
+}) {
   const used = usedOf(account);
   return (
     <div
       data-testid="pace-row"
       data-account={account.id}
       data-status={account.status}
+      data-parked={parked ? "true" : "false"}
       className="contents"
+      title={parked ? `${account.id} not in use (switched away)` : undefined}
     >
-      <span className="font-semibold">{account.id}</span>
+      <span className={cn("font-semibold", parked && "opacity-50")}>
+        {account.id}
+      </span>
       <div
         data-testid="pace-bar"
         className="relative h-1 rounded-[2px] bg-sidebar-foreground/15"
@@ -101,7 +116,11 @@ function AccountBar({ account }: { account: PaceAccount }) {
         {used !== null ? (
           <div
             data-testid="pace-fill"
-            className={cn("h-full rounded-[2px]", FILL_CLASS[account.status])}
+            className={cn(
+              "h-full rounded-[2px]",
+              // Parked: switched away from, so gray — known, not alarming.
+              parked ? PARKED_FILL_CLASS : FILL_CLASS[account.status],
+            )}
             style={{ width: `${Math.round(Math.min(1, used) * 100)}%` }}
           />
         ) : null}
@@ -160,7 +179,8 @@ export function ClaudePaceCardView({
   defaultExpanded?: boolean;
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
-  const warning = pace.status === "warn" || pace.status === "critical";
+  const status = activeStatus(pace);
+  const warning = status === "warn" || status === "critical";
   const Icon = warning ? TriangleAlert : Gauge;
   const headroom =
     pace.headroomAccounts !== null
@@ -187,14 +207,14 @@ export function ClaudePaceCardView({
         <span className="flex w-full items-center gap-2 text-xs">
           <Icon
             aria-hidden
-            className={cn("size-3.25 shrink-0", HEADLINE_CLASS[pace.status])}
+            className={cn("size-3.25 shrink-0", HEADLINE_CLASS[status])}
           />
           <span
             data-testid="pace-headline"
-            data-status={pace.status}
+            data-status={status}
             className={cn(
               "min-w-0 flex-1 truncate font-semibold",
-              HEADLINE_CLASS[pace.status],
+              HEADLINE_CLASS[status],
             )}
           >
             {headlineFor(pace, now)}
@@ -209,7 +229,11 @@ export function ClaudePaceCardView({
         </span>
         <span className="grid w-full grid-cols-[14px_1fr_32px] items-center gap-x-2 gap-y-1 text-2xs text-sidebar-foreground/60">
           {pace.accounts.map((account) => (
-            <AccountBar key={account.id} account={account} />
+            <AccountBar
+              key={account.id}
+              account={account}
+              parked={isParked(pace, account)}
+            />
           ))}
         </span>
       </button>

@@ -40,6 +40,7 @@ function account(overrides) {
   return {
     id: "A",
     isDefault: true,
+    inUse: true,
     state: "known",
     usedFraction: 0.92,
     resetsAt: "2026-09-29T13:00:00Z",
@@ -250,6 +251,67 @@ test("critical keeps its own (red) headline colour", async () => {
   const headline = q(container, "pace-headline");
   assert.equal(headline.textContent, "A is out");
   assert.ok(headline.classList.contains("text-red-600"));
+  await act(async () => root.unmount());
+});
+
+test("a parked pool is gray and no longer drives the headline", async () => {
+  // Live shape 2026-09-28: switched A -> B; A at 99% and critical, B fine.
+  const { container, root } = await render(
+    pace({
+      status: "critical",
+      accounts: [
+        account({
+          isDefault: false,
+          inUse: false,
+          usedFraction: 0.99,
+          status: "critical",
+          etaFullAt: "2026-09-29T04:13:00Z",
+        }),
+        account({ id: "B", usedFraction: 0.09, status: "ok" }),
+      ],
+    }),
+  );
+  const rowA = container.querySelector('[data-account="A"]');
+  assert.equal(rowA.dataset.parked, "true");
+  const fillA = rowA.querySelector('[data-testid="pace-fill"]');
+  assert.ok(fillA.classList.contains("bg-sidebar-foreground/30"), "A is gray");
+  assert.ok(!fillA.classList.contains("bg-amber-500"), "A is not amber");
+  assert.equal(
+    rowA.querySelector('[data-testid="pace-percent"]').textContent,
+    "99%",
+    "the number stays",
+  );
+  const headline = q(container, "pace-headline");
+  assert.equal(headline.textContent, "On pace");
+  assert.equal(headline.dataset.status, "ok");
+  assert.ok(!headline.classList.contains("text-red-600"));
+  await act(async () => root.unmount());
+});
+
+test("an in-use critical pool still turns the headline red", async () => {
+  const { container, root } = await render(
+    pace({
+      status: "critical",
+      accounts: [
+        account({
+          isDefault: false,
+          inUse: true,
+          usedFraction: 1,
+          status: "critical",
+        }),
+        account({ id: "B", usedFraction: 0.09, status: "ok" }),
+      ],
+    }),
+  );
+  const rowA = container.querySelector('[data-account="A"]');
+  assert.equal(rowA.dataset.parked, "false");
+  assert.ok(
+    rowA
+      .querySelector('[data-testid="pace-fill"]')
+      .classList.contains("bg-amber-500"),
+  );
+  assert.equal(q(container, "pace-headline").textContent, "A is out");
+  assert.ok(q(container, "pace-headline").classList.contains("text-red-600"));
   await act(async () => root.unmount());
 });
 

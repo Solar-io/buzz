@@ -3,7 +3,7 @@
  * only turn payload values into words. `now` and `timeZone` are explicit so
  * tests are deterministic.
  */
-import type { Pace, PaceAccount } from "./usageHub.ts";
+import type { Pace, PaceAccount, PaceStatus } from "./usageHub.ts";
 
 const HOUR_MS = 3_600_000;
 
@@ -58,8 +58,43 @@ export function formatClock(ms: number, timeZone?: string): string {
   }
 }
 
-function worstAccount(pace: Pace): PaceAccount | undefined {
-  return pace.accounts.find((account) => account.status === pace.status);
+/**
+ * An account we have switched away from: no agent routes to it. Uses the
+ * hub's `inUse` when sent; otherwise "not the default while another account
+ * is". With neither signal every account counts as active.
+ */
+export function isParked(pace: Pace, account: PaceAccount): boolean {
+  if (typeof account.inUse === "boolean") return !account.inUse;
+  return !account.isDefault && pace.accounts.some((other) => other.isDefault);
+}
+
+const STATUS_RANK: Record<PaceStatus, number> = {
+  unknown: 0,
+  ok: 1,
+  warn: 2,
+  critical: 3,
+};
+
+/**
+ * The card's status, ignoring parked accounts: once we have switched off an
+ * exhausted pool it should not keep the headline yellow or red all week.
+ */
+export function activeStatus(pace: Pace): PaceStatus {
+  const active = pace.accounts.filter((account) => !isParked(pace, account));
+  if (active.length === 0 || active.length === pace.accounts.length) {
+    return pace.status;
+  }
+  return active.reduce<PaceStatus>(
+    (worst, account) =>
+      STATUS_RANK[account.status] > STATUS_RANK[worst] ? account.status : worst,
+    "unknown",
+  );
+}
+
+function worstAccount(pace: Pace, status: PaceStatus): PaceAccount | undefined {
+  return pace.accounts.find(
+    (account) => account.status === status && !isParked(pace, account),
+  );
 }
 
 /**
@@ -68,9 +103,10 @@ function worstAccount(pace: Pace): PaceAccount | undefined {
  * ({@link nextResetLabel}) in the left-nav redesign.
  */
 export function headlineFor(pace: Pace, now: number = Date.now()): string {
-  const worst = worstAccount(pace);
+  const status = activeStatus(pace);
+  const worst = worstAccount(pace, status);
   const id = worst?.id ?? "An account";
-  switch (pace.status) {
+  switch (status) {
     case "ok":
       return "On pace";
     case "warn":

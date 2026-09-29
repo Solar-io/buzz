@@ -23,6 +23,12 @@ export type PaceAccountState =
 export type PaceAccount = {
   id: string;
   isDefault: boolean;
+  /**
+   * Whether any agent routes to this pool (default, or agents assigned).
+   * `null` when the hub does not send it; the card then falls back to
+   * `isDefault`.
+   */
+  inUse: boolean | null;
   state: PaceAccountState;
   usedFraction: number | null;
   resetsAt: string | null;
@@ -79,6 +85,7 @@ function parseAccount(raw: unknown): PaceAccount | null {
   return {
     id: raw.id,
     isDefault: raw.isDefault === true,
+    inUse: typeof raw.inUse === "boolean" ? raw.inUse : null,
     state: raw.state as PaceAccountState,
     usedFraction: numOrNull(raw.usedFraction),
     resetsAt: dateOrNull(raw.resetsAt),
