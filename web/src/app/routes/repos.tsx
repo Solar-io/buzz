@@ -58,6 +58,8 @@ import { HuddleDock } from "@/features/huddle/ui/HuddleDock";
 import { useHuddleSession } from "@/features/huddle/HuddleSessionProvider";
 import { useRouteMentionMembers } from "@/features/huddle/useHuddleMentionMembers";
 import { eligibleDmAgentPubkey } from "@/features/huddle/lib/dmAgentCall.ts";
+import { authorLabel } from "@/features/channels/lib/authorLabel.ts";
+import { soleAgent } from "@/features/channels/lib/soleAgent.ts";
 import { ThreadPanel } from "@/features/channels/ui/ThreadPanel";
 import {
   useAgentFrames,
@@ -594,6 +596,17 @@ function ChannelBrowser() {
         })
       : null;
   }, [current, selfPubkey, knownAgentPubkeys]);
+  // The main composer notifies the room's one agent without a typed @ (Sam
+  // 2026-09-29), the channel/DM twin of the thread pane's partner rule. A
+  // mention is the only wake path, so without it a post reaches nobody.
+  const composerAutoNotify = useMemo(() => {
+    const pubkey = soleAgent(
+      members.map((member) => member.pubkey),
+      selfPubkey,
+      knownAgentPubkeys,
+    );
+    return pubkey ? { pubkey, label: authorLabel(pubkey, profiles) } : null;
+  }, [members, selfPubkey, knownAgentPubkeys, profiles]);
   const agentPubkeys = useMemo(() => {
     const set = new Set(observerStore?.byAgent.keys() ?? []);
     for (const entry of agentRegistry) {
@@ -903,6 +916,7 @@ function ChannelBrowser() {
                           editSend={messageActions.editSend}
                           profiles={profiles}
                           strictMentions={strictMentions}
+                          autoNotify={composerAutoNotify}
                           draftKey={current.id}
                           send={send}
                           actionsBar={

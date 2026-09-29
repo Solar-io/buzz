@@ -711,7 +711,7 @@ export function Composer({
     // @typed the other participant, one tag goes out, not two). Explicit
     // picks keep their position; the automatic key appends. It is a
     // send-payload addition only — no @ token is written into the content —
-    // and absent when `autoNotify` is null (the main-channel composer).
+    // and absent when `autoNotify` is null (no single partner or agent).
     const autoEntry = autoNotify ? autoNotify.pubkey : null;
     const mentionPubkeys =
       autoEntry &&
