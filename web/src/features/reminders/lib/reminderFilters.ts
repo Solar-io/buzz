@@ -167,3 +167,42 @@ export function formatDueLabel(notBefore: number, now: number): string {
   }
   return unit === null ? "in less than a minute" : `in ${unit}`;
 }
+
+/**
+ * The due time as a wall clock, e.g. "tomorrow 11:10 AM", shown beside the
+ * relative label so a row answers "when exactly?" without doing arithmetic.
+ *
+ * Sam, 2026-09-29 asked for this after the "+" toast ("Reminder set for
+ * tomorrow 11:10 AM") showed the clock time the list then hid. Days are
+ * compared as LOCAL calendar days, so 11pm → 1am is "tomorrow" even though it
+ * is only two hours out. Beyond yesterday/today/tomorrow the weekday and date
+ * are named. `locale` exists for tests; the UI passes the runtime default.
+ */
+export function formatDueClock(
+  notBefore: number,
+  now: number,
+  locale?: string,
+): string {
+  const due = new Date(notBefore * 1_000);
+  const today = new Date(now * 1_000);
+  const time = due.toLocaleTimeString(locale, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const dayIndex = (d: Date) =>
+    Math.round(
+      new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() /
+        86_400_000,
+    );
+  const dayDiff = dayIndex(due) - dayIndex(today);
+  if (dayDiff === 0) return `today ${time}`;
+  if (dayDiff === 1) return `tomorrow ${time}`;
+  if (dayDiff === -1) return `yesterday ${time}`;
+  const date = due.toLocaleDateString(locale, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    ...(due.getFullYear() !== today.getFullYear() ? { year: "numeric" } : {}),
+  });
+  return `${date} ${time}`;
+}
