@@ -691,6 +691,7 @@ function ChannelBrowser() {
         selfPubkey={selfPubkey}
         agentPubkeys={agentPubkeys}
         onClose={() => setThreadRootId(null)}
+        onOpenChannel={() => selectChannel(threadChannel.id)}
       />
     ) : null;
   const threadOpen = threadRoot !== null || detachedThread !== null;

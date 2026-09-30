@@ -5,6 +5,7 @@ import type { ChannelSummary } from "@/features/channels/useChannels";
 import { useHuddleSession } from "@/features/huddle/HuddleSessionProvider";
 import { useRouteMentionMembers } from "@/features/huddle/useHuddleMentionMembers";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
+import { threadOriginLabel } from "../lib/openThread.ts";
 import { ThreadPanel } from "./ThreadPanel";
 
 /**
@@ -25,12 +26,15 @@ export function DetachedThreadPanel({
   selfPubkey,
   agentPubkeys,
   onClose,
+  onOpenChannel,
 }: {
   channel: ChannelSummary;
   rootId: string;
   selfPubkey: string | null;
   agentPubkeys: ReadonlySet<string>;
   onClose: () => void;
+  /** Jump to the thread's own channel (the pane's "in #channel" link). */
+  onOpenChannel: () => void;
 }) {
   const { session } = useRelaySession();
   const huddleSession = useHuddleSession();
@@ -70,6 +74,13 @@ export function DetachedThreadPanel({
       selfPubkey={selfPubkey}
       onClose={onClose}
       send={send}
+      // Beside another conversation or a full-page view: say whose thread
+      // this is, and keep the ✕ visible (the Replies toggle there is not
+      // this thread's).
+      origin={{
+        label: threadOriginLabel(channel, selfPubkey, profiles),
+        onOpen: onOpenChannel,
+      }}
     />
   );
 }

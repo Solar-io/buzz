@@ -22,6 +22,8 @@
  * threads still close on navigation, exactly as they always did.
  */
 
+import { dmDisplayName, type NameLikeProfile } from "../../dms/lib/dmNaming.ts";
+
 export interface OpenThread {
   /** Channel (or DM) the thread lives in. */
   channelId: string;
@@ -71,4 +73,19 @@ export function threadPaneSource(
 ): "none" | "current" | "other" {
   if (open === null) return "none";
   return open.channelId === currentChannelId ? "current" : "other";
+}
+
+/**
+ * The kept-open pane's "in …" label for the thread's channel: `#name` for a
+ * channel or forum, the participants' names for a DM (the relay names every
+ * DM channel "DM", so its own name says nothing).
+ */
+export function threadOriginLabel(
+  channel: { type: string; name: string; participantPubkeys: string[] },
+  selfPubkey: string | null,
+  profiles: Map<string, NameLikeProfile>,
+): string {
+  return channel.type === "dm"
+    ? dmDisplayName(channel.participantPubkeys, selfPubkey ?? "", profiles)
+    : `#${channel.name}`;
 }

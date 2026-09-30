@@ -3,8 +3,31 @@ import { test } from "node:test";
 import {
   retargetThread,
   threadAfterNavigation,
+  threadOriginLabel,
   threadPaneSource,
 } from "./openThread.ts";
+
+test("origin label: #name for channels, the other party for DMs", () => {
+  const self = "e".repeat(64);
+  const bob = "b".repeat(64);
+  const profiles = new Map([[bob, { name: "bob", displayName: "Bob" }]]);
+  assert.equal(
+    threadOriginLabel(
+      { type: "stream", name: "general", participantPubkeys: [] },
+      self,
+      profiles,
+    ),
+    "#general",
+  );
+  assert.equal(
+    threadOriginLabel(
+      { type: "dm", name: "DM", participantPubkeys: [self, bob] },
+      self,
+      profiles,
+    ),
+    "Bob",
+  );
+});
 
 const inGeneral = { channelId: "general", rootId: "root-1" };
 

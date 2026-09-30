@@ -77,6 +77,7 @@ export function ThreadPanel({
   permalinkMessageId = null,
   onPermalinkSettled,
   agentPubkeys,
+  origin = null,
 }: {
   root: TimelineMessage;
   buffer: MessageBuffer;
@@ -102,6 +103,13 @@ export function ThreadPanel({
   onPermalinkSettled?: (id: string) => void;
   /** Agent authors — forwarded so thread rows get the agent badge + card. */
   agentPubkeys?: ReadonlySet<string>;
+  /**
+   * Set when the pane is kept open beside something OTHER than its own
+   * channel (lib/openThread.ts): a small "in #channel" line that jumps to
+   * the thread's channel, and the ✕ shown at every width — beside Inbox or
+   * another channel the composer row's Replies toggle is not this thread's.
+   */
+  origin?: { label: string; onOpen: () => void } | null;
 }) {
   const layoutMode = useThreadLayout();
   const rootId = root.id;
@@ -185,12 +193,28 @@ export function ThreadPanel({
         aria-label="Close thread"
         className={cn(
           "absolute right-3 top-[max(0.75rem,env(safe-area-inset-top))] z-10 rounded p-1 text-sm text-muted-foreground hover:bg-accent",
-          !mobileOnly && layoutMode === "split" && "lg:hidden",
+          !mobileOnly && layoutMode === "split" && !origin && "lg:hidden",
         )}
         onClick={onClose}
       >
         ✕
       </button>
+      {origin && (
+        <div
+          data-testid="thread-origin"
+          className="flex min-w-0 items-center gap-1 border-b border-border py-2 pr-10 pl-3 text-xs text-muted-foreground"
+        >
+          <span className="shrink-0">in</span>
+          <button
+            type="button"
+            className="min-w-0 truncate font-medium text-foreground hover:underline"
+            title={`Open ${origin.label}`}
+            onClick={origin.onOpen}
+          >
+            {origin.label}
+          </button>
+        </div>
+      )}
       <ChannelTimeline
         messages={threadMessages}
         profiles={profiles}
