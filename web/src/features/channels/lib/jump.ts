@@ -197,8 +197,7 @@ export function buildJumpResults(input: {
     }))
     .sort(
       (a, b) =>
-        b.score - a.score ||
-        a.candidate.label.localeCompare(b.candidate.label),
+        b.score - a.score || a.candidate.label.localeCompare(b.candidate.label),
     )
     .slice(0, limit)
     .map((entry) => entry.candidate);

@@ -22,13 +22,10 @@ function run(...blocks) {
 }
 
 test("the five markers become callouts; an unknown marker stays a quote", () => {
-  assert.deepEqual([...CALLOUT_TYPES], [
-    "note",
-    "tip",
-    "important",
-    "warning",
-    "caution",
-  ]);
+  assert.deepEqual(
+    [...CALLOUT_TYPES],
+    ["note", "tip", "important", "warning", "caution"],
+  );
   for (const type of ["NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"]) {
     const [node] = run(quote(`[!${type}]\nbody text`));
     assert.equal(node.type, "callout", type);
@@ -69,7 +66,10 @@ test("text after the marker is the title when a body follows", () => {
   const block = quote("[!NOTE] Tested in Agent Brave");
   block.children.push(list);
   const [withList] = run(block);
-  assert.equal(withList.data.hProperties["data-title"], "Tested in Agent Brave");
+  assert.equal(
+    withList.data.hProperties["data-title"],
+    "Tested in Agent Brave",
+  );
   assert.deepEqual(withList.children, [list]);
 });
 
@@ -85,7 +85,10 @@ test("a one-line callout keeps its text as the body under the default title", ()
 });
 
 test("inline formatting after the marker survives as body", () => {
-  const strong = { type: "strong", children: [{ type: "text", value: "green" }] };
+  const strong = {
+    type: "strong",
+    children: [{ type: "text", value: "green" }],
+  };
   const [node] = run(
     quote([{ type: "text", value: "[!TIP] Suites are " }, strong]),
   );

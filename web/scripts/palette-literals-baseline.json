@@ -14,7 +14,6 @@
   "src/features/channels/lib/presence.ts": 2,
   "src/features/channels/ui/AddChannelMembersDialog.tsx": 1,
   "src/features/channels/ui/ChannelActionsBar.tsx": 9,
-  "src/features/channels/ui/ChannelTimeline.tsx": 2,
   "src/features/channels/ui/ReactionChips.tsx": 2,
   "src/features/channels/ui/TimelineDividers.tsx": 2,
   "src/features/community-members/ui/AddMemberDialog.tsx": 2,

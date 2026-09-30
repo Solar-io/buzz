@@ -123,10 +123,7 @@ test("with the root unloaded, replies fold under the oldest loaded ancestor", ()
 });
 
 test("a parent cycle terminates", () => {
-  const messages = [
-    reply("a", 100, null, "b"),
-    reply("b", 110, null, "a"),
-  ];
+  const messages = [reply("a", 100, null, "b"), reply("b", 110, null, "a")];
   const { rowOf } = foldReplies(messages);
   assert.equal(rowOf.size <= 2, true);
 });

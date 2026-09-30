@@ -148,7 +148,10 @@ export function SidebarNavButton({
       ) : null}
       {muted && (
         <BellOff
-          className={cn("h-3.5 w-3.5 shrink-0", !unread && !marked && "ml-auto")}
+          className={cn(
+            "h-3.5 w-3.5 shrink-0",
+            !unread && !marked && "ml-auto",
+          )}
           aria-label="Muted"
         />
       )}

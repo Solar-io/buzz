@@ -154,8 +154,8 @@ export function InlineThread({
           )}
           {count > replies.length && (
             <p className="text-xs text-muted-foreground">
-              {replies.length} of {replyCountLabel(count)} loaded — scroll up
-              in the channel to load the rest.
+              {replies.length} of {replyCountLabel(count)} loaded — scroll up in
+              the channel to load the rest.
             </p>
           )}
           {visible.map((reply) => renderReply(reply))}

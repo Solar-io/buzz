@@ -24,7 +24,11 @@ function Tile({ file }: { file: FileCardTarget }) {
       className="flex min-w-0 flex-col gap-1.5 border-t border-l border-border p-3 text-left transition-colors hover:bg-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:opacity-70"
     >
       <span className="grid h-13.5 place-items-center rounded-lg bg-chip font-mono text-sm font-bold tracking-wide text-muted-foreground">
-        {downloading ? <Spinner className="size-4" /> : fileTypeLabel(file.filename)}
+        {downloading ? (
+          <Spinner className="size-4" />
+        ) : (
+          fileTypeLabel(file.filename)
+        )}
       </span>
       <span className="truncate font-mono text-xs font-semibold text-foreground">
         {file.filename}

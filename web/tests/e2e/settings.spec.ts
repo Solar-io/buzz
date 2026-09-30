@@ -379,9 +379,7 @@ test("conversation density changes real conversation spacing", async ({
   expect(spacious).not.toBe(compact);
 });
 
-test("the link preview choice persists across a reload", async ({
-  page,
-}) => {
+test("the link preview choice persists across a reload", async ({ page }) => {
   await signIn(page);
 
   // Defaults, asserted as literals so a changed default is caught here.

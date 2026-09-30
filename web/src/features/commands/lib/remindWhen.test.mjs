@@ -14,7 +14,10 @@ const NOW = local(2026, 9, 30, 15, 42);
 
 test("30m, 2h, tomorrow and 3pm resolve to hardcoded instants; junk is null", () => {
   assert.equal(parseRemindWhen("30m", NOW).at, s(local(2026, 9, 30, 16, 12)));
-  assert.equal(parseRemindWhen("in 2 hours", NOW).at, s(local(2026, 9, 30, 17, 42)));
+  assert.equal(
+    parseRemindWhen("in 2 hours", NOW).at,
+    s(local(2026, 9, 30, 17, 42)),
+  );
   assert.equal(parseRemindWhen("1d", NOW).at, s(NOW) + 86_400);
   assert.equal(parseRemindWhen("1 week", NOW).at, s(NOW) + 604_800);
   assert.equal(parseRemindWhen("tomorrow", NOW).at, s(local(2026, 10, 1, 9)));
@@ -29,7 +32,17 @@ test("30m, 2h, tomorrow and 3pm resolve to hardcoded instants; junk is null", ()
   assert.equal(parseRemindWhen("09:15", NOW).at, s(local(2026, 10, 1, 9, 15)));
   assert.equal(parseRemindWhen("12am", NOW).at, s(local(2026, 10, 1, 0)));
 
-  for (const junk of ["", "later", "soon", "3", "25:00", "13pm", "0m", "2 parsecs", "tomorrow noonish"]) {
+  for (const junk of [
+    "",
+    "later",
+    "soon",
+    "3",
+    "25:00",
+    "13pm",
+    "0m",
+    "2 parsecs",
+    "tomorrow noonish",
+  ]) {
     assert.equal(parseRemindWhen(junk, NOW), null, junk);
   }
 });

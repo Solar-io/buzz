@@ -1,9 +1,4 @@
-import {
-  useRef,
-  useState,
-  type ClipboardEvent,
-  type DragEvent,
-} from "react";
+import { useRef, useState, type ClipboardEvent, type DragEvent } from "react";
 import { toast } from "@/shared/ui/notify";
 import { uploadBlob } from "@/shared/api/blossom";
 import { attachmentRejectionReason } from "../lib/attachmentAccept.ts";

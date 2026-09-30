@@ -87,14 +87,17 @@ test("the strip is Work, then Thinking — a thread is never a tab", () => {
     }
   }
   // The full layout object: no thread fields left to mount a pane from.
-  assert.deepEqual(rightPaneLayout(input({ agentDm: true, active: "activity" })), {
-    hostVisible: true,
-    tabs: ["work", "activity"],
-    active: "activity",
-    handle: true,
-    work: null,
-    activity: true,
-  });
+  assert.deepEqual(
+    rightPaneLayout(input({ agentDm: true, active: "activity" })),
+    {
+      hostVisible: true,
+      tabs: ["work", "activity"],
+      active: "activity",
+      handle: true,
+      work: null,
+      activity: true,
+    },
+  );
 });
 
 test("handle renders for a hidden agent-DM pane", () => {

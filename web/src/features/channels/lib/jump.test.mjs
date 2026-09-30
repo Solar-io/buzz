@@ -12,28 +12,79 @@ import {
 
 // The Jump artboard's sample set.
 const CANDIDATES = [
-  { key: "conversation:c-flight", kind: "channel", label: "flight-path", hint: "1 needs you", hot: true },
-  { key: "conversation:c-eng", kind: "channel", label: "engineering", hint: "2 agents working" },
-  { key: "conversation:c-ann", kind: "channel", label: "announcements", hint: "unread" },
+  {
+    key: "conversation:c-flight",
+    kind: "channel",
+    label: "flight-path",
+    hint: "1 needs you",
+    hot: true,
+  },
+  {
+    key: "conversation:c-eng",
+    kind: "channel",
+    label: "engineering",
+    hint: "2 agents working",
+  },
+  {
+    key: "conversation:c-ann",
+    kind: "channel",
+    label: "announcements",
+    hint: "unread",
+  },
   { key: "conversation:c-design", kind: "channel", label: "design" },
   { key: "conversation:c-general", kind: "channel", label: "general" },
   { key: "conversation:d-gilfoyle", kind: "dm", label: "Gilfoyle" },
   { key: "conversation:d-nikon", kind: "dm", label: "Lord Nikon" },
   { key: "person:p-evie", kind: "person", label: "Evie" },
-  { key: "command:remind", kind: "command", label: "remind", hint: "/remind [when]" },
-  { key: "action:reminders", kind: "action", label: "Reminders", keywords: ["remind", "later"] },
-  { key: "action:new-channel", kind: "action", label: "New channel", keywords: ["create"] },
+  {
+    key: "command:remind",
+    kind: "command",
+    label: "remind",
+    hint: "/remind [when]",
+  },
+  {
+    key: "action:reminders",
+    kind: "action",
+    label: "Reminders",
+    keywords: ["remind", "later"],
+  },
+  {
+    key: "action:new-channel",
+    kind: "action",
+    label: "New channel",
+    keywords: ["create"],
+  },
 ];
 
 const keys = (results) => results.flat.map((item) => item.key);
 const headers = (results) => results.sections.map((section) => section.header);
 
 test("# @ / scope the list; the ghost completes the top prefix hit", () => {
-  assert.deepEqual(parseJumpQuery("en"), { scope: "all", prefix: "", needle: "en" });
-  assert.deepEqual(parseJumpQuery("#En "), { scope: "channel", prefix: "#", needle: "en" });
-  assert.deepEqual(parseJumpQuery("@lord"), { scope: "person", prefix: "@", needle: "lord" });
-  assert.deepEqual(parseJumpQuery("/re"), { scope: "command", prefix: "/", needle: "re" });
-  assert.deepEqual(parseJumpQuery(""), { scope: "all", prefix: "", needle: "" });
+  assert.deepEqual(parseJumpQuery("en"), {
+    scope: "all",
+    prefix: "",
+    needle: "en",
+  });
+  assert.deepEqual(parseJumpQuery("#En "), {
+    scope: "channel",
+    prefix: "#",
+    needle: "en",
+  });
+  assert.deepEqual(parseJumpQuery("@lord"), {
+    scope: "person",
+    prefix: "@",
+    needle: "lord",
+  });
+  assert.deepEqual(parseJumpQuery("/re"), {
+    scope: "command",
+    prefix: "/",
+    needle: "re",
+  });
+  assert.deepEqual(parseJumpQuery(""), {
+    scope: "all",
+    prefix: "",
+    needle: "",
+  });
 
   // "en": engineering is the prefix hit; the ghost is the rest of its name.
   const all = buildJumpResults({
@@ -124,8 +175,11 @@ test("empty query lists recents, newest first", () => {
 
   // No history yet: no section at all, rather than an empty "Recent".
   assert.deepEqual(
-    buildJumpResults({ query: parseJumpQuery(""), candidates: CANDIDATES, recents: [] })
-      .sections,
+    buildJumpResults({
+      query: parseJumpQuery(""),
+      candidates: CANDIDATES,
+      recents: [],
+    }).sections,
     [],
   );
 });

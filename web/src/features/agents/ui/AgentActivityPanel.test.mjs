@@ -163,9 +163,7 @@ test("the portrait no longer renders inside the thinking pane", async () => {
     false,
     'the word "Thinking" must not appear in the pane',
   );
-  const close = container.querySelector(
-    '[aria-label="Close thinking panel"]',
-  );
+  const close = container.querySelector('[aria-label="Close thinking panel"]');
   assert.ok(close, "the mobile close control survives the header removal");
 
   // The transcript still gets its rows (the turn divider from the frame).
@@ -189,7 +187,7 @@ test("the pane has no Replies switch; its close stays below-lg only", async () =
   // jsdom does not evaluate Tailwind, so a visibility check here would pass
   // on any markup and prove nothing.
   const { container, unmount } = await mountPanel({});
-  const replies =[...container.querySelectorAll("button")].find(
+  const replies = [...container.querySelectorAll("button")].find(
     (b) => b.textContent?.trim() === "Replies",
   );
   assert.equal(replies, undefined, "no Replies switch in the thinking pane");

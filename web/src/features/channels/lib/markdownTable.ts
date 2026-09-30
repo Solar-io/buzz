@@ -30,7 +30,9 @@ export function isNumericCell(text: string): boolean {
  * One flag per column. `rows` are the BODY rows only (the header is a label,
  * not data); ragged rows are read as far as they go.
  */
-export function numericColumns(rows: readonly (readonly string[])[]): boolean[] {
+export function numericColumns(
+  rows: readonly (readonly string[])[],
+): boolean[] {
   const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
   const flags: boolean[] = [];
   for (let column = 0; column < width; column += 1) {

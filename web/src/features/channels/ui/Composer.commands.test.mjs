@@ -200,8 +200,7 @@ async function mount(props = {}) {
     );
   });
   await flush();
-  const input = () =>
-    container.querySelector('[data-testid="composer-input"]');
+  const input = () => container.querySelector('[data-testid="composer-input"]');
   return {
     container,
     sent,
@@ -261,7 +260,11 @@ test("a command is never passed to send", async () => {
     await composer.clickSend();
     assert.deepEqual(commands.calls.work, [CHANNEL], "/status ran");
     assert.deepEqual(composer.sent, [], "/status was not sent as text");
-    assert.equal(composer.input().value, "", "a command that ran clears the box");
+    assert.equal(
+      composer.input().value,
+      "",
+      "a command that ran clears the box",
+    );
 
     // A command with arguments, sent with Enter (the list is closed by then).
     await composer.type("/remind 2h");
@@ -286,7 +289,11 @@ test("an unknown command shows an inline error, keeps the draft and sends nothin
   try {
     await composer.type("/remnid 2h");
     await composer.clickSend();
-    assert.deepEqual(composer.sent, [], "a typo'd command never reaches the wire");
+    assert.deepEqual(
+      composer.sent,
+      [],
+      "a typo'd command never reaches the wire",
+    );
     assert.deepEqual(commands.calls.reminders, []);
     assert.equal(
       composer.error(),
@@ -354,7 +361,11 @@ test("a leading space or a path sends as text; so does a slash line in a box wit
       composer.sent.map((payload) => payload.content),
       ["/status", "/usr/local/bin is missing"],
     );
-    assert.deepEqual(commands.calls.work, [], "the escaped /status did not run");
+    assert.deepEqual(
+      commands.calls.work,
+      [],
+      "the escaped /status did not run",
+    );
   } finally {
     await composer.unmount();
   }
@@ -392,7 +403,12 @@ test("a thread reply box refuses a slash line instead of posting it", async () =
     await composer.key("Enter");
     assert.deepEqual(
       composer.sent.map((payload) => [payload.content, payload.threadRef]),
-      [["Keep the cursor move slow.", { rootId: "root-1", replyToId: "root-1" }]],
+      [
+        [
+          "Keep the cursor move slow.",
+          { rootId: "root-1", replyToId: "root-1" },
+        ],
+      ],
     );
   } finally {
     await composer.unmount();

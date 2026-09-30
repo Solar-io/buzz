@@ -240,8 +240,7 @@ export function MessageSearchResults({
               authorLabel={search.nameFor}
               authorPicture={search.pictureFor}
               channelName={(channelId) =>
-                channels.find((channel) => channel.id === channelId)?.name ??
-                ""
+                channels.find((channel) => channel.id === channelId)?.name ?? ""
               }
               key={searchResultKey(result)}
               onActivate={() => onOpen(hit)}
@@ -263,8 +262,8 @@ export function MessageSearchResults({
       >
         Nothing here is called{" "}
         <code className="text-foreground">{search.unresolvedTerm}</code>. Fix
-        the filter or remove it — searching without it would answer a
-        different question.
+        the filter or remove it — searching without it would answer a different
+        question.
       </p>
     );
   }

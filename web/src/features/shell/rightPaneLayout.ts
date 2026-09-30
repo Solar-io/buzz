@@ -74,11 +74,7 @@ export function rightPaneTabs(input: RightPaneInput): RightTabId[] {
   if (input.workTab) {
     tabs.push("work");
   }
-  if (
-    input.surface === "conversation" &&
-    input.agentDm &&
-    !input.paneHidden
-  ) {
+  if (input.surface === "conversation" && input.agentDm && !input.paneHidden) {
     tabs.push("activity");
   }
   return tabs;

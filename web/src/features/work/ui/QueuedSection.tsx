@@ -244,7 +244,8 @@ function DoneRows({
     <>
       {shown.map((row) => {
         const name = authorLabel(row.agentPubkey, profiles);
-        const abnormal = row.stopReason !== null && row.stopReason !== "end_turn";
+        const abnormal =
+          row.stopReason !== null && row.stopReason !== "end_turn";
         return (
           <button
             key={row.key}

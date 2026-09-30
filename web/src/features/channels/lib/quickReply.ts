@@ -32,7 +32,7 @@ export type QuickReplyKind = "yesno";
 /** The choices, spelled the way they are sent. */
 export const YES_NO_CHOICES = ["Yes", "No"] as const;
 
-const QUOTE = String.raw`["'“”‘’]?`;
+const QUOTE = "[\"'“”‘’]?";
 /**
  * "yes or no" · "yes/no" · "y/n" — the literal offer, and ONLY those two: a
  * third choice ("yes, no or later") is not a yes/no question.

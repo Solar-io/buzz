@@ -83,7 +83,10 @@ function at(nowMs: number, dayOffset: number, minutes: number): number {
 }
 
 /** Parse `text` relative to `nowMs`; null when it is not a time we read. */
-export function parseRemindWhen(text: string, nowMs: number): RemindWhen | null {
+export function parseRemindWhen(
+  text: string,
+  nowMs: number,
+): RemindWhen | null {
   const input = text.trim().toLowerCase().replace(/\s+/g, " ");
   if (input === "") {
     return null;

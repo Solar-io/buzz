@@ -173,7 +173,9 @@ const remind: CommandSpec = {
       return {
         ok: false,
         error:
-          error instanceof Error ? error.message : "Could not set the reminder.",
+          error instanceof Error
+            ? error.message
+            : "Could not set the reminder.",
       };
     }
     return {

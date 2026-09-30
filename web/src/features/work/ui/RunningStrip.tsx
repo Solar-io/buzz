@@ -109,7 +109,8 @@ export function RunningStrip({
         variant === "bar"
           ? "border-b border-border px-4 py-2 text-sidebar-meta md:hidden"
           : "hidden px-1 pt-2.25 text-xs md:flex",
-        variant === "bar" && (summary.quiet ? "bg-coral-wash" : "bg-honey-wash"),
+        variant === "bar" &&
+          (summary.quiet ? "bg-coral-wash" : "bg-honey-wash"),
       )}
     >
       <HexAvatar

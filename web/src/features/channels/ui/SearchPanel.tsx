@@ -169,7 +169,9 @@ function SearchPanelBody({
         label: channel.name,
         hint:
           status ??
-          (channel.isPrivate ? "private" : (channelTopic(channel) ?? undefined)),
+          (channel.isPrivate
+            ? "private"
+            : (channelTopic(channel) ?? undefined)),
         hot: (marker?.needs ?? 0) > 0,
         isPrivate: channel.isPrivate,
         keywords: [channel.name.replace(/[-_]/g, " ")],
@@ -177,7 +179,11 @@ function SearchPanelBody({
       });
     }
     for (const [pubkey, profile] of profiles) {
-      if (pubkey === selfPubkey || dmPartners.has(pubkey) || !profile.displayName) {
+      if (
+        pubkey === selfPubkey ||
+        dmPartners.has(pubkey) ||
+        !profile.displayName
+      ) {
         continue;
       }
       out.push({
@@ -338,7 +344,6 @@ function SearchPanelBody({
       data-testid="search-panel"
       onClick={onClose}
     >
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: click-stop only */}
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: keyboard is handled by the input */}
       <div
         role="dialog"

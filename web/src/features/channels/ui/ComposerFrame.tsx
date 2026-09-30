@@ -1,5 +1,12 @@
 import { type ReactNode, useState } from "react";
-import { ArrowUp, AtSign, Paperclip, Smile, SquareSlash, Type } from "lucide-react";
+import {
+  ArrowUp,
+  AtSign,
+  Paperclip,
+  Smile,
+  SquareSlash,
+  Type,
+} from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { EmojiPicker } from "@/shared/ui/EmojiPicker";
 
@@ -251,8 +258,8 @@ export function ComposerFrame({
                 </span>
               ) : (
                 <>
-                  Type <Key>/</Key> for commands · <Key>@</Key> to hand work
-                  to a seat
+                  Type <Key>/</Key> for commands · <Key>@</Key> to hand work to
+                  a seat
                 </>
               )}
             </span>

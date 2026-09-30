@@ -58,7 +58,10 @@ test("buttons close once I have replied", () => {
   const question = message("q1", AGENT, 100, "Ship it? Reply yes or no.");
   const mine = message("m1", SELF, 105, "Yes");
   assert.equal(openQuickReplies([question], SELF, { isDm: true }).size, 1);
-  assert.equal(openQuickReplies([question, mine], SELF, { isDm: true }).size, 0);
+  assert.equal(
+    openQuickReplies([question, mine], SELF, { isDm: true }).size,
+    0,
+  );
   // A question asked AFTER my last message is open again.
   const later = message("q2", AGENT, 110, "And the second one? (yes/no)");
   assert.deepEqual(
