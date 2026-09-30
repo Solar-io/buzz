@@ -109,8 +109,10 @@ export function WorkToasts({
         const ref = row.source.approval.ref;
         notify.needsYou(
           {
-            lead: "Workflow approval",
-            rest: "needs you",
+            // Toasts artboard: "<who> needs your approval". An approval is
+            // relay-authored (no actor to name), so the workflow is the who.
+            lead: "Workflow",
+            rest: "needs your approval",
             meta: metaLine(row.title, where),
             seed: null,
             agent: false,

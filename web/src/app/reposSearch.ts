@@ -34,6 +34,11 @@ export interface ReposSearch {
    * replacing it, so Back exits and the view stays linkable.
    */
   stage?: string;
+  /**
+   * With `m`: land ready to reply — the thread's reply box in a channel,
+   * the composer in a DM. A message toast's Reply sets it.
+   */
+  reply?: true;
 }
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -54,6 +59,11 @@ export function validateReposSearch(
     stage:
       typeof search.stage === "string" && HEX64.test(search.stage)
         ? search.stage
+        : undefined,
+    reply:
+      typeof search.m === "string" &&
+      (search.reply === true || search.reply === "1" || search.reply === 1)
+        ? true
         : undefined,
   };
 }

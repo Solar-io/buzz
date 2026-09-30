@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronLeft, CornerDownLeft, Pencil } from "lucide-react";
+import { Bell, ChevronLeft, CornerDownLeft } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import {
   answerSummary,
   back,
   commitMultiSelect,
   interviewView,
-  isAnswered,
   select,
   setNote,
   skipTo,
@@ -16,6 +15,14 @@ import {
 } from "../lib/cardInterview.ts";
 import { ANSWER_LIMITS } from "../lib/cardAnswerTag.ts";
 import type { DecisionCard } from "../lib/decisionCard.ts";
+import {
+  AuthorText,
+  OptionRow,
+  PreviousAnswer,
+  ProgressRail,
+  SomethingElseRow,
+  type InterviewVariant,
+} from "./CardInterviewParts.tsx";
 
 /**
  * The decision-card stepper BODY: progress, one question, its options, the
@@ -32,6 +39,14 @@ import type { DecisionCard } from "../lib/decisionCard.ts";
  * title, and what renders is the v1 card. There is deliberately no branch on
  * `card.v`: one parser, one renderer, and a v2 payload is never a second code
  * path.
+ *
+ * Two layouts, one behaviour (web redesign Phase 2): `inline` is the card in
+ * a desktop row (Message artboard); `sheet` is the phone bottom sheet
+ * (PhoneAsk artboard) — a larger question, the last answer one tap from
+ * Edit, and Back / Next as thumb-sized buttons at the foot. Both keep
+ * answer-and-advance: choosing a single-select option IS the next step, so
+ * the sheet's Next only appears on a question that already has an answer
+ * (a revisit), where it moves on without changing it.
  *
  * ## Author text is BIDI-ISOLATED, and that is this layer's job
  *
@@ -51,11 +66,6 @@ import type { DecisionCard } from "../lib/decisionCard.ts";
  * `overflow-hidden` box, so a long combining-mark run makes a tall row rather
  * than an escaped one.
  */
-
-/** One author-supplied string. See the bidi note above — do not inline this. */
-function AuthorText({ children }: { children: string }) {
-  return <bdi className="min-w-0 break-words">{children}</bdi>;
-}
 
 export interface CardInterviewProps {
   card: DecisionCard;
@@ -77,6 +87,19 @@ export interface CardInterviewProps {
   busy: boolean;
   /** Footer escape hatch; absent where replying in chat is not a navigation. */
   onAnswerInChat?: () => void;
+  /** Card row (default) or phone sheet — see the module doc. */
+  variant?: InterviewVariant;
+  /**
+   * The host already shows `card.title` above this body (the card's header
+   * bar). A question whose text IS the title — every v1 card, and a v2
+   * card's first question when the author gave no title — then does not
+   * repeat it.
+   */
+  titleShown?: boolean;
+  /** "Not now, send to Feedback" — the sheet's way out that files the ask. */
+  onFeedback?: () => void;
+  /** The card is already filed; the Feedback button says so. */
+  inFeedback?: boolean;
 }
 
 export function CardInterview({
@@ -86,9 +109,14 @@ export function CardInterview({
   onSubmit,
   busy,
   onAnswerInChat,
+  variant = "inline",
+  titleShown = false,
+  onFeedback,
+  inFeedback = false,
 }: CardInterviewProps) {
   const view = interviewView(card, state);
   const question = view.question;
+  const sheet = variant === "sheet";
   const [typing, setTyping] = useState(false);
   const [draft, setDraft] = useState("");
   const typedRef = useRef<HTMLInputElement | null>(null);
@@ -135,30 +163,107 @@ export function CardInterview({
   const multi = question.multiSelect;
   const chosen = new Set(view.current?.optionIds ?? []);
   const selectedCount = chosen.size;
+  const heading = question.question || card.title;
+  const showHeading = !(titleShown && heading === card.title);
+  // A revisited single-select question already carries an answer; Next
+  // moves on without re-choosing it. (An unanswered one advances on the tap.)
+  const nextLabel =
+    !multi && view.current !== null && view.index < view.total - 1
+      ? answerSummary(question, view.current)
+      : null;
+
+  const backButton = (
+    <button
+      type="button"
+      data-testid="card-interview-back"
+      disabled={busy}
+      onClick={() => onChange(back(state))}
+      className={
+        sheet
+          ? "h-12 w-24 shrink-0 rounded-xl border border-line-2 bg-card text-base font-semibold text-foreground hover:bg-sunk disabled:opacity-50"
+          : "-ml-1 mt-px flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40"
+      }
+      aria-label={sheet ? undefined : "Previous question"}
+    >
+      {sheet ? "Back" : <ChevronLeft className="size-4" aria-hidden />}
+    </button>
+  );
+
+  const primary = multi ? (
+    <button
+      type="button"
+      data-testid="card-interview-continue"
+      disabled={busy || selectedCount === 0}
+      onClick={() => apply(commitMultiSelect(card, state, question.id))}
+      className={cn(
+        "flex min-w-0 items-center justify-center rounded-xl bg-primary px-3 font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40",
+        sheet ? "h-12 flex-1 text-base" : "min-h-10 w-full text-sm",
+      )}
+    >
+      <span className="truncate">
+        {selectedCount === 0
+          ? "Choose at least one"
+          : `Continue (${selectedCount} selected)`}
+      </span>
+    </button>
+  ) : nextLabel !== null ? (
+    <button
+      type="button"
+      data-testid="card-interview-next"
+      disabled={busy}
+      onClick={() => onChange(skipTo(card, state, view.index + 1))}
+      className={cn(
+        "flex min-w-0 items-center justify-center rounded-xl bg-primary px-3 font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40",
+        sheet ? "h-12 flex-1 text-base" : "min-h-10 w-full text-sm",
+      )}
+    >
+      <span className="truncate">
+        Next · <AuthorText>{nextLabel}</AuthorText>
+      </span>
+    </button>
+  ) : null;
 
   return (
-    <div data-testid="card-interview" className="flex flex-col gap-2">
+    <div
+      data-testid="card-interview"
+      className={cn("flex flex-col", sheet ? "gap-3" : "gap-2.5")}
+    >
       {view.total > 1 && (
-        <ProgressRail card={card} state={state} onJump={onChange} busy={busy} />
+        <ProgressRail
+          card={card}
+          state={state}
+          onJump={onChange}
+          busy={busy}
+          variant={variant}
+        />
       )}
 
-      <div className="flex items-start gap-1.5">
-        {view.canGoBack && (
-          <button
-            type="button"
-            data-testid="card-interview-back"
-            aria-label="Previous question"
-            disabled={busy}
-            onClick={() => onChange(back(state))}
-            className="-ml-1 mt-px flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40"
-          >
-            <ChevronLeft className="size-4" aria-hidden />
-          </button>
-        )}
-        <p className="min-w-0 text-sm font-bold leading-snug">
-          <AuthorText>{question.question || card.title}</AuthorText>
-        </p>
-      </div>
+      {sheet && view.index > 0 && (
+        <PreviousAnswer
+          card={card}
+          state={state}
+          onChange={onChange}
+          busy={busy}
+        />
+      )}
+
+      {(showHeading || (!sheet && view.canGoBack)) && (
+        <div className="flex items-start gap-1.5">
+          {!sheet && view.canGoBack && backButton}
+          {showHeading && (
+            <p
+              className={cn(
+                "min-w-0",
+                sheet
+                  ? "mt-1 text-xl font-bold leading-tight tracking-tight"
+                  : "text-sm font-semibold leading-snug",
+              )}
+            >
+              <AuthorText>{heading}</AuthorText>
+            </p>
+          )}
+        </div>
+      )}
 
       {question.body && (
         <p className="min-w-0 break-words text-sm leading-snug text-muted-foreground">
@@ -194,108 +299,57 @@ export function CardInterview({
             // typing must not smuggle in more than choosing could, and the
             // answer builder refuses anything past this.
             maxLength={ANSWER_LIMITS.maxTextChars}
-            className="h-8 min-w-0 flex-1 rounded-lg border bg-background px-2.5 text-sm outline-none placeholder:text-muted-foreground/60 focus-visible:border-primary/50"
+            className={cn(
+              "min-w-0 flex-1 rounded-[10px] border border-line-2 bg-card px-3 outline-none placeholder:text-muted-foreground focus-visible:border-foreground",
+              sheet ? "h-11 text-base" : "h-9 text-sm",
+            )}
           />
           <button
             type="submit"
             data-testid="card-interview-send-typed"
             disabled={busy || draft.trim().length === 0}
             aria-label="Send your own answer"
-            className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            className={cn(
+              "flex shrink-0 items-center justify-center rounded-[10px] bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40",
+              sheet ? "size-11" : "size-9",
+            )}
           >
             <CornerDownLeft className="size-4" aria-hidden />
           </button>
         </form>
       )}
 
-      <fieldset className="flex min-w-0 flex-col gap-2 border-0 p-0">
+      <fieldset
+        role={multi ? undefined : "radiogroup"}
+        className={cn(
+          "flex min-w-0 flex-col border-0 p-0",
+          sheet ? "gap-2" : "gap-1.5",
+        )}
+      >
         <legend className="sr-only">{question.question}</legend>
-        {question.options.map((option) => {
-          const active = chosen.has(option.id);
-          return (
-            <button
-              key={option.id}
-              type="button"
-              data-testid={`card-interview-option-${option.id}`}
-              aria-pressed={multi ? active : undefined}
-              disabled={busy}
-              onClick={() =>
-                multi
-                  ? onChange(toggle(card, state, question.id, option.id))
-                  : apply(select(card, state, question.id, option.id))
-              }
-              className={cn(
-                // 2.75rem — the touch-target floor, which is why this is
-                // min-h and not a fixed height: a long label grows the row.
-                "flex min-h-11 w-full items-center gap-2 overflow-hidden rounded-lg border bg-background px-3 py-2 text-left text-sm",
-                "transition-colors hover:border-primary/50 hover:bg-primary/5",
-                "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
-                "disabled:cursor-not-allowed disabled:opacity-60",
-                active && "border-primary bg-primary/10",
-              )}
-            >
-              {multi && (
-                <span
-                  aria-hidden
-                  className={cn(
-                    "flex size-4 shrink-0 items-center justify-center rounded border",
-                    active
-                      ? "border-primary bg-primary text-primary-foreground"
-                      : "border-muted-foreground/40",
-                  )}
-                >
-                  {active && <Check className="size-3" />}
-                </span>
-              )}
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="min-w-0 break-words">
-                  <AuthorText>{option.label}</AuthorText>
-                </span>
-                {option.description && (
-                  <span className="min-w-0 break-words text-xs text-muted-foreground">
-                    <AuthorText>{option.description}</AuthorText>
-                  </span>
-                )}
-              </span>
-              {option.recommended === true && (
-                <span
-                  data-testid="decision-card-recommended"
-                  className="ml-auto shrink-0 rounded bg-accent/50 px-1.5 py-0.5 text-badge font-medium uppercase tracking-wide text-accent-foreground/80"
-                >
-                  Recommended
-                </span>
-              )}
-            </button>
-          );
-        })}
-
+        {question.options.map((option) => (
+          <OptionRow
+            key={option.id}
+            option={option}
+            multi={multi}
+            active={chosen.has(option.id)}
+            busy={busy}
+            variant={variant}
+            onPick={() =>
+              multi
+                ? onChange(toggle(card, state, question.id, option.id))
+                : apply(select(card, state, question.id, option.id))
+            }
+          />
+        ))}
         {!typing && (
-          <button
-            type="button"
-            data-testid="card-interview-something-else"
-            disabled={busy}
-            onClick={() => setTyping(true)}
-            className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-dashed bg-background px-3 py-2 text-left text-sm text-muted-foreground hover:border-primary/50 hover:text-foreground disabled:opacity-60"
-          >
-            <Pencil className="size-3.5 shrink-0" aria-hidden />
-            Something else…
-          </button>
+          <SomethingElseRow
+            busy={busy}
+            variant={variant}
+            onOpen={() => setTyping(true)}
+          />
         )}
       </fieldset>
-
-      {multi && (
-        <button
-          type="button"
-          data-testid="card-interview-continue"
-          disabled={busy || selectedCount === 0}
-          onClick={() => apply(commitMultiSelect(card, state, question.id))}
-          className="flex min-h-11 w-full items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {selectedCount === 0
-            ? "Choose at least one"
-            : `Continue (${selectedCount} selected)`}
-        </button>
-      )}
 
       {/* The interview-level note is offered on the LAST question only — it
           is the closest analogue to Claude Code's freeform `response`, and
@@ -310,110 +364,63 @@ export function CardInterview({
             disabled={busy}
             placeholder="Optional note for the whole interview"
             maxLength={ANSWER_LIMITS.maxNoteChars}
-            className="h-8 min-w-0 rounded-lg border bg-background px-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground/60 focus-visible:border-primary/50"
+            className="h-9 min-w-0 rounded-[10px] border border-line-2 bg-card px-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:border-foreground"
           />
         </label>
       )}
 
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        {view.canSendPartial && (
-          <button
-            type="button"
-            data-testid="card-interview-send-partial"
-            disabled={busy}
-            onClick={() => onSubmit(state)}
-            className="text-xs font-medium text-primary hover:underline disabled:opacity-50"
-          >
-            Send what I have ({view.answeredCount} of {view.total})
-          </button>
-        )}
-        {onAnswerInChat && (
-          <button
-            type="button"
-            data-testid="card-interview-answer-in-chat"
-            disabled={busy}
-            onClick={onAnswerInChat}
-            className="text-xs text-muted-foreground hover:text-foreground hover:underline disabled:opacity-50"
-          >
-            Answer in chat instead
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
+      {sheet
+        ? (view.canGoBack || primary) && (
+            <div className="mt-1 flex gap-2">
+              {view.canGoBack && backButton}
+              {primary}
+            </div>
+          )
+        : primary}
 
-/**
- * "Question N of M" plus one segment per question.
- *
- * The segments are the revisit affordance — an answered question collapses to
- * its segment, which is tappable and carries its answer in the tooltip/label,
- * so going back to change one costs a tap rather than N chevrons. Segment
- * labels are the question's `header` (≤12 chars, Claude Code's bound) when
- * the author supplied one.
- *
- * The count is announced `aria-live="polite"`: advancing is a silent visual
- * change otherwise, and a screen-reader user would only ever hear the new
- * question with no sense of where they are in the set.
- */
-function ProgressRail({
-  card,
-  state,
-  onJump,
-  busy,
-}: {
-  card: DecisionCard;
-  state: CardInterviewState;
-  onJump: (next: CardInterviewState) => void;
-  busy: boolean;
-}) {
-  const view = interviewView(card, state);
-  return (
-    <div className="flex flex-col gap-1">
-      <p
-        data-testid="card-interview-progress"
-        aria-live="polite"
-        className="text-xs font-medium text-muted-foreground"
-      >
-        Question {view.index + 1} of {view.total}
-        {view.answeredCount > 0 && ` · ${view.answeredCount} answered`}
-      </p>
-      <ol className="flex min-w-0 items-center gap-1">
-        {card.questions.map((question, index) => {
-          const answered = isAnswered(state, question.id);
-          const active = index === view.index;
-          const summary = answerSummary(question, state.answers[question.id]);
-          return (
-            <li key={question.id} className="flex min-w-0 flex-1">
-              <button
-                type="button"
-                data-testid={`card-interview-step-${index}`}
-                aria-current={active ? "step" : undefined}
-                aria-label={
-                  answered
-                    ? `Question ${index + 1}, answered: ${summary}`
-                    : `Question ${index + 1}, not answered`
-                }
-                title={summary || undefined}
-                disabled={busy}
-                onClick={() => onJump(skipTo(card, state, index))}
-                className={cn(
-                  "h-1.5 w-full rounded-full transition-colors disabled:cursor-not-allowed",
-                  active
-                    ? "bg-primary"
-                    : answered
-                      ? "bg-primary/40 hover:bg-primary/60"
-                      : "bg-muted-foreground/20 hover:bg-muted-foreground/40",
-                )}
-              />
-            </li>
-          );
-        })}
-      </ol>
-      {card.questions.some((question) => question.header) && (
-        <p className="truncate text-2xs text-muted-foreground/70">
-          <AuthorText>{view.question.header ?? ""}</AuthorText>
-        </p>
+      {sheet && onFeedback && (
+        <button
+          type="button"
+          data-testid="card-interview-feedback"
+          disabled={busy || inFeedback}
+          onClick={onFeedback}
+          className="inline-flex h-10 items-center gap-1.5 self-center px-3 text-sm font-semibold text-muted-foreground hover:text-foreground disabled:opacity-60"
+        >
+          <Bell aria-hidden className="size-3.75" />
+          {inFeedback ? "In Feedback" : "Not now, send to Feedback"}
+        </button>
+      )}
+
+      {(view.canSendPartial || onAnswerInChat) && (
+        <div
+          className={cn(
+            "flex flex-wrap items-center gap-x-3 gap-y-1",
+            sheet && "justify-center",
+          )}
+        >
+          {view.canSendPartial && (
+            <button
+              type="button"
+              data-testid="card-interview-send-partial"
+              disabled={busy}
+              onClick={() => onSubmit(state)}
+              className="text-xs font-semibold text-info-ink hover:underline disabled:opacity-50"
+            >
+              Send what I have ({view.answeredCount} of {view.total})
+            </button>
+          )}
+          {onAnswerInChat && (
+            <button
+              type="button"
+              data-testid="card-interview-answer-in-chat"
+              disabled={busy}
+              onClick={onAnswerInChat}
+              className="text-xs text-muted-foreground hover:text-foreground hover:underline disabled:opacity-50"
+            >
+              Answer in chat instead
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

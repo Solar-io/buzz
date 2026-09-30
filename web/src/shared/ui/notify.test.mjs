@@ -38,7 +38,8 @@ test("message and agentDone dismiss at 6000 ms", () => {
     agent: true,
     context: "DM · now",
     preview: "Unblinded, and it's an upset.",
-    onOpen: noop,
+    onReply: noop,
+    onFeedback: noop,
   });
   const done = agentDoneSpec({
     agent: "Acid Burn",
@@ -48,12 +49,30 @@ test("message and agentDone dismiss at 6000 ms", () => {
   for (const spec of [message, done]) {
     assert.equal(spec.duration, 6000, spec.variant);
     assert.equal(spec.timer, true, `${spec.variant} draws the timer line`);
-    assert.deepEqual(
-      spec.actions.map((action) => action.label),
-      ["Open"],
-      "no Reply/Feedback until Phase 2 — no control that lies",
-    );
   }
+  // Toasts artboard: a message offers Reply and Feedback (Phase 2 shipped
+  // both); a finished turn only opens.
+  assert.deepEqual(
+    message.actions.map((action) => action.label),
+    ["Reply", "Feedback"],
+  );
+  assert.deepEqual(
+    done.actions.map((action) => action.label),
+    ["Open"],
+  );
+  // No reminders here, no Feedback button — no control that lies.
+  const bare = messageSpec({
+    sender: "Gilfoyle",
+    senderPubkey: "aa".repeat(32),
+    agent: true,
+    context: "DM · now",
+    preview: "x",
+    onReply: noop,
+  });
+  assert.deepEqual(
+    bare.actions.map((action) => action.label),
+    ["Reply"],
+  );
   // The decision toasts stay until acted on.
   const needs = needsYouSpec({
     lead: "Cereal Killer",

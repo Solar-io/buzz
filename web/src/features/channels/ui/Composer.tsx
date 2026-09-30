@@ -76,6 +76,8 @@ export interface ComposerHandle {
   appendDictation: (chunk: string) => void;
   /** Replace the draft and put the caret at its end (⌘K → "/handoff "). */
   prefill: (text: string) => void;
+  /** Put the caret at the end of the draft (a toast's Reply in a DM). */
+  focus: () => void;
 }
 
 /** The message a reply is aimed at, for the composer's quoted banner. */
@@ -483,9 +485,11 @@ export function Composer({
     [applyText, focusAt],
   );
 
-  useImperativeHandle(ref, () => ({ appendDictation, prefill }), [
+  const focus = useCallback(() => focusAt(textRef.current.length), [focusAt]);
+  useImperativeHandle(ref, () => ({ appendDictation, prefill, focus }), [
     appendDictation,
     prefill,
+    focus,
   ]);
 
   // Rich-text toolbar: apply a format fn to the current selection and restore
@@ -639,7 +643,8 @@ export function Composer({
   const working = busy || commandRun.running;
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: pointer-only drop target — drag-and-drop has no keyboard or ARIA equivalent; the paperclip button above is the keyboard-accessible attach path.
+    // A pointer-only drop target (the spread handlers): drag-and-drop has no
+    // keyboard equivalent; the paperclip is the keyboard-accessible attach.
     <div
       className={cn(
         "relative",

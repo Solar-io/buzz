@@ -343,6 +343,11 @@ export function MessageRow({
                 onAnswerInChat={
                   onOpenThread ? () => onOpenThread(message) : undefined
                 }
+                asker={{
+                  pubkey: message.authorPubkey,
+                  label,
+                  picture: profiles.get(message.authorPubkey)?.avatar,
+                }}
               />
             ) : stageOpenCardTag(message) ? (
               // Agent Stage Mode: a well-formed open tag renders the Stage

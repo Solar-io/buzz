@@ -56,6 +56,8 @@ import { eligibleDmAgentPubkey } from "@/features/huddle/lib/dmAgentCall.ts";
 import { authorLabel } from "@/features/channels/lib/authorLabel.ts";
 import { soleAgent } from "@/features/channels/lib/soleAgent.ts";
 import { useInlineThreads } from "@/features/channels/useInlineThreads.ts";
+import { useReplyIntent } from "@/features/channels/useReplyIntent.ts";
+import { useJumpShortcut } from "@/features/search/useJumpShortcut.ts";
 import {
   memberSubtitle,
   memberSummary,
@@ -631,22 +633,21 @@ function ChannelBrowser() {
     web.hide();
     void navigate({ to: "/repos", search: { c, m } });
   };
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setSearchOpen(true);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  useJumpShortcut(() => setSearchOpen(true));
   // Composer dictation: the mic button on the actions row streams through
   // the STT bridge and appends finalized utterances to the composer's draft
   // via its imperative handle — the route owns the wiring between the two.
   const composerRef = useRef<ComposerHandle | null>(null);
   const dictation = useComposerDictation({
     onFinalTranscript: (text) => composerRef.current?.appendDictation(text),
+  });
+  useReplyIntent({
+    reply: Route.useSearch({ select: (s) => s.reply }),
+    messageId: permalinkMessageId,
+    topLevelId: permalinkJump?.topLevelId ?? null,
+    isDm: current?.type === "dm",
+    replyInThread: inlineThreads.reply,
+    focusComposer: () => composerRef.current?.focus(),
   });
   // Both belong at the shell and nowhere else: the sync keeps one kind:30300
   // subscription for the whole app, and the notification hook is the sole
@@ -970,7 +971,8 @@ function ChannelBrowser() {
                   id: command.id,
                   hint: command.describe,
                   // Into the composer, caret after the name: ↵ there runs it.
-                  onSelect: () => composerRef.current?.prefill(`/${command.id} `),
+                  onSelect: () =>
+                    composerRef.current?.prefill(`/${command.id} `),
                 }))
               : undefined
           }

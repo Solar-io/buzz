@@ -121,12 +121,20 @@ function ToastMark({ icon }: { icon: ToastIcon }) {
     );
   }
   if (icon.kind === "workflow") {
+    // The need-ringed hex every "waiting on you" mark wears, with the
+    // workflow glyph where an agent's initials would be.
     return (
       <span
         aria-hidden
-        className="grid size-6 shrink-0 place-items-center rounded-md bg-chip text-ink-2"
+        className="buzz-hex grid shrink-0 place-items-center bg-need"
+        style={{ width: 22, height: 22 * 1.155 }}
       >
-        <GitBranch className="size-3.5" />
+        <span
+          className="buzz-hex grid place-items-center bg-card text-ink-2"
+          style={{ width: 18, height: 18 * 1.155 }}
+        >
+          <GitBranch className="size-2.75" strokeWidth={2.2} />
+        </span>
       </span>
     );
   }

@@ -71,6 +71,11 @@ export interface ChannelActivity {
   pubkey: string;
   /** Plain-text excerpt of the message content, markdown stripped. */
   preview: string;
+  /**
+   * The message's event id — a toast's Reply and Feedback name it.
+   * Optional: samples built before it existed, and synthetic ones, have none.
+   */
+  eventId?: string;
 }
 
 export type ChannelActivityMap = Map<string, ChannelActivity>;
@@ -142,6 +147,7 @@ export function channelActivityFromEvent(
     createdAt: event.created_at,
     pubkey: event.pubkey,
     preview: plainPreview(event.content),
+    eventId: event.id,
   };
 }
 

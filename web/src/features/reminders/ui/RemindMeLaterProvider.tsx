@@ -16,6 +16,11 @@ import type { ReminderTarget } from "../lib/reminderTypes.ts";
 import { RemindMeLaterDialog } from "./RemindMeLaterDialog.tsx";
 
 interface RemindMeLaterContextValue {
+  /**
+   * A provider is mounted. Outside one every action is a no-op, so a trigger
+   * that would silently do nothing (the ask sheet's Feedback) hides instead.
+   */
+  available: boolean;
   /** Raise the create dialog for one message. */
   openReminder: (target: ReminderTarget) => void;
   /**
@@ -40,6 +45,7 @@ interface RemindMeLaterContextValue {
 }
 
 const RemindMeLaterContext = createContext<RemindMeLaterContextValue>({
+  available: false,
   openReminder: () => {},
   sendToFeedback: () => {},
   feedbackPending: false,
@@ -133,6 +139,7 @@ export function RemindMeLaterProvider({
 
   const value = useMemo(
     () => ({
+      available: true,
       openReminder,
       sendToFeedback,
       feedbackPending,

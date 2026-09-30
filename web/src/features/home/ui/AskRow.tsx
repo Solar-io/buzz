@@ -9,7 +9,10 @@ import {
 } from "lucide-react";
 
 import { AuthorAvatar } from "@/features/channels/ui/AuthorAvatar";
-import { CardInterviewSheet } from "@/features/channels/ui/CardInterviewSheet";
+import {
+  type CardAsker,
+  CardInterviewSheet,
+} from "@/features/channels/ui/CardInterviewSheet";
 import type { Profile } from "@/features/channels/hooks";
 import { authorLabel } from "@/features/channels/lib/authorLabel.ts";
 import { formatTime } from "@/features/channels/lib/dateFormatters.ts";
@@ -157,7 +160,15 @@ export function AskRow({
         </div>
       </button>
       {multi ? (
-        <AskInterviewAnswer ask={ask} onAnswerInChat={onOpen} />
+        <AskInterviewAnswer
+          ask={ask}
+          onAnswerInChat={onOpen}
+          asker={{
+            pubkey: ask.authorPubkey,
+            label,
+            picture: profiles.get(ask.authorPubkey)?.avatar,
+          }}
+        />
       ) : (
         <AskOneTapAnswer ask={ask} options={options} />
       )}
@@ -325,9 +336,11 @@ function AskOneTapAnswer({
 function AskInterviewAnswer({
   ask,
   onAnswerInChat,
+  asker,
 }: {
   ask: AskItem;
   onAnswerInChat: () => void;
+  asker: CardAsker;
 }) {
   const [open, setOpen] = useState(false);
   const flow = useCardAnswerFlow({
@@ -408,6 +421,7 @@ function AskInterviewAnswer({
           onAnswerInChat();
         }}
         footer={status}
+        asker={asker}
       />
     </div>
   );
