@@ -913,3 +913,29 @@ Three sub-traps from the same hour:
   its watermark on the first check that runs AFTER the query resolves, so a
   reminder meant to fire during a test must come due later than that second
   check (~35 s in), not at the first.
+
+## Scratch channels (earned on redesign Phase 3, 2026-09-30)
+
+- **The parent link rides in `about`.** A 9007 stores `name`, `visibility`,
+  `channel_type`, `about` and `ttl` and nothing else a client can set, and the
+  39000 is relay-built, so an invented tag never comes back. The about reads
+  `Cloned from #flight-path [parent:<uuid>]`; `features/scratch/lib/
+  scratchChannel.ts` parses the marker and `channelTopic` hides it. Scratch =
+  the marker AND a live `ttl` — `/keep` clears the TTL and leaves the about.
+- **A 39000's `ttl_deadline` goes stale.** The relay slides the deadline in a
+  DB trigger on every event (`migrations/0022_event_ttl_refresh.sql`, 0024)
+  and does NOT re-emit the 39000, so the stamp under-reports. The real idle
+  deadline is the later of the stamp and newest event + `ttl`
+  (`scratchIdleDeadline`).
+- **`shot()` photographs a timed toast gone.** It settles every FINITE
+  animation first, and a toast's draining line is a finite animation as long
+  as the toast (10 s for `/exit`'s Undo) — the frame is taken after it closes
+  and the Undo button is detached. Screenshot such frames directly
+  (`shotWithUndo` in `scratch.spec.ts`).
+- **The mock relay can play side effects:** `onPublish(event, relay)` runs
+  after an accepted OK; `remove(pred)` stops serving (a deleted channel);
+  `served()` snapshots. Keep the relay's shape: a new 39000 goes out with
+  `add` (no live fan-out on the real relay), a 39002 re-sign with `push`.
+- **Check a mutation applied before reading its result.** A `sed` whose
+  pattern misses (indentation) leaves the file untouched and reports a
+  surviving mutant; `git diff --stat` empty means you tested the original.
