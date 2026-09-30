@@ -418,9 +418,17 @@ export function ChannelTimeline({
    * is what keeps the reply box in view, so it stays.
    */
   const lastRowIdRef = useRef<string | null>(null);
+  /**
+   * While an opening thread settles, scroll events do not feed the follow
+   * engine: the virtualizer's own compensation can pass through the very
+   * bottom, which would RESUME following and re-pin the list over the thread
+   * (measured in the Phase 2 e2e, one run in two).
+   */
+  const holdUntilRef = useRef(0);
   const openHere = (rowId: string) => {
     if (rowId !== lastRowIdRef.current) {
       followRef.current.follow = false;
+      holdUntilRef.current = performance.now() + 600;
       const scroller = wrapRef.current?.firstElementChild;
       if (scroller instanceof HTMLElement) {
         holdAnchor(scroller, `[data-testid="message-row-${rowId}"]`);
@@ -792,6 +800,9 @@ export function ChannelTimeline({
       return;
     }
     if (el.scrollHeight - el.clientHeight < 2) {
+      return;
+    }
+    if (performance.now() < holdUntilRef.current) {
       return;
     }
     applyInputFollowScroll(

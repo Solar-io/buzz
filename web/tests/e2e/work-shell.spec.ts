@@ -131,6 +131,11 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       const thread = page.getByTestId(`inline-thread-${ask?.id}`);
       await expect(thread).toContainText("Beat 01 is captured. Two to go.");
       await expect(thread.getByTestId("thread-reply-box")).toBeVisible();
+      // It opens DOWNWARD, from where it was clicked: the chip and the first
+      // reply stay on screen (a list re-pin once pushed them off the top).
+      await page.waitForTimeout(800);
+      await expect(chip).toBeInViewport();
+      await expect(thread.getByText("On it — splitting")).toBeInViewport();
       await expect(page.getByTestId("right-pane-tabs")).toHaveCount(0);
       await expect(page.getByTestId("work-rail")).toBeVisible();
       await shot(page, `thread-inline-${theme}-1440`);
