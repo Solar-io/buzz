@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   botPubkeysFromMemberEvent,
+  chunkBridgeText,
   chunkSpeakableText,
   classifySpeakableAgentText,
   CHUNK_MAX_CHARS,
@@ -864,4 +865,47 @@ test("sentence boundaries are respected when packing", () => {
   assert.equal(chunks.length, 2);
   assert.ok(chunks.every((chunk) => chunk.length <= CHUNK_MAX_CHARS));
   assert.ok(chunks.every((chunk) => chunk.endsWith(".")));
+});
+
+test("chunkBridgeText: one server sentence per request", () => {
+  const s1 =
+    "Okay, I looked through the deployment logs from last night and found the problem.";
+  const s2 =
+    "The migration script ran twice because the lock file was cleaned up by the nightly job.";
+  assert.deepEqual(chunkBridgeText(`${s1} ${s2}`), [s1, s2]);
+  // Packed for speechSynthesis, the same text is ONE chunk.
+  assert.equal(chunkSpeakableText(`${s1} ${s2}`).length, 1);
+});
+
+test("chunkBridgeText: fragments under 20 chars merge into the next", () => {
+  assert.deepEqual(
+    chunkBridgeText("Sure. Yes! I can take a look at that this afternoon."),
+    ["Sure. Yes! I can take a look at that this afternoon."],
+  );
+  // A short LAST fragment has no next: it stays on its own.
+  assert.deepEqual(
+    chunkBridgeText("I can take a look at that this afternoon. Thanks."),
+    ["I can take a look at that this afternoon.", "Thanks."],
+  );
+  // No split without whitespace after the punctuation (e.g. "3.5").
+  assert.deepEqual(chunkBridgeText("Version 3.5 shipped on time today."), [
+    "Version 3.5 shipped on time today.",
+  ]);
+  assert.deepEqual(chunkBridgeText("   "), []);
+});
+
+test("chunkBridgeText: word-wraps at 200 chars, hard-splits one huge word", () => {
+  const long = `${"word ".repeat(80).trim()}.`; // 400 chars, no sentence break
+  const parts = chunkBridgeText(long);
+  assert.ok(parts.length >= 2);
+  assert.ok(
+    parts.every((p) => p.length <= 200),
+    parts.map((p) => p.length).join(","),
+  );
+  assert.equal(parts.join(" "), long);
+  const huge = "x".repeat(450);
+  assert.deepEqual(
+    chunkBridgeText(huge).map((p) => p.length),
+    [200, 200, 50],
+  );
 });

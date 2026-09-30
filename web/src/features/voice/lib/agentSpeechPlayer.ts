@@ -19,6 +19,7 @@
  */
 
 import {
+  chunkBridgeText,
   chunkSpeakableText,
   resolveProfileVoice,
   speakRoute,
@@ -26,9 +27,15 @@ import {
   watchdogMs,
 } from "../../huddle/lib/huddleAgentSpeech.ts";
 import {
+  drainTimed,
   playBridgeResponse,
   type BridgeAudioContextLike,
+  type TimedDrain,
 } from "../../huddle/lib/bridgeSpeech.ts";
+import {
+  type BridgeCalibration,
+  loadCalibration,
+} from "../../huddle/lib/bridgeJitterBuffer.ts";
 import {
   resolveHuddleVoice,
   type HuddleVoiceOverride,
@@ -177,6 +184,13 @@ export function createAgentSpeechPlayer(
   let activeSettle: (() => void) | null = null;
   /** Wakes a bridge fetch await on interrupt (see `speak`). */
   const stopWaiters = new Set<() => void>();
+  /**
+   * Jitter-buffer calibration per engine:voice (speed scale, length ratio),
+   * loaded from localStorage on first use and saved after every completed
+   * stream: a GPU that was slow for one sentence usually still is for the
+   * next, and a voice's pace is stable.
+   */
+  let calibration: BridgeCalibration | null = null;
 
   const bridgeContext = (): PlayerContext | null => {
     if (ctx === null) {
@@ -292,6 +306,15 @@ export function createAgentSpeechPlayer(
     if (bridgeRequest !== null) {
       const context = bridgeContext();
       if (context !== null) {
+        // ONE server sentence per request on the bridge route (the jitter
+        // buffer plans a sentence at a time; Chatterbox slows as a request
+        // grows) — local synth keeps its packed chunks.
+        const bridgeChunks = chunkBridgeText(text);
+        const bridgeUtterances =
+          bridgeChunks.length > 0 ? bridgeChunks : [text];
+        const voiceKey = `${bridgeRequest.engine}:${bridgeRequest.voice}`;
+        calibration ??= loadCalibration();
+        const cal = calibration;
         let bridgeFailed = false;
         const doFetch = deps.fetchImpl ?? fetch;
         /**
@@ -301,6 +324,11 @@ export function createAgentSpeechPlayer(
          * byte is ~0.4 s, and fetching sequentially turned that into an
          * audible gap between every pair of chunks. At most one prefetched
          * request is held; an interrupt or failure aborts it.
+         *
+         * The body is DRAINED from headers on (`drainTimed`), for the
+         * prefetched request too: each chunk is timestamped when it
+         * arrives, so the jitter buffer sees the true generation timing
+         * instead of one burst when the sentence's turn comes.
          */
         const startFetch = (chunk: string) => {
           const controller =
@@ -320,11 +348,25 @@ export function createAgentSpeechPlayer(
           // An aborted or failed prefetch that nobody awaits must not
           // surface as an unhandled rejection.
           promise.catch(() => {});
+          let drain: TimedDrain | null = null;
+          let cancelled = false;
+          void promise
+            .then((response) => {
+              if (!cancelled && response.ok && response.body) {
+                drain = drainTimed(response, context);
+              }
+            })
+            .catch(() => {});
           return {
             chunk,
             promise,
+            /** The headers-time drain, or a fresh one if none started. */
+            drainFor: (response: Response): TimedDrain =>
+              drain ?? drainTimed(response, context),
             cancel: () => {
+              cancelled = true;
               controller?.abort();
+              (drain as TimedDrain | null)?.cancel();
               void promise.then((r) => r.body?.cancel()).catch(() => {});
             },
           };
@@ -333,11 +375,11 @@ export function createAgentSpeechPlayer(
         let current: InFlight | null = null;
         let prefetched: InFlight | null = null;
         try {
-          for (let i = 0; i < utterances.length; i++) {
+          for (let i = 0; i < bridgeUtterances.length; i++) {
             if (stopped()) {
               break;
             }
-            const chunk = utterances[i];
+            const chunk = bridgeUtterances[i];
             current = prefetched ?? startFetch(chunk);
             prefetched = null;
             // A hung bridge must not wedge the queue (watchdog), and an
@@ -371,8 +413,8 @@ export function createAgentSpeechPlayer(
             }
             // Headers are in: request the next chunk NOW so it is
             // synthesizing while this one plays.
-            if (i + 1 < utterances.length && !stopped()) {
-              prefetched = startFetch(utterances[i + 1]);
+            if (i + 1 < bridgeUtterances.length && !stopped()) {
+              prefetched = startFetch(bridgeUtterances[i + 1]);
             }
             const servedEngine = raced.headers?.get?.("x-tts-engine") ?? null;
             if (servedEngine) {
@@ -383,10 +425,16 @@ export function createAgentSpeechPlayer(
                 ...(servedVoice ? { servedVoice } : {}),
               });
             }
+            const drain = current.drainFor(raced);
             current = null;
-            await playBridgeResponse(raced, context, {
+            await playBridgeResponse(drain, context, {
               shouldStop: stopped,
               scheduleSettle: settleOnClock(context),
+              jitter: {
+                chars: chunk.trim().length,
+                voiceKey,
+                calibration: cal,
+              },
               ...(gain === null ? {} : { destination: gain }),
             });
             deps.onChunkSpoken?.(chunk);

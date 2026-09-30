@@ -122,6 +122,7 @@ export function createVoicePreviewer(
           }
           await playBridgeResponse(response, ctx, {
             shouldStop: () => token !== mine,
+            jitter: { chars: PREVIEW_SAMPLE_TEXT.length },
           });
         } catch {
           // A failed preview must never wedge the dialog.
