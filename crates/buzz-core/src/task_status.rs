@@ -450,6 +450,22 @@ mod tests {
     }
 
     #[test]
+    fn requires_h_tag() {
+        // An h-less head would be stored channel-less, i.e. readable by
+        // anyone. Both namespaces must refuse it.
+        let mut tags = lifecycle("running", None);
+        tags.retain(|t| t[0] != "h");
+        let e = parse_task_status_parts(&tags, "").unwrap_err();
+        assert_eq!(
+            e.to_string(),
+            "task-status: exactly one `h` tag is required (got 0)"
+        );
+        let mut tags = detail(&[tag(&["title", "t"])]);
+        tags.retain(|t| t[0] != "h");
+        assert!(parse_task_status_parts(&tags, "").is_err());
+    }
+
+    #[test]
     fn rejects_non_uuid_h() {
         let mut tags = lifecycle("running", None);
         tags[0] = tag(&["d", "turn:general"]);
