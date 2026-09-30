@@ -286,6 +286,7 @@ async function mountPanel(options = {}) {
           profiles: options.profiles ?? new Map(),
           selfPubkey: options.selfPubkey ?? null,
           agentPubkeys: options.agentPubkeys,
+          origin: options.origin,
           onClose: () => {
             closed += 1;
           },
@@ -497,6 +498,75 @@ test("the pane has no header band, only the floating close", async () => {
       );
     });
     assert.equal(panel.closed(), 1, "and it closes the pane");
+  } finally {
+    await panel.unmount();
+  }
+});
+
+// ── Kept-open thread beside another view (QA 2026-09-29) ────────────────
+// Docked at lg in Split, the ✕ is lg:hidden because the composer row's
+// Replies toggle closes the pane. Beside Inbox or another channel that
+// toggle is absent or belongs to someone else, so a kept-open pane (origin
+// set) keeps its ✕ at every width and names the channel it came from.
+
+test("a docked pane without an origin hides its ✕ at lg (Replies toggle owns it)", async () => {
+  const panel = await mountPanel();
+  try {
+    const close = panel.container.querySelector('[aria-label="Close thread"]');
+    assert.ok(close.className.split(/\s+/).includes("lg:hidden"));
+    assert.equal(
+      panel.container.querySelector('[data-testid="thread-origin"]'),
+      null,
+    );
+  } finally {
+    await panel.unmount();
+  }
+});
+
+test("a kept-open pane keeps its ✕ visible at every width, and it closes", async () => {
+  const panel = await mountPanel({
+    origin: { label: "#general", onOpen: () => {} },
+  });
+  try {
+    const close = panel.container.querySelector('[aria-label="Close thread"]');
+    assert.ok(close, "the ✕ renders");
+    assert.equal(
+      close.className.split(/\s+/).includes("lg:hidden"),
+      false,
+      "not hidden at lg",
+    );
+    await act(async () => {
+      close.dispatchEvent(
+        new dom.window.MouseEvent("click", { bubbles: true }),
+      );
+    });
+    assert.equal(panel.closed(), 1);
+  } finally {
+    await panel.unmount();
+  }
+});
+
+test("a kept-open pane says which channel it is in and links there", async () => {
+  let opened = 0;
+  const panel = await mountPanel({
+    origin: {
+      label: "#general",
+      onOpen: () => {
+        opened += 1;
+      },
+    },
+  });
+  try {
+    const line = panel.container.querySelector('[data-testid="thread-origin"]');
+    assert.ok(line, "the origin line renders");
+    assert.equal(line.textContent, "in#general");
+    const link = line.querySelector("button");
+    assert.equal(link.textContent, "#general");
+    await act(async () => {
+      link.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+    assert.equal(opened, 1, "clicking it opens the thread's channel");
+    assert.equal(panel.closed(), 0, "and does not close the pane");
   } finally {
     await panel.unmount();
   }

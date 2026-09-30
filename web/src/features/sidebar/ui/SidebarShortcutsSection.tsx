@@ -55,10 +55,13 @@ export interface SidebarLinks {
 export function useSidebarLinks({
   onOpenOverlay,
   favorites,
+  onVisit,
 }: {
   /** Raise the in-app dock on a given overlay-mode shortcut id. */
   onOpenOverlay: (shortcutId: string) => void;
   favorites?: SidebarLinkFavorites;
+  /** A link row was opened (either mode) — feeds the Favorites ordering. */
+  onVisit?: (shortcutId: string) => void;
 }): SidebarLinks {
   const { shortcuts, blocked, blockedMessage, mutateShortcuts } =
     useShortcutBar();
@@ -142,6 +145,7 @@ export function useSidebarLinks({
         />
       }
       onSelect={() => {
+        onVisit?.(shortcut.id);
         if (shortcut.mode === "overlay") {
           onOpenOverlay(shortcut.id);
           return;

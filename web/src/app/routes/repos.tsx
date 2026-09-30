@@ -62,6 +62,13 @@ import { authorLabel } from "@/features/channels/lib/authorLabel.ts";
 import { soleAgent } from "@/features/channels/lib/soleAgent.ts";
 import { ThreadPanel } from "@/features/channels/ui/ThreadPanel";
 import {
+  DetachedThreadPanel,
+  WithThreadPane,
+} from "@/features/channels/ui/DetachedThreadPanel";
+import { useOpenThread } from "@/features/channels/useOpenThread.ts";
+import { useRecordConversationVisits } from "@/features/sidebar/lib/useSidebarOrder.ts";
+import { ShellViewPane } from "../ShellViewPane";
+import {
   useAgentFrames,
   useAgentObserverHistory,
   useObserverStore,
@@ -77,14 +84,8 @@ import { useHiddenDms } from "@/features/dms/useHiddenDms.ts";
 import { channelMenuItems } from "@/features/sidebar/lib/channelMenuItems.ts";
 import { SidebarWithBadges } from "@/features/sidebar/ui/SidebarWithBadges";
 import { AsksProvider } from "@/features/home/AsksProvider";
-import { HomeInboxRoute } from "@/features/home/ui/HomeInboxRoute";
-import { WorkflowsPage } from "@/features/workflows/ui/WorkflowsPage";
-import { OnboardingPane } from "@/features/onboarding";
-import { ProjectsScreen } from "@/features/projects/ui/ProjectsScreen";
-import { PulseScreen } from "@/features/pulse/ui/PulseScreen";
 import { useReminderSync } from "@/features/reminders/hooks";
 import { useReminderNotifications } from "@/features/reminders/useReminderNotifications";
-import { RemindersPanel } from "@/features/reminders/ui/RemindersPanel";
 import { RemindMeLaterProvider } from "@/features/reminders/ui/RemindMeLaterProvider";
 import { NotificationRuntime } from "@/features/notifications/ui/NotificationRuntime";
 import { ProfileActionsProvider } from "@/features/profile/ProfileActionsContext";
@@ -307,7 +308,10 @@ function ChannelBrowser() {
     () => timelineReplyCounts(replyCounts(messages), threadSummaries),
     [messages, threadSummaries],
   );
-  const [threadRootId, setThreadRootId] = useState<string | null>(null);
+  // The open thread survives conversation/view switches while docked (Sam
+  // 2026-09-29; policy in features/channels/lib/openThread.ts).
+  const { openThread, threadRootId, setThreadRootId, source } =
+    useOpenThread(selectedId);
   /**
    * D-043: a permalink to a REPLY opens the thread on its root (the effect)
    * and, once that thread is the one open, names the reply so the panel's
@@ -317,7 +321,7 @@ function ChannelBrowser() {
     if (permalinkJump?.isReply) {
       setThreadRootId(permalinkJump.topLevelId);
     }
-  }, [permalinkJump]);
+  }, [permalinkJump, setThreadRootId]);
   const threadPermalinkId =
     permalinkMessageId != null &&
     permalinkJump?.isReply &&
@@ -332,9 +336,10 @@ function ChannelBrowser() {
   useEffect(() => {
     setForumPostId(null);
   }, [channelId]);
-  const threadRoot = threadRootId
-    ? (messages.find((m) => m.id === threadRootId) ?? null)
-    : null;
+  const threadRoot =
+    threadRootId && source === "current"
+      ? (messages.find((m) => m.id === threadRootId) ?? null)
+      : null;
   // Right-pane width (thread + agent activity share it), drag-resizable.
   // Ceiling is relative to the layout ROW (window minus the app sidebar) so
   // the pane can take nearly the whole row instead of the old 640px cap,
@@ -452,8 +457,8 @@ function ChannelBrowser() {
       void navigate({ to: "/repos", search: {}, replace: true }),
   });
 
+  useRecordConversationVisits(selectedId); // Favorites/Channels "most used"
   const selectChannel = (channelId: string) => {
-    setThreadRootId(null);
     web.hide();
     void navigate({ to: "/repos", search: { c: channelId } });
   };
@@ -677,6 +682,19 @@ function ChannelBrowser() {
     [channelAgentFrames, messages, dmAgentPubkey],
   );
   useTick(working.working);
+  const threadChannel = channels.find((c) => c.id === openThread?.channelId);
+  const detachedThread =
+    source === "other" && openThread && threadChannel ? (
+      <DetachedThreadPanel
+        channel={threadChannel}
+        rootId={openThread.rootId}
+        selfPubkey={selfPubkey}
+        agentPubkeys={agentPubkeys}
+        onClose={() => setThreadRootId(null)}
+        onOpenChannel={() => selectChannel(threadChannel.id)}
+      />
+    ) : null;
+  const threadOpen = threadRoot !== null || detachedThread !== null;
 
   // Both belong at the shell and nowhere else: the sync keeps one kind:30300
   // subscription for the whole app, and the notification hook is the sole
@@ -752,43 +770,22 @@ function ChannelBrowser() {
             }
           >
             <div className="relative h-full min-h-0">
-              {view === "onboarding" ? (
-                <OnboardingPane />
-              ) : view === "projects" ? (
-                <ProjectsScreen />
-              ) : view === "pulse" ? (
-                <PulseScreen
-                  onClose={() => void navigate({ to: "/repos", search: {} })}
-                  selfPubkey={selfPubkey}
-                />
-              ) : view === "reminders" ? (
-                <RemindersPanel
-                  channels={channels}
-                  onClose={() => void navigate({ to: "/repos", search: {} })}
-                  onJump={(destination) => {
-                    void navigate({
-                      to: "/repos",
-                      search: {
-                        c: destination.channelId,
-                        m: destination.messageId,
-                      },
-                    });
-                  }}
-                  selfPubkey={selfPubkey}
-                />
-              ) : view === "workflows" ? (
-                <WorkflowsPage />
-              ) : view === "inbox" ? (
-                <HomeInboxRoute
-                  channels={channels}
-                  selfPubkey={selfPubkey}
-                  onOpenChannel={(channelId, messageId) => {
-                    void navigate({
-                      to: "/repos",
-                      search: { c: channelId, m: messageId },
-                    });
-                  }}
-                />
+              {view !== undefined ? (
+                <WithThreadPane
+                  pane={detachedThread}
+                  width={threadWidth}
+                  rowRef={setRowEl}
+                >
+                  <ShellViewPane
+                    view={view}
+                    channels={channels}
+                    selfPubkey={selfPubkey}
+                    onClose={() => void navigate({ to: "/repos", search: {} })}
+                    onOpenMessage={(c, m) =>
+                      void navigate({ to: "/repos", search: { c, m } })
+                    }
+                  />
+                </WithThreadPane>
               ) : current ? (
                 <div
                   ref={setRowEl}
@@ -944,7 +941,7 @@ function ChannelBrowser() {
                     )}
                     <HuddleDock currentChannelId={current.id} />
                   </section>
-                  {(threadRoot || dmAgentPubkey) && (
+                  {(threadOpen || dmAgentPubkey) && (
                     // biome-ignore lint/a11y/useFocusableInteractive: pointer-only resize handle; keyboard resize is not implemented
                     // biome-ignore lint/a11y/useSemanticElements: pointer-only resize handle; keyboard resize is not implemented
                     <div
@@ -973,6 +970,7 @@ function ChannelBrowser() {
                       send={send}
                     />
                   )}
+                  {(!dmAgentPubkey || rightTab === "thread") && detachedThread}
                   {threadRoot && dmAgentPubkey && rightTab === "thinking" && (
                     <ThreadPanel
                       root={threadRoot}
@@ -989,7 +987,7 @@ function ChannelBrowser() {
                   )}
                   {dmAgentPubkey &&
                     !dmPaneHidden &&
-                    (!threadRoot || rightTab === "thinking") && (
+                    (!threadOpen || rightTab === "thinking") && (
                       <AgentActivityPanel
                         agentPubkey={dmAgentPubkey}
                         agentName={
@@ -1005,7 +1003,7 @@ function ChannelBrowser() {
                         onCloseMobile={() => setThinkingOpen(false)}
                         onCloseDesktop={() => setDmPaneHidden(true)}
                         onSelectThreadTab={
-                          threadRoot ? () => setRightTab("thread") : undefined
+                          threadOpen ? () => setRightTab("thread") : undefined
                         }
                       />
                     )}
