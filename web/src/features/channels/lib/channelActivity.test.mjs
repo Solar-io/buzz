@@ -510,3 +510,78 @@ test("T9 the tap into a real store skips the OWNED channel and warms the rest", 
     ["b"],
   );
 });
+
+// --- silent scheduled wakes (Sam 2026-09-30) -------------------------------
+
+/** buzz-services reminder identity — the wake sender. */
+const WAKE_SERVICE =
+  "a9387088355b4efe46decbde77c8fe34ee9ecbd6619d41217d21be0123f08271";
+const AGENT = "agentpubkey";
+
+test("a wake for another member adds no unread and fires no live arrival; the agent's reply does both", () => {
+  const feed = driveFeed({ ch1: 100 }, SELF);
+  // Human baseline at-or-below the marker: a known sample, nothing unread.
+  feed.handlers.onEvent(relayEvent({ id: "base", created_at: 100 }));
+  feed.handlers.onEose();
+  assert.equal(feed.counts().get("ch1"), 0);
+  assert.equal(feed.live().length, 0);
+
+  // The scheduler wakes the agent in the viewer's channel.
+  feed.handlers.onEvent(
+    relayEvent({
+      id: "wake",
+      pubkey: WAKE_SERVICE,
+      created_at: 110,
+      tags: [
+        ["h", "ch1"],
+        ["p", AGENT],
+      ],
+    }),
+  );
+  assert.equal(feed.counts().get("ch1"), 0);
+  assert.equal(feed.live().length, 0);
+  // The sample (sidebar dot + ordering source) is still the human baseline.
+  assert.equal(feed.activity().get("ch1").createdAt, 100);
+
+  // The agent's reply is ordinary conversation: one unread, one toast.
+  feed.handlers.onEvent(
+    relayEvent({ id: "reply", pubkey: AGENT, created_at: 120 }),
+  );
+  assert.equal(feed.counts().get("ch1"), 1);
+  assert.equal(feed.live().length, 1);
+});
+
+test("a wake for another member still reaches the timeline tap", () => {
+  const raw = [];
+  const handlers = tappedHandlers((event) => raw.push(event.id));
+  handlers.onEvent(
+    relayEvent({
+      id: "wake",
+      pubkey: WAKE_SERVICE,
+      tags: [
+        ["h", "ch1"],
+        ["p", AGENT],
+      ],
+    }),
+  );
+  assert.deepEqual(raw, ["wake"]);
+});
+
+test("a wake that p-tags the viewer counts and fires like any message", () => {
+  const feed = driveFeed({ ch1: 100 }, SELF);
+  feed.handlers.onEvent(relayEvent({ id: "base", created_at: 100 }));
+  feed.handlers.onEose();
+  feed.handlers.onEvent(
+    relayEvent({
+      id: "wake-me",
+      pubkey: WAKE_SERVICE,
+      created_at: 110,
+      tags: [
+        ["h", "ch1"],
+        ["p", SELF],
+      ],
+    }),
+  );
+  assert.equal(feed.counts().get("ch1"), 1);
+  assert.equal(feed.live().length, 1);
+});

@@ -33,6 +33,11 @@ export interface IncomingMessage {
   fromSelf: boolean;
   /** The message p-tags the viewer: an @mention, or a DM peer tag. */
   mentionsSelf: boolean;
+  /**
+   * A scheduled wake from the services identity addressed to someone else
+   * (see `isWakeForOthers`) — agent machinery the viewer is a bystander to.
+   */
+  silentWake: boolean;
   /** The message landed in a DM channel. */
   isDm: boolean;
   /** The message's channel is muted in the viewer's local channel prefs. */
@@ -60,6 +65,7 @@ export interface NotifyContext {
 export type NotifyReason =
   | "ok"
   | "self"
+  | "silent-wake"
   | "muted-everything"
   | "channel-muted"
   | "not-addressed"
@@ -91,6 +97,9 @@ export function decideNotification(
 ): NotifyDecision {
   if (message.fromSelf) {
     return { notify: false, badge: false, reason: "self" };
+  }
+  if (message.silentWake) {
+    return { notify: false, badge: false, reason: "silent-wake" };
   }
   if (context.mode === "none") {
     return { notify: false, badge: false, reason: "muted-everything" };
@@ -141,6 +150,8 @@ export function describeNotifyReason(reason: NotifyReason): string {
       return "Messages will raise a notification.";
     case "self":
       return "Your own messages never notify.";
+    case "silent-wake":
+      return "Scheduled wakes for other members never notify.";
     case "muted-everything":
       return "Notifications are set to nothing.";
     case "channel-muted":

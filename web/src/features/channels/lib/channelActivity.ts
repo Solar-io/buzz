@@ -10,6 +10,7 @@
 
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { isUnread, type ReadState } from "./readState.ts";
+import { isWakeForOthers } from "./wakeMessage.ts";
 
 /** Chat messages. Reactions, typing and system rows never count as activity. */
 const KIND_CHAT_MESSAGE = 9;
@@ -387,6 +388,14 @@ export function createChannelActivityHandlers(
       // store may not have yet; the store's own rules decide what sticks.
       if (event.kind === 9) {
         onRawEvent?.(event);
+      }
+      // A scheduled wake addressed to another member is machinery the viewer
+      // is a bystander to: the timeline keeps the row (tapped above), but it
+      // must not become the channel's sample, a counted unread or a live
+      // arrival — so no badge, dot, sidebar reorder or toast. Gated BEFORE
+      // remember() so the marker-move recount cannot resurrect it either.
+      if (isWakeForOthers(event, selfPubkey)) {
+        return;
       }
       const entry = channelActivityFromEvent(event);
       if (!entry) {

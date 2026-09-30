@@ -65,6 +65,43 @@ export function isScheduledWake(
 }
 
 /**
+ * True when an event is a scheduled wake addressed to someone OTHER than the
+ * viewer — Sam's 2026-09-30 "silent scheduled wakes" ruling.
+ *
+ * A wake is a kind-9 from the services identity that p-tags the seat it is
+ * waking. The viewer is a bystander to that: it must raise no toast, unread
+ * count, row dot, sidebar reorder or OS notification. Three cases stay loud
+ * on purpose:
+ *
+ * - a wake that p-tags the viewer (it IS addressed to them);
+ * - a services post with no `p` tag at all (alerts, daily digest, Daily
+ *   Edition — broadcast content, not a wake);
+ * - any non-kind-9 post from the identity (forum kinds keep their own path).
+ *
+ * An unknown viewer (null/empty pubkey) cannot be shown to be a bystander,
+ * so the answer is false and the message stays loud.
+ *
+ * Narrower than {@link isScheduledWake}, which matches every kind-9 from the
+ * identity and only drives the collapsed timeline row.
+ */
+export function isWakeForOthers(
+  event: { kind: number; pubkey: string; tags: string[][] },
+  selfPubkey: string | null,
+): boolean {
+  if (!selfPubkey) return false;
+  if (event.kind !== CHANNEL_CHAT_KIND) return false;
+  if (!WAKE_SERVICE_PUBKEYS.includes(event.pubkey.toLowerCase())) return false;
+  const self = selfPubkey.toLowerCase();
+  let tagged = 0;
+  for (const tag of event.tags) {
+    if (tag[0] !== "p" || typeof tag[1] !== "string") continue;
+    if (tag[1].toLowerCase() === self) return false;
+    tagged += 1;
+  }
+  return tagged > 0;
+}
+
+/**
  * One-line preview for the collapsed row: first line of the wake text,
  * whitespace-run squeezed, so a stack of wake rows stays scannable and each
  * remains distinguishable from its neighbors.
