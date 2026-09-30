@@ -47,12 +47,19 @@ function context(channel) {
 }
 
 const parent = { id: PARENT, name: "flight-path", type: "stream" };
-const scratch = {
+/** A scratch channel, seen by a viewer holding `role` in its 39002. */
+const scratchAs = (role) => ({
   id: SCRATCH,
   name: "flight-path-scratch-1",
   type: "stream",
-  scratch: { parentId: PARENT, parentName: "flight-path", label: "scratch-1" },
-};
+  scratch: {
+    parentId: PARENT,
+    parentName: "flight-path",
+    label: "scratch-1",
+    role,
+  },
+});
+const scratch = scratchAs("owner");
 
 async function run(text, ctx) {
   const resolved = resolveCommand(parseCommand(text), ctx);
@@ -83,6 +90,26 @@ test("/exit and /keep are offered only in a scratch channel; /new never in a DM"
     name: "exit",
   });
   assert.equal(COMMAND_GROUP_LABEL.channel, "This channel");
+});
+
+test("only the owner is offered /exit; an admin keeps; a copied member gets neither", () => {
+  const ids = (role) =>
+    matchCommands("", context(scratchAs(role)).ctx)
+      .map((command) => command.id)
+      .filter((id) => id === "exit" || id === "keep");
+  assert.deepEqual(ids("owner"), ["exit", "keep"]);
+  assert.deepEqual(ids("admin"), ["keep"]);
+  assert.deepEqual(ids("member"), []);
+  assert.deepEqual(ids("bot"), []);
+  // Roster not read yet: nothing destructive is on offer.
+  assert.deepEqual(ids(null), []);
+  // Typed anyway by a member, /exit is unknown: no 10 s vanish, no 9008.
+  const member = context(scratchAs("member"));
+  assert.deepEqual(resolveCommand(parseCommand("/exit"), member.ctx), {
+    kind: "unknown",
+    name: "exit",
+  });
+  assert.deepEqual(member.calls.exit, []);
 });
 
 test("the composer's rows say what happens in this channel", () => {

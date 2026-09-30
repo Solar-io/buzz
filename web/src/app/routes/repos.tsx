@@ -617,11 +617,13 @@ function ChannelBrowser() {
   const openView = (next: NonNullable<typeof view>) =>
     void navigate({ to: "/repos", search: { view: next } });
   // Its title ("flight-path / scratch-1" for a scratch), and the channel as
-  // slash commands — and ⌘K's list of them — see it.
+  // slash commands — and ⌘K's list of them — see it, with my role there.
+  const viewerRole = scratch.roleIn(current?.id ?? null, members);
   const { title: conversationTitle, commandChannel } = conversationIdentity(
     current,
     channels,
     dmName,
+    viewerRole,
   );
   const openMessage = (c: string, m?: string) => {
     web.hide();
@@ -816,6 +818,7 @@ function ChannelBrowser() {
                     actions: scratch.actions,
                     channels,
                     lastActivityAt: newestMessageAt || null,
+                    role: viewerRole,
                   }}
                 />
                 <RunningStrip

@@ -50,7 +50,8 @@ function relaySideEffects() {
   let clock = Math.floor(Date.now() / 1000);
   let seq = 7_000;
   const metadata = new Map<string, string[][]>();
-  const rosters = new Map<string, string[]>();
+  /** Per channel, its 39002 `p` tags: `["p", pubkey, "", role]`. */
+  const rosters = new Map<string, string[][]>();
   let seeded = false;
   const learnSeed = (relay: MockRelay) => {
     if (seeded) {
@@ -64,9 +65,7 @@ function relaySideEffects() {
       } else if (event.kind === 39002) {
         rosters.set(
           id,
-          event.tags
-            .filter((entry) => entry[0] === "p")
-            .map((entry) => entry[1]),
+          event.tags.filter((entry) => entry[0] === "p"),
         );
       }
     }
@@ -88,12 +87,7 @@ function relaySideEffects() {
   };
   const emitRoster = (relay: MockRelay, id: string) => {
     relay.remove((event) => event.kind === 39002 && tag(event, "d") === id);
-    relay.push(
-      signed(39002, [
-        ["d", id],
-        ...(rosters.get(id) ?? []).map((pubkey) => ["p", pubkey]),
-      ]),
-    );
+    relay.push(signed(39002, [["d", id], ...(rosters.get(id) ?? [])]));
   };
   return (event: MockEvent, relay: MockRelay) => {
     learnSeed(relay);
@@ -112,11 +106,19 @@ function relaySideEffects() {
         ["ttl", String(ttl)],
         ["ttl_deadline", new Date((clock + ttl) * 1000).toISOString()],
       ]);
-      rosters.set(id, [event.pubkey]);
+      // The creator is the owner — the relay signs the role at index 3.
+      rosters.set(id, [["p", event.pubkey, "", "owner"]]);
       emitMeta(relay, id);
       emitRoster(relay, id);
     } else if (event.kind === 9000) {
-      rosters.get(id)?.push(tag(event, "p") ?? "");
+      rosters
+        .get(id)
+        ?.push([
+          "p",
+          tag(event, "p") ?? "",
+          "",
+          tag(event, "role") ?? "member",
+        ]);
       emitRoster(relay, id);
     } else if (event.kind === 9002) {
       let tags = metadata.get(id) ?? [];
@@ -137,11 +139,15 @@ function relaySideEffects() {
   };
 }
 
-/** A scratch channel already on the relay: 39000 + its roster. */
+/**
+ * A scratch channel already on the relay: 39000 + its roster, with the
+ * viewer as its owner — or, with `role`, as someone Gilfoyle copied in.
+ */
 function seededScratch(
   fixture: WorkFixture,
-  options: { id: string; name: string; deadlineInS: number },
+  options: { id: string; name: string; deadlineInS: number; role?: string },
 ): MockEvent[] {
+  const role = options.role ?? "owner";
   const nowS = Math.floor(Date.now() / 1000);
   const parent = fixture.channels["flight-path"];
   return [
@@ -170,8 +176,13 @@ function seededScratch(
       created_at: nowS - 3600,
       tags: [
         ["d", options.id],
-        ["p", fixture.viewer, "", "owner"],
-        ["p", fixture.agents.gilfoyle.pubkey],
+        ["p", fixture.viewer, "", role],
+        [
+          "p",
+          fixture.agents.gilfoyle.pubkey,
+          "",
+          role === "owner" ? "member" : "owner",
+        ],
         ["p", fixture.agents.nikon.pubkey],
       ],
     }),
@@ -493,6 +504,123 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       await expect(page.getByTestId("channel-header")).toHaveAttribute(
         "data-scratch",
         "true",
+      );
+    });
+
+    test("a copied member is offered Leave, never Exit or Keep", async ({
+      page,
+    }) => {
+      const { fixture, relay } = await openShell(page, {
+        theme,
+        path: () => `/repos?c=${SCRATCH_ID}`,
+        fixture: { phase2: true },
+        extra: (f) =>
+          seededScratch(f, {
+            id: SCRATCH_ID,
+            name: "flight-path-scratch-1",
+            deadlineInS: 259_000,
+            role: "member",
+          }),
+        relay: { onPublish: relaySideEffects() },
+      });
+      const header = page.getByTestId("channel-header");
+      await expect(header).toHaveAttribute("data-scratch", "true");
+      await expect(header.getByTestId("scratch-leave")).toBeVisible();
+      await expect(header.getByTestId("scratch-exit")).toHaveCount(0);
+      await expect(header.getByTestId("scratch-keep")).toHaveCount(0);
+      await expect(page.getByTestId("scratch-banner")).toContainText(
+        "Its owner can keep or discard it; you can leave.",
+      );
+      // Not in the composer's list, not in ⌘K's, and typed anyway it is
+      // unknown: the channel never vanishes, no 9008 goes out.
+      const composer = mainComposer(page);
+      await composer.click();
+      await composer.fill("/");
+      const list = page.getByTestId("command-list");
+      await expect(list.getByTestId("command-option-new")).toBeVisible();
+      await expect(list.getByTestId("command-option-exit")).toHaveCount(0);
+      await expect(list.getByTestId("command-option-keep")).toHaveCount(0);
+      await runCommand(page, "/exit");
+      await expect(page.getByTestId("composer-command-error")).toContainText(
+        "Unknown command /exit",
+      );
+      await expect(page).toHaveURL(new RegExp(`c=${SCRATCH_ID}`));
+      expect(relay.published.filter((e) => e.kind === 9008)).toEqual([]);
+
+      // Leave: kind 9022, back to the parent, gone from Scratch.
+      await header.getByTestId("scratch-leave").click();
+      await expect
+        .poll(() => relay.published.filter((e) => e.kind === 9022).length)
+        .toBe(1);
+      expect(relay.published.find((e) => e.kind === 9022)?.tags).toEqual([
+        ["h", SCRATCH_ID],
+      ]);
+      await expect(page).toHaveURL(
+        new RegExp(`c=${fixture.channels["flight-path"]}`),
+      );
+      await expect(scratchSection(page)).toHaveCount(0);
+      expect(relay.published.filter((e) => e.kind === 9008)).toEqual([]);
+    });
+
+    test("a hovered Undo holds the delete; leaving the page sends it at once", async ({
+      page,
+    }) => {
+      // Timer behaviour, not palette: once is enough.
+      test.skip(theme !== "buzz", "theme-independent");
+      test.setTimeout(90_000);
+      const { relay } = await openShell(page, {
+        theme,
+        path: () => `/repos?c=${SCRATCH_ID}`,
+        fixture: { phase2: true },
+        extra: (f) => [
+          ...seededScratch(f, {
+            id: SCRATCH_ID,
+            name: "flight-path-scratch-1",
+            deadlineInS: 259_000,
+          }),
+          ...seededScratch(f, {
+            id: SCRATCH_2_ID,
+            name: "flight-path-scratch-2",
+            deadlineInS: 259_000,
+          }),
+        ],
+        relay: { onPublish: relaySideEffects() },
+      });
+      const deletes = () => relay.published.filter((e) => e.kind === 9008);
+      await expect(page.getByTestId("channel-header")).toHaveAttribute(
+        "data-scratch",
+        "true",
+      );
+      // Let the arrival toasts from the fixture replay clear first, so the
+      // Undo toast is the one under the pointer.
+      await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, {
+        timeout: 15_000,
+      });
+
+      await runCommand(page, "/exit");
+      const undo = page.getByTestId("buzz-toast-undo");
+      await expect(undo).toBeVisible();
+      // Hovering pauses the toast; the delete must pause with it.
+      await undo.hover();
+      await page.waitForTimeout(13_000);
+      await expect(undo).toBeVisible();
+      expect(deletes(), "no delete under a paused Undo").toEqual([]);
+      // Pointer away: the rest of the window runs, then the delete.
+      await page.mouse.move(1, 1);
+      await expect.poll(() => deletes().length, { timeout: 12_000 }).toBe(1);
+      expect(deletes()[0].tags).toEqual([["h", SCRATCH_ID]]);
+
+      // Leaving the page inside a window sends the delete immediately.
+      await scratchSection(page).getByText("flight-path / scratch-2").click();
+      await expect(page).toHaveURL(new RegExp(`c=${SCRATCH_2_ID}`));
+      await runCommand(page, "/exit");
+      await expect(page.getByTestId("buzz-toast-undo")).toBeVisible();
+      const leftAt = Date.now();
+      await page.goto("about:blank");
+      await expect.poll(() => deletes().length, { timeout: 5_000 }).toBe(2);
+      expect(deletes()[1].tags).toEqual([["h", SCRATCH_2_ID]]);
+      expect(Date.now() - leftAt, "well inside the 10 s window").toBeLessThan(
+        8_000,
       );
     });
   });

@@ -81,6 +81,8 @@ export function ChannelHeader({
     channels: readonly ChannelSummary[];
     /** Newest event seen here (unix s) — the idle clock restarts on it. */
     lastActivityAt: number | null;
+    /** The viewer's role here — only the owner is offered Exit. */
+    role: string | null;
   };
 }) {
   const phone = usePhoneLayout();
@@ -112,6 +114,7 @@ export function ChannelHeader({
         info={info}
         actions={scratch.actions}
         lastActivityAt={scratch.lastActivityAt}
+        role={scratch.role}
         phone={phone}
         memberPubkeys={members.map((member) => member.pubkey)}
         agentPubkeys={agentPubkeys}

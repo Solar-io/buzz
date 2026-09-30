@@ -232,11 +232,25 @@ export function undoSpec(input: {
   };
 }
 
-/** Show a spec; returns sonner's id. */
-export function showToast(spec: ToastSpec, id?: string): string | number {
+/**
+ * Show a spec; returns sonner's id. `lifecycle` hears the toast END: sonner's
+ * own timer ran out (`onAutoClose` — it pauses while the stack is hovered or
+ * the tab is hidden, so this fires exactly when the draining line empties),
+ * or it was dismissed (`onDismiss` — the close button, an action, Clear all).
+ */
+export function showToast(
+  spec: ToastSpec,
+  id?: string,
+  lifecycle?: { onAutoClose?: () => void; onDismiss?: () => void },
+): string | number {
   return toast.custom(
     (toastId) => createElement(BuzzToast, { spec, toastId }),
-    { duration: spec.duration, id },
+    {
+      duration: spec.duration,
+      id,
+      onAutoClose: lifecycle?.onAutoClose,
+      onDismiss: lifecycle?.onDismiss,
+    },
   );
 }
 
