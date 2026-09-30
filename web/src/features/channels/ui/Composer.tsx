@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -262,18 +263,45 @@ export function Composer({
     });
   }, []);
 
-  /** Focus the textarea, place the caret, and refresh the mark state. */
-  const focusAt = useCallback((start: number, end: number = start) => {
-    requestAnimationFrame(() => {
-      const el = textareaRef.current;
-      if (!el) {
-        return;
-      }
-      el.focus();
-      el.setSelectionRange(start, end);
-      setSelection({ start, end });
-    });
+  /**
+   * Where the caret goes once the text it belongs to is on the page.
+   *
+   * Applied in a layout effect — after React has written the new value and
+   * before the browser handles the next key — so a key typed straight after
+   * a pick (Enter on "@Lord Nikon", then "r") lands after the name. Placing
+   * it on the next animation frame alone was a frame late: the "r" went in
+   * at the old caret, then the frame moved the caret back in front of it
+   * (Phase 2 QA). The frame stays as the fallback for a move that causes no
+   * render (focusing an unchanged draft), and is a no-op once applied.
+   */
+  const pendingCaret = useRef<{ start: number; end: number } | null>(null);
+  const applyPendingCaret = useCallback(() => {
+    const next = pendingCaret.current;
+    const el = textareaRef.current;
+    if (!next || !el) {
+      return;
+    }
+    pendingCaret.current = null;
+    el.focus();
+    el.setSelectionRange(next.start, next.end);
+    setSelection((previous) =>
+      previous.start === next.start && previous.end === next.end
+        ? previous
+        : next,
+    );
   }, []);
+  useLayoutEffect(() => {
+    applyPendingCaret();
+  });
+
+  /** Focus the textarea, place the caret, and refresh the mark state. */
+  const focusAt = useCallback(
+    (start: number, end: number = start) => {
+      pendingCaret.current = { start, end };
+      requestAnimationFrame(applyPendingCaret);
+    },
+    [applyPendingCaret],
+  );
 
   // Auto-grow (Sam 2026-09-02: "the text entry area should expand as the
   // user types"): fit the textarea's height to its content on every text
