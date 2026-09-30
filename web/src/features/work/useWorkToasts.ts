@@ -7,7 +7,7 @@ import { authorLabel } from "@/features/channels/lib/authorLabel.ts";
 import { useAsks } from "@/features/home/AsksProvider";
 import { useWorkflowActions } from "@/features/workflows/useWorkflowActions";
 import { notify } from "@/shared/ui/notify";
-import { useWorkContext } from "./WorkProvider";
+import { useWorkContext } from "./workContext.ts";
 import { frameTriggers } from "./lib/activeTurns.ts";
 import { includesOwnSend } from "./lib/ownSends.ts";
 import { useNowSeconds, useWorkFeed } from "./useWorkFeed.ts";

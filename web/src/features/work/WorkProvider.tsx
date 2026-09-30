@@ -1,7 +1,5 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -11,9 +9,7 @@ import {
 
 import type { ReadState } from "@/features/channels/lib/readState.ts";
 import type { ChannelSummary } from "@/features/channels/useChannels";
-import type { InboxReadState } from "@/features/home/lib/inboxReadState.ts";
 import { useInboxReadState } from "@/features/home/hooks.ts";
-import type { TimelineMessage } from "@/features/channels/lib/messageBuffer.ts";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { getUnlockedSecretKey } from "@/shared/lib/key-store";
 import {
@@ -21,11 +17,7 @@ import {
   type SignedNostrEvent,
 } from "@/shared/lib/nostr-signer";
 import { isNativeIOS } from "@/shared/platform/native";
-import {
-  type ApprovalEvent,
-  type PendingApproval,
-  pendingApprovals,
-} from "./lib/approvalEvents.ts";
+import { type ApprovalEvent, pendingApprovals } from "./lib/approvalEvents.ts";
 import {
   QUEUED_TTL_S,
   REACTION_SEEN,
@@ -33,6 +25,12 @@ import {
   type ReactionEvent,
 } from "./lib/queuedReactions.ts";
 import { mergeById, useSettledKey } from "./lib/useSettledKey.ts";
+import { WorkCountsProvider } from "./useWorkCounts.ts";
+import {
+  useWorkContext,
+  WorkContext,
+  type WorkContextValue,
+} from "./workContext.ts";
 import {
   localMidnight,
   type MetricEntry,
@@ -67,29 +65,7 @@ const METRICS_EOSE_TIMEOUT_MS = 15_000;
 
 type MetricsState = WorkInputs["metrics"];
 
-interface WorkContextValue {
-  channels: ChannelSummary[];
-  selfPubkey: string | null;
-  agentPubkeys: ReadonlySet<string>;
-  readState: ReadState;
-  inboxRead: InboxReadState;
-  markInboxRead: (messages: readonly TimelineMessage[]) => void;
-  approvals: PendingApproval[];
-  reactions: ReactionEvent[];
-  targets: ReadonlyMap<string, ReactionTarget>;
-  metrics: MetricsState;
-  dismissedTurns: ReadonlySet<string>;
-  dismissTurn: (turnId: string) => void;
-  /** Visible Work surfaces (the rail at lg, the Work page) report in here. */
-  reportVisible: (visible: boolean) => () => void;
-  workVisible: () => boolean;
-}
-
-const WorkContext = createContext<WorkContextValue | null>(null);
-
-export function useWorkContext(): WorkContextValue | null {
-  return useContext(WorkContext);
-}
+export { useWorkContext };
 
 function canDecrypt(): boolean {
   return isNativeIOS() || getUnlockedSecretKey() !== null;
@@ -395,5 +371,9 @@ export function WorkProvider({
       workVisible,
     ],
   );
-  return <WorkContext.Provider value={value}>{children}</WorkContext.Provider>;
+  return (
+    <WorkContext.Provider value={value}>
+      <WorkCountsProvider>{children}</WorkCountsProvider>
+    </WorkContext.Provider>
+  );
 }

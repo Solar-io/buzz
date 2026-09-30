@@ -104,6 +104,22 @@ export function NeedsYouSection({
   const cards = page ? visible.slice(0, 2) : [];
   const listed = page ? visible.slice(2) : visible;
 
+  const showMore =
+    rows.length > NEEDS_PAGE ? (
+      <button
+        type="button"
+        onClick={() => setShowAll((value) => !value)}
+        className={cn(
+          "font-semibold text-info-ink hover:underline",
+          page
+            ? "h-10 text-center text-sm"
+            : "h-8 w-full px-3 text-left text-xs",
+        )}
+      >
+        {showAll ? "Show fewer" : `Show ${rows.length - NEEDS_PAGE} more`}
+      </button>
+    ) : null;
+
   return (
     <section aria-label="Needs you" className="flex flex-col gap-1.75">
       {showHeader && (
@@ -188,22 +204,11 @@ export function NeedsYouSection({
                       }
                     />
                   ))}
+                  {/* In the rail the toggle is the card's last row (Main). */}
+                  {!page && showMore}
                 </div>
               )}
-              {rows.length > NEEDS_PAGE && (
-                <button
-                  type="button"
-                  onClick={() => setShowAll((value) => !value)}
-                  className={cn(
-                    "text-left font-semibold text-info-ink hover:underline",
-                    page ? "h-10 text-center text-sm" : "h-6 px-3 text-xs",
-                  )}
-                >
-                  {showAll
-                    ? "Show fewer"
-                    : `Show ${rows.length - NEEDS_PAGE} more`}
-                </button>
-              )}
+              {page && showMore}
             </>
           )}
         </>

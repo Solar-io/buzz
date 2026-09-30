@@ -3,7 +3,7 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { useProfiles } from "@/features/channels/hooks";
 import { cn } from "@/shared/lib/cn";
-import { useWorkContext } from "../WorkProvider";
+import { useWorkContext } from "../workContext.ts";
 import { useNowSeconds, useWorkFeed } from "../useWorkFeed.ts";
 import {
   loadCollapsedSections,

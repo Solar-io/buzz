@@ -1,17 +1,41 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useObserverStore } from "@/features/agents/ObserverProvider";
 import { useAsks } from "@/features/home/AsksProvider";
 import { buildInboxItems } from "@/features/home/lib/inboxItem.ts";
 import { inboxReadPredicate } from "@/features/home/lib/inboxReadState.ts";
 import { useRemindersQuery } from "@/features/reminders/hooks";
-import { useWorkContext } from "./WorkProvider";
+import { useWorkContext } from "./workContext.ts";
 import { buildWorkFeed } from "./lib/workFeed.ts";
 import type { WorkFeed, WorkScope } from "./lib/workTypes.ts";
 
 const EMPTY_FRAMES = new Map();
 const NO_REACTIONS: never[] = [];
 const NO_TARGETS = new Map();
+
+/**
+ * A value that changes at most every `ms`. Observer frames arrive several a
+ * second from a busy agent; the feed needs them within a second, not within
+ * a frame — this keeps the join from re-running at the frame rate.
+ */
+function useThrottledValue<T>(value: T, ms: number): T {
+  const [shown, setShown] = useState(value);
+  const lastAt = useRef(0);
+  useEffect(() => {
+    const wait = lastAt.current + ms - Date.now();
+    if (wait <= 0) {
+      lastAt.current = Date.now();
+      setShown(value);
+      return;
+    }
+    const timer = setTimeout(() => {
+      lastAt.current = Date.now();
+      setShown(value);
+    }, wait);
+    return () => clearTimeout(timer);
+  }, [value, ms]);
+  return shown;
+}
 
 /** Unix seconds, re-read every `intervalMs` while `active`. */
 export function useNowSeconds(intervalMs: number, active = true): number {
@@ -67,7 +91,7 @@ export function useWorkFeed(options: {
   const targets = context?.targets ?? NO_TARGETS;
   const metrics = context?.metrics;
   const dismissedTurns = context?.dismissedTurns;
-  const byAgent = observer?.byAgent ?? EMPTY_FRAMES;
+  const byAgent = useThrottledValue(observer?.byAgent ?? EMPTY_FRAMES, 500);
   const { scope, channelId, nowS } = options;
   return useMemo(
     () =>

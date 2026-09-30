@@ -447,6 +447,28 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
   });
 }
 
+test.describe("tablet 900 · buzz", () => {
+  test.use({ viewport: { width: 900, height: 900 } });
+
+  test("between md and lg, Work is a sidebar row and a page", async ({
+    page,
+  }) => {
+    await open(page, { theme: "buzz", path: channelPath });
+    // No docked rail below lg, and no phone tab bar at md and up.
+    await expect(page.getByTestId("work-rail")).toBeHidden();
+    await expect(page.getByTestId("phone-tab-bar")).toHaveCount(0);
+    const work = page
+      .getByTestId("app-shell-sidebar")
+      .locator("button", { hasText: "Work" });
+    await expect(work).toBeVisible();
+    await expect(work).toContainText("8");
+    await work.click();
+    await expect(page).toHaveURL(/view=work/);
+    await expect(page.getByTestId("work-page")).toBeVisible();
+    await shot(page, "tablet-work-buzz-900");
+  });
+});
+
 test.describe("desktop 1440 · catppuccin-mocha", () => {
   test.use({ viewport: { width: 1440, height: 960 } });
 

@@ -867,3 +867,49 @@ Three sub-traps from the same hour:
 - **`pnpm test` does not typecheck** (`--experimental-strip-types`); the
   `tsc` in `pnpm build` does. A TS-invalid fix can sit behind a green suite —
   run the build before you rsync a bundle.
+
+## Web shell: Work rail, tabs and toasts (earned on redesign Phase 1, 2026-09-30)
+
+- **The right pane is a tab model, not show/hide flags.** `features/shell/
+  rightPaneLayout.ts` decides (Work | Thread | Thinking, Work always first);
+  `dmPaneToggles.ts` is the 🧠 / Replies policy on the same `RightTabId`. Below
+  `lg` there is no dock: the host is `display: contents`, the thread and
+  thinking panels keep their own full-screen sheets, and Work is `?view=work`.
+  A panel that must stay mounted behind another tab is wrapped `contents
+  lg:hidden`, never unmounted — a thread draft lives in it.
+- **Anything in the shell chrome must not read the Work feed directly.**
+  `useWorkFeed` re-derives on observer frames (a busy agent emits several a
+  second, throttled to 2/s inside the hook), and every component that calls it
+  re-renders at that rate. Badges read `useWorkCounts()` — a context whose
+  value only changes when a number does. Wiring the sidebar to the feed
+  re-ranks its sections several times a second.
+- **Running rows need terminal frames.** `capFrames` keeps `turn_completed` /
+  `turn_error` / `agent_panic` through the per-agent cap for this reason: with
+  only `turn_started` kept, a finished turn whose end was evicted by another
+  channel's flood reads as "no heartbeat". `activeTurns` also ends an older
+  turn when a newer one starts in the same channel (the harness runs one turn
+  per channel per agent).
+- **Reactions and their kind-5 removals carry no `h` tag** — the relay derives
+  the channel, so `#h` filters match them but the EVENT cannot tell you which
+  channel it is in. WorkProvider resolves that from the target event (`ids`
+  REQ). A mock relay has to be given the `h` tag a real one would derive.
+- **Sonner, three traps.** (1) `toast.custom` toasts are unstyled and have no
+  width — give the card one, or each toast is as wide as its text. (2) The
+  default stack hides older toasts behind the newest; a sticky decision toast
+  behind a message toast is invisible, hence `expand`. (3) A pointer resting
+  over the toaster pauses EVERY toast's timer — a Playwright click on
+  something under the stack leaves the mouse there and no toast ever leaves;
+  move the mouse away before waiting for one to dismiss.
+- **`document.getAnimations()` includes infinite animations** (`animate-pulse`
+  on a running hex). Awaiting every `.finished` before a screenshot hangs
+  until the test times out; filter on
+  `effect.getComputedTiming().iterations !== Infinity`.
+- **Web e2e with data:** `tests/e2e/helpers/mockRelay.ts` serves REQs, can
+  `push()` live events to open subscriptions and can refuse a publish with the
+  relay's text; `helpers/workFixture.ts` builds a workspace whose encrypted
+  families (reminders, observer frames, turn metrics) are real NIP-44
+  ciphertext. `SHOTS_DIR=… pnpm exec playwright test --project=smoke
+  work-shell` writes the artboard screenshots. The reminder due-check seeds
+  its watermark on the first check that runs AFTER the query resolves, so a
+  reminder meant to fire during a test must come due later than that second
+  check (~35 s in), not at the first.

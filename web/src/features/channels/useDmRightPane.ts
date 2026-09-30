@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { loadRightTab, saveRightTab } from "@/features/work/lib/workPrefs.ts";
 import {
   thinkingPaneVisible,
@@ -100,18 +100,16 @@ export function useDmRightPane(options: {
   }, [options.threadRootId]);
 
   // Entering an agent DM whose thinking tab is open selects it — once per
-  // entry (today's default: the thinking pane opens), not on every render,
-  // so a viewer who then picks Work stays on Work.
-  const enteredRef = useRef<string | null>(null);
+  // entry (today's default: the thinking pane opens). The key changes only on
+  // entry (and on re-entry, via null), so a viewer who then picks Work stays
+  // on Work until they leave and come back.
   const entryKey =
     options.agentDm && !dmPaneHidden ? (options.channelId ?? null) : null;
   // biome-ignore lint/correctness/useExhaustiveDependencies: fires on entry only; setActive is a fresh closure over a stable setter
   useEffect(() => {
-    if (entryKey === null || enteredRef.current === entryKey) {
-      return;
+    if (entryKey !== null) {
+      setActive("activity");
     }
-    enteredRef.current = entryKey;
-    setActive("activity");
   }, [entryKey]);
 
   useEffect(() => {
