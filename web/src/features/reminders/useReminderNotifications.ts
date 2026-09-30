@@ -1,16 +1,22 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
 
 import {
   useNotificationPermission,
   useNotificationSettings,
 } from "@/features/notifications/hooks";
 
-import { remindersQueryKey, useRemindersQuery } from "./hooks.ts";
+import { notify } from "@/shared/ui/notify";
+
+import {
+  remindersQueryKey,
+  useReminderMutations,
+  useRemindersQuery,
+} from "./hooks.ts";
 import { readWatermark, writeWatermark } from "./lib/dueWatermark.ts";
 import { reminderAlertCopy } from "./lib/reminderAlert.ts";
 import { dueSince } from "./lib/reminderFilters.ts";
+import { reminderDestination } from "./lib/reminderNavigation.ts";
 import type { Reminder } from "./lib/reminderTypes.ts";
 
 /** How often the page re-checks whether anything has come due. */
@@ -20,6 +26,8 @@ export interface ReminderNotificationOptions {
   selfPubkey: string | null;
   /** Raise the reminders panel; wired to the toast's action button. */
   onOpenPanel?: () => void;
+  /** Jump to the reminded message — a single due reminder's Open. */
+  onOpenMessage?: (channelId: string, messageId: string) => void;
 }
 
 /**
@@ -44,8 +52,9 @@ export interface ReminderNotificationOptions {
 export function useReminderNotifications(
   options: ReminderNotificationOptions,
 ): void {
-  const { selfPubkey, onOpenPanel } = options;
+  const { selfPubkey, onOpenPanel, onOpenMessage } = options;
   const query = useRemindersQuery(selfPubkey);
+  const { snooze } = useReminderMutations(selfPubkey);
   const queryClient = useQueryClient();
   const settings = useNotificationSettings();
   const permission = useNotificationPermission();
@@ -56,8 +65,17 @@ export function useReminderNotifications(
     settings,
     permission,
     onOpenPanel,
+    onOpenMessage,
+    snooze: snooze.mutate,
   });
-  latest.current = { reminders: query.data, settings, permission, onOpenPanel };
+  latest.current = {
+    reminders: query.data,
+    settings,
+    permission,
+    onOpenPanel,
+    onOpenMessage,
+    snooze: snooze.mutate,
+  };
 
   // The query is `undefined` until it first resolves. Firing off that empty
   // state would advance the watermark past every reminder that came due while
@@ -79,12 +97,36 @@ export function useReminderNotifications(
       }
       const current = latest.current;
 
-      toast(copy.title, {
-        description: copy.body,
-        action: current.onOpenPanel
-          ? { label: "View", onClick: () => current.onOpenPanel?.() }
-          : undefined,
-      });
+      // Sticky (the redesign's feedback-due toast): it stays until acted
+      // on. One due reminder opens its message and can be snoozed from the
+      // toast; a batch opens the panel.
+      const only = due.length === 1 ? due[0] : null;
+      const destination = only
+        ? reminderDestination(only.content.target)
+        : null;
+      notify.feedbackDue(
+        {
+          context: only ? "" : `${due.length} reminders`,
+          body: copy.body,
+          ai: false,
+          onOpen: () => {
+            const now = latest.current;
+            if (destination && now.onOpenMessage) {
+              now.onOpenMessage(destination.channelId, destination.messageId);
+            } else {
+              now.onOpenPanel?.();
+            }
+          },
+          onSnooze: only
+            ? () =>
+                latest.current.snooze({
+                  reminder: only,
+                  notBefore: Math.floor(Date.now() / 1_000) + 3_600,
+                })
+            : undefined,
+        },
+        copy.tag,
+      );
 
       if (
         !current.settings.desktopEnabled ||

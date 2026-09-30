@@ -7,22 +7,26 @@ import { NotificationRuntime } from "@/features/notifications/ui/NotificationRun
 import { ProfileActionsProvider } from "@/features/profile/ProfileActionsContext";
 import { RemindMeLaterProvider } from "@/features/reminders/ui/RemindMeLaterProvider";
 import { StageRoute } from "@/features/stage/ui/StageRoute";
+import { WorkProvider } from "@/features/work/WorkProvider";
+import { WorkToasts } from "@/features/work/useWorkToasts";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 
 type StageProps = ComponentProps<typeof StageRoute>;
 type ToastProps = ComponentProps<typeof MessageToasts>;
+type WorkProps = ComponentProps<typeof WorkProvider>;
 
 /**
  * The signed-in shell's always-mounted providers and runtimes, lifted out of
- * `routes/repos.tsx` unchanged (web redesign Phase 0; Phase 1 mounts
- * `WorkProvider` here). Everything in it belongs at the shell and nowhere
- * else: once per app, outliving every view.
+ * `routes/repos.tsx` (web redesign Phase 0), plus the Work tab's
+ * subscriptions and toasts (Phase 1). Everything in it belongs at the shell
+ * and nowhere else: once per app, outliving every view.
  */
 export function ShellProviders({
   channels,
   selfPubkey,
   stage,
   toasts,
+  work,
   onDmOpened,
   children,
 }: {
@@ -31,6 +35,8 @@ export function ShellProviders({
   /** The open conversation, for the Stage overlay. */
   stage: Omit<StageProps, "selfPubkey">;
   toasts: Omit<ToastProps, "selfPubkey" | "channels">;
+  /** The Work tab's shell inputs: known agents and the live read markers. */
+  work: Pick<WorkProps, "agentPubkeys" | "readState">;
   /** A profile card opened (or created) a DM. */
   onDmOpened: (channelId: string) => void;
   children: ReactNode;
@@ -39,44 +45,63 @@ export function ShellProviders({
   const { session } = useRelaySession();
   return (
     // AsksProvider owns the always-on asks badge + answer detection; once at
-    // the shell, same discipline as NotificationRuntime.
+    // the shell, same discipline as NotificationRuntime. WorkProvider sits
+    // inside it (it reads the asks feed) and owns the Work tab's own REQs.
     <AsksProvider channels={channels} selfPubkey={selfPubkey}>
-      {/* Mounted at the shell so it outlives every route the signed-in app can
-        be on; in the sidebar it died wherever the sidebar unmounted. It takes
-        the shell's channel list rather than opening a second kind:39000 REQ. */}
-      <NotificationRuntime selfPubkey={selfPubkey} channels={channels} />
-      <StageRoute {...stage} selfPubkey={selfPubkey} />
-      {/* Same mount discipline as NotificationRuntime: once at the shell, so
-        toasts survive every view. The channel side consumes the shell's
-        shared activity feed; the DM side opens the feed's DM-scoped twin. */}
-      <MessageToasts {...toasts} selfPubkey={selfPubkey} channels={channels} />
-      <RemindMeLaterProvider selfPubkey={selfPubkey}>
-        {/* Profile cards open DMs; DM creation is the shell's job, and the row
-          that raises the card renders under ChannelTimeline, so the callback
-          reaches it by context rather than through files the shell does not
-          own. The "Recent" list knows event and channel ids but not names,
-          and cannot route — the shell owns both. */}
-        <ProfileActionsProvider
-          channelName={(channelId) =>
-            channels.find((channel) => channel.id === channelId)?.name ?? ""
+      <WorkProvider channels={channels} selfPubkey={selfPubkey} {...work}>
+        <WorkToasts
+          selectedId={toasts.selectedId}
+          onOpenChannel={toasts.onOpenChannel}
+          onOpenMessage={(c, m) =>
+            void navigate({ to: "/repos", search: { c, m } })
           }
-          onOpenMessage={(channelId, messageId) => {
-            void navigate({
-              to: "/repos",
-              search: { c: channelId, m: messageId },
-            });
-          }}
-          onOpenDm={(pubkey) => {
-            void openDm(session, [pubkey]).then((result) => {
-              if (result.ok && result.channelId) {
-                onDmOpened(result.channelId);
-              }
-            });
-          }}
-        >
-          {children}
-        </ProfileActionsProvider>
-      </RemindMeLaterProvider>
+          onOpenView={(view) =>
+            void navigate({ to: "/repos", search: { view } })
+          }
+        />
+        {/* Mounted at the shell so it outlives every route the signed-in app
+          can be on; in the sidebar it died wherever the sidebar unmounted. It
+          takes the shell's channel list rather than opening a second
+          kind:39000 REQ. */}
+        <NotificationRuntime selfPubkey={selfPubkey} channels={channels} />
+        <StageRoute {...stage} selfPubkey={selfPubkey} />
+        {/* Same mount discipline as NotificationRuntime: once at the shell, so
+          toasts survive every view. The channel side consumes the shell's
+          shared activity feed; the DM side opens the feed's DM-scoped twin. */}
+        <MessageToasts
+          {...toasts}
+          selfPubkey={selfPubkey}
+          channels={channels}
+          agentPubkeys={work.agentPubkeys}
+        />
+        <RemindMeLaterProvider selfPubkey={selfPubkey}>
+          {/* Profile cards open DMs; DM creation is the shell's job, and the
+            row that raises the card renders under ChannelTimeline, so the
+            callback reaches it by context rather than through files the shell
+            does not own. The "Recent" list knows event and channel ids but
+            not names, and cannot route — the shell owns both. */}
+          <ProfileActionsProvider
+            channelName={(channelId) =>
+              channels.find((channel) => channel.id === channelId)?.name ?? ""
+            }
+            onOpenMessage={(channelId, messageId) => {
+              void navigate({
+                to: "/repos",
+                search: { c: channelId, m: messageId },
+              });
+            }}
+            onOpenDm={(pubkey) => {
+              void openDm(session, [pubkey]).then((result) => {
+                if (result.ok && result.channelId) {
+                  onDmOpened(result.channelId);
+                }
+              });
+            }}
+          >
+            {children}
+          </ProfileActionsProvider>
+        </RemindMeLaterProvider>
+      </WorkProvider>
     </AsksProvider>
   );
 }

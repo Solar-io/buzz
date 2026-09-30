@@ -1,0 +1,86 @@
+/*
+ * Web redesign Phase 1 primitives (docs/plans/2026-09-29-web-redesign/
+ * phase-1.md): the agent hexagon, agent identity inks, the toast timer line
+ * and the docked right pane. Colours here are either tokens or the canvas's
+ * fixed agent-identity inks, which are the same in both themes on purpose
+ * (an agent keeps its colour when you switch light/dark).
+ */
+
+/* The hexagon every agent avatar and state marker is cut to. */
+.buzz-hex {
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+}
+
+/* The workspace mark: honey on ink in BOTH themes (Main.dc.html). */
+.buzz-mark {
+  background-color: #1b1a16;
+  color: #eba21a;
+}
+
+/* Agent identity inks (Main.dc.html inner hexes), picked by a pubkey hash. */
+.buzz-agent-ink {
+  color: #f6f1e4;
+}
+.buzz-agent-ink-0 {
+  background-color: #24231f;
+}
+.buzz-agent-ink-1 {
+  background-color: #243449;
+}
+.buzz-agent-ink-2 {
+  background-color: #452536;
+}
+.buzz-agent-ink-3 {
+  background-color: #2a2a33;
+}
+.buzz-agent-ink-4 {
+  background-color: #2f3524;
+}
+.buzz-agent-ink-5 {
+  background-color: #3a2e22;
+}
+.buzz-agent-ink-6 {
+  background-color: #22303a;
+}
+
+/* Toast timer line: drains over the toast's own duration and pauses while
+   the stack is hovered — sonner pauses its dismiss timer on the same hover
+   (the toaster list's mouseenter), so the line and the timer agree. */
+@keyframes buzz-toast-drain {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+.buzz-toast-timer {
+  transform-origin: left center;
+  animation-name: buzz-toast-drain;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+[data-sonner-toaster]:hover .buzz-toast-timer {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .buzz-toast-timer {
+    animation: none;
+  }
+}
+
+/* Custom gradient: every pane in the dock is its own bordered card, so the
+   dock's own hairline would be a stray line on the gradient. */
+:root[data-custom-gradient="true"] .buzz-right-dock {
+  border-left-width: 0;
+}
+
+/* The docked right pane (Work / Thread / Thinking tabs) owns the one left
+   border; the thread and thinking panels bring their own for the old
+   side-by-side layout, which would draw a second hairline inside the dock. */
+@media (min-width: 64rem) {
+  .buzz-right-dock [data-custom-content-pane="replies"],
+  .buzz-right-dock [data-custom-content-pane="thinking"] {
+    border-left-width: 0;
+  }
+}

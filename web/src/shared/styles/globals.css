@@ -2,6 +2,8 @@
 @import "tw-animate-css";
 /* Fixed palettes (buzz-light / buzz-dark), selected by data-palette. */
 @import "./palettes.css";
+/* Redesign primitives: agent hexes, toast timer, the docked right pane. */
+@import "./redesign.css";
 @plugin "@tailwindcss/typography";
 @config "../../../tailwind.config.js";
 

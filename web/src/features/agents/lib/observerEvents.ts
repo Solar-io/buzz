@@ -442,8 +442,19 @@ export function agentWorkingState(
   return { working: true, startedAt };
 }
 
-/** Frame kinds that mark turn boundaries — never evicted by the cap. */
-const BOUNDARY_KINDS = new Set(["turn_started"]);
+/**
+ * Frame kinds that mark turn boundaries — never evicted by the cap. The END
+ * of a turn is a boundary too: with only `turn_started` kept, a turn whose
+ * `turn_completed` was evicted by a later flood reads as started-and-silent
+ * — and the Work tab's Running section (features/work/lib/activeTurns.ts)
+ * would list a finished turn as stalled.
+ */
+const BOUNDARY_KINDS = new Set([
+  "turn_started",
+  "turn_completed",
+  "turn_error",
+  "agent_panic",
+]);
 
 /**
  * Cap a per-agent frame buffer at `cap` newest frames, EXCEPT turn-boundary

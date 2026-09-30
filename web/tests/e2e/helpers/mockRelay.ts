@@ -99,6 +99,21 @@ export interface MockRelay {
   published: MockEvent[];
   /** Add events after the page has loaded; they are served to later REQs. */
   add: (...events: MockEvent[]) => void;
+  /**
+   * Deliver events LIVE: sent to every subscription still open whose filters
+   * match (and kept for later REQs). This is the one piece of fan-out the
+   * mock has — enough to drive surfaces that only react to an arrival, like a
+   * toast, without pretending to be a relay.
+   */
+  push: (...events: MockEvent[]) => void;
+}
+
+export interface MockRelayOptions {
+  /**
+   * Refuse a publish: return the relay's rejection text, or null to accept.
+   * The refusal is an `OK false` frame carrying that text verbatim.
+   */
+  rejectPublish?: (event: MockEvent) => string | null;
 }
 
 /**
@@ -111,11 +126,19 @@ export interface MockRelay {
 export async function installMockRelay(
   page: Page,
   events: MockEvent[] = [],
+  options: MockRelayOptions = {},
 ): Promise<MockRelay> {
   const served = [...events];
   const published: MockEvent[] = [];
+  /** Open subscriptions per socket, for {@link MockRelay.push}. */
+  const sockets: Array<{
+    send: (frame: string) => void;
+    subs: Map<string, Filter[]>;
+  }> = [];
 
   await page.routeWebSocket(/.*/, (ws) => {
+    const subs = new Map<string, Filter[]>();
+    sockets.push({ send: (frame) => ws.send(frame), subs });
     ws.onMessage((raw) => {
       if (typeof raw !== "string") {
         return;
@@ -133,6 +156,7 @@ export async function installMockRelay(
       if (type === "REQ") {
         const subId = String(message[1]);
         const filters = message.slice(2) as Filter[];
+        subs.set(subId, filters);
         for (const event of served) {
           if (filters.some((filter) => matches(filter, event))) {
             ws.send(JSON.stringify(["EVENT", subId, event]));
@@ -146,8 +170,14 @@ export async function installMockRelay(
         // — no page bridge needed — and a spec can read it synchronously.
         const event = message[1] as MockEvent;
         published.push(event);
-        ws.send(JSON.stringify(["OK", event.id, true, ""]));
+        const refusal = options.rejectPublish?.(event) ?? null;
+        ws.send(
+          JSON.stringify(["OK", event.id, refusal === null, refusal ?? ""]),
+        );
         return;
+      }
+      if (type === "CLOSE") {
+        subs.delete(String(message[1]));
       }
       // CLOSE and AUTH need no reply from a relay that never challenges.
     });
@@ -157,6 +187,22 @@ export async function installMockRelay(
     published,
     add: (...more: MockEvent[]) => {
       served.push(...more);
+    },
+    push: (...more: MockEvent[]) => {
+      served.push(...more);
+      for (const socket of sockets) {
+        for (const event of more) {
+          for (const [subId, filters] of socket.subs) {
+            if (filters.some((filter) => matches(filter, event))) {
+              try {
+                socket.send(JSON.stringify(["EVENT", subId, event]));
+              } catch {
+                // A closed socket has nobody to deliver to.
+              }
+            }
+          }
+        }
+      }
     },
   };
 }

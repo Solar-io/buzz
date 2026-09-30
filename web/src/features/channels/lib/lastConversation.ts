@@ -92,6 +92,26 @@ export function landingRedirectTarget(
   return stored?.channelId ?? null;
 }
 
+/**
+ * The phone's home screen (web redesign phase-1, decision D3): on a phone a
+ * bare `/repos` lands on Work rather than the last conversation. Same guard
+ * as {@link landingRedirectTarget} — only a bare landing moves, and the
+ * redirect carries `view`, so it cannot loop.
+ */
+export function phoneLandingView(
+  search: { c?: string; view?: string; m?: string },
+  phone: boolean,
+): "work" | null {
+  if (!phone) {
+    return null;
+  }
+  return search.c === undefined &&
+    search.view === undefined &&
+    search.m === undefined
+    ? "work"
+    : null;
+}
+
 export type RestoreVerdict = "valid" | "stale" | "wait";
 
 /**
