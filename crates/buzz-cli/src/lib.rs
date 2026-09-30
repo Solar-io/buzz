@@ -236,6 +236,14 @@ enum Cmd {
     /// Upload files to the relay's Blossom store
     #[command(subcommand)]
     Upload(UploadCmd),
+    /// Share deliverables (reports, HTML, images, logs, exports) to a channel's Shelf.
+    ///
+    /// Uploads each file through the relay's generic file path (the relay is
+    /// the validator — no client allow-list) and posts ONE kind 9 message
+    /// carrying an `imeta` per file (with `filename`), the `["t","shelf"]`
+    /// marker, and a `["path","<host>:<abs path>"]` per file unless
+    /// `--no-path`. Replies to that message are comments on the file.
+    Share(ShareArgs),
     /// Agent engram management — persistent memory per NIP-AE
     #[command(subcommand)]
     Mem(MemCmd),
@@ -2086,6 +2094,29 @@ pub enum ItemsCmd {
     },
 }
 
+/// Arguments for `buzz share`.
+#[derive(clap::Args)]
+pub struct ShareArgs {
+    /// File(s) to share (1–10); all land in one message
+    #[arg(required = true, num_args = 1..=10)]
+    pub paths: Vec<String>,
+    /// Channel UUID, or a name/#slug resolved against your visible channels (unique match required)
+    #[arg(long)]
+    pub channel: String,
+    /// Message prose: what the file is and what to look at. Use '-' to read from stdin.
+    #[arg(long)]
+    pub summary: Option<String>,
+    /// Event ID to reply to (shares into a thread)
+    #[arg(long)]
+    pub reply_to: Option<String>,
+    /// Pubkey to mention (hex or npub; repeatable)
+    #[arg(long = "mention")]
+    pub mentions: Vec<String>,
+    /// Omit the `["path","<host>:<abs path>"]` tags (for sensitive paths)
+    #[arg(long)]
+    pub no_path: bool,
+}
+
 #[derive(Subcommand)]
 pub enum UploadCmd {
     /// Upload a file to the relay's Blossom store
@@ -2406,6 +2437,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Pr(sub) => commands::pr::dispatch(sub, &client).await,
         Cmd::Media(sub) => commands::upload::dispatch_media(sub, &client).await,
         Cmd::Upload(sub) => commands::upload::dispatch(sub, &client).await,
+        Cmd::Share(args) => commands::share::cmd_share(&client, args).await,
         Cmd::Mem(sub) => commands::mem::dispatch(sub, &client).await,
         Cmd::Moderation(sub) => commands::moderation::dispatch(sub, &client, &cli.format).await,
         Cmd::Voices(sub) => commands::voices::dispatch(sub, &client).await,
@@ -2559,6 +2591,8 @@ mod tests {
             "projects",
             "reactions",
             "repos",
+            // Phase 6 Shelf: one message per share, marked ["t","shelf"].
+            "share",
             "social",
             // Agent Stage Mode: open / show / next / run / status / close.
             "stage",

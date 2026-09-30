@@ -365,18 +365,14 @@ fn format_events(normalized: &str, format: &crate::OutputFormat) -> String {
 
 /// First `e`-tag value on an event, if any — the target of a kind 40003 edit.
 fn first_e_tag_target(event: &serde_json::Value) -> Option<String> {
-    event
-        .get("tags")?
-        .as_array()?
-        .iter()
-        .find_map(|t| {
-            let arr = t.as_array()?;
-            if arr.first()?.as_str()? == "e" {
-                Some(arr.get(1)?.as_str()?.to_string())
-            } else {
-                None
-            }
-        })
+    event.get("tags")?.as_array()?.iter().find_map(|t| {
+        let arr = t.as_array()?;
+        if arr.first()?.as_str()? == "e" {
+            Some(arr.get(1)?.as_str()?.to_string())
+        } else {
+            None
+        }
+    })
 }
 
 /// Fold kind 40003 edit overlays into the events they target.
@@ -404,7 +400,10 @@ fn fold_edit_overlays(events: &mut Vec<serde_json::Value>, keep_orphan_edits: bo
         let Some(target) = first_e_tag_target(event) else {
             continue;
         };
-        let created_at = event.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0);
+        let created_at = event
+            .get("created_at")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         let id = event
             .get("id")
             .and_then(|v| v.as_str())
@@ -442,10 +441,7 @@ fn fold_edit_overlays(events: &mut Vec<serde_json::Value>, keep_orphan_edits: bo
         if event.get("kind").and_then(|k| k.as_u64()) != Some(40003) {
             return true;
         }
-        let id = event
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default();
+        let id = event.get("id").and_then(|v| v.as_str()).unwrap_or_default();
         // Applied edits disappear into their target; unapplied ones follow the
         // caller's orphan policy.
         !applied_edit_ids.contains(id) && keep_orphan_edits
@@ -732,6 +728,56 @@ pub struct SendMessageParams {
     /// Agent Stage Mode: one validated `["stage", …]` tag plus (for parts) an
     /// already-uploaded image. Set only by `buzz stage`, never from argv.
     pub stage: Option<StageAttachment>,
+    /// Phase 6 Shelf: already-uploaded files plus their `path` tags. Set only
+    /// by `buzz share`, never from argv.
+    pub share: Option<ShareAttachment>,
+}
+
+/// What `buzz share` hands the send path: every file already uploaded through
+/// the relay's generic path (`UploadMode::Any`), each with its sanitized
+/// display filename, and the `path` tag values (`<host>:<abs path>`, one per
+/// file, same order; empty with `--no-path`).
+pub struct ShareAttachment {
+    pub files: Vec<(crate::client::BlobDescriptor, String)>,
+    pub paths: Vec<String>,
+}
+
+/// The Shelf marker. A one-letter tag so NIP-01 `#t` filters can select it.
+pub const SHELF_TAG: [&str; 2] = ["t", "shelf"];
+
+/// Share: one `imeta` (with `filename`) + one content link per file, then hand
+/// back the trailing tags — `["t","shelf"]` followed by the `path` tags — which
+/// the caller appends after every imeta and before the session stamp.
+/// Images and video keep the `![image]` / `![video]` lines; every other file is
+/// linked by its filename (`[report.md](url)`, byte-compatible with the web's
+/// `attachmentMarkdown`).
+pub(crate) fn attach_share_files(
+    share: Option<ShareAttachment>,
+    media_tags: &mut Vec<Vec<String>>,
+    media_content: &mut String,
+) -> Vec<Vec<String>> {
+    let Some(share) = share else {
+        return Vec::new();
+    };
+    for (desc, filename) in &share.files {
+        media_tags.push(crate::client::build_imeta_tag(desc, Some(filename)));
+        if desc.mime_type.starts_with("image/") {
+            media_content.push_str("\n![image](");
+        } else if desc.mime_type.starts_with("video/") {
+            media_content.push_str("\n![video](");
+        } else {
+            media_content.push_str("\n[");
+            media_content.push_str(&crate::client::share_link_label(filename));
+            media_content.push_str("](");
+        }
+        media_content.push_str(&desc.url);
+        media_content.push(')');
+    }
+    let mut trailing = vec![SHELF_TAG.iter().map(|s| s.to_string()).collect()];
+    for path in share.paths {
+        trailing.push(vec!["path".to_string(), path]);
+    }
+    trailing
 }
 
 /// What `buzz stage` hands the send path. The image was uploaded (or its
@@ -760,7 +806,7 @@ fn attach_stage_media(
 ) -> Option<Vec<String>> {
     let stage = stage?;
     if let Some(desc) = &stage.media {
-        media_tags.push(crate::client::build_imeta_tag(desc));
+        media_tags.push(crate::client::build_imeta_tag(desc, None));
         media_content.push_str("\n![image](");
         media_content.push_str(&desc.url);
         media_content.push(')');
@@ -826,7 +872,8 @@ pub(crate) async fn send_message(
     }
     // A stage showing may be image-only: its image line is the content.
     let has_stage_media = p.stage.as_ref().is_some_and(|s| s.media.is_some());
-    if card_tag.is_none() && !has_stage_media && p.content.trim().is_empty() {
+    let has_share_files = p.share.as_ref().is_some_and(|s| !s.files.is_empty());
+    if card_tag.is_none() && !has_stage_media && !has_share_files && p.content.trim().is_empty() {
         return Err(CliError::Usage(
             "--content is required (or pass --card, which generates it)".into(),
         ));
@@ -894,7 +941,10 @@ pub(crate) async fn send_message(
     // card with no thread to join and nobody to ask is the shape that opens a
     // second Asks row when a follow-up was meant.
     if let Some(notice) = card_round_notice(
-        card_tag.as_ref().and_then(|tag| tag.get(1)).map(String::as_str),
+        card_tag
+            .as_ref()
+            .and_then(|tag| tag.get(1))
+            .map(String::as_str),
         p.reply_to.is_some(),
         mention_pubkeys.len(),
     ) {
@@ -909,7 +959,8 @@ pub(crate) async fn send_message(
             .upload_file(file_path)
             .await
             .map_err(|e| CliError::Other(format!("upload failed for {file_path}: {e}")))?;
-        media_tags.push(crate::client::build_imeta_tag(&desc));
+        let filename = crate::client::sanitize_share_filename(std::path::Path::new(file_path)).ok();
+        media_tags.push(crate::client::build_imeta_tag(&desc, filename.as_deref()));
         if desc.mime_type.starts_with("video/") {
             media_content.push_str("\n![video](");
         } else {
@@ -919,6 +970,7 @@ pub(crate) async fn send_message(
         media_content.push(')');
     }
     let stage_tag = attach_stage_media(p.stage.take(), &mut media_tags, &mut media_content);
+    let share_tags = attach_share_files(p.share.take(), &mut media_tags, &mut media_content);
     let final_content = compose_final_content(&p.content, &media_content);
 
     // D-035 card tag rides AFTER imeta attachments and BEFORE the session
@@ -931,6 +983,8 @@ pub(crate) async fn send_message(
     if let Some(tag) = stage_tag {
         media_tags.push(tag);
     }
+    // Share: the Shelf marker then the `path` tags, in the same slot.
+    media_tags.extend(share_tags);
 
     // Identity stamp (managed sessions): `["session", "<slot>"]` rides the
     // outgoing event's tags for kinds 9 / 45001 / 45003, so any client can
@@ -1321,6 +1375,7 @@ pub async fn dispatch(
                     supersede,
                     card,
                     stage: None,
+                    share: None,
                 },
             )
             .await
@@ -1449,12 +1504,13 @@ pub async fn dispatch(
 
 #[cfg(test)]
 mod tests {
-    use super::{attach_stage_media, compose_final_content, StageAttachment, 
-        channel_id_from_event, classify_claim, cmd_get_thread, event_mention_pubkeys,
-        find_root_from_tags, fold_edit_overlays, match_profiles_by_name, merge_message_mentions,
-        missing_members, normalize_explicit_mentions, parse_member_pubkeys,
-        resolve_names_to_pubkeys, resolve_thread_target, thread_ref_from_event,
-        thread_ref_from_parent_tags, BuzzClient, ClaimState, CliError, Uuid, CLAIM_EMOJI,
+    use super::{
+        attach_stage_media, channel_id_from_event, classify_claim, cmd_get_thread,
+        compose_final_content, event_mention_pubkeys, find_root_from_tags, fold_edit_overlays,
+        match_profiles_by_name, merge_message_mentions, missing_members,
+        normalize_explicit_mentions, parse_member_pubkeys, resolve_names_to_pubkeys,
+        resolve_thread_target, thread_ref_from_event, thread_ref_from_parent_tags, BuzzClient,
+        ClaimState, CliError, StageAttachment, Uuid, CLAIM_EMOJI,
     };
     use buzz_sdk::mentions::{
         extract_at_mentions_with_known, extract_at_names, match_names_to_profiles, MentionProfile,
@@ -1516,7 +1572,7 @@ mod tests {
             &mut media,
         );
         assert_eq!(tag, Some(vec!["stage".to_string(), "{}".to_string()]));
-        assert_eq!(tags, vec![crate::client::build_imeta_tag(&desc)]);
+        assert_eq!(tags, vec![crate::client::build_imeta_tag(&desc, None)]);
         assert_eq!(
             compose_final_content("Para.", &media),
             "Para.\n![image](https://r.example/media/abc.png)"
@@ -1540,7 +1596,11 @@ mod tests {
             edit(ID_B, ID_A, "EDITED text", 2000),
         ];
         fold_edit_overlays(&mut events, false);
-        assert_eq!(events.len(), 1, "applied edit must disappear into its target");
+        assert_eq!(
+            events.len(),
+            1,
+            "applied edit must disappear into its target"
+        );
         assert_eq!(events[0]["id"], json!(ID_A));
         assert_eq!(events[0]["content"], json!("EDITED text"));
         assert_eq!(events[0]["edited_at"], json!(2000));
@@ -1552,9 +1612,24 @@ mod tests {
     fn newest_edit_wins_and_tie_breaks_on_id() {
         let mut events = vec![
             message(ID_A, "original", 1000),
-            edit("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0001", ID_A, "first", 2000),
-            edit("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0002", ID_A, "second", 2000),
-            edit("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0000", ID_A, "older ts", 1500),
+            edit(
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0001",
+                ID_A,
+                "first",
+                2000,
+            ),
+            edit(
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0002",
+                ID_A,
+                "second",
+                2000,
+            ),
+            edit(
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0000",
+                ID_A,
+                "older ts",
+                1500,
+            ),
         ];
         fold_edit_overlays(&mut events, false);
         assert_eq!(events.len(), 1);
@@ -1564,11 +1639,20 @@ mod tests {
 
     #[test]
     fn orphan_edit_dropped_in_timeline_kept_in_search() {
-        let orphan = edit(ID_B, "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "lost target", 3000);
+        let orphan = edit(
+            ID_B,
+            "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "lost target",
+            3000,
+        );
 
         let mut timeline = vec![message(ID_A, "plain", 1000), orphan.clone()];
         fold_edit_overlays(&mut timeline, false);
-        assert_eq!(timeline.len(), 1, "timeline drops edits whose target is not shown");
+        assert_eq!(
+            timeline.len(),
+            1,
+            "timeline drops edits whose target is not shown"
+        );
 
         let mut search = vec![message(ID_A, "plain", 1000), orphan];
         fold_edit_overlays(&mut search, true);

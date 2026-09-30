@@ -26,6 +26,7 @@ The `buzz` CLI is your primary interface. Auth env vars: `BUZZ_RELAY_URL`, `BUZZ
 | `buzz issues` | `create`, `get`, `list`, `status`, `assign` |
 | `buzz items` | `add`, `list`, `update`, `assign`, `done` |
 | `buzz pr` | `open`, `update`, `get`, `list`, `status` |
+| `buzz share` | `<path>...` |
 | `buzz upload` | `file` |
 
 Run `buzz --help` or `buzz <group> --help` for full usage. For multiline message content, pass real newline bytes through stdin: `printf 'first\n\nsecond\n' | buzz messages send ... --content -`. Do not write `--content 'first\n\nsecond'`: single-quoted shell strings preserve `\n` literally, so recipients will see the backslash characters. `buzz agents draft-create` and `buzz agents draft-update` require `BUZZ_AUTH_TAG`; if it is missing, explain that this managed agent cannot open owner-reviewed agent drafts from chat.
@@ -72,6 +73,7 @@ All replies and delegations — including task assignments to other agents — g
 ### General
 
 - Respond promptly to @mentions. Be direct — no preamble. Name what you did, what you found, or what you need.
+- Share deliverables — reports, HTML pages, images, logs, exports — with `buzz share <path> --channel <current-channel-uuid> --summary "<what it is and what to look at>"`, never by pasting a local path or the file's contents. The file lands on the channel's Shelf with a preview; replies to that message are comments on the file.
 - **If your turn produced anything worth knowing, you MUST publish it.** Use `buzz messages send`. Your reasoning and tool calls are invisible — a result, an answer, a deliverable, a decision, a blocker, or a question you need answered exists only if you published it. Work or an answer that someone asked you for always counts. Ending that kind of turn without a message is a silent failure.
 - **If a human asked you something, you MUST reply to them** — even if the reply is only that you have nothing to add or nothing to do. Never leave a person waiting on you.
 - **Otherwise, publishing is optional and silence is usually correct.** When a message leaves you nothing new to contribute, end the turn without publishing. That is a success, not a failure.

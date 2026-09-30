@@ -3430,3 +3430,61 @@ async fn test_nip29_relay_rejects_last_owner_self_demotion() {
         "the last owner must keep their role"
     );
 }
+
+/// Phase 6 Shelf: a `["t","shelf"]` share followed by 250 newer plain
+/// messages must still come back for `{"#t":["shelf"],"limit":10}`. Before the
+/// `#t` SQL pushdown the relay cut the page at the newest 10 rows and matched
+/// `#t` afterwards, answering empty.
+#[tokio::test]
+#[ignore]
+async fn shelf_query_finds_old_share_behind_newer_messages() {
+    let url = relay_url();
+    let keys = Keys::generate();
+    let channel = create_test_channel(&keys).await;
+    let mut client = BuzzTestClient::connect(&url, &keys).await.expect("connect");
+
+    let share_content = format!("shelf-share-{}", uuid::Uuid::new_v4());
+    let share = EventBuilder::new(Kind::Custom(9), &share_content)
+        .tags([
+            Tag::parse(["h", &channel]).unwrap(),
+            Tag::parse(["t", "shelf"]).unwrap(),
+        ])
+        .custom_created_at(nostr::Timestamp::from_secs(
+            nostr::Timestamp::now().as_secs() - 120,
+        ))
+        .sign_with_keys(&keys)
+        .unwrap();
+    let ok = client.send_event(share).await.expect("send share");
+    assert!(ok.accepted, "share rejected: {}", ok.message);
+
+    for i in 0..250 {
+        let ok = client
+            .send_text_message(&keys, &channel, &format!("plain {i}"), 9)
+            .await
+            .expect("send plain");
+        assert!(ok.accepted, "plain {i} rejected: {}", ok.message);
+    }
+
+    let sid = sub_id("shelf");
+    let filter = Filter::new()
+        .kind(Kind::Custom(9))
+        .custom_tags(SingleLetterTag::lowercase(Alphabet::H), [channel.as_str()])
+        .custom_tags(SingleLetterTag::lowercase(Alphabet::T), ["shelf"])
+        .limit(10);
+    client
+        .subscribe(&sid, vec![filter])
+        .await
+        .expect("subscribe");
+    let events = client
+        .collect_until_eose(&sid, Duration::from_secs(10))
+        .await
+        .expect("collect until EOSE");
+    assert_eq!(
+        events.len(),
+        1,
+        "exactly the one share must match, got {} events",
+        events.len()
+    );
+    assert_eq!(events[0].content, share_content);
+    client.disconnect().await.expect("disconnect");
+}

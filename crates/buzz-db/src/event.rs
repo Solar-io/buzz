@@ -79,6 +79,13 @@ pub struct EventQuery {
     /// post-`LIMIT` match lets a page of newer unrelated events starve every
     /// matching row out of the result.
     pub a_tags: Option<Vec<String>>,
+    /// Restrict results to events with a `t` (hashtag/topic) tag equal to any
+    /// of these values.
+    ///
+    /// Same JSONB containment mechanism as [`EventQuery::a_tags`]. The Shelf
+    /// query (`{"kinds":[9],"#t":["shelf"]}`) depends on it: shares are a thin
+    /// slice of channel messages, so a post-`LIMIT` match answers nearly empty.
+    pub t_tags: Option<Vec<String>>,
     /// Restrict results to events in any of these channels. By default,
     /// channel-less global events are retained so this can enforce a viewer's
     /// accessible-channel scope without hiding global events. Set
@@ -138,6 +145,7 @@ impl EventQuery {
             ids: None,
             e_tags: None,
             a_tags: None,
+            t_tags: None,
             channel_ids: None,
             channel_ids_include_global: true,
             max_limit: None,
@@ -538,6 +546,9 @@ pub(crate) async fn query_events_on(
     if q.a_tags.as_deref().is_some_and(|a| a.is_empty()) {
         return Ok(vec![]);
     }
+    if q.t_tags.as_deref().is_some_and(|t| t.is_empty()) {
+        return Ok(vec![]);
+    }
 
     let clamp = q.max_limit.unwrap_or(DEFAULT_MAX_PAGE_LIMIT);
     let limit_val = q.limit.unwrap_or(100).min(clamp);
@@ -655,6 +666,11 @@ pub(crate) async fn query_events_on(
     // a-tag pushdown, identical mechanism: tags @> '[["a","<coordinate>"]]'.
     if let Some(ref a_tags) = q.a_tags {
         push_tag_containment(&mut qb, col_prefix, "a", a_tags);
+    }
+
+    // t-tag pushdown, identical mechanism: tags @> '[["t","<value>"]]'.
+    if let Some(ref t_tags) = q.t_tags {
+        push_tag_containment(&mut qb, col_prefix, "t", t_tags);
     }
 
     if let Some(s) = q.since {
@@ -815,6 +831,9 @@ pub(crate) async fn count_events_on(conn: &mut sqlx::PgConnection, q: &EventQuer
     if q.a_tags.as_deref().is_some_and(|a| a.is_empty()) {
         return Ok(0);
     }
+    if q.t_tags.as_deref().is_some_and(|t| t.is_empty()) {
+        return Ok(0);
+    }
 
     let mut qb: QueryBuilder<sqlx::Postgres> = if let Some(ref p_hex) = q.p_tag_hex {
         let mut b = QueryBuilder::new(
@@ -910,6 +929,11 @@ pub(crate) async fn count_events_on(conn: &mut sqlx::PgConnection, q: &EventQuer
 
     if let Some(ref a_tags) = q.a_tags {
         push_tag_containment(&mut qb, col_prefix, "a", a_tags);
+    }
+
+    // t-tag pushdown, identical mechanism: tags @> '[["t","<value>"]]'.
+    if let Some(ref t_tags) = q.t_tags {
+        push_tag_containment(&mut qb, col_prefix, "t", t_tags);
     }
 
     if let Some(s) = q.since {
@@ -2275,6 +2299,84 @@ mod tests {
         .await
         .expect("count by #a");
         assert_eq!(counted, 1, "COUNT must apply #a exactly as the page does");
+    }
+
+    /// `EventQuery::t_tags` must narrow the SQL before the `LIMIT` (Phase 6
+    /// Shelf). Five `["t","shelf"]` shares are the OLDEST of 305 kind-9s; a
+    /// `limit 5` page that post-filters `#t` returns 5 plain decoys (so zero
+    /// shares), while the pushed predicate returns exactly the five shares.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn t_tag_filter_narrows_the_query_before_the_limit() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let author = Keys::generate();
+        let base: i64 = 1_760_000_000;
+
+        let mut shelf_ids = Vec::new();
+        for i in 0..5 {
+            let share = EventBuilder::new(Kind::Custom(9), "shared a file")
+                .tags(vec![Tag::parse(["t", "shelf"]).expect("t tag")])
+                .custom_created_at(nostr::Timestamp::from_secs((base + i) as u64))
+                .sign_with_keys(&author)
+                .expect("sign share");
+            insert_event(&pool, community, &share, None)
+                .await
+                .expect("insert share");
+            shelf_ids.push(share.id);
+        }
+        for i in 0..300 {
+            let plain = EventBuilder::new(Kind::Custom(9), "plain message")
+                .custom_created_at(nostr::Timestamp::from_secs((base + 100 + i) as u64))
+                .sign_with_keys(&author)
+                .expect("sign plain");
+            insert_event(&pool, community, &plain, None)
+                .await
+                .expect("insert plain");
+        }
+
+        let query = EventQuery {
+            kinds: Some(vec![9]),
+            pubkey: Some(author.public_key().to_bytes().to_vec()),
+            t_tags: Some(vec!["shelf".to_string()]),
+            limit: Some(5),
+            ..EventQuery::for_community(community)
+        };
+        let found = query_events(&pool, &query).await.expect("query by #t");
+        assert_eq!(
+            found.len(),
+            5,
+            "all five shares must fill the five-row page"
+        );
+        let mut got: Vec<_> = found.iter().map(|r| r.event.id).collect();
+        got.sort();
+        let mut want = shelf_ids.clone();
+        want.sort();
+        assert_eq!(got, want, "the page must hold exactly the shelf shares");
+
+        // A topic no event carries matches nothing: the predicate discriminates.
+        let miss = EventQuery {
+            t_tags: Some(vec!["not-shelf".to_string()]),
+            ..query.clone()
+        };
+        assert!(
+            query_events(&pool, &miss)
+                .await
+                .expect("query by absent #t")
+                .is_empty(),
+            "a topic no event carries must return nothing"
+        );
+
+        let counted = count_events(
+            &pool,
+            &EventQuery {
+                limit: None,
+                ..query.clone()
+            },
+        )
+        .await
+        .expect("count by #t");
+        assert_eq!(counted, 5, "COUNT must apply #t exactly as the page does");
     }
 
     fn make_text_event(content: &str) -> nostr::Event {
