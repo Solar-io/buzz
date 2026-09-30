@@ -1,0 +1,34 @@
+{
+  "v": 3,
+  "attachments": {},
+  "boards": {
+    "Main.dc.html": {"h": 960, "is_interactive": true, "title": "Channel + Work rail (theme tweak)", "w": 1440, "x": 0, "y": 0},
+    "Message.dc.html": {"h": 1540, "is_interactive": true, "title": "Readable agent messages + ask cards (dark)", "w": 880, "x": 1520, "y": 0},
+    "Items.dc.html": {"h": 1040, "is_interactive": true, "title": "Items: bugs + backlog table", "w": 1440, "x": 0, "y": 1960},
+    "Shelf.dc.html": {"h": 960, "is_interactive": true, "title": "Shelf: every file shared in chat", "w": 1440, "x": 1520, "y": 1960},
+    "Preview.dc.html": {"h": 960, "is_interactive": true, "title": "File open beside a conversation (dark)", "w": 1440, "x": 3040, "y": 1960},
+    "Files.dc.html": {"h": 960, "is_interactive": true, "title": "Files (stash) inside the shell", "w": 1440, "x": 0, "y": 3420},
+    "Terminal.dc.html": {"h": 960, "is_interactive": true, "title": "Terminal: herdr on crichton (dark)", "w": 1440, "x": 1520, "y": 3420},
+    "Vitals.dc.html": {"h": 720, "title": "Vitals: one Claude bar + crichton", "w": 1000, "x": 0, "y": 4800},
+    "Toasts.dc.html": {"h": 720, "title": "Toasts, top-right, light + dark", "w": 1000, "x": 1080, "y": 4800},
+    "Commands.dc.html": {"h": 960, "is_interactive": true, "title": "Slash commands in a scratch channel", "w": 880, "x": 2160, "y": 4800},
+    "Jump.dc.html": {"h": 720, "is_interactive": true, "title": "Jump (⌘K) with autocomplete", "w": 1000, "x": 3120, "y": 4800},
+    "PhoneWork.dc.html": {"h": 844, "is_interactive": true, "title": "Phone: Work", "w": 390, "x": 0, "y": 6180},
+    "PhoneChannel.dc.html": {"h": 844, "is_interactive": true, "title": "Phone: channel (dark)", "w": 390, "x": 470, "y": 6180},
+    "PhoneAsk.dc.html": {"h": 844, "is_interactive": true, "title": "Phone: ask card as a sheet", "w": 390, "x": 940, "y": 6180},
+    "PhoneTerminal.dc.html": {"h": 844, "is_interactive": true, "title": "Phone: terminal with key bar (dark)", "w": 390, "x": 1410, "y": 6180}
+  },
+  "createdOnFiles": {"at": "2026-09-29T21:05:00Z", "v": 1},
+  "designSystems": [],
+  "launch": {"view": "canvas"},
+  "notes": {
+    "title": {"kind": "title1", "maxW": 2400, "text": "Desktop: channel, Work rail, readable agent messages", "w": 240, "x": 0, "y": -300},
+    "t2": {"kind": "title1", "maxW": 4480, "text": "Items, Shelf, and a file open beside chat", "w": 240, "x": 0, "y": 1660},
+    "t3": {"kind": "title1", "maxW": 2960, "text": "Files and Terminal", "w": 240, "x": 0, "y": 3120},
+    "t4": {"kind": "title1", "maxW": 4120, "text": "Vitals, toasts, slash commands, jump", "w": 240, "x": 0, "y": 4500},
+    "t5": {"kind": "title1", "maxW": 1800, "text": "Phone", "w": 240, "x": 0, "y": 5880}
+  },
+  "order": ["Main.dc.html", "Message.dc.html", "Items.dc.html", "Shelf.dc.html", "Preview.dc.html", "Files.dc.html", "Terminal.dc.html", "Vitals.dc.html", "Toasts.dc.html", "Commands.dc.html", "Jump.dc.html", "PhoneWork.dc.html", "PhoneChannel.dc.html", "PhoneAsk.dc.html", "PhoneTerminal.dc.html"],
+  "pages": [],
+  "title": "Buzz Web Redesign"
+}

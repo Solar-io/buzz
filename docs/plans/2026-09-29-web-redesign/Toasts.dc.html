@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Buzz: toast notifications</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI','Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased}
+.mono{font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,monospace}
+.hex{clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
+.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.clamp2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+button{font:inherit;color:inherit;cursor:pointer}
+.th{--bg:#FDFCF9;--rail:#F7F5F0;--card:#FFFFFF;--chip:#F2EFE8;--ink:#1B1A16;--ink2:#45423B;--muted:#6B655A;--line:#E6E2D8;--line2:#D6D1C5;--need:#E0553A;--coral-soft:#FBE6DF;--coral-ink:#A2301A;--leaf:#2E9A68;--leaf-soft:#DFF1E7;--leaf-ink:#1C6644;--blue-ink:#1F4E8C;--ring-idle:#D5D0C4;--btn:#1B1A16;--btn-ink:#FDFCF9;--shadow:rgba(27,26,22,.28)}
+.th.dark{--bg:#141414;--rail:#171717;--card:#1F1F1F;--chip:#2A2A2A;--ink:#E7E5E1;--ink2:#BDBAB4;--muted:#8E8B85;--line:#2A2A2A;--line2:#363636;--need:#C8674F;--coral-soft:#2E1F1B;--coral-ink:#E39A8A;--leaf:#5BAE82;--leaf-soft:#18231C;--leaf-ink:#8CCBA5;--blue-ink:#A5BEDF;--ring-idle:#3A3A3A;--btn:#E7E5E1;--btn-ink:#141414;--shadow:rgba(0,0,0,.7)}
+</style>
+</helmet>
+<div style="width: 1000px; height: 720px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: hidden; font-size: 14px; line-height: 1.45">
+
+  <sc-for list="{{ themes }}" as="t" hint-placeholder-count="2">
+    <div class="th {{ t.cls }}" style="background: var(--rail); color: var(--ink); display: flex; flex-direction: column-reverse; justify-content: flex-end; gap: 10px; padding: 24px 24px 24px 76px; border-right: 1px solid var(--line)">
+
+      <div style="display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--muted); padding: 0 4px"><span>3 more</span><button style="height: 24px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--blue-ink); font-size: 12px; font-weight: 600">Clear all</button></div>
+
+      <div role="alert" style="background: var(--card); border: 1px solid var(--line2); border-radius: 12px; box-shadow: 0 18px 36px -20px var(--shadow); overflow: hidden">
+        <div style="display: flex; gap: 10px; padding: 11px 12px 11px">
+          <span style="width: 24px; height: 24px; border-radius: 50%; background: var(--coral-soft); color: var(--coral-ink); display: grid; place-items: center; flex-shrink: 0"><svg class="ic" viewBox="0 0 24 24" style="width: 14px; height: 14px"><path d="M12 8v5M12 16h.01"></path><circle cx="12" cy="12" r="9"></circle></svg></span>
+          <div style="min-width: 0; flex-grow: 1">
+            <div style="font-size: 13px; font-weight: 650">Message not sent</div>
+            <div class="mono" style="font-size: 11px; color: var(--muted); margin-top: 1px">relay: root tag does not match thread ancestry</div>
+            <div style="display: flex; gap: 6px; margin-top: 8px"><button style="height: 26px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--btn); background: var(--btn); color: var(--btn-ink); font-size: 12px; font-weight: 600">Retry</button><button style="height: 26px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--line2); background: transparent; color: var(--ink); font-size: 12px; font-weight: 600">Copy error</button></div>
+          </div>
+          <button aria-label="Dismiss" style="width: 24px; height: 24px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); display: grid; place-items: center; padding: 0"><svg class="ic" viewBox="0 0 24 24" style="width: 13px; height: 13px"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
+        </div>
+      </div>
+
+      <div role="status" style="background: var(--card); border: 1px solid var(--line2); border-radius: 12px; box-shadow: 0 18px 36px -20px var(--shadow); overflow: hidden">
+        <div style="display: flex; gap: 10px; padding: 11px 12px 11px">
+          <span style="width: 24px; height: 24px; border-radius: 50%; background: var(--coral-soft); color: var(--coral-ink); display: grid; place-items: center; flex-shrink: 0"><svg class="ic" viewBox="0 0 24 24" style="width: 13px; height: 13px"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path></svg></span>
+          <div style="min-width: 0; flex-grow: 1">
+            <div style="font-size: 13px"><b style="font-weight: 650">Feedback due</b> · ESP32</div>
+            <div class="clamp2" style="font-size: 12.5px; color: var(--ink2); margin-top: 2px"><span class="mono" style="font-size: 9.5px; font-weight: 650; color: var(--muted); background: var(--chip); border-radius: 3px; padding: 0 4px; margin-right: 5px">AI</span>XiaoZhi firmware is running. It wants a wake word before it tunes audio.</div>
+            <div style="display: flex; gap: 6px; margin-top: 8px"><button style="height: 26px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--line2); background: transparent; color: var(--ink); font-size: 12px; font-weight: 600">Open</button><button style="height: 26px; padding: 0 10px; border-radius: 7px; border: 0; background: transparent; color: var(--muted); font-size: 12px; font-weight: 600">Snooze 1h</button></div>
+          </div>
+          <button aria-label="Dismiss" style="width: 24px; height: 24px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); display: grid; place-items: center; padding: 0"><svg class="ic" viewBox="0 0 24 24" style="width: 13px; height: 13px"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
+        </div>
+      </div>
+
+      <div role="status" style="background: var(--card); border: 1px solid var(--line2); border-radius: 12px; box-shadow: 0 18px 36px -20px var(--shadow); overflow: hidden">
+        <div style="display: flex; gap: 10px; padding: 11px 12px 11px">
+          <span class="hex" style="width: 22px; height: 25.4px; background: var(--need); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 18px; height: 20.8px; background: #2A2A33; color: #F6F1E4; display: grid; place-items: center; font-size: 7px; font-weight: 600">CK</span></span>
+          <div style="min-width: 0; flex-grow: 1">
+            <div style="font-size: 13px"><b style="font-weight: 650">Cereal Killer</b> needs your approval</div>
+            <div class="mono" style="font-size: 11px; color: var(--muted); margin-top: 1px">merge fix(web): clamp jitter calibration · #engineering</div>
+            <div style="display: flex; gap: 6px; margin-top: 8px"><button style="height: 26px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--btn); background: var(--btn); color: var(--btn-ink); font-size: 12px; font-weight: 600">Approve</button><button style="height: 26px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--line2); background: transparent; color: var(--ink); font-size: 12px; font-weight: 600">Review</button></div>
+          </div>
+          <button aria-label="Dismiss" style="width: 24px; height: 24px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); display: grid; place-items: center; padding: 0"><svg class="ic" viewBox="0 0 24 24" style="width: 13px; height: 13px"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
+        </div>
+      </div>
+
+      <div role="status" style="background: var(--card); border: 1px solid var(--line2); border-radius: 12px; box-shadow: 0 18px 36px -20px var(--shadow); overflow: hidden">
+        <div style="display: flex; gap: 10px; padding: 11px 12px 10px">
+          <span class="hex" style="width: 22px; height: 25.4px; background: var(--ring-idle); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 18px; height: 20.8px; background: #24231F; color: #F6F1E4; display: grid; place-items: center; font-size: 7px; font-weight: 600">GF</span></span>
+          <div style="min-width: 0; flex-grow: 1">
+            <div style="font-size: 13px"><b style="font-weight: 650">Gilfoyle</b> <span class="mono" style="font-size: 11px; color: var(--muted)">DM · now</span></div>
+            <div class="clamp2" style="font-size: 12.5px; color: var(--ink2); margin-top: 1px">Unblinded, and it's an upset: Sol max won the game build.</div>
+            <div style="display: flex; gap: 6px; margin-top: 8px"><button style="height: 26px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--line2); background: transparent; color: var(--ink); font-size: 12px; font-weight: 600">Reply</button><button style="height: 26px; padding: 0 10px; border-radius: 7px; border: 0; background: transparent; color: var(--muted); font-size: 12px; font-weight: 600">Feedback</button></div>
+          </div>
+          <button aria-label="Dismiss" style="width: 24px; height: 24px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); display: grid; place-items: center; padding: 0"><svg class="ic" viewBox="0 0 24 24" style="width: 13px; height: 13px"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
+        </div>
+        <div style="height: 2px; background: var(--line)"><div style="width: 70%; height: 2px; background: var(--muted)"></div></div>
+      </div>
+
+      <div role="status" style="background: var(--card); border: 1px solid var(--line2); border-radius: 12px; box-shadow: 0 18px 36px -20px var(--shadow); overflow: hidden">
+        <div style="display: flex; gap: 10px; padding: 11px 12px 10px">
+          <span style="width: 24px; height: 24px; border-radius: 50%; background: var(--leaf-soft); color: var(--leaf-ink); display: grid; place-items: center; flex-shrink: 0"><svg class="ic" viewBox="0 0 24 24" style="width: 14px; height: 14px; stroke-width: 2.4"><path d="M20 6 9 17l-5-5"></path></svg></span>
+          <div style="min-width: 0; flex-grow: 1">
+            <div style="font-size: 13px"><b style="font-weight: 650">Acid Burn</b> finished jitter buffer QA</div>
+            <div class="mono" style="font-size: 11px; color: var(--muted); margin-top: 1px">#engineering · 212 passed · 0 failed</div>
+          </div>
+          <button style="height: 26px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--line2); background: transparent; color: var(--ink); font-size: 12px; font-weight: 600; align-self: center">Open</button>
+        </div>
+        <div style="height: 2px; background: var(--line)"><div style="width: 35%; height: 2px; background: var(--leaf)"></div></div>
+      </div>
+    </div>
+  </sc-for>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1000,"height":720}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { themes: [{ cls: '' }, { cls: 'dark' }] };
+  }
+}
+</script>
+</body>
+</html>

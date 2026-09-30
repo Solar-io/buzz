@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Buzz phone: Terminal</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI','Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased}
+.mono{font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,monospace}
+.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.term>div{white-space:pre;min-height:1.6em}
+.pulse{animation:pulse 2.2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.55}}
+@media (prefers-reduced-motion:reduce){.pulse{animation:none}}
+button{font:inherit;color:inherit;cursor:pointer}
+.th{--bg:#FDFCF9;--card:#FFFFFF;--chip:#F2EFE8;--ink:#1B1A16;--ink2:#45423B;--muted:#6B655A;--line:#E6E2D8;--line2:#D6D1C5;--work:#EBA21A;--need:#E0553A;--leaf:#2E9A68;--term:#FBFAF7;--term-ink:#1F1E1B;--term-dim:#7A756B;--term-add:#E6F3EA;--term-add-ink:#1C6644;--term-hl:#1F4E8C;--term-warn:#9A5B00;--key:#FFFFFF}
+.th.dark{--bg:#141414;--card:#1D1D1D;--chip:#262626;--ink:#E7E5E1;--ink2:#BDBAB4;--muted:#8E8B85;--line:#262626;--line2:#333333;--work:#C9A24E;--need:#C8674F;--leaf:#5BAE82;--term:#101010;--term-ink:#D8D6D1;--term-dim:#8A8781;--term-add:#16211A;--term-add-ink:#8CCBA5;--term-hl:#A5BEDF;--term-warn:#D9B56A;--key:#222222}
+</style>
+</helmet>
+<div class="th {{ themeClass }}" style="width: 390px; height: 844px; display: flex; flex-direction: column; background: var(--bg); color: var(--ink); overflow: hidden; font-size: 15px; line-height: 1.4">
+
+  <header style="display: flex; align-items: center; gap: 4px; padding: 14px 8px 6px 4px">
+    <a href="PhoneWork.dc.html" aria-label="Back" style="width: 44px; height: 44px; display: grid; place-items: center; color: var(--ink2)"><svg class="ic" viewBox="0 0 24 24" style="width: 22px; height: 22px"><path d="m15 18-6-6 6-6"></path></svg></a>
+    <div style="min-width: 0; flex-grow: 1">
+      <div style="font-size: 17px; font-weight: 720">Terminal</div>
+      <div class="mono" style="font-size: 11px; color: var(--muted)">herdr · crichton · buzz</div>
+    </div>
+    <button aria-label="Reset view (keeps the session)" style="width: 44px; height: 44px; border: 0; border-radius: 12px; background: transparent; color: var(--ink2); display: grid; place-items: center; padding: 0"><svg class="ic" viewBox="0 0 24 24" style="width: 19px; height: 19px"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></svg></button>
+  </header>
+
+  <div role="tablist" class="mono" style="display: flex; gap: 6px; padding: 4px 12px 10px; overflow: hidden; font-size: 12px; border-bottom: 1px solid var(--line)">
+    <span role="tab" aria-selected="true" style="height: 32px; padding: 0 12px; border-radius: 8px; background: var(--ink); color: var(--bg); display: inline-flex; align-items: center; gap: 7px; white-space: nowrap"><span class="pulse" style="width: 6px; height: 6px; border-radius: 50%; background: var(--work)"></span>Vitals redesign</span>
+    <span role="tab" aria-selected="false" style="height: 32px; padding: 0 12px; border-radius: 8px; background: var(--chip); color: var(--ink2); display: inline-flex; align-items: center; white-space: nowrap">jitter QA</span>
+    <span role="tab" aria-selected="false" style="height: 32px; padding: 0 12px; border-radius: 8px; background: var(--chip); color: var(--ink2); display: inline-flex; align-items: center; gap: 7px; white-space: nowrap"><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--need)"></span>codex</span>
+  </div>
+
+  <div class="mono term" style="flex-grow: 1; min-height: 0; overflow: hidden; background: var(--term); color: var(--term-ink); padding: 12px 12px; font-size: 11.5px; line-height: 1.6">
+<div><span style="color: var(--leaf)">●</span> Update(<span style="color: var(--term-hl)">usage/lib/runway.ts</span>)</div>
+<div style="color: var(--term-dim)">  ⎿ Added 5 lines</div>
+<div style="background: var(--term-add); color: var(--term-add-ink)"> 12 + export function poolRunway(</div>
+<div style="background: var(--term-add); color: var(--term-add-ink)"> 13 +   accounts, perHour) {</div>
+<div style="background: var(--term-add); color: var(--term-add-ink)"> 14 +   const free = accounts.reduce(</div>
+<div style="background: var(--term-add); color: var(--term-add-ink)"> 15 +     (n, a) =&gt; n + 1 - a.used, 0);</div>
+<div style="background: var(--term-add); color: var(--term-add-ink)"> 16 +   return free / accounts.length</div>
+<div style="background: var(--term-add); color: var(--term-add-ink)"> 17 +     / perHour;</div>
+<div> </div>
+<div><span style="color: var(--leaf)">●</span> Bash(pnpm test -- runway)</div>
+<div style="color: var(--term-dim)">  ⎿ ✔ 45% free at 16%/h = 2.8h</div>
+<div style="color: var(--term-dim)">    <span style="color: var(--term-add-ink)">3 passed</span></div>
+<div> </div>
+<div><span style="color: var(--term-ink)">●</span> Wiring the bar into the sidebar</div>
+<div>  Vitals block next.</div>
+<div> </div>
+<div><span style="color: var(--term-warn)">✻ Brewing…</span> <span style="color: var(--term-dim)">(2m 14s)</span></div>
+  </div>
+
+  <div class="mono" style="background: var(--term); border-top: 1px solid var(--line); padding: 8px 12px; font-size: 11.5px; color: var(--term-dim)">
+    <div style="color: var(--term-ink)">❯ <span style="display: inline-block; width: 7px; height: 13px; background: var(--term-ink); vertical-align: -2px"></span></div>
+    <div>Opus 5.5 · ctx 14% · wk 26%</div>
+  </div>
+
+  <div role="toolbar" aria-label="Terminal keys" class="mono" style="display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 5px; padding: 8px 8px 30px; border-top: 1px solid var(--line); background: var(--chip); font-size: 12.5px">
+    <button style="height: 40px; border-radius: 8px; border: 0; background: var(--key); color: var(--ink); box-shadow: 0 1px 0 var(--line2); padding: 0">esc</button>
+    <button style="height: 40px; border-radius: 8px; border: 0; background: var(--key); color: var(--ink); box-shadow: 0 1px 0 var(--line2); padding: 0">tab</button>
+    <button aria-pressed="true" style="height: 40px; border-radius: 8px; border: 0; background: var(--ink); color: var(--bg); padding: 0">ctrl</button>
+    <button aria-label="Up" style="height: 40px; border-radius: 8px; border: 0; background: var(--key); color: var(--ink); box-shadow: 0 1px 0 var(--line2); padding: 0">↑</button>
+    <button aria-label="Down" style="height: 40px; border-radius: 8px; border: 0; background: var(--key); color: var(--ink); box-shadow: 0 1px 0 var(--line2); padding: 0">↓</button>
+    <button aria-label="Left" style="height: 40px; border-radius: 8px; border: 0; background: var(--key); color: var(--ink); box-shadow: 0 1px 0 var(--line2); padding: 0">←</button>
+    <button aria-label="Right" style="height: 40px; border-radius: 8px; border: 0; background: var(--key); color: var(--ink); box-shadow: 0 1px 0 var(--line2); padding: 0">→</button>
+    <button aria-label="Show keyboard" style="height: 40px; border-radius: 8px; border: 0; background: var(--key); color: var(--ink); box-shadow: 0 1px 0 var(--line2); padding: 0; display: grid; place-items: center"><svg class="ic" viewBox="0 0 24 24" style="width: 17px; height: 17px"><rect x="2" y="7" width="20" height="10" rx="2"></rect><path d="M6 11h.01M10 11h.01M14 11h.01M18 11h.01M8 14h8"></path></svg></button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { themeClass: (this.props.theme ?? 'dark') === 'dark' ? 'dark' : '' };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Buzz: slash commands in a scratch channel</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI','Helvetica Neue',sans-serif;color:#1B1A16;-webkit-font-smoothing:antialiased}
+.mono{font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,monospace}
+.hex{clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
+.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.pulse{animation:pulse 2.2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.55}}
+@media (prefers-reduced-motion:reduce){.pulse{animation:none}}
+button{font:inherit;cursor:pointer}
+a{color:#1F4E8C}a:hover{color:#163A6A}
+</style>
+</helmet>
+<div style="width: 880px; height: 960px; display: flex; flex-direction: column; background: #FDFCF9; overflow: hidden; font-size: 14px; line-height: 1.45; border-left: 1px solid #E6E2D8; box-sizing: border-box">
+
+  <header style="display: flex; align-items: center; gap: 12px; min-height: 58px; box-sizing: border-box; padding: 10px 20px; border-bottom: 1px solid #E6E2D8">
+    <svg class="ic" viewBox="0 0 24 24" style="width: 18px; height: 18px; color: #7F5200; stroke-dasharray: 3 2.4"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"></path></svg>
+    <div style="font-size: 17px; font-weight: 720; letter-spacing: -.02em; white-space: nowrap">flight-path <span style="color: #8A8478; font-weight: 500">/</span> scratch-1</div>
+    <span class="mono" style="font-size: 10px; font-weight: 650; letter-spacing: .1em; color: #7F5200; border: 1px dashed #EBA21A; background: #FEF8E8; border-radius: 999px; padding: 1px 8px">SCRATCH</span>
+    <span style="font-size: 12.5px; color: #6B655A; white-space: nowrap">cloned from #flight-path · 3 agents</span>
+    <div style="margin-left: auto; display: flex; align-items: center; gap: 6px">
+      <button style="height: 32px; padding: 0 12px; border-radius: 9px; border: 1px solid #E6E2D8; background: #FFFFFF; color: #45423B; font-size: 12.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px"><svg class="ic" viewBox="0 0 24 24" style="width: 14px; height: 14px"><path d="M6 3h12v18l-6-4-6 4z"></path></svg>Keep</button>
+      <a href="Main.dc.html" style="height: 32px; box-sizing: border-box; padding: 0 12px; border-radius: 9px; border: 1px solid #1B1A16; background: #1B1A16; color: #FDFCF9; font-size: 12.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; text-decoration: none"><svg class="ic" viewBox="0 0 24 24" style="width: 14px; height: 14px"><path d="M10 17l5-5-5-5M15 12H3M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5"></path></svg>Exit</a>
+    </div>
+  </header>
+
+  <div style="display: flex; align-items: center; gap: 10px; margin: 12px 20px 0; padding: 9px 12px; border: 1px dashed #F0DDA6; border-radius: 10px; background: #FEFAF0; font-size: 12.5px; color: #45423B">
+    <svg class="ic" viewBox="0 0 24 24" style="width: 15px; height: 15px; color: #7F5200"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5M12 16h.01"></path></svg>
+    <span>Same people and agents as <b style="font-weight: 650">#flight-path</b>, fresh history. <span class="mono" style="font-size: 11.5px; font-weight: 600; background: #F2EFE8; border-radius: 4px; padding: 0 4px">/keep</span> makes it permanent. <span class="mono" style="font-size: 11.5px; font-weight: 600; background: #F2EFE8; border-radius: 4px; padding: 0 4px">/exit</span> discards it and takes you back.</span>
+  </div>
+
+  <div style="flex-grow: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; padding: 10px 20px 0">
+    <div class="mono" style="align-self: center; font-size: 11px; color: #6B655A; padding: 4px 0 8px">Sam opened scratch-1 from #flight-path · 3:31 PM</div>
+
+    <div style="display: grid; grid-template-columns: 36px minmax(0, 1fr); column-gap: 12px; padding: 8px 0">
+      <span style="width: 36px; height: 36px; border-radius: 50%; background: #CFE3D3; color: #33291F; display: grid; place-items: center; font-weight: 650; font-size: 13px">S</span>
+      <div>
+        <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 3px"><b style="font-weight: 680">Sam</b><span class="mono" style="font-size: 11px; color: #8A8478">3:31 PM</span></div>
+        <div style="font-size: 14.5px; line-height: 1.52"><span style="display: inline-flex; align-items: center; gap: 4px; padding: 0 6px 0 5px; border-radius: 6px; background: #EDEAE2; font-weight: 620"><span class="hex" style="width: 9px; height: 10.4px; background: #452536"></span>Acid Burn</span> the composer dropped my draft when I jumped into this scratch channel. Repro it and file it.</div>
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 36px minmax(0, 1fr); column-gap: 12px; padding: 8px 0">
+      <span class="hex" style="width: 36px; height: 41.6px; background: #D5D0C4; display: grid; place-items: center"><span class="hex mono" style="width: 30px; height: 34.6px; background: #452536; color: #F6F1E4; display: grid; place-items: center; font-size: 10px; font-weight: 600">AB</span></span>
+      <div style="min-width: 0">
+        <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 3px"><b style="font-weight: 680">Acid Burn</b><span class="mono" style="align-self: center; font-size: 9.5px; font-weight: 600; letter-spacing: .06em; color: #6B655A; border: 1px solid #D6D1C5; border-radius: 4px; padding: 0 4px; line-height: 15px">AGENT</span><span class="mono" style="font-size: 11px; color: #8A8478">3:34 PM</span></div>
+        <div style="font-size: 14.5px; line-height: 1.52">Reproduced. The draft is dropped when the channel key changes mid-edit. Filed:</div>
+        <div style="display: flex; gap: 12px; align-items: flex-start; margin-top: 10px; padding: 12px 14px; border: 1px solid #E6E2D8; border-radius: 12px; background: #FFFFFF; max-width: 560px">
+          <span style="width: 34px; height: 34px; border-radius: 9px; background: #FBE6DF; color: #A2301A; display: grid; place-items: center; flex-shrink: 0"><svg class="ic" viewBox="0 0 24 24"><path d="M8 6a4 4 0 0 1 8 0"></path><rect x="7" y="7" width="10" height="13" rx="5"></rect><path d="M3 13h4M17 13h4M4 7l3 2M20 7l-3 2M4 20l3-2M20 20l-3-2M12 11v9"></path></svg></span>
+          <div style="min-width: 0; flex-grow: 1">
+            <div class="mono" style="font-size: 10px; font-weight: 600; letter-spacing: .07em; color: #6B655A">BUG · BUZZ WEB #88</div>
+            <div style="font-size: 14px; font-weight: 680; line-height: 1.3; margin: 2px 0 6px">Composer drops the draft when switching into a scratch channel</div>
+            <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12px; color: #6B655A">
+              <span class="mono" style="font-size: 10.5px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: #FBE6DF; color: #A2301A">P2</span>
+              <span class="mono" style="font-size: 10.5px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: #F2EFE8; color: #45423B">Backlog</span>
+              <span>filed via <span class="mono" style="font-size: 11px">/bug</span> · repro steps attached</span>
+            </div>
+          </div>
+          <a href="#" style="align-self: center; font-size: 12.5px; font-weight: 600; text-decoration: none; white-space: nowrap">Open ↗</a>
+        </div>
+      </div>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 10px; margin: 6px 0 0 48px; padding: 8px 12px; border-radius: 10px; background: #F4F7F2; border: 1px solid #DCEBDF; font-size: 13px; color: #1B1A16; max-width: 560px">
+      <svg class="ic" viewBox="0 0 24 24" style="width: 15px; height: 15px; color: #1C6644"><path d="M4 6h11M4 12h11M4 18h7M18 15v6M15 18h6"></path></svg>
+      <span style="min-width: 0">Added to <b style="font-weight: 650">Buzz web backlog</b>: "Scratch channels keep the parent's pinned agents"</span>
+      <span class="mono" style="margin-left: auto; font-size: 11px; color: #6B655A; white-space: nowrap">P3 · you</span>
+      <button style="height: 24px; padding: 0 8px; border-radius: 6px; border: 0; background: transparent; color: #1F4E8C; font-size: 12px; font-weight: 600">Undo</button>
+    </div>
+  </div>
+
+  <!-- composer + command menu -->
+  <div style="position: relative; padding: 0 20px 16px">
+    <div role="listbox" aria-label="Commands" style="position: absolute; left: 20px; bottom: calc(100% + 6px); width: 620px; background: #FFFFFF; border: 1px solid #D6D1C5; border-radius: 14px; box-shadow: 0 24px 48px -24px rgba(27,26,22,.45), 0 4px 10px -6px rgba(27,26,22,.15); padding: 6px; box-sizing: border-box">
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 10px 6px; font-size: 12px; color: #6B655A"><b style="color: #1B1A16; font-weight: 650">Commands</b><span class="mono" style="font-size: 10.5px">in a scratch channel</span></div>
+
+      <div style="font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: #6B655A; padding: 8px 10px 4px">This channel</div>
+      <div style="display: flex; align-items: center; gap: 12px; height: 32px; padding: 0 10px; border-radius: 8px">
+        <span class="mono" style="width: 150px; flex-shrink: 0; font-size: 12.5px"><b style="font-weight: 650">/new</b> <span style="color: #8A8478">[name]</span></span>
+        <span style="font-size: 13px; color: #45423B; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Another scratch copy to work in parallel</span>
+      </div>
+      <div role="option" aria-selected="true" style="display: flex; align-items: center; gap: 12px; height: 32px; padding: 0 10px; border-radius: 8px; background: #F2EFE8">
+        <span class="mono" style="width: 150px; flex-shrink: 0; font-size: 12.5px"><b style="font-weight: 650">/exit</b></span>
+        <span style="font-size: 13px; color: #1B1A16; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Discard scratch-1 and go back to #flight-path</span>
+        <span class="mono" style="margin-left: auto; font-size: 11px; color: #45423B; background: #FFFFFF; border: 1px solid #DDD8CC; border-radius: 5px; padding: 0 5px">↵</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px; height: 32px; padding: 0 10px; border-radius: 8px">
+        <span class="mono" style="width: 150px; flex-shrink: 0; font-size: 12.5px"><b style="font-weight: 650">/keep</b> <span style="color: #8A8478">[name]</span></span>
+        <span style="font-size: 13px; color: #45423B; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Make this a permanent channel</span>
+      </div>
+
+      <div style="font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: #6B655A; padding: 8px 10px 3px; border-top: 1px solid #EFECE4; margin-top: 4px">Capture</div>
+      <div style="display: flex; align-items: center; gap: 12px; height: 32px; padding: 0 10px; border-radius: 8px">
+        <span class="mono" style="width: 150px; flex-shrink: 0; font-size: 12.5px"><b style="font-weight: 650">/bug</b> <span style="color: #8A8478">&lt;title&gt;</span></span>
+        <span style="font-size: 13px; color: #45423B; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">File a bug in this channel's project</span>
+        <span class="mono" style="margin-left: auto; font-size: 10.5px; color: #6B655A; white-space: nowrap">Buzz web</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px; height: 32px; padding: 0 10px; border-radius: 8px">
+        <span class="mono" style="width: 150px; flex-shrink: 0; font-size: 12.5px"><b style="font-weight: 650">/backlog</b> <span style="color: #8A8478">&lt;item&gt;</span></span>
+        <span style="font-size: 13px; color: #45423B; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Add an item to the project backlog</span>
+        <span class="mono" style="margin-left: auto; font-size: 10.5px; color: #6B655A; white-space: nowrap">Buzz web</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px; height: 32px; padding: 0 10px; border-radius: 8px">
+        <span class="mono" style="width: 150px; flex-shrink: 0; font-size: 12.5px"><b style="font-weight: 650">/remind</b> <span style="color: #8A8478">[when]</span></span>
+        <span style="font-size: 13px; color: #45423B; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Remind me about the last message aimed at me</span>
+      </div>
+
+      <div style="font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: #6B655A; padding: 8px 10px 3px; border-top: 1px solid #EFECE4; margin-top: 4px">Agents</div>
+      <div style="display: flex; align-items: center; gap: 12px; height: 32px; padding: 0 10px; border-radius: 8px">
+        <span class="mono" style="width: 150px; flex-shrink: 0; font-size: 12.5px"><b style="font-weight: 650">/handoff</b> <span style="color: #8A8478">@seat</span></span>
+        <span style="font-size: 13px; color: #45423B; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Hand work to a seat as a tracked handoff</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px; height: 32px; padding: 0 10px; border-radius: 8px">
+        <span class="mono" style="width: 150px; flex-shrink: 0; font-size: 12.5px"><b style="font-weight: 650">/status</b></span>
+        <span style="font-size: 13px; color: #45423B; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">What's running and queued in this channel</span>
+      </div>
+    </div>
+
+    <div style="border: 1px solid #1B1A16; border-radius: 14px; background: #FFFFFF; box-shadow: 0 0 0 3px #EDEAE2">
+      <div class="mono" style="padding: 13px 14px 4px; font-size: 14.5px; display: flex; align-items: center; color: #1B1A16">/<span style="width: 1.5px; height: 18px; background: #1B1A16; margin-left: 1px"></span></div>
+      <div style="display: flex; align-items: center; gap: 2px; padding: 4px 8px 8px">
+        <span class="mono" style="margin-left: 6px; font-size: 11.5px; color: #6B655A; white-space: nowrap">↑↓ choose · Tab complete · ↵ run · Esc close</span>
+        <button aria-label="Send" style="margin-left: auto; width: 32px; height: 32px; border-radius: 9px; border: 0; background: #1B1A16; color: #FDFCF9; display: grid; place-items: center; padding: 0"><svg class="ic" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"></path></svg></button>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":880,"height":960}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

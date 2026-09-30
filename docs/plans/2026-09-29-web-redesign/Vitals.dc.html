@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Buzz: vitals, Claude usage and crichton</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI','Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased}
+.mono{font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,monospace}
+.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+button{font:inherit;color:inherit;cursor:pointer}
+.th{--bg:#FDFCF9;--side:#F2EFE8;--card:#FFFFFF;--sunk:#F7F5F0;--chip:#F2EFE8;--ink:#1B1A16;--ink2:#45423B;--muted:#6B655A;--faint:#A7A194;--line:#E6E2D8;--line2:#D6D1C5;--vit:#E8E4DA;--work:#EBA21A;--need:#E0553A;--honey-ink:#7F5200;--coral-ink:#A2301A;--leaf:#2E9A68;--blue-ink:#1F4E8C;--shadow:rgba(27,26,22,.35)}
+.th.dark{--bg:#141414;--side:#181818;--card:#1D1D1D;--sunk:#191919;--chip:#262626;--ink:#E7E5E1;--ink2:#BDBAB4;--muted:#8E8B85;--faint:#5F5D59;--line:#262626;--line2:#333333;--vit:#1E1E1E;--work:#C9A24E;--need:#C8674F;--honey-ink:#D9B56A;--coral-ink:#E39A8A;--leaf:#5BAE82;--blue-ink:#A5BEDF;--shadow:rgba(0,0,0,.6)}
+.th a{color:var(--blue-ink)}.th a:hover{color:var(--ink)}
+</style>
+</helmet>
+<div style="width: 1000px; height: 720px; position: relative; background: #E8E5DD; overflow: hidden; font-size: 14px; line-height: 1.45; color: #1B1A16">
+
+  <sc-for list="{{ frags }}" as="f" hint-placeholder-count="2">
+    <div class="th {{ f.cls }}" style="position: absolute; left: 40px; top: {{ f.top }}; width: 260px; box-sizing: border-box; background: var(--side); color: var(--ink); border-radius: 12px; box-shadow: 0 0 0 1px var(--line); padding: 10px 12px 12px">
+      <div style="display: flex; flex-direction: column; opacity: .45">
+        <div style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; font-size: 13.5px; color: var(--ink2)"><span style="width: 14px; text-align: center; color: var(--faint)">#</span>mobile</div>
+        <div style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; font-size: 13.5px; color: var(--ink2)"><span style="width: 14px; text-align: center; color: var(--faint)">#</span>pipelines</div>
+      </div>
+      <div style="margin-top: 12px; background: var(--vit); border-radius: 10px; padding: 10px 10px 11px">
+        <div style="display: flex; align-items: center; justify-content: space-between"><span style="font-size: 10.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--muted)">Claude</span><span class="mono" style="font-size: 10.5px; color: var(--muted)">2 accounts</span></div>
+        <div class="mono" style="display: grid; grid-template-columns: minmax(0, 1fr) 30px; align-items: center; gap: 8px; margin-top: 7px; font-size: 10.5px"><span style="position: relative; height: 4px; border-radius: 2px; background: var(--line2)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 55%; border-radius: 2px; background: var(--ink)"></span></span><span style="text-align: right">55%</span></div>
+        <div class="mono" style="margin-top: 4px; font-size: 10.5px; color: var(--muted)">45% free · <b style="color: var(--ink); font-weight: 600">~2h 50m</b> of active use</div>
+        <div style="height: 1px; background: var(--line2); margin: 10px 0 9px"></div>
+        <div style="display: flex; align-items: center; justify-content: space-between"><span style="font-size: 10.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--muted)">crichton</span><span class="mono" style="display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--muted)"><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--leaf)"></span>ok</span></div>
+        <div class="mono" style="display: grid; grid-template-columns: 34px minmax(0, 1fr) 30px; align-items: center; gap: 6px 8px; margin-top: 7px; font-size: 10.5px">
+          <span style="color: var(--muted)">CPU</span><span style="position: relative; height: 3px; border-radius: 2px; background: var(--line2)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 38%; border-radius: 2px; background: var(--ink2)"></span></span><span style="text-align: right">38%</span>
+          <span style="color: var(--muted)">GPU</span><span style="position: relative; height: 3px; border-radius: 2px; background: var(--line2)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 71%; border-radius: 2px; background: var(--work)"></span></span><span style="text-align: right">71%</span>
+          <span style="color: var(--muted)">Mem</span><span style="position: relative; height: 3px; border-radius: 2px; background: var(--line2)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 64%; border-radius: 2px; background: var(--ink2)"></span></span><span style="text-align: right">64%</span>
+          <span style="color: var(--muted)">Disk</span><span style="position: relative; height: 3px; border-radius: 2px; background: var(--line2)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 62%; border-radius: 2px; background: var(--ink2)"></span></span><span style="text-align: right">62%</span>
+        </div>
+      </div>
+    </div>
+  </sc-for>
+
+  <!-- expanded popover -->
+  <div class="th" role="dialog" aria-label="Vitals" style="position: absolute; left: 332px; top: 40px; width: 560px; box-sizing: border-box; background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 30px 60px -30px var(--shadow), 0 6px 14px -8px var(--shadow); overflow: hidden">
+    <div style="display: flex; align-items: center; gap: 10px; height: 50px; padding: 0 18px; border-bottom: 1px solid var(--line)">
+      <b style="font-size: 15px; font-weight: 700">Vitals</b>
+      <span class="mono" style="font-size: 11px; color: var(--muted)">updated 12s ago</span>
+      <button aria-label="Close" style="margin-left: auto; width: 28px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); display: grid; place-items: center; padding: 0"><svg class="ic" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
+    </div>
+
+    <div style="padding: 16px 18px 14px">
+      <div style="display: flex; align-items: center; justify-content: space-between"><span style="font-size: 11px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--muted)">Claude · both accounts</span><a href="#" style="font-size: 12px; font-weight: 600; text-decoration: none">Usage hub ↗</a></div>
+      <div style="display: flex; align-items: baseline; gap: 10px; margin-top: 8px">
+        <span style="font-size: 30px; font-weight: 720; letter-spacing: -.03em; line-height: 1">45% free</span>
+        <span style="font-size: 13.5px; color: var(--ink2)">about <b style="font-weight: 650; color: var(--ink)">2h 50m</b> of active work at your usual pace</span>
+      </div>
+      <div style="position: relative; height: 6px; border-radius: 3px; background: var(--line); margin-top: 12px"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 55%; border-radius: 3px; background: var(--ink)"></span></div>
+      <div class="mono" style="margin-top: 6px; font-size: 11px; color: var(--muted)">runway = free ÷ use per active hour · 48h: 16%/h over 18 active h</div>
+
+      <div style="margin-top: 14px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; line-height: 1.45">
+        <div style="display: flex; gap: 9px"><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--leaf); margin-top: 7px; flex-shrink: 0"></span><span><b style="font-weight: 650">You won't run dry.</b> Account A resets at 4:58 PM, well inside the runway.</span></div>
+        <div style="display: flex; gap: 9px"><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--need); margin-top: 7px; flex-shrink: 0"></span><span><b style="font-weight: 650">B is running at 1.6× its pace</b> and fills around 5:08 PM. The 3 seats on B could move to A until then.</span></div>
+      </div>
+
+      <div style="margin-top: 14px; border-top: 1px dashed var(--line2); padding-top: 12px; display: grid; grid-template-columns: 80px minmax(0, 1fr) 132px; align-items: center; gap: 10px 12px; font-size: 12.5px">
+        <span>Account A</span>
+        <span style="position: relative; height: 4px; border-radius: 2px; background: var(--line)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 62%; border-radius: 2px; background: var(--ink2)"></span><span style="position: absolute; left: 71%; top: -3px; width: 2px; height: 10px; margin-left: -1px; background: var(--muted)"></span></span>
+        <span class="mono" style="font-size: 11.5px; color: var(--muted); text-align: right">62% · resets 4:58 PM</span>
+        <span style="color: var(--coral-ink)">Account B</span>
+        <span style="position: relative; height: 4px; border-radius: 2px; background: var(--line)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 48%; border-radius: 2px; background: var(--need)"></span><span style="position: absolute; left: 30%; top: -3px; width: 2px; height: 10px; margin-left: -1px; background: var(--muted)"></span></span>
+        <span class="mono" style="font-size: 11.5px; color: var(--muted); text-align: right">48% · resets 7:01 PM</span>
+      </div>
+      <div class="mono" style="margin-top: 6px; font-size: 10.5px; color: var(--muted)">tick = how much of each account's window has passed</div>
+    </div>
+
+    <div style="height: 8px; background: var(--sunk); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line)"></div>
+
+    <div style="padding: 14px 18px 16px">
+      <div style="display: flex; align-items: center; justify-content: space-between"><span style="font-size: 11px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--muted)">crichton</span><span class="mono" style="font-size: 11px; color: var(--muted)">up 12d 4h</span></div>
+      <div class="mono" style="display: grid; grid-template-columns: 48px 140px minmax(0, 1fr) 44px; align-items: center; gap: 9px 12px; margin-top: 10px; font-size: 11.5px">
+        <span style="color: var(--muted)">CPU</span>
+        <svg viewBox="0 0 140 16" style="width: 140px; height: 16px; display: block"><polyline points="0,12 12,11 23,13 35,9 47,10 58,7 70,8 82,6 93,10 105,8 117,7 128,9 140,6" fill="none" stroke="currentColor" style="stroke-width: 1.4; stroke-linejoin: round; color: var(--ink2)"></polyline></svg>
+        <span style="color: var(--muted)">load 5.2 · 3.9 · 3.4</span>
+        <b style="text-align: right">38%</b>
+        <span style="color: var(--muted)">GPU</span>
+        <svg viewBox="0 0 140 16" style="width: 140px; height: 16px; display: block"><polyline points="0,9 12,5 23,7 35,4 47,5 58,3 70,6 82,3 93,4 105,2 117,5 128,4 140,5" fill="none" stroke="currentColor" style="stroke-width: 1.4; stroke-linejoin: round; color: var(--work)"></polyline></svg>
+        <span style="color: var(--muted)">chatterbox-tts 58% · whisper 9%</span>
+        <b style="text-align: right">71%</b>
+        <span style="color: var(--muted)">Mem</span>
+        <svg viewBox="0 0 140 16" style="width: 140px; height: 16px; display: block"><polyline points="0,7 12,7 23,6 35,6 47,6 58,5 70,5 82,6 93,5 105,5 117,5 128,5 140,5" fill="none" stroke="currentColor" style="stroke-width: 1.4; stroke-linejoin: round; color: var(--ink2)"></polyline></svg>
+        <span style="color: var(--muted)">41.2 / 64 GB · pressure normal</span>
+        <b style="text-align: right">64%</b>
+        <span style="color: var(--muted)">Disk</span>
+        <span style="position: relative; height: 4px; border-radius: 2px; background: var(--line)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 62%; border-radius: 2px; background: var(--ink2)"></span></span>
+        <span style="color: var(--muted)">Macintosh HD · 740 GB free</span>
+        <b style="text-align: right">62%</b>
+        <span style="color: var(--honey-ink)">Backup</span>
+        <span style="position: relative; height: 4px; border-radius: 2px; background: var(--line)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 84%; border-radius: 2px; background: var(--work)"></span></span>
+        <span style="color: var(--honey-ink)">external · 320 GB free</span>
+        <b style="text-align: right; color: var(--honey-ink)">84%</b>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12.5px; color: var(--ink2)"><span style="width: 7px; height: 7px; border-radius: 50%; background: var(--leaf)"></span>6 Buzz services up<span style="color: var(--line2)">·</span>tts bridge restarted 2h ago</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1000,"height":720}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { frags: [{ cls: '', top: '40px' }, { cls: 'dark', top: '380px' }] };
+  }
+}
+</script>
+</body>
+</html>

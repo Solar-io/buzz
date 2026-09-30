@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Buzz phone: ask card sheet</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI','Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased}
+.mono{font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,monospace}
+.hex{clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
+.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer}
+input::placeholder{color:var(--muted)}
+.th{--bg:#FDFCF9;--card:#FFFFFF;--sunk:#F7F5F0;--chip:#F2EFE8;--ink:#1B1A16;--ink2:#45423B;--muted:#6B655A;--faint:#A7A194;--line:#E6E2D8;--line2:#D6D1C5;--honey-soft:#FCF0D2;--honey-ink:#7F5200;--coral-ink:#A2301A;--leaf-soft:#DFF1E7;--leaf-ink:#1C6644;--blue-soft:#E7EEF8;--blue-ink:#1F4E8C;--ring-idle:#D5D0C4;--btn:#1B1A16;--btn-ink:#FDFCF9;--scrim:rgba(27,26,22,.4);--work:#EBA21A}
+.th.dark{--bg:#141414;--card:#1D1D1D;--sunk:#191919;--chip:#262626;--ink:#E7E5E1;--ink2:#BDBAB4;--muted:#8E8B85;--faint:#5F5D59;--line:#2A2A2A;--line2:#363636;--honey-soft:#2A2518;--honey-ink:#D9B56A;--coral-ink:#E39A8A;--leaf-soft:#18231C;--leaf-ink:#8CCBA5;--blue-soft:#1A1F27;--blue-ink:#A5BEDF;--ring-idle:#3A3A3A;--btn:#E7E5E1;--btn-ink:#141414;--scrim:rgba(0,0,0,.6);--work:#C9A24E}
+.th a{color:var(--blue-ink)}.th a:hover{color:var(--ink)}
+</style>
+</helmet>
+<div class="th {{ themeClass }}" style="width: 390px; height: 844px; position: relative; background: var(--bg); color: var(--ink); overflow: hidden; font-size: 15px; line-height: 1.4">
+
+  <!-- channel behind -->
+  <div aria-hidden="true" style="padding: 16px 18px">
+    <div style="font-size: 17px; font-weight: 720"><span style="color: var(--faint); font-weight: 500">@</span> ESP32</div>
+    <div style="margin-top: 20px; height: 12px; width: 70%; border-radius: 6px; background: var(--chip)"></div>
+    <div style="margin-top: 10px; height: 12px; width: 84%; border-radius: 6px; background: var(--chip)"></div>
+    <div style="margin-top: 10px; height: 12px; width: 52%; border-radius: 6px; background: var(--chip)"></div>
+  </div>
+  <div aria-hidden="true" style="position: absolute; inset: 0; background: var(--scrim)"></div>
+
+  <!-- sheet -->
+  <div role="dialog" aria-label="ESP32 asks" style="position: absolute; left: 0; right: 0; bottom: 0; background: var(--card); border-radius: 22px 22px 0 0; box-shadow: 0 -20px 40px -20px rgba(0,0,0,.4); display: flex; flex-direction: column; padding: 8px 18px 28px">
+    <div style="width: 40px; height: 5px; border-radius: 3px; background: var(--line2); margin: 0 auto 10px"></div>
+
+    <div style="display: flex; align-items: center; gap: 10px">
+      <span class="hex" style="width: 28px; height: 32.3px; background: var(--ring-idle); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 23px; height: 26.6px; background: #22303A; color: #F6F1E4; display: grid; place-items: center; font-size: 8px; font-weight: 600">ES</span></span>
+      <div style="flex-grow: 1">
+        <div style="font-size: 15px; font-weight: 700">ESP32 asks</div>
+        <div class="mono" style="font-size: 11px; color: var(--muted)">XiaoZhi setup · DM</div>
+      </div>
+      <button aria-label="Close" style="width: 44px; height: 44px; border: 0; border-radius: 12px; background: transparent; color: var(--muted); display: grid; place-items: center; padding: 0; margin-right: -10px"><svg class="ic" viewBox="0 0 24 24" style="width: 20px; height: 20px"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin-top: 12px">
+      <span style="height: 4px; border-radius: 2px; background: var(--ink)"></span>
+      <span style="height: 4px; border-radius: 2px; background: var(--work)"></span>
+      <span style="height: 4px; border-radius: 2px; background: var(--line)"></span>
+    </div>
+    <div class="mono" style="display: flex; justify-content: space-between; margin-top: 6px; font-size: 11px; color: var(--muted)"><span>Question 2 of 3</span><span>about 1 min</span></div>
+
+    <button style="margin-top: 12px; display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 12px; border-radius: 10px; border: 0; background: var(--sunk); text-align: left; font-size: 13.5px; color: var(--ink2)"><svg class="ic" viewBox="0 0 24 24" style="width: 15px; height: 15px; color: var(--leaf-ink)"><path d="M20 6 9 17l-5-5"></path></svg>Language: <b style="color: var(--ink); font-weight: 650">English</b><span style="margin-left: auto; font-size: 12.5px; color: var(--blue-ink); font-weight: 600">Edit</span></button>
+
+    <div style="font-size: 20px; font-weight: 720; letter-spacing: -.01em; line-height: 1.3; margin-top: 16px">Which wake word should XiaoZhi listen for?</div>
+
+    <div role="radiogroup" style="display: flex; flex-direction: column; gap: 8px; margin-top: 14px">
+      <sc-for list="{{ options }}" as="o" hint-placeholder-count="3">
+        <button role="radio" aria-checked="{{ o.on }}" onClick="{{ o.pick }}" style="display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 12px; border: {{ o.border }}; background: {{ o.bg }}; text-align: left; color: var(--ink)">
+          <span style="width: 20px; height: 20px; border-radius: 50%; box-sizing: border-box; border: {{ o.ring }}; flex-shrink: 0; margin-top: 1px; display: grid; place-items: center"><span style="width: 10px; height: 10px; border-radius: 50%; background: {{ o.dot }}"></span></span>
+          <span style="min-width: 0">
+            <span style="display: flex; align-items: center; gap: 8px; font-size: 15.5px; font-weight: 650">{{ o.label }}<sc-if value="{{ o.rec }}" hint-placeholder-val="{{ false }}"><span class="mono" style="font-size: 10px; font-weight: 650; letter-spacing: .04em; color: var(--honey-ink); background: var(--honey-soft); border-radius: 999px; padding: 1px 7px">RECOMMENDED</span></sc-if></span>
+            <span style="display: block; font-size: 13.5px; color: var(--muted); margin-top: 2px; line-height: 1.4">{{ o.desc }}</span>
+          </span>
+        </button>
+      </sc-for>
+      <label style="display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 14px; border-radius: 12px; border: 1px dashed var(--line2)">
+        <span style="width: 20px; height: 20px; border-radius: 50%; box-sizing: border-box; border: 2px solid var(--line2); flex-shrink: 0"></span>
+        <input aria-label="Your own answer" placeholder="Something else…" style="flex-grow: 1; border: 0; outline: none; background: transparent; font-size: 15px">
+      </label>
+    </div>
+
+    <div style="display: flex; gap: 8px; margin-top: 18px">
+      <button style="width: 96px; height: 48px; border-radius: 12px; border: 1px solid var(--line2); background: var(--card); color: var(--ink); font-size: 15.5px; font-weight: 600">Back</button>
+      <button style="flex-grow: 1; height: 48px; border-radius: 12px; border: 0; background: var(--btn); color: var(--btn-ink); font-size: 15.5px; font-weight: 650">Next · {{ chosen }}</button>
+    </div>
+    <button style="align-self: center; margin-top: 8px; height: 40px; padding: 0 12px; border: 0; background: transparent; color: var(--muted); font-size: 13.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px"><svg class="ic" viewBox="0 0 24 24" style="width: 15px; height: 15px"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path></svg>Not now, send to Feedback</button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const s = this.state || {};
+    const picked = s.picked === undefined ? 0 : s.picked;
+    const defs = [
+      { label: 'Hey Buzz', rec: true, desc: 'Two syllables. Fewest false triggers in the bench test.' },
+      { label: 'Hi XiaoZhi', rec: false, desc: 'Stock wake word, no retraining. Harder to say.' },
+      { label: 'Computer', rec: false, desc: 'Fun, but TV audio set it off 6 times in an hour.' }
+    ];
+    const options = defs.map((d, i) => {
+      const on = i === picked;
+      return {
+        label: d.label,
+        rec: d.rec,
+        desc: d.desc,
+        on: on ? 'true' : 'false',
+        border: on ? '2px solid var(--ink)' : '1px solid var(--line)',
+        bg: on ? 'var(--sunk)' : 'var(--card)',
+        ring: on ? '2px solid var(--ink)' : '2px solid var(--line2)',
+        dot: on ? 'var(--ink)' : 'transparent',
+        pick: () => this.setState({ picked: i })
+      };
+    });
+    return {
+      themeClass: (this.props.theme ?? 'light') === 'dark' ? 'dark' : '',
+      options,
+      chosen: defs[picked].label
+    };
+  }
+}
+</script>
+</body>
+</html>

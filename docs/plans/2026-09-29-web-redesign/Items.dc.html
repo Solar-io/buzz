@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Buzz: Items, bugs and backlog</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI','Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased}
+.mono{font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,monospace}
+.hex{clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
+.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.ell{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pulse{animation:pulse 2.2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.55}}
+@media (prefers-reduced-motion:reduce){.pulse{animation:none}}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer}
+input::placeholder{color:var(--muted)}
+input[type=checkbox]{width:15px;height:15px;margin:0;accent-color:#1B1A16}
+.th{--bg:#FDFCF9;--side:#F2EFE8;--rail:#F7F5F0;--card:#FFFFFF;--sunk:#F7F5F0;--chip:#F2EFE8;--ink:#1B1A16;--ink2:#45423B;--muted:#6B655A;--faint:#A7A194;--line:#E6E2D8;--line2:#D6D1C5;--hover:#FAF8F3;--sel:#F4F1EA;--vit:#E8E4DA;--work:#EBA21A;--work-ink:#1B1A16;--need:#E0553A;--need-ink:#FFFFFF;--honey-ink:#7F5200;--coral-soft:#FBE6DF;--coral-ink:#A2301A;--leaf:#2E9A68;--leaf-ink:#1C6644;--blue-ink:#1F4E8C;--ring-idle:#D5D0C4;--btn:#1B1A16;--btn-ink:#FDFCF9;--human:#CFE3D3;--human-ink:#33291F}
+.th.dark{--bg:#141414;--side:#181818;--rail:#171717;--card:#1D1D1D;--sunk:#191919;--chip:#262626;--ink:#E7E5E1;--ink2:#BDBAB4;--muted:#8E8B85;--faint:#5F5D59;--line:#262626;--line2:#333333;--hover:#181818;--sel:#1F1F1F;--vit:#1B1B1B;--work:#C9A24E;--work-ink:#141414;--need:#C8674F;--need-ink:#141414;--honey-ink:#D9B56A;--coral-soft:#2E1F1B;--coral-ink:#E39A8A;--leaf:#5BAE82;--leaf-ink:#8CCBA5;--blue-ink:#A5BEDF;--ring-idle:#3A3A3A;--btn:#E7E5E1;--btn-ink:#141414;--human:#2C3B31;--human-ink:#CFE3D6}
+.th.dark input[type=checkbox]{accent-color:#E7E5E1}
+.th a{color:var(--blue-ink)}.th a:hover{color:var(--ink)}
+</style>
+</helmet>
+<div class="th {{ themeClass }}" style="width: 1440px; height: 1040px; position: relative; display: flex; background: var(--bg); color: var(--ink); overflow: hidden; font-size: 14px; line-height: 1.45">
+
+<!-- ═════════ SIDEBAR ═════════ -->
+<nav aria-label="Workspace" style="width: 260px; flex-shrink: 0; box-sizing: border-box; background: var(--side); border-right: 1px solid var(--line); padding: 16px 12px 12px; display: flex; flex-direction: column; gap: 14px">
+  <div style="display: flex; align-items: center; gap: 10px; padding: 0 4px">
+    <div style="width: 32px; height: 32px; border-radius: 9px; background: #1B1A16; box-shadow: 0 0 0 1px var(--line2); color: #EBA21A; display: grid; place-items: center; font-weight: 750; font-size: 15px; flex-shrink: 0">N</div>
+    <div style="min-width: 0; flex-grow: 1"><div style="font-size: 14.5px; font-weight: 700; line-height: 1.2">Noet</div><div class="mono" style="font-size: 11px; color: var(--muted)">crichton · relay</div></div>
+    <span style="width: 26px; height: 26px; border-radius: 50%; background: var(--human); color: var(--human-ink); display: grid; place-items: center; font-weight: 650; font-size: 11px">S</span>
+  </div>
+  <a href="Jump.dc.html" style="display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border-radius: 9px; background: var(--bg); border: 1px solid var(--line); color: var(--muted); font-size: 13px; text-decoration: none"><svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>Jump to…<span class="mono" style="margin-left: auto; font-size: 11px; border: 1px solid var(--line2); border-radius: 5px; padding: 0 5px">⌘K</span></a>
+  <div style="display: flex; flex-direction: column">
+    <a href="Main.dc.html" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><svg class="ic" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"></path><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path></svg>Inbox<span class="mono" style="margin-left: auto; min-width: 18px; height: 18px; box-sizing: border-box; border-radius: 9px; background: var(--btn); color: var(--btn-ink); font-size: 10.5px; font-weight: 600; line-height: 18px; text-align: center; padding: 0 5px">3</span></a>
+    <a href="#" aria-current="page" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; background: var(--card); box-shadow: 0 0 0 1px var(--line); color: var(--ink); font-weight: 650; text-decoration: none; font-size: 13.5px"><svg class="ic" viewBox="0 0 24 24"><path d="M4 6h11M4 12h11M4 18h7M18 15v6M15 18h6"></path></svg>Items<span class="mono" style="margin-left: auto; font-size: 11px; font-weight: 500; color: var(--muted)">11 · 31</span></a>
+    <a href="Shelf.dc.html" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><svg class="ic" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5M9 13h6M9 17h4"></path></svg>Shelf<span class="mono" style="margin-left: auto; font-size: 11px; color: var(--muted)">4 new</span></a>
+    <a href="Files.dc.html" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><svg class="ic" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>Files</a>
+    <a href="Terminal.dc.html" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 9l3 3-3 3M13 15h4"></path></svg>Terminal<span class="mono" style="margin-left: auto; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted)"><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--leaf)"></span>3 tabs</span></a>
+  </div>
+  <div style="display: flex; flex-direction: column">
+    <div style="font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 0 8px; margin-bottom: 3px">Channels</div>
+    <a href="#" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink); font-weight: 650; text-decoration: none; font-size: 13.5px"><span style="width: 14px; text-align: center; color: var(--faint); font-weight: 500">#</span>announcements<span style="margin-left: auto; width: 6px; height: 6px; border-radius: 50%; background: var(--ink)"></span></a>
+    <a href="#" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><span style="width: 14px; text-align: center; color: var(--faint); font-weight: 500">#</span>design</a>
+    <a href="#" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><span style="width: 14px; text-align: center; color: var(--faint); font-weight: 500">#</span>engineering<span class="hex pulse" style="margin-left: auto; width: 8px; height: 9.2px; background: var(--work)"></span></a>
+    <a href="Main.dc.html" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink); font-weight: 650; text-decoration: none; font-size: 13.5px"><span style="width: 14px; text-align: center; color: var(--faint); font-weight: 500">#</span>flight-path<span class="hex" style="margin-left: auto; width: 8px; height: 9.2px; background: var(--need)"></span></a>
+    <a href="#" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><span style="width: 14px; text-align: center; color: var(--faint); font-weight: 500">#</span>mobile<span class="hex pulse" style="margin-left: auto; width: 8px; height: 9.2px; background: var(--work)"></span></a>
+  </div>
+  <div style="display: flex; flex-direction: column">
+    <div style="font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 0 8px; margin-bottom: 3px">Direct messages</div>
+    <a href="Preview.dc.html" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink); font-weight: 650; text-decoration: none; font-size: 13.5px"><span class="hex" style="width: 18px; height: 20.8px; background: var(--ring-idle); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 14px; height: 16.2px; background: #24231F; color: #F6F1E4; display: grid; place-items: center; font-size: 6px; font-weight: 600">GF</span></span>Gilfoyle</a>
+    <a href="#" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><span class="hex" style="width: 18px; height: 20.8px; background: var(--work); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 14px; height: 16.2px; background: #243449; color: #F6F1E4; display: grid; place-items: center; font-size: 6px; font-weight: 600">LN</span></span>Lord Nikon</a>
+    <a href="#" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><span class="hex" style="width: 18px; height: 20.8px; background: var(--ring-idle); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 14px; height: 16.2px; background: #22303A; color: #F6F1E4; display: grid; place-items: center; font-size: 6px; font-weight: 600">ES</span></span>ESP32</a>
+  </div>
+  <a href="Vitals.dc.html" aria-label="Vitals" style="margin-top: auto; display: block; text-decoration: none; color: var(--ink); background: var(--vit); border-radius: 10px; padding: 10px 10px 11px">
+    <div style="display: flex; align-items: center; justify-content: space-between"><span style="font-size: 10.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--muted)">Claude</span><span class="mono" style="font-size: 10.5px; color: var(--muted)">2 accounts</span></div>
+    <div class="mono" style="display: grid; grid-template-columns: minmax(0, 1fr) 30px; align-items: center; gap: 8px; margin-top: 7px; font-size: 10.5px"><span style="position: relative; height: 4px; border-radius: 2px; background: var(--line2)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 55%; border-radius: 2px; background: var(--ink)"></span></span><span style="text-align: right">55%</span></div>
+    <div class="mono" style="margin-top: 4px; font-size: 10.5px; color: var(--muted)">45% free · <b style="color: var(--ink); font-weight: 600">~2h 50m</b> of active use</div>
+    <div style="height: 1px; background: var(--line2); margin: 10px 0 9px"></div>
+    <div style="display: flex; align-items: center; justify-content: space-between"><span style="font-size: 10.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--muted)">crichton</span><span class="mono" style="display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--muted)"><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--leaf)"></span>ok</span></div>
+    <div class="mono" style="display: grid; grid-template-columns: 34px minmax(0, 1fr) 30px; align-items: center; gap: 6px 8px; margin-top: 7px; font-size: 10.5px">
+      <span style="color: var(--muted)">CPU</span><span style="position: relative; height: 3px; border-radius: 2px; background: var(--line2)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 38%; border-radius: 2px; background: var(--ink2)"></span></span><span style="text-align: right">38%</span>
+      <span style="color: var(--muted)">GPU</span><span style="position: relative; height: 3px; border-radius: 2px; background: var(--line2)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 71%; border-radius: 2px; background: var(--work)"></span></span><span style="text-align: right">71%</span>
+      <span style="color: var(--muted)">Mem</span><span style="position: relative; height: 3px; border-radius: 2px; background: var(--line2)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 64%; border-radius: 2px; background: var(--ink2)"></span></span><span style="text-align: right">64%</span>
+      <span style="color: var(--muted)">Disk</span><span style="position: relative; height: 3px; border-radius: 2px; background: var(--line2)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 62%; border-radius: 2px; background: var(--ink2)"></span></span><span style="text-align: right">62%</span>
+    </div>
+  </a>
+</nav>
+
+<!-- ═════════ ITEMS ═════════ -->
+<main style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column">
+  <header style="display: flex; align-items: center; gap: 12px; min-height: 58px; box-sizing: border-box; padding: 10px 24px; border-bottom: 1px solid var(--line)">
+    <div style="font-size: 17px; font-weight: 720; letter-spacing: -.02em">Items</div>
+    <div style="font-size: 12.5px; color: var(--muted)"><span style="color: var(--line2); margin-right: 8px">|</span>Bugs and backlog from every channel. You, or any agent, can file one.</div>
+    <div style="margin-left: auto; display: flex; align-items: center; gap: 8px">
+      <label style="display: flex; align-items: center; gap: 8px; width: 240px; height: 32px; box-sizing: border-box; padding: 0 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--card); color: var(--muted)"><svg class="ic" viewBox="0 0 24 24" style="width: 14px; height: 14px"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg><input aria-label="Filter items" placeholder="Filter by text, #channel, @agent" style="border: 0; outline: none; background: transparent; width: 100%; font-size: 13px; color: var(--ink)"></label>
+      <button style="height: 32px; padding: 0 12px; border-radius: 9px; border: 1px solid var(--btn); background: var(--btn); color: var(--btn-ink); font-size: 12.5px; font-weight: 650; display: inline-flex; align-items: center; gap: 6px"><svg class="ic" viewBox="0 0 24 24" style="width: 14px; height: 14px"><path d="M12 5v14M5 12h14"></path></svg>Add item</button>
+    </div>
+  </header>
+
+  <div style="display: flex; align-items: center; gap: 6px; padding: 10px 24px; border-bottom: 1px solid var(--line)">
+    <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="3">
+      <button onClick="{{ t.pick }}" aria-pressed="{{ t.pressed }}" style="height: 28px; padding: 0 11px; border-radius: 8px; border: 1px solid {{ t.border }}; background: {{ t.bg }}; color: {{ t.fg }}; font-size: 12.5px; font-weight: 650; display: inline-flex; align-items: center; gap: 7px">{{ t.label }}<span class="mono" style="font-size: 11px; opacity: .75">{{ t.count }}</span></button>
+    </sc-for>
+    <span style="width: 1px; height: 20px; background: var(--line); margin: 0 6px"></span>
+    <button style="height: 28px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink2); font-size: 12.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px">Project: All<svg class="ic" viewBox="0 0 24 24" style="width: 12px; height: 12px"><path d="m6 9 6 6 6-6"></path></svg></button>
+    <button style="height: 28px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink2); font-size: 12.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px">Owner: Any<svg class="ic" viewBox="0 0 24 24" style="width: 12px; height: 12px"><path d="m6 9 6 6 6-6"></path></svg></button>
+    <button style="height: 28px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink2); font-size: 12.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px">Status: Not done<svg class="ic" viewBox="0 0 24 24" style="width: 12px; height: 12px"><path d="m6 9 6 6 6-6"></path></svg></button>
+    <span class="mono" style="margin-left: auto; font-size: 11.5px; color: var(--muted)">newest first · {{ shownLabel }}</span>
+  </div>
+
+  <div style="flex-grow: 1; min-height: 0; overflow: hidden; padding: 0 24px">
+    <div role="row" style="display: grid; grid-template-columns: 32px 74px minmax(0, 1fr) 92px 150px 128px 140px 96px 40px; align-items: center; height: 34px; border-bottom: 1px solid var(--line); font-size: 11px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--muted)">
+      <span></span><span>Type</span><span>Item</span><span>Project</span><span>Source channel</span><span>Source</span><span>Owner</span><span>Status</span><span style="text-align: right">Age</span>
+    </div>
+
+    <sc-for list="{{ rows }}" as="it" hint-placeholder-count="10">
+      <div style="border-bottom: 1px solid var(--line); background: {{ it.rowBg }}">
+        <div role="row" style="display: grid; grid-template-columns: 32px 74px minmax(0, 1fr) 92px 150px 128px 140px 96px 40px; align-items: center; min-height: 50px; font-size: 13px">
+          <span><input type="checkbox" aria-label="Select {{ it.title }}" checked="{{ it.checked }}" onChange="{{ it.toggle }}"></span>
+          <span>
+            <sc-if value="{{ it.isBug }}" hint-placeholder-val="{{ true }}"><span class="mono" style="display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; border-radius: 999px; background: var(--coral-soft); color: var(--coral-ink); font-size: 10.5px; font-weight: 650">Bug</span></sc-if>
+            <sc-if value="{{ it.isBacklog }}" hint-placeholder-val="{{ false }}"><span class="mono" style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; background: var(--chip); color: var(--ink2); font-size: 10.5px; font-weight: 650">Backlog</span></sc-if>
+          </span>
+          <button onClick="{{ it.expand }}" aria-expanded="{{ it.expanded }}" style="min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 14px 6px 0; border: 0; background: transparent; text-align: left; color: var(--ink)">
+            <span class="ell" style="max-width: 100%; font-size: 13.5px; font-weight: 650">{{ it.title }}</span>
+            <span class="ell" style="max-width: 100%; font-size: 12px; color: var(--muted)"><span class="mono" style="font-size: 9.5px; font-weight: 650; background: var(--chip); border-radius: 3px; padding: 0 4px; margin-right: 5px">AI</span>{{ it.summary }}</span>
+          </button>
+          <span class="ell" style="color: var(--ink2)">{{ it.project }}</span>
+          <span class="ell mono" style="font-size: 12px; color: var(--ink2)">{{ it.channel }}</span>
+          <span style="display: flex; align-items: center; gap: 7px; min-width: 0">
+            <sc-if value="{{ it.srcHuman }}" hint-placeholder-val="{{ false }}"><span style="width: 18px; height: 18px; border-radius: 50%; background: var(--human); color: var(--human-ink); display: grid; place-items: center; font-size: 8px; font-weight: 650; flex-shrink: 0">S</span></sc-if>
+            <sc-if value="{{ it.srcAgent }}" hint-placeholder-val="{{ true }}"><span class="hex" style="width: 16px; height: 18.5px; background: var(--ring-idle); display: grid; place-items: center; flex-shrink: 0"><span class="hex" style="width: 12px; height: 13.9px; background: {{ it.srcInk }}"></span></span></sc-if>
+            <span class="ell">{{ it.source }}</span>
+          </span>
+          <span style="display: flex; align-items: center; gap: 7px; min-width: 0">
+            <sc-if value="{{ it.hasOwner }}" hint-placeholder-val="{{ true }}"><span class="hex" style="width: 16px; height: 18.5px; background: {{ it.ownerRing }}; display: grid; place-items: center; flex-shrink: 0"><span class="hex" style="width: 12px; height: 13.9px; background: {{ it.ownerInk }}"></span></span><span class="ell">{{ it.owner }}</span></sc-if>
+            <sc-if value="{{ it.noOwner }}" hint-placeholder-val="{{ false }}"><span style="height: 24px; padding: 0 9px; border-radius: 7px; border: 1px dashed var(--line2); color: var(--muted); font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px"><svg class="ic" viewBox="0 0 24 24" style="width: 12px; height: 12px"><path d="M12 5v14M5 12h14"></path></svg>Assign</span></sc-if>
+          </span>
+          <span>
+            <sc-if value="{{ it.stProgress }}" hint-placeholder-val="{{ false }}"><span class="mono" style="display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; color: var(--honey-ink)"><span class="hex" style="width: 8px; height: 9.2px; background: var(--work)"></span>In progress</span></sc-if>
+            <sc-if value="{{ it.stOpen }}" hint-placeholder-val="{{ true }}"><span class="mono" style="display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; color: var(--muted)"><span style="width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--faint); box-sizing: border-box"></span>Open</span></sc-if>
+            <sc-if value="{{ it.stBlocked }}" hint-placeholder-val="{{ false }}"><span class="mono" style="display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; color: var(--coral-ink)"><span class="hex" style="width: 8px; height: 9.2px; background: var(--need)"></span>Needs you</span></sc-if>
+          </span>
+          <span class="mono" style="text-align: right; font-size: 11.5px; color: var(--muted)">{{ it.age }}</span>
+        </div>
+
+        <sc-if value="{{ it.expanded }}" hint-placeholder-val="{{ false }}">
+          <div style="display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 20px; padding: 4px 0 16px 106px">
+            <div style="display: flex; flex-direction: column; gap: 8px">
+              <div style="font-size: 11px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--muted)">Captured from</div>
+              <div style="border: 1px solid var(--line); border-radius: 10px; background: var(--card); padding: 10px 12px; font-size: 13.5px; line-height: 1.5">
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px"><b style="font-weight: 650">{{ it.source }}</b><span class="mono" style="font-size: 11px; color: var(--muted)">{{ it.channel }} · {{ it.when }}</span><a href="Main.dc.html" style="margin-left: auto; font-size: 12px; font-weight: 600; text-decoration: none">Open in channel ↗</a></div>
+                {{ it.quote }}
+              </div>
+              <div class="mono" style="font-size: 11.5px; color: var(--muted)">{{ it.activity }}</div>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 8px">
+              <div style="font-size: 11px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--muted)">Work it</div>
+              <button style="height: 34px; border-radius: 8px; border: 1px solid var(--btn); background: var(--btn); color: var(--btn-ink); font-size: 13px; font-weight: 650; display: inline-flex; align-items: center; justify-content: center; gap: 7px"><svg class="ic" viewBox="0 0 24 24" style="width: 14px; height: 14px"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>Hand to an agent…</button>
+              <button style="height: 34px; border-radius: 8px; border: 1px solid var(--line2); background: var(--card); color: var(--ink); font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; gap: 7px"><svg class="ic" viewBox="0 0 24 24" style="width: 14px; height: 14px; stroke-dasharray: 3 2.4"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"></path></svg>Open a scratch channel for it</button>
+              <div style="display: flex; gap: 8px">
+                <button style="flex-grow: 1; height: 30px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--ink2); font-size: 12.5px; font-weight: 600">Mark done</button>
+                <button style="flex-grow: 1; height: 30px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--ink2); font-size: 12.5px; font-weight: 600">{{ it.flipLabel }}</button>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+    </sc-for>
+  </div>
+
+  <sc-if value="{{ hasSelection }}" hint-placeholder-val="{{ true }}">
+    <div style="position: absolute; left: 50%; bottom: 24px; margin-left: 106px; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 16px; border-radius: 12px; background: #1B1A16; color: #FDFCF9; box-shadow: 0 20px 40px -18px rgba(0,0,0,.6); font-size: 13px">
+      <b style="font-weight: 650; margin-right: 8px">{{ selectedLabel }}</b>
+      <button style="height: 30px; padding: 0 12px; border-radius: 8px; border: 0; background: #FDFCF9; color: #1B1A16; font-size: 12.5px; font-weight: 650">Hand to an agent…</button>
+      <button style="height: 30px; padding: 0 12px; border-radius: 8px; border: 0; background: #2E2C27; color: #FDFCF9; font-size: 12.5px; font-weight: 600">Change type</button>
+      <button style="height: 30px; padding: 0 12px; border-radius: 8px; border: 0; background: #2E2C27; color: #FDFCF9; font-size: 12.5px; font-weight: 600">Mark done</button>
+      <button onClick="{{ clearSel }}" aria-label="Clear selection" style="width: 30px; height: 30px; border-radius: 8px; border: 0; background: transparent; color: #CFC9BC; display: grid; place-items: center; padding: 0"><svg class="ic" viewBox="0 0 24 24" style="width: 14px; height: 14px"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
+    </div>
+  </sc-if>
+</main>
+
+<!-- collapsed Work -->
+<aside aria-label="Work, collapsed" style="width: 48px; flex-shrink: 0; box-sizing: border-box; background: var(--rail); border-left: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; gap: 12px; padding-top: 12px">
+  <a href="Main.dc.html" aria-label="Open Work: 8 need you" style="position: relative; width: 34px; height: 34px; border-radius: 9px; background: var(--card); box-shadow: 0 0 0 1px var(--line); color: var(--ink2); display: grid; place-items: center"><svg class="ic" viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h7"></path><circle cx="18" cy="16" r="3"></circle></svg><span class="mono" style="position: absolute; top: -5px; right: -6px; min-width: 16px; height: 16px; box-sizing: border-box; border-radius: 8px; background: var(--need); color: var(--need-ink); font-size: 10px; font-weight: 650; line-height: 16px; text-align: center; padding: 0 4px">8</span></a>
+  <span title="4 running" style="display: flex; flex-direction: column; align-items: center; gap: 3px"><span class="hex pulse" style="width: 10px; height: 11.5px; background: var(--work)"></span><span class="mono" style="font-size: 10.5px; color: var(--muted)">4</span></span>
+</aside>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"$preview":{"width":1440,"height":1040}}'>
+class Component extends DCLogic {
+  data() {
+    return [
+      { id: 88, type: 'bug', title: 'Composer drops the draft when switching into a scratch channel', summary: 'The draft is discarded when the channel key changes mid-edit. Repro steps attached.', project: 'Buzz web', channel: '#flight-path/scratch-1', source: 'Acid Burn', srcInk: '#452536', owner: 'Acid Burn', ownerInk: '#452536', status: 'progress', age: '2h', when: '3:34 PM', quote: 'Reproduced. The draft is dropped when the channel key changes mid-edit. Typing in #flight-path, then /new, loses everything in the box. Filing as P2.', activity: 'Filed by Acid Burn with /bug · started 14m ago · 2 commits on claude/composer-draft-keep' },
+      { id: 87, type: 'backlog', title: 'Jump autocomplete for channels and DMs', summary: 'Inline completion in ⌘K, Tab to accept, # @ / to scope.', project: 'Buzz web', channel: '#flight-path', source: 'Sam', human: true, owner: 'Richard Hendricks', ownerInk: '#2B3340', status: 'progress', age: '1h', when: '2:40 PM', quote: '/backlog From the search dialog, autocomplete on DM and channel names so I can jump quickly.', activity: 'Richard Hendricks picked this up 40m ago' },
+      { id: 86, type: 'backlog', title: 'Scratch channels keep the parent\'s pinned agents', summary: '/new copies members and agents only, never history.', project: 'Buzz web', channel: '#flight-path/scratch-1', source: 'Sam', human: true, status: 'open', age: '20m', when: '3:36 PM', quote: '/backlog Scratch channels keep the parent\'s pinned agents', activity: 'No owner yet' },
+      { id: 85, type: 'backlog', title: 'Run Sol max on 1–2 more one-shot builds', summary: 'Check whether the RTS win repeats before the 10/8 call.', project: 'Evals', channel: 'DM Gilfoyle', source: 'Gilfoyle', srcInk: '#24231F', owner: 'Gilfoyle', ownerInk: '#24231F', status: 'open', age: '30m', when: '9:02 PM', quote: 'Want me to try Sol max on 1–2 more big one-shot builds before 10/8, so we know whether the game win repeats or was a one-off?', activity: 'Filed by Gilfoyle after you answered Yes' },
+      { id: 84, type: 'bug', title: 'Round-2 decision card missing from Asks on phone', summary: 'A card replying to an answer folds into the thread and never reaches the phone list.', project: 'Buzz web', channel: '#mobile', source: 'Crash Override', srcInk: '#3A2E22', status: 'open', age: '1d', when: 'yesterday 4:12 PM', quote: 'Round 2 of the card lands in the thread, but the Asks list on phone only reads timeline rows, so it never shows up there.', activity: 'Filed by Crash Override · no owner yet' },
+      { id: 83, type: 'backlog', title: 'GPU and memory in the sidebar Vitals', summary: 'Thin-line metrics for crichton stacked under Claude usage.', project: 'Buzz web', channel: '#ops', source: 'Sam', human: true, status: 'open', age: '2h', when: '1:30 PM', quote: '/backlog Show crichton CPU, GPU, memory and disk as thin lines under Claude usage.', activity: 'No owner yet' },
+      { id: 82, type: 'backlog', title: 'Prune pilot snapshots older than 30 days', summary: 'pilot disk is at 81%. The delete list is ready and waiting on your approval.', project: 'Infra', channel: '#ops', source: 'Gilfoyle', srcInk: '#24231F', owner: 'Gilfoyle', ownerInk: '#24231F', status: 'blocked', age: '2d', when: 'Mon 10:05 AM', quote: 'Disk on pilot is at 81%. I can prune snapshots older than 30 days (list attached) or you can grow the volume. Need a yes on the list.', activity: 'Blocked on your approval for 2d' },
+      { id: 81, type: 'bug', title: 'TTS bridge stalls after about 40 min of playback', summary: 'The jitter buffer drains faster than Chatterbox refills; audio stops with no error.', project: 'Buzz web', channel: '#engineering', source: 'Lord Nikon', srcInk: '#243449', owner: 'Lord Nikon', ownerInk: '#243449', status: 'progress', age: '3d', when: 'Sat 8:20 PM', quote: 'Long huddles go silent around the 40 minute mark. The jitter buffer runs dry and never recovers.', activity: 'Lord Nikon · adaptive buffer merged, soak test running' },
+      { id: 80, type: 'backlog', title: 'Tag Thunk notes by YouTube channel', summary: 'Add the source channel as a tag when the pipeline writes each note.', project: 'Thunk', channel: '#pipelines', source: 'Jared Dunn', srcInk: '#2F3524', status: 'open', age: '4d', when: 'Fri 9:00 AM', quote: 'Would help to tag each note with the YouTube channel it came from so they group in Thunk.', activity: 'Filed by Jared Dunn · no owner yet' },
+      { id: 79, type: 'bug', title: 'Reminder "open" lands on the channel, not the message', summary: 'The deep link drops the message id, so you arrive at the bottom of the channel.', project: 'Buzz web', channel: 'DM ESP32', source: 'Sam', human: true, status: 'open', age: '6d', when: 'Wed 5:30 PM', quote: '/bug Opening a reminder takes me to the channel instead of the message it was about.', activity: 'No owner yet' },
+      { id: 78, type: 'backlog', title: 'XiaoZhi wake-word tuning', summary: 'Firmware runs on the ESP32-S3. Needs a wake word picked before audio tuning.', project: 'ESP32', channel: 'DM ESP32', source: 'ESP32', srcInk: '#22303A', owner: 'ESP32', ownerInk: '#22303A', status: 'blocked', age: '6d', when: 'Wed 5:23 PM', quote: 'The XiaoZhi firmware flashed and is running with serial output confirming it is alive. Which wake word do you want before I tune audio?', activity: 'Blocked on your answer for 6d' }
+    ];
+  }
+
+  renderVals() {
+    const s = this.state || {};
+    const tab = s.tab || 'all';
+    const expandedId = s.expanded === undefined ? 88 : s.expanded;
+    const sel = s.sel || { 84: true, 79: true };
+    const all = this.data();
+    const list = all.filter((d) => tab === 'all' || d.type === tab);
+    const totals = { all: 42, bug: 11, backlog: 31 };
+    const setSel = (id) => {
+      const next = Object.assign({}, sel);
+      if (next[id]) delete next[id]; else next[id] = true;
+      this.setState({ sel: next });
+    };
+    const rows = list.map((d) => {
+      const exp = d.id === expandedId;
+      const checked = !!sel[d.id];
+      return {
+        title: d.title,
+        summary: d.summary,
+        project: d.project,
+        channel: d.channel,
+        source: d.source,
+        srcHuman: !!d.human,
+        srcAgent: !d.human,
+        srcInk: d.srcInk || '#24231F',
+        hasOwner: !!d.owner,
+        noOwner: !d.owner,
+        owner: d.owner || '',
+        ownerInk: d.ownerInk || '#24231F',
+        ownerRing: d.status === 'progress' ? 'var(--work)' : (d.status === 'blocked' ? 'var(--need)' : 'var(--ring-idle)'),
+        isBug: d.type === 'bug',
+        isBacklog: d.type === 'backlog',
+        stProgress: d.status === 'progress',
+        stOpen: d.status === 'open',
+        stBlocked: d.status === 'blocked',
+        age: d.age,
+        when: d.when,
+        quote: d.quote,
+        activity: d.activity,
+        flipLabel: d.type === 'bug' ? 'Move to backlog' : 'Make it a bug',
+        expanded: exp,
+        checked: checked,
+        rowBg: exp ? 'var(--sel)' : (checked ? 'var(--hover)' : 'transparent'),
+        expand: () => this.setState({ expanded: exp ? null : d.id }),
+        toggle: () => setSel(d.id)
+      };
+    });
+    const tabDefs = [
+      { id: 'all', label: 'All' },
+      { id: 'bug', label: 'Bugs' },
+      { id: 'backlog', label: 'Backlog' }
+    ];
+    const tabs = tabDefs.map((t) => {
+      const on = t.id === tab;
+      return {
+        label: t.label,
+        count: String(totals[t.id]),
+        pressed: on ? 'true' : 'false',
+        bg: on ? 'var(--btn)' : 'var(--card)',
+        fg: on ? 'var(--btn-ink)' : 'var(--ink2)',
+        border: on ? 'var(--btn)' : 'var(--line)',
+        pick: () => this.setState({ tab: t.id })
+      };
+    });
+    const nSel = Object.keys(sel).length;
+    return {
+      themeClass: (this.props.theme ?? 'light') === 'dark' ? 'dark' : '',
+      tabs,
+      rows,
+      shownLabel: 'showing ' + rows.length + ' of ' + totals[tab],
+      hasSelection: nSel > 0,
+      selectedLabel: nSel + ' selected',
+      clearSel: () => this.setState({ sel: {} })
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Buzz: readable agent messages</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI','Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased}
+.mono{font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,monospace}
+.num{font-variant-numeric:tabular-nums}
+.hex{clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
+.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer}
+.th{--bg:#FDFCF9;--side:#F2EFE8;--rail:#F7F5F0;--card:#FFFFFF;--sunk:#F7F5F0;--chip:#F2EFE8;--ink:#1B1A16;--ink2:#45423B;--muted:#6B655A;--faint:#A7A194;--line:#E6E2D8;--line2:#D6D1C5;--hover:#F4F1EA;--honey:#EBA21A;--honey-soft:#FCF0D2;--honey-wash:#FEF8E8;--honey-line:#F0DDA6;--honey-ink:#7F5200;--coral:#E0553A;--coral-soft:#FBE6DF;--coral-wash:#FDF3EF;--coral-line:#F2A594;--coral-ink:#A2301A;--leaf:#2E9A68;--leaf-soft:#DFF1E7;--leaf-line:#B9DFC9;--leaf-ink:#1C6644;--blue-soft:#E7EEF8;--blue-line:#C8D6EB;--blue-ink:#1F4E8C;--hex-idle:#E3DFD4;--ring-idle:#D5D0C4;--btn:#1B1A16;--btn-ink:#FDFCF9;--shadow:rgba(27,26,22,.35);--human:#CFE3D3;--human-ink:#33291F;--work:#EBA21A;--work-ink:#1B1A16}
+.th.dark{--bg:#141414;--side:#181818;--rail:#171717;--card:#1C1C1C;--sunk:#181818;--chip:#262626;--ink:#E7E5E1;--ink2:#BDBAB4;--muted:#8E8B85;--faint:#5F5D59;--line:#282828;--line2:#343434;--hover:#1B1B1B;--honey-soft:#2A2518;--honey-wash:#1A1916;--honey-line:#3A3322;--honey-ink:#D9B56A;--coral-soft:#2E1F1B;--coral-wash:#1B1716;--coral-line:#4A2C25;--coral-ink:#E39A8A;--leaf-soft:#161F19;--leaf-line:#26382C;--leaf-ink:#8CCBA5;--blue-soft:#181D24;--blue-line:#2A3342;--blue-ink:#A5BEDF;--hex-idle:#2C2C2C;--ring-idle:#3A3A3A;--btn:#E7E5E1;--btn-ink:#141414;--shadow:rgba(0,0,0,.6);--human:#2C3B31;--human-ink:#CFE3D6;--work:#C9A24E;--work-ink:#141414}
+.th a{color:var(--blue-ink)}.th a:hover{color:var(--ink)}
+</style>
+</helmet>
+<div class="th {{ themeClass }}" style="width: 880px; height: 1540px; display: flex; flex-direction: column; background: var(--bg); color: var(--ink); overflow: hidden; font-size: 14px; line-height: 1.5; box-sizing: border-box; border-left: 1px solid var(--line)">
+
+  <header style="display: flex; align-items: center; gap: 10px; min-height: 58px; box-sizing: border-box; padding: 10px 20px; border-bottom: 1px solid var(--line)">
+    <span class="hex" style="width: 26px; height: 30px; background: var(--ring-idle); display: grid; place-items: center"><span class="hex mono" style="width: 22px; height: 25.4px; background: #24231F; color: #F6F1E4; display: grid; place-items: center; font-size: 8px; font-weight: 600">GF</span></span>
+    <div style="font-size: 17px; font-weight: 720; letter-spacing: -.02em">Gilfoyle</div>
+    <span class="mono" style="font-size: 11px; color: var(--muted)">agent · idle · DM</span>
+    <a href="Preview.dc.html" style="margin-left: auto; display: inline-flex; align-items: center; gap: 6px; height: 32px; box-sizing: border-box; padding: 0 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--card); color: var(--ink2); font-size: 12.5px; font-weight: 600; text-decoration: none"><svg class="ic" viewBox="0 0 24 24" style="width: 14px; height: 14px"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path></svg>Shelf · 6 files</a>
+  </header>
+
+  <div style="flex-grow: 1; min-height: 0; overflow: hidden; padding: 18px 24px 8px; display: flex; flex-direction: column; gap: 22px">
+
+    <!-- ═══ message 1 ═══ -->
+    <div style="display: grid; grid-template-columns: 36px minmax(0, 1fr); column-gap: 12px">
+      <span class="hex" style="width: 36px; height: 41.6px; background: var(--ring-idle); display: grid; place-items: center"><span class="hex mono" style="width: 30px; height: 34.6px; background: #24231F; color: #F6F1E4; display: grid; place-items: center; font-size: 10px; font-weight: 600">GF</span></span>
+      <div style="min-width: 0; max-width: 720px">
+        <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 3px"><b style="font-weight: 680">Gilfoyle</b><span class="mono" style="align-self: center; font-size: 9.5px; font-weight: 600; letter-spacing: .06em; color: var(--muted); border: 1px solid var(--line2); border-radius: 4px; padding: 0 4px; line-height: 15px">AGENT</span><span class="mono" style="font-size: 11px; color: var(--muted)">8:37 PM</span></div>
+        <div style="font-size: 15.5px; font-weight: 650; line-height: 1.4">All 4 Command &amp; Conquer clones are done and playable.</div>
+        <div style="font-size: 14px; color: var(--ink2); margin-top: 2px">Each is a single file, no install, blind again (A–D shuffled), with a HOWTO for controls.</div>
+
+        <!-- file group -->
+        <div style="margin-top: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); overflow: hidden">
+          <div style="display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px; border-bottom: 1px solid var(--line); background: var(--sunk)">
+            <svg class="ic" viewBox="0 0 24 24" style="width: 15px; height: 15px; color: var(--muted)"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+            <span class="mono" style="font-size: 12px; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis">MEGA / shared_files / dropbox / <b style="color: var(--ink); font-weight: 650">rts-bakeoff</b></span>
+            <a href="Preview.dc.html" style="margin-left: auto; font-size: 12px; font-weight: 600; text-decoration: none; white-space: nowrap">Open in Shelf →</a>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr))">
+            <a href="Preview.dc.html" style="display: flex; flex-direction: column; gap: 6px; padding: 12px; text-decoration: none; color: var(--ink)">
+              <span class="mono" style="height: 54px; border-radius: 8px; background: var(--chip); display: grid; place-items: center; font-size: 22px; font-weight: 700; color: var(--muted)">A</span>
+              <span class="mono" style="font-size: 12px; font-weight: 600">game-A.html</span>
+              <span class="mono" style="font-size: 11px; color: var(--muted)">41 KB · HOWTO</span>
+            </a>
+            <a href="Preview.dc.html" style="display: flex; flex-direction: column; gap: 6px; padding: 12px; text-decoration: none; color: var(--ink); border-left: 1px solid var(--line)">
+              <span class="mono" style="height: 54px; border-radius: 8px; background: var(--chip); display: grid; place-items: center; font-size: 22px; font-weight: 700; color: var(--muted)">B</span>
+              <span class="mono" style="font-size: 12px; font-weight: 600">game-B.html</span>
+              <span class="mono" style="font-size: 11px; color: var(--muted)">164 KB · HOWTO</span>
+            </a>
+            <a href="Preview.dc.html" style="display: flex; flex-direction: column; gap: 6px; padding: 12px; text-decoration: none; color: var(--ink); border-left: 1px solid var(--line)">
+              <span class="mono" style="height: 54px; border-radius: 8px; background: var(--chip); display: grid; place-items: center; font-size: 22px; font-weight: 700; color: var(--muted)">C</span>
+              <span class="mono" style="font-size: 12px; font-weight: 600">game-C.html</span>
+              <span class="mono" style="font-size: 11px; color: var(--muted)">92 KB · HOWTO</span>
+            </a>
+            <a href="Preview.dc.html" style="display: flex; flex-direction: column; gap: 6px; padding: 12px; text-decoration: none; color: var(--ink); border-left: 1px solid var(--line)">
+              <span class="mono" style="height: 54px; border-radius: 8px; background: var(--chip); display: grid; place-items: center; font-size: 22px; font-weight: 700; color: var(--muted)">D</span>
+              <span class="mono" style="font-size: 12px; font-weight: 600">game-D.html</span>
+              <span class="mono" style="font-size: 11px; color: var(--muted)">219 KB · HOWTO</span>
+            </a>
+          </div>
+        </div>
+
+        <!-- verified callout -->
+        <div style="margin-top: 10px; border: 1px solid var(--leaf-line); border-radius: 12px; background: var(--leaf-soft); padding: 12px 14px">
+          <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--leaf-ink)"><svg class="ic" viewBox="0 0 24 24" style="width: 15px; height: 15px"><circle cx="12" cy="12" r="9"></circle><path d="m8 12 3 3 5-6"></path></svg>Tested in Agent Brave</div>
+          <ul style="margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 5px; font-size: 13.5px; color: var(--ink)">
+            <li style="display: flex; gap: 8px"><span style="flex-shrink: 0; width: 5px; height: 5px; border-radius: 50%; background: var(--leaf-ink); margin-top: 8px"></span>All 4 reach the title screen, start a skirmish, render fog of war and a minimap, and respond to box-select and right-click. Zero JS errors.</li>
+            <li style="display: flex; gap: 8px"><span style="flex-shrink: 0; width: 5px; height: 5px; border-radius: 50%; background: var(--leaf-ink); margin-top: 8px"></span>Each has a general power, base building and a build menu.</li>
+          </ul>
+        </div>
+
+        <!-- untested callout -->
+        <div style="margin-top: 8px; border: 1px solid var(--honey-line); border-radius: 12px; background: var(--honey-wash); padding: 12px 14px">
+          <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--honey-ink)"><svg class="ic" viewBox="0 0 24 24" style="width: 15px; height: 15px"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path><path d="M12 9v4M12 17h.01"></path></svg>Not tested</div>
+          <div style="margin-top: 6px; font-size: 13.5px; color: var(--ink)">Audio, and whether the AI launches attack waves and win/lose fires. Click once inside the page before expecting sound.</div>
+        </div>
+
+        <!-- ask card, answered -->
+        <div style="margin-top: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); overflow: hidden">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--line)">
+            <svg class="ic" viewBox="0 0 24 24" style="width: 15px; height: 15px; color: var(--blue-ink)"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6M12 17h.01"></path></svg>
+            <span style="font-size: 14px; font-weight: 650">Score each game 1–5</span>
+            <span class="mono" style="margin-left: auto; display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 600; color: var(--leaf-ink); background: var(--leaf-soft); border-radius: 999px; padding: 1px 8px"><svg class="ic" viewBox="0 0 24 24" style="width: 11px; height: 11px; stroke-width: 2.6"><path d="M20 6 9 17l-5-5"></path></svg>Answered 9:00 PM</span>
+          </div>
+          <div style="display: flex; flex-direction: column; padding: 6px 14px 10px">
+            <div style="display: flex; align-items: center; gap: 12px; height: 38px">
+              <span class="mono" style="width: 92px; font-size: 12.5px; font-weight: 600">game-A</span>
+              <div style="display: flex; gap: 4px">
+                <span class="mono" style="width: 32px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 650; background: var(--btn); color: var(--btn-ink)">1</span>
+                <span class="mono" style="width: 32px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; border: 1px solid var(--line); color: var(--muted)">2</span>
+                <span class="mono" style="width: 32px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; border: 1px solid var(--line); color: var(--muted)">3</span>
+                <span class="mono" style="width: 32px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; border: 1px solid var(--line); color: var(--muted)">4</span>
+                <span class="mono" style="width: 32px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; border: 1px solid var(--line); color: var(--muted)">5</span>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px; height: 38px; border-top: 1px solid var(--line)">
+              <span class="mono" style="width: 92px; font-size: 12.5px; font-weight: 600">game-B</span>
+              <div style="display: flex; gap: 4px">
+                <span class="mono" style="width: 32px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; border: 1px solid var(--line); color: var(--muted)">1</span>
+                <span class="mono" style="width: 32px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 650; background: var(--btn); color: var(--btn-ink)">2</span>
+                <span class="mono" style="width: 32px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; border: 1px solid var(--line); color: var(--muted)">3</span>
+                <span class="mono" style="width: 32px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; border: 1px solid var(--line); color: var(--muted)">4</span>
+                <span class="mono" style="width: 32px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; border: 1px solid var(--line); color: var(--muted)">5</span>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px; height: 38px; border-top: 1px solid var(--line)">
+              <span class="mono" style="width: 92px; font-size: 12.5px; font-weight: 600">game-C</span>
+              <div style="display: flex; gap: 4px">
+                <span class="mono" style="width: 32px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; border: 1px solid var(--line); color: var(--muted)">1</span>
+                <span class="mono" style="width: 32px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; border: 1px solid var(--line); color: var(--muted)">2</span>
+                <span class="mono" style="width: 32px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; border: 1px solid var(--line); color: var(--muted)">3</span>
+                <span class="mono" style="width: 32px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; border: 1px solid var(--line); color: var(--muted)">4</span>
+                <span class="mono" style="width: 32px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 650; background: var(--work); color: var(--work-ink)">5</span>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px; height: 38px; border-top: 1px solid var(--line)">
+              <span class="mono" style="width: 92px; font-size: 12.5px; font-weight: 600">game-D</span>
+              <div style="display: flex; gap: 4px">
+                <span class="mono" style="width: 32px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; border: 1px solid var(--line); color: var(--muted)">1</span>
+                <span class="mono" style="width: 32px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; border: 1px solid var(--line); color: var(--muted)">2</span>
+                <span class="mono" style="width: 32px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; border: 1px solid var(--line); color: var(--muted)">3</span>
+                <span class="mono" style="width: 32px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 650; background: var(--btn); color: var(--btn-ink)">4</span>
+                <span class="mono" style="width: 32px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; border: 1px solid var(--line); color: var(--muted)">5</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ message 2 ═══ -->
+    <div style="display: grid; grid-template-columns: 36px minmax(0, 1fr); column-gap: 12px">
+      <span class="hex" style="width: 36px; height: 41.6px; background: var(--ring-idle); display: grid; place-items: center"><span class="hex mono" style="width: 30px; height: 34.6px; background: #24231F; color: #F6F1E4; display: grid; place-items: center; font-size: 10px; font-weight: 600">GF</span></span>
+      <div style="min-width: 0; max-width: 720px">
+        <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 3px"><b style="font-weight: 680">Gilfoyle</b><span class="mono" style="align-self: center; font-size: 9.5px; font-weight: 600; letter-spacing: .06em; color: var(--muted); border: 1px solid var(--line2); border-radius: 4px; padding: 0 4px; line-height: 15px">AGENT</span><span class="mono" style="font-size: 11px; color: var(--muted)">9:00 PM</span></div>
+        <div style="font-size: 15.5px; line-height: 1.4">Unblinded, and it's an upset: <b style="font-weight: 700">Sol max won the game build.</b></div>
+
+        <!-- table -->
+        <div style="margin-top: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); overflow: hidden">
+          <div style="display: grid; grid-template-columns: 64px minmax(0, 1fr) 150px 96px 80px; align-items: center; height: 36px; padding: 0 14px; background: var(--sunk); border-bottom: 1px solid var(--line); font-size: 11px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--muted)">
+            <span>Game</span><span>Model</span><span>Your score</span><span style="text-align: right">Build</span><span style="text-align: right">Size</span>
+          </div>
+          <div class="num" style="display: grid; grid-template-columns: 64px minmax(0, 1fr) 150px 96px 80px; align-items: center; height: 44px; padding: 0 14px; background: var(--honey-wash); border-bottom: 1px solid var(--line); font-size: 13.5px">
+            <span class="mono" style="font-weight: 650">C</span>
+            <span style="display: flex; align-items: center; gap: 8px"><b style="font-weight: 680">Sol max</b><span class="mono" style="font-size: 10px; font-weight: 650; letter-spacing: .06em; background: var(--work); color: var(--work-ink); border-radius: 999px; padding: 0 7px">WINNER</span></span>
+            <span style="display: flex; align-items: center; gap: 3px"><span class="hex" style="width: 11px; height: 12.7px; background: var(--work)"></span><span class="hex" style="width: 11px; height: 12.7px; background: var(--work)"></span><span class="hex" style="width: 11px; height: 12.7px; background: var(--work)"></span><span class="hex" style="width: 11px; height: 12.7px; background: var(--work)"></span><span class="hex" style="width: 11px; height: 12.7px; background: var(--work)"></span><b class="mono" style="margin-left: 6px; font-size: 12.5px">5</b></span>
+            <span class="mono" style="text-align: right; font-size: 12.5px">32 min</span>
+            <span class="mono" style="text-align: right; font-size: 12.5px">92 KB</span>
+          </div>
+          <div class="num" style="display: grid; grid-template-columns: 64px minmax(0, 1fr) 150px 96px 80px; align-items: center; height: 44px; padding: 0 14px; border-bottom: 1px solid var(--line); font-size: 13.5px">
+            <span class="mono" style="font-weight: 650; color: var(--muted)">D</span>
+            <span>Opus xhigh</span>
+            <span style="display: flex; align-items: center; gap: 3px"><span class="hex" style="width: 11px; height: 12.7px; background: var(--ink2)"></span><span class="hex" style="width: 11px; height: 12.7px; background: var(--ink2)"></span><span class="hex" style="width: 11px; height: 12.7px; background: var(--ink2)"></span><span class="hex" style="width: 11px; height: 12.7px; background: var(--ink2)"></span><span class="hex" style="width: 11px; height: 12.7px; background: var(--line2)"></span><span class="mono" style="margin-left: 6px; font-size: 12.5px">4</span></span>
+            <span class="mono" style="text-align: right; font-size: 12.5px">56 min</span>
+            <span class="mono" style="text-align: right; font-size: 12.5px">219 KB</span>
+          </div>
+          <div class="num" style="display: grid; grid-template-columns: 64px minmax(0, 1fr) 150px 96px 80px; align-items: center; height: 44px; padding: 0 14px; border-bottom: 1px solid var(--line); font-size: 13.5px">
+            <span class="mono" style="font-weight: 650; color: var(--muted)">B</span>
+            <span>Opus high</span>
+            <span style="display: flex; align-items: center; gap: 3px"><span class="hex" style="width: 11px; height: 12.7px; background: var(--ink2)"></span><span class="hex" style="width: 11px; height: 12.7px; background: var(--ink2)"></span><span class="hex" style="width: 11px; height: 12.7px; background: var(--line2)"></span><span class="hex" style="width: 11px; height: 12.7px; background: var(--line2)"></span><span class="hex" style="width: 11px; height: 12.7px; background: var(--line2)"></span><span class="mono" style="margin-left: 6px; font-size: 12.5px">2</span></span>
+            <span class="mono" style="text-align: right; font-size: 12.5px">31 min</span>
+            <span class="mono" style="text-align: right; font-size: 12.5px">164 KB</span>
+          </div>
+          <div class="num" style="display: grid; grid-template-columns: 64px minmax(0, 1fr) 150px 96px 80px; align-items: center; height: 44px; padding: 0 14px; font-size: 13.5px">
+            <span class="mono" style="font-weight: 650; color: var(--muted)">A</span>
+            <span>Sol high</span>
+            <span style="display: flex; align-items: center; gap: 3px"><span class="hex" style="width: 11px; height: 12.7px; background: var(--ink2)"></span><span class="hex" style="width: 11px; height: 12.7px; background: var(--line2)"></span><span class="hex" style="width: 11px; height: 12.7px; background: var(--line2)"></span><span class="hex" style="width: 11px; height: 12.7px; background: var(--line2)"></span><span class="hex" style="width: 11px; height: 12.7px; background: var(--line2)"></span><span class="mono" style="margin-left: 6px; font-size: 12.5px">1</span></span>
+            <span class="mono" style="text-align: right; font-size: 12.5px">28 min</span>
+            <span class="mono" style="text-align: right; font-size: 12.5px">41 KB</span>
+          </div>
+        </div>
+
+        <!-- takeaways -->
+        <div style="margin-top: 12px; border-radius: 12px; background: var(--sunk); border: 1px solid var(--line); padding: 14px 16px">
+          <div style="font-size: 12px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--muted)">What it means</div>
+          <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px">
+            <div style="display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; font-size: 13.5px; line-height: 1.5">
+              <span class="mono" style="width: 20px; height: 20px; border-radius: 6px; background: var(--chip); display: grid; place-items: center; font-size: 11px; font-weight: 650; color: var(--ink2)">1</span>
+              <span><b style="font-weight: 680">The task picks the winner.</b> Sol's first win, with less than half the code in about 60% of Opus xhigh's time. On design, Opus xhigh swept 5 of 6 apps.</span>
+            </div>
+            <div style="display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; font-size: 13.5px; line-height: 1.5">
+              <span class="mono" style="width: 20px; height: 20px; border-radius: 6px; background: var(--chip); display: grid; place-items: center; font-size: 11px; font-weight: 650; color: var(--ink2)">2</span>
+              <span><b style="font-weight: 680">Top effort decided both creative rounds.</b> Sol max beat Sol high 5–1, Opus xhigh beat Opus high 4–2. On the graded T1–T14 suites, effort bought nothing.</span>
+            </div>
+            <div style="display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; font-size: 13.5px; line-height: 1.5">
+              <span class="mono" style="width: 20px; height: 20px; border-radius: 6px; background: var(--chip); display: grid; place-items: center; font-size: 11px; font-weight: 650; color: var(--ink2)">3</span>
+              <span><b style="font-weight: 680">Spend effort on open-ended builds</b>, skip it on well-specified work.</span>
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px; margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line2); font-size: 12.5px; color: var(--muted)"><svg class="ic" viewBox="0 0 24 24" style="width: 14px; height: 14px"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5M12 8h.01"></path></svg>One sample per config. A strong hint, not a verdict.</div>
+        </div>
+
+        <!-- live quick-reply ask -->
+        <div style="margin-top: 12px; border: 1px solid var(--blue-line); border-radius: 12px; background: var(--blue-soft); padding: 12px 14px">
+          <div style="display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--blue-ink)"><svg class="ic" viewBox="0 0 24 24" style="width: 14px; height: 14px"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6M12 17h.01"></path></svg>Gilfoyle asks</div>
+          <div style="font-size: 14.5px; font-weight: 600; margin-top: 4px; line-height: 1.45">Try Sol max on 1–2 more big one-shot builds before 10/8, to see whether the game win repeats?</div>
+          <sc-if value="{{ open }}" hint-placeholder-val="{{ true }}">
+            <div style="display: flex; align-items: center; gap: 6px; margin-top: 10px">
+              <button onClick="{{ yes }}" style="height: 32px; padding: 0 16px; border-radius: 8px; border: 1px solid var(--btn); background: var(--btn); color: var(--btn-ink); font-size: 13px; font-weight: 650">Yes</button>
+              <button onClick="{{ no }}" style="height: 32px; padding: 0 16px; border-radius: 8px; border: 1px solid var(--line2); background: var(--card); color: var(--ink); font-size: 13px; font-weight: 650">No</button>
+              <button onClick="{{ later }}" style="height: 32px; padding: 0 12px; border-radius: 8px; border: 1px dashed var(--line2); background: transparent; color: var(--ink2); font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px"><svg class="ic" viewBox="0 0 24 24" style="width: 14px; height: 14px"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path></svg>Feedback</button>
+              <span style="margin-left: auto; font-size: 12px; color: var(--muted)">or type a reply</span>
+            </div>
+          </sc-if>
+          <sc-if value="{{ answered }}" hint-placeholder-val="{{ false }}">
+            <div style="display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; color: var(--ink2)"><svg class="ic" viewBox="0 0 24 24" style="width: 15px; height: 15px; color: var(--leaf-ink)"><path d="M20 6 9 17l-5-5"></path></svg>{{ answerText }}<button onClick="{{ reset }}" style="margin-left: auto; height: 26px; padding: 0 10px; border-radius: 7px; border: 0; background: transparent; color: var(--blue-ink); font-size: 12.5px; font-weight: 600">Undo</button></div>
+          </sc-if>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="padding: 0 24px 16px">
+    <div style="display: flex; align-items: center; gap: 8px; border: 1px solid var(--line2); border-radius: 14px; background: var(--card); padding: 10px 10px 10px 14px">
+      <span style="flex-grow: 1; font-size: 14.5px; color: var(--muted)">Message Gilfoyle</span>
+      <button aria-label="Send" style="width: 32px; height: 32px; border-radius: 9px; border: 0; background: var(--btn); color: var(--btn-ink); display: grid; place-items: center; padding: 0"><svg class="ic" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"></path></svg></button>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"$preview":{"width":880,"height":1540}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const s = this.state || {};
+    const answer = s.answer || '';
+    const text = {
+      yes: 'You answered Yes · Gilfoyle is queuing 2 more Sol max builds',
+      no: 'You answered No',
+      later: 'Sent to Feedback · AI summary saved, due tomorrow 9:00 AM'
+    };
+    return {
+      themeClass: (this.props.theme ?? 'dark') === 'dark' ? 'dark' : '',
+      open: !answer,
+      answered: !!answer,
+      answerText: text[answer] || '',
+      yes: () => this.setState({ answer: 'yes' }),
+      no: () => this.setState({ answer: 'no' }),
+      later: () => this.setState({ answer: 'later' }),
+      reset: () => this.setState({ answer: '' })
+    };
+  }
+}
+</script>
+</body>
+</html>

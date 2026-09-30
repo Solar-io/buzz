@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Buzz: channel with Work rail</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI','Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased}
+.mono{font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,monospace}
+.hex{clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
+.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.ell{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pulse{animation:pulse 2.2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.55}}
+@media (prefers-reduced-motion:reduce){.pulse{animation:none}}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer}
+.th{--bg:#FDFCF9;--side:#F2EFE8;--rail:#F7F5F0;--card:#FFFFFF;--sunk:#F7F5F0;--chip:#F2EFE8;--ink:#1B1A16;--ink2:#45423B;--muted:#6B655A;--faint:#A7A194;--line:#E6E2D8;--line2:#D6D1C5;--hover:#F4F1EA;--sel:#FFFFFF;--vit:#E8E4DA;--work:#EBA21A;--work-ink:#1B1A16;--need:#E0553A;--need-ink:#FFFFFF;--honey-soft:#FCF0D2;--honey-wash:#FEF8E8;--honey-line:#F0DDA6;--honey-ink:#7F5200;--coral-soft:#FBE6DF;--coral-wash:#FDF3EF;--coral-line:#F2A594;--coral-ink:#A2301A;--leaf:#2E9A68;--leaf-soft:#DFF1E7;--leaf-ink:#1C6644;--blue-soft:#E7EEF8;--blue-line:#C8D6EB;--blue-ink:#1F4E8C;--hex-idle:#E3DFD4;--hex-idle-ink:#5E594F;--ring-idle:#D5D0C4;--btn:#1B1A16;--btn-ink:#FDFCF9;--shadow:rgba(27,26,22,.35);--human:#CFE3D3;--human-ink:#33291F}
+.th.dark{--bg:#141414;--side:#181818;--rail:#171717;--card:#1D1D1D;--sunk:#191919;--chip:#262626;--ink:#E7E5E1;--ink2:#BDBAB4;--muted:#8E8B85;--faint:#5F5D59;--line:#262626;--line2:#333333;--hover:#1B1B1B;--sel:#222222;--vit:#1B1B1B;--work:#C9A24E;--work-ink:#141414;--need:#C8674F;--need-ink:#141414;--honey-soft:#2A2518;--honey-wash:#1A1916;--honey-line:#3A3322;--honey-ink:#D9B56A;--coral-soft:#2E1F1B;--coral-wash:#1B1716;--coral-line:#4A2C25;--coral-ink:#E39A8A;--leaf:#5BAE82;--leaf-soft:#18231C;--leaf-ink:#8CCBA5;--blue-soft:#1A1F27;--blue-line:#2A3342;--blue-ink:#A5BEDF;--hex-idle:#2C2C2C;--hex-idle-ink:#9A978F;--ring-idle:#3A3A3A;--btn:#E7E5E1;--btn-ink:#141414;--shadow:rgba(0,0,0,.6);--human:#2C3B31;--human-ink:#CFE3D6}
+.th a{color:var(--blue-ink)}.th a:hover{color:var(--ink)}
+</style>
+</helmet>
+<div class="th {{ themeClass }}" style="width: 1440px; height: 960px; position: relative; display: flex; background: var(--bg); color: var(--ink); overflow: hidden; font-size: 14px; line-height: 1.45">
+
+<!-- ═════════ SIDEBAR ═════════ -->
+<nav aria-label="Workspace" style="width: 260px; flex-shrink: 0; box-sizing: border-box; background: var(--side); border-right: 1px solid var(--line); padding: 16px 12px 12px; display: flex; flex-direction: column; gap: 14px">
+  <div style="display: flex; align-items: center; gap: 10px; padding: 0 4px">
+    <div style="width: 32px; height: 32px; border-radius: 9px; background: #1B1A16; box-shadow: 0 0 0 1px var(--line2); color: #EBA21A; display: grid; place-items: center; font-weight: 750; font-size: 15px; flex-shrink: 0">N</div>
+    <div style="min-width: 0; flex-grow: 1">
+      <div style="font-size: 14.5px; font-weight: 700; line-height: 1.2">Noet</div>
+      <div class="mono" style="font-size: 11px; color: var(--muted)">crichton · relay</div>
+    </div>
+    <span style="position: relative; width: 26px; height: 26px; border-radius: 50%; background: var(--human); color: var(--human-ink); display: grid; place-items: center; font-weight: 650; font-size: 11px; flex-shrink: 0">S<span style="position: absolute; right: -1px; bottom: -1px; width: 8px; height: 8px; border-radius: 50%; background: var(--leaf); box-shadow: 0 0 0 2px var(--side)"></span></span>
+  </div>
+
+  <a href="Jump.dc.html" style="display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border-radius: 9px; background: var(--bg); border: 1px solid var(--line); color: var(--muted); font-size: 13px; text-decoration: none">
+    <svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+    Jump to…
+    <span class="mono" style="margin-left: auto; font-size: 11px; border: 1px solid var(--line2); border-radius: 5px; padding: 0 5px">⌘K</span>
+  </a>
+
+  <div style="display: flex; flex-direction: column">
+    <a href="#" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><svg class="ic" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"></path><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path></svg>Inbox<span class="mono" style="margin-left: auto; min-width: 18px; height: 18px; box-sizing: border-box; border-radius: 9px; background: var(--btn); color: var(--btn-ink); font-size: 10.5px; font-weight: 600; line-height: 18px; text-align: center; padding: 0 5px">3</span></a>
+    <a href="Items.dc.html" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><svg class="ic" viewBox="0 0 24 24"><path d="M4 6h11M4 12h11M4 18h7M18 15v6M15 18h6"></path></svg>Items<span class="mono" style="margin-left: auto; font-size: 11px; color: var(--muted)">11 · 31</span></a>
+    <a href="Shelf.dc.html" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><svg class="ic" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5M9 13h6M9 17h4"></path></svg>Shelf<span class="mono" style="margin-left: auto; font-size: 11px; color: var(--muted)">4 new</span></a>
+    <a href="Files.dc.html" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><svg class="ic" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>Files</a>
+    <a href="Terminal.dc.html" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 9l3 3-3 3M13 15h4"></path></svg>Terminal<span class="mono" style="margin-left: auto; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted)"><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--leaf)"></span>3 tabs</span></a>
+  </div>
+
+  <div style="display: flex; flex-direction: column">
+    <div style="display: flex; align-items: center; justify-content: space-between; font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 0 8px; margin-bottom: 3px">Scratch<span class="mono" style="letter-spacing: 0; text-transform: none; font-weight: 500">/new</span></div>
+    <a href="Commands.dc.html" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><svg class="ic" viewBox="0 0 24 24" style="width: 14px; height: 14px; color: var(--muted); stroke-dasharray: 3 2.4"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"></path></svg>flight-path / scratch-1<span class="hex pulse" style="margin-left: auto; width: 8px; height: 9.2px; background: var(--work)"></span></a>
+  </div>
+
+  <div style="display: flex; flex-direction: column">
+    <div style="font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 0 8px; margin-bottom: 3px">Channels</div>
+    <a href="#" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink); font-weight: 650; text-decoration: none; font-size: 13.5px"><span style="width: 14px; text-align: center; color: var(--faint); font-weight: 500">#</span>announcements<span style="margin-left: auto; width: 6px; height: 6px; border-radius: 50%; background: var(--ink)"></span></a>
+    <a href="#" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><span style="width: 14px; text-align: center; color: var(--faint); font-weight: 500">#</span>design</a>
+    <a href="#" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><span style="width: 14px; text-align: center; color: var(--faint); font-weight: 500">#</span>engineering<span class="mono" style="margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600; color: var(--honey-ink)"><span class="hex pulse" style="width: 8px; height: 9.2px; background: var(--work)"></span>2</span></a>
+    <a href="#" aria-current="page" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; background: var(--card); box-shadow: 0 0 0 1px var(--line); color: var(--ink); font-weight: 650; text-decoration: none; font-size: 13.5px"><span style="width: 14px; text-align: center; color: var(--faint); font-weight: 500">#</span>flight-path<span class="mono" style="margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600; color: var(--coral-ink)"><span class="hex" style="width: 8px; height: 9.2px; background: var(--need)"></span>1</span></a>
+    <a href="#" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><span style="width: 14px; text-align: center; color: var(--faint); font-weight: 500">#</span>mobile<span class="hex pulse" style="margin-left: auto; width: 8px; height: 9.2px; background: var(--work)"></span></a>
+    <a href="#" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><span style="width: 14px; text-align: center; color: var(--faint); font-weight: 500">#</span>pipelines<span class="hex pulse" style="margin-left: auto; width: 8px; height: 9.2px; background: var(--work)"></span></a>
+  </div>
+
+  <div style="display: flex; flex-direction: column">
+    <div style="font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 0 8px; margin-bottom: 3px">Direct messages</div>
+    <a href="Preview.dc.html" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink); font-weight: 650; text-decoration: none; font-size: 13.5px"><span class="hex" style="width: 18px; height: 20.8px; background: var(--ring-idle); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 14px; height: 16.2px; background: #24231F; color: #F6F1E4; display: grid; place-items: center; font-size: 6px; font-weight: 600">GF</span></span>Gilfoyle<span class="mono" style="margin-left: auto; min-width: 18px; height: 18px; box-sizing: border-box; border-radius: 9px; background: var(--btn); color: var(--btn-ink); font-size: 10.5px; font-weight: 600; line-height: 18px; text-align: center; padding: 0 5px">1</span></a>
+    <a href="#" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><span class="hex" style="width: 18px; height: 20.8px; background: var(--work); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 14px; height: 16.2px; background: #243449; color: #F6F1E4; display: grid; place-items: center; font-size: 6px; font-weight: 600">LN</span></span>Lord Nikon</a>
+    <a href="#" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><span class="hex" style="width: 18px; height: 20.8px; background: var(--ring-idle); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 14px; height: 16.2px; background: #22303A; color: #F6F1E4; display: grid; place-items: center; font-size: 6px; font-weight: 600">ES</span></span>ESP32</a>
+  </div>
+
+  <!-- vitals -->
+  <a href="Vitals.dc.html" aria-label="Vitals: Claude usage and crichton" style="margin-top: auto; display: block; text-decoration: none; color: var(--ink); background: var(--vit); border-radius: 10px; padding: 10px 10px 11px">
+    <div style="display: flex; align-items: center; justify-content: space-between"><span style="font-size: 10.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--muted)">Claude</span><span class="mono" style="font-size: 10.5px; color: var(--muted)">2 accounts</span></div>
+    <div class="mono" style="display: grid; grid-template-columns: minmax(0, 1fr) 30px; align-items: center; gap: 8px; margin-top: 7px; font-size: 10.5px">
+      <span style="position: relative; height: 4px; border-radius: 2px; background: var(--line2)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 55%; border-radius: 2px; background: var(--ink)"></span></span>
+      <span style="text-align: right">55%</span>
+    </div>
+    <div class="mono" style="margin-top: 4px; font-size: 10.5px; color: var(--muted)">45% free · <b style="color: var(--ink); font-weight: 600">~2h 50m</b> of active use</div>
+    <div style="height: 1px; background: var(--line2); margin: 10px 0 9px"></div>
+    <div style="display: flex; align-items: center; justify-content: space-between"><span style="font-size: 10.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--muted)">crichton</span><span class="mono" style="display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--muted)"><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--leaf)"></span>ok</span></div>
+    <div class="mono" style="display: grid; grid-template-columns: 34px minmax(0, 1fr) 30px; align-items: center; gap: 6px 8px; margin-top: 7px; font-size: 10.5px">
+      <span style="color: var(--muted)">CPU</span><span style="position: relative; height: 3px; border-radius: 2px; background: var(--line2)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 38%; border-radius: 2px; background: var(--ink2)"></span></span><span style="text-align: right">38%</span>
+      <span style="color: var(--muted)">GPU</span><span style="position: relative; height: 3px; border-radius: 2px; background: var(--line2)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 71%; border-radius: 2px; background: var(--work)"></span></span><span style="text-align: right">71%</span>
+      <span style="color: var(--muted)">Mem</span><span style="position: relative; height: 3px; border-radius: 2px; background: var(--line2)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 64%; border-radius: 2px; background: var(--ink2)"></span></span><span style="text-align: right">64%</span>
+      <span style="color: var(--muted)">Disk</span><span style="position: relative; height: 3px; border-radius: 2px; background: var(--line2)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 62%; border-radius: 2px; background: var(--ink2)"></span></span><span style="text-align: right">62%</span>
+    </div>
+  </a>
+</nav>
+
+<!-- ═════════ MAIN COLUMN ═════════ -->
+<main style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg)">
+  <header style="display: flex; align-items: center; gap: 12px; min-height: 58px; box-sizing: border-box; padding: 10px 20px; border-bottom: 1px solid var(--line)">
+    <div style="font-size: 17px; font-weight: 720; letter-spacing: -.02em; white-space: nowrap"><span style="color: var(--faint); font-weight: 500">#</span> flight-path</div>
+    <div class="ell" style="font-size: 12.5px; color: var(--muted); min-width: 0"><span style="color: var(--line2); margin-right: 8px">|</span>Product · capture plan for the desktop-to-mobile handoff</div>
+    <div style="margin-left: auto; display: flex; align-items: center; gap: 6px; flex-shrink: 0">
+      <div style="display: flex; align-items: center; height: 32px; box-sizing: border-box; padding: 0 10px 0 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--card)">
+        <span style="width: 22px; height: 22px; border-radius: 50%; background: var(--human); color: var(--human-ink); display: grid; place-items: center; font-size: 9px; font-weight: 650; box-shadow: 0 0 0 2px var(--card)">S</span>
+        <span class="hex" style="margin-left: -5px; width: 22px; height: 25.4px; background: var(--card); display: grid; place-items: center"><span class="hex mono" style="width: 18px; height: 20.8px; background: #24231F; color: #F6F1E4; display: grid; place-items: center; font-size: 7px; font-weight: 600">GF</span></span>
+        <span class="hex" style="margin-left: -5px; width: 22px; height: 25.4px; background: var(--card); display: grid; place-items: center"><span class="hex mono" style="width: 18px; height: 20.8px; background: #243449; color: #F6F1E4; display: grid; place-items: center; font-size: 7px; font-weight: 600">LN</span></span>
+        <span class="hex" style="margin-left: -5px; width: 22px; height: 25.4px; background: var(--card); display: grid; place-items: center"><span class="hex mono" style="width: 18px; height: 20.8px; background: #452536; color: #F6F1E4; display: grid; place-items: center; font-size: 7px; font-weight: 600">AB</span></span>
+        <span style="margin-left: 8px; font-size: 12.5px; font-weight: 650">4</span>
+        <span class="mono" style="margin-left: 6px; font-size: 11px; color: var(--muted)">3 agents</span>
+      </div>
+      <button aria-label="Start huddle" style="width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 9px; color: var(--ink2); background: var(--card); padding: 0"><svg class="ic" viewBox="0 0 24 24"><path d="M3 14v-2a9 9 0 0 1 18 0v2"></path><path d="M21 16a2 2 0 0 1-2 2h-1v-6h1a2 2 0 0 1 2 2zM3 16a2 2 0 0 0 2 2h1v-6H5a2 2 0 0 0-2 2z"></path></svg></button>
+      <button aria-label="Channel settings" style="width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 9px; color: var(--ink2); background: var(--card); padding: 0"><svg class="ic" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg></button>
+    </div>
+  </header>
+
+  <div style="flex-grow: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; padding: 6px 20px 12px">
+    <div class="mono" style="display: flex; align-items: center; gap: 10px; margin: 4px 0 6px; font-size: 10.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--honey-ink)"><span style="width: 36px; height: 1px; background: var(--work)"></span>New<span style="flex-grow: 1; height: 1px; background: var(--work)"></span></div>
+
+    <div style="display: grid; grid-template-columns: 36px minmax(0, 1fr); column-gap: 12px; padding: 6px 0">
+      <span style="width: 36px; height: 36px; border-radius: 50%; background: var(--human); color: var(--human-ink); display: grid; place-items: center; font-weight: 650; font-size: 13px">S</span>
+      <div>
+        <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px"><b style="font-weight: 680">Sam</b><span class="mono" style="font-size: 11px; color: var(--muted)">3:24 PM</span></div>
+        <div style="font-size: 14.5px; line-height: 1.52"><span style="display: inline-flex; align-items: center; gap: 4px; padding: 0 6px 0 5px; border-radius: 6px; background: var(--chip); font-weight: 620"><span class="hex" style="width: 9px; height: 10.4px; background: var(--ink2)"></span>Gilfoyle</span> turn the handoff notes into a three-beat capture plan and hand it off.</div>
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 36px minmax(0, 1fr); column-gap: 12px; padding: 6px 0">
+      <div style="display: flex; flex-direction: column; align-items: center">
+        <span class="hex" style="width: 36px; height: 41.6px; background: var(--ring-idle); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 30px; height: 34.6px; background: #24231F; color: #F6F1E4; display: grid; place-items: center; font-size: 10px; font-weight: 600">GF</span></span>
+        <span style="flex-grow: 1; width: 0; border-left: 2px dashed var(--work); opacity: .7; margin: 4px 0"></span>
+      </div>
+      <div style="min-width: 0">
+        <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px"><b style="font-weight: 680">Gilfoyle</b><span class="mono" style="align-self: center; font-size: 9.5px; font-weight: 600; letter-spacing: .06em; color: var(--muted); border: 1px solid var(--line2); border-radius: 4px; padding: 0 4px; line-height: 15px">AGENT</span><span class="mono" style="font-size: 11px; color: var(--muted)">3:25 PM</span></div>
+        <div style="font-size: 14.5px; line-height: 1.52">Three beats. Beat 01 is already captured.</div>
+        <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 8px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--card)">
+          <div style="padding: 12px 14px 13px">
+            <div class="mono" style="display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; color: var(--muted)">BEAT 01<span style="display: inline-flex; align-items: center; gap: 4px; font-size: 10px; letter-spacing: .02em; border-radius: 999px; padding: 1px 7px; background: var(--leaf-soft); color: var(--leaf-ink)"><svg class="ic" viewBox="0 0 24 24" style="width: 11px; height: 11px; stroke-width: 2.6"><path d="M20 6 9 17l-5-5"></path></svg>Captured</span></div>
+            <div style="font-size: 14px; font-weight: 680; margin: 6px 0 6px">Desktop compose</div>
+            <div style="font-size: 13px; color: var(--ink2); line-height: 1.45">Start on the project view, one clean cursor move into the update field.</div>
+          </div>
+          <div style="padding: 10px 14px 13px; border-left: 1px solid var(--line); border-top: 2px solid var(--work); background: var(--honey-wash)">
+            <div class="mono" style="display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; color: var(--muted)">BEAT 02<span style="font-size: 10px; letter-spacing: .02em; border-radius: 999px; padding: 1px 7px; background: var(--honey-soft); color: var(--honey-ink)">Lord Nikon · now</span></div>
+            <div style="font-size: 14px; font-weight: 680; margin: 6px 0 6px">Project header settle</div>
+            <div style="font-size: 13px; color: var(--ink2); line-height: 1.45">Hold on the header for a half beat so the context change reads.</div>
+          </div>
+          <div style="padding: 12px 14px 13px; border-left: 1px solid var(--line)">
+            <div class="mono" style="display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; color: var(--muted)">BEAT 03<span style="font-size: 10px; letter-spacing: .02em; border-radius: 999px; padding: 1px 7px; background: var(--chip); color: var(--muted)">Queued</span></div>
+            <div style="font-size: 14px; font-weight: 680; margin: 6px 0 6px">Mobile handoff / sent</div>
+            <div style="font-size: 13px; color: var(--ink2); line-height: 1.45">Cut to mobile. Let the sent message land and hold one extra beat.</div>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px; margin-top: 10px; padding: 8px 12px 8px 10px; border-radius: 12px; background: var(--honey-wash); border: 1px solid var(--honey-line); max-width: 620px">
+          <span class="mono" style="display: inline-flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 650; letter-spacing: .1em; color: var(--honey-ink)"><svg class="ic" viewBox="0 0 24 24" style="width: 15px; height: 15px"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>HANDOFF</span>
+          <b style="font-size: 13.5px; font-weight: 680">Lord Nikon</b>
+          <span style="font-size: 13.5px; color: var(--ink2)">final capture pass</span>
+          <span class="mono" style="margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--honey-ink); white-space: nowrap"><span class="hex pulse" style="width: 8px; height: 9.2px; background: var(--work)"></span>Accepted · working</span>
+        </div>
+
+        <div style="margin-top: 10px; max-width: 620px">
+          <button style="display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px 0 4px; border: 0; border-radius: 6px; background: transparent; color: var(--blue-ink); font-size: 12.5px; font-weight: 600"><svg class="ic" viewBox="0 0 24 24" style="width: 14px; height: 14px"><path d="m6 9 6 6 6-6"></path></svg>2 replies<span class="mono" style="font-size: 11px; font-weight: 500; color: var(--muted)">· last 3:29 PM</span></button>
+          <div style="margin: 4px 0 0 10px; padding-left: 14px; border-left: 2px solid var(--line2); display: flex; flex-direction: column; gap: 8px">
+            <div style="display: flex; gap: 9px; align-items: flex-start">
+              <span style="width: 20px; height: 20px; border-radius: 50%; background: var(--human); color: var(--human-ink); display: grid; place-items: center; font-size: 9px; font-weight: 650; flex-shrink: 0">S</span>
+              <div style="font-size: 13.5px; line-height: 1.45"><b style="font-weight: 650">Sam</b> <span class="mono" style="font-size: 10.5px; color: var(--muted)">3:27 PM</span><br>Beat 02 feels right. Keep the cursor move slow.</div>
+            </div>
+            <div style="display: flex; gap: 9px; align-items: flex-start">
+              <span class="hex" style="width: 20px; height: 23px; background: var(--work); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 16px; height: 18.5px; background: #243449; color: #F6F1E4; display: grid; place-items: center; font-size: 6.5px; font-weight: 600">LN</span></span>
+              <div style="font-size: 13.5px; line-height: 1.45"><b style="font-weight: 650">Lord Nikon</b> <span class="mono" style="font-size: 10.5px; color: var(--muted)">3:29 PM</span><br>Slowed it to 600 ms. Re-capturing beat 02 now.</div>
+            </div>
+            <div style="height: 30px; box-sizing: border-box; border: 1px solid var(--line); border-radius: 8px; background: var(--card); display: flex; align-items: center; padding: 0 10px; font-size: 12.5px; color: var(--muted)">Reply in thread…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="position: relative; display: grid; grid-template-columns: 36px minmax(0, 1fr); column-gap: 12px; padding: 8px 10px; margin: 8px -10px 0; border-radius: 10px; background: var(--coral-wash)">
+      <div role="toolbar" aria-label="Message actions" style="position: absolute; right: 10px; top: -16px; display: flex; align-items: center; gap: 1px; padding: 3px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 18px -10px var(--shadow)">
+        <button aria-label="Add reaction" style="width: 30px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--ink2); display: grid; place-items: center; padding: 0"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0M9 9.5h.01M15 9.5h.01"></path></svg></button>
+        <button aria-label="Reply in thread" style="width: 30px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--ink2); display: grid; place-items: center; padding: 0"><svg class="ic" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"></path></svg></button>
+        <span style="width: 1px; height: 18px; background: var(--line); margin: 0 3px"></span>
+        <button title="Send to Feedback: reply later, with an AI summary" style="height: 28px; border: 0; border-radius: 7px; background: var(--chip); color: var(--ink); display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; font-size: 12px; font-weight: 650"><svg class="ic" viewBox="0 0 24 24" style="width: 14px; height: 14px"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path></svg>Feedback</button>
+        <button aria-label="More actions" style="width: 30px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--ink2); display: grid; place-items: center; padding: 0"><svg class="ic" viewBox="0 0 24 24"><path d="M5 12h.01M12 12h.01M19 12h.01"></path></svg></button>
+      </div>
+      <span class="hex" style="width: 36px; height: 41.6px; background: var(--need); display: grid; place-items: center"><span class="hex mono" style="width: 30px; height: 34.6px; background: #243449; color: #F6F1E4; display: grid; place-items: center; font-size: 10px; font-weight: 600">LN</span></span>
+      <div>
+        <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px"><b style="font-weight: 680">Lord Nikon</b><span class="mono" style="align-self: center; font-size: 9.5px; font-weight: 600; letter-spacing: .06em; color: var(--muted); border: 1px solid var(--line2); border-radius: 4px; padding: 0 4px; line-height: 15px">AGENT</span><span class="mono" style="font-size: 11px; color: var(--muted)">3:30 PM</span><span style="font-size: 12px; color: var(--coral-ink); font-weight: 600">needs you</span></div>
+        <div style="font-size: 14.5px; line-height: 1.52">Header settle is in. For beat 03, trim the sent-message hold to 1.5s, or keep 2s?</div>
+        <div style="display: flex; align-items: center; gap: 6px; margin-top: 8px">
+          <button style="height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--btn); background: var(--btn); color: var(--btn-ink); font-size: 12.5px; font-weight: 600">Trim to 1.5s</button>
+          <button style="height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line2); background: var(--card); color: var(--ink2); font-size: 12.5px; font-weight: 600">Keep 2s</button>
+          <button style="height: 30px; padding: 0 12px; border-radius: 8px; border: 1px dashed var(--line2); background: transparent; color: var(--muted); font-size: 12.5px; font-weight: 600">Something else…</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="padding: 0 20px 14px">
+    <div style="border: 1px solid var(--line2); border-radius: 14px; background: var(--card); box-shadow: 0 12px 24px -18px var(--shadow)">
+      <div style="padding: 13px 14px 4px; color: var(--muted); font-size: 14.5px; display: flex; align-items: center"><span style="width: 1.5px; height: 18px; background: var(--ink); margin-right: 2px"></span>Message #flight-path</div>
+      <div style="display: flex; align-items: center; gap: 2px; padding: 4px 8px 8px">
+        <button aria-label="Mention" style="width: 30px; height: 30px; display: grid; place-items: center; border-radius: 7px; border: 0; background: transparent; color: var(--muted); padding: 0"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"></circle><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"></path></svg></button>
+        <button aria-label="Attach file" style="width: 30px; height: 30px; display: grid; place-items: center; border-radius: 7px; border: 0; background: transparent; color: var(--muted); padding: 0"><svg class="ic" viewBox="0 0 24 24"><path d="m21 11-8.6 8.6a5 5 0 0 1-7-7l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4L16 7"></path></svg></button>
+        <button aria-label="Commands" style="width: 30px; height: 30px; display: grid; place-items: center; border-radius: 7px; border: 0; background: transparent; color: var(--muted); padding: 0"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="4"></rect><path d="m14 7-4 10"></path></svg></button>
+        <span style="margin-left: 6px; font-size: 12px; color: var(--muted); white-space: nowrap">Type <span class="mono" style="font-size: 11px; font-weight: 600; color: var(--ink2); background: var(--chip); border-radius: 4px; padding: 0 4px">/</span> for commands · <span class="mono" style="font-size: 11px; font-weight: 600; color: var(--ink2); background: var(--chip); border-radius: 4px; padding: 0 4px">@</span> to hand work to a seat</span>
+        <button aria-label="Send" style="margin-left: auto; width: 32px; height: 32px; border-radius: 9px; border: 0; background: var(--btn); color: var(--btn-ink); display: grid; place-items: center; padding: 0"><svg class="ic" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"></path></svg></button>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px; padding: 9px 4px 0; font-size: 12.5px; color: var(--ink2)">
+      <span class="hex" style="width: 18px; height: 20.8px; background: var(--work); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 14px; height: 16.2px; background: #243449; color: #F6F1E4; display: grid; place-items: center; font-size: 6px; font-weight: 600">LN</span></span>
+      <span><b style="font-weight: 650">Lord Nikon</b> is re-capturing beat 02</span>
+      <span style="display: inline-flex; gap: 3px"><span class="pulse" style="width: 4px; height: 4px; border-radius: 50%; background: var(--work)"></span><span class="pulse" style="width: 4px; height: 4px; border-radius: 50%; background: var(--work)"></span><span class="pulse" style="width: 4px; height: 4px; border-radius: 50%; background: var(--work)"></span></span>
+      <span class="mono" style="margin-left: auto; font-size: 11px; color: var(--muted)">1m 40s</span>
+    </div>
+  </div>
+</main>
+
+<!-- ═════════ WORK RAIL ═════════ -->
+<aside aria-label="Work" style="width: 380px; flex-shrink: 0; box-sizing: border-box; background: var(--rail); border-left: 1px solid var(--line); padding: 14px 14px 14px; display: flex; flex-direction: column; gap: 12px; overflow: hidden">
+  <div style="display: flex; align-items: center; justify-content: space-between">
+    <div style="font-size: 16px; font-weight: 720; letter-spacing: -.01em">Work</div>
+    <div style="display: flex; padding: 2px; border-radius: 9px; background: var(--chip)">
+      <button aria-pressed="true" style="height: 26px; padding: 0 10px; border: 0; border-radius: 7px; background: var(--card); box-shadow: 0 1px 2px rgba(0,0,0,.12); color: var(--ink); font-size: 12px; font-weight: 600">Everywhere</button>
+      <button aria-pressed="false" style="height: 26px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 600">This channel</button>
+    </div>
+  </div>
+
+  <!-- NEEDS YOU (approvals, asks, feedback) -->
+  <section style="display: flex; flex-direction: column; gap: 7px">
+    <button aria-expanded="true" style="display: flex; align-items: center; gap: 7px; height: 22px; padding: 0 2px; border: 0; background: transparent; color: var(--coral-ink); font-size: 10.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; text-align: left"><svg class="ic" viewBox="0 0 24 24" style="width: 12px; height: 12px"><path d="m6 9 6 6 6-6"></path></svg><span class="hex" style="width: 10px; height: 11.5px; background: var(--need)"></span>Needs you<span class="mono" style="letter-spacing: 0">8</span><span class="mono" style="margin-left: auto; font-size: 10.5px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--muted)">2 overdue</span></button>
+    <div style="display: flex; gap: 4px">
+      <button aria-pressed="true" style="height: 24px; padding: 0 9px; border-radius: 999px; border: 0; background: var(--btn); color: var(--btn-ink); font-size: 11.5px; font-weight: 650">All 8</button>
+      <button aria-pressed="false" style="height: 24px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--ink2); font-size: 11.5px; font-weight: 600">Approvals 2</button>
+      <button aria-pressed="false" style="height: 24px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--ink2); font-size: 11.5px; font-weight: 600">Asks 3</button>
+      <button aria-pressed="false" style="height: 24px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--ink2); font-size: 11.5px; font-weight: 600">Feedback 3</button>
+    </div>
+    <div style="background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden">
+      <div style="padding: 10px 12px 11px; background: var(--sunk); border-bottom: 1px solid var(--line)">
+        <div style="display: flex; align-items: center; gap: 9px">
+          <span class="hex" style="width: 20px; height: 23px; background: var(--need); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 16px; height: 18.5px; background: #2A2A33; color: #F6F1E4; display: grid; place-items: center; font-size: 6.5px; font-weight: 600">CK</span></span>
+          <span class="ell" style="font-size: 13px; font-weight: 650; min-width: 0">Merge fix(web): clamp jitter calibration</span>
+          <span class="mono" style="margin-left: auto; font-size: 10.5px; color: var(--muted)">6m</span>
+        </div>
+        <div class="mono" style="margin: 3px 0 0 29px; font-size: 10.5px; color: var(--muted)"><span style="font-weight: 650; letter-spacing: .06em; color: var(--coral-ink)">APPROVAL</span> · #engineering · tests green</div>
+        <div style="display: flex; gap: 6px; margin: 9px 0 0 29px">
+          <button style="height: 28px; padding: 0 12px; border-radius: 7px; border: 1px solid var(--btn); background: var(--btn); color: var(--btn-ink); font-size: 12px; font-weight: 600">Approve</button>
+          <button style="height: 28px; padding: 0 12px; border-radius: 7px; border: 1px solid var(--line2); background: var(--card); color: var(--ink2); font-size: 12px; font-weight: 600">Review diff</button>
+          <button aria-label="Send to Feedback" style="width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--line2); background: var(--card); color: var(--muted); display: grid; place-items: center; padding: 0"><svg class="ic" viewBox="0 0 24 24" style="width: 13px; height: 13px"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path></svg></button>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 9px; padding: 8px 12px; border-bottom: 1px solid var(--line)">
+        <span class="hex" style="width: 20px; height: 23px; background: var(--work); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 16px; height: 18.5px; background: #243449; color: #F6F1E4; display: grid; place-items: center; font-size: 6.5px; font-weight: 600">LN</span></span>
+        <div style="min-width: 0; flex-grow: 1"><div class="ell" style="font-size: 13px">Beat 03 hold: 1.5s or keep 2s?</div><div class="mono" style="font-size: 10.5px; color: var(--muted)"><span style="font-weight: 650; letter-spacing: .06em; color: var(--blue-ink)">ASK</span> · #flight-path</div></div>
+        <span class="mono" style="font-size: 10.5px; color: var(--muted)">now</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 9px; padding: 8px 12px; border-bottom: 1px solid var(--line)">
+        <span class="hex" style="width: 20px; height: 23px; background: var(--ring-idle); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 16px; height: 18.5px; background: #24231F; color: #F6F1E4; display: grid; place-items: center; font-size: 6.5px; font-weight: 600">GF</span></span>
+        <div style="min-width: 0; flex-grow: 1"><div class="ell" style="font-size: 13px">Run Sol max on 1–2 more builds before 10/8?</div><div class="mono" style="font-size: 10.5px; color: var(--muted)"><span style="font-weight: 650; letter-spacing: .06em; color: var(--blue-ink)">ASK</span> · yes/no · DM</div></div>
+        <span class="mono" style="font-size: 10.5px; color: var(--muted)">38m</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 9px; padding: 8px 12px; border-bottom: 1px solid var(--line)">
+        <span style="width: 20px; height: 20px; border-radius: 6px; background: var(--chip); color: var(--ink2); display: grid; place-items: center; flex-shrink: 0"><svg class="ic" viewBox="0 0 24 24" style="width: 12px; height: 12px"><circle cx="6" cy="6" r="2.5"></circle><circle cx="18" cy="18" r="2.5"></circle><path d="M6 8.5V14a4 4 0 0 0 4 4h5.5"></path></svg></span>
+        <div style="min-width: 0; flex-grow: 1"><div class="ell" style="font-size: 13px">nightly-backup: approve the prune step</div><div class="mono" style="font-size: 10.5px; color: var(--muted)"><span style="font-weight: 650; letter-spacing: .06em; color: var(--coral-ink)">APPROVAL</span> · workflow · #ops</div></div>
+        <span class="mono" style="font-size: 10.5px; color: var(--muted)">1h</span>
+      </div>
+      <div style="display: flex; align-items: flex-start; gap: 9px; padding: 9px 12px; border-bottom: 1px solid var(--line)">
+        <span style="width: 20px; height: 20px; border-radius: 50%; background: var(--coral-soft); color: var(--coral-ink); display: grid; place-items: center; flex-shrink: 0; margin-top: 1px"><svg class="ic" viewBox="0 0 24 24" style="width: 11px; height: 11px"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path></svg></span>
+        <div style="min-width: 0; flex-grow: 1"><div class="ell" style="font-size: 13px"><span class="mono" style="font-size: 9.5px; font-weight: 650; color: var(--muted); background: var(--chip); border-radius: 3px; padding: 0 4px; margin-right: 5px">AI</span>XiaoZhi firmware is running; pick a wake word before audio tuning</div><div class="mono" style="font-size: 10.5px; color: var(--muted)"><span style="font-weight: 650; letter-spacing: .06em">FEEDBACK</span> · ESP32 · <span style="color: var(--coral-ink); font-weight: 600">6d overdue</span></div></div>
+      </div>
+      <div style="display: flex; align-items: flex-start; gap: 9px; padding: 9px 12px; border-bottom: 1px solid var(--line)">
+        <span style="width: 20px; height: 20px; border-radius: 50%; background: var(--coral-soft); color: var(--coral-ink); display: grid; place-items: center; flex-shrink: 0; margin-top: 1px"><svg class="ic" viewBox="0 0 24 24" style="width: 11px; height: 11px"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path></svg></span>
+        <div style="min-width: 0; flex-grow: 1"><div class="ell" style="font-size: 13px"><span class="mono" style="font-size: 9.5px; font-weight: 650; color: var(--muted); background: var(--chip); border-radius: 3px; padding: 0 4px; margin-right: 5px">AI</span>106-folder inventory; wants a yes on deleting zombie repos</div><div class="mono" style="font-size: 10.5px; color: var(--muted)"><span style="font-weight: 650; letter-spacing: .06em">FEEDBACK</span> · Gilfoyle · <span style="color: var(--coral-ink); font-weight: 600">12h overdue</span></div></div>
+      </div>
+      <button style="width: 100%; height: 32px; border: 0; background: transparent; color: var(--blue-ink); font-size: 12px; font-weight: 600; text-align: left; padding: 0 12px">Show 2 more</button>
+    </div>
+  </section>
+
+  <!-- RUNNING -->
+  <section style="display: flex; flex-direction: column; gap: 6px">
+    <button aria-expanded="true" style="display: flex; align-items: center; gap: 7px; height: 22px; padding: 0 2px; border: 0; background: transparent; color: var(--honey-ink); font-size: 10.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; text-align: left"><svg class="ic" viewBox="0 0 24 24" style="width: 12px; height: 12px"><path d="m6 9 6 6 6-6"></path></svg><span class="hex pulse" style="width: 10px; height: 11.5px; background: var(--work)"></span>Running<span class="mono" style="letter-spacing: 0">4</span></button>
+    <div style="background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden">
+      <div style="display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 12px; border-bottom: 1px solid var(--line)">
+        <span class="hex" style="width: 18px; height: 20.8px; background: var(--work); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 14px; height: 16.2px; background: #243449; color: #F6F1E4; display: grid; place-items: center; font-size: 6px; font-weight: 600">LN</span></span>
+        <span class="ell" style="font-size: 13px; min-width: 0; flex-grow: 1"><b style="font-weight: 650">Lord Nikon</b> <span style="color: var(--muted)">capture pass · #flight-path</span></span>
+        <span style="display: flex; gap: 2px; flex-shrink: 0"><span style="width: 10px; height: 4px; border-radius: 2px; background: var(--ink2)"></span><span class="pulse" style="width: 10px; height: 4px; border-radius: 2px; background: var(--work)"></span><span style="width: 10px; height: 4px; border-radius: 2px; background: var(--line2)"></span></span>
+        <span class="mono" style="width: 42px; text-align: right; font-size: 10.5px; color: var(--muted)">1m 40s</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 12px; border-bottom: 1px solid var(--line)">
+        <span class="hex" style="width: 18px; height: 20.8px; background: var(--work); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 14px; height: 16.2px; background: #452536; color: #F6F1E4; display: grid; place-items: center; font-size: 6px; font-weight: 600">AB</span></span>
+        <span class="ell" style="font-size: 13px; min-width: 0; flex-grow: 1"><b style="font-weight: 650">Acid Burn</b> <span style="color: var(--muted)">jitter buffer QA · #engineering</span></span>
+        <span class="mono" style="width: 42px; text-align: right; font-size: 10.5px; color: var(--muted)">12m</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 12px; border-bottom: 1px solid var(--line)">
+        <span class="hex" style="width: 18px; height: 20.8px; background: var(--work); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 14px; height: 16.2px; background: #2F3524; color: #F6F1E4; display: grid; place-items: center; font-size: 6px; font-weight: 600">JD</span></span>
+        <span class="ell" style="font-size: 13px; min-width: 0; flex-grow: 1"><b style="font-weight: 650">Jared Dunn</b> <span style="color: var(--muted)">YouTube → Thunk · 4 of 7</span></span>
+        <span class="mono" style="width: 42px; text-align: right; font-size: 10.5px; color: var(--muted)">3m</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 12px">
+        <span class="hex" style="width: 18px; height: 20.8px; background: var(--work); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 14px; height: 16.2px; background: #3A2E22; color: #F6F1E4; display: grid; place-items: center; font-size: 6px; font-weight: 600">CO</span></span>
+        <span class="ell" style="font-size: 13px; min-width: 0; flex-grow: 1"><b style="font-weight: 650">Crash Override</b> <span style="color: var(--muted)">TestFlight build · #mobile</span></span>
+        <span class="mono" style="width: 42px; text-align: right; font-size: 10.5px; color: var(--muted)">7m</span>
+      </div>
+    </div>
+  </section>
+
+  <button aria-expanded="false" style="display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px 0 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--muted); font-size: 10.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; text-align: left"><svg class="ic" viewBox="0 0 24 24" style="width: 12px; height: 12px"><path d="m9 6 6 6-6 6"></path></svg><span class="hex" style="width: 10px; height: 11.5px; background: var(--hex-idle)"></span>Queued<span class="mono" style="letter-spacing: 0; color: var(--ink)">6</span><span class="ell" style="margin-left: auto; font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none">next: Beat 03 → Lord Nikon</span></button>
+  <button aria-expanded="false" style="display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px 0 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--muted); font-size: 10.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; text-align: left"><svg class="ic" viewBox="0 0 24 24" style="width: 12px; height: 12px"><path d="m9 6 6 6-6 6"></path></svg><svg class="ic" viewBox="0 0 24 24" style="width: 12px; height: 12px; color: var(--leaf)"><path d="M20 6 9 17l-5-5"></path></svg>Done today<span class="mono" style="letter-spacing: 0; color: var(--ink)">12</span><span class="ell" style="margin-left: auto; font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none">last: Beat 01 captured</span></button>
+</aside>
+
+<!-- toast, top-right (where toasts sit today) -->
+<div role="status" style="position: absolute; right: 16px; top: 66px; width: 348px; box-sizing: border-box; background: var(--card); border: 1px solid var(--line2); border-radius: 12px; box-shadow: 0 18px 40px -18px var(--shadow), 0 4px 10px -6px var(--shadow); overflow: hidden">
+  <div style="display: flex; gap: 10px; padding: 11px 12px 10px">
+    <span style="width: 24px; height: 24px; border-radius: 50%; background: var(--leaf-soft); color: var(--leaf-ink); display: grid; place-items: center; flex-shrink: 0"><svg class="ic" viewBox="0 0 24 24" style="width: 14px; height: 14px; stroke-width: 2.4"><path d="M20 6 9 17l-5-5"></path></svg></span>
+    <div style="min-width: 0; flex-grow: 1">
+      <div style="font-size: 13px"><b style="font-weight: 650">Acid Burn</b> finished jitter buffer QA</div>
+      <div class="mono" style="font-size: 11px; color: var(--muted); margin-top: 1px">#engineering · 212 passed · 0 failed</div>
+      <div style="display: flex; gap: 6px; margin-top: 8px">
+        <button style="height: 26px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--line2); background: var(--card); color: var(--ink); font-size: 12px; font-weight: 600">Open</button>
+        <button style="height: 26px; padding: 0 10px; border-radius: 7px; border: 0; background: transparent; color: var(--muted); font-size: 12px; font-weight: 600">Dismiss</button>
+      </div>
+    </div>
+    <button aria-label="Close notification" style="width: 24px; height: 24px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); display: grid; place-items: center; padding: 0"><svg class="ic" viewBox="0 0 24 24" style="width: 13px; height: 13px"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
+  </div>
+  <div style="height: 2px; background: var(--line)"><div style="width: 62%; height: 2px; background: var(--leaf)"></div></div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"$preview":{"width":1440,"height":960}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { themeClass: (this.props.theme ?? 'dark') === 'dark' ? 'dark' : '' };
+  }
+}
+</script>
+</body>
+</html>

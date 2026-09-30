@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Buzz: Terminal</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI','Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased}
+.mono{font-family:ui-monospace,'SF Mono',SFMono-Regular,Menlo,monospace}
+.hex{clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
+.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.ell{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.term>div{white-space:pre;min-height:1.65em}
+.pulse{animation:pulse 2.2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.55}}
+@media (prefers-reduced-motion:reduce){.pulse{animation:none}}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer}
+.th{--bg:#FDFCF9;--side:#F2EFE8;--rail:#F7F5F0;--card:#FFFFFF;--sunk:#F7F5F0;--chip:#F2EFE8;--ink:#1B1A16;--ink2:#45423B;--muted:#6B655A;--faint:#A7A194;--line:#E6E2D8;--line2:#D6D1C5;--sel:#EFEBE2;--vit:#E8E4DA;--work:#EBA21A;--work-ink:#1B1A16;--need:#E0553A;--need-ink:#FFFFFF;--honey-ink:#7F5200;--coral-ink:#A2301A;--leaf:#2E9A68;--leaf-ink:#1C6644;--blue-ink:#1F4E8C;--ring-idle:#D5D0C4;--btn:#1B1A16;--btn-ink:#FDFCF9;--human:#CFE3D3;--human-ink:#33291F;--term:#FBFAF7;--term-ink:#1F1E1B;--term-dim:#7A756B;--term-add:#E6F3EA;--term-add-ink:#1C6644;--term-hl:#1F4E8C;--term-warn:#9A5B00;--term-tab:#EFECE4}
+.th.dark{--bg:#141414;--side:#181818;--rail:#171717;--card:#1D1D1D;--sunk:#191919;--chip:#262626;--ink:#E7E5E1;--ink2:#BDBAB4;--muted:#8E8B85;--faint:#5F5D59;--line:#262626;--line2:#333333;--sel:#232323;--vit:#1B1B1B;--work:#C9A24E;--work-ink:#141414;--need:#C8674F;--need-ink:#141414;--honey-ink:#D9B56A;--coral-ink:#E39A8A;--leaf:#5BAE82;--leaf-ink:#8CCBA5;--blue-ink:#A5BEDF;--ring-idle:#3A3A3A;--btn:#E7E5E1;--btn-ink:#141414;--human:#2C3B31;--human-ink:#CFE3D6;--term:#101010;--term-ink:#D8D6D1;--term-dim:#8A8781;--term-add:#16211A;--term-add-ink:#8CCBA5;--term-hl:#A5BEDF;--term-warn:#D9B56A;--term-tab:#1A1A1A}
+.th a{color:var(--blue-ink)}.th a:hover{color:var(--ink)}
+</style>
+</helmet>
+<div class="th {{ themeClass }}" style="width: 1440px; height: 960px; display: flex; background: var(--bg); color: var(--ink); overflow: hidden; font-size: 14px; line-height: 1.45">
+
+<!-- ═════════ SIDEBAR ═════════ -->
+<nav aria-label="Workspace" style="width: 260px; flex-shrink: 0; box-sizing: border-box; background: var(--side); border-right: 1px solid var(--line); padding: 16px 12px 12px; display: flex; flex-direction: column; gap: 14px">
+  <div style="display: flex; align-items: center; gap: 10px; padding: 0 4px">
+    <div style="width: 32px; height: 32px; border-radius: 9px; background: #1B1A16; box-shadow: 0 0 0 1px var(--line2); color: #EBA21A; display: grid; place-items: center; font-weight: 750; font-size: 15px; flex-shrink: 0">N</div>
+    <div style="min-width: 0; flex-grow: 1"><div style="font-size: 14.5px; font-weight: 700; line-height: 1.2">Noet</div><div class="mono" style="font-size: 11px; color: var(--muted)">crichton · relay</div></div>
+    <span style="width: 26px; height: 26px; border-radius: 50%; background: var(--human); color: var(--human-ink); display: grid; place-items: center; font-weight: 650; font-size: 11px">S</span>
+  </div>
+  <a href="Jump.dc.html" style="display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border-radius: 9px; background: var(--bg); border: 1px solid var(--line); color: var(--muted); font-size: 13px; text-decoration: none"><svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>Jump to…<span class="mono" style="margin-left: auto; font-size: 11px; border: 1px solid var(--line2); border-radius: 5px; padding: 0 5px">⌘K</span></a>
+  <div style="display: flex; flex-direction: column">
+    <a href="Main.dc.html" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><svg class="ic" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"></path><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path></svg>Inbox<span class="mono" style="margin-left: auto; min-width: 18px; height: 18px; box-sizing: border-box; border-radius: 9px; background: var(--btn); color: var(--btn-ink); font-size: 10.5px; font-weight: 600; line-height: 18px; text-align: center; padding: 0 5px">3</span></a>
+    <a href="Items.dc.html" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><svg class="ic" viewBox="0 0 24 24"><path d="M4 6h11M4 12h11M4 18h7M18 15v6M15 18h6"></path></svg>Items<span class="mono" style="margin-left: auto; font-size: 11px; color: var(--muted)">11 · 31</span></a>
+    <a href="Shelf.dc.html" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><svg class="ic" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5M9 13h6M9 17h4"></path></svg>Shelf<span class="mono" style="margin-left: auto; font-size: 11px; color: var(--muted)">4 new</span></a>
+    <a href="Files.dc.html" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><svg class="ic" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>Files</a>
+    <a href="#" aria-current="page" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; background: var(--card); box-shadow: 0 0 0 1px var(--line); color: var(--ink); font-weight: 650; text-decoration: none; font-size: 13.5px"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 9l3 3-3 3M13 15h4"></path></svg>Terminal<span class="mono" style="margin-left: auto; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 500; color: var(--muted)"><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--leaf)"></span>3 tabs</span></a>
+  </div>
+  <div style="display: flex; flex-direction: column">
+    <div style="font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 0 8px; margin-bottom: 3px">Channels</div>
+    <a href="#" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink); font-weight: 650; text-decoration: none; font-size: 13.5px"><span style="width: 14px; text-align: center; color: var(--faint); font-weight: 500">#</span>announcements<span style="margin-left: auto; width: 6px; height: 6px; border-radius: 50%; background: var(--ink)"></span></a>
+    <a href="#" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><span style="width: 14px; text-align: center; color: var(--faint); font-weight: 500">#</span>design</a>
+    <a href="#" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><span style="width: 14px; text-align: center; color: var(--faint); font-weight: 500">#</span>engineering<span class="hex pulse" style="margin-left: auto; width: 8px; height: 9.2px; background: var(--work)"></span></a>
+    <a href="Main.dc.html" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink); font-weight: 650; text-decoration: none; font-size: 13.5px"><span style="width: 14px; text-align: center; color: var(--faint); font-weight: 500">#</span>flight-path<span class="hex" style="margin-left: auto; width: 8px; height: 9.2px; background: var(--need)"></span></a>
+    <a href="#" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><span style="width: 14px; text-align: center; color: var(--faint); font-weight: 500">#</span>mobile<span class="hex pulse" style="margin-left: auto; width: 8px; height: 9.2px; background: var(--work)"></span></a>
+  </div>
+  <div style="display: flex; flex-direction: column">
+    <div style="font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 0 8px; margin-bottom: 3px">Direct messages</div>
+    <a href="Preview.dc.html" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink); font-weight: 650; text-decoration: none; font-size: 13.5px"><span class="hex" style="width: 18px; height: 20.8px; background: var(--ring-idle); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 14px; height: 16.2px; background: #24231F; color: #F6F1E4; display: grid; place-items: center; font-size: 6px; font-weight: 600">GF</span></span>Gilfoyle</a>
+    <a href="#" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><span class="hex" style="width: 18px; height: 20.8px; background: var(--work); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 14px; height: 16.2px; background: #243449; color: #F6F1E4; display: grid; place-items: center; font-size: 6px; font-weight: 600">LN</span></span>Lord Nikon</a>
+    <a href="#" style="display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--ink2); text-decoration: none; font-size: 13.5px"><span class="hex" style="width: 18px; height: 20.8px; background: var(--ring-idle); display: grid; place-items: center; flex-shrink: 0"><span class="hex mono" style="width: 14px; height: 16.2px; background: #22303A; color: #F6F1E4; display: grid; place-items: center; font-size: 6px; font-weight: 600">ES</span></span>ESP32</a>
+  </div>
+  <a href="Vitals.dc.html" aria-label="Vitals" style="margin-top: auto; display: block; text-decoration: none; color: var(--ink); background: var(--vit); border-radius: 10px; padding: 10px 10px 11px">
+    <div style="display: flex; align-items: center; justify-content: space-between"><span style="font-size: 10.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--muted)">Claude</span><span class="mono" style="font-size: 10.5px; color: var(--muted)">2 accounts</span></div>
+    <div class="mono" style="display: grid; grid-template-columns: minmax(0, 1fr) 30px; align-items: center; gap: 8px; margin-top: 7px; font-size: 10.5px"><span style="position: relative; height: 4px; border-radius: 2px; background: var(--line2)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 55%; border-radius: 2px; background: var(--ink)"></span></span><span style="text-align: right">55%</span></div>
+    <div class="mono" style="margin-top: 4px; font-size: 10.5px; color: var(--muted)">45% free · <b style="color: var(--ink); font-weight: 600">~2h 50m</b> of active use</div>
+    <div style="height: 1px; background: var(--line2); margin: 10px 0 9px"></div>
+    <div style="display: flex; align-items: center; justify-content: space-between"><span style="font-size: 10.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--muted)">crichton</span><span class="mono" style="display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--muted)"><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--leaf)"></span>ok</span></div>
+    <div class="mono" style="display: grid; grid-template-columns: 34px minmax(0, 1fr) 30px; align-items: center; gap: 6px 8px; margin-top: 7px; font-size: 10.5px">
+      <span style="color: var(--muted)">CPU</span><span style="position: relative; height: 3px; border-radius: 2px; background: var(--line2)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 38%; border-radius: 2px; background: var(--ink2)"></span></span><span style="text-align: right">38%</span>
+      <span style="color: var(--muted)">GPU</span><span style="position: relative; height: 3px; border-radius: 2px; background: var(--line2)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 71%; border-radius: 2px; background: var(--work)"></span></span><span style="text-align: right">71%</span>
+      <span style="color: var(--muted)">Mem</span><span style="position: relative; height: 3px; border-radius: 2px; background: var(--line2)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 64%; border-radius: 2px; background: var(--ink2)"></span></span><span style="text-align: right">64%</span>
+      <span style="color: var(--muted)">Disk</span><span style="position: relative; height: 3px; border-radius: 2px; background: var(--line2)"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 62%; border-radius: 2px; background: var(--ink2)"></span></span><span style="text-align: right">62%</span>
+    </div>
+  </a>
+</nav>
+
+<!-- ═════════ TERMINAL ═════════ -->
+<main style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column">
+  <header style="display: flex; align-items: center; gap: 12px; min-height: 58px; box-sizing: border-box; padding: 10px 16px 10px 20px; border-bottom: 1px solid var(--line)">
+    <div style="font-size: 17px; font-weight: 720; letter-spacing: -.02em">Terminal</div>
+    <div class="mono" style="font-size: 12px; color: var(--muted)"><span style="color: var(--line2); margin-right: 8px">|</span>herdr · crichton</div>
+    <span class="mono" style="display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 999px; background: var(--chip); font-size: 11px; color: var(--ink2)"><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--leaf)"></span>connected</span>
+    <div style="margin-left: auto; display: flex; align-items: center; gap: 4px">
+      <button aria-label="Show key bar" title="Key bar (Esc, Tab, Ctrl, arrows)" style="width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink2); display: grid; place-items: center; padding: 0"><svg class="ic" viewBox="0 0 24 24" style="width: 15px; height: 15px"><rect x="2" y="7" width="20" height="10" rx="2"></rect><path d="M6 11h.01M10 11h.01M14 11h.01M18 11h.01M8 14h8"></path></svg></button>
+      <button aria-label="Reset view (keeps the session)" title="Reset view: repaints from the shared session, nothing is killed" style="width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink2); display: grid; place-items: center; padding: 0"><svg class="ic" viewBox="0 0 24 24" style="width: 15px; height: 15px"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></svg></button>
+      <button aria-label="Full screen" style="width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink2); display: grid; place-items: center; padding: 0"><svg class="ic" viewBox="0 0 24 24" style="width: 15px; height: 15px"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"></path></svg></button>
+    </div>
+  </header>
+
+  <div style="flex-grow: 1; min-height: 0; display: flex">
+    <!-- herdr spaces + agents -->
+    <div style="width: 230px; flex-shrink: 0; box-sizing: border-box; background: var(--rail); border-right: 1px solid var(--line); padding: 12px 10px; display: flex; flex-direction: column; gap: 3px">
+      <div style="display: flex; align-items: center; justify-content: space-between; font-size: 10.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 2px 6px 4px">Spaces<button aria-label="New space" style="width: 20px; height: 20px; border: 0; background: transparent; color: var(--muted); padding: 0; display: grid; place-items: center"><svg class="ic" viewBox="0 0 24 24" style="width: 13px; height: 13px"><path d="M12 5v14M5 12h14"></path></svg></button></div>
+      <div style="display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; border-radius: 7px; background: var(--card); box-shadow: 0 0 0 1px var(--line); font-size: 13px; font-weight: 650"><span style="width: 7px; height: 7px; border-radius: 50%; background: var(--work)"></span>buzz<span class="mono" style="margin-left: auto; font-size: 11px; font-weight: 500; color: var(--muted)">main</span></div>
+      <div style="display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; font-size: 13px; color: var(--ink2)"><span style="width: 7px; height: 7px; border-radius: 50%; box-sizing: border-box; border: 1.5px solid var(--faint)"></span>evie-ui<span class="mono" style="margin-left: auto; font-size: 11px; color: var(--muted)">main</span></div>
+      <div style="display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; font-size: 13px; color: var(--ink2)"><span style="width: 7px; height: 7px; border-radius: 50%; background: var(--need)"></span>stash<span class="mono" style="margin-left: auto; font-size: 11px; color: var(--muted)">main</span></div>
+
+      <div style="display: flex; align-items: center; justify-content: space-between; font-size: 10.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 16px 6px 4px">Agents<span class="mono" style="letter-spacing: 0; text-transform: none; font-weight: 500">grouped</span></div>
+      <div style="display: flex; gap: 8px; padding: 6px 8px; border-radius: 7px; background: var(--sel)"><span class="pulse" style="width: 7px; height: 7px; border-radius: 50%; background: var(--work); margin-top: 6px; flex-shrink: 0"></span><div style="min-width: 0"><div class="ell" style="font-size: 12.5px"><b style="font-weight: 650">buzz</b> · Vitals redesign</div><div class="mono" style="font-size: 10.5px; color: var(--muted)">claude · running 2m</div></div></div>
+      <div style="display: flex; gap: 8px; padding: 6px 8px"><svg class="ic" viewBox="0 0 24 24" style="width: 12px; height: 12px; color: var(--leaf); margin-top: 3px; stroke-width: 2.4"><path d="M20 6 9 17l-5-5"></path></svg><div style="min-width: 0"><div class="ell" style="font-size: 12.5px; color: var(--ink2)"><b style="font-weight: 650">buzz</b> · jitter QA</div><div class="mono" style="font-size: 10.5px; color: var(--muted)">claude · done</div></div></div>
+      <div style="display: flex; gap: 8px; padding: 6px 8px"><span style="width: 7px; height: 7px; border-radius: 50%; background: var(--need); margin-top: 6px; flex-shrink: 0"></span><div style="min-width: 0"><div class="ell" style="font-size: 12.5px; color: var(--ink2)"><b style="font-weight: 650">stash</b> · parity walk</div><div class="mono" style="font-size: 10.5px; color: var(--coral-ink)">codex · waiting on you</div></div></div>
+      <div style="display: flex; gap: 8px; padding: 6px 8px"><svg class="ic" viewBox="0 0 24 24" style="width: 12px; height: 12px; color: var(--leaf); margin-top: 3px; stroke-width: 2.4"><path d="M20 6 9 17l-5-5"></path></svg><div style="min-width: 0"><div class="ell" style="font-size: 12.5px; color: var(--ink2)"><b style="font-weight: 650">evie-ui</b> · term drawer gap</div><div class="mono" style="font-size: 10.5px; color: var(--muted)">claude · done</div></div></div>
+    </div>
+
+    <!-- emulator -->
+    <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; background: var(--term)">
+      <div role="tablist" class="mono" style="display: flex; align-items: center; gap: 2px; height: 36px; padding: 0 8px; border-bottom: 1px solid var(--line); background: var(--term-tab); font-size: 12px">
+        <span role="tab" aria-selected="true" style="height: 26px; padding: 0 12px; border-radius: 6px; background: var(--term); box-shadow: 0 0 0 1px var(--line); color: var(--term-ink); display: inline-flex; align-items: center; gap: 7px"><span class="pulse" style="width: 6px; height: 6px; border-radius: 50%; background: var(--work)"></span>Vitals redesign</span>
+        <span role="tab" aria-selected="false" style="height: 26px; padding: 0 12px; border-radius: 6px; color: var(--term-dim); display: inline-flex; align-items: center">jitter QA</span>
+        <span role="tab" aria-selected="false" style="height: 26px; padding: 0 12px; border-radius: 6px; color: var(--term-dim); display: inline-flex; align-items: center; gap: 7px"><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--need)"></span>codex</span>
+        <button aria-label="New tab" style="width: 26px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: var(--term-dim); padding: 0; display: grid; place-items: center"><svg class="ic" viewBox="0 0 24 24" style="width: 13px; height: 13px"><path d="M12 5v14M5 12h14"></path></svg></button>
+      </div>
+      <div class="mono term" style="flex-grow: 1; min-height: 0; overflow: hidden; padding: 14px 18px; font-size: 12.5px; line-height: 1.65; color: var(--term-ink)">
+<div><span style="color: var(--term-dim)">❯</span> redesign the vitals block: one Claude bar, runway from recent pace</div>
+<div> </div>
+<div><span style="color: var(--leaf)">●</span> Reading <span style="color: var(--term-hl)">web/src/features/usage/lib/usageHub.ts</span></div>
+<div><span style="color: var(--leaf)">●</span> Reading <span style="color: var(--term-hl)">web/src/features/usage/ui/ClaudePaceCard.tsx</span></div>
+<div style="color: var(--term-dim)">  ⎿ Read 307 lines</div>
+<div> </div>
+<div><span style="color: var(--term-ink)">●</span> The hub sends usedFraction and resetsAt per account. Runway needs a burn</div>
+<div>  rate: average use per active hour over 48h of quota samples.</div>
+<div> </div>
+<div><span style="color: var(--leaf)">●</span> Update(<span style="color: var(--term-hl)">web/src/features/usage/lib/runway.ts</span>)</div>
+<div style="color: var(--term-dim)">  ⎿ Added 5 lines</div>
+<div style="background: var(--term-add); color: var(--term-add-ink)">     12 + export function poolRunway(accounts: PaceAccount[], perHour: number) {</div>
+<div style="background: var(--term-add); color: var(--term-add-ink)">     13 +   const free = accounts.reduce((n, a) =&gt; n + 1 - (a.usedFraction ?? 1), 0);</div>
+<div style="background: var(--term-add); color: var(--term-add-ink)">     14 +   return perHour &gt; 0 ? free / accounts.length / perHour : null;</div>
+<div style="background: var(--term-add); color: var(--term-add-ink)">     15 + }</div>
+<div> </div>
+<div><span style="color: var(--leaf)">●</span> Bash(cd web &amp;&amp; pnpm test -- runway)</div>
+<div style="color: var(--term-dim)">  ⎿ ✔ poolRunway: 45% free at 16% per active hour is 2.8h   <span style="color: var(--term-add-ink)">3 passed</span></div>
+<div> </div>
+<div><span style="color: var(--term-warn)">✻ Brewing…</span> <span style="color: var(--term-dim)">(2m 14s · ↓ 6.1k tokens · thinking)</span></div>
+      </div>
+      <div class="mono" style="border-top: 1px solid var(--line); padding: 8px 18px 10px; font-size: 12px; line-height: 1.6; color: var(--term-dim)">
+        <div style="color: var(--term-ink)">❯ <span style="display: inline-block; width: 7px; height: 14px; background: var(--term-ink); vertical-align: -2px"></span></div>
+        <div>cc1 crichton · buzz · Opus 5.5 · ctx 14% · sess 4% · wk 26% → 5d to reset</div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- collapsed Work -->
+<aside aria-label="Work, collapsed" style="width: 48px; flex-shrink: 0; box-sizing: border-box; background: var(--rail); border-left: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; gap: 12px; padding-top: 12px">
+  <a href="Main.dc.html" aria-label="Open Work: 8 need you" style="position: relative; width: 34px; height: 34px; border-radius: 9px; background: var(--card); box-shadow: 0 0 0 1px var(--line); color: var(--ink2); display: grid; place-items: center"><svg class="ic" viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h7"></path><circle cx="18" cy="16" r="3"></circle></svg><span class="mono" style="position: absolute; top: -5px; right: -6px; min-width: 16px; height: 16px; box-sizing: border-box; border-radius: 8px; background: var(--need); color: var(--need-ink); font-size: 10px; font-weight: 650; line-height: 16px; text-align: center; padding: 0 4px">8</span></a>
+  <span title="4 running" style="display: flex; flex-direction: column; align-items: center; gap: 3px"><span class="hex pulse" style="width: 10px; height: 11.5px; background: var(--work)"></span><span class="mono" style="font-size: 10.5px; color: var(--muted)">4</span></span>
+</aside>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"$preview":{"width":1440,"height":960}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { themeClass: (this.props.theme ?? 'dark') === 'dark' ? 'dark' : '' };
+  }
+}
+</script>
+</body>
+</html>
