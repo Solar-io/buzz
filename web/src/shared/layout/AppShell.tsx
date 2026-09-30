@@ -245,14 +245,17 @@ export function AppShell({
         </header>
         {/* The shell row: content, then the right pane beside it, with the
             web layer over both. The phone bar above keeps spanning the full
-            column width. */}
+            column width. The ROW is the scroll container (it was `main`,
+            when the pane lived inside it): its stable 10px scrollbar gutter
+            must stay at the far right, after the pane, not between the
+            conversation and the pane. */}
         <div
           ref={rowRef}
-          className={`relative flex min-h-0 flex-1${rowClassName ? ` ${rowClassName}` : ""}`}
+          className={`buzz-content-scrollbar relative flex min-h-0 flex-1 overflow-y-auto${rowClassName ? ` ${rowClassName}` : ""}`}
           style={rowStyle}
         >
           <PhoneBarSlotContext.Provider value={phoneBarSlot}>
-            <main className="buzz-content-scrollbar min-h-0 min-w-0 flex-1 overflow-y-auto">
+            <main className="min-h-0 min-w-0 flex-1">
               {children}
             </main>
             {rightPane}

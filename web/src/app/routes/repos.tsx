@@ -709,151 +709,155 @@ function ChannelBrowser() {
               }
             />
           ) : current ? (
-            <section
-              className="buzz-conversation-pane relative flex min-w-0 flex-1 flex-col"
-              data-custom-content-pane="chat"
-            >
-              {dmAgentPubkey && (
-                // Stationary portrait over the chat column (Sam's
-                // placement verdict, 2026-09-14): anchored top-right, it
-                // never scrolls with the transcript, and its fluid width
-                // reflows as the thinking pane is dragged. The matching
-                // gutter on the timeline below keeps the text clear of
-                // it. Same agent-chosen kind-0 avatar as the panel chip;
-                // a swap repaints it in place.
-                <AgentPortraitOverlay
-                  pubkey={dmAgentPubkey}
-                  name={
-                    profiles.get(dmAgentPubkey)?.displayName ?? dmAgentPubkey
-                  }
-                  picture={dmProfiles.get(dmAgentPubkey)?.avatar}
-                />
-              )}
-              {/* The channel header bar is gone (Sam, 2026-09-22). Its
+            // The flex row the section always sat in (its pane siblings now
+            // live in the AppShell row, beside `main`).
+            <div className="flex h-full min-h-0">
+              <section
+                className="buzz-conversation-pane relative flex min-w-0 flex-1 flex-col"
+                data-custom-content-pane="chat"
+              >
+                {dmAgentPubkey && (
+                  // Stationary portrait over the chat column (Sam's
+                  // placement verdict, 2026-09-14): anchored top-right, it
+                  // never scrolls with the transcript, and its fluid width
+                  // reflows as the thinking pane is dragged. The matching
+                  // gutter on the timeline below keeps the text clear of
+                  // it. Same agent-chosen kind-0 avatar as the panel chip;
+                  // a swap repaints it in place.
+                  <AgentPortraitOverlay
+                    pubkey={dmAgentPubkey}
+                    name={
+                      profiles.get(dmAgentPubkey)?.displayName ?? dmAgentPubkey
+                    }
+                    picture={dmProfiles.get(dmAgentPubkey)?.avatar}
+                  />
+                )}
+                {/* The channel header bar is gone (Sam, 2026-09-22). Its
                       parts went where they still belong: Join / Members /
                       the copy-name action to the composer's bottom bar, and
                       Call / Thinking to that bar's right end. The channel
                       name, type glyph and description are already in the
                       sidebar row and the window title, so the bar was a
                       second copy of the row you just clicked. */}
-              {current.type === "forum" ? (
-                <ForumView
-                  channel={current}
-                  selfPubkey={selfPubkey}
-                  profiles={profiles}
-                  members={members}
-                  feedReactions={reactions}
-                  replyCounts={counts}
-                  selectedPostId={forumPostId}
-                  onSelectPost={setForumPostId}
-                  onClosePost={() => setForumPostId(null)}
-                  onReact={messageActions.onReact}
-                  onDelete={messageActions.onDelete}
-                  send={send}
-                />
-              ) : (
-                <>
-                  {/* Gutter for the portrait overlay: the same fluid
+                {current.type === "forum" ? (
+                  <ForumView
+                    channel={current}
+                    selfPubkey={selfPubkey}
+                    profiles={profiles}
+                    members={members}
+                    feedReactions={reactions}
+                    replyCounts={counts}
+                    selectedPostId={forumPostId}
+                    onSelectPost={setForumPostId}
+                    onClosePost={() => setForumPostId(null)}
+                    onReact={messageActions.onReact}
+                    onDelete={messageActions.onDelete}
+                    send={send}
+                  />
+                ) : (
+                  <>
+                    {/* Gutter for the portrait overlay: the same fluid
                           width the overlay uses, so transcript text shifts
                           left of it and stays clear at every thinking-pane
                           width (the pair is the resize requirement). The
                           extra half-row keeps a visible seam between
                           full-width content and the frame. */}
-                  <div className="flex min-h-0 flex-1 flex-col lg:pr-[calc(min(12rem,24%)+1.25rem)]">
-                    <ChannelTimeline
-                      messages={messages}
-                      profiles={profiles}
-                      replyCounts={counts}
-                      onOpenThread={(message) =>
-                        rightPane.openThreadTab(message.id)
-                      }
-                      activeRootId={threadRootId}
-                      reactions={reactions}
-                      onReact={messageActions.onReact}
-                      onUnreact={(messageId, emoji) => {
-                        if (!selfPubkey) return;
-                        // Drop it locally first: the relay's kind-5 acknowledgement
-                        // targets the reaction event, which the message-overlay
-                        // path cannot apply, so nothing would clear the chip.
-                        forgetOwnReaction(messageId, emoji, selfPubkey);
-                        void unreactToMessage(session, {
-                          targetEventId: messageId,
-                          emoji,
-                          selfPubkey,
-                        });
-                      }}
-                      onEdit={messageActions.onEdit}
-                      onDelete={messageActions.onDelete}
-                      onShare={messageActions.onShare}
-                      selfPubkey={selfPubkey}
-                      pendingIds={messageActions.pendingIds}
-                      agentPubkeys={agentPubkeys}
-                      highlightId={permalinkJump?.topLevelId ?? null}
-                      scrollToMessageId={permalinkJump?.topLevelId ?? null}
-                      onScrollToMessageSettled={onPermalinkSettled}
-                      typingNames={typingNames}
-                      tailKey={tailKey}
-                      onLoadOlder={loadOlder}
-                      loadingOlder={loadingOlder}
-                      historyExhausted={historyExhausted}
-                      workingAgent={
-                        working.working &&
-                        working.startedAt !== null &&
-                        dmAgentPubkey
-                          ? {
-                              name:
-                                profiles.get(dmAgentPubkey)?.displayName ??
-                                dmAgentPubkey,
-                              startedAt: working.startedAt,
-                            }
-                          : null
-                      }
-                    />
-                  </div>
-                  {/* No threadRef here — deliberately. With a thread open
+                    <div className="flex min-h-0 flex-1 flex-col lg:pr-[calc(min(12rem,24%)+1.25rem)]">
+                      <ChannelTimeline
+                        messages={messages}
+                        profiles={profiles}
+                        replyCounts={counts}
+                        onOpenThread={(message) =>
+                          rightPane.openThreadTab(message.id)
+                        }
+                        activeRootId={threadRootId}
+                        reactions={reactions}
+                        onReact={messageActions.onReact}
+                        onUnreact={(messageId, emoji) => {
+                          if (!selfPubkey) return;
+                          // Drop it locally first: the relay's kind-5 acknowledgement
+                          // targets the reaction event, which the message-overlay
+                          // path cannot apply, so nothing would clear the chip.
+                          forgetOwnReaction(messageId, emoji, selfPubkey);
+                          void unreactToMessage(session, {
+                            targetEventId: messageId,
+                            emoji,
+                            selfPubkey,
+                          });
+                        }}
+                        onEdit={messageActions.onEdit}
+                        onDelete={messageActions.onDelete}
+                        onShare={messageActions.onShare}
+                        selfPubkey={selfPubkey}
+                        pendingIds={messageActions.pendingIds}
+                        agentPubkeys={agentPubkeys}
+                        highlightId={permalinkJump?.topLevelId ?? null}
+                        scrollToMessageId={permalinkJump?.topLevelId ?? null}
+                        onScrollToMessageSettled={onPermalinkSettled}
+                        typingNames={typingNames}
+                        tailKey={tailKey}
+                        onLoadOlder={loadOlder}
+                        loadingOlder={loadingOlder}
+                        historyExhausted={historyExhausted}
+                        workingAgent={
+                          working.working &&
+                          working.startedAt !== null &&
+                          dmAgentPubkey
+                            ? {
+                                name:
+                                  profiles.get(dmAgentPubkey)?.displayName ??
+                                  dmAgentPubkey,
+                                startedAt: working.startedAt,
+                              }
+                            : null
+                        }
+                      />
+                    </div>
+                    {/* No threadRef here — deliberately. With a thread open
                           in the right pane this composer used to be re-aimed
                           at it, so typing in the MAIN composer silently filed
                           the message into the thread. It always posts
                           top-level now (Sam 2026-09-20); only the thread
                           pane's own composer targets the thread, and Esc here
                           is free to do nothing instead of closing it. */}
-                  <Composer
-                    ref={composerRef}
-                    members={members}
-                    onTextChange={messageActions.onComposerText}
-                    editing={messageActions.editing}
-                    onCancelEdit={() => messageActions.setEditing(null)}
-                    editSend={messageActions.editSend}
-                    profiles={profiles}
-                    strictMentions={strictMentions}
-                    autoNotify={composerAutoNotify}
-                    draftKey={current.id}
-                    send={send}
-                    actionsBar={
-                      <DmComposerActions
-                        channel={current}
-                        title={
-                          current.type === "dm"
-                            ? dmName(current.participantPubkeys)
-                            : `# ${current.name}`
-                        }
-                        dmAgentPubkey={dmAgentPubkey}
-                        huddleSession={huddleSession}
-                        session={session}
-                        members={members}
-                        profiles={profiles}
-                        presence={presence}
-                        selfPubkey={selfPubkey}
-                        contacts={dmParticipantPubkeys}
-                        panes={rightPane.panes}
-                        dictation={dictation}
-                      />
-                    }
-                  />
-                </>
-              )}
-              <HuddleDock currentChannelId={current.id} />
-            </section>
+                    <Composer
+                      ref={composerRef}
+                      members={members}
+                      onTextChange={messageActions.onComposerText}
+                      editing={messageActions.editing}
+                      onCancelEdit={() => messageActions.setEditing(null)}
+                      editSend={messageActions.editSend}
+                      profiles={profiles}
+                      strictMentions={strictMentions}
+                      autoNotify={composerAutoNotify}
+                      draftKey={current.id}
+                      send={send}
+                      actionsBar={
+                        <DmComposerActions
+                          channel={current}
+                          title={
+                            current.type === "dm"
+                              ? dmName(current.participantPubkeys)
+                              : `# ${current.name}`
+                          }
+                          dmAgentPubkey={dmAgentPubkey}
+                          huddleSession={huddleSession}
+                          session={session}
+                          members={members}
+                          profiles={profiles}
+                          presence={presence}
+                          selfPubkey={selfPubkey}
+                          contacts={dmParticipantPubkeys}
+                          panes={rightPane.panes}
+                          dictation={dictation}
+                        />
+                      }
+                    />
+                  </>
+                )}
+                <HuddleDock currentChannelId={current.id} />
+              </section>
+            </div>
           ) : landingSkeleton ? (
             <LandingSkeleton />
           ) : (
