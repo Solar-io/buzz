@@ -1,4 +1,5 @@
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
+import { isWakeForOthers } from "../../channels/lib/wakeMessage.ts";
 
 export interface DmLastMessage {
   channelId: string;
@@ -79,6 +80,40 @@ export function dmActivityFilterBatches(dmIds: string[]): DmActivityFilter[][] {
  * construction.
  */
 export const DM_ACTIVITY_KIND = 9;
+
+/**
+ * Fold one delivered event into the per-DM newest-sample list (the state
+ * `useDmActivity` keeps): newest-wins per DM, one entry per DM.
+ *
+ * Returns the SAME array when nothing changes. That is the case for an event
+ * with no `h` tag, a stale/duplicate arrival, and a scheduled wake addressed
+ * to someone other than the viewer — such a wake must not become the DM's
+ * sample, because the row's unread dot, its preview and the DM list's
+ * recency order all derive from it.
+ */
+export function applyDmActivityEvent(
+  previous: SignedNostrEvent[],
+  event: SignedNostrEvent,
+  selfPubkey: string | null,
+): SignedNostrEvent[] {
+  if (isWakeForOthers(event, selfPubkey)) {
+    return previous;
+  }
+  const id = event.tags.find((tag) => tag[0] === "h")?.[1];
+  if (!id) {
+    return previous;
+  }
+  const channelOf = (candidate: SignedNostrEvent) =>
+    candidate.tags.find((tag) => tag[0] === "h")?.[1];
+  const existing = previous.find((candidate) => channelOf(candidate) === id);
+  if (existing && existing.created_at >= event.created_at) {
+    return previous;
+  }
+  return [
+    ...previous.filter((candidate) => channelOf(candidate) !== id),
+    event,
+  ];
+}
 
 export function dmActivityFromEvents(
   events: SignedNostrEvent[],

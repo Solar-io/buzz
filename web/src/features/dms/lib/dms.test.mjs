@@ -9,6 +9,7 @@ import {
   parsePubkeyInput,
 } from "./dmInput.ts";
 import {
+  applyDmActivityEvent,
   dmActivityFromEvents,
   compareDmRecency,
   dmActivityFilterBatches,
@@ -315,4 +316,72 @@ test("an event with no h tag never lands on any DM", () => {
     { kind: 9, created_at: 10, content: "no channel", tags: [["p", "x"]] },
   ]);
   assert.equal(map.size, 0);
+});
+
+// ---- silent scheduled wakes in DMs (Sam 2026-09-30) ----
+
+/** buzz-services reminder identity — the wake sender. */
+const WAKE_SERVICE =
+  "a9387088355b4efe46decbde77c8fe34ee9ecbd6619d41217d21be0123f08271";
+
+const dmHuman = () =>
+  event({
+    id: "human",
+    kind: 9,
+    created_at: 100,
+    pubkey: SAM,
+    content: "hello",
+    tags: [["h", "dm-1"]],
+  });
+const dmWake = (target) =>
+  event({
+    id: "wake",
+    kind: 9,
+    created_at: 110,
+    pubkey: WAKE_SERVICE,
+    content: "continue: check the pools",
+    tags: [
+      ["h", "dm-1"],
+      ["p", target],
+    ],
+  });
+
+test("applyDmActivityEvent: a wake for another DM member never becomes the DM's sample", () => {
+  const previous = [dmHuman()];
+  const next = applyDmActivityEvent(previous, dmWake(EVIE), SELF);
+  assert.equal(next, previous);
+  const sample = dmActivityFromEvents(next).get("dm-1");
+  assert.equal(sample.created_at, 100);
+  assert.equal(sample.authorPubkey, SAM);
+});
+
+test("applyDmActivityEvent: a wake that p-tags the viewer becomes the sample like any message", () => {
+  const next = applyDmActivityEvent([dmHuman()], dmWake(SELF), SELF);
+  const sample = dmActivityFromEvents(next).get("dm-1");
+  assert.equal(sample.created_at, 110);
+  assert.equal(sample.authorPubkey, WAKE_SERVICE);
+  assert.equal(next.length, 1);
+});
+
+test("applyDmActivityEvent: newest-wins per DM, stale arrivals return the same list", () => {
+  const previous = [dmHuman()];
+  const stale = event({
+    id: "stale",
+    kind: 9,
+    created_at: 90,
+    pubkey: EVIE,
+    tags: [["h", "dm-1"]],
+  });
+  assert.equal(applyDmActivityEvent(previous, stale, SELF), previous);
+  const newer = event({
+    id: "newer",
+    kind: 9,
+    created_at: 120,
+    pubkey: EVIE,
+    tags: [["h", "dm-1"]],
+  });
+  assert.deepEqual(
+    applyDmActivityEvent(previous, newer, SELF).map((e) => e.id),
+    ["newer"],
+  );
 });

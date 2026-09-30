@@ -585,3 +585,106 @@ test("a wake that p-tags the viewer counts and fires like any message", () => {
   assert.equal(feed.counts().get("ch1"), 1);
   assert.equal(feed.live().length, 1);
 });
+
+test("a channel read up to a wake still counts and toasts the agent's reply", () => {
+  // The only message in the window is the wake itself: there is no human
+  // baseline sample for the reply to beat.
+  const feed = driveFeed({ ch1: 100 }, SELF);
+  feed.handlers.onEvent(
+    relayEvent({
+      id: "wake",
+      pubkey: WAKE_SERVICE,
+      created_at: 110,
+      tags: [
+        ["h", "ch1"],
+        ["p", AGENT],
+      ],
+    }),
+  );
+  feed.handlers.onEose();
+  assert.equal(feed.counts().has("ch1"), false);
+  assert.equal(feed.activity().has("ch1"), false);
+  assert.equal(feed.live().length, 0);
+
+  feed.handlers.onEvent(
+    relayEvent({ id: "reply", pubkey: AGENT, created_at: 120 }),
+  );
+  assert.equal(feed.counts().get("ch1"), 1);
+  assert.equal(feed.live().length, 1);
+
+  // A reconnect replay of both must not count or toast the reply again.
+  feed.handlers.onEvent(
+    relayEvent({
+      id: "wake",
+      pubkey: WAKE_SERVICE,
+      created_at: 110,
+      tags: [
+        ["h", "ch1"],
+        ["p", AGENT],
+      ],
+    }),
+  );
+  feed.handlers.onEvent(
+    relayEvent({ id: "reply", pubkey: AGENT, created_at: 120 }),
+  );
+  assert.equal(feed.counts().get("ch1"), 1);
+  assert.equal(feed.live().length, 1);
+});
+
+test("a message OLDER than the wake is backfill, not a live arrival", () => {
+  const feed = driveFeed({ ch1: 100 }, SELF);
+  feed.handlers.onEvent(
+    relayEvent({
+      id: "wake",
+      pubkey: WAKE_SERVICE,
+      created_at: 110,
+      tags: [
+        ["h", "ch1"],
+        ["p", AGENT],
+      ],
+    }),
+  );
+  feed.handlers.onEvent(relayEvent({ id: "older", created_at: 105 }));
+  assert.equal(feed.live().length, 0);
+});
+
+// The DM toast feed is a SAMPLING feed (no read markers, limit-1 windows).
+// It is silenced only because MessageToasts hands it the viewer's pubkey.
+test("sampling feed with a viewer pubkey: a DM wake for another member never toasts, the reply does", () => {
+  const feed = driveFeed(null, SELF);
+  feed.handlers.onEvent(relayEvent({ id: "base", created_at: 100 }));
+  feed.handlers.onEose();
+  feed.handlers.onEvent(
+    relayEvent({
+      id: "wake",
+      pubkey: WAKE_SERVICE,
+      created_at: 110,
+      tags: [
+        ["h", "ch1"],
+        ["p", AGENT],
+      ],
+    }),
+  );
+  assert.equal(feed.live().length, 0);
+  feed.handlers.onEvent(
+    relayEvent({ id: "reply", pubkey: AGENT, created_at: 120 }),
+  );
+  assert.equal(feed.live().length, 1);
+});
+
+test("sampling feed WITHOUT a viewer pubkey cannot silence a wake (why MessageToasts must pass it)", () => {
+  const feed = driveFeed(null, null);
+  feed.handlers.onEvent(relayEvent({ id: "base", created_at: 100 }));
+  feed.handlers.onEvent(
+    relayEvent({
+      id: "wake",
+      pubkey: WAKE_SERVICE,
+      created_at: 110,
+      tags: [
+        ["h", "ch1"],
+        ["p", AGENT],
+      ],
+    }),
+  );
+  assert.equal(feed.live().length, 1);
+});

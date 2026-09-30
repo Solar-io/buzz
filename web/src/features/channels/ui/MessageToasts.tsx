@@ -62,7 +62,9 @@ export function MessageToasts({
   profiles,
   onOpenChannel,
 }: MessageToastsProps) {
-  const dmFeed = useChannelActivity(dmChannelIds);
+  // The viewer's pubkey rides along so a scheduled wake addressed to another
+  // DM member fires no live arrival (and so no toast) — same rule as channels.
+  const dmFeed = useChannelActivity(dmChannelIds, undefined, selfPubkey);
   // The registration effect keys on the STABLE register functions — keying
   // on `dmFeed` (a fresh object per render) would unregister and re-register
   // the handler on every activity update, opening a window to drop arrivals.

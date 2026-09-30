@@ -197,3 +197,41 @@ test("the design mention lands in its own channel row", () => {
   assert.equal(design.channelName, "design");
   assert.deepEqual(design.categories, ["mention"]);
 });
+
+// ---- silent scheduled wakes in DMs (Sam 2026-09-30) ----
+
+/** buzz-services reminder identity — the wake sender. */
+const WAKE_SERVICE =
+  "a9387088355b4efe46decbde77c8fe34ee9ecbd6619d41217d21be0123f08271";
+
+test("a DM wake for another member is not an inbox row and adds nothing to the badge", () => {
+  const items = build({
+    messages: [
+      message({
+        id: "dm-wake",
+        channelId: DM_CHANNEL,
+        authorPubkey: WAKE_SERVICE,
+        createdAt: 2_000,
+        mentionPubkeys: [BOB],
+      }),
+    ],
+  });
+  assert.equal(items.length, 0);
+  assert.equal(inboxUnreadTotal(items), 0);
+});
+
+test("a DM wake that p-tags the viewer is an inbox row and counts once", () => {
+  const items = build({
+    messages: [
+      message({
+        id: "dm-wake-me",
+        channelId: DM_CHANNEL,
+        authorPubkey: WAKE_SERVICE,
+        createdAt: 2_000,
+        mentionPubkeys: [BOB, SELF],
+      }),
+    ],
+  });
+  assert.equal(items.length, 1);
+  assert.equal(inboxUnreadTotal(items), 1);
+});
