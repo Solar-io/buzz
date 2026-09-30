@@ -396,6 +396,41 @@ fn thread_reference(tags: &[Vec<String>]) -> ThreadReference {
     }
 }
 
+/// Identities whose kind-9 posts that p-tag a member are scheduled wakes
+/// (buzz-services reminder firings). Mirrors `WAKE_SERVICE_PUBKEYS` in
+/// `desktop/src/shared/constants/wakeService.ts` and the web client's
+/// `wakeMessage.ts`; the three must name the same keys.
+const WAKE_SERVICE_PUBKEYS: &[&str] =
+    &["a9387088355b4efe46decbde77c8fe34ee9ecbd6619d41217d21be0123f08271"];
+
+/// A scheduled wake addressed to someone other than the viewer: kind 9, from
+/// a wake service identity, with at least one `p` tag and none naming the
+/// viewer. Catch-up duplicate of `isWakeForOthers` in `shouldNotify.ts`.
+/// An unknown viewer (empty pubkey) yields `false`.
+fn is_wake_for_others(event: &EventView, self_pubkey: &str) -> bool {
+    if self_pubkey.is_empty() || u32::from(event.kind) != KIND_STREAM_MESSAGE {
+        return false;
+    }
+    if !WAKE_SERVICE_PUBKEYS
+        .iter()
+        .any(|key| event.pubkey.eq_ignore_ascii_case(key))
+    {
+        return false;
+    }
+    let mut tagged = false;
+    for tag in &event.tags {
+        if tag.first().is_none_or(|part| part != "p") {
+            continue;
+        }
+        let Some(value) = tag.get(1) else { continue };
+        if value.eq_ignore_ascii_case(self_pubkey) {
+            return false;
+        }
+        tagged = true;
+    }
+    tagged
+}
+
 fn should_notify(
     event: &EventView,
     self_pubkey: &str,
@@ -404,6 +439,9 @@ fn should_notify(
     participated: &HashSet<String>,
     authored: &HashSet<String>,
 ) -> bool {
+    if is_wake_for_others(event, self_pubkey) {
+        return false;
+    }
     if has_exact_tag(&event.tags, "broadcast", "1") || has_tag_value(&event.tags, "p", self_pubkey)
     {
         return true;
@@ -664,5 +702,60 @@ mod tests {
         });
 
         assert_eq!(actual, expected);
+    }
+
+    /// buzz-services reminder identity — the wake sender.
+    const WAKE_SERVICE: &str = "a9387088355b4efe46decbde77c8fe34ee9ecbd6619d41217d21be0123f08271";
+
+    fn observed_ids(events: Vec<EventView>) -> Vec<String> {
+        let fetched = vec![FetchedChannel {
+            order: 0,
+            channel: CatchUpChannel {
+                id: "ch".into(),
+                channel_type: "stream".into(),
+                name: "Ch".into(),
+                read_at: Some(9),
+            },
+            events,
+        }];
+        let result = classify_batch(&request(), fetched, &HashMap::new());
+        let ChannelResult::Success {
+            observed_events, ..
+        } = &result[0]
+        else {
+            panic!("expected success")
+        };
+        observed_events
+            .iter()
+            .map(|event| event.id.clone())
+            .collect()
+    }
+
+    #[test]
+    fn wake_for_another_member_is_not_observed() {
+        let ids = observed_ids(vec![event(
+            "wake",
+            WAKE_SERVICE,
+            10,
+            &[&["h", "ch"], &["p", "agent"]],
+        )]);
+        assert_eq!(ids.len(), 0);
+    }
+
+    #[test]
+    fn service_post_without_p_tag_is_observed() {
+        let ids = observed_ids(vec![event("digest", WAKE_SERVICE, 10, &[&["h", "ch"]])]);
+        assert_eq!(ids, ["digest"]);
+    }
+
+    #[test]
+    fn wake_mentioning_the_viewer_is_observed() {
+        let ids = observed_ids(vec![event(
+            "wake-me",
+            WAKE_SERVICE,
+            10,
+            &[&["h", "ch"], &["p", "agent"], &["p", "self"]],
+        )]);
+        assert_eq!(ids, ["wake-me"]);
     }
 }

@@ -3,6 +3,8 @@ import {
   getThreadReference,
   isBroadcastReply,
 } from "@/features/messages/lib/threading";
+import { KIND_STREAM_MESSAGE } from "@/shared/constants/kinds";
+import { WAKE_SERVICE_PUBKEYS } from "@/shared/constants/wakeService";
 
 export function hasMentionForEvent(
   event: RelayEvent,
@@ -14,6 +16,34 @@ export function hasMentionForEvent(
       (tag) => tag[0] === "p" && tag[1]?.toLowerCase() === currentPubkey,
     )
   );
+}
+
+/**
+ * True when an event is a scheduled wake addressed to someone OTHER than the
+ * current user: a kind-9 from the services identity carrying at least one `p`
+ * tag, none of which is the viewer. Such a wake is agent machinery the viewer
+ * is a bystander to and must make no noise. A wake that mentions the viewer,
+ * a services post with no `p` tag (alerts, digests), and any other kind stay
+ * loud. An unknown viewer (empty pubkey) yields false.
+ *
+ * Duplicated in Rust as `is_wake_for_others` (`unread_catch_up.rs`) and on
+ * web as `isWakeForOthers` (`wakeMessage.ts`).
+ */
+export function isWakeForOthers(
+  event: Pick<RelayEvent, "kind" | "pubkey" | "tags">,
+  currentPubkey: string,
+): boolean {
+  if (currentPubkey.length === 0) return false;
+  if (event.kind !== KIND_STREAM_MESSAGE) return false;
+  if (!WAKE_SERVICE_PUBKEYS.includes(event.pubkey.toLowerCase())) return false;
+  const self = currentPubkey.toLowerCase();
+  let tagged = 0;
+  for (const tag of event.tags) {
+    if (tag[0] !== "p" || typeof tag[1] !== "string") continue;
+    if (tag[1].toLowerCase() === self) return false;
+    tagged += 1;
+  }
+  return tagged > 0;
 }
 
 export type NotifyOptions = {
@@ -38,6 +68,12 @@ export function shouldNotifyForEvent(
     mutedChannelIds = new Set(),
     channelId = null,
   } = options;
+  // Ahead of every other rule, broadcast included: a wake for another member
+  // never notifies the bystander.
+  if (isWakeForOthers(event, currentPubkey)) {
+    return false;
+  }
+
   const { parentId, rootId } = getThreadReference(event.tags);
 
   if (isBroadcastReply(event.tags)) {

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   isHighPriorityEventForUser,
+  isWakeForOthers,
   shouldNotifyForEvent,
 } from "./shouldNotify.ts";
 
@@ -325,4 +326,47 @@ test("isHighPriorityEventForUser returns false when currentPubkey is empty", () 
 test("isHighPriorityEventForUser returns false for event with no tags at all", () => {
   const event = makeEvent([]);
   assert.equal(isHighPriorityEventForUser(event, PUBKEY), false);
+});
+
+// ---- silent scheduled wakes (Sam 2026-09-30) ----
+
+/** buzz-services reminder identity — the wake sender. */
+const WAKE_SERVICE =
+  "a9387088355b4efe46decbde77c8fe34ee9ecbd6619d41217d21be0123f08271";
+
+test("top-level wake for another member does not notify", () => {
+  const event = makeEvent([["h", "ch"], pTag(OTHER_PUBKEY)], {
+    pubkey: WAKE_SERVICE,
+  });
+  assert.equal(shouldNotifyForEvent(event, PUBKEY, opts()), false);
+});
+
+test("top-level service post with no p tag notifies", () => {
+  const event = makeEvent([["h", "ch"]], { pubkey: WAKE_SERVICE });
+  assert.equal(shouldNotifyForEvent(event, PUBKEY, opts()), true);
+});
+
+test("wake that mentions the current user notifies", () => {
+  const event = makeEvent([pTag(OTHER_PUBKEY), pTag(PUBKEY)], {
+    pubkey: WAKE_SERVICE,
+  });
+  assert.equal(isWakeForOthers(event, PUBKEY), false);
+  assert.equal(shouldNotifyForEvent(event, PUBKEY, opts()), true);
+});
+
+test("isWakeForOthers: non-kind-9 service event and unknown viewer are not silent", () => {
+  assert.equal(
+    isWakeForOthers(
+      makeEvent([pTag(OTHER_PUBKEY)], { pubkey: WAKE_SERVICE, kind: 45001 }),
+      PUBKEY,
+    ),
+    false,
+  );
+  assert.equal(
+    isWakeForOthers(
+      makeEvent([pTag(OTHER_PUBKEY)], { pubkey: WAKE_SERVICE }),
+      "",
+    ),
+    false,
+  );
 });

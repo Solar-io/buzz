@@ -9,7 +9,10 @@ import {
   getChannelIdFromTags,
   isThreadReply,
 } from "@/features/messages/lib/threading";
-import { shouldNotifyForEvent } from "@/features/notifications/lib/shouldNotify";
+import {
+  isWakeForOthers,
+  shouldNotifyForEvent,
+} from "@/features/notifications/lib/shouldNotify";
 import { relayClient } from "@/shared/api/relayClient";
 import {
   CHANNEL_EVENT_KINDS,
@@ -248,10 +251,17 @@ export function useLiveChannelUpdates(
       isDmChannel,
     );
 
+    // A scheduled wake addressed to another member is silent for the viewer:
+    // no unread, no notification, and no Recent reorder either.
+    const isSilentWake = isWakeForOthers(event, normalizedCurrentPubkey);
+
     // Recency is presentation state, not notification state. Every recognized
     // message advances Recent ordering, including self-authored and muted
-    // messages that the notification policy deliberately filters below.
-    if (isUnreadTriggerKind) {
+    // messages that the notification policy deliberately filters below. The
+    // one exception is a silent wake: the sidebar's Recent sort reads this
+    // value (channelSortPreference.ts), so bumping it would reorder the
+    // sidebar for machinery the viewer is a bystander to.
+    if (isUnreadTriggerKind && !isSilentWake) {
       updateChannelLastMessageAt(queryClient, channelId, event.created_at);
     }
 
@@ -287,7 +297,11 @@ export function useLiveChannelUpdates(
     // callback path.
     handleDmEvent(event, isFirstNotificationDelivery);
 
-    if (isExternalTriggerEvent && isFirstNotificationDelivery) {
+    if (
+      isExternalTriggerEvent &&
+      isFirstNotificationDelivery &&
+      !isSilentWake
+    ) {
       const shouldNotify = shouldNotifyForEvent(
         event,
         normalizedCurrentPubkey,
