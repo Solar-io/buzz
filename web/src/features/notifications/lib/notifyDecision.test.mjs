@@ -203,3 +203,26 @@ test("every reason has copy", () => {
     assert.ok(copy.length > 0, `no copy for ${reason}`);
   }
 });
+
+test("a silent wake neither notifies nor badges, even in mode all with a hidden granted tab", () => {
+  const decision = decideNotification(
+    relevantMessage({ mentionsSelf: false, silentWake: true }),
+    grantedContext({
+      mode: "all",
+      documentHidden: true,
+      permission: "granted",
+    }),
+  );
+  assert.deepEqual(decision, {
+    notify: false,
+    badge: false,
+    reason: "silent-wake",
+  });
+});
+
+test("the silent-wake reason has its own copy", () => {
+  assert.equal(
+    describeNotifyReason("silent-wake"),
+    "Scheduled wakes for other members never notify.",
+  );
+});

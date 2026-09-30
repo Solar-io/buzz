@@ -5,6 +5,7 @@ import {
   timelineStore,
   warmTap,
 } from "@/features/channels/lib/timelineStore.ts";
+import { countsTowardDmUnread } from "./dmUnread.ts";
 
 const warmFromUnread = warmTap(timelineStore, "unread");
 
@@ -65,7 +66,7 @@ export function useUnreadCount(
           // Warm tap: these ARE the DM's unread messages — exactly what the
           // user is about to open.
           warmFromUnread(event);
-          if (event.pubkey !== selfPubkey) {
+          if (countsTowardDmUnread(event, selfPubkey)) {
             seen += 1;
             setCount(seen);
           }

@@ -144,3 +144,44 @@ test("with no signed-in key nothing is yours and nothing mentions you", () => {
   assert.equal(message.fromSelf, false);
   assert.equal(message.mentionsSelf, false);
 });
+
+/** buzz-services reminder identity — the wake sender. */
+const WAKE_SERVICE =
+  "a9387088355b4efe46decbde77c8fe34ee9ecbd6619d41217d21be0123f08271";
+
+test("a service wake p-tagging another member classifies as a silent wake", () => {
+  const { message } = classifyMessage(
+    event({
+      kind: 9,
+      pubkey: WAKE_SERVICE,
+      tags: [
+        ["h", CHANNEL],
+        ["p", OTHER],
+      ],
+    }),
+    context,
+  );
+  assert.equal(message.silentWake, true);
+});
+
+test("a service wake p-tagging the viewer, and a service post with no p tag, are not silent", () => {
+  const mentioned = classifyMessage(
+    event({
+      kind: 9,
+      pubkey: WAKE_SERVICE,
+      tags: [
+        ["h", CHANNEL],
+        ["p", SELF],
+      ],
+    }),
+    context,
+  );
+  assert.equal(mentioned.message.silentWake, false);
+  assert.equal(mentioned.message.mentionsSelf, true);
+
+  const digest = classifyMessage(
+    event({ kind: 9, pubkey: WAKE_SERVICE }),
+    context,
+  );
+  assert.equal(digest.message.silentWake, false);
+});

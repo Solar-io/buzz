@@ -9,7 +9,10 @@ import {
   getChannelIdFromTags,
   isThreadReply,
 } from "@/features/messages/lib/threading";
-import { shouldNotifyForEvent } from "@/features/notifications/lib/shouldNotify";
+import {
+  isWakeForOthers,
+  shouldNotifyForEvent,
+} from "@/features/notifications/lib/shouldNotify";
 import { relayClient } from "@/shared/api/relayClient";
 import {
   CHANNEL_EVENT_KINDS,
@@ -87,6 +90,40 @@ export function isChannelUnreadTriggerKind(kind: number, isDmChannel: boolean) {
   return isDmChannel
     ? isDmNotifiableKind(kind)
     : UNREAD_TRIGGER_KINDS.has(kind);
+}
+
+/**
+ * What one live channel event is allowed to do, decided before the hook runs
+ * any side effect.
+ *
+ * A scheduled wake addressed to another member (`isWakeForOthers`) is silent
+ * for the viewer: it must not advance the channel's Recent ordering — the
+ * sidebar sort reads `lastMessageAt` (channelSortPreference.ts) — and it must
+ * not reach any notification path (unread tracker, DM alert, thread-reply
+ * candidate). Every other recognized message keeps the existing behavior.
+ */
+export function liveChannelEventEffects(
+  event: Pick<RelayEvent, "kind" | "pubkey" | "tags">,
+  currentPubkey: string,
+  isDmChannel: boolean,
+): {
+  /** The kind is "new content" for this channel type. */
+  isUnreadTriggerKind: boolean;
+  /** Bump the channel's lastMessageAt (Recent ordering). */
+  advanceRecency: boolean;
+  /** Let the event into the DM-alert and notify/unread paths. */
+  notifiable: boolean;
+} {
+  const isUnreadTriggerKind = isChannelUnreadTriggerKind(
+    event.kind,
+    isDmChannel,
+  );
+  const isSilentWake = isWakeForOthers(event, currentPubkey);
+  return {
+    isUnreadTriggerKind,
+    advanceRecency: isUnreadTriggerKind && !isSilentWake,
+    notifiable: !isSilentWake,
+  };
 }
 
 export function isHomeActivityEvent(
@@ -243,15 +280,16 @@ export function useLiveChannelUpdates(
     }
 
     const isDmChannel = dmChannelMap.has(channelId);
-    const isUnreadTriggerKind = isChannelUnreadTriggerKind(
-      event.kind,
-      isDmChannel,
-    );
+    // A scheduled wake addressed to another member is silent for the viewer:
+    // no unread, no notification, and no Recent reorder either.
+    const { isUnreadTriggerKind, advanceRecency, notifiable } =
+      liveChannelEventEffects(event, normalizedCurrentPubkey, isDmChannel);
 
     // Recency is presentation state, not notification state. Every recognized
     // message advances Recent ordering, including self-authored and muted
-    // messages that the notification policy deliberately filters below.
-    if (isUnreadTriggerKind) {
+    // messages that the notification policy deliberately filters below. The
+    // one exception is a silent wake (see liveChannelEventEffects).
+    if (advanceRecency) {
       updateChannelLastMessageAt(queryClient, channelId, event.created_at);
     }
 
@@ -284,10 +322,12 @@ export function useLiveChannelUpdates(
 
     // DM alerts and every other notification side effect share this delivery
     // decision, preventing a replayed event from escaping through a second
-    // callback path.
-    handleDmEvent(event, isFirstNotificationDelivery);
+    // callback path. A wake addressed to another member reaches neither.
+    if (notifiable) {
+      handleDmEvent(event, isFirstNotificationDelivery);
+    }
 
-    if (isExternalTriggerEvent && isFirstNotificationDelivery) {
+    if (isExternalTriggerEvent && isFirstNotificationDelivery && notifiable) {
       const shouldNotify = shouldNotifyForEvent(
         event,
         normalizedCurrentPubkey,

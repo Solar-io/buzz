@@ -5,6 +5,7 @@ import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { signNostrEvent } from "@/shared/lib/nostr-signer";
 import type { ChannelSummary } from "@/features/channels/lib/channelFromEvent.ts";
 import {
+  applyDmActivityEvent,
   dmActivityFromEvents,
   compareDmRecency,
   dmActivityFilterBatches,
@@ -32,7 +33,11 @@ export interface DmSummary {
  * One subscription's worth of recency (see useDmActivity) drives the sort;
  * channels with no sampled activity fall back to metadata recency.
  */
-export function useDms(channels: ChannelSummary[]): {
+export function useDms(
+  channels: ChannelSummary[],
+  /** Viewer's key — lets the sampler skip wakes addressed to someone else. */
+  selfPubkey: string | null,
+): {
   dms: DmSummary[];
   channelsWithoutDms: ChannelSummary[];
   /** True when every per-DM sampling batch hit EOSE (or no DMs exist). */
@@ -42,7 +47,7 @@ export function useDms(channels: ChannelSummary[]): {
     () => channels.filter((c) => c.type === "dm").map((c) => c.id),
     [channels],
   );
-  const { activity, settled } = useDmActivity(dmIds);
+  const { activity, settled } = useDmActivity(dmIds, selfPubkey);
   const dms = useMemo(() => {
     const list = channels
       .filter((c) => c.type === "dm")
@@ -85,7 +90,10 @@ export function useDms(channels: ChannelSummary[]): {
  * pick waits on that signal so a cold start does not decide before the
  * samples exist (D-025 round 3).
  */
-function useDmActivity(dmIds: string[]): {
+function useDmActivity(
+  dmIds: string[],
+  selfPubkey: string | null,
+): {
   activity: Map<string, DmLastMessage>;
   settled: boolean;
 } {
@@ -136,26 +144,11 @@ function useDmActivity(dmIds: string[]): {
           // Warm tap: the newest DM message lands in the timeline store, so
           // opening the DM paints it without waiting on the network.
           warmFromDms(event);
-          setEvents((previous) => {
-            const id = event.tags.find((tag) => tag[0] === "h")?.[1];
-            if (!id) {
-              return previous;
-            }
-            const existing = previous.find(
-              (candidate) =>
-                candidate.tags.find((tag) => tag[0] === "h")?.[1] === id,
-            );
-            if (existing && existing.created_at >= event.created_at) {
-              return previous;
-            }
-            return [
-              ...previous.filter(
-                (candidate) =>
-                  candidate.tags.find((tag) => tag[0] === "h")?.[1] !== id,
-              ),
-              event,
-            ];
-          });
+          // Newest-wins per DM; a wake for someone else never becomes the
+          // sample (applyDmActivityEvent), so it cannot dot or re-sort a row.
+          setEvents((previous) =>
+            applyDmActivityEvent(previous, event, selfPubkey),
+          );
         },
         onEose: () => {
           awaitingEose -= 1;
@@ -172,7 +165,7 @@ function useDmActivity(dmIds: string[]): {
         unsubscribe();
       }
     };
-  }, [session, idsKey]);
+  }, [session, idsKey, selfPubkey]);
   const activity = useMemo(() => dmActivityFromEvents(events), [events]);
   return { activity, settled };
 }

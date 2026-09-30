@@ -81,6 +81,13 @@ export interface ChannelActivityCounting {
 export function useChannelActivity(
   channelIds: string[],
   counting?: ChannelActivityCounting,
+  /**
+   * Viewer's key for a SAMPLING feed (no `counting`). The feed needs it for
+   * one thing: recognising a scheduled wake addressed to someone else, which
+   * must not fire a live arrival (see `isWakeForOthers`). Counting feeds
+   * carry it in `counting.selfPubkey` and ignore this argument.
+   */
+  viewerPubkey: string | null = null,
 ): UseChannelActivityResult {
   const { session } = useRelaySession();
   const [activity, setActivity] = useState<ChannelActivityMap>(() => new Map());
@@ -117,7 +124,7 @@ export function useChannelActivity(
   );
 
   const readMarkers = counting?.readMarkers ?? null;
-  const selfPubkey = counting?.selfPubkey ?? null;
+  const selfPubkey = counting ? counting.selfPubkey : viewerPubkey;
   const isCounting = readMarkers !== null;
   // The handlers read markers through this ref (a getter), never a closure:
   // a marker move must not re-create them, or re-REQ anything.

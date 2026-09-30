@@ -14,6 +14,7 @@
  */
 
 import type { TimelineMessage } from "@/features/channels/lib/messageBuffer.ts";
+import { isWakeForOthers } from "../../channels/lib/wakeMessage.ts";
 
 /** Why this conversation is in the inbox. */
 export type InboxCategory = "mention" | "dm";
@@ -144,6 +145,21 @@ export function buildInboxItems(options: {
     }
     seenMessageIds.add(message.id);
     if (message.deleted || message.authorPubkey === selfPubkey) {
+      continue;
+    }
+    // A scheduled wake addressed to another member of a DM the viewer is in
+    // reaches this feed through the `#h` DM filter. It is not inbox material
+    // and must not add to the badge. (`mentionPubkeys` IS the p-tag list.)
+    if (
+      isWakeForOthers(
+        {
+          kind: message.kind,
+          pubkey: message.authorPubkey,
+          tags: message.mentionPubkeys.map((pubkey) => ["p", pubkey]),
+        },
+        selfPubkey,
+      )
+    ) {
       continue;
     }
     const channel = resolveChannel(message.channelId, channelById);

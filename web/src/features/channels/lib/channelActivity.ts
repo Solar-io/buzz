@@ -11,6 +11,7 @@
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { plainText } from "../../../shared/lib/plainText.ts";
 import { isUnread, type ReadState } from "./readState.ts";
+import { isWakeForOthers } from "./wakeMessage.ts";
 
 /** Chat messages. Reactions, typing and system rows never count as activity. */
 const KIND_CHAT_MESSAGE = 9;
@@ -364,6 +365,21 @@ export function createChannelActivityHandlers(
     }
   };
 
+  // Newest silent wake seen per channel. It never becomes the sample (so it
+  // cannot dot, count or reorder), but it proves the channel had traffic up
+  // to that instant — a baseline for the live-arrival decision in onEvent.
+  const silentWakeFloor = new Map<string, number>();
+  const noteSilentWake = (event: SignedNostrEvent): void => {
+    const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
+    if (typeof channelId !== "string" || channelId.length === 0) {
+      return;
+    }
+    const known = silentWakeFloor.get(channelId);
+    if (known === undefined || event.created_at > known) {
+      silentWakeFloor.set(channelId, event.created_at);
+    }
+  };
+
   return {
     recount(channelIds: readonly string[]): void {
       if (!seen) {
@@ -395,6 +411,15 @@ export function createChannelActivityHandlers(
       if (event.kind === 9) {
         onRawEvent?.(event);
       }
+      // A scheduled wake addressed to another member is machinery the viewer
+      // is a bystander to: the timeline keeps the row (tapped above), but it
+      // must not become the channel's sample, a counted unread or a live
+      // arrival — so no badge, dot, sidebar reorder or toast. Gated BEFORE
+      // remember() so the marker-move recount cannot resurrect it either.
+      if (isWakeForOthers(event, selfPubkey)) {
+        noteSilentWake(event);
+        return;
+      }
       const entry = channelActivityFromEvent(event);
       if (!entry) {
         return;
@@ -415,7 +440,16 @@ export function createChannelActivityHandlers(
       if (previous && previous.createdAt >= entry.createdAt) {
         return;
       }
-      if (previous) {
+      // A message is a live arrival when it beats a known sample — or, in a
+      // channel whose only delivered traffic so far was a silent wake, when
+      // it is newer than that wake. Without the second arm a channel read up
+      // to a wake (or a limit-1 DM sample that IS a wake) has no baseline,
+      // and the woken agent's reply would arrive unseen: no count, no toast.
+      const wakeFloor = silentWakeFloor.get(entry.channelId);
+      const isLiveArrival =
+        previous !== undefined ||
+        (wakeFloor !== undefined && entry.createdAt > wakeFloor);
+      if (isLiveArrival) {
         if (readMarkers) {
           // Live increment, same exclusion rules as the derivation.
           onUnreadCountsChange((counts) => {

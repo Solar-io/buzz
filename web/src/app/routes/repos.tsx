@@ -125,13 +125,14 @@ function ChannelBrowser() {
   const view = Route.useSearch({ select: (s) => s.view });
   const current = channels.find((channel) => channel.id === selectedId) ?? null;
 
+  const selfPubkey = useOwnPubkey();
   // DMs ride the same kind:39000 list (relay `t` tag); they get their own
   // sidebar section and participant-based names.
   const {
     dms,
     channelsWithoutDms: unfilteredChannels,
     dmSamplingSettled,
-  } = useDms(channels);
+  } = useDms(channels, selfPubkey);
   // Newest-message feed over every non-DM channel the sidebar can show:
   // the shell owns it ONCE so the unread dots and the message toasts read
   // the same subscription (archived channels hide from the sidebar, so they
@@ -147,7 +148,6 @@ function ChannelBrowser() {
     () => dms.map(({ channel }) => channel.id),
     [dms],
   );
-  const selfPubkey = useOwnPubkey();
   const dmParticipantPubkeys = useMemo(
     () =>
       dms.flatMap((dm) =>

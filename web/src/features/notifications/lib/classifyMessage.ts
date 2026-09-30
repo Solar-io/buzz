@@ -11,11 +11,13 @@
  * divergent implementation of mention resolution.
  */
 
+import { isWakeForOthers } from "../../channels/lib/wakeMessage.ts";
 import type { IncomingMessage } from "./notifyDecision.ts";
 
 /** The subset of a signed Nostr event this module reads. */
 export interface NotifiableEvent {
   id: string;
+  kind: number;
   pubkey: string;
   content: string;
   created_at: number;
@@ -70,6 +72,7 @@ export function classifyMessage(
     message: {
       fromSelf: self != null && event.pubkey === self,
       mentionsSelf: self != null && taggedPubkeys(event).includes(self),
+      silentWake: isWakeForOthers(event, self),
       isDm: channelId != null && context.dmChannelIds.includes(channelId),
       // A message with no channel cannot be matched against the viewer's
       // prefs or the open channel; treat it as muted rather than notifying

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   isScheduledWake,
+  isWakeForOthers,
   wakePreview,
   WAKE_SERVICE_PUBKEYS,
 } from "./wakeMessage.ts";
@@ -64,4 +65,56 @@ test("wakePreview truncates long first lines with an ellipsis and never exceeds 
 
 test("wakePreview of an empty/whitespace text is empty, not a stray newline", () => {
   assert.equal(wakePreview("   \n  \t "), "");
+});
+
+// ---- isWakeForOthers: the "silent scheduled wakes" rule (Sam 2026-09-30) ----
+
+/** The viewer, and the agent seat a wake is addressed to. */
+const VIEWER = "c".repeat(64);
+const AGENT = "d".repeat(64);
+const CHANNEL_TAG = ["h", "11111111-1111-1111-1111-111111111111"];
+
+function serviceEvent(overrides = {}) {
+  return {
+    kind: 9,
+    pubkey: SERVICE,
+    tags: [CHANNEL_TAG, ["p", AGENT]],
+    ...overrides,
+  };
+}
+
+test("a wake p-tagging another member is a wake for others", () => {
+  assert.equal(isWakeForOthers(serviceEvent(), VIEWER), true);
+});
+
+test("a wake mentioning the viewer is not silent", () => {
+  assert.equal(
+    isWakeForOthers(
+      serviceEvent({ tags: [CHANNEL_TAG, ["p", AGENT], ["p", VIEWER]] }),
+      VIEWER,
+    ),
+    false,
+  );
+});
+
+test("a service post with no p tag is not silent — alerts and digests stay loud", () => {
+  assert.equal(
+    isWakeForOthers(serviceEvent({ tags: [CHANNEL_TAG] }), VIEWER),
+    false,
+  );
+});
+
+test("kind 45001 from the service is not silent", () => {
+  assert.equal(isWakeForOthers(serviceEvent({ kind: 45001 }), VIEWER), false);
+});
+
+test("a p-tagged kind-9 from anyone but the service is not a wake", () => {
+  assert.equal(
+    isWakeForOthers(serviceEvent({ pubkey: CHATTER }), VIEWER),
+    false,
+  );
+});
+
+test("an unknown viewer (null pubkey) is never treated as a bystander", () => {
+  assert.equal(isWakeForOthers(serviceEvent(), null), false);
 });
