@@ -37,12 +37,27 @@ function paletteBlocks() {
   return blocks;
 }
 
-test("resolveThemeApplication: mapped names are fixed, everything else derived", () => {
+test("buzz and buzz-dark resolve to the fixed palettes", () => {
   assert.deepEqual(
     FIXED_THEME_FOR,
-    {},
-    "Phase 0 maps no theme — nothing may change on screen",
+    { buzz: "buzz-light", "buzz-dark": "buzz-dark" },
+    "Phase 1: the two Buzz names, and only those, are fixed",
   );
+  // The shipped map: both defaults paint with their palette…
+  assert.deepEqual(resolveThemeApplication("buzz"), {
+    kind: "fixed",
+    palette: "buzz-light",
+    isDark: false,
+  });
+  assert.deepEqual(resolveThemeApplication("buzz-dark"), {
+    kind: "fixed",
+    palette: "buzz-dark",
+    isDark: true,
+  });
+  // …and every Shiki theme stays selectable and derived.
+  assert.equal(resolveThemeApplication("catppuccin-mocha").kind, "derived");
+  assert.equal(resolveThemeApplication("github-dark").kind, "derived");
+  // An injected map still decides, name by name.
   const map = { buzz: "buzz-light" };
   assert.deepEqual(resolveThemeApplication("buzz", map), {
     kind: "fixed",
@@ -56,8 +71,6 @@ test("resolveThemeApplication: mapped names are fixed, everything else derived",
     resolveThemeApplication("catppuccin-mocha", map).kind,
     "derived",
   );
-  // With the real (empty) map, even `buzz` is derived.
-  assert.equal(resolveThemeApplication("buzz").kind, "derived");
   // A prototype key is not a mapping.
   assert.equal(resolveThemeApplication("constructor", map).kind, "derived");
 });

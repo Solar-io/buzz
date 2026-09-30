@@ -14,10 +14,12 @@ import {
 import { shellSidebarWidth, useShellSidebarWidthVar } from "./shellCanvas.ts";
 
 /**
- * Two-pane responsive shell: sidebar + main. On small screens the sidebar
- * becomes an overlay drawer behind a top bar (iOS/iPadOS friendly: it uses
- * dvh sizing and safe-area padding). At desktop widths both panes are
- * drag-resizable via edge handles (persisted per device).
+ * Responsive shell: sidebar + main (+ the right pane). At desktop widths the
+ * panes are drag-resizable via edge handles (persisted per device). On a
+ * phone (below md) navigation is a bottom tab bar on tab pages and a back
+ * chevron over a conversation (web redesign phase-1 §6); without a tab bar
+ * the older hamburger + overlay drawer still applies. iOS/iPadOS friendly:
+ * dvh sizing and safe-area padding throughout.
  */
 
 /**
@@ -128,6 +130,9 @@ export function AppShell({
   rowClassName,
   rowStyle,
   rowOverlay,
+  phoneTabBar,
+  onPhoneBack,
+  phoneBarTrailing,
 }: {
   sidebar: ReactNode;
   /**
@@ -152,6 +157,19 @@ export function AppShell({
    * the row's own padding (the web layer: Links + Files).
    */
   rowOverlay?: ReactNode;
+  /**
+   * Phone (below md): the bottom tab bar, passed only on TAB PAGES. While it
+   * is set the top bar hides — a tab page carries its own header — and the
+   * row takes the top safe-area inset itself.
+   */
+  phoneTabBar?: ReactNode;
+  /**
+   * Phone: something owns the whole screen (a conversation, Files). The top
+   * bar shows a back chevron instead of the hamburger.
+   */
+  onPhoneBack?: () => void;
+  /** Phone top bar, right end — after the conversation's own controls. */
+  phoneBarTrailing?: ReactNode;
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const closeDrawer = () => setDrawerOpen(false);
@@ -214,27 +232,31 @@ export function AppShell({
             "Buzz / Name" breadcrumb bar above it is gone. */}
         <header
           data-testid="app-shell-phone-bar"
-          className={`buzz-shell-navigation ${chromeless ? "hidden" : "flex"} min-h-11 shrink-0 items-center gap-1 border-b border-border bg-secondary px-2 py-1 pt-[max(0.25rem,env(safe-area-inset-top))] md:hidden`}
+          className={`buzz-shell-navigation ${chromeless || phoneTabBar ? "hidden" : "flex"} min-h-11 shrink-0 items-center gap-1 border-b border-border bg-background px-2 py-1 pt-[max(0.25rem,env(safe-area-inset-top))] md:hidden`}
         >
           <button
             type="button"
-            aria-label="Open channels"
-            className="rounded-md p-2 hover:bg-accent"
-            onClick={() => setDrawerOpen(true)}
+            aria-label={onPhoneBack ? "Back" : "Open channels"}
+            className="grid size-11 shrink-0 place-items-center rounded-md text-ink-2 hover:bg-accent"
+            onClick={onPhoneBack ?? (() => setDrawerOpen(true))}
           >
             <svg
               viewBox="0 0 24 24"
-              className="h-5 w-5"
+              className="size-5.5"
               fill="none"
               stroke="currentColor"
               strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
               role="img"
-              aria-label="Menu"
+              aria-label={onPhoneBack ? "Back" : "Menu"}
             >
-              <path d="M4 6h16M4 12h16M4 18h16" />
+              <path
+                d={onPhoneBack ? "m15 18-6-6 6-6" : "M4 6h16M4 12h16M4 18h16"}
+              />
             </svg>
           </button>
-          <span className="min-w-0 flex-1 truncate font-semibold">
+          <span className="min-w-0 flex-1 truncate text-base font-bold tracking-tight">
             {title || "Buzz"}
           </span>
           <div
@@ -242,6 +264,7 @@ export function AppShell({
             data-testid="phone-bar-actions"
             className="flex shrink-0 items-center"
           />
+          {phoneBarTrailing}
         </header>
         {/* The shell row: content, then the right pane beside it, with the
             web layer over both. The phone bar above keeps spanning the full
@@ -251,7 +274,7 @@ export function AppShell({
             conversation and the pane. */}
         <div
           ref={rowRef}
-          className={`buzz-content-scrollbar relative flex min-h-0 flex-1 overflow-y-auto${rowClassName ? ` ${rowClassName}` : ""}`}
+          className={`buzz-content-scrollbar relative flex min-h-0 flex-1 overflow-y-auto${phoneTabBar && !chromeless ? " max-md:pt-[env(safe-area-inset-top)]" : ""}${rowClassName ? ` ${rowClassName}` : ""}`}
           style={rowStyle}
         >
           <PhoneBarSlotContext.Provider value={phoneBarSlot}>
@@ -260,6 +283,9 @@ export function AppShell({
             {rowOverlay}
           </PhoneBarSlotContext.Provider>
         </div>
+        {phoneTabBar && !chromeless ? (
+          <div className="shrink-0 md:hidden">{phoneTabBar}</div>
+        ) : null}
       </div>
 
       {drawerOpen && (

@@ -11,7 +11,7 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
-import { toast } from "sonner";
+import { notify, toast } from "@/shared/ui/notify";
 import { AtSign, Paperclip, Smile } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
@@ -688,12 +688,10 @@ export function Composer({
         }
         onSent?.();
       } else {
-        toast.error(result.message || "The relay rejected the message.");
+        throw new Error(result.message || "The relay rejected the message.");
       }
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Could not send the message.",
-      );
+      notify.sendFailure(error, submitRef); // verbatim, sticky, Retry
     } finally {
       setBusy(false);
       if (unresolved.length > 0) {
@@ -704,6 +702,8 @@ export function Composer({
     }
   };
 
+  const submitRef = useRef(submit);
+  submitRef.current = submit;
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (suggest.onKeyDown(event)) {
       return;

@@ -21,13 +21,16 @@ const freshDm = () => ({
   mobileOpen: false,
   mobile: false,
   threadRootId: null,
-  rightTab: "thinking",
+  // Entering an agent DM makes the thinking tab active (phase-1 §3).
+  active: "activity",
+  previous: "work",
   lastThreadRootId: null,
 });
 
 const freshChannel = () => ({
   ...freshDm(),
   agentDm: false,
+  active: "work",
 });
 
 // ── 🧠 visibility ──────────────────────────────────────────────────────────
@@ -42,7 +45,7 @@ test("a collapsed pane, the Replies tab, and non-DM channels all hide it", () =>
     thinkingPaneVisible({
       ...freshDm(),
       threadRootId: "t1",
-      rightTab: "thread",
+      active: "thread",
     }),
     false,
   );
@@ -59,7 +62,7 @@ test("below lg the pane is on screen only while the sheet is open", () => {
       ...mobile,
       mobileOpen: true,
       threadRootId: "t1",
-      rightTab: "thread",
+      active: "thread",
     }),
     false,
   );
@@ -68,18 +71,30 @@ test("below lg the pane is on screen only while the sheet is open", () => {
 // ── 🧠 toggle ──────────────────────────────────────────────────────────────
 
 test("showing selects the thinking tab, un-collapses, and raises the sheet", () => {
-  assert.deepEqual(toggleThinkingPatch({ ...freshDm(), paneHidden: true }), {
-    rightTab: "thinking",
-    paneHidden: false,
-    mobileOpen: true,
-  });
+  assert.deepEqual(
+    toggleThinkingPatch({ ...freshDm(), paneHidden: true, active: "work" }),
+    {
+      active: "activity",
+      previous: "work",
+      paneHidden: false,
+      mobileOpen: true,
+    },
+  );
+  // From the thread tab: thinking becomes active and the thread is where
+  // hiding it again will return.
   assert.deepEqual(
     toggleThinkingPatch({
       ...freshDm(),
       threadRootId: "t1",
-      rightTab: "thread",
+      active: "thread",
+      previous: "activity",
     }),
-    { rightTab: "thinking", paneHidden: false, mobileOpen: true },
+    {
+      active: "activity",
+      previous: "thread",
+      paneHidden: false,
+      mobileOpen: true,
+    },
   );
 });
 
@@ -87,27 +102,38 @@ test("hiding collapses the pane on both form factors at once", () => {
   assert.deepEqual(toggleThinkingPatch(freshDm()), {
     paneHidden: true,
     mobileOpen: false,
+    active: "work",
   });
   assert.deepEqual(toggleThinkingPatch({ ...freshDm(), mobileOpen: true }), {
     paneHidden: true,
     mobileOpen: false,
+    active: "work",
   });
 });
 
 // ── Replies visibility + gating ────────────────────────────────────────────
 
-test("a thread shows in a plain channel whenever a root is open", () => {
+test("a thread shows in a plain channel while its tab is active", () => {
   assert.equal(threadPaneVisible(freshChannel()), false);
   assert.equal(
-    threadPaneVisible({ ...freshChannel(), threadRootId: "t1" }),
+    threadPaneVisible({
+      ...freshChannel(),
+      threadRootId: "t1",
+      active: "thread",
+    }),
     true,
+  );
+  // Open but behind the Work tab: a tab in the strip, not on screen.
+  assert.equal(
+    threadPaneVisible({ ...freshChannel(), threadRootId: "t1" }),
+    false,
   );
 });
 
 test("in an agent DM the tab decides which pane the thread occupies", () => {
   const dm = { ...freshDm(), threadRootId: "t1" };
   assert.equal(threadPaneVisible(dm), false);
-  assert.equal(threadPaneVisible({ ...dm, rightTab: "thread" }), true);
+  assert.equal(threadPaneVisible({ ...dm, active: "thread" }), true);
 });
 
 test("with no live or remembered root the toggle has nothing to show", () => {
@@ -126,28 +152,36 @@ test("hiding in an agent DM flips the tab back to thinking and keeps the root", 
   const patch = toggleThreadPatch({
     ...freshDm(),
     threadRootId: "t1",
-    rightTab: "thread",
+    active: "thread",
+    previous: "activity",
   });
-  assert.deepEqual(patch, { rightTab: "thinking" });
+  assert.deepEqual(patch, { active: "activity" });
 });
 
-test("hiding in a plain channel closes the pane like its own close button", () => {
-  const patch = toggleThreadPatch({ ...freshChannel(), threadRootId: "t1" });
-  assert.deepEqual(patch, { threadRootId: null });
+test("hiding in a plain channel returns to Work and keeps the thread as a tab", () => {
+  const patch = toggleThreadPatch({
+    ...freshChannel(),
+    threadRootId: "t1",
+    active: "thread",
+  });
+  // The root is untouched: the thread stays a tab (its own ✕ closes it).
+  assert.deepEqual(patch, { active: "work" });
 });
 
-test("showing restores the last root in a plain channel and un-collapses in a DM", () => {
+test("showing restores the last root and makes the thread the active tab", () => {
   assert.deepEqual(
     toggleThreadPatch({ ...freshChannel(), lastThreadRootId: "t1" }),
-    { threadRootId: "t1", rightTab: "thread", paneHidden: false },
+    { threadRootId: "t1", active: "thread", previous: "work" },
   );
+  // A hidden thinking tab stays hidden: the thread is its own tab now.
   assert.deepEqual(
     toggleThreadPatch({
       ...freshDm(),
       paneHidden: true,
       threadRootId: "t1",
+      active: "work",
     }),
-    { threadRootId: "t1", rightTab: "thread", paneHidden: false },
+    { threadRootId: "t1", active: "thread", previous: "work" },
   );
 });
 
@@ -162,7 +196,8 @@ test("both toggles are their own inverse over a four-corner round trip", () => {
     for (const variant of [
       base,
       { ...base, threadRootId: "t1", lastThreadRootId: "t1" },
-      { ...base, paneHidden: true },
+      // A hidden thinking tab is not on screen: the pane shows Work.
+      { ...base, paneHidden: true, active: "work" },
     ]) {
       // The 🧠 only exists in an agent DM (its gate is agentPubkey), so its
       // round trip is only meaningful there.
@@ -178,12 +213,12 @@ test("both toggles are their own inverse over a four-corner round trip", () => {
           {
             paneHidden: backThinking.paneHidden,
             threadRootId: backThinking.threadRootId,
-            rightTab: backThinking.rightTab,
+            active: backThinking.active,
           },
           {
             paneHidden: variant.paneHidden,
             threadRootId: variant.threadRootId,
-            rightTab: variant.rightTab,
+            active: variant.active,
           },
         );
       }
@@ -197,15 +232,12 @@ test("both toggles are their own inverse over a four-corner round trip", () => {
         assert.deepEqual(
           {
             threadRootId: backThreads.threadRootId,
-            // rightTab only decides anything in an agent DM — a plain
-            // channel has no tabs, and the toggle legitimately leaves the
-            // field wherever the DM machinery last put it.
-            ...(variant.agentDm ? { rightTab: backThreads.rightTab } : {}),
+            active: backThreads.active,
             paneHidden: backThreads.paneHidden,
           },
           {
             threadRootId: variant.threadRootId,
-            ...(variant.agentDm ? { rightTab: variant.rightTab } : {}),
+            active: variant.active,
             paneHidden: variant.paneHidden,
           },
         );

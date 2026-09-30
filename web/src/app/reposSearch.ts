@@ -11,6 +11,10 @@
  * from. It also keeps each pane linkable.
  */
 export const SHELL_VIEWS = [
+  // Work is the docked right rail at lg; below it, this page (and the phone's
+  // home screen). `channels` is the phone tab bar's channel list page.
+  "work",
+  "channels",
   "inbox",
   "workflows",
   "pulse",

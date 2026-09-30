@@ -82,6 +82,31 @@ export function buildMessageToast(input: MessageToastInput): MessageToastCopy {
   };
 }
 
+export interface MessageToastParts {
+  /** Bold lead: who wrote it. */
+  sender: string;
+  /** Mono meta line: "#channel" or "DM". */
+  context: string;
+  /** Up to two lines of body. */
+  preview: string;
+}
+
+/**
+ * The same wording as {@link buildMessageToast}, split into the three slots
+ * the redesign's toast card draws (sender / where / preview) instead of one
+ * "Sender in #channel" title.
+ */
+export function messageToastParts(input: MessageToastInput): MessageToastParts {
+  const channel = input.channelName.trim();
+  const sender = input.senderName.trim();
+  return {
+    sender: sender || (input.isDm ? channel : "") || "New message",
+    context: input.isDm ? "DM" : channel ? `#${channel}` : "",
+    preview:
+      truncate(input.preview, MESSAGE_TOAST_PREVIEW_MAX) || "Sent a message",
+  };
+}
+
 /** Collapse whitespace, then cut to `max` chars with an ellipsis. */
 function truncate(text: string, max: number): string {
   const collapsed = text.replace(/\s+/g, " ").trim();

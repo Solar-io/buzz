@@ -5,6 +5,7 @@ import {
   LAST_CONVERSATION_PREFIX,
   clearLastConversation,
   landingRedirectTarget,
+  phoneLandingView,
   loadLastConversation,
   restoreVerdict,
   saveLastConversation,
@@ -105,4 +106,16 @@ test("restore verdict: a hidden DM or another identity's entry is stale", () => 
     restoreVerdict({ ...base, storedPubkey: "alice", selfPubkey: "alice" }),
     "valid",
   );
+});
+
+test("phone landing: a bare /repos goes to Work; anything addressed stays put", () => {
+  assert.equal(phoneLandingView({}, true), "work");
+  // Desktop keeps the last-conversation restore.
+  assert.equal(phoneLandingView({}, false), null);
+  // A conversation, a view or a permalink was asked for: leave it alone
+  // (view=work is also the redirect's own loop guard).
+  assert.equal(phoneLandingView({ c: "dm-y" }, true), null);
+  assert.equal(phoneLandingView({ view: "work" }, true), null);
+  assert.equal(phoneLandingView({ view: "channels" }, true), null);
+  assert.equal(phoneLandingView({ m: "abc" }, true), null);
 });

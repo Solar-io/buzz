@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { loadRightTab, saveRightTab } from "@/features/work/lib/workPrefs.ts";
 import {
   thinkingPaneVisible,
   threadPaneVisible,
@@ -8,7 +9,7 @@ import {
   type DmPanePatch,
   type DmPaneState,
   type PaneToggles,
-  type RightTab,
+  type RightTabId,
 } from "./lib/dmPaneToggles.ts";
 import {
   loadThinkingPaneHidden,
@@ -24,22 +25,21 @@ function paneStorage(): Storage | null {
 }
 
 /**
- * The DM right-pane state the route used to hold inline, plus the two-way
- * toggles Sam asked for on 2026-09-22 (🧠 and the new Replies button).
+ * The right pane's tab state (web redesign phase-1 §3: Work | Thread |
+ * Thinking) plus the two-way 🧠 and Replies toggles Sam asked for on
+ * 2026-09-22.
  *
- * Extracted from `repos.tsx` when the toggles arrived: the show/hide policy
- * lives in `lib/dmPaneToggles.ts` (pure, unit-tested), this hook owns the
- * three state cells and the viewport flag, and the route keeps `threadRootId`
- * itself because the permalink effect and the thread lookup read it long
- * before the DM agent is known.
+ * The policy lives in `lib/dmPaneToggles.ts` (pure, unit-tested); this hook
+ * owns the state cells and the viewport flag, and the route keeps
+ * `threadRootId` itself because the permalink effect and the thread lookup
+ * read it long before the DM agent is known.
  *
- * The viewport flag mirrors the lg breakpoint the panes switch on
- * (`AgentActivityPanel`'s `lg:static` dock, `ThreadPanel`'s overlay): below it,
- * the thinking pane is only on screen while the sheet is open, which is one
- * of the two inputs `thinkingPaneVisible` reads.
+ * The viewport flag mirrors the lg breakpoint the panes switch on: below it
+ * the thinking pane is only on screen while its sheet is open, which is one
+ * of the inputs `thinkingPaneVisible` reads.
  */
 export function useDmRightPane(options: {
-  /** An agent DM is open (both tabs exist). */
+  /** An agent DM is open (the thinking tab can exist). */
   agentDm: boolean;
   /** The selected conversation — a change forgets the remembered thread root. */
   channelId: string | undefined;
@@ -51,7 +51,7 @@ export function useDmRightPane(options: {
 }) {
   const owner = options.ownerPubkey ?? null;
   const [thinkingOpen, setThinkingOpen] = useState(false);
-  // Desktop pane: closed by default, and each user's last choice sticks.
+  // Thinking tab: closed by default, and each user's last choice sticks.
   const [dmPaneHidden, setPaneHiddenState] = useState(() =>
     loadThinkingPaneHidden(paneStorage(), owner),
   );
@@ -62,13 +62,26 @@ export function useDmRightPane(options: {
     saveThinkingPaneHidden(paneStorage(), owner, hidden);
     setPaneHiddenState(hidden);
   };
-  const [rightTab, setRightTab] = useState<RightTab>("thinking");
+  const [tabs, setTabs] = useState<{
+    active: RightTabId;
+    previous: RightTabId;
+  }>(() => ({ active: loadRightTab(), previous: "work" }));
   const [lastThreadRootId, setLastThreadRootId] = useState<string | null>(null);
   const [mobile, setMobile] = useState(() =>
     typeof window !== "undefined" && window.matchMedia
       ? !window.matchMedia("(min-width: 1024px)").matches
       : false,
   );
+
+  const setActive = (active: RightTabId, previous?: RightTabId) => {
+    setTabs((current) => {
+      if (current.active === active) {
+        return previous === undefined ? current : { active, previous };
+      }
+      return { active, previous: previous ?? current.active };
+    });
+    saveRightTab(active);
+  };
 
   // D-1 (QA 2026-09-22): a remembered thread root belongs to the channel it
   // was opened in. Switching conversations must forget it, or the Replies
@@ -84,6 +97,21 @@ export function useDmRightPane(options: {
       setLastThreadRootId(options.threadRootId);
     }
   }, [options.threadRootId]);
+
+  // Entering an agent DM whose thinking tab is open selects it — once per
+  // entry (today's default: the thinking pane opens), not on every render,
+  // so a viewer who then picks Work stays on Work.
+  const enteredRef = useRef<string | null>(null);
+  const entryKey =
+    options.agentDm && !dmPaneHidden ? (options.channelId ?? null) : null;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fires on entry only; setActive is a fresh closure over a stable setter
+  useEffect(() => {
+    if (entryKey === null || enteredRef.current === entryKey) {
+      return;
+    }
+    enteredRef.current = entryKey;
+    setActive("activity");
+  }, [entryKey]);
 
   useEffect(() => {
     if (!window.matchMedia) {
@@ -103,7 +131,8 @@ export function useDmRightPane(options: {
     mobileOpen: thinkingOpen,
     mobile,
     threadRootId: options.threadRootId,
-    rightTab,
+    active: tabs.active,
+    previous: tabs.previous,
     lastThreadRootId,
   });
 
@@ -114,21 +143,46 @@ export function useDmRightPane(options: {
     if (patch.mobileOpen !== undefined) {
       setThinkingOpen(patch.mobileOpen);
     }
-    if (patch.rightTab !== undefined) {
-      setRightTab(patch.rightTab);
+    if (patch.active !== undefined) {
+      setActive(patch.active, patch.previous);
     }
     if (patch.threadRootId !== undefined) {
       options.setThreadRootId(patch.threadRootId);
     }
   };
 
+  const back = (leaving: RightTabId): RightTabId =>
+    tabs.previous !== leaving ? tabs.previous : "work";
+
   return {
     thinkingOpen,
     setThinkingOpen,
     dmPaneHidden,
     setDmPaneHidden,
-    rightTab,
-    setRightTab,
+    active: tabs.active,
+    previous: tabs.previous,
+    /** Pick a tab from the strip. */
+    selectTab: (tab: RightTabId) => setActive(tab),
+    /** A timeline "N replies" click: that thread, on the thread tab. */
+    openThreadTab: (id: string) => {
+      options.setThreadRootId(id);
+      setActive("thread");
+    },
+    /** The thread tab's ✕: close it and return to the tab before it. */
+    closeThread: () => {
+      options.setThreadRootId(null);
+      if (tabs.active === "thread") {
+        setActive(back("thread"), "work");
+      }
+    },
+    /** The thinking tab's ✕ / the pane's own close. */
+    closeThinking: () => {
+      setDmPaneHidden(true);
+      setThinkingOpen(false);
+      if (tabs.active === "activity") {
+        setActive(back("activity"), "work");
+      }
+    },
     /** The composer action row's 🧠 + Replies controls, as one group. */
     panes: {
       thinkingVisible: thinkingPaneVisible(state()),

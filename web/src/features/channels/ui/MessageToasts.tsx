@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import { toast } from "sonner";
 import type { Profile } from "@/features/channels/hooks";
 import type {
   ChannelActivityEvent,
@@ -11,13 +10,13 @@ import {
   type ChannelPrefs,
 } from "@/features/channels/lib/channelPrefs.ts";
 import {
-  MESSAGE_TOAST_DURATION_MS,
-  buildMessageToast,
+  messageToastParts,
   shouldToastMessage,
 } from "@/features/channels/lib/messageToast.ts";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
 import { readAuthorName } from "@/features/notifications/hooks";
+import { notify } from "@/shared/ui/notify";
 
 export interface MessageToastsProps {
   selfPubkey: string | null;
@@ -42,10 +41,12 @@ export interface MessageToastsProps {
    * row click lands.
    */
   onOpenChannel: (channelId: string) => void;
+  /** Known agents — their toasts carry the hex mark instead of a disc. */
+  agentPubkeys?: ReadonlySet<string>;
 }
 
 /**
- * Bottom-right toasts on new messages. Mounted ONCE at the shell (next to
+ * Top-right toasts on new messages. Mounted ONCE at the shell (next to
  * NotificationRuntime): the channel side consumes the shell's shared
  * activity feed via {@link MessageToastsProps.channelLiveEvents}, the DM side
  * runs its own `useChannelActivity` over the DM ids (the DM rows keep their
@@ -61,6 +62,7 @@ export function MessageToasts({
   channelPrefs,
   profiles,
   onOpenChannel,
+  agentPubkeys,
 }: MessageToastsProps) {
   const dmFeed = useChannelActivity(dmChannelIds);
   // The registration effect keys on the STABLE register functions — keying
@@ -77,6 +79,7 @@ export function MessageToasts({
     channelPrefs,
     profiles,
     onOpenChannel,
+    agentPubkeys,
   });
   latest.current = {
     selfPubkey,
@@ -85,6 +88,7 @@ export function MessageToasts({
     channelPrefs,
     profiles,
     onOpenChannel,
+    agentPubkeys,
   };
 
   useEffect(() => {
@@ -108,7 +112,7 @@ export function MessageToasts({
       ) {
         return;
       }
-      const copy = buildMessageToast({
+      const copy = messageToastParts({
         channelName: isDm
           ? dmDisplayName(
               channel.participantPubkeys,
@@ -122,13 +126,16 @@ export function MessageToasts({
           readAuthorName(entry.pubkey),
         preview: entry.preview,
       });
-      toast(copy.title, {
-        description: copy.description,
-        duration: MESSAGE_TOAST_DURATION_MS,
-        action: {
-          label: "Open",
-          onClick: () => current.onOpenChannel(entry.channelId),
-        },
+      // Six seconds with a timer line (notify.ts AUTO_DISMISS_MS).
+      notify.message({
+        sender: copy.sender,
+        senderPubkey: entry.pubkey,
+        agent:
+          current.agentPubkeys?.has(entry.pubkey) === true ||
+          current.agentPubkeys?.has(entry.pubkey.toLowerCase()) === true,
+        context: copy.context,
+        preview: copy.preview,
+        onOpen: () => current.onOpenChannel(entry.channelId),
       });
     };
 

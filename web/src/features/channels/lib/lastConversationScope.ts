@@ -6,6 +6,7 @@ import {
   type LastConversation,
   landingRedirectTarget,
   loadLastConversation,
+  phoneLandingView,
 } from "./lastConversation.ts";
 
 /**
@@ -28,6 +29,15 @@ export function lastConversationScope(): string {
   } catch {
     // Native app with no relay configured yet: nothing to restore into.
     return "unconfigured";
+  }
+}
+
+/** Below `md` (48rem) — the same query as AppShell's `usePhoneLayout`. */
+function isPhoneViewport(): boolean {
+  try {
+    return globalThis.matchMedia?.("(width < 48rem)").matches ?? false;
+  } catch {
+    return false;
   }
 }
 
@@ -68,6 +78,10 @@ export function landingBeforeLoad({
 }: {
   search: { c?: string; view?: string; m?: string };
 }): void {
+  // Phone (below md, AppShell's breakpoint): Work is the home screen.
+  if (phoneLandingView(search, isPhoneViewport()) !== null) {
+    throw redirect({ to: "/repos", search: { view: "work" }, replace: true });
+  }
   const target = restoredLandingTarget(search);
   if (target !== null) {
     throw redirect({ to: "/repos", search: { c: target }, replace: true });

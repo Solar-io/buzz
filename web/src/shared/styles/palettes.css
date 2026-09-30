@@ -19,8 +19,15 @@
  * the canvas does not specify are the engine's output for the canvas
  * bg/ink/muted. PALETTE_META_BG (fixed-palettes.ts) duplicates --background.
  *
- * Phase 0: no theme maps to a palette (FIXED_THEME_FOR is empty), so these
- * blocks match nothing yet.
+ * Phase 1: `buzz` and `buzz-dark` map here (FIXED_THEME_FOR), so these blocks
+ * are the default look. Tuned against Main.dc.html in Phase 1:
+ *
+ * - --sidebar-active is the INK pill (the canvas's --btn), not --sel: it
+ *   paints the unread dot and the count badges, and a white pill on a cream
+ *   sidebar is invisible.
+ * - The selected sidebar row is the card surface with a hairline ring and a
+ *   heavier label (the artboard's aria-current row), instead of the
+ *   translucent-white wash the dark derived themes use.
  */
 @layer base {
   :root[data-palette="buzz-light"] {
@@ -74,8 +81,12 @@
     --primary-foreground: 45 50.00% 98.4%;
     --sidebar-primary: 48 10.20% 9.6%;
     --sidebar-primary-foreground: 45 50.00% 98.4%;
-    --sidebar-active: 0 0% 100.0%;
-    --sidebar-active-foreground: 48 10.20% 9.6%;
+    --sidebar-active: 48 10.20% 9.6%;
+    --sidebar-active-foreground: 45 50.00% 98.4%;
+    --sidebar-row-active-surface: hsl(var(--card));
+    --sidebar-row-active-shadow: 0 0 0 1px hsl(var(--border));
+    --sidebar-row-active-label-weight: 650;
+    --sidebar-row-active-color: hsl(var(--foreground));
     --radius: 0.625rem;
   }
 
@@ -130,8 +141,12 @@
     --primary-foreground: 0 0% 7.8%;
     --sidebar-primary: 40 11.11% 89.4%;
     --sidebar-primary-foreground: 0 0% 7.8%;
-    --sidebar-active: 0 0% 13.3%;
-    --sidebar-active-foreground: 40 11.11% 89.4%;
+    --sidebar-active: 40 11.11% 89.4%;
+    --sidebar-active-foreground: 0 0% 7.8%;
+    --sidebar-row-active-surface: hsl(var(--card));
+    --sidebar-row-active-shadow: 0 0 0 1px hsl(var(--border));
+    --sidebar-row-active-label-weight: 650;
+    --sidebar-row-active-color: hsl(var(--foreground));
     --radius: 0.625rem;
   }
 }
