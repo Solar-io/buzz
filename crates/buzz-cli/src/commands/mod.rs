@@ -17,6 +17,7 @@ pub mod pr;
 pub mod projects;
 pub mod reactions;
 pub mod repos;
+pub mod share;
 pub mod social;
 pub mod stage;
 pub mod stage_tag;

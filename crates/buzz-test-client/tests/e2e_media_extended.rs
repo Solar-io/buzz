@@ -491,6 +491,47 @@ async fn test_upload_html_served_as_inert_attachment() {
 
 #[tokio::test]
 #[ignore]
+async fn generic_markdown_upload_served_as_attachment() {
+    // Phase 6 (`buzz share`, D6.4): markdown has no magic bytes, so it is
+    // stored as `application/octet-stream` (`.bin`) and served as an inert
+    // download. The Shelf previewer picks a renderer from imeta `filename`,
+    // never from the served response.
+    let client = http_client();
+    let keys = Keys::generate();
+    let md = b"# Weekly report\n\n- item one\n- [link](https://example.org)\n";
+    let resp = upload(&client, &keys, md).await;
+    assert_eq!(resp.status().as_u16(), 200, "markdown should upload");
+    let desc: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(desc["type"].as_str().unwrap(), "application/octet-stream");
+    let url = desc["url"].as_str().unwrap();
+    assert!(url.ends_with(".bin"), "stored as .bin, got {url}");
+    let sha256 = desc["sha256"].as_str().unwrap();
+
+    let get_resp = client
+        .get(url)
+        .header(
+            "Authorization",
+            blossom_auth_header(&sign_blossom_get_auth(&keys, sha256)),
+        )
+        .send()
+        .await
+        .expect("GET request");
+    assert_eq!(get_resp.status(), 200);
+    let header = |name: &str| {
+        get_resp
+            .headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string()
+    };
+    assert_eq!(header("content-disposition"), "attachment");
+    assert_eq!(header("x-content-type-options"), "nosniff");
+    assert_eq!(get_resp.bytes().await.unwrap().as_ref(), md);
+}
+
+#[tokio::test]
+#[ignore]
 async fn test_upload_pdf_accepted() {
     // PDF is detected by `infer` and is not in the blocked list, so it
     // routes through the generic file path successfully.
