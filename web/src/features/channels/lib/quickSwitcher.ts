@@ -55,7 +55,10 @@ const SUBSTRING = 10;
  * Score one candidate against a lowercased query.
  * Returns 0 when nothing matches, which the caller filters out.
  */
-function scoreOne(query: string, candidate: QuickCandidate): number {
+export function scoreQuickCandidate(
+  query: string,
+  candidate: Pick<QuickCandidate, "label" | "keywords">,
+): number {
   const haystacks = [candidate.label, ...(candidate.keywords ?? [])];
   let best = 0;
   for (const raw of haystacks) {
@@ -111,7 +114,7 @@ export function rankQuickTargets(
 
   const scored: QuickTarget[] = [];
   for (const candidate of candidates) {
-    const score = scoreOne(trimmed, candidate);
+    const score = scoreQuickCandidate(trimmed, candidate);
     if (score === 0) continue;
     scored.push({
       id: candidate.id,

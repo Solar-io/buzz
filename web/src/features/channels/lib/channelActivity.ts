@@ -9,6 +9,7 @@
  */
 
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
+import { plainText } from "../../../shared/lib/plainText.ts";
 import { isUnread, type ReadState } from "./readState.ts";
 
 /** Chat messages. Reactions, typing and system rows never count as activity. */
@@ -494,12 +495,14 @@ export function isChannelRowUnread(input: {
   return isUnread(input.read, input.channelId, channelUnreadSignal(input));
 }
 
-/** Strip markdown noise for a one-line preview (mirrors the DM sampler). */
+/**
+ * Strip markdown to a one-line preview (mirrors the DM sampler). Structural
+ * lines — a table's `|---|` separator, fences — are dropped whole
+ * (`shared/lib/plainText.ts`), so a toast never quotes raw table syntax.
+ */
 function plainPreview(content: string): string {
-  return content
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, "📷 image")
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/[#*_~`>|]/g, "")
+  return plainText(content, { embed: "📷 image" })
+    .replace(/[#~>|]/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, CHANNEL_ACTIVITY_PREVIEW_MAX);

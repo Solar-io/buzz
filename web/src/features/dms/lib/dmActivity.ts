@@ -1,4 +1,5 @@
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
+import { plainText } from "../../../shared/lib/plainText.ts";
 
 export interface DmLastMessage {
   channelId: string;
@@ -107,10 +108,8 @@ export function dmActivityFromEvents(
 
 /** Strip markdown noise for a one-line sidebar preview. */
 function plainExcerpt(content: string): string {
-  return content
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, "📷 image")
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/[#*_~`>|]/g, "")
+  return plainText(content, { embed: "📷 image" })
+    .replace(/[#~>|]/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 80);

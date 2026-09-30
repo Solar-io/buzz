@@ -86,6 +86,12 @@ export interface DoneLast {
   stopReason: string | null;
 }
 
+/** One finished turn (Phase 2: Done today lists every turn, not just the last). */
+export interface DoneRow extends DoneLast {
+  /** The turn id, else the metric's event id. */
+  key: string;
+}
+
 export interface DoneSummary {
   state: "ready";
   /** Distinct turns finished since local midnight. */
@@ -93,6 +99,8 @@ export interface DoneSummary {
   /** Events that did not decrypt — never counted as done. */
   locked: number;
   last: DoneLast | null;
+  /** One per turn, newest first. `count === rows.length`. */
+  rows: DoneRow[];
 }
 
 export type DoneState =
