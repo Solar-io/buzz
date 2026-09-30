@@ -340,6 +340,13 @@ fn build_eval_context(ctx: &FilterContext) -> Result<evalexpr::HashMapContext, S
 /// a pathological expression from silently widening the subscription.
 const MAX_CONSECUTIVE_TIMEOUTS: u32 = 5;
 
+/// True when `event` carries a [`buzz_core::kind::TAG_BUZZ_SYSTEM`] tag.
+pub fn is_buzz_system_event(event: &nostr::Event) -> bool {
+    event.tags.iter().any(|tag| {
+        tag.as_slice().first().map(|k| k.as_str()) == Some(buzz_core::kind::TAG_BUZZ_SYSTEM)
+    })
+}
+
 /// Match a Nostr event against an ordered list of subscription rules.
 ///
 /// Rules are evaluated in order; the first rule whose conditions all pass
@@ -347,6 +354,7 @@ const MAX_CONSECUTIVE_TIMEOUTS: u32 = 5;
 ///
 /// # Matching logic (per rule)
 ///
+/// 0. **system messages** — an event tagged `buzz-system` never matches.
 /// 1. **channels** — if not `"all"`, the event's channel UUID must be in the list.
 /// 2. **kinds** — if non-empty, the event kind must be in the list.
 /// 3. **require_mention** — if `true`, a `p` tag matching `agent_pubkey_hex` must
@@ -371,6 +379,15 @@ pub async fn match_event(
     rules: &[SubscriptionRule],
     agent_pubkey_hex: &str,
 ) -> Option<MatchedRule> {
+    // 0. Relay system messages (e.g. the huddle call transcript posted into the
+    //    parent channel when a call ends) are records, never prompts. Drop them
+    //    before any rule so no subscribe mode / respond-to mode can turn one
+    //    into a turn. The tag can only suppress, so honouring it from any
+    //    author is safe.
+    if is_buzz_system_event(event) {
+        return None;
+    }
+
     let filter_ctx = FilterContext::from_event(event, channel_id);
 
     for (index, rule) in rules.iter().enumerate() {
@@ -661,6 +678,51 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(matched.prompt_tag, "mentioned");
+    }
+
+    #[tokio::test]
+    async fn test_match_event_never_matches_relay_call_transcript() {
+        // The relay posts the huddle call transcript into the parent channel
+        // (DM or stream) as a relay-signed kind:9 tagged
+        // ["buzz-system","call-transcript"]. Even the widest rule — all
+        // channels, all kinds, no mention required (subscribe-mode=all) —
+        // and a p-tag on the agent must not turn it into a turn.
+        let agent_pubkey = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+        let relay = Keys::generate();
+        let transcript = EventBuilder::new(Kind::Custom(9), "📞 Call transcript — x\n\nSam: hi")
+            .tags([
+                Tag::parse([
+                    buzz_core::kind::TAG_BUZZ_SYSTEM,
+                    buzz_core::kind::BUZZ_SYSTEM_CALL_TRANSCRIPT,
+                ])
+                .unwrap(),
+                Tag::parse(["p", agent_pubkey]).unwrap(),
+            ])
+            .sign_with_keys(&relay)
+            .unwrap();
+        let rules = vec![make_rule(
+            "all",
+            ChannelScope::All("all".into()),
+            vec![],
+            false,
+            None,
+            Some("all"),
+        )];
+
+        assert!(is_buzz_system_event(&transcript));
+        assert!(
+            match_event(&transcript, any_channel(), &rules, agent_pubkey)
+                .await
+                .is_none()
+        );
+
+        // Control: the same rule matches an ordinary kind:9, so the None above
+        // is the system tag, not a rule that matches nothing.
+        let ordinary = make_event(9, "📞 Call transcript — x\n\nSam: hi");
+        assert!(!is_buzz_system_event(&ordinary));
+        assert!(match_event(&ordinary, any_channel(), &rules, agent_pubkey)
+            .await
+            .is_some());
     }
 
     #[tokio::test]

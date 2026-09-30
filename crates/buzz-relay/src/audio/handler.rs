@@ -1404,7 +1404,7 @@ struct ParticipantLifecycle<'a> {
 /// "audio room empty — auto-ending huddle" wording stays on this, the actual
 /// archive path, so log consumers keep matching.
 async fn archive_empty_huddle(
-    state: &AppState,
+    state: &Arc<AppState>,
     tenant: &TenantContext,
     channel_id: Uuid,
     parent_channel_id: Uuid,
@@ -1450,6 +1450,18 @@ async fn archive_empty_huddle(
                     roster_revision: None,
                     admission_id: None,
                 },
+            )
+            .await;
+
+            // Carry the call back into the main chat: one relay-signed kind:9
+            // with the transcript, into the verified parent. Rides this arm so
+            // it inherits the 48103's exactly-once (only the archive winner
+            // gets here). Best-effort — never affects the end outcome.
+            crate::audio::transcript::emit_call_transcript(
+                state,
+                tenant,
+                channel_id,
+                parent_channel_id,
             )
             .await;
             GraceArchiveOutcome::Ended
@@ -1798,5 +1810,249 @@ mod tests {
             !handler_receives_message_of_size(MAX_WEBSOCKET_MESSAGE_BYTES + 1).await,
             "oversized messages must be rejected by the WebSocket parser before the handler sees them"
         );
+    }
+}
+
+/// Huddle end → call transcript in the parent channel. Postgres-gated like the
+/// other DB-backed relay tests. Run with:
+///   `cargo test -p buzz-relay --lib huddle_end_transcript -- --ignored`
+#[cfg(test)]
+mod huddle_end_transcript_tests {
+    use super::*;
+    use buzz_core::channel::{ChannelType, ChannelVisibility};
+    use buzz_core::kind::{BUZZ_SYSTEM_CALL_TRANSCRIPT, TAG_BUZZ_SYSTEM};
+    use buzz_db::CreateCommunityWithOwnerResult;
+    use nostr::ToBech32;
+
+    /// Real-PG state mirroring `workflow_sink::integration_tests::test_state`.
+    async fn test_state() -> Arc<AppState> {
+        let mut config = crate::config::Config::from_env().expect("default config loads");
+        config.require_relay_membership = false;
+        config.redis_url = "redis://127.0.0.1:1".to_string();
+        let pool = sqlx::PgPool::connect_lazy(&config.database_url).expect("lazy pg pool");
+        let db = buzz_db::Db::from_pool(pool.clone());
+        let redis_pool = deadpool_redis::Config::from_url(&config.redis_url)
+            .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+            .expect("redis pool");
+        let pubsub = Arc::new(
+            buzz_pubsub::PubSubManager::new(&config.redis_url, redis_pool.clone())
+                .await
+                .expect("pubsub manager"),
+        );
+        let audit = buzz_audit::AuditService::new(pool.clone());
+        let auth = buzz_auth::AuthService::new(config.auth.clone());
+        let search = buzz_search::SearchService::new(pool.clone());
+        let workflow_engine = Arc::new(buzz_workflow::WorkflowEngine::new(
+            db.clone(),
+            buzz_workflow::WorkflowConfig::default(),
+        ));
+        let media_storage = buzz_media::MediaStorage::new(&config.media).expect("media storage");
+        let (state, _audit_shutdown) = AppState::new(
+            config,
+            db,
+            redis_pool,
+            audit,
+            pubsub,
+            auth,
+            search,
+            workflow_engine,
+            nostr::Keys::generate(),
+            media_storage,
+        );
+        Arc::new(state)
+    }
+
+    struct Fixture {
+        state: Arc<AppState>,
+        tenant: TenantContext,
+        parent: Uuid,
+        huddle: Uuid,
+        sam: nostr::Keys,
+        agent: nostr::Keys,
+    }
+
+    async fn fixture() -> Fixture {
+        let state = test_state().await;
+        let sam = nostr::Keys::generate();
+        let agent = nostr::Keys::generate();
+        let host = format!("huddle-tx-{}.example", Uuid::new_v4().simple());
+        let community = match state
+            .db
+            .create_community_with_owner(&host, &sam.public_key().to_hex())
+            .await
+            .expect("create community")
+        {
+            CreateCommunityWithOwnerResult::Created(rec) => rec.id,
+            other => panic!("expected fresh community, got {other:?}"),
+        };
+        let parent = state
+            .db
+            .create_channel(
+                community,
+                "jared",
+                ChannelType::Stream,
+                ChannelVisibility::Open,
+                None,
+                &sam.public_key().to_bytes(),
+                None,
+            )
+            .await
+            .expect("parent channel")
+            .id;
+        let huddle = state
+            .db
+            .create_channel(
+                community,
+                "Jared Dunn call",
+                ChannelType::Stream,
+                ChannelVisibility::Private,
+                None,
+                &sam.public_key().to_bytes(),
+                Some(3600),
+            )
+            .await
+            .expect("ephemeral huddle channel")
+            .id;
+        // Sam has a profile name; the agent deliberately does not (npub fallback).
+        let sam_bytes = sam.public_key().to_bytes().to_vec();
+        state
+            .db
+            .ensure_user(community, &sam_bytes)
+            .await
+            .expect("user");
+        state
+            .db
+            .update_user_profile(community, &sam_bytes, Some("Sam"), None, None, None)
+            .await
+            .expect("profile");
+        Fixture {
+            state,
+            tenant: TenantContext::resolved(community, host),
+            parent,
+            huddle,
+            sam,
+            agent,
+        }
+    }
+
+    async fn post(f: &Fixture, keys: &nostr::Keys, secs: u64, content: &str) {
+        let ev = EventBuilder::new(Kind::from(9u16), content)
+            .tags([Tag::parse(["h", &f.huddle.to_string()]).unwrap()])
+            .custom_created_at(nostr::Timestamp::from_secs(secs))
+            .sign_with_keys(keys)
+            .unwrap();
+        f.state
+            .db
+            .insert_event(f.tenant.community(), &ev, Some(f.huddle))
+            .await
+            .expect("insert huddle message");
+    }
+
+    async fn parent_events(f: &Fixture, kind: i32) -> Vec<StoredEvent> {
+        f.state
+            .db
+            .query_events(&buzz_db::EventQuery {
+                channel_id: Some(f.parent),
+                kinds: Some(vec![kind]),
+                limit: Some(50),
+                ..buzz_db::EventQuery::for_community(f.tenant.community())
+            })
+            .await
+            .expect("query parent")
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn huddle_end_transcript_posts_once_into_parent() {
+        let f = fixture().await;
+        let base = nostr::Timestamp::now().as_secs() - 60;
+        post(&f, &f.sam, base, "[voice] which drill should I buy?").await;
+        post(&f, &f.agent, base + 1, "The DeWalt 20V — best value.").await;
+        post(&f, &f.sam, base + 2, "[voice] thanks").await;
+
+        let sam_hex = f.sam.public_key().to_hex();
+        let outcome = archive_empty_huddle(&f.state, &f.tenant, f.huddle, f.parent, &sam_hex).await;
+        assert_eq!(outcome, GraceArchiveOutcome::Ended);
+
+        let transcripts = parent_events(&f, 9).await;
+        assert_eq!(transcripts.len(), 1, "exactly one transcript in the parent");
+        let t = &transcripts[0].event;
+        assert_eq!(t.pubkey, f.state.relay_keypair.public_key(), "relay-signed");
+        t.verify().expect("valid signature");
+        let npub = f.agent.public_key().to_bech32().unwrap();
+        let agent_label = format!("{}…", &npub[..12]);
+        assert_eq!(
+            t.content,
+            format!(
+                "📞 Call transcript — Jared Dunn call\n\n\
+                 Sam: which drill should I buy?\n\
+                 {agent_label}: The DeWalt 20V — best value.\n\
+                 Sam: thanks"
+            )
+        );
+        let has = |name: &str, value: &str| {
+            t.tags.iter().any(|tag| {
+                let s = tag.as_slice();
+                s.first().map(String::as_str) == Some(name)
+                    && s.get(1).map(String::as_str) == Some(value)
+            })
+        };
+        assert!(
+            has(TAG_BUZZ_SYSTEM, BUZZ_SYSTEM_CALL_TRANSCRIPT),
+            "no-trigger tag"
+        );
+        assert!(has("h", &f.parent.to_string()), "h tag = parent");
+        assert_eq!(
+            parent_events(&f, 48103).await.len(),
+            1,
+            "48103 still emitted"
+        );
+
+        // A second end attempt (racing fire / explicit archive) is a no-op:
+        // still exactly one transcript and one 48103.
+        let again = archive_empty_huddle(&f.state, &f.tenant, f.huddle, f.parent, &sam_hex).await;
+        assert_eq!(again, GraceArchiveOutcome::AlreadyEnded);
+        assert_eq!(parent_events(&f, 9).await.len(), 1);
+        assert_eq!(parent_events(&f, 48103).await.len(), 1);
+
+        // Replaying the emitter itself (belt-and-braces) dedupes on event id.
+        assert_eq!(
+            crate::audio::transcript::emit_call_transcript(&f.state, &f.tenant, f.huddle, f.parent)
+                .await,
+            None
+        );
+        assert_eq!(parent_events(&f, 9).await.len(), 1);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn huddle_end_without_messages_posts_no_transcript() {
+        let f = fixture().await;
+        let sam_hex = f.sam.public_key().to_hex();
+        let outcome = archive_empty_huddle(&f.state, &f.tenant, f.huddle, f.parent, &sam_hex).await;
+        assert_eq!(outcome, GraceArchiveOutcome::Ended);
+        assert_eq!(
+            parent_events(&f, 48103).await.len(),
+            1,
+            "the end itself happened"
+        );
+        assert!(
+            parent_events(&f, 9).await.is_empty(),
+            "no transcript for a silent call"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn huddle_end_transcript_skipped_when_parent_is_the_channel() {
+        let f = fixture().await;
+        post(&f, &f.sam, nostr::Timestamp::now().as_secs(), "[voice] hi").await;
+        // Lifecycle parent == channel (a huddle in a normal channel): nothing.
+        assert_eq!(
+            crate::audio::transcript::emit_call_transcript(&f.state, &f.tenant, f.parent, f.parent)
+                .await,
+            None
+        );
+        assert!(parent_events(&f, 9).await.is_empty());
     }
 }

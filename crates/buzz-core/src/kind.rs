@@ -612,6 +612,15 @@ pub const KIND_CANVAS: u32 = 40100;
 /// System message for channel state changes (join, leave, rename, etc.).
 pub const KIND_SYSTEM_MESSAGE: u32 = 40099;
 
+/// Tag name marking a relay-authored informational message that must never
+/// start an agent turn (e.g. `["buzz-system", "call-transcript"]`). The agent
+/// harness drops any event carrying it before subscription-rule matching.
+/// Anyone may add the tag, but it can only SUPPRESS a turn, never grant one.
+pub const TAG_BUZZ_SYSTEM: &str = "buzz-system";
+/// [`TAG_BUZZ_SYSTEM`] value for the huddle call transcript the relay posts
+/// into a huddle's parent channel when the huddle ends.
+pub const BUZZ_SYSTEM_CALL_TRANSCRIPT: &str = "call-transcript";
+
 // Relay-only sidecar kinds (never client-submitted)
 /// Channel metadata with computed fields (relay-signed sidecar).
 pub const KIND_CHANNEL_SUMMARY: u32 = 40901;
