@@ -14,6 +14,11 @@
  */
 
 import type { AgentVoiceSelection } from "../../voice/lib/agentVoiceSelection.ts";
+import {
+  type BridgeRateHistory,
+  type JitterState,
+  shouldStartPlayback,
+} from "./bridgeJitterBuffer.ts";
 
 /** The bridge's output format: PCM16LE mono 24 kHz. */
 export const BRIDGE_SAMPLE_RATE = 24_000;
@@ -209,6 +214,14 @@ export function int16ToFloat32(piece: Int16Array): Float32Array {
  * Play a bridge PCM response as it arrives, resolving when the last
  * scheduled piece has finished sounding.
  *
+ * Arrivals go through an adaptive JITTER BUFFER (policy in
+ * `bridgeJitterBuffer.ts`): nothing is handed to the clock until a small
+ * prebuffer is met, and if the scheduled tail runs dry before more audio
+ * arrives (a server slower than real time) scheduling pauses until enough
+ * is buffered to play the rest through. Stream end always flushes, and an
+ * interrupt drops buffered-but-unscheduled audio along with stopping the
+ * scheduled sources.
+ *
  * `fetchImpl` and `audioContext` are injected so tests can drive the pure
  * scheduling logic; production passes `fetch` and a lazily-created
  * AudioContext (sampleRate 24 kHz with a fallback to the default — buffers
@@ -228,6 +241,15 @@ export async function playBridgeResponse(
      * the same way it covers peers.
      */
     destination?: AudioNode;
+    /**
+     * Jitter-buffer hints. `expectedSeconds` estimates this stream's audio
+     * length (from its text); `history` carries the observed arrival rate
+     * across streams and is updated when this one completes.
+     */
+    jitter?: {
+      expectedSeconds?: number | null;
+      history?: BridgeRateHistory;
+    };
   } = {},
 ): Promise<{ seconds: number }> {
   const shouldStop = options.shouldStop ?? (() => false);
@@ -244,6 +266,8 @@ export async function playBridgeResponse(
   }
   const reader = body.getReader();
   const destination = options.destination ?? audioContext.destination;
+  const history = options.jitter?.history;
+  const expectedSeconds = options.jitter?.expectedSeconds ?? null;
   let queueAt = audioContext.currentTime + 0.02;
   let samples = 0;
   /**
@@ -262,22 +286,36 @@ export async function playBridgeResponse(
     scheduled.length = 0;
   };
 
-  let carry: Uint8Array | null = null;
-  while (true) {
-    if (shouldStop()) {
-      try {
-        await reader.cancel();
-      } catch {
-        // already closed
-      }
-      stopScheduled();
-      break;
+  // Jitter-buffer state. `pending` is received-but-unscheduled audio;
+  // `flowing` is true while arrivals go straight to the clock.
+  const pending: Int16Array[] = [];
+  let pendingSamples = 0;
+  let receivedSamples = 0;
+  let afterFirstSamples = 0;
+  let firstArrivalAt: number | null = null;
+  let underruns = 0;
+  let flowing = false;
+
+  const jitterState = (streamDone: boolean): JitterState => ({
+    bufferedSeconds: pendingSamples / BRIDGE_SAMPLE_RATE,
+    receivedSeconds: receivedSamples / BRIDGE_SAMPLE_RATE,
+    scheduledSeconds: samples / BRIDGE_SAMPLE_RATE,
+    arrivedAfterFirstSeconds: afterFirstSamples / BRIDGE_SAMPLE_RATE,
+    elapsedSeconds:
+      firstArrivalAt === null ? 0 : audioContext.currentTime - firstArrivalAt,
+    underruns,
+    expectedSeconds,
+    historyRate: history?.rate ?? null,
+    streamDone,
+  });
+
+  const flushPending = () => {
+    if (!flowing) {
+      // (Re)starting after a hold: begin a fresh schedule at the clock.
+      queueAt = Math.max(queueAt, audioContext.currentTime + 0.02);
+      flowing = true;
     }
-    const { done, value } = await reader.read();
-    if (done) break;
-    const framed = alignPcmChunk(carry, value);
-    carry = framed.carry;
-    for (const piece of chunkToInt16Pieces(framed.aligned, BRIDGE_PIECE_SAMPLES)) {
+    for (const piece of pending) {
       const f32 = int16ToFloat32(piece);
       const buf = audioContext.createBuffer(1, f32.length, BRIDGE_SAMPLE_RATE);
       buf.copyToChannel(f32, 0);
@@ -290,6 +328,64 @@ export async function playBridgeResponse(
       queueAt = when + f32.length / BRIDGE_SAMPLE_RATE;
       samples += piece.length;
     }
+    pending.length = 0;
+    pendingSamples = 0;
+  };
+
+  let carry: Uint8Array | null = null;
+  let completed = false;
+  while (true) {
+    if (shouldStop()) {
+      try {
+        await reader.cancel();
+      } catch {
+        // already closed
+      }
+      // Buffered-not-yet-scheduled audio is dropped too: an interrupt
+      // silences everything, not just what reached the clock.
+      pending.length = 0;
+      pendingSamples = 0;
+      stopScheduled();
+      break;
+    }
+    const { done, value } = await reader.read();
+    if (done) {
+      completed = true;
+      if (pendingSamples > 0 && !shouldStop()) flushPending();
+      break;
+    }
+    const framed = alignPcmChunk(carry, value);
+    carry = framed.carry;
+    const pieces = chunkToInt16Pieces(framed.aligned, BRIDGE_PIECE_SAMPLES);
+    let arrived = 0;
+    for (const piece of pieces) {
+      pending.push(piece);
+      arrived += piece.length;
+    }
+    if (arrived === 0) continue;
+    if (firstArrivalAt === null) {
+      firstArrivalAt = audioContext.currentTime;
+    } else {
+      afterFirstSamples += arrived;
+    }
+    receivedSamples += arrived;
+    pendingSamples += arrived;
+
+    if (flowing && queueAt <= audioContext.currentTime) {
+      // UNDERRUN: the schedule sounded out before this audio arrived. Hold
+      // it and rebuffer rather than play it the moment it lands.
+      flowing = false;
+      underruns += 1;
+    }
+    if (flowing || shouldStartPlayback(jitterState(false))) {
+      flushPending();
+    }
+  }
+
+  if (completed && history && firstArrivalAt !== null) {
+    const elapsed = audioContext.currentTime - firstArrivalAt;
+    history.rate =
+      elapsed > 0 ? afterFirstSamples / BRIDGE_SAMPLE_RATE / elapsed : null;
   }
 
   // Settle when the tail of the schedule has sounded (setTimeout is the

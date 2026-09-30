@@ -30,6 +30,10 @@ import {
   type BridgeAudioContextLike,
 } from "../../huddle/lib/bridgeSpeech.ts";
 import {
+  createRateHistory,
+  estimateSpeechSeconds,
+} from "../../huddle/lib/bridgeJitterBuffer.ts";
+import {
   resolveHuddleVoice,
   type HuddleVoiceOverride,
 } from "../../huddle/lib/huddlePrefs.ts";
@@ -177,6 +181,13 @@ export function createAgentSpeechPlayer(
   let activeSettle: (() => void) | null = null;
   /** Wakes a bridge fetch await on interrupt (see `speak`). */
   const stopWaiters = new Set<() => void>();
+  /**
+   * Bridge arrival rate carried across chunks and replies: a GPU that was
+   * slower than real time for one sentence usually still is for the next,
+   * so the jitter buffer sizes that chunk's prebuffer up front instead of
+   * discovering the slowness through a gap.
+   */
+  const bridgeRate = createRateHistory();
 
   const bridgeContext = (): PlayerContext | null => {
     if (ctx === null) {
@@ -387,6 +398,10 @@ export function createAgentSpeechPlayer(
             await playBridgeResponse(raced, context, {
               shouldStop: stopped,
               scheduleSettle: settleOnClock(context),
+              jitter: {
+                expectedSeconds: estimateSpeechSeconds(chunk),
+                history: bridgeRate,
+              },
               ...(gain === null ? {} : { destination: gain }),
             });
             deps.onChunkSpoken?.(chunk);
