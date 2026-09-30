@@ -487,3 +487,60 @@ test("Open in Files loads the Files frame on that folder, once per request", asy
     await unmount();
   }
 });
+
+test("Escape that closes a popover over Files does not also close Files", async () => {
+  const { container, q, show, unmount } = await mount();
+  try {
+    await show("files", "files");
+    // Focus inside an open popover (Radix PopoverContent is role=dialog).
+    const popover = dom.window.document.createElement("div");
+    popover.setAttribute("role", "dialog");
+    const inside = dom.window.document.createElement("button");
+    popover.appendChild(inside);
+    container.appendChild(popover);
+    await act(async () => {
+      inside.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+        }),
+      );
+    });
+    assert.equal(
+      q("web-frame-host").hasAttribute("inert"),
+      false,
+      "Files stays",
+    );
+    // A layer that already handled it (Radix prevents default) — same.
+    const handled = (event) => event.preventDefault();
+    dom.window.document.addEventListener("keydown", handled, true);
+    await act(async () => {
+      dom.window.document.body.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    dom.window.document.removeEventListener("keydown", handled, true);
+    assert.equal(
+      q("web-frame-host").hasAttribute("inert"),
+      false,
+      "Files stays",
+    );
+    // A bare Escape still backs out to the conversation.
+    await act(async () => {
+      dom.window.document.body.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+        }),
+      );
+    });
+    assert.equal(q("web-frame-host").hasAttribute("inert"), true);
+    popover.remove();
+  } finally {
+    await unmount();
+  }
+});

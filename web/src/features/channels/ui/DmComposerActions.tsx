@@ -2,6 +2,7 @@ import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import type { HuddleSession } from "@/features/huddle/HuddleSessionProvider";
+import { useActiveWebView } from "@/features/webPanels/activeWebStore.ts";
 import type { RelaySession } from "@/shared/api/relay-session";
 import { usePhoneBarSlot, usePhoneLayout } from "@/shared/layout/AppShell";
 import { signNostrEvent } from "@/shared/lib/nostr-signer";
@@ -57,6 +58,7 @@ export function DmComposerActions({
   // one instance, portaled, so its call/join state is never duplicated.
   const phoneBarSlot = usePhoneBarSlot();
   const phone = usePhoneLayout();
+  const covered = useActiveWebView().state.active !== null;
   const bar = (
     <ChannelActionsBar
       channel={channel}
@@ -103,5 +105,13 @@ export function DmComposerActions({
       showMembers={phone}
     />
   );
-  return phone && phoneBarSlot ? createPortal(bar, phoneBarSlot) : bar;
+  // Files or a link page covers the conversation on a phone: its controls
+  // leave the top bar with it — hidden, not unmounted, so a call or a
+  // dictation in progress survives the trip.
+  return phone && phoneBarSlot
+    ? createPortal(
+        <div className={covered ? "hidden" : "contents"}>{bar}</div>,
+        phoneBarSlot,
+      )
+    : bar;
 }

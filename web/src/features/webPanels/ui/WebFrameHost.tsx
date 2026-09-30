@@ -17,6 +17,10 @@ import { readBuzzTheme, useFilesThemePush } from "../useFilesThemePush.ts";
 /** How long a frame may stay blank before we suggest opening it directly. */
 const EMBED_STALL_MS = 8_000;
 
+/** Layered UI whose own Escape must not also back out of the page. */
+const LAYER_SELECTOR =
+  '[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"],[data-radix-popper-content-wrapper]';
+
 const isFilesKey = (key: string | null): key is string =>
   key?.startsWith("files:") ?? false;
 
@@ -144,7 +148,16 @@ export function WebFrameHost({
       return;
     }
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") {
+      if (event.key !== "Escape" || event.defaultPrevented) {
+        return;
+      }
+      // An open popover, menu or dialog owns this Escape (the Vitals panel
+      // over Files, say): it closes, and the page stays.
+      const target = event.target as Partial<Element> | null;
+      if (
+        typeof target?.closest === "function" &&
+        target.closest(LAYER_SELECTOR)
+      ) {
         return;
       }
       // Escape backs out one level: full screen first, then the page.
