@@ -223,7 +223,7 @@ export function MessageRow({
       {children}
     </UserProfilePopover>
   );
-  return (
+  const row = (
     // Desktop message cards: rounded-2xl rows, hover muted wash; the open
     // thread's root keeps a persistent tint so the selection is traceable.
     // `relative` + the named `group/message` are what the floating action bar
@@ -390,7 +390,6 @@ export function MessageRow({
               onReact={onReact}
               onUnreact={onUnreact}
             />
-            {children}
           </div>
           {showActions && (
             <MessageActionBar
@@ -414,6 +413,19 @@ export function MessageRow({
           )}
         </>
       )}
+    </div>
+  );
+  if (!children) {
+    return row;
+  }
+  // The inline thread sits UNDER the row, not inside it: inside, it was part
+  // of the row's `group/message`, so pointing at a reply (or focusing its
+  // box) lit the root's action bar and every reply's at once. Indented to
+  // the message text: px-2.5 + the 36px avatar + gap-3 = 58px.
+  return (
+    <div>
+      {row}
+      <div className="pl-14.5">{children}</div>
     </div>
   );
 }

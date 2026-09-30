@@ -158,7 +158,7 @@ function relayEvent(tags, content = TRANSCRIPT, pubkey = RELAY) {
   });
 }
 
-async function mountRow(message) {
+async function mountRow(message, children = undefined) {
   const container = dom.window.document.createElement("div");
   dom.window.document.body.appendChild(container);
   const reactRoot = createRoot(container);
@@ -175,6 +175,7 @@ async function mountRow(message) {
           reactionGroups: [],
           showActions: false,
           isAgent: false,
+          children,
         }),
       ),
     );
@@ -248,4 +249,23 @@ test("the transcript body keeps one speaker per line", async () => {
     "Sam: thanks",
   ]);
   await row.unmount();
+});
+
+test("an inline thread renders under the row, outside its hover group", async () => {
+  // Inside the row it was part of `group/message`: pointing at a reply lit
+  // the root's action bar and every reply's at once (Phase 2 e2e frame).
+  const message = relayEvent([], "plain message", "a".repeat(64));
+  const mounted = await mountRow(
+    message,
+    React.createElement("div", { "data-testid": "thread-body" }, "replies"),
+  );
+  const row = mounted.container.querySelector(
+    `[data-testid="message-row-${message.id}"]`,
+  );
+  assert.ok(row, "the row renders");
+  assert.ok(row.className.includes("group/message"));
+  const thread = mounted.container.querySelector('[data-testid="thread-body"]');
+  assert.ok(thread, "the thread renders");
+  assert.equal(row.contains(thread), false, "the thread is not inside the row");
+  await mounted.unmount();
 });

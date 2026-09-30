@@ -87,14 +87,16 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       ).not.toHaveCount(0);
       expect(pageErrors).toEqual([]);
       await shot(page, `message-${theme}-1440`);
-      await table.scrollIntoViewIfNeeded();
-      await shot(page, `message-table-${theme}-1440`);
 
       // The card at the bottom: title once in its header, options below.
+      // (Before scrolling up: the virtualizer unmounts rows it leaves.)
       const card = page.getByTestId("decision-card").last();
       await expect(card).toContainText("Beat 03 hold");
       await expect(card.getByTestId("decision-card-recommended")).toBeVisible();
       expect(find(fixture, "**Beat 03 hold").id).toBeTruthy();
+
+      await table.scrollIntoViewIfNeeded();
+      await shot(page, `message-table-${theme}-1440`);
     });
 
     test("slash commands run from the composer and are never sent as text", async ({
@@ -148,6 +150,9 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
         page.getByRole("button", { name: "@Lord Nikon", exact: true }),
       ).toBeVisible();
       await mainComposer(page).press("Enter");
+      // The pick moves the caret on the next frame; type after it lands.
+      await expect(mainComposer(page)).toHaveValue("/handoff @Lord Nikon ");
+      await page.waitForTimeout(50);
       await mainComposer(page).pressSequentially("retake beat 03");
       await mainComposer(page).press("Enter");
       await expect
