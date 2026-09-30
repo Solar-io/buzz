@@ -4,7 +4,7 @@ import type { Profile } from "../hooks.ts";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { cn } from "@/shared/lib/cn";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
-import { authorLabel } from "../lib/authorLabel.ts";
+import { authorLabel, messageAuthorLabel } from "../lib/authorLabel.ts";
 import {
   formatClockTime,
   formatFullDateTime,
@@ -27,6 +27,7 @@ import {
   stageOpenCardTag,
 } from "@/features/stage/ui/StageOpenCard";
 import { StagePartChip } from "@/features/stage/ui/StagePartChip";
+import { useRelaySelf } from "@/shared/lib/relaySelf";
 
 /** Desktop parity: the timestamp tooltip waits half a second before opening. */
 const TIMESTAMP_TOOLTIP_DELAY_MS = 500;
@@ -156,7 +157,10 @@ export function MessageRow({
     }
     rowRef.current?.scrollIntoView({ block: "center" });
   }, [highlighted]);
-  const label = authorLabel(message.authorPubkey, profiles);
+  // Only rows carrying a buzz-system tag need the relay key (NIP-11 read,
+  // cached per page); every other row skips it.
+  const relaySelf = useRelaySelf(Boolean(message.buzzSystem));
+  const label = messageAuthorLabel(message, profiles, relaySelf);
   // Scheduled wakes (reminder firings from the services identity) render as
   // one collapsed line — see lib/wakeMessage.ts. The shell above (ref,
   // testid, highlight flash, permalink scroll) stays theirs so a jump to a

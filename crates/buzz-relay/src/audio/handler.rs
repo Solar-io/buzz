@@ -1403,8 +1403,8 @@ struct ParticipantLifecycle<'a> {
 /// ephemeral-channel TTL reaper can never double-end the huddle. The
 /// "audio room empty — auto-ending huddle" wording stays on this, the actual
 /// archive path, so log consumers keep matching.
-async fn archive_empty_huddle(
-    state: &AppState,
+pub(crate) async fn archive_empty_huddle(
+    state: &Arc<AppState>,
     tenant: &TenantContext,
     channel_id: Uuid,
     parent_channel_id: Uuid,
@@ -1450,6 +1450,18 @@ async fn archive_empty_huddle(
                     roster_revision: None,
                     admission_id: None,
                 },
+            )
+            .await;
+
+            // Carry the call back into the main chat: one relay-signed kind:9
+            // with the transcript, into the verified parent. Rides this arm so
+            // it inherits the 48103's exactly-once (only the archive winner
+            // gets here). Best-effort — never affects the end outcome.
+            crate::audio::transcript::emit_call_transcript(
+                state,
+                tenant,
+                channel_id,
+                parent_channel_id,
             )
             .await;
             GraceArchiveOutcome::Ended

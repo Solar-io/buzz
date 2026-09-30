@@ -277,6 +277,51 @@ pub async fn huddle_started_link_exists(
         .any(|content| huddle_started_content_links(content, ephemeral_channel_id)))
 }
 
+/// Resolve the parent channel an ephemeral huddle channel was started from:
+/// the channel holding the newest creator-signed kind:48100 whose content links
+/// to `ephemeral_channel_id`. Same trust rule as
+/// [`huddle_started_link_exists`] (only the ephemeral channel's creator can
+/// sign the link), for callers that know the huddle but not its parent — e.g.
+/// a kind:9002 archive or the TTL reaper.
+pub async fn find_huddle_parent_channel(
+    pool: &PgPool,
+    community_id: CommunityId,
+    ephemeral_channel_id: Uuid,
+    creator_pubkey: &[u8],
+) -> Result<Option<Uuid>> {
+    let uuid_needle = format!("%{}%", ephemeral_channel_id);
+    let candidates: Vec<(Uuid, String)> = sqlx::query_as(
+        r#"
+        SELECT channel_id, content
+        FROM events
+        WHERE deleted_at IS NULL
+          AND community_id = $1
+          AND channel_id IS NOT NULL
+          AND channel_id <> $2
+          AND kind = $3
+          AND pubkey = $4
+          AND octet_length(content) <= $5
+          AND content ILIKE $6
+        ORDER BY created_at DESC, id ASC
+        LIMIT $7
+        "#,
+    )
+    .bind(community_id.as_uuid())
+    .bind(ephemeral_channel_id)
+    .bind(KIND_HUDDLE_STARTED as i32)
+    .bind(creator_pubkey)
+    .bind(HUDDLE_LINK_CONTENT_MAX_BYTES)
+    .bind(uuid_needle)
+    .bind(HUDDLE_LINK_CANDIDATE_LIMIT)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(candidates
+        .into_iter()
+        .find(|(_, content)| huddle_started_content_links(content, ephemeral_channel_id))
+        .map(|(channel_id, _)| channel_id))
+}
+
 /// Delete retained agent observer frames (kind 24200) older than `cutoff`,
 /// batching to keep each statement's lock footprint small. Mention rows go
 /// first (no FK on `event_mentions`, so they are removed explicitly).

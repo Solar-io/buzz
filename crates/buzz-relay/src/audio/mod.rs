@@ -14,6 +14,9 @@ pub mod handler;
 pub mod join;
 pub mod mesh;
 pub mod room;
+pub mod transcript;
+#[cfg(test)]
+mod transcript_tests;
 pub mod wire;
 
 pub use handler::ws_audio_handler;

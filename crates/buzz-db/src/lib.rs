@@ -1394,6 +1394,24 @@ impl Db {
         .await
     }
 
+    /// Resolve an ephemeral huddle channel's parent from its creator-signed
+    /// kind:48100 link. See [`event::find_huddle_parent_channel`].
+    #[datastore_span(name = "find_huddle_parent_channel", system = "postgresql")]
+    pub async fn find_huddle_parent_channel(
+        &self,
+        community_id: CommunityId,
+        ephemeral_channel_id: Uuid,
+        creator_pubkey: &[u8],
+    ) -> Result<Option<Uuid>> {
+        event::find_huddle_parent_channel(
+            &self.pool,
+            community_id,
+            ephemeral_channel_id,
+            creator_pubkey,
+        )
+        .await
+    }
+
     /// Fetch the latest replaceable event for a (kind, pubkey) pair.
     ///
     /// Uses canonical NIP-16 ordering: `created_at DESC, id ASC`.

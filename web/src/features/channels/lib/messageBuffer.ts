@@ -97,6 +97,14 @@ export interface TimelineMessage {
    * construction-time constant, like `card`.
    */
   stage?: StageTag | null;
+  /**
+   * Value of a `["buzz-system", …]` tag: a relay-authored informational
+   * message (e.g. `call-transcript`, the huddle transcript the relay posts
+   * into the parent channel when a call ends). Rows label these by purpose
+   * instead of the relay's pubkey — see `messageAuthorLabel`. Optional so
+   * rows restored from an older timeline cache simply fall back.
+   */
+  buzzSystem?: string | null;
   /** Edit overlay present (renders the "(edited)" marker). */
   edited: boolean;
   /** Deleted via kind 5 — rows hide rather than render. */
@@ -163,9 +171,16 @@ export function timelineMessageFromEvent(
     stage: event.tags.some((tag) => tag[0] === "stage")
       ? parseStageTag(event.tags)
       : null,
+    buzzSystem: buzzSystemTag(event.tags),
     edited: false,
     deleted: false,
   };
+}
+
+/** The `["buzz-system", <value>]` tag value, or null when absent/malformed. */
+function buzzSystemTag(tags: string[][]): string | null {
+  const value = tags.find((tag) => tag[0] === "buzz-system")?.[1];
+  return typeof value === "string" && value !== "" ? value : null;
 }
 
 /** Target id from the first e tag of an edit (40003) or delete (5) event. */
