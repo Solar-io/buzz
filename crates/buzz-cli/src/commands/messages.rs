@@ -64,7 +64,10 @@ fn thread_ref_from_parent_tags(
 /// - Nested reply: `root` is the parent's own root marker; `parent` is unchanged.
 ///
 /// Ensures CLI-sent replies thread correctly using the same NIP-10 logic.
-async fn fetch_event(client: &BuzzClient, event_id: &str) -> Result<serde_json::Value, CliError> {
+pub(crate) async fn fetch_event(
+    client: &BuzzClient,
+    event_id: &str,
+) -> Result<serde_json::Value, CliError> {
     let filter = serde_json::json!({ "ids": [event_id], "limit": 1 });
     let raw = client.query(&filter).await?;
     let events: serde_json::Value = serde_json::from_str(&raw)
@@ -304,7 +307,7 @@ async fn fetch_events(
 }
 
 /// Extract member pubkeys (the `p` tag values) from a single 39002 event.
-async fn fetch_member_pubkeys(
+pub(crate) async fn fetch_member_pubkeys(
     client: &BuzzClient,
     filter: &serde_json::Value,
 ) -> Option<Vec<String>> {
@@ -629,7 +632,7 @@ pub async fn cmd_search(
 /// must match exactly one user (case-insensitive, on `display_name` or
 /// `name`) — ambiguity is an error listing the candidates rather than a
 /// silent mix of authors.
-async fn resolve_author(client: &BuzzClient, author: &str) -> Result<String, CliError> {
+pub(crate) async fn resolve_author(client: &BuzzClient, author: &str) -> Result<String, CliError> {
     let author = author.trim();
     if author.len() == 64 && author.chars().all(|c| c.is_ascii_hexdigit()) {
         return Ok(author.to_ascii_lowercase());

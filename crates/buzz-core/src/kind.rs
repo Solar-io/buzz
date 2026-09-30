@@ -799,6 +799,20 @@ pub const KIND_GIT_STATUS_DRAFT: u32 = 1633;
 /// announcement, never a project. See `docs/nips/NIP-MP.md`.
 pub const KIND_PROJECT: u32 = 30621;
 
+/// Item — a bug or backlog entry (parameterized replaceable, d=12-char item id).
+///
+/// Multi-writer: each editor publishes their own head at `(author, 30623, d)`
+/// and clients fold heads by `(h, d)`, newest `created_at` wins. The optional
+/// `h` tag is the source channel and scopes visibility to its members; without
+/// it the item is community-global. Validated by `buzz_core::item`.
+pub const KIND_ITEM: u32 = 30623;
+
+/// Agent task status — the member-readable projection of an agent's turn in a
+/// channel (parameterized replaceable). `d` is `turn:<channel uuid>` (lifecycle,
+/// written by the ACP harness) or `detail:<channel uuid>` (title/progress,
+/// written by `buzz status set`). Always `h`-scoped.
+pub const KIND_AGENT_TASK_STATUS: u32 = 30624;
+
 /// All registered kind constants — used for duplicate detection and iteration.
 pub const ALL_KINDS: &[u32] = &[
     KIND_PROFILE,
@@ -935,6 +949,8 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_GIT_STATUS_CLOSED,
     KIND_GIT_STATUS_DRAFT,
     KIND_PROJECT,
+    KIND_ITEM,
+    KIND_AGENT_TASK_STATUS,
 ];
 
 /// Returns `true` if `kind` is in the ephemeral range (20000–29999).
@@ -1058,6 +1074,10 @@ const _: () = assert!(is_parameterized_replaceable(KIND_WORKFLOW_DEF)); // 30620
 const _: () = assert!(is_parameterized_replaceable(KIND_EVENT_REMINDER)); // 30300 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_DM_VISIBILITY)); // 30622 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_PROJECT)); // 30621 ∈ 30000–39999
+const _: () = assert!(is_parameterized_replaceable(KIND_ITEM)); // 30623 ∈ 30000–39999
+const _: () = assert!(is_parameterized_replaceable(KIND_AGENT_TASK_STATUS)); // 30624 ∈ 30000–39999
+const _: () = assert!(KIND_ITEM <= u16::MAX as u32);
+const _: () = assert!(KIND_AGENT_TASK_STATUS <= u16::MAX as u32);
 const _: () = assert!(is_parameterized_replaceable(KIND_THREAD_SUMMARY)); // 39005 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_WINDOW_BOUNDS)); // 39006 ∈ 30000–39999
 

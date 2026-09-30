@@ -224,6 +224,9 @@ enum Cmd {
     /// Create, get, list, and set status on git issues (NIP-34)
     #[command(subcommand)]
     Issues(IssuesCmd),
+    /// File and track bug and backlog items (kind 30623)
+    #[command(subcommand)]
+    Items(ItemsCmd),
     /// Open, update, list, and set status on git pull requests (NIP-34)
     #[command(subcommand)]
     Pr(PrCmd),
@@ -1987,6 +1990,103 @@ pub enum IssuesCmd {
 }
 
 #[derive(Subcommand)]
+pub enum ItemsCmd {
+    /// File a bug or backlog item. Prints the item as JSON plus write fields.
+    Add {
+        /// Item type
+        #[arg(long = "type", value_parser = ["bug", "backlog"])]
+        item_type: String,
+        /// One-line title (1-200 characters)
+        #[arg(long)]
+        title: String,
+        /// One or two sentences a reader can act on (max 500 characters)
+        #[arg(long)]
+        summary: Option<String>,
+        /// Markdown body (repro steps, notes). Use '-' to read from stdin.
+        #[arg(long)]
+        body: Option<String>,
+        /// Source message event id: links the item to it and scopes the item
+        /// to that message's channel
+        #[arg(long)]
+        from_event: Option<String>,
+        /// Channel (UUID, #slug or name) that scopes the item's visibility.
+        /// Without it (and without --from-event) the item is community-wide.
+        #[arg(long)]
+        channel: Option<String>,
+        /// Project: a kind:30621 slug, name, or 30621:<pubkey>:<d> coordinate
+        #[arg(long)]
+        project: Option<String>,
+        /// Owner: me, hex pubkey, npub, or display name
+        #[arg(long)]
+        owner: Option<String>,
+        /// Initial status
+        #[arg(long, default_value = "open", value_parser = ["open", "progress", "needs-you"])]
+        status: String,
+    },
+    /// List items (folded to their current state), newest update first
+    List {
+        /// Comma-separated statuses, or 'all' (default: everything except done)
+        #[arg(long)]
+        status: Option<String>,
+        /// Filter by type
+        #[arg(long = "type", value_parser = ["bug", "backlog"])]
+        item_type: Option<String>,
+        /// Filter by owner: me, hex pubkey, npub, display name, or 'none'
+        #[arg(long)]
+        owner: Option<String>,
+        /// Only items scoped to this channel (UUID, #slug or name)
+        #[arg(long)]
+        channel: Option<String>,
+        /// Filter by project slug, name, or coordinate
+        #[arg(long)]
+        project: Option<String>,
+        /// Maximum number of items to print
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+    /// Get one item by id or unique id prefix (4+ characters)
+    Get {
+        /// Item id or unique prefix
+        id: String,
+    },
+    /// Update fields on an item (publishes your own head for it)
+    Update {
+        /// Item id or unique prefix
+        id: String,
+        /// New title
+        #[arg(long)]
+        title: Option<String>,
+        /// New summary ('' clears it)
+        #[arg(long)]
+        summary: Option<String>,
+        /// New markdown body. Use '-' to read from stdin.
+        #[arg(long)]
+        body: Option<String>,
+        /// New type
+        #[arg(long = "type", value_parser = ["bug", "backlog"])]
+        item_type: Option<String>,
+        /// New status
+        #[arg(long, value_parser = ["open", "progress", "needs-you", "done"])]
+        status: Option<String>,
+        /// New project (slug, name, coordinate), or 'none' to clear
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// Assign an item: me, hex pubkey, npub, display name, or 'none'
+    Assign {
+        /// Item id or unique prefix
+        id: String,
+        /// Assignee (must be able to see the item's channel)
+        assignee: String,
+    },
+    /// Mark an item done
+    Done {
+        /// Item id or unique prefix
+        id: String,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum UploadCmd {
     /// Upload a file to the relay's Blossom store
     File {
@@ -2302,6 +2402,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Projects(sub) => commands::projects::dispatch(sub, &client).await,
         Cmd::Patches(sub) => commands::patches::dispatch(sub, &client).await,
         Cmd::Issues(sub) => commands::issues::dispatch(sub, &client).await,
+        Cmd::Items(sub) => commands::items::dispatch(sub, &client).await,
         Cmd::Pr(sub) => commands::pr::dispatch(sub, &client).await,
         Cmd::Media(sub) => commands::upload::dispatch_media(sub, &client).await,
         Cmd::Upload(sub) => commands::upload::dispatch(sub, &client).await,
@@ -2444,6 +2545,9 @@ mod tests {
             "emoji",
             "feed",
             "issues",
+            // Bug/backlog items (kind 30623): add / list / get / update /
+            // assign / done.
+            "items",
             "media",
             "mem",
             "messages",
@@ -2640,6 +2744,10 @@ mod tests {
         assert_eq!(
             names(&cmd, "issues"),
             vec!["assign", "create", "get", "list", "status", "unassign"]
+        );
+        assert_eq!(
+            names(&cmd, "items"),
+            vec!["add", "assign", "done", "get", "list", "update"]
         );
         assert_eq!(names(&cmd, "media"), vec!["get"]);
         assert_eq!(names(&cmd, "upload"), vec!["file"]);
