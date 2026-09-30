@@ -255,9 +255,7 @@ export function AppShell({
           style={rowStyle}
         >
           <PhoneBarSlotContext.Provider value={phoneBarSlot}>
-            <main className="min-h-0 min-w-0 flex-1">
-              {children}
-            </main>
+            <main className="min-h-0 min-w-0 flex-1">{children}</main>
             {rightPane}
             {rowOverlay}
           </PhoneBarSlotContext.Provider>
