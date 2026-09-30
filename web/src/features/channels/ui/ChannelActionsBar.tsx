@@ -3,6 +3,7 @@ import { Brain, LogIn } from "lucide-react";
 import { toast } from "sonner";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import { useHuddleRoster } from "@/features/huddle/useHuddleRoster";
+import { isScratchChannel } from "@/features/scratch/lib/scratchChannel.ts";
 import type { AgentCallPhase } from "@/features/huddle/lib/agentCallFlow.ts";
 import { cn } from "@/shared/lib/cn";
 import type { ChannelMember, Profile } from "../hooks.ts";
@@ -110,7 +111,9 @@ export function ChannelActionsBar({
   // The expiry badge counts DOWN, so it needs a tick of its own — nothing
   // else in this strip changes when a minute passes.
   const [nowSeconds, setNowSeconds] = useState(() => Date.now() / 1000);
-  const isEphemeral = channel.ttlSeconds !== null;
+  // A scratch channel counts down in its own header, and only in its last
+  // idle hour — "71h left" on every composer would be noise.
+  const isEphemeral = channel.ttlSeconds !== null && !isScratchChannel(channel);
   useEffect(() => {
     if (!isEphemeral) {
       return;
@@ -118,7 +121,7 @@ export function ChannelActionsBar({
     const timer = setInterval(() => setNowSeconds(Date.now() / 1000), 15_000);
     return () => clearInterval(timer);
   }, [isEphemeral]);
-  const expiry = ephemeralDisplay(channel, nowSeconds);
+  const expiry = isEphemeral ? ephemeralDisplay(channel, nowSeconds) : null;
 
   const isMember =
     selfPubkey && members.length > 0

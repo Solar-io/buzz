@@ -45,6 +45,7 @@ export default defineConfig({
         "**/shortcut-bar.spec.ts",
         "**/work-shell.spec.ts",
         "**/messages.spec.ts",
+        "**/scratch.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],

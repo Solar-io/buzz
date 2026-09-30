@@ -3,6 +3,7 @@ import { type ReactNode, useEffect, useRef } from "react";
 
 import { AuthorAvatar } from "@/features/channels/ui/AuthorAvatar";
 import type { JumpCandidate } from "@/features/channels/lib/jump.ts";
+import { ScratchGlyph } from "@/features/scratch/ui/ScratchChrome";
 import { cn } from "@/shared/lib/cn";
 
 /**
@@ -141,6 +142,13 @@ function Glyph({
         ) : (
           <Hash aria-hidden className="size-3.75" />
         )}
+      </span>
+    );
+  }
+  if (item.kind === "scratch") {
+    return (
+      <span className="grid w-5.5 shrink-0 place-items-center text-honey-ink">
+        <ScratchGlyph className="size-3.75" />
       </span>
     );
   }

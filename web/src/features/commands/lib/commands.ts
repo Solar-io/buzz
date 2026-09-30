@@ -3,9 +3,9 @@
  *
  * One entry per command: `{id, args, when(ctx), run(ctx, args)}` plus the two
  * strings the list draws. A command appears only once it WORKS — Phase 2
- * ships `/remind`, `/handoff` and `/status`; `/new`, `/exit`, `/keep`, `/bug`
- * and `/backlog` join with the phases that build what they do (plan rule 2:
- * no control that lies).
+ * shipped `/remind`, `/handoff` and `/status`, Phase 3 `/new`, `/exit` and
+ * `/keep` (`scratchCommands.ts`); `/bug` and `/backlog` join with the phase
+ * that builds what they do (plan rule 2: no control that lies).
  *
  * `run` never touches the relay itself. Everything a command does goes
  * through `ctx.actions`, which the composer's host supplies, so the registry
@@ -21,6 +21,7 @@ import { quickRemindDueAt } from "../../reminders/lib/quickRemind.ts";
 import type { ReminderTarget } from "../../reminders/lib/reminderTypes.ts";
 import type { ParsedCommand } from "./parseCommand.ts";
 import { parseRemindWhen, remindWhenLabel } from "./remindWhen.ts";
+import { SCRATCH_COMMANDS } from "./scratchCommands.ts";
 
 /** The slice of a timeline message a command reads. */
 export interface CommandMessage {
@@ -34,9 +35,37 @@ export interface CommandMessage {
   deleted?: boolean;
 }
 
+/** What the scratch commands do; the host runs them against the relay. */
+export interface ScratchActions {
+  /** Create the copy, copy the parent's roster in, open it. */
+  create: (input: {
+    parent: { id: string; name: string };
+    name: string | null;
+  }) => Promise<CommandResult>;
+  /** Leave now; delete once the Undo window has passed. */
+  exit: (input: {
+    channelId: string;
+    parent: { id: string; name: string };
+  }) => Promise<CommandResult>;
+  /** Clear the TTL, and rename when a name is given. */
+  keep: (input: {
+    channelId: string;
+    name: string | null;
+  }) => Promise<CommandResult>;
+}
+
 export interface CommandContext {
   /** The open conversation; null where a composer has none. */
-  channel: { id: string; name: string; type: string } | null;
+  channel: {
+    id: string;
+    name: string;
+    type: string;
+    /**
+     * Set in a scratch channel: its parent, and the part of its name after
+     * the parent's ("scratch-1").
+     */
+    scratch?: { parentId: string; parentName: string; label: string } | null;
+  } | null;
   selfPubkey: string | null;
   /** The open conversation's buffer, oldest first. */
   messages: readonly CommandMessage[];
@@ -60,6 +89,8 @@ export interface CommandContext {
     }) => Promise<{ ok: boolean; message: string }>;
     /** Show Work scoped to a channel (the rail at lg, the page below). */
     openWorkForChannel: (channelId: string) => void;
+    /** Scratch channels; absent where a composer cannot open one. */
+    scratch?: ScratchActions;
   };
 }
 
@@ -67,7 +98,7 @@ export type CommandResult =
   | { ok: true; notice?: string }
   | { ok: false; error: string };
 
-export type CommandGroup = "capture" | "agents";
+export type CommandGroup = "channel" | "capture" | "agents";
 
 export interface CommandSpec {
   /** The name typed after the slash. */
@@ -80,13 +111,20 @@ export interface CommandSpec {
    */
   needsArgs: boolean;
   group: CommandGroup;
+  /** What it does, context-free (⌘K lists it with no channel in view). */
   describe: string;
+  /**
+   * The same line where the channel is known (the composer's list):
+   * "Discard scratch-1 and go back to #flight-path".
+   */
+  detail?: (ctx: CommandContext) => string;
   /** Offered (and runnable) in this context. */
   when: (ctx: CommandContext) => boolean;
   run: (ctx: CommandContext, args: string) => Promise<CommandResult>;
 }
 
 export const COMMAND_GROUP_LABEL: Record<CommandGroup, string> = {
+  channel: "This channel",
   capture: "Capture",
   agents: "Agents",
 };
@@ -278,11 +316,42 @@ const status: CommandSpec = {
 };
 
 /** Every command this build can run, in list order. */
-export const COMMANDS: readonly CommandSpec[] = [remind, handoff, status];
+export const COMMANDS: readonly CommandSpec[] = [
+  ...SCRATCH_COMMANDS,
+  remind,
+  handoff,
+  status,
+];
 
 /** The commands offered in `ctx`. */
 export function availableCommands(ctx: CommandContext): CommandSpec[] {
   return COMMANDS.filter((command) => command.when(ctx));
+}
+
+/**
+ * The commands ⌘K may offer for the open conversation — the composer's own
+ * `when`, so the palette never lists `/exit` outside a scratch channel. ⌘K
+ * only prefills the composer; the composer re-resolves before running.
+ */
+export function paletteCommands(
+  input: Pick<CommandContext, "channel" | "selfPubkey"> & {
+    scratch?: ScratchActions;
+  },
+): CommandSpec[] {
+  return availableCommands({
+    channel: input.channel,
+    selfPubkey: input.selfPubkey,
+    messages: [],
+    members: [],
+    mentionPicks: new Map(),
+    nowMs: 0,
+    actions: {
+      createReminder: async () => {},
+      send: async () => ({ ok: false, message: "" }),
+      openWorkForChannel: () => {},
+      scratch: input.scratch,
+    },
+  });
 }
 
 /** Available commands whose name starts with the typed prefix. */

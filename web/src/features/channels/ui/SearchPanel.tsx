@@ -25,6 +25,7 @@ import {
 } from "../lib/jump.ts";
 import type { QuickCandidate } from "../lib/quickSwitcher.ts";
 import type { ChannelSummary } from "../useChannels";
+import { scratchInfo } from "@/features/scratch/lib/scratchChannel.ts";
 import { channelTopic } from "./ChannelHeader.tsx";
 import {
   MessageSearchResults,
@@ -159,6 +160,19 @@ function SearchPanelBody({
           hint: status ?? (others.length > 1 ? "group DM" : undefined),
           hot: (marker?.needs ?? 0) > 0,
           pubkey: others[0],
+          run: () => onJumpToChannel(channel.id),
+        });
+        continue;
+      }
+      const scratch = scratchInfo(channel, channels);
+      if (scratch) {
+        out.push({
+          key: `conversation:${channel.id}`,
+          kind: "scratch",
+          label: `${scratch.label.parent} / ${scratch.label.rest}`,
+          hint: status ? `scratch · ${status}` : "scratch",
+          hot: (marker?.needs ?? 0) > 0,
+          keywords: [channel.name.replace(/[-_]/g, " "), scratch.parentName],
           run: () => onJumpToChannel(channel.id),
         });
         continue;

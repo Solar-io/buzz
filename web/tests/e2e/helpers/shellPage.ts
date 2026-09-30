@@ -5,6 +5,7 @@ import { expect, type Page } from "@playwright/test";
 
 import {
   installMockRelay,
+  type MockEvent,
   type MockRelay,
   type MockRelayOptions,
 } from "./mockRelay";
@@ -67,6 +68,8 @@ export async function openShell(
     path: (fixture: WorkFixture) => string;
     fixture?: Parameters<typeof buildWorkFixture>[0];
     relay?: MockRelayOptions;
+    /** More events to serve from the first REQ on, built on the fixture. */
+    extra?: (fixture: WorkFixture) => MockEvent[];
   },
 ): Promise<{ fixture: WorkFixture; relay: MockRelay }> {
   const fixture = buildWorkFixture(options.fixture);
@@ -75,7 +78,11 @@ export async function openShell(
     localStorage.setItem("buzz-follow-system", "false");
   }, options.theme);
   await routeUsageHub(page);
-  const relay = await installMockRelay(page, fixture.events, options.relay);
+  const relay = await installMockRelay(
+    page,
+    [...fixture.events, ...(options.extra?.(fixture) ?? [])],
+    options.relay,
+  );
   await signIn(page, options.path(fixture), fixture.viewerKey);
   return { fixture, relay };
 }

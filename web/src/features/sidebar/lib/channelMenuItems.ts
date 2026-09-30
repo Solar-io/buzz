@@ -49,6 +49,34 @@ export interface ChannelMenuDeps {
   onCloseChannel: () => void;
 }
 
+/**
+ * Evict every per-channel trace of a relay-CONFIRMED delete: viewer prefs,
+ * read marker, composer draft, the timeline cache (IndexedDB) and the
+ * sidebar list + its seed. Without the list eviction the row stays clickable
+ * and re-opens the deleted channel from its timeline cache — a successful
+ * delete read as a failed one. Shared by "Delete channel" and `/exit`.
+ */
+export function evictDeletedChannel(
+  channelId: string,
+  deps: Pick<
+    ChannelMenuDeps,
+    "setChannelPrefs" | "setReadState" | "onChannelDeleted"
+  >,
+): void {
+  deps.setChannelPrefs((prefs) => forgetChannel(prefs, channelId));
+  deps.setReadState((previous) => {
+    const next = forgetChannelRead(previous, channelId);
+    if (next !== previous) {
+      saveReadState(next);
+      notifyReadStateLocalChange();
+    }
+    return next;
+  });
+  clearDraft(channelId);
+  evictTimelineCache(channelId);
+  deps.onChannelDeleted(channelId);
+}
+
 /** Context menu per channel: favorite / mark read / mute / leave. */
 export function channelMenuItems(
   channel: ChannelSummary,
@@ -147,23 +175,11 @@ export function channelMenuItems(
               return;
             }
             toast.success(`Deleted #${channel.name}`);
-            // Evict every per-channel trace: viewer prefs, read marker,
-            // composer draft, the timeline cache (IndexedDB) and the
-            // sidebar list + its seed. Without the list eviction the row
-            // stays clickable and re-opens the deleted channel from its
-            // timeline cache — a successful delete read as a failed one.
-            setChannelPrefs((prefs) => forgetChannel(prefs, channel.id));
-            setReadState((previous) => {
-              const next = forgetChannelRead(previous, channel.id);
-              if (next !== previous) {
-                saveReadState(next);
-                notifyReadStateLocalChange();
-              }
-              return next;
+            evictDeletedChannel(channel.id, {
+              setChannelPrefs,
+              setReadState,
+              onChannelDeleted,
             });
-            clearDraft(channel.id);
-            evictTimelineCache(channel.id);
-            onChannelDeleted(channel.id);
             if (selectedId === channel.id) {
               onCloseChannel();
             }

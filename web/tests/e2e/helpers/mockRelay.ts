@@ -106,6 +106,10 @@ export interface MockRelay {
    * toast, without pretending to be a relay.
    */
   push: (...events: MockEvent[]) => void;
+  /** Stop serving every event `drop` matches (a deleted channel's 39000). */
+  remove: (drop: (event: MockEvent) => boolean) => void;
+  /** What a REQ would be served right now. */
+  served: () => readonly MockEvent[];
 }
 
 export interface MockRelayOptions {
@@ -114,6 +118,12 @@ export interface MockRelayOptions {
    * The refusal is an `OK false` frame carrying that text verbatim.
    */
   rejectPublish?: (event: MockEvent) => string | null;
+  /**
+   * An ACCEPTED publish, after its OK: stand in for the relay's side effect
+   * (a 9007 becoming a 39000, a 9000 re-signing the 39002). The spec writes
+   * the effect it needs; this is still not a relay.
+   */
+  onPublish?: (event: MockEvent, relay: MockRelay) => void;
 }
 
 /**
@@ -128,13 +138,39 @@ export async function installMockRelay(
   events: MockEvent[] = [],
   options: MockRelayOptions = {},
 ): Promise<MockRelay> {
-  const served = [...events];
+  let served = [...events];
   const published: MockEvent[] = [];
   /** Open subscriptions per socket, for {@link MockRelay.push}. */
   const sockets: Array<{
     send: (frame: string) => void;
     subs: Map<string, Filter[]>;
   }> = [];
+  const handle: MockRelay = {
+    published,
+    add: (...more: MockEvent[]) => {
+      served.push(...more);
+    },
+    push: (...more: MockEvent[]) => {
+      served.push(...more);
+      for (const socket of sockets) {
+        for (const event of more) {
+          for (const [subId, filters] of socket.subs) {
+            if (filters.some((filter) => matches(filter, event))) {
+              try {
+                socket.send(JSON.stringify(["EVENT", subId, event]));
+              } catch {
+                // A closed socket has nobody to deliver to.
+              }
+            }
+          }
+        }
+      }
+    },
+    remove: (drop) => {
+      served = served.filter((event) => !drop(event));
+    },
+    served: () => [...served],
+  };
 
   await page.routeWebSocket(/.*/, (ws) => {
     const subs = new Map<string, Filter[]>();
@@ -174,6 +210,9 @@ export async function installMockRelay(
         ws.send(
           JSON.stringify(["OK", event.id, refusal === null, refusal ?? ""]),
         );
+        if (refusal === null) {
+          options.onPublish?.(event, handle);
+        }
         return;
       }
       if (type === "CLOSE") {
@@ -183,26 +222,5 @@ export async function installMockRelay(
     });
   });
 
-  return {
-    published,
-    add: (...more: MockEvent[]) => {
-      served.push(...more);
-    },
-    push: (...more: MockEvent[]) => {
-      served.push(...more);
-      for (const socket of sockets) {
-        for (const event of more) {
-          for (const [subId, filters] of socket.subs) {
-            if (filters.some((filter) => matches(filter, event))) {
-              try {
-                socket.send(JSON.stringify(["EVENT", subId, event]));
-              } catch {
-                // A closed socket has nobody to deliver to.
-              }
-            }
-          }
-        }
-      }
-    },
-  };
+  return handle;
 }

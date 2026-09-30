@@ -20,6 +20,8 @@ export interface ComposerCommandHost {
   messages: readonly CommandMessage[];
   createReminder: CommandContext["actions"]["createReminder"];
   openWorkForChannel: (channelId: string) => void;
+  /** `/new`, `/exit`, `/keep`; absent, they are not offered. */
+  scratch?: CommandContext["actions"]["scratch"];
 }
 
 /**
@@ -71,16 +73,29 @@ export function useComposerCommands(options: {
             createReminder: host.createReminder,
             send: options.send,
             openWorkForChannel: host.openWorkForChannel,
+            scratch: host.scratch,
           },
         }
       : null;
 
   const query = typeof host === "object" ? commandQuery(text, caret) : null;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `context()` reads the latest props; the list only changes with the query and the channel
+  // What decides the list besides the query: the channel, and whether it is
+  // scratch (`/keep` turns a scratch channel into an ordinary one in place).
+  const listKey =
+    typeof host === "object"
+      ? `${host.channel?.id ?? ""}|${host.channel?.scratch?.parentId ?? ""}|${host.scratch ? 1 : 0}`
+      : null;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `context()` reads the latest props; the list only changes with the query and `listKey`
   const matches = useMemo<CommandSpec[]>(() => {
     const ctx = context();
-    return query === null || !ctx ? [] : matchCommands(query, ctx);
-  }, [query, typeof host === "object" ? host.channel?.id : null]);
+    return query === null || !ctx
+      ? []
+      : // The composer knows the channel, so a row reads in its terms:
+        // "Discard scratch-1 and go back to #flight-path".
+        matchCommands(query, ctx).map((spec) =>
+          spec.detail ? { ...spec, describe: spec.detail(ctx) } : spec,
+        );
+  }, [query, listKey]);
 
   const run = async (parsed: ParsedCommand): Promise<void> => {
     const ctx = context();

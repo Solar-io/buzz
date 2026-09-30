@@ -54,7 +54,13 @@ export function scopedJumpText(scope: JumpScope, needle: string): string {
   return `${key}${needle}`;
 }
 
-export type JumpKind = "channel" | "dm" | "person" | "action" | "command";
+export type JumpKind =
+  | "channel"
+  | "scratch"
+  | "dm"
+  | "person"
+  | "action"
+  | "command";
 
 /** One thing ⌘K can jump to. */
 export interface JumpCandidate {
@@ -91,13 +97,21 @@ export interface JumpResults {
 
 const GROUP_HEADER: Record<JumpKind, string> = {
   channel: "Channels",
+  scratch: "Scratch",
   dm: "Direct messages",
   person: "People",
   command: "Commands",
   action: "Actions",
 };
+/**
+ * Scratch channels sit right under Channels (Jump artboard). Their labels
+ * start with the parent's name ("flight-path / scratch-1"), so a query for
+ * the parent finds both, and on an equal match the shorter parent sorts
+ * first: each scratch ranks with, and after, its parent.
+ */
 const GROUP_ORDER: readonly JumpKind[] = [
   "channel",
+  "scratch",
   "dm",
   "person",
   "command",
@@ -109,7 +123,7 @@ function inScope(scope: JumpScope, kind: JumpKind): boolean {
     case "all":
       return true;
     case "channel":
-      return kind === "channel";
+      return kind === "channel" || kind === "scratch";
     case "person":
       return kind === "dm" || kind === "person";
     case "command":

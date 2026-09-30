@@ -5,6 +5,7 @@ import {
 } from "@/features/channels/lib/channelPrefs.ts";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import type { DmSummary } from "@/features/dms/hooks";
+import { isScratchChannel } from "@/features/scratch/lib/scratchChannel.ts";
 
 /** Everything {@link useChannelLists} sections the sidebar from. */
 export interface ChannelListsInput {
@@ -16,6 +17,8 @@ export interface ChannelListsInput {
   channelPrefs: ChannelPrefs;
   /** DM channel ids the viewer hid locally. */
   hiddenDmIds: string[];
+  /** Scratch channels inside their `/exit` Undo window — already gone. */
+  exitingScratchIds?: ReadonlySet<string>;
 }
 
 /**
@@ -28,6 +31,8 @@ export interface ChannelLists {
   streams: ChannelSummary[];
   /** Forum-type channels — their own section and their own body. */
   forums: ChannelSummary[];
+  /** Live scratch channels (Phase 3), by name — so each parent's group up. */
+  scratch: ChannelSummary[];
   /** Non-DM landing fallback: favorited streams first, then the rest. */
   landingChannelIds: string[];
   /** DMs the viewer has not hidden locally. */
@@ -39,16 +44,32 @@ export interface ChannelLists {
  *
  * Archived channels (expired transport rooms etc.) hide from the sidebar —
  * the relay's `archived` tag exists for exactly this. Ephemeral channels are
- * transport rooms and never enter the main channel list. Forum-type channels
- * split into their own sidebar section (and their own channel body); streams
- * keep the Channels list.
+ * transport rooms and never enter the main channel list — except scratch
+ * channels, which get a section of their own. Forum-type channels split into
+ * their own sidebar section (and their own channel body); streams keep the
+ * Channels list.
  */
 export function useChannelLists({
   channels,
   dms,
   channelPrefs,
   hiddenDmIds,
+  exitingScratchIds,
 }: ChannelListsInput): ChannelLists {
+  const scratch = useMemo(
+    () =>
+      channels
+        .filter(
+          (channel) =>
+            !channel.archived &&
+            isScratchChannel(channel) &&
+            !exitingScratchIds?.has(channel.id),
+        )
+        .sort((a, b) =>
+          a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+        ),
+    [channels, exitingScratchIds],
+  );
   const permanentChannels = useMemo(
     () =>
       channels
@@ -80,5 +101,5 @@ export function useChannelLists({
     () => dms.filter(({ channel }) => !hiddenDmIds.includes(channel.id)),
     [dms, hiddenDmIds],
   );
-  return { streams, forums, landingChannelIds, visibleDms };
+  return { streams, forums, scratch, landingChannelIds, visibleDms };
 }

@@ -1,4 +1,4 @@
-import { AlertCircle, Bell, Check, GitBranch, X } from "lucide-react";
+import { AlertCircle, Bell, Check, GitBranch, LogOut, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/shared/lib/cn";
 import { HexAvatar } from "./HexAvatar";
@@ -139,7 +139,13 @@ function ToastMark({ icon }: { icon: ToastIcon }) {
     );
   }
   const Icon =
-    icon.kind === "done" ? Check : icon.kind === "error" ? AlertCircle : Bell;
+    icon.kind === "done"
+      ? Check
+      : icon.kind === "error"
+        ? AlertCircle
+        : icon.kind === "left"
+          ? LogOut
+          : Bell;
   return (
     <span
       aria-hidden
@@ -147,7 +153,9 @@ function ToastMark({ icon }: { icon: ToastIcon }) {
         "grid size-6 shrink-0 place-items-center rounded-full",
         icon.kind === "done"
           ? "bg-leaf-soft text-leaf-ink"
-          : "bg-coral-soft text-coral-ink",
+          : icon.kind === "left"
+            ? "bg-honey-soft text-honey-ink"
+            : "bg-coral-soft text-coral-ink",
       )}
     >
       <Icon className="size-3.5" strokeWidth={icon.kind === "done" ? 2.4 : 2} />

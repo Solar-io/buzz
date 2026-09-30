@@ -1,4 +1,10 @@
 import { Lock } from "lucide-react";
+import type { ScratchActions } from "@/features/commands/lib/commands.ts";
+import {
+  scratchInfo,
+  withoutScratchMarker,
+} from "@/features/scratch/lib/scratchChannel.ts";
+import { ScratchHeading } from "@/features/scratch/ui/ScratchHeading";
 import { usePhoneLayout } from "@/shared/layout/AppShell";
 import type { ChannelMember, Profile } from "../hooks.ts";
 import type { ChannelSummary } from "../useChannels";
@@ -7,13 +13,20 @@ import type { PresenceEntry } from "../lib/presence.ts";
 import { AuthorAvatar } from "./AuthorAvatar.tsx";
 import { ChannelMembersButton } from "./ChannelMembersButton.tsx";
 
-/** The first non-empty of topic → about → purpose, or null. */
+/**
+ * The first non-empty of topic → about → purpose, or null. A scratch
+ * channel's parent marker is machine text and never reads here.
+ */
 export function channelTopic(channel: {
   topic?: string | null;
   about?: string | null;
   purpose?: string | null;
 }): string | null {
-  for (const value of [channel.topic, channel.about, channel.purpose]) {
+  for (const value of [
+    channel.topic,
+    channel.about ? withoutScratchMarker(channel.about) : channel.about,
+    channel.purpose,
+  ]) {
     const trimmed = value?.trim();
     if (trimmed) {
       return trimmed;
@@ -36,7 +49,8 @@ export function channelTopic(channel: {
  * facepile, because a DM's members are its title.
  *
  * Below md the phone top bar carries the title and the member line
- * (PhoneChannel artboard), so this renders nothing there.
+ * (PhoneChannel artboard), so this renders nothing there — except in a
+ * scratch channel, whose banner (pill, Keep, Exit) has nowhere else to go.
  */
 export function ChannelHeader({
   channel,
@@ -48,6 +62,7 @@ export function ChannelHeader({
   contacts,
   agentPubkeys,
   dmAgentPubkey,
+  scratch,
 }: {
   channel: ChannelSummary;
   /** The resolved conversation name (a DM's is its participants). */
@@ -60,6 +75,13 @@ export function ChannelHeader({
   agentPubkeys: ReadonlySet<string>;
   /** The DM's agent counterpart, when it is a 1:1 DM with a known agent. */
   dmAgentPubkey: string | null;
+  /** Scratch-channel wiring; the header draws it only for a scratch channel. */
+  scratch?: {
+    actions: ScratchActions;
+    channels: readonly ChannelSummary[];
+    /** Newest event seen here (unix s) — the idle clock restarts on it. */
+    lastActivityAt: number | null;
+  };
 }) {
   const phone = usePhoneLayout();
   const dm = channel.type === "dm";
@@ -68,6 +90,35 @@ export function ChannelHeader({
     (pubkey) => pubkey !== selfPubkey,
   );
   const dmFace = others.length === 1 ? others[0] : null;
+  const roster = (variant: "facepile" | "count") => (
+    <ChannelMembersButton
+      variant={variant}
+      channelId={channel.id}
+      members={members}
+      profiles={profiles}
+      presence={presence}
+      contacts={contacts}
+      selfPubkey={selfPubkey}
+      agentPubkeys={agentPubkeys}
+    />
+  );
+  const info = scratch ? scratchInfo(channel, scratch.channels) : null;
+  if (scratch && info) {
+    // Keep and Exit claim the facepile's room; its line already says how
+    // many agents came along, so the roster shrinks to its count.
+    return (
+      <ScratchHeading
+        channel={channel}
+        info={info}
+        actions={scratch.actions}
+        lastActivityAt={scratch.lastActivityAt}
+        phone={phone}
+        memberPubkeys={members.map((member) => member.pubkey)}
+        agentPubkeys={agentPubkeys}
+        roster={roster("count")}
+      />
+    );
+  }
   if (phone) {
     return null;
   }
@@ -118,16 +169,7 @@ export function ChannelHeader({
       ) : null}
       {!dm && (
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
-          <ChannelMembersButton
-            variant="facepile"
-            channelId={channel.id}
-            members={members}
-            profiles={profiles}
-            presence={presence}
-            contacts={contacts}
-            selfPubkey={selfPubkey}
-            agentPubkeys={agentPubkeys}
-          />
+          {roster("facepile")}
         </div>
       )}
     </header>
