@@ -60,6 +60,14 @@ export function buildWorkFixture(
   options: {
     /** Seed one more reminder that comes due this many seconds from now. */
     dueInS?: number;
+    /**
+     * Phase 2's readable-message and ask surfaces: callouts, a file tile
+     * group, a /handoff with its receipt, a yes/no ask in the Gilfoyle DM
+     * and a three-question card in the ESP32 DM. Off by default, because
+     * the asks and receipts move the Work rail's counts the Phase 1 cases
+     * pin.
+     */
+    phase2?: boolean;
   } = {},
   nowS = Math.floor(Date.now() / 1000),
 ): WorkFixture {
@@ -472,7 +480,184 @@ export function buildWorkFixture(
   metric(agents.gilfoyle, "done-2", flight, 30);
   metric(agents.nikon, "done-3", flight, 10);
 
+  if (options.phase2) {
+    seedPhase2(push, { viewer, agents, channels: c, nowS });
+  }
+
   return { viewerKey, viewer, agents, channels: c, events };
+}
+
+/** Phase 2 seeds — see `buildWorkFixture`'s `phase2` option. */
+function seedPhase2(
+  push: (event: Partial<MockEvent>) => MockEvent,
+  context: {
+    viewer: string;
+    agents: Record<string, Agent>;
+    channels: Record<string, string>;
+    nowS: number;
+  },
+): void {
+  const { viewer, agents, channels: c, nowS } = context;
+  const flight = c["flight-path"];
+  // The member roster (kind 39002): the header's facepile and the @ list
+  // a /handoff seat is picked from.
+  push({
+    kind: 39002,
+    pubkey: RELAY,
+    created_at: nowS - 86_400,
+    tags: [
+      ["d", flight],
+      ["p", viewer],
+      ["p", agents.gilfoyle.pubkey],
+      ["p", agents.nikon.pubkey],
+      ["p", agents.acid.pubkey],
+      ["p", agents.cereal.pubkey],
+    ],
+  });
+  // Callouts, between the table and the viewer's note to Nikon.
+  push({
+    kind: 9,
+    pubkey: agents.gilfoyle.pubkey,
+    created_at: nowS - 300,
+    tags: [["h", flight]],
+    content:
+      "Capture notes for beat 02.\n\n" +
+      "> [!NOTE]\n> The header settle only replays on a cold start — relaunch between takes.\n\n" +
+      "> [!WARNING]\n> Reduce Motion skips the cursor ease. Record with it off.",
+  });
+  // Three attachments alone in one paragraph: one tile group.
+  const blob = (n: string) => `https://blob.buzz.test/${n.repeat(64)}`;
+  push({
+    kind: 9,
+    pubkey: agents.gilfoyle.pubkey,
+    created_at: nowS - 260,
+    tags: [
+      ["h", flight],
+      [
+        "imeta",
+        `url ${blob("a")}`,
+        "m application/pdf",
+        "size 482133",
+        "filename capture-plan.pdf",
+      ],
+      [
+        "imeta",
+        `url ${blob("b")}`,
+        "m text/csv",
+        "size 2210",
+        "filename beats.csv",
+      ],
+      [
+        "imeta",
+        `url ${blob("c")}`,
+        "m text/markdown",
+        "size 9120",
+        "filename handoff-notes.md",
+      ],
+    ],
+    content:
+      `[capture-plan.pdf](${blob("a")}) [beats.csv](${blob("b")}) ` +
+      `[handoff-notes.md](${blob("c")})`,
+  });
+  // A /handoff the seat has picked up (💬 = responding).
+  const handoff = push({
+    kind: 9,
+    pubkey: viewer,
+    created_at: nowS - 180,
+    tags: [
+      ["h", flight],
+      ["p", agents.nikon.pubkey],
+      ["handoff", agents.nikon.pubkey],
+    ],
+    content: "@Lord Nikon final capture pass on beat 02, slow cursor.",
+  });
+  push({
+    kind: 7,
+    pubkey: agents.nikon.pubkey,
+    created_at: nowS - 170,
+    tags: [
+      ["e", handoff.id],
+      ["h", flight],
+    ],
+    content: "💬",
+  });
+  // An explicit yes/no ask in the Gilfoyle DM (quick replies).
+  push({
+    kind: 9,
+    pubkey: agents.gilfoyle.pubkey,
+    created_at: nowS - 5 * 60,
+    tags: [
+      ["h", c["dm-gilfoyle"]],
+      ["p", viewer],
+    ],
+    content:
+      "Try Sol max on 1–2 more big one-shot builds before 10/8, to see whether the game win repeats?\n\nReply yes or no.",
+  });
+  // A three-question interview in the ESP32 DM (PhoneAsk).
+  push({
+    kind: 9,
+    pubkey: agents.esp32.pubkey,
+    created_at: nowS - 2 * 60,
+    tags: [
+      ["h", c["dm-esp32"]],
+      ["p", viewer],
+      [
+        "card",
+        JSON.stringify({
+          v: 2,
+          title: "XiaoZhi setup",
+          questions: [
+            {
+              id: "lang",
+              header: "Language",
+              question: "Which language should XiaoZhi speak?",
+              options: [
+                { id: "en", label: "English" },
+                { id: "zh", label: "Mandarin" },
+              ],
+            },
+            {
+              id: "wake",
+              header: "Wake word",
+              question: "Which wake word should XiaoZhi listen for?",
+              options: [
+                {
+                  id: "buzz",
+                  label: "Hey Buzz",
+                  description:
+                    "Two syllables. Fewest false triggers in the bench test.",
+                  recommended: true,
+                },
+                {
+                  id: "stock",
+                  label: "Hi XiaoZhi",
+                  description: "Stock wake word, no retraining. Harder to say.",
+                },
+                {
+                  id: "computer",
+                  label: "Computer",
+                  description:
+                    "Fun, but TV audio set it off 6 times in an hour.",
+                },
+              ],
+            },
+            {
+              id: "vol",
+              header: "Volume",
+              question: "Speaker volume after boot?",
+              options: [
+                { id: "lo", label: "Low" },
+                { id: "mid", label: "Medium" },
+                { id: "hi", label: "High" },
+              ],
+            },
+          ],
+        }),
+      ],
+    ],
+    content:
+      "**XiaoZhi setup**\n\n1. Which language should XiaoZhi speak?\n2. Which wake word should XiaoZhi listen for?\n3. Speaker volume after boot?",
+  });
 }
 
 /** The usage hub, answered from a fixture (A 62 %, B 48 % → 45 % free). */

@@ -128,8 +128,8 @@ Commit before mutating; a kill = same total count, named failures.
 | ID | File · test | Mutation that must fail it |
 |---|---|---|
 | T2-1 | `commands/lib/parseCommand.test.mjs` · `a slash line is a command; a leading space or a path is a message` | treat `/usr/local` as a command |
-| T2-2 | · `an unknown command resolves to unknown, never to text` | return null for unknown names |
-| T2-3 | `channels/ui/Composer.test.mjs` · `a command is never passed to send` | call `send` before the command check |
+| T2-2 | `commands/lib/commands.test.mjs` · `an unknown command resolves to unknown, never to text` | return null for unknown names |
+| T2-3 | `channels/ui/Composer.commands.test.mjs` · `a command is never passed to send` | call `send` before the command check |
 | T2-4 | `commands/lib/remindWhen.test.mjs` · `30m, 2h, tomorrow and 3pm resolve to hardcoded instants; junk is null` | drop the past-time roll-forward |
 | T2-5 | `commands/lib/commands.test.mjs` · `/handoff needs a resolved seat and a task, and tags the seat` | drop the handoff tag |
 | T2-6 | `channels/lib/quickReply.test.mjs` · `every positive fixture is detected` (count asserted) | require "reply" in the pattern |
@@ -140,18 +140,39 @@ Commit before mutating; a kill = same total count, named failures.
 | T2-11 | `reminders/lib/feedback.test.mjs` · `due is tomorrow 9:00 local, whatever the hour` | `+24h` |
 | T2-12 | `shared/lib/remarkCallouts.test.mjs` · `the five markers become callouts; an unknown marker stays a quote` | accept any `[!X]` |
 | T2-13 | `shared/lib/plainText.test.mjs` · `a table becomes cells, without the separator row` | keep the separator row |
-| T2-14 | `channels/lib/quickSwitcher.test.mjs` · `# @ / scope the list; the ghost completes the top prefix hit` | ghost on substring hits |
+| T2-14 | `channels/lib/jump.test.mjs` · `# @ / scope the list; the ghost completes the top prefix hit` | ghost on substring hits |
 | T2-15 | · `empty query lists recents, newest first` | sort by score |
 | T2-16 | `work/lib/channelMarkers.test.mjs` · `needs outrank running; channel-less rows mark nothing` | count null channels |
 | T2-17 | `work/lib/turnMetrics.test.mjs` · `done rows are one per turn, newest first, locked excluded` | include locked |
 | T2-18 | `shell/rightPaneLayout.test.mjs` · `the strip is Work, then Thinking — a thread is never a tab` | push a thread tab |
 | T2-19 | `shared/ui/toastStack.test.mjs` · `a phone shows one toast; Work on screen suppresses needs-you and feedback-due` | always raise |
 | T2-20 | `channels/lib/markdownTable.test.mjs` · `numeric columns right-align; a mixed column does not` | align every column |
+| T2-21 | `channels/ui/DecisionCard.sheet.test.mjs` · `a v1 card says its question once: in the header, not again in the body` | ignore `titleShown` |
+| T2-22 | · `Not now, send to Feedback files the ask, closes the sheet and answers nothing` | keep the sheet open |
+| T2-23 | `app/reposSearch.test.mjs` · `?reply= only counts alongside the message it replies to` | accept `reply` without `m` |
+
+End to end: `tests/e2e/messages.spec.ts` (new) drives every surface above
+against the mocked relay at 1440 and 390 in both fixed palettes;
+`work-shell.spec.ts` replaces the thread-tab case with the inline thread and
+asserts the reply is rooted at the ask.
 
 ## 7. Deviations from the plan
 
 - **Scratch ranking in ⌘K** waits for Phase 3 (no scratch channels exist).
-- **Ask sheet** keeps answer-and-advance (tap an option → next question); the
-  PhoneAsk "Next · choice" button would add a tap Sam's flow removed.
+- **Ask sheet** keeps answer-and-advance (tap an option → next question). The
+  PhoneAsk "Next · choice" button appears only on a question that already
+  has an answer (a revisit via Edit or a segment), where it moves on without
+  re-choosing; on an open question it would add the tap Sam's flow removed.
 - **Task titles and progress** on Running / Done / handoff stay out until
   Phase 8 supplies them.
+- **Threads are inline only.** The thread tab, the Replies toggle, the
+  detached thread window and Settings → Thread layout are gone rather than
+  kept as an option: two ways to read a thread was the confusion.
+- **Feedback replaces the hover bar's "+"** (quick remind). `/remind` with no
+  time keeps the old +1 day; "Remind me at…" stays in the ⋯ menu.
+- **⌘K commands prefill the composer** (`/handoff `) instead of running from
+  the panel: every command needs the channel's context and most need text.
+- **A message toast's Reply** lands on `?m=<id>&reply=1`: the thread's reply
+  box in a channel, the composer in a DM.
+- **A /handoff seat is picked from the @ list.** Typed names resolve against
+  the member roster, whose names are short keys until picked.

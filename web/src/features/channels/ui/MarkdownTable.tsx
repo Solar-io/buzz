@@ -68,7 +68,9 @@ export function MarkdownTable({
     <NumericColumns.Provider value={numeric}>
       <div
         data-testid="markdown-table"
-        className="my-2 max-w-full overflow-hidden rounded-xl border border-border bg-card"
+        // not-prose: the card styles every cell itself, and typography's
+        // table margins (26px) out-rank a my-0 on the table.
+        className="not-prose my-2 max-w-full overflow-hidden rounded-xl border border-border bg-card"
       >
         <div className="buzz-content-scrollbar overflow-x-auto">
           <table className="my-0 w-full border-collapse text-left text-sidebar-meta [&_thead_tr]:bg-sunk">
@@ -123,7 +125,9 @@ function cell(header: boolean) {
           header
             ? "h-9 whitespace-nowrap py-0 text-2xs font-semibold uppercase tracking-[0.06em] text-muted-foreground"
             : "py-2.5",
-          !header && numeric && "whitespace-nowrap font-mono text-xs tabular-nums",
+          !header &&
+            numeric &&
+            "whitespace-nowrap font-mono text-xs tabular-nums",
         )}
       >
         {children}

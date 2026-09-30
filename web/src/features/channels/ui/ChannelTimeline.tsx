@@ -36,6 +36,7 @@ import {
 import { SYSTEM_MESSAGE_KIND } from "../lib/systemEvent.ts";
 import { usePermalinkScroll } from "../lib/usePermalinkScroll.ts";
 import { isRenderableCard } from "../lib/decisionCard.ts";
+import { holdAnchor } from "../lib/holdAnchor.ts";
 import { foldReplies, inlineThreadRef } from "../lib/inlineThread.ts";
 import { openQuickReplies } from "../lib/quickReply.ts";
 import { InlineThread, type InlineThreadComposer } from "./InlineThread.tsx";
@@ -401,9 +402,11 @@ export function ChannelTimeline({
   );
   // Explicit yes/no asks still open to the viewer (lib/quickReply.ts).
   const isDm = threads?.isDm ?? false;
+  const hasThreads = threads !== undefined;
   const quickReplies = useMemo(
-    () => (threads ? openQuickReplies(messages, selfPubkey, { isDm }) : null),
-    [messages, selfPubkey, threads !== undefined, isDm],
+    () =>
+      hasThreads ? openQuickReplies(messages, selfPubkey, { isDm }) : null,
+    [messages, selfPubkey, hasThreads, isDm],
   );
   /**
    * Open or fold a row's thread. Opening one ABOVE the newest row pauses
@@ -415,9 +418,18 @@ export function ChannelTimeline({
    * is what keeps the reply box in view, so it stays.
    */
   const lastRowIdRef = useRef<string | null>(null);
-  const toggleThread = (rowId: string, open: boolean) => {
-    if (open && rowId !== lastRowIdRef.current) {
+  const openHere = (rowId: string) => {
+    if (rowId !== lastRowIdRef.current) {
       followRef.current.follow = false;
+      const scroller = wrapRef.current?.firstElementChild;
+      if (scroller instanceof HTMLElement) {
+        holdAnchor(scroller, `[data-testid="message-row-${rowId}"]`);
+      }
+    }
+  };
+  const toggleThread = (rowId: string, open: boolean) => {
+    if (open) {
+      openHere(rowId);
     }
     threads?.onToggle(rowId, open);
   };
@@ -452,7 +464,10 @@ export function ChannelTimeline({
         // ↩ opens the row's own thread; a reply inside a thread has none.
         onOpenThread={
           threads && !options.inThread
-            ? (target) => threads.onReply(target.id)
+            ? (target) => {
+                openHere(target.id);
+                threads.onReply(target.id);
+              }
             : undefined
         }
         showActions={showActions}

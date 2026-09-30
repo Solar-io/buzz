@@ -72,6 +72,11 @@ export function ChannelMembersButton({
               title="Channel members"
               className="flex h-8 shrink-0 items-center rounded-[9px] border border-border bg-card pr-2.5 pl-2 text-xs hover:bg-accent"
             >
+              {/* No roster yet (loading, or a relay that serves none): the
+                  icon alone rather than a "0" that reads as an empty room. */}
+              {members.length === 0 && (
+                <Users aria-hidden className="size-4 text-muted-foreground" />
+              )}
               {roster.faces.map((pubkey, index) => (
                 <AuthorAvatar
                   key={pubkey}
@@ -85,9 +90,11 @@ export function ChannelMembersButton({
                   )}
                 />
               ))}
-              <span className="ml-2 font-semibold tabular-nums text-foreground">
-                {members.length}
-              </span>
+              {members.length > 0 && (
+                <span className="ml-2 font-semibold tabular-nums text-foreground">
+                  {members.length}
+                </span>
+              )}
               {roster.agents > 0 && (
                 <span className="ml-1.5 font-mono text-2xs text-muted-foreground">
                   {roster.agents} {roster.agents === 1 ? "agent" : "agents"}

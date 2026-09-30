@@ -157,6 +157,8 @@ function messageWith(payload, id) {
   };
 }
 
+// DOM nodes are compared as booleans: an assert.equal(node, null) that FAILS
+// util.inspects a jsdom element, which takes minutes and reads as a hang.
 async function mount(payload, { id, answer = null, asker = ASKER } = {}) {
   const container = dom.window.document.createElement("div");
   dom.window.document.body.appendChild(container);
@@ -265,8 +267,8 @@ test("the sheet names the asker, offers the last answer for Edit, and Next moves
   assert.ok(header.includes("XiaoZhi setup"), header);
   // Question one: nothing answered yet, so no previous chip and no Next —
   // tapping an option IS the next step.
-  assert.equal(mounted.inSheet("card-interview-previous"), null);
-  assert.equal(mounted.inSheet("card-interview-next"), null);
+  assert.ok(!mounted.inSheet("card-interview-previous"), "no previous chip");
+  assert.ok(!mounted.inSheet("card-interview-next"), "no Next on Q1");
 
   await mounted.clickInSheet("card-interview-option-en");
   const previous = mounted.inSheet("card-interview-previous");
@@ -303,7 +305,7 @@ test("Not now, send to Feedback files the ask, closes the sheet and answers noth
     await mounted.click("card-summary-answer");
     await mounted.clickInSheet("card-interview-option-zh");
     await mounted.clickInSheet("card-interview-feedback");
-    assert.equal(mounted.sheet(), null, "filing closes the sheet");
+    assert.ok(!mounted.sheet(), "filing closes the sheet");
     assert.equal(filed.length, 1);
     assert.equal(filed[0].eventId, "card-sheet-feedback");
     assert.equal(filed[0].channelId, "ch-1");
@@ -325,7 +327,7 @@ test("without a reminders provider the sheet offers no Feedback button", async (
   const mounted = await mount(THREE, { id: "card-sheet-no-feedback" });
   await mounted.click("card-summary-answer");
   assert.ok(mounted.sheet());
-  assert.equal(mounted.inSheet("card-interview-feedback"), null);
+  assert.ok(!mounted.inSheet("card-interview-feedback"), "no Feedback button");
   await mounted.unmount();
 });
 
@@ -333,7 +335,7 @@ test("an answered card wears an Answered pill with the answer's time", async () 
   globalThis.__BUZZ_TEST_IDB__.data.clear();
   const calls = installFakeSession();
   const first = await mount(THREE, { id: "card-answered-pill" });
-  assert.equal(first.find("decision-card-answered"), null, "open: no pill");
+  assert.ok(!first.find("decision-card-answered"), "open: no pill");
   await first.click("card-interview-option-en");
   await first.click("card-interview-option-buzz");
   await first.click("card-interview-option-lo");
