@@ -28,7 +28,8 @@ import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { queryEvents } from "@/shared/lib/nostr-client";
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { ownPubkey, signNostrEvent } from "@/shared/lib/nostr-signer";
-import { relayHttpBaseUrl, relayWsUrl } from "@/shared/lib/relay-url";
+import { relayWsUrl } from "@/shared/lib/relay-url";
+import { fetchRelaySelf } from "@/shared/lib/relaySelf";
 
 import {
   buildArchiveRequest,
@@ -86,32 +87,8 @@ function verifyOwnerAttestation(input: {
   }
 }
 
-/**
- * The relay's own signing key, from its NIP-11 document's `self` field.
- * Cached per page: it identifies the relay, and it does not change under a
- * running tab.
- */
-let relaySelfPromise: Promise<string | null> | null = null;
-
-export function fetchRelaySelf(): Promise<string | null> {
-  relaySelfPromise ??= (async () => {
-    try {
-      const response = await fetch(relayHttpBaseUrl(), {
-        headers: { Accept: "application/nostr+json" },
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!response.ok) return null;
-      const document = (await response.json()) as Record<string, unknown>;
-      const self = document.self;
-      return typeof self === "string" && /^[0-9a-f]{64}$/i.test(self)
-        ? self.toLowerCase()
-        : null;
-    } catch {
-      return null;
-    }
-  })();
-  return relaySelfPromise;
-}
+/** Moved to shared so channel rows can trust relay-signed messages too. */
+export { fetchRelaySelf };
 
 export interface ArchivedIdentities {
   archived: string[];

@@ -801,6 +801,51 @@ pub async fn emit_system_message(
     Ok(())
 }
 
+/// One tick of the ephemeral-channel TTL reaper: archive every channel whose
+/// TTL deadline has passed, then for each one tell members why (system
+/// message), refresh NIP-29 discovery, evict live subscriptions, and — for a
+/// huddle channel — post its call transcript into the parent. Returns the
+/// number of channels archived. Lives in the lib (not `main.rs`) so the
+/// per-channel follow-through is testable.
+pub async fn run_ephemeral_reaper_tick(state: &Arc<AppState>) -> anyhow::Result<usize> {
+    let expired = state.db.reap_expired_ephemeral_channels().await?;
+    for channel in &expired {
+        // Per-row tenant: the reaper crosses communities, so each archived
+        // channel carries its own server-resolved `(community, host)` from the
+        // DB RETURNING. Build the `TenantContext` from that row — never a
+        // default tenant.
+        let tenant = TenantContext::resolved(channel.community_id, channel.host.clone());
+        let channel_id = channel.channel_id;
+        // Emit a system message so members see why the channel was archived.
+        if let Err(e) = emit_system_message(
+            &tenant,
+            state,
+            channel_id,
+            serde_json::json!({ "type": "channel_auto_archived" }),
+        )
+        .await
+        {
+            tracing::error!(channel = %channel_id, "reaper system message failed: {e}");
+        }
+
+        // Update NIP-29 discovery events so clients see the archived state.
+        if let Err(e) = emit_group_discovery_events(&tenant, state, channel_id).await {
+            tracing::error!(channel = %channel_id, "reaper discovery update failed: {e}");
+        }
+
+        // Close live subscriptions so connected clients drop the archived
+        // channel immediately (CLOSED is in the client's drop-set → no
+        // reconnect storm). Offline clients are caught by the archived=true
+        // skip in discover_channels on reconnect.
+        evict_all_channel_subscriptions(&tenant, state, channel_id).await;
+
+        // A huddle that outlived its TTL still ends with its transcript.
+        crate::audio::transcript::emit_call_transcript_for_archived(state, &tenant, channel_id)
+            .await;
+    }
+    Ok(expired.len())
+}
+
 /// Sign and fan out a fresh relay-signed `kind:39005` thread-summary overlay
 /// for `root_id` after a thread mutation (reply insert or threaded delete).
 ///
@@ -1643,6 +1688,13 @@ async fn handle_edit_metadata(
                                 .db
                                 .archive_channel(tenant.community(), channel_id)
                                 .await?;
+                            // A client ending its own huddle (desktop/mobile
+                            // "End huddle", last leave) archives the ephemeral
+                            // channel here. No-op for non-huddle channels.
+                            crate::audio::transcript::emit_call_transcript_for_archived(
+                                state, tenant, channel_id,
+                            )
+                            .await;
                             emit_system_message(
                                 tenant,
                                 state,

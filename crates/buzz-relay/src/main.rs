@@ -685,63 +685,14 @@ async fn main() -> anyhow::Result<()> {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(reaper_interval_secs)).await;
 
-                let expired = match reaper_state.db.reap_expired_ephemeral_channels().await {
-                    Ok(ids) => ids,
-                    Err(e) => {
-                        error!("Ephemeral reaper tick failed: {e}");
-                        continue;
-                    }
-                };
-
-                if expired.is_empty() {
-                    continue;
-                }
-
-                info!(count = expired.len(), "Ephemeral reaper archived channels");
-
-                for channel in &expired {
-                    // Per-row tenant: the reaper crosses communities, so each
-                    // archived channel carries its own server-resolved
-                    // `(community, host)` from the DB RETURNING. Build the
-                    // `TenantContext` from that row — never a default tenant.
-                    let tenant = buzz_core::tenant::TenantContext::resolved(
-                        channel.community_id,
-                        channel.host.clone(),
-                    );
-                    let channel_id = channel.channel_id;
-                    // Emit a system message so members see why the channel was archived.
-                    if let Err(e) = buzz_relay::handlers::side_effects::emit_system_message(
-                        &tenant,
-                        &reaper_state,
-                        channel_id,
-                        serde_json::json!({ "type": "channel_auto_archived" }),
-                    )
+                // Per-channel follow-through (system message, discovery,
+                // eviction, huddle call transcript) lives in the lib.
+                match buzz_relay::handlers::side_effects::run_ephemeral_reaper_tick(&reaper_state)
                     .await
-                    {
-                        error!(channel = %channel_id, "reaper system message failed: {e}");
-                    }
-
-                    // Update NIP-29 discovery events so clients see the archived state.
-                    if let Err(e) = buzz_relay::handlers::side_effects::emit_group_discovery_events(
-                        &tenant,
-                        &reaper_state,
-                        channel_id,
-                    )
-                    .await
-                    {
-                        error!(channel = %channel_id, "reaper discovery update failed: {e}");
-                    }
-
-                    // Close live subscriptions so connected clients drop the
-                    // archived channel immediately (CLOSED is in the client's
-                    // drop-set → no reconnect storm). Offline clients are caught
-                    // by the archived=true skip in discover_channels on reconnect.
-                    buzz_relay::handlers::side_effects::evict_all_channel_subscriptions(
-                        &tenant,
-                        &reaper_state,
-                        channel_id,
-                    )
-                    .await;
+                {
+                    Ok(0) => {}
+                    Ok(count) => info!(count, "Ephemeral reaper archived channels"),
+                    Err(e) => error!("Ephemeral reaper tick failed: {e}"),
                 }
             }
         });

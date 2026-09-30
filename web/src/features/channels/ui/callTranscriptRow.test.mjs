@@ -77,6 +77,19 @@ dom.window.matchMedia = (query) => ({
 
 const OWNER = "0".repeat(64);
 const RELAY = "7".repeat(64);
+const IMPOSTOR = "9".repeat(64);
+
+// The relay's NIP-11 document advertises RELAY as its `self` key — the only
+// author whose `buzz-system` tag is honoured. Reads are counted so the spoof
+// test can show the key was actually consulted.
+const nip11Reads = [];
+globalThis.fetch = async (url) => {
+  nip11Reads.push(String(url));
+  return new Response(JSON.stringify({ name: "test", self: RELAY }), {
+    status: 200,
+    headers: { "content-type": "application/nostr+json" },
+  });
+};
 
 globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
   "@/shared/api/RelaySessionProvider": `
@@ -133,10 +146,10 @@ const TRANSCRIPT =
   "Jared: The DeWalt 20V — best value.\n\n" +
   "Sam: thanks";
 
-function relayEvent(tags, content = TRANSCRIPT) {
+function relayEvent(tags, content = TRANSCRIPT, pubkey = RELAY) {
   return timelineMessageFromEvent({
     id: "c".repeat(64),
-    pubkey: RELAY,
+    pubkey,
     created_at: 1_000,
     kind: 9,
     content,
@@ -167,8 +180,14 @@ async function mountRow(message) {
       ),
     );
   });
+  // Let the (cached) NIP-11 read settle and the row re-render with it.
+  for (let i = 0; i < 5; i += 1) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
   const triggers = container.querySelectorAll(
-    `[data-testid="profile-trigger-${RELAY}"]`,
+    `[data-testid="profile-trigger-${message.authorPubkey}"]`,
   );
   // Guard the harness: avatar + name triggers, the second one the name.
   assert.equal(triggers.length, 2);
@@ -203,6 +222,17 @@ test("control: the same relay key WITHOUT the tag keeps the ordinary label", asy
   // author — an untagged relay message still names its (truncated) key.
   const row = await mountRow(relayEvent([], "hello"));
   assert.equal(row.name, "77777777…7777");
+  await row.unmount();
+});
+
+test("a buzz-system tag from any author other than the relay is ignored", async () => {
+  // A client forging the tag (relay ingest also rejects it) must not borrow
+  // the relay's label: the row names its real author.
+  const row = await mountRow(
+    relayEvent([["buzz-system", "call-transcript"]], TRANSCRIPT, IMPOSTOR),
+  );
+  assert.equal(row.name, "99999999…9999");
+  assert.ok(nip11Reads.length > 0, "the relay key was actually consulted");
   await row.unmount();
 });
 

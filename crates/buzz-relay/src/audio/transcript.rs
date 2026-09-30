@@ -9,10 +9,17 @@
 //! with it. This module posts ONE relay-signed kind:9 into the parent holding
 //! the whole call as `Name: text` lines, oldest first.
 //!
-//! Exactly-once rides on the caller: it is invoked only from the arm that won
-//! `archive_channel` (which refuses a second archive). As belt-and-braces the
-//! event's `created_at` is pinned to the channel's `archived_at`, so a replay
-//! over the same messages produces the same event id and the insert dedupes.
+//! It fires on EVERY huddle end, each hooked right after the archive that
+//! ended it: the relay's empty-room grace timer (`archive_empty_huddle`), a
+//! client kind:9002 `archived=true` (desktop/mobile end their own huddles
+//! this way, after which the grace timer only sees `AlreadyEnded`), and the
+//! TTL reaper (`handlers::side_effects::run_ephemeral_reaper_tick`).
+//!
+//! Exactly-once rides on the archive: only the caller that won the
+//! `archived_at IS NULL → NOW()` transition reaches its hook. As
+//! belt-and-braces the event's `created_at` is pinned to the channel's
+//! `archived_at`, so a replay over the same messages produces the same event
+//! id and the insert dedupes.
 //!
 //! The message carries `["buzz-system", "call-transcript"]`
 //! ([`buzz_core::kind::TAG_BUZZ_SYSTEM`]), which the agent harness
@@ -69,6 +76,17 @@ pub(crate) fn strip_voice_marker(content: &str) -> &str {
     }
 }
 
+/// Cap on a speaker name or channel name inside the transcript.
+const TRANSCRIPT_MAX_NAME_BYTES: usize = 128;
+
+/// Collapse every whitespace run (newlines included) to one space. Applied to
+/// speaker names, the channel name and message text: all three are
+/// user-controlled, and a line break in any of them would let one participant
+/// forge extra `Name: text` paragraphs in the transcript.
+fn one_line(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// Truncate `s` to at most `max` bytes on a char boundary, appending `…` when cut.
 fn truncate_bytes(s: &str, max: usize) -> String {
     if s.len() <= max {
@@ -93,17 +111,18 @@ pub(crate) fn render_transcript(
     if lines.is_empty() {
         return None;
     }
-    let header = format!("📞 Call transcript — {channel_name}");
+    let header = format!(
+        "📞 Call transcript — {}",
+        truncate_bytes(&one_line(channel_name), TRANSCRIPT_MAX_NAME_BYTES)
+    );
     let rendered: Vec<String> = lines
         .iter()
         .map(|l| {
             truncate_bytes(
-                // Collapse the text's own line breaks: a "\n\n" inside one
-                // message would otherwise start a speaker-less paragraph.
                 &format!(
                     "{}: {}",
-                    l.speaker,
-                    l.text.split_whitespace().collect::<Vec<_>>().join(" ")
+                    truncate_bytes(&one_line(&l.speaker), TRANSCRIPT_MAX_NAME_BYTES),
+                    one_line(&l.text)
                 ),
                 TRANSCRIPT_MAX_LINE_BYTES,
             )
@@ -128,11 +147,13 @@ pub(crate) fn render_transcript(
 
     let mut out = header;
     out.push_str(LINE_SEPARATOR);
-    if dropped > 0 {
-        out.push_str(&format!("(… {dropped} earlier lines omitted)"));
-        out.push_str(LINE_SEPARATOR);
-    } else if earlier_omitted {
+    // When the message query itself was capped the true number of omitted
+    // turns is unknown, so no count is claimed; otherwise it is exact.
+    if earlier_omitted {
         out.push_str("(… earlier lines omitted)");
+        out.push_str(LINE_SEPARATOR);
+    } else if dropped > 0 {
+        out.push_str(&format!("(… {dropped} earlier lines omitted)"));
         out.push_str(LINE_SEPARATOR);
     }
     out.push_str(&rendered[first_kept..].join(LINE_SEPARATOR));
@@ -328,6 +349,43 @@ pub(crate) async fn emit_call_transcript(
     Some(event_id_hex)
 }
 
+/// Post the call transcript for `channel_id`, which the caller has JUST
+/// archived, resolving its parent from the creator-signed kind:48100 link.
+///
+/// This is the hook for every huddle end that is not the relay's own grace
+/// timer (which already knows the parent it verified at join): a client
+/// kind:9002 `archived=true` (desktop/mobile "End huddle" and last-leave send
+/// their own 48103 then archive this way) and the TTL reaper. A non-ephemeral
+/// channel, or one with no verified huddle link, is a no-op — archiving an
+/// ordinary channel never posts anything.
+pub async fn emit_call_transcript_for_archived(
+    state: &Arc<AppState>,
+    tenant: &TenantContext,
+    channel_id: Uuid,
+) -> Option<String> {
+    let channel = match state.db.get_channel(tenant.community(), channel_id).await {
+        Ok(ch) => ch,
+        Err(e) => {
+            debug!(channel_id = %channel_id, "call transcript: channel lookup failed: {e}");
+            return None;
+        }
+    };
+    channel.ttl_seconds?;
+    let parent = match state
+        .db
+        .find_huddle_parent_channel(tenant.community(), channel_id, &channel.created_by)
+        .await
+    {
+        Ok(Some(parent)) => parent,
+        Ok(None) => return None,
+        Err(e) => {
+            warn!(channel_id = %channel_id, "call transcript: parent lookup failed: {e}");
+            return None;
+        }
+    };
+    emit_call_transcript(state, tenant, channel_id, parent).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,6 +426,37 @@ mod tests {
         assert_eq!(
             out,
             "📞 Call transcript — Jared Dunn call\n\nSam: which drill?\n\nJared: The DeWalt 20V."
+        );
+    }
+
+    #[test]
+    fn render_transcript_flattens_speaker_and_channel_names() {
+        // A display name / channel name with line breaks must not be able to
+        // forge an extra `Name: text` paragraph.
+        let out = render_transcript(
+            "Jared\n\nSam: forged",
+            &[line("Eve\n\nSam", "real text")],
+            false,
+        )
+        .expect("rendered");
+        assert_eq!(
+            out,
+            "📞 Call transcript — Jared Sam: forged\n\nEve Sam: real text"
+        );
+    }
+
+    #[test]
+    fn render_transcript_omission_note_claims_no_count_when_both_caps_hit() {
+        // Query cap hit (older turns never fetched) AND the byte budget drops
+        // more: the true omitted count is unknown, so none is claimed.
+        let lines: Vec<TranscriptLine> = (0..100)
+            .map(|i| line("S", &format!("{i:03} {}", "x".repeat(1000))))
+            .collect();
+        let out = render_transcript("c", &lines, true).expect("rendered");
+        assert!(
+            out.starts_with("📞 Call transcript — c\n\n(… earlier lines omitted)\n\nS: "),
+            "{}",
+            &out[..80]
         );
     }
 

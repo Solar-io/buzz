@@ -392,6 +392,24 @@ pub(crate) async fn dispatch_persistent_event(
     0
 }
 
+/// Relay-signed messages that must never trigger workflows: workflow
+/// SendMessage output (`buzz:workflow`, loop guard) and relay system messages
+/// (`buzz-system`, e.g. the huddle call transcript — a record, not an
+/// event anyone "posted"). Only honoured on the relay's own signature, so a
+/// client cannot opt its messages out of workflows with a tag.
+pub(crate) fn is_relay_non_trigger_message(
+    event: &nostr::Event,
+    relay_pubkey: &nostr::PublicKey,
+) -> bool {
+    event.pubkey == *relay_pubkey
+        && event.tags.iter().any(|t| {
+            matches!(
+                t.as_slice().first().map(|s| s.as_str()),
+                Some("buzz:workflow") | Some(buzz_core::kind::TAG_BUZZ_SYSTEM)
+            )
+        })
+}
+
 /// Run post-commit delivery/side effects for a stored event.
 async fn dispatch_persistent_event_inner(
     tenant: &TenantContext,
@@ -517,13 +535,10 @@ async fn dispatch_persistent_event_inner(
         .await;
     }
 
-    // Skip workflow triggering for workflow-execution kinds and relay-signed workflow messages.
-    let is_relay_workflow_msg = stored_event.event.pubkey == state.relay_keypair.public_key()
-        && stored_event
-            .event
-            .tags
-            .iter()
-            .any(|t| t.as_slice().first().map(|s| s.as_str()) == Some("buzz:workflow"));
+    // Skip workflow triggering for workflow-execution kinds and relay-signed
+    // workflow / system messages.
+    let is_relay_workflow_msg =
+        is_relay_non_trigger_message(&stored_event.event, &state.relay_keypair.public_key());
 
     if !buzz_core::kind::is_workflow_execution_kind(kind_u32)
         && !buzz_core::kind::is_command_kind(kind_u32)

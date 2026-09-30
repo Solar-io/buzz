@@ -143,6 +143,14 @@ async fn validate_huddle_lifecycle_event(
     Ok(())
 }
 
+/// True when `event` carries a `buzz-system` tag (relay-only; see ingest).
+fn has_buzz_system_tag(event: &Event) -> bool {
+    event
+        .tags
+        .iter()
+        .any(|t| t.as_slice().first().map(String::as_str) == Some(buzz_core::kind::TAG_BUZZ_SYSTEM))
+}
+
 fn validate_custom_emoji_tags(event: &Event) -> Result<(), IngestError> {
     for tag in event.tags.iter() {
         let parts = tag.as_slice();
@@ -2578,6 +2586,16 @@ async fn ingest_event_inner(
 
     if buzz_core::kind::is_relay_only_kind(kind_u32) {
         return Err(IngestError::Rejected("restricted: relay-only kind".into()));
+    }
+
+    // `buzz-system` marks relay-authored records (the huddle call transcript)
+    // that clients label by purpose and agents/workflows never act on. The
+    // relay writes those directly, never through ingest, so any submitted
+    // event carrying the tag is a client trying to wear the relay's label.
+    if has_buzz_system_tag(&event) {
+        return Err(IngestError::Rejected(
+            "restricted: buzz-system tag is relay-only".into(),
+        ));
     }
 
     // Share the event with the verify task via Arc instead of deep-cloning it
