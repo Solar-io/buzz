@@ -1985,8 +1985,8 @@ mod huddle_end_transcript_tests {
             t.content,
             format!(
                 "📞 Call transcript — Jared Dunn call\n\n\
-                 Sam: which drill should I buy?\n\
-                 {agent_label}: The DeWalt 20V — best value.\n\
+                 Sam: which drill should I buy?\n\n\
+                 {agent_label}: The DeWalt 20V — best value.\n\n\
                  Sam: thanks"
             )
         );

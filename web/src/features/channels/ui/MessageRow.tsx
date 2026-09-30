@@ -4,7 +4,7 @@ import type { Profile } from "../hooks.ts";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { cn } from "@/shared/lib/cn";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
-import { authorLabel } from "../lib/authorLabel.ts";
+import { authorLabel, messageAuthorLabel } from "../lib/authorLabel.ts";
 import {
   formatClockTime,
   formatFullDateTime,
@@ -156,7 +156,7 @@ export function MessageRow({
     }
     rowRef.current?.scrollIntoView({ block: "center" });
   }, [highlighted]);
-  const label = authorLabel(message.authorPubkey, profiles);
+  const label = messageAuthorLabel(message, profiles);
   // Scheduled wakes (reminder firings from the services identity) render as
   // one collapsed line — see lib/wakeMessage.ts. The shell above (ref,
   // testid, highlight flash, permalink scroll) stays theirs so a jump to a

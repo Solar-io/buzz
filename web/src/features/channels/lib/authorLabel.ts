@@ -12,3 +12,24 @@ export function authorLabel(
 ): string {
   return profiles.get(pubkey)?.displayName ?? truncatePubkey(pubkey);
 }
+
+/** Author labels for relay-authored `buzz-system` messages, by tag value. */
+const BUZZ_SYSTEM_LABELS: Record<string, string> = {
+  "call-transcript": "Call transcript",
+};
+
+/**
+ * Author label for a timeline row. A relay-authored `buzz-system` message
+ * (the huddle call transcript) is labelled by what it is — the relay key has
+ * no profile, so `authorLabel` would show its truncated hex. Everything else
+ * is `authorLabel`.
+ */
+export function messageAuthorLabel(
+  message: { authorPubkey: string; buzzSystem?: string | null },
+  profiles: Map<string, Profile>,
+): string {
+  if (message.buzzSystem) {
+    return BUZZ_SYSTEM_LABELS[message.buzzSystem] ?? "Buzz";
+  }
+  return authorLabel(message.authorPubkey, profiles);
+}

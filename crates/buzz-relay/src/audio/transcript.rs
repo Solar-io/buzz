@@ -46,6 +46,12 @@ pub(crate) const TRANSCRIPT_MAX_LINE_BYTES: usize = 4 * 1024;
 /// Spoken-turn marker the web huddle voice mode prefixes onto user speech.
 const VOICE_MARKER: &str = "[voice]";
 
+/// Separator between transcript lines. A BLANK line, not "\n": clients render
+/// kind:9 content as CommonMark, where a single newline is a soft break that
+/// collapses to a space — every speaker would run together in one paragraph
+/// (pinned by web `channels/ui/callTranscriptRow.test.mjs`).
+const LINE_SEPARATOR: &str = "\n\n";
+
 /// One transcript line: resolved speaker label plus message text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TranscriptLine {
@@ -92,7 +98,13 @@ pub(crate) fn render_transcript(
         .iter()
         .map(|l| {
             truncate_bytes(
-                &format!("{}: {}", l.speaker, l.text),
+                // Collapse the text's own line breaks: a "\n\n" inside one
+                // message would otherwise start a speaker-less paragraph.
+                &format!(
+                    "{}: {}",
+                    l.speaker,
+                    l.text.split_whitespace().collect::<Vec<_>>().join(" ")
+                ),
                 TRANSCRIPT_MAX_LINE_BYTES,
             )
         })
@@ -105,7 +117,7 @@ pub(crate) fn render_transcript(
     let mut used = 0usize;
     let mut first_kept = rendered.len();
     for (i, line) in rendered.iter().enumerate().rev() {
-        let cost = line.len() + 1; // + newline
+        let cost = line.len() + LINE_SEPARATOR.len();
         if used + cost > budget {
             break;
         }
@@ -115,14 +127,15 @@ pub(crate) fn render_transcript(
     let dropped = first_kept;
 
     let mut out = header;
-    out.push('\n');
+    out.push_str(LINE_SEPARATOR);
     if dropped > 0 {
-        out.push_str(&format!("(… {dropped} earlier lines omitted)\n"));
+        out.push_str(&format!("(… {dropped} earlier lines omitted)"));
+        out.push_str(LINE_SEPARATOR);
     } else if earlier_omitted {
-        out.push_str("(… earlier lines omitted)\n");
+        out.push_str("(… earlier lines omitted)");
+        out.push_str(LINE_SEPARATOR);
     }
-    out.push('\n');
-    out.push_str(&rendered[first_kept..].join("\n"));
+    out.push_str(&rendered[first_kept..].join(LINE_SEPARATOR));
     Some(out)
 }
 
@@ -354,8 +367,15 @@ mod tests {
         .expect("rendered");
         assert_eq!(
             out,
-            "📞 Call transcript — Jared Dunn call\n\nSam: which drill?\nJared: The DeWalt 20V."
+            "📞 Call transcript — Jared Dunn call\n\nSam: which drill?\n\nJared: The DeWalt 20V."
         );
+    }
+
+    #[test]
+    fn render_transcript_flattens_a_messages_own_line_breaks() {
+        let out =
+            render_transcript("c", &[line("J", "one\n\ntwo\nthree")], false).expect("rendered");
+        assert_eq!(out, "📞 Call transcript — c\n\nJ: one two three");
     }
 
     #[test]
@@ -363,7 +383,7 @@ mod tests {
         let out = render_transcript("c", &[line("A", "x")], true).expect("rendered");
         assert_eq!(
             out,
-            "📞 Call transcript — c\n(… earlier lines omitted)\n\nA: x"
+            "📞 Call transcript — c\n\n(… earlier lines omitted)\n\nA: x"
         );
     }
 
