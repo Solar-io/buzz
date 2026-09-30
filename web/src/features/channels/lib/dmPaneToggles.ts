@@ -1,37 +1,40 @@
 /**
- * Pure show/hide decisions for the DM right-pane toggles (Sam, 2026-09-22:
- * the composer's 🧠 and the new Replies button both become two-way toggles).
+ * Pure show/hide decisions for the composer's 🧠 and Replies toggles (Sam,
+ * 2026-09-22: both are two-way toggles), on the right pane's TAB model
+ * (web redesign phase-1.md §3: Work | Thread | Thinking, Work always first).
  *
  * The route owns the state; this file owns the policy. It is import-free so
  * `node --test` loads it directly, and every rule the two buttons encode is
  * asserted in `dmPaneToggles.test.mjs`:
  *
- *  - The 🧠 shows the thinking pane when it is off-screen (collapsed, on the
- *    Replies tab, or below lg with the sheet closed) and hides it when it is
- *    on screen — the exact inverse of `thinkingPaneVisible`.
- *  - The Replies button does the same for the thread pane. Hiding in an agent
- *    DM flips the tab back to Thinking (the thread root is kept, so the
- *    button can flip forward again); everywhere else it closes the pane
- *    exactly like the pane's own ✕. Showing needs a root — the live one, or
- *    the last one the route ever opened, which is why the route tracks
+ *  - The 🧠 toggles the thinking tab against the tab before it: showing makes
+ *    it the active tab (un-hiding it and raising the phone sheet), hiding
+ *    closes it and returns to where the viewer was.
+ *  - Replies does the same for the thread tab. Hiding returns to the previous
+ *    tab and KEEPS the thread (it stays a tab; its own ✕ closes it), so the
+ *    button is its own inverse. Showing needs a root — the live one, or the
+ *    last one the route ever opened, which is why the route tracks
  *    `lastThreadRootId`.
  */
 
-/** Which right-pane content an agent DM is showing. */
-export type RightTab = "thinking" | "thread";
+/** The right pane's tabs (mirrors `features/shell/rightPaneLayout.ts`). */
+export type RightTabId = "work" | "thread" | "activity";
 
 /** Snapshot of the pane state the toggles decide over. */
 export interface DmPaneState {
-  /** An agent DM is open: both tabs exist and `rightTab` picks the pane. */
+  /** An agent DM is open: the thinking tab can exist. */
   agentDm: boolean;
-  /** Desktop collapse of the DM right pane (the pane's ✕ / 🧠 hide). */
+  /** The thinking tab was closed (its ✕ / the 🧠 hide). */
   paneHidden: boolean;
-  /** The mobile thinking sheet is open (`thinkingOpen` in the route). */
+  /** The phone thinking sheet is open (`thinkingOpen` in the route). */
   mobileOpen: boolean;
-  /** Below the lg breakpoint — panes are overlays/sheets there, not docks. */
+  /** Below the lg breakpoint — panes are sheets there, not docked tabs. */
   mobile: boolean;
   threadRootId: string | null;
-  rightTab: RightTab;
+  /** The tab on screen… */
+  active: RightTabId;
+  /** …and the one before it. */
+  previous: RightTabId;
   /** Newest thread root the route has ever opened (hide/show restore). */
   lastThreadRootId: string | null;
 }
@@ -41,7 +44,8 @@ export interface DmPanePatch {
   paneHidden?: boolean;
   mobileOpen?: boolean;
   threadRootId?: string | null;
-  rightTab?: RightTab;
+  active?: RightTabId;
+  previous?: RightTabId;
 }
 
 /**
@@ -57,50 +61,52 @@ export interface PaneToggles {
   toggleThreads: () => void;
 }
 
-/**
- * Is the thinking pane on screen?
- *
- * The render condition the route already uses (`dmAgentPubkey && !dmPaneHidden
- * && (!threadRoot || rightTab === "thinking")`) is the desktop truth; below lg
- * the mounted pane is only on screen while the sheet (`mobileOpen`) is open,
- * because the same route condition keeps it out of the DOM otherwise.
- */
-export function thinkingPaneVisible(state: DmPaneState): boolean {
-  if (!state.agentDm) {
-    return false;
-  }
-  if (state.mobile && !state.mobileOpen) {
-    return false;
-  }
-  return (
-    !state.paneHidden &&
-    (state.threadRootId === null || state.rightTab === "thinking")
-  );
+/** Where closing `leaving` lands: the previous tab, unless it IS `leaving`. */
+function backFrom(state: DmPaneState, leaving: RightTabId): RightTabId {
+  return state.previous !== leaving ? state.previous : "work";
+}
+
+/** Make `tab` active, remembering where the viewer came from. */
+function activate(state: DmPaneState, tab: RightTabId): DmPanePatch {
+  return {
+    active: tab,
+    previous: state.active === tab ? state.previous : state.active,
+  };
 }
 
 /**
- * The 🧠's next state: the exact inverse of visibility. Hiding collapses the
- * pane on BOTH form factors (the sheet close and the desktop collapse are the
- * same gesture now); showing selects the thinking tab, un-collapses, and
- * raises the sheet — the trio the old open-only button did.
+ * Is the thinking pane on screen? At lg it is the active tab; below lg the
+ * same tab is only on screen while its sheet is open.
+ */
+export function thinkingPaneVisible(state: DmPaneState): boolean {
+  if (!state.agentDm || state.paneHidden || state.active !== "activity") {
+    return false;
+  }
+  return !state.mobile || state.mobileOpen;
+}
+
+/**
+ * The 🧠's next state: the exact inverse of visibility. Hiding closes the
+ * tab on BOTH form factors (sheet and dock are one gesture) and returns to
+ * the previous tab; showing selects it, un-hides it and raises the sheet.
  */
 export function toggleThinkingPatch(state: DmPaneState): DmPanePatch {
   return thinkingPaneVisible(state)
-    ? { paneHidden: true, mobileOpen: false }
-    : { rightTab: "thinking", paneHidden: false, mobileOpen: true };
+    ? {
+        paneHidden: true,
+        mobileOpen: false,
+        active: backFrom(state, "activity"),
+      }
+    : {
+        ...activate(state, "activity"),
+        paneHidden: false,
+        mobileOpen: true,
+      };
 }
 
-/**
- * Is the Replies pane the active right-pane content?
- *
- * In a non-DM channel the thread pane has no tab to share — it is visible
- * whenever a root is open. In an agent DM the tab decides.
- */
+/** Is the thread the tab on screen? */
 export function threadPaneVisible(state: DmPaneState): boolean {
-  if (state.threadRootId === null) {
-    return false;
-  }
-  return !state.agentDm || state.rightTab === "thread";
+  return state.threadRootId !== null && state.active === "thread";
 }
 
 /**
@@ -119,11 +125,11 @@ export function threadToggleAvailable(state: DmPaneState): boolean {
  */
 export function toggleThreadPatch(state: DmPaneState): DmPanePatch | null {
   if (threadPaneVisible(state)) {
-    return state.agentDm ? { rightTab: "thinking" } : { threadRootId: null };
+    return { active: backFrom(state, "thread") };
   }
   const root = state.threadRootId ?? state.lastThreadRootId;
   if (root === null) {
     return null;
   }
-  return { threadRootId: root, rightTab: "thread", paneHidden: false };
+  return { threadRootId: root, ...activate(state, "thread") };
 }

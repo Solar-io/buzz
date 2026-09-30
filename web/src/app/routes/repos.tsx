@@ -58,6 +58,9 @@ import { ShellViewPane } from "../ShellViewPane";
 import { ShellProviders } from "../ShellProviders";
 import { useShellRightPane } from "@/features/shell/useShellRightPane.ts";
 import { RightPaneHost } from "@/features/shell/ui/RightPaneHost";
+import { PhoneNav, PhoneWorkPill } from "@/features/shell/ui/PhoneNav";
+import { unreadConversationCount } from "@/features/sidebar/lib/rowUnread.ts";
+import { lastPhoneTab, phoneTabBarVisible } from "@/shared/layout/phoneTabs.ts";
 import { useObserverStore } from "@/features/agents/ObserverProvider";
 import { useAgentRegistry } from "@/features/agents/useAgentRegistry";
 import { useDmAgentActivity } from "@/features/agents/useDmAgentActivity.ts";
@@ -469,7 +472,7 @@ function ChannelBrowser() {
       connected={connected}
       relayStatus={relayStatus}
       inboxSelected={view === "inbox"}
-      remindersSelected={view === "reminders"}
+      workSelected={view === "work"}
       channelCount={channels.length}
       selectedId={selectedId}
       lists={{ ...lists, dms }}
@@ -517,8 +520,8 @@ function ChannelBrowser() {
         onOpenFiles: openFiles,
         onOpenInbox: () =>
           void navigate({ to: "/repos", search: { view: "inbox" } }),
-        onOpenReminders: () =>
-          void navigate({ to: "/repos", search: { view: "reminders" } }),
+        onOpenWork: () =>
+          void navigate({ to: "/repos", search: { view: "work" } }),
         onOpenShortcutOverlay: openLink,
       }}
     />
@@ -597,8 +600,22 @@ function ChannelBrowser() {
     dmAgentPubkey,
     selfPubkey,
     webLayerActive: web.state.active !== null,
+    workIsPage: view === "work",
     selectChannel,
   });
+  // Phone (below md): tab pages get the bottom tab bar; a conversation or
+  // the web layer takes the screen and gets a back chevron instead.
+  const phoneTabs = phoneTabBarVisible({
+    conversationOpen: current !== null,
+    view,
+    webLayerActive: web.state.active !== null,
+  });
+  const openView = (next: NonNullable<typeof view>) =>
+    void navigate({ to: "/repos", search: { view: next } });
+  const openMessage = (c: string, m?: string) => {
+    web.hide();
+    void navigate({ to: "/repos", search: { c, m } });
+  };
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
@@ -622,8 +639,8 @@ function ChannelBrowser() {
   useReminderSync(selfPubkey);
   useReminderNotifications({
     selfPubkey,
-    onOpenPanel: () =>
-      void navigate({ to: "/repos", search: { view: "reminders" } }),
+    onOpenPanel: () => openView("reminders"),
+    onOpenMessage: openMessage,
   });
 
   return (
@@ -645,9 +662,40 @@ function ChannelBrowser() {
         profiles: dmProfiles,
         onOpenChannel: selectChannel,
       }}
+      work={{ agentPubkeys: knownAgentPubkeys, readState }}
       onDmOpened={onDmOpened}
     >
       <AppShell
+        phoneTabBar={
+          phoneTabs ? (
+            <PhoneNav
+              view={view}
+              unread={unreadConversationCount(
+                [...lists.streams, ...lists.forums],
+                lists.visibleDms,
+                {
+                  prefs: channelPrefs,
+                  read: readState,
+                  activity: channelActivity.activity,
+                  selfPubkey,
+                },
+              )}
+              onOpenView={openView}
+              onOpenFiles={openFiles}
+              onOpenSettings={() => void navigate({ to: "/repos/settings" })}
+              onOpenAgents={() => void navigate({ to: "/repos/agents" })}
+            />
+          ) : undefined
+        }
+        onPhoneBack={
+          phoneTabs
+            ? undefined
+            : () =>
+                web.state.active !== null
+                  ? web.hide()
+                  : openView(lastPhoneTab())
+        }
+        phoneBarTrailing={<PhoneWorkPill onOpen={() => openView("work")} />}
         chromeless={web.state.active !== null && web.state.focus}
         sidebar={sidebar}
         title={
@@ -668,6 +716,13 @@ function ChannelBrowser() {
         rightPane={
           <RightPaneHost
             {...rightPane.hostProps}
+            work={{
+              channelId: view === undefined && current ? current.id : null,
+              onOpenMessage: openMessage,
+              onOpenChannel: selectChannel,
+              onOpenView: openView,
+              ...rightPane.workFold,
+            }}
             conversation={{
               root: threadRoot,
               buffer: messages,
@@ -704,8 +759,18 @@ function ChannelBrowser() {
               channels={channels}
               selfPubkey={selfPubkey}
               onClose={() => void navigate({ to: "/repos", search: {} })}
-              onOpenMessage={(c, m) =>
-                void navigate({ to: "/repos", search: { c, m } })
+              onOpenMessage={openMessage}
+              onOpenView={openView}
+              onJump={() => setSearchOpen(true)}
+              channelsPage={
+                <>
+                  <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground md:hidden">
+                    {sidebar}
+                  </div>
+                  <p className="hidden h-full items-center justify-center text-sm text-muted-foreground md:flex">
+                    Pick a channel to get started.
+                  </p>
+                </>
               }
             />
           ) : current ? (

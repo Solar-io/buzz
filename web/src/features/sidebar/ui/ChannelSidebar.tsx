@@ -1,5 +1,5 @@
 import { type ReactNode, useMemo, useState } from "react";
-import { Bell, Inbox, Search } from "lucide-react";
+import { Folder, Inbox, ListTodo, Search } from "lucide-react";
 import type { Profile } from "@/features/channels/hooks";
 import type { RelaySessionStatus } from "@/shared/api/relay-session";
 import {
@@ -8,13 +8,12 @@ import {
   type ChannelPrefs,
   type FavoriteRef,
 } from "@/features/channels/lib/channelPrefs.ts";
-import {
-  isChannelRowUnread,
-  type ChannelActivityMap,
-  type ChannelUnreadCounts,
+import type {
+  ChannelActivityMap,
+  ChannelUnreadCounts,
 } from "@/features/channels/lib/channelActivity.ts";
 import type { PresenceEntry } from "@/features/channels/lib/presence.ts";
-import { isUnread, type ReadState } from "@/features/channels/lib/readState.ts";
+import type { ReadState } from "@/features/channels/lib/readState.ts";
 import { NewChannelDialog } from "@/features/channels/ui/NewChannelDialog";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import type { DmSummary } from "@/features/dms/hooks";
@@ -55,8 +54,13 @@ import {
 import { RelayConnectionCard } from "@/features/sidebar/ui/RelayConnectionCard";
 import { SidebarProfileCard } from "@/features/sidebar/ui/SidebarProfileCard";
 import { InstallAppButton } from "@/features/sidebar/ui/InstallAppButton";
-import { ClaudePaceCard } from "@/features/usage/ui/ClaudePaceCard";
+import { VitalsBlock } from "@/features/vitals/ui/VitalsBlock";
 import type { SidebarMenuItem } from "@/features/sidebar/lib/sidebarMenuItem";
+import {
+  channelRowUnread,
+  dmRowUnread,
+} from "@/features/sidebar/lib/rowUnread.ts";
+import { relayWsUrl } from "@/shared/lib/relay-url";
 
 /**
  * The sidebar's source lists, already filtered and sorted by the shell.
@@ -138,14 +142,25 @@ export interface ChannelSidebarActions {
   onOpenFiles: () => void;
   /** Open the inbox view. */
   onOpenInbox: () => void;
-  /** Open the reminders view (?view=reminders). */
-  onOpenReminders: () => void;
+  /** Open the Work page (?view=work) — the row shows below lg only. */
+  onOpenWork: () => void;
   /**
    * Raise the in-app dock on an overlay-mode SHORTCUT. Not a channel: the
    * shortcut list is channel-independent (see SidebarShortcutsSection), so
    * this is the shell's shortcut overlay, not a conversation.
    */
   onOpenShortcutOverlay: (shortcutId: string) => void;
+}
+
+/** "crichton · relay": the relay host's first label, for the header. */
+function relayLabel(): string {
+  try {
+    const host = new URL(relayWsUrl()).hostname;
+    const name = /^[\d.]+$/.test(host) ? host : host.split(".")[0];
+    return `${name} · relay`;
+  } catch {
+    return "relay";
+  }
 }
 
 /** Props for {@link ChannelSidebar}. */
@@ -170,10 +185,10 @@ export interface ChannelSidebarProps {
    * number so it is live on every view, not just inside the inbox.
    */
   asksCount: number;
-  /** The reminders view is the active pane. */
-  remindersSelected: boolean;
-  /** Reminders due right now — the Reminders row's count badge. 0 renders nothing. */
-  remindersCount: number;
+  /** The Work page is the active pane. */
+  workSelected: boolean;
+  /** Needs-you rows, Everywhere — the Work row's count badge. */
+  needsCount: number;
   lists: ChannelSidebarLists;
   readState: ChannelSidebarReadState;
   search: ChannelSidebarSearch;
@@ -183,8 +198,10 @@ export interface ChannelSidebarProps {
 }
 
 /**
- * The app's left rail: connection state, the ⌘K search field, the favorites /
- * channel / forum / DM sections, and the Files + Agents footer.
+ * The app's left rail (Main artboard): the workspace header, the ⌘K Jump
+ * field, the nav rows that exist today (Inbox, Files, and Work below lg —
+ * Items, Shelf and Terminal join as their phases ship), the favorites /
+ * channel / forum / DM sections, and the Vitals block above the profile row.
  */
 export function ChannelSidebar({
   connected,
@@ -193,8 +210,8 @@ export function ChannelSidebar({
   selectedId,
   inboxSelected,
   asksCount,
-  remindersSelected,
-  remindersCount,
+  workSelected,
+  needsCount,
   lists,
   readState,
   search,
@@ -247,19 +264,16 @@ export function ChannelSidebar({
     favorites: prefs.favorites,
   });
 
-  // Unread dot for channel/forum rows: read marker vs the newest
-  // sampled MESSAGE (self-authored samples excluded — see
-  // channelUnreadSignal), falling back to metadata for unsampled channels.
-  // DM rows keep their own activity feed and stay on lastMessage logic.
+  // Unread dots: one definition, shared with the phone tab bar's Channels
+  // badge (lib/rowUnread.ts).
+  const unreadInput = {
+    prefs: readState.prefs,
+    read: readState.read,
+    activity: readState.activity,
+    selfPubkey: dmIdentity.selfPubkey,
+  };
   const rowUnread = (channel: ChannelSummary) =>
-    !isMuted(readState.prefs, channel.id) &&
-    isChannelRowUnread({
-      read: readState.read,
-      channelId: channel.id,
-      updatedAt: channel.updatedAt,
-      activity: readState.activity.get(channel.id),
-      selfPubkey: dmIdentity.selfPubkey,
-    });
+    channelRowUnread(channel, unreadInput);
   // The counted form of the same signal, when the counting feed has derived
   // the channel's window. Muted rows never reach the badge: `rowUnread`
   // already folds mute in, and the badge renders only on an unread row.
@@ -268,14 +282,7 @@ export function ChannelSidebar({
 
   const channelSelected = (channel: ChannelSummary) =>
     channel.id === selectedId;
-  // DM rows keep their own activity feed and stay on lastMessage logic. Own
-  // messages (e.g. sent from another device) never dot your row — parity
-  // with channel rows, whose channelUnreadSignal ignores self-authored
-  // activity.
-  const dmUnread = ({ channel, lastMessage }: DmSummary) =>
-    lastMessage && lastMessage.authorPubkey !== dmIdentity.selfPubkey
-      ? isUnread(readState.read, channel.id, lastMessage.created_at)
-      : false;
+  const dmUnread = (dm: DmSummary) => dmRowUnread(dm, unreadInput);
   // Favorites and Channels: unread first, then most frequently used, then
   // newest activity / name (sectionOrder.ts). The open row ranks by its
   // facts at the moment it was opened, and the whole order holds while the
@@ -437,34 +444,55 @@ export function ChannelSidebar({
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="channel-sidebar">
-      {/* Fixed header: the ⌘K search field, then the Inbox row 6px below it.
-          The old header row (the word "Channels", the connection dot, and a
-          Settings link) is gone — Sam, 2026-09-22. Settings still lives in
-          the profile row at the foot of this rail, and the connection state
-          is on its indicator, so nothing became unreachable. */}
-      <div className="flex flex-col px-2.5 pt-3 pb-1.5">
-        {/* Desktop-style search field: typing here opens the ⌘K search
-            panel seeded with what was typed. */}
-        <div className="flex h-8.5 items-center gap-2 rounded-[8px] border border-sidebar-border bg-sidebar-accent/60 pr-2 pl-2.5">
-          <Search
+      {/* Fixed header (Main artboard): workspace, the ⌘K Jump field, then
+          the nav. Settings lives in the profile row at the foot of this rail
+          and the connection state on its indicator. */}
+      <div className="flex flex-col gap-3.5 px-3 pt-4 pb-1.5">
+        <div className="flex items-center gap-2.5 px-1">
+          <span
             aria-hidden
-            className="size-3.75 shrink-0 text-sidebar-foreground/60"
-          />
+            className="buzz-mark grid size-8 shrink-0 place-items-center rounded-[9px] text-base font-bold ring-1 ring-line-2"
+          >
+            B
+          </span>
+          <div className="min-w-0">
+            <div className="text-sm leading-tight font-bold">Buzz</div>
+            <div className="truncate font-mono text-2xs text-muted-foreground">
+              {relayLabel()}
+            </div>
+          </div>
+        </div>
+        {/* Typing here opens the ⌘K panel seeded with what was typed. */}
+        <div className="flex h-8.5 items-center gap-2 rounded-[9px] border border-sidebar-border bg-background px-2.5 text-muted-foreground">
+          <Search aria-hidden className="size-4 shrink-0" />
           <input
             value={search.query}
             onChange={(event) => search.onQueryChange(event.target.value)}
             onFocus={search.onFocus}
-            placeholder="Search"
+            placeholder="Jump to…"
             aria-label="Search messages"
-            className="w-full bg-transparent text-sm outline-hidden placeholder:text-sidebar-foreground/60"
+            className="w-full bg-transparent text-sidebar-meta text-foreground outline-hidden placeholder:text-muted-foreground"
           />
-          <kbd className="hidden rounded-[5px] border border-sidebar-border px-[5px] py-px font-sans text-2xs text-sidebar-foreground/60 sm:block">
+          <kbd className="hidden rounded-[5px] border border-line-2 px-[5px] font-mono text-2xs sm:block">
             ⌘K
           </kbd>
         </div>
-        {/* Above the sections, like the desktop's primary nav: the inbox is
-            a destination, not one channel among many. */}
-        <div className="mt-1.5">
+        {/* Destinations, not channels. Reminders left this list (decision
+            D4): Feedback lives in Work's Needs you; the Reminders view stays
+            reachable from Work, More and ⌘K. */}
+        <div>
+          {/* Tablet only: at lg Work is the docked rail, and on a phone
+              it is the first tab of the bottom bar. */}
+          <div className="hidden md:block lg:hidden">
+            <SidebarNavButton
+              selected={workSelected}
+              label="Work"
+              icon={<ListTodo aria-hidden className="size-4 shrink-0" />}
+              unread={needsCount > 0}
+              unreadCount={needsCount}
+              onSelect={actions.onOpenWork}
+            />
+          </div>
           <SidebarNavButton
             selected={inboxSelected}
             label="Inbox"
@@ -474,12 +502,10 @@ export function ChannelSidebar({
             onSelect={actions.onOpenInbox}
           />
           <SidebarNavButton
-            selected={remindersSelected}
-            label="Reminders"
-            icon={<Bell aria-hidden className="size-4 shrink-0" />}
-            unread={remindersCount > 0}
-            unreadCount={remindersCount}
-            onSelect={actions.onOpenReminders}
+            selected={false}
+            label="Files"
+            icon={<Folder aria-hidden className="size-4 shrink-0" />}
+            onSelect={actions.onOpenFiles}
           />
         </div>
       </div>
@@ -575,9 +601,9 @@ export function ChannelSidebar({
           onToggleCollapsed={() => toggle("links")}
         />
       </nav>
-      {/* Fixed footer: usage strip above the user row, 1px top border. */}
-      <footer className="flex flex-col gap-1.5 border-t border-sidebar-border px-2.5 pt-2 pb-2.5">
-        <ClaudePaceCard />
+      {/* Fixed footer: the Vitals block above the user row. */}
+      <footer className="flex flex-col gap-1.5 px-3 pt-2 pb-2.5">
+        <VitalsBlock />
         <InstallAppButton />
         <SidebarProfileCard
           selfPubkey={dmIdentity.selfPubkey}

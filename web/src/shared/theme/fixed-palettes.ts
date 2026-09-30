@@ -9,10 +9,11 @@ import { type SyntaxThemeName, resolveShikiThemeName } from "./theme-loader.ts";
  * (`shared/styles/palettes.css`) selected by `data-palette` on `<html>`;
  * ThemeProvider clears the engine's inline vars and sets the attribute.
  *
- * Phase 0 ships the mechanism with NO theme mapped, so nothing changes on
- * screen. Phase 1 maps `buzz` → buzz-light and `buzz-dark` → buzz-dark.
- * Syntax highlighting is unaffected either way: code blocks resolve their
- * Shiki theme from the theme NAME, not from the palette.
+ * Phase 1 maps the two Buzz theme names onto them (decision D5): `buzz` →
+ * buzz-light and `buzz-dark` → buzz-dark, so the default themes get the
+ * redesign's look and every other theme stays derived. Syntax highlighting
+ * is unaffected either way: code blocks resolve their Shiki theme from the
+ * theme NAME, not from the palette.
  */
 export type PaletteId = "buzz-light" | "buzz-dark";
 
@@ -32,10 +33,10 @@ export const PALETTE_META_BG: Readonly<Record<PaletteId, string>> = {
   "buzz-dark": "#141414",
 };
 
-/** Which theme names paint with a fixed palette. Empty in Phase 0. */
+/** Which theme names paint with a fixed palette — the one-line switch. */
 export const FIXED_THEME_FOR: Readonly<
   Partial<Record<SyntaxThemeName, PaletteId>>
-> = Object.freeze({});
+> = Object.freeze({ buzz: "buzz-light", "buzz-dark": "buzz-dark" });
 
 export type ThemeApplication =
   | { kind: "fixed"; palette: PaletteId; isDark: boolean }

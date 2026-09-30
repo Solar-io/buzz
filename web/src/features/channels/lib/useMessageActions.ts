@@ -10,6 +10,7 @@ import {
 } from "@/features/channels/hooks";
 import { clearDraft, saveDraft } from "@/features/channels/lib/drafts.ts";
 import type { ChannelSummary } from "@/features/channels/useChannels";
+import { recordOwnSend } from "@/features/work/lib/ownSends.ts";
 import type { RelaySession } from "@/shared/api/relay-session";
 import { publicAppOrigin } from "@/shared/lib/relay-url";
 
@@ -215,6 +216,8 @@ export function useMessageActions({
       kind: options.kind,
       onSigned: (event) => {
         signedId = event.id;
+        // The agent-done toast only fires for turns MY sends started.
+        recordOwnSend(event.id);
         setPendingIds((previous) => new Set(previous).add(event.id));
       },
     })

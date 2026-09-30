@@ -43,6 +43,7 @@ export default defineConfig({
         "**/forum.spec.ts",
         "**/sidebar-appearance.spec.ts",
         "**/shortcut-bar.spec.ts",
+        "**/work-shell.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],

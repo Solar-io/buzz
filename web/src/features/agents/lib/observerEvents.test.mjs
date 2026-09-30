@@ -418,6 +418,26 @@ test("capFrames preserves evicted turn boundaries", () => {
   assert.equal(small.length, 10);
 });
 
+test("capFrames keeps a turn's END through a later flood", () => {
+  // A finished turn, then another channel's flood: the terminal frame must
+  // survive with its turn_started, or the turn reads as never having ended.
+  const frames = [
+    { kind: "turn_started", createdAt: 100, id: "s", turnId: "t-old" },
+    { kind: "turn_completed", createdAt: 110, id: "e", turnId: "t-old" },
+    { kind: "turn_error", createdAt: 111, id: "x", turnId: "t-err" },
+    { kind: "agent_panic", createdAt: 112, id: "p", turnId: null },
+  ];
+  for (let i = 0; i < 300; i++) {
+    frames.push({ kind: "tool_call", createdAt: 200 + i, id: `f${i}` });
+  }
+  const capped = capFrames(frames, 200);
+  assert.deepEqual(
+    capped.slice(0, 4).map((frame) => frame.kind),
+    ["turn_started", "turn_completed", "turn_error", "agent_panic"],
+  );
+  assert.equal(capped.length, 204);
+});
+
 test("a busy turn's own boundary survives the cap and drives the timer", () => {
   // ESP32's exact failure: boundary at turn start, flood pushes it past 200
   // frames, then the timer is read — must still find the boundary, not the
