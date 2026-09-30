@@ -7138,10 +7138,26 @@ mod tests {
         Vec<(buzz_core::task_status::TaskState, String, u64)>,
         String,
     ) {
+        run_status_turn_with(reply, channel, 0, crate::task_status::STATUS_REFRESH).await
+    }
+
+    /// As [`run_status_turn`], with the fake agent sleeping `delay_secs`
+    /// before each reply and a custom status refresh interval.
+    async fn run_status_turn_with(
+        reply: &str,
+        channel: bool,
+        delay_secs: u32,
+        refresh: Duration,
+    ) -> (
+        PromptOutcome,
+        Vec<(buzz_core::task_status::TaskState, String, u64)>,
+        String,
+    ) {
         let script = format!(
             r#"count=0
 while IFS= read -r line; do
   count=$((count + 1))
+  sleep {delay_secs}
   printf '%s\n' "{{\"jsonrpc\":\"2.0\",\"id\":$((count - 1)),{reply}}}"
 done"#
         );
@@ -7176,6 +7192,7 @@ done"#
         let sink = Arc::new(crate::task_status::RecordingSink::default());
         let mut ctx = make_prompt_context_no_owner();
         ctx.task_status_sink = Some(sink.clone());
+        ctx.task_status_refresh = refresh;
         let ctx = Arc::new(ctx);
         let (result_tx, mut result_rx) = mpsc::unbounded_channel();
 
@@ -7261,6 +7278,35 @@ done"#
             "unexpected outcome"
         );
         assert_running_then(&states, buzz_core::task_status::TaskState::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn refresh_runs_with_liveness_disabled_during_turn() {
+        // The test context has `turn_liveness_interval = 0` (observer
+        // liveness off). The status refresh must still fire on its own ticker
+        // while the agent is busy.
+        let (outcome, states, _) = run_status_turn_with(
+            r#"\"result\":{\"stopReason\":\"end_turn\"}"#,
+            true,
+            3,
+            Duration::from_secs(1),
+        )
+        .await;
+        assert!(matches!(outcome, PromptOutcome::Ok(StopReason::EndTurn)));
+        use buzz_core::task_status::TaskState;
+        let kinds: Vec<TaskState> = states.iter().map(|s| s.0).collect();
+        assert_eq!(kinds.first(), Some(&TaskState::Running));
+        assert_eq!(kinds.last(), Some(&TaskState::Done));
+        assert!(
+            kinds[1..kinds.len() - 1]
+                .iter()
+                .filter(|k| **k == TaskState::Running)
+                .count()
+                >= 1,
+            "at least one refresh while the agent was busy: {kinds:?}"
+        );
+        let times: Vec<u64> = states.iter().map(|s| s.2).collect();
+        assert!(times.windows(2).all(|w| w[0] < w[1]), "{times:?}");
     }
 
     #[tokio::test]
