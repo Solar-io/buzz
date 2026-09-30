@@ -25,11 +25,26 @@ fn short_hostname() -> Option<String> {
     (!short.is_empty()).then_some(short)
 }
 
-/// `<host>:<abs path>` for one shared file.
+/// `<host>:<abs path>` for one shared file. The path is made absolute AS
+/// GIVEN — symlinks are deliberately not resolved, so sharing through a link
+/// never discloses where the link points.
 fn path_tag_value(host: &str, path: &Path) -> Result<String, CliError> {
-    let abs = std::fs::canonicalize(path)
+    let abs = std::path::absolute(path)
         .map_err(|e| CliError::Usage(format!("cannot resolve {}: {e}", path.display())))?;
     Ok(format!("{host}:{}", abs.display()))
+}
+
+/// The host for `path` tags, or `None` when `--no-path` was passed (or no
+/// hostname resolves). `hostname` is injected so the wiring is testable.
+fn share_host(args: &ShareArgs, hostname: impl FnOnce() -> Option<String>) -> Option<String> {
+    if args.no_path {
+        return None;
+    }
+    let h = hostname();
+    if h.is_none() {
+        eprintln!("buzz share: hostname unavailable; sending without path tags");
+    }
+    h
 }
 
 /// Reject anything that is not an existing regular file before any upload.
@@ -73,15 +88,7 @@ fn build_share_attachment(
 pub async fn cmd_share(client: &BuzzClient, args: ShareArgs) -> Result<(), CliError> {
     check_share_paths(&args.paths)?;
 
-    let host = if args.no_path {
-        None
-    } else {
-        let h = short_hostname();
-        if h.is_none() {
-            eprintln!("buzz share: hostname unavailable; sending without path tags");
-        }
-        h
-    };
+    let host = share_host(&args, short_hostname);
 
     let mut uploaded = Vec::with_capacity(args.paths.len());
     for p in &args.paths {
@@ -229,11 +236,55 @@ mod tests {
 
         // Default → one `<host>:<canonical abs path>` per file.
         let share = build_share_attachment(uploaded, &sources, Some("crichton")).unwrap();
-        let abs = std::fs::canonicalize(&f).unwrap();
+        let abs = std::path::absolute(&f).unwrap();
         assert_eq!(
             share.paths,
             vec![format!("crichton:{}", abs.display())],
             "default share must carry the path tag"
+        );
+    }
+
+    fn parse_share(argv: &[&str]) -> ShareArgs {
+        #[derive(clap::Parser)]
+        struct W {
+            #[command(flatten)]
+            args: ShareArgs,
+        }
+        <W as clap::Parser>::try_parse_from(argv)
+            .expect("parse")
+            .args
+    }
+
+    #[test]
+    fn no_path_cli_flag_suppresses_host() {
+        let host = || Some("crichton".to_string());
+        let with = parse_share(&["share", "a.md", "--channel", "c", "--no-path"]);
+        assert!(with.no_path, "--no-path must parse");
+        assert_eq!(
+            share_host(&with, host),
+            None,
+            "--no-path must drop the host"
+        );
+        let without = parse_share(&["share", "a.md", "--channel", "c"]);
+        assert_eq!(share_host(&without, host), Some("crichton".to_string()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn path_tag_does_not_resolve_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let real_dir = dir.path().join("secret-real-dir");
+        std::fs::create_dir(&real_dir).unwrap();
+        let target = real_dir.join("report.md");
+        std::fs::write(&target, "# hi").unwrap();
+        let link = dir.path().join("link.md");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let value = path_tag_value("crichton", &link).unwrap();
+        assert_eq!(value, format!("crichton:{}", link.display()));
+        assert!(
+            !value.contains("secret-real-dir"),
+            "path tag must not reveal the link target: {value}"
         );
     }
 
