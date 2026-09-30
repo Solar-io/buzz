@@ -857,6 +857,10 @@ pub struct PromptContext {
     /// Claude auth-pool router (shared overflow state); used to stamp the
     /// slot's effective pool into kind-44200 attribution.
     pub pool_router: crate::auth_pool::PoolRouter,
+    /// Kind-30624 task status sink. `None` disables status publishing.
+    pub task_status_sink: Option<Arc<dyn crate::task_status::TaskStatusSink>>,
+    /// Interval at which a running turn's status head is re-published.
+    pub task_status_refresh: Duration,
 }
 
 impl AgentPool {
@@ -2401,6 +2405,36 @@ fn with_canvas(prompt: Option<String>, canvas: Option<&str>) -> Option<String> {
     }
 }
 
+/// `run_prompt_task`'s result channel plus the turn's task-status outcome slot.
+///
+/// Shadowing the raw sender with this inside `run_prompt_task` routes every
+/// `send_prompt_result` call through the outcome classification without
+/// touching each call site.
+struct TurnResultSender {
+    tx: mpsc::UnboundedSender<PromptResult>,
+    outcome: crate::task_status::TaskOutcomeSlot,
+}
+
+/// Terminal kind-30624 state for a classified prompt outcome (D8.7).
+fn task_state_for_outcome(outcome: &PromptOutcome) -> buzz_core::task_status::TaskState {
+    use buzz_core::task_status::TaskState;
+    match outcome {
+        PromptOutcome::Ok(StopReason::Cancelled) => TaskState::Cancelled,
+        PromptOutcome::Ok(
+            StopReason::EndTurn
+            | StopReason::MaxTokens
+            | StopReason::MaxTurnRequests
+            | StopReason::Refusal,
+        ) => TaskState::Done,
+        // An intentional cancel whose cleanup overran its grace is still a
+        // cancel from the reader's point of view.
+        PromptOutcome::Cancelled | PromptOutcome::CancelDrainTimeout(_) => TaskState::Cancelled,
+        PromptOutcome::Error(_) | PromptOutcome::AgentExited | PromptOutcome::Timeout(_) => {
+            TaskState::Error
+        }
+    }
+}
+
 /// Return `agent` to the pool via `result_tx`, clearing any steer receiver first.
 ///
 /// Every path that returns an `OwnedAgent` to the pool via `PromptResult` goes
@@ -2415,7 +2449,7 @@ fn with_canvas(prompt: Option<String>, canvas: Option<&str>) -> Option<String> {
 ///
 /// On the happy path the read loop has already called `take()`, so this is a no-op.
 fn send_prompt_result(
-    result_tx: &mpsc::UnboundedSender<PromptResult>,
+    result_tx: &TurnResultSender,
     turn_id: &str,
     mut agent: OwnedAgent,
     source: PromptSource,
@@ -2423,7 +2457,10 @@ fn send_prompt_result(
     batch: Option<FlushBatch>,
 ) {
     agent.acp.clear_steer_rx();
-    let _ = result_tx.send(PromptResult {
+    // Every classified exit records its task status here, so
+    // `TurnCompletionGuard` publishes the matching terminal head.
+    result_tx.outcome.set(task_state_for_outcome(&outcome));
+    let _ = result_tx.tx.send(PromptResult {
         agent,
         source,
         turn_id: turn_id.to_owned(),
@@ -2491,12 +2528,44 @@ pub async fn run_prompt_task(
     // metadata now, before the agent is moved into PromptResult. It must be
     // declared before `liveness_guard`: Rust drops locals in reverse order, so
     // liveness is aborted before completion makes the turn terminal.
+    //
+    // Kind-30624 task status (phase 8): channel turns only — a heartbeat has no
+    // channel whose members could read it. `running` goes out now; the guard
+    // publishes the terminal head on every exit path.
+    let status_outcome = crate::task_status::TaskOutcomeSlot::default();
+    let task_status = match (&source, ctx.task_status_sink.as_ref()) {
+        (PromptSource::Channel(channel_id), Some(sink)) => {
+            let publisher = Arc::new(crate::task_status::TurnStatusPublisher::new(
+                Arc::clone(sink),
+                ctx.agent_keys.clone(),
+                *channel_id,
+                turn_id.clone(),
+                crate::task_status::unix_now(),
+                triggering_event_ids.first().cloned(),
+                Some(metric_slot.to_string()),
+            ));
+            publisher.running();
+            Some(publisher)
+        }
+        _ => None,
+    };
     let _turn_guard = TurnCompletionGuard::new(
         agent.acp.observer_handle(),
         agent.acp.observer_agent_index(),
         observer_channel_id,
         turn_id.clone(),
+        task_status.clone(),
+        status_outcome.clone(),
     );
+    // Declared after `_turn_guard`, so it drops (aborting the refresh loop)
+    // before the terminal head; the publisher's close flag covers the rest.
+    let _status_refresh = task_status.map(|publisher| {
+        crate::task_status::StatusRefreshGuard::spawn(publisher, ctx.task_status_refresh)
+    });
+    let result_tx = TurnResultSender {
+        tx: result_tx,
+        outcome: status_outcome,
+    };
 
     // Start liveness with `turn_started`, not the final session/prompt call:
     // session creation, context fetches, and an initial message can themselves
@@ -5189,6 +5258,10 @@ struct TurnCompletionGuard {
     agent_index: Option<usize>,
     channel_id: Option<uuid::Uuid>,
     turn_id: String,
+    /// Kind-30624 publisher for channel turns; terminal head on drop.
+    status: Option<Arc<crate::task_status::TurnStatusPublisher>>,
+    /// Filled by `send_prompt_result`; unset at drop means `error`.
+    outcome: crate::task_status::TaskOutcomeSlot,
 }
 
 impl TurnCompletionGuard {
@@ -5197,12 +5270,16 @@ impl TurnCompletionGuard {
         agent_index: Option<usize>,
         channel_id: Option<uuid::Uuid>,
         turn_id: String,
+        status: Option<Arc<crate::task_status::TurnStatusPublisher>>,
+        outcome: crate::task_status::TaskOutcomeSlot,
     ) -> Self {
         Self {
             observer,
             agent_index,
             channel_id,
             turn_id,
+            status,
+            outcome,
         }
     }
 }
@@ -5217,6 +5294,9 @@ impl Drop for TurnCompletionGuard {
                 &context,
                 serde_json::json!({}),
             );
+        }
+        if let Some(status) = self.status.take() {
+            status.terminal(self.outcome.resolve(), None);
         }
     }
 }
@@ -7046,6 +7126,225 @@ mod tests {
         assert!(parse_kind0_profile_lookup(json!({})).is_none());
     }
 
+    // ── kind-30624 task status at the turn guards ───────────────────────────
+
+    /// Run one turn against a fake ACP process that answers every request
+    /// with `reply` (a JSON-RPC body minus `jsonrpc`/`id`), recording status.
+    async fn run_status_turn(
+        reply: &str,
+        channel: bool,
+    ) -> (
+        PromptOutcome,
+        Vec<(buzz_core::task_status::TaskState, String, u64)>,
+        String,
+    ) {
+        let script = format!(
+            r#"count=0
+while IFS= read -r line; do
+  count=$((count + 1))
+  printf '%s\n' "{{\"jsonrpc\":\"2.0\",\"id\":$((count - 1)),{reply}}}"
+done"#
+        );
+        let acp = AcpClient::spawn("bash", &["-c".to_string(), script], &[], false)
+            .await
+            .expect("spawn status ACP script");
+        let channel_id = Uuid::new_v4();
+        let mut agent = OwnedAgent {
+            index: 4,
+            acp,
+            state: SessionState::default(),
+            model_capabilities: None,
+            desired_model: None,
+            model_overridden: false,
+            desired_model_request_id: None,
+            desired_model_pending_ack: false,
+            startup_effort: None,
+            agent_name: "status-test-agent".into(),
+            goose_system_prompt_supported: None,
+            protocol_version: 1,
+        };
+        agent
+            .state
+            .sessions
+            .insert(channel_id, "live-session".into());
+        agent.state.heartbeat_session = Some("live-session".into());
+        agent
+            .state
+            .deliveries
+            .insert(channel_id, ChannelDeliveryState::default());
+
+        let sink = Arc::new(crate::task_status::RecordingSink::default());
+        let mut ctx = make_prompt_context_no_owner();
+        ctx.task_status_sink = Some(sink.clone());
+        let ctx = Arc::new(ctx);
+        let (result_tx, mut result_rx) = mpsc::unbounded_channel();
+
+        let batch = channel.then(|| {
+            let event = EventBuilder::new(Kind::Custom(9), "status please")
+                .sign_with_keys(&Keys::generate())
+                .unwrap();
+            FlushBatch {
+                channel_id,
+                events: vec![crate::queue::BatchEvent {
+                    event,
+                    prompt_tag: "test".into(),
+                    received_at: std::time::Instant::now(),
+                }],
+                cancelled_events: vec![],
+                cancel_reason: None,
+            }
+        });
+        let trigger = batch
+            .as_ref()
+            .map(|b| b.events[0].event.id.to_hex())
+            .unwrap_or_default();
+        run_prompt_task(
+            agent,
+            batch,
+            (!channel).then(|| "heartbeat".to_string()),
+            ctx,
+            result_tx,
+            None,
+            "turn-status-1".into(),
+        )
+        .await;
+        let result = result_rx.recv().await.expect("prompt result");
+        let outcome = result.outcome;
+        let mut agent = result.agent;
+        agent.acp.shutdown().await;
+        let recorded = sink.0.lock().unwrap().clone();
+        for event in &recorded {
+            let head = buzz_core::task_status::parse_task_status(event).unwrap();
+            assert_eq!(head.channel, channel_id, "h is the turn's channel");
+            assert_eq!(head.trigger.as_deref(), Some(trigger.as_str()));
+            assert_eq!(head.session.as_deref(), Some("4"), "session = pool slot");
+        }
+        (outcome, sink.states(), trigger)
+    }
+
+    fn assert_running_then(
+        states: &[(buzz_core::task_status::TaskState, String, u64)],
+        terminal: buzz_core::task_status::TaskState,
+    ) {
+        use buzz_core::task_status::TaskState;
+        let kinds: Vec<TaskState> = states.iter().map(|s| s.0).collect();
+        assert_eq!(kinds, vec![TaskState::Running, terminal], "{states:?}");
+        assert!(
+            states.iter().all(|s| s.1 == "turn-status-1"),
+            "same turn id on every head: {states:?}"
+        );
+        assert!(states[0].2 < states[1].2, "created_at strictly increases");
+    }
+
+    #[tokio::test]
+    async fn status_running_then_done_on_end_turn() {
+        let (outcome, states, _) =
+            run_status_turn(r#"\"result\":{\"stopReason\":\"end_turn\"}"#, true).await;
+        assert!(matches!(outcome, PromptOutcome::Ok(StopReason::EndTurn)));
+        assert_running_then(&states, buzz_core::task_status::TaskState::Done);
+    }
+
+    #[tokio::test]
+    async fn status_error_on_acp_error_path() {
+        let (outcome, states, _) =
+            run_status_turn(r#"\"error\":{\"code\":-32000,\"message\":\"boom\"}"#, true).await;
+        assert!(matches!(outcome, PromptOutcome::Error(_)));
+        assert_running_then(&states, buzz_core::task_status::TaskState::Error);
+    }
+
+    #[tokio::test]
+    async fn status_cancelled_on_cancel() {
+        let (outcome, states, _) =
+            run_status_turn(r#"\"result\":{\"stopReason\":\"cancelled\"}"#, true).await;
+        assert!(
+            matches!(outcome, PromptOutcome::Ok(StopReason::Cancelled)),
+            "unexpected outcome"
+        );
+        assert_running_then(&states, buzz_core::task_status::TaskState::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn no_status_for_heartbeat_turn() {
+        let (outcome, states, _) =
+            run_status_turn(r#"\"result\":{\"stopReason\":\"end_turn\"}"#, false).await;
+        assert!(matches!(outcome, PromptOutcome::Ok(StopReason::EndTurn)));
+        assert!(
+            states.is_empty(),
+            "heartbeat turns publish nothing: {states:?}"
+        );
+    }
+
+    #[test]
+    fn status_error_when_outcome_unset_at_drop() {
+        // A panic or an unclassified exit never reaches `send_prompt_result`,
+        // so the slot is unset when the guard drops.
+        use buzz_core::task_status::TaskState;
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _enter = rt.enter();
+        let sink = Arc::new(crate::task_status::RecordingSink::default());
+        let publisher = Arc::new(crate::task_status::TurnStatusPublisher::new(
+            sink.clone(),
+            Keys::generate(),
+            Uuid::new_v4(),
+            "turn-panic".into(),
+            crate::task_status::unix_now(),
+            None,
+            None,
+        ));
+        publisher.running();
+        let outcome = crate::task_status::TaskOutcomeSlot::default();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = TurnCompletionGuard::new(
+                None,
+                None,
+                None,
+                "turn-panic".into(),
+                Some(publisher.clone()),
+                outcome.clone(),
+            );
+            panic!("simulated turn panic");
+        }));
+        assert!(result.is_err());
+        let kinds: Vec<TaskState> = sink.states().into_iter().map(|s| s.0).collect();
+        assert_eq!(kinds, vec![TaskState::Running, TaskState::Error]);
+    }
+
+    #[test]
+    fn task_state_for_outcome_maps_every_outcome() {
+        use buzz_core::task_status::TaskState;
+        assert_eq!(
+            task_state_for_outcome(&PromptOutcome::Ok(StopReason::EndTurn)),
+            TaskState::Done
+        );
+        assert_eq!(
+            task_state_for_outcome(&PromptOutcome::Ok(StopReason::MaxTokens)),
+            TaskState::Done
+        );
+        assert_eq!(
+            task_state_for_outcome(&PromptOutcome::Ok(StopReason::Refusal)),
+            TaskState::Done
+        );
+        assert_eq!(
+            task_state_for_outcome(&PromptOutcome::Cancelled),
+            TaskState::Cancelled
+        );
+        assert_eq!(
+            task_state_for_outcome(&PromptOutcome::CancelDrainTimeout(Duration::from_secs(1))),
+            TaskState::Cancelled
+        );
+        assert_eq!(
+            task_state_for_outcome(&PromptOutcome::AgentExited),
+            TaskState::Error
+        );
+        assert_eq!(
+            task_state_for_outcome(&PromptOutcome::Timeout(TimeoutKind::Idle)),
+            TaskState::Error
+        );
+    }
+
     fn context_message(event_id: &str, content: &str) -> ContextMessage {
         ContextMessage {
             event_id: event_id.to_string(),
@@ -8703,7 +9002,10 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel::<PromptResult>();
         let source = PromptSource::Heartbeat;
         send_prompt_result(
-            &result_tx,
+            &TurnResultSender {
+                tx: result_tx.clone(),
+                outcome: Default::default(),
+            },
             "test-turn-id",
             agent,
             source,
@@ -8764,7 +9066,10 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel::<PromptResult>();
         let source = PromptSource::Heartbeat;
         send_prompt_result(
-            &result_tx,
+            &TurnResultSender {
+                tx: result_tx.clone(),
+                outcome: Default::default(),
+            },
             "test-turn-id",
             agent,
             source,
@@ -9393,6 +9698,8 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             harness_name: "goose".to_string(),
             relay_url: "ws://127.0.0.1:3000".to_string(),
             pool_router: crate::auth_pool::PoolRouter::default(),
+            task_status_sink: None,
+            task_status_refresh: crate::task_status::STATUS_REFRESH,
         }
     }
 

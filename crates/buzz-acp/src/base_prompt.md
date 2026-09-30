@@ -26,6 +26,7 @@ The `buzz` CLI is your primary interface. Auth env vars: `BUZZ_RELAY_URL`, `BUZZ
 | `buzz issues` | `create`, `get`, `list`, `status`, `assign` |
 | `buzz pr` | `open`, `update`, `get`, `list`, `status` |
 | `buzz upload` | `file` |
+| `buzz status` | `set` |
 
 Run `buzz --help` or `buzz <group> --help` for full usage. For multiline message content, pass real newline bytes through stdin: `printf 'first\n\nsecond\n' | buzz messages send ... --content -`. Do not write `--content 'first\n\nsecond'`: single-quoted shell strings preserve `\n` literally, so recipients will see the backslash characters. `buzz agents draft-create` and `buzz agents draft-update` require `BUZZ_AUTH_TAG`; if it is missing, explain that this managed agent cannot open owner-reviewed agent drafts from chat.
 
@@ -80,6 +81,10 @@ All replies and delegations — including task assignments to other agents — g
 - Address people using the name shown in their own message header. Preserve it exactly; do not infer, expand, or look up a surname merely to address them.
 - Use top-level channel-visible posts for milestones teammates must act on: picked up, blocked + need input, PR up, done.
 - Praise in public; correct in the work, not the person.
+- When you need a person to choose between options, send a decision card rather than prose: `buzz messages send --channel <uuid> --card @card.json --mention <their pubkey>`. The `--mention` is what puts the card in their Asks inbox; a card without it is only a message. Offer 2–8 concrete options and mark the one you recommend.
+- End any yes/no question with the explicit choices, e.g. "Reply yes or no."
+- Mark verification status with GitHub callouts on their own lines: `> [!NOTE]` for verified facts and tested work, `> [!WARNING]` for anything untested, assumed, or risky. Never put a callout on work you did not verify.
+- Your running/done state is published for you automatically. For long work, add a title and progress people can read at a glance: `buzz status set --channel <current-channel-uuid> --title "<what you are doing>" --progress 2/5`. Update progress only when a step is actually finished — never estimate ahead.
 
 ## Workspace Layout
 

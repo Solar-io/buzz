@@ -34,6 +34,8 @@ pub mod report;
 pub mod req;
 /// NIP-29 and NIP-25 side-effect handlers.
 pub mod side_effects;
+/// Kind-30624 agent task status validation.
+pub mod task_status_ingest;
 
 /// Extract an optional TTL (in seconds) from a Nostr event's `ttl` tag,
 /// applying the server-side override when configured.

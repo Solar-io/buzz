@@ -14,6 +14,7 @@ mod pool_lifecycle;
 mod queue;
 mod relay;
 mod setup_mode;
+mod task_status;
 mod usage;
 mod voice_turn;
 
@@ -2220,6 +2221,8 @@ async fn tokio_main() -> Result<()> {
 
     let base_prompt_content = config.base_prompt_content.take();
     let cwd = current_working_directory()?;
+    let task_status_sink: Arc<dyn task_status::TaskStatusSink> =
+        Arc::new(task_status::RestTaskStatusSink::new(relay.rest_client()));
     let ctx = Arc::new(PromptContext {
         mcp_servers: build_mcp_servers(&config),
         initial_message: config.initial_message.clone(),
@@ -2254,7 +2257,20 @@ async fn tokio_main() -> Result<()> {
         harness_name: crate::config::normalize_agent_command_identity(&config.agent_command),
         relay_url: config.relay_url.clone(),
         pool_router: config.pool_router.clone(),
+        task_status_sink: Some(task_status_sink.clone()),
+        task_status_refresh: task_status::STATUS_REFRESH,
     });
+
+    // D8.8: close any `running` status heads a previous process of this agent
+    // left behind. Off the startup path — best-effort, never blocks readiness.
+    {
+        let rest = relay.rest_client();
+        let keys = config.keys.clone();
+        let sink = task_status_sink.clone();
+        tokio::spawn(async move {
+            task_status::sweep_stale_running(&rest, &keys, sink.as_ref()).await;
+        });
+    }
 
     if !config.memory_enabled {
         tracing::info!(
@@ -4108,6 +4124,8 @@ mod claim_router_tests {
             harness_name: "claim-router-test".to_string(),
             relay_url: "ws://127.0.0.1:3000".to_string(),
             pool_router: crate::auth_pool::PoolRouter::default(),
+            task_status_sink: None,
+            task_status_refresh: crate::task_status::STATUS_REFRESH,
         }
     }
 
@@ -5317,6 +5335,25 @@ mod agent_draft_prompt_tests {
             prompt.contains("This applies equally to human-agent and agent-to-agent coordination")
         );
         assert!(!prompt.contains("deeper nesting is allowed"));
+    }
+
+    #[test]
+    fn shared_base_prompt_teaches_status_set() {
+        let prompt = include_str!("base_prompt.md");
+        assert!(prompt.contains("| `buzz status` | `set` |"));
+        assert!(prompt.contains("buzz status set --channel"));
+        assert!(prompt.contains("published for you automatically"));
+        assert!(prompt.contains("never estimate ahead"));
+    }
+
+    #[test]
+    fn shared_base_prompt_teaches_cards_and_callouts() {
+        let prompt = include_str!("base_prompt.md");
+        assert!(prompt.contains("--card @card.json --mention <their pubkey>"));
+        assert!(prompt.contains("puts the card in their Asks inbox"));
+        assert!(prompt.contains("Reply yes or no."));
+        assert!(prompt.contains("`> [!NOTE]` for verified facts"));
+        assert!(prompt.contains("`> [!WARNING]` for anything untested"));
     }
 }
 
