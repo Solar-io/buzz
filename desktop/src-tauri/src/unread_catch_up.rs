@@ -400,6 +400,12 @@ fn thread_reference(tags: &[Vec<String>]) -> ThreadReference {
 /// (buzz-services reminder firings). Mirrors `WAKE_SERVICE_PUBKEYS` in
 /// `desktop/src/shared/constants/wakeService.ts` and the web client's
 /// `wakeMessage.ts`; the three must name the same keys.
+///
+/// CHANGE TOGETHER with `desktop/src/shared/constants/wakeService.ts`: that
+/// copy drives LIVE notifications and honours a `VITE_WAKE_SERVICE_PUBKEYS`
+/// override; this one drives catch-up and is compile-time only, so an
+/// override there is not seen here. `wakeService.test.mjs` parses this
+/// literal and fails when the two defaults differ.
 const WAKE_SERVICE_PUBKEYS: &[&str] =
     &["a9387088355b4efe46decbde77c8fe34ee9ecbd6619d41217d21be0123f08271"];
 
@@ -757,5 +763,37 @@ mod tests {
             &[&["h", "ch"], &["p", "agent"], &["p", "self"]],
         )]);
         assert_eq!(ids, ["wake-me"]);
+    }
+
+    #[test]
+    fn p_tagged_message_from_a_non_service_author_is_observed() {
+        let ids = observed_ids(vec![event(
+            "human-mention",
+            "other",
+            10,
+            &[&["h", "ch"], &["p", "agent"]],
+        )]);
+        assert_eq!(ids, ["human-mention"]);
+    }
+
+    #[test]
+    fn non_chat_kind_from_the_service_is_observed() {
+        let ids = observed_ids(vec![EventView {
+            kind: 45001,
+            ..event(
+                "forum-post",
+                WAKE_SERVICE,
+                10,
+                &[&["h", "ch"], &["p", "agent"]],
+            )
+        }]);
+        assert_eq!(ids, ["forum-post"]);
+    }
+
+    #[test]
+    fn unknown_viewer_is_never_treated_as_a_bystander() {
+        let wake = event("wake", WAKE_SERVICE, 10, &[&["h", "ch"], &["p", "agent"]]);
+        assert!(!is_wake_for_others(&wake, ""));
+        assert!(is_wake_for_others(&wake, "self"));
     }
 }
