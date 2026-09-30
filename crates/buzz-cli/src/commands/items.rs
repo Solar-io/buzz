@@ -288,8 +288,32 @@ async fn resolve_person(client: &BuzzClient, who: &str) -> Result<String, CliErr
     resolve_author(client, who).await
 }
 
-/// Refuse an owner who cannot read the item's channel. Global items are
-/// readable by every community member, so there is nothing to check.
+/// `true` if kind:39000 channel metadata marks the channel open. The relay
+/// tags every channel `["public"]` or `["private"]`; anything else (missing
+/// metadata, a `private` tag) is treated as private so the check fails closed.
+pub(crate) fn metadata_is_open(metadata: Option<&serde_json::Value>) -> bool {
+    let Some(tags) = metadata
+        .and_then(|m| m.get("tags"))
+        .and_then(|t| t.as_array())
+    else {
+        return false;
+    };
+    let has = |name: &str| {
+        tags.iter()
+            .any(|t| t.get(0).and_then(|v| v.as_str()) == Some(name))
+    };
+    has("public") && !has("private")
+}
+
+/// The relay's read rule for an h-scoped item: an open channel is readable by
+/// every relay member; a private channel (or DM) only by its members.
+pub(crate) fn can_read_channel(open: bool, members: &[String], pubkey: &str) -> bool {
+    open || members.iter().any(|m| m == pubkey)
+}
+
+/// Refuse an owner who cannot read the item's channel. Global items and
+/// items in open channels are readable by every relay member, so only a
+/// private channel's membership is checked.
 async fn ensure_can_see(
     client: &BuzzClient,
     channel: Option<&str>,
@@ -298,15 +322,27 @@ async fn ensure_can_see(
     let Some(channel) = channel else {
         return Ok(());
     };
-    let filter = serde_json::json!({ "kinds": [39002], "#d": [channel], "limit": 1 });
-    let members = fetch_member_pubkeys(client, &filter)
+    let meta_filter = serde_json::json!({ "kinds": [39000], "#d": [channel], "limit": 1 });
+    let metadata = client
+        .query(&meta_filter)
         .await
-        .ok_or_else(|| CliError::Other(format!("could not load members of channel {channel}")))?;
-    if members.iter().any(|m| m == pubkey) {
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Vec<serde_json::Value>>(&raw).ok())
+        .and_then(|events| events.into_iter().next());
+    let open = metadata_is_open(metadata.as_ref());
+    let members = if open {
+        Vec::new()
+    } else {
+        let filter = serde_json::json!({ "kinds": [39002], "#d": [channel], "limit": 1 });
+        fetch_member_pubkeys(client, &filter).await.ok_or_else(|| {
+            CliError::Other(format!("could not load members of channel {channel}"))
+        })?
+    };
+    if can_read_channel(open, &members, pubkey) {
         Ok(())
     } else {
         Err(CliError::Usage(format!(
-            "assignee cannot see this item: {pubkey} is not a member of channel {channel}"
+            "assignee cannot see this item: {pubkey} is not a member of private channel {channel}"
         )))
     }
 }
@@ -738,6 +774,25 @@ mod tests {
         assert_eq!(resolve_prefix(&items, "7f3k2m").unwrap().id, "7f3k2m9qa1bc");
         assert!(resolve_prefix(&items, "7f3").is_err());
         assert!(resolve_prefix(&items, "zzzz").is_err());
+    }
+
+    #[test]
+    fn open_channel_assignee_need_not_be_member() {
+        let open_meta =
+            serde_json::json!({ "tags": [["d", CH], ["name", "x"], ["public"], ["closed"]] });
+        let private_meta = serde_json::json!({ "tags": [["d", CH], ["private"], ["closed"]] });
+        assert!(metadata_is_open(Some(&open_meta)));
+        assert!(!metadata_is_open(Some(&private_meta)));
+        assert!(!metadata_is_open(None), "missing metadata fails closed");
+
+        let member = "a".repeat(64);
+        let outsider = "b".repeat(64);
+        let members = vec![member.clone()];
+        // Open channel: any relay member can read, so assignment is allowed.
+        assert!(can_read_channel(true, &[], &outsider));
+        // Private channel: only members.
+        assert!(can_read_channel(false, &members, &member));
+        assert!(!can_read_channel(false, &members, &outsider));
     }
 
     #[test]
