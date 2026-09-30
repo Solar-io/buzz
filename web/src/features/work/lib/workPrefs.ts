@@ -56,8 +56,25 @@ export function loadWorkScope(): WorkScope {
   return read(SCOPE_KEY) === "channel" ? "channel" : "everywhere";
 }
 
+const scopeListeners = new Set<() => void>();
+
+/**
+ * Persist the scope and tell every mounted Work surface. The scope is set
+ * from outside the Work tab too (`/status` asks for "this channel"), so it
+ * is a tiny store rather than one component's state.
+ */
 export function saveWorkScope(scope: WorkScope): void {
   write(SCOPE_KEY, scope);
+  for (const listener of scopeListeners) {
+    listener();
+  }
+}
+
+export function subscribeWorkScope(listener: () => void): () => void {
+  scopeListeners.add(listener);
+  return () => {
+    scopeListeners.delete(listener);
+  };
 }
 
 export function loadCollapsedSections(): Record<WorkSection, boolean> {
@@ -109,12 +126,14 @@ export function saveRailCollapsed(collapsed: boolean): void {
 }
 
 const RIGHT_TAB_KEY = "buzz.work.right-tab.v1";
-type StoredTab = "work" | "thread" | "activity";
+type StoredTab = "work" | "activity";
 
-/** The right pane's last chosen tab (a missing tab resolves to Work). */
+/**
+ * The right pane's last chosen tab (a missing tab resolves to Work). A
+ * stored "thread" — written before threads moved inline — reads as Work.
+ */
 export function loadRightTab(): StoredTab {
-  const value = read(RIGHT_TAB_KEY);
-  return value === "thread" || value === "activity" ? value : "work";
+  return read(RIGHT_TAB_KEY) === "activity" ? "activity" : "work";
 }
 
 export function saveRightTab(tab: StoredTab): void {

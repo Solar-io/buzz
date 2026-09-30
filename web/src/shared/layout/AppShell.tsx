@@ -124,6 +124,7 @@ function ResizeHandle({
 export function AppShell({
   sidebar,
   title,
+  subtitle,
   children,
   chromeless = false,
   rightPane,
@@ -144,6 +145,8 @@ export function AppShell({
   chromeless?: boolean;
   /** Current conversation label for the mobile top bar. */
   title?: string | null;
+  /** Under the title on the phone bar: "4 members · 3 agents". */
+  subtitle?: string | null;
   children: ReactNode;
   /** The right pane (thread / thinking), rendered after `main` in the row. */
   rightPane?: ReactNode;
@@ -257,8 +260,18 @@ export function AppShell({
               />
             </svg>
           </button>
-          <span className="min-w-0 flex-1 truncate text-base font-bold tracking-tight">
-            {title || "Buzz"}
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-base leading-tight font-bold tracking-tight">
+              {title || "Buzz"}
+            </span>
+            {subtitle ? (
+              <span
+                data-testid="phone-bar-subtitle"
+                className="block truncate font-mono text-2xs text-muted-foreground"
+              >
+                {subtitle}
+              </span>
+            ) : null}
           </span>
           <div
             ref={setPhoneBarSlot}

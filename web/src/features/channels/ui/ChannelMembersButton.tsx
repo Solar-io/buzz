@@ -4,7 +4,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import type { ChannelMember, Profile } from "../hooks.ts";
 import type { PresenceEntry } from "../lib/presence.ts";
 import { presenceDotClass } from "../lib/presence.ts";
+import { cn } from "@/shared/lib/cn";
 import { authorLabel } from "../lib/authorLabel.ts";
+import { memberSummary } from "../lib/memberSummary.ts";
 import { AuthorAvatar } from "./AuthorAvatar.tsx";
 import { AddChannelMembersDialog } from "./AddChannelMembersDialog.tsx";
 
@@ -30,6 +32,8 @@ export function ChannelMembersButton({
   presence,
   contacts = [],
   selfPubkey = null,
+  variant = "count",
+  agentPubkeys,
 }: {
   /** The channel the roster belongs to (kind-9000 `h` tag for the add). */
   channelId: string;
@@ -41,23 +45,67 @@ export function ChannelMembersButton({
   contacts?: string[];
   /** The viewer — excluded from add suggestions. */
   selfPubkey?: string | null;
+  /**
+   * "facepile" is the channel header's trigger (Main artboard): the first
+   * few faces, the member count and how many of them are agents. "count" is
+   * the compact icon + number used in the phone top bar.
+   */
+  variant?: "count" | "facepile";
+  /** Known agents, for the facepile's "N agents" and its ordering. */
+  agentPubkeys?: ReadonlySet<string>;
 }) {
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const roster = memberSummary(
+    members.map((member) => member.pubkey),
+    agentPubkeys,
+  );
   return (
     <>
       <Popover onOpenChange={setPopoverOpen} open={popoverOpen}>
         <PopoverTrigger asChild>
-          <button
-            type="button"
-            data-testid="channel-members-trigger"
-            aria-label={`View channel members (${members.length})`}
-            title="Channel members"
-            className="flex shrink-0 items-center gap-1 rounded-full border border-border px-2 py-1 text-2xs text-muted-foreground hover:bg-accent hover:text-foreground"
-          >
-            <Users aria-hidden className="h-4 w-4" />
-            <span className="min-w-[1ch] tabular-nums">{members.length}</span>
-          </button>
+          {variant === "facepile" ? (
+            <button
+              type="button"
+              data-testid="channel-members-trigger"
+              aria-label={`View channel members (${members.length})`}
+              title="Channel members"
+              className="flex h-8 shrink-0 items-center rounded-[9px] border border-border bg-card pr-2.5 pl-2 text-xs hover:bg-accent"
+            >
+              {roster.faces.map((pubkey, index) => (
+                <AuthorAvatar
+                  key={pubkey}
+                  pubkey={pubkey}
+                  label={authorLabel(pubkey, profiles)}
+                  picture={profiles.get(pubkey)?.avatar}
+                  size="sm"
+                  className={cn(
+                    "size-5.5 ring-2 ring-card",
+                    index > 0 && "-ml-1.25",
+                  )}
+                />
+              ))}
+              <span className="ml-2 font-semibold tabular-nums text-foreground">
+                {members.length}
+              </span>
+              {roster.agents > 0 && (
+                <span className="ml-1.5 font-mono text-2xs text-muted-foreground">
+                  {roster.agents} {roster.agents === 1 ? "agent" : "agents"}
+                </span>
+              )}
+            </button>
+          ) : (
+            <button
+              type="button"
+              data-testid="channel-members-trigger"
+              aria-label={`View channel members (${members.length})`}
+              title="Channel members"
+              className="flex shrink-0 items-center gap-1 rounded-full border border-border px-2 py-1 text-2xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <Users aria-hidden className="h-4 w-4" />
+              <span className="min-w-[1ch] tabular-nums">{members.length}</span>
+            </button>
+          )}
         </PopoverTrigger>
         <PopoverContent
           align="end"

@@ -171,7 +171,6 @@ async function mountRow(message) {
           message,
           profiles: new Map(),
           grouped: false,
-          replyCount: 0,
           active: false,
           reactionGroups: [],
           showActions: false,

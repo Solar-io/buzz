@@ -105,6 +105,14 @@ export interface TimelineMessage {
    * rows restored from an older timeline cache simply fall back.
    */
   buzzSystem?: string | null;
+  /**
+   * The seat a `/handoff` hands work to: the pubkey in a
+   * `["handoff", <pubkey>]` tag (web redesign Phase 2). The row renders as a
+   * HANDOFF bar. Optional, like `stage` and `buzzSystem`: a row restored from
+   * a timeline cache written before the field existed has none, and reads as
+   * an ordinary message — always test it with `!= null`.
+   */
+  handoff?: string | null;
   /** Edit overlay present (renders the "(edited)" marker). */
   edited: boolean;
   /** Deleted via kind 5 — rows hide rather than render. */
@@ -172,9 +180,18 @@ export function timelineMessageFromEvent(
       ? parseStageTag(event.tags)
       : null,
     buzzSystem: buzzSystemTag(event.tags),
+    handoff: handoffTag(event.tags),
     edited: false,
     deleted: false,
   };
+}
+
+/** The `["handoff", <64-hex pubkey>]` tag value, lowercased, or null. */
+function handoffTag(tags: string[][]): string | null {
+  const value = tags.find((tag) => tag[0] === "handoff")?.[1];
+  return typeof value === "string" && /^[0-9a-f]{64}$/i.test(value)
+    ? value.toLowerCase()
+    : null;
 }
 
 /** The `["buzz-system", <value>]` tag value, or null when absent/malformed. */

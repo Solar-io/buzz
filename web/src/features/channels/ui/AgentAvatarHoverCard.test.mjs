@@ -217,7 +217,6 @@ async function mountRow({ isAgent = true } = {}) {
           message: message(),
           profiles: new Map(),
           grouped: false,
-          replyCount: 0,
           active: false,
           reactionGroups: [],
           showActions: false,

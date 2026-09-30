@@ -2,15 +2,17 @@ import assert from "node:assert/strict";
 import { after, afterEach, test } from "node:test";
 
 /**
- * The hover bar's "+" button, driven through the REAL MessageActionBar, the
- * REAL RemindMeLaterProvider, and the REAL `useReminderMutations` hook on a
- * real TanStack QueryClient. Only the boundaries are faked: the relay session
- * (so no socket), `createReminder` (so no crypto — it records its arguments
- * and returns a promise the test settles), the toast, and the dialog.
+ * The hover bar's Feedback button, driven through the REAL MessageActionBar,
+ * the REAL RemindMeLaterProvider, and the REAL `useReminderMutations` hook on
+ * a real TanStack QueryClient. Only the boundaries are faked: the relay
+ * session (so no socket), `createReminder` (so no crypto — it records its
+ * arguments and returns a promise the test settles), the toast, and the
+ * dialog.
  *
  * What this pins: one click reaches the dialog's `createReminder` path with
- * due = click + 86 400 s and the message as target; the reminders query is
- * invalidated on success (nav badge / list); a second click while the first
+ * due = TOMORROW 9:00 AM LOCAL and the message as target (web redesign
+ * Phase 2; the button this replaced filed +24 h); the reminders query is
+ * invalidated on success (Work / nav badge); a second click while the first
  * is in flight is dropped; success and failure both toast.
  */
 const { JSDOM } = await import("jsdom");
@@ -37,7 +39,7 @@ Object.defineProperty(globalThis, "navigator", {
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const state = { creates: [], toasts: [] };
-globalThis.__QUICK_REMIND_TEST__ = state;
+globalThis.__FEEDBACK_TEST__ = state;
 
 globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
   ...(originals.stubs ?? {}),
@@ -47,7 +49,7 @@ globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
   `,
   // hooks.ts's own specifier for the service — the dialog's create path.
   "./lib/reminderService.ts": `
-    const s = () => globalThis.__QUICK_REMIND_TEST__;
+    const s = () => globalThis.__FEEDBACK_TEST__;
     export function createReminder(session, selfPubkey, input) {
       return new Promise((resolve, reject) =>
         s().creates.push({ selfPubkey, input, resolve, reject }));
@@ -59,7 +61,7 @@ globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
     export const cancelReminder = never;
   `,
   sonner: `
-    const s = () => globalThis.__QUICK_REMIND_TEST__;
+    const s = () => globalThis.__FEEDBACK_TEST__;
     export const toast = {
       success: (m) => s().toasts.push({ kind: "success", m }),
       error: (m) => s().toasts.push({ kind: "error", m }),
@@ -80,7 +82,7 @@ after(() => {
   }
   globalThis.IS_REACT_ACT_ENVIRONMENT = originals.actEnv;
   globalThis.__BUZZ_TEST_MODULE_STUBS__ = originals.stubs;
-  delete globalThis.__QUICK_REMIND_TEST__;
+  delete globalThis.__FEEDBACK_TEST__;
 });
 
 const React = (await import("react")).default;
@@ -96,7 +98,10 @@ const { MessageActionBar } = await import("./MessageActionBar.tsx");
 
 const SELF = "1".repeat(64);
 const AUTHOR = "2".repeat(64);
-const CLICK_MS = 1_790_000_000_000;
+// Local wall-clock instants, so the expectation is a hardcoded calendar time
+// in any timezone: clicked Wed 30 Sep 2026 at 3:42 PM, due Thu 1 Oct at 9:00.
+const CLICK_MS = new Date(2026, 8, 30, 15, 42, 0, 0).getTime();
+const DUE_S = new Date(2026, 9, 1, 9, 0, 0, 0).getTime() / 1000;
 
 async function mount() {
   const queryClient = new QueryClient({
@@ -137,7 +142,7 @@ async function mount() {
   const view = {
     invalidated,
     button: () =>
-      container.querySelector('[data-testid="quick-remind-message-msg-1"]'),
+      container.querySelector('[data-testid="feedback-message-msg-1"]'),
     unmount: async () => {
       if (!mounted) {
         return;
@@ -207,18 +212,22 @@ async function settle(fn) {
   });
 }
 
-test("+ is labelled and titled, and rendered with no author gate", async () => {
+test("Feedback is labelled and titled, and rendered with no author gate", async () => {
   reset();
   const view = await mount();
   const button = view.button();
-  assert.ok(button, "quick-remind button rendered");
-  assert.equal(button.getAttribute("aria-label"), "Add to reminders (1 day)");
-  assert.equal(button.getAttribute("title"), "Add to reminders (1 day)");
+  assert.ok(button, "Feedback button rendered");
+  assert.equal(button.getAttribute("aria-label"), "Send to Feedback");
+  assert.equal(
+    button.getAttribute("title"),
+    "Send to Feedback: reply later, with an AI summary",
+  );
+  assert.match(button.textContent, /Feedback/);
   assert.equal(button.disabled, false);
   await view.unmount();
 });
 
-test("one click creates the reminder due 24h out with the message target", async () => {
+test("one click creates the reminder due tomorrow 9:00 AM with the message target", async () => {
   reset();
   const view = await mount();
   await clickAt(view.button(), CLICK_MS);
@@ -232,13 +241,15 @@ test("one click creates the reminder due 24h out with the message target", async
       preview: "ship the thing",
       authorPubkey: AUTHOR,
     },
-    notBefore: 1_790_086_400,
+    // NOT click + 86 400 s (3:42 PM tomorrow): the start of the next day.
+    notBefore: DUE_S,
   });
+  assert.notEqual(DUE_S, CLICK_MS / 1000 + 86_400);
   await settle(() => call.resolve({}));
   await view.unmount();
 });
 
-test("success invalidates the reminders query and toasts 'tomorrow'", async () => {
+test("success invalidates the reminders query and toasts 'Sent to Feedback'", async () => {
   reset();
   const view = await mount();
   await clickAt(view.button(), CLICK_MS);
@@ -246,7 +257,7 @@ test("success invalidates the reminders query and toasts 'tomorrow'", async () =
   assert.deepEqual(view.invalidated, [["reminders", SELF]]);
   assert.equal(state.toasts.length, 1);
   assert.equal(state.toasts[0].kind, "success");
-  assert.match(state.toasts[0].m, /^Reminder set for tomorrow \d/);
+  assert.match(state.toasts[0].m, /^Sent to Feedback · due tomorrow 9:00/);
   await view.unmount();
 });
 

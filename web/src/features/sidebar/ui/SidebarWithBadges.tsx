@@ -13,9 +13,19 @@ import { ChannelSidebar, type ChannelSidebarProps } from "./ChannelSidebar";
  * Must render inside AsksProvider and WorkProvider.
  */
 export function SidebarWithBadges(
-  props: Omit<ChannelSidebarProps, "asksCount" | "needsCount">,
+  props: Omit<
+    ChannelSidebarProps,
+    "asksCount" | "needsCount" | "channelMarkers"
+  >,
 ) {
   const { badge } = useAsks();
-  const { needs } = useWorkCounts();
-  return <ChannelSidebar {...props} asksCount={badge} needsCount={needs} />;
+  const { needs, markers } = useWorkCounts();
+  return (
+    <ChannelSidebar
+      {...props}
+      asksCount={badge}
+      needsCount={needs}
+      channelMarkers={markers}
+    />
+  );
 }

@@ -55,6 +55,7 @@ import { RelayConnectionCard } from "@/features/sidebar/ui/RelayConnectionCard";
 import { SidebarProfileCard } from "@/features/sidebar/ui/SidebarProfileCard";
 import { InstallAppButton } from "@/features/sidebar/ui/InstallAppButton";
 import { VitalsBlock } from "@/features/vitals/ui/VitalsBlock";
+import type { ChannelMarkers } from "@/features/work/lib/channelMarkers.ts";
 import type { SidebarMenuItem } from "@/features/sidebar/lib/sidebarMenuItem";
 import {
   channelRowUnread,
@@ -189,6 +190,8 @@ export interface ChannelSidebarProps {
   workSelected: boolean;
   /** Needs-you rows, Everywhere — the Work row's count badge. */
   needsCount: number;
+  /** Per-channel needs / running — the channel rows' work markers. */
+  channelMarkers?: ChannelMarkers;
   lists: ChannelSidebarLists;
   readState: ChannelSidebarReadState;
   search: ChannelSidebarSearch;
@@ -212,6 +215,7 @@ export function ChannelSidebar({
   asksCount,
   workSelected,
   needsCount,
+  channelMarkers,
   lists,
   readState,
   search,
@@ -362,6 +366,7 @@ export function ChannelSidebar({
         unread={rowUnread(channel)}
         unreadCount={rowUnreadCount(channel)}
         muted={isMuted(readState.prefs, channel.id)}
+        status={channelMarkers?.get(channel.id)}
         onSelect={() => actions.onSelectChannel(channel.id)}
         menuItems={actions.channelMenuItems(channel)}
       />

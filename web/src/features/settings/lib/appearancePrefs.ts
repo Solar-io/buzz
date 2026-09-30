@@ -62,9 +62,6 @@ export type ConversationDensity = "compact" | "comfortable" | "spacious";
 /** How sender-authored link preview cards are presented. */
 export type LinkPreviewStyle = "compact" | "rich";
 
-/** Whether a thread opens over the channel or beside it. */
-export type ThreadLayout = "focus" | "split";
-
 /**
  * Whether the selected sidebar entry gets the higher-contrast surface.
  *
@@ -138,13 +135,6 @@ export const LINK_PREVIEW_STYLE_PREFERENCE: PreferenceSpec<LinkPreviewStyle> = {
   values: ["compact", "rich"],
 };
 
-export const THREAD_LAYOUT_PREFERENCE: PreferenceSpec<ThreadLayout> = {
-  storageKey: "buzz.channels.threadViewMode",
-  attribute: "data-thread-layout",
-  defaultValue: "split",
-  values: ["focus", "split"],
-};
-
 /**
  * The desktop client stores this one OUTSIDE the `buzz.appearance.*` family
  * (`shared/theme/ThemeProvider.tsx`'s `PROMINENT_ACTIVE_TAB_STORAGE_KEY`), so
@@ -165,7 +155,6 @@ export const APPEARANCE_PREFERENCES = [
   FONT_FAMILY_PREFERENCE,
   CONVERSATION_DENSITY_PREFERENCE,
   LINK_PREVIEW_STYLE_PREFERENCE,
-  THREAD_LAYOUT_PREFERENCE,
   PROMINENT_ACTIVE_TAB_PREFERENCE,
 ] as const;
 

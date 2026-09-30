@@ -74,6 +74,11 @@ export interface CommandSpec {
   id: string;
   /** Usage hint shown after the name: "[when]", "@seat <task>", "". */
   args: string;
+  /**
+   * The command cannot run bare: Enter on its list row completes the name
+   * and waits for the arguments instead of running it into an error.
+   */
+  needsArgs: boolean;
   group: CommandGroup;
   describe: string;
   /** Offered (and runnable) in this context. */
@@ -125,6 +130,7 @@ export function remindTarget(
 const remind: CommandSpec = {
   id: "remind",
   args: "[when]",
+  needsArgs: false,
   group: "capture",
   describe: "Remind me about the last message aimed at me",
   when: (ctx) => ctx.channel !== null && ctx.selfPubkey !== null,
@@ -180,6 +186,7 @@ const remind: CommandSpec = {
 const handoff: CommandSpec = {
   id: "handoff",
   args: "@seat <task>",
+  needsArgs: true,
   group: "agents",
   describe: "Hand work to a seat as a tracked handoff",
   when: (ctx) => ctx.channel !== null,
@@ -255,6 +262,7 @@ const handoff: CommandSpec = {
 const status: CommandSpec = {
   id: "status",
   args: "",
+  needsArgs: false,
   group: "agents",
   describe: "What's running and queued in this channel",
   when: (ctx) => ctx.channel !== null,

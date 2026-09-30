@@ -2,11 +2,10 @@ import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { JSDOM } from "jsdom";
 
-// D-1 (QA, 2026-09-22): opening a thread in conversation A and switching to
-// B left the Replies button enabled in B — `lastThreadRootId` survived the
-// switch, so clicking it restored A's root, which cannot resolve in B: the
-// pane never mounted while the policy still reported it visible
-// (aria-pressed=true, "Hide replies panel", no pane).
+// The DM right pane's tab state, driven through the REAL hook. Its thread
+// half (the Replies toggle and the remembered root — QA D-1, 2026-09-22) went
+// with the thread tab: threads open inline under their message (web redesign
+// Phase 2). What is left, and pinned here, is the entry rule and the 🧠.
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", {
   url: "https://web.test/",
@@ -20,7 +19,7 @@ const originals = {
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-dom.window.matchMedia = (query) => ({
+dom.window.matchMedia = () => ({
   matches: true, // desktop: the lg breakpoint is met
   addEventListener() {},
   removeEventListener() {},
@@ -33,24 +32,18 @@ const { useDmRightPane } = await import("./useDmRightPane.ts");
 
 const { useState } = React;
 
-/**
- * A route-shaped harness: threadRootId lives in the parent (like repos.tsx),
- * and a channelId change simulates selectChannel (which nulls the root).
- */
+/** A route-shaped harness: the conversation and its agent-DM flag. */
 function Probe({ onPane }) {
   const [channelId, setChannelId] = useState("A");
-  const [threadRootId, setThreadRootId] = useState(null);
-  const pane = useDmRightPane({
-    agentDm: true,
-    channelId,
-    threadRootId,
-    setThreadRootId,
-  });
-  onPane({ ...pane, channelId, threadRootId, setChannelId, setThreadRootId });
+  const [agentDm, setAgentDm] = useState(true);
+  const pane = useDmRightPane({ agentDm, channelId, ownerPubkey: "owner" });
+  onPane({ ...pane, channelId, setChannelId, setAgentDm });
   return null;
 }
 
 async function mount() {
+  globalThis.localStorage?.clear?.();
+  dom.window.localStorage.clear();
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
@@ -76,74 +69,65 @@ after(() => {
   dom.window.matchMedia = originals.matchMedia;
 });
 
-test("the remembered thread root does not survive a channel switch (D-1)", async () => {
+test("the pane starts closed; once shown, entering an agent DM selects Thinking once and picking Work sticks", async () => {
   const h = await mount();
   try {
-    // Open a thread in A and show it via the toggle.
-    await act(async () => h.pane.setThreadRootId("root-A"));
-    assert.equal(h.pane.panes.threadsAvailable, true);
-    await act(async () => h.pane.panes.toggleThreads()); // show (tab flips)
-    assert.equal(h.pane.panes.threadsVisible, true);
-    await act(async () => h.pane.panes.toggleThreads()); // hide
-    assert.equal(h.pane.panes.threadsVisible, false);
-    assert.equal(
-      h.pane.panes.threadsAvailable,
-      true,
-      "same channel: the hidden thread stays restorable",
-    );
-
-    // Switch to B the way selectChannel does: clear the root, change the
-    // channel. The button must go DISABLED — there is no thread to show in B.
-    await act(async () => {
-      h.pane.setThreadRootId(null);
-      h.pane.setChannelId("B");
-    });
-    assert.equal(
-      h.pane.panes.threadsAvailable,
-      false,
-      "phantom-pressed button: the remembered root leaked across the switch",
-    );
-    assert.equal(h.pane.panes.threadsVisible, false);
+    // Closed by default (plan item 1): entry leaves Work selected.
+    assert.equal(h.pane.dmPaneHidden, true);
+    assert.equal(h.pane.panes.thinkingVisible, false);
+    assert.equal(h.pane.active, "work");
+    await act(async () => h.pane.panes.toggleThinking()); // show
+    assert.equal(h.pane.active, "activity", "the 🧠 selects the thinking tab");
+    assert.equal(h.pane.panes.thinkingVisible, true);
+    await act(async () => h.pane.selectTab("work"));
+    assert.equal(h.pane.active, "work");
+    assert.equal(h.pane.panes.thinkingVisible, false);
+    // Re-entering the same conversation's render does not steal it back…
+    await act(async () => h.pane.setChannelId("A"));
+    assert.equal(h.pane.active, "work");
+    // …entering ANOTHER agent DM does.
+    await act(async () => h.pane.setChannelId("B"));
+    assert.equal(h.pane.active, "activity");
   } finally {
     await act(async () => h.root.unmount());
     h.container.remove();
   }
 });
 
-test("within one channel the toggle round-trips through the remembered root", async () => {
+test("the 🧠 round-trips, and closing Thinking lands on Work", async () => {
   const h = await mount();
   try {
-    await act(async () => h.pane.setThreadRootId("root-A"));
-    await act(async () => h.pane.panes.toggleThreads()); // show
-    assert.equal(h.pane.panes.threadsVisible, true);
-    await act(async () => h.pane.panes.toggleThreads()); // hide
-    assert.equal(h.pane.panes.threadsVisible, false);
-    await act(async () => h.pane.panes.toggleThreads()); // show again
-    assert.equal(h.pane.panes.threadsVisible, true);
-    assert.equal(h.pane.threadRootId, "root-A"); // the route's root was restored
+    await act(async () => h.pane.panes.toggleThinking()); // show
+    assert.equal(h.pane.panes.thinkingVisible, true);
+    await act(async () => h.pane.panes.toggleThinking()); // hide
+    assert.equal(h.pane.panes.thinkingVisible, false);
+    assert.equal(h.pane.dmPaneHidden, true);
+    assert.equal(h.pane.active, "work");
+    await act(async () => h.pane.panes.toggleThinking()); // show
+    assert.equal(h.pane.panes.thinkingVisible, true);
+    assert.equal(h.pane.active, "activity");
+    await act(async () => h.pane.closeThinking());
+    assert.equal(h.pane.active, "work");
+    assert.equal(h.pane.dmPaneHidden, true);
   } finally {
     await act(async () => h.root.unmount());
     h.container.remove();
   }
 });
 
-test("a deep-link thread opened while switching into a channel is remembered", async () => {
+test("the hook's surface has no thread half left", async () => {
   const h = await mount();
   try {
-    // Permalink into B with a root resolved in the same update.
-    await act(async () => {
-      h.pane.setChannelId("B");
-      h.pane.setThreadRootId("root-B");
-    });
-    assert.equal(h.pane.panes.threadsAvailable, true);
-    await act(async () => h.pane.panes.toggleThreads()); // show
-    assert.equal(h.pane.panes.threadsVisible, true);
-    await act(async () => h.pane.panes.toggleThreads()); // hide
-    assert.equal(
-      h.pane.panes.threadsAvailable,
-      true,
-      "same channel: still restorable",
-    );
+    for (const gone of [
+      "openThreadTab",
+      "closeThread",
+      "threadsVisible",
+      "threadsAvailable",
+      "toggleThreads",
+    ]) {
+      assert.equal(gone in h.pane, false, gone);
+      assert.equal(gone in h.pane.panes, false, `panes.${gone}`);
+    }
   } finally {
     await act(async () => h.root.unmount());
     h.container.remove();

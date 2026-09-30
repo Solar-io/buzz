@@ -1,12 +1,12 @@
 import { Check, ChevronRight } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 
 import type { Profile } from "@/features/channels/hooks";
 import { authorLabel } from "@/features/channels/lib/authorLabel.ts";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import { cn } from "@/shared/lib/cn";
 import { HexAvatar, StateHex } from "@/shared/ui/HexAvatar";
-import type { DoneState, QueuedRow } from "../lib/workTypes.ts";
+import type { DoneRow, DoneState, QueuedRow } from "../lib/workTypes.ts";
 import { SectionHeader } from "./NeedsYouSection";
 import { channelLabel, clockLabel, metaLine, shortAge } from "./workLabels.ts";
 
@@ -200,32 +200,96 @@ export function DoneSection({
         trailing={done.locked > 0 ? `${done.locked} locked` : null}
       />
       <div className="overflow-hidden rounded-xl border border-border bg-card">
-        {last ? (
-          <button
-            type="button"
-            disabled={!last.channelId}
-            onClick={() => last.channelId && onOpenChannel(last.channelId)}
-            className={cn(
-              "flex h-8.5 w-full items-center gap-2.25 px-3 text-left hover:bg-accent disabled:cursor-default",
-            )}
-          >
-            <HexAvatar
-              label={authorLabel(last.agentPubkey, profiles)}
-              seed={last.agentPubkey}
-              size={18}
-              ring="idle"
-            />
-            <span className="min-w-0 flex-1 truncate text-sidebar-meta text-muted-foreground">
-              <span className="text-foreground">Last:</span> {lastLine}
-              {last.stopReason ? ` · ${last.stopReason}` : ""}
-            </span>
-          </button>
-        ) : (
+        {done.rows.length === 0 ? (
           <p className="px-3 py-2 text-sidebar-meta text-muted-foreground">
             No turns finished yet today.
           </p>
+        ) : (
+          <DoneRows
+            rows={done.rows}
+            channels={channels}
+            profiles={profiles}
+            onOpenChannel={onOpenChannel}
+          />
         )}
       </div>
     </section>
+  );
+}
+
+/** Turns listed before "Show N more". */
+export const DONE_PAGE = 6;
+
+/**
+ * One row per finished turn, newest first (Phase 2): who, where, when, and
+ * how the turn ended. `end_turn` is the ordinary ending and says nothing;
+ * any other stop reason — a cancel, a refusal, an error — is shown, because
+ * a turn that did not end normally is the one worth a second look. What the
+ * turn WAS is not here: titles arrive with task status in Phase 8.
+ */
+function DoneRows({
+  rows,
+  channels,
+  profiles,
+  onOpenChannel,
+}: {
+  rows: readonly DoneRow[];
+  channels: readonly ChannelSummary[];
+  profiles: Map<string, Profile>;
+  onOpenChannel: (channelId: string) => void;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  const shown = showAll ? rows : rows.slice(0, DONE_PAGE);
+  return (
+    <>
+      {shown.map((row) => {
+        const name = authorLabel(row.agentPubkey, profiles);
+        const abnormal = row.stopReason !== null && row.stopReason !== "end_turn";
+        return (
+          <button
+            key={row.key}
+            type="button"
+            data-testid="done-row"
+            disabled={!row.channelId}
+            onClick={() => row.channelId && onOpenChannel(row.channelId)}
+            className="flex h-8.5 w-full items-center gap-2.25 border-b border-border px-3 text-left last:border-b-0 hover:bg-accent disabled:cursor-default"
+          >
+            <HexAvatar
+              label={name}
+              seed={row.agentPubkey}
+              size={18}
+              ring="idle"
+            />
+            <span className="min-w-0 flex-1 truncate text-sidebar-meta">
+              <b className="font-semibold">{name}</b>
+              <span className="text-muted-foreground">
+                {" "}
+                {metaLine(
+                  channelLabel(row.channelId, channels) || "heartbeat",
+                  abnormal && row.stopReason,
+                )}
+              </span>
+            </span>
+            <span
+              className={cn(
+                "shrink-0 font-mono text-2xs",
+                abnormal ? "text-coral-ink" : "text-muted-foreground",
+              )}
+            >
+              {clockLabel(row.at)}
+            </span>
+          </button>
+        );
+      })}
+      {rows.length > shown.length && (
+        <button
+          type="button"
+          onClick={() => setShowAll(true)}
+          className="h-8 w-full px-3 text-left text-xs font-semibold text-info-ink hover:bg-accent"
+        >
+          Show {rows.length - shown.length} more
+        </button>
+      )}
+    </>
   );
 }

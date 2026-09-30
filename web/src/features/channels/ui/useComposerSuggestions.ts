@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import type { CommandSpec } from "@/features/commands/lib/commands.ts";
 import { activeMentionQuery } from "../lib/mentions.ts";
 import {
   activeEmojiQuery,
@@ -25,25 +26,38 @@ export interface NamedMember {
 
 /**
  * One autocomplete source. The first trigger with a non-empty list owns the
- * keyboard; Phase 2 adds "command" (`/`) as a third without touching the
- * composer. Internal to this hook: a trigger's token detection lives in the
- * memos below because the mention token gates the emoji one.
+ * keyboard: `command` (`/`), then `mention` (`@`), then `emoji` (`:`).
+ * Internal to this hook: a trigger's token detection lives in the memos below
+ * because the mention token gates the emoji one.
  */
 interface SuggestionTrigger<Item> {
-  id: "mention" | "emoji";
+  id: "command" | "mention" | "emoji";
   items: readonly Item[];
   index: number;
   setIndex: (update: (index: number) => number) => void;
+  /** Tab (and, without `enter`, Enter): complete the token. */
   apply: (item: Item | undefined) => void;
+  /** Enter, when it means something other than completing. */
+  enter?: (item: Item | undefined) => void;
   /** Escape with the list open. */
   dismiss: () => void;
 }
 
+/** The slash-command list's inputs (from `useComposerCommands`). */
+export interface ComposerCommandSuggestions {
+  matches: readonly CommandSpec[];
+  /** Enter on a row that can run without arguments. */
+  onRun: (command: CommandSpec) => void;
+}
+
 /**
- * The composer's `@mention` and `:emoji:` autocomplete, lifted out of
- * `Composer.tsx` unchanged (web redesign Phase 0). The composer keeps
- * `mentionPicks` — draft persistence and submit read it — and learns about a
- * pick through `onPickMention`.
+ * The composer's `/command`, `@mention` and `:emoji:` autocomplete. The
+ * composer keeps `mentionPicks` — draft persistence and submit read it — and
+ * learns about a pick through `onPickMention`.
+ *
+ * Commands (web redesign Phase 2) ride the same machinery: ↑↓ choose, Tab
+ * completes the name, Enter RUNS it (or completes it, when it cannot run
+ * without arguments), Esc closes the list until the text changes.
  */
 export function useComposerSuggestions({
   text,
@@ -53,6 +67,7 @@ export function useComposerSuggestions({
   applyText,
   focusAt,
   onPickMention,
+  commands,
 }: {
   text: string;
   selection: ComposerSelection;
@@ -61,10 +76,13 @@ export function useComposerSuggestions({
   applyText: (next: string) => void;
   focusAt: (start: number, end?: number) => void;
   onPickMention: (name: string, pubkey: string) => void;
+  commands?: ComposerCommandSuggestions;
 }) {
   const [popupIndex, setPopupIndex] = useState(0);
   const [mentionDismissed, setMentionDismissed] = useState(false);
   const [emojiIndex, setEmojiIndex] = useState(0);
+  const [commandIndex, setCommandIndex] = useState(0);
+  const [commandDismissed, setCommandDismissed] = useState(false);
   const caret = Math.min(selection.start, text.length);
 
   const namedMembers = useMemo<NamedMember[]>(
@@ -79,6 +97,29 @@ export function useComposerSuggestions({
       })),
     [members, profiles],
   );
+
+  // Any edit re-arms a command list that Escape closed.
+  //
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `text` is the trigger, not a read — see the mention effect below
+  useEffect(() => {
+    setCommandDismissed(false);
+  }, [text]);
+  const commandMatches =
+    commands && !commandDismissed ? commands.matches : NO_COMMANDS;
+  const commandRow = Math.min(commandIndex, commandMatches.length - 1);
+  const completeCommand = (command: CommandSpec) => {
+    const next = `/${command.id} `;
+    applyText(next);
+    setCommandIndex(0);
+    focusAt(next.length);
+  };
+  const enterCommand = (command: CommandSpec) => {
+    if (command.needsArgs) {
+      completeCommand(command);
+    } else {
+      commands?.onRun(command);
+    }
+  };
 
   // Non-null the moment an "@" token is open at the caret — including a
   // bare "@" (the regex's name group matches empty), which is what the
@@ -141,6 +182,18 @@ export function useComposerSuggestions({
     focusAt(result.caret);
   };
 
+  const command: SuggestionTrigger<CommandSpec> = {
+    id: "command",
+    items: commandMatches,
+    index: Math.max(commandRow, 0),
+    setIndex: setCommandIndex,
+    apply: (row) => row && completeCommand(row),
+    enter: (row) => row && enterCommand(row),
+    dismiss: () => {
+      setCommandIndex(0);
+      setCommandDismissed(true);
+    },
+  };
   const mention: SuggestionTrigger<MentionSuggestion> = {
     id: "mention",
     items: suggestions,
@@ -168,7 +221,11 @@ export function useComposerSuggestions({
 
   /** Popup keys. True = handled; the caller returns without its own keys. */
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
-    for (const trigger of [mention, emoji] as SuggestionTrigger<unknown>[]) {
+    for (const trigger of [
+      command,
+      mention,
+      emoji,
+    ] as SuggestionTrigger<unknown>[]) {
       const count = trigger.items.length;
       if (count === 0) {
         continue;
@@ -183,9 +240,14 @@ export function useComposerSuggestions({
         trigger.setIndex((index) => (index - 1 + count) % count);
         return true;
       }
-      if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
+      if (event.key === "Tab") {
         event.preventDefault();
         trigger.apply(trigger.items[trigger.index]);
+        return true;
+      }
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        (trigger.enter ?? trigger.apply)(trigger.items[trigger.index]);
         return true;
       }
       if (event.key === "Escape") {
@@ -198,6 +260,8 @@ export function useComposerSuggestions({
 
   return {
     namedMembers,
+    /** The command list is on screen (the composer swaps its hint line). */
+    commandListOpen: commandMatches.length > 0,
     listProps: {
       applyEmojiMatch,
       applySuggestion,
@@ -205,6 +269,9 @@ export function useComposerSuggestions({
       emojiMatches,
       popupIndex,
       suggestions,
+      commandMatches,
+      commandIndex: Math.max(commandRow, 0),
+      onPickCommand: enterCommand,
     },
     onKeyDown,
     /** The @ button: a bare "@" it inserts must open the list. */
@@ -213,3 +280,5 @@ export function useComposerSuggestions({
     resetHighlight: () => setPopupIndex(0),
   };
 }
+
+const NO_COMMANDS: readonly CommandSpec[] = [];

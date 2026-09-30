@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Brain, LogIn, MessagesSquare } from "lucide-react";
+import { Brain, LogIn } from "lucide-react";
 import { toast } from "sonner";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import { useHuddleRoster } from "@/features/huddle/useHuddleRoster";
@@ -34,9 +34,9 @@ export interface ChannelActionsBarProps {
   /** Set when this DM has an agent counterpart — shows the 🧠 toggle. */
   agentPubkey: string | null;
   /**
-   * The two-way panel controls (Sam, 2026-09-22): 🧠 shows/hides the thinking
-   * pane, the Replies button shows/hides the thread pane. Grouped so the pair
-   * cannot be half-wired; derived in `lib/dmPaneToggles.ts`.
+   * The two-way panel control (Sam, 2026-09-22): 🧠 shows/hides the thinking
+   * pane. Derived in `lib/dmPaneToggles.ts`. (The Replies toggle that sat
+   * beside it went with the thread pane — threads open inline.)
    */
   panes: PaneToggles;
   /** Composer dictation controller (the mic button). Rendered when supported. */
@@ -53,6 +53,11 @@ export interface ChannelActionsBarProps {
   onJoinChannel?: () => Promise<void> | void;
   /** DM counterparty pubkeys, for the roster's add-member suggestions. */
   contacts?: string[];
+  /**
+   * Render the roster button. True on a phone, where this strip sits in the
+   * top bar; at md and up the channel header's facepile is the roster.
+   */
+  showMembers?: boolean;
 }
 
 const NO_MEMBERS: ChannelMember[] = [];
@@ -71,9 +76,12 @@ const NO_PROFILES: Map<string, Profile> = new Map();
  *
  * The right end is the voice/panel cluster from Sam's 2026-09-22 reference:
  * the dictation mic and the solid waveform Call button (the Anthropic-style
- * pair that replaced the old "Call" pill), then the 🧠, then the Replies
- * toggle immediately right of it. Both panel buttons are two-way — their
- * pressed state is passed in, their click inverts it.
+ * pair that replaced the old "Call" pill), then the 🧠 — a two-way toggle:
+ * its pressed state is passed in, its click inverts it.
+ *
+ * At md and up the roster lives in the channel header's facepile (web
+ * redesign Phase 2), so the members button here renders on a phone only,
+ * where this strip is portaled into the top bar.
  */
 export function ChannelActionsBar({
   channel,
@@ -90,14 +98,9 @@ export function ChannelActionsBar({
   selfPubkey,
   onJoinChannel,
   contacts,
+  showMembers = true,
 }: ChannelActionsBarProps) {
-  const {
-    thinkingVisible,
-    toggleThinking,
-    threadsVisible,
-    threadsAvailable,
-    toggleThreads,
-  } = panes;
+  const { thinkingVisible, toggleThinking } = panes;
   const [startingAgentCall, setStartingAgentCall] = useState(false);
   const [joining, setJoining] = useState(false);
   const { live } = useHuddleRoster(
@@ -182,7 +185,7 @@ export function ChannelActionsBar({
           {joining ? "Joining…" : "Join"}
         </button>
       )}
-      {channel.type !== "dm" && (
+      {channel.type !== "dm" && showMembers && (
         <ChannelMembersButton
           channelId={channel.id}
           members={members}
@@ -290,25 +293,6 @@ export function ChannelActionsBar({
           <Brain aria-hidden className="h-4 w-4" />
         </button>
       )}
-      <button
-        type="button"
-        data-testid="toggle-threads-panel"
-        aria-label={
-          threadsVisible ? "Hide replies panel" : "Show replies panel"
-        }
-        aria-pressed={threadsVisible}
-        title={threadsAvailable ? "Replies" : "Open a message's replies first"}
-        disabled={!threadsAvailable}
-        className={cn(
-          "shrink-0 rounded-full border border-border p-1.5 transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
-          threadsVisible
-            ? "bg-accent text-foreground"
-            : "text-muted-foreground",
-        )}
-        onClick={toggleThreads}
-      >
-        <MessagesSquare aria-hidden className="h-4 w-4" />
-      </button>
     </div>
   );
 }

@@ -1,10 +1,6 @@
 import { X } from "lucide-react";
 import type { ComponentProps, CSSProperties } from "react";
 import { AgentActivityPanel } from "@/features/agents/ui/AgentActivityPanel";
-import { DetachedThreadPanel } from "@/features/channels/ui/DetachedThreadPanel";
-import { ThreadPanel } from "@/features/channels/ui/ThreadPanel";
-import type { TimelineMessage } from "@/features/channels/lib/messageBuffer.ts";
-import type { ChannelSummary } from "@/features/channels/useChannels";
 import { useWorkCounts } from "@/features/work/useWorkCounts.ts";
 import { WorkRailCollapsed } from "@/features/work/ui/WorkRailCollapsed";
 import { WorkTab } from "@/features/work/ui/WorkTab";
@@ -16,7 +12,6 @@ import { cn } from "@/shared/lib/cn";
 import { StateHex } from "@/shared/ui/HexAvatar";
 import type { RightPaneLayout, RightTabId } from "../rightPaneLayout.ts";
 
-type ThreadProps = ComponentProps<typeof ThreadPanel>;
 type ActivityProps = ComponentProps<typeof AgentActivityPanel>;
 type WorkProps = ComponentProps<typeof WorkTab>;
 
@@ -26,28 +21,8 @@ export interface RightPaneHostProps {
   drag: ReturnType<typeof usePointerDrag>;
   /** The docked column's width at lg, for the active tab. */
   dockWidth: number;
-  /** The kept-open thread from another channel, when there is one. */
-  detached: {
-    channel: ChannelSummary;
-    rootId: string;
-    onOpenChannel: () => void;
-  } | null;
   onSelectTab: (tab: RightTabId) => void;
-  onCloseThread: () => void;
   onCloseActivity: () => void;
-  /** The open channel's thread and the props its panel reads. */
-  conversation: {
-    root: TimelineMessage | null;
-    buffer: ThreadProps["buffer"];
-    members: ThreadProps["members"];
-    profiles: ThreadProps["profiles"];
-    agentPubkeys: ReadonlySet<string>;
-    strictMentions: boolean;
-    selfPubkey: string | null;
-    permalinkMessageId: string | null;
-    onPermalinkSettled: ThreadProps["onPermalinkSettled"];
-    send: ThreadProps["send"];
-  };
   /** The agent-DM thinking pane's data; null outside an agent DM. */
   activity: Pick<
     ActivityProps,
@@ -59,10 +34,10 @@ export interface RightPaneHostProps {
     | "connected"
     | "working"
   > | null;
-  /** The thinking pane's sheet / collapse / tab controls (useShellRightPane). */
+  /** The thinking pane's sheet / collapse controls (useShellRightPane). */
   activityChrome: Pick<
     ActivityProps,
-    "mobileOpen" | "onCloseMobile" | "onCloseDesktop" | "onSelectThreadTab"
+    "mobileOpen" | "onCloseMobile" | "onCloseDesktop"
   >;
   /** The Work tab's inputs and the rail's fold. */
   work: Pick<
@@ -76,41 +51,31 @@ export interface RightPaneHostProps {
 
 const TAB_LABEL: Record<RightTabId, string> = {
   work: "Work",
-  thread: "Thread",
   activity: "Thinking",
 };
 
 /**
- * The shell row's right pane (phase-1 §3): at lg a docked column with a tab
- * strip — Work always first, then the open thread and the agent's thinking
- * pane while they exist. A strip of one is just the Work rail and its title.
+ * The shell row's right pane: at lg a docked column with a tab strip — Work
+ * always first, then the agent's Thinking pane in an agent DM. A strip of
+ * one is just the Work rail and its title. (Threads are not here: they open
+ * in place under their message — web redesign Phase 2.)
  *
  * Below lg there is no dock: the column is `display: contents`, Work is the
- * `?view=work` page, and the thread and thinking panels fall back to the
- * full-screen sheets they already own. The panels stay MOUNTED while another
- * tab is on screen (lg-hidden), so a thread draft survives a tab switch; the
- * whole host is `display: none` (still mounted) while the web layer covers
- * the row.
+ * `?view=work` page, and the thinking panel falls back to the full-screen
+ * sheet it already owns. The whole host is `display: none` (still mounted)
+ * while the web layer covers the row.
  */
 export function RightPaneHost({
   layout,
   drag,
   dockWidth,
-  detached,
   onSelectTab,
-  onCloseThread,
   onCloseActivity,
-  conversation,
   activity,
   activityChrome,
   work,
 }: RightPaneHostProps) {
-  const { root } = conversation;
   const counts = useWorkCounts();
-  const threadWrap =
-    layout.threadDocked || layout.threadFocus
-      ? "contents"
-      : "contents lg:hidden";
   return (
     <div
       className={layout.hostVisible ? "contents" : "hidden"}
@@ -142,8 +107,8 @@ export function RightPaneHost({
         style={
           {
             "--dock-width": `${dockWidth}px`,
-            // The thread and thinking panels size themselves from
-            // --thread-width; inside the dock that is simply "fill it".
+            // The thinking panel sizes itself from --thread-width; inside the
+            // dock that is simply "fill it".
             "--thread-width": "100%",
           } as CSSProperties
         }
@@ -157,12 +122,7 @@ export function RightPaneHost({
           >
             {layout.tabs.map((tab) => {
               const selected = tab === layout.active;
-              const close =
-                tab === "thread"
-                  ? onCloseThread
-                  : tab === "activity"
-                    ? onCloseActivity
-                    : null;
+              const close = tab === "activity" ? onCloseActivity : null;
               return (
                 <div
                   key={tab}
@@ -228,33 +188,6 @@ export function RightPaneHost({
                 onExpand={work.onExpand}
               />
             </div>
-          )}
-          {layout.thread && root && (
-            <div className={threadWrap}>
-              <ThreadPanel
-                root={root}
-                buffer={conversation.buffer}
-                members={conversation.members}
-                profiles={conversation.profiles}
-                agentPubkeys={conversation.agentPubkeys}
-                strictMentions={conversation.strictMentions}
-                selfPubkey={conversation.selfPubkey}
-                permalinkMessageId={conversation.permalinkMessageId}
-                onPermalinkSettled={conversation.onPermalinkSettled}
-                onClose={onCloseThread}
-                send={conversation.send}
-              />
-            </div>
-          )}
-          {layout.detached && detached && (
-            <DetachedThreadPanel
-              channel={detached.channel}
-              rootId={detached.rootId}
-              selfPubkey={conversation.selfPubkey}
-              agentPubkeys={conversation.agentPubkeys}
-              onClose={onCloseThread}
-              onOpenChannel={detached.onOpenChannel}
-            />
           )}
           {layout.activity && activity && (
             <AgentActivityPanel {...activity} {...activityChrome} />

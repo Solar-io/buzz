@@ -1,8 +1,15 @@
-import { PanelRightClose, Search } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { PanelRightClose, Search, X } from "lucide-react";
+import {
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import { useProfiles } from "@/features/channels/hooks";
 import { cn } from "@/shared/lib/cn";
+import { reportWorkPage } from "@/shared/ui/toastStack.ts";
 import { useWorkContext } from "../workContext.ts";
 import { useNowSeconds, useWorkFeed } from "../useWorkFeed.ts";
 import {
@@ -10,8 +17,10 @@ import {
   loadWorkScope,
   saveCollapsedSections,
   saveWorkScope,
+  subscribeWorkScope,
   type WorkSection,
 } from "../lib/workPrefs.ts";
+import { channelLabel } from "./workLabels.ts";
 import type { NeedRow, WorkScope } from "../lib/workTypes.ts";
 import { NeedsYouSection } from "./NeedsYouSection";
 import type { NeedRowContext } from "./NeedRow";
@@ -56,10 +65,16 @@ export function WorkTab({
   onOpenView,
   onJump,
   vitals,
+  onClearChannel,
 }: {
   variant: "rail" | "page";
-  /** The open conversation; null on view pages ("This channel" disables). */
+  /**
+   * The open conversation; null on view pages ("This channel" disables). On
+   * the Work PAGE a channel id means "opened for this channel" (`/status`).
+   */
   channelId: string | null;
+  /** The page's "#channel only" chip was dismissed. */
+  onClearChannel?: () => void;
   /** False when the tab strip above already names the tab. */
   showTitle?: boolean;
   onCollapse?: () => void;
@@ -70,12 +85,27 @@ export function WorkTab({
   vitals?: ReactNode;
 }) {
   const context = useWorkContext();
-  const [scope, setScope] = useState<WorkScope>(() => loadWorkScope());
+  // A store, not local state: `/status` sets the scope from the composer.
+  const scope = useSyncExternalStore<WorkScope>(
+    subscribeWorkScope,
+    loadWorkScope,
+    () => "everywhere",
+  );
   const [collapsed, setCollapsed] = useState(() => loadCollapsedSections());
   const [phoneSection, setPhoneSection] = useState<PhoneSection>("needs");
   const [fast, setFast] = useState(false);
   const nowS = useNowSeconds(fast ? 1_000 : 15_000);
-  const effectiveScope: WorkScope = channelId ? scope : "everywhere";
+  // The page has no scope toggle: it is Everywhere unless it was opened FOR a
+  // channel (`/status` on a phone), and then it is that channel until the
+  // chip is dismissed.
+  const effectiveScope: WorkScope =
+    variant === "page"
+      ? channelId
+        ? "channel"
+        : "everywhere"
+      : channelId
+        ? scope
+        : "everywhere";
   const feed = useWorkFeed({ scope: effectiveScope, channelId, nowS });
 
   const ticking = feed.running.some((row) => row.state !== "reacting");
@@ -86,6 +116,11 @@ export function WorkTab({
   const reportVisible = context?.reportVisible;
   const onScreen = variant === "page" || lg;
   useEffect(() => reportVisible?.(onScreen), [reportVisible, onScreen]);
+  // The phone's decision toasts stay down over this page (toastStack.ts).
+  useEffect(
+    () => (variant === "page" ? reportWorkPage() : undefined),
+    [variant],
+  );
 
   const pubkeys = useMemo(
     () =>
@@ -121,10 +156,7 @@ export function WorkTab({
       saveCollapsedSections(next);
       return next;
     });
-  const chooseScope = (next: WorkScope) => {
-    setScope(next);
-    saveWorkScope(next);
-  };
+  const chooseScope = (next: WorkScope) => saveWorkScope(next);
 
   const openRow = (row: NeedRow) => {
     if (row.source.kind === "mention") {
@@ -255,6 +287,22 @@ export function WorkTab({
           )}
         </header>
         {vitals ? <div className="px-4 pt-1">{vitals}</div> : null}
+        {channelId && (
+          <div className="px-4 pt-2.5">
+            <button
+              type="button"
+              data-testid="work-channel-scope"
+              aria-label="Show work everywhere"
+              onClick={onClearChannel}
+              className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-full bg-honey-soft pr-2 pl-3 text-xs font-semibold text-honey-ink"
+            >
+              <span className="truncate">
+                {channelLabel(channelId, channels) || "This channel"} only
+              </span>
+              <X aria-hidden className="size-3.5 shrink-0" />
+            </button>
+          </div>
+        )}
         <div className="flex gap-1.5 overflow-x-auto px-4 pt-3 pb-2">
           {chips.map(([id, label, count]) => (
             <button

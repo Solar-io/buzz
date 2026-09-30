@@ -379,7 +379,7 @@ test("conversation density changes real conversation spacing", async ({
   expect(spacious).not.toBe(compact);
 });
 
-test("link preview and thread layout choices persist across a reload", async ({
+test("the link preview choice persists across a reload", async ({
   page,
 }) => {
   await signIn(page);
@@ -389,23 +389,16 @@ test("link preview and thread layout choices persist across a reload", async ({
     "data-link-preview-style",
     "compact",
   );
-  await expect(page.locator("html")).toHaveAttribute(
-    "data-thread-layout",
-    "split",
-  );
 
   await page.getByTestId("link-preview-style-rich").check();
-  await page.getByTestId("thread-layout-focus").check();
   await page.reload();
 
   await expect(page.locator("html")).toHaveAttribute(
     "data-link-preview-style",
     "rich",
   );
-  await expect(page.locator("html")).toHaveAttribute(
-    "data-thread-layout",
-    "focus",
-  );
+  // The Thread layout setting left with the thread pane: threads open inline.
+  await expect(page.getByTestId("thread-layout-row")).toHaveCount(0);
 });
 
 test("the accent picker repaints the interface's primary colour", async ({

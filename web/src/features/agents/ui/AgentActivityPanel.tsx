@@ -155,7 +155,6 @@ export function AgentActivityPanel({
   mobileOpen,
   onCloseMobile,
   onCloseDesktop,
-  onSelectThreadTab,
 }: {
   agentPubkey: string;
   agentName: string;
@@ -170,8 +169,6 @@ export function AgentActivityPanel({
   onCloseMobile: () => void;
   /** Collapses the desktop right pane entirely. */
   onCloseDesktop?: () => void;
-  /** DMs offer a Thinking ↔ Replies switch in the header. */
-  onSelectThreadTab?: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   // Thought rows the reader expanded, by entry id (collapsed by default).
@@ -393,31 +390,13 @@ export function AgentActivityPanel({
         ref={scrollRef}
         className="buzz-channel-activity-scrollbar relative min-h-0 flex-1 overflow-y-auto p-3"
       >
-        {/* Two controls, two different reachability problems, so they do NOT
-            share a breakpoint.
-
-            The CLOSE only matters below lg, where this pane is a full-screen
+        {/* The CLOSE only matters below lg, where this pane is a full-screen
             sheet covering the composer — whose own brain toggle is therefore
             underneath it and unreachable. At lg the pane is docked beside the
-            composer, that toggle is visible, and this hides.
-
-            The REPLIES switch is the opposite case and must stay visible at
-            EVERY width. It is the only route from this pane to the thread in a
-            DM that has both a thread and an agent (`onSelectThreadTab` is
-            passed only then), and the reverse route lives on the thread pane.
-            Gating it to `lg:hidden` stranded desktop: a reader who switched to
-            Replies had no way back to Thinking. It was an unqualified child of
-            the old header bar for exactly this reason. */}
+            composer, that toggle is visible, and this hides. (The Replies
+            switch that sat beside it went with the thread tab: threads open
+            inline now.) */}
         <div className="absolute right-2 top-2 z-10 flex items-center gap-1">
-          {onSelectThreadTab && (
-            <button
-              type="button"
-              className="rounded-md bg-card/90 px-2 py-1 text-sm text-muted-foreground backdrop-blur-sm hover:bg-accent hover:text-foreground"
-              onClick={onSelectThreadTab}
-            >
-              Replies
-            </button>
-          )}
           <button
             type="button"
             aria-label="Close thinking panel"

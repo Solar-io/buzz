@@ -25,6 +25,8 @@ export function ShellViewPane({
   onOpenView,
   onJump,
   channelsPage,
+  workChannelId = null,
+  onClearWorkChannel,
 }: {
   view: ShellView;
   channels: ChannelSummary[];
@@ -39,13 +41,17 @@ export function ShellViewPane({
   onJump: () => void;
   /** The channel list as a page — the phone tab bar's Channels tab. */
   channelsPage: ReactNode;
+  /** The Work page was opened for one channel (`/status` below lg). */
+  workChannelId?: string | null;
+  onClearWorkChannel?: () => void;
 }) {
   switch (view) {
     case "work":
       return (
         <WorkTab
           variant="page"
-          channelId={null}
+          channelId={workChannelId}
+          onClearChannel={onClearWorkChannel}
           onOpenMessage={onOpenMessage}
           onOpenChannel={onOpenMessage}
           onOpenView={onOpenView}

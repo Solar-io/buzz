@@ -100,6 +100,7 @@ export function DmComposerActions({
       agentPubkey={dmAgentPubkey}
       panes={panes}
       dictation={dictation}
+      showMembers={phone}
     />
   );
   return phone && phoneBarSlot ? createPortal(bar, phoneBarSlot) : bar;

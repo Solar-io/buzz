@@ -16,6 +16,7 @@ import {
 } from "@/shared/ui/dropdown-menu";
 import { useDrawerClose } from "@/shared/layout/AppShell";
 import { cn } from "@/shared/lib/cn";
+import { StateHex } from "@/shared/ui/HexAvatar";
 
 /** Props for {@link SidebarNavButton}. */
 export interface SidebarNavButtonProps {
@@ -43,6 +44,45 @@ export interface SidebarNavButtonProps {
   onSelect: () => void;
   /** Right-click / ⋯ menu items, when provided. */
   menuItems?: SidebarMenuItem[];
+  /**
+   * What the channel's agents are doing (web redesign Phase 2; Main
+   * artboard): a coral hex and a count when something here needs the viewer,
+   * else a pulsing amber hex — with a count past one — while agents work.
+   */
+  status?: { needs: number; running: number } | null;
+}
+
+/** The row's work marker, or nothing. Needs outrank running. */
+function StatusMarker({
+  status,
+}: {
+  status: { needs: number; running: number };
+}) {
+  if (status.needs > 0) {
+    return (
+      <span
+        data-testid="sidebar-row-needs"
+        title={`${status.needs} ${status.needs === 1 ? "needs" : "need"} you`}
+        className="inline-flex shrink-0 items-center gap-1 font-mono text-badge font-semibold text-coral-ink"
+      >
+        <StateHex tone="need" size={8} />
+        {status.needs}
+      </span>
+    );
+  }
+  if (status.running > 0) {
+    return (
+      <span
+        data-testid="sidebar-row-running"
+        title={`${status.running} ${status.running === 1 ? "agent" : "agents"} working`}
+        className="inline-flex shrink-0 items-center gap-1 font-mono text-badge font-semibold text-honey-ink"
+      >
+        <StateHex tone="work" size={8} pulse />
+        {status.running > 1 ? status.running : null}
+      </span>
+    );
+  }
+  return null;
 }
 
 /**
@@ -60,7 +100,9 @@ export function SidebarNavButton({
   muted,
   onSelect,
   menuItems,
+  status,
 }: SidebarNavButtonProps) {
+  const marked = status != null && (status.needs > 0 || status.running > 0);
   const closeDrawer = useDrawerClose();
   const row = (
     <button
@@ -99,9 +141,14 @@ export function SidebarNavButton({
       >
         {label}
       </span>
+      {marked && status ? (
+        <span className="ml-auto flex shrink-0 items-center">
+          <StatusMarker status={status} />
+        </span>
+      ) : null}
       {muted && (
         <BellOff
-          className={cn("h-3.5 w-3.5 shrink-0", !unread && "ml-auto")}
+          className={cn("h-3.5 w-3.5 shrink-0", !unread && !marked && "ml-auto")}
           aria-label="Muted"
         />
       )}
@@ -112,7 +159,7 @@ export function SidebarNavButton({
         <span
           className={cn(
             "flex h-4.5 min-w-4.5 shrink-0 items-center justify-center rounded-full bg-sidebar-active px-[5px] text-2xs font-semibold leading-none tabular-nums text-sidebar-active-foreground",
-            !muted && "ml-auto",
+            !muted && !marked && "ml-auto",
           )}
         >
           {formatUnreadCount(unreadCount)}
@@ -122,7 +169,7 @@ export function SidebarNavButton({
           <span
             className={cn(
               "h-2 w-2 shrink-0 rounded-full bg-sidebar-active",
-              !muted && "ml-auto",
+              !muted && !marked && "ml-auto",
             )}
           />
         )
@@ -150,7 +197,7 @@ export function SidebarNavButton({
                 "shrink-0 rounded p-0.5 text-xs text-sidebar-foreground/60 hover:bg-sidebar-foreground/10",
                 "pointer-events-none opacity-0 group-hover/row:pointer-events-auto group-hover/row:opacity-100",
                 "focus-visible:pointer-events-auto focus-visible:opacity-100",
-                !unread && !muted && "ml-auto",
+                !unread && !muted && !marked && "ml-auto",
               )}
               onClick={(event) => event.stopPropagation()}
             >

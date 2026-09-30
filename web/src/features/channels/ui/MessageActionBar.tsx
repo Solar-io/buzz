@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Bell,
   Check,
   Clock,
-  CornerUpLeft,
   EllipsisVertical,
   Link2,
+  MessageCircle,
   Pencil,
-  Plus,
   SmilePlus,
   Trash2,
   X,
@@ -23,32 +23,29 @@ import { cn } from "@/shared/lib/cn";
 import { QUICK_REACTIONS } from "../lib/reactions.ts";
 
 /**
- * The floating hover action bar for one message row, in the desktop's shape
- * (`desktop/src/features/messages/ui/MessageActionBar.tsx`): a rounded pill
- * on a translucent, blurred surface that overlaps the top-right corner of the
- * row and appears on hover OR focus-within.
+ * The floating hover toolbar for one message row (Main artboard): a small
+ * elevated card that overlaps the row's top-right corner and appears on
+ * hover OR focus-within.
  *
  * Focus-within is not decoration. Without it the bar is unreachable by
  * keyboard: tabbing into a button that is `opacity-0` and
  * `pointer-events-none` leaves the user operating an invisible control.
  *
- * The pill carries the frequent, one-click actions (react, reply, copy link,
- * and "+" for a one-day reminder). Everything rarer — edit, delete, remind at
- * a chosen time — lives behind the overflow menu,
- * matching the desktop's "More actions" dropdown. (This resolves the former
- * `TODO(primitives)`: `shared/ui/dropdown-menu` has since landed in the web
- * client.)
+ * The bar carries the one-click actions: react, reply in thread, and
+ * **Feedback** — the one labelled control, because it is the redesign's
+ * fastest way to say "not now": one click files the message as a reminder
+ * due tomorrow 9:00 AM (kind 30300), where it waits in Work → Needs you.
+ * Everything rarer — copy link, remind at a chosen time, edit, delete —
+ * lives behind the overflow menu.
  *
- * One deliberate difference from the desktop bar remains: the quick-reaction
- * row is kept. It is existing web functionality (the old glyph stack rendered
- * {@link QUICK_REACTIONS} inline) and the desktop has no equivalent, so
- * dropping it while restyling would be a silent feature removal.
+ * The quick-reaction row is kept from the old bar: one-click 👍 is existing
+ * web behaviour, and dropping it while restyling would be a silent removal.
  */
 
 const ACTION_BUTTON_CLASS = cn(
-  "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
-  "text-muted-foreground transition-colors",
-  "hover:bg-accent hover:text-accent-foreground",
+  "inline-flex h-7 w-7.5 shrink-0 items-center justify-center rounded-[7px]",
+  "text-ink-2 transition-colors",
+  "hover:bg-accent hover:text-foreground",
   "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
 );
 const ACTION_ICON_CLASS = "h-4 w-4";
@@ -96,9 +93,12 @@ export function MessageActionBar({
   onEdit?: () => void;
   onDelete?: () => void;
 }) {
-  const { openReminder, quickRemind, quickRemindPending } = useRemindMeLater();
-  // One target for both reminder entry points, so "+" and "Remind me later"
-  // cannot drift apart on what they point at.
+  const { openReminder, sendToFeedback, feedbackPending, pendingEventIds } =
+    useRemindMeLater();
+  // Already filed: the button says so instead of filing a second reminder.
+  const inFeedback = pendingEventIds.has(messageId);
+  // One target for both reminder entry points, so Feedback and "Remind me
+  // later" cannot drift apart on what they point at.
   const reminderTarget = () => ({
     eventId: messageId,
     channelId: channelId ?? "",
@@ -219,9 +219,9 @@ export function MessageActionBar({
           setPickerOpen(false);
         }}
         className={cn(
-          "buzz-message-actions absolute right-2 top-1 z-10 -translate-y-1/2",
-          "flex items-center gap-0.5 rounded-full border border-border/70 p-1",
-          "bg-background/95 shadow-xs backdrop-blur-sm supports-[backdrop-filter]:bg-background/85",
+          "buzz-message-actions absolute right-2.5 top-0 z-10 -translate-y-1/2",
+          "flex items-center gap-px rounded-[10px] border border-border bg-card p-[3px]",
+          "shadow-[0_8px_18px_-10px_var(--elev-shadow)]",
           "transition-opacity duration-150 ease-out",
           // Hidden until the row is hovered or something inside it holds focus.
           // Forced open while the emoji palette or the overflow menu is up, or a
@@ -299,36 +299,44 @@ export function MessageActionBar({
             className={ACTION_BUTTON_CLASS}
             onClick={onReply}
           >
-            <CornerUpLeft className={ACTION_ICON_CLASS} aria-hidden="true" />
+            <MessageCircle className={ACTION_ICON_CLASS} aria-hidden="true" />
           </button>
         )}
 
-        {onShare && (
-          <button
-            type="button"
-            aria-label="Copy link to message"
-            title="Copy link to message"
-            data-testid={`copy-link-message-${messageId}`}
-            className={ACTION_BUTTON_CLASS}
-            onClick={onShare}
-          >
-            <Link2 className={ACTION_ICON_CLASS} aria-hidden="true" />
-          </button>
-        )}
+        <span
+          aria-hidden="true"
+          className="mx-[3px] h-4.5 w-px shrink-0 bg-border"
+        />
 
-        {/* One-click reminder, due in one day (Sam 2026-09-29). Unconditional
-          for the same reason as the overflow menu's "Remind me later":
-          reminders are offered on every message, whoever wrote it. */}
+        {/* Send to Feedback: one click, due tomorrow 9:00 AM (plan default
+          3). Unconditional for the same reason as the overflow menu's
+          "Remind me later": it is offered on every message, whoever wrote
+          it. A message already filed says so and cannot be filed twice. */}
         <button
           type="button"
-          aria-label="Add to reminders (1 day)"
-          title="Add to reminders (1 day)"
-          data-testid={`quick-remind-message-${messageId}`}
-          className={cn(ACTION_BUTTON_CLASS, "disabled:opacity-50")}
-          disabled={quickRemindPending}
-          onClick={() => quickRemind(reminderTarget())}
+          aria-label={inFeedback ? "In Feedback" : "Send to Feedback"}
+          title={
+            inFeedback
+              ? "Already in Feedback — change it from Work"
+              : "Send to Feedback: reply later, with an AI summary"
+          }
+          data-testid={`feedback-message-${messageId}`}
+          className={cn(
+            "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-[7px] bg-chip px-2.25 text-xs font-semibold text-foreground transition-colors",
+            "hover:bg-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
+            "disabled:opacity-60",
+          )}
+          disabled={feedbackPending || inFeedback}
+          onClick={() => sendToFeedback(reminderTarget())}
         >
-          <Plus className={ACTION_ICON_CLASS} aria-hidden="true" />
+          {inFeedback ? (
+            <Check className="size-3.5" aria-hidden="true" />
+          ) : (
+            <Bell className="size-3.5" aria-hidden="true" />
+          )}
+          <span className="hidden sm:inline">
+            {inFeedback ? "In Feedback" : "Feedback"}
+          </span>
         </button>
 
         {/* Always mounted: "Remind me later" is offered on every message,
@@ -362,12 +370,21 @@ export function MessageActionBar({
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            {onShare && (
+              <DropdownMenuItem
+                data-testid={`copy-link-message-${messageId}`}
+                onClick={onShare}
+              >
+                <Link2 className={ACTION_ICON_CLASS} aria-hidden="true" />
+                Copy link to message
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem
               data-testid={`remind-message-${messageId}`}
               onClick={() => openReminder(reminderTarget())}
             >
               <Clock className={ACTION_ICON_CLASS} aria-hidden="true" />
-              Remind me later
+              Remind me at…
             </DropdownMenuItem>
 
             {canEdit && (

@@ -185,6 +185,7 @@ export default {
         leaf: {
           DEFAULT: "hsl(var(--leaf))",
           soft: "hsl(var(--leaf-soft))",
+          line: "hsl(var(--leaf-line))",
           ink: "hsl(var(--leaf-ink))",
         },
         info: {

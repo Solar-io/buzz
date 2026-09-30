@@ -13,8 +13,8 @@ import { NativeSetup } from "@/shared/platform/NativeSetup";
 import { isNativeIOS } from "@/shared/platform/native";
 import { installNativeNavigation } from "@/shared/platform/native-navigation";
 
-// Font size, conversation density, link preview style and thread layout are
-// carried on `<html>` attributes that globals.css selects on. Apply them
+// Font size, conversation density and link preview style are carried on
+// `<html>` attributes that globals.css selects on. Apply them
 // BEFORE the first render, or the app paints one frame at the default type
 // scale and spacing and then snaps — the same first-paint problem the theme
 // cache solves for colours.

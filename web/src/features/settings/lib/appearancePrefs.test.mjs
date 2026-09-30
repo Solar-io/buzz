@@ -10,7 +10,6 @@ import {
   FONT_SIZE_PREFERENCE,
   LINK_PREVIEW_STYLE_PREFERENCE,
   PROMINENT_ACTIVE_TAB_PREFERENCE,
-  THREAD_LAYOUT_PREFERENCE,
   parsePreference,
 } from "./appearancePrefs.ts";
 
@@ -30,11 +29,6 @@ test("storage keys match the desktop client's, character for character", () => {
   assert.equal(
     LINK_PREVIEW_STYLE_PREFERENCE.storageKey,
     "buzz.appearance.linkPreviewStyle",
-  );
-  // Not "buzz.appearance.*" — the desktop files this one under channels.
-  assert.equal(
-    THREAD_LAYOUT_PREFERENCE.storageKey,
-    "buzz.channels.threadViewMode",
   );
   // Nor under "buzz.appearance.*": the desktop's ThemeProvider files this one
   // as a theme preference, and matching its spelling is what lets the two
@@ -56,7 +50,6 @@ test("root attribute names match the ones the stylesheet selects on", () => {
     LINK_PREVIEW_STYLE_PREFERENCE.attribute,
     "data-link-preview-style",
   );
-  assert.equal(THREAD_LAYOUT_PREFERENCE.attribute, "data-thread-layout");
   assert.equal(
     PROMINENT_ACTIVE_TAB_PREFERENCE.attribute,
     "data-prominent-active-tab",
@@ -154,7 +147,7 @@ test("parsePreference keeps legal values", () => {
     parsePreference(CONVERSATION_DENSITY_PREFERENCE, "spacious"),
     "spacious",
   );
-  assert.equal(parsePreference(THREAD_LAYOUT_PREFERENCE, "focus"), "focus");
+  assert.equal(parsePreference(LINK_PREVIEW_STYLE_PREFERENCE, "rich"), "rich");
 });
 
 test("parsePreference falls back for absent, corrupt, or foreign values", () => {
@@ -170,7 +163,10 @@ test("parsePreference falls back for absent, corrupt, or foreign values", () => 
     parsePreference(CONVERSATION_DENSITY_PREFERENCE, "larger"),
     "comfortable",
   );
-  assert.equal(parsePreference(THREAD_LAYOUT_PREFERENCE, "rich"), "split");
+  assert.equal(
+    parsePreference(LINK_PREVIEW_STYLE_PREFERENCE, "spacious"),
+    "compact",
+  );
   // The boolean-shaped one is stored as the desktop's "true"/"false" strings,
   // so anything else — including a real boolean that lost its quotes on the
   // way through storage — falls back to off rather than reaching the DOM.
@@ -188,15 +184,14 @@ test("parsePreference falls back for absent, corrupt, or foreign values", () => 
 
 /**
  * Defaults are asserted as literals AND as "not the first legal value",
- * because two of the four are not first: a `defaultValue: values[0]`
+ * because one of them is not first: a `defaultValue: values[0]`
  * refactor would look correct and would silently move everyone from Comfy to
- * Compact and from Split to Focus.
+ * Compact.
  */
 test("defaults are the desktop's, and are not merely the first option", () => {
   assert.equal(FONT_SIZE_PREFERENCE.defaultValue, "default");
   assert.equal(CONVERSATION_DENSITY_PREFERENCE.defaultValue, "comfortable");
   assert.equal(LINK_PREVIEW_STYLE_PREFERENCE.defaultValue, "compact");
-  assert.equal(THREAD_LAYOUT_PREFERENCE.defaultValue, "split");
   // Off by default, exactly as the desktop's DEFAULT_PROMINENT_ACTIVE_TAB.
   assert.equal(PROMINENT_ACTIVE_TAB_PREFERENCE.defaultValue, "false");
 
@@ -204,14 +199,10 @@ test("defaults are the desktop's, and are not merely the first option", () => {
     CONVERSATION_DENSITY_PREFERENCE.defaultValue,
     CONVERSATION_DENSITY_PREFERENCE.values[0],
   );
-  assert.notEqual(
-    THREAD_LAYOUT_PREFERENCE.defaultValue,
-    THREAD_LAYOUT_PREFERENCE.values[0],
-  );
 });
 
 test("every default is one of its own legal values", () => {
-  assert.equal(APPEARANCE_PREFERENCES.length, 6);
+  assert.equal(APPEARANCE_PREFERENCES.length, 5);
   for (const spec of APPEARANCE_PREFERENCES) {
     assert.ok(
       spec.values.includes(spec.defaultValue),
@@ -223,8 +214,8 @@ test("every default is one of its own legal values", () => {
 test("the registry lists each preference once, with distinct keys", () => {
   const keys = APPEARANCE_PREFERENCES.map((spec) => spec.storageKey);
   const attributes = APPEARANCE_PREFERENCES.map((spec) => spec.attribute);
-  assert.equal(new Set(keys).size, 6);
-  assert.equal(new Set(attributes).size, 6);
+  assert.equal(new Set(keys).size, 5);
+  assert.equal(new Set(attributes).size, 5);
   // The store's initializer indexes by attribute; a preference missing from
   // the registry is a preference that is never applied at first paint.
   assert.deepEqual([...attributes].sort(), [
@@ -233,7 +224,6 @@ test("the registry lists each preference once, with distinct keys", () => {
     "data-font-size",
     "data-link-preview-style",
     "data-prominent-active-tab",
-    "data-thread-layout",
   ]);
 });
 

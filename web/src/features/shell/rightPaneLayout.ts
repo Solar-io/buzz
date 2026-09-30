@@ -1,26 +1,24 @@
 /**
  * The shell's right pane as a pure function of the route's state.
  *
- * Phase 0 moved the rules out of `routes/repos.tsx` unchanged; Phase 1
- * (phase-1.md §3) turns the pane into a TAB STRIP: Work is always tab 1,
- * the open thread and the agent's thinking pane join as tabs while they
- * exist. At `lg` the host is a docked column; below it there is no dock —
- * the thread and thinking panes keep their own full-screen sheets, and Work
- * is the `?view=work` page.
+ * Phase 1 (phase-1.md §3) made the pane a TAB STRIP with Work always first.
+ * Phase 2 took the thread out of it: a thread now opens in place, under its
+ * message (features/channels/ui/InlineThread), so the strip is Work and —
+ * in an agent DM — the agent's Thinking pane. A thread is never a tab.
+ *
+ * At `lg` the host is a docked column; below it there is no dock — the
+ * thinking pane keeps its own full-screen sheet, and Work is the
+ * `?view=work` page.
  */
 
 /** Which surface the shell row is showing. */
 export type PaneSurface = "conversation" | "view" | "none";
 
 /** The right pane's tabs, in strip order. */
-export type RightTabId = "work" | "thread" | "activity";
+export type RightTabId = "work" | "activity";
 
 export interface RightPaneInput {
   surface: PaneSurface;
-  /** A thread in the OPEN channel resolved to a root message. */
-  threadRoot: boolean;
-  /** A thread kept open from another channel (DetachedThreadPanel). */
-  detached: boolean;
   /** The open conversation is a 1:1 DM with a known agent. */
   agentDm: boolean;
   /** The tab the viewer last chose… */
@@ -33,14 +31,12 @@ export interface RightPaneInput {
   webLayerActive: boolean;
   /** Work is a tab (false on `?view=work`, where it is the page itself). */
   workTab: boolean;
-  /** Thread layout "split": a thread is a tab. "focus" keeps it an overlay. */
-  threadIsTab: boolean;
   /** The Work rail is folded to its 44 px strip. */
   workCollapsed: boolean;
 }
 
 export interface RightPaneLayout {
-  /** False: the host renders `display:none` but stays mounted (drafts survive). */
+  /** False: the host renders `display:none` but stays mounted. */
   hostVisible: boolean;
   /** The strip, Work first. A strip of one renders as a plain title. */
   tabs: RightTabId[];
@@ -50,14 +46,6 @@ export interface RightPaneLayout {
   handle: boolean;
   /** Work at lg: open, folded to the strip, or not shown. */
   work: "open" | "collapsed" | null;
-  /** Mount the open channel's ThreadPanel (a sheet below lg). */
-  thread: boolean;
-  /** …and it is the docked tab at lg (else lg-hidden, still mounted). */
-  threadDocked: boolean;
-  /** …or it is a focus-layout overlay, on screen at every width. */
-  threadFocus: boolean;
-  /** Mount the kept-open thread from another channel. */
-  detached: boolean;
   /** Mount the agent's thinking pane (it is the active tab). */
   activity: boolean;
 }
@@ -80,20 +68,17 @@ export function resolveActiveTab(
   return tabs[0] ?? null;
 }
 
-/** Work is always first; thread and thinking join while they exist. */
+/** Work is always first; Thinking joins in an agent DM while it is open. */
 export function rightPaneTabs(input: RightPaneInput): RightTabId[] {
   const tabs: RightTabId[] = [];
   if (input.workTab) {
     tabs.push("work");
   }
-  const conversation = input.surface === "conversation";
-  const threadOpen =
-    (conversation && input.threadRoot) ||
-    (input.surface !== "none" && input.detached);
-  if (input.threadIsTab && threadOpen) {
-    tabs.push("thread");
-  }
-  if (conversation && input.agentDm && !input.paneHidden) {
+  if (
+    input.surface === "conversation" &&
+    input.agentDm &&
+    !input.paneHidden
+  ) {
     tabs.push("activity");
   }
   return tabs;
@@ -102,32 +87,16 @@ export function rightPaneTabs(input: RightPaneInput): RightTabId[] {
 export function rightPaneLayout(input: RightPaneInput): RightPaneLayout {
   const tabs = rightPaneTabs(input);
   const active = resolveActiveTab(input.active, input.previous, tabs);
-  const conversation = input.surface === "conversation";
-  const thread = conversation && input.threadRoot;
-  const threadDocked = thread && input.threadIsTab && active === "thread";
-  // A focus-layout thread is a full-screen overlay at every width, so it
-  // never needs to be the active tab to show.
-  const detached =
-    input.surface !== "none" &&
-    input.detached &&
-    (!input.threadIsTab || active === "thread");
   const work =
     active === "work" ? (input.workCollapsed ? "collapsed" : "open") : null;
-  const activity = conversation && input.agentDm && active === "activity";
+  const activity =
+    input.surface === "conversation" && input.agentDm && active === "activity";
   return {
     hostVisible: !input.webLayerActive,
     tabs,
     active,
-    handle:
-      work === "open" ||
-      threadDocked ||
-      (detached && input.threadIsTab) ||
-      activity,
+    handle: work === "open" || activity,
     work,
-    thread,
-    threadDocked,
-    threadFocus: thread && !input.threadIsTab,
-    detached,
     activity,
   };
 }
