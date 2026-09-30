@@ -69,6 +69,12 @@
   }
 }
 
+/* Custom gradient: every pane in the dock is its own bordered card, so the
+   dock's own hairline would be a stray line on the gradient. */
+:root[data-custom-gradient="true"] .buzz-right-dock {
+  border-left-width: 0;
+}
+
 /* The docked right pane (Work / Thread / Thinking tabs) owns the one left
    border; the thread and thinking panels bring their own for the old
    side-by-side layout, which would draw a second hairline inside the dock. */

@@ -88,6 +88,7 @@ export function useDmRightPane(options: {
   // toggle stays enabled in a channel where the root can never resolve —
   // phantom-pressed with no pane. Declared BEFORE the remember effect so a
   // deep link that sets channel + root in one update still remembers.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: channelId is the reset trigger by design — read nowhere in the effect
   useEffect(() => {
     setLastThreadRootId(null);
   }, [options.channelId]);

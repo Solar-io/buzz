@@ -207,7 +207,7 @@ export function VitalsPanel({
         )}
         {summary.accounts.length > 0 && (
           <>
-            <div className="mt-3.5 grid grid-cols-[5rem_minmax(0,1fr)_8.25rem] items-center gap-x-3 gap-y-2.5 border-t border-dashed border-input pt-3 text-xs">
+            <div className="mt-3.5 grid grid-cols-[5rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2.5 border-t border-dashed border-input pt-3 text-xs">
               {summary.accounts.map((account) => (
                 <AccountRow key={account.id} account={account} />
               ))}
@@ -249,7 +249,7 @@ function AccountRow({ account }: { account: AccountVitals }) {
           />
         )}
       </span>
-      <span className="text-right font-mono text-2xs text-muted-foreground">
+      <span className="whitespace-nowrap text-right font-mono text-2xs text-muted-foreground">
         {account.used !== null
           ? `${percent(account.used)}%${account.resetsAt ? ` · resets ${clock(account.resetsAt)}` : ""}`
           : unknownText(account.state)}

@@ -1,5 +1,5 @@
 import { Bell } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { useState } from "react";
 
 import { sendCardAnswer } from "@/features/channels/lib/cardAnswer.ts";
 import { interviewView } from "@/features/channels/lib/cardInterview.ts";
@@ -15,8 +15,10 @@ import type {
 import type { TimelineMessage } from "@/features/channels/lib/messageBuffer.ts";
 import { useWorkflowActions } from "@/features/workflows/useWorkflowActions";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
-import { cn } from "@/shared/lib/cn";
 import type { NeedRow } from "../lib/workTypes.ts";
+import { ActionButton, type ActionSize, Verdict } from "./ActionButton";
+
+export type { ActionSize };
 
 /**
  * The expanded row's actions (phase-1 §2.2: the first visible row renders
@@ -24,71 +26,6 @@ import type { NeedRow } from "../lib/workTypes.ts";
  * failure; nothing clears optimistically — a row leaves when the relay's own
  * echo (an answer, a 46011/46012, a reminder update) says it is done.
  */
-
-export type ActionSize = "rail" | "page";
-
-type Tone = "primary" | "secondary" | "ghost" | "dashed";
-
-export function ActionButton({
-  children,
-  tone = "secondary",
-  size,
-  disabled,
-  grow,
-  onClick,
-  label,
-}: {
-  children: ReactNode;
-  tone?: Tone;
-  size: ActionSize;
-  disabled?: boolean;
-  grow?: boolean;
-  onClick: () => void;
-  label?: string;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      disabled={disabled}
-      onClick={(event) => {
-        event.stopPropagation();
-        onClick();
-      }}
-      className={cn(
-        "inline-flex items-center justify-center gap-1.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60",
-        size === "rail"
-          ? "h-7 rounded-[7px] px-3 text-xs"
-          : "h-11 rounded-[10px] px-4 text-base",
-        grow && "flex-1",
-        tone === "primary" &&
-          "border border-primary bg-primary text-primary-foreground hover:opacity-90",
-        tone === "secondary" &&
-          "border border-input bg-card text-ink-2 hover:bg-accent hover:text-foreground",
-        tone === "ghost" &&
-          "border-0 bg-transparent text-muted-foreground hover:text-foreground",
-        tone === "dashed" &&
-          "border border-dashed border-input bg-transparent text-muted-foreground hover:text-foreground",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-/** Verdict line under the buttons — the relay's words, verbatim. */
-function Verdict({ text, error }: { text: string; error?: boolean }) {
-  return (
-    <p
-      className={cn(
-        "mt-1.5 break-words font-mono text-2xs",
-        error ? "text-coral-ink" : "text-muted-foreground",
-      )}
-    >
-      {text}
-    </p>
-  );
-}
 
 function FeedbackBell({
   size,
@@ -210,9 +147,12 @@ function AskActions({
                 : "Answer"}
           </ActionButton>
         )}
-        <ActionButton size={size} tone="dashed" onClick={onOpen}>
-          Open
-        </ActionButton>
+        {/* On the phone card the title itself opens the message. */}
+        {size === "rail" && (
+          <ActionButton size={size} tone="dashed" onClick={onOpen}>
+            Open
+          </ActionButton>
+        )}
         <FeedbackBell size={size} target={target} />
       </div>
       {phase.kind === "error" && <Verdict error text={phase.message} />}

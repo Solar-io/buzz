@@ -64,6 +64,7 @@ export function frameTriggers(frame: ObserverFrame): string[] {
 }
 
 interface Draft {
+  superseded?: boolean;
   turnId: string;
   channelId: string | null;
   payloadStart: number | null;
@@ -82,7 +83,8 @@ const STATE_RANK: Record<RunState, number> = { live: 0, stalled: 1, lost: 2 };
  * - Frames group by `(agent, turnId)`; frames with no `turnId` are ignored,
  *   except `agent_panic`, which ends every turn of that agent whose last
  *   frame is not newer than the panic.
- * - `turn_completed` / `turn_error` end their own turn.
+ * - `turn_completed` / `turn_error` end their own turn; so does a NEWER turn
+ *   by the same agent in the same channel (one turn per channel at a time).
  * - `startedAt` is the newest parseable `frame.startedAt` (the harness stamps
  *   it on every frame, so it survives a reload after `turn_started` fell out
  *   of the live lookback), else the earliest frame's `createdAt`.
@@ -134,8 +136,22 @@ export function activeTurns(
         }
       }
     }
+    // The harness runs ONE turn per channel per agent (buzz-acp queue.rs:
+    // per-channel in-flight enforcement), so a newer turn in a channel means
+    // every older one there ended — even when its terminal frame never
+    // reached this buffer (evicted, or outside the live lookback).
+    const newestStart = new Map<string, number>();
+    const startOf = (draft: Draft) => draft.payloadStart ?? draft.earliest;
     for (const draft of turns.values()) {
-      if (draft.ended || dismissed.has(draft.turnId)) {
+      const key = draft.channelId ?? "";
+      newestStart.set(key, Math.max(newestStart.get(key) ?? 0, startOf(draft)));
+    }
+    for (const draft of turns.values()) {
+      draft.superseded =
+        startOf(draft) < (newestStart.get(draft.channelId ?? "") ?? 0);
+    }
+    for (const draft of turns.values()) {
+      if (draft.ended || draft.superseded || dismissed.has(draft.turnId)) {
         continue;
       }
       if (panicAt !== null && panicAt >= draft.lastBeat) {

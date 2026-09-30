@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { toast, Toaster as Sonner, useSonner } from "sonner";
 import { useTheme } from "@/shared/theme/ThemeProvider";
 
@@ -5,11 +6,17 @@ type ToasterProps = React.ComponentProps<typeof Sonner>;
 
 /** Toasts on screen at once; the rest wait behind "N more · Clear all". */
 export const VISIBLE_TOASTS = 3;
-/** Sonner's own default offsets (desktop / phone), kept as the baseline. */
-const OFFSET_TOP_PX = 24;
+/**
+ * Main.dc.html: the stack sits 16px in from the right and 66px down — inside
+ * the Work rail's column and clear of its header row (title, scope toggle,
+ * fold), so a toast never covers the controls it is next to.
+ */
+const OFFSET_TOP_PX = 66;
+const OFFSET_RIGHT_PX = 16;
+const WIDTH_PX = 348;
 const MOBILE_TOP = "calc(env(safe-area-inset-top) + 52px)";
 /** Height the stack header takes above the toasts, incl. its gap. */
-const HEADER_PX = 32;
+const HEADER_PX = 34;
 
 /**
  * Top-right toasts (kept where they were — Sam, 2026-09-29), restyled onto the
@@ -17,9 +24,11 @@ const HEADER_PX = 32;
  * own card through `toast.custom`; every other `toast.*` call in the app
  * keeps sonner's renderer with these classes, so both read as one surface.
  *
- * At most three show. Past that a header reads "N more · Clear all" above
- * the stack — above rather than below because sonner's stack grows on hover,
- * and a header under it would jump.
+ * The stack is a plain list (`expand`), as on the Toasts artboard: a decision
+ * toast hidden behind a newer one is a decision nobody can see. At most three
+ * show; past that a header reads "N more · Clear all". It sits above the
+ * stack rather than below, where it would move every time a toast's height
+ * changed.
  */
 const Toaster = ({ ...props }: ToasterProps) => {
   const { isDark } = useTheme();
@@ -33,12 +42,22 @@ const Toaster = ({ ...props }: ToasterProps) => {
         <div
           data-testid="toast-stack-header"
           // Sonner's own phone breakpoint is 600px, not a Tailwind one.
-          className="fixed top-6 right-6 z-[1000000000] flex w-[356px] items-center justify-between rounded-lg bg-popover/90 px-3 py-1 text-xs text-muted-foreground shadow-elev backdrop-blur-sm max-[600px]:top-[calc(env(safe-area-inset-top)+52px)] max-[600px]:right-4 max-[600px]:left-4 max-[600px]:w-auto"
+          // Desktop geometry rides CSS vars so the phone classes can override.
+          className="fixed top-[var(--t)] right-[var(--r)] z-[1000000000] flex w-[var(--w)] items-center justify-between px-1 text-xs text-muted-foreground max-[600px]:top-[calc(env(safe-area-inset-top)+52px)] max-[600px]:right-4 max-[600px]:left-4 max-[600px]:w-auto"
+          style={
+            {
+              "--t": `${OFFSET_TOP_PX}px`,
+              "--r": `${OFFSET_RIGHT_PX}px`,
+              "--w": `${WIDTH_PX}px`,
+            } as CSSProperties
+          }
         >
-          <span>{hidden} more</span>
+          <span className="rounded-md bg-popover/90 px-2 py-1 shadow-elev backdrop-blur-sm">
+            {hidden} more
+          </span>
           <button
             type="button"
-            className="h-6 rounded-md px-2 font-semibold text-info-ink hover:bg-accent"
+            className="h-6 rounded-md bg-popover/90 px-2 font-semibold text-info-ink shadow-elev backdrop-blur-sm hover:bg-accent"
             onClick={() => toast.dismiss()}
           >
             Clear all
@@ -49,8 +68,11 @@ const Toaster = ({ ...props }: ToasterProps) => {
         theme={isDark ? "dark" : "light"}
         className="toaster group"
         position="top-right"
+        expand
+        gap={10}
         visibleToasts={VISIBLE_TOASTS}
-        offset={{ top: OFFSET_TOP_PX + shift, right: 24 }}
+        style={{ "--width": `${WIDTH_PX}px` } as CSSProperties}
+        offset={{ top: OFFSET_TOP_PX + shift, right: OFFSET_RIGHT_PX }}
         // Sonner makes the toaster full-width below 600px. On a phone that puts
         // it over the shell's top bar, which is its own kind of collision, so
         // below md it sits just under the bar instead. 45px is the phone bar's

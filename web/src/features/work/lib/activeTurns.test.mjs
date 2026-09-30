@@ -120,6 +120,28 @@ test("startedAt comes from frame.startedAt when turn_started is outside the wind
   assert.equal(bare[0].startedAt, 1000);
 });
 
+test("a newer turn in the same channel ends the older one there", () => {
+  // The old turn's terminal frame never reached the buffer (evicted, or
+  // outside the live lookback). One turn per channel per agent: the newer
+  // turn in chan-1 means the older one is over — it must not read "stalled".
+  const frames = [
+    frame("turn_started", 1000, { turnId: "old" }),
+    frame("turn_started", 1500, { turnId: "new" }),
+    frame("turn_liveness", 1510, { turnId: "new" }),
+    // Another channel's old turn is NOT superseded by chan-1's.
+    frame("turn_started", 1005, { turnId: "elsewhere", channelId: "chan-2" }),
+  ];
+  assert.ok(frames.length > 0, "fixture has frames");
+  const rows = activeTurns(new Map([[AGENT, frames]]), 1512);
+  assert.deepEqual(
+    rows.map((row) => [row.turnId, row.state]),
+    [
+      ["new", "live"],
+      ["elsewhere", "stalled"],
+    ],
+  );
+});
+
 test("live rows sort before stalled ones and triggers are collected", () => {
   const frames = [
     frame("turn_started", 1000, {

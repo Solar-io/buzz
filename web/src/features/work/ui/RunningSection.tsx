@@ -70,13 +70,16 @@ export function RunningSection({
       {showHeader && (
         <SectionHeader
           label="Running"
-          count={
-            stalled > 0 ? `${rows.length} · ${stalled} stalled` : rows.length
-          }
+          count={rows.length}
           tone="text-honey-ink"
           marker={<StateHex tone="work" size={10} pulse={rows.length > 0} />}
           collapsed={collapsed}
           onToggle={onToggle}
+          trailing={
+            stalled > 0 ? (
+              <span className="text-coral-ink">{stalled} stalled</span>
+            ) : null
+          }
         />
       )}
       {!collapsed &&

@@ -121,7 +121,7 @@ function RowTitle({ row }: { row: Row }) {
   return row.source.kind === "feedback" ? (
     <FeedbackTitle reminder={row.source.reminder} fallback={row.title} />
   ) : (
-    <>{row.title}</>
+    row.title
   );
 }
 

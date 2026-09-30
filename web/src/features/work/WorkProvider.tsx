@@ -26,7 +26,13 @@ import {
   type PendingApproval,
   pendingApprovals,
 } from "./lib/approvalEvents.ts";
-import { QUEUED_TTL_S, type ReactionEvent } from "./lib/queuedReactions.ts";
+import {
+  QUEUED_TTL_S,
+  REACTION_SEEN,
+  REACTION_WORKING,
+  type ReactionEvent,
+} from "./lib/queuedReactions.ts";
+import { mergeById, useSettledKey } from "./lib/useSettledKey.ts";
 import {
   localMidnight,
   type MetricEntry,
@@ -56,7 +62,6 @@ import {
  * them directly rather than subscribing twice.
  */
 
-const RESUBSCRIBE_DEBOUNCE_MS = 2_000;
 /** No EOSE for metrics by then: the REQ is not being served — "unavailable". */
 const METRICS_EOSE_TIMEOUT_MS = 15_000;
 
@@ -84,22 +89,6 @@ const WorkContext = createContext<WorkContextValue | null>(null);
 
 export function useWorkContext(): WorkContextValue | null {
   return useContext(WorkContext);
-}
-
-/** Debounce a string key so a burst of changes re-subscribes once. */
-function useSettledKey(key: string): string {
-  const [settled, setSettled] = useState(key);
-  useEffect(() => {
-    const timer = setTimeout(() => setSettled(key), RESUBSCRIBE_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [key]);
-  return settled;
-}
-
-function mergeById<T extends { id: string }>(previous: T[], event: T): T[] {
-  return previous.some((existing) => existing.id === event.id)
-    ? previous
-    : [...previous, event];
 }
 
 function canDecrypt(): boolean {
@@ -190,8 +179,17 @@ export function WorkProvider({
       nowS,
     ).map((filter) =>
       session.subscribe(filter, {
-        onEvent: (event) =>
-          setReactions((previous) => mergeById(previous, event)),
+        // Only the harness's two markers and their removals: the same REQ
+        // also returns every 👍 an agent left in the last two hours.
+        onEvent: (event) => {
+          if (
+            event.kind === 5 ||
+            event.content === REACTION_SEEN ||
+            event.content === REACTION_WORKING
+          ) {
+            setReactions((previous) => mergeById(previous, event));
+          }
+        },
       }),
     );
     return () => {

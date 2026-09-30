@@ -47,7 +47,7 @@ export function BuzzToast({
     <div
       role={spec.role}
       data-testid={`buzz-toast-${spec.variant}`}
-      className="w-full overflow-hidden rounded-xl border border-input bg-popover text-popover-foreground shadow-elev"
+      className="w-[min(var(--width,348px),calc(100vw-2rem))] overflow-hidden rounded-xl border border-input bg-popover text-popover-foreground shadow-elev"
     >
       <div className="flex gap-2.5 px-3 py-2.75">
         <ToastMark icon={spec.icon} />

@@ -64,7 +64,8 @@ export function usePhoneLayout(): boolean {
 }
 
 const SIDEBAR_WIDTH_KEY = "buzz.sidebar-width.v1";
-const DEFAULT_SIDEBAR_WIDTH = 232;
+/** The Main artboard's sidebar (web redesign); a stored width still wins. */
+const DEFAULT_SIDEBAR_WIDTH = 260;
 const MIN_SIDEBAR_WIDTH = 200;
 const MAX_SIDEBAR_WIDTH = 480;
 

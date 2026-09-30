@@ -135,7 +135,9 @@ export function RightPaneHost({
         className={cn(
           "buzz-right-dock contents",
           layout.tabs.length > 0 &&
-            "lg:flex lg:min-h-0 lg:w-[var(--dock-width)] lg:shrink-0 lg:flex-col lg:border-l lg:border-border",
+            // Sticky + self-start: on a long view page the ROW scrolls, and
+            // the dock must stay in the viewport rather than ride the page.
+            "lg:sticky lg:top-0 lg:flex lg:h-full lg:min-h-0 lg:w-[var(--dock-width)] lg:shrink-0 lg:flex-col lg:self-start lg:border-l lg:border-border",
         )}
         style={
           {

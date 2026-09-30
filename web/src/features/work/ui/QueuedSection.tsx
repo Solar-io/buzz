@@ -33,9 +33,9 @@ function FoldedSummary({
     >
       <ChevronRight aria-hidden className="size-3 shrink-0" />
       {marker}
-      {label}
+      <span className="shrink-0 whitespace-nowrap">{label}</span>
       <span className="font-mono tracking-normal text-foreground">{count}</span>
-      <span className="ml-auto min-w-0 truncate text-xs font-medium normal-case tracking-normal">
+      <span className="ml-auto min-w-0 truncate pl-2 text-xs font-medium normal-case tracking-normal">
         {summary}
       </span>
     </button>

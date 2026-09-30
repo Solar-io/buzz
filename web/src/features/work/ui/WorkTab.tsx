@@ -298,6 +298,9 @@ export function WorkTab({
     <aside
       aria-label="Work"
       data-testid="work-rail"
+      // A content pane, so the custom-gradient theme cards it like the
+      // thread and thinking panes it shares the dock with.
+      data-custom-content-pane="work"
       className="flex h-full min-h-0 w-full flex-col gap-3 overflow-y-auto bg-rail p-3.5"
     >
       <div className="flex items-center gap-2">

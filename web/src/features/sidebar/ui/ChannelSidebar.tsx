@@ -481,7 +481,9 @@ export function ChannelSidebar({
             D4): Feedback lives in Work's Needs you; the Reminders view stays
             reachable from Work, More and ⌘K. */}
         <div>
-          <div className="lg:hidden">
+          {/* Tablet only: at lg Work is the docked rail, and on a phone
+              it is the first tab of the bottom bar. */}
+          <div className="hidden md:block lg:hidden">
             <SidebarNavButton
               selected={workSelected}
               label="Work"
