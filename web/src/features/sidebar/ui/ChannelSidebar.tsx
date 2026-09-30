@@ -30,9 +30,17 @@ import {
   type CollapsedSections,
 } from "@/features/sidebar/lib/collapsedSections.ts";
 import {
-  SIDEBAR_LIST_OPTIONS,
-  sortUnreadFirst,
-} from "@/features/sidebar/lib/sectionList.ts";
+  holdOrder,
+  rankSection,
+  type RankFacts,
+} from "@/features/sidebar/lib/sectionOrder.ts";
+import {
+  noteSidebarVisit,
+  useHeldKeys,
+  useOpenItemSnapshot,
+  useVisitScores,
+} from "@/features/sidebar/lib/useSidebarOrder.ts";
+import { visitScore } from "@/features/sidebar/lib/visitFrequency.ts";
 import { SidebarSection } from "@/features/sidebar/ui/SidebarSection";
 import { SidebarNavButton } from "@/features/sidebar/ui/SidebarNavButton";
 import {
@@ -224,6 +232,7 @@ export function ChannelSidebar({
   const prefs = readState.prefs;
   const links = useSidebarLinks({
     onOpenOverlay: actions.onOpenShortcutOverlay,
+    onVisit: (id) => noteSidebarVisit(`link:${id}`),
     favorites: {
       isFavorite: (id) => isFavorite(prefs, { kind: "link", id }),
       set: (id, on) => actions.onSetFavorite({ kind: "link", id }, on),
@@ -267,11 +276,74 @@ export function ChannelSidebar({
     lastMessage && lastMessage.authorPubkey !== dmIdentity.selfPubkey
       ? isUnread(readState.read, channel.id, lastMessage.created_at)
       : false;
-  // Unread channels float to the top of Channels (SIDEBAR_LIST_OPTIONS);
-  // the incoming order is kept within each group.
-  const channelRows = SIDEBAR_LIST_OPTIONS.unreadFirst
-    ? sortUnreadFirst(sections.channels, rowUnread)
-    : sections.channels;
+  // Favorites and Channels: unread first, then most frequently used, then
+  // newest activity / name (sectionOrder.ts). The open row ranks by its
+  // facts at the moment it was opened, and the whole order holds while the
+  // pointer is over the list, so nothing slides under a click.
+  const visits = useVisitScores();
+  const now = Date.now();
+  const channelFacts = (channel: ChannelSummary): RankFacts => ({
+    unread: rowUnread(channel),
+    score: visitScore(visits, channel.id, now),
+    lastActivity:
+      readState.activity.get(channel.id)?.createdAt ?? channel.updatedAt,
+    name: channel.name,
+  });
+  const favoriteFacts = (item: FavoriteItem): RankFacts => {
+    switch (item.kind) {
+      case "channel":
+      case "forum":
+        return channelFacts(item.channel);
+      case "dm":
+        return {
+          unread: dmUnread(item.dm),
+          score: visitScore(visits, item.key, now),
+          lastActivity:
+            item.dm.lastMessage?.created_at ?? item.dm.channel.updatedAt,
+          name: item.dm.channel.name,
+        };
+      case "link":
+        return {
+          unread: false,
+          score: visitScore(visits, item.key, now),
+          lastActivity: 0,
+          name: item.shortcut.label,
+        };
+    }
+  };
+  const openSnapshot = useOpenItemSnapshot(selectedId, (key) => {
+    const favorite = sections.favorites.find((item) => item.key === key);
+    if (favorite) return favoriteFacts(favorite);
+    const channel = sections.channels.find((row) => row.id === key);
+    return channel ? channelFacts(channel) : undefined;
+  });
+  const [pointerInList, setPointerInList] = useState(false);
+  const liveFavorites = rankSection(
+    sections.favorites,
+    (item) => item.key,
+    favoriteFacts,
+    { frozen: openSnapshot },
+  );
+  const liveChannels = rankSection(
+    sections.channels,
+    (channel) => channel.id,
+    channelFacts,
+    { frozen: openSnapshot },
+  );
+  const heldFavoriteKeys = useHeldKeys(
+    liveFavorites.map((item) => item.key),
+    pointerInList,
+  );
+  const heldChannelKeys = useHeldKeys(
+    liveChannels.map((channel) => channel.id),
+    pointerInList,
+  );
+  const favoriteRows = heldFavoriteKeys
+    ? holdOrder(liveFavorites, (item) => item.key, heldFavoriteKeys)
+    : liveFavorites;
+  const channelRows = heldChannelKeys
+    ? holdOrder(liveChannels, (channel) => channel.id, heldChannelKeys)
+    : liveChannels;
 
   const renderChannel =
     (glyph: (channel: ChannelSummary) => ReactNode) =>
@@ -414,7 +486,11 @@ export function ChannelSidebar({
       <RelayConnectionCard status={relayStatus} />
       {/* The only scrolling region: the footer below is a sibling, so the
           list scrolls above it and never under it. */}
-      <nav className="buzz-sidebar-scrollbar flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-2.5 pt-1 pb-3">
+      <nav
+        onPointerEnter={() => setPointerInList(true)}
+        onPointerLeave={() => setPointerInList(false)}
+        className="buzz-sidebar-scrollbar flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-2.5 pt-1 pb-3"
+      >
         {channelCount === 0 && (
           <p className="px-2 py-4 text-sm text-sidebar-foreground/60">
             {connected
@@ -423,11 +499,11 @@ export function ChannelSidebar({
           </p>
         )}
         {sections.favorites.length > 0 && (
-          // Channels, forums, DMs and links the viewer pinned, in add order
-          // (never unread-sorted). Replaced the channel-only Starred.
+          // Channels, forums, DMs and links the viewer pinned, unread first
+          // then most used (Sam 2026-09-29). Replaced the channel-only Starred.
           <SidebarSection
             label="Favorites"
-            items={sections.favorites}
+            items={favoriteRows}
             getKey={(item) => item.key}
             renderItem={renderFavorite}
             isSelected={favoriteSelected}

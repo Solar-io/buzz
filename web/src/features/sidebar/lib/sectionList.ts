@@ -1,40 +1,22 @@
 /**
  * Pure list logic for the sidebar's collapsible sections (left-nav redesign,
- * 2026-09-28): unread-first ordering, truncation with an "N more" row, the
- * selected row always staying visible, and what a collapsed header shows.
+ * 2026-09-28): truncation with an "N more" row, the selected row always
+ * staying visible, and what a collapsed header shows. Row ORDER for
+ * Favorites and Channels lives in sectionOrder.ts (unread, then most used).
  *
- * The two tunables live here and only here, so the sidebar and its tests read
- * the same values.
+ * The tunable lives here and only here, so the sidebar and its tests read
+ * the same value.
  */
 
-/** Sidebar list settings (the design's `visibleItems` / `unreadFirst`). */
+/** Sidebar list settings (the design's `visibleItems`). */
 export interface SidebarListOptions {
   /** Rows an open section shows before the "N more" row. */
   visibleItems: number;
-  /** Sort unread channels to the top of the Channels section. */
-  unreadFirst: boolean;
 }
 
 export const SIDEBAR_LIST_OPTIONS: SidebarListOptions = {
   visibleItems: 6,
-  unreadFirst: true,
 };
-
-/**
- * Unread rows first, otherwise the incoming order (stable). Returns a new
- * array; the input is React-owned and never mutated.
- */
-export function sortUnreadFirst<T>(
-  items: readonly T[],
-  isUnread: (item: T) => boolean,
-): T[] {
-  const unread: T[] = [];
-  const read: T[] = [];
-  for (const item of items) {
-    (isUnread(item) ? unread : read).push(item);
-  }
-  return [...unread, ...read];
-}
 
 /** What an open section renders. */
 export interface TruncatedSection<T> {

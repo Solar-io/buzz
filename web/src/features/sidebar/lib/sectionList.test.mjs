@@ -3,7 +3,6 @@ import { test } from "node:test";
 import {
   SIDEBAR_LIST_OPTIONS,
   sectionHeaderState,
-  sortUnreadFirst,
   truncateSection,
 } from "./sectionList.ts";
 
@@ -11,9 +10,8 @@ import {
 // limit or the options under test.
 const letters = (n) => "abcdefghijklmnopqrstuvwxyz".slice(0, n).split("");
 
-test("the design's defaults: 6 visible rows, unread first", () => {
+test("the design's default: 6 visible rows", () => {
   assert.equal(SIDEBAR_LIST_OPTIONS.visibleItems, 6);
-  assert.equal(SIDEBAR_LIST_OPTIONS.unreadFirst, true);
 });
 
 test("a list at or under the limit shows whole, no more row", () => {
@@ -64,13 +62,6 @@ test("a selected item inside the cutoff is not duplicated", () => {
   });
   assert.deepEqual(r.shown, ["a", "b", "c", "d", "e", "f"]);
   assert.equal(r.moreLabel, "8 more");
-});
-
-test("sortUnreadFirst is stable and does not mutate", () => {
-  const input = ["a", "B", "c", "D", "e"];
-  const unread = (s) => s === s.toUpperCase();
-  assert.deepEqual(sortUnreadFirst(input, unread), ["B", "D", "a", "c", "e"]);
-  assert.deepEqual(input, ["a", "B", "c", "D", "e"]);
 });
 
 test("an open header shows no count and no dot", () => {
