@@ -63,6 +63,12 @@ Rejections are prefixed `invalid: task-status: <rule>`.
 4. Show title and progress only if `D.turn == L.turn`.
 5. Queries: Everywhere = `{"kinds":[30624],"since":now−86400}`; This channel adds
    `#h`.
+6. **Live updates need `#h`.** Measured against a worktree relay (e2e
+   `member_reads_agent_status_non_member_cannot`): the relay never fans a
+   channel-scoped event out to a *global* subscription (`subscription.rs`
+   `fan_out_scoped`). The Everywhere query above returns stored heads, but a
+   live Work tab must hold a subscription whose filter carries `#h` with the
+   viewer's channel ids (one REQ may list many).
 
 ## File-by-file change map
 
