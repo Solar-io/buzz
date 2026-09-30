@@ -3431,8 +3431,9 @@ async fn test_nip29_relay_rejects_last_owner_self_demotion() {
     );
 }
 
-/// Phase 6 Shelf: a `["t","shelf"]` share followed by 250 newer plain
-/// messages must still come back for `{"#t":["shelf"],"limit":10}`. Before the
+/// Phase 6 Shelf: a `["t","shelf"]` share followed by 50 newer plain
+/// messages must still come back for `{"#t":["shelf"],"limit":10}` (50 stays under
+/// the default 60 human messages/min limit). Before the
 /// `#t` SQL pushdown the relay cut the page at the newest 10 rows and matched
 /// `#t` afterwards, answering empty.
 #[tokio::test]
@@ -3457,7 +3458,9 @@ async fn shelf_query_finds_old_share_behind_newer_messages() {
     let ok = client.send_event(share).await.expect("send share");
     assert!(ok.accepted, "share rejected: {}", ok.message);
 
-    for i in 0..250 {
+    for i in 0..50 {
+        // Stay under the default 10 WS events/sec admission budget.
+        tokio::time::sleep(Duration::from_millis(150)).await;
         let ok = client
             .send_text_message(&keys, &channel, &format!("plain {i}"), 9)
             .await
