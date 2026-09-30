@@ -40,6 +40,8 @@ pub mod presence;
 pub mod private_managed_agent;
 /// Canonical relay runtime identities.
 pub mod relay;
+/// Agent task status (kind 30624) — wire validator shared by relay, SDK and CLI.
+pub mod task_status;
 /// Tenant identity — the server-resolved community key carried on scoped paths.
 pub mod tenant;
 /// Schnorr signature and event ID verification.

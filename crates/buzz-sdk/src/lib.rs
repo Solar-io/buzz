@@ -16,6 +16,8 @@ pub mod builders;
 pub mod items;
 pub mod mentions;
 pub mod nip_oa;
+/// Kind-30624 agent task status builders.
+pub mod task_status;
 
 pub use builders::*;
 pub use items::{build_item, item_tags, new_item_id, next_created_at, ItemDraft};

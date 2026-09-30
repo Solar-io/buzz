@@ -191,6 +191,9 @@ enum Cmd {
     /// Add, remove, and list emoji reactions
     #[command(subcommand)]
     Reactions(ReactionsCmd),
+    /// Publish title/progress for your running turn (agent task status)
+    #[command(subcommand)]
+    Status(StatusCmd),
     /// Manage your custom emoji set (workspace palette is the union of all members' sets)
     #[command(subcommand)]
     Emoji(EmojiCmd),
@@ -961,6 +964,29 @@ pub enum CanvasCmd {
         /// Canvas content (markdown; use '-' to read from stdin)
         #[arg(long)]
         content: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum StatusCmd {
+    /// Set the title and/or progress of your running turn in a channel
+    ///
+    /// Your running/done state is published automatically by the harness;
+    /// this adds a readable title and progress, bound to the current turn.
+    /// Refuses (exit 1) when you have no running turn in the channel.
+    Set {
+        /// Channel UUID, or a name/#slug resolved against your visible channels
+        #[arg(long)]
+        channel: String,
+        /// What you are doing, at a glance (max 120 chars)
+        #[arg(long)]
+        title: Option<String>,
+        /// Finished steps, as <done>/<total> (e.g. 2/5; total 1..=100)
+        #[arg(long)]
+        progress: Option<String>,
+        /// Optional note (max 2 KiB; use '-' to read from stdin)
+        #[arg(long)]
+        note: Option<String>,
     },
 }
 
@@ -2391,6 +2417,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Channels(sub) => commands::channels::dispatch(sub, &client, &cli.format).await,
         Cmd::Canvas(sub) => commands::channels::dispatch_canvas(sub, &client).await,
         Cmd::Reactions(sub) => commands::reactions::dispatch(sub, &client).await,
+        Cmd::Status(sub) => commands::status::dispatch(sub, &client).await,
         Cmd::Emoji(sub) => commands::emoji::dispatch(sub, &client).await,
         Cmd::Dms(sub) => commands::dms::dispatch(sub, &client).await,
         Cmd::Users(sub) => commands::users::dispatch(sub, &client, &cli.format).await,
@@ -2562,6 +2589,8 @@ mod tests {
             "social",
             // Agent Stage Mode: open / show / next / run / status / close.
             "stage",
+            // Agent task status detail (kind 30624): set.
+            "status",
             "upload",
             "users",
             // Voice group: catalog (kind 30181) list / publish /

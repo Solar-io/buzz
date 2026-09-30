@@ -454,6 +454,9 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         | super::push_lease::KIND_PUSH_LEASE => { Ok(Scope::UsersWrite) }
         // NIP-AM: agent turn metrics are agent-authored global events (encrypted to owner).
         KIND_AGENT_TURN_METRIC => Ok(Scope::MessagesWrite),
+        // Agent task status: h-scoped, member-readable lifecycle/detail heads
+        // (phase-8 D8.9). `h` is enforced by the kind's own validator.
+        buzz_core::kind::KIND_AGENT_TASK_STATUS => Ok(Scope::MessagesWrite),
         // NIP-56 reports are ordinary member writes into the mod-only queue.
         // Ingest persists them to `moderation_reports` and suppresses public
         // storage/fanout; reports are signals, never enforcement triggers.
@@ -3168,6 +3171,10 @@ async fn ingest_event_inner(
         }
     }
 
+    if kind_u32 == buzz_core::kind::KIND_AGENT_TASK_STATUS {
+        super::task_status_ingest::validate(&event)?;
+    }
+
     if kind_u32 == KIND_EVENT_REMINDER {
         validate_event_reminder(&event)
             .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
@@ -4382,6 +4389,24 @@ mod tests {
             required_scope_for_kind(KIND_AGENT_TURN_METRIC, &dummy).unwrap(),
             Scope::MessagesWrite,
             "kind:44200 requires MessagesWrite scope"
+        );
+    }
+
+    #[test]
+    fn task_status_requires_messages_write_scope() {
+        let dummy = make_dummy_event();
+        assert_eq!(
+            required_scope_for_kind(30624, &dummy),
+            Ok(Scope::MessagesWrite),
+            "kind:30624 must be accepted with MessagesWrite scope"
+        );
+        assert!(
+            !is_global_only_kind(30624),
+            "kind:30624 is h-scoped and must never be global-only"
+        );
+        assert!(
+            !requires_h_channel_scope(30624),
+            "kind:30624's h requirement lives in its own validator"
         );
     }
 

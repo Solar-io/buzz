@@ -20,6 +20,7 @@ pub mod repos;
 pub mod social;
 pub mod stage;
 pub mod stage_tag;
+pub mod status;
 pub mod upload;
 pub mod users;
 pub mod voices;
