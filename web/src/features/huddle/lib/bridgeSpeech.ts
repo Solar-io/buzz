@@ -15,9 +15,11 @@
 
 import type { AgentVoiceSelection } from "../../voice/lib/agentVoiceSelection.ts";
 import {
+  type Arrival,
   type BridgeRateHistory,
   type JitterState,
   shouldStartPlayback,
+  updateRateHistory,
 } from "./bridgeJitterBuffer.ts";
 
 /** The bridge's output format: PCM16LE mono 24 kHz. */
@@ -295,6 +297,8 @@ export async function playBridgeResponse(
   let firstArrivalAt: number | null = null;
   let underruns = 0;
   let flowing = false;
+  /** Arrival log for {@link updateRateHistory} at stream end. */
+  const arrivals: Arrival[] = [];
 
   const jitterState = (streamDone: boolean): JitterState => ({
     bufferedSeconds: pendingSamples / BRIDGE_SAMPLE_RATE,
@@ -306,6 +310,7 @@ export async function playBridgeResponse(
     underruns,
     expectedSeconds,
     historyRate: history?.rate ?? null,
+    lengthScale: history?.lengthScale ?? null,
     streamDone,
   });
 
@@ -341,10 +346,9 @@ export async function playBridgeResponse(
       } catch {
         // already closed
       }
-      // Buffered-not-yet-scheduled audio is dropped too: an interrupt
-      // silences everything, not just what reached the clock.
-      pending.length = 0;
-      pendingSamples = 0;
+      // Buffered-not-yet-scheduled audio in `pending` is simply never
+      // scheduled (the loop exits without flushing); only what already
+      // reached the clock needs stopping.
       stopScheduled();
       break;
     }
@@ -370,6 +374,10 @@ export async function playBridgeResponse(
     }
     receivedSamples += arrived;
     pendingSamples += arrived;
+    arrivals.push({
+      t: audioContext.currentTime,
+      seconds: arrived / BRIDGE_SAMPLE_RATE,
+    });
 
     if (flowing && queueAt <= audioContext.currentTime) {
       // UNDERRUN: the schedule sounded out before this audio arrived. Hold
@@ -382,10 +390,9 @@ export async function playBridgeResponse(
     }
   }
 
-  if (completed && history && firstArrivalAt !== null) {
-    const elapsed = audioContext.currentTime - firstArrivalAt;
-    history.rate =
-      elapsed > 0 ? afterFirstSamples / BRIDGE_SAMPLE_RATE / elapsed : null;
+  // An interrupted stream is not a measurement (its tail never arrived).
+  if (completed && history) {
+    updateRateHistory(history, { arrivals, expectedSeconds });
   }
 
   // Settle when the tail of the schedule has sounded (setTimeout is the
