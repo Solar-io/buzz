@@ -31,8 +31,8 @@ function Badge({ count, tone }: { count: number; tone: "need" | "ink" }) {
 
 /**
  * The phone's bottom tab bar (PhoneWork artboard; phase-1 §6): Work,
- * Channels, More. Items and Shelf join as their phases ship — a tab appears
- * only once its page exists.
+ * Channels, More. Items (Phase 5) lives in More; Shelf joins as its phase
+ * ships — an entry appears only once its page exists.
  *
  * Rendered by AppShell below the content row (not fixed over it), so nothing
  * is ever hidden behind the bar; the bottom padding is the home indicator.

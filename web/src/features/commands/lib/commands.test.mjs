@@ -67,10 +67,10 @@ async function run(text, ctx) {
   return resolved.spec.run(ctx, resolved.args);
 }
 
-test("the registry ships the scratch trio, then remind, handoff and status", () => {
+test("the registry ships the scratch trio, bug and backlog, then remind, handoff and status", () => {
   assert.deepEqual(
     COMMANDS.map((command) => command.id),
-    ["new", "exit", "keep", "remind", "handoff", "status"],
+    ["new", "exit", "keep", "bug", "backlog", "remind", "handoff", "status"],
   );
   // No channel open: nothing is offered, so nothing can lie.
   const { ctx } = context({ channel: null });
@@ -96,7 +96,7 @@ test("an unknown command resolves to unknown, never to text", () => {
     kind: "unknown",
     name: "remnid",
   });
-  // /bug is a later phase: until it ships it is unknown, not a message.
+  // /bug ships, but a composer with no item host cannot run it.
   assert.deepEqual(resolveCommand(parseCommand("/bug it broke"), ctx), {
     kind: "unknown",
     name: "bug",

@@ -12,6 +12,7 @@ test("?stage= keeps a 64-hex open id alongside c", () => {
     view: undefined,
     stage: ID,
     reply: undefined,
+    item: undefined,
   });
 });
 
@@ -28,6 +29,7 @@ test("existing params are unchanged (view whitelist, m, c)", () => {
     view: "inbox",
     stage: undefined,
     reply: undefined,
+    item: undefined,
   });
   assert.equal(validateReposSearch({ view: "bogus" }).view, undefined);
 });
@@ -41,4 +43,24 @@ test("?reply= only counts alongside the message it replies to", () => {
     validateReposSearch({ c: "x", m: "y", reply: "yes" }).reply,
     undefined,
   );
+});
+
+test("?item= opens one item, only on the Items view and only as an item id", () => {
+  assert.equal(
+    validateReposSearch({ view: "items", item: "7f3k2m9qa1bc" }).item,
+    "7f3k2m9qa1bc",
+  );
+  assert.equal(validateReposSearch({ view: "items" }).view, "items");
+  // Elsewhere it means nothing, so it is not kept.
+  assert.equal(
+    validateReposSearch({ view: "work", item: "7f3k2m9qa1bc" }).item,
+    undefined,
+  );
+  // Not a Crockford id: `u` is outside the alphabet; 11 and 13 chars.
+  for (const bad of ["7f3k2m9qa1bu", "7f3k2m9qa1b", "7f3k2m9qa1bcd", 7]) {
+    assert.equal(
+      validateReposSearch({ view: "items", item: bad }).item,
+      undefined,
+    );
+  }
 });
