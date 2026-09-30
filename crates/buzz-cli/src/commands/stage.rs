@@ -505,6 +505,7 @@ fn send_params(
         supersede: false,
         card: None,
         stage: Some(StageAttachment { tag, media }),
+        share: None,
     }
 }
 

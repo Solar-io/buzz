@@ -44,7 +44,12 @@ pub struct MediaHead {
 }
 
 /// Build an `imeta` tag array from a BlobDescriptor (NIP-92 media metadata).
-pub fn build_imeta_tag(d: &BlobDescriptor) -> Vec<String> {
+///
+/// `filename`, when given, is appended LAST as `filename <name>` (Phase 6
+/// Shelf): markdown and HTML carry no magic bytes and are stored as
+/// `application/octet-stream`, so the web previewer picks a renderer from the
+/// filename's extension while `m` stays the truthful stored type.
+pub fn build_imeta_tag(d: &BlobDescriptor, filename: Option<&str>) -> Vec<String> {
     let mut tag = vec![
         "imeta".to_string(),
         format!("url {}", d.url),
@@ -64,7 +69,69 @@ pub fn build_imeta_tag(d: &BlobDescriptor) -> Vec<String> {
     if let Some(dur) = d.duration {
         tag.push(format!("duration {dur}"));
     }
+    if let Some(name) = filename {
+        tag.push(format!("filename {name}"));
+    }
     tag
+}
+
+/// Maximum bytes of a shared filename (the common filesystem NAME_MAX).
+const MAX_SHARE_FILENAME_BYTES: usize = 255;
+
+/// The display filename for a shared file: the basename only, every control
+/// character (newlines included) replaced by a space, trimmed, and cut to at
+/// most 255 bytes on a char boundary. This is the value `imeta` carries; the
+/// markdown link label escapes it further with [`share_link_label`].
+pub fn sanitize_share_filename(path: &std::path::Path) -> Result<String, CliError> {
+    let base = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .ok_or_else(|| CliError::Usage(format!("{} has no file name", path.display())))?;
+    let cleaned: String = base
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let mut name = cleaned.trim().to_string();
+    if name.len() > MAX_SHARE_FILENAME_BYTES {
+        let mut cut = MAX_SHARE_FILENAME_BYTES;
+        while !name.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        name.truncate(cut);
+    }
+    if name.is_empty() {
+        return Err(CliError::Usage(format!(
+            "{} has no usable file name",
+            path.display()
+        )));
+    }
+    Ok(name)
+}
+
+/// Escape a sanitized filename for use as a markdown link label: `\`, `]`
+/// and `)` are backslash-escaped so a hostile name cannot break out of the
+/// `[label](url)` link.
+pub fn share_link_label(filename: &str) -> String {
+    let mut out = String::with_capacity(filename.len());
+    for c in filename.chars() {
+        if matches!(c, '\\' | ']' | ')') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Client-side type policy for [`BuzzClient::upload_file_with`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UploadMode {
+    /// `buzz upload file` / `messages send --file`: the narrow media
+    /// allow-list, with the legacy `/media/upload` fallback.
+    Media,
+    /// `buzz share`: no client allow-list — the relay's generic file path is
+    /// the validator (it denies active content and executables). Never falls
+    /// back to legacy `/media/upload`, which rejects generic files.
+    Any,
 }
 
 /// MIME types accepted for upload.
@@ -100,6 +167,10 @@ const MAX_IMAGE_BYTES: u64 = 50 * 1024 * 1024;
 
 /// Maximum file size for video uploads (500 MB).
 const MAX_VIDEO_BYTES: u64 = 500 * 1024 * 1024;
+
+/// Maximum size for generic (non-image, non-video) files — the relay's
+/// generic-file cap (`buzz-media` `default_max_file_bytes`, 100 MB).
+const MAX_GENERIC_BYTES: u64 = 100 * 1024 * 1024;
 
 /// Sign a NIP-98 HTTP auth event (kind:27235) and return the Authorization header value.
 ///
@@ -221,6 +292,27 @@ fn extract_relay_message_field(body: &str) -> Option<String> {
                 .or_else(|| v.get("message"))
                 .and_then(|m| m.as_str().map(str::to_string))
         })
+}
+
+/// Map a generic (`UploadMode::Any`) upload failure onto the CLI's exit-code
+/// contract. A 404/405 means the relay predates the generic `/upload` path
+/// (exit 2, never a legacy fallback); any other client rejection — a blocked
+/// type, a file too large — is the relay's verdict on the input, surfaced
+/// verbatim as a usage error (exit 1). Auth (401/403), throttling (429) and
+/// server errors keep their relay classification.
+fn generic_upload_error(e: CliError) -> CliError {
+    match e {
+        CliError::Relay { status, body } if matches!(status, 404 | 405) => CliError::Relay {
+            status,
+            body: format!("relay does not support generic file uploads ({body})"),
+        },
+        CliError::Relay { status, body }
+            if (400..500).contains(&status) && !matches!(status, 401 | 403 | 429) =>
+        {
+            CliError::Usage(body)
+        }
+        other => other,
+    }
 }
 
 fn should_retry_legacy_upload(status: reqwest::StatusCode) -> bool {
@@ -1124,6 +1216,15 @@ impl BuzzClient {
     /// Upload a file to the relay's Blossom endpoint.
     /// Returns a BlobDescriptor on success.
     pub async fn upload_file(&self, file_path: &str) -> Result<BlobDescriptor, CliError> {
+        self.upload_file_with(file_path, UploadMode::Media).await
+    }
+
+    /// Upload a file under the given [`UploadMode`] policy.
+    pub async fn upload_file_with(
+        &self,
+        file_path: &str,
+        mode: UploadMode,
+    ) -> Result<BlobDescriptor, CliError> {
         // 1. Read file — validate it exists and is a regular file
         let metadata = std::fs::metadata(file_path)
             .map_err(|e| CliError::Other(format!("cannot access {file_path}: {e}")))?;
@@ -1142,7 +1243,7 @@ impl BuzzClient {
             .map(|t| canonical_upload_mime(t.mime_type()).to_string())
             .unwrap_or_else(|| "application/octet-stream".to_string());
 
-        if !ALLOWED_MIMES.contains(&mime.as_str()) {
+        if mode == UploadMode::Media && !ALLOWED_MIMES.contains(&mime.as_str()) {
             return Err(CliError::Usage(format!("unsupported file type: {mime}")));
         }
 
@@ -1172,8 +1273,10 @@ impl BuzzClient {
         // 3. Size check
         let max = if mime.starts_with("video/") {
             MAX_VIDEO_BYTES
-        } else {
+        } else if mime.starts_with("image/") || mode == UploadMode::Media {
             MAX_IMAGE_BYTES
+        } else {
+            MAX_GENERIC_BYTES
         };
         if bytes.len() as u64 > max {
             return Err(CliError::Usage(format!(
@@ -1234,6 +1337,10 @@ impl BuzzClient {
         // If the primary /upload endpoint definitively doesn't exist on this relay version
         // (404 or 405), fall back to the legacy /media/upload endpoint.  The 404/405 switch
         // itself is not retried; only transient failures on the selected legacy endpoint are.
+        if mode == UploadMode::Any {
+            return result.map_err(generic_upload_error);
+        }
+
         match result {
             Ok(desc) => return Ok(desc),
             Err(CliError::Relay { status: s, body: _ })
@@ -1726,7 +1833,10 @@ mod retry_tests {
     #[test]
     fn success_document_carries_accepted() {
         let out = normalize_write_response(r#"{"event_id":"abc","accepted":true,"message":""}"#);
-        assert!(carries_a_verdict(&out), "normal success body must carry a verdict: {out}");
+        assert!(
+            carries_a_verdict(&out),
+            "normal success body must carry a verdict: {out}"
+        );
     }
 
     #[test]
@@ -2804,6 +2914,224 @@ mod tests {
         assert!(
             built.headers().get("x-auth-tag").is_none(),
             "x-auth-tag header must not be present when no auth tag is configured"
+        );
+    }
+}
+
+/// Phase 6 (`buzz share`): `imeta` filename, the share filename sanitizer, and
+/// the `UploadMode::Any` generic-upload policy against a local mock relay.
+#[cfg(test)]
+mod share_upload_tests {
+    use std::sync::{Arc, Mutex};
+
+    use axum::body::Bytes;
+    use axum::extract::State;
+    use axum::http::StatusCode;
+    use axum::routing::put;
+    use axum::Router;
+    use nostr::Keys;
+
+    use super::{
+        build_imeta_tag, sanitize_share_filename, share_link_label, BlobDescriptor, BuzzClient,
+        UploadMode,
+    };
+    use crate::error::CliError;
+
+    fn desc() -> BlobDescriptor {
+        BlobDescriptor {
+            url: "https://r.test/media/abc.bin".into(),
+            sha256: "abc".into(),
+            size: 42,
+            mime_type: "application/octet-stream".into(),
+            uploaded: 0,
+            dim: None,
+            blurhash: None,
+            thumb: None,
+            duration: None,
+        }
+    }
+
+    #[test]
+    fn imeta_includes_filename_last() {
+        let tag = build_imeta_tag(&desc(), Some("report.md"));
+        assert_eq!(tag.last().map(String::as_str), Some("filename report.md"));
+        assert_eq!(tag.len(), 6);
+    }
+
+    #[test]
+    fn imeta_without_filename_is_unchanged() {
+        let tag = build_imeta_tag(&desc(), None);
+        assert_eq!(
+            tag,
+            vec![
+                "imeta",
+                "url https://r.test/media/abc.bin",
+                "m application/octet-stream",
+                "x abc",
+                "size 42",
+            ]
+        );
+    }
+
+    #[test]
+    fn share_filename_strips_controls_and_dirs() {
+        let name = sanitize_share_filename(std::path::Path::new("../a\nb].md")).unwrap();
+        assert_eq!(name, "a b].md");
+        assert_eq!(share_link_label(&name), "a b\\].md");
+        assert_eq!(share_link_label("x)y\\z"), "x\\)y\\\\z");
+        // 255-byte cap, cut on a char boundary (é is 2 bytes).
+        let long = format!("{}.md", "é".repeat(200));
+        let capped = sanitize_share_filename(std::path::Path::new(&long)).unwrap();
+        assert_eq!(capped.len(), 254);
+        assert!(sanitize_share_filename(std::path::Path::new("/")).is_err());
+    }
+
+    #[derive(Clone, Default)]
+    struct Seen {
+        upload: Arc<Mutex<Vec<Vec<u8>>>>,
+        legacy: Arc<Mutex<usize>>,
+    }
+
+    const OK_BODY: &str = r#"{"url":"https://relay.test/media/aa.bin","sha256":"aa","size":3,"type":"application/octet-stream","uploaded":0}"#;
+
+    /// Mock relay: `PUT /upload` answers `upload_status` (200 → a descriptor),
+    /// `PUT /media/upload` answers 200 and counts hits.
+    async fn mock_relay(upload_status: StatusCode, upload_body: &'static str) -> (String, Seen) {
+        let seen = Seen::default();
+        let app = Router::new()
+            .route(
+                "/upload",
+                put(move |State(s): State<Seen>, body: Bytes| async move {
+                    s.upload.lock().unwrap().push(body.to_vec());
+                    let text = if upload_status == StatusCode::OK {
+                        OK_BODY
+                    } else {
+                        upload_body
+                    };
+                    (upload_status, [("content-type", "application/json")], text)
+                }),
+            )
+            .route(
+                "/media/upload",
+                put(|State(s): State<Seen>| async move {
+                    *s.legacy.lock().unwrap() += 1;
+                    (
+                        StatusCode::OK,
+                        [("content-type", "application/json")],
+                        OK_BODY,
+                    )
+                }),
+            )
+            .with_state(seen.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{addr}"), seen)
+    }
+
+    fn client(base: &str) -> BuzzClient {
+        BuzzClient::new(base.to_string(), Keys::generate(), None, None).unwrap()
+    }
+
+    fn temp_file(name: &str, bytes: &[u8]) -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join(name);
+        std::fs::write(&p, bytes).unwrap();
+        (dir, p.to_string_lossy().into_owned())
+    }
+
+    #[tokio::test]
+    async fn any_mode_accepts_markdown_media_mode_rejects() {
+        let md = b"# Report\n\nhello\n";
+        let (_d, path) = temp_file("report.md", md);
+        let (base, seen) = mock_relay(StatusCode::OK, "").await;
+        let c = client(&base);
+
+        let got = c.upload_file_with(&path, UploadMode::Any).await;
+        assert!(got.is_ok(), "Any mode must upload markdown: {got:?}");
+        assert_eq!(seen.upload.lock().unwrap().as_slice(), &[md.to_vec()]);
+
+        let err = c
+            .upload_file_with(&path, UploadMode::Media)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, CliError::Usage(m) if m.contains("unsupported file type")),
+            "Media mode must keep the allow-list: {err:?}"
+        );
+        assert_eq!(
+            seen.upload.lock().unwrap().len(),
+            1,
+            "Media mode must refuse before any request"
+        );
+    }
+
+    #[tokio::test]
+    async fn any_mode_never_uses_legacy_endpoint() {
+        let (_d, path) = temp_file("notes.txt", b"plain text");
+        let (base, seen) = mock_relay(StatusCode::NOT_FOUND, "not found").await;
+        let err = client(&base)
+            .upload_file_with(&path, UploadMode::Any)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, CliError::Relay { status: 404, body } if body.contains("does not support generic file uploads")),
+            "404 must be a relay error naming the missing generic path: {err:?}"
+        );
+        assert_eq!(crate::error::exit_code(&err), 2);
+        assert_eq!(*seen.legacy.lock().unwrap(), 0, "no legacy /media/upload");
+    }
+
+    #[tokio::test]
+    async fn any_mode_surfaces_relay_rejection_verbatim_exit_1() {
+        let (_d, path) = temp_file("x.js", b"alert(1)");
+        let verdict = r#"{"error":"disallowed content type: text/javascript"}"#;
+        let (base, _seen) = mock_relay(StatusCode::UNSUPPORTED_MEDIA_TYPE, verdict).await;
+        let err = client(&base)
+            .upload_file_with(&path, UploadMode::Any)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, CliError::Usage(m) if m == verdict),
+            "relay verdict must surface verbatim: {err:?}"
+        );
+        assert_eq!(crate::error::exit_code(&err), 1);
+    }
+
+    #[tokio::test]
+    async fn any_mode_still_sanitizes_images() {
+        let mut clean = Vec::new();
+        image::DynamicImage::new_rgb8(4, 4)
+            .write_to(std::io::Cursor::new(&mut clean), image::ImageFormat::Jpeg)
+            .unwrap();
+        let mut tiff = vec![b'I', b'I', 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00];
+        tiff.extend_from_slice(&0x0112u16.to_le_bytes());
+        tiff.extend_from_slice(&3u16.to_le_bytes());
+        tiff.extend_from_slice(&1u32.to_le_bytes());
+        tiff.extend_from_slice(&6u16.to_le_bytes());
+        tiff.extend_from_slice(&[0, 0]);
+        let mut exif = b"Exif\0\0".to_vec();
+        exif.extend_from_slice(&tiff);
+        let mut infected = vec![0xff, 0xd8, 0xff, 0xe1];
+        infected.extend_from_slice(&((exif.len() + 2) as u16).to_be_bytes());
+        infected.extend_from_slice(&exif);
+        infected.extend_from_slice(&clean[2..]);
+        assert!(
+            infected.windows(4).any(|w| w == b"Exif"),
+            "fixture carries EXIF"
+        );
+
+        let (_d, path) = temp_file("photo.jpg", &infected);
+        let (base, seen) = mock_relay(StatusCode::OK, "").await;
+        client(&base)
+            .upload_file_with(&path, UploadMode::Any)
+            .await
+            .expect("upload");
+        let bodies = seen.upload.lock().unwrap();
+        assert_eq!(bodies.len(), 1);
+        assert!(
+            !bodies[0].windows(4).any(|w| w == b"Exif"),
+            "Any mode must strip EXIF before upload"
         );
     }
 }

@@ -931,9 +931,9 @@ pub(crate) fn count_fallback_exceeded(candidate_count: usize) -> bool {
 ///
 /// Pushed constraints: kinds, authors (single or multi), ids, since, until,
 /// authorized channel scope (#h single or multi, injected by caller), #p (single),
-/// #d (single, NIP-33-only kinds), #e (any), #a (any).
+/// #d (single, NIP-33-only kinds), #e (any), #a (any), #t (any).
 ///
-/// Anything else (multi-#p, #t, search, #d on non-NIP-33) requires
+/// Anything else (multi-#p, other generic tags, search, #d on non-NIP-33) requires
 /// post-filtering and cannot use the fast COUNT path.
 pub fn filter_fully_pushable(filter: &Filter) -> bool {
     // Check if filter exclusively targets NIP-33 kinds (needed for #d pushability).
@@ -970,8 +970,11 @@ pub fn filter_fully_pushable(filter: &Filter) -> bool {
             "a" => {
                 // #a is fully pushed (any count) via JSONB containment.
             }
+            "t" => {
+                // #t is fully pushed (any count) via JSONB containment (Shelf).
+            }
             _ => {
-                // Any other generic tag (#t, etc.) is not pushed.
+                // Any other generic tag is not pushed.
                 if !tag_values.is_empty() {
                     return false;
                 }
@@ -1105,6 +1108,18 @@ fn filter_to_query_params(
         }
     });
 
+    // Push #t tag filter into SQL via JSONB containment, exactly as #a above.
+    // The Shelf query (`{"kinds":[9],"#t":["shelf"]}`) selects a thin slice of
+    // channel messages; post-filtered after the LIMIT it answers nearly empty.
+    let t_tag_key = nostr::SingleLetterTag::lowercase(nostr::Alphabet::T);
+    let t_tags = filter.generic_tags.get(&t_tag_key).and_then(|values| {
+        if values.is_empty() {
+            None
+        } else {
+            Some(values.iter().map(|v| v.to_string()).collect::<Vec<_>>())
+        }
+    });
+
     // Push single-value #p tag into SQL via event_mentions join.
     // This is critical for gift-wrap (kind:1059) and membership notification
     // queries where >500 events for other recipients would otherwise push
@@ -1164,6 +1179,7 @@ fn filter_to_query_params(
         ids,
         e_tags,
         a_tags,
+        t_tags,
         ..EventQuery::for_community(community)
     }
 }
@@ -2338,15 +2354,59 @@ mod tests {
 
         // A tag that is still post-filtered must stay off the fast path — this
         // is the discriminating half: if the arm were widened to every generic
-        // tag, COUNT would over-report for #t.
-        let t_tag = SingleLetterTag::lowercase(Alphabet::T);
+        // tag, COUNT would over-report for #r.
+        let r_tag = SingleLetterTag::lowercase(Alphabet::R);
         assert!(
             !filter_fully_pushable(
                 &Filter::new()
                     .kind(nostr::Kind::Custom(30621))
-                    .custom_tags(t_tag, ["buzz"])
+                    .custom_tags(r_tag, ["buzz"])
             ),
-            "#t is not pushed, so COUNT over it must take the post-filter path"
+            "#r is not pushed, so COUNT over it must take the post-filter path"
+        );
+    }
+
+    #[test]
+    fn t_tag_is_pushed_into_sql_like_a_tag() {
+        let community = buzz_core::tenant::CommunityId::from_uuid(uuid::Uuid::nil());
+        let t_tag = SingleLetterTag::lowercase(Alphabet::T);
+
+        let shelf = Filter::new()
+            .kind(nostr::Kind::Custom(9))
+            .custom_tags(t_tag, ["shelf"]);
+        let q = filter_to_query_params(&shelf, None, community);
+        assert_eq!(
+            q.t_tags,
+            Some(vec!["shelf".to_string()]),
+            "#t must reach the DB layer, or the Shelf is matched after the SQL LIMIT"
+        );
+
+        // Multiple values keep NIP-01 OR semantics — all of them are pushed.
+        let multi = Filter::new()
+            .kind(nostr::Kind::Custom(9))
+            .custom_tags(t_tag, ["shelf", "report"]);
+        let mut pushed = filter_to_query_params(&multi, None, community)
+            .t_tags
+            .expect("multi-value #t must be pushed");
+        pushed.sort();
+        assert_eq!(pushed, vec!["report".to_string(), "shelf".to_string()]);
+
+        // No #t leaves the constraint unset rather than match-nothing.
+        let none =
+            filter_to_query_params(&Filter::new().kind(nostr::Kind::Custom(9)), None, community);
+        assert_eq!(none.t_tags, None);
+    }
+
+    #[test]
+    fn t_filter_is_fully_pushable() {
+        let t_tag = SingleLetterTag::lowercase(Alphabet::T);
+        assert!(
+            filter_fully_pushable(
+                &Filter::new()
+                    .kind(nostr::Kind::Custom(9))
+                    .custom_tags(t_tag, ["shelf"])
+            ),
+            "#t is applied in SQL, so COUNT over it is exact"
         );
     }
 
