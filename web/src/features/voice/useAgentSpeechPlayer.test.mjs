@@ -347,3 +347,76 @@ test("the owner's 30183 assignment outranks the agent's own 30182 at speak time"
   assert.equal(bodies[0].voice, "evie");
   player.dispose();
 });
+
+// ── Bridge chunking + timed drain (jitter buffer, 2026-09-29) ──────────────
+
+const SHORT_SENTENCES =
+  "The logs from last night show the problem clearly. The migration ran twice by mistake. We can rerun it safely tomorrow.";
+
+test("the bridge route sends ONE sentence per request (local synth would pack them)", async () => {
+  const { chunkSpeakableText } = await import(
+    "../huddle/lib/huddleAgentSpeech.ts"
+  );
+  assert.equal(chunkSpeakableText(SHORT_SENTENCES).length, 1, "fixture guard");
+  const ctx = wallClockContext();
+  const texts = [];
+  const player = createAgentSpeechPlayer({
+    getVoices: () => [],
+    voiceSelectionFor: () => undefined,
+    ttsUrl: () => "https://web.test:6366/tts",
+    createAudioContext: () => ctx,
+    fetchImpl: (_url, init) => {
+      texts.push(JSON.parse(init.body).text);
+      return Promise.resolve(pcmResponse(0.1));
+    },
+  });
+  assert.equal(await player.speak(SHORT_SENTENCES, AGENT), "spoken");
+  assert.deepEqual(texts, [
+    "The logs from last night show the problem clearly.",
+    "The migration ran twice by mistake.",
+    "We can rerun it safely tomorrow.",
+  ]);
+  player.dispose();
+});
+
+test("the PREFETCHED body is read from its headers on, while chunk 1 still plays", async () => {
+  const ctx = wallClockContext();
+  const firstPullAt = [];
+  const spokenAt = [];
+  let requests = 0;
+  const player = createAgentSpeechPlayer({
+    getVoices: () => [],
+    voiceSelectionFor: () => undefined,
+    ttsUrl: () => "https://web.test:6366/tts",
+    createAudioContext: () => ctx,
+    fetchImpl: () => {
+      const index = requests++;
+      let sent = false;
+      // highWaterMark 0: the body is pulled ONLY when someone reads it.
+      const body = new ReadableStream(
+        {
+          pull(controller) {
+            if (firstPullAt[index] === undefined)
+              firstPullAt[index] = Date.now();
+            if (sent) {
+              controller.close();
+              return;
+            }
+            sent = true;
+            controller.enqueue(new Uint8Array(BRIDGE_SAMPLE_RATE * 2 * 0.4));
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      return Promise.resolve(new Response(body, { status: 200 }));
+    },
+    onChunkSpoken: () => spokenAt.push(Date.now()),
+  });
+  assert.equal(await player.speak(THREE_CHUNKS, AGENT), "spoken");
+  assert.equal(requests, 3);
+  assert.ok(
+    firstPullAt[1] < spokenAt[0],
+    `body #2 first read at ${firstPullAt[1]} must precede chunk #1 settling at ${spokenAt[0]}`,
+  );
+  player.dispose();
+});

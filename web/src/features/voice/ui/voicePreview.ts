@@ -20,7 +20,6 @@ import {
   ttsBridgeUrl,
   type BridgeAudioContextLike,
 } from "../../huddle/lib/bridgeSpeech.ts";
-import { estimateSpeechSeconds } from "../../huddle/lib/bridgeJitterBuffer.ts";
 import { PREVIEW_SAMPLE_TEXT, type VoiceEngine } from "./voicePickerOptions.ts";
 import {
   relayHostname,
@@ -123,9 +122,7 @@ export function createVoicePreviewer(
           }
           await playBridgeResponse(response, ctx, {
             shouldStop: () => token !== mine,
-            jitter: {
-              expectedSeconds: estimateSpeechSeconds(PREVIEW_SAMPLE_TEXT),
-            },
+            jitter: { chars: PREVIEW_SAMPLE_TEXT.length },
           });
         } catch {
           // A failed preview must never wedge the dialog.

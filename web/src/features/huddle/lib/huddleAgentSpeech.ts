@@ -724,6 +724,61 @@ export function chunkSpeakableText(
   return chunks;
 }
 
+/** Bridge fragments shorter than this ride along with the next sentence. */
+export const BRIDGE_MIN_FRAGMENT_CHARS = 20;
+
+/**
+ * Split text for the TTS BRIDGE route: ONE server sentence per request.
+ *
+ * Unlike {@link chunkSpeakableText} (which packs sentences up to 200 chars
+ * for speechSynthesis), the bridge wants short, sentence-sized requests:
+ * Chatterbox slows down as a sentence grows, and the jitter buffer plans
+ * one sentence at a time — a packed 3-sentence request (14 s of audio)
+ * needed a 5 s start delay where three 1-sentence requests needed ~1 s.
+ * Rules: split after terminal punctuation followed by whitespace; a
+ * fragment under {@link BRIDGE_MIN_FRAGMENT_CHARS} ("Sure.") is merged into
+ * the next one; anything over `maxChars` is word-wrapped (hard split only
+ * for a single oversized word).
+ */
+export function chunkBridgeText(
+  text: string,
+  maxChars = CHUNK_MAX_CHARS,
+): string[] {
+  const normalized = text.trim();
+  if (normalized.length === 0) return [];
+  const sentences = normalized
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  const out: string[] = [];
+  const wrap = (piece: string) => {
+    let rest = piece;
+    while (rest.length > maxChars) {
+      const slice = rest.slice(0, maxChars + 1);
+      const cut = slice.lastIndexOf(" ");
+      if (cut <= 0) {
+        out.push(rest.slice(0, maxChars));
+        rest = rest.slice(maxChars).trim();
+      } else {
+        out.push(rest.slice(0, cut).trim());
+        rest = rest.slice(cut).trim();
+      }
+    }
+    if (rest.length > 0) out.push(rest);
+  };
+  let carry = "";
+  for (let i = 0; i < sentences.length; i++) {
+    const piece = carry ? `${carry} ${sentences[i]}` : sentences[i];
+    if (piece.length < BRIDGE_MIN_FRAGMENT_CHARS && i < sentences.length - 1) {
+      carry = piece;
+      continue;
+    }
+    carry = "";
+    wrap(piece);
+  }
+  return out;
+}
+
 export interface OrderedSpeaker {
   /** Queue one utterance. Returns whether it was accepted. */
   enqueue: (text: string, speakerPubkey: string) => "queued" | "disabled";
