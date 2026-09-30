@@ -13,10 +13,12 @@
 //! No keys are held here. No network calls are made.
 
 pub mod builders;
+pub mod items;
 pub mod mentions;
 pub mod nip_oa;
 
 pub use builders::*;
+pub use items::{build_item, item_tags, new_item_id, next_created_at, ItemDraft};
 
 /// Re-export kind constants so consumers don't need buzz-core directly.
 pub use buzz_core::kind;
