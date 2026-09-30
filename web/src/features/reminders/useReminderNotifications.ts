@@ -7,6 +7,11 @@ import {
 } from "@/features/notifications/hooks";
 
 import { notify } from "@/shared/ui/notify";
+import {
+  decisionToastSuppressed,
+  isPhoneViewport,
+  workPageOnScreen,
+} from "@/shared/ui/toastStack";
 
 import {
   remindersQueryKey,
@@ -104,29 +109,38 @@ export function useReminderNotifications(
       const destination = only
         ? reminderDestination(only.content.target)
         : null;
-      notify.feedbackDue(
-        {
-          context: only ? "" : `${due.length} reminders`,
-          body: copy.body,
-          ai: false,
-          onOpen: () => {
-            const now = latest.current;
-            if (destination && now.onOpenMessage) {
-              now.onOpenMessage(destination.channelId, destination.messageId);
-            } else {
-              now.onOpenPanel?.();
-            }
+      // Phase 1 QA: over the phone's Work page the toast would land on the
+      // very row it names, covering it. The row is the notice there.
+      const covered = decisionToastSuppressed("feedbackDue", {
+        workVisible: false,
+        workPage: workPageOnScreen(),
+        phone: isPhoneViewport(),
+      });
+      if (!covered) {
+        notify.feedbackDue(
+          {
+            context: only ? "" : `${due.length} reminders`,
+            body: copy.body,
+            ai: false,
+            onOpen: () => {
+              const now = latest.current;
+              if (destination && now.onOpenMessage) {
+                now.onOpenMessage(destination.channelId, destination.messageId);
+              } else {
+                now.onOpenPanel?.();
+              }
+            },
+            onSnooze: only
+              ? () =>
+                  latest.current.snooze({
+                    reminder: only,
+                    notBefore: Math.floor(Date.now() / 1_000) + 3_600,
+                  })
+              : undefined,
           },
-          onSnooze: only
-            ? () =>
-                latest.current.snooze({
-                  reminder: only,
-                  notBefore: Math.floor(Date.now() / 1_000) + 3_600,
-                })
-            : undefined,
-        },
-        copy.tag,
-      );
+          copy.tag,
+        );
+      }
 
       if (
         !current.settings.desktopEnabled ||

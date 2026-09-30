@@ -31,7 +31,6 @@ import {
   FONT_SIZE_PREFERENCE,
   LINK_PREVIEW_STYLE_PREFERENCE,
   PROMINENT_ACTIVE_TAB_PREFERENCE,
-  THREAD_LAYOUT_PREFERENCE,
   parsePreference,
   type ConversationDensity,
   type FontFamily,
@@ -39,7 +38,6 @@ import {
   type LinkPreviewStyle,
   type PreferenceSpec,
   type ProminentActiveTab,
-  type ThreadLayout,
 } from "./appearancePrefs.ts";
 
 export interface PreferenceStore<Value extends string> {
@@ -123,9 +121,6 @@ export const conversationDensityStore = createPreferenceStore(
 export const linkPreviewStyleStore = createPreferenceStore(
   LINK_PREVIEW_STYLE_PREFERENCE,
 );
-export const threadLayoutStore = createPreferenceStore(
-  THREAD_LAYOUT_PREFERENCE,
-);
 export const prominentActiveTabStore = createPreferenceStore(
   PROMINENT_ACTIVE_TAB_PREFERENCE,
 );
@@ -135,7 +130,6 @@ const STORES = {
   "data-font-family": fontFamilyStore,
   "data-conversation-density": conversationDensityStore,
   "data-link-preview-style": linkPreviewStyleStore,
-  "data-thread-layout": threadLayoutStore,
   "data-prominent-active-tab": prominentActiveTabStore,
 } as const;
 
@@ -182,13 +176,6 @@ export function useLinkPreviewStyle(): LinkPreviewStyle {
   return usePreference(
     linkPreviewStyleStore,
     LINK_PREVIEW_STYLE_PREFERENCE.defaultValue,
-  );
-}
-
-export function useThreadLayout(): ThreadLayout {
-  return usePreference(
-    threadLayoutStore,
-    THREAD_LAYOUT_PREFERENCE.defaultValue,
   );
 }
 

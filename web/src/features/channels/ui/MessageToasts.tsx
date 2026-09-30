@@ -16,6 +16,7 @@ import {
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
 import { readAuthorName } from "@/features/notifications/hooks";
+import { useRemindMeLater } from "@/features/reminders/ui/RemindMeLaterProvider";
 import { notify } from "@/shared/ui/notify";
 
 export interface MessageToastsProps {
@@ -43,6 +44,12 @@ export interface MessageToastsProps {
   onOpenChannel: (channelId: string) => void;
   /** Known agents — their toasts carry the hex mark instead of a disc. */
   agentPubkeys?: ReadonlySet<string>;
+  /**
+   * Reply: open the conversation at the message, ready to answer it
+   * (`?m=&reply=1`). Without it, or for a sample with no event id, Reply
+   * opens the conversation.
+   */
+  onReply?: (channelId: string, messageId: string) => void;
 }
 
 /**
@@ -63,7 +70,9 @@ export function MessageToasts({
   profiles,
   onOpenChannel,
   agentPubkeys,
+  onReply,
 }: MessageToastsProps) {
+  const { available, sendToFeedback } = useRemindMeLater();
   // The viewer's pubkey rides along so a scheduled wake addressed to another
   // DM member fires no live arrival (and so no toast) — same rule as channels.
   const dmFeed = useChannelActivity(dmChannelIds, undefined, selfPubkey);
@@ -82,6 +91,8 @@ export function MessageToasts({
     profiles,
     onOpenChannel,
     agentPubkeys,
+    onReply,
+    feedback: available ? sendToFeedback : null,
   });
   latest.current = {
     selfPubkey,
@@ -91,6 +102,8 @@ export function MessageToasts({
     profiles,
     onOpenChannel,
     agentPubkeys,
+    onReply,
+    feedback: available ? sendToFeedback : null,
   };
 
   useEffect(() => {
@@ -137,7 +150,20 @@ export function MessageToasts({
           current.agentPubkeys?.has(entry.pubkey.toLowerCase()) === true,
         context: copy.context,
         preview: copy.preview,
-        onOpen: () => current.onOpenChannel(entry.channelId),
+        onReply: () =>
+          entry.eventId != null && current.onReply
+            ? current.onReply(entry.channelId, entry.eventId)
+            : current.onOpenChannel(entry.channelId),
+        onFeedback:
+          entry.eventId != null && current.feedback
+            ? () =>
+                current.feedback?.({
+                  eventId: entry.eventId ?? "",
+                  channelId: entry.channelId,
+                  preview: entry.preview,
+                  authorPubkey: entry.pubkey,
+                })
+            : undefined,
       });
     };
 

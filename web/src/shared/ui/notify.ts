@@ -74,7 +74,10 @@ export function messageSpec(input: {
   agent: boolean;
   context: string;
   preview: string;
-  onOpen: () => void;
+  /** Open the conversation at the message, ready to answer it. */
+  onReply: () => void;
+  /** File the message in Feedback; absent where reminders are unavailable. */
+  onFeedback?: () => void;
 }): ToastSpec {
   return {
     variant: "message",
@@ -88,7 +91,12 @@ export function messageSpec(input: {
       agent: input.agent,
       ring: "idle",
     },
-    actions: [{ label: "Open", onClick: input.onOpen }],
+    actions: [
+      { label: "Reply", onClick: input.onReply },
+      ...(input.onFeedback
+        ? [{ label: "Feedback", onClick: input.onFeedback }]
+        : []),
+    ],
     duration: AUTO_DISMISS_MS,
     timer: true,
     role: "status",

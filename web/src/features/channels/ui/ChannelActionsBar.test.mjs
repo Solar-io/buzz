@@ -82,9 +82,6 @@ function props(overrides = {}) {
     panes: {
       thinkingVisible: false,
       toggleThinking: () => {},
-      threadsVisible: false,
-      threadsAvailable: false,
-      toggleThreads: () => {},
     },
     dictation: undefined,
     onStartAgentCall: async () => ({ ok: true, message: "started" }),
@@ -195,9 +192,6 @@ test("the thinking toggle appears only on an agent DM and is two-way", async () 
       panes: {
         thinkingVisible: true,
         toggleThinking: () => toggles.push(true),
-        threadsVisible: false,
-        threadsAvailable: false,
-        toggleThreads: () => {},
       },
     }),
   );
@@ -243,66 +237,26 @@ test("the thinking toggle appears only on an agent DM and is two-way", async () 
   await humanDm.unmount();
 });
 
-test("the replies toggle sits after the brain and is disabled with no thread", async () => {
-  const calls = [];
-  const mounted = await mount(
-    props({
-      panes: {
-        thinkingVisible: false,
-        toggleThinking: () => {},
-        threadsVisible: false,
-        threadsAvailable: false,
-        toggleThreads: () => calls.push(true),
-      },
-    }),
-  );
+test("there is no replies toggle: threads open inline, not in a pane", async () => {
+  // The Replies toggle sat immediately right of the brain while a thread was
+  // a right-pane tab (Sam, 2026-09-22). Threads open in place under their
+  // message now (web redesign Phase 2), so there is no pane for it to show —
+  // pinned so the button cannot come back pointing at nothing.
+  const mounted = await mount(props());
   const bar = mounted.container.querySelector(
     '[data-testid="channel-actions-bar"]',
   );
   const ids = [...bar.querySelectorAll("button")]
     .map((button) => button.getAttribute("data-testid"))
     .filter(Boolean);
-  // "immediately right of the brain icon" (Sam, 2026-09-22) — pinned as an
-  // order so a future insertion cannot silently move it.
-  assert.ok(ids.indexOf("toggle-thinking-panel") !== -1);
+  assert.ok(ids.includes("toggle-thinking-panel"), "the brain is still here");
+  assert.equal(ids.includes("toggle-threads-panel"), false);
   assert.equal(
-    ids.indexOf("toggle-threads-panel"),
-    ids.indexOf("toggle-thinking-panel") + 1,
-    "the replies toggle renders immediately right of the brain",
+    ids[ids.length - 1],
+    "toggle-thinking-panel",
+    "the brain is the last control in the strip",
   );
-  const replies = bar.querySelector('[data-testid="toggle-threads-panel"]');
-  assert.equal(replies.disabled, true, "no thread to show yet");
-  await act(async () => {
-    replies.dispatchEvent(
-      new dom.window.MouseEvent("click", { bubbles: true }),
-    );
-  });
-  assert.deepEqual(calls, [], "a disabled replies toggle fires nothing");
   await mounted.unmount();
-
-  const live = await mount(
-    props({
-      panes: {
-        thinkingVisible: false,
-        toggleThinking: () => {},
-        threadsVisible: true,
-        threadsAvailable: true,
-        toggleThreads: () => calls.push(true),
-      },
-    }),
-  );
-  const liveButton = live.container.querySelector(
-    '[data-testid="toggle-threads-panel"]',
-  );
-  assert.equal(liveButton.disabled, false);
-  assert.equal(liveButton.getAttribute("aria-pressed"), "true");
-  await act(async () => {
-    liveButton.dispatchEvent(
-      new dom.window.MouseEvent("click", { bubbles: true }),
-    );
-  });
-  assert.deepEqual(calls, [true]);
-  await live.unmount();
 });
 
 test("the dictation mic renders when supported, toggles, and shows interim text", async () => {

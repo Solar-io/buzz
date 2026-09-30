@@ -12,7 +12,6 @@ import { VList, type VListHandle } from "virtua";
 import type { MessageBuffer, TimelineMessage } from "../lib/messageBuffer.ts";
 export type { ChannelMember, Profile } from "../hooks.ts";
 import type { Profile } from "../hooks.ts";
-import { formatElapsed } from "@/features/agents/ui/WorkingBadge";
 import {
   applyInputFollowScroll,
   armFollowInput,
@@ -28,7 +27,6 @@ import {
 import { decideGeometryDiagnostic } from "@/features/channels/lib/geometryDiagnostic";
 import { chainEntry } from "@/features/channels/lib/geometryDiagnostic";
 import { GeometryDiagnosticOverlay } from "./GeometryDiagnosticOverlay.tsx";
-import { authorLabel } from "../lib/authorLabel.ts";
 import { formatDayLabel } from "../lib/dateFormatters.ts";
 import {
   reactionGroups as groupReactions,
@@ -37,12 +35,11 @@ import {
 } from "../lib/reactions.ts";
 import { SYSTEM_MESSAGE_KIND } from "../lib/systemEvent.ts";
 import { usePermalinkScroll } from "../lib/usePermalinkScroll.ts";
-import {
-  threadIndentRem,
-  type ThreadBranchSummary,
-} from "../lib/threadTree.ts";
-import { AuthorAvatar } from "./AuthorAvatar.tsx";
-import { ThreadBranchChip } from "./ThreadBranchChip.tsx";
+import { isRenderableCard } from "../lib/decisionCard.ts";
+import { holdAnchor } from "../lib/holdAnchor.ts";
+import { foldReplies, inlineThreadRef } from "../lib/inlineThread.ts";
+import { openQuickReplies } from "../lib/quickReply.ts";
+import { InlineThread, type InlineThreadComposer } from "./InlineThread.tsx";
 import { MessageRow } from "./MessageRow.tsx";
 import { DayDivider, UnreadDivider } from "./TimelineDividers.tsx";
 import {
@@ -78,25 +75,33 @@ function isEditableKeyboardTarget(target: EventTarget | null) {
   );
 }
 
-/** Nested-thread rendering inputs — see the `threadLayout` prop. */
-export interface ThreadLayout {
-  /** Message id → tree depth. 0/absent renders flush, as before. */
-  depthById: ReadonlyMap<string, number>;
-  /** Message id → its hidden sub-branch, when collapsed. */
-  summaryById: ReadonlyMap<string, ThreadBranchSummary>;
-  /** Expand the branch under this message. */
-  onExpand: (parentId: string) => void;
+/**
+ * Inline threads (web redesign Phase 2): which rows' threads are open, and
+ * what a thread's reply box and the quick-reply buttons send with. The route
+ * owns the open set — a reply permalink and the ↩ action both open one.
+ */
+export interface TimelineThreads {
+  /** Rows whose thread is expanded. */
+  expandedIds: ReadonlySet<string>;
+  /** The row whose reply box should take the caret (↩, "Answer in chat"). */
+  focusId: string | null;
+  /** A reply that must be on screen: its thread shows every reply. */
+  revealId: string | null;
+  onToggle: (rowId: string, open: boolean) => void;
+  /** Open a row's thread with the caret in its reply box. */
+  onReply: (rowId: string) => void;
+  /** The conversation is a DM (every message in it is aimed at the viewer). */
+  isDm: boolean;
+  reply: InlineThreadComposer;
 }
 
 export function ChannelTimeline({
   messages,
   profiles,
   replyCounts,
-  onOpenThread,
-  activeRootId,
+  threads,
   flat,
   showActions = true,
-  workingAgent,
   reactions,
   onReact,
   onUnreact,
@@ -115,32 +120,24 @@ export function ChannelTimeline({
   onLoadOlder,
   loadingOlder,
   historyExhausted,
-  threadLayout,
 }: {
   messages: MessageBuffer;
   profiles: Map<string, Profile>;
   replyCounts: Map<string, number>;
   /**
-   * Open a message's thread pane. Optional: a flat list must not offer it —
-   * the thread panel passes nothing, because an in-pane ↩ would promise a
-   * mid-thread parent its composer no longer sends (Sam 2026-09-20). Without
-   * it the previews, the "View all N replies" button and the ↩ action all
-   * drop out of the rows.
+   * Inline threads. With it, replies fold under their row behind an
+   * "N replies" chip that expands in place, rows offer ↩, and explicit yes/no
+   * asks grow quick-reply buttons. Without it the list is read-only about
+   * threads: no chip, no ↩ (a call transcript passes `flat` instead).
    */
-  onOpenThread?: (message: TimelineMessage) => void;
-  /** Root id of the currently open thread — highlights it in the timeline. */
-  activeRootId?: string | null;
+  threads?: TimelineThreads;
   /**
-   * Thread-panel mode: render EVERY message as a full row. Without this,
-   * replies render as inline previews under their root — correct for the
-   * channel timeline, but inside an open thread the replies ARE the
-   * conversation and must show in full.
+   * Render EVERY message as a full row, in order — a call transcript, where
+   * the replies are the conversation rather than something to fold away.
    */
   flat?: boolean;
   /** Hide reply/action affordances for read-only embedded call transcripts. */
   showActions?: boolean;
-  /** When set, renders the "received and working" typing row at the bottom. */
-  workingAgent?: { name: string; startedAt: number } | null;
   /** Kind-7 reactions aggregated per target id. */
   reactions?: ReactionIndex;
   /** Send a reaction (emoji) on a message. */
@@ -208,15 +205,6 @@ export function ChannelTimeline({
   loadingOlder?: boolean;
   /** Older pagination already hit the channel start — stop offering it. */
   historyExhausted?: boolean;
-  /**
-   * Nested-thread rendering (thread panel only, alongside `flat`).
-   *
-   * `depthById` indents a reply by its position in the NIP-10 tree, and
-   * `summaryById` puts a collapsed-branch chip under any reply whose own
-   * sub-branch is hidden. Omit it and the list renders exactly as before —
-   * the channel timeline never nests, because its rows are thread ROOTS.
-   */
-  threadLayout?: ThreadLayout;
 }) {
   const listRef = useRef<VListHandle>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -406,10 +394,132 @@ export function ChannelTimeline({
     () => answeredCardReplies(messages, selfPubkey),
     [messages, selfPubkey],
   );
+  // Which messages are rows and which fold into a row's inline thread — one
+  // answer for both questions (lib/inlineThread.ts). Flat lists fold nothing.
+  const folded = useMemo(
+    () => (flat ? null : foldReplies(messages)),
+    [messages, flat],
+  );
+  // Explicit yes/no asks still open to the viewer (lib/quickReply.ts).
+  const isDm = threads?.isDm ?? false;
+  const hasThreads = threads !== undefined;
+  const quickReplies = useMemo(
+    () =>
+      hasThreads ? openQuickReplies(messages, selfPubkey, { isDm }) : null,
+    [messages, selfPubkey, hasThreads, isDm],
+  );
+  /**
+   * Open or fold a row's thread. Opening one ABOVE the newest row pauses
+   * follow-the-tail first: the list is bottom-pinned while following, so
+   * every pixel the thread grows by would otherwise come out of the row's
+   * top and push the message being answered off the screen (the same
+   * geometry that made the inline card stepper unusable on a phone —
+   * AGENTS.md). Returning to the bottom resumes. On the newest row the pin
+   * is what keeps the reply box in view, so it stays.
+   */
+  const lastRowIdRef = useRef<string | null>(null);
+  /**
+   * While an opening thread settles, scroll events do not feed the follow
+   * engine: the virtualizer's own compensation can pass through the very
+   * bottom, which would RESUME following and re-pin the list over the thread
+   * (measured in the Phase 2 e2e, one run in two).
+   */
+  const holdUntilRef = useRef(0);
+  const openHere = (rowId: string) => {
+    if (rowId !== lastRowIdRef.current) {
+      followRef.current.follow = false;
+      holdUntilRef.current = performance.now() + 600;
+      const scroller = wrapRef.current?.firstElementChild;
+      if (scroller instanceof HTMLElement) {
+        holdAnchor(scroller, `[data-testid="message-row-${rowId}"]`);
+      }
+    }
+  };
+  const toggleThread = (rowId: string, open: boolean) => {
+    if (open) {
+      openHere(rowId);
+    }
+    threads?.onToggle(rowId, open);
+  };
+  /** One message row: a top-level row, or a reply inside an inline thread. */
+  const renderRow = (
+    message: TimelineMessage,
+    options: { grouped: boolean; inThread: boolean; children?: ReactNode },
+  ) => {
+    const receiptSplit = splitAgentReceipt(
+      groupReactions(reactions ?? EMPTY_REACTIONS, message.id, selfPubkey),
+      agentPubkeys,
+    );
+    const answer = cardAnswers.get(message.id) ?? null;
+    const reply = threads?.reply;
+    const quick = reply && quickReplies?.has(message.id) === true;
+    // An unanswered card that p-tags me is waiting on me, and says so.
+    const cardForMe =
+      threads !== undefined &&
+      selfPubkey != null &&
+      answer === null &&
+      isRenderableCard(message.card) &&
+      message.authorPubkey !== selfPubkey &&
+      message.mentionPubkeys.includes(selfPubkey);
+    return (
+      <MessageRow
+        key={message.id}
+        message={message}
+        profiles={profiles}
+        grouped={options.grouped}
+        density={options.inThread ? "thread" : "default"}
+        cardAnswer={answer}
+        // ↩ opens the row's own thread; a reply inside a thread has none.
+        onOpenThread={
+          threads && !options.inThread
+            ? (target) => {
+                openHere(target.id);
+                threads.onReply(target.id);
+              }
+            : undefined
+        }
+        showActions={showActions}
+        active={false}
+        needsYou={quick || cardForMe}
+        quickReply={
+          quick
+            ? {
+                onAnswer: (choice) =>
+                  reply.send({
+                    content: choice,
+                    // The asker's p-tag is the wake: without it an agent's
+                    // harness never sees the answer.
+                    mentionPubkeys: [message.authorPubkey],
+                    threadRef: inlineThreadRef(message),
+                    mediaTags: [],
+                  }),
+              }
+            : null
+        }
+        reactionGroups={receiptSplit.groups}
+        agentReceipt={receiptSplit.receipt}
+        onReact={onReact}
+        onUnreact={onUnreact}
+        onEdit={onEdit}
+        onDelete={onDelete}
+        onShare={onShare}
+        canModify={selfPubkey === message.authorPubkey}
+        isAgent={agentPubkeys?.has(message.authorPubkey) ?? false}
+        highlighted={
+          message.id === highlightId ||
+          (threads?.revealId != null && message.id === threads.revealId)
+        }
+        pending={pending.has(message.id)}
+        selfPubkey={selfPubkey}
+      >
+        {options.children}
+      </MessageRow>
+    );
+  };
   let lastAuthor: string | null = null;
   let lastKind = 0;
-  /** Tree depth of the previously rendered row — a change breaks grouping. */
-  let lastDepth = 0;
+  /** The newest rendered row — a thread opened there keeps following. */
+  let lastRowId: string | null = null;
   // createdAt (Unix seconds) of the previous RENDERED message — the anchor
   // for the grouping window. Chained like the desktop: each message compares
   // against its immediate predecessor, grouped or not.
@@ -428,8 +538,6 @@ export function ChannelTimeline({
   };
   const rowIndex = new Map<string, number>();
   rowIndexRef.current = rowIndex;
-  /** Which roots the buffer can actually render under — see the orphan branch. */
-  const bufferedIds = new Set(messages.map((message) => message.id));
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index];
     // Deleted messages disappear from the timeline entirely (desktop parity:
@@ -473,115 +581,61 @@ export function ChannelTimeline({
       pushRow(<SystemMessageRow key={message.id} description={description} />);
       continue;
     }
-    // Replies render INLINE under their root (desktop pattern: indented
-    // previews with a connector rail, click opens the full thread panel) —
-    // but only when the root is in the buffer to render under. An orphan
-    // (root older than the fetched page, deleted, or pruned) used to
-    // `continue` into nothing while its day divider still rendered above
-    // it: the timeline claimed the day's activity and refused to show it
-    // (D-025 follow-up, reproduced on the CK DM — divider, zero rows). It
-    // now falls through as a top-level row, so the newest message is always
-    // visible somewhere.
+    // Replies fold into their row's inline thread (web redesign Phase 2) —
+    // but only when there is a row to fold under. An orphan (root older than
+    // the fetched page, deleted, or pruned) used to `continue` into nothing
+    // while its day divider still rendered above it: the timeline claimed the
+    // day's activity and refused to show it (D-025 follow-up, reproduced on
+    // the CK DM — divider, zero rows). It renders as a row of its own, so the
+    // newest message is always visible somewhere.
+    if (folded?.rowOf.has(message.id)) {
+      lastAuthor = null;
+      continue;
+    }
     if (!flat && (message.rootId || message.replyToId)) {
-      const rootId = message.rootId ?? message.replyToId ?? "";
-      if (bufferedIds.has(rootId)) {
-        lastAuthor = null;
-        continue;
-      }
       lastAuthor = null;
     }
-    const replies = flat
-      ? []
-      : messages.filter(
-          (m) => m.rootId === message.id || m.replyToId === message.id,
-        );
     // Continuation = consecutive same author + kind AND inside the desktop's
     // 10-minute grouping window. The window is the fix for messages from
     // "earlier in the day" rendering merged into a prior block with no
     // timestamp of their own.
-    // Nested threads: a reply's own indent is part of how it is read, so a
-    // depth change always starts a fresh block. Grouping it into the row
-    // above would drop its avatar and leave an indented, unattributed
-    // paragraph hanging under someone else's reply.
-    const depth = threadLayout?.depthById.get(message.id) ?? 0;
     const grouped =
       message.authorPubkey === lastAuthor &&
       message.kind === lastKind &&
-      depth === lastDepth &&
       isWithinGroupingWindow(lastRenderedAt, message.createdAt);
     lastAuthor = message.authorPubkey;
     lastKind = message.kind;
-    lastDepth = depth;
     lastRenderedAt = message.createdAt;
+    lastRowId = message.id;
     rowIndex.set(message.id, rows.length);
-    const branch = threadLayout?.summaryById.get(message.id) ?? null;
-    const receiptSplit = splitAgentReceipt(
-      groupReactions(reactions ?? EMPTY_REACTIONS, message.id, selfPubkey),
-      agentPubkeys,
-    );
-    const row = (
-      <MessageRow
-        key={message.id}
-        message={message}
-        profiles={profiles}
-        grouped={grouped}
-        replyCount={flat ? 0 : (replyCounts.get(message.id) ?? 0)}
-        cardAnswer={cardAnswers.get(message.id) ?? null}
-        onOpenThread={onOpenThread}
-        showActions={showActions}
-        active={!flat && activeRootId === message.id}
-        reactionGroups={receiptSplit.groups}
-        agentReceipt={receiptSplit.receipt}
-        onReact={onReact}
-        onUnreact={onUnreact}
-        onEdit={onEdit}
-        onDelete={onDelete}
-        onShare={onShare}
-        canModify={selfPubkey === message.authorPubkey}
-        isAgent={agentPubkeys?.has(message.authorPubkey) ?? false}
-        highlighted={message.id === highlightId}
-        pending={pending.has(message.id)}
-        selfPubkey={selfPubkey}
-      >
-        {replies.length > 0 && onOpenThread && (
-          // Previews only exist on a non-flat timeline, where every caller
-          // still passes onOpenThread — the guard is for the seam, not the
-          // current callers.
-          <ThreadPreview
-            replies={replies}
-            profiles={profiles}
-            onOpenThread={onOpenThread}
+    const replies = folded?.replies.get(message.id) ?? NO_REPLIES;
+    const expanded = threads?.expandedIds.has(message.id) ?? false;
+    pushRow(
+      renderRow(message, {
+        grouped,
+        inThread: false,
+        children: threads && (
+          <InlineThread
             root={message}
-          />
-        )}
-        {branch && threadLayout && (
-          <ThreadBranchChip
-            summary={branch}
+            replies={replies}
+            summarizedCount={replyCounts.get(message.id) ?? 0}
+            expanded={expanded}
+            focus={threads.focusId === message.id}
+            revealId={threads.revealId}
+            onToggle={(open) => toggleThread(message.id, open)}
             profiles={profiles}
-            onExpand={threadLayout.onExpand}
+            selfPubkey={selfPubkey}
+            agentPubkeys={agentPubkeys}
+            composer={threads.reply}
+            renderReply={(reply) =>
+              renderRow(reply, { grouped: false, inThread: true })
+            }
           />
-        )}
-      </MessageRow>
+        ),
+      }),
     );
-    if (depth > 0) {
-      // Indent the whole row, with a rail on its leading edge so the eye can
-      // follow a branch down the panel. `paddingInlineStart` (not a margin)
-      // keeps the rail flush against the row it belongs to.
-      pushRow(
-        <div
-          key={message.id}
-          data-testid="thread-reply-indent"
-          data-depth={depth}
-          className="border-l border-border/60"
-          style={{ marginInlineStart: `${threadIndentRem(depth)}rem` }}
-        >
-          {row}
-        </div>,
-      );
-      continue;
-    }
-    pushRow(row);
   }
+  lastRowIdRef.current = lastRowId;
   // Virtualized (virtua VList — the desktop's timeline virtualizer): only the
   // visible window of rows mounts, so a 500-message buffer scrolls smoothly.
   // Each row carries its own max-w centering wrapper so line lengths stay
@@ -626,28 +680,6 @@ export function ChannelTimeline({
             {typingNames.slice(0, 3).join(", ")}
             {typingNames.length > 3 ? ` +${typingNames.length - 3}` : ""}{" "}
             {typingNames.length === 1 ? "is" : "are"} typing
-          </span>
-        </div>
-      </div>,
-    );
-    itemDays.push(null);
-    itemIsDivider.push(false);
-  }
-  if (workingAgent) {
-    items.push(
-      <div key="working" className="mx-auto w-full max-w-3xl px-1 sm:px-3">
-        <div className="mt-2 flex items-center gap-2 px-2 py-1 text-sm text-muted-foreground">
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-          </span>
-          <span>{workingAgent.name} received it and is working</span>
-          <span className="tabular-nums">
-            ·{" "}
-            {formatElapsed(
-              workingAgent.startedAt,
-              Math.floor(Date.now() / 1000),
-            )}
           </span>
         </div>
       </div>,
@@ -768,6 +800,9 @@ export function ChannelTimeline({
       return;
     }
     if (el.scrollHeight - el.clientHeight < 2) {
+      return;
+    }
+    if (performance.now() < holdUntilRef.current) {
       return;
     }
     applyInputFollowScroll(
@@ -989,61 +1024,4 @@ export function ChannelTimeline({
   );
 }
 
-/**
- * Inline thread previews under a root message, in the desktop's shape:
- * indented under the avatar's center line, a connector rail on the left,
- * the newest replies as one-line author + excerpt rows, and the whole block
- * opens the thread panel on click.
- */
-function ThreadPreview({
-  replies,
-  profiles,
-  onOpenThread,
-  root,
-}: {
-  replies: TimelineMessage[];
-  profiles: Map<string, Profile>;
-  onOpenThread?: (message: TimelineMessage) => void;
-  root: TimelineMessage;
-}) {
-  const newest = [...replies].sort((a, b) => b.createdAt - a.createdAt);
-  const shown = newest.slice(0, 2);
-  return (
-    <div className="mt-1 ml-[18px] border-l-2 border-border/45 pl-3">
-      {shown.map((reply) => (
-        <button
-          key={reply.id}
-          type="button"
-          className="flex w-full items-center gap-2 rounded-lg py-0.5 pr-2 text-left hover:bg-muted/50"
-          onClick={() => onOpenThread?.(root)}
-        >
-          <AuthorAvatar
-            pubkey={reply.authorPubkey}
-            label={authorLabel(reply.authorPubkey, profiles)}
-            picture={profiles.get(reply.authorPubkey)?.avatar}
-            size="sm"
-          />
-          <span className="shrink-0 text-sm font-medium">
-            {authorLabel(reply.authorPubkey, profiles)}
-          </span>
-          <span className="truncate text-sm text-muted-foreground">
-            {plainExcerpt(reply.content)}
-          </span>
-        </button>
-      ))}
-      {newest.length > shown.length && (
-        <button
-          type="button"
-          className="py-0.5 pr-2 text-sm font-medium text-muted-foreground hover:underline"
-          onClick={() => onOpenThread?.(root)}
-        >
-          +{newest.length - shown.length} more →
-        </button>
-      )}
-    </div>
-  );
-}
-
-function plainExcerpt(content: string): string {
-  return content.replace(/[`*_~#>]/g, "").slice(0, 120);
-}
+const NO_REPLIES: TimelineMessage[] = [];

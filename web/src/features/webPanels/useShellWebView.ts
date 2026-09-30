@@ -3,8 +3,9 @@ import { useCallback, useEffect, useRef } from "react";
 import { useShortcutBar } from "@/features/shortcut-bar/hooks";
 
 import { type ActiveWebView, useActiveWebView } from "./activeWebStore.ts";
+import { useFilesPathRequest } from "./filesPathStore.ts";
 import { useWebPanelDock } from "./hooks.ts";
-import { pickFilesPanel } from "./lib/activeWebView.ts";
+import { pickFilesPanel, webLayerMode } from "./lib/activeWebView.ts";
 
 /**
  * The shell's entry points into the web layer, kept out of `repos.tsx` so the
@@ -23,6 +24,8 @@ export function useShellWebView(navKey: string): {
   openLink: (linkId: string) => void;
   /** Label of the page showing (the phone top bar's title), else null. */
   activeTitle: string | null;
+  /** Files beside the Work strip, a page over the row, or nothing. */
+  layerMode: ReturnType<typeof webLayerMode>;
 } {
   const web = useActiveWebView();
   const files = useWebPanelDock();
@@ -42,6 +45,19 @@ export function useShellWebView(navKey: string): {
       panelId: pickFilesPanel(filesIds ? filesIds.split("\n") : [], mounted),
     });
   }, [show, filesIds, mounted]);
+  // "Open in Files" (`openInFiles`): each request brings Files up; the frame
+  // host loads that Files frame on the requested folder.
+  // A request made before this shell mounted is not a new one.
+  const pathNonce = useFilesPathRequest()?.nonce ?? 0;
+  const handledNonce = useRef(pathNonce);
+  const openFilesRef = useRef(openFiles);
+  openFilesRef.current = openFiles;
+  useEffect(() => {
+    if (pathNonce !== handledNonce.current) {
+      handledNonce.current = pathNonce;
+      openFilesRef.current();
+    }
+  }, [pathNonce]);
   const openLink = useCallback(
     (linkId: string) => show({ kind: "link", panelId: linkId }),
     [show],
@@ -54,5 +70,11 @@ export function useShellWebView(navKey: string): {
       : active.kind === "link"
         ? (shortcuts.find((s) => s.id === active.panelId)?.label ?? null)
         : (files.panels.find((p) => p.id === active.panelId)?.label ?? "Files");
-  return { web, openFiles, openLink, activeTitle };
+  return {
+    web,
+    openFiles,
+    openLink,
+    activeTitle,
+    layerMode: webLayerMode(web.state),
+  };
 }

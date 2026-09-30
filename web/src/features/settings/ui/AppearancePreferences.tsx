@@ -7,28 +7,26 @@ import {
   fontSizeStore,
   linkPreviewStyleStore,
   setProminentActiveTab,
-  threadLayoutStore,
   useConversationDensity,
   useFontFamily,
   useFontSize,
   useLinkPreviewStyle,
   useProminentActiveTab,
-  useThreadLayout,
 } from "../lib/appearanceStore.ts";
 import type {
   ConversationDensity,
   FontFamily,
   FontSize,
   LinkPreviewStyle,
-  ThreadLayout,
 } from "../lib/appearancePrefs.ts";
 import { Switch } from "@/shared/ui/switch";
 import { SegmentedControl } from "./SegmentedControl.tsx";
 
 /**
  * The reading-comfort half of Appearance — the web port of the desktop's
- * `ConversationDisplaySettings`, `LinkPreviewStyleSetting` and
- * `ThreadLayoutSetting` rows (`settings/ui/AppearanceSettingsControls.tsx`).
+ * `ConversationDisplaySettings` and `LinkPreviewStyleSetting` rows
+ * (`settings/ui/AppearanceSettingsControls.tsx`). The desktop’s Thread layout
+ * row has no web twin: threads open inline here (web redesign Phase 2).
  *
  * Every row here drives an existing mechanism rather than introducing one:
  *
@@ -40,8 +38,6 @@ import { SegmentedControl } from "./SegmentedControl.tsx";
  *    Conversation density sets `data-conversation-density` the same way.
  *  - Link previews sets `data-link-preview-style`, which `LinkPreviewCards`
  *    reads to choose its presentation.
- *  - Thread layout sets `data-thread-layout`, which `ThreadPanel` reads to
- *    decide whether it docks beside the channel or covers it.
  *  - Prominent active tab sets `data-prominent-active-tab`, which repaints the
  *    `--sidebar-row-active-*` tokens the selected sidebar row is built from
  *    (`SidebarNavButton`, `DmNavRow`). Port of the desktop's
@@ -101,16 +97,6 @@ const LINK_PREVIEW_STYLE_OPTIONS = [
 const LINK_PREVIEW_DESCRIPTIONS: Record<LinkPreviewStyle, string> = {
   compact: "Small cards with a thumbnail beside the title.",
   rich: "Large previews with the image above the description.",
-};
-
-const THREAD_LAYOUT_OPTIONS = [
-  { value: "focus", label: "Focus" },
-  { value: "split", label: "Split" },
-] as const satisfies readonly { value: ThreadLayout; label: string }[];
-
-const THREAD_LAYOUT_DESCRIPTIONS: Record<ThreadLayout, string> = {
-  focus: "Threads open over the channel.",
-  split: "Threads open in a side panel next to the channel.",
 };
 
 /** One labelled row: description on the left, control on the right. */
@@ -218,7 +204,6 @@ export function AppearancePreferences() {
   const fontFamily = useFontFamily();
   const density = useConversationDensity();
   const linkPreviewStyle = useLinkPreviewStyle();
-  const threadLayout = useThreadLayout();
   const prominentActiveTab = useProminentActiveTab();
 
   return (
@@ -293,21 +278,6 @@ export function AppearancePreferences() {
         description={LINK_PREVIEW_DESCRIPTIONS[linkPreviewStyle]}
         label="Link previews"
         testId="link-preview-style-row"
-      />
-      <PreferenceRow
-        control={
-          <SegmentedControl
-            legend="Thread layout"
-            onValueChange={threadLayoutStore.set}
-            optionTestIdPrefix="thread-layout"
-            options={THREAD_LAYOUT_OPTIONS}
-            testId="thread-layout-control"
-            value={threadLayout}
-          />
-        }
-        description={THREAD_LAYOUT_DESCRIPTIONS[threadLayout]}
-        label="Thread layout"
-        testId="thread-layout-row"
       />
       <PreferenceRow
         control={

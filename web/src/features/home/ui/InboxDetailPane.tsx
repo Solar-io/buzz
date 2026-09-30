@@ -159,7 +159,6 @@ export function InboxDetailPane({
                 message.id !== firstUnreadId &&
                 inboxContextGrouped(message, context[index - 1])
               }
-              replyCount={0}
               cardAnswer={cardAnswers.get(message.id) ?? null}
               onOpenThread={() => onOpenInChannel(item)}
               active={message.id === item.message.id}

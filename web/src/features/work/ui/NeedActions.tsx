@@ -1,4 +1,4 @@
-import { Bell } from "lucide-react";
+import { Bell, Check } from "lucide-react";
 import { useState } from "react";
 
 import { sendCardAnswer } from "@/features/channels/lib/cardAnswer.ts";
@@ -34,20 +34,27 @@ function FeedbackBell({
   size: ActionSize;
   target: ReminderTarget | null;
 }) {
-  const { openReminder } = useRemindMeLater();
+  // One click, due tomorrow 9:00 AM (Phase 2) — the same write as the hover
+  // bar's Feedback button. A row already filed says so and cannot file twice.
+  const { sendToFeedback, feedbackPending, pendingEventIds } =
+    useRemindMeLater();
   if (!target) {
     return null;
   }
+  const filed = pendingEventIds.has(target.eventId);
+  const icon = size === "rail" ? "size-3.25" : "size-4.5";
   return (
     <ActionButton
       size={size}
-      label="Send to Feedback"
-      onClick={() => openReminder(target)}
+      label={filed ? "In Feedback" : "Send to Feedback"}
+      disabled={feedbackPending || filed}
+      onClick={() => sendToFeedback(target)}
     >
-      <Bell
-        aria-hidden
-        className={size === "rail" ? "size-3.25" : "size-4.5"}
-      />
+      {filed ? (
+        <Check aria-hidden className={icon} />
+      ) : (
+        <Bell aria-hidden className={icon} />
+      )}
     </ActionButton>
   );
 }

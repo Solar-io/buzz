@@ -1,22 +1,14 @@
-import { mkdirSync } from "node:fs";
-import path from "node:path";
-
-import { expect, type Page, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import * as nip44 from "nostr-tools/nip44";
 
+import { hexId, mockEvent } from "./helpers/mockRelay";
 import {
-  hexId,
-  installMockRelay,
-  type MockRelay,
-  type MockRelayOptions,
-  mockEvent,
-} from "./helpers/mockRelay";
-import { signIn } from "./helpers/signIn";
-import {
-  buildWorkFixture,
-  routeUsageHub,
-  type WorkFixture,
-} from "./helpers/workFixture";
+  channelPath as shellChannelPath,
+  openShell as open,
+  SHOTS_DIR,
+  sendMessage,
+  shot,
+} from "./helpers/shellPage";
 
 /**
  * The redesign's shell (web redesign Phase 1), driven through the real
@@ -35,73 +27,8 @@ import {
  * stack case only runs then: it has to wait out the reminder check interval.
  */
 
-const SHOTS_DIR = process.env.SHOTS_DIR;
 const REFUSAL = "invalid: root tag does not match thread ancestry";
-
-async function shot(
-  page: Page,
-  name: string,
-  options: { keepToasts?: boolean } = {},
-): Promise<void> {
-  if (!SHOTS_DIR) {
-    return;
-  }
-  mkdirSync(SHOTS_DIR, { recursive: true });
-  if (!options.keepToasts) {
-    // The sign-in toast (and any arrival toast the mock's replay raises)
-    // would sit over the top-right of every frame: let them run out first.
-    await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, {
-      timeout: 12_000,
-    });
-  }
-  // Let entrance animations settle so two themes capture the same frame.
-  // Only FINITE ones: the running hexes pulse forever and never finish.
-  await page
-    .evaluate(() =>
-      Promise.all(
-        document
-          .getAnimations()
-          .filter(
-            (animation) =>
-              animation.effect?.getComputedTiming().iterations !== Infinity,
-          )
-          .map((animation) => animation.finished.catch(() => {})),
-      ),
-    )
-    .catch(() => {});
-  await page.screenshot({ path: path.join(SHOTS_DIR, `${name}.png`) });
-}
-
-async function open(
-  page: Page,
-  options: {
-    theme: string;
-    path: (fixture: WorkFixture) => string;
-    fixture?: Parameters<typeof buildWorkFixture>[0];
-    relay?: MockRelayOptions;
-  },
-): Promise<{ fixture: WorkFixture; relay: MockRelay }> {
-  const fixture = buildWorkFixture(options.fixture);
-  await page.addInitScript((theme) => {
-    localStorage.setItem("buzz-theme", theme);
-    localStorage.setItem("buzz-follow-system", "false");
-  }, options.theme);
-  await routeUsageHub(page);
-  const relay = await installMockRelay(page, fixture.events, options.relay);
-  await signIn(page, options.path(fixture), fixture.viewerKey);
-  return { fixture, relay };
-}
-
-const channelPath = (fixture: WorkFixture) =>
-  `/repos?c=${fixture.channels["flight-path"]}`;
-
-async function sendMessage(page: Page, text: string): Promise<void> {
-  const composer = page
-    .locator('[data-custom-content-pane="chat"] textarea')
-    .last();
-  await composer.fill(text);
-  await composer.press("Enter");
-}
+const channelPath = shellChannelPath();
 
 for (const theme of ["buzz", "buzz-dark"] as const) {
   test.describe(`desktop 1440 · ${theme}`, () => {
@@ -185,33 +112,51 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       await page.keyboard.press("Escape");
     });
 
-    test("a thread opens as a tab beside Work and closes back to it", async ({
+    test("a thread opens inline under its message; Work stays the only tab", async ({
       page,
     }) => {
-      await open(page, { theme, path: channelPath });
+      const { fixture, relay } = await open(page, { theme, path: channelPath });
       const host = page.getByTestId("right-pane-host");
       await expect(host).toHaveAttribute("data-active-tab", "work");
-      // One tab: no strip, just the Work title.
+      // One tab: no strip, just the Work title — and a thread never adds one.
       await expect(page.getByTestId("right-pane-tabs")).toHaveCount(0);
 
-      await page.getByRole("button", { name: /View all 3 replies/ }).click();
-      await expect(host).toHaveAttribute("data-active-tab", "thread");
-      const tabs = page.getByTestId("right-pane-tabs");
-      await expect(tabs.getByRole("tab")).toHaveText([/Work/, "Thread"]);
-      await expect(page.getByTestId("thread-panel")).toBeVisible();
-      await expect(page.getByTestId("work-rail")).toHaveCount(0);
-      await shot(page, `thread-tab-${theme}-1440`);
-
-      // Work is one click away, and the thread stays mounted behind it.
-      await tabs.getByRole("tab", { name: /Work/ }).click();
+      const ask = fixture.events.find((event) =>
+        event.content.startsWith("@Gilfoyle turn the handoff notes"),
+      );
+      expect(ask).toBeTruthy();
+      const chip = page.getByTestId(`thread-chip-${ask?.id}`);
+      await expect(chip).toHaveText(/3 replies/);
+      await chip.click();
+      const thread = page.getByTestId(`inline-thread-${ask?.id}`);
+      await expect(thread).toContainText("Beat 01 is captured. Two to go.");
+      await expect(thread.getByTestId("thread-reply-box")).toBeVisible();
+      // It opens DOWNWARD, from where it was clicked: the chip and the first
+      // reply stay on screen (a list re-pin once pushed them off the top).
+      await page.waitForTimeout(800);
+      await expect(chip).toBeInViewport();
+      await expect(thread.getByText("On it — splitting")).toBeInViewport();
+      await expect(page.getByTestId("right-pane-tabs")).toHaveCount(0);
       await expect(page.getByTestId("work-rail")).toBeVisible();
-      await expect(page.getByTestId("thread-panel")).toBeHidden();
+      await shot(page, `thread-inline-${theme}-1440`);
 
-      // Closing the thread tab returns to Work and drops the strip.
-      await tabs.getByRole("tab", { name: "Thread" }).click();
-      await tabs.getByRole("button", { name: "Close Thread" }).click();
-      await expect(host).toHaveAttribute("data-active-tab", "work");
-      await expect(page.getByTestId("right-pane-tabs")).toHaveCount(0);
+      // A reply from the inline box is rooted at the ask (NIP-10 thread
+      // ancestry — the relay refuses anything else).
+      const box = thread.getByTestId("thread-reply-box").locator("textarea");
+      await box.fill("Ship beat 02 next.");
+      await box.press("Enter");
+      await expect
+        .poll(() =>
+          relay.published.find(
+            (event) =>
+              event.kind === 9 && event.content === "Ship beat 02 next.",
+          ),
+        )
+        .toBeTruthy();
+      const reply = relay.published.find(
+        (event) => event.content === "Ship beat 02 next.",
+      );
+      expect(reply?.tags).toContainEqual(["e", ask?.id, "", "reply"]);
 
       // Folding the rail leaves the 44 px strip with the live counts.
       await page.getByRole("button", { name: "Collapse Work" }).click();
@@ -422,12 +367,20 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       // Opening a conversation hides the bar and shows the back chevron.
       await row.click();
       await expect(tabs).toBeHidden();
-      await expect(page.getByRole("button", { name: "Back" })).toBeVisible();
-      await expect(page.getByText("Three beats. Beat 01")).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Back", exact: true }),
+      ).toBeVisible();
+      // In the TIMELINE: the mock's replay also raises a message toast with
+      // the same text, and an unscoped match is then two elements.
+      await expect(
+        page
+          .locator(".buzz-timeline-scrollbar")
+          .getByText("Three beats. Beat 01"),
+      ).toBeVisible();
       await shot(page, `phone-channel-${theme}-390`);
 
       // Back returns to the tab it was opened from.
-      await page.getByRole("button", { name: "Back" }).click();
+      await page.getByRole("button", { name: "Back", exact: true }).click();
       await expect(page).toHaveURL(/view=channels/);
       await expect(tabs).toBeVisible();
 

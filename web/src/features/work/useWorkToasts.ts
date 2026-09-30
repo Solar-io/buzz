@@ -9,6 +9,7 @@ import { useWorkflowActions } from "@/features/workflows/useWorkflowActions";
 import { notify } from "@/shared/ui/notify";
 import { useWorkContext } from "./workContext.ts";
 import { frameTriggers } from "./lib/activeTurns.ts";
+import { shouldToastNeed } from "./lib/needsToast.ts";
 import { includesOwnSend } from "./lib/ownSends.ts";
 import { useNowSeconds, useWorkFeed } from "./useWorkFeed.ts";
 import { channelLabel, metaLine } from "./ui/workLabels.ts";
@@ -20,7 +21,8 @@ const SETTLE_MS = 10_000;
  * The Work tab's two toasts (phase-1 §5):
  *
  * - needs-you: an approval or ask that ARRIVED after the feed settled, while
- *   no Work surface is on screen. Sticky; it leaves when the row does.
+ *   no Work surface is on screen, outside the conversation I am reading
+ *   (`lib/needsToast.ts`). Sticky; it leaves when the row does.
  * - agent-done: a `turn_completed` for a turn one of MY messages started
  *   (its `turn_started` triggers ∩ this browser's sends), in a channel I am
  *   not looking at. Deliberately narrow — every agent's every turn would
@@ -96,11 +98,14 @@ export function WorkToasts({
         continue;
       }
       seen.current.add(row.key);
-      if (!settled || (row.kind !== "approval" && row.kind !== "ask")) {
-        continue;
-      }
       const current = latest.current;
-      if (current.context?.workVisible()) {
+      if (
+        !shouldToastNeed(row, {
+          settled,
+          workVisible: current.context?.workVisible() ?? false,
+          selectedId: current.selectedId,
+        })
+      ) {
         continue;
       }
       const where = channelLabel(row.channelId, current.context?.channels);
@@ -109,8 +114,10 @@ export function WorkToasts({
         const ref = row.source.approval.ref;
         notify.needsYou(
           {
-            lead: "Workflow approval",
-            rest: "needs you",
+            // Toasts artboard: "<who> needs your approval". An approval is
+            // relay-authored (no actor to name), so the workflow is the who.
+            lead: "Workflow",
+            rest: "needs your approval",
             meta: metaLine(row.title, where),
             seed: null,
             agent: false,

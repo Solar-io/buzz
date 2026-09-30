@@ -55,6 +55,8 @@ import { RelayConnectionCard } from "@/features/sidebar/ui/RelayConnectionCard";
 import { SidebarProfileCard } from "@/features/sidebar/ui/SidebarProfileCard";
 import { InstallAppButton } from "@/features/sidebar/ui/InstallAppButton";
 import { VitalsBlock } from "@/features/vitals/ui/VitalsBlock";
+import { useActiveWebView } from "@/features/webPanels/activeWebStore.ts";
+import type { ChannelMarkers } from "@/features/work/lib/channelMarkers.ts";
 import type { SidebarMenuItem } from "@/features/sidebar/lib/sidebarMenuItem";
 import {
   channelRowUnread,
@@ -138,7 +140,7 @@ export interface ChannelSidebarActions {
   onHideDm: (channelId: string) => void;
   /** Add (true) / remove (false) a DM or link favorite — idempotent. */
   onSetFavorite: (ref: FavoriteRef, favorite: boolean) => void;
-  /** Raise the Files overlay. */
+  /** Show Files (a page in the main column beside the Work strip). */
   onOpenFiles: () => void;
   /** Open the inbox view. */
   onOpenInbox: () => void;
@@ -189,6 +191,8 @@ export interface ChannelSidebarProps {
   workSelected: boolean;
   /** Needs-you rows, Everywhere — the Work row's count badge. */
   needsCount: number;
+  /** Per-channel needs / running — the channel rows' work markers. */
+  channelMarkers?: ChannelMarkers;
   lists: ChannelSidebarLists;
   readState: ChannelSidebarReadState;
   search: ChannelSidebarSearch;
@@ -212,6 +216,7 @@ export function ChannelSidebar({
   asksCount,
   workSelected,
   needsCount,
+  channelMarkers,
   lists,
   readState,
   search,
@@ -280,8 +285,12 @@ export function ChannelSidebar({
   const rowUnreadCount = (channel: ChannelSummary) =>
     readState.unreadCounts.get(channel.id) ?? null;
 
-  const channelSelected = (channel: ChannelSummary) =>
-    channel.id === selectedId;
+  // While Files or a link page covers the conversation, that page's row is
+  // the one selected — never also the conversation behind it.
+  const { state: webView } = useActiveWebView();
+  const filesSelected = webView.active?.kind === "files";
+  const shownId = webView.active === null ? selectedId : undefined;
+  const channelSelected = (channel: ChannelSummary) => channel.id === shownId;
   const dmUnread = (dm: DmSummary) => dmRowUnread(dm, unreadInput);
   // Favorites and Channels: unread first, then most frequently used, then
   // newest activity / name (sectionOrder.ts). The open row ranks by its
@@ -356,12 +365,13 @@ export function ChannelSidebar({
     (glyph: (channel: ChannelSummary) => ReactNode) =>
     (channel: ChannelSummary) => (
       <SidebarNavButton
-        selected={channel.id === selectedId}
+        selected={channel.id === shownId}
         label={channel.name}
         icon={glyph(channel)}
         unread={rowUnread(channel)}
         unreadCount={rowUnreadCount(channel)}
         muted={isMuted(readState.prefs, channel.id)}
+        status={channelMarkers?.get(channel.id)}
         onSelect={() => actions.onSelectChannel(channel.id)}
         menuItems={actions.channelMenuItems(channel)}
       />
@@ -385,7 +395,7 @@ export function ChannelSidebar({
     const dmFavorite = isFavorite(prefs, dmRef);
     return (
       <DmNavRow
-        selected={channel.id === selectedId}
+        selected={channel.id === shownId}
         channelId={channel.id}
         lastSeenAt={readState.read[channel.id] ?? null}
         unread={dmUnread(dm)}
@@ -429,7 +439,7 @@ export function ChannelSidebar({
   const favoriteSelected = (item: FavoriteItem) =>
     item.kind === "link"
       ? links.isSelected(item.shortcut)
-      : item.key === selectedId;
+      : item.key === shownId;
   const favoriteUnread = (item: FavoriteItem) => {
     switch (item.kind) {
       case "channel":
@@ -485,7 +495,7 @@ export function ChannelSidebar({
               it is the first tab of the bottom bar. */}
           <div className="hidden md:block lg:hidden">
             <SidebarNavButton
-              selected={workSelected}
+              selected={workSelected && webView.active === null}
               label="Work"
               icon={<ListTodo aria-hidden className="size-4 shrink-0" />}
               unread={needsCount > 0}
@@ -494,7 +504,7 @@ export function ChannelSidebar({
             />
           </div>
           <SidebarNavButton
-            selected={inboxSelected}
+            selected={inboxSelected && webView.active === null}
             label="Inbox"
             icon={<Inbox aria-hidden className="size-4 shrink-0" />}
             unread={asksCount > 0}
@@ -502,7 +512,7 @@ export function ChannelSidebar({
             onSelect={actions.onOpenInbox}
           />
           <SidebarNavButton
-            selected={false}
+            selected={filesSelected}
             label="Files"
             icon={<Folder aria-hidden className="size-4 shrink-0" />}
             onSelect={actions.onOpenFiles}
@@ -561,7 +571,7 @@ export function ChannelSidebar({
           items={sections.dms}
           getKey={(dm) => dm.channel.id}
           renderItem={renderDm}
-          isSelected={(dm) => dm.channel.id === selectedId}
+          isSelected={(dm) => dm.channel.id === shownId}
           isUnread={dmUnread}
           collapsed={isCollapsed(collapsed, "dms")}
           onToggleCollapsed={() => toggle("dms")}

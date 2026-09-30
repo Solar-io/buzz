@@ -11,6 +11,7 @@ import {
 } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkCallouts from "@/shared/lib/remarkCallouts.ts";
 import remarkSpoilers from "@/shared/lib/remarkSpoilers";
 import remarkCustomEmoji from "@/features/custom-emoji/lib/remarkCustomEmoji";
 import { useCustomEmoji } from "@/features/custom-emoji/hooks";
@@ -28,9 +29,22 @@ import { CodeBlock, extractLanguage } from "./CodeBlock";
 import { Spoiler } from "./Spoiler";
 import { resolveSnapshotCard } from "../lib/snapshotCard.ts";
 import { SnapshotCard } from "./SnapshotCard.tsx";
-import { galleryFromTriggers, resolveFileCard } from "../lib/messageMedia.ts";
+import {
+  type FileCardTarget,
+  galleryFromTriggers,
+  resolveFileCard,
+} from "../lib/messageMedia.ts";
+import { cn } from "@/shared/lib/cn";
+import { Callout } from "./Callout.tsx";
 import { FileCard } from "./FileCard.tsx";
+import { FileTileGroup } from "./FileTileGroup.tsx";
 import { ImageMosaic } from "./ImageMosaic.tsx";
+import {
+  MarkdownTable,
+  MarkdownTableDataCell,
+  MarkdownTableHeaderCell,
+  MarkdownTableRow,
+} from "./MarkdownTable.tsx";
 import {
   MessageMedia,
   MessageMediaProvider,
@@ -143,6 +157,58 @@ function splitMediaChildren(children: ReactNode[]): {
 }
 
 /**
+ * The file attachments of a paragraph that is NOTHING BUT file attachments,
+ * or null. A file is a link — or, from the CLI, an image node — whose imeta
+ * MIME is neither image nor video (`resolveFileCard`). Two or more of them
+ * alone in a paragraph render as one tile group instead of a stack of cards;
+ * a paragraph that also carries prose or pictures is left as it is.
+ */
+function fileOnlyParagraph(
+  children: ReactNode[],
+  imetaByUrl: Map<string, ImetaEntry> | undefined,
+): FileCardTarget[] | null {
+  if (!imetaByUrl) {
+    return null;
+  }
+  const files: FileCardTarget[] = [];
+  for (const child of children) {
+    if (typeof child === "string" && child.trim() === "") {
+      continue;
+    }
+    if (!isValidElement(child)) {
+      return null;
+    }
+    const props = child.props as {
+      href?: unknown;
+      src?: unknown;
+      alt?: unknown;
+      children?: ReactNode;
+    };
+    const url =
+      typeof props.href === "string"
+        ? props.href
+        : typeof props.src === "string"
+          ? props.src
+          : null;
+    if (url === null) {
+      return null;
+    }
+    const label =
+      typeof props.href === "string"
+        ? nodeText(props.children)
+        : typeof props.alt === "string"
+          ? props.alt
+          : "";
+    const file = resolveFileCard(imetaByUrl.get(url), url, label);
+    if (!file) {
+      return null;
+    }
+    files.push(file);
+  }
+  return files.length >= 2 ? files : null;
+}
+
+/**
  * Render message markdown. react-markdown does not render raw HTML by
  * default, so content is structurally sanitized. @mention tokens get a
  * distinct style so addressed readers scan faster.
@@ -153,7 +219,12 @@ function splitMediaChildren(children: ReactNode[]): {
  * - Every image is a lightbox trigger, and the lightbox opens as a gallery
  *   over the images of THIS message — the root div below is the scope.
  * - A link (or, from the CLI, an `![image](…)` node) whose imeta MIME is
- *   neither image nor video renders as a download card.
+ *   neither image nor video renders as a download card; several of them
+ *   alone in a paragraph render as one tile group.
+ *
+ * Readable long messages (web redesign Phase 2; Message artboard):
+ * - a table is a card with a header row and right-aligned numeric columns;
+ * - `> [!NOTE|TIP|IMPORTANT|WARNING|CAUTION]` is a callout (remarkCallouts).
  *
  * Snapshot links: when an imeta map is supplied (ChannelTimeline/ThreadPanel)
  * and a link classifies as a snapshot candidate, it renders as a SnapshotCard
@@ -171,6 +242,7 @@ export const MarkdownContent = memo(
     mentionNames,
     imetaByUrl,
     snapshotSharedBy,
+    compact = false,
   }: {
     content: string;
     mentionNames: ReadonlySet<string>;
@@ -178,6 +250,8 @@ export const MarkdownContent = memo(
     imetaByUrl?: Map<string, ImetaEntry>;
     /** Author label for the "Shared by" line on snapshot cards. */
     snapshotSharedBy?: string;
+    /** One type step smaller — a reply inside an inline thread. */
+    compact?: boolean;
   }) {
     const openSnapshotPreview = useSnapshotPreview();
     const palette = useCustomEmoji();
@@ -231,7 +305,12 @@ export const MarkdownContent = memo(
     const remarkPlugins = useMemo<
       ComponentProps<typeof ReactMarkdown>["remarkPlugins"]
     >(
-      () => [remarkGfm, remarkSpoilers, [remarkCustomEmoji, { palette }]],
+      () => [
+        remarkGfm,
+        remarkCallouts,
+        remarkSpoilers,
+        [remarkCustomEmoji, { palette }],
+      ],
       [palette],
     );
 
@@ -240,11 +319,19 @@ export const MarkdownContent = memo(
         p: ({ children }) => {
           const childArray = Array.isArray(children) ? children : [children];
           const { media, other } = splitMediaChildren(childArray);
+          const files = fileOnlyParagraph(childArray, imetaByUrl);
+          if (files) {
+            return <FileTileGroup files={files} />;
+          }
           if (media.length >= 2 && other.length === 0) {
             return <ImageMosaic>{media}</ImageMosaic>;
           }
           return <p>{withMentions(children, mentionNames)}</p>;
         },
+        table: MarkdownTable,
+        tr: MarkdownTableRow,
+        th: MarkdownTableHeaderCell,
+        td: MarkdownTableDataCell,
         li: ({ children }) => <li>{withMentions(children, mentionNames)}</li>,
         // remarkSpoilers emits a <spoiler> element. Without an entry here
         // react-markdown drops the unknown tag and renders the hidden text
@@ -267,6 +354,9 @@ export const MarkdownContent = memo(
           spoiler: ({ children }: { children?: ReactNode }) => (
             <Spoiler>{children}</Spoiler>
           ),
+          // remarkCallouts emits <callout>; same rule as the two above — no
+          // entry here and a NOTE would silently lose its frame.
+          callout: Callout,
         } as Partial<Components>),
         a: ({ href, children }) => {
           // Exact-match lookup, mirroring the desktop markdown.tsx
@@ -331,7 +421,10 @@ export const MarkdownContent = memo(
       <MessageMediaProvider value={mediaContext}>
         <div
           ref={rootRef}
-          className="message-prose prose dark:prose-invert max-w-none break-words prose-p:my-1 prose-pre:my-2 prose-pre:font-mono prose-code:before:content-none prose-code:after:content-none"
+          className={cn(
+            "message-prose prose dark:prose-invert max-w-none break-words prose-p:my-1 prose-pre:my-2 prose-pre:font-mono prose-code:before:content-none prose-code:after:content-none",
+            compact && "message-prose-compact",
+          )}
         >
           <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
             {content}
@@ -357,7 +450,8 @@ export const MarkdownContent = memo(
     prev.content === next.content &&
     mentionSetsEqual(prev.mentionNames, next.mentionNames) &&
     prev.imetaByUrl === next.imetaByUrl &&
-    prev.snapshotSharedBy === next.snapshotSharedBy,
+    prev.snapshotSharedBy === next.snapshotSharedBy &&
+    prev.compact === next.compact,
 );
 
 /** Wrap @Name text nodes in a styled span (names matched case-insensitively). */

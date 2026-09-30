@@ -8,6 +8,9 @@ import {
   formatRunway,
   paceLine,
   percent,
+  type RunDry,
+  runDryNote,
+  runwayMethod,
   updatedAgo,
   type VitalsSummary,
 } from "../lib/vitalsMath.ts";
@@ -96,6 +99,27 @@ function accountLines(accounts: readonly AccountVitals[]): Line[] {
   return lines;
 }
 
+/** The runway against the next reset (Vitals artboard), first in the list. */
+function runDryLine(note: RunDry | null): Line | null {
+  if (!note) {
+    return null;
+  }
+  const when = clock(note.resetsAt);
+  return note.kind === "safe"
+    ? {
+        key: "run-dry",
+        tone: "leaf",
+        strong: "You won't run dry.",
+        rest: ` Account ${note.account} resets ${when}, ${note.well ? "well " : ""}inside the runway.`,
+      }
+    : {
+        key: "run-dry",
+        tone: "honey",
+        strong: "The runway ends before the next reset",
+        rest: ` if you work without a break — Account ${note.account} resets ${when}.`,
+      };
+}
+
 const DOT: Record<Line["tone"], string> = {
   leaf: "bg-leaf",
   honey: "bg-work",
@@ -118,6 +142,14 @@ export function VitalsPanel({
     return () => clearInterval(timer);
   }, []);
   const runway = formatRunway(data.runway);
+  const method = runwayMethod(data.runway);
+  const runDry = runDryLine(
+    runDryNote(data.runway, data.pace?.nextReset ?? null, now),
+  );
+  const lines =
+    summary.kind === "known"
+      ? [...(runDry ? [runDry] : []), ...accountLines(summary.accounts)]
+      : [];
   return (
     <div data-testid="vitals-popover" className="text-foreground">
       <div className="flex h-12.5 items-center gap-2.5 border-b border-border px-4.5">
@@ -179,9 +211,22 @@ export function VitalsPanel({
                 style={{ width: `${percent(summary.used)}%` }}
               />
             </div>
-            {accountLines(summary.accounts).length > 0 && (
+            {method ? (
+              <p
+                data-testid="vitals-runway-method"
+                className="mt-1.5 font-mono text-2xs text-muted-foreground"
+                title={
+                  data.runway?.basis
+                    ? `Measured on the ${data.runway.basis} quota window`
+                    : undefined
+                }
+              >
+                {method}
+              </p>
+            ) : null}
+            {lines.length > 0 && (
               <ul className="mt-3.5 flex flex-col gap-2 text-sidebar-meta leading-snug">
-                {accountLines(summary.accounts).map((line) => (
+                {lines.map((line) => (
                   <li key={line.key} className="flex gap-2.25">
                     <span
                       aria-hidden

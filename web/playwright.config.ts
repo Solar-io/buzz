@@ -44,6 +44,8 @@ export default defineConfig({
         "**/sidebar-appearance.spec.ts",
         "**/shortcut-bar.spec.ts",
         "**/work-shell.spec.ts",
+        "**/messages.spec.ts",
+        "**/files-embed.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],

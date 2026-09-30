@@ -163,9 +163,7 @@ test("the portrait no longer renders inside the thinking pane", async () => {
     false,
     'the word "Thinking" must not appear in the pane',
   );
-  const close = container.querySelector(
-    '[aria-label="Close thinking panel"]',
-  );
+  const close = container.querySelector('[aria-label="Close thinking panel"]');
   assert.ok(close, "the mobile close control survives the header removal");
 
   // The transcript still gets its rows (the turn divider from the frame).
@@ -178,33 +176,22 @@ test("the portrait no longer renders inside the thinking pane", async () => {
   await unmount();
 });
 
-test("the Replies switch is reachable at EVERY width, not just below lg", async () => {
-  // The header bar's removal (Sam, 2026-09-22) moved the Replies switch into
-  // a floating strip that ALSO carries the mobile close. The close genuinely
-  // belongs below lg only (at lg the pane is docked and the composer's brain
-  // toggle is visible), but the Replies switch does not: in a DM that has
-  // both a thread and an agent it is the ONLY route back to Thinking, and the
-  // reverse route sits on the thread pane. Sharing the close's `lg:hidden`
-  // stranded every desktop reader who switched to Replies — this test exists
-  // because that shipped once.
+test("the pane has no Replies switch; its close stays below-lg only", async () => {
+  // The Replies switch lived here while a thread was a right-pane tab: it was
+  // the only route from Thinking to the thread in an agent DM. Threads open
+  // inline under their message now (web redesign Phase 2), so there is no
+  // thread pane to switch to — and a switch left behind would be a control
+  // that goes nowhere.
   //
-  // The assertion is on the class list, not computed style: jsdom does not
-  // evaluate Tailwind, so a visibility check here would pass on any markup
-  // and prove nothing.
-  const { container, unmount } = await mountPanel({
-    onSelectThreadTab: () => {},
-  });
+  // The assertion on the close is on the class list, not computed style:
+  // jsdom does not evaluate Tailwind, so a visibility check here would pass
+  // on any markup and prove nothing.
+  const { container, unmount } = await mountPanel({});
   const replies = [...container.querySelectorAll("button")].find(
     (b) => b.textContent?.trim() === "Replies",
   );
-  assert.ok(replies, "the Replies switch renders when a thread is available");
-  assert.equal(
-    replies.className.includes("lg:hidden"),
-    false,
-    "the Replies switch must not inherit the close's lg:hidden gate",
-  );
+  assert.equal(replies, undefined, "no Replies switch in the thinking pane");
 
-  // The close keeps its own gate — the two are independent.
   const close = container.querySelector('[aria-label="Close thinking panel"]');
   assert.ok(close, "the mobile close still renders");
   assert.equal(

@@ -386,6 +386,15 @@
 .message-prose p {
   line-height: var(--conversation-message-line-height);
 }
+/* A reply inside an inline thread: one step down from the conversation size,
+   still on the virtual type rem so the font-size preference and zoom move it
+   with everything else. */
+.message-prose.message-prose-compact {
+  font-size: calc(var(--conversation-message-font-size) * 0.93);
+}
+.message-prose.message-prose-compact p {
+  line-height: 1.45;
+}
 
 /*
  * Scrollbars (Sam 8/30: track must match the surface it sits on). Ported
@@ -603,6 +612,7 @@
     --coral-ink: 9.7 72.34% 36.9%;
     --leaf: 152.2 54.00% 39.2%;
     --leaf-soft: 146.7 39.13% 91.0%;
+    --leaf-line: 145.3 37.25% 80.0%;
     --leaf-ink: 152.4 56.92% 25.5%;
     --info-soft: 215.3 54.84% 93.9%;
     --info-line: 216 46.67% 85.3%;
@@ -699,6 +709,7 @@
     --coral-ink: 10.8 61.38% 71.6%;
     --leaf: 148.2 33.88% 52.0%;
     --leaf-soft: 141.8 18.64% 11.6%;
+    --leaf-line: 140 19.15% 18.4%;
     --leaf-ink: 143.8 37.72% 67.3%;
     --info-soft: 216.9 20.00% 12.7%;
     --info-line: 217.5 22.22% 21.2%;

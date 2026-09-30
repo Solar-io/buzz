@@ -9,6 +9,7 @@
  */
 
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
+import { plainText } from "../../../shared/lib/plainText.ts";
 import { isUnread, type ReadState } from "./readState.ts";
 import { isWakeForOthers } from "./wakeMessage.ts";
 
@@ -71,6 +72,11 @@ export interface ChannelActivity {
   pubkey: string;
   /** Plain-text excerpt of the message content, markdown stripped. */
   preview: string;
+  /**
+   * The message's event id — a toast's Reply and Feedback name it.
+   * Optional: samples built before it existed, and synthetic ones, have none.
+   */
+  eventId?: string;
 }
 
 export type ChannelActivityMap = Map<string, ChannelActivity>;
@@ -142,6 +148,7 @@ export function channelActivityFromEvent(
     createdAt: event.created_at,
     pubkey: event.pubkey,
     preview: plainPreview(event.content),
+    eventId: event.id,
   };
 }
 
@@ -528,12 +535,14 @@ export function isChannelRowUnread(input: {
   return isUnread(input.read, input.channelId, channelUnreadSignal(input));
 }
 
-/** Strip markdown noise for a one-line preview (mirrors the DM sampler). */
+/**
+ * Strip markdown to a one-line preview (mirrors the DM sampler). Structural
+ * lines — a table's `|---|` separator, fences — are dropped whole
+ * (`shared/lib/plainText.ts`), so a toast never quotes raw table syntax.
+ */
 function plainPreview(content: string): string {
-  return content
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, "📷 image")
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/[#*_~`>|]/g, "")
+  return plainText(content, { embed: "📷 image" })
+    .replace(/[#~>|]/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, CHANNEL_ACTIVITY_PREVIEW_MAX);

@@ -3,236 +3,176 @@ import { test } from "node:test";
 import { resolveActiveTab, rightPaneLayout } from "./rightPaneLayout.ts";
 
 /**
- * The right pane's tab model (phase-1.md §3). Phase 0 pinned the old
- * show/hide rules against the pre-extraction JSX; Phase 1 replaces those
- * rules on purpose, so the table below is the NEW contract, transcribed by
- * hand from the design doc — not computed from rightPaneLayout:
+ * The right pane's tab model. Phase 1 (phase-1.md §3) made it a strip with
+ * Work first; Phase 2 (phase-2.md) moved threads INLINE under their message,
+ * so the strip is now Work and — in an agent DM — Thinking. The table below
+ * is that contract, transcribed by hand from the design docs, not computed
+ * from rightPaneLayout:
  *
- *   tabs     work, + thread while a thread is open, + activity in an agent
- *            DM whose thinking pane is not hidden
+ *   tabs     work, + activity in an agent DM whose thinking pane is open
  *   active   the chosen tab if it exists, else previous, else work
- *   docked   threadRoot && active = thread
- *   detached detached && active = thread
  *   activity agentDm && active = activity
  *
- * Columns: threadRoot, detached, agentDm, active, paneHidden, then the
- * expected tabs, active, threadDocked, detached, activity. `previous` is
- * "work" throughout.
+ * Columns: agentDm, active, paneHidden, then the expected tabs, active,
+ * activity. `previous` is "work" throughout.
  */
 const W = "work";
-const WT = "work,thread";
 const WA = "work,activity";
-const WTA = "work,thread,activity";
 const CONVERSATION_TABLE = [
-  // no thread, plain channel
-  [0, 0, 0, "work", 0, /* → */ W, "work", 0, 0, 0],
-  [0, 0, 0, "work", 1, /* → */ W, "work", 0, 0, 0],
-  [0, 0, 0, "thread", 0, /* → */ W, "work", 0, 0, 0],
-  [0, 0, 0, "thread", 1, /* → */ W, "work", 0, 0, 0],
-  [0, 0, 0, "activity", 0, /* → */ W, "work", 0, 0, 0],
-  [0, 0, 0, "activity", 1, /* → */ W, "work", 0, 0, 0],
-  // no thread, agent DM
-  [0, 0, 1, "work", 0, /* → */ WA, "work", 0, 0, 0],
-  [0, 0, 1, "work", 1, /* → */ W, "work", 0, 0, 0],
-  [0, 0, 1, "thread", 0, /* → */ WA, "work", 0, 0, 0],
-  [0, 0, 1, "thread", 1, /* → */ W, "work", 0, 0, 0],
-  [0, 0, 1, "activity", 0, /* → */ WA, "activity", 0, 0, 1],
-  [0, 0, 1, "activity", 1, /* → */ W, "work", 0, 0, 0],
-  // a kept-open thread from another channel
-  [0, 1, 0, "work", 0, /* → */ WT, "work", 0, 0, 0],
-  [0, 1, 0, "work", 1, /* → */ WT, "work", 0, 0, 0],
-  [0, 1, 0, "thread", 0, /* → */ WT, "thread", 0, 1, 0],
-  [0, 1, 0, "thread", 1, /* → */ WT, "thread", 0, 1, 0],
-  [0, 1, 0, "activity", 0, /* → */ WT, "work", 0, 0, 0],
-  [0, 1, 0, "activity", 1, /* → */ WT, "work", 0, 0, 0],
-  [0, 1, 1, "work", 0, /* → */ WTA, "work", 0, 0, 0],
-  [0, 1, 1, "work", 1, /* → */ WT, "work", 0, 0, 0],
-  [0, 1, 1, "thread", 0, /* → */ WTA, "thread", 0, 1, 0],
-  [0, 1, 1, "thread", 1, /* → */ WT, "thread", 0, 1, 0],
-  [0, 1, 1, "activity", 0, /* → */ WTA, "activity", 0, 0, 1],
-  [0, 1, 1, "activity", 1, /* → */ WT, "work", 0, 0, 0],
-  // the open channel's thread
-  [1, 0, 0, "work", 0, /* → */ WT, "work", 0, 0, 0],
-  [1, 0, 0, "work", 1, /* → */ WT, "work", 0, 0, 0],
-  [1, 0, 0, "thread", 0, /* → */ WT, "thread", 1, 0, 0],
-  [1, 0, 0, "thread", 1, /* → */ WT, "thread", 1, 0, 0],
-  [1, 0, 0, "activity", 0, /* → */ WT, "work", 0, 0, 0],
-  [1, 0, 0, "activity", 1, /* → */ WT, "work", 0, 0, 0],
-  [1, 0, 1, "work", 0, /* → */ WTA, "work", 0, 0, 0],
-  [1, 0, 1, "work", 1, /* → */ WT, "work", 0, 0, 0],
-  [1, 0, 1, "thread", 0, /* → */ WTA, "thread", 1, 0, 0],
-  [1, 0, 1, "thread", 1, /* → */ WT, "thread", 1, 0, 0],
-  [1, 0, 1, "activity", 0, /* → */ WTA, "activity", 0, 0, 1],
-  [1, 0, 1, "activity", 1, /* → */ WT, "work", 0, 0, 0],
-  // both
-  [1, 1, 0, "work", 0, /* → */ WT, "work", 0, 0, 0],
-  [1, 1, 0, "work", 1, /* → */ WT, "work", 0, 0, 0],
-  [1, 1, 0, "thread", 0, /* → */ WT, "thread", 1, 1, 0],
-  [1, 1, 0, "thread", 1, /* → */ WT, "thread", 1, 1, 0],
-  [1, 1, 0, "activity", 0, /* → */ WT, "work", 0, 0, 0],
-  [1, 1, 0, "activity", 1, /* → */ WT, "work", 0, 0, 0],
-  [1, 1, 1, "work", 0, /* → */ WTA, "work", 0, 0, 0],
-  [1, 1, 1, "work", 1, /* → */ WT, "work", 0, 0, 0],
-  [1, 1, 1, "thread", 0, /* → */ WTA, "thread", 1, 1, 0],
-  [1, 1, 1, "thread", 1, /* → */ WT, "thread", 1, 1, 0],
-  [1, 1, 1, "activity", 0, /* → */ WTA, "activity", 0, 0, 1],
-  [1, 1, 1, "activity", 1, /* → */ WT, "work", 0, 0, 0],
+  // a plain channel: Work alone, whatever was last chosen
+  [0, "work", 0, /* → */ W, "work", 0],
+  [0, "work", 1, /* → */ W, "work", 0],
+  [0, "activity", 0, /* → */ W, "work", 0],
+  [0, "activity", 1, /* → */ W, "work", 0],
+  // an agent DM
+  [1, "work", 0, /* → */ WA, "work", 0],
+  [1, "work", 1, /* → */ W, "work", 0],
+  [1, "activity", 0, /* → */ WA, "activity", 1],
+  [1, "activity", 1, /* → */ W, "work", 0],
 ];
 
 function input(overrides) {
   return {
     surface: "conversation",
-    threadRoot: false,
-    detached: false,
     agentDm: false,
     active: "work",
     previous: "work",
     paneHidden: false,
-    webLayerActive: false,
+    webLayer: "none",
+    filesWorkOpen: false,
     workTab: true,
-    threadIsTab: true,
     workCollapsed: false,
     ...overrides,
   };
 }
 
 test("conversation: every combination matches the tab model", () => {
-  assert.equal(CONVERSATION_TABLE.length, 48, "2 × 2 × 2 × 3 × 2 inputs");
+  assert.equal(CONVERSATION_TABLE.length, 8, "2 × 2 × 2 inputs");
   const seen = new Set();
   for (const row of CONVERSATION_TABLE) {
-    const [threadRoot, detached, agentDm, active, paneHidden] = row;
-    seen.add(row.slice(0, 5).join(","));
+    const [agentDm, active, paneHidden] = row;
+    seen.add(row.slice(0, 3).join(","));
     const got = rightPaneLayout(
       input({
-        threadRoot: threadRoot === 1,
-        detached: detached === 1,
         agentDm: agentDm === 1,
         active,
         paneHidden: paneHidden === 1,
       }),
     );
-    const [tabs, resolved, docked, kept, activity] = row.slice(5);
+    const [tabs, resolved, activity] = row.slice(3);
     assert.deepEqual(
-      [
-        got.tabs.join(","),
-        got.active,
-        got.threadDocked,
-        got.detached,
-        got.activity,
-      ],
-      [tabs, resolved, docked === 1, kept === 1, activity === 1],
-      `inputs ${row.slice(0, 5).join(",")}`,
+      [got.tabs.join(","), got.active, got.activity],
+      [tabs, resolved, activity === 1],
+      `inputs ${row.slice(0, 3).join(",")}`,
     );
     assert.equal(got.hostVisible, true);
-    // The open channel's thread is always MOUNTED (its sheet below lg).
-    assert.equal(got.thread, threadRoot === 1);
   }
-  assert.equal(seen.size, 48, "no duplicated input rows");
+  assert.equal(seen.size, 8, "no duplicated input rows");
 });
 
-test("handle renders for a hidden agent-DM pane with no thread", () => {
+test("the strip is Work, then Thinking — a thread is never a tab", () => {
+  // Every surface and every pane state: the only ids the strip can hold.
+  for (const surface of ["conversation", "view", "none"]) {
+    for (const agentDm of [false, true]) {
+      for (const paneHidden of [false, true]) {
+        const { tabs } = rightPaneLayout(
+          input({ surface, agentDm, paneHidden, active: "activity" }),
+        );
+        assert.equal(tabs[0], "work", "Work is always the first tab");
+        assert.ok(
+          tabs.every((tab) => tab === "work" || tab === "activity"),
+          `unexpected tab in ${tabs.join(",")}`,
+        );
+        assert.ok(tabs.length <= 2);
+      }
+    }
+  }
+  // The full layout object: no thread fields left to mount a pane from.
+  assert.deepEqual(
+    rightPaneLayout(input({ agentDm: true, active: "activity" })),
+    {
+      hostVisible: true,
+      tabs: ["work", "activity"],
+      active: "activity",
+      handle: true,
+      work: null,
+      activity: true,
+      conversationCovered: false,
+    },
+  );
+});
+
+test("handle renders for a hidden agent-DM pane", () => {
   const layout = rightPaneLayout(input({ agentDm: true, paneHidden: true }));
   assert.equal(layout.activity, false, "the thinking tab is gone");
-  assert.equal(layout.threadDocked, false);
-  assert.equal(layout.detached, false);
   assert.deepEqual(layout.tabs, ["work"]);
   assert.equal(layout.work, "open");
   assert.equal(layout.handle, true, "the Work rail is what the handle sizes");
 });
 
-test("view surface: a detached thread is a tab beside Work", () => {
-  const layout = rightPaneLayout(
-    input({
-      surface: "view",
-      detached: true,
-      agentDm: true,
-      threadRoot: true,
-      active: "thread",
-    }),
+test("view and empty surfaces show Work alone", () => {
+  const view = rightPaneLayout(
+    input({ surface: "view", agentDm: true, active: "activity" }),
   );
-  assert.deepEqual(layout, {
+  assert.deepEqual(view, {
     hostVisible: true,
-    tabs: ["work", "thread"],
-    active: "thread",
+    tabs: ["work"],
+    active: "work",
     handle: true,
-    work: null,
-    thread: false,
-    threadDocked: false,
-    threadFocus: false,
-    detached: true,
+    work: "open",
     activity: false,
+    conversationCovered: false,
   });
-  const empty = rightPaneLayout(input({ surface: "view" }));
-  assert.deepEqual(empty.tabs, ["work"]);
-  assert.equal(empty.detached, false);
   const none = rightPaneLayout(
-    input({ surface: "none", detached: true, agentDm: true, active: "thread" }),
+    input({ surface: "none", agentDm: true, active: "activity" }),
   );
-  assert.equal(none.detached, false, "no conversation, no view: no thread");
   assert.deepEqual(none.tabs, ["work"]);
+  assert.equal(none.activity, false, "no conversation: no thinking pane");
 });
 
-test("web layer hides the host but keeps it mounted", () => {
+test("a link page hides the host but keeps it mounted", () => {
   const covered = rightPaneLayout(
-    input({ threadRoot: true, active: "thread", webLayerActive: true }),
+    input({ agentDm: true, active: "activity", webLayer: "page" }),
   );
   assert.equal(covered.hostVisible, false);
-  // The panes are still laid out (mounted, display:none) — a thread draft
-  // survives the Files overlay.
-  assert.equal(covered.threadDocked, true);
-  assert.equal(covered.thread, true);
+  // The pane is still laid out (mounted, display:none) behind Files.
+  assert.equal(covered.activity, true);
   assert.equal(
-    rightPaneLayout(input({ threadRoot: true })).hostVisible,
+    rightPaneLayout(input({ agentDm: true })).hostVisible,
     true,
     "uncovered, the host shows",
   );
   assert.equal(
-    rightPaneLayout(input({ surface: "view", webLayerActive: true }))
-      .hostVisible,
+    rightPaneLayout(input({ surface: "view", webLayer: "page" })).hostVisible,
     false,
   );
 });
 
-test("Work is always the first tab; closing a thread returns to the previous tab", () => {
-  // In an agent DM the viewer opened a thread from the thinking tab.
+test("closing Thinking returns to the previous tab, else to Work", () => {
+  // In an agent DM, on Thinking.
   const open = rightPaneLayout(
-    input({
-      agentDm: true,
-      threadRoot: true,
-      active: "thread",
-      previous: "activity",
-    }),
+    input({ agentDm: true, active: "activity", previous: "work" }),
   );
-  assert.deepEqual(open.tabs, ["work", "thread", "activity"]);
-  assert.equal(open.tabs[0], "work");
-  assert.equal(open.active, "thread");
-  // Closing it: the thread tab disappears and the pane returns to thinking,
-  // not to Work and not to nothing.
+  assert.deepEqual(open.tabs, ["work", "activity"]);
+  assert.equal(open.active, "activity");
+  // Its ✕ hides the pane: the tab disappears and the pane lands on Work.
   const closed = rightPaneLayout(
     input({
       agentDm: true,
-      threadRoot: false,
-      active: "thread",
-      previous: "activity",
+      paneHidden: true,
+      active: "activity",
+      previous: "work",
     }),
   );
-  assert.deepEqual(closed.tabs, ["work", "activity"]);
-  assert.equal(closed.active, "activity");
-  assert.equal(closed.activity, true);
-  // With the previous tab gone too, it lands on Work.
-  assert.equal(resolveActiveTab("thread", "activity", ["work"]), "work");
+  assert.deepEqual(closed.tabs, ["work"]);
+  assert.equal(closed.active, "work");
+  assert.equal(closed.activity, false);
+  // With no tabs at all there is nothing to land on.
+  assert.equal(resolveActiveTab("activity", "work", []), null);
+  assert.equal(resolveActiveTab("activity", "work", ["work"]), "work");
 });
 
-test("focus layout keeps the thread an overlay; ?view=work and a folded rail", () => {
-  const focus = rightPaneLayout(
-    input({ threadRoot: true, detached: true, threadIsTab: false }),
-  );
-  assert.deepEqual(focus.tabs, ["work"], "a focus thread is not a tab");
-  assert.equal(focus.thread, true, "…but it is mounted (its own overlay)");
-  assert.equal(focus.threadFocus, true, "…and stays on screen at lg");
-  assert.equal(focus.detached, true);
-  assert.equal(focus.threadDocked, false);
-
+test("?view=work and a folded rail", () => {
   const workPage = rightPaneLayout(input({ surface: "view", workTab: false }));
   assert.deepEqual(workPage.tabs, [], "the Work page needs no Work rail");
   assert.equal(workPage.work, null);
@@ -240,5 +180,59 @@ test("focus layout keeps the thread an overlay; ?view=work and a folded rail", (
 
   const folded = rightPaneLayout(input({ workCollapsed: true }));
   assert.equal(folded.work, "collapsed");
-  assert.equal(folded.handle, false, "a 44 px strip is not resizable");
+  assert.equal(folded.handle, false, "a 48 px strip is not resizable");
+});
+
+// Phase 4 (Files artboard): Files is a page in the main column, and the dock
+// beside it is the folded Work strip — whatever the conversation behind it
+// had docked, and whatever the viewer's conversation fold preference is.
+test("Files keeps the Work strip beside it; Thinking is not a tab", () => {
+  for (const agentDm of [false, true]) {
+    for (const workCollapsed of [false, true]) {
+      const got = rightPaneLayout(
+        input({
+          agentDm,
+          active: "activity",
+          workCollapsed,
+          webLayer: "files",
+        }),
+      );
+      assert.deepEqual(
+        got,
+        {
+          hostVisible: true,
+          tabs: ["work"],
+          active: "work",
+          handle: false,
+          work: "collapsed",
+          activity: false,
+          conversationCovered: true,
+        },
+        `agentDm=${agentDm} workCollapsed=${workCollapsed}`,
+      );
+    }
+  }
+});
+
+test("unfolding Work beside Files opens the rail without touching the fold preference", () => {
+  const open = rightPaneLayout(
+    input({ webLayer: "files", filesWorkOpen: true, workCollapsed: true }),
+  );
+  assert.equal(open.work, "open");
+  assert.equal(open.handle, true, "an open rail is resizable");
+  // Back on the conversation, the viewer's own fold still rules.
+  const back = rightPaneLayout(
+    input({ webLayer: "none", filesWorkOpen: true, workCollapsed: true }),
+  );
+  assert.equal(back.work, "collapsed");
+  assert.equal(back.conversationCovered, false);
+});
+
+test("the Work page is not also a strip beside Files", () => {
+  const got = rightPaneLayout(
+    input({ surface: "view", workTab: false, webLayer: "files" }),
+  );
+  assert.deepEqual(got.tabs, []);
+  assert.equal(got.work, null);
+  assert.equal(got.active, null);
 });

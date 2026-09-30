@@ -2,19 +2,21 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type ClipboardEvent,
-  type DragEvent,
   type KeyboardEvent,
   type ReactNode,
   type Ref,
 } from "react";
 import { notify, toast } from "@/shared/ui/notify";
-import { AtSign, Paperclip, Smile } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
+import {
+  type ComposerCommands,
+  useComposerCommands,
+} from "@/features/commands/useComposerCommands.ts";
 import { resolveMentions } from "../lib/mentions.ts";
 import { applyWrap } from "../lib/composerFormat.ts";
 import {
@@ -22,7 +24,6 @@ import {
   NO_ACTIVE_MARKS,
   type ActiveMarks,
 } from "../lib/composerActiveMarks.ts";
-import { imageFilesFromClipboard } from "../lib/composerPaste.ts";
 import { loadDraftState, saveDraftState } from "../lib/drafts.ts";
 import { buildImetaTag } from "../lib/imeta.ts";
 import { returnInsertsNewline } from "../lib/returnKey.ts";
@@ -30,26 +31,12 @@ import {
   composeSendContent,
   stripAttachmentsMarkdown,
 } from "../lib/attachmentMarkdown.ts";
-import {
-  ATTACHMENT_ACCEPT,
-  attachmentRejectionReason,
-} from "../lib/attachmentAccept.ts";
-import { dragCarriesFiles, partitionDropFiles } from "../lib/attachmentDrop.ts";
+import { ATTACHMENT_ACCEPT } from "../lib/attachmentAccept.ts";
 import {
   filenamesByUrl,
-  hasPendingUploads,
-  markFailed,
-  markUploaded,
-  markUploading,
-  queuedFrom,
   queueFromDescriptors,
-  removeAttachment,
   uploadedDescriptors,
-  withProgress,
-  type QueuedAttachment,
 } from "../lib/attachmentQueue.ts";
-import { uploadBlob } from "@/shared/api/blossom";
-import { EmojiPicker } from "@/shared/ui/EmojiPicker";
 import { useCustomEmoji } from "@/features/custom-emoji/hooks";
 import { buildCustomEmojiTags } from "@/features/custom-emoji/lib/customEmojiTags";
 import {
@@ -61,10 +48,12 @@ import {
   ComposerReplyBanner,
 } from "./ComposerReplyBanner.tsx";
 import { ComposerAttachmentTray } from "./ComposerAttachmentTray.tsx";
+import { ComposerFrame } from "./ComposerFrame.tsx";
 import { ComposerLinkPreviewTray } from "./ComposerLinkPreviewTray.tsx";
 import { ComposerSuggestionLists } from "./ComposerSuggestionLists.tsx";
 import { useComposerLinkPreviews } from "../lib/useComposerLinkPreviews.ts";
 import type { ChannelMember, Profile } from "../hooks.ts";
+import { useComposerAttachments } from "./useComposerAttachments.ts";
 import {
   useComposerSuggestions,
   type ComposerSelection,
@@ -77,16 +66,19 @@ export interface ThreadRef {
 
 /**
  * The imperative surface the composer exposes to its owner (React 19's
- * ref-as-prop). Today it exists for dictation: the mic button lives on the
- * actions row the ROUTE renders, while the draft text is composer-local
- * state, so the route's dictation hook needs a way to append finalized
- * utterances into the box. Kept as a named handle rather than a callback prop
- * so the route wires it once with a ref and never re-renders the composer on
- * its account.
+ * ref-as-prop). It exists for dictation — the mic button lives on the actions
+ * row the ROUTE renders, while the draft text is composer-local state — and
+ * for ⌘K, which hands a command that needs arguments to the box to finish.
+ * A named handle rather than callback props, so the route wires it once with
+ * a ref and never re-renders the composer on its account.
  */
 export interface ComposerHandle {
   /** Append finalized dictation text at the end of the draft. */
   appendDictation: (chunk: string) => void;
+  /** Replace the draft and put the caret at its end (⌘K → "/handoff "). */
+  prefill: (text: string) => void;
+  /** Put the caret at the end of the draft (a toast's Reply in a DM). */
+  focus: () => void;
 }
 
 /** The message a reply is aimed at, for the composer's quoted banner. */
@@ -112,16 +104,21 @@ export function Composer({
   actionsBar,
   strictMentions = false,
   autoNotify = null,
+  variant = "default",
+  commands,
+  commandContext,
+  autoFocus = false,
+  footer,
   send,
   ref,
 }: {
   members: ChannelMember[];
   profiles: Map<string, Profile>;
   /**
-   * When set, every send is threaded under that root (a channel thread pane).
-   * Absent/null — the channel's main composer, which posts top-level even
-   * while a thread is open beside it: only the pane's own composer may target
-   * the thread (Sam 2026-09-20).
+   * When set, every send is threaded under that root (an inline thread's
+   * reply box). Absent/null — the channel's main composer, which posts
+   * top-level even while a thread is open under a message: only the thread's
+   * own box may target the thread (Sam 2026-09-20).
    */
   threadRef?: ThreadRef | null;
   /**
@@ -132,9 +129,9 @@ export function Composer({
    */
   replyTarget?: ComposerReplyTarget | null;
   /**
-   * Esc with a thread aimed: the caller drops the mid-thread target, or closes
-   * the pane when the composer already answers the root. Without a threadRef
-   * there is nothing to clear and Esc does nothing.
+   * Esc with a thread aimed: the caller drops the mid-thread target, or
+   * collapses the thread when the box already answers the root. Without a
+   * threadRef there is nothing to clear and Esc does nothing.
    */
   onClearThread?: () => void;
   onSent?: () => void;
@@ -146,31 +143,42 @@ export function Composer({
   editSend?: (content: string) => Promise<{ ok: boolean; message: string }>;
   /** Channel id the draft belongs to — changing it restores that channel's draft. */
   draftKey?: string;
-  /**
-   * The only textarea hint left: callers that want one pass it (the thread
-   * pane names its root author, forum views say "Write your post..."). The
-   * main channel composer passes none, so its field is empty.
-   */
+  /** The field's hint: "Message #flight-path", "Reply in thread…". */
   placeholder?: string;
   /**
-   * Channel controls rendered above the field (the roster, Join, the one-click
-   * DM call, the thinking toggle, the shortcut bar). Only the main channel
-   * composer passes this — a thread pane or a forum has no channel-level
-   * actions of its own. Hidden while an edit is in progress, when the pane is
-   * given over to the edit banner.
+   * Channel controls on the tool row's right end (the dictation mic, the
+   * one-click DM call, the thinking toggle). Only the main channel composer
+   * passes this. Hidden while an edit is in progress.
    */
   actionsBar?: ReactNode;
   strictMentions?: boolean;
   /**
    * A participant every send from this composer should wake WITHOUT the
-   * author typing an @. Set by ThreadPanel when the thread's only authors
-   * are the viewer and exactly one other person — Sam 2026-09-20: "if two
-   * people are the only ones in the conversation, then I shouldn't have to
-   * tag them." `label` is the display name the "… will be notified" hint
-   * shows. Null/absent means no automatic tagging: the main-channel composer
-   * never passes this, so its payload is untouched.
+   * author typing an @. Set for a thread whose only other voice is one person
+   * or agent — Sam 2026-09-20: "if two people are the only ones in the
+   * conversation, then I shouldn't have to tag them." `label` is the display
+   * name the "… will be notified" hint shows. Null/absent means no automatic
+   * tagging: the main-channel composer's payload is untouched.
    */
   autoNotify?: { pubkey: string; label: string } | null;
+  /**
+   * "inline" is the thread reply box under a message: one slim field, no tool
+   * row. "default" is the channel composer (Main artboard), which is also the
+   * compact `/` · field · send row below md (PhoneChannel artboard).
+   */
+  variant?: "default" | "inline";
+  /**
+   * Slash commands (web redesign Phase 2). A host object runs them here;
+   * "elsewhere" refuses a slash line instead of posting it; undefined leaves
+   * the text alone. A command is NEVER passed to `send`.
+   */
+  commands?: ComposerCommands;
+  /** "in #flight-path" — the command list's title row. */
+  commandContext?: string;
+  /** Take focus on mount (a thread opened to reply). */
+  autoFocus?: boolean;
+  /** Under the box: the channel's running line (who is working here). */
+  footer?: ReactNode;
   send: (options: {
     content: string;
     mentionPubkeys: string[];
@@ -204,14 +212,18 @@ export function Composer({
   const [mentionPicks, setMentionPicks] = useState<Map<string, string>>(
     () => new Map(Object.entries(initialDraft.current?.mentionPicks ?? {})),
   );
-  const [attachments, setAttachments] = useState<QueuedAttachment[]>(() =>
-    queueFromDescriptors(
-      initialDraft.current?.media ?? [],
-      initialDraft.current?.filenames ?? {},
-    ),
-  );
+  const editingActive = editing != null;
+  const queue = useComposerAttachments({
+    initial: () =>
+      queueFromDescriptors(
+        initialDraft.current?.media ?? [],
+        initialDraft.current?.filenames ?? {},
+      ),
+    editingActive,
+    busy,
+  });
+  const { attachments, setAttachments } = queue;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   // The community's NIP-30 palette, for the emoji tags a send has to carry.
   const customEmoji = useCustomEmoji();
   // The author's own key — @everyone expands to everyone EXCEPT them.
@@ -251,18 +263,45 @@ export function Composer({
     });
   }, []);
 
-  /** Focus the textarea, place the caret, and refresh the mark state. */
-  const focusAt = useCallback((start: number, end: number = start) => {
-    requestAnimationFrame(() => {
-      const el = textareaRef.current;
-      if (!el) {
-        return;
-      }
-      el.focus();
-      el.setSelectionRange(start, end);
-      setSelection({ start, end });
-    });
+  /**
+   * Where the caret goes once the text it belongs to is on the page.
+   *
+   * Applied in a layout effect — after React has written the new value and
+   * before the browser handles the next key — so a key typed straight after
+   * a pick (Enter on "@Lord Nikon", then "r") lands after the name. Placing
+   * it on the next animation frame alone was a frame late: the "r" went in
+   * at the old caret, then the frame moved the caret back in front of it
+   * (Phase 2 QA). The frame stays as the fallback for a move that causes no
+   * render (focusing an unchanged draft), and is a no-op once applied.
+   */
+  const pendingCaret = useRef<{ start: number; end: number } | null>(null);
+  const applyPendingCaret = useCallback(() => {
+    const next = pendingCaret.current;
+    const el = textareaRef.current;
+    if (!next || !el) {
+      return;
+    }
+    pendingCaret.current = null;
+    el.focus();
+    el.setSelectionRange(next.start, next.end);
+    setSelection((previous) =>
+      previous.start === next.start && previous.end === next.end
+        ? previous
+        : next,
+    );
   }, []);
+  useLayoutEffect(() => {
+    applyPendingCaret();
+  });
+
+  /** Focus the textarea, place the caret, and refresh the mark state. */
+  const focusAt = useCallback(
+    (start: number, end: number = start) => {
+      pendingCaret.current = { start, end };
+      requestAnimationFrame(applyPendingCaret);
+    },
+    [applyPendingCaret],
+  );
 
   // Auto-grow (Sam 2026-09-02: "the text entry area should expand as the
   // user types"): fit the textarea's height to its content on every text
@@ -278,6 +317,13 @@ export function Composer({
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 240)}px`;
   }, [text]);
+
+  // A thread opened to reply takes the caret (↩, "Answer in chat instead").
+  useEffect(() => {
+    if (autoFocus) {
+      textareaRef.current?.focus();
+    }
+  }, [autoFocus]);
 
   // Switching channels restores that channel's persisted draft — text,
   // uploaded attachments and mention picks together (see lib/drafts.ts).
@@ -354,10 +400,32 @@ export function Composer({
       );
     }
   }, [editing]);
-  const editingActive = editing != null;
 
-  // @mention + :emoji: autocomplete (useComposerSuggestions). The picks map
-  // stays here: draft persistence and submit both read it.
+  // Slash commands: what the list offers for the token being typed, and the
+  // intercept `submit` consults before it sends anything. The send ref lets a
+  // command publish through THIS composer's send path (`/handoff`).
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  const namedMembersRef = useRef<{ pubkey: string; name: string }[]>([]);
+  const commandRun = useComposerCommands({
+    host: editingActive ? undefined : commands,
+    text,
+    caret: Math.min(selection.start, text.length),
+    selfPubkey,
+    members: namedMembersRef.current,
+    mentionPicks,
+    send: (options) => sendRef.current(options),
+    onRan: (notice) => {
+      applyText("");
+      setMentionPicks(new Map());
+      if (notice) {
+        toast.success(notice);
+      }
+    },
+  });
+
+  // /command, @mention and :emoji: autocomplete (useComposerSuggestions). The
+  // picks map stays here: draft persistence and submit both read it.
   const suggest = useComposerSuggestions({
     text,
     selection,
@@ -371,8 +439,12 @@ export function Composer({
         next.set(name.toLowerCase(), pubkey);
         return next;
       }),
+    commands: commandRun.enabled
+      ? { matches: commandRun.matches, onRun: commandRun.run }
+      : undefined,
   });
   const { namedMembers } = suggest;
+  namedMembersRef.current = namedMembers;
 
   // Which toolbar buttons render as pressed. Reading marks off the markdown
   // around the selection is the textarea equivalent of the desktop's
@@ -387,12 +459,12 @@ export function Composer({
     return activeMarks(text, start, end);
   }, [text, selection, editingActive]);
 
-  /** Insert an emoji at the caret (or the end when the textarea is unfocused). */
-  const insertEmoji = (emoji: string) => {
+  /** Insert text at the caret (or the end when the textarea is unfocused). */
+  const insertAtCaret = (inserted: string) => {
     const start = Math.min(selection.start, text.length);
     const end = Math.min(selection.end, text.length);
-    applyText(`${text.slice(0, start)}${emoji}${text.slice(end)}`);
-    focusAt(start + emoji.length);
+    applyText(`${text.slice(0, start)}${inserted}${text.slice(end)}`);
+    focusAt(start + inserted.length);
   };
 
   /**
@@ -433,8 +505,20 @@ export function Composer({
     },
     [applyText, focusAt],
   );
+  const prefill = useCallback(
+    (next: string) => {
+      applyText(next);
+      focusAt(next.length);
+    },
+    [applyText, focusAt],
+  );
 
-  useImperativeHandle(ref, () => ({ appendDictation }), [appendDictation]);
+  const focus = useCallback(() => focusAt(textRef.current.length), [focusAt]);
+  useImperativeHandle(ref, () => ({ appendDictation, prefill, focus }), [
+    appendDictation,
+    prefill,
+    focus,
+  ]);
 
   // Rich-text toolbar: apply a format fn to the current selection and restore
   // the selection the fn computed.
@@ -449,160 +533,7 @@ export function Composer({
     focusAt(result.selStart, result.selEnd);
   };
 
-  const attach = async (files: FileList | null) => {
-    if (!files || files.length === 0) {
-      return;
-    }
-    await attachFiles(Array.from(files));
-  };
-
-  /**
-   * Queue and upload files one at a time, each with its own row in the tray.
-   *
-   * Sequential rather than parallel on purpose: the relay's upload path takes
-   * a per-pubkey in-flight permit, and a serial queue makes the per-file
-   * progress bars mean what they appear to mean.
-   */
-  const attachFiles = async (files: File[]) => {
-    const accepted: { file: File; row: QueuedAttachment }[] = [];
-    for (const file of files) {
-      const reason = attachmentRejectionReason(file);
-      if (reason) {
-        toast.error(`${file.name}: ${reason}`);
-        continue;
-      }
-      const previewUrl = file.type.startsWith("image/")
-        ? URL.createObjectURL(file)
-        : undefined;
-      accepted.push({ file, row: queuedFrom(file, previewUrl) });
-    }
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-    if (accepted.length === 0) {
-      return;
-    }
-    setAttachments((previous) => [
-      ...previous,
-      ...accepted.map((entry) => entry.row),
-    ]);
-    for (const { file, row } of accepted) {
-      setAttachments((previous) => markUploading(previous, row.id));
-      try {
-        const descriptor = await uploadBlob(file, {
-          onProgress: (fraction) =>
-            setAttachments((previous) =>
-              withProgress(previous, row.id, fraction),
-            ),
-        });
-        setAttachments((previous) =>
-          markUploaded(previous, row.id, descriptor),
-        );
-        // No text mutation: the markdown is composed at send time
-        // (`composeSendContent` in submit) — the box shows only what the
-        // author typed (Sam, 2026-09-17: hide attachment URLs in the box).
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Upload failed.";
-        setAttachments((previous) => markFailed(previous, row.id, message));
-        toast.error(`${file.name}: ${message}`);
-      }
-    }
-  };
-
-  /** Drop one attachment and its preview. No text to unwind — the box never
-   *  carried the attachment's markdown; dropping the chip drops the wire. */
-  const removeQueued = (id: string) => {
-    const item = attachments.find((entry) => entry.id === id);
-    setAttachments((previous) => removeAttachment(previous, id));
-    if (item?.previewUrl) {
-      URL.revokeObjectURL(item.previewUrl);
-    }
-  };
-
-  // Screenshot paste (Sam 2026-09-02): a clipboard image uploads and lands
-  // as an attachment exactly like the paperclip. Text pastes fall through
-  // to the browser default.
-  const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    if (editingActive) {
-      return;
-    }
-    const images = imageFilesFromClipboard(event.clipboardData);
-    if (images.length === 0) {
-      return;
-    }
-    event.preventDefault();
-    void attachFiles(images);
-  };
-
-  // Drag-and-drop onto the composer (2026-09-18): the tray and queue have
-  // always been multi-file; this is the entry point the picker and paste
-  // already had. The composer root is the drop surface, and the overlay
-  // announces it. Text/URL drags are invisible here — `dragCarriesFiles`
-  // reads the dragover-safe `types` list, so an overlay never flashes for
-  // them and their default behaviour is untouched.
-  const [dragDepth, setDragDepth] = useState(0);
-  const [dragCount, setDragCount] = useState(0);
-  // No drop mid-edit (the tray is hidden and its rows belong to the channel
-  // draft, not the message under edit) and none mid-send.
-  const dropTargetActive = !editingActive && !busy;
-
-  const onDragEnter = (event: DragEvent<HTMLDivElement>) => {
-    if (!dropTargetActive || !dragCarriesFiles(event.dataTransfer)) {
-      return;
-    }
-    event.preventDefault();
-    // enter/leave pair off per child element — count them (the classic
-    // counter pattern) so crossing the textarea or a tray chip can't
-    // thrash the overlay.
-    setDragDepth((depth) => depth + 1);
-    // Best-effort count for the overlay copy; not every engine fills
-    // `items` during enter, in which case the copy omits the number.
-    setDragCount(event.dataTransfer?.items?.length ?? 0);
-  };
-
-  const onDragOver = (event: DragEvent<HTMLDivElement>) => {
-    if (!dropTargetActive || !dragCarriesFiles(event.dataTransfer)) {
-      return;
-    }
-    // preventDefault on EVERY dragover — without it the browser never fires
-    // drop at all (the surface would read as "no files accepted here").
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
-  };
-
-  const onDragLeave = () => {
-    if (!dropTargetActive) {
-      return;
-    }
-    setDragDepth((depth) => (depth > 0 ? depth - 1 : 0));
-  };
-
-  const onDrop = (event: DragEvent<HTMLDivElement>) => {
-    if (!dropTargetActive || !dragCarriesFiles(event.dataTransfer)) {
-      return;
-    }
-    event.preventDefault();
-    setDragDepth(0);
-    const files = Array.from(event.dataTransfer?.files ?? []);
-    if (files.length === 0) {
-      return; // a text/URL drag that slipped through — nothing to attach
-    }
-    const { accepted, rejections } = partitionDropFiles(files);
-    // Same words, same surface as the picker's rejections (`attachFiles`).
-    for (const { name, reason } of rejections) {
-      toast.error(`${name}: ${reason}`);
-    }
-    if (accepted.length > 0) {
-      void attachFiles(accepted);
-    }
-  };
-
-  const uploadsPending = hasPendingUploads(attachments);
-  // An uploaded attachment alone is a sendable message — the markdown that
-  // makes it non-empty is composed at send, so the button cannot key on the
-  // visible text alone.
-  const hasUploaded = attachments.some((item) => item.descriptor != null);
+  const { uploadsPending, hasUploaded } = queue;
 
   // Sender-authored link previews. Editing an existing message never
   // re-resolves: the snapshot belongs to the original send, and an edit that
@@ -611,6 +542,12 @@ export function Composer({
 
   const submit = async () => {
     const trimmed = text.trim();
+    // A slash line is a COMMAND and is never sent as message text: run it,
+    // or refuse it with an inline error, and stop. This sits before every
+    // other branch of submit on purpose — nothing below it may see the draft.
+    if (commandRun.intercept(text, busy)) {
+      return;
+    }
     // Attachment markdown is wire-only; edits keep the original body.
     const finalContent = editingActive
       ? trimmed
@@ -674,13 +611,8 @@ export function Composer({
             ],
           });
       if (result.ok) {
-        for (const item of attachments) {
-          if (item.previewUrl) {
-            URL.revokeObjectURL(item.previewUrl);
-          }
-        }
+        queue.clear();
         applyText("");
-        setAttachments([]);
         setMentionPicks(new Map());
         linkPreviews.reset();
         if (editingActive) {
@@ -735,36 +667,38 @@ export function Composer({
     }
   };
 
-  // No placeholder (Sam, 2026-09-22): the field starts empty of hint text.
-  // Everything the old hint carried is still said, and said louder, elsewhere
-  // in this pane — the edit banner above ("Editing message"), the reply banner
-  // with the quoted body, the auto-notify line, and the thread line. The
-  // channel name is on screen in the header, so repeating it in the field
-  // added a second, quieter source for the same fact. The `placeholder` prop
-  // still wins if a caller passes one (forum views), and `@`/emoji autocomplete
-  // are driven by typing, not by the hint.
+  const inline = variant === "inline";
+  const working = busy || commandRun.running;
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: pointer-only drop target — drag-and-drop has no keyboard or ARIA equivalent; the paperclip button above is the keyboard-accessible attach path.
+    // A pointer-only drop target (the spread handlers): drag-and-drop has no
+    // keyboard equivalent; the paperclip is the keyboard-accessible attach.
     <div
-      className="relative border-t border-border p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-4"
-      onDragEnter={onDragEnter}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
+      className={cn(
+        "relative",
+        !inline &&
+          "border-t border-border px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:border-t-0 md:px-5 md:pt-1 md:pb-3.5",
+      )}
+      {...queue.dropHandlers}
     >
-      {dragDepth > 0 && (
+      {queue.dragDepth > 0 && (
         <div
           data-testid="composer-drop-overlay"
           aria-hidden
           className="pointer-events-none absolute inset-x-0 bottom-full z-10 mb-1 flex items-center justify-center rounded-lg border border-dashed border-ring/70 bg-card/95 px-3 py-2 text-sm text-foreground shadow-lg"
         >
-          {dragCount > 0
-            ? `Drop to attach — ${dragCount} ${dragCount === 1 ? "file" : "files"}`
+          {queue.dragCount > 0
+            ? `Drop to attach — ${queue.dragCount} ${queue.dragCount === 1 ? "file" : "files"}`
             : "Drop files to attach"}
         </div>
       )}
-      <ComposerSuggestionLists {...suggest.listProps} />
+      <ComposerSuggestionLists
+        {...suggest.listProps}
+        onPickCommand={
+          commandRun.enabled ? suggest.listProps.onPickCommand : undefined
+        }
+        commandContext={commandContext}
+      />
       {editingActive ? (
         <ComposerEditBanner onCancel={() => onCancelEdit?.()} />
       ) : threadRef && replyTarget ? (
@@ -773,43 +707,11 @@ export function Composer({
           body={replyTarget.body}
           onDismiss={() => onClearThread?.()}
         />
-      ) : threadRef ? (
-        <p className="mb-1 text-xs text-muted-foreground">
-          Replying in thread — Esc clears
-        </p>
       ) : null}
-      {/* The author cannot tell an invisible p-tag is being added, so the
-          pane says so: the same quiet line style as the thread banner. An
-          edit carries no p-tags at all, hence the editingActive guard. */}
-      {autoNotify && !editingActive && (
-        <p
-          data-testid="composer-auto-notify"
-          className="mb-1 text-xs text-muted-foreground"
-        >
-          {autoNotify.label} will be notified
-        </p>
-      )}
-      {!editingActive && (
-        <div className="mb-1.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-          <ComposerFormatToolbar
-            className="mb-0"
-            marks={marks}
-            disabled={busy}
-            onApply={applyFormat}
-            onCaptureSelection={syncSelection}
-          />
-          {/* The channel's controls share this row with the formatting icons —
-              right-aligned, same line (Sam, 2026-09-22: the annotation's arrow
-              lands on the B/I/S/… toolbar, and these were rendering one row
-              above it). Wraps below the icons on a narrow column rather than
-              crushing it. */}
-          {actionsBar}
-        </div>
-      )}
       {!editingActive && (
         <ComposerAttachmentTray
           attachments={attachments}
-          onRemove={removeQueued}
+          onRemove={queue.removeQueued}
         />
       )}
       {!editingActive && (
@@ -818,120 +720,99 @@ export function Composer({
           onSuppress={linkPreviews.suppress}
         />
       )}
-      <div className="flex items-end gap-2">
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept={ATTACHMENT_ACCEPT}
-          multiple
-          className="hidden"
-          onChange={(event) => void attach(event.target.files)}
-        />
-        {/* Desktop's composer shape: ONE rounded field carrying the icons
-            inside it (attach / mention / emoji at the right edge), send
-            circle just outside. No emoji glyphs — proper lucide icons. */}
-        <div
+      <input
+        ref={queue.fileInputRef}
+        type="file"
+        accept={ATTACHMENT_ACCEPT}
+        multiple
+        className="hidden"
+        onChange={(event) => void queue.attach(event.target.files)}
+      />
+      <ComposerFrame
+        variant={inline ? "inline" : "default"}
+        busy={working}
+        editing={editingActive}
+        canSend={
+          !working && !uploadsPending && (text.trim() !== "" || hasUploaded)
+        }
+        sendTitle={uploadsPending ? "Waiting for uploads to finish" : undefined}
+        commandsEnabled={commandRun.enabled && !editingActive}
+        commandListOpen={suggest.commandListOpen}
+        actionsBar={editingActive ? null : actionsBar}
+        formatToolbar={
+          editingActive ? null : (
+            <ComposerFormatToolbar
+              className="mb-0"
+              marks={marks}
+              disabled={busy}
+              onApply={applyFormat}
+              onCaptureSelection={syncSelection}
+            />
+          )
+        }
+        onSubmit={() => void submit()}
+        onAttach={() => queue.fileInputRef.current?.click()}
+        onMention={() => {
+          insertAtCaret("@");
+          suggest.rearmMention();
+        }}
+        onCommand={() => {
+          applyText("/");
+          focusAt(1);
+        }}
+        onEmoji={insertAtCaret}
+        onGif={insertGif}
+      >
+        <textarea
+          ref={textareaRef}
+          data-testid="composer-input"
           className={cn(
-            "flex min-h-14 min-w-0 flex-1 items-end gap-1 rounded-2xl border border-input bg-card py-1.5 pl-1 pr-1.5 shadow-xs transition-colors",
-            "focus-within:border-ring/60 focus-within:ring-1 focus-within:ring-ring",
+            "block min-w-0 flex-1 resize-none overflow-y-auto bg-transparent placeholder:text-muted-foreground focus-visible:outline-hidden",
+            inline
+              ? "max-h-40 min-h-7.5 px-2.5 py-1.5 text-sm"
+              : "max-h-60 min-h-11 px-3.5 py-2.5 text-base md:min-h-10 md:w-full md:pt-3 md:pb-1",
+          )}
+          placeholder={placeholder}
+          rows={1}
+          value={text}
+          onChange={(event) => {
+            applyText(event.target.value);
+            commandRun.clearError();
+            suggest.resetHighlight();
+            syncSelection();
+          }}
+          onKeyDown={onKeyDown}
+          onKeyUp={syncSelection}
+          onClick={syncSelection}
+          onSelect={syncSelection}
+          onFocus={syncSelection}
+          onPaste={queue.onPaste}
+          onBlur={suggest.resetHighlight}
+        />
+      </ComposerFrame>
+      {footer}
+      {commandRun.error && (
+        <p
+          role="alert"
+          data-testid="composer-command-error"
+          className="mt-1.5 px-1 text-xs font-medium text-coral-ink"
+        >
+          {commandRun.error}
+        </p>
+      )}
+      {/* The author cannot tell an invisible p-tag is being added, so the box
+          says so. An edit carries no p-tags at all, hence the guard. */}
+      {autoNotify && !editingActive && (
+        <p
+          data-testid="composer-auto-notify"
+          className={cn(
+            "text-muted-foreground",
+            inline ? "mt-1 px-0.5 text-2xs" : "mt-1.5 px-1 text-xs",
           )}
         >
-          <textarea
-            ref={textareaRef}
-            data-testid="composer-input"
-            className="max-h-60 min-h-11 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-3 py-2 text-base placeholder:text-muted-foreground focus-visible:outline-hidden"
-            placeholder={placeholder}
-            rows={1}
-            value={text}
-            onChange={(event) => {
-              applyText(event.target.value);
-              suggest.resetHighlight();
-              syncSelection();
-            }}
-            onKeyDown={onKeyDown}
-            onKeyUp={syncSelection}
-            onClick={syncSelection}
-            onSelect={syncSelection}
-            onFocus={syncSelection}
-            onPaste={onPaste}
-            onBlur={suggest.resetHighlight}
-          />
-          <div
-            className="flex items-center gap-0.5 pb-0.5"
-            role="toolbar"
-            aria-label="Insert"
-          >
-            <button
-              type="button"
-              aria-label="Attach a file"
-              title="Attach images, video or files — or paste a screenshot"
-              className="rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
-              disabled={busy}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Paperclip aria-hidden className="h-5 w-5" />
-            </button>
-            <button
-              type="button"
-              aria-label="Mention someone"
-              title="Mention — inserts @"
-              className="rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
-              disabled={busy || editingActive}
-              onClick={() => {
-                const start = Math.min(selection.start, text.length);
-                const end = Math.min(selection.end, text.length);
-                applyText(`${text.slice(0, start)}@${text.slice(end)}`);
-                suggest.rearmMention();
-                focusAt(start + 1);
-              }}
-            >
-              <AtSign aria-hidden className="h-5 w-5" />
-            </button>
-            <EmojiPicker
-              label="Insert emoji"
-              onSelect={insertEmoji}
-              onSelectGif={insertGif}
-            >
-              {(props) => (
-                <button
-                  type="button"
-                  ref={props.ref}
-                  aria-label={props["aria-label"]}
-                  title="Insert emoji"
-                  className="rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
-                  disabled={busy || editingActive}
-                  onClick={props.onClick}
-                >
-                  <Smile aria-hidden className="h-5 w-5" />
-                </button>
-              )}
-            </EmojiPicker>
-          </div>
-        </div>
-        {/* Desktop's send control: filled primary circle with an up arrow. */}
-        <button
-          type="button"
-          aria-label={editingActive ? "Save" : "Send"}
-          title={uploadsPending ? "Waiting for uploads to finish" : undefined}
-          disabled={busy || uploadsPending || (!text.trim() && !hasUploaded)}
-          className="mb-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-          onClick={() => void submit()}
-        >
-          <svg
-            aria-hidden="true"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="h-5 w-5"
-          >
-            <path d="m5 12 7-7 7 7" />
-            <path d="M12 19V5" />
-          </svg>
-        </button>
-      </div>
+          {autoNotify.label} will be notified
+        </p>
+      )}
     </div>
   );
 }

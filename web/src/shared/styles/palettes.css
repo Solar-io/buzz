@@ -28,6 +28,10 @@
  * - The selected sidebar row is the card surface with a hairline ring and a
  *   heavier label (the artboard's aria-current row), instead of the
  *   translucent-white wash the dark derived themes use.
+ * - --sel / --sel-foreground (Phase 4) are the Files artboard's selected-row
+ *   pair (#EFEBE2 / #232323). Buzz paints nothing with them; the Files theme
+ *   push sends them as stash's selected-row fill (webPanels/lib/themePush.ts),
+ *   where the ink --sidebar-active pill would read as a black bar.
  */
 @layer base {
   :root[data-palette="buzz-light"] {
@@ -87,6 +91,8 @@
     --sidebar-row-active-shadow: 0 0 0 1px hsl(var(--border));
     --sidebar-row-active-label-weight: 650;
     --sidebar-row-active-color: hsl(var(--foreground));
+    --sel: 41.5 28.89% 91.2%;
+    --sel-foreground: 48 10.20% 9.6%;
     --radius: 0.625rem;
   }
 
@@ -147,6 +153,8 @@
     --sidebar-row-active-shadow: 0 0 0 1px hsl(var(--border));
     --sidebar-row-active-label-weight: 650;
     --sidebar-row-active-color: hsl(var(--foreground));
+    --sel: 0 0% 13.7%;
+    --sel-foreground: 40 11.11% 89.4%;
     --radius: 0.625rem;
   }
 }

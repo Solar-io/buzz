@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/features/auth/ui/AuthProvider";
 import { LoginPage } from "@/features/auth/ui/LoginPage";
@@ -40,7 +40,10 @@ import { useMessageActions } from "@/features/channels/lib/useMessageActions.ts"
 import { paletteActions } from "@/features/channels/lib/paletteActions.ts";
 import { isNativeIOS } from "@/shared/platform/native";
 import { ChannelTimeline } from "@/features/channels/ui/ChannelTimeline";
-import { Composer, type ComposerHandle } from "@/features/channels/ui/Composer";
+import type { ComposerHandle } from "@/features/channels/ui/Composer";
+import { ChannelHeader } from "@/features/channels/ui/ChannelHeader";
+import { CommandComposer } from "@/features/commands/ui/CommandComposer";
+import { COMMANDS } from "@/features/commands/lib/commands.ts";
 import { DmComposerActions } from "@/features/channels/ui/DmComposerActions";
 import { useComposerDictation } from "@/features/channels/useComposerDictation";
 import { useTimelinePrefetch } from "@/features/channels/useTimelinePrefetch";
@@ -52,7 +55,15 @@ import { useRouteMentionMembers } from "@/features/huddle/useHuddleMentionMember
 import { eligibleDmAgentPubkey } from "@/features/huddle/lib/dmAgentCall.ts";
 import { authorLabel } from "@/features/channels/lib/authorLabel.ts";
 import { soleAgent } from "@/features/channels/lib/soleAgent.ts";
-import { useOpenThread } from "@/features/channels/useOpenThread.ts";
+import { useInlineThreads } from "@/features/channels/useInlineThreads.ts";
+import { useReplyIntent } from "@/features/channels/useReplyIntent.ts";
+import { useJumpShortcut } from "@/features/search/useJumpShortcut.ts";
+import {
+  memberSubtitle,
+  memberSummary,
+} from "@/features/channels/lib/memberSummary.ts";
+import { saveWorkScope } from "@/features/work/lib/workPrefs.ts";
+import { RunningStrip } from "@/features/work/ui/RunningStrip";
 import { useRecordConversationVisits } from "@/features/sidebar/lib/useSidebarOrder.ts";
 import { ShellViewPane } from "../ShellViewPane";
 import { ShellProviders } from "../ShellProviders";
@@ -290,24 +301,23 @@ function ChannelBrowser() {
     () => timelineReplyCounts(replyCounts(messages), threadSummaries),
     [messages, threadSummaries],
   );
-  // The open thread survives conversation/view switches while docked (Sam
-  // 2026-09-29; policy in features/channels/lib/openThread.ts).
-  const { openThread, threadRootId, setThreadRootId, source } =
-    useOpenThread(selectedId);
+  // Threads open in place, under their message (web redesign Phase 2): the
+  // route holds which rows are open because a reply permalink, the ↩ action
+  // and a card's "Answer in chat" all open one from outside the row.
+  const inlineThreads = useInlineThreads(selectedId);
+  const revealThread = inlineThreads.reveal;
   /**
-   * D-043: a permalink to a REPLY opens the thread on its root (the effect)
-   * and, once that thread is the one open, names the reply so the panel's
-   * list jumps to it (the derived id below).
+   * D-043: a permalink to a REPLY opens its row's thread (the effect) and
+   * names the reply, so the thread shows every reply and the target row
+   * scrolls into view and flashes (`revealId` below).
    */
   useEffect(() => {
     if (permalinkJump?.isReply) {
-      setThreadRootId(permalinkJump.topLevelId);
+      revealThread(permalinkJump.topLevelId);
     }
-  }, [permalinkJump, setThreadRootId]);
-  const threadPermalinkId =
-    permalinkMessageId != null &&
-    permalinkJump?.isReply &&
-    permalinkJump.topLevelId === threadRootId
+  }, [permalinkJump, revealThread]);
+  const revealReplyId =
+    permalinkMessageId != null && permalinkJump?.isReply
       ? permalinkMessageId
       : null;
   // Forum thread selection: picking a post swaps the posts list for the
@@ -318,10 +328,6 @@ function ChannelBrowser() {
   useEffect(() => {
     setForumPostId(null);
   }, [channelId]);
-  const threadRoot =
-    threadRootId && source === "current"
-      ? (messages.find((m) => m.id === threadRootId) ?? null)
-      : null;
   // Auto-tail now lives INSIDE the virtualized timeline (tailKey) — the VList
   // owns its scroll node. The key covers both new messages and channel
   // switches (two channels share a last-message id only in the empty case).
@@ -376,7 +382,7 @@ function ChannelBrowser() {
   // always-mounted frame host, and a keep-alive LRU (plan items 3 + 4). A
   // link/Files click shows a page from any state; any conversation
   // navigation hides the layer without unloading its frames.
-  const { web, openFiles, openLink, activeTitle } = useShellWebView(
+  const { web, openFiles, openLink, activeTitle, layerMode } = useShellWebView(
     `${selectedId ?? ""}|${view ?? ""}`,
   );
   // Sidebar + buttons: section-header plus buttons open the create dialogs.
@@ -583,26 +589,32 @@ function ChannelBrowser() {
     current?.id,
     messages,
   );
-  // The right pane (thread / agent thinking) — width, DM pane state and the
-  // kept-open thread live in useShellRightPane; what shows is
-  // rightPaneLayout(). The route keeps threadRootId (the permalink effect
-  // above reads it).
+  // The right pane (Work / agent thinking) — widths and the DM pane state
+  // live in useShellRightPane; what shows is rightPaneLayout().
   const rightPane = useShellRightPane({
     surface: view !== undefined ? "view" : current ? "conversation" : "none",
     channelId,
     selectedId,
-    channels,
-    openThread,
-    source,
-    threadRootId,
-    setThreadRootId,
-    threadRootResolved: threadRoot !== null,
     dmAgentPubkey,
     selfPubkey,
-    webLayerActive: web.state.active !== null,
+    webLayer: layerMode,
     workIsPage: view === "work",
-    selectChannel,
   });
+  // `/status`: Work scoped to a channel — the rail at lg, the page below it.
+  const [workChannelId, setWorkChannelId] = useState<string | null>(null);
+  const showWork = rightPane.showWork;
+  const openWorkForChannel = useCallback(
+    (id: string) => {
+      saveWorkScope("channel");
+      if (globalThis.matchMedia?.("(min-width: 64rem)").matches ?? true) {
+        showWork();
+        return;
+      }
+      setWorkChannelId(id);
+      void navigate({ to: "/repos", search: { view: "work" } });
+    },
+    [showWork, navigate],
+  );
   // Phone (below md): tab pages get the bottom tab bar; a conversation or
   // the web layer takes the screen and gets a back chevron instead.
   const phoneTabs = phoneTabBarVisible({
@@ -612,26 +624,30 @@ function ChannelBrowser() {
   });
   const openView = (next: NonNullable<typeof view>) =>
     void navigate({ to: "/repos", search: { view: next } });
+  const conversationTitle = current
+    ? current.type === "dm"
+      ? dmName(current.participantPubkeys)
+      : `# ${current.name}`
+    : null;
   const openMessage = (c: string, m?: string) => {
     web.hide();
     void navigate({ to: "/repos", search: { c, m } });
   };
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setSearchOpen(true);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  useJumpShortcut(() => setSearchOpen(true));
   // Composer dictation: the mic button on the actions row streams through
   // the STT bridge and appends finalized utterances to the composer's draft
   // via its imperative handle — the route owns the wiring between the two.
   const composerRef = useRef<ComposerHandle | null>(null);
   const dictation = useComposerDictation({
     onFinalTranscript: (text) => composerRef.current?.appendDictation(text),
+  });
+  useReplyIntent({
+    reply: Route.useSearch({ select: (s) => s.reply }),
+    messageId: permalinkMessageId,
+    topLevelId: permalinkJump?.topLevelId ?? null,
+    isDm: current?.type === "dm",
+    replyInThread: inlineThreads.reply,
+    focusComposer: () => composerRef.current?.focus(),
   });
   // Both belong at the shell and nowhere else: the sync keeps one kind:30300
   // subscription for the whole app, and the notification hook is the sole
@@ -698,21 +714,23 @@ function ChannelBrowser() {
         phoneBarTrailing={<PhoneWorkPill onOpen={() => openView("work")} />}
         chromeless={web.state.active !== null && web.state.focus}
         sidebar={sidebar}
-        title={
-          activeTitle !== null
-            ? activeTitle
-            : current
-              ? current.type === "dm"
-                ? dmName(current.participantPubkeys)
-                : `# ${current.name}`
-              : null
+        title={activeTitle !== null ? activeTitle : conversationTitle}
+        subtitle={
+          activeTitle === null && current && current.type !== "dm"
+            ? memberSubtitle(
+                memberSummary(
+                  members.map((member) => member.pubkey),
+                  knownAgentPubkeys,
+                ),
+              )
+            : null
         }
         rowRef={rightPane.row.ref}
         rowStyle={rightPane.row.style}
         rowClassName={
           view === undefined && current ? "buzz-conversation-row" : undefined
         }
-        rowOverlay={<WebLayer web={web} />}
+        mainOverlay={<WebLayer web={web} />}
         rightPane={
           <RightPaneHost
             {...rightPane.hostProps}
@@ -722,18 +740,6 @@ function ChannelBrowser() {
               onOpenChannel: selectChannel,
               onOpenView: openView,
               ...rightPane.workFold,
-            }}
-            conversation={{
-              root: threadRoot,
-              buffer: messages,
-              members,
-              profiles,
-              agentPubkeys,
-              strictMentions,
-              selfPubkey,
-              permalinkMessageId: threadPermalinkId,
-              onPermalinkSettled,
-              send,
             }}
             activity={
               dmAgentPubkey
@@ -762,6 +768,8 @@ function ChannelBrowser() {
               onOpenMessage={openMessage}
               onOpenView={openView}
               onJump={() => setSearchOpen(true)}
+              workChannelId={workChannelId}
+              onClearWorkChannel={() => setWorkChannelId(null)}
               channelsPage={
                 <>
                   <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground md:hidden">
@@ -797,13 +805,25 @@ function ChannelBrowser() {
                     picture={dmProfiles.get(dmAgentPubkey)?.avatar}
                   />
                 )}
-                {/* The channel header bar is gone (Sam, 2026-09-22). Its
-                      parts went where they still belong: Join / Members /
-                      the copy-name action to the composer's bottom bar, and
-                      Call / Thinking to that bar's right end. The channel
-                      name, type glyph and description are already in the
-                      sidebar row and the window title, so the bar was a
-                      second copy of the row you just clicked. */}
+                {/* The header is back (web redesign Phase 2), carrying what
+                      the sidebar row cannot: the topic and the facepile.
+                      Call / Thinking / dictation stay on the composer row. */}
+                <ChannelHeader
+                  channel={current}
+                  title={conversationTitle ?? ""}
+                  members={members}
+                  profiles={profiles}
+                  presence={presence}
+                  selfPubkey={selfPubkey}
+                  contacts={dmParticipantPubkeys}
+                  agentPubkeys={knownAgentPubkeys}
+                  dmAgentPubkey={dmAgentPubkey}
+                />
+                <RunningStrip
+                  channelId={current.id}
+                  profiles={profiles}
+                  variant="bar"
+                />
                 {current.type === "forum" ? (
                   <ForumView
                     channel={current}
@@ -832,10 +852,15 @@ function ChannelBrowser() {
                         messages={messages}
                         profiles={profiles}
                         replyCounts={counts}
-                        onOpenThread={(message) =>
-                          rightPane.openThreadTab(message.id)
-                        }
-                        activeRootId={threadRootId}
+                        threads={{
+                          expandedIds: inlineThreads.expandedIds,
+                          focusId: inlineThreads.focusId,
+                          revealId: revealReplyId,
+                          onToggle: inlineThreads.toggle,
+                          onReply: inlineThreads.reply,
+                          isDm: current.type === "dm",
+                          reply: { members, strictMentions, send },
+                        }}
                         reactions={reactions}
                         onReact={messageActions.onReact}
                         onUnreact={(messageId, emoji) => {
@@ -864,29 +889,34 @@ function ChannelBrowser() {
                         onLoadOlder={loadOlder}
                         loadingOlder={loadingOlder}
                         historyExhausted={historyExhausted}
-                        workingAgent={
-                          working.working &&
-                          working.startedAt !== null &&
-                          dmAgentPubkey
-                            ? {
-                                name:
-                                  profiles.get(dmAgentPubkey)?.displayName ??
-                                  dmAgentPubkey,
-                                startedAt: working.startedAt,
-                              }
-                            : null
-                        }
                       />
                     </div>
-                    {/* No threadRef here — deliberately. With a thread open
-                          in the right pane this composer used to be re-aimed
-                          at it, so typing in the MAIN composer silently filed
-                          the message into the thread. It always posts
-                          top-level now (Sam 2026-09-20); only the thread
-                          pane's own composer targets the thread, and Esc here
-                          is free to do nothing instead of closing it. */}
-                    <Composer
+                    {/* No threadRef here — deliberately. This composer always
+                          posts top-level (Sam 2026-09-20); only a thread's
+                          own reply box targets the thread. Slash commands run
+                          here and are never sent as text. */}
+                    <CommandComposer
                       ref={composerRef}
+                      host={{
+                        channel: {
+                          id: current.id,
+                          name:
+                            current.type === "dm"
+                              ? dmName(current.participantPubkeys)
+                              : current.name,
+                          type: current.type,
+                        },
+                        messages,
+                        openWorkForChannel,
+                      }}
+                      placeholder={`Message ${conversationTitle?.replace(/^# /, "#") ?? ""}`}
+                      footer={
+                        <RunningStrip
+                          channelId={current.id}
+                          profiles={profiles}
+                          variant="line"
+                        />
+                      }
                       members={members}
                       onTextChange={messageActions.onComposerText}
                       editing={messageActions.editing}
@@ -900,11 +930,7 @@ function ChannelBrowser() {
                       actionsBar={
                         <DmComposerActions
                           channel={current}
-                          title={
-                            current.type === "dm"
-                              ? dmName(current.participantPubkeys)
-                              : `# ${current.name}`
-                          }
+                          title={conversationTitle ?? ""}
                           dmAgentPubkey={dmAgentPubkey}
                           huddleSession={huddleSession}
                           session={session}
@@ -939,6 +965,19 @@ function ChannelBrowser() {
           initialQuery={sidebarQuery}
           onJumpToChannel={(id) => selectChannel(id)}
           actions={palette}
+          commands={
+            current && current.type !== "forum" && view === undefined
+              ? COMMANDS.map((command) => ({
+                  id: command.id,
+                  hint: command.describe,
+                  // Into the composer, caret after the name: ↵ there runs it.
+                  onSelect: () =>
+                    composerRef.current?.prefill(`/${command.id} `),
+                }))
+              : undefined
+          }
+          dmLabel={(channel) => dmName(channel.participantPubkeys)}
+          selfPubkey={selfPubkey}
           channels={channels}
           profiles={profiles}
           defaultChannelId={current?.id ?? null}

@@ -15,6 +15,8 @@ import { UserProfilePopover } from "@/features/profile/ui/UserProfilePopover";
 import { AgentAvatarHoverCard } from "./AgentAvatarHoverCard.tsx";
 import { AuthorAvatar } from "./AuthorAvatar.tsx";
 import { DecisionCard } from "./DecisionCard.tsx";
+import { HandoffChip, handoffTask } from "./HandoffChip.tsx";
+import { QuickReplies } from "./QuickReplies.tsx";
 import { isRenderableCard } from "../lib/decisionCard.ts";
 import { LinkPreviewCards } from "./LinkPreviewCards.tsx";
 import { MarkdownContent } from "./MarkdownContent.tsx";
@@ -76,7 +78,6 @@ export function MessageRow({
   message,
   profiles,
   grouped,
-  replyCount,
   cardAnswer = null,
   onOpenThread,
   active,
@@ -94,12 +95,14 @@ export function MessageRow({
   selfPubkey,
   showActions = true,
   onOpenDm,
+  density = "default",
+  needsYou = false,
+  quickReply = null,
   children,
 }: {
   message: TimelineMessage;
   profiles: Map<string, Profile>;
   grouped: boolean;
-  replyCount: number;
   /**
    * When this row is a decision card, MY answer to it from the same buffer
    * (`answeredCardReplies`). The row cannot derive this itself — it sees one
@@ -110,10 +113,11 @@ export function MessageRow({
    */
   cardAnswer?: TimelineMessage | null;
   /**
-   * Open this message's thread pane. Optional: a flat list (the thread panel)
-   * passes nothing — no "View all N replies" button and no ↩ action, because
-   * an in-pane reply target would promise a parent the pane's composer never
-   * sends to (Sam 2026-09-20).
+   * Open this message's thread — in place, under the row, with the caret in
+   * its reply box (web redesign Phase 2). Optional: a row inside a thread, or
+   * in a read-only list, passes nothing and the reply action drops out,
+   * because replying to a mid-thread message is not something the reply box
+   * sends (Sam 2026-09-20).
    */
   onOpenThread?: (message: TimelineMessage) => void;
   active: boolean;
@@ -140,8 +144,29 @@ export function MessageRow({
    * present it simply does not render the action.
    */
   onOpenDm?: (pubkey: string) => void;
+  /**
+   * "thread" is a reply inside an inline thread: a 20 px avatar, one step
+   * smaller type, no author grouping. The row is otherwise the same row —
+   * cards, reactions and the hover bar all work inside a thread.
+   */
+  density?: "default" | "thread";
+  /**
+   * This row is waiting on the VIEWER (an unanswered card aimed at them, an
+   * open yes/no ask): it gets the coral wash and the "needs you" label of the
+   * Main artboard. Decided by the host, which holds the buffer.
+   */
+  needsYou?: boolean;
+  /**
+   * The message explicitly asked the viewer for a yes or a no and is still
+   * open (`openQuickReplies`). `onAnswer` sends the choice as an ordinary
+   * threaded reply.
+   */
+  quickReply?: {
+    onAnswer: (choice: string) => Promise<{ ok: boolean; message: string }>;
+  } | null;
   children?: ReactNode;
 }) {
+  const thread = density === "thread";
   const mentionNames = new Set(
     message.mentionPubkeys.map((pubkey) =>
       authorLabel(pubkey, profiles).toLowerCase(),
@@ -171,8 +196,12 @@ export function MessageRow({
       pubkey={message.authorPubkey}
       label={label}
       picture={profiles.get(message.authorPubkey)?.avatar}
+      size={thread ? "sm" : "md"}
     />
   );
+  // A `/handoff` row: the seat's name and the task, drawn as one bar.
+  const handoffSeat =
+    message.handoff != null ? authorLabel(message.handoff, profiles) : null;
   // Avatar and author name are the two things a reader points at to ask "who
   // is this?", and until now both were inert. They share one card so the two
   // answers cannot drift. Agent config (model, effort…) rides the AVATAR only
@@ -194,7 +223,7 @@ export function MessageRow({
       {children}
     </UserProfilePopover>
   );
-  return (
+  const row = (
     // Desktop message cards: rounded-2xl rows, hover muted wash; the open
     // thread's root keeps a persistent tint so the selection is traceable.
     // `relative` + the named `group/message` are what the floating action bar
@@ -203,10 +232,15 @@ export function MessageRow({
     <div
       ref={rowRef}
       data-testid={`message-row-${message.id}`}
+      data-needs-you={needsYou ? "true" : undefined}
       className={cn(
-        "group/message relative flex gap-3 rounded-2xl px-2 transition-colors hover:bg-muted/50",
-        grouped ? "mt-0.5" : "mt-3",
-        active && "bg-muted/40 hover:bg-muted/40",
+        "group/message relative flex transition-colors",
+        thread
+          ? "gap-2.25 rounded-lg px-1 py-1 hover:bg-accent"
+          : "gap-3 rounded-[10px] px-2.5 hover:bg-accent",
+        !thread && (grouped ? "py-0.5" : "mt-1.5 py-1.5"),
+        needsYou && "bg-coral-wash hover:bg-coral-wash",
+        active && !needsYou && "bg-accent",
         pending && "opacity-70",
         highlighted &&
           "bg-primary/10 ring-1 ring-primary/40 [animation:pingFlash_1.2s_ease-out_1]",
@@ -216,7 +250,7 @@ export function MessageRow({
         <ScheduledWakeRow message={message} label={label} />
       ) : (
         <>
-          <div className="w-9 shrink-0">
+          <div className={cn("shrink-0", thread ? "w-5 pt-0.5" : "w-9")}>
             {grouped ? (
               // Continuation rows borrow the avatar column for a right-aligned
               // clock that fades in on hover/focus — otherwise a grouped message
@@ -234,26 +268,39 @@ export function MessageRow({
           </div>
           <div className="min-w-0 flex-1">
             {!grouped && (
-              <div className="flex items-baseline gap-2">
+              <div className="flex flex-wrap items-baseline gap-x-2">
                 {profileCard(
-                  <span className="text-sm font-semibold hover:underline">
+                  <span
+                    className={cn(
+                      "font-semibold hover:underline",
+                      thread ? "text-sidebar-meta" : "text-sm",
+                    )}
+                  >
                     {label}
                   </span>,
                 )}
-                {isAgent && (
-                  <>
-                    <span className="rounded bg-accent/50 px-1 text-badge font-medium uppercase tracking-wide text-accent-foreground/80">
-                      agent
-                    </span>
-                    <span
-                      className="hidden font-mono text-badge text-muted-foreground/60 sm:inline"
-                      title={message.authorPubkey}
-                    >
-                      {truncatePubkey(message.authorPubkey)}
-                    </span>
-                  </>
+                {isAgent && !thread && (
+                  // The author's key lives on the chip's tooltip and in the
+                  // profile card — a hex fragment in every header was noise.
+                  <span
+                    title={truncatePubkey(message.authorPubkey)}
+                    className="self-center rounded border border-line-2 px-1 font-mono text-badge font-semibold uppercase leading-4 tracking-[0.06em] text-muted-foreground"
+                  >
+                    Agent
+                  </span>
                 )}
-                <MessageTimestamp createdAt={message.createdAt} />
+                <MessageTimestamp
+                  createdAt={message.createdAt}
+                  className="font-mono text-2xs"
+                />
+                {needsYou && (
+                  <span
+                    data-testid="message-needs-you"
+                    className="text-xs font-semibold text-coral-ink"
+                  >
+                    needs you
+                  </span>
+                )}
                 {pending && (
                   <span
                     data-testid="message-send-status"
@@ -296,19 +343,36 @@ export function MessageRow({
                 onAnswerInChat={
                   onOpenThread ? () => onOpenThread(message) : undefined
                 }
+                asker={{
+                  pubkey: message.authorPubkey,
+                  label,
+                  picture: profiles.get(message.authorPubkey)?.avatar,
+                }}
               />
             ) : stageOpenCardTag(message) ? (
               // Agent Stage Mode: a well-formed open tag renders the Stage
               // card; a malformed one parsed to null and falls through to the
               // fallback markdown, like a card. Parts stay ordinary rows.
               <StageOpenCard message={message} />
+            ) : handoffSeat !== null ? (
+              // `/handoff`: the seat and the task as one bar. The content
+              // stays the plain-client rendering ("@Seat task").
+              <HandoffChip
+                seatName={handoffSeat}
+                task={handoffTask(message.content, handoffSeat)}
+                receipt={agentReceipt}
+              />
             ) : (
               <MarkdownContent
                 content={message.content}
                 mentionNames={mentionNames}
                 imetaByUrl={message.imetaByUrl}
                 snapshotSharedBy={label}
+                compact={thread}
               />
+            )}
+            {quickReply && (
+              <QuickReplies message={message} onAnswer={quickReply.onAnswer} />
             )}
             <StagePartChip message={message} />
             {message.edited && (
@@ -317,15 +381,6 @@ export function MessageRow({
               </span>
             )}
             <LinkPreviewCards previews={message.linkPreviews} />
-            {replyCount > 2 && onOpenThread && (
-              <button
-                type="button"
-                className="mt-0.5 text-sm font-medium text-primary hover:underline"
-                onClick={() => onOpenThread(message)}
-              >
-                View all {replyCount} {replyCount === 1 ? "reply" : "replies"} →
-              </button>
-            )}
             <ReactionChips
               messageId={message.id}
               groups={reactionGroups}
@@ -335,7 +390,6 @@ export function MessageRow({
               onReact={onReact}
               onUnreact={onUnreact}
             />
-            {children}
           </div>
           {showActions && (
             <MessageActionBar
@@ -359,6 +413,19 @@ export function MessageRow({
           )}
         </>
       )}
+    </div>
+  );
+  if (!children) {
+    return row;
+  }
+  // The inline thread sits UNDER the row, not inside it: inside, it was part
+  // of the row's `group/message`, so pointing at a reply (or focusing its
+  // box) lit the root's action bar and every reply's at once. Indented to
+  // the message text: px-2.5 + the 36px avatar + gap-3 = 58px.
+  return (
+    <div>
+      {row}
+      <div className="pl-14.5">{children}</div>
     </div>
   );
 }

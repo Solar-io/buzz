@@ -5,6 +5,8 @@ import {
   formatRunway,
   paceLine,
   parseRunway,
+  runDryNote,
+  runwayMethod,
   vitalsSummary,
 } from "./vitalsMath.ts";
 
@@ -144,4 +146,120 @@ test("runway line reads the hub and hides when it cannot say", () => {
     null,
   );
   assert.equal(parseRunway("nope"), null);
+});
+
+// ── Phase 4: /v1/runway in the popover ─────────────────────────────────────
+// The live hub at 2026-09-30T19:01Z, verbatim (curl receipt in the Phase 4
+// report): 1.28 accounts free, 6.48 % of one account per active hour.
+const LIVE_RUNWAY = {
+  freeFraction: 1.28,
+  ratePerActiveHour: 0.0648,
+  activeHours: 8.333333333333334,
+  runwayHours: 19.75308641975309,
+  basis: "weeklyAll",
+  computedAt: "2026-09-30T19:01:36.257Z",
+};
+const NOW = Date.parse("2026-09-30T19:01:36.000Z");
+
+test("parseRunway keeps the hub's fields, basis included", () => {
+  assert.deepEqual(parseRunway(LIVE_RUNWAY), {
+    freeFraction: 1.28,
+    ratePerActiveHour: 0.0648,
+    activeHours: 8.333333333333334,
+    runwayHours: 19.75308641975309,
+    basis: "weeklyAll",
+  });
+  assert.equal(parseRunway({ basis: 7 }).basis, null);
+});
+
+test("the runway reads in hours, then in days past two days", () => {
+  assert.equal(formatRunway(parseRunway(LIVE_RUNWAY)), "~19h 45m");
+  assert.equal(formatRunway(parseRunway({ runwayHours: 47.99 })), "~47h 59m");
+  assert.equal(formatRunway(parseRunway({ runwayHours: 76.2 })), "~3d 4h");
+});
+
+test("method line: the hub's own rate and active hours", () => {
+  assert.equal(
+    runwayMethod(parseRunway(LIVE_RUNWAY)),
+    "runway = free ÷ use per active hour · 48h: 6.5%/h over 8.3 active h",
+  );
+  assert.equal(
+    runwayMethod(
+      parseRunway({
+        ratePerActiveHour: 0.162,
+        activeHours: 18.2,
+        runwayHours: 2.83,
+      }),
+    ),
+    "runway = free ÷ use per active hour · 48h: 16%/h over 18 active h",
+  );
+  // Under three active intervals the hub sends no runway: say so, no rate.
+  assert.equal(
+    runwayMethod(
+      parseRunway({
+        ratePerActiveHour: 0.03,
+        activeHours: 0.3,
+        runwayHours: null,
+      }),
+    ),
+    "runway: too little active use in the last 48h to estimate",
+  );
+  assert.equal(runwayMethod(null), null);
+  assert.equal(runwayMethod(parseRunway({})), null);
+});
+
+test("you won't run dry only when the next reset lands inside the runway", () => {
+  // B resets 2026-10-01T19:59Z — 24.96 h away; the runway is 19.75 active h.
+  // Worked without a break the runway ends first, so this is NOT safe.
+  const live = runDryNote(
+    parseRunway(LIVE_RUNWAY),
+    { account: "B", resetsAt: "2026-10-01T19:59:00.000Z" },
+    NOW,
+  );
+  assert.deepEqual(live, {
+    kind: "tight",
+    account: "B",
+    resetsAt: "2026-10-01T19:59:00.000Z",
+  });
+  // The same runway with a reset 6 h out: well inside (6 ≤ 19.75 / 2).
+  assert.deepEqual(
+    runDryNote(
+      parseRunway(LIVE_RUNWAY),
+      { account: "A", resetsAt: "2026-10-01T01:01:36.000Z" },
+      NOW,
+    ),
+    {
+      kind: "safe",
+      account: "A",
+      resetsAt: "2026-10-01T01:01:36.000Z",
+      well: true,
+    },
+  );
+  // 15 h out: inside, but not "well" inside.
+  assert.equal(
+    runDryNote(
+      parseRunway(LIVE_RUNWAY),
+      { account: "A", resetsAt: "2026-10-01T10:01:36.000Z" },
+      NOW,
+    ).well,
+    false,
+  );
+});
+
+test("no runway, no reset, or a reset already past: no run-dry line", () => {
+  const reset = { account: "B", resetsAt: "2026-10-01T00:00:00.000Z" };
+  assert.equal(
+    runDryNote(parseRunway({ runwayHours: null }), reset, NOW),
+    null,
+  );
+  assert.equal(runDryNote(null, reset, NOW), null);
+  assert.equal(runDryNote(parseRunway(LIVE_RUNWAY), null, NOW), null);
+  assert.equal(
+    runDryNote(
+      parseRunway(LIVE_RUNWAY),
+      { account: "B", resetsAt: "2026-09-30T18:00:00.000Z" },
+      NOW,
+    ),
+    null,
+  );
 });

@@ -124,13 +124,14 @@ function ResizeHandle({
 export function AppShell({
   sidebar,
   title,
+  subtitle,
   children,
   chromeless = false,
   rightPane,
   rowRef,
   rowClassName,
   rowStyle,
-  rowOverlay,
+  mainOverlay,
   phoneTabBar,
   onPhoneBack,
   phoneBarTrailing,
@@ -144,6 +145,8 @@ export function AppShell({
   chromeless?: boolean;
   /** Current conversation label for the mobile top bar. */
   title?: string | null;
+  /** Under the title on the phone bar: "4 members · 3 agents". */
+  subtitle?: string | null;
   children: ReactNode;
   /** The right pane (thread / thinking), rendered after `main` in the row. */
   rightPane?: ReactNode;
@@ -154,10 +157,11 @@ export function AppShell({
   /** Carries `--thread-width` for the panes. */
   rowStyle?: CSSProperties;
   /**
-   * Absolutely positioned over the whole row — `main`, the right pane and
-   * the row's own padding (the web layer: Links + Files).
+   * Absolutely positioned over `main` (the web layer: Links + Files). A link
+   * page hides the right pane, so `main` — and the layer — is then the whole
+   * row; Files keeps the Work strip beside it (redesign Phase 4).
    */
-  rowOverlay?: ReactNode;
+  mainOverlay?: ReactNode;
   /**
    * Phone (below md): the bottom tab bar, passed only on TAB PAGES. While it
    * is set the top bar hides — a tab page carries its own header — and the
@@ -257,8 +261,18 @@ export function AppShell({
               />
             </svg>
           </button>
-          <span className="min-w-0 flex-1 truncate text-base font-bold tracking-tight">
-            {title || "Buzz"}
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-base leading-tight font-bold tracking-tight">
+              {title || "Buzz"}
+            </span>
+            {subtitle ? (
+              <span
+                data-testid="phone-bar-subtitle"
+                className="block truncate font-mono text-2xs text-muted-foreground"
+              >
+                {subtitle}
+              </span>
+            ) : null}
           </span>
           <div
             ref={setPhoneBarSlot}
@@ -267,8 +281,8 @@ export function AppShell({
           />
           {phoneBarTrailing}
         </header>
-        {/* The shell row: content, then the right pane beside it, with the
-            web layer over both. The phone bar above keeps spanning the full
+        {/* The shell row: content (with the web layer over it), then the
+            right pane beside it. The phone bar above keeps spanning the full
             column width. The ROW is the scroll container (it was `main`,
             when the pane lived inside it): its stable 10px scrollbar gutter
             must stay at the far right, after the pane, not between the
@@ -279,9 +293,11 @@ export function AppShell({
           style={rowStyle}
         >
           <PhoneBarSlotContext.Provider value={phoneBarSlot}>
-            <main className="min-h-0 min-w-0 flex-1">{children}</main>
+            <main className="relative min-h-0 min-w-0 flex-1">
+              {children}
+              {mainOverlay}
+            </main>
             {rightPane}
-            {rowOverlay}
           </PhoneBarSlotContext.Provider>
         </div>
         {phoneTabBar && !chromeless ? (

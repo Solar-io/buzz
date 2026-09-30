@@ -47,6 +47,41 @@ test("counts distinct turnIds since local midnight; undecryptable is locked, not
   assert.equal(scoped.last?.channelId, "chan-2");
 });
 
+test("done rows are one per turn, newest first, locked excluded", () => {
+  const entries = [
+    done("e1", "turn-a", MIDNIGHT + 10),
+    // A replay of turn-a with a later end time: still one row, the later one.
+    done("e2", "turn-a", MIDNIGHT + 15),
+    done("e3", "turn-b", MIDNIGHT + 20, "chan-2"),
+    done("e4", null, MIDNIGHT + 5),
+    { locked: true, eventId: "x1", createdAt: MIDNIGHT + 40 },
+  ];
+  assert.equal(entries.length, 5, "fixture has entries");
+  const { rows, count, locked } = summarizeDone(entries, MIDNIGHT);
+  assert.deepEqual(
+    rows.map((row) => [row.key, row.at, row.channelId]),
+    [
+      ["turn-b", MIDNIGHT + 20, "chan-2"],
+      ["turn-a", MIDNIGHT + 15, "chan-1"],
+      ["e4", MIDNIGHT + 5, "chan-1"],
+    ],
+  );
+  assert.equal(count, 3);
+  assert.equal(locked, 1);
+  // The locked envelope is tallied, never listed.
+  assert.equal(
+    rows.some((row) => row.key === "x1"),
+    false,
+  );
+  // Scope: the open channel's turns only.
+  assert.deepEqual(
+    summarizeDone(entries, MIDNIGHT, "channel", "chan-2").rows.map(
+      (row) => row.key,
+    ),
+    ["turn-b"],
+  );
+});
+
 test("parseTurnMetric reads NIP-AM and rejects what is not one", () => {
   assert.deepEqual(
     parseTurnMetric(

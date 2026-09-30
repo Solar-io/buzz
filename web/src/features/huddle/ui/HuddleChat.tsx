@@ -63,7 +63,6 @@ export function HuddleChat({ variant }: { variant: "compact" | "full" }) {
       loadingOlder={feed.loadingOlder}
       messages={messages}
       onLoadOlder={feed.loadOlder}
-      onOpenThread={() => {}}
       profiles={profiles}
       reactions={feed.reactions}
       replyCounts={new Map()}

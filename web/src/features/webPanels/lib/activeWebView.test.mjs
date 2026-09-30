@@ -6,6 +6,7 @@ import {
   KEEP_ALIVE,
   activeWebReducer,
   pickFilesPanel,
+  webLayerMode,
 } from "./activeWebView.ts";
 
 const link = (panelId) => ({ kind: "link", panelId });
@@ -112,4 +113,24 @@ test("pickFilesPanel: last used Files site, else first, else setup id", () => {
   );
   assert.equal(pickFilesPanel(["files", "nas"], ["files:gone"]), "files");
   assert.equal(pickFilesPanel([], []), "files");
+});
+
+test("layer mode: Files is a main-column page; a link or full screen covers the row", () => {
+  assert.equal(webLayerMode(INITIAL_ACTIVE_WEB), "none");
+  assert.equal(
+    webLayerMode(run({ type: "show", target: files("files") })),
+    "files",
+  );
+  assert.equal(webLayerMode(run({ type: "show", target: link("a") })), "page");
+  const focused = run(
+    { type: "show", target: files("files") },
+    { type: "focus", focused: true },
+  );
+  assert.equal(webLayerMode(focused), "page", "full screen takes the row");
+  assert.equal(
+    webLayerMode(
+      run({ type: "show", target: files("files") }, { type: "hide" }),
+    ),
+    "none",
+  );
 });

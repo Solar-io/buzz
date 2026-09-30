@@ -332,7 +332,6 @@ export function StageView(props: StageViewProps) {
                 previous?.authorPubkey === message.authorPubkey &&
                 message.createdAt - previous.createdAt < 300
               }
-              replyCount={0}
               active={false}
               reactionGroups={[]}
               selfPubkey={props.selfPubkey}

@@ -1,5 +1,9 @@
 import { Users } from "lucide-react";
+import type { CommandSpec } from "@/features/commands/lib/commands.ts";
+import { CommandList } from "@/features/commands/ui/CommandList";
 import { cn } from "@/shared/lib/cn";
+
+const NO_COMMANDS: readonly CommandSpec[] = [];
 
 /**
  * One row of the mention autocomplete: a channel member, or the reserved
@@ -33,6 +37,10 @@ export function ComposerSuggestionLists({
   emojiMatches,
   popupIndex,
   suggestions,
+  commandMatches = NO_COMMANDS,
+  commandIndex = 0,
+  onPickCommand,
+  commandContext,
 }: {
   applyEmojiMatch: (match: EmojiSuggestion) => void;
   applySuggestion: (name: string, pubkey?: string) => void;
@@ -40,9 +48,23 @@ export function ComposerSuggestionLists({
   emojiMatches: readonly EmojiSuggestion[];
   popupIndex: number;
   suggestions: readonly MentionSuggestion[];
+  /** Slash commands matching what is being typed (Phase 2's third trigger). */
+  commandMatches?: readonly CommandSpec[];
+  commandIndex?: number;
+  onPickCommand?: (command: CommandSpec) => void;
+  /** "in #flight-path" — shown in the command list's title row. */
+  commandContext?: string;
 }) {
   return (
     <>
+      {onPickCommand && (
+        <CommandList
+          commands={commandMatches}
+          selected={commandIndex}
+          context={commandContext}
+          onPick={onPickCommand}
+        />
+      )}
       {suggestions.length > 0 && (
         <ul className="absolute bottom-full left-3 mb-1 w-64 overflow-hidden rounded-md border border-border bg-popover shadow-lg">
           {suggestions.map((row, index) => (

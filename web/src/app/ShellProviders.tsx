@@ -34,7 +34,7 @@ export function ShellProviders({
   selfPubkey: string | null;
   /** The open conversation, for the Stage overlay. */
   stage: Omit<StageProps, "selfPubkey">;
-  toasts: Omit<ToastProps, "selfPubkey" | "channels">;
+  toasts: Omit<ToastProps, "selfPubkey" | "channels" | "onReply">;
   /** The Work tab's shell inputs: known agents and the live read markers. */
   work: Pick<WorkProps, "agentPubkeys" | "readState">;
   /** A profile card opened (or created) a DM. */
@@ -65,16 +65,21 @@ export function ShellProviders({
           kind:39000 REQ. */}
         <NotificationRuntime selfPubkey={selfPubkey} channels={channels} />
         <StageRoute {...stage} selfPubkey={selfPubkey} />
-        {/* Same mount discipline as NotificationRuntime: once at the shell, so
-          toasts survive every view. The channel side consumes the shell's
-          shared activity feed; the DM side opens the feed's DM-scoped twin. */}
-        <MessageToasts
-          {...toasts}
-          selfPubkey={selfPubkey}
-          channels={channels}
-          agentPubkeys={work.agentPubkeys}
-        />
         <RemindMeLaterProvider selfPubkey={selfPubkey}>
+          {/* Same mount discipline as NotificationRuntime: once at the shell,
+            so toasts survive every view. Inside the reminders provider, for
+            the toast's Feedback. The channel side consumes the shell's
+            shared activity feed; the DM side opens the feed's DM-scoped
+            twin. */}
+          <MessageToasts
+            {...toasts}
+            selfPubkey={selfPubkey}
+            channels={channels}
+            agentPubkeys={work.agentPubkeys}
+            onReply={(c, m) =>
+              void navigate({ to: "/repos", search: { c, m, reply: true } })
+            }
+          />
           {/* Profile cards open DMs; DM creation is the shell's job, and the
             row that raises the card renders under ChannelTimeline, so the
             callback reaches it by context rather than through files the shell

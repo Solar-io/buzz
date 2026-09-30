@@ -73,6 +73,18 @@ export function pickFilesPanel(
   return filesPanelIds[0] ?? "files";
 }
 
+/**
+ * How the shell lays the layer out (Phase 4): Files is a page in the main
+ * column beside the Work strip; a link — or anything in full screen — covers
+ * the whole row. Mirrors `WebLayerMode` in features/shell/rightPaneLayout.ts.
+ */
+export function webLayerMode(state: ActiveWebState): "none" | "page" | "files" {
+  if (state.active === null) {
+    return "none";
+  }
+  return state.active.kind === "files" && !state.focus ? "files" : "page";
+}
+
 /** Frame key: Files sites and links live in separate id spaces. */
 export function webViewKey(target: WebViewTarget): string {
   return `${target.kind}:${target.panelId}`;

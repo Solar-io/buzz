@@ -84,6 +84,7 @@ test("channelActivityFromEvent reads the h tag, author and created_at", () => {
     createdAt: 123,
     pubkey: OTHER,
     preview: "hello world",
+    eventId: "e1",
   });
   // No h tag = not a channel message; the caller drops it.
   assert.equal(channelActivityFromEvent(relayEvent({ tags: [] })), null);

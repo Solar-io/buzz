@@ -11,7 +11,7 @@
  * counted as done; a turn is counted once however many metrics name it.
  */
 
-import type { DoneSummary, WorkScope } from "./workTypes.ts";
+import type { DoneRow, DoneSummary, WorkScope } from "./workTypes.ts";
 
 export const KIND_AGENT_TURN_METRIC = 44200;
 
@@ -71,9 +71,11 @@ export function localMidnight(nowMs: number): number {
 }
 
 /**
- * Count distinct turns (turnId, else the event id) finished since
- * `sinceS`; `last` is the newest. Channel scope keeps only turns in the open
- * channel (a channel-less turn is Everywhere-only).
+ * The turns finished since `sinceS`: ONE row per distinct turn (turnId, else
+ * the event id — a replayed metric must not list a turn twice), newest first,
+ * with the count and the locked tally. Channel scope keeps only turns in the
+ * open channel (a channel-less turn is Everywhere-only). An envelope that
+ * did not decrypt is LOCKED: tallied, never listed and never counted as done.
  */
 export function summarizeDone(
   entries: readonly MetricEntry[],
@@ -81,9 +83,8 @@ export function summarizeDone(
   scope: WorkScope = "everywhere",
   channelId: string | null = null,
 ): DoneSummary {
-  const turns = new Set<string>();
+  const byTurn = new Map<string, DoneRow>();
   let locked = 0;
-  let last: DoneSummary["last"] = null;
   for (const entry of entries) {
     if (entry.createdAt < sinceS) {
       continue;
@@ -95,15 +96,27 @@ export function summarizeDone(
     if (scope === "channel" && channelId && entry.channelId !== channelId) {
       continue;
     }
-    turns.add(entry.turnId ?? entry.eventId);
-    if (!last || entry.at > last.at) {
-      last = {
-        agentPubkey: entry.agentPubkey,
-        channelId: entry.channelId,
-        at: entry.at,
-        stopReason: entry.stopReason,
-      };
+    const key = entry.turnId ?? entry.eventId;
+    const previous = byTurn.get(key);
+    if (previous && previous.at >= entry.at) {
+      continue;
     }
+    byTurn.set(key, {
+      key,
+      agentPubkey: entry.agentPubkey,
+      channelId: entry.channelId,
+      at: entry.at,
+      stopReason: entry.stopReason,
+    });
   }
-  return { state: "ready", count: turns.size, locked, last };
+  const rows = [...byTurn.values()].sort(
+    (a, b) => b.at - a.at || a.key.localeCompare(b.key),
+  );
+  return {
+    state: "ready",
+    count: rows.length,
+    locked,
+    last: rows[0] ?? null,
+    rows,
+  };
 }
