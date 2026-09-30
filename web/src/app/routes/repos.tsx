@@ -32,6 +32,9 @@ import { notifyReadStateLocalChange } from "@/features/channels/lib/readStateSyn
 import { useReadStateSync } from "@/features/channels/lib/useReadStateSync.ts";
 import { activeTyping } from "@/features/channels/lib/typing.ts";
 import { usePermalinkCleanup } from "@/features/channels/lib/usePermalinkCleanup.ts";
+import { permalinkJumpTarget } from "@/features/channels/lib/permalinkJump.ts";
+import { conversationIdentity } from "@/features/channels/lib/conversationIdentity.ts";
+import { useScratch } from "@/features/scratch/useScratch.ts";
 import { useChannelLists } from "@/features/channels/lib/useChannelLists.ts";
 import { useLandingConversation } from "@/features/channels/lib/useLandingConversation.ts";
 import { landingBeforeLoad } from "@/features/channels/lib/lastConversationScope.ts";
@@ -43,7 +46,7 @@ import { ChannelTimeline } from "@/features/channels/ui/ChannelTimeline";
 import type { ComposerHandle } from "@/features/channels/ui/Composer";
 import { ChannelHeader } from "@/features/channels/ui/ChannelHeader";
 import { CommandComposer } from "@/features/commands/ui/CommandComposer";
-import { COMMANDS } from "@/features/commands/lib/commands.ts";
+import { paletteCommands } from "@/features/commands/lib/commands.ts";
 import { DmComposerActions } from "@/features/channels/ui/DmComposerActions";
 import { useComposerDictation } from "@/features/channels/useComposerDictation";
 import { useTimelinePrefetch } from "@/features/channels/useTimelinePrefetch";
@@ -225,40 +228,11 @@ function ChannelBrowser() {
   const permalinkReady =
     permalinkMessageId != null &&
     messages.some((m) => m.id === permalinkMessageId);
-  /**
-   * Reply targets have no row in the channel timeline (replies collapse
-   * under their roots), so a permalink to one lands on its ROOT row and
-   * opens the thread panel — where replies render as full rows (D-043). A
-   * reply whose root fell outside the buffer needs neither: the timeline
-   * renders it as an orphan top-level row, so it jumps directly.
-   */
-  const permalinkJump = useMemo(() => {
-    if (!permalinkMessageId) {
-      return null;
-    }
-    const byId = new Map(messages.map((m) => [m.id, m]));
-    let current = byId.get(permalinkMessageId);
-    if (!current) {
-      return null;
-    }
-    let topLevelId = current.id;
-    for (let hops = 0; hops < 100; hops += 1) {
-      const parentId = current.rootId ?? current.replyToId;
-      if (!parentId) {
-        break;
-      }
-      const parent = byId.get(parentId);
-      if (!parent) {
-        break;
-      }
-      topLevelId = parent.id;
-      current = parent;
-    }
-    return {
-      isReply: topLevelId !== permalinkMessageId,
-      topLevelId,
-    };
-  }, [permalinkMessageId, messages]);
+  // A reply's permalink lands on its root row and opens its thread (D-043).
+  const permalinkJump = useMemo(
+    () => permalinkJumpTarget(messages, permalinkMessageId),
+    [permalinkMessageId, messages],
+  );
   // Drop ?m= once the jump reports it landed (or 4s without progress).
   const onPermalinkSettled = usePermalinkCleanup({
     permalinkMessageId,
@@ -392,11 +366,29 @@ function ChannelBrowser() {
   // re-opening the DM via the new-DM flow (41010) un-hides it.
   const hiddenDms = useHiddenDms(session, selfPubkey);
   const hiddenDmIds = hiddenDms.hiddenDmIds;
+  // Scratch channels (Phase 3): /new, /exit (with its Undo window), /keep.
+  const scratch = useScratch({
+    session,
+    channels,
+    selfPubkey,
+    openRoster: {
+      channelId: current?.id ?? null,
+      pubkeys: members.map((m) => m.pubkey),
+    },
+    openChannel: (id) => void navigate({ to: "/repos", search: { c: id } }),
+    refreshChannels,
+    evict: {
+      setChannelPrefs,
+      setReadState,
+      onChannelDeleted: forgetChannelFromList,
+    },
+  });
   const lists = useChannelLists({
     channels: unfilteredChannels,
     dms,
     channelPrefs,
     hiddenDmIds,
+    exitingScratchIds: scratch.exitingIds,
   });
 
   // Landing (plan item 5 + D-025): the last-opened conversation restored
@@ -624,11 +616,15 @@ function ChannelBrowser() {
   });
   const openView = (next: NonNullable<typeof view>) =>
     void navigate({ to: "/repos", search: { view: next } });
-  const conversationTitle = current
-    ? current.type === "dm"
-      ? dmName(current.participantPubkeys)
-      : `# ${current.name}`
-    : null;
+  // Its title ("flight-path / scratch-1" for a scratch), and the channel as
+  // slash commands — and ⌘K's list of them — see it, with my role there.
+  const viewerRole = scratch.roleIn(current?.id ?? null, members);
+  const { title: conversationTitle, commandChannel } = conversationIdentity(
+    current,
+    channels,
+    dmName,
+    viewerRole,
+  );
   const openMessage = (c: string, m?: string) => {
     web.hide();
     void navigate({ to: "/repos", search: { c, m } });
@@ -818,6 +814,12 @@ function ChannelBrowser() {
                   contacts={dmParticipantPubkeys}
                   agentPubkeys={knownAgentPubkeys}
                   dmAgentPubkey={dmAgentPubkey}
+                  scratch={{
+                    actions: scratch.actions,
+                    channels,
+                    lastActivityAt: newestMessageAt || null,
+                    role: viewerRole,
+                  }}
                 />
                 <RunningStrip
                   channelId={current.id}
@@ -898,16 +900,10 @@ function ChannelBrowser() {
                     <CommandComposer
                       ref={composerRef}
                       host={{
-                        channel: {
-                          id: current.id,
-                          name:
-                            current.type === "dm"
-                              ? dmName(current.participantPubkeys)
-                              : current.name,
-                          type: current.type,
-                        },
+                        channel: commandChannel,
                         messages,
                         openWorkForChannel,
+                        scratch: scratch.actions,
                       }}
                       placeholder={`Message ${conversationTitle?.replace(/^# /, "#") ?? ""}`}
                       footer={
@@ -967,7 +963,11 @@ function ChannelBrowser() {
           actions={palette}
           commands={
             current && current.type !== "forum" && view === undefined
-              ? COMMANDS.map((command) => ({
+              ? paletteCommands({
+                  channel: commandChannel,
+                  selfPubkey,
+                  scratch: scratch.actions,
+                }).map((command) => ({
                   id: command.id,
                   hint: command.describe,
                   // Into the composer, caret after the name: ↵ there runs it.

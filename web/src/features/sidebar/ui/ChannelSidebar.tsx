@@ -18,6 +18,8 @@ import { NewChannelDialog } from "@/features/channels/ui/NewChannelDialog";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import type { DmSummary } from "@/features/dms/hooks";
 import { NewDmDialog } from "@/features/dms/ui/NewDmDialog";
+import { scratchInfo } from "@/features/scratch/lib/scratchChannel.ts";
+import { ScratchGlyph } from "@/features/scratch/ui/ScratchChrome";
 import { useUserStatuses } from "@/features/user-status/hooks";
 import { ChannelForum, ChannelGlyph } from "@/features/sidebar/ui/ChannelGlyph";
 import { DmNavRow } from "@/features/sidebar/ui/DmNavRow";
@@ -73,6 +75,8 @@ export interface ChannelSidebarLists {
   streams: ChannelSummary[];
   /** Forum-type channels, which get their own section and body. */
   forums: ChannelSummary[];
+  /** Live scratch channels — the Scratch section, above Favorites. */
+  scratch?: ChannelSummary[];
   /** Every DM, hidden ones included — drives the "all hidden" copy. */
   dms: DmSummary[];
   /** DMs the viewer has not hidden locally. */
@@ -380,6 +384,24 @@ export function ChannelSidebar({
     <ChannelGlyph isPrivate={channel.isPrivate} />
   ));
   const forumRow = renderChannel(() => <ChannelForum />);
+  // "flight-path / scratch-1" behind a dashed hash (Main artboard).
+  const channelNames = [...lists.streams, ...lists.forums];
+  const scratchRow = (channel: ChannelSummary) => {
+    const label = scratchInfo(channel, channelNames)?.label;
+    return (
+      <SidebarNavButton
+        selected={channel.id === shownId}
+        label={label ? `${label.parent} / ${label.rest}` : channel.name}
+        icon={<ScratchGlyph className="size-3.5 text-sidebar-foreground/60" />}
+        unread={rowUnread(channel)}
+        unreadCount={rowUnreadCount(channel)}
+        muted={isMuted(readState.prefs, channel.id)}
+        status={channelMarkers?.get(channel.id)}
+        onSelect={() => actions.onSelectChannel(channel.id)}
+        menuItems={actions.channelMenuItems(channel)}
+      />
+    );
+  };
 
   const renderDm = (dm: DmSummary) => {
     const { channel } = dm;
@@ -533,6 +555,21 @@ export function ChannelSidebar({
               ? "No channels visible yet."
               : "Connecting to the relay…"}
           </p>
+        )}
+        {lists.scratch && lists.scratch.length > 0 && (
+          // Short-lived copies of channels (Phase 3): above everything that
+          // lasts, and gone from here the moment `/exit` runs.
+          <SidebarSection
+            label="Scratch"
+            hint="/new"
+            items={lists.scratch}
+            getKey={(channel) => channel.id}
+            renderItem={scratchRow}
+            isSelected={channelSelected}
+            isUnread={rowUnread}
+            collapsed={isCollapsed(collapsed, "scratch")}
+            onToggleCollapsed={() => toggle("scratch")}
+          />
         )}
         {sections.favorites.length > 0 && (
           // Channels, forums, DMs and links the viewer pinned, unread first

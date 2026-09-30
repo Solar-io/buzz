@@ -235,3 +235,40 @@ test("recentJumpKeys orders by last open, not by score, and skips links", () => 
   ]);
   assert.deepEqual(recentJumpKeys(visits, 1), ["conversation:c-flight"]);
 });
+
+test("scratch rows rank with their parent: # finds both, the parent first", () => {
+  const candidates = [
+    ...CANDIDATES,
+    {
+      key: "conversation:s-1",
+      kind: "scratch",
+      label: "flight-path / scratch-1",
+      hint: "scratch",
+      keywords: ["flight path scratch 1", "flight-path"],
+    },
+  ];
+  const results = buildJumpResults({
+    query: parseJumpQuery("#flight"),
+    candidates,
+    recents: [],
+  });
+  assert.deepEqual(keys(results), [
+    "conversation:c-flight",
+    "conversation:s-1",
+  ]);
+  assert.deepEqual(headers(results), ["Top hit", "Scratch"]);
+  // Nothing typed: the channel scope lists Channels, then Scratch.
+  const scoped = buildJumpResults({
+    query: parseJumpQuery("#"),
+    candidates,
+    recents: [],
+  });
+  assert.deepEqual(headers(scoped), ["Channels", "Scratch"]);
+  // @ is people only: a scratch channel never appears there.
+  const people = buildJumpResults({
+    query: parseJumpQuery("@flight"),
+    candidates,
+    recents: [],
+  });
+  assert.deepEqual(keys(people), []);
+});

@@ -14,6 +14,8 @@ export interface SectionHeaderProps {
   /** Shows the + button when provided (Channels, Direct messages, Links). */
   onAdd?: () => void;
   addLabel?: string;
+  /** A quiet mono hint at the right end — Scratch's "/new". */
+  hint?: string;
   className?: string;
 }
 
@@ -31,6 +33,7 @@ export function SectionHeader({
   unreadDot,
   onAdd,
   addLabel,
+  hint,
   className,
 }: SectionHeaderProps) {
   return (
@@ -74,6 +77,11 @@ export function SectionHeader({
           </span>
         )}
       </button>
+      {hint && (
+        <span className="shrink-0 pr-1.5 font-mono text-2xs font-medium normal-case tracking-normal">
+          {hint}
+        </span>
+      )}
       {onAdd && (
         <button
           type="button"

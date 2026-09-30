@@ -308,6 +308,11 @@ export interface ChannelMember {
   pubkey: string;
   /** Best display name available: profile name, else truncated key. */
   name: string;
+  /**
+   * Role from the relay-signed 39002 (`owner`, `admin`, `member`, `bot`…),
+   * where the roster source carries it — the TTL-room snapshot does.
+   */
+  role?: string;
 }
 
 /** Channel members from kind 39002 admission events (p tag = member). */

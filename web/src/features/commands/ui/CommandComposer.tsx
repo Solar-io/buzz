@@ -21,10 +21,10 @@ export function CommandComposer({
   host: Omit<ComposerCommandHost, "createReminder">;
 }) {
   const { createReminder } = useRemindMeLater();
-  const { channel, messages, openWorkForChannel } = host;
+  const { channel, messages, openWorkForChannel, scratch } = host;
   const commands = useMemo<ComposerCommandHost>(
-    () => ({ channel, messages, openWorkForChannel, createReminder }),
-    [channel, messages, openWorkForChannel, createReminder],
+    () => ({ channel, messages, openWorkForChannel, createReminder, scratch }),
+    [channel, messages, openWorkForChannel, createReminder, scratch],
   );
   const where = !channel
     ? undefined

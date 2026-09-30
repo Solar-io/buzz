@@ -20,6 +20,8 @@ export interface SidebarSectionProps<T> {
   onToggleCollapsed: () => void;
   onAdd?: () => void;
   addLabel?: string;
+  /** A quiet mono hint at the header's right end. */
+  hint?: string;
   /** Rendered between the header and the rows (create dialogs, empty copy). */
   children?: ReactNode;
   /** Rows before the "N more" row; defaults to SIDEBAR_LIST_OPTIONS. */
@@ -42,6 +44,7 @@ export function SidebarSection<T>({
   onToggleCollapsed,
   onAdd,
   addLabel,
+  hint,
   children,
   visibleItems = SIDEBAR_LIST_OPTIONS.visibleItems,
 }: SidebarSectionProps<T>) {
@@ -63,6 +66,7 @@ export function SidebarSection<T>({
         unreadDot={header.unreadDot}
         onAdd={onAdd}
         addLabel={addLabel}
+        hint={hint}
       />
       {children}
       {!collapsed && list.shown.length > 0 && (

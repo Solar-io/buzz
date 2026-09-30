@@ -28,12 +28,14 @@ export type ToastVariant =
   | "agentDone"
   | "needsYou"
   | "feedbackDue"
-  | "sendError";
+  | "sendError"
+  | "undo";
 
 export type ToastIcon =
   | { kind: "done" }
   | { kind: "error" }
   | { kind: "feedback" }
+  | { kind: "left" }
   | { kind: "workflow" }
   | {
       kind: "avatar";
@@ -203,11 +205,52 @@ export function sendErrorSpec(input: {
   };
 }
 
-/** Show a spec; returns sonner's id. */
-export function showToast(spec: ToastSpec, id?: string): string | number {
+/**
+ * Something already happened and can still be taken back: "Left
+ * flight-path / scratch-1". The draining line IS the undo window, so the
+ * toast lives exactly as long as the caller's own timer — the caller commits
+ * on that timer, not on the toast closing (a hovered toast pauses, and the
+ * commit must not).
+ */
+export function undoSpec(input: {
+  lead: string;
+  rest?: string;
+  meta?: string;
+  windowMs: number;
+  onUndo: () => void;
+}): ToastSpec {
+  return {
+    variant: "undo",
+    lead: input.lead,
+    rest: input.rest,
+    meta: input.meta,
+    icon: { kind: "left" },
+    actions: [{ label: "Undo", primary: true, onClick: input.onUndo }],
+    duration: input.windowMs,
+    timer: true,
+    role: "status",
+  };
+}
+
+/**
+ * Show a spec; returns sonner's id. `lifecycle` hears the toast END: sonner's
+ * own timer ran out (`onAutoClose` — it pauses while the stack is hovered or
+ * the tab is hidden, so this fires exactly when the draining line empties),
+ * or it was dismissed (`onDismiss` — the close button, an action, Clear all).
+ */
+export function showToast(
+  spec: ToastSpec,
+  id?: string,
+  lifecycle?: { onAutoClose?: () => void; onDismiss?: () => void },
+): string | number {
   return toast.custom(
     (toastId) => createElement(BuzzToast, { spec, toastId }),
-    { duration: spec.duration, id },
+    {
+      duration: spec.duration,
+      id,
+      onAutoClose: lifecycle?.onAutoClose,
+      onDismiss: lifecycle?.onDismiss,
+    },
   );
 }
 
