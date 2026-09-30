@@ -38,7 +38,8 @@ function input(overrides) {
     active: "work",
     previous: "work",
     paneHidden: false,
-    webLayerActive: false,
+    webLayer: "none",
+    filesWorkOpen: false,
     workTab: true,
     workCollapsed: false,
     ...overrides,
@@ -96,6 +97,7 @@ test("the strip is Work, then Thinking — a thread is never a tab", () => {
       handle: true,
       work: null,
       activity: true,
+      conversationCovered: false,
     },
   );
 });
@@ -119,6 +121,7 @@ test("view and empty surfaces show Work alone", () => {
     handle: true,
     work: "open",
     activity: false,
+    conversationCovered: false,
   });
   const none = rightPaneLayout(
     input({ surface: "none", agentDm: true, active: "activity" }),
@@ -127,9 +130,9 @@ test("view and empty surfaces show Work alone", () => {
   assert.equal(none.activity, false, "no conversation: no thinking pane");
 });
 
-test("web layer hides the host but keeps it mounted", () => {
+test("a link page hides the host but keeps it mounted", () => {
   const covered = rightPaneLayout(
-    input({ agentDm: true, active: "activity", webLayerActive: true }),
+    input({ agentDm: true, active: "activity", webLayer: "page" }),
   );
   assert.equal(covered.hostVisible, false);
   // The pane is still laid out (mounted, display:none) behind Files.
@@ -140,8 +143,7 @@ test("web layer hides the host but keeps it mounted", () => {
     "uncovered, the host shows",
   );
   assert.equal(
-    rightPaneLayout(input({ surface: "view", webLayerActive: true }))
-      .hostVisible,
+    rightPaneLayout(input({ surface: "view", webLayer: "page" })).hostVisible,
     false,
   );
 });
@@ -178,5 +180,59 @@ test("?view=work and a folded rail", () => {
 
   const folded = rightPaneLayout(input({ workCollapsed: true }));
   assert.equal(folded.work, "collapsed");
-  assert.equal(folded.handle, false, "a 44 px strip is not resizable");
+  assert.equal(folded.handle, false, "a 48 px strip is not resizable");
+});
+
+// Phase 4 (Files artboard): Files is a page in the main column, and the dock
+// beside it is the folded Work strip — whatever the conversation behind it
+// had docked, and whatever the viewer's conversation fold preference is.
+test("Files keeps the Work strip beside it; Thinking is not a tab", () => {
+  for (const agentDm of [false, true]) {
+    for (const workCollapsed of [false, true]) {
+      const got = rightPaneLayout(
+        input({
+          agentDm,
+          active: "activity",
+          workCollapsed,
+          webLayer: "files",
+        }),
+      );
+      assert.deepEqual(
+        got,
+        {
+          hostVisible: true,
+          tabs: ["work"],
+          active: "work",
+          handle: false,
+          work: "collapsed",
+          activity: false,
+          conversationCovered: true,
+        },
+        `agentDm=${agentDm} workCollapsed=${workCollapsed}`,
+      );
+    }
+  }
+});
+
+test("unfolding Work beside Files opens the rail without touching the fold preference", () => {
+  const open = rightPaneLayout(
+    input({ webLayer: "files", filesWorkOpen: true, workCollapsed: true }),
+  );
+  assert.equal(open.work, "open");
+  assert.equal(open.handle, true, "an open rail is resizable");
+  // Back on the conversation, the viewer's own fold still rules.
+  const back = rightPaneLayout(
+    input({ webLayer: "none", filesWorkOpen: true, workCollapsed: true }),
+  );
+  assert.equal(back.work, "collapsed");
+  assert.equal(back.conversationCovered, false);
+});
+
+test("the Work page is not also a strip beside Files", () => {
+  const got = rightPaneLayout(
+    input({ surface: "view", workTab: false, webLayer: "files" }),
+  );
+  assert.deepEqual(got.tabs, []);
+  assert.equal(got.work, null);
+  assert.equal(got.active, null);
 });

@@ -9,7 +9,15 @@
  * At `lg` the host is a docked column; below it there is no dock — the
  * thinking pane keeps its own full-screen sheet, and Work is the
  * `?view=work` page.
+ *
+ * Phase 4: Files is a page in the MAIN column (Files artboard), not a cover
+ * over the row, so while it shows the dock stays — as the folded Work strip,
+ * which the viewer may unfold beside Files. A link page still covers the
+ * whole row and hides the pane.
  */
+
+/** What the web layer is showing: nothing, a link over the row, or Files. */
+export type WebLayerMode = "none" | "page" | "files";
 
 /** Which surface the shell row is showing. */
 export type PaneSurface = "conversation" | "view" | "none";
@@ -27,11 +35,13 @@ export interface RightPaneInput {
   previous: RightTabId;
   /** The agent-DM thinking pane was closed. */
   paneHidden: boolean;
-  /** Links/Files cover the row. */
-  webLayerActive: boolean;
+  /** The web layer: a link page hides the pane; Files keeps the Work strip. */
+  webLayer: WebLayerMode;
+  /** The viewer unfolded Work beside Files (Files only; not persisted). */
+  filesWorkOpen: boolean;
   /** Work is a tab (false on `?view=work`, where it is the page itself). */
   workTab: boolean;
-  /** The Work rail is folded to its 44 px strip. */
+  /** The Work rail is folded to its 48 px strip. */
   workCollapsed: boolean;
 }
 
@@ -48,6 +58,11 @@ export interface RightPaneLayout {
   work: "open" | "collapsed" | null;
   /** Mount the agent's thinking pane (it is the active tab). */
   activity: boolean;
+  /**
+   * Files covers the conversation: Work's "This channel" has no channel to
+   * mean, so it reads as Everywhere (as it does on view pages).
+   */
+  conversationCovered: boolean;
 }
 
 /**
@@ -74,6 +89,10 @@ export function rightPaneTabs(input: RightPaneInput): RightTabId[] {
   if (input.workTab) {
     tabs.push("work");
   }
+  // Files covers the conversation, so its Thinking pane is not a tab.
+  if (input.webLayer === "files") {
+    return tabs;
+  }
   if (input.surface === "conversation" && input.agentDm && !input.paneHidden) {
     tabs.push("activity");
   }
@@ -82,17 +101,24 @@ export function rightPaneTabs(input: RightPaneInput): RightTabId[] {
 
 export function rightPaneLayout(input: RightPaneInput): RightPaneLayout {
   const tabs = rightPaneTabs(input);
-  const active = resolveActiveTab(input.active, input.previous, tabs);
-  const work =
-    active === "work" ? (input.workCollapsed ? "collapsed" : "open") : null;
+  const files = input.webLayer === "files";
+  const active = files
+    ? tabs.includes("work")
+      ? "work"
+      : null
+    : resolveActiveTab(input.active, input.previous, tabs);
+  // Beside Files, Work starts folded whatever the conversation preference.
+  const folded = files ? !input.filesWorkOpen : input.workCollapsed;
+  const work = active === "work" ? (folded ? "collapsed" : "open") : null;
   const activity =
     input.surface === "conversation" && input.agentDm && active === "activity";
   return {
-    hostVisible: !input.webLayerActive,
+    hostVisible: input.webLayer !== "page",
     tabs,
     active,
     handle: work === "open" || activity,
     work,
     activity,
+    conversationCovered: files,
   };
 }

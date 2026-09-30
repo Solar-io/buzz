@@ -11,7 +11,11 @@ import {
   WORK_RAIL_COLLAPSED_WIDTH,
 } from "@/features/work/lib/workPrefs.ts";
 import { usePointerDrag } from "@/shared/layout/usePointerDrag.ts";
-import { type PaneSurface, rightPaneLayout } from "./rightPaneLayout.ts";
+import {
+  type PaneSurface,
+  rightPaneLayout,
+  type WebLayerMode,
+} from "./rightPaneLayout.ts";
 import type { RightPaneHostProps } from "./ui/RightPaneHost.tsx";
 
 /**
@@ -30,7 +34,8 @@ export function useShellRightPane(options: {
   selectedId: string | undefined;
   dmAgentPubkey: string | null;
   selfPubkey: string | null;
-  webLayerActive: boolean;
+  /** `webLayerMode(web.state)`: Files keeps the Work strip beside it. */
+  webLayer: WebLayerMode;
   /** `?view=work`: Work is the page, so it is not also a rail. */
   workIsPage: boolean;
 }) {
@@ -47,6 +52,15 @@ export function useShellRightPane(options: {
     saveRailCollapsed(collapsed);
     setWorkCollapsedState(collapsed);
   };
+  // Beside Files, Work opens folded every time; unfolding it there is a
+  // per-visit choice that never rewrites the conversation preference.
+  const files = options.webLayer === "files";
+  const [filesWorkOpen, setFilesWorkOpen] = useState(false);
+  useEffect(() => {
+    if (!files) {
+      setFilesWorkOpen(false);
+    }
+  }, [files]);
   const pane = useDmRightPane({
     agentDm: options.dmAgentPubkey !== null,
     channelId: options.selectedId,
@@ -58,7 +72,8 @@ export function useShellRightPane(options: {
     active: pane.active,
     previous: pane.previous,
     paneHidden: pane.dmPaneHidden,
-    webLayerActive: options.webLayerActive,
+    webLayer: options.webLayer,
+    filesWorkOpen,
     workTab: !options.workIsPage,
     workCollapsed,
   });
@@ -104,11 +119,17 @@ export function useShellRightPane(options: {
     hostProps,
     /** The Work rail's fold, for the host's `work` prop. */
     workFold: {
-      onCollapse: () => setWorkCollapsed(true),
-      onExpand: () => setWorkCollapsed(false),
+      onCollapse: () =>
+        files ? setFilesWorkOpen(false) : setWorkCollapsed(true),
+      onExpand: () =>
+        files ? setFilesWorkOpen(true) : setWorkCollapsed(false),
     },
     /** `/status`: bring the Work rail up (unfold it, select its tab). */
     showWork: () => {
+      if (files) {
+        setFilesWorkOpen(true);
+        return;
+      }
       setWorkCollapsed(false);
       pane.selectTab("work");
     },

@@ -63,7 +63,7 @@ const TAB_LABEL: Record<RightTabId, string> = {
  * Below lg there is no dock: the column is `display: contents`, Work is the
  * `?view=work` page, and the thinking panel falls back to the full-screen
  * sheet it already owns. The whole host is `display: none` (still mounted)
- * while the web layer covers the row.
+ * while a link page covers the row; beside Files it is the Work strip.
  */
 export function RightPaneHost({
   layout,
@@ -171,7 +171,7 @@ export function RightPaneHost({
             <div className="hidden min-w-0 flex-1 lg:block">
               <WorkTab
                 variant="rail"
-                channelId={work.channelId}
+                channelId={layout.conversationCovered ? null : work.channelId}
                 showTitle={layout.tabs.length < 2}
                 onCollapse={work.onCollapse}
                 onOpenMessage={work.onOpenMessage}

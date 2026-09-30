@@ -16,7 +16,7 @@ export const WORK_WIDTH_DEFAULT = 380;
 export const WORK_WIDTH_MIN = 320;
 export const WORK_WIDTH_MAX = 520;
 /** The collapsed strip. */
-export const WORK_RAIL_COLLAPSED_WIDTH = 44;
+export const WORK_RAIL_COLLAPSED_WIDTH = 48;
 
 export type WorkSection = "needs" | "running" | "queued" | "done";
 

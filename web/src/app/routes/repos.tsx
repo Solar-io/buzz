@@ -382,7 +382,7 @@ function ChannelBrowser() {
   // always-mounted frame host, and a keep-alive LRU (plan items 3 + 4). A
   // link/Files click shows a page from any state; any conversation
   // navigation hides the layer without unloading its frames.
-  const { web, openFiles, openLink, activeTitle } = useShellWebView(
+  const { web, openFiles, openLink, activeTitle, layerMode } = useShellWebView(
     `${selectedId ?? ""}|${view ?? ""}`,
   );
   // Sidebar + buttons: section-header plus buttons open the create dialogs.
@@ -597,7 +597,7 @@ function ChannelBrowser() {
     selectedId,
     dmAgentPubkey,
     selfPubkey,
-    webLayerActive: web.state.active !== null,
+    webLayer: layerMode,
     workIsPage: view === "work",
   });
   // `/status`: Work scoped to a channel — the rail at lg, the page below it.
@@ -730,7 +730,7 @@ function ChannelBrowser() {
         rowClassName={
           view === undefined && current ? "buzz-conversation-row" : undefined
         }
-        rowOverlay={<WebLayer web={web} />}
+        mainOverlay={<WebLayer web={web} />}
         rightPane={
           <RightPaneHost
             {...rightPane.hostProps}

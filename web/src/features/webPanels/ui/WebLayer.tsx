@@ -4,6 +4,7 @@ import { FilesSetup } from "@/features/files/ui/FilesPanel";
 import { useShortcutBar } from "@/features/shortcut-bar/hooks";
 
 import type { ActiveWebView } from "../activeWebStore.ts";
+import { useFilesPathRequest } from "../filesPathStore.ts";
 import { useWebPanelDock } from "../hooks.ts";
 import type { WebPanelDef } from "../lib/panelRegistry.ts";
 import { WebFrameHost } from "./WebFrameHost.tsx";
@@ -18,6 +19,7 @@ import { WebFrameHost } from "./WebFrameHost.tsx";
 export function WebLayer({ web }: { web: ActiveWebView }) {
   const files = useWebPanelDock();
   const { shortcuts } = useShortcutBar();
+  const filesPath = useFilesPathRequest();
   // Saving the first Files URL changes a setting, not React state; this bump
   // re-renders so the registry re-reads it and the new site resolves.
   const [, setConfiguredAt] = useState(0);
@@ -53,6 +55,7 @@ export function WebLayer({ web }: { web: ActiveWebView }) {
 
   return (
     <WebFrameHost
+      filesPath={filesPath}
       fallback={
         web.state.active?.kind === "files" ? (
           <FilesSetup

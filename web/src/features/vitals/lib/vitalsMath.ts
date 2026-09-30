@@ -148,10 +148,15 @@ export function updatedAgo(computedAt: number | null, nowMs: number): string {
 // ── /v1/runway ─────────────────────────────────────────────────────────────
 
 export interface Runway {
+  /** Σ free across the accounts the hub can read, in ACCOUNTS (1.28 = 128 %). */
   freeFraction: number | null;
+  /** One account's quota burned per active hour over the last 48 h. */
   ratePerActiveHour: number | null;
   activeHours: number | null;
+  /** freeFraction ÷ rate; null under 3 active intervals. */
   runwayHours: number | null;
+  /** The quota window measured (`weeklyAll` today). */
+  basis: string | null;
 }
 
 function num(value: unknown): number | null {
@@ -169,17 +174,83 @@ export function parseRunway(json: unknown): Runway | null {
     ratePerActiveHour: num(raw.ratePerActiveHour),
     activeHours: num(raw.activeHours),
     runwayHours: num(raw.runwayHours),
+    basis: typeof raw.basis === "string" ? raw.basis : null,
   };
 }
 
-/** "~2h 50m" of active use; null when the hub cannot say. */
+/** "~2h 50m" of active use ("~3d 4h" past two days); null when unknown. */
 export function formatRunway(runway: Runway | null): string | null {
   const hours = runway?.runwayHours ?? null;
   if (hours === null || hours < 0) {
     return null;
   }
   const minutes = Math.round(hours * 60);
+  if (minutes >= 48 * 60) {
+    const wholeHours = Math.round(minutes / 60);
+    return `~${Math.floor(wholeHours / 24)}d ${wholeHours % 24}h`;
+  }
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   return h > 0 ? `~${h}h ${m}m` : `~${m}m`;
+}
+
+/** 6.48 → "6.5", 16.2 → "16": one decimal only under ten. */
+function short(value: number): string {
+  return value < 10
+    ? String(Math.round(value * 10) / 10)
+    : String(Math.round(value));
+}
+
+/**
+ * The popover's method line (Vitals artboard): how the runway was computed,
+ * from the hub's own numbers — "runway = free ÷ use per active hour · 48h:
+ * 6.5%/h over 8.3 active h". When the hub has too little active use to
+ * divide by, it says so instead of printing a rate of nothing.
+ */
+export function runwayMethod(runway: Runway | null): string | null {
+  if (!runway) {
+    return null;
+  }
+  const rate = runway.ratePerActiveHour;
+  const active = runway.activeHours;
+  if (runway.runwayHours === null || rate === null || active === null) {
+    return active === null
+      ? null
+      : "runway: too little active use in the last 48h to estimate";
+  }
+  return `runway = free ÷ use per active hour · 48h: ${short(rate * 100)}%/h over ${short(active)} active h`;
+}
+
+export type RunDry =
+  /** The next reset lands before the runway could run out. */
+  | { kind: "safe"; account: string; resetsAt: string; well: boolean }
+  /** Worked without a break, the runway ends before the next reset. */
+  | { kind: "tight"; account: string; resetsAt: string };
+
+/**
+ * "You won't run dry" (Vitals artboard). The runway is in ACTIVE hours, so
+ * the soonest it can end is `now + runwayHours` of wall clock — working
+ * without a break. A reset before that is safe whatever the pace; "well
+ * inside" when it lands in the first half. No runway or no reset → null.
+ */
+export function runDryNote(
+  runway: Runway | null,
+  nextReset: { account: string; resetsAt: string } | null,
+  nowMs: number,
+): RunDry | null {
+  const hours = runway?.runwayHours ?? null;
+  if (hours === null || hours < 0 || !nextReset) {
+    return null;
+  }
+  const resetMs = Date.parse(nextReset.resetsAt);
+  if (!Number.isFinite(resetMs) || resetMs < nowMs) {
+    return null;
+  }
+  const endMs = nowMs + hours * 3_600_000;
+  const { account, resetsAt } = nextReset;
+  if (resetMs < endMs) {
+    const well = resetMs - nowMs <= (endMs - nowMs) / 2;
+    return { kind: "safe", account, resetsAt, well };
+  }
+  return { kind: "tight", account, resetsAt };
 }

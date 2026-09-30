@@ -1,13 +1,15 @@
-import { PanelRightOpen } from "lucide-react";
+import { ListTodo } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { cn } from "@/shared/lib/cn";
 import { StateHex } from "@/shared/ui/HexAvatar";
 
 /**
- * The Work rail folded to a 44 px strip (phase-1 §3): expand, the need count
- * on a coral hex, and the running count. A NEW need pulses the badge so a
- * folded rail still says "something arrived".
+ * The Work rail folded to its 48 px strip — the "Work, collapsed" aside of
+ * the Files / Items / Terminal artboards, and the fold of the conversation
+ * rail (phase-1 §3): one Work button carrying the need count, then the
+ * running count on a pulsing hex. A NEW need pulses the badge so a folded
+ * rail still says "something arrived".
  */
 export function WorkRailCollapsed({
   needs,
@@ -30,40 +32,35 @@ export function WorkRailCollapsed({
     previous.current = needs;
   }, [needs]);
 
+  const label = needs > 0 ? `Expand Work: ${needs} need you` : "Expand Work";
   return (
     <div
       data-testid="work-rail-collapsed"
-      className="flex h-full w-11 flex-col items-center gap-3 bg-rail py-3"
+      className="flex h-full w-12 flex-col items-center gap-3 bg-rail pt-3"
     >
       <button
         type="button"
-        aria-label="Expand Work"
+        aria-label={label}
+        title={label}
         onClick={onExpand}
-        className="grid size-8 place-items-center rounded-lg text-ink-2 hover:bg-accent hover:text-foreground"
+        className="relative grid size-8.5 place-items-center rounded-[9px] bg-card text-ink-2 ring-1 ring-border transition-colors hover:text-foreground"
       >
-        <PanelRightOpen aria-hidden className="size-4" />
-      </button>
-      {needs > 0 && (
-        <button
-          type="button"
-          onClick={onExpand}
-          aria-label={`${needs} need you`}
-          className="relative grid place-items-center"
-        >
+        <ListTodo aria-hidden className="size-4" />
+        {needs > 0 && (
           <span
+            aria-hidden
             className={cn(
-              "buzz-hex grid size-7 place-items-center bg-need font-mono text-2xs font-semibold text-need-foreground",
+              "absolute -top-1.25 -right-1.5 h-4 min-w-4 rounded-full bg-need px-1 text-center font-mono text-badge leading-4 font-semibold text-need-foreground",
               pulse && "motion-safe:animate-pulse",
             )}
-            style={{ height: "2rem" }}
           >
             {needs > 99 ? "99+" : needs}
           </span>
-        </button>
-      )}
+        )}
+      </button>
       {running > 0 && (
         <span
-          className="flex flex-col items-center gap-1 font-mono text-2xs text-honey-ink"
+          className="flex flex-col items-center gap-0.75 font-mono text-2xs text-muted-foreground"
           title={`${running} running`}
         >
           <StateHex tone="work" size={10} pulse />
