@@ -370,7 +370,13 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       await expect(
         page.getByRole("button", { name: "Back", exact: true }),
       ).toBeVisible();
-      await expect(page.getByText("Three beats. Beat 01")).toBeVisible();
+      // In the TIMELINE: the mock's replay also raises a message toast with
+      // the same text, and an unscoped match is then two elements.
+      await expect(
+        page
+          .locator(".buzz-timeline-scrollbar")
+          .getByText("Three beats. Beat 01"),
+      ).toBeVisible();
       await shot(page, `phone-channel-${theme}-390`);
 
       // Back returns to the tab it was opened from.
