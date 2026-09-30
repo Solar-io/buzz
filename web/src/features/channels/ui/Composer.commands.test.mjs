@@ -452,3 +452,36 @@ test("the list filters as you type; Tab completes, Enter runs, Esc closes", asyn
     await composer.unmount();
   }
 });
+
+test("a key typed right after picking a mention lands after the name", async () => {
+  // Frames are held so the order is the race QA hit: the pick, then a key,
+  // THEN the frame the old caret move waited for.
+  const frames = [];
+  const realFrame = dom.window.requestAnimationFrame;
+  dom.window.requestAnimationFrame = (callback) => {
+    frames.push(callback);
+    return frames.length;
+  };
+  const composer = await mount();
+  try {
+    await composer.type("hi @Lo");
+    await composer.key("Enter");
+    assert.equal(composer.input().value, "hi @Lord Nikon ");
+    await composer.type("hi @Lord Nikon r");
+    await act(async () => {
+      for (const callback of frames.splice(0)) {
+        callback(0);
+      }
+    });
+    const el = composer.input();
+    assert.equal(el.value, "hi @Lord Nikon r");
+    assert.equal(
+      el.selectionStart,
+      el.value.length,
+      "the caret stays after the typed key; a late frame moved it back",
+    );
+  } finally {
+    dom.window.requestAnimationFrame = realFrame;
+    await composer.unmount();
+  }
+});
