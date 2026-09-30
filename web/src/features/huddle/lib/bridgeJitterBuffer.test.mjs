@@ -600,3 +600,150 @@ test("a completed stream updates AND saves the calibration; the log keeps the la
   assert.equal(log.at(-1).chars, 54);
   assert.equal(log[0].chars, 5);
 });
+
+// ---------------------------------------------------------------------------
+// Robustness: out-of-band persisted calibration, backpressured drains
+// ---------------------------------------------------------------------------
+
+test("load clamps calibration: c = 1e9 → 4, c = 0 / negative → unknown, lastC seed clamped", () => {
+  const storage = memoryStorage();
+  const now = 1_000_000_000;
+  storage.setItem(
+    "buzz.tts.jb.v1",
+    JSON.stringify({
+      v: 1,
+      voices: {
+        "chatterbox:huge": {
+          c: 1e9,
+          lenScale: 50,
+          lenDev: 9,
+          bias: 100,
+          updatedAt: now,
+        },
+        "chatterbox:zero": {
+          c: 0,
+          lenScale: 0,
+          lenDev: -1,
+          bias: 0,
+          updatedAt: now,
+        },
+        "chatterbox:neg": {
+          c: -3,
+          lenScale: -2,
+          lenDev: 0.1,
+          bias: -1,
+          updatedAt: now,
+        },
+      },
+      lastC: 1e9,
+      lastAt: now,
+    }),
+  );
+  const cal = loadCalibration(storage, now);
+  assert.deepEqual(
+    { ...cal.voices["chatterbox:huge"] },
+    { c: 4, lenScale: 3, lenDev: 1, bias: 3, updatedAt: now },
+  );
+  assert.equal(cal.voices["chatterbox:zero"].c, null);
+  assert.equal(cal.voices["chatterbox:zero"].lenScale, null);
+  assert.equal(cal.voices["chatterbox:zero"].lenDev, 0);
+  assert.equal(cal.voices["chatterbox:neg"].c, null);
+  assert.equal(cal.voices["chatterbox:neg"].bias, null);
+  assert.equal(cal.lastC, 4);
+  // A voice with no entry is seeded from the CLAMPED lastC.
+  assert.equal(calFor(cal, "chatterbox:new").c, 4);
+  // An invalid c falls back to the (clamped) lastC seed as well.
+  assert.equal(calFor(cal, "chatterbox:zero").c, 4);
+  // In-memory corruption is clamped at use too.
+  const raw = createCalibration();
+  raw.lastC = 1e9;
+  assert.equal(calFor(raw, "chatterbox:x").c, 4);
+});
+
+test("load treats a FUTURE updatedAt as now (it still expires 7 days later)", () => {
+  const storage = memoryStorage();
+  const now = 1_000_000_000;
+  const day = 24 * 60 * 60 * 1000;
+  storage.setItem(
+    "buzz.tts.jb.v1",
+    JSON.stringify({
+      v: 1,
+      voices: {
+        "chatterbox:jared": {
+          c: 1,
+          lenScale: 1,
+          lenDev: 0.1,
+          bias: 1,
+          updatedAt: now + 365 * day,
+        },
+      },
+      lastC: 1,
+      lastAt: now + 365 * day,
+    }),
+  );
+  const cal = loadCalibration(storage, now);
+  assert.equal(cal.voices["chatterbox:jared"].updatedAt, now);
+  assert.equal(cal.lastAt, now);
+  saveCalibration(cal, storage);
+  const later = loadCalibration(storage, now + 8 * day);
+  assert.deepEqual(
+    later.voices,
+    {},
+    "a future stamp must not keep it alive forever",
+  );
+  assert.equal(later.lastC, null);
+});
+
+/**
+ * Play live1_jared through a drain created at headers with `cap` bytes,
+ * consumed only once the whole stream is in (a prefetched sentence waiting
+ * its turn). Returns the resulting calibration entry and the drain.
+ */
+async function lateConsumed(cap) {
+  const clock = virtualClock();
+  const ctx = fakeContext(clock, []);
+  const trace = TRACES.live1_jared;
+  const served = serve(clock, trace, 0, 0);
+  const calibration = createCalibration();
+  let drain = null;
+  const run = (async () => {
+    await new Promise((resolve) =>
+      clock.at(served.headersAt, () => {
+        drain = drainTimed({ body: served.body }, ctx, cap);
+        resolve();
+      }),
+    );
+    await new Promise((resolve) => clock.at(served.doneAt + 0.5, resolve));
+    await playBridgeResponse(drain, ctx, {
+      scheduleWake: clock.timer,
+      scheduleSettle: clock.timer,
+      jitter: {
+        chars: trace.text.length,
+        voiceKey: "chatterbox:jared",
+        calibration,
+        storage: null,
+      },
+    });
+  })();
+  await clock.run(run);
+  return { entry: calibration.voices["chatterbox:jared"], drain };
+}
+
+test("a backpressured drain does not calibrate speed (length still does)", async () => {
+  // live1 is ~232 KB: a 60 KB cap pauses reading, so later chunks would be
+  // stamped when read — up to seconds after they arrived.
+  const capped = await lateConsumed(60_000);
+  assert.equal(capped.drain.backpressured(), true);
+  assert.equal(
+    capped.entry.c,
+    null,
+    "timing from a paused drain must not set c",
+  );
+  assert.equal(capped.entry.bias, null);
+  assert.ok(capped.entry.lenScale > 0, "the audio length is still exact");
+  // Control: the default cap never pauses here, and the true stamps DO
+  // calibrate c.
+  const free = await lateConsumed(undefined);
+  assert.equal(free.drain.backpressured(), false);
+  assert.ok(free.entry.c > 0, `c ${free.entry.c}`);
+});

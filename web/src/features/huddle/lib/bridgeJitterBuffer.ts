@@ -179,11 +179,13 @@ export function calFor(
   voiceKey: string,
 ): CalibrationView {
   const v = cal.voices[voiceKey];
+  // Clamped again here: an in-memory calibration (or the lastC seed for a
+  // new voice) must never plan from an out-of-band value either.
   return {
-    c: v?.c ?? cal.lastC,
-    lenScale: v?.lenScale ?? null,
-    lenDev: v?.lenDev ?? null,
-    bias: v?.bias ?? 1,
+    c: banded(v?.c ?? cal.lastC, CAL_BANDS.c),
+    lenScale: banded(v?.lenScale ?? null, CAL_BANDS.lenScale),
+    lenDev: banded(v?.lenDev ?? null, CAL_BANDS.lenDev),
+    bias: banded(v?.bias ?? 1, CAL_BANDS.bias) ?? 1,
   };
 }
 
@@ -200,7 +202,8 @@ function requiredOffset(c: number, x1: number, from: number, T: number) {
  * Fold a completed stream into the calibration for `voiceKey`. Short texts
  * (< MIN_LEN_CHARS) never touch the length scale; streams with less than
  * MIN_HIST_S of audio or fewer than 3 arrivals never touch c — a "Sure."
- * says nothing about either.
+ * says nothing about either. `timingValid: false` (a backpressured drain)
+ * updates only the length scale.
  */
 export function updateCalibration(
   cal: BridgeCalibration,
@@ -208,11 +211,16 @@ export function updateCalibration(
   arrivals: readonly TimedArrival[],
   chars: number,
   nowMs = Date.now(),
+  opts: { timingValid?: boolean } = {},
 ): void {
   if (arrivals.length === 0) return;
   const total = arrivals.reduce((sum, a) => sum + a.s, 0);
   const lenOk = chars >= MIN_LEN_CHARS;
-  const cOk = total >= MIN_HIST_S && arrivals.length >= 3;
+  // Arrival times that are not TRUE arrival times (a drain that paused at
+  // its byte cap stamps late chunks at read time) say nothing about speed;
+  // the audio length is still exact.
+  const cOk =
+    opts.timingValid !== false && total >= MIN_HIST_S && arrivals.length >= 3;
   if (!lenOk && !cOk) return;
   cal.voices[voiceKey] ??= {
     c: null,
@@ -381,8 +389,27 @@ function defaultStorage(): CalibrationStorage | null {
   }
 }
 
-const finiteOrNull = (v: unknown): number | null =>
-  typeof v === "number" && Number.isFinite(v) ? v : null;
+/**
+ * Sane bands for persisted calibration. Storage is outside our control
+ * (another tab, an older build, hand edits): a c of 1e9 would hold every
+ * reply until stream end, a c of 0 would start with nothing buffered.
+ */
+export const CAL_BANDS = {
+  c: [0.1, 4],
+  lenScale: [0.3, 3],
+  lenDev: [0, 1],
+  bias: [0.5, 3],
+} as const;
+
+/** Finite (and positive where the band is) → clamped; else → null. */
+function banded(
+  v: unknown,
+  [lo, hi]: readonly [number, number],
+): number | null {
+  if (typeof v !== "number" || !Number.isFinite(v)) return null;
+  if (v <= 0 && lo > 0) return null;
+  return Math.min(hi, Math.max(lo, v));
+}
 
 /**
  * Load the persisted calibration, dropping voices not updated within 7
@@ -416,20 +443,25 @@ export function loadCalibration(
     lastAt?: unknown;
   };
   const fresh = (at: unknown) =>
-    typeof at === "number" && nowMs - at <= CALIBRATION_TTL_MS;
+    typeof at === "number" &&
+    Number.isFinite(at) &&
+    nowMs - at <= CALIBRATION_TTL_MS;
+  // A timestamp from the future (clock skew, another device) counts as
+  // NOW — never as "fresh forever".
+  const stamp = (at: number) => Math.min(at, nowMs);
   for (const [key, v] of Object.entries(data.voices ?? {})) {
     if (!v || !fresh(v.updatedAt)) continue;
     cal.voices[key] = {
-      c: finiteOrNull(v.c),
-      lenScale: finiteOrNull(v.lenScale),
-      lenDev: finiteOrNull(v.lenDev),
-      bias: finiteOrNull(v.bias),
-      updatedAt: v.updatedAt as number,
+      c: banded(v.c, CAL_BANDS.c),
+      lenScale: banded(v.lenScale, CAL_BANDS.lenScale),
+      lenDev: banded(v.lenDev, CAL_BANDS.lenDev),
+      bias: banded(v.bias, CAL_BANDS.bias),
+      updatedAt: stamp(v.updatedAt as number),
     };
   }
   if (fresh(data.lastAt)) {
-    cal.lastC = finiteOrNull(data.lastC);
-    cal.lastAt = data.lastAt as number;
+    cal.lastC = banded(data.lastC, CAL_BANDS.c);
+    cal.lastAt = stamp(data.lastAt as number);
   }
   return cal;
 }

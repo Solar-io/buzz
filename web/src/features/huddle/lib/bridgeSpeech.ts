@@ -234,6 +234,12 @@ export interface TimedDrain {
   next(): Promise<TimedChunk | null>;
   /** Stop reading and release the body. */
   cancel(): void;
+  /**
+   * True once reading has paused at the byte cap: chunks read after that
+   * are stamped when READ, not when they arrived, so the stream's timing
+   * must not calibrate the speed model.
+   */
+  backpressured?(): boolean;
 }
 
 /**
@@ -257,6 +263,7 @@ export function drainTimed(
   let queuedBytes = 0;
   let ended = false;
   let cancelled = false;
+  let paused = false;
   let failure: unknown = null;
   let wakeConsumer: (() => void) | null = null;
   let resumeReader: (() => void) | null = null;
@@ -270,6 +277,7 @@ export function drainTimed(
     if (reader === null) return;
     while (!cancelled) {
       if (queuedBytes >= maxBufferedBytes) {
+        paused = true;
         await new Promise<void>((resolve) => {
           resumeReader = resolve;
         });
@@ -309,6 +317,7 @@ export function drainTimed(
       if (failure !== null && !cancelled) throw failure;
       return null;
     },
+    backpressured: () => paused,
     cancel() {
       if (cancelled) return;
       cancelled = true;
@@ -569,7 +578,9 @@ export async function playBridgeResponse(
 
   const audioSeconds = arrivals.reduce((sum, a) => sum + a.s, 0);
   if (completed && voiceKey !== null && arrivals.length > 0) {
-    updateCalibration(calibration, voiceKey, arrivals, chars);
+    updateCalibration(calibration, voiceKey, arrivals, chars, Date.now(), {
+      timingValid: !(drain.backpressured?.() ?? false),
+    });
     saveCalibration(calibration, options.jitter?.storage);
   }
   if (arrivals.length > 0) {
