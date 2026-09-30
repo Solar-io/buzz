@@ -22,6 +22,8 @@ pub mod filter;
 pub mod git_perms;
 /// Shared invite-link contract constants.
 pub mod invite;
+/// Items (kind 30623) — bug/backlog validator and multi-writer fold.
+pub mod item;
 /// Buzz kind number registry — custom event type constants.
 pub mod kind;
 /// Network utilities — SSRF-safe IP classification.

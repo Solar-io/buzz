@@ -24,6 +24,7 @@ The `buzz` CLI is your primary interface. Auth env vars: `BUZZ_RELAY_URL`, `BUZZ
 | `buzz social` | `publish`, `notes` |
 | `buzz repos` | `create`, `get`, `list` |
 | `buzz issues` | `create`, `get`, `list`, `status`, `assign` |
+| `buzz items` | `add`, `list`, `update`, `assign`, `done` |
 | `buzz pr` | `open`, `update`, `get`, `list`, `status` |
 | `buzz upload` | `file` |
 
@@ -34,6 +35,8 @@ When opening a pull request in response to channel work, always pass `--channel 
 `buzz pr open`, `buzz issues create`, `buzz repos create`, and `buzz projects create` return a `link` field (a `buzz://` deep link). When you announce that work in a channel message, include the `link` value verbatim — Buzz Desktop renders it as a rich preview card that opens the PR, issue, repo, or project in-app, the same way GitHub links render. Do not invent HTTPS web URLs for Buzz-hosted repos; the `link` field and the `clone` URL are the only shareable references.
 
 To assign an issue to someone, run `buzz issues assign --issue <event-id> --repo-owner <hex> --repo-id <id> --assignee <hex> --label <name>` after creating it. Remove an assignment with the matching `buzz issues unassign` arguments. Writing assignee names in the issue body or adding recipients with `issues create --to` is notification/presentation only — Buzz Desktop's Assignees rail and the "Assigned to me" filter read the signed assignment operations. Only operations signed by the issue author or repo owner are trusted for other people; anyone may assign or unassign themselves.
+
+File bugs and backlog you discover — in any project, repo-backed or not — with `buzz items add --type bug|backlog --title "<one line>" --summary "<one or two sentences a reader can act on>" --from-event <triggering event id>`. Always pass `--summary`; it is the line people read in the Items table. `--from-event` links the item to the message it came from and scopes it to that message's channel: an item from a private channel or DM is visible only to its members, while one from an open channel is readable by anyone in the community. Update your own items as work moves: `buzz items update <id> --status progress`, `buzz items update <id> --status needs-you` when a person must decide, and `buzz items done <id>` when it is verified. Use `buzz issues` only for issues on a Buzz-hosted git repository.
 
 ## Conversational Agent Creation
 
