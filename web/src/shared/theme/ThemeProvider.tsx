@@ -8,7 +8,12 @@ import {
   useState,
 } from "react";
 
-import { createThemeVars, hexToHsl, luminance } from "./adaptive-theme.ts";
+import {
+  DERIVED_VAR_NAMES,
+  createThemeVars,
+  hexToHsl,
+  luminance,
+} from "./adaptive-theme.ts";
 import {
   CUSTOM_GRADIENT_STORAGE_KEY,
   CUSTOM_GRADIENT_V1_STORAGE_KEY,
@@ -19,6 +24,13 @@ import {
   loadCustomGradientConfig,
 } from "./custom-gradient.ts";
 import {
+  FIXED_THEME_FOR,
+  PALETTE_IS_DARK,
+  PALETTE_META_BG,
+  type PaletteId,
+  resolveThemeApplication,
+} from "./fixed-palettes.ts";
+import {
   BUZZ_DARK_THEME_NAME,
   BUZZ_THEME_NAME,
   type SyntaxThemeName,
@@ -26,7 +38,6 @@ import {
   extractThemeInfo,
   isLightTheme,
   loadThemeData,
-  resolveShikiThemeName,
   resolveSystemTheme,
 } from "./theme-loader.ts";
 
@@ -58,7 +69,9 @@ export const ACCENT_STORAGE_KEY = "buzz-accent-color";
  * one. Caching the derived variables lets us paint the right colours
  * immediately and reconcile once the real theme resolves.
  */
-const THEME_CACHE_KEY = "buzz-theme-cache-v2";
+// v3: entries may carry a fixed `palette` (fixed-palettes.ts); a v2 entry is
+// ignored and the provider reconciles as it always has.
+const THEME_CACHE_KEY = "buzz-theme-cache-v3";
 const CUSTOM_META_PREVIOUS = "customGradientPreviousContent";
 
 const DEFAULT_THEME: SyntaxThemeName = BUZZ_DARK_THEME_NAME;
@@ -70,6 +83,8 @@ interface ThemeCache {
   name: string;
   isDark: boolean;
   vars: Record<string, string>;
+  /** Set when the theme paints with a fixed palette (then `vars` is empty). */
+  palette?: PaletteId;
 }
 
 export interface ThemeContextValue {
@@ -160,16 +175,51 @@ function readThemeCache(): ThemeCache | null {
   }
 }
 
-/** Paint a derived variable set onto the document root. */
-function applyVars(vars: Record<string, string>, isDark: boolean): void {
+/** Set the polarity class and color-scheme on the document root. */
+function applyPolarity(isDark: boolean): void {
   const root = document.documentElement;
-  for (const [name, value] of Object.entries(vars)) {
-    root.style.setProperty(name, value);
-  }
   root.classList.remove("light", "dark");
   root.classList.add(isDark ? "dark" : "light");
   root.style.colorScheme = isDark ? "dark" : "light";
+}
+
+/** Paint a derived variable set onto the document root. */
+function applyVars(vars: Record<string, string>, isDark: boolean): void {
+  const root = document.documentElement;
+  delete root.dataset.palette;
+  for (const [name, value] of Object.entries(vars)) {
+    root.style.setProperty(name, value);
+  }
+  applyPolarity(isDark);
   syncThemeColorMetas(vars, isDark);
+}
+
+/**
+ * Remove every inline var the engine writes. Required before a fixed palette
+ * activates: an inline value beats `:root[data-palette]`, so a stale derived
+ * `--background` would paint over the palette's.
+ */
+function clearDerivedVars(): void {
+  const root = document.documentElement;
+  for (const name of DERIVED_VAR_NAMES) {
+    root.style.removeProperty(name);
+  }
+}
+
+/**
+ * Activate a fixed palette (palettes.css). The accent layer is untouched: it
+ * is inline, so a user accent still overrides the palette's `--primary`.
+ */
+function applyPalette(palette: PaletteId): void {
+  const root = document.documentElement;
+  const isDark = PALETTE_IS_DARK[palette];
+  clearDerivedVars();
+  root.dataset.palette = palette;
+  applyPolarity(isDark);
+  syncThemeColorMetas(
+    { "--background": hexToHsl(PALETTE_META_BG[palette]) },
+    isDark,
+  );
 }
 
 /**
@@ -223,7 +273,7 @@ function accentForeground(hex: string): string {
  * a specific selected-row purple — and an accent nobody asked for must not
  * silently replace them.
  */
-function applyAccent(hex: string | null): void {
+export function applyAccent(hex: string | null): void {
   const root = document.documentElement;
   const names = [
     "--primary",
@@ -252,9 +302,21 @@ function applyAccent(hex: string | null): void {
 }
 
 /** Resolve, derive and apply a theme. Returns the cache entry it wrote. */
-async function applyThemeByName(name: string): Promise<ThemeCache> {
-  const shikiName = resolveShikiThemeName(name);
-  const data = await loadThemeData(shikiName);
+export async function applyThemeByName(
+  name: string,
+  palettes: Parameters<typeof resolveThemeApplication>[1] = FIXED_THEME_FOR,
+): Promise<ThemeCache> {
+  const application = resolveThemeApplication(name, palettes);
+  if (application.kind === "fixed") {
+    applyPalette(application.palette);
+    return {
+      name,
+      isDark: application.isDark,
+      vars: {},
+      palette: application.palette,
+    };
+  }
+  const data = await loadThemeData(application.shikiName);
   const info = extractThemeInfo(name, data);
   const { isDark, vars } = createThemeVars(info.bg, info.fg, info.comment, {
     added: info.added,
@@ -322,7 +384,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       : initial;
     const cached = readThemeCache();
     if (cached) {
-      applyVars(cached.vars, cached.isDark);
+      if (cached.palette && cached.palette in PALETTE_IS_DARK) {
+        applyPalette(cached.palette);
+      } else {
+        applyVars(cached.vars, cached.isDark);
+      }
       if (isCustomGradientTheme(initialApplied)) {
         applyCustomGradient(
           initialCustomGradient(),

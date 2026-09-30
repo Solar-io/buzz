@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useState,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import {
@@ -122,6 +123,11 @@ export function AppShell({
   title,
   children,
   chromeless = false,
+  rightPane,
+  rowRef,
+  rowClassName,
+  rowStyle,
+  rowOverlay,
 }: {
   sidebar: ReactNode;
   /**
@@ -133,6 +139,19 @@ export function AppShell({
   /** Current conversation label for the mobile top bar. */
   title?: string | null;
   children: ReactNode;
+  /** The right pane (thread / thinking), rendered after `main` in the row. */
+  rightPane?: ReactNode;
+  /** The shell row element — the pane-width ResizeObserver target. */
+  rowRef?: (element: HTMLDivElement | null) => void;
+  /** `buzz-conversation-row` while a conversation is open, and only then. */
+  rowClassName?: string;
+  /** Carries `--thread-width` for the panes. */
+  rowStyle?: CSSProperties;
+  /**
+   * Absolutely positioned over the whole row — `main`, the right pane and
+   * the row's own padding (the web layer: Links + Files).
+   */
+  rowOverlay?: ReactNode;
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const closeDrawer = () => setDrawerOpen(false);
@@ -224,11 +243,23 @@ export function AppShell({
             className="flex shrink-0 items-center"
           />
         </header>
-        <main className="buzz-content-scrollbar min-h-0 flex-1 overflow-y-auto">
+        {/* The shell row: content, then the right pane beside it, with the
+            web layer over both. The phone bar above keeps spanning the full
+            column width. The ROW is the scroll container (it was `main`,
+            when the pane lived inside it): its stable 10px scrollbar gutter
+            must stay at the far right, after the pane, not between the
+            conversation and the pane. */}
+        <div
+          ref={rowRef}
+          className={`buzz-content-scrollbar relative flex min-h-0 flex-1 overflow-y-auto${rowClassName ? ` ${rowClassName}` : ""}`}
+          style={rowStyle}
+        >
           <PhoneBarSlotContext.Provider value={phoneBarSlot}>
-            {children}
+            <main className="min-h-0 min-w-0 flex-1">{children}</main>
+            {rightPane}
+            {rowOverlay}
           </PhoneBarSlotContext.Provider>
-        </main>
+        </div>
       </div>
 
       {drawerOpen && (

@@ -10,8 +10,8 @@ import type { ShellView } from "./reposSearch.ts";
 /**
  * The shell's full-page `?view=` panes (Inbox, Reminders, Pulse, Projects,
  * Workflows, Onboarding). Lifted out of routes/repos.tsx unchanged so the
- * route can dock a kept-open thread beside them (WithThreadPane) without
- * growing past the file-size ceiling.
+ * route can dock a kept-open thread beside them (the shell row's
+ * RightPaneHost) without growing past the file-size ceiling.
  */
 export function ShellViewPane({
   view,

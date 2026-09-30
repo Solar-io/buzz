@@ -1,5 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+/* Fixed palettes (buzz-light / buzz-dark), selected by data-palette. */
+@import "./palettes.css";
 @plugin "@tailwindcss/typography";
 @config "../../../tailwind.config.js";
 
@@ -566,6 +568,55 @@
     --status-modified: #9a6700;
     --ui-warning: #9a6700;
     --ui-warning-bg: rgba(154, 103, 0, 0.08);
+
+    /*
+     * Redesign semantic tokens (web redesign Phase 0, phase-0.md §2.3). HSL
+     * triples like the shadcn set, except --elev-shadow (a whole color) and
+     * the invite gradient stops (whole colors, used via var()). Nothing
+     * paints with the redesign tokens yet except --surface-neutral and the
+     * invite stops, whose values equal the literals they replaced.
+     *
+     * Neutrals — derived themes get engine values inline (adaptive-theme.ts);
+     * these are the canvas fallbacks.
+     */
+    --sunk: 42.9 30.43% 95.5%;
+    --chip: 42 27.78% 92.9%;
+    --ink-2: 42 7.81% 25.1%;
+    --faint: 41.1 9.74% 61.8%;
+    --line-2: 42.4 17.17% 80.6%;
+    --rail: 42.9 30.43% 95.5%;
+    --vit: 42.9 23.33% 88.2%;
+    /* Static status hues — every theme gets the canvas amber/coral/leaf. */
+    --work: 39 83.94% 51.2%;
+    --work-foreground: 48 10.20% 9.6%;
+    --need: 9.8 72.81% 55.3%;
+    --need-foreground: 0 0% 100.0%;
+    --honey-soft: 42.9 87.50% 90.6%;
+    --honey-wash: 43.6 91.67% 95.3%;
+    --honey-line: 44.6 71.15% 79.6%;
+    --honey-ink: 38.7 100.00% 24.9%;
+    --coral-soft: 15 77.78% 92.9%;
+    --coral-wash: 17.1 77.78% 96.5%;
+    --coral-line: 10.9 78.33% 76.5%;
+    --coral-ink: 9.7 72.34% 36.9%;
+    --leaf: 152.2 54.00% 39.2%;
+    --leaf-soft: 146.7 39.13% 91.0%;
+    --leaf-ink: 152.4 56.92% 25.5%;
+    --info-soft: 215.3 54.84% 93.9%;
+    --info-line: 216 46.67% 85.3%;
+    --info-ink: 214.1 63.74% 33.5%;
+    --idle-ring: 42.4 16.83% 80.2%;
+    --idle-hex: 44 21.13% 86.1%;
+    --idle-hex-ink: 40 8.67% 33.9%;
+    --human: 132 26.32% 85.1%;
+    --human-ink: 30 24.39% 16.1%;
+    --elev-shadow: rgba(27, 26, 22, 0.35);
+    /* Repos pages' neutral surface: exactly #F3F3F3 (was a literal). */
+    --surface-neutral: 0 0% 95.2941%;
+    /* The invite page is the same in both polarities, so both stops live
+       here only. */
+    --invite-gradient-from: #d7d72e;
+    --invite-gradient-to: #d7e7f6;
   }
 
   .dark {
@@ -622,6 +673,42 @@
     --status-modified: #d29922;
     --ui-warning: #d29922;
     --ui-warning-bg: rgba(210, 153, 34, 0.1);
+
+    /* Redesign semantic tokens — dark counterparts of the `:root` set. */
+    --sunk: 0 0% 9.8%;
+    --chip: 0 0% 14.9%;
+    --ink-2: 40 6.38% 72.4%;
+    --faint: 40 3.26% 36.1%;
+    --line-2: 0 0% 20.0%;
+    --rail: 0 0% 9.0%;
+    --vit: 0 0% 10.6%;
+    /* Static status hues — every theme gets the canvas amber/coral/leaf. */
+    --work: 41 53.25% 54.7%;
+    --work-foreground: 0 0% 7.8%;
+    --need: 11.9 52.38% 54.7%;
+    --need-foreground: 0 0% 7.8%;
+    --honey-soft: 43.3 27.27% 12.9%;
+    --honey-wash: 45 8.33% 9.4%;
+    --honey-line: 42.5 26.09% 18.0%;
+    --honey-ink: 40.5 59.36% 63.3%;
+    --coral-soft: 12.6 26.03% 14.3%;
+    --coral-wash: 12 10.20% 9.6%;
+    --coral-line: 11.4 33.33% 21.8%;
+    --coral-ink: 10.8 61.38% 71.6%;
+    --leaf: 148.2 33.88% 52.0%;
+    --leaf-soft: 141.8 18.64% 11.6%;
+    --leaf-ink: 143.8 37.72% 67.3%;
+    --info-soft: 216.9 20.00% 12.7%;
+    --info-line: 217.5 22.22% 21.2%;
+    --info-ink: 214.1 47.54% 76.1%;
+    --idle-ring: 0 0% 22.7%;
+    --idle-hex: 0 0% 17.3%;
+    --idle-hex-ink: 43.6 5.16% 58.2%;
+    --human: 140 14.56% 20.2%;
+    --human-ink: 141 26.32% 85.1%;
+    --elev-shadow: rgba(0, 0, 0, 0.6);
+    /* Exactly #171717 (was a literal). */
+    --surface-neutral: 0 0% 9.0196%;
   }
 
   * {

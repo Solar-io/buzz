@@ -31,12 +31,6 @@ import {
 import { notifyReadStateLocalChange } from "@/features/channels/lib/readStateSync.ts";
 import { useReadStateSync } from "@/features/channels/lib/useReadStateSync.ts";
 import { activeTyping } from "@/features/channels/lib/typing.ts";
-import { clampThreadWidth } from "@/features/channels/lib/threadPanelWidth.ts";
-import { useThreadPaneWidth } from "@/features/channels/lib/useThreadPaneWidth.ts";
-import {
-  PANE_RESIZE_HANDLE_CLASSES,
-  usePointerDrag,
-} from "@/shared/layout/usePointerDrag.ts";
 import { usePermalinkCleanup } from "@/features/channels/lib/usePermalinkCleanup.ts";
 import { useChannelLists } from "@/features/channels/lib/useChannelLists.ts";
 import { useLandingConversation } from "@/features/channels/lib/useLandingConversation.ts";
@@ -50,9 +44,7 @@ import { Composer, type ComposerHandle } from "@/features/channels/ui/Composer";
 import { DmComposerActions } from "@/features/channels/ui/DmComposerActions";
 import { useComposerDictation } from "@/features/channels/useComposerDictation";
 import { useTimelinePrefetch } from "@/features/channels/useTimelinePrefetch";
-import { useDmRightPane } from "@/features/channels/useDmRightPane";
 import { ForumView } from "@/features/channels/ui/ForumView";
-import { MessageToasts } from "@/features/channels/ui/MessageToasts";
 import { SearchPanel } from "@/features/channels/ui/SearchPanel";
 import { HuddleDock } from "@/features/huddle/ui/HuddleDock";
 import { useHuddleSession } from "@/features/huddle/HuddleSessionProvider";
@@ -60,40 +52,27 @@ import { useRouteMentionMembers } from "@/features/huddle/useHuddleMentionMember
 import { eligibleDmAgentPubkey } from "@/features/huddle/lib/dmAgentCall.ts";
 import { authorLabel } from "@/features/channels/lib/authorLabel.ts";
 import { soleAgent } from "@/features/channels/lib/soleAgent.ts";
-import { ThreadPanel } from "@/features/channels/ui/ThreadPanel";
-import {
-  DetachedThreadPanel,
-  WithThreadPane,
-} from "@/features/channels/ui/DetachedThreadPanel";
 import { useOpenThread } from "@/features/channels/useOpenThread.ts";
 import { useRecordConversationVisits } from "@/features/sidebar/lib/useSidebarOrder.ts";
 import { ShellViewPane } from "../ShellViewPane";
-import {
-  useAgentFrames,
-  useAgentObserverHistory,
-  useObserverStore,
-} from "@/features/agents/ObserverProvider";
+import { ShellProviders } from "../ShellProviders";
+import { useShellRightPane } from "@/features/shell/useShellRightPane.ts";
+import { RightPaneHost } from "@/features/shell/ui/RightPaneHost";
+import { useObserverStore } from "@/features/agents/ObserverProvider";
 import { useAgentRegistry } from "@/features/agents/useAgentRegistry";
-import { agentWorkingState } from "@/features/agents/lib/observerEvents";
-import { useTick } from "@/features/agents/ui/WorkingBadge";
-import { AgentActivityPanel } from "@/features/agents/ui/AgentActivityPanel";
+import { useDmAgentActivity } from "@/features/agents/useDmAgentActivity.ts";
 import { AgentPortraitOverlay } from "@/features/agents/ui/AgentPortraitOverlay";
-import { openDm, useDms } from "@/features/dms/hooks";
+import { useDms } from "@/features/dms/hooks";
 import { dmDisplayName } from "@/features/dms/lib/dmNaming.ts";
 import { useHiddenDms } from "@/features/dms/useHiddenDms.ts";
 import { channelMenuItems } from "@/features/sidebar/lib/channelMenuItems.ts";
 import { SidebarWithBadges } from "@/features/sidebar/ui/SidebarWithBadges";
-import { AsksProvider } from "@/features/home/AsksProvider";
 import { useReminderSync } from "@/features/reminders/hooks";
 import { useReminderNotifications } from "@/features/reminders/useReminderNotifications";
-import { RemindMeLaterProvider } from "@/features/reminders/ui/RemindMeLaterProvider";
-import { NotificationRuntime } from "@/features/notifications/ui/NotificationRuntime";
-import { ProfileActionsProvider } from "@/features/profile/ProfileActionsContext";
 import { useShellWebView } from "@/features/webPanels/useShellWebView";
 import { WebLayer } from "@/features/webPanels/ui/WebLayer";
 import { AppShell } from "@/shared/layout/AppShell";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
-import { StageRoute } from "@/features/stage/ui/StageRoute";
 import { validateReposSearch } from "../reposSearch.ts";
 
 /**
@@ -340,30 +319,6 @@ function ChannelBrowser() {
     threadRootId && source === "current"
       ? (messages.find((m) => m.id === threadRootId) ?? null)
       : null;
-  // Right-pane width (thread + agent activity share it), drag-resizable.
-  // Ceiling is relative to the layout ROW (window minus the app sidebar) so
-  // the pane can take nearly the whole row instead of the old 640px cap,
-  // without starving the timeline while the sidebar is open; a width
-  // persisted on a big window re-clamps on a smaller one.
-  // Pane width state machine (persist, clamps on mount / channel change /
-  // window resize) — extracted from this file for the size ratchet. The
-  // ResizeObserver inside it closes a PRE-EXISTING breach: the app sidebar's
-  // width is AppShell local state, so a sidebar drag resizes the layout row
-  // without any window resize, and a pane width persisted on a wide row
-  // quietly starved the channel column (reproduced 2026-09-14: chat at 77px
-  // after min-sidebar → max-pane → max-sidebar). The row element arrives via
-  // ref callback so the observer attaches whenever the row mounts, whatever
-  // the navigation path. Rail reservation inactive here — no portrait rail
-  // on this surface.
-  const { setRowEl, shellRowWidth, threadWidth, setThreadWidth } =
-    useThreadPaneWidth(channelId, false);
-  // Dragging the side panel's left edge rightward shrinks it (touch-safe).
-  const sidePanelDrag = usePointerDrag({
-    onDrag: (deltaX) =>
-      setThreadWidth((previous) =>
-        clampThreadWidth(previous - deltaX, shellRowWidth()),
-      ),
-  });
   // Auto-tail now lives INSIDE the virtualized timeline (tailKey) — the VList
   // owns its scroll node. The key covers both new messages and channel
   // switches (two channels share a last-message id only in the empty case).
@@ -619,37 +574,30 @@ function ChannelBrowser() {
     }
     return set;
   }, [observerStore, agentRegistry]);
-  const agentFrames = useAgentFrames(dmAgentPubkey);
-  // The live REQ only carries the last few minutes (see ObserverProvider), so
-  // an agent's earlier turns come from its own retained history. Scoped to the
-  // open DM's agent: the sidebar rows deliberately do NOT fetch, or every row
-  // would pull a page of its own.
-  useAgentObserverHistory(dmAgentPubkey);
-  const channelAgentFrames = useMemo(
-    () =>
-      agentFrames.filter(
-        (frame) => frame.channelId === null || frame.channelId === current?.id,
-      ),
-    [agentFrames, current?.id],
+  // The agent DM's observer frames + "received and working" turn state.
+  const { frames: channelAgentFrames, working } = useDmAgentActivity(
+    dmAgentPubkey,
+    current?.id,
+    messages,
   );
-  // The DM right-pane state (thinking sheet / desktop collapse / tab) plus
-  // the two-way 🧠 and Replies toggles Sam asked for on 2026-09-22. The
-  // show/hide policy lives in features/channels/lib/dmPaneToggles.ts; the
-  // route keeps threadRootId itself (the permalink effect below reads it).
-  const {
-    thinkingOpen,
-    setThinkingOpen,
-    dmPaneHidden,
-    setDmPaneHidden,
-    rightTab,
-    setRightTab,
-    panes,
-  } = useDmRightPane({
-    agentDm: dmAgentPubkey !== null,
-    channelId: selectedId,
+  // The right pane (thread / agent thinking) — width, DM pane state and the
+  // kept-open thread live in useShellRightPane; what shows is
+  // rightPaneLayout(). The route keeps threadRootId (the permalink effect
+  // above reads it).
+  const rightPane = useShellRightPane({
+    surface: view !== undefined ? "view" : current ? "conversation" : "none",
+    channelId,
+    selectedId,
+    channels,
+    openThread,
+    source,
     threadRootId,
     setThreadRootId,
-    ownerPubkey: selfPubkey,
+    threadRootResolved: threadRoot !== null,
+    dmAgentPubkey,
+    selfPubkey,
+    webLayerActive: web.state.active !== null,
+    selectChannel,
   });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -668,34 +616,6 @@ function ChannelBrowser() {
   const dictation = useComposerDictation({
     onFinalTranscript: (text) => composerRef.current?.appendDictation(text),
   });
-  // "Received and working": sticky turn start; the agent's kind-9 reply
-  // landing in the channel ends the turn.
-  const working = useMemo(
-    () =>
-      agentWorkingState(
-        channelAgentFrames,
-        messages
-          .filter((m) => m.authorPubkey === dmAgentPubkey)
-          .reduce((max, m) => Math.max(max, m.createdAt), 0),
-        Math.floor(Date.now() / 1000),
-      ),
-    [channelAgentFrames, messages, dmAgentPubkey],
-  );
-  useTick(working.working);
-  const threadChannel = channels.find((c) => c.id === openThread?.channelId);
-  const detachedThread =
-    source === "other" && openThread && threadChannel ? (
-      <DetachedThreadPanel
-        channel={threadChannel}
-        rootId={openThread.rootId}
-        selfPubkey={selfPubkey}
-        agentPubkeys={agentPubkeys}
-        onClose={() => setThreadRootId(null)}
-        onOpenChannel={() => selectChannel(threadChannel.id)}
-      />
-    ) : null;
-  const threadOpen = threadRoot !== null || detachedThread !== null;
-
   // Both belong at the shell and nowhere else: the sync keeps one kind:30300
   // subscription for the whole app, and the notification hook is the sole
   // due-detector — mounted per pane it would fire once per mounted copy.
@@ -707,338 +627,265 @@ function ChannelBrowser() {
   });
 
   return (
-    // Profile cards open DMs; DM creation is the shell's job, and the row that
-    // raises the card renders under ChannelTimeline, so the callback reaches it
-    // by context rather than through two files the shell does not own.
-    // AsksProvider owns the always-on asks badge + answer detection; once at
-    // the shell, same discipline as NotificationRuntime.
-    <AsksProvider channels={channels} selfPubkey={selfPubkey}>
-      {/* Mounted at the shell so it outlives every route the signed-in app can
-        be on; in the sidebar it died wherever the sidebar unmounted. It takes
-        the shell's channel list rather than opening a second kind:39000 REQ. */}
-      <NotificationRuntime selfPubkey={selfPubkey} channels={channels} />
-      <StageRoute
-        {...{ messages, members, profiles, send, selfPubkey }}
-        channelId={current?.id ?? null}
-      />
-      {/* Same mount discipline as NotificationRuntime: once at the shell, so
-        toasts survive every view. The channel side consumes the shell's
-        shared activity feed; the DM side opens the feed's DM-scoped twin. */}
-      <MessageToasts
-        selfPubkey={selfPubkey}
-        selectedId={selectedId ?? null}
-        channels={channels}
-        channelLiveEvents={channelActivity.onLiveEvent}
-        dmChannelIds={dmChannelIds}
-        channelPrefs={channelPrefs}
-        profiles={dmProfiles}
-        onOpenChannel={selectChannel}
-      />
-      <RemindMeLaterProvider selfPubkey={selfPubkey}>
-        <ProfileActionsProvider
-          // The profile dialog's "Recent" list knows event and channel ids but
-          // not names, and cannot route — the shell owns both. Without these it
-          // still renders, just unnamed and unclickable.
-          channelName={(channelId) =>
-            channels.find((channel) => channel.id === channelId)?.name ?? ""
-          }
-          onOpenMessage={(channelId, messageId) => {
-            void navigate({
-              to: "/repos",
-              search: { c: channelId, m: messageId },
-            });
-          }}
-          onOpenDm={(pubkey) => {
-            void openDm(session, [pubkey]).then((result) => {
-              if (result.ok && result.channelId) {
-                onDmOpened(result.channelId);
-              }
-            });
-          }}
-        >
-          <AppShell
-            chromeless={web.state.active !== null && web.state.focus}
-            sidebar={sidebar}
-            title={
-              activeTitle !== null
-                ? activeTitle
-                : current
-                  ? current.type === "dm"
-                    ? dmName(current.participantPubkeys)
-                    : `# ${current.name}`
-                  : null
+    <ShellProviders
+      channels={channels}
+      selfPubkey={selfPubkey}
+      stage={{
+        messages,
+        members,
+        profiles,
+        send,
+        channelId: current?.id ?? null,
+      }}
+      toasts={{
+        selectedId: selectedId ?? null,
+        channelLiveEvents: channelActivity.onLiveEvent,
+        dmChannelIds,
+        channelPrefs,
+        profiles: dmProfiles,
+        onOpenChannel: selectChannel,
+      }}
+      onDmOpened={onDmOpened}
+    >
+      <AppShell
+        chromeless={web.state.active !== null && web.state.focus}
+        sidebar={sidebar}
+        title={
+          activeTitle !== null
+            ? activeTitle
+            : current
+              ? current.type === "dm"
+                ? dmName(current.participantPubkeys)
+                : `# ${current.name}`
+              : null
+        }
+        rowRef={rightPane.row.ref}
+        rowStyle={rightPane.row.style}
+        rowClassName={
+          view === undefined && current ? "buzz-conversation-row" : undefined
+        }
+        rowOverlay={<WebLayer web={web} />}
+        rightPane={
+          <RightPaneHost
+            {...rightPane.hostProps}
+            conversation={{
+              root: threadRoot,
+              buffer: messages,
+              members,
+              profiles,
+              agentPubkeys,
+              strictMentions,
+              selfPubkey,
+              permalinkMessageId: threadPermalinkId,
+              onPermalinkSettled,
+              send,
+            }}
+            activity={
+              dmAgentPubkey
+                ? {
+                    agentPubkey: dmAgentPubkey,
+                    agentName:
+                      profiles.get(dmAgentPubkey)?.displayName ?? dmAgentPubkey,
+                    profile: dmProfiles.get(dmAgentPubkey),
+                    frames: channelAgentFrames,
+                    lockedCount: observerStore?.lockedCount ?? 0,
+                    connected,
+                    working,
+                  }
+                : null
             }
-          >
-            <div className="relative h-full min-h-0">
-              {view !== undefined ? (
-                <WithThreadPane
-                  pane={detachedThread}
-                  width={threadWidth}
-                  rowRef={setRowEl}
-                >
-                  <ShellViewPane
-                    view={view}
-                    channels={channels}
-                    selfPubkey={selfPubkey}
-                    onClose={() => void navigate({ to: "/repos", search: {} })}
-                    onOpenMessage={(c, m) =>
-                      void navigate({ to: "/repos", search: { c, m } })
+          />
+        }
+      >
+        <div className="relative h-full min-h-0">
+          {view !== undefined ? (
+            <ShellViewPane
+              view={view}
+              channels={channels}
+              selfPubkey={selfPubkey}
+              onClose={() => void navigate({ to: "/repos", search: {} })}
+              onOpenMessage={(c, m) =>
+                void navigate({ to: "/repos", search: { c, m } })
+              }
+            />
+          ) : current ? (
+            // The flex row the section always sat in (its pane siblings now
+            // live in the AppShell row, beside `main`).
+            <div className="flex h-full min-h-0">
+              <section
+                className="buzz-conversation-pane relative flex min-w-0 flex-1 flex-col"
+                data-custom-content-pane="chat"
+              >
+                {dmAgentPubkey && (
+                  // Stationary portrait over the chat column (Sam's
+                  // placement verdict, 2026-09-14): anchored top-right, it
+                  // never scrolls with the transcript, and its fluid width
+                  // reflows as the thinking pane is dragged. The matching
+                  // gutter on the timeline below keeps the text clear of
+                  // it. Same agent-chosen kind-0 avatar as the panel chip;
+                  // a swap repaints it in place.
+                  <AgentPortraitOverlay
+                    pubkey={dmAgentPubkey}
+                    name={
+                      profiles.get(dmAgentPubkey)?.displayName ?? dmAgentPubkey
                     }
+                    picture={dmProfiles.get(dmAgentPubkey)?.avatar}
                   />
-                </WithThreadPane>
-              ) : current ? (
-                <div
-                  ref={setRowEl}
-                  className="buzz-conversation-row flex h-full min-h-0"
-                  style={{ ["--thread-width" as string]: `${threadWidth}px` }}
-                >
-                  <section
-                    className="buzz-conversation-pane relative flex min-w-0 flex-1 flex-col"
-                    data-custom-content-pane="chat"
-                  >
-                    {dmAgentPubkey && (
-                      // Stationary portrait over the chat column (Sam's
-                      // placement verdict, 2026-09-14): anchored top-right, it
-                      // never scrolls with the transcript, and its fluid width
-                      // reflows as the thinking pane is dragged. The matching
-                      // gutter on the timeline below keeps the text clear of
-                      // it. Same agent-chosen kind-0 avatar as the panel chip;
-                      // a swap repaints it in place.
-                      <AgentPortraitOverlay
-                        pubkey={dmAgentPubkey}
-                        name={
-                          profiles.get(dmAgentPubkey)?.displayName ??
-                          dmAgentPubkey
-                        }
-                        picture={dmProfiles.get(dmAgentPubkey)?.avatar}
-                      />
-                    )}
-                    {/* The channel header bar is gone (Sam, 2026-09-22). Its
+                )}
+                {/* The channel header bar is gone (Sam, 2026-09-22). Its
                       parts went where they still belong: Join / Members /
                       the copy-name action to the composer's bottom bar, and
                       Call / Thinking to that bar's right end. The channel
                       name, type glyph and description are already in the
                       sidebar row and the window title, so the bar was a
                       second copy of the row you just clicked. */}
-                    {current.type === "forum" ? (
-                      <ForumView
-                        channel={current}
-                        selfPubkey={selfPubkey}
-                        profiles={profiles}
-                        members={members}
-                        feedReactions={reactions}
-                        replyCounts={counts}
-                        selectedPostId={forumPostId}
-                        onSelectPost={setForumPostId}
-                        onClosePost={() => setForumPostId(null)}
-                        onReact={messageActions.onReact}
-                        onDelete={messageActions.onDelete}
-                        send={send}
-                      />
-                    ) : (
-                      <>
-                        {/* Gutter for the portrait overlay: the same fluid
+                {current.type === "forum" ? (
+                  <ForumView
+                    channel={current}
+                    selfPubkey={selfPubkey}
+                    profiles={profiles}
+                    members={members}
+                    feedReactions={reactions}
+                    replyCounts={counts}
+                    selectedPostId={forumPostId}
+                    onSelectPost={setForumPostId}
+                    onClosePost={() => setForumPostId(null)}
+                    onReact={messageActions.onReact}
+                    onDelete={messageActions.onDelete}
+                    send={send}
+                  />
+                ) : (
+                  <>
+                    {/* Gutter for the portrait overlay: the same fluid
                           width the overlay uses, so transcript text shifts
                           left of it and stays clear at every thinking-pane
                           width (the pair is the resize requirement). The
                           extra half-row keeps a visible seam between
                           full-width content and the frame. */}
-                        <div className="flex min-h-0 flex-1 flex-col lg:pr-[calc(min(12rem,24%)+1.25rem)]">
-                          <ChannelTimeline
-                            messages={messages}
-                            profiles={profiles}
-                            replyCounts={counts}
-                            onOpenThread={(message) => {
-                              setThreadRootId(message.id);
-                              setRightTab("thread");
-                            }}
-                            activeRootId={threadRootId}
-                            reactions={reactions}
-                            onReact={messageActions.onReact}
-                            onUnreact={(messageId, emoji) => {
-                              if (!selfPubkey) return;
-                              // Drop it locally first: the relay's kind-5 acknowledgement
-                              // targets the reaction event, which the message-overlay
-                              // path cannot apply, so nothing would clear the chip.
-                              forgetOwnReaction(messageId, emoji, selfPubkey);
-                              void unreactToMessage(session, {
-                                targetEventId: messageId,
-                                emoji,
-                                selfPubkey,
-                              });
-                            }}
-                            onEdit={messageActions.onEdit}
-                            onDelete={messageActions.onDelete}
-                            onShare={messageActions.onShare}
-                            selfPubkey={selfPubkey}
-                            pendingIds={messageActions.pendingIds}
-                            agentPubkeys={agentPubkeys}
-                            highlightId={permalinkJump?.topLevelId ?? null}
-                            scrollToMessageId={
-                              permalinkJump?.topLevelId ?? null
-                            }
-                            onScrollToMessageSettled={onPermalinkSettled}
-                            typingNames={typingNames}
-                            tailKey={tailKey}
-                            onLoadOlder={loadOlder}
-                            loadingOlder={loadingOlder}
-                            historyExhausted={historyExhausted}
-                            workingAgent={
-                              working.working &&
-                              working.startedAt !== null &&
-                              dmAgentPubkey
-                                ? {
-                                    name:
-                                      profiles.get(dmAgentPubkey)
-                                        ?.displayName ?? dmAgentPubkey,
-                                    startedAt: working.startedAt,
-                                  }
-                                : null
-                            }
-                          />
-                        </div>
-                        {/* No threadRef here — deliberately. With a thread open
+                    <div className="flex min-h-0 flex-1 flex-col lg:pr-[calc(min(12rem,24%)+1.25rem)]">
+                      <ChannelTimeline
+                        messages={messages}
+                        profiles={profiles}
+                        replyCounts={counts}
+                        onOpenThread={(message) =>
+                          rightPane.openThreadTab(message.id)
+                        }
+                        activeRootId={threadRootId}
+                        reactions={reactions}
+                        onReact={messageActions.onReact}
+                        onUnreact={(messageId, emoji) => {
+                          if (!selfPubkey) return;
+                          // Drop it locally first: the relay's kind-5 acknowledgement
+                          // targets the reaction event, which the message-overlay
+                          // path cannot apply, so nothing would clear the chip.
+                          forgetOwnReaction(messageId, emoji, selfPubkey);
+                          void unreactToMessage(session, {
+                            targetEventId: messageId,
+                            emoji,
+                            selfPubkey,
+                          });
+                        }}
+                        onEdit={messageActions.onEdit}
+                        onDelete={messageActions.onDelete}
+                        onShare={messageActions.onShare}
+                        selfPubkey={selfPubkey}
+                        pendingIds={messageActions.pendingIds}
+                        agentPubkeys={agentPubkeys}
+                        highlightId={permalinkJump?.topLevelId ?? null}
+                        scrollToMessageId={permalinkJump?.topLevelId ?? null}
+                        onScrollToMessageSettled={onPermalinkSettled}
+                        typingNames={typingNames}
+                        tailKey={tailKey}
+                        onLoadOlder={loadOlder}
+                        loadingOlder={loadingOlder}
+                        historyExhausted={historyExhausted}
+                        workingAgent={
+                          working.working &&
+                          working.startedAt !== null &&
+                          dmAgentPubkey
+                            ? {
+                                name:
+                                  profiles.get(dmAgentPubkey)?.displayName ??
+                                  dmAgentPubkey,
+                                startedAt: working.startedAt,
+                              }
+                            : null
+                        }
+                      />
+                    </div>
+                    {/* No threadRef here — deliberately. With a thread open
                           in the right pane this composer used to be re-aimed
                           at it, so typing in the MAIN composer silently filed
                           the message into the thread. It always posts
                           top-level now (Sam 2026-09-20); only the thread
                           pane's own composer targets the thread, and Esc here
                           is free to do nothing instead of closing it. */}
-                        <Composer
-                          ref={composerRef}
-                          members={members}
-                          onTextChange={messageActions.onComposerText}
-                          editing={messageActions.editing}
-                          onCancelEdit={() => messageActions.setEditing(null)}
-                          editSend={messageActions.editSend}
-                          profiles={profiles}
-                          strictMentions={strictMentions}
-                          autoNotify={composerAutoNotify}
-                          draftKey={current.id}
-                          send={send}
-                          actionsBar={
-                            <DmComposerActions
-                              channel={current}
-                              title={
-                                current.type === "dm"
-                                  ? dmName(current.participantPubkeys)
-                                  : `# ${current.name}`
-                              }
-                              dmAgentPubkey={dmAgentPubkey}
-                              huddleSession={huddleSession}
-                              session={session}
-                              members={members}
-                              profiles={profiles}
-                              presence={presence}
-                              selfPubkey={selfPubkey}
-                              contacts={dmParticipantPubkeys}
-                              panes={panes}
-                              dictation={dictation}
-                            />
+                    <Composer
+                      ref={composerRef}
+                      members={members}
+                      onTextChange={messageActions.onComposerText}
+                      editing={messageActions.editing}
+                      onCancelEdit={() => messageActions.setEditing(null)}
+                      editSend={messageActions.editSend}
+                      profiles={profiles}
+                      strictMentions={strictMentions}
+                      autoNotify={composerAutoNotify}
+                      draftKey={current.id}
+                      send={send}
+                      actionsBar={
+                        <DmComposerActions
+                          channel={current}
+                          title={
+                            current.type === "dm"
+                              ? dmName(current.participantPubkeys)
+                              : `# ${current.name}`
                           }
+                          dmAgentPubkey={dmAgentPubkey}
+                          huddleSession={huddleSession}
+                          session={session}
+                          members={members}
+                          profiles={profiles}
+                          presence={presence}
+                          selfPubkey={selfPubkey}
+                          contacts={dmParticipantPubkeys}
+                          panes={rightPane.panes}
+                          dictation={dictation}
                         />
-                      </>
-                    )}
-                    <HuddleDock currentChannelId={current.id} />
-                  </section>
-                  {(threadOpen || dmAgentPubkey) && (
-                    // biome-ignore lint/a11y/useFocusableInteractive: pointer-only resize handle; keyboard resize is not implemented
-                    // biome-ignore lint/a11y/useSemanticElements: pointer-only resize handle; keyboard resize is not implemented
-                    <div
-                      aria-label="Resize side panel"
-                      // biome-ignore lint/a11y/useAriaPropsForRole: drag handle is not a value slider; aria-valuenow would be meaningless
-                      role="separator"
-                      aria-orientation="vertical"
-                      // No border of its own: the pane's border-l is the one divider (a
-                      // second 1px border read as "two scrollbars and a sliver").
-                      className={`buzz-side-panel-resize-handle relative z-10 hidden w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-white/15 active:bg-white/25 lg:block lg:-ml-px ${PANE_RESIZE_HANDLE_CLASSES}`}
-                      {...sidePanelDrag}
+                      }
                     />
-                  )}
-                  {threadRoot && (!dmAgentPubkey || rightTab === "thread") && (
-                    <ThreadPanel
-                      root={threadRoot}
-                      buffer={messages}
-                      members={members}
-                      profiles={profiles}
-                      agentPubkeys={agentPubkeys}
-                      strictMentions={strictMentions}
-                      selfPubkey={selfPubkey}
-                      permalinkMessageId={threadPermalinkId}
-                      onPermalinkSettled={onPermalinkSettled}
-                      onClose={() => setThreadRootId(null)}
-                      send={send}
-                    />
-                  )}
-                  {(!dmAgentPubkey || rightTab === "thread") && detachedThread}
-                  {threadRoot && dmAgentPubkey && rightTab === "thinking" && (
-                    <ThreadPanel
-                      root={threadRoot}
-                      buffer={messages}
-                      members={members}
-                      profiles={profiles}
-                      agentPubkeys={agentPubkeys}
-                      strictMentions={strictMentions}
-                      selfPubkey={selfPubkey}
-                      onClose={() => setThreadRootId(null)}
-                      send={send}
-                      mobileOnly
-                    />
-                  )}
-                  {dmAgentPubkey &&
-                    !dmPaneHidden &&
-                    (!threadOpen || rightTab === "thinking") && (
-                      <AgentActivityPanel
-                        agentPubkey={dmAgentPubkey}
-                        agentName={
-                          profiles.get(dmAgentPubkey)?.displayName ??
-                          dmAgentPubkey
-                        }
-                        profile={dmProfiles.get(dmAgentPubkey)}
-                        frames={channelAgentFrames}
-                        lockedCount={observerStore?.lockedCount ?? 0}
-                        connected={connected}
-                        working={working}
-                        mobileOpen={thinkingOpen}
-                        onCloseMobile={() => setThinkingOpen(false)}
-                        onCloseDesktop={() => setDmPaneHidden(true)}
-                        onSelectThreadTab={
-                          threadOpen ? () => setRightTab("thread") : undefined
-                        }
-                      />
-                    )}
-                </div>
-              ) : landingSkeleton ? (
-                <LandingSkeleton />
-              ) : (
-                <div className="flex h-full items-center justify-center p-8">
-                  <p className="text-sm text-muted-foreground">
-                    Pick a channel to get started.
-                  </p>
-                </div>
-              )}
-              <WebLayer web={web} />
+                  </>
+                )}
+                <HuddleDock currentChannelId={current.id} />
+              </section>
             </div>
-            <SearchPanel
-              open={searchOpen}
-              onClose={closeSearch}
-              initialQuery={sidebarQuery}
-              onJumpToChannel={(id) => selectChannel(id)}
-              actions={palette}
-              channels={channels}
-              profiles={profiles}
-              defaultChannelId={current?.id ?? null}
-              onOpenResult={(channelId, messageId) => {
-                web.hide();
-                void navigate({
-                  to: "/repos",
-                  search: { c: channelId, m: messageId },
-                });
-              }}
-            />
-          </AppShell>
-        </ProfileActionsProvider>
-      </RemindMeLaterProvider>
-    </AsksProvider>
+          ) : landingSkeleton ? (
+            <LandingSkeleton />
+          ) : (
+            <div className="flex h-full items-center justify-center p-8">
+              <p className="text-sm text-muted-foreground">
+                Pick a channel to get started.
+              </p>
+            </div>
+          )}
+        </div>
+        <SearchPanel
+          open={searchOpen}
+          onClose={closeSearch}
+          initialQuery={sidebarQuery}
+          onJumpToChannel={(id) => selectChannel(id)}
+          actions={palette}
+          channels={channels}
+          profiles={profiles}
+          defaultChannelId={current?.id ?? null}
+          onOpenResult={(channelId, messageId) => {
+            web.hide();
+            void navigate({
+              to: "/repos",
+              search: { c: channelId, m: messageId },
+            });
+          }}
+        />
+      </AppShell>
+    </ShellProviders>
   );
 }

@@ -1,0 +1,82 @@
+import type { ComponentProps, ReactNode } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import { MessageToasts } from "@/features/channels/ui/MessageToasts";
+import { openDm } from "@/features/dms/hooks";
+import { AsksProvider } from "@/features/home/AsksProvider";
+import { NotificationRuntime } from "@/features/notifications/ui/NotificationRuntime";
+import { ProfileActionsProvider } from "@/features/profile/ProfileActionsContext";
+import { RemindMeLaterProvider } from "@/features/reminders/ui/RemindMeLaterProvider";
+import { StageRoute } from "@/features/stage/ui/StageRoute";
+import { useRelaySession } from "@/shared/api/RelaySessionProvider";
+
+type StageProps = ComponentProps<typeof StageRoute>;
+type ToastProps = ComponentProps<typeof MessageToasts>;
+
+/**
+ * The signed-in shell's always-mounted providers and runtimes, lifted out of
+ * `routes/repos.tsx` unchanged (web redesign Phase 0; Phase 1 mounts
+ * `WorkProvider` here). Everything in it belongs at the shell and nowhere
+ * else: once per app, outliving every view.
+ */
+export function ShellProviders({
+  channels,
+  selfPubkey,
+  stage,
+  toasts,
+  onDmOpened,
+  children,
+}: {
+  channels: ToastProps["channels"];
+  selfPubkey: string | null;
+  /** The open conversation, for the Stage overlay. */
+  stage: Omit<StageProps, "selfPubkey">;
+  toasts: Omit<ToastProps, "selfPubkey" | "channels">;
+  /** A profile card opened (or created) a DM. */
+  onDmOpened: (channelId: string) => void;
+  children: ReactNode;
+}) {
+  const navigate = useNavigate({ from: "/repos" });
+  const { session } = useRelaySession();
+  return (
+    // AsksProvider owns the always-on asks badge + answer detection; once at
+    // the shell, same discipline as NotificationRuntime.
+    <AsksProvider channels={channels} selfPubkey={selfPubkey}>
+      {/* Mounted at the shell so it outlives every route the signed-in app can
+        be on; in the sidebar it died wherever the sidebar unmounted. It takes
+        the shell's channel list rather than opening a second kind:39000 REQ. */}
+      <NotificationRuntime selfPubkey={selfPubkey} channels={channels} />
+      <StageRoute {...stage} selfPubkey={selfPubkey} />
+      {/* Same mount discipline as NotificationRuntime: once at the shell, so
+        toasts survive every view. The channel side consumes the shell's
+        shared activity feed; the DM side opens the feed's DM-scoped twin. */}
+      <MessageToasts {...toasts} selfPubkey={selfPubkey} channels={channels} />
+      <RemindMeLaterProvider selfPubkey={selfPubkey}>
+        {/* Profile cards open DMs; DM creation is the shell's job, and the row
+          that raises the card renders under ChannelTimeline, so the callback
+          reaches it by context rather than through files the shell does not
+          own. The "Recent" list knows event and channel ids but not names,
+          and cannot route — the shell owns both. */}
+        <ProfileActionsProvider
+          channelName={(channelId) =>
+            channels.find((channel) => channel.id === channelId)?.name ?? ""
+          }
+          onOpenMessage={(channelId, messageId) => {
+            void navigate({
+              to: "/repos",
+              search: { c: channelId, m: messageId },
+            });
+          }}
+          onOpenDm={(pubkey) => {
+            void openDm(session, [pubkey]).then((result) => {
+              if (result.ok && result.channelId) {
+                onDmOpened(result.channelId);
+              }
+            });
+          }}
+        >
+          {children}
+        </ProfileActionsProvider>
+      </RemindMeLaterProvider>
+    </AsksProvider>
+  );
+}

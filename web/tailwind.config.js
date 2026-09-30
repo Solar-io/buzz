@@ -69,6 +69,8 @@ export default {
         // it tapers out at each corner instead of turning it.
         "panel-left":
           "-1px 0 0 0 hsl(var(--border) / 0.8), -16px 0 32px -12px rgb(0 0 0 / 0.18)",
+        // Redesign elevation (phase-0.md §2.3): --elev-shadow is a whole color.
+        elev: "0 12px 32px -12px var(--elev-shadow)",
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -147,6 +149,57 @@ export default {
         warning: {
           DEFAULT: "var(--ui-warning)",
           bg: "var(--ui-warning-bg)",
+        },
+        // Web redesign semantic tokens (phase-0.md §2.3), declared in
+        // globals.css `:root` / `.dark` and in palettes.css. `info` (not
+        // `blue`) and `idle` (not ring-idle/hex-idle) avoid shadowing
+        // Tailwind's own palette names.
+        sunk: "hsl(var(--sunk))",
+        chip: "hsl(var(--chip))",
+        "ink-2": "hsl(var(--ink-2))",
+        faint: "hsl(var(--faint))",
+        "line-2": "hsl(var(--line-2))",
+        rail: "hsl(var(--rail))",
+        vit: "hsl(var(--vit))",
+        "surface-neutral": "hsl(var(--surface-neutral))",
+        work: {
+          DEFAULT: "hsl(var(--work))",
+          foreground: "hsl(var(--work-foreground))",
+        },
+        need: {
+          DEFAULT: "hsl(var(--need))",
+          foreground: "hsl(var(--need-foreground))",
+        },
+        honey: {
+          soft: "hsl(var(--honey-soft))",
+          wash: "hsl(var(--honey-wash))",
+          line: "hsl(var(--honey-line))",
+          ink: "hsl(var(--honey-ink))",
+        },
+        coral: {
+          soft: "hsl(var(--coral-soft))",
+          wash: "hsl(var(--coral-wash))",
+          line: "hsl(var(--coral-line))",
+          ink: "hsl(var(--coral-ink))",
+        },
+        leaf: {
+          DEFAULT: "hsl(var(--leaf))",
+          soft: "hsl(var(--leaf-soft))",
+          ink: "hsl(var(--leaf-ink))",
+        },
+        info: {
+          soft: "hsl(var(--info-soft))",
+          line: "hsl(var(--info-line))",
+          ink: "hsl(var(--info-ink))",
+        },
+        idle: {
+          ring: "hsl(var(--idle-ring))",
+          hex: "hsl(var(--idle-hex))",
+          "hex-ink": "hsl(var(--idle-hex-ink))",
+        },
+        human: {
+          DEFAULT: "hsl(var(--human))",
+          ink: "hsl(var(--human-ink))",
         },
       },
     },

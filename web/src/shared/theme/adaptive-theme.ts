@@ -226,6 +226,9 @@ export function createThemeVars(
   // Derived colors
   const borderColor = mix(primaryBg, syntaxFg, isDark ? 0.15 : 0.12);
   const hoverBg = elevate(0.06);
+  // Same direction as hover (darker on light, lighter on dark), half the
+  // step: the canvas's --sunk is #F7F5F0 on #FDFCF9 and #191919 on #141414.
+  const sunkBg = elevate(0.03);
   const huddleControlBg = isDark ? mix(hoverBg, syntaxFg, 0.14) : "#333333";
   const huddleControlHoverBg = isDark
     ? mix(huddleControlBg, syntaxFg, 0.08)
@@ -264,6 +267,17 @@ export function createThemeVars(
       "--huddle-tooltip-surface": hexToHsl(huddleTooltipBg),
       "--huddle-tooltip-foreground": huddleControlFg,
 
+      // Redesign neutrals (web redesign Phase 0): the canvas's extra surface
+      // and text steps, so a derived theme follows its own neutrals. Nothing
+      // paints with them yet; the fixed palettes set canvas values instead.
+      "--sunk": hexToHsl(sunkBg),
+      "--chip": hexToHsl(hoverBg),
+      "--ink-2": hexToHsl(mix(syntaxFg, primaryBg, 0.25)),
+      "--faint": hexToHsl(mix(syntaxComment, primaryBg, 0.45)),
+      "--line-2": hexToHsl(borderColor),
+      "--rail": hexToHsl(sunkBg),
+      "--vit": hexToHsl(mix(chromeColor, syntaxFg, 0.06)),
+
       // Foregrounds
       "--foreground": textFg,
       "--card-foreground": textFg,
@@ -300,3 +314,14 @@ export function createThemeVars(
     },
   };
 }
+
+/**
+ * Every variable {@link createThemeVars} writes inline on `<html>`. A fixed
+ * palette (fixed-palettes.ts) removes all of them before it activates — an
+ * inline value beats any stylesheet selector — and `palettes.css` must define
+ * every one (pinned by fixed-palettes.test.mjs). Derived from the engine's
+ * own output so the list cannot drift from it.
+ */
+export const DERIVED_VAR_NAMES: readonly string[] = Object.freeze(
+  Object.keys(createThemeVars("#ffffff", "#000000", "#808080").vars),
+);

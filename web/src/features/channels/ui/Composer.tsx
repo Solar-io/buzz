@@ -15,18 +15,13 @@ import { toast } from "sonner";
 import { AtSign, Paperclip, Smile } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
-import { activeMentionQuery, resolveMentions } from "../lib/mentions.ts";
+import { resolveMentions } from "../lib/mentions.ts";
 import { applyWrap } from "../lib/composerFormat.ts";
 import {
   activeMarks,
   NO_ACTIVE_MARKS,
   type ActiveMarks,
 } from "../lib/composerActiveMarks.ts";
-import {
-  activeEmojiQuery,
-  applyEmojiCompletion,
-  emojiSuggestions,
-} from "../lib/emojiAutocomplete.ts";
 import { imageFilesFromClipboard } from "../lib/composerPaste.ts";
 import { loadDraftState, saveDraftState } from "../lib/drafts.ts";
 import { buildImetaTag } from "../lib/imeta.ts";
@@ -70,7 +65,10 @@ import { ComposerLinkPreviewTray } from "./ComposerLinkPreviewTray.tsx";
 import { ComposerSuggestionLists } from "./ComposerSuggestionLists.tsx";
 import { useComposerLinkPreviews } from "../lib/useComposerLinkPreviews.ts";
 import type { ChannelMember, Profile } from "../hooks.ts";
-import type { MentionSuggestion } from "./ComposerSuggestionLists.tsx";
+import {
+  useComposerSuggestions,
+  type ComposerSelection,
+} from "./useComposerSuggestions.ts";
 
 export interface ThreadRef {
   rootId: string;
@@ -96,12 +94,6 @@ export interface ComposerReplyTarget {
   author: string;
   /** Raw content — excerpted for display, never rendered as markdown. */
   body: string;
-}
-
-/** Selection offsets into the textarea's value. */
-interface Selection {
-  start: number;
-  end: number;
 }
 
 export function Composer({
@@ -199,12 +191,13 @@ export function Composer({
     ),
   );
   const [busy, setBusy] = useState(false);
-  const [popupIndex, setPopupIndex] = useState(0);
   // The caret/selection, mirrored into React state. The textarea is
   // uncontrolled for selection, but the toolbar's aria-pressed depends on
   // where the caret is, so every caret move has to reach a render.
-  const [selection, setSelection] = useState<Selection>({ start: 0, end: 0 });
-  const [mentionDismissed, setMentionDismissed] = useState(false);
+  const [selection, setSelection] = useState<ComposerSelection>({
+    start: 0,
+    end: 0,
+  });
   // Pubkeys captured when the author picks from the mention autocomplete.
   // Resolving by display name at send time cannot tell two members with the
   // same name apart; a pick can. Keyed by lowercased inserted name.
@@ -363,54 +356,23 @@ export function Composer({
   }, [editing]);
   const editingActive = editing != null;
 
-  const namedMembers = useMemo(
-    () =>
-      members.map((member) => ({
-        pubkey: member.pubkey,
-        name:
-          profiles
-            .get(member.pubkey)
-            ?.displayName.replace(/\s+/g, " ")
-            .trim() || member.name,
-      })),
-    [members, profiles],
-  );
-
-  // Non-null the moment an "@" token is open at the caret — including a
-  // bare "@" (the regex's name group matches empty), which is what the
-  // @ button leaves behind. TYPING @ therefore opens the list, not just
-  // the button (Sam 2026-09-02: "if I do an @ and an agent's name,
-  // nothing happens").
-  const query = activeMentionQuery(
+  // @mention + :emoji: autocomplete (useComposerSuggestions). The picks map
+  // stays here: draft persistence and submit both read it.
+  const suggest = useComposerSuggestions({
     text,
-    Math.min(selection.start, text.length),
-  );
-  // A fresh token re-arms the popup after an Escape dismissal.
-  //
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `query` is the trigger, not a read — the body deliberately ignores its value and exists only to re-run when the token changes. Dropping it, as the rule suggests, would run this once at mount, so one Escape would suppress the mention popup for the rest of the session.
-  useEffect(() => {
-    setMentionDismissed(false);
-  }, [query]);
-  const suggestions = useMemo<MentionSuggestion[]>(() => {
-    if (query === null || mentionDismissed) {
-      return [];
-    }
-    const lower = query.toLowerCase();
-    const matching: MentionSuggestion[] = namedMembers
-      .filter((member) => member.name.toLowerCase().includes(lower))
-      .slice(0, 6)
-      .map((member) => ({
-        kind: "member",
-        name: member.name,
-        pubkey: member.pubkey,
-      }));
-    // The reserved @everyone rides first whenever the query could be typing
-    // it — including the empty query right after "@".
-    if ("everyone".includes(lower)) {
-      return [{ kind: "everyone", name: "everyone" }, ...matching];
-    }
-    return matching;
-  }, [query, namedMembers, mentionDismissed]);
+    selection,
+    members,
+    profiles,
+    applyText,
+    focusAt,
+    onPickMention: (name, pubkey) =>
+      setMentionPicks((previous) => {
+        const next = new Map(previous);
+        next.set(name.toLowerCase(), pubkey);
+        return next;
+      }),
+  });
+  const { namedMembers } = suggest;
 
   // Which toolbar buttons render as pressed. Reading marks off the markdown
   // around the selection is the textarea equivalent of the desktop's
@@ -424,25 +386,6 @@ export function Composer({
     const end = Math.min(selection.end, text.length);
     return activeMarks(text, start, end);
   }, [text, selection, editingActive]);
-
-  const applySuggestion = (name: string, pubkey?: string) => {
-    if (pubkey) {
-      setMentionPicks((previous) => {
-        const next = new Map(previous);
-        next.set(name.toLowerCase(), pubkey);
-        return next;
-      });
-    }
-    const caret = Math.min(selection.start, text.length);
-    const upToCaret = text.slice(0, caret);
-    const at = upToCaret.lastIndexOf("@");
-    if (at === -1) {
-      return;
-    }
-    applyText(`${text.slice(0, at)}@${name} ${text.slice(caret)}`);
-    setMentionDismissed(true);
-    focusAt(at + name.length + 2);
-  };
 
   /** Insert an emoji at the caret (or the end when the textarea is unfocused). */
   const insertEmoji = (emoji: string) => {
@@ -504,27 +447,6 @@ export function Composer({
     const result = format(text, start, end);
     applyText(result.text);
     focusAt(result.selStart, result.selEnd);
-  };
-
-  // :code: emoji autocomplete — rides the same popup machinery as mentions.
-  const emojiToken =
-    query !== null
-      ? null
-      : activeEmojiQuery(text, Math.min(selection.start, text.length));
-  const emojiMatches = useMemo(
-    () => (emojiToken === null ? [] : emojiSuggestions(emojiToken)),
-    [emojiToken],
-  );
-  const [emojiIndex, setEmojiIndex] = useState(0);
-  const applyEmojiMatch = (match: { emoji: string }) => {
-    const result = applyEmojiCompletion(
-      text,
-      Math.min(selection.start, text.length),
-      match.emoji,
-    );
-    applyText(result.text);
-    setEmojiIndex(0);
-    focusAt(result.caret);
   };
 
   const attach = async (files: FileList | null) => {
@@ -783,57 +705,8 @@ export function Composer({
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (suggestions.length > 0) {
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setPopupIndex((index) => (index + 1) % suggestions.length);
-        return;
-      }
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        setPopupIndex(
-          (index) => (index - 1 + suggestions.length) % suggestions.length,
-        );
-        return;
-      }
-      if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
-        event.preventDefault();
-        const row = suggestions[popupIndex];
-        applySuggestion(
-          row?.name ?? "",
-          row?.kind === "member" ? row.pubkey : undefined,
-        );
-        return;
-      }
-      if (event.key === "Escape") {
-        setPopupIndex(0);
-        // Dismiss until the token changes (a fresh query re-arms it).
-        setMentionDismissed(true);
-        return;
-      }
-    }
-    if (emojiMatches.length > 0) {
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setEmojiIndex((index) => (index + 1) % emojiMatches.length);
-        return;
-      }
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        setEmojiIndex(
-          (index) => (index - 1 + emojiMatches.length) % emojiMatches.length,
-        );
-        return;
-      }
-      if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
-        event.preventDefault();
-        applyEmojiMatch(emojiMatches[emojiIndex] ?? emojiMatches[0]);
-        return;
-      }
-      if (event.key === "Escape") {
-        setEmojiIndex(0);
-        return;
-      }
+    if (suggest.onKeyDown(event)) {
+      return;
     }
     // Rich-text shortcuts: ⌘B bold, ⌘I italic (no browser conflict inside a
     // textarea except ⌘I in some browsers — preventDefault covers it).
@@ -891,14 +764,7 @@ export function Composer({
             : "Drop files to attach"}
         </div>
       )}
-      <ComposerSuggestionLists
-        applyEmojiMatch={applyEmojiMatch}
-        applySuggestion={applySuggestion}
-        emojiIndex={emojiIndex}
-        emojiMatches={emojiMatches}
-        popupIndex={popupIndex}
-        suggestions={suggestions}
-      />
+      <ComposerSuggestionLists {...suggest.listProps} />
       {editingActive ? (
         <ComposerEditBanner onCancel={() => onCancelEdit?.()} />
       ) : threadRef && replyTarget ? (
@@ -979,7 +845,7 @@ export function Composer({
             value={text}
             onChange={(event) => {
               applyText(event.target.value);
-              setPopupIndex(0);
+              suggest.resetHighlight();
               syncSelection();
             }}
             onKeyDown={onKeyDown}
@@ -988,7 +854,7 @@ export function Composer({
             onSelect={syncSelection}
             onFocus={syncSelection}
             onPaste={onPaste}
-            onBlur={() => setPopupIndex(0)}
+            onBlur={suggest.resetHighlight}
           />
           <div
             className="flex items-center gap-0.5 pb-0.5"
@@ -1015,7 +881,7 @@ export function Composer({
                 const start = Math.min(selection.start, text.length);
                 const end = Math.min(selection.end, text.length);
                 applyText(`${text.slice(0, start)}@${text.slice(end)}`);
-                setMentionDismissed(false);
+                suggest.rearmMention();
                 focusAt(start + 1);
               }}
             >
