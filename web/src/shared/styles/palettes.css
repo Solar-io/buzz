@@ -1,0 +1,137 @@
+/*
+ * Fixed palettes (web redesign Phase 0; plan §2 of
+ * docs/plans/2026-09-29-web-redesign/phase-0.md).
+ *
+ * A fixed palette is a stylesheet block selected by `data-palette` on
+ * <html>, NOT inline vars: the accent layer (ThemeProvider `applyAccent`)
+ * removes its inline properties when the accent is null, which would delete a
+ * palette's --primary if the palette were inline too. The provider clears
+ * every derived inline var (DERIVED_VAR_NAMES) and sets the attribute.
+ *
+ * Specificity: `:root[data-palette]` (0,2,0) beats `:root` / `.dark` (both in
+ * `@layer base` here and in globals.css). Inline still wins, so a user accent
+ * still overrides the palette's --primary.
+ *
+ * Each block MUST define every name in DERIVED_VAR_NAMES plus the accent set
+ * and --radius — the huddle tokens have no stylesheet default at all.
+ * fixed-palettes.test.mjs enforces it. Values are the canvas
+ * (Main.dc.html) converted with `hexToHsl`; huddle / status / warning tokens
+ * the canvas does not specify are the engine's output for the canvas
+ * bg/ink/muted. PALETTE_META_BG (fixed-palettes.ts) duplicates --background.
+ *
+ * Phase 0: no theme maps to a palette (FIXED_THEME_FOR is empty), so these
+ * blocks match nothing yet.
+ */
+@layer base {
+  :root[data-palette="buzz-light"] {
+    --background: 45 50.00% 98.4%;
+    --card: 0 0% 100.0%;
+    --popover: 0 0% 100.0%;
+    --muted: 42 27.78% 92.9%;
+    --accent: 42 31.25% 93.7%;
+    --secondary: 42 27.78% 92.9%;
+    --huddle-drawer-surface: 0 0% 0%;
+    --huddle-control-surface: 0 0% 20.0%;
+    --huddle-control-hover-surface: 0 0% 23.9%;
+    --huddle-control-chevron-surface: 0 0% 16.1%;
+    --huddle-control-chevron-hover-surface: 0 0% 22.0%;
+    --huddle-control-foreground: 0 0% 98%;
+    --huddle-popover-surface: 0 0% 16.1%;
+    --huddle-popover-border: 0 0% 23.9%;
+    --huddle-tooltip-surface: 0 0% 20.0%;
+    --huddle-tooltip-foreground: 0 0% 98%;
+    --sunk: 42.9 30.43% 95.5%;
+    --chip: 42 27.78% 92.9%;
+    --ink-2: 42 7.81% 25.1%;
+    --faint: 41.1 9.74% 61.8%;
+    --line-2: 42.4 17.17% 80.6%;
+    --rail: 42.9 30.43% 95.5%;
+    --vit: 42.9 23.33% 88.2%;
+    --foreground: 48 10.20% 9.6%;
+    --card-foreground: 48 10.20% 9.6%;
+    --popover-foreground: 48 10.20% 9.6%;
+    --muted-foreground: 38.8 8.63% 38.6%;
+    --accent-foreground: 48 10.20% 9.6%;
+    --secondary-foreground: 48 10.20% 9.6%;
+    --destructive: 9.8 72.81% 55.3%;
+    --destructive-foreground: 0 0% 100.0%;
+    --border: 42.9 21.88% 87.5%;
+    --input: 42.4 17.17% 80.6%;
+    --ring: 48 10.20% 9.6%;
+    --sidebar-background: 42 27.78% 92.9%;
+    --sidebar-foreground: 48 10.20% 9.6%;
+    --sidebar-accent: 42 31.25% 93.7%;
+    --sidebar-accent-foreground: 48 10.20% 9.6%;
+    --sidebar-border: 42.9 21.88% 87.5%;
+    --sidebar-ring: 42.4 17.17% 80.6%;
+    --status-added: #1a7f37;
+    --status-deleted: #cf222e;
+    --status-modified: #9a6700;
+    --ui-warning: #9a6700;
+    --ui-warning-bg: rgba(154, 103, 0, 0.08);
+    --sidebar: 42 27.78% 92.9%;
+    --primary: 48 10.20% 9.6%;
+    --primary-foreground: 45 50.00% 98.4%;
+    --sidebar-primary: 48 10.20% 9.6%;
+    --sidebar-primary-foreground: 45 50.00% 98.4%;
+    --sidebar-active: 0 0% 100.0%;
+    --sidebar-active-foreground: 48 10.20% 9.6%;
+    --radius: 0.625rem;
+  }
+
+  :root[data-palette="buzz-dark"] {
+    --background: 0 0% 7.8%;
+    --card: 0 0% 11.4%;
+    --popover: 0 0% 12.2%;
+    --muted: 0 0% 14.9%;
+    --accent: 0 0% 10.6%;
+    --secondary: 0 0% 14.9%;
+    --huddle-drawer-surface: 0 0% 13.3%;
+    --huddle-control-surface: 0 0.81% 24.1%;
+    --huddle-control-hover-surface: 0 1.33% 29.4%;
+    --huddle-control-chevron-surface: 0 1.01% 19.4%;
+    --huddle-control-chevron-hover-surface: 0 0.88% 22.2%;
+    --huddle-control-foreground: 40 11.11% 89.4%;
+    --huddle-popover-surface: 0 1.01% 19.4%;
+    --huddle-popover-border: 0 1.33% 29.4%;
+    --huddle-tooltip-surface: 0 0.81% 24.1%;
+    --huddle-tooltip-foreground: 40 11.11% 89.4%;
+    --sunk: 0 0% 9.8%;
+    --chip: 0 0% 14.9%;
+    --ink-2: 40 6.38% 72.4%;
+    --faint: 40 3.26% 36.1%;
+    --line-2: 0 0% 20.0%;
+    --rail: 0 0% 9.0%;
+    --vit: 0 0% 10.6%;
+    --foreground: 40 11.11% 89.4%;
+    --card-foreground: 40 11.11% 89.4%;
+    --popover-foreground: 40 11.11% 89.4%;
+    --muted-foreground: 40 3.83% 53.9%;
+    --accent-foreground: 40 11.11% 89.4%;
+    --secondary-foreground: 40 11.11% 89.4%;
+    --destructive: 11.9 52.38% 54.7%;
+    --destructive-foreground: 0 0% 7.8%;
+    --border: 0 0% 14.9%;
+    --input: 0 0% 20.0%;
+    --ring: 40 11.11% 89.4%;
+    --sidebar-background: 0 0% 9.4%;
+    --sidebar-foreground: 40 11.11% 89.4%;
+    --sidebar-accent: 0 0% 10.6%;
+    --sidebar-accent-foreground: 40 11.11% 89.4%;
+    --sidebar-border: 0 0% 14.9%;
+    --sidebar-ring: 0 0% 20.0%;
+    --status-added: #3fb950;
+    --status-deleted: #f85149;
+    --status-modified: #d29922;
+    --ui-warning: #d29922;
+    --ui-warning-bg: rgba(210, 153, 34, 0.1);
+    --sidebar: 0 0% 9.4%;
+    --primary: 40 11.11% 89.4%;
+    --primary-foreground: 0 0% 7.8%;
+    --sidebar-primary: 40 11.11% 89.4%;
+    --sidebar-primary-foreground: 0 0% 7.8%;
+    --sidebar-active: 0 0% 13.3%;
+    --sidebar-active-foreground: 40 11.11% 89.4%;
+    --radius: 0.625rem;
+  }
+}

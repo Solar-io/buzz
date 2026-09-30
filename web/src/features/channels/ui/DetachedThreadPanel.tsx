@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo } from "react";
+import { useMemo } from "react";
 import { useChannelMessages, useProfiles } from "@/features/channels/hooks";
 import { useMessageActions } from "@/features/channels/lib/useMessageActions.ts";
 import type { ChannelSummary } from "@/features/channels/useChannels";
@@ -82,37 +82,5 @@ export function DetachedThreadPanel({
         onOpen: onOpenChannel,
       }}
     />
-  );
-}
-
-/**
- * A full-page view (Inbox, Reminders, Pulse, …) with a kept-open thread
- * docked on its right. With no pane it renders the view exactly as before —
- * no wrapper, no layout change. The conversation row docks its own pane.
- */
-export function WithThreadPane({
-  pane,
-  width,
-  rowRef,
-  children,
-}: {
-  pane: ReactNode;
-  /** The shared right-pane width (px) — the --thread-width the pane reads. */
-  width: number;
-  rowRef?: (element: HTMLDivElement | null) => void;
-  children: ReactNode;
-}) {
-  if (!pane) {
-    return <>{children}</>;
-  }
-  return (
-    <div
-      ref={rowRef}
-      className="flex h-full min-h-0"
-      style={{ ["--thread-width" as string]: `${width}px` }}
-    >
-      <div className="relative h-full min-h-0 min-w-0 flex-1">{children}</div>
-      {pane}
-    </div>
   );
 }

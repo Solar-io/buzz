@@ -163,3 +163,43 @@ test("a dark theme and a light theme do not produce the same background", () => 
   assert.notEqual(dark["--background"], light["--background"]);
   assert.notEqual(dark["--foreground"], light["--foreground"]);
 });
+
+test("emits sunk/chip/ink-2/faint/line-2/rail/vit for light and dark inputs", () => {
+  // Web redesign Phase 0: derived themes carry the canvas's extra neutral
+  // steps so the redesigned surfaces follow the user's own theme.
+  const lightness = (triple) => Number.parseFloat(triple.split(" ")[2]);
+  const hslTriple = /^-?[\d.]+ [\d.]+% [\d.]+%$/;
+  for (const [label, bg, fg, comment] of [
+    ["light", LATTE_BG, LATTE_FG, LATTE_COMMENT],
+    ["dark", MOCHA_BG, MOCHA_FG, MOCHA_COMMENT],
+  ]) {
+    const { isDark, vars } = createThemeVars(bg, fg, comment);
+    for (const name of [
+      "--sunk",
+      "--chip",
+      "--ink-2",
+      "--faint",
+      "--line-2",
+      "--rail",
+      "--vit",
+    ]) {
+      assert.match(vars[name] ?? "", hslTriple, `${label} ${name}`);
+    }
+    // Stated aliases (phase-0.md §2.3).
+    assert.equal(vars["--chip"], vars["--secondary"], `${label} chip`);
+    assert.equal(vars["--line-2"], vars["--input"], `${label} line-2`);
+    assert.equal(vars["--rail"], vars["--sunk"], `${label} rail`);
+    // Sunk steps away from the background the way hover does (canvas:
+    // #F7F5F0 on #FDFCF9, #191919 on #141414), and ink-2 sits between the
+    // foreground and the background.
+    const bgL = lightness(vars["--background"]);
+    const sunkL = lightness(vars["--sunk"]);
+    assert.ok(isDark ? sunkL > bgL : sunkL < bgL, `${label} sunk ${sunkL}`);
+    const fgL = lightness(vars["--foreground"]);
+    const ink2L = lightness(vars["--ink-2"]);
+    assert.ok(
+      Math.min(fgL, bgL) < ink2L && ink2L < Math.max(fgL, bgL),
+      `${label} ink-2 ${ink2L} between ${fgL} and ${bgL}`,
+    );
+  }
+});

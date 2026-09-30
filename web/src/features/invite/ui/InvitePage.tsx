@@ -198,7 +198,8 @@ export function InvitePage({ code }: { code: string }) {
     <div
       className="flex flex-1 flex-col items-center justify-center px-4 py-16 text-center"
       style={{
-        backgroundImage: "linear-gradient(180deg, #D7D72E 0%, #D7E7F6 100%)",
+        backgroundImage:
+          "linear-gradient(180deg, var(--invite-gradient-from) 0%, var(--invite-gradient-to) 100%)",
       }}
     >
       <div className="w-full max-w-xl space-y-4">
