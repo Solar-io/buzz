@@ -371,11 +371,28 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
   test.describe(`phone 390 · ${theme}`, () => {
     test.use({ viewport: { width: 390, height: 844 } });
 
-    test("a bare /repos lands on Work with the tab bar", async ({ page }) => {
+    test("a bare /repos lands on Channels with the tab bar", async ({
+      page,
+    }) => {
       const pageErrors: string[] = [];
       page.on("pageerror", (error) => pageErrors.push(error.message));
       await open(page, { theme, path: () => "/repos" });
 
+      // The phone opens on the Channels tab (Sam, 2026-10-01; was Work).
+      await expect(page).toHaveURL(/view=channels/);
+      const tabs = page.getByTestId("phone-tab-bar");
+      await expect(tabs).toBeVisible();
+      await expect(
+        tabs.getByRole("button", { name: /Channels/ }),
+      ).toHaveAttribute("aria-current", "page");
+      await expect(
+        page
+          .getByTestId("channel-sidebar")
+          .locator("button", { hasText: "flight-path" })
+          .last(),
+      ).toBeVisible();
+
+      await tabs.getByRole("button", { name: /Work/ }).click();
       await expect(page).toHaveURL(/view=work/);
       const work = page.getByTestId("work-page");
       await expect(work).toBeVisible();
@@ -384,8 +401,6 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
         work.getByRole("button", { name: /^Needs you 8$/ }),
       ).toBeVisible();
       await expect(work.getByTestId("vitals-strip")).toContainText("45% free");
-      const tabs = page.getByTestId("phone-tab-bar");
-      await expect(tabs).toBeVisible();
       // Channels on the left, Work in the middle (Sam, 2026-10-01) — and
       // Work's needs-you badge moved with it.
       await expect(tabs.getByRole("button")).toHaveText([

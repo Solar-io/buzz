@@ -17,6 +17,13 @@
  * channel ids as channel favorites, in their stored order, with no user
  * action. Saves also write `starred` (the channel favorites) so a build from
  * before this change, on the same device, still sees its stars.
+ *
+ * CROSS-DEVICE SYNC (`favoritesSync.ts`): this file stays the offline cache
+ * and the only writer of favorites on this device. Each add stamps
+ * `favoriteAt[key]`, each removal leaves a tombstone in `removed`, so the
+ * sync merge can tell a fresh unfavorite from a stale device's old copy. A
+ * favorite stored before sync existed carries no stamp and merges as time 0:
+ * it survives every merge except an explicit, later removal.
  */
 
 const PREFS_KEY = "buzz.channel-prefs.v1";
@@ -28,11 +35,29 @@ export interface FavoriteRef {
   id: string;
 }
 
+/** An unfavorite, remembered so a stale device cannot resurrect it. */
+export interface FavoriteTombstone extends FavoriteRef {
+  /** Epoch ms of the removal. */
+  at: number;
+}
+
 export interface ChannelPrefs {
   /** Favorited conversations and links, in the order they were added. */
   favorites: FavoriteRef[];
   muted: string[];
+  /** Epoch ms each favorite was added, by {@link favoriteKey}; absent = 0. */
+  favoriteAt?: Record<string, number>;
+  /** Removed favorites (sync tombstones), oldest first. */
+  removed?: FavoriteTombstone[];
 }
+
+/** The identity of a favorite across devices: `kind:id`. */
+export function favoriteKey(ref: FavoriteRef): string {
+  return `${ref.kind}:${ref.id}`;
+}
+
+/** Tombstones kept per user; the oldest fall off first. */
+export const MAX_FAVORITE_TOMBSTONES = 200;
 
 function emptyPrefs(): ChannelPrefs {
   return { favorites: [], muted: [] };
@@ -56,7 +81,7 @@ function isFavoriteRef(value: unknown): value is FavoriteRef {
 function dedupeRefs(refs: FavoriteRef[]): FavoriteRef[] {
   const seen = new Set<string>();
   return refs.filter((ref) => {
-    const key = `${ref.kind}:${ref.id}`;
+    const key = favoriteKey(ref);
     if (seen.has(key)) {
       return false;
     }
@@ -75,6 +100,8 @@ export function loadChannelPrefs(): ChannelPrefs {
       favorites?: unknown;
       starred?: unknown;
       muted?: unknown;
+      favoriteAt?: unknown;
+      removed?: unknown;
     };
     const favorites = Array.isArray(parsed.favorites)
       ? parsed.favorites
@@ -88,10 +115,60 @@ export function loadChannelPrefs(): ChannelPrefs {
     return {
       favorites: dedupeRefs(favorites),
       muted: stringList(parsed.muted),
+      favoriteAt: stampMap(parsed.favoriteAt),
+      removed: tombstoneList(parsed.removed),
     };
   } catch {
     return emptyPrefs();
   }
+}
+
+function isStamp(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function stampMap(value: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return out;
+  }
+  for (const [key, at] of Object.entries(value)) {
+    if (isStamp(at)) {
+      out[key] = at;
+    }
+  }
+  return out;
+}
+
+/** Valid tombstones, one per key (the newest), oldest first, capped. */
+export function tombstoneList(value: unknown): FavoriteTombstone[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const byKey = new Map<string, FavoriteTombstone>();
+  for (const entry of value) {
+    if (!isFavoriteRef(entry) || !isStamp((entry as { at?: unknown }).at)) {
+      continue;
+    }
+    const tomb = {
+      kind: entry.kind,
+      id: entry.id,
+      at: (entry as FavoriteTombstone).at,
+    };
+    const key = favoriteKey(tomb);
+    const held = byKey.get(key);
+    if (!held || held.at < tomb.at) {
+      byKey.set(key, tomb);
+    }
+  }
+  return [...byKey.values()]
+    .sort((a, b) => a.at - b.at)
+    .slice(-MAX_FAVORITE_TOMBSTONES);
+}
+
+/** Persist prefs as-is (the sync merge's write path; mutators call it too). */
+export function saveChannelPrefs(prefs: ChannelPrefs): void {
+  savePrefs(prefs);
 }
 
 function savePrefs(prefs: ChannelPrefs): void {
@@ -101,6 +178,8 @@ function savePrefs(prefs: ChannelPrefs): void {
       JSON.stringify({
         favorites: prefs.favorites,
         muted: prefs.muted,
+        favoriteAt: prefs.favoriteAt ?? {},
+        removed: prefs.removed ?? [],
         // Back-compat mirror for older builds; never read when favorites is.
         starred: favoriteChannelIds(prefs),
       }),
@@ -138,23 +217,59 @@ export function setFavorite(
   prefs: ChannelPrefs,
   ref: FavoriteRef,
   favorite: boolean,
+  now: number = Date.now(),
 ): ChannelPrefs {
   if (isFavorite(prefs, ref) === favorite) {
     return prefs;
   }
-  const favorites = favorite
-    ? [...prefs.favorites, { kind: ref.kind, id: ref.id }]
-    : prefs.favorites.filter((entry) => !sameRef(entry, ref));
-  const next = { ...prefs, favorites };
+  const next = favorite
+    ? withFavoriteAdded(prefs, ref, now)
+    : withFavoriteRemoved(prefs, ref, now);
   savePrefs(next);
   return next;
+}
+
+/** Append `ref`, stamp it, and lift any tombstone it had. */
+function withFavoriteAdded(
+  prefs: ChannelPrefs,
+  ref: FavoriteRef,
+  now: number,
+): ChannelPrefs {
+  const key = favoriteKey(ref);
+  return {
+    ...prefs,
+    favorites: [...prefs.favorites, { kind: ref.kind, id: ref.id }],
+    favoriteAt: { ...prefs.favoriteAt, [key]: now },
+    removed: (prefs.removed ?? []).filter((tomb) => favoriteKey(tomb) !== key),
+  };
+}
+
+/** Drop `ref` and leave a tombstone so the removal syncs. */
+function withFavoriteRemoved(
+  prefs: ChannelPrefs,
+  ref: FavoriteRef,
+  now: number,
+): ChannelPrefs {
+  const key = favoriteKey(ref);
+  const favoriteAt = { ...prefs.favoriteAt };
+  delete favoriteAt[key];
+  return {
+    ...prefs,
+    favorites: prefs.favorites.filter((entry) => !sameRef(entry, ref)),
+    favoriteAt,
+    removed: tombstoneList([
+      ...(prefs.removed ?? []),
+      { kind: ref.kind, id: ref.id, at: now },
+    ]),
+  };
 }
 
 export function toggleFavorite(
   prefs: ChannelPrefs,
   ref: FavoriteRef,
+  now: number = Date.now(),
 ): ChannelPrefs {
-  return setFavorite(prefs, ref, !isFavorite(prefs, ref));
+  return setFavorite(prefs, ref, !isFavorite(prefs, ref), now);
 }
 
 export function toggleMuted(
@@ -173,11 +288,15 @@ export function toggleMuted(
 export function forgetChannel(
   prefs: ChannelPrefs,
   channelId: string,
+  now: number = Date.now(),
 ): ChannelPrefs {
+  const ref: FavoriteRef = { kind: "channel", id: channelId };
+  // A favorite of a channel left behind is unfavorited everywhere.
+  const base = isFavorite(prefs, ref)
+    ? withFavoriteRemoved(prefs, ref, now)
+    : prefs;
   const next = {
-    favorites: prefs.favorites.filter(
-      (ref) => !(ref.kind === "channel" && ref.id === channelId),
-    ),
+    ...base,
     muted: prefs.muted.filter((id) => id !== channelId),
   };
   savePrefs(next);

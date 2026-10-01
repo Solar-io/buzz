@@ -93,22 +93,23 @@ export function landingRedirectTarget(
 }
 
 /**
- * The phone's home screen (web redesign phase-1, decision D3): on a phone a
- * bare `/repos` lands on Work rather than the last conversation. Same guard
+ * The phone's home screen: on a phone a bare `/repos` lands on the Channels
+ * tab (Sam, 2026-10-01 — was Work under phase-1 D3) rather than the last
+ * conversation. Same guard
  * as {@link landingRedirectTarget} — only a bare landing moves, and the
  * redirect carries `view`, so it cannot loop.
  */
 export function phoneLandingView(
   search: { c?: string; view?: string; m?: string },
   phone: boolean,
-): "work" | null {
+): "channels" | null {
   if (!phone) {
     return null;
   }
   return search.c === undefined &&
     search.view === undefined &&
     search.m === undefined
-    ? "work"
+    ? "channels"
     : null;
 }
 
