@@ -1,0 +1,261 @@
+import { expect, type Page, test } from "@playwright/test";
+
+import type { MockEvent } from "./helpers/mockRelay";
+import {
+  channelPath as shellChannelPath,
+  openShell,
+  shot,
+} from "./helpers/shellPage";
+import {
+  buildTaskStatus,
+  detailHead,
+  lifecycleHead,
+  PR_TITLE,
+} from "./helpers/taskStatusFixture";
+import type { WorkFixture } from "./helpers/workFixture";
+
+/**
+ * Work tab v2 (web redesign Phase 8), driven through the real sign-in against
+ * a relay faked at the WebSocket boundary.
+ *
+ * What only this can prove: the 30624 REQ is actually opened (with `#h`, or
+ * the mock's live push would never reach it), the heads it returns reach the
+ * Running and Done rows through the provider, a live update lands on the SAME
+ * row, and a terminal head moves the turn from Running to Done. The unit
+ * suites prove the join; this proves the join is wired.
+ *
+ * `SHOTS_DIR=… pnpm exec playwright test --project=smoke work-status` writes
+ * the Main / PhoneWork / PhoneChannel comparison shots, both themes.
+ */
+
+const channelPath = shellChannelPath();
+const now = () => Math.floor(Date.now() / 1000);
+
+async function open(
+  page: Page,
+  theme: string,
+  path: (fixture: WorkFixture) => string,
+) {
+  let built: ReturnType<typeof buildTaskStatus> | null = null;
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const { fixture, relay } = await openShell(page, {
+    theme,
+    path,
+    extra: (base) => {
+      built = buildTaskStatus(base);
+      return built.events;
+    },
+  });
+  if (!built) {
+    throw new Error("the status fixture was not built");
+  }
+  const status = built as ReturnType<typeof buildTaskStatus>;
+  const card = status.events.find(
+    (event: MockEvent) => event.kind === 9,
+  ) as MockEvent;
+  return { fixture, relay, status, card, pageErrors };
+}
+
+const rowKey = (agent: string, turn: string) =>
+  `[data-row-key="turn:${agent}:${turn}"]`;
+
+for (const theme of ["buzz", "buzz-dark"] as const) {
+  test.describe(`desktop 1440 · ${theme}`, () => {
+    test.use({ viewport: { width: 1440, height: 960 } });
+
+    test("Running rows carry 30624 titles and progress; a turn moves to Done in place", async ({
+      page,
+    }) => {
+      const { fixture, relay, status, card, pageErrors } = await open(
+        page,
+        theme,
+        channelPath,
+      );
+      const a = fixture.agents;
+      const rail = page.getByTestId("work-rail");
+      const running = rail.getByRole("region", { name: "Running" });
+
+      // Five working (four of the viewer's own turns + another member's
+      // agent seen only through 30624), two silent ones still listed.
+      await expect(running.getByTestId("run-row-live")).toHaveCount(5);
+      await expect(running.getByTestId("run-row-stalled")).toHaveCount(2);
+
+      // Observer + status for the same turn: ONE row, titled, 1/3.
+      const nikon = running.locator(rowKey(a.nikon.pubkey, "t-nikon"));
+      await expect(nikon).toHaveCount(1);
+      await expect(nikon).toContainText("Capture pass · #flight-path");
+      await expect(nikon.getByTestId("progress-segments")).toHaveAttribute(
+        "data-progress",
+        "1/3",
+      );
+      // Past five steps: words, not segments.
+      const acid = running.locator(rowKey(a.acid.pubkey, "t-acid"));
+      await expect(acid).toContainText("Jitter buffer QA · 4 of 7");
+      await expect(acid.getByTestId("progress-segments")).toHaveCount(0);
+      // A detail stamped with an EARLIER turn never titles this one (D8.3).
+      const crash = running.locator(rowKey(a.crash.pubkey, "t-crash"));
+      await expect(crash).toBeVisible();
+      await expect(crash).not.toContainText("Stale title");
+      // No 30624 at all (a heartbeat turn): the observer row stands alone.
+      await expect(
+        running.locator(rowKey(a.jared.pubkey, "t-jared")),
+      ).toContainText("heartbeat");
+      // Another member's agent, readable only through 30624.
+      const razor = running.locator(
+        rowKey(status.agents.razor.pubkey, "r-run"),
+      );
+      await expect(razor).toContainText("Restore drill · #ops");
+      await expect(razor.getByTestId("progress-segments")).toHaveAttribute(
+        "data-progress",
+        "2/3",
+      );
+      // A head that stopped refreshing is said out loud, never hidden.
+      const blade = running.locator(
+        rowKey(status.agents.blade.pubkey, "b-run"),
+      );
+      await expect(blade).toHaveAttribute("data-testid", "run-row-stalled");
+      await expect(blade).toContainText("no heartbeat");
+
+      // The PR-merge ask is an APPROVAL, beside the two workflow gates.
+      const pr = rail.getByTestId(`need-row-ask:${card.id}`);
+      await expect(pr).toContainText(PR_TITLE);
+      await expect(pr).toContainText("APPROVAL · PR · buzz · #engineering");
+      await expect(
+        rail.getByRole("button", { name: /^Approvals 3$/ }),
+      ).toBeVisible();
+      await expect(rail.getByRole("button", { name: /^All 9$/ })).toBeVisible();
+
+      // Done today folds to its newest titled turn (Main artboard).
+      const done = rail.getByRole("button", { name: /Done today\s*5/ });
+      await expect(done).toContainText("last: Merge-queue sweep");
+
+      // The composer line names what the one working agent is doing.
+      const strip = page.getByTestId("running-strip-line");
+      await expect(strip).toContainText("Lord Nikon · Capture pass");
+      await expect(strip.getByTestId("progress-segments")).toHaveAttribute(
+        "data-progress",
+        "1/3",
+      );
+      expect(pageErrors).toEqual([]);
+      await shot(page, `status-main-${theme}-1440`);
+
+      // LIVE: `buzz status set --progress 2/3` lands on the same row.
+      const flight = fixture.channels["flight-path"];
+      relay.push(
+        detailHead(a.nikon.pubkey, flight, "t-nikon", now() + 21, {
+          progress: [2, 3],
+        }),
+      );
+      await expect(nikon.getByTestId("progress-segments")).toHaveAttribute(
+        "data-progress",
+        "2/3",
+      );
+      await expect(nikon).toContainText("Capture pass", {
+        timeout: 1_000,
+      });
+      // A lifecycle refresh is the heartbeat, not a second row.
+      relay.push(
+        lifecycleHead(
+          a.nikon.pubkey,
+          flight,
+          "t-nikon",
+          "running",
+          now() + 22,
+          now() - 100,
+        ),
+      );
+      await page.waitForTimeout(1_200);
+      await expect(nikon).toHaveCount(1);
+      await expect(running.getByTestId("run-row-live")).toHaveCount(5);
+
+      // LIVE: the harness says the turn ended — Running → Done.
+      relay.push(
+        lifecycleHead(
+          a.nikon.pubkey,
+          flight,
+          "t-nikon",
+          "done",
+          now() + 23,
+          now() - 100,
+        ),
+      );
+      await expect(nikon).toHaveCount(0);
+      await expect(running.getByTestId("run-row-live")).toHaveCount(4);
+      await expect(
+        rail.getByRole("button", { name: /Done today\s*6/ }),
+      ).toContainText("last: Capture pass");
+      await expect(strip).toHaveCount(0);
+
+      // Expanded: one row per turn, titled where the agent said, abnormal
+      // endings said; the turn both sources report is listed once.
+      await rail.getByRole("button", { name: /Done today\s*6/ }).click();
+      const rows = rail
+        .getByRole("region", { name: "Done today" })
+        .getByTestId("done-row");
+      await expect(rows).toHaveCount(6);
+      await expect(rows.first()).toContainText("Capture pass · #flight-path");
+      await expect(rows.filter({ hasText: "Beat 01 captured" })).toHaveCount(1);
+      await expect(
+        rows.filter({ hasText: "error · harness-restart" }),
+      ).toHaveCount(1);
+      // The rail now overflows: it scrolls, and the folded Queued row keeps
+      // its 34 px instead of being squeezed by the flex column.
+      const queued = await rail
+        .getByRole("button", { name: /Queued\s*2/ })
+        .boundingBox();
+      expect(queued?.height ?? 0).toBeGreaterThanOrEqual(33);
+      await shot(page, `status-done-${theme}-1440`);
+      expect(pageErrors).toEqual([]);
+    });
+  });
+
+  test.describe(`phone 390 · ${theme}`, () => {
+    test.use({ viewport: { width: 390, height: 844 } });
+
+    test("the Work page lists titled turns; the channel bar names the work", async ({
+      page,
+    }) => {
+      const { fixture, pageErrors } = await open(page, theme, () => "/repos");
+      const work = page.getByTestId("work-page");
+      await expect(work).toBeVisible();
+      await expect(
+        work.getByRole("button", { name: /^Needs you 9$/ }),
+      ).toBeVisible();
+      await shot(page, `status-phone-needs-${theme}-390`);
+
+      await work.getByRole("button", { name: /^Running 7$/ }).click();
+      const titles = work.getByTestId("run-row-title");
+      await expect(titles.filter({ hasText: "Capture pass" })).toBeVisible();
+      await expect(
+        titles.filter({ hasText: "Jitter buffer QA · 4 of 7" }),
+      ).toBeVisible();
+      await expect(titles.filter({ hasText: "Restore drill" })).toBeVisible();
+      await expect(work.getByText(/no heartbeat/).first()).toBeVisible();
+      // Nothing scrolls sideways at phone width.
+      expect(
+        await page.evaluate(
+          () =>
+            document.documentElement.scrollWidth <=
+            document.documentElement.clientWidth,
+        ),
+      ).toBe(true);
+      await shot(page, `status-phone-running-${theme}-390`);
+
+      // Tapping the row opens its channel, where the bar says what it is.
+      await work
+        .locator(rowKey(fixture.agents.nikon.pubkey, "t-nikon"))
+        .getByRole("button")
+        .first()
+        .click();
+      const bar = page.getByTestId("running-strip-bar");
+      await expect(bar).toContainText("Lord Nikon · Capture pass");
+      await expect(bar.getByTestId("progress-segments")).toHaveAttribute(
+        "data-progress",
+        "1/3",
+      );
+      await shot(page, `status-phone-channel-${theme}-390`);
+      expect(pageErrors).toEqual([]);
+    });
+  });
+}

@@ -1,0 +1,17 @@
+{
+  "//": "JetBrainsMono Nerd Font MONO (the single-width build; the non-Mono family ships double-width icons that shear xterm's grid). Full family, NOT unicode-range subset: TUIs draw icons across two Private Use planes. Byte-copied from evie-ui app/public/fonts. Loaded only by the Terminal page. SIL Open Font License 1.1 (JetBrains Mono, patched by Nerd Fonts).",
+  "files": {
+    "JetBrainsMonoNerdFontMono-Regular.woff2": {
+      "package": "JetBrainsMono Nerd Font Mono",
+      "version": "unrecorded (evie-ui copy)",
+      "license": "OFL-1.1",
+      "sha256": "9a9579b8988a1209afb089803a65f747fac876e620b7fd6e8c868a96a37ba097"
+    },
+    "JetBrainsMonoNerdFontMono-Bold.woff2": {
+      "package": "JetBrainsMono Nerd Font Mono",
+      "version": "unrecorded (evie-ui copy)",
+      "license": "OFL-1.1",
+      "sha256": "986adeabc42bab2925de274ebfb27ceaf479052eac55e0f8692e1dc87f1d4db6"
+    }
+  }
+}

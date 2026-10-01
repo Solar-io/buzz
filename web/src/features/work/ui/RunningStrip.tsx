@@ -2,8 +2,10 @@ import type { Profile } from "@/features/channels/hooks";
 import { authorLabel } from "@/features/channels/lib/authorLabel.ts";
 import { cn } from "@/shared/lib/cn";
 import { HexAvatar } from "@/shared/ui/HexAvatar";
+import { progressText } from "../lib/taskStatus.ts";
 import type { RunRow } from "../lib/workTypes.ts";
 import { useNowSeconds, useWorkFeed } from "../useWorkFeed.ts";
+import { ProgressSegments } from "./ProgressSegments";
 import { clockLabel, elapsedLabel } from "./workLabels.ts";
 
 /** What the strip says about the turns running in one channel. */
@@ -62,10 +64,10 @@ export function runningNames(names: readonly string[]): string[] {
  * does, so it covers channels too and can never disagree with Running.
  *
  * Honest by the same rules as the rail (VISION_ACTIVITY): it says an agent
- * IS WORKING and for how long, because that is all a turn's lifecycle
- * carries. What it is working on, and how far along, arrive with task status
- * (Phase 8); until then the strip makes no claim about either. A turn with
- * no heartbeat is named as quiet, never hidden.
+ * IS WORKING and for how long. What it is working on, and how far along,
+ * show only when the agent said so for THIS turn (`buzz status set`, 30624
+ * detail bound by turn id — Phase 8); otherwise the strip makes no claim
+ * about either. A turn with no heartbeat is named as quiet, never hidden.
  */
 export function RunningStrip({
   channelId,
@@ -100,6 +102,10 @@ export function RunningStrip({
             ? elapsedLabel(first.startedAt, Math.max(nowS, coarse))
             : null;
   const ring = summary.quiet ? "need" : "work";
+  // One working turn that said what it is doing: name it (Phase 8).
+  const single = summary.rows.length === 1 && !summary.quiet ? first : null;
+  const title = single?.title != null ? single.title : null;
+  const progress = single?.progress != null ? single.progress : null;
   return (
     <div
       role="status"
@@ -126,12 +132,32 @@ export function RunningStrip({
             {index > 0 && (index === names.length - 1 ? " and " : ", ")}
             <b className="font-semibold text-foreground">{name}</b>
           </span>
-        ))}{" "}
-        <span className={summary.quiet ? "text-coral-ink" : undefined}>
-          {summary.verb}
-        </span>
+        ))}
+        {title ? (
+          <span data-testid="running-strip-title">
+            {" · "}
+            {title}
+            {progressText(progress) ? ` · ${progressText(progress)}` : null}
+          </span>
+        ) : (
+          <>
+            {" "}
+            <span className={summary.quiet ? "text-coral-ink" : undefined}>
+              {summary.verb}
+            </span>
+          </>
+        )}
       </span>
-      {!summary.quiet && (
+      {progress ? (
+        <span className="ml-auto flex shrink-0">
+          <ProgressSegments
+            progress={progress}
+            live
+            size={variant === "bar" ? "bar" : "rail"}
+          />
+        </span>
+      ) : null}
+      {!summary.quiet && !progress && (
         <span aria-hidden className="flex shrink-0 gap-0.75">
           {[0, 1, 2].map((dot) => (
             <span
@@ -145,7 +171,8 @@ export function RunningStrip({
       {timing && (
         <span
           className={cn(
-            "ml-auto shrink-0 font-mono text-2xs",
+            "shrink-0 font-mono text-2xs",
+            !progress && "ml-auto",
             summary.quiet ? "text-coral-ink" : "text-muted-foreground",
           )}
         >

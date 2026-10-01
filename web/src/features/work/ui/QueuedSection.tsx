@@ -133,9 +133,10 @@ export function QueuedSection({
 }
 
 /**
- * Done today (phase-1 §2.6), from 44200 turn metrics. Loading and
- * unavailable render nothing — never a "0" the data does not carry; a locked
- * key says so.
+ * Done today (phase-1 §2.6, Phase 8): 30624 terminal heads for every agent in
+ * the viewer's channels, plus the 44200 turn metrics of their own agents.
+ * Loading and unavailable render nothing — never a "0" the data does not
+ * carry; a locked key with no status to fall back on says so.
  */
 export function DoneSection({
   done,
@@ -170,12 +171,16 @@ export function DoneSection({
     );
   }
   const last = done.last;
+  // Main: "last: Beat 01 captured" — what was done, when the agent said so;
+  // otherwise who, where and when.
   const lastLine = last
-    ? metaLine(
-        authorLabel(last.agentPubkey, profiles),
-        channelLabel(last.channelId, channels),
-        clockLabel(last.at),
-      )
+    ? last.title != null
+      ? last.title
+      : metaLine(
+          authorLabel(last.agentPubkey, profiles),
+          channelLabel(last.channelId, channels),
+          clockLabel(last.at),
+        )
     : "";
   if (collapsed) {
     return (
@@ -221,11 +226,11 @@ export function DoneSection({
 export const DONE_PAGE = 6;
 
 /**
- * One row per finished turn, newest first (Phase 2): who, where, when, and
- * how the turn ended. `end_turn` is the ordinary ending and says nothing;
- * any other stop reason — a cancel, a refusal, an error — is shown, because
- * a turn that did not end normally is the one worth a second look. What the
- * turn WAS is not here: titles arrive with task status in Phase 8.
+ * One row per finished turn, newest first (Phase 2): who, what (its 30624
+ * title, Phase 8), where, when, and how the turn ended. `end_turn` / `done`
+ * is the ordinary ending and says nothing; anything else — a cancel, a
+ * refusal, an error, a harness restart — is shown, because a turn that did
+ * not end normally is the one worth a second look.
  */
 function DoneRows({
   rows,
@@ -266,9 +271,12 @@ function DoneRows({
               <span className="text-muted-foreground">
                 {" "}
                 {metaLine(
+                  row.title != null && row.title,
                   channelLabel(row.channelId, channels) || "heartbeat",
-                  abnormal && row.stopReason,
                 )}
+                {abnormal ? (
+                  <span className="text-coral-ink"> · {row.stopReason}</span>
+                ) : null}
               </span>
             </span>
             <span

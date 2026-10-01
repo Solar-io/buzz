@@ -259,7 +259,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                             return Ok(Redirect::permanent(&target).into_response());
                         }
                         WebFallback::SpaIndex => {
-                            return Ok(read_spa_index(&index).await);
+                            let mut response = read_spa_index(&index).await;
+                            state.config.web_csp.apply(req.headers(), &mut response);
+                            return Ok(response);
                         }
                         WebFallback::NotFound => {}
                     }
@@ -622,7 +624,9 @@ async fn nip11_or_ws_handler(
                     if accept.contains("text/html") {
                         let index = dir.join("index.html");
                         if let Ok(body) = tokio::fs::read(&index).await {
-                            return axum::response::Html(body).into_response();
+                            let mut response = axum::response::Html(body).into_response();
+                            state.config.web_csp.apply(&headers, &mut response);
+                            return response;
                         }
                     }
                 }
@@ -1067,12 +1071,21 @@ mod tests {
         changelog_upstream: Option<String>,
         edition_upstream: Option<String>,
     ) -> Arc<AppState> {
+        test_state_with(|config| {
+            config.docs_changelog_upstream =
+                changelog_upstream.map(|raw| url::Url::parse(&raw).expect("test upstream url"));
+            config.docs_edition_upstream =
+                edition_upstream.map(|raw| url::Url::parse(&raw).expect("test upstream url"));
+        })
+        .await
+    }
+
+    /// Router state on lazy (unreachable) Postgres/Redis, with `mutate`
+    /// applied to an env-derived config.
+    async fn test_state_with(mutate: impl FnOnce(&mut crate::config::Config)) -> Arc<AppState> {
         let mut config = crate::config::Config::from_env().expect("test config");
         config.redis_url = "redis://127.0.0.1:1".to_string();
-        config.docs_changelog_upstream =
-            changelog_upstream.map(|raw| url::Url::parse(&raw).expect("test upstream url"));
-        config.docs_edition_upstream =
-            edition_upstream.map(|raw| url::Url::parse(&raw).expect("test upstream url"));
+        mutate(&mut config);
 
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://buzz:buzz_dev@127.0.0.1:1/buzz") // sadscan:disable np.postgres.1
@@ -1275,6 +1288,65 @@ mod tests {
             assert_eq!(
                 status, 404,
                 "{path} must not exist without its upstream configured (body: {body})"
+            );
+        }
+
+        relay_server.abort();
+        let _ = relay_server.await;
+    }
+
+    #[tokio::test]
+    async fn web_client_index_carries_the_csp_header() {
+        let web_dir = tempfile::tempdir().expect("web dir");
+        std::fs::write(web_dir.path().join("index.html"), "<!doctype html>").expect("write index");
+        std::fs::create_dir(web_dir.path().join("assets")).expect("assets dir");
+        std::fs::write(web_dir.path().join("assets/app.js"), "1").expect("write asset");
+
+        let web_path = web_dir.path().to_path_buf();
+        let state = test_state_with(|config| {
+            config.web_dir = Some(web_path);
+            config.serve_git_web_gui = true;
+        })
+        .await;
+
+        let relay_listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind relay test listener");
+        let relay_addr = relay_listener.local_addr().expect("relay test address");
+        let relay_server = tokio::spawn(async move {
+            axum::serve(
+                relay_listener,
+                build_router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+            .expect("serve relay test router");
+        });
+
+        let client = reqwest::Client::new();
+        let base = format!("http://{relay_addr}");
+        for path in ["/invite/abc", "/repos/", "/repos/some/repo"] {
+            let response = client
+                .get(format!("{base}{path}"))
+                .header("host", "crichton.tailb3d4b8.ts.net:6351")
+                .send()
+                .await
+                .expect("index request");
+            assert_eq!(response.status(), 200, "{path}");
+            let csp = response
+                .headers()
+                .get("content-security-policy")
+                .unwrap_or_else(|| panic!("{path}: no CSP header"))
+                .to_str()
+                .expect("ascii csp")
+                .to_string();
+            assert!(
+                csp.contains("script-src 'self' blob: 'wasm-unsafe-eval';"),
+                "{path}: {csp}"
+            );
+            assert!(csp.contains("frame-ancestors 'self'"), "{path}: {csp}");
+            assert!(
+                csp.contains("wss://crichton.tailb3d4b8.ts.net:6351"),
+                "{path}: relay socket missing from {csp}"
             );
         }
 

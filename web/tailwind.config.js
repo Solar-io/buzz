@@ -202,6 +202,18 @@ export default {
           DEFAULT: "hsl(var(--human))",
           ink: "hsl(var(--human-ink))",
         },
+        // Terminal (Phase 7): whole colours in redesign.css, not triples.
+        term: {
+          DEFAULT: "var(--term)",
+          ink: "var(--term-ink)",
+          dim: "var(--term-dim)",
+          tab: "var(--term-tab)",
+          add: "var(--term-add)",
+          "add-ink": "var(--term-add-ink)",
+          hl: "var(--term-hl)",
+          warn: "var(--term-warn)",
+        },
+        key: "var(--key)",
       },
     },
   },

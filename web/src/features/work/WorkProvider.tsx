@@ -25,6 +25,7 @@ import {
   type ReactionEvent,
 } from "./lib/queuedReactions.ts";
 import { mergeById, useSettledKey } from "./lib/useSettledKey.ts";
+import { useTaskStatus } from "./useTaskStatus.ts";
 import { WorkCountsProvider } from "./useWorkCounts.ts";
 import {
   useWorkContext,
@@ -53,6 +54,7 @@ import {
  *   approvals  46010–46012 addressed to me (history via #p, live via #h)
  *   reactions  the known agents' 👀/💬 and their kind-5 removals (#h chunks)
  *   metrics    44200 turn metrics since local midnight, decrypted here
+ *   status     30624 task status heads in my channels (#h chunks, Phase 8)
  *   targets    the events those reactions point at (for their channel)
  *
  * Asks, mentions, reminders and observer frames already have owners
@@ -300,6 +302,14 @@ export function WorkProvider({
     };
   }, [session, live, selfPubkey, metricsSince]);
 
+  // ---- task status: 30624 heads in every channel I am in -------------------
+  const taskStatus = useTaskStatus({
+    session,
+    live,
+    channelKey,
+    sinceS: metricsSince,
+  });
+
   const metrics: MetricsState = useMemo(() => {
     const ready = {
       state: "ready" as const,
@@ -349,6 +359,7 @@ export function WorkProvider({
       reactions,
       targets,
       metrics,
+      status: taskStatus,
       dismissedTurns,
       dismissTurn,
       reportVisible,
@@ -365,6 +376,7 @@ export function WorkProvider({
       reactions,
       targets,
       metrics,
+      taskStatus,
       dismissedTurns,
       dismissTurn,
       reportVisible,

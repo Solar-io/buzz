@@ -45,6 +45,9 @@ globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
 const { AuthorAvatar } = await import("./AuthorAvatar.tsx");
 
 const PUBKEY = "b".repeat(64);
+// Relay Blossom media (same origin as the page here) is auth-gated and goes
+// through the signed fetch; anything else renders as a plain <img src>.
+const RELAY_PIC = "https://web.test/media/pic.jpg";
 
 async function mountAvatar(props) {
   const container = dom.window.document.createElement("div");
@@ -72,7 +75,7 @@ test("default (no shape) keeps the circular picture once it resolves", async () 
   const avatar = await mountAvatar({
     pubkey: PUBKEY,
     label: "Richard",
-    picture: "https://media.test/pic",
+    picture: RELAY_PIC,
   });
   const el = avatar.first();
   assert.equal(el?.tagName, "IMG");
@@ -86,7 +89,7 @@ test("shape=portrait renders the 3:4 frame classes, not a circle", async () => {
   const avatar = await mountAvatar({
     pubkey: PUBKEY,
     label: "Richard",
-    picture: "https://media.test/pic",
+    picture: RELAY_PIC,
     shape: "portrait",
   });
   const el = avatar.first();
@@ -111,7 +114,7 @@ test("shape=portrait falls back to the initials frame when the fetch fails", asy
   const avatar = await mountAvatar({
     pubkey: PUBKEY,
     label: "Richard Hendricks",
-    picture: "https://media.test/pic",
+    picture: RELAY_PIC,
     shape: "portrait",
   });
   const el = avatar.first();
@@ -142,6 +145,43 @@ test("no picture renders the initials frame without any media fetch", async () =
   assert.equal(el.textContent, "G");
   assert.equal(called, false);
   await avatar.unmount();
+});
+
+test("a foreign picture renders directly, never through the signed fetch", async () => {
+  let called = false;
+  globalThis.__BUZZ_TEST_FETCH_SIGNED_MEDIA__ = async () => {
+    called = true;
+    return "blob:unused";
+  };
+  const avatar = await mountAvatar({
+    pubkey: PUBKEY,
+    label: "Richard",
+    picture: "https://cdn.example/pic.png",
+  });
+  const el = avatar.first();
+  assert.equal(el?.tagName, "IMG");
+  assert.equal(el.getAttribute("src"), "https://cdn.example/pic.png");
+  assert.equal(called, false, "no NIP-98 fetch to a third-party host");
+  // A dead foreign URL falls back to the initials.
+  await act(async () => {
+    el.dispatchEvent(new dom.window.Event("error"));
+  });
+  assert.equal(avatar.first()?.tagName, "DIV");
+  assert.equal(avatar.first()?.textContent, "R");
+  await avatar.unmount();
+});
+
+test("a non-https foreign picture is not rendered", async () => {
+  globalThis.__BUZZ_TEST_FETCH_SIGNED_MEDIA__ = async () => "blob:unused";
+  for (const picture of ["http://cdn.example/pic.png", "javascript:alert(1)"]) {
+    const avatar = await mountAvatar({
+      pubkey: PUBKEY,
+      label: "Richard",
+      picture,
+    });
+    assert.equal(avatar.first()?.tagName, "DIV", picture);
+    await avatar.unmount();
+  }
 });
 
 after(() => {

@@ -131,8 +131,9 @@ export function WorkTab({
           ),
           ...feed.running.map((row) => row.agentPubkey),
           ...feed.queued.map((row) => row.agentPubkey),
-          ...(feed.done.state === "ready" && feed.done.last
-            ? [feed.done.last.agentPubkey]
+          // Every Done row names its agent, not just the folded summary's.
+          ...(feed.done.state === "ready"
+            ? feed.done.rows.map((row) => row.agentPubkey)
             : []),
         ]),
       ),
@@ -321,7 +322,7 @@ export function WorkTab({
             </button>
           ))}
         </div>
-        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-4 pt-1 pb-4">
+        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-4 pt-1 pb-4 *:shrink-0">
           {phoneSection === "needs" && needs}
           {phoneSection === "running" && (
             <>
@@ -349,7 +350,9 @@ export function WorkTab({
       // A content pane, so the custom-gradient theme cards it like the
       // thread and thinking panes it shares the dock with.
       data-custom-content-pane="work"
-      className="flex h-full min-h-0 w-full flex-col gap-3 overflow-y-auto bg-rail p-3.5"
+      // `*:shrink-0`: once the sections overflow, a flex column would squeeze
+      // the folded Queued / Done rows below their 34 px instead of scrolling.
+      className="flex h-full min-h-0 w-full flex-col gap-3 overflow-y-auto bg-rail p-3.5 *:shrink-0"
     >
       <div className="flex items-center gap-2">
         {showTitle && (
