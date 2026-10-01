@@ -222,6 +222,8 @@ export interface RunwayAccount {
 export interface Runway {
   /** How far back the hub averages (72 h). */
   lookbackHours: number | null;
+  /** Saturday/Sunday hours project at this multiple of the rate (1.5). */
+  weekendFactor: number | null;
   /** The quota window measured (`weeklyAll` today). */
   basis: string | null;
   /** Worst account status from the projection. */
@@ -277,6 +279,7 @@ export function parseRunway(json: unknown): Runway | null {
   }
   return {
     lookbackHours: num(raw.lookbackHours),
+    weekendFactor: num(raw.weekendFactor),
     basis: str(raw.basis),
     status: statusOf(raw.status),
     accounts,
@@ -327,7 +330,7 @@ function short(value: number): string {
 
 /**
  * The popover's method line, from the hub's own numbers: "72h average,
- * carried forward to each reset: A 1.4%/h · B 0.4%/h". An account with less
+ * weekends ×1.5, carried forward to each reset: A 1.4%/h · B 0.4%/h". An account with less
  * than the full window of history is noted quietly ("B: 31h of history").
  */
 export function runwayMethod(runway: Runway | null): string | null {
@@ -347,5 +350,9 @@ export function runwayMethod(runway: Runway | null): string | null {
     .filter((a) => a.historyHours !== null && a.historyHours < lookback - 1)
     .map((a) => `${a.id}: ${Math.round(a.historyHours ?? 0)}h of history`);
   const note = thin.length > 0 ? ` (${thin.join(", ")})` : "";
-  return `${lookback}h average, carried forward to each reset: ${rates}${note}`;
+  const weekend =
+    runway.weekendFactor !== null && runway.weekendFactor !== 1
+      ? `, weekends ×${runway.weekendFactor}`
+      : "";
+  return `${lookback}h average${weekend}, carried forward to each reset: ${rates}${note}`;
 }
