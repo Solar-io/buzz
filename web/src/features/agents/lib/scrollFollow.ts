@@ -78,10 +78,30 @@ export interface InputFollowState {
   /** performance.now() of the arm; stale arms expire instead of pausing later. */
   armedAt: number;
   prevScrollTop: number;
+  /**
+   * Paused by the app for something the reader opened (an inline thread):
+   * reaching the bottom does NOT resume until the reader's own input or a
+   * force. See `holdInputFollow`.
+   */
+  held: boolean;
 }
 
 export function createInputFollowState(follow = true): InputFollowState {
-  return { follow, armed: false, armedAt: 0, prevScrollTop: 0 };
+  return { follow, armed: false, armedAt: 0, prevScrollTop: 0, held: false };
+}
+
+/**
+ * Pause tailing for content the reader just opened, until the READER moves
+ * the list. Position alone cannot resume it: while an opened thread settles,
+ * the virtualizer's own compensation and late-sizing rows emit scroll events
+ * that can read "at the bottom" at any time — the old fix ignored them for a
+ * fixed 600ms, and one landing just after that window re-pinned the list over
+ * the thread (bug 706x8b4zrjdn, ~15% of re-opens). Cleared by
+ * `armFollowInput` (the reader touched the scroller) and `forceInputFollow`.
+ */
+export function holdInputFollow(state: InputFollowState): void {
+  state.follow = false;
+  state.held = true;
 }
 
 /**
@@ -90,6 +110,7 @@ export function createInputFollowState(follow = true): InputFollowState {
  * intent; `applyInputFollowScroll` decides whether it actually pauses.
  */
 export function armFollowInput(state: InputFollowState, now: number): void {
+  state.held = false;
   state.armed = true;
   state.armedAt = now;
 }
@@ -101,6 +122,7 @@ export function armFollowInput(state: InputFollowState, now: number): void {
  * "show me the bottom" signal, even if the reader had scrolled up to read.
  */
 export function forceInputFollow(state: InputFollowState): void {
+  state.held = false;
   state.follow = true;
 }
 
@@ -108,7 +130,8 @@ export function forceInputFollow(state: InputFollowState): void {
  * Apply one scroll event. Returns the follow state after the event.
  *
  * - Armed + upward movement → paused (reader intent outranks the band).
- * - At the bottom → following (the resume rule — position, whatever armed it).
+ * - At the bottom → following (the resume rule — position, whatever armed it),
+ *   unless held (`holdInputFollow`) and no reader input has come since.
  * - Otherwise (unarmed movement in any direction — virtualizer corrections,
  *   downward pinning) → the current state carries over.
  */
@@ -126,7 +149,10 @@ export function applyInputFollowScroll(
   if (armed && movedUp) {
     state.armed = false;
     state.follow = false;
-  } else if (isScrolledToBottom(scrollTop, scrollHeight, clientHeight, edge)) {
+  } else if (
+    !state.held &&
+    isScrolledToBottom(scrollTop, scrollHeight, clientHeight, edge)
+  ) {
     // Reaching the bottom consumes any pending arm — the reader came back.
     state.armed = false;
     state.follow = true;
