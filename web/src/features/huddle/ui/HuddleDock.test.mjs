@@ -62,14 +62,30 @@ globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
       });
     }
   `,
-  "./HuddleChat.tsx": `
-    export function HuddleChat({ variant }) {
+  // The call room's feed and timeline, stubbed so that ANY call transcript
+  // put back into the dock mounts cheaply and is caught by the test below
+  // rather than by an import failure.
+  "@/features/channels/hooks": `
+    export function useChannelMessages(channelId) {
+      globalThis.__BUZZ_TEST_ROOM_FEED_READS__.push(channelId);
+      return { messages: [], reactions: new Map(), loadOlder: () => {},
+        loadingOlder: false, historyExhausted: true };
+    }
+    export function useProfiles() { return new Map(); }
+  `,
+  "@/features/channels/ui/ChannelTimeline": `
+    export function ChannelTimeline() {
       return globalThis.__BUZZ_TEST_REACT__.createElement("div", {
-        "data-testid": "huddle-chat-" + variant,
+        "data-testid": "call-room-timeline",
       });
     }
   `,
+  "@/features/channels/ui/Composer": `
+    export function Composer() { return null; }
+  `,
 };
+/** Every call-room feed a mounted component subscribed to. */
+globalThis.__BUZZ_TEST_ROOM_FEED_READS__ = [];
 
 const React = (await import("react")).default;
 globalThis.__BUZZ_TEST_REACT__ = React;
@@ -89,6 +105,9 @@ function session({ connected = true, floating = false, ...overrides } = {}) {
       reconnecting: false,
       channelId: HUDDLE,
       parentChannelId: PARENT,
+      selfPubkey: "1".repeat(64),
+      memberPubkeys: ["1".repeat(64)],
+      send: () => {},
       micHoldNotice: null,
       huddle: { micLevel: -50, muted: false, error: null },
       voice: { enabled: false, interimText: "", error: null },
@@ -161,6 +180,27 @@ test("the dock yields to the floating panel, even on its own channel", async () 
 test("a call that is not connected has no dock", async () => {
   const mounted = await mountDock(HUDDLE, session({ connected: false }));
   assert.equal(mounted.docked(), 0);
+  await mounted.unmount();
+});
+
+test("the dock has no call transcript box — call lines are already in the chat above", async () => {
+  // Sam, 2026-10-01: the relay mirrors every call line into the parent
+  // channel / DM, so a transcript in the dock showed each line twice.
+  globalThis.__BUZZ_TEST_ROOM_FEED_READS__ = [];
+  const mounted = await mountDock(PARENT);
+  assert.equal(mounted.docked(), 1, "the dock itself still renders");
+  assert.equal(
+    mounted.container.querySelectorAll(
+      '[aria-label="Call transcript"], [data-testid="huddle-chat"], [data-testid="call-room-timeline"]',
+    ).length,
+    0,
+  );
+  assert.doesNotMatch(mounted.container.textContent, /transcript/i);
+  assert.deepEqual(
+    globalThis.__BUZZ_TEST_ROOM_FEED_READS__,
+    [],
+    "the dock does not read the call room's messages at all",
+  );
   await mounted.unmount();
 });
 
