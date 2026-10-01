@@ -1,5 +1,7 @@
 import type { ChannelSummary } from "@/features/channels/useChannels";
+import type { ScratchActions } from "@/features/commands/lib/commands.ts";
 import { HomeInboxRoute } from "@/features/home/ui/HomeInboxRoute";
+import { ItemsPage } from "@/features/items/ui/ItemsPage";
 import { OnboardingPane } from "@/features/onboarding";
 import { ProjectsScreen } from "@/features/projects/ui/ProjectsScreen";
 import { PulseScreen } from "@/features/pulse/ui/PulseScreen";
@@ -13,8 +15,8 @@ import type { ReactNode } from "react";
 import type { ShellView } from "./reposSearch.ts";
 
 /**
- * The shell's full-page `?view=` panes (Work, Channels, Inbox, Reminders,
- * Pulse, Projects, Workflows, Onboarding, Terminal). Lifted out of routes/repos.tsx unchanged so the
+ * The shell's full-page `?view=` panes (Work, Channels, Inbox, Items,
+ * Reminders, Pulse, Projects, Workflows, Onboarding, Terminal). Lifted out of routes/repos.tsx unchanged so the
  * route can dock a kept-open thread beside them (the shell row's
  * RightPaneHost) without growing past the file-size ceiling.
  */
@@ -29,6 +31,7 @@ export function ShellViewPane({
   channelsPage,
   workChannelId = null,
   onClearWorkChannel,
+  scratch,
 }: {
   view: ShellView;
   channels: ChannelSummary[];
@@ -46,6 +49,8 @@ export function ShellViewPane({
   /** The Work page was opened for one channel (`/status` below lg). */
   workChannelId?: string | null;
   onClearWorkChannel?: () => void;
+  /** Scratch channels — Items' "Open a scratch channel for it". */
+  scratch?: ScratchActions;
 }) {
   switch (view) {
     case "work":
@@ -63,6 +68,14 @@ export function ShellViewPane({
       );
     case "channels":
       return channelsPage;
+    case "items":
+      return (
+        <ItemsPage
+          channels={channels}
+          scratch={scratch}
+          onOpenMessage={onOpenMessage}
+        />
+      );
     case "onboarding":
       return <OnboardingPane />;
     case "projects":

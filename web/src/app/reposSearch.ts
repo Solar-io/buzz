@@ -16,6 +16,7 @@ export const SHELL_VIEWS = [
   "work",
   "channels",
   "inbox",
+  "items",
   "workflows",
   "pulse",
   "reminders",
@@ -41,9 +42,15 @@ export interface ReposSearch {
    * the composer in a DM. A message toast's Reply sets it.
    */
   reply?: true;
+  /**
+   * With `view=items`: open this item (its `d`) expanded — the confirmation
+   * row's "Open" and a shared link land on it.
+   */
+  item?: string;
 }
 
 const HEX64 = /^[0-9a-f]{64}$/;
+const ITEM_ID = /^[0-9a-hjkmnp-tv-z]{12}$/;
 
 export function validateReposSearch(
   search: Record<string, unknown>,
@@ -66,6 +73,12 @@ export function validateReposSearch(
       typeof search.m === "string" &&
       (search.reply === true || search.reply === "1" || search.reply === 1)
         ? true
+        : undefined,
+    item:
+      search.view === "items" &&
+      typeof search.item === "string" &&
+      ITEM_ID.test(search.item)
+        ? search.item
         : undefined,
   };
 }

@@ -1,5 +1,5 @@
 import { type ReactNode, useMemo, useState } from "react";
-import { Folder, Inbox, ListTodo, Search } from "lucide-react";
+import { Folder, Inbox, ListPlus, ListTodo, Search } from "lucide-react";
 import type { Profile } from "@/features/channels/hooks";
 import type { RelaySessionStatus } from "@/shared/api/relay-session";
 import {
@@ -151,6 +151,8 @@ export interface ChannelSidebarActions {
   onOpenInbox: () => void;
   /** Open the Work page (?view=work) — the row shows below lg only. */
   onOpenWork: () => void;
+  /** Open the Items page (?view=items). */
+  onOpenItems: () => void;
   /**
    * Raise the in-app dock on an overlay-mode SHORTCUT. Not a channel: the
    * shortcut list is channel-independent (see SidebarShortcutsSection), so
@@ -196,6 +198,10 @@ export interface ChannelSidebarProps {
   workSelected: boolean;
   /** Needs-you rows, Everywhere — the Work row's count badge. */
   needsCount: number;
+  /** The Items page is the active pane. */
+  itemsSelected: boolean;
+  /** Open bugs · open backlog — the Items row's trailing numbers. */
+  itemCounts: { bugs: number; backlog: number } | null;
   /** Per-channel needs / running — the channel rows' work markers. */
   channelMarkers?: ChannelMarkers;
   lists: ChannelSidebarLists;
@@ -208,8 +214,8 @@ export interface ChannelSidebarProps {
 
 /**
  * The app's left rail (Main artboard): the workspace header, the ⌘K Jump
- * field, the nav rows that exist today (Inbox, Files, and Work below lg —
- * Items, Shelf and Terminal join as their phases ship), the favorites /
+ * field, the nav rows that exist today (Inbox, Items, Files, and Work below
+ * lg — Shelf and Terminal join as their phases ship), the favorites /
  * channel / forum / DM sections, and the Vitals block above the profile row.
  */
 export function ChannelSidebar({
@@ -221,6 +227,8 @@ export function ChannelSidebar({
   asksCount,
   workSelected,
   needsCount,
+  itemsSelected,
+  itemCounts,
   channelMarkers,
   lists,
   readState,
@@ -533,6 +541,22 @@ export function ChannelSidebar({
             unread={asksCount > 0}
             unreadCount={asksCount}
             onSelect={actions.onOpenInbox}
+          />
+          <SidebarNavButton
+            selected={itemsSelected && webView.active === null}
+            label="Items"
+            icon={<ListPlus aria-hidden className="size-4 shrink-0" />}
+            meta={
+              itemCounts && itemCounts.bugs + itemCounts.backlog > 0 ? (
+                <span
+                  data-testid="sidebar-items-counts"
+                  title={`${itemCounts.bugs} open ${itemCounts.bugs === 1 ? "bug" : "bugs"} · ${itemCounts.backlog} in backlog`}
+                >
+                  {itemCounts.bugs} · {itemCounts.backlog}
+                </span>
+              ) : null
+            }
+            onSelect={actions.onOpenItems}
           />
           <SidebarNavButton
             selected={filesSelected}
