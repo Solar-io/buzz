@@ -313,3 +313,152 @@ test("engine: an unreadable relay copy switches sync off instead of overwriting 
     ["mine"],
   );
 });
+
+// --- adversarial QA (2026-10-01) ----------------------------------------
+
+test("clock skew: an unfavorite on a device whose clock runs BEHIND still beats the add it saw", () => {
+  // Device A (clock 10 min fast) added `x` at 1_000_600; device B, with a
+  // correct clock, synced that set and unfavorited `x` at 1_000_000.
+  globalThis.localStorage.setItem(
+    "buzz.channel-prefs.v1",
+    JSON.stringify({
+      favorites: [{ kind: "channel", id: "x" }],
+      favoriteAt: { "channel:x": 1_000_600 },
+      muted: [],
+    }),
+  );
+  setFavorite(
+    loadChannelPrefs(),
+    { kind: "channel", id: "x" },
+    false,
+    1_000_000,
+  );
+  const onB = blobFromPrefs(loadChannelPrefs());
+  // A stale A still holds its add; the merge must keep B's removal.
+  const merged = mergeFavorites(onB, blob([ch("x", 1_000_600)]));
+  assert.deepEqual(ids(merged), [], "the removal is not resurrected");
+});
+
+test("clock skew: a re-favorite on a device whose clock runs BEHIND still beats the tombstone it saw", () => {
+  globalThis.localStorage.setItem(
+    "buzz.channel-prefs.v1",
+    JSON.stringify({
+      favorites: [],
+      removed: [{ kind: "channel", id: "x", at: 2_000_600 }],
+      muted: [],
+    }),
+  );
+  setFavorite(
+    loadChannelPrefs(),
+    { kind: "channel", id: "x" },
+    true,
+    2_000_000,
+  );
+  const onB = blobFromPrefs(loadChannelPrefs());
+  const merged = mergeFavorites(blob([], [ch("x", 2_000_600)]), onB);
+  assert.deepEqual(ids(merged), ["channel:x"], "the re-add is not lost");
+});
+
+test("a relay entry without a stamp merges as time 0 instead of being dropped and overwritten", async () => {
+  seedLocal("mine");
+  const h = harness({
+    stored: {
+      v: 1,
+      favorites: [{ kind: "channel", id: "theirs" }],
+      removed: [],
+    },
+  });
+  h.eose();
+  await h.tick();
+  assert.deepEqual(
+    loadChannelPrefs().favorites.map((f) => f.id),
+    ["theirs", "mine"],
+  );
+  assert.deepEqual(
+    JSON.parse(h.published[0].content).favorites.map((f) => f.id),
+    ["theirs", "mine"],
+    "the publish does not drop the relay's entry",
+  );
+});
+
+test("engine: a malformed relay copy (favorites not an array) never publishes over it", async () => {
+  seedLocal("mine");
+  const h = harness();
+  h.emit({
+    ...h.storedEvent(blob([])),
+    content: JSON.stringify({ v: 1, favorites: "x" }),
+  });
+  h.eose();
+  await h.tick();
+  setFavorite(loadChannelPrefs(), { kind: "channel", id: "later" }, true, 50);
+  h.engine.noteLocalChange();
+  await h.tick();
+  assert.equal(h.engine.status(), "off");
+  assert.equal(h.published.length, 0);
+  assert.deepEqual(
+    loadChannelPrefs().favorites.map((f) => f.id),
+    ["mine", "later"],
+  );
+});
+
+test("engine: a stale device whose publish was refused does not resurrect a removal that lands meanwhile", async () => {
+  // This device added `x` at t=10, went offline; another device removed it at t=20.
+  globalThis.localStorage.setItem(
+    "buzz.channel-prefs.v1",
+    JSON.stringify({
+      favorites: [
+        { kind: "channel", id: "x" },
+        { kind: "channel", id: "y" },
+      ],
+      favoriteAt: { "channel:x": 10, "channel:y": 10 },
+      muted: [],
+    }),
+  );
+  const h = harness({
+    stored: blob([ch("y", 10)]),
+    verdicts: [{ ok: false, message: "timeout" }],
+  });
+  h.eose();
+  await h.tick(); // publishes x+y, refused
+  assert.equal(h.engine.status(), "retrying");
+  h.emit(h.storedEvent(blob([ch("y", 10)], [ch("x", 20)]), 1_600_000_100));
+  await h.tick(); // reconcile, then the retry
+  assert.deepEqual(
+    loadChannelPrefs().favorites.map((f) => f.id),
+    ["y"],
+  );
+  // The retry finds the relay already holds the merge: nothing re-sent, so
+  // the refused copy carrying `x` is never published again.
+  assert.equal(h.published.length, 1, "no publish resurrects x");
+  assert.equal(h.engine.status(), "synced");
+  assert.deepEqual(await h.tick(), [], "and no retry is left pending");
+});
+
+test("engine: two devices publishing at once converge on the union", async () => {
+  seedLocal("a");
+  const h = harness({ stored: blob([ch("a", 0)]) });
+  h.eose();
+  await h.tick();
+  setFavorite(loadChannelPrefs(), { kind: "channel", id: "mine" }, true, 100);
+  h.engine.noteLocalChange();
+  await h.tick();
+  const ours = h.published.at(-1);
+  // The other device's simultaneous publish wins the coordinate (newer created_at).
+  h.emit(
+    h.storedEvent(blob([ch("a", 0), ch("theirs", 100)]), ours.created_at + 1),
+  );
+  await h.tick();
+  assert.deepEqual(
+    loadChannelPrefs()
+      .favorites.map((f) => f.id)
+      .sort(),
+    ["a", "mine", "theirs"],
+  );
+  const last = JSON.parse(h.published.at(-1).content);
+  assert.deepEqual(last.favorites.map((f) => f.id).sort(), [
+    "a",
+    "mine",
+    "theirs",
+  ]);
+  assert.ok(h.published.at(-1).created_at > ours.created_at + 1);
+});

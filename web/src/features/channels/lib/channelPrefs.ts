@@ -236,10 +236,14 @@ function withFavoriteAdded(
   now: number,
 ): ChannelPrefs {
   const key = favoriteKey(ref);
+  // Stamp past the tombstone this device holds, so a clock running behind
+  // the device that removed it cannot lose the re-add in the merge.
+  const tomb = (prefs.removed ?? []).find((t) => favoriteKey(t) === key);
+  const at = tomb ? Math.max(now, tomb.at + 1) : now;
   return {
     ...prefs,
     favorites: [...prefs.favorites, { kind: ref.kind, id: ref.id }],
-    favoriteAt: { ...prefs.favoriteAt, [key]: now },
+    favoriteAt: { ...prefs.favoriteAt, [key]: at },
     removed: (prefs.removed ?? []).filter((tomb) => favoriteKey(tomb) !== key),
   };
 }
@@ -252,6 +256,9 @@ function withFavoriteRemoved(
 ): ChannelPrefs {
   const key = favoriteKey(ref);
   const favoriteAt = { ...prefs.favoriteAt };
+  // Stamp past the add this device saw (it may come from a device whose
+  // clock runs ahead), or the merge would resurrect the favorite.
+  const at = Math.max(now, (favoriteAt[key] ?? -1) + 1);
   delete favoriteAt[key];
   return {
     ...prefs,
@@ -259,7 +266,7 @@ function withFavoriteRemoved(
     favoriteAt,
     removed: tombstoneList([
       ...(prefs.removed ?? []),
-      { kind: ref.kind, id: ref.id, at: now },
+      { kind: ref.kind, id: ref.id, at },
     ]),
   };
 }

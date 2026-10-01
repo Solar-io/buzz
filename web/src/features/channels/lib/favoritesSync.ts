@@ -75,18 +75,22 @@ export function nextFavoritesCreatedAt(
   return Math.max(Math.floor(nowSeconds), maxSeenCreatedAt + 1);
 }
 
-function isStampedRef(value: unknown): value is StampedFavorite {
+function isFavoriteEntry(value: unknown): value is FavoriteRef {
   if (typeof value !== "object" || value === null) {
     return false;
   }
-  const { kind, id, at } = value as Record<string, unknown>;
-  return (
-    (kind === "channel" || kind === "link") &&
-    typeof id === "string" &&
-    typeof at === "number" &&
-    Number.isFinite(at) &&
-    at >= 0
-  );
+  const { kind, id } = value as Record<string, unknown>;
+  return (kind === "channel" || kind === "link") && typeof id === "string";
+}
+
+/**
+ * A relay entry's stamp; a missing or invalid one reads as 0 (like a
+ * pre-sync local favorite) so the entry is merged, never dropped and then
+ * overwritten by this device's publish.
+ */
+function entryStamp(value: unknown): number {
+  const at = (value as { at?: unknown }).at;
+  return typeof at === "number" && Number.isFinite(at) && at >= 0 ? at : 0;
 }
 
 export type ParsedFavoritesBlob =
@@ -114,11 +118,11 @@ export function parseFavoritesBlob(raw: unknown): ParsedFavoritesBlob {
   const seen = new Set<string>();
   const list: StampedFavorite[] = [];
   for (const entry of favorites) {
-    if (!isStampedRef(entry) || seen.has(favoriteKey(entry))) {
+    if (!isFavoriteEntry(entry) || seen.has(favoriteKey(entry))) {
       continue;
     }
     seen.add(favoriteKey(entry));
-    list.push({ kind: entry.kind, id: entry.id, at: entry.at });
+    list.push({ kind: entry.kind, id: entry.id, at: entryStamp(entry) });
   }
   return {
     ok: true,
