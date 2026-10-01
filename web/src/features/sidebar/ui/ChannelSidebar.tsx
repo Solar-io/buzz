@@ -5,6 +5,7 @@ import {
   Inbox,
   ListPlus,
   ListTodo,
+  MessagesSquare,
   Search,
 } from "lucide-react";
 import type { Profile } from "@/features/channels/hooks";
@@ -34,6 +35,8 @@ import { DmNavRow } from "@/features/sidebar/ui/DmNavRow";
 import {
   isCollapsed,
   loadCollapsedSections,
+  NAV_FORUMS_ID,
+  NAV_LINKS_ID,
   saveCollapsedSections,
   toggleSection,
   type CollapsedSections,
@@ -52,6 +55,7 @@ import {
 import { visitScore } from "@/features/sidebar/lib/visitFrequency.ts";
 import { SidebarSection } from "@/features/sidebar/ui/SidebarSection";
 import { SidebarNavButton } from "@/features/sidebar/ui/SidebarNavButton";
+import { SidebarNavDisclosure } from "@/features/sidebar/ui/SidebarNavDisclosure";
 import {
   SidebarLinksSection,
   useSidebarLinks,
@@ -62,7 +66,7 @@ import {
   type FavoriteItem,
 } from "@/features/sidebar/lib/favorites.ts";
 import { RelayConnectionCard } from "@/features/sidebar/ui/RelayConnectionCard";
-import { SidebarProfileCard } from "@/features/sidebar/ui/SidebarProfileCard";
+import { SidebarAppMenu } from "@/features/sidebar/ui/SidebarAppMenu";
 import { InstallAppButton } from "@/features/sidebar/ui/InstallAppButton";
 import { VitalsBlock } from "@/features/vitals/ui/VitalsBlock";
 import { useActiveWebView } from "@/features/webPanels/activeWebStore.ts";
@@ -72,7 +76,6 @@ import {
   channelRowUnread,
   dmRowUnread,
 } from "@/features/sidebar/lib/rowUnread.ts";
-import { relayWsUrl } from "@/shared/lib/relay-url";
 
 /**
  * The sidebar's source lists, already filtered and sorted by the shell.
@@ -170,17 +173,6 @@ export interface ChannelSidebarActions {
   onOpenShortcutOverlay: (shortcutId: string) => void;
 }
 
-/** "crichton · relay": the relay host's first label, for the header. */
-function relayLabel(): string {
-  try {
-    const host = new URL(relayWsUrl()).hostname;
-    const name = /^[\d.]+$/.test(host) ? host : host.split(".")[0];
-    return `${name} · relay`;
-  } catch {
-    return "relay";
-  }
-}
-
 /** Props for {@link ChannelSidebar}. */
 export interface ChannelSidebarProps {
   /** Relay connection state — the header dot and the empty copy read it. */
@@ -226,10 +218,11 @@ export interface ChannelSidebarProps {
 }
 
 /**
- * The app's left rail (Main artboard): the workspace header, the ⌘K Jump
- * field, the nav rows that exist today (Inbox, Items, Files, and Work below
- * lg — Shelf and Terminal join as their phases ship), the favorites /
- * channel / forum / DM sections, and the Vitals block above the profile row.
+ * The app's left rail (Main artboard): the B menu (Settings and the
+ * account), the ⌘K Jump field, the nav rows (Inbox, Items, Shelf, Files,
+ * Terminal, and Work below lg), then — folded under Terminal — Forums and
+ * Links, the favorites / channel / DM sections, and the Vitals block at the
+ * foot. Layout per Sam, 2026-09-30.
  */
 export function ChannelSidebar({
   connected,
@@ -500,23 +493,17 @@ export function ChannelSidebar({
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="channel-sidebar">
-      {/* Fixed header (Main artboard): workspace, the ⌘K Jump field, then
-          the nav. Settings lives in the profile row at the foot of this rail
-          and the connection state on its indicator. */}
-      <div className="flex flex-col gap-3.5 px-3 pt-4 pb-1.5">
-        <div className="flex items-center gap-2.5 px-1">
-          <span
-            aria-hidden
-            className="buzz-mark grid size-8 shrink-0 place-items-center rounded-[9px] text-base font-bold ring-1 ring-line-2"
-          >
-            B
-          </span>
-          <div className="min-w-0">
-            <div className="text-sm leading-tight font-bold">Buzz</div>
-            <div className="truncate font-mono text-2xs text-muted-foreground">
-              {relayLabel()}
-            </div>
-          </div>
+      {/* Fixed header (Main artboard): the B menu, the ⌘K Jump field, then
+          the nav. Settings, status and who you are signed in as live behind
+          the B; a dropped relay shows in RelayConnectionCard below. */}
+      <div className="flex flex-col gap-3.5 px-3 pt-4">
+        <div className="flex items-center px-1">
+          <SidebarAppMenu
+            selfPubkey={dmIdentity.selfPubkey}
+            profiles={dmIdentity.profiles}
+            connected={connected}
+            onOpenFiles={actions.onOpenFiles}
+          />
         </div>
         {/* Typing here opens the ⌘K panel seeded with what was typed. */}
         <div className="flex h-8.5 items-center gap-2 rounded-[9px] border border-sidebar-border bg-background px-2.5 text-muted-foreground">
@@ -601,8 +588,37 @@ export function ChannelSidebar({
       <nav
         onPointerEnter={() => setPointerInList(true)}
         onPointerLeave={() => setPointerInList(false)}
-        className="buzz-sidebar-scrollbar flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-2.5 pt-1 pb-3"
+        className="buzz-sidebar-scrollbar flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-2.5 pt-px pb-3"
       >
+        {/* Forums and Links: nav rows directly under Terminal, folded until
+            clicked (Sam, 2026-09-30). They open the top of the SCROLLING
+            list rather than joining the fixed header: an open list there
+            would squeeze the channels to nothing on a phone. px-0.5 lines
+            them up with the header's rows (px-3 there, px-2.5 here). */}
+        <div className="flex flex-col gap-px px-0.5">
+          {sections.forums.length > 0 && (
+            <SidebarNavDisclosure
+              label="Forums"
+              icon={<MessagesSquare aria-hidden className="size-4 shrink-0" />}
+              items={sections.forums}
+              getKey={(channel) => channel.id}
+              renderItem={forumRow}
+              isSelected={channelSelected}
+              isUnread={rowUnread}
+              collapsed={isCollapsed(collapsed, NAV_FORUMS_ID)}
+              onToggleCollapsed={() => toggle(NAV_FORUMS_ID)}
+            />
+          )}
+          {/* Always rendered — storage (encrypted relay blob vs this
+              device's localStorage) follows the signer, and "Add a link"
+              must stay reachable on an empty list. */}
+          <SidebarLinksSection
+            links={links}
+            items={sections.links}
+            collapsed={isCollapsed(collapsed, NAV_LINKS_ID)}
+            onToggleCollapsed={() => toggle(NAV_LINKS_ID)}
+          />
+        </div>
         {channelCount === 0 && (
           <p className="px-2 py-4 text-sm text-sidebar-foreground/60">
             {connected
@@ -681,37 +697,13 @@ export function ChannelSidebar({
             </p>
           )}
         </SidebarSection>
-        {sections.forums.length > 0 && (
-          <SidebarSection
-            label="Forums"
-            items={sections.forums}
-            getKey={(channel) => channel.id}
-            renderItem={forumRow}
-            isSelected={channelSelected}
-            isUnread={rowUnread}
-            collapsed={isCollapsed(collapsed, "forums")}
-            onToggleCollapsed={() => toggle("forums")}
-          />
-        )}
-        {/* Always rendered — storage (encrypted relay blob vs this device's
-            localStorage) follows the signer. Defaults collapsed. */}
-        <SidebarLinksSection
-          links={links}
-          items={sections.links}
-          collapsed={isCollapsed(collapsed, "links")}
-          onToggleCollapsed={() => toggle("links")}
-        />
       </nav>
-      {/* Fixed footer: the Vitals block above the user row. */}
-      <footer className="flex flex-col gap-1.5 px-3 pt-2 pb-2.5">
-        <VitalsBlock />
+      {/* Fixed footer. Vitals is the last thing in the rail, in the slot the
+          profile row held until Sam removed it (2026-09-30); the install
+          offer, when the browser has one, sits above it. */}
+      <footer className="flex flex-col gap-1.5 px-3 pt-2 pb-3">
         <InstallAppButton />
-        <SidebarProfileCard
-          selfPubkey={dmIdentity.selfPubkey}
-          profiles={dmIdentity.profiles}
-          connected={connected}
-          onOpenFiles={actions.onOpenFiles}
-        />
+        <VitalsBlock />
       </footer>
     </div>
   );

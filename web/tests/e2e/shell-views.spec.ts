@@ -78,10 +78,18 @@ test("an unknown view falls back to the channel shell, not a blank pane", async 
   }
 });
 
-test("every pane is reachable from the profile menu", async ({ page }) => {
+test("every pane is reachable from the B menu", async ({ page }) => {
   await signIn(page);
-  await page.getByRole("button", { name: /Open your menu/ }).click();
-  for (const label of ["Projects", "Pulse", "Reminders", "Workflows"]) {
+  // The profile row at the foot of the sidebar is gone (2026-09-30); its
+  // menu, Settings included, opens from the B at the top-left.
+  await page.getByRole("button", { name: /Buzz menu/ }).click();
+  for (const label of [
+    "Settings",
+    "Projects",
+    "Pulse",
+    "Reminders",
+    "Workflows",
+  ]) {
     await expect(page.getByRole("link", { name: label })).toBeVisible();
   }
 });

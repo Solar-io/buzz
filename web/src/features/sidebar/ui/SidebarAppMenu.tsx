@@ -2,6 +2,7 @@ import {
   Activity,
   Bell,
   Bot,
+  ChevronDown,
   Clock,
   Copy,
   FolderKanban,
@@ -32,46 +33,48 @@ import { truncatePubkey } from "@/shared/lib/pubkey";
 import { Avatar, AvatarFallback, AvatarImage } from "@/shared/ui/avatar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 
-/** Props for {@link SidebarProfileCard}. */
-export interface SidebarProfileCardProps {
+/** Props for {@link SidebarAppMenu}. */
+export interface SidebarAppMenuProps {
   /** The signed-in key, or null before it resolves. */
   selfPubkey: string | null;
   /** Profile metadata by pubkey — the viewer's own row is read from here. */
   profiles: Map<string, Profile>;
   /** Whether the relay session is live; drives the presence dot. */
   connected: boolean;
-  /** Raise the Files overlay. */
+  /** Raise the Files page. */
   onOpenFiles: () => void;
 }
 
+const ITEM =
+  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none";
+
+function MenuDivider() {
+  return <div aria-hidden className="mx-1 my-1 h-px bg-border" />;
+}
+
 /**
- * The sidebar's identity footer.
+ * The "B" at the top of the sidebar, and the menu behind it: Settings, your
+ * status and notifications, the secondary views, and who you are signed in
+ * as.
  *
- * The web client previously ended its sidebar with two text links and showed
- * the signed-in identity nowhere at all — you could not tell which key you
- * were using without opening Settings. This is the desktop's profile card:
- * avatar, name, and a presence dot, opening a menu with the actions that
- * belong to "you" rather than to a channel.
+ * This menu used to hang off a profile row at the foot of the sidebar
+ * (avatar, name, gear). Sam removed that row on 2026-09-30 and put Settings
+ * on the B, so everything the row did lives here now — nothing became
+ * unreachable. The identity the row displayed opens the menu instead, as
+ * its header: it still answers "which key am I using" without opening
+ * Settings.
  *
- * The dot reports relay connection, not human availability. Buzz has a real
- * presence model for other people, but a client cannot meaningfully report
- * its own user's status from a socket — so this deliberately says "connected"
- * rather than implying "online". The human-authored half of that — the
- * desktop's NIP-38 emoji + text — is the status line below the name, set from
- * this menu.
- *
- * It is also where the notification runtime is mounted. That is a pragmatic
- * home rather than a principled one: this card is the one piece of the
- * signed-in shell that is always on screen, so mounting here makes
- * notifications live without touching the app shell. See
- * {@link NotificationRuntime} for where it belongs instead.
+ * The dot there reports relay connection, not human availability: a client
+ * cannot meaningfully report its own user's presence from a socket, so it
+ * says "Connected" rather than implying "online". The human-authored half —
+ * the NIP-38 emoji + text — replaces that line once the viewer sets one.
  */
-export function SidebarProfileCard({
+export function SidebarAppMenu({
   selfPubkey,
   profiles,
   connected,
   onOpenFiles,
-}: SidebarProfileCardProps) {
+}: SidebarAppMenuProps) {
   const closeDrawer = useDrawerClose();
   const { session } = useRelaySession();
   const [open, setOpen] = useState(false);
@@ -128,21 +131,53 @@ export function SidebarProfileCard({
       .finally(() => setSavingStatus(false));
   };
 
+  // A route link closes the menu and, on a phone, the drawer it sits in.
+  const leave = () => {
+    setOpen(false);
+    closeDrawer();
+  };
+
   return (
-    // The footer (ChannelSidebar) owns the top border and padding.
-    <div>
+    <>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <button
             type="button"
-            aria-label={`You: ${label}. Open your menu.`}
+            data-testid="sidebar-app-menu"
+            aria-label="Buzz menu: settings, status and your account"
             className={cn(
-              "flex w-full items-center gap-2.5 rounded-[8px] px-2.5 py-1 text-left",
-              "hover:bg-sidebar-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+              "group/brand -m-1 flex min-w-0 items-center gap-2.5 rounded-[11px] p-1 pr-2 text-left transition-colors",
+              "hover:bg-sidebar-foreground/5 data-[state=open]:bg-sidebar-foreground/5",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
             )}
           >
+            <span
+              aria-hidden
+              className="buzz-mark grid size-8 shrink-0 place-items-center rounded-[9px] text-base font-bold ring-1 ring-line-2"
+            >
+              B
+            </span>
+            <span className="text-sm leading-tight font-bold">Buzz</span>
+            <ChevronDown
+              aria-hidden
+              className="size-3.5 shrink-0 text-sidebar-foreground/50 transition-transform duration-150 group-data-[state=open]/brand:rotate-180"
+            />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          side="bottom"
+          sideOffset={8}
+          className="w-64 p-1"
+        >
+          {/* Who you are signed in as — the identity the removed profile
+              row used to show at the foot of the sidebar. */}
+          <div
+            className="flex items-center gap-2.5 px-2 pt-1.5 pb-2"
+            data-testid="sidebar-app-menu-identity"
+          >
             <span className="relative shrink-0">
-              <Avatar className="size-7.5 rounded-[8px]">
+              <Avatar className="size-8 rounded-[8px]">
                 {profile?.avatar && <AvatarImage src={profile.avatar} alt="" />}
                 <AvatarFallback className="text-2xs">{initials}</AvatarFallback>
               </Avatar>
@@ -150,43 +185,41 @@ export function SidebarProfileCard({
                 aria-hidden
                 title={connected ? "Connected" : "Connecting…"}
                 className={cn(
-                  // Ringed in the sidebar's own ground so the dot reads as a
+                  // Ringed in the menu's own ground so the dot reads as a
                   // cutout rather than a sticker, matching the desktop.
-                  "absolute -right-0.5 -bottom-0.5 size-2.75 rounded-full ring-2 ring-sidebar",
-                  connected ? "bg-emerald-500" : "bg-sidebar-foreground/40",
+                  "absolute -right-0.5 -bottom-0.5 size-2.75 rounded-full ring-2 ring-popover",
+                  connected ? "bg-leaf" : "bg-muted-foreground",
                 )}
               />
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm leading-tight font-semibold text-sidebar-foreground">
+              <span className="block truncate text-sm leading-tight font-semibold">
                 {label}
               </span>
               {/* A status the viewer wrote outranks the socket state: it is
-                  the only line here that carries human intent. The connection
-                  string stays available on the dot's tooltip. */}
+                  the only line here that carries human intent. */}
               {selfStatus ? (
                 <span
-                  className="block truncate text-xs leading-tight text-sidebar-foreground/60"
+                  className="block truncate text-xs leading-tight text-muted-foreground"
                   data-testid="sidebar-self-status"
                 >
                   {statusLabel(selfStatus)}
                 </span>
               ) : (
-                <span className="block truncate text-xs leading-tight text-sidebar-foreground/60">
+                <span className="block truncate text-xs leading-tight text-muted-foreground">
                   {connected ? "Connected" : "Connecting…"}
                 </span>
               )}
             </span>
-            <Settings
-              aria-hidden
-              className="size-4 shrink-0 text-sidebar-foreground/50"
-            />
-          </button>
-        </PopoverTrigger>
-        <PopoverContent align="start" side="top" className="w-56 p-1">
+          </div>
+          <MenuDivider />
+          <Link to="/repos/settings" className={ITEM} onClick={leave}>
+            <Settings aria-hidden className="size-4" />
+            Settings
+          </Link>
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+            className={ITEM}
             data-testid="open-set-status"
             onClick={() => {
               setOpen(false);
@@ -205,7 +238,7 @@ export function SidebarProfileCard({
           </button>
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+            className={ITEM}
             data-testid="open-notification-settings"
             onClick={() => {
               setOpen(false);
@@ -215,25 +248,12 @@ export function SidebarProfileCard({
             <Bell aria-hidden className="size-4" />
             Notifications
           </button>
-          <Link
-            to="/repos/settings"
-            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
-            onClick={() => {
-              setOpen(false);
-              closeDrawer();
-            }}
-          >
-            <Settings aria-hidden className="size-4" />
-            Settings
-          </Link>
+          <MenuDivider />
           <Link
             to="/repos"
             search={{ view: "projects" as const }}
-            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
-            onClick={() => {
-              setOpen(false);
-              closeDrawer();
-            }}
+            className={ITEM}
+            onClick={leave}
           >
             <FolderKanban aria-hidden className="size-4" />
             Projects
@@ -241,11 +261,8 @@ export function SidebarProfileCard({
           <Link
             to="/repos"
             search={{ view: "pulse" as const }}
-            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
-            onClick={() => {
-              setOpen(false);
-              closeDrawer();
-            }}
+            className={ITEM}
+            onClick={leave}
           >
             <Activity aria-hidden className="size-4" />
             Pulse
@@ -253,11 +270,8 @@ export function SidebarProfileCard({
           <Link
             to="/repos"
             search={{ view: "reminders" as const }}
-            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
-            onClick={() => {
-              setOpen(false);
-              closeDrawer();
-            }}
+            className={ITEM}
+            onClick={leave}
           >
             <Clock aria-hidden className="size-4" />
             Reminders
@@ -273,31 +287,21 @@ export function SidebarProfileCard({
           <Link
             to="/repos"
             search={{ view: "workflows" as const }}
-            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
-            onClick={() => {
-              setOpen(false);
-              closeDrawer();
-            }}
+            className={ITEM}
+            onClick={leave}
           >
             <Workflow aria-hidden className="size-4" />
             Workflows
           </Link>
           {!isNativeIOS() && (
-            <Link
-              to="/repos/agents"
-              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
-              onClick={() => {
-                setOpen(false);
-                closeDrawer();
-              }}
-            >
+            <Link to="/repos/agents" className={ITEM} onClick={leave}>
               <Bot aria-hidden className="size-4" />
               Agents
             </Link>
           )}
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
+            className={ITEM}
             onClick={() => {
               setOpen(false);
               onOpenFiles();
@@ -307,17 +311,20 @@ export function SidebarProfileCard({
             Files
           </button>
           {npub && (
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
-              onClick={() => {
-                setOpen(false);
-                copyNpub();
-              }}
-            >
-              <Copy aria-hidden className="size-4" />
-              Copy your npub
-            </button>
+            <>
+              <MenuDivider />
+              <button
+                type="button"
+                className={ITEM}
+                onClick={() => {
+                  setOpen(false);
+                  copyNpub();
+                }}
+              >
+                <Copy aria-hidden className="size-4" />
+                Copy your npub
+              </button>
+            </>
           )}
         </PopoverContent>
       </Popover>
@@ -335,6 +342,6 @@ export function SidebarProfileCard({
         onOpenChange={setNotificationsOpen}
         open={notificationsOpen}
       />
-    </div>
+    </>
   );
 }

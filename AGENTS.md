@@ -1022,3 +1022,26 @@ Three sub-traps from the same hour:
   a 6-hour-old `vite preview` from another worktree on the port this one
   picked; every failure was against someone else's build. `lsof -nP
   -iTCP:<port> -sTCP:LISTEN` before the run, not after the confusing result.
+
+## Web left rail: testing and live checks (earned on the sidebar pass, 2026-09-30)
+
+- **Settings lives behind the B** (`sidebar/ui/SidebarAppMenu.tsx`); there
+  is no profile row any more. Forums and Links are `SidebarNavDisclosure`
+  rows under Terminal, folded by default under `nav:forums` / `nav:links`.
+  An e2e that wants a forum or link row must open its row first.
+- **The real `ChannelSidebar` renders under node + jsdom**
+  (`ChannelSidebar.layout.test.mjs`). It needs a `QueryClientProvider`, a
+  stub for `@/app/router` (shell modules import the whole route tree), and
+  `gcTime: Infinity` plus `queryClient.clear()` on unmount: the default
+  5-minute cache-GC timer keeps the test process alive after the last case,
+  and the runner reports it as a hang, not a failure.
+- **A Playwright e2e run empties `web/test-results/`** (its `outputDir`).
+  Screenshots saved there for a report are gone after the next e2e run. Put
+  them in `web/.scratch/` (gitignored) instead.
+- **Agent Brave sign-in without printing the key:** write
+  `{nsec, tag}` from `BUZZ_PRIVATE_KEY` / `BUZZ_AUTH_TAG` to a gitignored
+  file under the vite root, fetch it inside `browser_run_code_unsafe`, fill
+  the form there, and delete the file once enrolled. Nothing secret crosses
+  the tool output. In the same call, find your page by URL
+  (`page.context().pages().find(…)`): other agents move the MCP's "current"
+  tab while you work.

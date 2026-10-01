@@ -39,7 +39,6 @@
   "src/features/profile/ui/ProfileIdentityRows.tsx": 2,
   "src/features/pulse/ui/AgentActivityCard.tsx": 2,
   "src/features/repos/ui/RepoDetailPage.tsx": 1,
-  "src/features/sidebar/ui/SidebarProfileCard.tsx": 1,
   "src/features/voice/ui/AgentVoicesCard.tsx": 1,
   "src/features/voice/ui/VoicePickerDialog.tsx": 3,
   "src/features/voice/ui/VoiceSettingsCard.tsx": 1,
