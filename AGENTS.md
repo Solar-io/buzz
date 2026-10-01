@@ -877,6 +877,21 @@ Three sub-traps from the same hour:
   thinking panels keep their own full-screen sheets, and Work is `?view=work`.
   A panel that must stay mounted behind another tab is wrapped `contents
   lg:hidden`, never unmounted — a thread draft lives in it.
+- **Work | Canvas: documents live UNDER Canvas, never beside Work** (Sam,
+  2026-09-30). `rightPaneStrip` returns the top tabs (`paneTabs`: Work,
+  Canvas, then Thinking in an agent DM) and the Canvas document on screen.
+  `FileTabsState.open` says whether Canvas is up; `active` remembers its
+  document across a trip to Work. The channel canvas (kind 40100) is a
+  REGULAR `h`-scoped event — every `buzz canvas set` appends, the newest
+  wins, an empty set clears it — so `CHANNEL_CANVAS_KEY` is not a file and
+  follows the conversation. Close with the DRAWN order
+  (`files.close(key, items)`), or closing the first file skips the pinned
+  canvas.
+- **Module stubs cannot `import` anything.** A `__BUZZ_TEST_MODULE_STUBS__`
+  source loads from a non-file URL, so `import … from "react"` dies with
+  `ERR_INVALID_URL` before a test runs. Reach the test's React through
+  `globalThis.__BUZZ_TEST_REACT__` (`HuddleDock.test.mjs`,
+  `RightPaneHost.test.mjs`).
 - **Anything in the shell chrome must not read the Work feed directly.**
   `useWorkFeed` re-derives on observer frames (a busy agent emits several a
   second, throttled to 2/s inside the hook), and every component that calls it

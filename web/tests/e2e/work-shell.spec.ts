@@ -112,14 +112,19 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       await page.keyboard.press("Escape");
     });
 
-    test("a thread opens inline under its message; Work stays the only tab", async ({
+    test("a thread opens inline under its message; the strip stays Work | Canvas", async ({
       page,
     }) => {
       const { fixture, relay } = await open(page, { theme, path: channelPath });
       const host = page.getByTestId("right-pane-host");
       await expect(host).toHaveAttribute("data-active-tab", "work");
-      // One tab: no strip, just the Work title — and a thread never adds one.
-      await expect(page.getByTestId("right-pane-tabs")).toHaveCount(0);
+      // Exactly two top-level tabs (Sam, 2026-09-30) — a thread never adds one.
+      const paneTabs = page.getByTestId("right-pane-tabs");
+      await expect(paneTabs.getByRole("tab")).toHaveCount(2);
+      await expect(page.getByTestId("right-pane-tab-work")).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
 
       const ask = fixture.events.find((event) =>
         event.content.startsWith("@Gilfoyle turn the handoff notes"),
@@ -136,7 +141,7 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       await page.waitForTimeout(800);
       await expect(chip).toBeInViewport();
       await expect(thread.getByText("On it — splitting")).toBeInViewport();
-      await expect(page.getByTestId("right-pane-tabs")).toHaveCount(0);
+      await expect(paneTabs.getByRole("tab")).toHaveCount(2);
       await expect(page.getByTestId("work-rail")).toBeVisible();
       await shot(page, `thread-inline-${theme}-1440`);
 
@@ -166,6 +171,17 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
         strip.getByRole("button", { name: "8 need you" }),
       ).toBeVisible();
       await strip.getByRole("button", { name: "Expand Work" }).click();
+      await expect(page.getByTestId("work-rail")).toBeVisible();
+
+      // The fold still reaches the pane's other tab: Canvas (empty here).
+      await page.getByRole("button", { name: "Collapse Work" }).click();
+      await strip.getByRole("button", { name: "Open Canvas" }).click();
+      await expect(page.getByTestId("canvas-empty")).toBeVisible();
+      await expect(page.getByTestId("right-pane-tab-canvas")).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await page.getByTestId("right-pane-tab-work").click();
       await expect(page.getByTestId("work-rail")).toBeVisible();
     });
 

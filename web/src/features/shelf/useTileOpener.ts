@@ -2,12 +2,12 @@ import { useMessageMedia } from "@/features/channels/ui/messageMediaContext.ts";
 import { useFileTabs } from "./FileTabsProvider";
 import { type FileKind, fileKind } from "./lib/fileKind.ts";
 import { openFileFromSource } from "./lib/fileSource.ts";
-import { fileTabKey } from "./lib/fileTabs.ts";
+import { fileOnScreen, fileTabKey } from "./lib/fileTabs.ts";
 
 /**
- * What a file card or tile in a message does when clicked (web redesign
- * Phase 6): open the file in a tab beside the chat — with the message it
- * came in, so the tab can show its comments — or, outside the shell (no
+ * What a file card or tile in a message does when clicked: open the file in
+ * the right pane's Canvas beside the chat — with the message it came in, so
+ * the Canvas can show its comments — or, outside the shell (no
  * FileTabsProvider: an issue body, a component test), download it as before.
  */
 export function useTileOpener(file: {
@@ -48,7 +48,7 @@ export function useTileOpener(file: {
           mime,
         }),
       ),
-    selected: tabs.state.active === key,
+    selected: fileOnScreen(tabs.state) === key,
     onShelf: fileSource?.shelf === true,
     kind,
     openShelf: tabs.openShelf,
