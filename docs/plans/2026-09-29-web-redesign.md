@@ -39,6 +39,7 @@ discipline, Agent Brave) and does not repeat them.
 | Topic | Decision |
 |---|---|
 | Right pane | Replaces the thread pane. It's a tab strip; **Work** is always the first tab and defaults to **Everywhere**. |
+| Right pane tabs (2026-09-30) | Exactly two top-level tabs, **Work** and **Canvas**. Opened files and the channel canvas are sub-tabs UNDER Canvas, never tabs beside Work. Opening a file switches the pane to Canvas; Work is unchanged. |
 | Threads | Inline under the message. Kept, but de-emphasised. |
 | Needs you | Decision cards, workflow approvals, @mentions and PR-merge asks, plus **Feedback** (reminders), with filter chips. Feedback is not a separate section. |
 | Feedback | One button on any message sends it to Feedback, with an AI summary (today's reminders plus summaries). |

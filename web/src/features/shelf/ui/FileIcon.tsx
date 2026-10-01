@@ -60,8 +60,8 @@ export function FileIcon({
   className,
 }: {
   kind: FileKind;
-  /** sm 24 · md 28 (Shelf row) · lg 30 (message tile). */
-  size?: "sm" | "md" | "lg";
+  /** xs 20 (Canvas sub-tab) · sm 24 · md 28 (Shelf row) · lg 30 (tile). */
+  size?: "xs" | "sm" | "md" | "lg";
   className?: string;
 }) {
   return (
@@ -70,16 +70,21 @@ export function FileIcon({
       data-kind={kind}
       className={cn(
         "grid shrink-0 place-items-center",
-        size === "sm"
-          ? "size-6 rounded-md"
-          : size === "md"
-            ? "size-7 rounded-[7px]"
-            : "size-7.5 rounded-[7px]",
+        size === "xs"
+          ? "size-5 rounded-[5px]"
+          : size === "sm"
+            ? "size-6 rounded-md"
+            : size === "md"
+              ? "size-7 rounded-[7px]"
+              : "size-7.5 rounded-[7px]",
         TONE[kind],
         className,
       )}
     >
-      <Glyph kind={kind} className={size === "sm" ? "size-3" : "size-3.5"} />
+      <Glyph
+        kind={kind}
+        className={size === "xs" || size === "sm" ? "size-3" : "size-3.5"}
+      />
     </span>
   );
 }

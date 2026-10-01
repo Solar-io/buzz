@@ -440,6 +440,47 @@ export function pdfShare(fixture: WorkFixture): MockEvent {
   });
 }
 
+/**
+ * The #flight-path channel canvas (kind 40100, `buzz canvas set`): one
+ * `h`-scoped event whose content is the markdown. An older set sits behind
+ * it so the client must take the NEWEST, not the first served.
+ */
+export function channelCanvasEvents(fixture: WorkFixture): MockEvent[] {
+  const channel = fixture.channels["flight-path"];
+  const now = Math.floor(Date.now() / 1000);
+  return [
+    mockEvent({
+      id: hexId(40_101),
+      kind: 40100,
+      pubkey: fixture.agents.nikon.pubkey,
+      created_at: now - 2 * 3600,
+      tags: [["h", channel]],
+      content: "# Flight path (stale)\n\nThis set was replaced.",
+    }),
+    mockEvent({
+      id: hexId(40_102),
+      kind: 40100,
+      pubkey: fixture.agents.nikon.pubkey,
+      created_at: now - 20 * 60,
+      tags: [["h", channel]],
+      content: [
+        "# Flight path",
+        "",
+        "The capture plan for the launch video: three beats, one take each.",
+        "",
+        "## Beats",
+        "",
+        "1. **Header settle** — the project header lands and holds 2 s.",
+        "2. **Work rail** — a running turn, then Done today.",
+        "3. **Canvas** — a shared PDF opens beside the chat.",
+        "",
+        "> [!NOTE]",
+        "> Beat 02 is captured; the second take is on the Shelf.",
+      ].join("\n"),
+    }),
+  ];
+}
+
 export function probeShare(fixture: WorkFixture): MockEvent {
   return shareEvent({
     author: fixture.agents.gilfoyle.pubkey,
