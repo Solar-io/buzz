@@ -70,10 +70,12 @@ const TAB_LABEL: Record<PaneTabId, string> = {
   activity: "Thinking",
 };
 
+// The Shelf's type chips (ShelfToolbar), so both strips read as one control
+// family (Sam, 2026-10-01): solid primary when on, a bordered card when off.
 const TAB_CLASS =
-  "flex h-7 shrink-0 items-center rounded-[7px] text-xs font-semibold transition-colors";
-const TAB_ON = "bg-card text-foreground shadow-xs ring-1 ring-border";
-const TAB_OFF = "text-muted-foreground hover:text-foreground";
+  "flex h-7 shrink-0 items-center rounded-lg border text-xs font-semibold transition-colors";
+const TAB_ON = "border-primary bg-primary text-primary-foreground";
+const TAB_OFF = "border-border bg-card text-ink-2 hover:text-foreground";
 
 /**
  * The shell row's right pane. At lg it is a docked column whose strip has
@@ -193,7 +195,7 @@ export function RightPaneHost({
             data-testid="right-pane-tabs"
             className="hidden h-11 shrink-0 items-center gap-1 border-b border-border bg-rail px-2 lg:flex"
           >
-            <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none]">
+            <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">
               {tabs.map((tab) => {
                 const selected = tab === strip.active;
                 const close = tab === "activity" ? onCloseActivity : null;
@@ -209,21 +211,30 @@ export function RightPaneHost({
                       data-testid={`right-pane-tab-${tab}`}
                       onClick={() => selectTab(tab)}
                       className={cn(
-                        "flex h-full items-center gap-1.5 pl-2.5",
-                        close ? "pr-1" : "pr-2.5",
+                        "flex h-full items-center gap-1.75 pl-2.75",
+                        close ? "pr-1" : "pr-2.75",
                       )}
                     >
                       {TAB_LABEL[tab]}
                       {tab === "work" && counts.needs > 0 && (
-                        <span className="flex items-center gap-1 font-mono text-2xs text-coral-ink">
-                          <StateHex tone="need" size={8} />
-                          {counts.needs}
+                        <span
+                          data-testid="work-needs-count"
+                          className="flex items-center gap-1 font-mono text-2xs"
+                        >
+                          <StateHex
+                            tone="need"
+                            size={8}
+                            className={
+                              selected ? "bg-primary-foreground" : "bg-primary"
+                            }
+                          />
+                          <span className="opacity-75">{counts.needs}</span>
                         </span>
                       )}
                       {tab === "canvas" && items.length > 0 && (
                         <span
                           data-testid="canvas-count"
-                          className="font-mono text-2xs font-medium text-muted-foreground"
+                          className="font-mono text-2xs opacity-75"
                         >
                           {items.length}
                         </span>

@@ -359,3 +359,36 @@ test("an empty Canvas says what lands there; no conversation means no channel ca
     await pane.unmount();
   }
 });
+
+test("Work | Canvas are Shelf-style chips; the needs hex follows the chip", async () => {
+  globalThis.__CANVAS_TEST_STATE__ = { doc: null, phase: "ready" };
+  const pane = await mount();
+  const chip = (tab) =>
+    pane.q(`[data-testid="right-pane-tab-${tab}"]`).parentElement.className;
+  const hex = () =>
+    pane.q('[data-testid="work-needs-count"] .buzz-hex').className;
+  try {
+    // Work on screen: solid primary chip, white hex; Canvas a bordered card.
+    assert.match(chip("work"), /\bbg-primary\b/);
+    assert.match(chip("work"), /\btext-primary-foreground\b/);
+    assert.match(chip("canvas"), /\bborder-border\b/);
+    assert.match(chip("canvas"), /\bbg-card\b/);
+    assert.doesNotMatch(chip("canvas"), /\bbg-primary\b/);
+    assert.equal(
+      pane.q('[data-testid="work-needs-count"]').textContent,
+      "2",
+      "the unread needs count stays",
+    );
+    assert.match(hex(), /\bbg-primary-foreground\b/);
+    assert.doesNotMatch(hex(), /\bbg-need\b/, "no coral on the orange chip");
+
+    // Canvas on screen: the chips swap; the hex turns primary on the card.
+    await pane.run((tabs) => tabs.open(openFile("notes.md")));
+    assert.match(chip("canvas"), /\bbg-primary\b/);
+    assert.match(chip("work"), /\bbg-card\b/);
+    assert.match(hex(), /\bbg-primary\b/);
+    assert.doesNotMatch(hex(), /\bbg-primary-foreground\b/);
+  } finally {
+    await pane.unmount();
+  }
+});
