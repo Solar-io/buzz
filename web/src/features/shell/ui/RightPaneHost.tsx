@@ -8,7 +8,6 @@ import { useFileTabs } from "@/features/shelf/FileTabsProvider";
 import {
   CHANNEL_CANVAS_KEY,
   canvasItemKeys,
-  clampFileWidth,
 } from "@/features/shelf/lib/fileTabs.ts";
 import { useDockedPane } from "@/features/shelf/useDockedPane.ts";
 import { useWorkCounts } from "@/features/work/useWorkCounts.ts";
@@ -16,7 +15,7 @@ import { WorkRailCollapsed } from "@/features/work/ui/WorkRailCollapsed";
 import { WorkTab } from "@/features/work/ui/WorkTab";
 import {
   PANE_RESIZE_HANDLE_CLASSES,
-  usePointerDrag,
+  type usePointerDrag,
 } from "@/shared/layout/usePointerDrag.ts";
 import { cn } from "@/shared/lib/cn";
 import { StateHex } from "@/shared/ui/HexAvatar";
@@ -36,6 +35,13 @@ export interface RightPaneHostProps {
   drag: ReturnType<typeof usePointerDrag>;
   /** The docked column's width at lg, for the active tab. */
   dockWidth: number;
+  /**
+   * Work's width, which Canvas shares: the pane keeps one size whether Work
+   * or Canvas is on screen (Sam, 2026-10-01), and dragging either resizes
+   * both. `workDrag` always resizes that shared width.
+   */
+  workWidth: number;
+  workDrag: ReturnType<typeof usePointerDrag>;
   onSelectTab: (tab: RightTabId) => void;
   onCloseActivity: () => void;
   /** The agent-DM thinking pane's data; null outside an agent DM. */
@@ -97,6 +103,8 @@ export function RightPaneHost({
   layout,
   drag,
   dockWidth,
+  workWidth,
+  workDrag,
   onSelectTab,
   onCloseActivity,
   activity,
@@ -127,10 +135,6 @@ export function RightPaneHost({
   const canvasOn = files !== null && strip.active === "canvas";
   const expanded =
     canvasOn && strip.canvasItem !== null && (files?.state.expanded ?? false);
-  const fileDrag = usePointerDrag({
-    onDrag: (deltaX) =>
-      files?.setWidth((width) => clampFileWidth(width - deltaX)),
-  });
   const docks = layout.tabs.length > 0 || canvasOn;
   const selectTab = (tab: PaneTabId) => {
     if (tab === "canvas") {
@@ -161,7 +165,7 @@ export function RightPaneHost({
           // No border of its own: the dock's border-l is the one divider (a
           // second 1px border read as "two scrollbars and a sliver").
           className={`buzz-side-panel-resize-handle relative z-10 hidden w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-foreground/10 active:bg-foreground/20 lg:block lg:-ml-px ${PANE_RESIZE_HANDLE_CLASSES}`}
-          {...(canvasOn ? fileDrag : drag)}
+          {...(canvasOn ? workDrag : drag)}
         />
       )}
       <div
@@ -181,7 +185,7 @@ export function RightPaneHost({
         )}
         style={
           {
-            "--dock-width": `${canvasOn && files ? files.width : dockWidth}px`,
+            "--dock-width": `${canvasOn ? workWidth : dockWidth}px`,
             // The thinking panel sizes itself from --thread-width; inside the
             // dock that is simply "fill it".
             "--thread-width": "100%",

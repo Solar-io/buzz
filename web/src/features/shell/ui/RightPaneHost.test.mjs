@@ -163,7 +163,10 @@ async function mount({ channelId = CHANNEL } = {}) {
     return React.createElement(RightPaneHost, {
       layout,
       drag: {},
-      dockWidth: 380,
+      // On Work the shell's dockWidth IS the Work width (useShellRightPane).
+      dockWidth: 437,
+      workWidth: 437,
+      workDrag: {},
       onSelectTab: (tab) => selected.push(tab),
       onCloseActivity: () => {},
       activity: null,
@@ -388,6 +391,24 @@ test("Work | Canvas are Shelf-style chips; the needs hex follows the chip", asyn
     assert.match(chip("work"), /\bbg-card\b/);
     assert.match(hex(), /\bbg-primary\b/);
     assert.doesNotMatch(hex(), /\bbg-primary-foreground\b/);
+  } finally {
+    await pane.unmount();
+  }
+});
+
+test("Canvas keeps Work's width: one pane size for both tabs", async () => {
+  globalThis.__CANVAS_TEST_STATE__ = { doc: null, phase: "ready" };
+  const pane = await mount();
+  const width = () =>
+    pane.q('[data-testid="right-dock"]').style.getPropertyValue("--dock-width");
+  try {
+    assert.equal(pane.onScreen(), "work");
+    assert.equal(width(), "437px");
+    await pane.run((tabs) => tabs.open(openFile("notes.md")));
+    assert.equal(pane.onScreen(), "canvas");
+    assert.equal(width(), "437px", "Canvas is not its own (540) width");
+    await pane.click(pane.q('[data-testid="right-pane-tab-work"]'));
+    assert.equal(width(), "437px");
   } finally {
     await pane.unmount();
   }

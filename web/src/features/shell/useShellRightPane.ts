@@ -91,6 +91,11 @@ export function useShellRightPane(options: {
       }
     },
   });
+  // Canvas shares Work's width (Sam, 2026-10-01): its handle always resizes it.
+  const workDrag = usePointerDrag({
+    onDrag: (deltaX) =>
+      setWorkWidth((previous) => clampWorkWidth(previous - deltaX)),
+  });
   useEffect(() => saveWorkWidth(workWidth), [workWidth]);
   const rowStyle = {
     ["--thread-width" as string]: `${threadWidth}px`,
@@ -104,6 +109,8 @@ export function useShellRightPane(options: {
         : onWork
           ? workWidth
           : threadWidth,
+    workWidth,
+    workDrag,
     onSelectTab: pane.selectTab,
     onCloseActivity: pane.closeThinking,
     activityChrome: {
