@@ -1,21 +1,24 @@
-//! Huddle end → call transcript in the parent channel, through every path a
+//! Call lines flowing, live, from a voice call into its parent channel — and
+//! the end-of-call flush that must not duplicate them, through every path a
 //! huddle can end by. Postgres-gated like the other DB-backed relay tests:
 //!   `cargo test -p buzz-relay --lib transcript_tests -- --ignored`
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use buzz_core::channel::{ChannelType, ChannelVisibility};
-use buzz_core::kind::{BUZZ_SYSTEM_CALL_TRANSCRIPT, TAG_BUZZ_SYSTEM};
+use buzz_core::channel::{ChannelType, ChannelVisibility, MemberRole};
+use buzz_core::kind::{
+    BUZZ_SYSTEM_CALL_LINE, BUZZ_SYSTEM_CALL_TRANSCRIPT, TAG_BUZZ_CALL_SOURCE, TAG_BUZZ_SYSTEM,
+};
 use buzz_core::tenant::TenantContext;
 use buzz_core::StoredEvent;
 use buzz_db::CreateCommunityWithOwnerResult;
-use nostr::{EventBuilder, Kind, Tag, ToBech32};
+use nostr::{EventBuilder, Kind, Tag};
 use uuid::Uuid;
 
 use crate::audio::grace::GraceArchiveOutcome;
 use crate::audio::handler::archive_empty_huddle;
-use crate::audio::transcript::{emit_call_transcript, emit_call_transcript_for_archived};
+use crate::audio::transcript::{flush_call_lines, flush_call_lines_for_archived};
 use crate::handlers::ingest::{ingest_event, HttpAuthMethod, IngestAuth, IngestError};
 use crate::state::AppState;
 
@@ -69,6 +72,7 @@ struct Fixture {
 
 /// Parent channel + ephemeral huddle channel created by Sam, linked the way
 /// clients link them: a Sam-signed kind:48100 in the parent naming the huddle.
+/// Sam and the agent are members of both.
 async fn fixture() -> Fixture {
     let (state, pool) = test_state().await;
     let sam = nostr::Keys::generate();
@@ -111,18 +115,34 @@ async fn fixture() -> Fixture {
         .await
         .expect("ephemeral huddle channel")
         .id;
-    // Sam has a profile name; the agent deliberately does not (npub fallback).
-    let sam_bytes = sam.public_key().to_bytes().to_vec();
-    state
-        .db
-        .ensure_user(community, &sam_bytes)
-        .await
-        .expect("user");
-    state
-        .db
-        .update_user_profile(community, &sam_bytes, Some("Sam"), None, None, None)
-        .await
-        .expect("profile");
+    for who in [&sam, &agent] {
+        state
+            .db
+            .ensure_user(community, &who.public_key().to_bytes())
+            .await
+            .expect("user");
+    }
+    for ch in [parent, huddle] {
+        for who in [&sam, &agent] {
+            // Sam (the creator) bootstraps himself, then invites the agent.
+            let role = if who.public_key() == sam.public_key() {
+                MemberRole::Owner
+            } else {
+                MemberRole::Member
+            };
+            state
+                .db
+                .add_member(
+                    community,
+                    ch,
+                    &who.public_key().to_bytes(),
+                    role,
+                    Some(&sam.public_key().to_bytes()),
+                )
+                .await
+                .expect("add member");
+        }
+    }
     let f = Fixture {
         state,
         pool,
@@ -153,35 +173,41 @@ async fn link_huddle(f: &Fixture, signer: &nostr::Keys) {
         .expect("insert 48100 link");
 }
 
-async fn post(f: &Fixture, keys: &nostr::Keys, secs: u64, content: &str) {
-    let ev = EventBuilder::new(Kind::from(9u16), content)
+fn call_event(f: &Fixture, keys: &nostr::Keys, secs: u64, content: &str) -> nostr::Event {
+    EventBuilder::new(Kind::from(9u16), content)
         .tags([Tag::parse(["h", &f.huddle.to_string()]).unwrap()])
         .custom_created_at(nostr::Timestamp::from_secs(secs))
         .sign_with_keys(keys)
-        .unwrap();
+        .unwrap()
+}
+
+fn auth_for(keys: &nostr::Keys) -> IngestAuth {
+    IngestAuth::Http {
+        pubkey: keys.public_key(),
+        scopes: vec![buzz_auth::Scope::MessagesWrite],
+        auth_method: HttpAuthMethod::Nip98,
+    }
+}
+
+/// Send a call message the way a client does — through ingest, which is
+/// where the live mirror hooks in.
+async fn say(f: &Fixture, keys: &nostr::Keys, secs: u64, content: &str) {
+    let ev = call_event(f, keys, secs, content);
+    let r = ingest_event(&f.state, &f.tenant, ev, auth_for(keys))
+        .await
+        .expect("call message accepted");
+    assert!(r.accepted, "call message accepted: {}", r.message);
+}
+
+/// Store a call message WITHOUT going through ingest — the live mirror never
+/// sees it, standing in for a line the live path missed (relay restart).
+async fn post_missed(f: &Fixture, keys: &nostr::Keys, secs: u64, content: &str) {
+    let ev = call_event(f, keys, secs, content);
     f.state
         .db
         .insert_event(f.tenant.community(), &ev, Some(f.huddle))
         .await
         .expect("insert huddle message");
-}
-
-async fn post_call(f: &Fixture) {
-    let base = nostr::Timestamp::now().as_secs() - 60;
-    post(f, &f.sam, base, "[voice] which drill should I buy?").await;
-    post(f, &f.agent, base + 1, "The DeWalt 20V — best value.").await;
-    post(f, &f.sam, base + 2, "[voice] thanks").await;
-}
-
-fn expected_call_body(f: &Fixture) -> String {
-    let npub = f.agent.public_key().to_bech32().unwrap();
-    let agent_label = format!("{}…", &npub[..12]);
-    format!(
-        "📞 Call transcript — Jared Dunn call\n\n\
-         Sam: which drill should I buy?\n\n\
-         {agent_label}: The DeWalt 20V — best value.\n\n\
-         Sam: thanks"
-    )
 }
 
 async fn parent_events(f: &Fixture, kind: i32) -> Vec<StoredEvent> {
@@ -197,65 +223,271 @@ async fn parent_events(f: &Fixture, kind: i32) -> Vec<StoredEvent> {
         .expect("query parent")
 }
 
-/// Exactly one kind:9 in the parent, and it is the relay-signed, tagged call
-/// transcript with the expected body.
-async fn assert_one_transcript(f: &Fixture) {
-    let transcripts = parent_events(f, 9).await;
-    assert_eq!(transcripts.len(), 1, "exactly one transcript in the parent");
-    let t = &transcripts[0].event;
-    assert_eq!(t.pubkey, f.state.relay_keypair.public_key(), "relay-signed");
-    t.verify().expect("valid signature");
-    assert_eq!(t.content, expected_call_body(f));
-    let has = |name: &str, value: &str| {
-        t.tags.iter().any(|tag| {
-            let s = tag.as_slice();
-            s.first().map(String::as_str) == Some(name)
-                && s.get(1).map(String::as_str) == Some(value)
-        })
-    };
-    assert!(
-        has(TAG_BUZZ_SYSTEM, BUZZ_SYSTEM_CALL_TRANSCRIPT),
-        "no-trigger tag"
-    );
-    assert!(has("h", &f.parent.to_string()), "h tag = parent");
+/// Poll until the parent holds `n` kind:9 (the live mirror is spawned).
+async fn wait_for_lines(f: &Fixture, n: usize) -> Vec<StoredEvent> {
+    let mut got = Vec::new();
+    for _ in 0..100 {
+        got = parent_events(f, 9).await;
+        if got.len() >= n {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    got
 }
 
-// ── Path 1: the relay's empty-room grace timer ───────────────────────────────
+fn tag<'a>(ev: &'a nostr::Event, name: &str) -> Option<&'a str> {
+    ev.tags.iter().find_map(|t| {
+        let s = t.as_slice();
+        (s.first().map(String::as_str) == Some(name)).then(|| s.get(1).map(String::as_str))?
+    })
+}
+
+/// The parent's kind:9s, oldest first, as `(actor hex, content)` — after
+/// checking each is a relay-signed, valid, no-trigger call line.
+fn lines(f: &Fixture, events: &[StoredEvent]) -> Vec<(String, String)> {
+    let mut evs: Vec<&nostr::Event> = events.iter().map(|s| &s.event).collect();
+    evs.sort_by_key(|e| e.created_at);
+    evs.into_iter()
+        .map(|e| {
+            assert_eq!(e.pubkey, f.state.relay_keypair.public_key(), "relay-signed");
+            e.verify().expect("valid signature");
+            assert_eq!(tag(e, TAG_BUZZ_SYSTEM), Some(BUZZ_SYSTEM_CALL_LINE));
+            assert_eq!(tag(e, "h"), Some(f.parent.to_string().as_str()));
+            assert!(tag(e, TAG_BUZZ_CALL_SOURCE).is_some());
+            assert!(tag(e, "p").is_none(), "no mention copied");
+            (
+                tag(e, "actor").expect("actor").to_string(),
+                e.content.clone(),
+            )
+        })
+        .collect()
+}
+
+fn hex(k: &nostr::Keys) -> String {
+    k.public_key().to_hex()
+}
+
+fn call_lines(f: &Fixture) -> Vec<(String, String)> {
+    vec![
+        (hex(&f.sam), "which drill should I buy?".into()),
+        (hex(&f.agent), "The DeWalt 20V — best value.".into()),
+        (hex(&f.sam), "thanks".into()),
+    ]
+}
+
+/// The call as clients send it: every line through ingest (live path).
+async fn live_call(f: &Fixture) {
+    let base = nostr::Timestamp::now().as_secs() - 60;
+    say(f, &f.sam, base, "[voice] which drill should I buy?").await;
+    say(f, &f.agent, base + 1, "The DeWalt 20V — best value.").await;
+    say(f, &f.sam, base + 2, "[voice] thanks").await;
+}
+
+/// The same call, none of it seen by the live path.
+async fn missed_call(f: &Fixture) {
+    let base = nostr::Timestamp::now().as_secs() - 60;
+    post_missed(f, &f.sam, base, "[voice] which drill should I buy?").await;
+    post_missed(f, &f.agent, base + 1, "The DeWalt 20V — best value.").await;
+    post_missed(f, &f.sam, base + 2, "[voice] thanks").await;
+}
+
+// ── Live flow ────────────────────────────────────────────────────────────────
 
 #[tokio::test]
 #[ignore = "requires Postgres"]
-async fn grace_timer_end_posts_transcript_once() {
+async fn each_call_line_flows_into_the_parent_live_attributed_to_its_speaker() {
     let f = fixture().await;
-    post_call(&f).await;
+    let base = nostr::Timestamp::now().as_secs() - 60;
 
-    let sam_hex = f.sam.public_key().to_hex();
+    say(&f, &f.sam, base, "[voice] which drill should I buy?").await;
+    // Live: the first line is in the parent before the call goes on.
+    let first = wait_for_lines(&f, 1).await;
+    assert_eq!(
+        lines(&f, &first),
+        vec![(hex(&f.sam), "which drill should I buy?".to_string())]
+    );
+    assert_eq!(
+        first[0].event.created_at.as_secs(),
+        base,
+        "line keeps the time it was spoken"
+    );
+
+    say(&f, &f.agent, base + 1, "The DeWalt 20V — best value.").await;
+    say(&f, &f.sam, base + 2, "[voice] thanks").await;
+    assert_eq!(lines(&f, &wait_for_lines(&f, 3).await), call_lines(&f));
+}
+
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn messages_in_an_ordinary_channel_are_not_mirrored() {
+    let f = fixture().await;
+    let ev = EventBuilder::new(Kind::from(9u16), "plain")
+        .tags([Tag::parse(["h", &f.parent.to_string()]).unwrap()])
+        .sign_with_keys(&f.sam)
+        .unwrap();
+    ingest_event(&f.state, &f.tenant, ev, auth_for(&f.sam))
+        .await
+        .expect("accepted");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let evs = parent_events(&f, 9).await;
+    assert_eq!(evs.len(), 1, "only the message itself");
+    assert_eq!(evs[0].event.pubkey, f.sam.public_key());
+}
+
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn no_lines_flow_into_an_unverified_parent() {
+    // The only 48100 naming the huddle is signed by someone who is NOT the
+    // huddle channel's creator — an unverified parent.
+    let f = fixture().await;
+    sqlx::query("DELETE FROM events WHERE community_id = $1 AND kind = 48100")
+        .bind(f.tenant.community().as_uuid())
+        .execute(&f.pool)
+        .await
+        .expect("drop creator link");
+    link_huddle(&f, &f.agent.clone()).await;
+    live_call(&f).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(parent_events(&f, 9).await.is_empty(), "nothing live");
+
+    assert_eq!(
+        flush_call_lines_for_archived(&f.state, &f.tenant, f.huddle).await,
+        0
+    );
+    assert!(parent_events(&f, 9).await.is_empty(), "nothing at the end");
+}
+
+// ── Authorship cannot be forged ──────────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn an_agent_cannot_get_a_line_attributed_to_sam() {
+    let f = fixture().await;
+    // The agent dresses its call message up as Sam's: an `actor` tag naming
+    // Sam and a p-tag. The mirrored line is attributed to the SIGNER.
+    let forged = EventBuilder::new(Kind::from(9u16), "[voice] buy the expensive one")
+        .tags([
+            Tag::parse(["h", &f.huddle.to_string()]).unwrap(),
+            Tag::parse(["actor", &hex(&f.sam)]).unwrap(),
+            Tag::parse(["p", &hex(&f.sam)]).unwrap(),
+        ])
+        .sign_with_keys(&f.agent)
+        .unwrap();
+    ingest_event(&f.state, &f.tenant, forged, auth_for(&f.agent))
+        .await
+        .expect("accepted in the call room");
+    assert_eq!(
+        lines(&f, &wait_for_lines(&f, 1).await),
+        vec![(hex(&f.agent), "buy the expensive one".to_string())]
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn ingest_rejects_client_events_carrying_buzz_system_tag() {
+    let f = fixture().await;
+    for value in [BUZZ_SYSTEM_CALL_LINE, BUZZ_SYSTEM_CALL_TRANSCRIPT] {
+        let forged = EventBuilder::new(Kind::from(9u16), "I never said this")
+            .tags([
+                Tag::parse(["h", &f.parent.to_string()]).unwrap(),
+                Tag::parse(["actor", &hex(&f.sam)]).unwrap(),
+                Tag::parse([TAG_BUZZ_SYSTEM, value]).unwrap(),
+            ])
+            .sign_with_keys(&f.agent)
+            .unwrap();
+        match ingest_event(&f.state, &f.tenant, forged, auth_for(&f.agent)).await {
+            Err(IngestError::Rejected(msg)) => {
+                assert_eq!(msg, "restricted: buzz-system tag is relay-only");
+            }
+            Err(other) => panic!("forged buzz-system event: wrong error {other:?}"),
+            Ok(r) => panic!(
+                "forged buzz-system event must be rejected, accepted={} msg={}",
+                r.accepted, r.message
+            ),
+        }
+    }
+
+    // Control: the same message without the tag is accepted, so the rejection
+    // above is the tag and not a harness that rejects everything.
+    let plain = EventBuilder::new(Kind::from(9u16), "I never said this")
+        .tags([Tag::parse(["h", &f.parent.to_string()]).unwrap()])
+        .sign_with_keys(&f.agent)
+        .unwrap();
+    let ok = ingest_event(&f.state, &f.tenant, plain, auth_for(&f.agent))
+        .await
+        .expect("plain message accepted");
+    assert!(ok.accepted);
+}
+
+// ── Huddle end: no duplicate of what flowed live ─────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn grace_timer_end_after_a_live_call_adds_nothing() {
+    let f = fixture().await;
+    live_call(&f).await;
+    assert_eq!(lines(&f, &wait_for_lines(&f, 3).await), call_lines(&f));
+
+    let sam_hex = hex(&f.sam);
     let outcome = archive_empty_huddle(&f.state, &f.tenant, f.huddle, f.parent, &sam_hex).await;
     assert_eq!(outcome, GraceArchiveOutcome::Ended);
-    assert_one_transcript(&f).await;
     assert_eq!(
         parent_events(&f, 48103).await.len(),
         1,
         "48103 still emitted"
     );
+    assert_eq!(
+        lines(&f, &parent_events(&f, 9).await),
+        call_lines(&f),
+        "no end-of-call transcript, no duplicate line"
+    );
+    // Re-flushing either way is a no-op.
+    assert_eq!(
+        flush_call_lines(&f.state, &f.tenant, f.huddle, f.parent).await,
+        0
+    );
+    assert_eq!(
+        flush_call_lines_for_archived(&f.state, &f.tenant, f.huddle).await,
+        0
+    );
+    assert_eq!(parent_events(&f, 9).await.len(), 3);
+}
+
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn grace_timer_end_flushes_lines_the_live_path_missed() {
+    let f = fixture().await;
+    missed_call(&f).await;
+    assert!(parent_events(&f, 9).await.is_empty());
+
+    let sam_hex = hex(&f.sam);
+    let outcome = archive_empty_huddle(&f.state, &f.tenant, f.huddle, f.parent, &sam_hex).await;
+    assert_eq!(outcome, GraceArchiveOutcome::Ended);
+    assert_eq!(lines(&f, &parent_events(&f, 9).await), call_lines(&f));
 
     // A second end attempt (racing fire / explicit archive) is a no-op.
     let again = archive_empty_huddle(&f.state, &f.tenant, f.huddle, f.parent, &sam_hex).await;
     assert_eq!(again, GraceArchiveOutcome::AlreadyEnded);
-    assert_eq!(parent_events(&f, 48103).await.len(), 1);
-
-    // Replaying either emitter (belt-and-braces) dedupes on the event id.
-    assert_eq!(
-        emit_call_transcript(&f.state, &f.tenant, f.huddle, f.parent).await,
-        None
-    );
-    assert_eq!(
-        emit_call_transcript_for_archived(&f.state, &f.tenant, f.huddle).await,
-        None
-    );
-    assert_one_transcript(&f).await;
+    assert_eq!(parent_events(&f, 9).await.len(), 3);
 }
 
-// ── Path 2: a client ends the huddle (48103 + kind:9002 archived=true) ──────
+#[tokio::test]
+#[ignore = "requires Postgres"]
+async fn partly_missed_call_flushes_only_the_missing_line() {
+    let f = fixture().await;
+    let base = nostr::Timestamp::now().as_secs() - 60;
+    say(&f, &f.sam, base, "[voice] which drill should I buy?").await;
+    post_missed(&f, &f.agent, base + 1, "The DeWalt 20V — best value.").await;
+    say(&f, &f.sam, base + 2, "[voice] thanks").await;
+    assert_eq!(wait_for_lines(&f, 2).await.len(), 2);
+
+    assert_eq!(
+        flush_call_lines(&f.state, &f.tenant, f.huddle, f.parent).await,
+        1
+    );
+    assert_eq!(lines(&f, &parent_events(&f, 9).await), call_lines(&f));
+}
 
 async fn client_archive(f: &Fixture) {
     let ev = EventBuilder::new(Kind::from(9002u16), "")
@@ -272,40 +504,17 @@ async fn client_archive(f: &Fixture) {
 
 #[tokio::test]
 #[ignore = "requires Postgres"]
-async fn client_9002_archive_posts_transcript_and_grace_then_adds_nothing() {
+async fn client_9002_archive_flushes_missed_lines_and_grace_then_adds_nothing() {
     let f = fixture().await;
-    post_call(&f).await;
+    missed_call(&f).await;
 
     client_archive(&f).await;
-    assert_one_transcript(&f).await;
+    assert_eq!(lines(&f, &parent_events(&f, 9).await), call_lines(&f));
 
-    // The relay's own grace timer fires afterwards: AlreadyEnded, no second
-    // transcript (and no relay 48103 — the client sent its own).
-    let sam_hex = f.sam.public_key().to_hex();
+    let sam_hex = hex(&f.sam);
     let outcome = archive_empty_huddle(&f.state, &f.tenant, f.huddle, f.parent, &sam_hex).await;
     assert_eq!(outcome, GraceArchiveOutcome::AlreadyEnded);
-    assert_one_transcript(&f).await;
-}
-
-#[tokio::test]
-#[ignore = "requires Postgres"]
-async fn client_9002_archive_without_creator_signed_link_posts_nothing() {
-    // Same call, but the only 48100 naming the huddle is signed by someone who
-    // is NOT the huddle channel's creator — an unverified parent.
-    let f = fixture().await;
-    sqlx::query("DELETE FROM events WHERE community_id = $1 AND kind = 48100")
-        .bind(f.tenant.community().as_uuid())
-        .execute(&f.pool)
-        .await
-        .expect("drop creator link");
-    link_huddle(&f, &f.agent.clone()).await;
-    post_call(&f).await;
-
-    client_archive(&f).await;
-    assert!(
-        parent_events(&f, 9).await.is_empty(),
-        "no transcript into an unverified parent"
-    );
+    assert_eq!(parent_events(&f, 9).await.len(), 3);
 }
 
 #[tokio::test]
@@ -325,13 +534,11 @@ async fn archiving_an_ordinary_channel_posts_nothing() {
     assert!(parent_events(&f, 9).await.is_empty());
 }
 
-// ── Path 3: the TTL reaper ───────────────────────────────────────────────────
-
 #[tokio::test]
 #[ignore = "requires Postgres"]
-async fn ttl_reaper_end_posts_transcript() {
+async fn ttl_reaper_end_flushes_missed_lines() {
     let f = fixture().await;
-    post_call(&f).await;
+    missed_call(&f).await;
     sqlx::query(
         "UPDATE channels SET ttl_deadline = NOW() - interval '1 second' \
          WHERE community_id = $1 AND id = $2",
@@ -346,16 +553,14 @@ async fn ttl_reaper_end_posts_transcript() {
         .await
         .expect("reaper tick");
     assert!(reaped >= 1, "the expired huddle was reaped");
-    assert_one_transcript(&f).await;
+    assert_eq!(lines(&f, &parent_events(&f, 9).await), call_lines(&f));
 }
-
-// ── Silent calls / non-ephemeral ─────────────────────────────────────────────
 
 #[tokio::test]
 #[ignore = "requires Postgres"]
-async fn silent_call_posts_no_transcript() {
+async fn silent_call_posts_nothing() {
     let f = fixture().await;
-    let sam_hex = f.sam.public_key().to_hex();
+    let sam_hex = hex(&f.sam);
     let outcome = archive_empty_huddle(&f.state, &f.tenant, f.huddle, f.parent, &sam_hex).await;
     assert_eq!(outcome, GraceArchiveOutcome::Ended);
     assert_eq!(
@@ -363,29 +568,26 @@ async fn silent_call_posts_no_transcript() {
         1,
         "the end itself happened"
     );
-    assert!(
-        parent_events(&f, 9).await.is_empty(),
-        "no transcript for a silent call"
-    );
+    assert!(parent_events(&f, 9).await.is_empty());
 }
 
 #[tokio::test]
 #[ignore = "requires Postgres"]
-async fn transcript_skipped_when_parent_is_the_channel() {
+async fn flush_skipped_when_parent_is_the_channel() {
     let f = fixture().await;
-    post(&f, &f.sam, nostr::Timestamp::now().as_secs(), "[voice] hi").await;
+    post_missed(&f, &f.sam, nostr::Timestamp::now().as_secs(), "[voice] hi").await;
     assert_eq!(
-        emit_call_transcript(&f.state, &f.tenant, f.parent, f.parent).await,
-        None
+        flush_call_lines(&f.state, &f.tenant, f.parent, f.parent).await,
+        0
     );
     assert!(parent_events(&f, 9).await.is_empty());
 }
 
-// ── Workflows never fire on the transcript ───────────────────────────────────
+// ── Mirrored lines never fire workflows ──────────────────────────────────────
 
 #[tokio::test]
 #[ignore = "requires Postgres"]
-async fn transcript_does_not_trigger_message_posted_workflows() {
+async fn call_lines_do_not_trigger_message_posted_workflows() {
     let f = fixture().await;
     let def_json = serde_json::json!({
         "name": "on-message",
@@ -416,13 +618,25 @@ async fn transcript_does_not_trigger_message_posted_workflows() {
             .len()
     };
 
-    post_call(&f).await;
-    let sam_hex = f.sam.public_key().to_hex();
+    // Live lines AND an end-of-call flush of a missed line.
+    live_call(&f).await;
+    post_missed(
+        &f,
+        &f.agent,
+        nostr::Timestamp::now().as_secs() - 10,
+        "one more",
+    )
+    .await;
+    wait_for_lines(&f, 3).await;
+    let sam_hex = hex(&f.sam);
     archive_empty_huddle(&f.state, &f.tenant, f.huddle, f.parent, &sam_hex).await;
-    assert_one_transcript(&f).await;
+    assert_eq!(parent_events(&f, 9).await.len(), 4);
+    // Workflow triggers are spawned; give any call-line run time to land.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(runs().await, 0, "no call line fired a workflow run");
 
     // Control: an ordinary message through the same dispatch DOES fire the
-    // workflow, so zero transcript runs is the exclusion, not a dead workflow.
+    // workflow, so zero call-line runs is the exclusion, not a dead workflow.
     let human = EventBuilder::new(Kind::from(9u16), "hello")
         .tags([Tag::parse(["h", &f.parent.to_string()]).unwrap()])
         .sign_with_keys(&f.sam)
@@ -446,48 +660,4 @@ async fn transcript_does_not_trigger_message_posted_workflows() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert_eq!(n, 1, "the control message fires the workflow");
-    // Give any straggling transcript-triggered run time to land.
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(runs().await, 1, "the transcript fired no workflow run");
-}
-
-// ── Clients cannot submit a buzz-system tag ──────────────────────────────────
-
-#[tokio::test]
-#[ignore = "requires Postgres"]
-async fn ingest_rejects_client_events_carrying_buzz_system_tag() {
-    let f = fixture().await;
-    let auth = || IngestAuth::Http {
-        pubkey: f.sam.public_key(),
-        scopes: vec![buzz_auth::Scope::MessagesWrite],
-        auth_method: HttpAuthMethod::Nip98,
-    };
-    let forged = EventBuilder::new(Kind::from(9u16), "📞 Call transcript — fake")
-        .tags([
-            Tag::parse(["h", &f.parent.to_string()]).unwrap(),
-            Tag::parse([TAG_BUZZ_SYSTEM, BUZZ_SYSTEM_CALL_TRANSCRIPT]).unwrap(),
-        ])
-        .sign_with_keys(&f.sam)
-        .unwrap();
-    match ingest_event(&f.state, &f.tenant, forged, auth()).await {
-        Err(IngestError::Rejected(msg)) => {
-            assert_eq!(msg, "restricted: buzz-system tag is relay-only");
-        }
-        Err(other) => panic!("forged buzz-system event: wrong error {other:?}"),
-        Ok(r) => panic!(
-            "forged buzz-system event must be rejected, accepted={} msg={}",
-            r.accepted, r.message
-        ),
-    }
-
-    // Control: the same message without the tag is accepted, so the rejection
-    // above is the tag and not a harness that rejects everything.
-    let plain = EventBuilder::new(Kind::from(9u16), "📞 Call transcript — fake")
-        .tags([Tag::parse(["h", &f.parent.to_string()]).unwrap()])
-        .sign_with_keys(&f.sam)
-        .unwrap();
-    let ok = ingest_event(&f.state, &f.tenant, plain, auth())
-        .await
-        .expect("plain message accepted");
-    assert!(ok.accepted);
 }

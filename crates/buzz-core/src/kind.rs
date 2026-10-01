@@ -618,8 +618,17 @@ pub const KIND_SYSTEM_MESSAGE: u32 = 40099;
 /// Anyone may add the tag, but it can only SUPPRESS a turn, never grant one.
 pub const TAG_BUZZ_SYSTEM: &str = "buzz-system";
 /// [`TAG_BUZZ_SYSTEM`] value for the huddle call transcript the relay posts
-/// into a huddle's parent channel when the huddle ends.
+/// into a huddle's parent channel when the huddle ends. Superseded by
+/// [`BUZZ_SYSTEM_CALL_LINE`]; kept because rows already posted carry it.
 pub const BUZZ_SYSTEM_CALL_TRANSCRIPT: &str = "call-transcript";
+/// [`TAG_BUZZ_SYSTEM`] value for ONE utterance of a huddle / voice call that
+/// the relay mirrors, live, into the huddle's parent channel. Relay-signed,
+/// attributed to the speaker by an `["actor", <hex>]` tag (the existing
+/// relay-signed delegated-authorship convention).
+pub const BUZZ_SYSTEM_CALL_LINE: &str = "call-line";
+/// Tag naming the call-room event a mirrored call line was copied from:
+/// `["buzz-call-source", <source event id hex>, <call channel uuid>]`.
+pub const TAG_BUZZ_CALL_SOURCE: &str = "buzz-call-source";
 
 // Relay-only sidecar kinds (never client-submitted)
 /// Channel metadata with computed fields (relay-signed sidecar).

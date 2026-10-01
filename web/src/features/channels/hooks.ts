@@ -1,9 +1,11 @@
 import { buildReactionEmojiTag } from "@/features/custom-emoji/lib/customEmojiTags";
 import type { CustomEmoji } from "@/features/custom-emoji/lib/customEmoji";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RelaySession } from "@/shared/api/relay-session";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
+import { useRelaySelf } from "@/shared/lib/relaySelf";
 import { useStableSortedSet } from "@/shared/lib/useStableSortedSet";
+import { attributeCallLines, hasCallLines } from "./lib/callLines.ts";
 
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { signNostrEvent } from "@/shared/lib/nostr-signer";
@@ -268,8 +270,18 @@ export function useChannelMessages(channelId: string | null): ChannelFeed {
     [channelId],
   );
 
+  // Voice-call lines the relay mirrored into this channel render as their
+  // speaker's messages (lib/callLines.ts). Applied to the VIEW only: the
+  // store and its cache keep the signed event's real author.
+  const callLinesPresent = useMemo(() => hasCallLines(buffer), [buffer]);
+  const relaySelf = useRelaySelf(callLinesPresent);
+  const messages = useMemo(
+    () => attributeCallLines(buffer, relaySelf),
+    [buffer, relaySelf],
+  );
+
   return {
-    messages: buffer,
+    messages,
     reactions: current.reactions,
     typing,
     threadSummaries,

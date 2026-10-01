@@ -3711,6 +3711,11 @@ async fn ingest_event_inner(
     )
     .await;
 
+    // A message spoken/typed in a voice call (ephemeral huddle channel) also
+    // flows, live, into the call's parent channel as a relay-signed copy
+    // attributed to its signer. Background; free for non-ephemeral channels.
+    crate::audio::transcript::spawn_live_call_line(state, tenant, channel_row.as_ref(), &event);
+
     info!(event_id = %event_id_hex, kind = kind_u32, "Event ingested via pipeline");
 
     Ok(IngestResult {

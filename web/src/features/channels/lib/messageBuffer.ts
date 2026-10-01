@@ -108,6 +108,19 @@ export interface TimelineMessage {
    */
   buzzSystem?: string | null;
   /**
+   * `["actor", <64-hex pubkey>]`, lowercased: the relay's delegated-
+   * authorship claim on a relay-signed event (e.g. a voice-call line the
+   * relay mirrored into the main chat on the speaker's behalf). Read as data
+   * only; it changes who a row is attributed to ONLY through
+   * `attributeCallLines`, which requires the relay's own signature.
+   */
+  actorPubkey?: string | null;
+  /**
+   * Set by `attributeCallLines` on a verified relay-mirrored call line whose
+   * `authorPubkey` it rewrote to the speaker. Never set from the wire.
+   */
+  viaCall?: boolean;
+  /**
    * The seat a `/handoff` hands work to: the pubkey in a
    * `["handoff", <pubkey>]` tag (web redesign Phase 2). The row renders as a
    * HANDOFF bar. Optional, like `stage` and `buzzSystem`: a row restored from
@@ -197,7 +210,8 @@ export function timelineMessageFromEvent(
       ? parseStageTag(event.tags)
       : null,
     buzzSystem: buzzSystemTag(event.tags),
-    handoff: handoffTag(event.tags),
+    actorPubkey: pubkeyTag(event.tags, "actor"),
+    handoff: pubkeyTag(event.tags, "handoff"),
     item: itemRowTag(event.tags),
     shelf: isShelfShare(event.tags)
       ? { paths: sharePathValues(event.tags) }
@@ -207,9 +221,9 @@ export function timelineMessageFromEvent(
   };
 }
 
-/** The `["handoff", <64-hex pubkey>]` tag value, lowercased, or null. */
-function handoffTag(tags: string[][]): string | null {
-  const value = tags.find((tag) => tag[0] === "handoff")?.[1];
+/** The `[name, <64-hex pubkey>]` tag value, lowercased, or null. */
+function pubkeyTag(tags: string[][], name: string): string | null {
+  const value = tags.find((tag) => tag[0] === name)?.[1];
   return typeof value === "string" && /^[0-9a-f]{64}$/i.test(value)
     ? value.toLowerCase()
     : null;

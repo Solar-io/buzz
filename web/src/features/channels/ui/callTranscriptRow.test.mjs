@@ -158,7 +158,7 @@ function relayEvent(tags, content = TRANSCRIPT, pubkey = RELAY) {
   });
 }
 
-async function mountRow(message, children = undefined) {
+async function mountRow(message, children = undefined, profiles = new Map()) {
   const container = dom.window.document.createElement("div");
   dom.window.document.body.appendChild(container);
   const reactRoot = createRoot(container);
@@ -169,7 +169,7 @@ async function mountRow(message, children = undefined) {
         null,
         React.createElement(MessageRow, {
           message,
-          profiles: new Map(),
+          profiles,
           grouped: false,
           active: false,
           reactionGroups: [],
@@ -268,4 +268,65 @@ test("an inline thread renders under the row, outside its hover group", async ()
   assert.ok(thread, "the thread renders");
   assert.equal(row.contains(thread), false, "the thread is not inside the row");
   await mounted.unmount();
+});
+
+// ── Live voice-call lines (["buzz-system","call-line"] + ["actor", …]) ──────
+//
+// Each utterance of a call is mirrored into the main chat as it happens. The
+// row must look like the speaker typed it: their name and avatar, ordinary
+// markdown body — plus only a small "voice" marker.
+
+const { attributeCallLines } = await import("../lib/callLines.ts");
+const SAM = "5".repeat(64);
+
+function callLine(content, actor = SAM, pubkey = RELAY) {
+  return timelineMessageFromEvent({
+    id: "d".repeat(64),
+    pubkey,
+    created_at: 2_000,
+    kind: 9,
+    content,
+    tags: [
+      ["h", "chan"],
+      ["actor", actor],
+      ["buzz-system", "call-line"],
+      ["buzz-call-source", "e".repeat(64), "call-chan"],
+    ],
+    sig: "f".repeat(128),
+  });
+}
+
+const SAM_PROFILE = new Map([[SAM, { name: "sam", displayName: "Sam" }]]);
+
+test("a call line renders as the speaker's ordinary message", async () => {
+  const [line] = attributeCallLines(
+    [callLine("which **drill** should I buy?")],
+    RELAY,
+  );
+  const row = await mountRow(line, undefined, SAM_PROFILE);
+  assert.equal(row.name, "Sam");
+  assert.ok(
+    row.container.querySelector('[data-testid="message-via-call"]'),
+    "the voice marker is shown",
+  );
+  // Normal markdown body — no transcript framing, no "Sam:" prefix.
+  const prose = row.container.querySelector(".message-prose");
+  assert.equal(prose.textContent.trim(), "which drill should I buy?");
+  assert.ok(prose.querySelector("strong"), "markdown renders as in chat");
+  assert.ok(!row.container.textContent.includes("77777777…"));
+  await row.unmount();
+});
+
+test("an impostor's call line is not attributed and shows no voice marker", async () => {
+  const [line] = attributeCallLines(
+    [callLine("I never said this", SAM, IMPOSTOR)],
+    RELAY,
+  );
+  const row = await mountRow(line, undefined, SAM_PROFILE);
+  assert.equal(row.name, "99999999…9999");
+  assert.equal(
+    row.container.querySelector('[data-testid="message-via-call"]'),
+    null,
+  );
+  await row.unmount();
 });

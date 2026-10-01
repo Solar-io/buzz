@@ -726,6 +726,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_match_event_never_matches_relay_call_line() {
+        // During a voice call the relay mirrors each utterance into the parent
+        // channel / DM as a relay-signed kind:9 tagged
+        // ["buzz-system","call-line"], attributed via ["actor", <speaker>].
+        // The agent's OWN spoken reply (actor = the agent) and the human's
+        // speech that already woke it in the call room must not start a
+        // second turn here — under the widest rule and with a p-tag on it.
+        let agent_pubkey = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+        let relay = Keys::generate();
+        let line = EventBuilder::new(Kind::Custom(9), "The DeWalt 20V.")
+            .tags([
+                Tag::parse(["actor", agent_pubkey]).unwrap(),
+                Tag::parse([
+                    buzz_core::kind::TAG_BUZZ_SYSTEM,
+                    buzz_core::kind::BUZZ_SYSTEM_CALL_LINE,
+                ])
+                .unwrap(),
+                Tag::parse(["p", agent_pubkey]).unwrap(),
+            ])
+            .sign_with_keys(&relay)
+            .unwrap();
+        let rules = vec![make_rule(
+            "all",
+            ChannelScope::All("all".into()),
+            vec![],
+            false,
+            None,
+            Some("all"),
+        )];
+
+        assert!(is_buzz_system_event(&line));
+        assert!(match_event(&line, any_channel(), &rules, agent_pubkey)
+            .await
+            .is_none());
+
+        // Control: the same content without the system tag matches.
+        let ordinary = make_event(9, "The DeWalt 20V.");
+        assert!(match_event(&ordinary, any_channel(), &rules, agent_pubkey)
+            .await
+            .is_some());
+    }
+
+    #[tokio::test]
     async fn test_match_event_no_match() {
         let event = make_event(1, "hello");
         let channel_id = any_channel();

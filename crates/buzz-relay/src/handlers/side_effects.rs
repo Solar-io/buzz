@@ -839,9 +839,8 @@ pub async fn run_ephemeral_reaper_tick(state: &Arc<AppState>) -> anyhow::Result<
         // skip in discover_channels on reconnect.
         evict_all_channel_subscriptions(&tenant, state, channel_id).await;
 
-        // A huddle that outlived its TTL still ends with its transcript.
-        crate::audio::transcript::emit_call_transcript_for_archived(state, &tenant, channel_id)
-            .await;
+        // A huddle that outlived its TTL: flush call lines the live mirror missed.
+        crate::audio::transcript::flush_call_lines_for_archived(state, &tenant, channel_id).await;
     }
     Ok(expired.len())
 }
@@ -1690,8 +1689,9 @@ async fn handle_edit_metadata(
                                 .await?;
                             // A client ending its own huddle (desktop/mobile
                             // "End huddle", last leave) archives the ephemeral
-                            // channel here. No-op for non-huddle channels.
-                            crate::audio::transcript::emit_call_transcript_for_archived(
+                            // channel here: flush call lines the live mirror
+                            // missed. No-op for non-huddle channels.
+                            crate::audio::transcript::flush_call_lines_for_archived(
                                 state, tenant, channel_id,
                             )
                             .await;
