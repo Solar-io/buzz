@@ -27,13 +27,18 @@ function whenLabel(atS: number, nowS: number): string {
  * latest change. "No owner yet" stays, as the nudge it is.
  */
 export function activityLine(item: ItemHead, ctx: ItemRowContext): string {
+  // shortAge says "now" for the freshest items, which takes no "ago".
+  const ago = (at: number) => {
+    const age = shortAge(at, ctx.nowS);
+    return age === "now" ? "just now" : `${age} ago`;
+  };
   const parts = [
     shortItemId(item.id),
-    `filed by ${ctx.personName(item.reporter)} ${shortAge(item.created, ctx.nowS)} ago`,
+    `filed by ${ctx.personName(item.reporter)} ${ago(item.created)}`,
   ];
   if (item.updatedAt > item.created + 60) {
     parts.push(
-      `changed ${shortAge(item.updatedAt, ctx.nowS)} ago by ${ctx.personName(item.updatedBy)}`,
+      `changed ${ago(item.updatedAt)} by ${ctx.personName(item.updatedBy)}`,
     );
   }
   if (!item.owner) {
