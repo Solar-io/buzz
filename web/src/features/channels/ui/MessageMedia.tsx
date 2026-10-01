@@ -1,33 +1,12 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-  type CSSProperties,
-} from "react";
+import { useContext, useEffect, useState, type CSSProperties } from "react";
 import { fetchSignedMedia } from "@/shared/api/blossom";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { cn } from "@/shared/lib/cn";
-import type { ImetaEntry } from "../lib/imetaEntries.ts";
 import { mediaFrame, resolveFileCard } from "../lib/messageMedia.ts";
 import { FileCard } from "./FileCard.tsx";
+import { MessageMediaContext } from "./messageMediaContext.ts";
 
-/**
- * Per-message media context. `MessageMedia` is registered as react-markdown's
- * `img` component, so it cannot receive per-message props directly — the
- * imeta map and the gallery opener arrive through this context instead, and
- * the component identity stays module-stable so the paragraph classifier can
- * recognise its own media children by reference.
- */
-export interface MessageMediaContextValue {
-  imetaByUrl?: Map<string, ImetaEntry>;
-  /** Open the message-scoped lightbox gallery at the clicked trigger. */
-  openGallery: (trigger: HTMLElement) => void;
-}
-
-const MessageMediaContext = createContext<MessageMediaContextValue>({
-  openGallery: () => {},
-});
+export type { MessageMediaContextValue } from "./messageMediaContext.ts";
 
 export const MessageMediaProvider = MessageMediaContext.Provider;
 

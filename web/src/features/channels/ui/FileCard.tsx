@@ -1,7 +1,11 @@
 import { useState } from "react";
 import { Download, FileText } from "lucide-react";
 import { toast } from "sonner";
+import { kindLabel } from "@/features/shelf/lib/fileKind.ts";
+import { FileIcon } from "@/features/shelf/ui/FileIcon";
+import { useTileOpener } from "@/features/shelf/useTileOpener.ts";
 import { fetchSignedMedia } from "@/shared/api/blossom";
+import { cn } from "@/shared/lib/cn";
 import { Spinner } from "@/shared/ui/spinner";
 import { formatFileSize } from "../lib/messageMedia.ts";
 
@@ -12,7 +16,8 @@ import { formatFileSize } from "../lib/messageMedia.ts";
  * the relay's 401 JSON. The bytes are fetched with a signed GET first and the
  * download is driven from the resulting object URL — the same trick the
  * inline `<img>` path already uses, since neither an anchor nor an image tag
- * can sign a request. Shared by the single card and the tile group.
+ * can sign a request. Shared by the single card, the tile group and the file
+ * pane's Download.
  */
 export function useFileDownload(href: string, filename: string) {
   const [downloading, setDownloading] = useState(false);
@@ -37,10 +42,12 @@ export function useFileDownload(href: string, filename: string) {
 }
 
 /**
- * Download card for a generic (non-image, non-video) attachment: icon,
- * filename, size, and a download action. The web mirror of the desktop's
- * `shared/ui/markdown/FileCard.tsx`. Several in one message render as a
- * `FileTileGroup` instead.
+ * One generic (non-image, non-video) attachment. Inside the shell it is the
+ * Preview artboard's file tile — a typed icon, the name, what it is, and
+ * "Open", which opens it in a tab beside the chat (web redesign Phase 6).
+ * Outside the shell (no file tabs) it stays the download card it was: the
+ * web mirror of the desktop's `shared/ui/markdown/FileCard.tsx`. Several in
+ * one message render as a `FileTileGroup` instead.
  */
 export function FileCard({
   href,
@@ -52,7 +59,42 @@ export function FileCard({
   size?: number;
 }) {
   const { downloading, download } = useFileDownload(href, filename);
+  const tile = useTileOpener({ href, filename, size });
   const sizeLabel = size === undefined ? "" : formatFileSize(size);
+
+  if (tile.open) {
+    const meta = [
+      kindLabel(tile.kind),
+      sizeLabel || null,
+      tile.onShelf ? "on the Shelf" : null,
+    ].filter(Boolean);
+    return (
+      <button
+        type="button"
+        data-testid="file-card"
+        data-selected={tile.selected ? "true" : undefined}
+        aria-label={`Open ${filename}`}
+        onClick={tile.open}
+        className={cn(
+          "my-1.5 flex w-full max-w-105 items-center gap-2.5 rounded-[10px] border bg-card px-3 py-2.5 text-left no-underline transition-colors hover:bg-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
+          tile.selected ? "border-ink-2 ring-3 ring-chip" : "border-border",
+        )}
+      >
+        <FileIcon kind={tile.kind} size="lg" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-mono text-xs font-semibold text-foreground">
+            {filename}
+          </span>
+          <span className="block truncate text-xs text-muted-foreground">
+            {meta.join(" · ")}
+          </span>
+        </span>
+        <span className="shrink-0 text-xs font-semibold text-info-ink">
+          {tile.selected ? "Open →" : "Open"}
+        </span>
+      </button>
+    );
+  }
 
   return (
     <button

@@ -1,4 +1,5 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { fileSourceOf } from "@/features/shelf/lib/fileSource.ts";
 import type { TimelineMessage } from "../lib/messageBuffer.ts";
 import type { Profile } from "../hooks.ts";
 import { truncatePubkey } from "@/shared/lib/pubkey";
@@ -187,6 +188,12 @@ export function MessageRow({
   // cached per page); every other row skips it.
   const relaySelf = useRelaySelf(Boolean(message.buzzSystem));
   const label = messageAuthorLabel(message, profiles, relaySelf);
+  // File tiles open in a tab with the message they came in (Phase 6); one
+  // object per message so the markdown memo holds.
+  const fileSource = useMemo(
+    () => (message.imetaByUrl.size > 0 ? fileSourceOf(message) : undefined),
+    [message],
+  );
   // Scheduled wakes (reminder firings from the services identity) render as
   // one collapsed line — see lib/wakeMessage.ts. The shell above (ref,
   // testid, highlight flash, permalink scroll) stays theirs so a jump to a
@@ -379,6 +386,7 @@ export function MessageRow({
                 imetaByUrl={message.imetaByUrl}
                 snapshotSharedBy={label}
                 compact={thread}
+                fileSource={fileSource}
               />
             )}
             {quickReply && (

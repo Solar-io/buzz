@@ -22,6 +22,7 @@ import { relayHttpBaseUrl } from "@/shared/lib/relay-url";
 import { useFileViewer } from "@/shared/ui/FileViewerDialog";
 import { Lightbox, type LightboxItem } from "@/shared/ui/Lightbox";
 import { useSnapshotPreview } from "@/features/agents/ui/SnapshotPreviewProvider";
+import type { FileSource } from "@/features/shelf/lib/fileSource.ts";
 import type { ImetaEntry } from "../lib/imetaEntries.ts";
 import { mentionSetsEqual } from "../lib/mentionSets.ts";
 import { mentionParts } from "../lib/mentionParts.ts";
@@ -175,37 +176,84 @@ function fileOnlyParagraph(
     if (typeof child === "string" && child.trim() === "") {
       continue;
     }
-    if (!isValidElement(child)) {
-      return null;
-    }
-    const props = child.props as {
-      href?: unknown;
-      src?: unknown;
-      alt?: unknown;
-      children?: ReactNode;
-    };
-    const url =
-      typeof props.href === "string"
-        ? props.href
-        : typeof props.src === "string"
-          ? props.src
-          : null;
-    if (url === null) {
-      return null;
-    }
-    const label =
-      typeof props.href === "string"
-        ? nodeText(props.children)
-        : typeof props.alt === "string"
-          ? props.alt
-          : "";
-    const file = resolveFileCard(imetaByUrl.get(url), url, label);
+    const file = childFile(child, imetaByUrl);
     if (!file) {
       return null;
     }
     files.push(file);
   }
   return files.length >= 2 ? files : null;
+}
+
+/** One paragraph child as a file attachment, or null. */
+function childFile(
+  child: ReactNode,
+  imetaByUrl: Map<string, ImetaEntry>,
+): FileCardTarget | null {
+  if (!isValidElement(child)) {
+    return null;
+  }
+  const props = child.props as {
+    href?: unknown;
+    src?: unknown;
+    alt?: unknown;
+    children?: ReactNode;
+  };
+  const url =
+    typeof props.href === "string"
+      ? props.href
+      : typeof props.src === "string"
+        ? props.src
+        : null;
+  if (url === null) {
+    return null;
+  }
+  const label =
+    typeof props.href === "string"
+      ? nodeText(props.children)
+      : typeof props.alt === "string"
+        ? props.alt
+        : "";
+  return resolveFileCard(imetaByUrl.get(url), url, label);
+}
+
+/**
+ * Prose followed by two or more file links in the SAME paragraph — the shape
+ * `buzz share` writes ("summary\n[a.md](…)\n[b.html](…)", Phase 6): the prose
+ * stays a paragraph and the files become one tile group under it, instead of
+ * a stack of cards inside the sentence. Null for any other paragraph.
+ */
+function trailingFiles(
+  children: ReactNode[],
+  imetaByUrl: Map<string, ImetaEntry> | undefined,
+): { lead: ReactNode[]; files: FileCardTarget[] } | null {
+  if (!imetaByUrl) {
+    return null;
+  }
+  const files: FileCardTarget[] = [];
+  let cut = children.length;
+  while (cut > 0) {
+    const child = children[cut - 1];
+    if (typeof child === "string" && child.trim() === "") {
+      cut -= 1;
+      continue;
+    }
+    const file = childFile(child, imetaByUrl);
+    if (!file) {
+      break;
+    }
+    files.unshift(file);
+    cut -= 1;
+  }
+  const lead = children.slice(0, cut);
+  while (
+    lead.length > 0 &&
+    typeof lead[lead.length - 1] === "string" &&
+    (lead[lead.length - 1] as string).trim() === ""
+  ) {
+    lead.pop();
+  }
+  return files.length >= 2 && lead.length > 0 ? { lead, files } : null;
 }
 
 /**
@@ -243,6 +291,7 @@ export const MarkdownContent = memo(
     imetaByUrl,
     snapshotSharedBy,
     compact = false,
+    fileSource,
   }: {
     content: string;
     mentionNames: ReadonlySet<string>;
@@ -252,6 +301,11 @@ export const MarkdownContent = memo(
     snapshotSharedBy?: string;
     /** One type step smaller — a reply inside an inline thread. */
     compact?: boolean;
+    /**
+     * The message the attachments belong to: file tiles open in a tab
+     * with it (Phase 6). Reference-stable per message (MessageRow memo).
+     */
+    fileSource?: FileSource;
   }) {
     const openSnapshotPreview = useSnapshotPreview();
     const palette = useCustomEmoji();
@@ -283,8 +337,8 @@ export const MarkdownContent = memo(
     }, []);
 
     const mediaContext = useMemo(
-      () => ({ imetaByUrl, openGallery }),
-      [imetaByUrl, openGallery],
+      () => ({ imetaByUrl, openGallery, fileSource }),
+      [imetaByUrl, openGallery, fileSource],
     );
 
     /**
@@ -322,6 +376,15 @@ export const MarkdownContent = memo(
           const files = fileOnlyParagraph(childArray, imetaByUrl);
           if (files) {
             return <FileTileGroup files={files} />;
+          }
+          const split = trailingFiles(childArray, imetaByUrl);
+          if (split) {
+            return (
+              <>
+                <p>{withMentions(split.lead, mentionNames)}</p>
+                <FileTileGroup files={split.files} />
+              </>
+            );
           }
           if (media.length >= 2 && other.length === 0) {
             return <ImageMosaic>{media}</ImageMosaic>;
@@ -451,7 +514,8 @@ export const MarkdownContent = memo(
     mentionSetsEqual(prev.mentionNames, next.mentionNames) &&
     prev.imetaByUrl === next.imetaByUrl &&
     prev.snapshotSharedBy === next.snapshotSharedBy &&
-    prev.compact === next.compact,
+    prev.compact === next.compact &&
+    prev.fileSource === next.fileSource,
 );
 
 /** Wrap @Name text nodes in a styled span (names matched case-insensitively). */

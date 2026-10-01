@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { resolveActiveTab, rightPaneLayout } from "./rightPaneLayout.ts";
+import {
+  resolveActiveTab,
+  rightPaneLayout,
+  rightPaneStrip,
+} from "./rightPaneLayout.ts";
 
 /**
  * The right pane's tab model. Phase 1 (phase-1.md §3) made it a strip with
@@ -235,4 +239,51 @@ test("the Work page is not also a strip beside Files", () => {
   assert.deepEqual(got.tabs, []);
   assert.equal(got.work, null);
   assert.equal(got.active, null);
+});
+
+// ---- Phase 6: open files join the strip ------------------------------------
+
+test("files: a file tab follows the shell tabs and is what the pane shows", () => {
+  const layout = rightPaneLayout(input({ agentDm: true, active: "activity" }));
+  const strip = rightPaneStrip(layout, ["f1", "f2"], "f2");
+  assert.deepEqual(strip.files, ["f1", "f2"]);
+  assert.equal(strip.activeFile, "f2");
+  assert.equal(strip.visible, true);
+  // Back on a shell tab: the strip stays, no file is on screen.
+  const back = rightPaneStrip(layout, ["f1"], null);
+  assert.equal(back.activeFile, null);
+  assert.equal(back.visible, true);
+  // A key that is no longer open is not on screen.
+  assert.equal(rightPaneStrip(layout, ["f1"], "gone").activeFile, null);
+});
+
+test("files: one Work tab and no files draws no strip (the rail's own title)", () => {
+  const plain = rightPaneLayout(input({}));
+  assert.equal(rightPaneStrip(plain, [], null).visible, false);
+  assert.equal(rightPaneStrip(plain, [], null).activeFile, null);
+  assert.equal(rightPaneStrip(plain, ["f1"], null).visible, true);
+});
+
+test("files: a folded Work rail hides the strip unless a file is on screen", () => {
+  const folded = rightPaneLayout(input({ workCollapsed: true }));
+  assert.equal(folded.work, "collapsed");
+  assert.equal(rightPaneStrip(folded, ["f1"], null).visible, false);
+  assert.equal(rightPaneStrip(folded, ["f1"], "f1").visible, true);
+});
+
+test("files: with no shell tab (?view=work) the last file is on screen", () => {
+  const page = rightPaneLayout(input({ surface: "view", workTab: false }));
+  assert.deepEqual(page.tabs, []);
+  const strip = rightPaneStrip(page, ["f1", "f2"], null);
+  assert.equal(strip.activeFile, "f2");
+  assert.equal(strip.visible, true);
+});
+
+test("files: a link page hides the host, files and all", () => {
+  const covered = rightPaneLayout(input({ webLayer: "page" }));
+  assert.deepEqual(rightPaneStrip(covered, ["f1"], "f1"), {
+    files: [],
+    activeFile: null,
+    visible: false,
+  });
 });

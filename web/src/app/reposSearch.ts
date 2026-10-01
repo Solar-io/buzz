@@ -17,6 +17,7 @@ export const SHELL_VIEWS = [
   "channels",
   "inbox",
   "items",
+  "shelf",
   "workflows",
   "pulse",
   "reminders",

@@ -1,5 +1,12 @@
 import { type ReactNode, useMemo, useState } from "react";
-import { Folder, Inbox, ListPlus, ListTodo, Search } from "lucide-react";
+import {
+  FileText,
+  Folder,
+  Inbox,
+  ListPlus,
+  ListTodo,
+  Search,
+} from "lucide-react";
 import type { Profile } from "@/features/channels/hooks";
 import type { RelaySessionStatus } from "@/shared/api/relay-session";
 import {
@@ -152,6 +159,8 @@ export interface ChannelSidebarActions {
   onOpenWork: () => void;
   /** Open the Items page (?view=items). */
   onOpenItems: () => void;
+  /** Open the Shelf (?view=shelf). */
+  onOpenShelf?: () => void;
   /**
    * Raise the in-app dock on an overlay-mode SHORTCUT. Not a channel: the
    * shortcut list is channel-independent (see SidebarShortcutsSection), so
@@ -201,6 +210,10 @@ export interface ChannelSidebarProps {
   itemsSelected: boolean;
   /** Open bugs · open backlog — the Items row's trailing numbers. */
   itemCounts: { bugs: number; backlog: number } | null;
+  /** The Shelf is the active pane. */
+  shelfSelected?: boolean;
+  /** Files shared since the Shelf was last opened — "N new". */
+  shelfNew?: number;
   /** Per-channel needs / running — the channel rows' work markers. */
   channelMarkers?: ChannelMarkers;
   lists: ChannelSidebarLists;
@@ -228,6 +241,8 @@ export function ChannelSidebar({
   needsCount,
   itemsSelected,
   itemCounts,
+  shelfSelected = false,
+  shelfNew = 0,
   channelMarkers,
   lists,
   readState,
@@ -557,6 +572,19 @@ export function ChannelSidebar({
             }
             onSelect={actions.onOpenItems}
           />
+          {actions.onOpenShelf ? (
+            <SidebarNavButton
+              selected={shelfSelected && webView.active === null}
+              label="Shelf"
+              icon={<FileText aria-hidden className="size-4 shrink-0" />}
+              meta={
+                shelfNew > 0 ? (
+                  <span data-testid="sidebar-shelf-new">{shelfNew} new</span>
+                ) : null
+              }
+              onSelect={actions.onOpenShelf}
+            />
+          ) : null}
           <SidebarNavButton
             selected={filesSelected}
             label="Files"

@@ -1,0 +1,339 @@
+import { Download, FolderOpen, Link2, RotateCw, X } from "lucide-react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+
+import { formatFileSize } from "@/features/channels/lib/messageMedia.ts";
+import { useFileDownload } from "@/features/channels/ui/FileCard";
+import { getConfiguredFilesUrl } from "@/features/files/filesConfig";
+import { openInFiles } from "@/features/webPanels/filesPathStore";
+import { cn } from "@/shared/lib/cn";
+import { publicAppOrigin } from "@/shared/lib/relay-url";
+import { useFileTabs } from "../FileTabsProvider";
+import { cleanQuote } from "../lib/fileComment.ts";
+import {
+  fileKind,
+  hasSourceView,
+  kindLabel,
+  previewMode,
+  readMinutes,
+  sourceLanguage,
+} from "../lib/fileKind.ts";
+import type { OpenFile } from "../lib/fileTabs.ts";
+import { whenLabel } from "../lib/shelfView.ts";
+import {
+  displayPath,
+  filesTarget,
+  parseSharePath,
+  type SharePath,
+} from "../lib/shareEvent.ts";
+import { useShelf } from "../ShelfProvider";
+import { useFileComments } from "../useFileComments.ts";
+import { useFileContent } from "../useFileContent.ts";
+import { useShareNames } from "../useShareNames.ts";
+import { FileCommentBox, FileCommentList } from "./FileComments";
+import { FilePreviewBody } from "./FilePreviewBody";
+
+function ActionButton({
+  label,
+  icon,
+  onClick,
+  testId,
+}: {
+  label: string;
+  icon: ReactNode;
+  onClick: () => void;
+  testId: string;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      onClick={onClick}
+      className="inline-flex h-7.5 shrink-0 items-center gap-1.5 rounded-lg border border-line-2 bg-card px-2.5 text-xs font-semibold text-foreground transition-colors hover:bg-accent"
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+/** The file's path, from the tab or (for a cached message) the Shelf's copy. */
+function useSharePath(file: OpenFile): SharePath | null {
+  const shelf = useShelf();
+  return useMemo(() => {
+    const own = parseSharePath(file.path);
+    if (own || !file.messageId) {
+      return own;
+    }
+    const share = shelf?.byId.get(file.messageId);
+    return share?.files.find((entry) => entry.url === file.url)?.path ?? null;
+  }, [file.path, file.messageId, file.url, shelf]);
+}
+
+/**
+ * A file open beside the conversation (Preview and Shelf artboards): what it
+ * is and where it came from, Preview / Source, the actions (Jump to message,
+ * Open in Files when the share carried a path on the Files host, Download,
+ * Copy link), the preview, and the comments — thread replies to the share —
+ * with a comment box at the foot.
+ *
+ * `variant`: the docked tab, the tab expanded over the row, or the phone's
+ * full-screen sheet (which brings its own close).
+ */
+export function FilePreview({
+  file,
+  variant,
+  onClose,
+}: {
+  file: OpenFile;
+  variant: "dock" | "expanded" | "sheet";
+  /** The sheet's close (the dock closes from its tab). */
+  onClose?: () => void;
+}) {
+  const tabs = useFileTabs();
+  const kind = fileKind(file.filename, file.mime);
+  const mode = previewMode(file.filename, kind);
+  const [view, setView] = useState<"preview" | "source">("preview");
+  const [reload, setReload] = useState(0);
+  const [quote, setQuote] = useState<string | null>(null);
+  const content = useFileContent(file.url, mode, file.size, reload);
+  const { download } = useFileDownload(file.url, file.filename);
+  const path = useSharePath(file);
+  const filesPath = filesTarget(path, getConfiguredFilesUrl());
+  const share =
+    file.messageId && file.channelId && file.authorPubkey
+      ? {
+          id: file.messageId,
+          channelId: file.channelId,
+          authorPubkey: file.authorPubkey,
+          rootId: file.rootId,
+          replyToId: file.replyToId,
+        }
+      : null;
+  const { comments } = useFileComments(share);
+  const people = useMemo(
+    () => [
+      ...new Set([
+        ...(file.authorPubkey ? [file.authorPubkey] : []),
+        ...comments.map((comment) => comment.authorPubkey),
+      ]),
+    ],
+    [file.authorPubkey, comments],
+  );
+  const names = useShareNames(people);
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  const meta = [
+    file.size !== null ? formatFileSize(file.size) : null,
+    kindLabel(kind).toLowerCase(),
+    mode === "markdown" && content.phase === "text"
+      ? `${readMinutes(content.text)} min read`
+      : null,
+  ].filter(Boolean);
+  const leave = () => {
+    if (variant === "sheet") {
+      onClose?.();
+    }
+  };
+  const copyLink = () => {
+    if (!file.channelId || !file.messageId) {
+      return;
+    }
+    const url = `${publicAppOrigin()}/repos?c=${file.channelId}&m=${file.messageId}`;
+    void navigator.clipboard
+      ?.writeText(url)
+      .then(() => toast.success("Link copied"))
+      .catch(() => toast.error("Could not copy the link."));
+  };
+  const captureSelection = () => {
+    const selection = globalThis.getSelection?.();
+    const root = bodyRef.current;
+    if (!selection || selection.isCollapsed || !root) {
+      return;
+    }
+    if (!root.contains(selection.anchorNode)) {
+      return;
+    }
+    const next = cleanQuote(selection.toString());
+    if (next) {
+      setQuote(next);
+    }
+  };
+
+  return (
+    <section
+      data-testid="file-preview"
+      data-variant={variant}
+      aria-label={file.filename}
+      className="flex h-full min-h-0 flex-col bg-background"
+    >
+      <header className="border-b border-border px-4 pt-3 pb-3">
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-baseline gap-2">
+              <h2
+                data-testid="file-preview-name"
+                className="truncate font-mono text-sm font-semibold"
+              >
+                {file.filename}
+              </h2>
+              <span className="shrink-0 font-mono text-2xs text-muted-foreground">
+                {meta.join(" · ")}
+              </span>
+            </div>
+            {file.authorPubkey && file.channelId && file.createdAt ? (
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Shared by {names.person(file.authorPubkey)} in{" "}
+                {names.channel(file.channelId)} ·{" "}
+                {whenLabel(file.createdAt, Math.floor(Date.now() / 1000))}
+                {file.messageId ? (
+                  <>
+                    {" · "}
+                    <button
+                      type="button"
+                      data-testid="file-jump"
+                      onClick={() => {
+                        leave();
+                        tabs?.openMessage(
+                          file.channelId as string,
+                          file.messageId as string,
+                        );
+                      }}
+                      className="font-semibold text-info-ink hover:underline"
+                    >
+                      Jump to message
+                    </button>
+                  </>
+                ) : null}
+              </p>
+            ) : null}
+            {path ? (
+              <p
+                data-testid="file-preview-path"
+                className="mt-0.5 truncate font-mono text-2xs text-muted-foreground"
+                title={`${path.host}:${path.path}`}
+              >
+                {path.host}: {displayPath(path.path)}
+              </p>
+            ) : null}
+          </div>
+          {variant === "sheet" ? (
+            <button
+              type="button"
+              aria-label="Close file"
+              onClick={onClose}
+              className="-mt-1 -mr-1.5 grid size-9 shrink-0 place-items-center rounded-lg text-ink-2 hover:bg-accent"
+            >
+              <X aria-hidden className="size-4.5" />
+            </button>
+          ) : null}
+        </div>
+        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+          {hasSourceView(mode) ? (
+            <fieldset className="flex rounded-lg bg-chip p-0.5">
+              <legend className="sr-only">View</legend>
+              {(["preview", "source"] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={view === option}
+                  data-testid={`file-view-${option}`}
+                  onClick={() => setView(option)}
+                  className={cn(
+                    "h-6 rounded-md px-2.5 text-xs font-semibold capitalize",
+                    view === option
+                      ? "bg-card text-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {option}
+                </button>
+              ))}
+            </fieldset>
+          ) : null}
+          {mode === "html" && view === "preview" ? (
+            <button
+              type="button"
+              aria-label="Reload preview"
+              onClick={() => setReload((value) => value + 1)}
+              className="grid size-7 place-items-center rounded-lg text-ink-2 hover:bg-accent"
+            >
+              <RotateCw aria-hidden className="size-3.5" />
+            </button>
+          ) : null}
+          <span className="ml-auto" />
+          {filesPath ? (
+            <ActionButton
+              testId="file-open-in-files"
+              label="Open in Files"
+              icon={<FolderOpen aria-hidden className="size-3.5" />}
+              onClick={() => {
+                leave();
+                openInFiles(filesPath);
+              }}
+            />
+          ) : null}
+          <ActionButton
+            testId="file-download"
+            label="Download"
+            icon={<Download aria-hidden className="size-3.5" />}
+            onClick={download}
+          />
+          {file.messageId ? (
+            <ActionButton
+              testId="file-copy-link"
+              label="Copy link"
+              icon={<Link2 aria-hidden className="size-3.5" />}
+              onClick={copyLink}
+            />
+          ) : null}
+        </div>
+      </header>
+      <div
+        data-testid="file-preview-scroll"
+        className="buzz-content-scrollbar min-h-0 flex-1 overflow-y-auto"
+      >
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: reads a text selection for the comment box; nothing to activate */}
+        <div
+          ref={bodyRef}
+          onMouseUp={captureSelection}
+          onKeyUp={captureSelection}
+          className={cn(
+            "px-4 py-4",
+            variant !== "dock" && "mx-auto w-full max-w-5xl",
+          )}
+        >
+          <FilePreviewBody
+            content={content}
+            mode={mode}
+            view={view}
+            filename={file.filename}
+            language={
+              view === "source" || mode === "code"
+                ? sourceLanguage(file.filename)
+                : ""
+            }
+            fit={variant === "dock" ? "dock" : "fill"}
+            reloadKey={reload}
+            onDownload={download}
+          />
+        </div>
+        <div className={cn(variant !== "dock" && "mx-auto w-full max-w-5xl")}>
+          <FileCommentList comments={comments} names={names} />
+        </div>
+      </div>
+      {share ? (
+        <FileCommentBox
+          share={share}
+          quote={quote}
+          onClearQuote={() => setQuote(null)}
+          selfPubkey={names.selfPubkey}
+          className={cn(
+            variant === "sheet" &&
+              "pb-[max(0.875rem,env(safe-area-inset-bottom))]",
+          )}
+        />
+      ) : null}
+    </section>
+  );
+}

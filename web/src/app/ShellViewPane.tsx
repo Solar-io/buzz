@@ -6,6 +6,7 @@ import { OnboardingPane } from "@/features/onboarding";
 import { ProjectsScreen } from "@/features/projects/ui/ProjectsScreen";
 import { PulseScreen } from "@/features/pulse/ui/PulseScreen";
 import { RemindersPanel } from "@/features/reminders/ui/RemindersPanel";
+import { ShelfPage } from "@/features/shelf/ui/ShelfPage";
 import { VitalsBlock } from "@/features/vitals/ui/VitalsBlock";
 import { WorkTab } from "@/features/work/ui/WorkTab";
 import { WorkflowsPage } from "@/features/workflows/ui/WorkflowsPage";
@@ -13,7 +14,7 @@ import type { ReactNode } from "react";
 import type { ShellView } from "./reposSearch.ts";
 
 /**
- * The shell's full-page `?view=` panes (Work, Channels, Inbox, Items,
+ * The shell's full-page `?view=` panes (Work, Channels, Inbox, Items, Shelf,
  * Reminders, Pulse, Projects, Workflows, Onboarding). Lifted out of routes/repos.tsx unchanged so the
  * route can dock a kept-open thread beside them (the shell row's
  * RightPaneHost) without growing past the file-size ceiling.
@@ -74,6 +75,8 @@ export function ShellViewPane({
           onOpenMessage={onOpenMessage}
         />
       );
+    case "shelf":
+      return <ShelfPage channels={channels} />;
     case "onboarding":
       return <OnboardingPane />;
     case "projects":

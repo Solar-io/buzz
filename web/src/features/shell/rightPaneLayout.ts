@@ -99,6 +99,46 @@ export function rightPaneTabs(input: RightPaneInput): RightTabId[] {
   return tabs;
 }
 
+/**
+ * The strip with the open FILES in it (web redesign Phase 6). File tabs come
+ * after the shell's tabs and sit over them: a file that is active is what the
+ * pane shows; none active hands it back to `layout.active`.
+ */
+export interface RightPaneStrip {
+  /** The open files' keys, in tab order ([] while the host is hidden). */
+  files: string[];
+  /** The file on screen, or null when a shell tab is. */
+  activeFile: string | null;
+  /** Draw the tab strip. */
+  visible: boolean;
+}
+
+export function rightPaneStrip(
+  layout: RightPaneLayout,
+  files: readonly string[],
+  activeFile: string | null,
+): RightPaneStrip {
+  if (!layout.hostVisible) {
+    return { files: [], activeFile: null, visible: false };
+  }
+  let active =
+    activeFile !== null && files.includes(activeFile) ? activeFile : null;
+  // No shell tab to fall back to (`?view=work` is Work itself): a file is on.
+  if (active === null && layout.tabs.length === 0 && files.length > 0) {
+    active = files[files.length - 1];
+  }
+  // A folded Work rail is a 48 px strip; tabs cannot live over it, so the
+  // strip shows only while a file (or an unfolded shell tab) is on screen.
+  const shellOpen = layout.work !== "collapsed";
+  return {
+    files: [...files],
+    activeFile: active,
+    visible:
+      active !== null ||
+      (shellOpen && (files.length > 0 || layout.tabs.length >= 2)),
+  };
+}
+
 export function rightPaneLayout(input: RightPaneInput): RightPaneLayout {
   const tabs = rightPaneTabs(input);
   const files = input.webLayer === "files";

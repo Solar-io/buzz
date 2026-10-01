@@ -6,6 +6,7 @@ import { parseCardAnswerTags, type CardAnswer } from "./cardAnswerTag.ts";
 import { SYSTEM_MESSAGE_KIND } from "./systemEvent.ts";
 import { parseStageTag, type StageTag } from "../../stage/lib/stageTag.ts";
 import { itemRowTag } from "../../items/lib/itemMessages.ts";
+import { isShelfShare, sharePathValues } from "../../shelf/lib/shareEvent.ts";
 
 /**
  * Kinds that render their own row in a channel timeline.
@@ -121,6 +122,14 @@ export interface TimelineMessage {
    * reads as its plain content, which says the same thing — test `!= null`.
    */
   item?: { d: string; type: "bug" | "backlog" } | null;
+  /**
+   * A `buzz share` (web redesign Phase 6): the `["t","shelf"]` marker, with
+   * the share's `path` tags in imeta order. Its tiles open in a file tab
+   * and say "on the Shelf". Optional like `item`: a row cached before the
+   * field existed reads as an ordinary attachment message, and its file
+   * tab still finds the path through the Shelf — test `!= null`.
+   */
+  shelf?: { paths: string[] } | null;
   /** Edit overlay present (renders the "(edited)" marker). */
   edited: boolean;
   /** Deleted via kind 5 — rows hide rather than render. */
@@ -190,6 +199,9 @@ export function timelineMessageFromEvent(
     buzzSystem: buzzSystemTag(event.tags),
     handoff: handoffTag(event.tags),
     item: itemRowTag(event.tags),
+    shelf: isShelfShare(event.tags)
+      ? { paths: sharePathValues(event.tags) }
+      : null,
     edited: false,
     deleted: false,
   };

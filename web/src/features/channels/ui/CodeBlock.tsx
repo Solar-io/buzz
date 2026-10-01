@@ -66,7 +66,7 @@ function cacheTokens(key: string, tokens: ThemedToken[][]): void {
   tokenCache.set(key, tokens);
 }
 
-async function highlight(
+export async function highlight(
   code: string,
   language: string,
   themeName: string,

@@ -472,6 +472,7 @@ function ChannelBrowser() {
       inboxSelected={view === "inbox"}
       workSelected={view === "work"}
       itemsSelected={view === "items"}
+      shelfSelected={view === "shelf"}
       channelCount={channels.length}
       selectedId={selectedId}
       lists={{ ...lists, dms }}
@@ -517,11 +518,10 @@ function ChannelBrowser() {
         onSetFavorite: (ref, on) =>
           setChannelPrefs((prefs) => setFavorite(prefs, ref, on)),
         onOpenFiles: openFiles,
-        onOpenInbox: () =>
-          void navigate({ to: "/repos", search: { view: "inbox" } }),
-        onOpenWork: () =>
-          void navigate({ to: "/repos", search: { view: "work" } }),
+        onOpenInbox: () => openView("inbox"),
+        onOpenWork: () => openView("work"),
         onOpenItems: () => openView("items"),
+        onOpenShelf: () => openView("shelf"),
         onOpenShortcutOverlay: openLink,
       }}
     />
