@@ -101,9 +101,9 @@ export function accountVitals(
 }
 
 /**
- * The account row's right-hand text. A warn/critical row names when it runs
- * dry instead of its reset, so the red is never a colour to decode (Sam,
- * 2026-10-01). `clock` formats an ISO time; `unknown` explains a null usage.
+ * The account row's right-hand text: used % and when it resets, the same
+ * shape on every row (Sam, 2026-10-01: the red row says its reset too).
+ * `clock` formats an ISO time; `unknown` explains a null usage.
  */
 export function accountRowText(
   account: AccountVitals,
@@ -114,13 +114,24 @@ export function accountRowText(
     return unknown;
   }
   const used = `${percent(account.used)}%`;
-  const hot = account.status === "warn" || account.status === "critical";
-  if (hot && account.dryAt) {
-    return `${used} · runs dry ${clock(account.dryAt)}`;
-  }
   return account.resetsAt
     ? `${used} · resets ${clock(account.resetsAt)}`
     : used;
+}
+
+/**
+ * The second line under a warn/critical row: when it runs dry, so the red is
+ * never a colour to decode (Sam, 2026-10-01). Null when the row is not hot
+ * or has no projection.
+ */
+export function accountDryText(
+  account: AccountVitals,
+  clock: (iso: string) => string,
+): string | null {
+  const hot = account.status === "warn" || account.status === "critical";
+  return account.used !== null && hot && account.dryAt
+    ? `runs dry ${clock(account.dryAt)}`
+    : null;
 }
 
 /** The combined bar: free = 1 − mean(known usedFraction). */
