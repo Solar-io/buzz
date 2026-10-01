@@ -192,7 +192,43 @@ export function isNonMediaAttachment(entry: ImetaEntry | undefined): boolean {
   if (!entry?.m) {
     return false;
   }
-  return !entry.m.startsWith("image/") && !entry.m.startsWith("video/");
+  return (
+    !entry.m.startsWith("image/") &&
+    !entry.m.startsWith("video/") &&
+    !isInlineAudioMime(entry.m)
+  );
+}
+
+/**
+ * Audio MIMEs that play in an inline `<audio>` player. Only MP3: the relay
+ * stores it metadata-free (`buzz-media`'s `mp3.rs` rejects ID3/APE tags) and
+ * serves it inline. Every other audio type stays a download card — WAV, for
+ * one, is a voice-reference asset, not a chat attachment.
+ */
+export function isInlineAudioMime(mime: string | undefined): boolean {
+  return mime === "audio/mpeg";
+}
+
+/**
+ * Classify a message link (or image node) as an inline audio player. Same
+ * shape and filename fallbacks as {@link resolveFileCard}, which returns null
+ * for these entries — an MP3 is a player, never a download tile.
+ */
+export function resolveInlineAudio(
+  entry: ImetaEntry | undefined,
+  href: string | undefined,
+  childText: string,
+): FileCardTarget | null {
+  if (!href || !isInlineAudioMime(entry?.m)) {
+    return null;
+  }
+  const filename =
+    entry?.filename || childText.trim() || href.split("/").pop() || "audio";
+  return {
+    href,
+    filename,
+    ...(entry?.size === undefined ? {} : { size: entry.size }),
+  };
 }
 
 /**

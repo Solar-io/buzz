@@ -5,10 +5,12 @@ import {
   dimensionsFromDim,
   formatFileSize,
   galleryFromTriggers,
+  isInlineAudioMime,
   isNonMediaAttachment,
   mediaFrame,
   mosaicLayout,
   resolveFileCard,
+  resolveInlineAudio,
 } from "./messageMedia.ts";
 
 // --- dimensionsFromDim -----------------------------------------------------
@@ -172,6 +174,9 @@ test("isNonMediaAttachment is true only for a known non-media MIME", () => {
   assert.equal(isNonMediaAttachment(PDF), true);
   assert.equal(isNonMediaAttachment({ url: "u", m: "image/png" }), false);
   assert.equal(isNonMediaAttachment({ url: "u", m: "video/mp4" }), false);
+  // MP3 is an inline player, not a download card; other audio is still a file.
+  assert.equal(isNonMediaAttachment({ url: "u", m: "audio/mpeg" }), false);
+  assert.equal(isNonMediaAttachment({ url: "u", m: "audio/wav" }), true);
   // No MIME: legacy events omit `m` and are overwhelmingly images. Guessing
   // "file" here would replace working images with download cards.
   assert.equal(isNonMediaAttachment({ url: "u" }), false);
@@ -267,4 +272,51 @@ test("galleryFromTriggers degrades to a one-item gallery off-scope", () => {
 test("galleryFromTriggers defaults a missing alt to an empty string", () => {
   const bare = { dataset: { lightboxSrc: "blob:a" } };
   assert.equal(galleryFromTriggers([bare], bare).items[0].alt, "");
+});
+
+// --- inline audio ----------------------------------------------------------
+
+const MP3 = {
+  url: "u",
+  m: "audio/mpeg",
+  size: 48_900,
+  filename: "voice-memo.mp3",
+};
+
+test("isInlineAudioMime is true only for audio/mpeg", () => {
+  assert.equal(isInlineAudioMime("audio/mpeg"), true);
+  assert.equal(isInlineAudioMime("audio/wav"), false);
+  assert.equal(isInlineAudioMime("audio/ogg"), false);
+  assert.equal(isInlineAudioMime(undefined), false);
+});
+
+test("an MP3 attachment is an inline player, never a file card", () => {
+  assert.equal(resolveFileCard(MP3, "https://r/media/abc.mp3", "x"), null);
+  assert.deepEqual(resolveInlineAudio(MP3, "https://r/media/abc.mp3", "x"), {
+    href: "https://r/media/abc.mp3",
+    filename: "voice-memo.mp3",
+    size: 48_900,
+  });
+});
+
+test("resolveInlineAudio falls back to link text, then the URL tail", () => {
+  const bare = { url: "u", m: "audio/mpeg" };
+  assert.equal(
+    resolveInlineAudio(bare, "https://r/media/abc.mp3", " song.mp3 ").filename,
+    "song.mp3",
+  );
+  assert.equal(
+    resolveInlineAudio(bare, "https://r/media/abc.mp3", "").filename,
+    "abc.mp3",
+  );
+});
+
+test("resolveInlineAudio ignores non-MP3 entries and missing hrefs", () => {
+  assert.equal(resolveInlineAudio(PDF, "https://r/media/abc", "x"), null);
+  assert.equal(
+    resolveInlineAudio({ url: "u", m: "audio/wav" }, "https://r/m", "x"),
+    null,
+  );
+  assert.equal(resolveInlineAudio(MP3, undefined, "x"), null);
+  assert.equal(resolveInlineAudio(undefined, "https://r/m", "x"), null);
 });

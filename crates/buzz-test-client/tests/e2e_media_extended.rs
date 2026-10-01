@@ -577,13 +577,50 @@ async fn test_legacy_media_route_still_accepts_canonical_media() {
 async fn test_standard_upload_rejects_recognized_audio() {
     let client = http_client();
     let keys = Keys::generate();
-    let mp3 = b"ID3\x04\x00\x00\x00\x00\x00\x00";
-    let resp = upload(&client, &keys, mp3).await;
+    let flac = b"fLaC\x00\x00\x00\x22";
+    let resp = upload(&client, &keys, flac).await;
     assert_eq!(
         resp.status(),
         reqwest::StatusCode::UNSUPPORTED_MEDIA_TYPE,
         "recognized audio must not bypass the location policy as an attachment"
     );
+}
+
+/// Three MPEG-1 Layer III frames (128 kbps, 44.1 kHz → 417 bytes each).
+fn clean_mp3() -> Vec<u8> {
+    let mut out = Vec::new();
+    for i in 0..3usize {
+        out.extend_from_slice(&[0xFF, 0xFB, 0x90, 0x00]);
+        out.extend((0..413usize).map(|j| ((i + j) % 0x7F) as u8));
+    }
+    out
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_standard_upload_rejects_tagged_mp3() {
+    let client = http_client();
+    let keys = Keys::generate();
+    let mut tagged = b"ID3\x04\x00\x00\x00\x00\x00\x05TIT2x".to_vec();
+    tagged.extend_from_slice(&clean_mp3());
+    let resp = upload(&client, &keys, &tagged).await;
+    assert_eq!(
+        resp.status(),
+        reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+        "an ID3-tagged MP3 must be rejected as metadata, not stored"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_upload_clean_mp3_roundtrip() {
+    let client = http_client();
+    let keys = Keys::generate();
+    let resp = upload(&client, &keys, &clean_mp3()).await;
+    assert_eq!(resp.status(), 200, "metadata-free MP3 should be accepted");
+    let desc: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(desc["type"].as_str().unwrap(), "audio/mpeg");
+    assert!(desc["url"].as_str().unwrap().ends_with(".mp3"));
 }
 
 #[tokio::test]

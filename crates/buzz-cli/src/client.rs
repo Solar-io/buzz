@@ -148,6 +148,7 @@ const ALLOWED_MIMES: &[&str] = &[
     "image/webp",
     "video/mp4",
     "audio/wav",
+    "audio/mpeg",
 ];
 
 /// Canonicalize a sniffed MIME for the upload allow-list and wire
@@ -1241,7 +1242,16 @@ impl BuzzClient {
         // the wire content-type carry the canonical `audio/wav`.
         let mime = infer::get(&bytes)
             .map(|t| canonical_upload_mime(t.mime_type()).to_string())
-            .unwrap_or_else(|| "application/octet-stream".to_string());
+            .unwrap_or_else(|| {
+                // `infer` only spots MP3 by a leading `ID3` or an `FF FB`
+                // sync; the relay's frame-walk sniff also accepts the other
+                // MPEG frame headers, so mirror it here.
+                if buzz_media::mp3::looks_like_mpeg_audio(&bytes) {
+                    "audio/mpeg".to_string()
+                } else {
+                    "application/octet-stream".to_string()
+                }
+            });
 
         if mode == UploadMode::Media && !ALLOWED_MIMES.contains(&mime.as_str()) {
             return Err(CliError::Usage(format!("unsupported file type: {mime}")));
@@ -1260,6 +1270,23 @@ impl BuzzClient {
             if sanitized.len() != raw_len {
                 eprintln!(
                     "sanitized {} for upload: metadata stripped ({} -> {} bytes)",
+                    file_path,
+                    raw_len,
+                    sanitized.len()
+                );
+            }
+            sanitized
+        } else if mime == "audio/mpeg" {
+            // MP3 tags (ID3v1/v2, APEv2, Lyrics3) carry titles, comments,
+            // cover art and private frames; the relay rejects any of them
+            // (`MetadataForbidden`). Strip before hashing — the relay stores
+            // exactly these bytes under their sha256.
+            let raw_len = bytes.len();
+            let sanitized = buzz_media::sanitize::sanitize_mp3_for_upload(bytes)
+                .map_err(|e| CliError::Usage(format!("{file_path}: {e}")))?;
+            if sanitized.len() != raw_len {
+                eprintln!(
+                    "sanitized {} for upload: audio tags stripped ({} -> {} bytes)",
                     file_path,
                     raw_len,
                     sanitized.len()
@@ -3133,5 +3160,33 @@ mod share_upload_tests {
             !bodies[0].windows(4).any(|w| w == b"Exif"),
             "Any mode must strip EXIF before upload"
         );
+    }
+
+    #[tokio::test]
+    async fn mp3_tags_are_stripped_before_hashing_and_upload() {
+        // Three MPEG-1 Layer III frames (128 kbps, 44.1 kHz → 417 bytes).
+        let mut clean = Vec::new();
+        for i in 0..3usize {
+            clean.extend_from_slice(&[0xFF, 0xFB, 0x90, 0x00]);
+            clean.extend((0..413usize).map(|j| ((i + j) % 0x7F) as u8));
+        }
+        let mut tagged =
+            b"ID3\x04\x00\x00\x00\x00\x00\x0eTPE1\x00\x00\x00\x04\x00\x00\x03Sam".to_vec();
+        tagged.extend_from_slice(&clean);
+        let mut v1 = b"TAGSecret".to_vec();
+        v1.resize(128, b' ');
+        tagged.extend_from_slice(&v1);
+
+        let (_d, path) = temp_file("song.mp3", &tagged);
+        let (base, seen) = mock_relay(StatusCode::OK, "").await;
+        client(&base)
+            .upload_file_with(&path, UploadMode::Any)
+            .await
+            .expect("upload");
+        let bodies = seen.upload.lock().unwrap();
+        assert_eq!(bodies.len(), 1);
+        assert_eq!(bodies[0], clean, "only the audio frames are uploaded");
+        // The relay's validator accepts exactly what was sent.
+        buzz_media::mp3::validate_mp3(&bodies[0]).expect("relay accepts sanitized mp3");
     }
 }

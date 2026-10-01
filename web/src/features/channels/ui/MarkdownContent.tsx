@@ -34,6 +34,7 @@ import {
   type FileCardTarget,
   galleryFromTriggers,
   resolveFileCard,
+  resolveInlineAudio,
 } from "../lib/messageMedia.ts";
 import { cn } from "@/shared/lib/cn";
 import { Callout } from "./Callout.tsx";
@@ -50,6 +51,7 @@ import {
   MessageMedia,
   MessageMediaProvider,
   type MessageMediaProps,
+  SignedAudio,
 } from "./MessageMedia.tsx";
 
 /**
@@ -268,7 +270,8 @@ function trailingFiles(
  *   over the images of THIS message — the root div below is the scope.
  * - A link (or, from the CLI, an `![image](…)` node) whose imeta MIME is
  *   neither image nor video renders as a download card; several of them
- *   alone in a paragraph render as one tile group.
+ *   alone in a paragraph render as one tile group. An `audio/mpeg` one is an
+ *   inline `<audio>` player instead (`resolveInlineAudio`).
  *
  * Readable long messages (web redesign Phase 2; Message artboard):
  * - a table is a card with a header row and right-aligned numeric columns;
@@ -448,6 +451,11 @@ export const MarkdownContent = memo(
           const file = resolveFileCard(entry, href, label);
           if (file) {
             return <FileCard {...file} />;
+          }
+          // An MP3 attachment plays inline (same `[name](url)` shape).
+          const audio = resolveInlineAudio(entry, href, label);
+          if (audio) {
+            return <SignedAudio {...audio} />;
           }
           return <MessageLink href={href}>{children}</MessageLink>;
         },

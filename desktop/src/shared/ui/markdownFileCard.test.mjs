@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { resolveFileCard, resolveSnapshotCard } from "./markdownFileCard.ts";
+import {
+  isInlineAudioMime,
+  resolveFileCard,
+  resolveSnapshotCard,
+} from "./markdownFileCard.ts";
 
 // A generic-file URL (non-media extension) does not match the relay-media
 // proxy regex, so `rewriteRelayUrl` passes it through unchanged — assertions
@@ -321,4 +325,21 @@ test("resolveSnapshotCard: .TEAM.PNG classifies as team snapshot card", () => {
   );
   assert.ok(card !== null);
   assert.equal(card.snapshotKind, "team");
+});
+
+test("isInlineAudioMime: only audio/mpeg plays inline", () => {
+  assert.equal(isInlineAudioMime("audio/mpeg"), true);
+  assert.equal(isInlineAudioMime("audio/wav"), false);
+  assert.equal(isInlineAudioMime("application/pdf"), false);
+  assert.equal(isInlineAudioMime(undefined), false);
+});
+
+test("resolveFileCard: an MP3 still gets a download card (player renders under it)", () => {
+  const card = resolveFileCard(
+    { m: "audio/mpeg", filename: "memo.mp3", size: 1234 },
+    "https://example.com/media/abc.mp3",
+    "memo.mp3",
+  );
+  assert.equal(card?.filename, "memo.mp3");
+  assert.equal(card?.size, 1234);
 });
