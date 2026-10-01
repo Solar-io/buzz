@@ -1,70 +1,61 @@
-//! Call transcript carried back to the parent channel when a huddle ends.
+//! Call lines carried, live, from a voice call into its parent channel.
 //!
-//! A voice huddle runs in an EPHEMERAL (ttl) channel linked to its parent by a
-//! creator-signed kind:48100. Spoken turns land there as kind:9 `"[voice] …"`
-//! messages and agents reply as kind:9 in the same channel. When the relay
-//! ends the huddle (the exactly-once kind:48103 path in
-//! `handler::archive_empty_huddle`) nothing from the call used to reach the
-//! parent, and the ephemeral channel then expired — taking the conversation
-//! with it. This module posts ONE relay-signed kind:9 into the parent holding
-//! the whole call as `Name: text` lines, oldest first.
+//! A voice huddle (channel huddle or DM voice call) runs in an EPHEMERAL (ttl)
+//! channel linked to its parent by a creator-signed kind:48100. Spoken turns
+//! land there as kind:9 `"[voice] …"` messages signed by the speaker's client,
+//! and agents reply as kind:9 in the same channel. That channel expires, and
+//! nobody looking at the parent channel / DM sees the conversation happen.
 //!
-//! It fires on EVERY huddle end, each hooked right after the archive that
-//! ended it: the relay's empty-room grace timer (`archive_empty_huddle`), a
-//! client kind:9002 `archived=true` (desktop/mobile end their own huddles
-//! this way, after which the grace timer only sees `AlreadyEnded`), and the
-//! TTL reaper (`handlers::side_effects::run_ephemeral_reaper_tick`).
+//! This module mirrors EACH kind:9 of the call into the parent as it lands:
+//! one relay-signed kind:9 per utterance, carrying the utterance text (the
+//! `[voice]` marker stripped) and attributed to its speaker:
 //!
-//! Exactly-once rides on the archive: only the caller that won the
-//! `archived_at IS NULL → NOW()` transition reaches its hook. As
-//! belt-and-braces the event's `created_at` is pinned to the channel's
-//! `archived_at`, so a replay over the same messages produces the same event
-//! id and the insert dedupes.
+//! ```text
+//! ["h", <parent>]
+//! ["actor", <speaker pubkey hex>]            // delegated authorship
+//! ["buzz-system", "call-line"]               // never a trigger
+//! ["buzz-call-source", <source id>, <call channel>]
+//! ```
 //!
-//! The message carries `["buzz-system", "call-transcript"]`
-//! ([`buzz_core::kind::TAG_BUZZ_SYSTEM`]), which the agent harness
-//! (`buzz-acp` `filter::match_event`) treats as never-trigger: a transcript is
-//! a record of a conversation that already happened, not a new prompt.
+//! **Authorship.** The copy must be relay-signed: the speaker's own event is
+//! signed over its `h` tag (the call channel), so it cannot be re-homed. The
+//! `actor` tag is the existing relay-signed delegated-authorship convention
+//! (`ingest::effective_message_author`, desktop `authors.ts`): clients honour
+//! it ONLY on the relay's NIP-11 `self` signature, and the relay only ever
+//! writes the pubkey that SIGNED the source event — an agent cannot get a line
+//! attributed to Sam, because the only way to produce one is for Sam's key to
+//! sign the call-room message. The source id is carried for audit.
+//!
+//! **No trigger loops.** `buzz-system` is relay-only at ingest, keeps the line
+//! out of workflows (`handlers::event::is_relay_non_trigger_message`), and the
+//! agent harness drops it before rule matching (`buzz-acp`
+//! `filter::match_event`). No `p` tags are copied, so nothing is mentioned.
+//!
+//! **Exactly once, no end-of-call duplicate.** A line's id is deterministic —
+//! same content, tags, relay key and `created_at` (the SOURCE's) — so the live
+//! mirror ([`spawn_live_call_line`], from ingest) and the end-of-call flush
+//! ([`flush_call_lines`], on every huddle end) produce the SAME event and the
+//! insert dedupes. The flush therefore posts only lines the live path missed
+//! (relay restart mid-call, a dropped spawn); it replaced the single
+//! end-of-call transcript message, which would now duplicate every line.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use buzz_core::kind::{BUZZ_SYSTEM_CALL_TRANSCRIPT, KIND_STREAM_MESSAGE, TAG_BUZZ_SYSTEM};
+use buzz_core::kind::{
+    BUZZ_SYSTEM_CALL_LINE, KIND_STREAM_MESSAGE, TAG_BUZZ_CALL_SOURCE, TAG_BUZZ_SYSTEM,
+};
 use buzz_core::tenant::TenantContext;
-use nostr::{EventBuilder, Kind, Tag, ToBech32};
+use nostr::{EventBuilder, Kind, Tag};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::state::AppState;
 
-/// Newest kind:9 messages considered. A call longer than this keeps its most
-/// recent turns and notes that earlier ones were omitted.
-pub(crate) const TRANSCRIPT_MAX_MESSAGES: usize = 500;
-
-/// Byte budget for the rendered transcript body (header + lines). Well under
-/// any relay event-size ceiling; when exceeded the OLDEST lines are dropped
-/// (the end of a call — conclusions, recommendations — is what gets lost
-/// otherwise) and an omission note is written under the header.
-pub(crate) const TRANSCRIPT_MAX_BYTES: usize = 32 * 1024;
-
-/// Per-line cap so one giant pasted reply cannot evict the whole call.
-pub(crate) const TRANSCRIPT_MAX_LINE_BYTES: usize = 4 * 1024;
+/// Newest call messages the end-of-call flush considers.
+pub(crate) const FLUSH_MAX_MESSAGES: usize = 500;
 
 /// Spoken-turn marker the web huddle voice mode prefixes onto user speech.
 const VOICE_MARKER: &str = "[voice]";
-
-/// Separator between transcript lines. A BLANK line, not "\n": clients render
-/// kind:9 content as CommonMark, where a single newline is a soft break that
-/// collapses to a space — every speaker would run together in one paragraph
-/// (pinned by web `channels/ui/callTranscriptRow.test.mjs`).
-const LINE_SEPARATOR: &str = "\n\n";
-
-/// One transcript line: resolved speaker label plus message text.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TranscriptLine {
-    pub speaker: String,
-    pub text: String,
-}
 
 /// Strip the leading `[voice] ` marker (and surrounding whitespace).
 pub(crate) fn strip_voice_marker(content: &str) -> &str {
@@ -76,221 +67,74 @@ pub(crate) fn strip_voice_marker(content: &str) -> &str {
     }
 }
 
-/// Cap on a speaker name or channel name inside the transcript.
-const TRANSCRIPT_MAX_NAME_BYTES: usize = 128;
-
-/// Collapse every whitespace run (newlines included) to one space. Applied to
-/// speaker names, the channel name and message text: all three are
-/// user-controlled, and a line break in any of them would let one participant
-/// forge extra `Name: text` paragraphs in the transcript.
-fn one_line(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// Truncate `s` to at most `max` bytes on a char boundary, appending `…` when cut.
-fn truncate_bytes(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        return s.to_string();
-    }
-    let mut end = max.saturating_sub('…'.len_utf8());
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &s[..end])
-}
-
-/// Render the transcript message body, or `None` when there is nothing to say.
-///
-/// `lines` are oldest first. `earlier_omitted` is true when the message query
-/// itself hit [`TRANSCRIPT_MAX_MESSAGES`] (older turns were never fetched).
-pub(crate) fn render_transcript(
-    channel_name: &str,
-    lines: &[TranscriptLine],
-    earlier_omitted: bool,
-) -> Option<String> {
-    if lines.is_empty() {
+/// The text a call message mirrors as, or `None` when it is not a mirrorable
+/// utterance: not a kind:9, authored by the relay itself, already a
+/// `buzz-system` record, or empty once the `[voice]` marker is stripped.
+pub(crate) fn mirrorable_text<'a>(
+    relay_pubkey: &nostr::PublicKey,
+    source: &'a nostr::Event,
+) -> Option<&'a str> {
+    if u32::from(source.kind.as_u16()) != KIND_STREAM_MESSAGE
+        || source.pubkey == *relay_pubkey
+        || source
+            .tags
+            .iter()
+            .any(|t| t.as_slice().first().map(String::as_str) == Some(TAG_BUZZ_SYSTEM))
+    {
         return None;
     }
-    let header = format!(
-        "📞 Call transcript — {}",
-        truncate_bytes(&one_line(channel_name), TRANSCRIPT_MAX_NAME_BYTES)
-    );
-    let rendered: Vec<String> = lines
-        .iter()
-        .map(|l| {
-            truncate_bytes(
-                &format!(
-                    "{}: {}",
-                    truncate_bytes(&one_line(&l.speaker), TRANSCRIPT_MAX_NAME_BYTES),
-                    one_line(&l.text)
-                ),
-                TRANSCRIPT_MAX_LINE_BYTES,
-            )
-        })
-        .collect();
-
-    // Keep the newest lines that fit, walking backwards. Reserve room for the
-    // header and a worst-case omission note so the total stays in budget.
-    let reserve = header.len() + 64;
-    let budget = TRANSCRIPT_MAX_BYTES.saturating_sub(reserve);
-    let mut used = 0usize;
-    let mut first_kept = rendered.len();
-    for (i, line) in rendered.iter().enumerate().rev() {
-        let cost = line.len() + LINE_SEPARATOR.len();
-        if used + cost > budget {
-            break;
-        }
-        used += cost;
-        first_kept = i;
-    }
-    let dropped = first_kept;
-
-    let mut out = header;
-    out.push_str(LINE_SEPARATOR);
-    // When the message query itself was capped the true number of omitted
-    // turns is unknown, so no count is claimed; otherwise it is exact.
-    if earlier_omitted {
-        out.push_str("(… earlier lines omitted)");
-        out.push_str(LINE_SEPARATOR);
-    } else if dropped > 0 {
-        out.push_str(&format!("(… {dropped} earlier lines omitted)"));
-        out.push_str(LINE_SEPARATOR);
-    }
-    out.push_str(&rendered[first_kept..].join(LINE_SEPARATOR));
-    Some(out)
+    let text = strip_voice_marker(&source.content);
+    (!text.is_empty()).then_some(text)
 }
 
-/// Short, human-scannable fallback label for a pubkey with no display name.
-fn short_npub(pubkey: &nostr::PublicKey) -> String {
-    match pubkey.to_bech32() {
-        Ok(npub) => format!("{}…", &npub[..npub.len().min(12)]),
-        Err(_) => {
-            let hex = pubkey.to_hex();
-            format!("{}…", &hex[..8])
-        }
-    }
-}
-
-/// Post the call transcript of ephemeral huddle `channel_id` into its verified
-/// parent `parent_channel_id`. Best-effort: every failure is logged and
-/// swallowed — a missing transcript must never undo or delay the huddle end.
+/// Build (and sign) the parent-channel copy of call message `source`, or
+/// `None` when [`mirrorable_text`] rejects it.
 ///
-/// Returns the posted event id (hex) when a transcript was published.
-pub(crate) async fn emit_call_transcript(
+/// Deterministic apart from the Schnorr signature: the event id depends only
+/// on `(relay key, created_at = source.created_at, kind, tags, content)`.
+pub(crate) fn call_line_event(
+    relay_keys: &nostr::Keys,
+    call_channel_id: Uuid,
+    parent_channel_id: Uuid,
+    source: &nostr::Event,
+) -> Option<nostr::Event> {
+    let text = mirrorable_text(&relay_keys.public_key(), source)?;
+    let tags = [
+        Tag::parse(["h", &parent_channel_id.to_string()]),
+        Tag::parse(["actor", &source.pubkey.to_hex()]),
+        Tag::parse([TAG_BUZZ_SYSTEM, BUZZ_SYSTEM_CALL_LINE]),
+        Tag::parse([
+            TAG_BUZZ_CALL_SOURCE,
+            &source.id.to_hex(),
+            &call_channel_id.to_string(),
+        ]),
+    ]
+    .into_iter()
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| warn!("call line: failed to build tags: {e}"))
+    .ok()?;
+    EventBuilder::new(Kind::from(KIND_STREAM_MESSAGE as u16), text)
+        .tags(tags)
+        .custom_created_at(source.created_at)
+        .sign_with_keys(relay_keys)
+        .map_err(|e| warn!("call line: failed to sign: {e}"))
+        .ok()
+}
+
+/// Persist `event` as a top-level message of `parent_channel_id` and fan it
+/// out. Returns true when it was newly inserted (false: already there, or the
+/// write failed — logged).
+async fn publish_call_line(
     state: &Arc<AppState>,
     tenant: &TenantContext,
-    channel_id: Uuid,
     parent_channel_id: Uuid,
-) -> Option<String> {
-    // Non-ephemeral huddles run in the channel itself (lifecycle parent ==
-    // channel): their messages are already in the main chat.
-    if parent_channel_id == channel_id {
-        return None;
-    }
-    let channel = match state.db.get_channel(tenant.community(), channel_id).await {
-        Ok(ch) => ch,
-        Err(e) => {
-            warn!(channel_id = %channel_id, "call transcript: channel lookup failed: {e}");
-            return None;
-        }
-    };
-    // Only ephemeral (ttl) huddle channels expire and lose their messages.
-    channel.ttl_seconds?;
-
-    let query = buzz_db::EventQuery {
-        channel_id: Some(channel_id),
-        kinds: Some(vec![KIND_STREAM_MESSAGE as i32]),
-        limit: Some(TRANSCRIPT_MAX_MESSAGES as i64 + 1),
-        ..buzz_db::EventQuery::for_community(tenant.community())
-    };
-    let mut events = match state.db.query_events(&query).await {
-        Ok(evs) => evs,
-        Err(e) => {
-            warn!(channel_id = %channel_id, "call transcript: message query failed: {e}");
-            return None;
-        }
-    };
-    let earlier_omitted = events.len() > TRANSCRIPT_MAX_MESSAGES;
-    events.truncate(TRANSCRIPT_MAX_MESSAGES);
-    // query_events is newest first (created_at DESC, id ASC); flip to oldest
-    // first with the same deterministic tiebreak.
-    events.reverse();
-
-    // Resolve display names in one bulk read of the users table (populated
-    // from kind:0 profiles); fall back to a short npub.
-    let mut authors: Vec<Vec<u8>> = events
-        .iter()
-        .map(|e| e.event.pubkey.to_bytes().to_vec())
-        .collect();
-    authors.sort();
-    authors.dedup();
-    let names: HashMap<Vec<u8>, String> =
-        match state.db.get_users_bulk(tenant.community(), &authors).await {
-            Ok(users) => users
-                .into_iter()
-                .filter_map(|u| {
-                    let name = u.display_name?.trim().to_string();
-                    (!name.is_empty()).then_some((u.pubkey, name))
-                })
-                .collect(),
-            Err(e) => {
-                debug!(channel_id = %channel_id, "call transcript: name lookup failed: {e}");
-                HashMap::new()
-            }
-        };
-
-    let lines: Vec<TranscriptLine> = events
-        .iter()
-        .filter_map(|e| {
-            let text = strip_voice_marker(&e.event.content);
-            if text.is_empty() {
-                return None;
-            }
-            let key = e.event.pubkey.to_bytes().to_vec();
-            let speaker = names
-                .get(&key)
-                .cloned()
-                .unwrap_or_else(|| short_npub(&e.event.pubkey));
-            Some(TranscriptLine {
-                speaker,
-                text: text.to_string(),
-            })
-        })
-        .collect();
-
-    let body = render_transcript(&channel.name, &lines, earlier_omitted)?;
-
-    let tags = match (
-        Tag::parse(["h", &parent_channel_id.to_string()]),
-        Tag::parse([TAG_BUZZ_SYSTEM, BUZZ_SYSTEM_CALL_TRANSCRIPT]),
-    ) {
-        (Ok(h), Ok(sys)) => vec![h, sys],
-        (Err(e), _) | (_, Err(e)) => {
-            warn!("call transcript: failed to build tags: {e}");
-            return None;
-        }
-    };
-    let created_at = channel
-        .archived_at
-        .map(|t| t.timestamp().max(0) as u64)
-        .unwrap_or_else(|| nostr::Timestamp::now().as_secs());
-    let event = match EventBuilder::new(Kind::from(KIND_STREAM_MESSAGE as u16), body)
-        .tags(tags)
-        .custom_created_at(nostr::Timestamp::from_secs(created_at))
-        .sign_with_keys(&state.relay_keypair)
-    {
-        Ok(ev) => ev,
-        Err(e) => {
-            warn!("call transcript: failed to sign: {e}");
-            return None;
-        }
-    };
+    event: &nostr::Event,
+) -> bool {
     let event_id_bytes = event.id.as_bytes().to_vec();
-    let event_created_at =
-        chrono::DateTime::from_timestamp(created_at as i64, 0).unwrap_or_else(chrono::Utc::now);
-
-    // Persist as a top-level (depth 0) channel message, matching the
-    // workflow SendMessage path so the timeline treats it like any message.
+    let event_created_at = chrono::DateTime::from_timestamp(event.created_at.as_secs() as i64, 0)
+        .unwrap_or_else(chrono::Utc::now);
+    // Top-level (depth 0), matching the workflow SendMessage path so the
+    // timeline treats it like any message.
     let thread_meta = buzz_db::event::ThreadMetadataParams {
         event_id: &event_id_bytes,
         event_created_at,
@@ -306,7 +150,7 @@ pub(crate) async fn emit_call_transcript(
         .db
         .insert_event_with_thread_metadata(
             tenant.community(),
-            &event,
+            event,
             Some(parent_channel_id),
             Some(thread_meta),
         )
@@ -314,20 +158,13 @@ pub(crate) async fn emit_call_transcript(
     {
         Ok(r) => r,
         Err(e) => {
-            warn!(
-                channel_id = %channel_id,
-                parent_channel_id = %parent_channel_id,
-                "call transcript: persist failed: {e}"
-            );
-            return None;
+            warn!(parent_channel_id = %parent_channel_id, "call line: persist failed: {e}");
+            return false;
         }
     };
-    let event_id_hex = event.id.to_hex();
     if !inserted {
-        debug!(event_id = %event_id_hex, "call transcript already persisted — skipping fan-out");
-        return None;
+        return false;
     }
-
     let relay_hex = state.relay_keypair.public_key().to_hex();
     crate::handlers::event::dispatch_persistent_event(
         tenant,
@@ -338,63 +175,171 @@ pub(crate) async fn emit_call_transcript(
         None,
     )
     .await;
-
-    info!(
-        channel_id = %channel_id,
-        parent_channel_id = %parent_channel_id,
-        event_id = %event_id_hex,
-        lines = lines.len(),
-        "huddle ended — call transcript posted to parent channel"
-    );
-    Some(event_id_hex)
+    true
 }
 
-/// Post the call transcript for `channel_id`, which the caller has JUST
-/// archived, resolving its parent from the creator-signed kind:48100 link.
-///
-/// This is the hook for every huddle end that is not the relay's own grace
-/// timer (which already knows the parent it verified at join): a client
-/// kind:9002 `archived=true` (desktop/mobile "End huddle" and last-leave send
-/// their own 48103 then archive this way) and the TTL reaper. A non-ephemeral
-/// channel, or one with no verified huddle link, is a no-op — archiving an
-/// ordinary channel never posts anything.
-pub async fn emit_call_transcript_for_archived(
+/// Resolve the verified parent of call channel `channel` (ephemeral, linked
+/// by a creator-signed kind:48100), or `None` for anything else.
+async fn verified_parent(
+    state: &Arc<AppState>,
+    tenant: &TenantContext,
+    channel: &buzz_db::channel::ChannelRecord,
+) -> Option<Uuid> {
+    // Only ephemeral (ttl) huddle channels hold a call apart from the main
+    // chat; a non-ephemeral huddle runs IN its channel.
+    channel.ttl_seconds?;
+    match state
+        .db
+        .find_huddle_parent_channel(tenant.community(), channel.id, &channel.created_by)
+        .await
+    {
+        Ok(Some(parent)) if parent != channel.id => Some(parent),
+        Ok(_) => None,
+        Err(e) => {
+            warn!(channel_id = %channel.id, "call line: parent lookup failed: {e}");
+            None
+        }
+    }
+}
+
+/// Mirror one just-stored call message into the call's parent. Best-effort:
+/// every failure is logged and swallowed. Returns the mirrored event id (hex)
+/// when a NEW line was posted.
+pub(crate) async fn mirror_call_line(
+    state: &Arc<AppState>,
+    tenant: &TenantContext,
+    channel: &buzz_db::channel::ChannelRecord,
+    source: &nostr::Event,
+) -> Option<String> {
+    // Cheap rejection first: it needs no database read.
+    mirrorable_text(&state.relay_keypair.public_key(), source)?;
+    let parent = verified_parent(state, tenant, channel).await?;
+    let event = call_line_event(&state.relay_keypair, channel.id, parent, source)?;
+    let id = event.id.to_hex();
+    publish_call_line(state, tenant, parent, &event)
+        .await
+        .then(|| {
+            debug!(call = %channel.id, parent = %parent, event_id = %id, "call line mirrored");
+            id
+        })
+}
+
+/// Ingest hook: a kind:9 just landed in `channel`. When that channel is a call
+/// room (ephemeral), mirror the message into the call's parent in the
+/// background — the sender's OK never waits on it. Free for every other
+/// channel (the row is already loaded by ingest).
+pub(crate) fn spawn_live_call_line(
+    state: &Arc<AppState>,
+    tenant: &TenantContext,
+    channel: Option<&buzz_db::channel::ChannelRecord>,
+    source: &nostr::Event,
+) {
+    let Some(channel) = channel else { return };
+    if channel.ttl_seconds.is_none() || u32::from(source.kind.as_u16()) != KIND_STREAM_MESSAGE {
+        return;
+    }
+    let state = Arc::clone(state);
+    let tenant = tenant.clone();
+    let channel = channel.clone();
+    let source = source.clone();
+    tokio::spawn(async move {
+        mirror_call_line(&state, &tenant, &channel, &source).await;
+    });
+}
+
+/// End-of-call flush: mirror every kind:9 of call channel `channel_id` into
+/// `parent_channel_id` that is not there yet. Lines the live path already
+/// posted dedupe on their deterministic id, so a call that flowed live posts
+/// nothing here. Returns the number of NEW lines posted.
+pub(crate) async fn flush_call_lines(
     state: &Arc<AppState>,
     tenant: &TenantContext,
     channel_id: Uuid,
-) -> Option<String> {
+    parent_channel_id: Uuid,
+) -> usize {
+    if parent_channel_id == channel_id {
+        return 0;
+    }
+    let query = buzz_db::EventQuery {
+        channel_id: Some(channel_id),
+        kinds: Some(vec![KIND_STREAM_MESSAGE as i32]),
+        limit: Some(FLUSH_MAX_MESSAGES as i64),
+        ..buzz_db::EventQuery::for_community(tenant.community())
+    };
+    let mut events = match state.db.query_events(&query).await {
+        Ok(evs) => evs,
+        Err(e) => {
+            warn!(channel_id = %channel_id, "call flush: message query failed: {e}");
+            return 0;
+        }
+    };
+    // query_events is newest first; publish oldest first.
+    events.reverse();
+    let mut posted = 0usize;
+    for stored in &events {
+        let Some(line) = call_line_event(
+            &state.relay_keypair,
+            channel_id,
+            parent_channel_id,
+            &stored.event,
+        ) else {
+            continue;
+        };
+        if publish_call_line(state, tenant, parent_channel_id, &line).await {
+            posted += 1;
+        }
+    }
+    if posted > 0 {
+        info!(
+            channel_id = %channel_id,
+            parent_channel_id = %parent_channel_id,
+            posted,
+            "huddle ended — flushed call lines the live mirror had missed"
+        );
+    }
+    posted
+}
+
+/// [`flush_call_lines`] for `channel_id`, which the caller has JUST archived,
+/// resolving its parent from the creator-signed kind:48100 link. The hook for
+/// a client kind:9002 `archived=true` and the TTL reaper. A non-ephemeral
+/// channel, or one with no verified huddle link, is a no-op.
+pub async fn flush_call_lines_for_archived(
+    state: &Arc<AppState>,
+    tenant: &TenantContext,
+    channel_id: Uuid,
+) -> usize {
     let channel = match state.db.get_channel(tenant.community(), channel_id).await {
         Ok(ch) => ch,
         Err(e) => {
-            debug!(channel_id = %channel_id, "call transcript: channel lookup failed: {e}");
-            return None;
+            debug!(channel_id = %channel_id, "call flush: channel lookup failed: {e}");
+            return 0;
         }
     };
-    channel.ttl_seconds?;
-    let parent = match state
-        .db
-        .find_huddle_parent_channel(tenant.community(), channel_id, &channel.created_by)
-        .await
-    {
-        Ok(Some(parent)) => parent,
-        Ok(None) => return None,
-        Err(e) => {
-            warn!(channel_id = %channel_id, "call transcript: parent lookup failed: {e}");
-            return None;
-        }
+    let Some(parent) = verified_parent(state, tenant, &channel).await else {
+        return 0;
     };
-    emit_call_transcript(state, tenant, channel_id, parent).await
+    flush_call_lines(state, tenant, channel_id, parent).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn line(speaker: &str, text: &str) -> TranscriptLine {
-        TranscriptLine {
-            speaker: speaker.into(),
-            text: text.into(),
-        }
+    fn tag_value<'a>(event: &'a nostr::Event, name: &str) -> Option<&'a [String]> {
+        event
+            .tags
+            .iter()
+            .map(|t| t.as_slice())
+            .find(|s| s.first().map(String::as_str) == Some(name))
+    }
+
+    fn call_msg(keys: &nostr::Keys, content: &str, secs: u64) -> nostr::Event {
+        EventBuilder::new(Kind::from(9u16), content)
+            .tags([Tag::parse(["h", &Uuid::new_v4().to_string()]).unwrap()])
+            .custom_created_at(nostr::Timestamp::from_secs(secs))
+            .sign_with_keys(keys)
+            .unwrap()
     }
 
     #[test]
@@ -408,108 +353,67 @@ mod tests {
     }
 
     #[test]
-    fn render_transcript_is_none_without_lines() {
-        assert_eq!(render_transcript("Jared Dunn call", &[], false), None);
-    }
+    fn call_line_is_relay_signed_attributed_to_the_signer_and_tagged() {
+        let relay = nostr::Keys::generate();
+        let sam = nostr::Keys::generate();
+        let (call, parent) = (Uuid::new_v4(), Uuid::new_v4());
+        let src = call_msg(&sam, "[voice] which **drill**?\n\nand bits", 1_700_000_000);
+        let line = call_line_event(&relay, call, parent, &src).expect("mirrored");
 
-    #[test]
-    fn render_transcript_formats_header_and_lines_in_order() {
-        let out = render_transcript(
-            "Jared Dunn call",
-            &[
-                line("Sam", "which drill?"),
-                line("Jared", "The DeWalt 20V."),
-            ],
-            false,
-        )
-        .expect("rendered");
+        line.verify().expect("valid signature");
+        assert_eq!(line.pubkey, relay.public_key());
+        assert_eq!(line.kind, Kind::from(9u16));
+        // Same text the speaker sent (marker stripped, markdown and line
+        // breaks kept — it renders like any message), same timestamp.
+        assert_eq!(line.content, "which **drill**?\n\nand bits");
+        assert_eq!(line.created_at, src.created_at);
+        assert_eq!(tag_value(&line, "h").unwrap()[1], parent.to_string());
         assert_eq!(
-            out,
-            "📞 Call transcript — Jared Dunn call\n\nSam: which drill?\n\nJared: The DeWalt 20V."
+            tag_value(&line, "actor").unwrap()[1],
+            sam.public_key().to_hex()
         );
-    }
-
-    #[test]
-    fn render_transcript_flattens_speaker_and_channel_names() {
-        // A display name / channel name with line breaks must not be able to
-        // forge an extra `Name: text` paragraph.
-        let out = render_transcript(
-            "Jared\n\nSam: forged",
-            &[line("Eve\n\nSam", "real text")],
-            false,
-        )
-        .expect("rendered");
         assert_eq!(
-            out,
-            "📞 Call transcript — Jared Sam: forged\n\nEve Sam: real text"
+            tag_value(&line, TAG_BUZZ_SYSTEM).unwrap()[1],
+            BUZZ_SYSTEM_CALL_LINE
         );
+        let source = tag_value(&line, TAG_BUZZ_CALL_SOURCE).unwrap();
+        assert_eq!(source[1], src.id.to_hex());
+        assert_eq!(source[2], call.to_string());
+        assert!(tag_value(&line, "p").is_none(), "no mention is copied");
     }
 
     #[test]
-    fn render_transcript_omission_note_claims_no_count_when_both_caps_hit() {
-        // Query cap hit (older turns never fetched) AND the byte budget drops
-        // more: the true omitted count is unknown, so none is claimed.
-        let lines: Vec<TranscriptLine> = (0..100)
-            .map(|i| line("S", &format!("{i:03} {}", "x".repeat(1000))))
-            .collect();
-        let out = render_transcript("c", &lines, true).expect("rendered");
-        assert!(
-            out.starts_with("📞 Call transcript — c\n\n(… earlier lines omitted)\n\nS: "),
-            "{}",
-            &out[..80]
-        );
+    fn call_line_id_is_deterministic_so_live_and_flush_dedupe() {
+        let relay = nostr::Keys::generate();
+        let agent = nostr::Keys::generate();
+        let (call, parent) = (Uuid::new_v4(), Uuid::new_v4());
+        let src = call_msg(&agent, "The DeWalt 20V.", 1_700_000_001);
+        let a = call_line_event(&relay, call, parent, &src).unwrap();
+        let b = call_line_event(&relay, call, parent, &src).unwrap();
+        assert_eq!(a.id, b.id);
     }
 
     #[test]
-    fn render_transcript_flattens_a_messages_own_line_breaks() {
-        let out =
-            render_transcript("c", &[line("J", "one\n\ntwo\nthree")], false).expect("rendered");
-        assert_eq!(out, "📞 Call transcript — c\n\nJ: one two three");
-    }
-
-    #[test]
-    fn render_transcript_notes_query_level_omission() {
-        let out = render_transcript("c", &[line("A", "x")], true).expect("rendered");
-        assert_eq!(
-            out,
-            "📞 Call transcript — c\n\n(… earlier lines omitted)\n\nA: x"
-        );
-    }
-
-    #[test]
-    fn render_transcript_drops_oldest_lines_to_fit_budget() {
-        // 100 lines of ~1 KiB each is ~100 KiB, far over the 32 KiB budget.
-        let lines: Vec<TranscriptLine> = (0..100)
-            .map(|i| line("S", &format!("{i:03} {}", "x".repeat(1000))))
-            .collect();
-        let out = render_transcript("c", &lines, false).expect("rendered");
-        assert!(out.len() <= TRANSCRIPT_MAX_BYTES, "len {}", out.len());
-        // Newest line is kept, oldest is dropped, and the drop is counted.
-        assert!(out.contains("S: 099 "));
-        assert!(!out.contains("S: 000 "));
-        let kept = out.lines().filter(|l| l.starts_with("S: ")).count();
-        assert!(kept > 0 && kept < 100);
-        assert!(
-            out.contains(&format!("(… {} earlier lines omitted)", 100 - kept)),
-            "{}",
-            &out[..120]
-        );
-    }
-
-    #[test]
-    fn render_transcript_caps_a_single_giant_line() {
-        let giant = "y".repeat(TRANSCRIPT_MAX_LINE_BYTES * 3);
-        let out = render_transcript("c", &[line("S", &giant)], false).expect("rendered");
-        let body_line = out.lines().last().expect("line");
-        assert!(body_line.len() <= TRANSCRIPT_MAX_LINE_BYTES);
-        assert!(body_line.ends_with('…'));
-    }
-
-    #[test]
-    fn truncate_bytes_respects_char_boundaries() {
-        let s = "ééééé"; // 2 bytes each
-        let t = truncate_bytes(s, 6);
-        assert!(t.len() <= 6);
-        assert!(t.ends_with('…'));
+    fn call_line_skips_non_utterances() {
+        let relay = nostr::Keys::generate();
+        let sam = nostr::Keys::generate();
+        let (call, parent) = (Uuid::new_v4(), Uuid::new_v4());
+        // Empty once the marker is stripped.
+        assert!(call_line_event(&relay, call, parent, &call_msg(&sam, "[voice]  ", 1)).is_none());
+        // The relay's own messages are never mirrored.
+        assert!(call_line_event(&relay, call, parent, &call_msg(&relay, "hi", 1)).is_none());
+        // Not a kind:9.
+        let reaction = EventBuilder::new(Kind::from(7u16), "+")
+            .sign_with_keys(&sam)
+            .unwrap();
+        assert!(call_line_event(&relay, call, parent, &reaction).is_none());
+        // Already a buzz-system record.
+        let sys = EventBuilder::new(Kind::from(9u16), "x")
+            .tags([Tag::parse([TAG_BUZZ_SYSTEM, BUZZ_SYSTEM_CALL_LINE]).unwrap()])
+            .sign_with_keys(&sam)
+            .unwrap();
+        assert!(call_line_event(&relay, call, parent, &sys).is_none());
+        // Control: an ordinary utterance IS mirrored.
+        assert!(call_line_event(&relay, call, parent, &call_msg(&sam, "[voice] hi", 1)).is_some());
     }
 }

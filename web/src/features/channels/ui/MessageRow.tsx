@@ -301,6 +301,17 @@ export function MessageRow({
                   createdAt={message.createdAt}
                   className="font-mono text-2xs"
                 />
+                {message.viaCall && (
+                  // Spoken in a voice call and relayed into this chat by
+                  // Buzz on the speaker's behalf (lib/callLines.ts).
+                  <span
+                    data-testid="message-via-call"
+                    title="Spoken in a voice call — relayed by Buzz"
+                    className="text-xs text-muted-foreground"
+                  >
+                    voice
+                  </span>
+                )}
                 {needsYou && (
                   <span
                     data-testid="message-needs-you"

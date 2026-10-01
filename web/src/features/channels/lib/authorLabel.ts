@@ -16,6 +16,9 @@ export function authorLabel(
 /** Author labels for relay-authored `buzz-system` messages, by tag value. */
 const BUZZ_SYSTEM_LABELS: Record<string, string> = {
   "call-transcript": "Call transcript",
+  // A call line is normally attributed to its speaker (lib/callLines.ts);
+  // this is the label wherever a view shows it unattributed.
+  "call-line": "Voice call",
 };
 
 /**
