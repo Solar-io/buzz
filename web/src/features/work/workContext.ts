@@ -20,6 +20,8 @@ export interface WorkContextValue {
   reactions: ReactionEvent[];
   targets: ReadonlyMap<string, ReactionTarget>;
   metrics: WorkInputs["metrics"];
+  /** 30624 task status heads (Phase 8). */
+  status: WorkInputs["status"];
   dismissedTurns: ReadonlySet<string>;
   dismissTurn: (turnId: string) => void;
   /** Visible Work surfaces (the rail at lg, the Work page) report in here. */

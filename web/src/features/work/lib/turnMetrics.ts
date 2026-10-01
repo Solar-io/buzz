@@ -107,6 +107,8 @@ export function summarizeDone(
       channelId: entry.channelId,
       at: entry.at,
       stopReason: entry.stopReason,
+      // A metric never carries one; `doneToday.ts` binds the 30624 title.
+      title: null,
     });
   }
   const rows = [...byTurn.values()].sort(

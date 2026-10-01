@@ -7,6 +7,8 @@ import type { AskInterview } from "@/features/home/lib/askInterview.ts";
 import type { InboxItem } from "@/features/home/lib/inboxItem.ts";
 import type { Reminder } from "@/features/reminders/lib/reminderTypes.ts";
 import type { PendingApproval } from "./approvalEvents.ts";
+import type { PrReference } from "./prAsk.ts";
+import type { TaskProgress } from "./taskStatus.ts";
 
 export type WorkScope = "everywhere" | "channel";
 
@@ -45,6 +47,11 @@ export interface NeedRow {
   overdueBy: number | null;
   open: NeedOpen | null;
   source: NeedSource;
+  /**
+   * A PR-merge ask (Phase 8): a decision card that references a NIP-34 pull
+   * request (kind 1618). It lists as APPROVAL; its actions are the card's.
+   */
+  pr?: PrReference | null;
 }
 
 export interface NeedCounts {
@@ -57,7 +64,14 @@ export interface NeedCounts {
 
 export type RunRowState = "live" | "stalled" | "lost" | "reacting";
 
+/**
+ * Where a running row's lifecycle came from: the owner's observer frames, a
+ * member-readable 30624 status head (Phase 8), or an agent's 💬 reaction.
+ */
+export type RunSource = "observer" | "status" | "reaction";
+
 export interface RunRow {
+  /** `turn:<agent>:<turnId>` for both lifecycle sources, so they converge. */
   key: string;
   agentPubkey: string;
   turnId: string | null;
@@ -65,7 +79,10 @@ export interface RunRow {
   startedAt: number | null;
   lastBeatAt: number | null;
   state: RunRowState;
-  source: "observer" | "reaction";
+  source: RunSource;
+  /** From `buzz status set`, bound to this turn; null when none was set. */
+  title: string | null;
+  progress: TaskProgress | null;
 }
 
 export interface QueuedRow {
@@ -83,7 +100,14 @@ export interface DoneLast {
   agentPubkey: string;
   channelId: string | null;
   at: number;
+  /**
+   * How the turn ended when that was not the ordinary ending: a 44200 stop
+   * reason, or a 30624 `error` / `cancelled` (with its reason). Null or
+   * "end_turn" = it simply finished.
+   */
   stopReason: string | null;
+  /** The turn's 30624 title, when its agent set one. */
+  title: string | null;
 }
 
 /** One finished turn (Phase 2: Done today lists every turn, not just the last). */

@@ -5,15 +5,27 @@ import { authorLabel } from "@/features/channels/lib/authorLabel.ts";
 import type { ChannelSummary } from "@/features/channels/useChannels";
 import { cn } from "@/shared/lib/cn";
 import { HexAvatar, StateHex } from "@/shared/ui/HexAvatar";
+import { progressText } from "../lib/taskStatus.ts";
 import type { RunRow } from "../lib/workTypes.ts";
 import { SectionHeader } from "./NeedsYouSection";
-import { channelLabel, clockLabel, elapsedLabel } from "./workLabels.ts";
+import { ProgressSegments } from "./ProgressSegments";
+import {
+  channelLabel,
+  clockLabel,
+  elapsedLabel,
+  metaLine,
+} from "./workLabels.ts";
 
 /**
- * Running (phase-1 §2.4). Honesty over guessing: a silent turn reads "no
- * heartbeat" and stays listed; after ten minutes it reads "lost"; only the
- * viewer's Dismiss removes it. Reaction-derived rows (agents the viewer does
- * not own) say "working · since …" and never claim an elapsed heartbeat.
+ * Running (phase-1 §2.4, Phase 8). Each row is one turn: who, what (the
+ * `buzz status set` title, when the agent set one), where, how far (progress
+ * segments, or "n of m" past five steps) and for how long.
+ *
+ * Honesty over guessing: a silent turn reads "no heartbeat" and stays listed
+ * — an observer turn after 25 s, a 30624 head after 180 s without a refresh;
+ * after ten minutes it reads "lost"; only the viewer's Dismiss removes it.
+ * Reaction-derived rows (agents with no lifecycle source at all) say
+ * "working · since …" and never claim an elapsed heartbeat.
  */
 function RunStatus({ row, nowS }: { row: RunRow; nowS: number }) {
   switch (row.state) {
@@ -101,13 +113,18 @@ export function RunningSection({
                   ? "heartbeat"
                   : channelLabel(row.channelId, channels);
               const quiet = row.state === "stalled" || row.state === "lost";
+              // `!= null`: a row built before Phase 8 has no such fields.
+              const title = row.title != null ? row.title : null;
+              const steps = progressText(row.progress ?? null);
+              const rest = metaLine(steps, where);
               return (
                 <div
                   key={row.key}
                   data-testid={`run-row-${row.state}`}
+                  data-row-key={row.key}
                   className={cn(
                     "flex items-center gap-2.25 border-b border-border px-3 last:border-b-0",
-                    page ? "min-h-13" : "h-8.5",
+                    page ? "min-h-13 py-1.5" : "h-8.5",
                   )}
                 >
                   <button
@@ -130,18 +147,54 @@ export function RunningSection({
                             : "work"
                       }
                     />
-                    <span
-                      className={cn(
-                        "min-w-0 flex-1 truncate",
-                        page ? "text-sm" : "text-sidebar-meta",
-                      )}
-                    >
-                      <b className="font-semibold">{name}</b>
-                      {where ? (
-                        <span className="text-muted-foreground"> {where}</span>
-                      ) : null}
-                    </span>
+                    {page && title ? (
+                      // Phone: who and where, then what — a 52 px row has
+                      // room for the title on its own line.
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span className="truncate text-sm">
+                          <b className="font-semibold">{name}</b>
+                          {where ? (
+                            <span className="text-muted-foreground">
+                              {" "}
+                              {where}
+                            </span>
+                          ) : null}
+                        </span>
+                        <span
+                          data-testid="run-row-title"
+                          className="truncate text-xs text-ink-2"
+                        >
+                          {metaLine(title, steps)}
+                        </span>
+                      </span>
+                    ) : (
+                      // Rail: one line, "Name  title · #channel" (Main).
+                      <span
+                        className={cn(
+                          "min-w-0 flex-1 truncate",
+                          page ? "text-sm" : "text-sidebar-meta",
+                        )}
+                      >
+                        <b className="font-semibold">{name}</b>
+                        {title || rest ? (
+                          <span className="text-muted-foreground">
+                            {" "}
+                            {title ? (
+                              <span data-testid="run-row-title">{title}</span>
+                            ) : null}
+                            {title && rest ? " · " : null}
+                            {rest}
+                          </span>
+                        ) : null}
+                      </span>
+                    )}
                   </button>
+                  {row.progress ? (
+                    <ProgressSegments
+                      progress={row.progress}
+                      live={row.state === "live"}
+                    />
+                  ) : null}
                   <span className="shrink-0 text-right font-mono text-2xs text-muted-foreground">
                     <RunStatus row={row} nowS={nowS} />
                   </span>

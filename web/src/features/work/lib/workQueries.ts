@@ -12,6 +12,7 @@ import type { NostrFilter } from "@/shared/lib/nostr-client";
 import { chunkChannelIds } from "@/features/home/lib/inboxQuery.ts";
 import { APPROVAL_KINDS } from "./approvalEvents.ts";
 import { QUEUED_TTL_S } from "./queuedReactions.ts";
+import { KIND_AGENT_TASK_STATUS, STATUS_LOOKBACK_S } from "./taskStatus.ts";
 import { KIND_AGENT_TURN_METRIC } from "./turnMetrics.ts";
 
 const DAY_S = 86_400;
@@ -64,6 +65,23 @@ export function reactionFilters(
     authors,
     "#h": chunk,
     since: nowS - QUEUED_TTL_S,
+  }));
+}
+
+/**
+ * Kind-30624 task status (Phase 8): one REQ per 128-channel chunk, history
+ * AND live. It must carry `#h` — the relay fans a channel-scoped event out
+ * only to subscriptions registered with that channel (AGENTS.md gotcha 11),
+ * so an `#h`-less "everywhere" REQ would load the heads and then go deaf.
+ */
+export function taskStatusFilters(
+  channelIds: readonly string[],
+  nowS: number,
+): NostrFilter[] {
+  return chunkChannelIds(channelIds).map((chunk) => ({
+    kinds: [KIND_AGENT_TASK_STATUS],
+    "#h": chunk,
+    since: nowS - STATUS_LOOKBACK_S,
   }));
 }
 
