@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { fetchSignedMedia } from "@/shared/api/blossom";
+import { useAvatarSrc } from "@/shared/hooks/useAvatarSrc";
 import { cn } from "@/shared/lib/cn";
 import {
   avatarPaletteClass,
@@ -32,27 +31,7 @@ export function ProfileAvatar({
   className?: string;
   testId?: string;
 }) {
-  const [objectUrl, setObjectUrl] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setObjectUrl(null);
-    if (!picture) {
-      return;
-    }
-    fetchSignedMedia(picture)
-      .then((url) => {
-        if (!cancelled) {
-          setObjectUrl(url);
-        }
-      })
-      .catch(() => {
-        // Unavailable media falls back to the identicon below.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [picture]);
+  const { src: objectUrl, onError } = useAvatarSrc(picture);
 
   if (objectUrl) {
     return (
@@ -61,6 +40,7 @@ export function ProfileAvatar({
         className={cn("shrink-0 rounded-full object-cover", className)}
         data-testid={testId}
         src={objectUrl}
+        onError={onError}
       />
     );
   }

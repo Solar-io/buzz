@@ -336,6 +336,9 @@ pub struct Config {
     /// Whether the configured web bundle serves Git browser routes in addition
     /// to the public invite landing page. Defaults to false.
     pub serve_git_web_gui: bool,
+    /// Content-Security-Policy knobs for the web client's HTML document
+    /// (`BUZZ_WEB_CSP_SAME_HOST_PORTS`, `BUZZ_WEB_CSP_CONNECT_ORIGINS`).
+    pub web_csp: crate::web_csp::WebCspConfig,
     /// Optional base URL of the changelog/tracker sidecar upstream (normally
     /// `http://host.docker.internal:6451`). When set, the relay serves a
     /// strict allowlist of those documents same-origin (`/changelog`,
@@ -1098,6 +1101,9 @@ impl Config {
             .map(|value| value == "true" || value == "1")
             .unwrap_or(false);
 
+        let web_csp =
+            crate::web_csp::WebCspConfig::from_env().map_err(ConfigError::InvalidValue)?;
+
         if let Some(ref dir) = web_dir {
             if !dir.join("index.html").is_file() {
                 return Err(ConfigError::InvalidValue(format!(
@@ -1188,6 +1194,7 @@ impl Config {
             admin,
             web_dir,
             serve_git_web_gui,
+            web_csp,
             docs_changelog_upstream,
             docs_edition_upstream,
         })
