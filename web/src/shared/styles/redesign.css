@@ -6,6 +6,36 @@
  * (an agent keeps its colour when you switch light/dark).
  */
 
+/* Terminal tokens (Phase 7; Terminal + PhoneTerminal artboards). Whole
+   colours, not HSL triples: the emulator reads them with getComputedStyle and
+   hands them to xterm, which paints a canvas and needs a resolved colour.
+   Static per polarity, like the status hues — every theme gets the canvas
+   terminal. `--key` is the phone key bar's key cap. */
+@layer base {
+  :root {
+    --term: #fbfaf7;
+    --term-ink: #1f1e1b;
+    --term-dim: #7a756b;
+    --term-add: #e6f3ea;
+    --term-add-ink: #1c6644;
+    --term-hl: #1f4e8c;
+    --term-warn: #9a5b00;
+    --term-tab: #efece4;
+    --key: #ffffff;
+  }
+  .dark {
+    --term: #101010;
+    --term-ink: #d8d6d1;
+    --term-dim: #8a8781;
+    --term-add: #16211a;
+    --term-add-ink: #8ccba5;
+    --term-hl: #a5bedf;
+    --term-warn: #d9b56a;
+    --term-tab: #1a1a1a;
+    --key: #222222;
+  }
+}
+
 /* The hexagon every agent avatar and state marker is cut to. */
 .buzz-hex {
   clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);

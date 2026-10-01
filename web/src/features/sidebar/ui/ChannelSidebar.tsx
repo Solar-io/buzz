@@ -20,6 +20,7 @@ import type { DmSummary } from "@/features/dms/hooks";
 import { NewDmDialog } from "@/features/dms/ui/NewDmDialog";
 import { scratchInfo } from "@/features/scratch/lib/scratchChannel.ts";
 import { ScratchGlyph } from "@/features/scratch/ui/ScratchChrome";
+import { TerminalNavButton } from "@/features/terminal/ui/TerminalNavButton";
 import { useUserStatuses } from "@/features/user-status/hooks";
 import { ChannelForum, ChannelGlyph } from "@/features/sidebar/ui/ChannelGlyph";
 import { DmNavRow } from "@/features/sidebar/ui/DmNavRow";
@@ -539,6 +540,7 @@ export function ChannelSidebar({
             icon={<Folder aria-hidden className="size-4 shrink-0" />}
             onSelect={actions.onOpenFiles}
           />
+          <TerminalNavButton />
         </div>
       </div>
       <RelayConnectionCard status={relayStatus} />

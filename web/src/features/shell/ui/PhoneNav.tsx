@@ -3,7 +3,11 @@ import { useEffect } from "react";
 
 import { useWorkCounts } from "@/features/work/useWorkCounts.ts";
 import { PhoneTabBar } from "@/shared/layout/PhoneTabBar";
-import { activePhoneTab, rememberPhoneTab } from "@/shared/layout/phoneTabs.ts";
+import {
+  activePhoneTab,
+  rememberPhoneTab,
+  viewOwnsPhoneScreen,
+} from "@/shared/layout/phoneTabs.ts";
 import { isNativeIOS } from "@/shared/platform/native";
 import { StateHex } from "@/shared/ui/HexAvatar";
 
@@ -31,6 +35,9 @@ export function PhoneNav({
   const { needs } = useWorkCounts();
   const active = activePhoneTab(view);
   useEffect(() => rememberPhoneTab(active), [active]);
+  if (viewOwnsPhoneScreen(view)) {
+    return null;
+  }
   const icon = "size-5";
   return (
     <PhoneTabBar
