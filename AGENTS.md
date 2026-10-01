@@ -939,3 +939,23 @@ Three sub-traps from the same hour:
 - **Check a mutation applied before reading its result.** A `sed` whose
   pattern misses (indentation) leaves the file untouched and reports a
   surviving mutant; `git diff --stat` empty means you tested the original.
+
+## Web Items (kind 30623): what the e2e and the browser check need (earned on Phase 5, 2026-09-30)
+
+- **The mock relay does not fan a publish back out.** Anything published
+  outside the composer's own send path (which inserts an optimistic row) —
+  the `/bug` confirmation row, a handoff — never reaches the timeline in a
+  spec unless the relay options echo it:
+  `onPublish: (event, relay) => relay.push(event)`. The real relay does.
+- **`page.route` runs the LAST registered handler first.** `routeUsageHub`
+  (inside `openShell`) answers every `**/summarize`, so a spec that wants
+  its own bridge answer must route after `openShell` and before the page
+  asks — sign in elsewhere, route, then navigate in the app.
+- **A Radix menu reopened right after a pick can swallow the click.** Wait
+  for `getByRole("menu")` to reach count 0 before clicking the trigger again.
+- **Agent Brave can run the mock relay too.** `browser_run_code_unsafe`
+  gets a Playwright `page`, so `page.routeWebSocket` works in the real
+  browser; its `filename` allow-list excludes agent worktrees, so serve the
+  fixture JSON from `dist/` (`vite preview`) and `page.request.get` it.
+  Activate the tab again before reading layout: a hidden tab runs no
+  ResizeObserver, so a resize looks like a responsive bug.

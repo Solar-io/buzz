@@ -177,17 +177,15 @@ export function ItemsToolbar({
         : filters.project.name;
 
   const tabs = (
-    <div
-      role="tablist"
-      aria-label="Item type"
-      className="flex shrink-0 gap-1.5"
-    >
+    // Toggle buttons, not ARIA tabs: they filter one list in place, there
+    // are no tab panels to point at.
+    <fieldset className="flex shrink-0 gap-1.5">
+      <legend className="sr-only">Item type</legend>
       {TABS.map(([id, label]) => (
         <button
           key={id}
           type="button"
-          role="tab"
-          aria-selected={filters.tab === id}
+          aria-pressed={filters.tab === id}
           data-testid={`items-tab-${id}`}
           onClick={() => onChange({ tab: id })}
           className={cn(
@@ -201,7 +199,7 @@ export function ItemsToolbar({
           <span className="font-mono text-2xs opacity-75">{tabCounts[id]}</span>
         </button>
       ))}
-    </div>
+    </fieldset>
   );
   const facets = (
     <div className="flex shrink-0 gap-1.5">
@@ -243,8 +241,10 @@ export function ItemsToolbar({
   if (narrow) {
     return (
       <div className="flex flex-col gap-2 border-b border-border px-4 pt-1 pb-2.5">
-        <div className="flex items-center gap-1.5 overflow-x-auto">{tabs}</div>
-        <div className="flex items-center gap-1.5 overflow-x-auto">
+        <div className="flex items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">
+          {tabs}
+        </div>
+        <div className="flex items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">
           {facets}
         </div>
       </div>
