@@ -471,6 +471,7 @@ function ChannelBrowser() {
       relayStatus={relayStatus}
       inboxSelected={view === "inbox"}
       workSelected={view === "work"}
+      itemsSelected={view === "items"}
       channelCount={channels.length}
       selectedId={selectedId}
       lists={{ ...lists, dms }}
@@ -520,6 +521,7 @@ function ChannelBrowser() {
           void navigate({ to: "/repos", search: { view: "inbox" } }),
         onOpenWork: () =>
           void navigate({ to: "/repos", search: { view: "work" } }),
+        onOpenItems: () => openView("items"),
         onOpenShortcutOverlay: openLink,
       }}
     />
@@ -766,6 +768,7 @@ function ChannelBrowser() {
               onJump={() => setSearchOpen(true)}
               workChannelId={workChannelId}
               onClearWorkChannel={() => setWorkChannelId(null)}
+              scratch={scratch.actions}
               channelsPage={
                 <>
                   <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground md:hidden">

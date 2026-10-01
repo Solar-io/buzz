@@ -50,6 +50,11 @@ export interface SidebarNavButtonProps {
    * else a pulsing amber hex — with a count past one — while agents work.
    */
   status?: { needs: number; running: number } | null;
+  /**
+   * Quiet trailing text for a destination row — Items' "11 · 31" (open bugs
+   * · open backlog). Not a badge: nothing here is unread.
+   */
+  meta?: ReactNode;
 }
 
 /** The row's work marker, or nothing. Needs outrank running. */
@@ -101,6 +106,7 @@ export function SidebarNavButton({
   onSelect,
   menuItems,
   status,
+  meta,
 }: SidebarNavButtonProps) {
   const marked = status != null && (status.needs > 0 || status.running > 0);
   const closeDrawer = useDrawerClose();
@@ -144,6 +150,11 @@ export function SidebarNavButton({
       {marked && status ? (
         <span className="ml-auto flex shrink-0 items-center">
           <StatusMarker status={status} />
+        </span>
+      ) : null}
+      {meta != null && !marked ? (
+        <span className="ml-auto shrink-0 font-mono text-2xs font-medium text-muted-foreground">
+          {meta}
         </span>
       ) : null}
       {muted && (

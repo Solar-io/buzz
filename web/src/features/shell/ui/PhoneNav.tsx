@@ -1,4 +1,4 @@
-import { Bell, Bot, Folder, Inbox, Settings } from "lucide-react";
+import { Bell, Bot, Folder, Inbox, ListPlus, Settings } from "lucide-react";
 import { useEffect } from "react";
 
 import { useWorkCounts } from "@/features/work/useWorkCounts.ts";
@@ -23,7 +23,9 @@ export function PhoneNav({
 }: {
   view: string | undefined;
   unread: number;
-  onOpenView: (view: "work" | "channels" | "inbox" | "reminders") => void;
+  onOpenView: (
+    view: "work" | "channels" | "inbox" | "items" | "reminders",
+  ) => void;
   onOpenFiles: () => void;
   onOpenSettings: () => void;
   onOpenAgents: () => void;
@@ -44,6 +46,11 @@ export function PhoneNav({
           label: "Inbox",
           icon: <Inbox aria-hidden className={icon} />,
           onSelect: () => onOpenView("inbox"),
+        },
+        {
+          label: "Items",
+          icon: <ListPlus aria-hidden className={icon} />,
+          onSelect: () => onOpenView("items"),
         },
         {
           label: "Reminders",

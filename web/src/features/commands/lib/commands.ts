@@ -4,8 +4,9 @@
  * One entry per command: `{id, args, when(ctx), run(ctx, args)}` plus the two
  * strings the list draws. A command appears only once it WORKS — Phase 2
  * shipped `/remind`, `/handoff` and `/status`, Phase 3 `/new`, `/exit` and
- * `/keep` (`scratchCommands.ts`); `/bug` and `/backlog` join with the phase
- * that builds what they do (plan rule 2: no control that lies).
+ * `/keep` (`scratchCommands.ts`), Phase 5 `/bug` and `/backlog`
+ * (`itemCommands.ts`) — each with the phase that builds what it does (plan
+ * rule 2: no control that lies).
  *
  * `run` never touches the relay itself. Everything a command does goes
  * through `ctx.actions`, which the composer's host supplies, so the registry
@@ -19,6 +20,7 @@ import {
 import { SYSTEM_MESSAGE_KIND } from "../../channels/lib/systemEvent.ts";
 import { quickRemindDueAt } from "../../reminders/lib/quickRemind.ts";
 import type { ReminderTarget } from "../../reminders/lib/reminderTypes.ts";
+import { ITEM_COMMANDS, type ItemCommandActions } from "./itemCommands.ts";
 import type { ParsedCommand } from "./parseCommand.ts";
 import { parseRemindWhen, remindWhenLabel } from "./remindWhen.ts";
 import { SCRATCH_COMMANDS } from "./scratchCommands.ts";
@@ -37,11 +39,15 @@ export interface CommandMessage {
 
 /** What the scratch commands do; the host runs them against the relay. */
 export interface ScratchActions {
-  /** Create the copy, copy the parent's roster in, open it. */
+  /**
+   * Create the copy, copy the parent's roster in, open it. A success names
+   * the new channel, so a caller (Items' "Open a scratch channel for it")
+   * can post its first message there.
+   */
   create: (input: {
     parent: { id: string; name: string };
     name: string | null;
-  }) => Promise<CommandResult>;
+  }) => Promise<CommandResult & { channelId?: string }>;
   /** Leave now; delete once the Undo window has passed. */
   exit: (input: {
     channelId: string;
@@ -102,6 +108,8 @@ export interface CommandContext {
     openWorkForChannel: (channelId: string) => void;
     /** Scratch channels; absent where a composer cannot open one. */
     scratch?: ScratchActions;
+    /** `/bug` and `/backlog`; absent where a composer cannot file items. */
+    items?: ItemCommandActions;
   };
 }
 
@@ -329,6 +337,7 @@ const status: CommandSpec = {
 /** Every command this build can run, in list order. */
 export const COMMANDS: readonly CommandSpec[] = [
   ...SCRATCH_COMMANDS,
+  ...ITEM_COMMANDS,
   remind,
   handoff,
   status,
@@ -338,6 +347,15 @@ export const COMMANDS: readonly CommandSpec[] = [
 export function availableCommands(ctx: CommandContext): CommandSpec[] {
   return COMMANDS.filter((command) => command.when(ctx));
 }
+
+/**
+ * ⌘K stands in for the item host: the channel's main composer always has
+ * one (`CommandComposer` supplies it), and ⌘K only prefills that composer.
+ */
+const PALETTE_ITEMS: ItemCommandActions = {
+  file: async () => ({ ok: false, error: "" }),
+  projectFor: () => null,
+};
 
 /**
  * The commands ⌘K may offer for the open conversation — the composer's own
@@ -361,6 +379,7 @@ export function paletteCommands(
       send: async () => ({ ok: false, message: "" }),
       openWorkForChannel: () => {},
       scratch: input.scratch,
+      items: PALETTE_ITEMS,
     },
   });
 }

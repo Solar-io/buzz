@@ -5,6 +5,7 @@ import { parseCardTags, type DecisionCard } from "./decisionCard.ts";
 import { parseCardAnswerTags, type CardAnswer } from "./cardAnswerTag.ts";
 import { SYSTEM_MESSAGE_KIND } from "./systemEvent.ts";
 import { parseStageTag, type StageTag } from "../../stage/lib/stageTag.ts";
+import { itemRowTag } from "../../items/lib/itemMessages.ts";
 
 /**
  * Kinds that render their own row in a channel timeline.
@@ -113,6 +114,13 @@ export interface TimelineMessage {
    * an ordinary message — always test it with `!= null`.
    */
   handoff?: string | null;
+  /**
+   * A `/bug` or `/backlog` confirmation row: the `["item", <d>, <type>]`
+   * tag (web redesign Phase 5). The row renders as the compact item row.
+   * Optional like `handoff`: a cached row from before the field existed
+   * reads as its plain content, which says the same thing — test `!= null`.
+   */
+  item?: { d: string; type: "bug" | "backlog" } | null;
   /** Edit overlay present (renders the "(edited)" marker). */
   edited: boolean;
   /** Deleted via kind 5 — rows hide rather than render. */
@@ -181,6 +189,7 @@ export function timelineMessageFromEvent(
       : null,
     buzzSystem: buzzSystemTag(event.tags),
     handoff: handoffTag(event.tags),
+    item: itemRowTag(event.tags),
     edited: false,
     deleted: false,
   };

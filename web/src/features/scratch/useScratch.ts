@@ -239,6 +239,7 @@ export function useScratch(options: UseScratchOptions): {
       const copied = plan.length - failures.length;
       return {
         ok: true,
+        channelId,
         notice:
           plan.length === 0
             ? `Opened ${title} — nobody else to copy from #${parent.name}`

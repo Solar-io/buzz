@@ -1,5 +1,6 @@
 import { type ComponentProps, useMemo } from "react";
 import { Composer } from "@/features/channels/ui/Composer";
+import { useItemActions } from "@/features/items/useItemActions.ts";
 import { useRemindMeLater } from "@/features/reminders/ui/RemindMeLaterProvider";
 import type { ComposerCommandHost } from "../useComposerCommands.ts";
 
@@ -10,21 +11,30 @@ type ComposerProps = ComponentProps<typeof Composer>;
  *
  * A thin wrapper, and it exists for one reason: the route that renders the
  * composer sits ABOVE `RemindMeLaterProvider` in the tree, so it cannot read
- * the reminder context `/remind` needs. This component sits below it, takes
- * the rest of the command host from the route, and hands the composer the
- * complete `commands` object.
+ * the reminder context `/remind` needs — nor the Items provider `/bug` and
+ * `/backlog` file through. This component sits below both, takes the rest of
+ * the command host from the route, and hands the composer the complete
+ * `commands` object.
  */
 export function CommandComposer({
   host,
   ...props
 }: Omit<ComposerProps, "commands" | "commandContext"> & {
-  host: Omit<ComposerCommandHost, "createReminder">;
+  host: Omit<ComposerCommandHost, "createReminder" | "items">;
 }) {
   const { createReminder } = useRemindMeLater();
+  const items = useItemActions().commandActions;
   const { channel, messages, openWorkForChannel, scratch } = host;
   const commands = useMemo<ComposerCommandHost>(
-    () => ({ channel, messages, openWorkForChannel, createReminder, scratch }),
-    [channel, messages, openWorkForChannel, createReminder, scratch],
+    () => ({
+      channel,
+      messages,
+      openWorkForChannel,
+      createReminder,
+      scratch,
+      items,
+    }),
+    [channel, messages, openWorkForChannel, createReminder, scratch, items],
   );
   const where = !channel
     ? undefined

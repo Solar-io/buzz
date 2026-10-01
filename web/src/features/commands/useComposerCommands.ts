@@ -22,6 +22,8 @@ export interface ComposerCommandHost {
   openWorkForChannel: (channelId: string) => void;
   /** `/new`, `/exit`, `/keep`; absent, they are not offered. */
   scratch?: CommandContext["actions"]["scratch"];
+  /** `/bug`, `/backlog`; absent, they are not offered. */
+  items?: CommandContext["actions"]["items"];
 }
 
 /**
@@ -74,6 +76,7 @@ export function useComposerCommands(options: {
             send: options.send,
             openWorkForChannel: host.openWorkForChannel,
             scratch: host.scratch,
+            items: host.items,
           },
         }
       : null;
@@ -83,7 +86,7 @@ export function useComposerCommands(options: {
   // scratch (`/keep` turns a scratch channel into an ordinary one in place).
   const listKey =
     typeof host === "object"
-      ? `${host.channel?.id ?? ""}|${host.channel?.scratch?.parentId ?? ""}|${host.scratch ? 1 : 0}`
+      ? `${host.channel?.id ?? ""}|${host.channel?.scratch?.parentId ?? ""}|${host.scratch ? 1 : 0}|${host.items ? 1 : 0}`
       : null;
   // biome-ignore lint/correctness/useExhaustiveDependencies: `context()` reads the latest props; the list only changes with the query and `listKey`
   const matches = useMemo<CommandSpec[]>(() => {

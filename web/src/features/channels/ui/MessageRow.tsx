@@ -29,6 +29,7 @@ import {
   stageOpenCardTag,
 } from "@/features/stage/ui/StageOpenCard";
 import { StagePartChip } from "@/features/stage/ui/StagePartChip";
+import { ItemRowMessage } from "@/features/items/ui/ItemRowMessage";
 import { useRelaySelf } from "@/shared/lib/relaySelf";
 
 /** Desktop parity: the timestamp tooltip waits half a second before opening. */
@@ -354,6 +355,15 @@ export function MessageRow({
               // card; a malformed one parsed to null and falls through to the
               // fallback markdown, like a card. Parts stay ordinary rows.
               <StageOpenCard message={message} />
+            ) : message.item != null ? (
+              // `/bug` · `/backlog`: the compact item row, live from the
+              // Items fold. The content stays the plain-client rendering.
+              <ItemRowMessage
+                channelId={message.channelId}
+                content={message.content}
+                itemRef={message.item}
+                profiles={profiles}
+              />
             ) : handoffSeat !== null ? (
               // `/handoff`: the seat and the task as one bar. The content
               // stays the plain-client rendering ("@Seat task").
