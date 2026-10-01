@@ -108,7 +108,7 @@ export function Composer({
   commands,
   commandContext,
   autoFocus = false,
-  footer,
+  status,
   send,
   ref,
 }: {
@@ -158,7 +158,9 @@ export function Composer({
    * or agent — Sam 2026-09-20: "if two people are the only ones in the
    * conversation, then I shouldn't have to tag them." `label` is the display
    * name the "… will be notified" hint shows. Null/absent means no automatic
-   * tagging: the main-channel composer's payload is untouched.
+   * tagging: the main-channel composer's payload is untouched. The tag is
+   * not announced under the box any more — Sam (2026-09-30) cut the
+   * "… will be notified" line as noise; `label` names it for assistive tech.
    */
   autoNotify?: { pubkey: string; label: string } | null;
   /**
@@ -177,8 +179,12 @@ export function Composer({
   commandContext?: string;
   /** Take focus on mount (a thread opened to reply). */
   autoFocus?: boolean;
-  /** Under the box: the channel's running line (who is working here). */
-  footer?: ReactNode;
+  /**
+   * Directly above the box: the conversation's status line — who is working
+   * or typing here (RunningStrip). It sits where the eye is while waiting for
+   * an answer, above any reply banner or attachment tray (Sam, 2026-09-30).
+   */
+  status?: ReactNode;
   send: (options: {
     content: string;
     mentionPubkeys: string[];
@@ -692,6 +698,7 @@ export function Composer({
             : "Drop files to attach"}
         </div>
       )}
+      {status}
       <ComposerSuggestionLists
         {...suggest.listProps}
         onPickCommand={
@@ -773,6 +780,11 @@ export function Composer({
               : "max-h-60 min-h-11 px-3.5 py-2.5 text-base md:min-h-10 md:w-full md:pt-3 md:pb-1",
           )}
           placeholder={placeholder}
+          aria-description={
+            autoNotify && !editingActive
+              ? `${autoNotify.label} will be notified`
+              : undefined
+          }
           rows={1}
           value={text}
           onChange={(event) => {
@@ -790,7 +802,6 @@ export function Composer({
           onBlur={suggest.resetHighlight}
         />
       </ComposerFrame>
-      {footer}
       {commandRun.error && (
         <p
           role="alert"
@@ -798,19 +809,6 @@ export function Composer({
           className="mt-1.5 px-1 text-xs font-medium text-coral-ink"
         >
           {commandRun.error}
-        </p>
-      )}
-      {/* The author cannot tell an invisible p-tag is being added, so the box
-          says so. An edit carries no p-tags at all, hence the guard. */}
-      {autoNotify && !editingActive && (
-        <p
-          data-testid="composer-auto-notify"
-          className={cn(
-            "text-muted-foreground",
-            inline ? "mt-1 px-0.5 text-2xs" : "mt-1.5 px-1 text-xs",
-          )}
-        >
-          {autoNotify.label} will be notified
         </p>
       )}
     </div>

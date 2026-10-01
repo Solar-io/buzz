@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { runningNames, runningSummary } from "./RunningStrip.tsx";
+import { runningNames, runningSummary, typingOthers } from "./RunningStrip.tsx";
 
 function row(agent, state) {
   return {
@@ -44,6 +44,24 @@ test("working turns are named; a silent turn is named only when nothing works", 
   );
   // Nothing at all: no strip.
   assert.equal(runningSummary([]), null);
+});
+
+test("typing names only who the running rows do not already name", () => {
+  const nikon = "a1".repeat(32);
+  const carol = "c3".repeat(32);
+  const ghost = "e5".repeat(32);
+  // An agent at work types for its whole turn: said once, as working.
+  assert.deepEqual(typingOthers([nikon, carol], [row(nikon, "live")]), [carol]);
+  // A quiet turn names its agent too — the strip already says it.
+  assert.deepEqual(typingOthers([nikon], [row(nikon, "stalled")]), []);
+  // Case never splits one key in two.
+  assert.deepEqual(
+    typingOthers([nikon.toUpperCase()], [row(nikon, "reacting")]),
+    [],
+  );
+  // An agent typing with no lifecycle row is still said; so is a person.
+  assert.deepEqual(typingOthers([ghost, carol], []), [ghost, carol]);
+  assert.deepEqual(typingOthers([], [row(nikon, "live")]), []);
 });
 
 test("names list two, then count the rest", () => {

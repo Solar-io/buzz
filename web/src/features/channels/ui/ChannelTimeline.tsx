@@ -37,7 +37,11 @@ import { SYSTEM_MESSAGE_KIND } from "../lib/systemEvent.ts";
 import { usePermalinkScroll } from "../lib/usePermalinkScroll.ts";
 import { isRenderableCard } from "../lib/decisionCard.ts";
 import { holdAnchor } from "../lib/holdAnchor.ts";
-import { foldReplies, inlineThreadRef } from "../lib/inlineThread.ts";
+import {
+  foldReplies,
+  inlineThreadRef,
+  threadOpen,
+} from "../lib/inlineThread.ts";
 import { openQuickReplies } from "../lib/quickReply.ts";
 import { InlineThread, type InlineThreadComposer } from "./InlineThread.tsx";
 import { MessageRow } from "./MessageRow.tsx";
@@ -77,12 +81,13 @@ function isEditableKeyboardTarget(target: EventTarget | null) {
 
 /**
  * Inline threads (web redesign Phase 2): which rows' threads are open, and
- * what a thread's reply box and the quick-reply buttons send with. The route
- * owns the open set — a reply permalink and the ↩ action both open one.
+ * what a thread's reply box and the quick-reply buttons send with. Threads
+ * with replies are open by default (`threadOpen`); the route owns the
+ * viewer's explicit folds and opens — a reply permalink and ↩ open one.
  */
 export interface TimelineThreads {
-  /** Rows whose thread is expanded. */
-  expandedIds: ReadonlySet<string>;
+  /** The viewer's explicit open (true) / fold (false) per row id. */
+  choices: ReadonlyMap<string, boolean>;
   /** The row whose reply box should take the caret (↩, "Answer in chat"). */
   focusId: string | null;
   /** A reply that must be on screen: its thread shows every reply. */
@@ -114,7 +119,6 @@ export function ChannelTimeline({
   scrollToMessageId,
   onScrollToMessageSettled,
   unreadBefore,
-  typingNames,
   pendingIds,
   tailKey,
   onLoadOlder,
@@ -179,8 +183,6 @@ export function ChannelTimeline({
   onScrollToMessageSettled?: (id: string) => void;
   /** createdAt of the first UNSEEN message — renders the unread divider. */
   unreadBefore?: number | null;
-  /** Display names of people typing in this channel (footer row). */
-  typingNames?: string[];
   /**
    * Ids of optimistically inserted sends still awaiting their relay OK. Those
    * rows render the desktop's "Sending…" status. The web client has no
@@ -292,6 +294,7 @@ export function ChannelTimeline({
     }, 500);
     return () => window.clearInterval(timer);
   }, []);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: recoveryNonce is the restart trigger — each remount re-arms the watcher
   useEffect(() => {
     collapsedBeatsRef.current = 0;
     const startedAt = Date.now();
@@ -609,7 +612,9 @@ export function ChannelTimeline({
     lastRowId = message.id;
     rowIndex.set(message.id, rows.length);
     const replies = folded?.replies.get(message.id) ?? NO_REPLIES;
-    const expanded = threads?.expandedIds.has(message.id) ?? false;
+    const expanded =
+      threads !== undefined &&
+      threadOpen(threads.choices, message.id, replies.length);
     pushRow(
       renderRow(message, {
         grouped,
@@ -667,26 +672,8 @@ export function ChannelTimeline({
     itemDays.unshift(null);
     itemIsDivider.unshift(false);
   }
-  if (typingNames && typingNames.length > 0) {
-    items.push(
-      <div key="typing" className="mx-auto w-full max-w-3xl px-1 sm:px-3">
-        <div className="mt-1 flex items-center gap-2 px-2 py-0.5 text-sm text-muted-foreground">
-          <span className="flex gap-0.5">
-            <span className="animate-bounce [animation-delay:0ms]">·</span>
-            <span className="animate-bounce [animation-delay:150ms]">·</span>
-            <span className="animate-bounce [animation-delay:300ms]">·</span>
-          </span>
-          <span>
-            {typingNames.slice(0, 3).join(", ")}
-            {typingNames.length > 3 ? ` +${typingNames.length - 3}` : ""}{" "}
-            {typingNames.length === 1 ? "is" : "are"} typing
-          </span>
-        </div>
-      </div>,
-    );
-    itemDays.push(null);
-    itemIsDivider.push(false);
-  }
+  // No typing row here: who is about to answer is the composer's status line
+  // (RunningStrip), directly above the box (Sam, 2026-09-30).
   itemDaysRef.current = itemDays;
   itemIsDividerRef.current = itemIsDivider;
   // Newest row index for the geometry-driven re-pin below (kept in a ref so

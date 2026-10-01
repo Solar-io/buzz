@@ -1,75 +1,68 @@
 import { useCallback, useEffect, useState } from "react";
+import {
+  choicesFor,
+  type ThreadChoices,
+  withThreadChoice,
+} from "./lib/inlineThread.ts";
 
-interface ThreadsState {
-  expanded: ReadonlySet<string>;
-  focusId: string | null;
-}
-
-const NONE: ThreadsState = { expanded: new Set(), focusId: null };
-
-function withRow(
-  expanded: ReadonlySet<string>,
-  rowId: string,
-  open: boolean,
-): ReadonlySet<string> {
-  if (expanded.has(rowId) === open) {
-    return expanded;
-  }
-  const next = new Set(expanded);
-  if (open) {
-    next.add(rowId);
-  } else {
-    next.delete(rowId);
-  }
-  return next;
-}
+const NONE: ThreadChoices = new Map();
 
 /**
- * Which rows' inline threads are open in the conversation on screen (web
- * redesign Phase 2).
+ * Which rows' inline threads the viewer opened or folded (web redesign
+ * Phase 2), and which reply box holds the caret.
  *
- * The route owns this rather than the timeline because three things open a
- * thread from outside a row: a permalink to a reply (`reveal`), the ↩ action
- * and a card's "Answer in chat instead" (`reply`, which also hands the caret
- * to that thread's reply box).
+ * Threads are open by default (`threadOpen` in lib/inlineThread.ts), so what
+ * this keeps is the viewer's explicit choices: a fold, or an open on a row
+ * with no replies yet (↩). The route owns them rather than the timeline
+ * because three things open a thread from outside a row: a permalink to a
+ * reply (`reveal`), the ↩ action and a card's "Answer in chat instead"
+ * (`reply`, which also hands the caret to that thread's reply box).
  *
- * The open set belongs to the conversation it was opened in: switching
- * conversations folds everything. Unlike the old thread pane, nothing is
- * "kept open" across a switch — a thread lives under its message, and the
- * message is not on screen anymore.
+ * Choices are kept per conversation for the session: a thread folded in one
+ * channel is still folded on the way back to it. The caret is not — a switch
+ * drops `focusId`, so returning never steals focus into an old reply box.
  */
 export function useInlineThreads(conversationId: string | undefined) {
-  const [state, setState] = useState<ThreadsState>(NONE);
+  const [all, setAll] = useState<ThreadChoices>(NONE);
+  const [focusId, setFocusId] = useState<string | null>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: conversationId is the reset trigger by design — read nowhere in the effect
   useEffect(() => {
-    setState(NONE);
+    setFocusId(null);
   }, [conversationId]);
 
-  const toggle = useCallback((rowId: string, open: boolean) => {
-    setState((previous) => ({
-      expanded: withRow(previous.expanded, rowId, open),
-      focusId: !open && previous.focusId === rowId ? null : previous.focusId,
-    }));
-  }, []);
-  const reply = useCallback((rowId: string) => {
-    setState((previous) => ({
-      expanded: withRow(previous.expanded, rowId, true),
-      focusId: rowId,
-    }));
-  }, []);
-  const reveal = useCallback((rowId: string) => {
-    setState((previous) => {
-      const expanded = withRow(previous.expanded, rowId, true);
-      return expanded === previous.expanded
-        ? previous
-        : { expanded, focusId: previous.focusId };
-    });
-  }, []);
+  const toggle = useCallback(
+    (rowId: string, open: boolean) => {
+      setAll((previous) =>
+        withThreadChoice(previous, conversationId, rowId, open),
+      );
+      if (!open) {
+        setFocusId((previous) => (previous === rowId ? null : previous));
+      }
+    },
+    [conversationId],
+  );
+  const reply = useCallback(
+    (rowId: string) => {
+      setAll((previous) =>
+        withThreadChoice(previous, conversationId, rowId, true),
+      );
+      setFocusId(rowId);
+    },
+    [conversationId],
+  );
+  const reveal = useCallback(
+    (rowId: string) => {
+      setAll((previous) =>
+        withThreadChoice(previous, conversationId, rowId, true),
+      );
+    },
+    [conversationId],
+  );
 
   return {
-    expandedIds: state.expanded,
-    focusId: state.focusId,
+    choices: choicesFor(all, conversationId),
+    focusId,
     toggle,
     reply,
     reveal,
