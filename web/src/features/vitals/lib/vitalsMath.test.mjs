@@ -2,11 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   accountVitals,
-  formatRunway,
   paceLine,
   parseRunway,
-  runDryNote,
   runwayMethod,
+  runwayOutlook,
   vitalsSummary,
 } from "./vitalsMath.ts";
 
@@ -104,162 +103,224 @@ test("pace multiplier is null when elapsedFraction < 0.05", () => {
   assert.equal(paceLine(hot), "B is running at 1.6× its pace");
 });
 
-test("resets-unused hidden when etaFullAt is set", () => {
-  assert.equal(accountVitals(LIVE, LIVE.accounts[0]).unusedAtReset, 84);
-  // 1 − 0.595 = 0.405 → 40.5 rounds half-up to 41 (the design doc's "40" is
-  // its own sample arithmetic, not the rule).
-  assert.equal(accountVitals(LIVE, LIVE.accounts[1]).unusedAtReset, 41);
-  const filling = accountVitals(
-    LIVE,
-    account({
-      projectedAtReset: 0.5,
-      etaFullAt: "2026-10-01T17:08:00.000Z",
-      resetsAt: "2026-10-06T12:59:00.000Z",
-    }),
-  );
-  assert.equal(filling.unusedAtReset, null);
-  assert.equal(filling.fillsAt, "2026-10-01T17:08:00.000Z");
-  // An ETA after the reset is not a "fills around".
-  const late = accountVitals(
-    LIVE,
-    account({ etaFullAt: "2026-10-09T00:00:00.000Z" }),
-  );
-  assert.equal(late.fillsAt, null);
-});
+// ── /v1/runway v2: 72 h calendar-hour average, projected to each reset ─────
+// computeRunway against a snapshot of the live hub DB at 2026-10-01T04:09Z
+// (the same instant as the live /v1/pace below), verbatim but for rounding of
+// the long floats. A burns 1.38 %/h of its week → full around 15:02Z, before
+// its Oct 6 reset; B burns 0.42 %/h and lasts to its reset at ~43 %.
+const LIVE_RUNWAY = {
+  v: 2,
+  basis: "weeklyAll",
+  lookbackHours: 72,
+  freeFraction: 0.79,
+  status: "warn",
+  accounts: [
+    {
+      id: "A",
+      usedFraction: 0.85,
+      resetsAt: "2026-10-06T13:00:00.000Z",
+      historyHours: 71.841,
+      burnPerHour: 0.01378,
+      projectedAtReset: 2.6256,
+      dryAt: "2026-10-01T15:02:14.645Z",
+      status: "warn",
+    },
+    {
+      id: "B",
+      usedFraction: 0.36,
+      resetsAt: "2026-10-01T19:59:00.000Z",
+      historyHours: 71.471,
+      burnPerHour: 0.0042,
+      projectedAtReset: 0.4265,
+      dryAt: null,
+      status: "ok",
+    },
+  ],
+  computedAt: "2026-10-01T04:09:08.544Z",
+};
+// /v1/pace at the same instant: its trailing-24 h model calls A critical.
+function withStatus(status, accounts) {
+  return { ...pace(accounts), status };
+}
+const LIVE_PACE = withStatus("critical", [
+  account({
+    id: "A",
+    usedFraction: 0.85,
+    resetsAt: "2026-10-06T13:00:00.000Z",
+    elapsedFraction: 0.233,
+    projectedAtReset: 5.385,
+    etaFullAt: "2026-10-01T08:24:50.521Z",
+    status: "critical",
+  }),
+  account({
+    id: "B",
+    isDefault: false,
+    usedFraction: 0.36,
+    resetsAt: "2026-10-01T19:59:00.000Z",
+    elapsedFraction: 0.906,
+    projectedAtReset: 0.38,
+    status: "ok",
+  }),
+]);
 
-test("runway line reads the hub and hides when it cannot say", () => {
-  assert.equal(
-    formatRunway(parseRunway({ runwayHours: 2.8333333 })),
-    "~2h 50m",
-  );
-  assert.equal(formatRunway(parseRunway({ runwayHours: 0.5 })), "~30m");
-  // The live hub this morning: runwayHours null.
-  assert.equal(
-    formatRunway(
-      parseRunway({
-        freeFraction: null,
-        ratePerActiveHour: 0.0614,
-        activeHours: 7.17,
-        runwayHours: null,
-      }),
-    ),
-    null,
-  );
+test("parseRunway keeps the v2 per-account fields and drops off-shape entries", () => {
+  const parsed = parseRunway(LIVE_RUNWAY);
+  assert.equal(parsed.lookbackHours, 72);
+  assert.equal(parsed.basis, "weeklyAll");
+  assert.equal(parsed.status, "warn");
+  assert.deepEqual(parsed.accounts[0], {
+    id: "A",
+    usedFraction: 0.85,
+    resetsAt: "2026-10-06T13:00:00.000Z",
+    historyHours: 71.841,
+    burnPerHour: 0.01378,
+    projectedAtReset: 2.6256,
+    dryAt: "2026-10-01T15:02:14.645Z",
+    status: "warn",
+  });
+  const messy = parseRunway({
+    accounts: [
+      { id: 7 },
+      null,
+      { id: "C", burnPerHour: "fast", status: "on fire" },
+    ],
+  });
+  assert.equal(messy.accounts.length, 1);
+  assert.equal(messy.accounts[0].burnPerHour, null);
+  assert.equal(messy.accounts[0].status, "unknown");
   assert.equal(parseRunway("nope"), null);
 });
 
-// ── Phase 4: /v1/runway in the popover ─────────────────────────────────────
-// The live hub at 2026-09-30T19:01Z, verbatim (curl receipt in the Phase 4
-// report): 1.28 accounts free, 6.48 % of one account per active hour.
-const LIVE_RUNWAY = {
-  freeFraction: 1.28,
-  ratePerActiveHour: 0.0648,
-  activeHours: 8.333333333333334,
-  runwayHours: 19.75308641975309,
-  basis: "weeklyAll",
-  computedAt: "2026-09-30T19:01:36.257Z",
-};
-const NOW = Date.parse("2026-09-30T19:01:36.000Z");
-
-test("parseRunway keeps the hub's fields, basis included", () => {
-  assert.deepEqual(parseRunway(LIVE_RUNWAY), {
+test("a pre-v2 hub (active-hour fields) projects nothing", () => {
+  const old = parseRunway({
     freeFraction: 1.28,
     ratePerActiveHour: 0.0648,
-    activeHours: 8.333333333333334,
-    runwayHours: 19.75308641975309,
+    activeHours: 8.33,
+    runwayHours: 19.75,
     basis: "weeklyAll",
   });
-  assert.equal(parseRunway({ basis: 7 }).basis, null);
+  assert.deepEqual(old.accounts, []);
+  assert.equal(runwayMethod(old), null);
+  const summary = vitalsSummary(LIVE_PACE, old);
+  assert.equal(runwayOutlook(summary), null);
+  assert.equal(summary.accounts[0].dryAt, null);
 });
 
-test("the runway reads in hours, then in days past two days", () => {
-  assert.equal(formatRunway(parseRunway(LIVE_RUNWAY)), "~19h 45m");
-  assert.equal(formatRunway(parseRunway({ runwayHours: 47.99 })), "~47h 59m");
-  assert.equal(formatRunway(parseRunway({ runwayHours: 76.2 })), "~3d 4h");
+test("account rows take the projection and its status from the runway", () => {
+  const runway = parseRunway(LIVE_RUNWAY);
+  const a = accountVitals(LIVE_PACE, LIVE_PACE.accounts[0], runway);
+  assert.equal(a.dryAt, "2026-10-01T15:02:14.645Z");
+  assert.equal(a.projectedAtReset, 2.6256);
+  assert.equal(a.burnPerHour, 0.01378);
+  assert.equal(a.historyHours, 71.841);
+  assert.equal(a.status, "warn", "the 72 h projection, not pace's critical");
+  const b = accountVitals(LIVE_PACE, LIVE_PACE.accounts[1], runway);
+  assert.equal(b.dryAt, null);
+  assert.equal(b.projectedAtReset, 0.4265);
+  assert.equal(b.status, "ok");
+
+  // No runway: no projection at all (pace's own ETA is not shown), pace status.
+  const bare = accountVitals(LIVE_PACE, LIVE_PACE.accounts[0]);
+  assert.equal(bare.dryAt, null);
+  assert.equal(bare.projectedAtReset, null);
+  assert.equal(bare.status, "critical");
+
+  // A stale reading gets no projection even if the runway sent one.
+  const stale = accountVitals(
+    LIVE_PACE,
+    account({ id: "A", state: "stale", usedFraction: null }),
+    runway,
+  );
+  assert.equal(stale.dryAt, null);
+  assert.equal(stale.projectedAtReset, null);
 });
 
-test("method line: the hub's own rate and active hours", () => {
+test("summary status: worst of the rows the runway coloured", () => {
+  assert.equal(vitalsSummary(LIVE_PACE).status, "critical");
   assert.equal(
-    runwayMethod(parseRunway(LIVE_RUNWAY)),
-    "runway = free ÷ use per active hour · 48h: 6.5%/h over 8.3 active h",
+    vitalsSummary(LIVE_PACE, parseRunway(LIVE_RUNWAY)).status,
+    "warn",
   );
-  assert.equal(
-    runwayMethod(
-      parseRunway({
-        ratePerActiveHour: 0.162,
-        activeHours: 18.2,
-        runwayHours: 2.83,
-      }),
-    ),
-    "runway = free ÷ use per active hour · 48h: 16%/h over 18 active h",
-  );
-  // Under three active intervals the hub sends no runway: say so, no rate.
-  assert.equal(
-    runwayMethod(
-      parseRunway({
-        ratePerActiveHour: 0.03,
-        activeHours: 0.3,
-        runwayHours: null,
-      }),
-    ),
-    "runway: too little active use in the last 48h to estimate",
-  );
-  assert.equal(runwayMethod(null), null);
-  assert.equal(runwayMethod(parseRunway({})), null);
+  // A parked: pace's rule colours by the in-use rows only, and B's row is
+  // coloured by the runway (warn), not by pace (ok).
+  const parked = withStatus("critical", [
+    { ...LIVE_PACE.accounts[0], inUse: false },
+    LIVE_PACE.accounts[1],
+  ]);
+  const hotB = structuredClone(LIVE_RUNWAY);
+  hotB.accounts[1].status = "warn";
+  assert.equal(vitalsSummary(parked).status, "ok");
+  assert.equal(vitalsSummary(parked, parseRunway(hotB)).status, "warn");
 });
 
-test("you won't run dry only when the next reset lands inside the runway", () => {
-  // B resets 2026-10-01T19:59Z — 24.96 h away; the runway is 19.75 active h.
-  // Worked without a break the runway ends first, so this is NOT safe.
-  const live = runDryNote(
-    parseRunway(LIVE_RUNWAY),
-    { account: "B", resetsAt: "2026-10-01T19:59:00.000Z" },
-    NOW,
+test("outlook: the soonest dry in-use account, else safe, else nothing", () => {
+  const live = runwayOutlook(
+    vitalsSummary(LIVE_PACE, parseRunway(LIVE_RUNWAY)),
   );
   assert.deepEqual(live, {
-    kind: "tight",
-    account: "B",
-    resetsAt: "2026-10-01T19:59:00.000Z",
+    kind: "dry",
+    account: "A",
+    at: "2026-10-01T15:02:14.645Z",
   });
-  // The same runway with a reset 6 h out: well inside (6 ≤ 19.75 / 2).
+
+  // Both dry: the earlier one (B) wins, whatever the order.
+  const both = structuredClone(LIVE_RUNWAY);
+  both.accounts[1].dryAt = "2026-10-01T09:30:00.000Z";
+  assert.deepEqual(runwayOutlook(vitalsSummary(LIVE_PACE, parseRunway(both))), {
+    kind: "dry",
+    account: "B",
+    at: "2026-10-01T09:30:00.000Z",
+  });
+
+  // Nobody dry: safe.
+  const calm = structuredClone(LIVE_RUNWAY);
+  calm.accounts[0].dryAt = null;
+  calm.accounts[0].projectedAtReset = 0.97;
+  assert.deepEqual(runwayOutlook(vitalsSummary(LIVE_PACE, parseRunway(calm))), {
+    kind: "safe",
+  });
+
+  // A parked (switched-off) account running dry is not the headline.
+  const parked = pace([
+    { ...LIVE_PACE.accounts[0], inUse: false },
+    LIVE_PACE.accounts[1],
+  ]);
   assert.deepEqual(
-    runDryNote(
-      parseRunway(LIVE_RUNWAY),
-      { account: "A", resetsAt: "2026-10-01T01:01:36.000Z" },
-      NOW,
-    ),
-    {
-      kind: "safe",
-      account: "A",
-      resetsAt: "2026-10-01T01:01:36.000Z",
-      well: true,
-    },
+    runwayOutlook(vitalsSummary(parked, parseRunway(LIVE_RUNWAY))),
+    { kind: "safe" },
   );
-  // 15 h out: inside, but not "well" inside.
+
+  // No projection anywhere: no headline.
+  const blind = structuredClone(LIVE_RUNWAY);
+  for (const entry of blind.accounts) {
+    entry.projectedAtReset = null;
+    entry.dryAt = null;
+  }
   assert.equal(
-    runDryNote(
-      parseRunway(LIVE_RUNWAY),
-      { account: "A", resetsAt: "2026-10-01T10:01:36.000Z" },
-      NOW,
-    ).well,
-    false,
+    runwayOutlook(vitalsSummary(LIVE_PACE, parseRunway(blind))),
+    null,
   );
+  assert.equal(runwayOutlook(vitalsSummary(null)), null);
 });
 
-test("no runway, no reset, or a reset already past: no run-dry line", () => {
-  const reset = { account: "B", resetsAt: "2026-10-01T00:00:00.000Z" };
+test("method line: 72 h average per account, short history noted", () => {
   assert.equal(
-    runDryNote(parseRunway({ runwayHours: null }), reset, NOW),
-    null,
+    runwayMethod(parseRunway(LIVE_RUNWAY)),
+    "72h average, carried forward to each reset: A 1.4%/h · B 0.4%/h",
   );
-  assert.equal(runDryNote(null, reset, NOW), null);
-  assert.equal(runDryNote(parseRunway(LIVE_RUNWAY), null, NOW), null);
+  const young = structuredClone(LIVE_RUNWAY);
+  young.accounts[1].historyHours = 31.2;
   assert.equal(
-    runDryNote(
-      parseRunway(LIVE_RUNWAY),
-      { account: "B", resetsAt: "2026-09-30T18:00:00.000Z" },
-      NOW,
-    ),
-    null,
+    runwayMethod(parseRunway(young)),
+    "72h average, carried forward to each reset: A 1.4%/h · B 0.4%/h (B: 31h of history)",
   );
+  const empty = structuredClone(LIVE_RUNWAY);
+  for (const entry of empty.accounts) {
+    entry.burnPerHour = null;
+  }
+  assert.equal(
+    runwayMethod(parseRunway(empty)),
+    "not enough history in the last 72h to project yet",
+  );
+  assert.equal(runwayMethod(null), null);
 });

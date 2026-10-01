@@ -105,8 +105,20 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
 
       // Vitals popover.
       await sidebar.getByTestId("vitals-block").click();
+      // The runway's 72 h calendar projection: B runs dry before its reset,
+      // A lasts (fixture in workFixture.routeUsageHub).
+      await expect(sidebar.getByTestId("vitals-block")).toContainText("B dry");
+      await expect(page.getByTestId("vitals-outlook")).toContainText(
+        "Account B runs dry around",
+      );
       await expect(page.getByTestId("vitals-popover")).toContainText(
-        "B is running at 1.6× its pace",
+        "A won't run dry — about 64% used when it resets",
+      );
+      await expect(page.getByTestId("vitals-runway-method")).toContainText(
+        "72h average, carried forward to each reset: A 1.2%/h · B 20%/h (B: 40h of history)",
+      );
+      await expect(page.getByTestId("vitals-popover")).not.toContainText(
+        "active",
       );
       await shot(page, `vitals-${theme}-1440`);
       await page.keyboard.press("Escape");
