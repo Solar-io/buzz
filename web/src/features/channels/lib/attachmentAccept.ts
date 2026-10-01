@@ -14,7 +14,8 @@
  * 3. Everything else → `process_file_upload`, the generic attachment path.
  *    That path is a DENY-list, not an allow-list: `validate_file_content`
  *    rejects anything sniffed as `image/*`, `video/*` or `audio/*` (those must
- *    use their own pipelines, and audio has no sanitizer yet), rejects
+ *    use their own pipelines) except tag-free MP3, which it accepts and
+ *    `uploadBlob` strips client-side (`shared/lib/mp3Canonical.ts`), rejects
  *    `BLOCKED_FILE_MIME_TYPES` (SVG, XHTML, JavaScript, and native
  *    executables/installers), and accepts everything else — including files
  *    with no magic signature at all, which store as
@@ -25,9 +26,10 @@
  * `/upload` first, so the wider set is the one that matters.
  *
  * Two consequences worth stating plainly, because the old five-type list hid
- * them: **audio is rejected by the relay** (deliberately, pending a container
- * sanitizer), and **SVG is rejected** as a stored-XSS carrier. Neither is
- * offered here — offering them would produce a picker entry that always fails.
+ * them: **audio other than MP3 is rejected by the relay** (deliberately,
+ * pending a container sanitizer), and **SVG is rejected** as a stored-XSS
+ * carrier. Neither is offered here — offering them would produce a picker
+ * entry that always fails.
  */
 
 /** Sniffed image types the relay's image pipeline accepts. */
@@ -40,6 +42,13 @@ export const IMAGE_MIMES = [
 
 /** The only video container the relay's streaming pipeline accepts. */
 export const VIDEO_MIMES = ["video/mp4"] as const;
+
+/**
+ * The only audio the relay stores as a chat attachment: MP3, metadata-free
+ * (`uploadBlob` strips ID3/APE tags first). `audio/mp3` is a non-standard
+ * alias some browsers report.
+ */
+export const AUDIO_MIMES = ["audio/mpeg", "audio/mp3"] as const;
 
 /**
  * Generic-attachment types worth naming in the picker's `accept`.
@@ -110,6 +119,8 @@ export const BLOCKED_MIMES = [
 export const ATTACHMENT_ACCEPT = [
   ...IMAGE_MIMES,
   ...VIDEO_MIMES,
+  ...AUDIO_MIMES,
+  ".mp3",
   ...FILE_MIMES,
   ...FILE_EXTENSIONS,
 ].join(",");
@@ -132,8 +143,11 @@ export function attachmentRejectionReason(file: {
     // attachment. Nothing to reject on.
     return null;
   }
-  if (REJECTED_MIME_PREFIXES.some((prefix) => mime.startsWith(prefix))) {
-    return "Audio uploads are not accepted yet.";
+  if (
+    REJECTED_MIME_PREFIXES.some((prefix) => mime.startsWith(prefix)) &&
+    !(AUDIO_MIMES as readonly string[]).includes(mime)
+  ) {
+    return "Only MP3 audio is accepted.";
   }
   if ((BLOCKED_MIMES as readonly string[]).includes(mime)) {
     return "That file type is blocked for security reasons.";

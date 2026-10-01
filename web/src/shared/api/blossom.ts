@@ -13,6 +13,7 @@ import { signNostrEvent } from "../lib/nostr-signer";
 import { getAuthTagJson } from "../lib/key-store";
 import { relayHttpBaseUrl } from "../lib/relay-url";
 import { canonicalizeImage } from "../lib/mediaCanonical";
+import { isMp3Upload, stripMp3Tags } from "../lib/mp3Canonical";
 import { resolveRelayHref } from "../lib/linkOpen";
 
 export const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
@@ -95,7 +96,8 @@ async function buildAuthorization(
  * 4 KiB and routes on the actual bytes — so this only has to be truthful, not
  * gate-keeping. The gate that matters is the relay's: images and MP4 take
  * their own pipelines and everything else takes the generic attachment path,
- * which is a deny-list (no audio, no SVG/JS, no executables).
+ * which is a deny-list (no audio except tag-free MP3, no SVG/JS, no
+ * executables).
  *
  * Client-side pre-flight against those rules lives in
  * `features/channels/lib/attachmentAccept.ts`, where the picker's `accept`
@@ -222,7 +224,7 @@ export async function uploadBlob(
   options: UploadOptions = {},
 ): Promise<BlobDescriptor> {
   const prepared = await prepareForUpload(file);
-  const mime = detectMime(prepared);
+  let mime = detectMime(prepared);
   if (prepared.size > maxBytesFor(mime)) {
     throw new Error("File is too large.");
   }
@@ -230,6 +232,12 @@ export async function uploadBlob(
   const canonical = canonicalizeImage(bytes, mime);
   if (canonical) {
     bytes = new Uint8Array(canonical);
+  }
+  // MP3: strip ID3/APE/Lyrics3 tags BEFORE hashing — the relay rejects any
+  // tagged MP3 (422 MetadataForbidden) and stores exactly these bytes.
+  if (isMp3Upload(bytes, mime)) {
+    bytes = stripMp3Tags(bytes);
+    mime = "audio/mpeg";
   }
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   const sha256 = Array.from(new Uint8Array(digest), (b) =>
