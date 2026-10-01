@@ -13,8 +13,52 @@ import {
   scratchIdleDeadline,
   scratchInfo,
   scratchMemberPlan,
+  scratchPermissions,
+  viewerRole,
   withoutScratchMarker,
 } from "./scratchChannel.ts";
+
+test("my role is the roster's word, else owner of what I created here, else unknown", () => {
+  const me = "a".repeat(64);
+  const roster = [
+    { pubkey: me.toUpperCase(), role: "member" },
+    { pubkey: "b".repeat(64), role: "owner" },
+  ];
+  assert.equal(viewerRole(roster, me, false), "member");
+  // The roster outranks the local memory of having created it.
+  assert.equal(viewerRole(roster, me, true), "member");
+  // Before the roster lists me: the creator is the owner.
+  assert.equal(viewerRole([], me, true), "owner");
+  assert.equal(viewerRole([{ pubkey: me }], me, false), null);
+  assert.equal(viewerRole(roster, null, false), null);
+});
+
+test("only the owner may discard; owner and admin may keep; the rest may leave", () => {
+  assert.deepEqual(scratchPermissions("owner"), {
+    canDiscard: true,
+    canKeep: true,
+    canLeave: false,
+  });
+  assert.deepEqual(scratchPermissions("admin"), {
+    canDiscard: false,
+    canKeep: true,
+    canLeave: true,
+  });
+  for (const role of ["member", "bot", "guest"]) {
+    assert.deepEqual(scratchPermissions(role), {
+      canDiscard: false,
+      canKeep: false,
+      canLeave: true,
+    });
+  }
+  for (const role of [null, undefined, ""]) {
+    assert.deepEqual(scratchPermissions(role), {
+      canDiscard: false,
+      canKeep: false,
+      canLeave: false,
+    });
+  }
+});
 
 const PARENT = "10000000-0000-4000-8000-000000000004";
 const SCRATCH = "30000000-0000-4000-8000-00000000000a";

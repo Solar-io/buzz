@@ -16,9 +16,14 @@ export interface HuddleMentionCallRoster {
   memberRosterKnown: boolean;
 }
 
-/** Turn the complete snapshot into the member shape shared by Composer. */
+/**
+ * Turn the complete snapshot into the member shape shared by Composer. With
+ * `roles` (the snapshot's pubkey → role), each member carries its role — how
+ * a scratch channel knows whether the viewer owns it.
+ */
 export function huddleMentionMembers(
   memberPubkeys: readonly string[],
+  roles?: ReadonlyMap<string, string>,
 ): ChannelMember[] {
   const seen = new Set<string>();
   const members: ChannelMember[] = [];
@@ -28,7 +33,12 @@ export function huddleMentionMembers(
       continue;
     }
     seen.add(pubkey);
-    members.push({ pubkey, name: truncatePubkey(pubkey) });
+    const role = roles?.get(pubkey);
+    members.push(
+      role === undefined
+        ? { pubkey, name: truncatePubkey(pubkey) }
+        : { pubkey, name: truncatePubkey(pubkey), role },
+    );
   }
   return members;
 }
@@ -59,7 +69,10 @@ export function useHuddleMentionMembers(options: {
     if (callMatches) {
       return huddleMentionMembers(call.memberPubkeys);
     }
-    return huddleMentionMembers([...fallbackSnapshot.members.keys()]);
+    return huddleMentionMembers(
+      [...fallbackSnapshot.members.keys()],
+      fallbackSnapshot.members,
+    );
   }, [
     call.memberPubkeys,
     callMatches,

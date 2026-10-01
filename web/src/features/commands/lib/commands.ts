@@ -58,6 +58,11 @@ export interface ScratchActions {
     channelId: string;
     name: string | null;
   }) => Promise<CommandResult>;
+  /** Kind 9022 — what a member who cannot discard it does instead. */
+  leave: (input: {
+    channelId: string;
+    parent: { id: string; name: string };
+  }) => Promise<CommandResult>;
 }
 
 export interface CommandContext {
@@ -67,10 +72,16 @@ export interface CommandContext {
     name: string;
     type: string;
     /**
-     * Set in a scratch channel: its parent, and the part of its name after
-     * the parent's ("scratch-1").
+     * Set in a scratch channel: its parent, the part of its name after the
+     * parent's ("scratch-1"), and the viewer's role there (39002; null until
+     * the roster is read) — which decides whether /exit and /keep exist.
      */
-    scratch?: { parentId: string; parentName: string; label: string } | null;
+    scratch?: {
+      parentId: string;
+      parentName: string;
+      label: string;
+      role: string | null;
+    } | null;
   } | null;
   selfPubkey: string | null;
   /** The open conversation's buffer, oldest first. */

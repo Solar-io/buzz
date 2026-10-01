@@ -11,6 +11,7 @@ import {
   type ChannelLike,
   type ScratchInfo,
   scratchCountdown,
+  scratchPermissions,
 } from "../lib/scratchChannel.ts";
 
 /**
@@ -87,62 +88,82 @@ function report(result: CommandResult) {
   }
 }
 
-/** Keep and Exit, as the header (md+) and the phone banner draw them. */
+/**
+ * Keep / Exit / Leave, as the header (md+) and the phone banner draw them —
+ * only the ones the viewer's role can actually do (`scratchPermissions`):
+ * the owner gets Keep and Exit, an admin Keep and Leave, a copied member
+ * Leave alone, and an unread roster nothing yet.
+ */
 export function ScratchButtons({
   channelId,
   info,
   actions,
+  role,
   compact = false,
 }: {
   channelId: string;
   info: ScratchInfo;
   actions: ScratchActions;
+  role: string | null;
   compact?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
+  const may = scratchPermissions(role);
   const size = compact ? "h-7 px-2.5" : "h-8 px-3";
+  const quiet = cn(
+    "inline-flex shrink-0 items-center gap-1.5 rounded-[9px] border border-border bg-card text-xs font-semibold text-ink-2 transition-colors hover:bg-accent hover:text-foreground disabled:opacity-60",
+    size,
+  );
+  const parent = { id: info.parentId, name: info.parentName };
+  const run = (action: () => Promise<CommandResult>) => {
+    setBusy(true);
+    void action()
+      .then(report)
+      .finally(() => setBusy(false));
+  };
   return (
     <>
-      <button
-        type="button"
-        data-testid="scratch-keep"
-        title="Make this a permanent channel (/keep)"
-        disabled={busy}
-        onClick={() => {
-          setBusy(true);
-          void actions
-            .keep({ channelId, name: null })
-            .then(report)
-            .finally(() => setBusy(false));
-        }}
-        className={cn(
-          "inline-flex shrink-0 items-center gap-1.5 rounded-[9px] border border-border bg-card text-xs font-semibold text-ink-2 transition-colors hover:bg-accent hover:text-foreground disabled:opacity-60",
-          size,
-        )}
-      >
-        <Bookmark aria-hidden className="size-3.5" />
-        Keep
-      </button>
-      <button
-        type="button"
-        data-testid="scratch-exit"
-        title={`Discard ${info.label.rest} and go back to #${info.parentName} (/exit)`}
-        onClick={() =>
-          void actions
-            .exit({
-              channelId,
-              parent: { id: info.parentId, name: info.parentName },
-            })
-            .then(report)
-        }
-        className={cn(
-          "inline-flex shrink-0 items-center gap-1.5 rounded-[9px] border border-primary bg-primary text-xs font-semibold text-primary-foreground transition-opacity hover:opacity-90",
-          size,
-        )}
-      >
-        <LogOut aria-hidden className="size-3.5" />
-        Exit
-      </button>
+      {may.canKeep ? (
+        <button
+          type="button"
+          data-testid="scratch-keep"
+          title="Make this a permanent channel (/keep)"
+          disabled={busy}
+          onClick={() => run(() => actions.keep({ channelId, name: null }))}
+          className={quiet}
+        >
+          <Bookmark aria-hidden className="size-3.5" />
+          Keep
+        </button>
+      ) : null}
+      {may.canDiscard ? (
+        <button
+          type="button"
+          data-testid="scratch-exit"
+          title={`Discard ${info.label.rest} and go back to #${info.parentName} (/exit)`}
+          onClick={() => void actions.exit({ channelId, parent }).then(report)}
+          className={cn(
+            "inline-flex shrink-0 items-center gap-1.5 rounded-[9px] border border-primary bg-primary text-xs font-semibold text-primary-foreground transition-opacity hover:opacity-90",
+            size,
+          )}
+        >
+          <LogOut aria-hidden className="size-3.5" />
+          Exit
+        </button>
+      ) : null}
+      {may.canLeave ? (
+        <button
+          type="button"
+          data-testid="scratch-leave"
+          title={`Leave ${info.label.rest} — only its owner can discard it`}
+          disabled={busy}
+          onClick={() => run(() => actions.leave({ channelId, parent }))}
+          className={quiet}
+        >
+          <LogOut aria-hidden className="size-3.5" />
+          Leave
+        </button>
+      ) : null}
     </>
   );
 }
@@ -164,15 +185,18 @@ export function ScratchBanner({
   channelId,
   info,
   actions,
+  role,
   expiry,
   phone,
 }: {
   channelId: string;
   info: ScratchInfo;
   actions: ScratchActions;
+  role: string | null;
   expiry: EphemeralDisplay | null;
   phone: boolean;
 }) {
+  const may = scratchPermissions(role);
   if (phone) {
     return (
       <div
@@ -195,11 +219,25 @@ export function ScratchBanner({
           channelId={channelId}
           info={info}
           actions={actions}
+          role={role}
           compact
         />
       </div>
     );
   }
+  // Name only what this viewer can do: a copied member cannot /exit it.
+  const verbs =
+    may.canKeep && may.canDiscard ? (
+      <>
+        <Kbd>/keep</Kbd> makes it permanent, <Kbd>/exit</Kbd> discards it.
+      </>
+    ) : may.canKeep ? (
+      <>
+        <Kbd>/keep</Kbd> makes it permanent.
+      </>
+    ) : may.canLeave ? (
+      <>Its owner can keep or discard it; you can leave.</>
+    ) : null;
   return (
     <div
       data-testid="scratch-banner"
@@ -208,8 +246,9 @@ export function ScratchBanner({
       <Info aria-hidden className="size-3.75 shrink-0 text-honey-ink" />
       <span className="min-w-0">
         Same people and agents as{" "}
-        <b className="font-semibold">#{info.parentName}</b>, fresh history.{" "}
-        <Kbd>/keep</Kbd> makes it permanent, <Kbd>/exit</Kbd> discards it.
+        <b className="font-semibold">#{info.parentName}</b>, fresh history.
+        {verbs ? " " : null}
+        {verbs}
       </span>
     </div>
   );

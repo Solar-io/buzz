@@ -27,6 +27,7 @@ export function ScratchHeading({
   info,
   actions,
   lastActivityAt,
+  role,
   phone,
   memberPubkeys,
   agentPubkeys,
@@ -36,6 +37,8 @@ export function ScratchHeading({
   info: ScratchInfo;
   actions: ScratchActions;
   lastActivityAt: number | null;
+  /** The viewer's role here (39002) — decides Keep / Exit / Leave. */
+  role: string | null;
   phone: boolean;
   memberPubkeys: readonly string[];
   agentPubkeys: ReadonlySet<string>;
@@ -47,6 +50,7 @@ export function ScratchHeading({
       channelId={channel.id}
       info={info}
       actions={actions}
+      role={role}
       expiry={expiry}
       phone={phone}
     />
@@ -90,6 +94,7 @@ export function ScratchHeading({
             channelId={channel.id}
             info={info}
             actions={actions}
+            role={role}
           />
         </div>
       </header>

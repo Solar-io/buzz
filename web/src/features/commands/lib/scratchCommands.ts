@@ -12,6 +12,10 @@
  * import back would be a cycle.
  */
 
+import {
+  type ScratchPermissions,
+  scratchPermissions,
+} from "../../scratch/lib/scratchChannel.ts";
 import type { CommandContext, CommandSpec } from "./commands.ts";
 
 /** The parent a `/new` copies: this channel, or a scratch's own parent. */
@@ -23,8 +27,17 @@ export function scratchParentOf(
     : { id: channel.id, name: channel.name };
 }
 
-const inScratch = (ctx: CommandContext): boolean =>
-  ctx.channel?.scratch != null && ctx.actions.scratch !== undefined;
+/**
+ * In a scratch channel AND allowed to: the relay refuses a non-owner's 9008
+ * and a member's ttl edit, so those commands are not offered to them at all
+ * (typed anyway, they resolve as unknown and nothing is sent).
+ */
+const inScratchAs =
+  (may: keyof ScratchPermissions) =>
+  (ctx: CommandContext): boolean =>
+    ctx.channel?.scratch != null &&
+    ctx.actions.scratch !== undefined &&
+    scratchPermissions(ctx.channel.scratch.role)[may];
 
 const scratchNew: CommandSpec = {
   id: "new",
@@ -61,7 +74,7 @@ const scratchExit: CommandSpec = {
     ctx.channel?.scratch
       ? `Discard ${ctx.channel.scratch.label} and go back to #${ctx.channel.scratch.parentName}`
       : "Discard this scratch channel and go back",
-  when: inScratch,
+  when: inScratchAs("canDiscard"),
   run: async (ctx) => {
     if (!ctx.channel?.scratch || !ctx.actions.scratch) {
       return { ok: false, error: "/exit only works in a scratch channel." };
@@ -79,7 +92,7 @@ const scratchKeep: CommandSpec = {
   needsArgs: false,
   group: "channel",
   describe: "Make this a permanent channel",
-  when: inScratch,
+  when: inScratchAs("canKeep"),
   run: async (ctx, args) => {
     if (!ctx.channel?.scratch || !ctx.actions.scratch) {
       return { ok: false, error: "/keep only works in a scratch channel." };

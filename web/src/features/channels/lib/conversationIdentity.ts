@@ -19,6 +19,8 @@ export function conversationIdentity(
   } | null,
   channels: readonly { id: string; name: string }[],
   dmName: (participantPubkeys: string[]) => string,
+  /** The viewer's role in `current` (39002), for the scratch commands. */
+  role: string | null = null,
 ): { title: string | null; commandChannel: CommandContext["channel"] } {
   if (!current) {
     return { title: null, commandChannel: null };
@@ -39,6 +41,7 @@ export function conversationIdentity(
         parentId: scratch.parentId,
         parentName: scratch.parentName,
         label: scratch.label.rest,
+        role,
       },
     },
   };

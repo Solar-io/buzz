@@ -18,6 +18,22 @@ test("the shared huddle roster keeps silent members for typed mentions", () => {
   );
 });
 
+test("the snapshot's roles ride on the members (a scratch owner is known)", () => {
+  assert.deepEqual(
+    huddleMentionMembers(
+      [SELF, OTHER],
+      new Map([
+        [SELF, "owner"],
+        [OTHER, "member"],
+      ]),
+    ),
+    [
+      { pubkey: SELF, name: "aaaaaaaa…aaaa", role: "owner" },
+      { pubkey: OTHER, name: "cccccccc…cccc", role: "member" },
+    ],
+  );
+});
+
 test("a changed room cannot reuse a previous huddle roster", () => {
   assert.deepEqual(huddleMentionMembers([OTHER]), [
     { pubkey: OTHER, name: "cccccccc…cccc" },

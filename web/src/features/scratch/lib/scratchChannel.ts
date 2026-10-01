@@ -312,6 +312,59 @@ export function buildScratchKeepEvent(
   return { event: { kind: 9002, tags, content: "" } };
 }
 
+export interface ScratchPermissions {
+  /** `/exit` and the Exit button: kind 9008 is owner-only on the relay. */
+  canDiscard: boolean;
+  /** `/keep` and Keep: a `ttl` edit (9002) needs owner or admin. */
+  canKeep: boolean;
+  /** Leave (kind 9022): what everyone else can do instead of Exit. */
+  canLeave: boolean;
+}
+
+/**
+ * What the viewer may do here, from their role in the scratch channel's
+ * kind-39002 roster (the creator is its owner). The relay is the judge; this
+ * only keeps the client from OFFERING what it would refuse — a copied member
+ * offered /exit watched the channel vanish for 10 s and come back as "Could
+ * not delete". An unknown role (roster not read yet) offers nothing.
+ */
+export function scratchPermissions(
+  role: string | null | undefined,
+): ScratchPermissions {
+  switch (role) {
+    case "owner":
+      return { canDiscard: true, canKeep: true, canLeave: false };
+    case "admin":
+      return { canDiscard: false, canKeep: true, canLeave: true };
+    case null:
+    case undefined:
+    case "":
+      return { canDiscard: false, canKeep: false, canLeave: false };
+    default:
+      return { canDiscard: false, canKeep: false, canLeave: true };
+  }
+}
+
+/**
+ * The viewer's role in a channel: the 39002 roster's word when it has one
+ * for them, else "owner" for a channel this client created (the creator is
+ * its owner; covers the moments before the roster is first read), else null.
+ */
+export function viewerRole(
+  members: readonly { pubkey: string; role?: string }[],
+  selfPubkey: string | null,
+  createdHere: boolean,
+): string | null {
+  const self = selfPubkey?.toLowerCase();
+  const listed = self
+    ? members.find((member) => member.pubkey.toLowerCase() === self)?.role
+    : undefined;
+  if (listed) {
+    return listed;
+  }
+  return createdHere ? "owner" : null;
+}
+
 /** Kind 9008 for `/exit`, once the Undo window has passed. */
 export function buildScratchDeleteEvent(
   channelId: string,
