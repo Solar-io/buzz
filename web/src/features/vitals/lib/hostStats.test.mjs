@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   barTone,
+  blockVitalRows,
   crichtonStatus,
   diskLine,
   formatPercent,
@@ -10,6 +11,7 @@ import {
   primaryDisk,
   servicesLine,
   sparkline,
+  stripGpuPercent,
   uptimeLine,
   vitalRows,
 } from "./hostStats.ts";
@@ -92,6 +94,65 @@ test("unknown renders as an em dash, never 0%", () => {
     [null, null, null, null],
   );
   assert.equal(formatPercent(0), "0%", "a real zero is still a zero");
+});
+
+test("the block draws only rows with a reading — and no section without one", () => {
+  // Sam, 2026-10-01: hide any row that has no data, never an empty section.
+  assert.deepEqual(
+    blockVitalRows({ status: "ok", stats: stats() }).map((r) => r.label),
+    ["CPU", "GPU", "Mem", "Disk"],
+  );
+  assert.deepEqual(
+    blockVitalRows({
+      status: "ok",
+      stats: stats({ gpu: { percent: null, renderer: null, tiler: null } }),
+    }).map((r) => [r.label, r.text]),
+    [
+      ["CPU", "67%"],
+      ["Mem", "86%"],
+      ["Disk", "45%"],
+    ],
+    "an unknown GPU is left out, not drawn as a dash",
+  );
+  assert.equal(
+    blockVitalRows({
+      status: "ok",
+      stats: stats({
+        cpu: null,
+        gpu: { percent: null, renderer: null, tiler: null },
+        mem: null,
+        disks: [],
+      }),
+    }),
+    null,
+    "every value unknown: no crichton section at all",
+  );
+  // A real zero is a reading, not an absence.
+  assert.deepEqual(
+    blockVitalRows({ status: "ok", stats: stats({ cpu: 0 }) })[0].text,
+    "0%",
+  );
+  for (const status of ["idle", "offline", "signed-out", "forbidden"]) {
+    assert.equal(
+      blockVitalRows({ status, stats: null }),
+      null,
+      `${status}: no header standing over nothing`,
+    );
+  }
+});
+
+test("the phone strip's GPU column exists only with a GPU reading", () => {
+  assert.equal(stripGpuPercent({ status: "ok", stats: stats() }), 87);
+  assert.equal(
+    stripGpuPercent({
+      status: "ok",
+      stats: stats({ gpu: { percent: null, renderer: null, tiler: null } }),
+    }),
+    null,
+  );
+  for (const status of ["idle", "offline", "signed-out", "forbidden"]) {
+    assert.equal(stripGpuPercent({ status, stats: null }), null, status);
+  }
 });
 
 test("tones: ink under 70, honey from 70, coral from 90", () => {

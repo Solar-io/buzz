@@ -3,8 +3,9 @@
  * matters — the tab bar hides while a conversation is open — is testable
  * without a DOM.
  *
- * Below `md` the shell has three tabs: Work (the home screen), Channels (the
- * channel list as a page) and More (a sheet of the remaining views). The tab
+ * Below `md` the shell has three tabs, left to right: Channels (the channel
+ * list as a page), Work (the home screen) and More (a sheet of the remaining
+ * views). The tab
  * is derived from the URL, never stored: `?view=work` is Work, `?view=channels`
  * (or a bare shell) is Channels, any other view belongs to More. A
  * conversation — or the web layer (Files / a link) — takes the whole screen;

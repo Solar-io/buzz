@@ -1,7 +1,9 @@
 import { expect, test } from "@playwright/test";
 import * as nip44 from "nostr-tools/nip44";
+import { getPublicKey } from "nostr-tools/pure";
 
 import { hexId, mockEvent } from "./helpers/mockRelay";
+import { buildWorkFixture } from "./helpers/workFixture";
 import {
   channelPath as shellChannelPath,
   openShell as open,
@@ -384,6 +386,13 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       await expect(work.getByTestId("vitals-strip")).toContainText("45% free");
       const tabs = page.getByTestId("phone-tab-bar");
       await expect(tabs).toBeVisible();
+      // Channels on the left, Work in the middle (Sam, 2026-10-01) — and
+      // Work's needs-you badge moved with it.
+      await expect(tabs.getByRole("button")).toHaveText([
+        /^Channels/,
+        /^Work8$/,
+        /^More$/,
+      ]);
       await expect(tabs.getByRole("button", { name: /Work/ })).toHaveAttribute(
         "aria-current",
         "page",
@@ -434,6 +443,138 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
         "page",
       );
     });
+
+    test("the Channels page is the desktop rail: Favorites, Forums, Links, Vitals with its runway", async ({
+      page,
+    }) => {
+      const pageErrors: string[] = [];
+      page.on("pageerror", (error) => pageErrors.push(error.message));
+      // Favorites live in THIS device's localStorage (channelPrefs.ts):
+      // seed a channel and a DM the way a phone that favorited them would.
+      const ids = buildWorkFixture().channels;
+      await page.addInitScript(
+        (favorites) => {
+          try {
+            localStorage.setItem(
+              "buzz.channel-prefs.v1",
+              JSON.stringify({ favorites, muted: [] }),
+            );
+          } catch {
+            // A sandboxed frame: nothing to seed.
+          }
+        },
+        [
+          { kind: "channel", id: ids.design },
+          { kind: "channel", id: ids["dm-gilfoyle"] },
+        ],
+      );
+      await open(page, {
+        theme,
+        path: () => "/repos?view=channels",
+        extra: (fixture) => [
+          mockEvent({
+            id: hexId(901, "f"),
+            kind: 39000,
+            created_at: Math.floor(Date.now() / 1000) - 86_400,
+            tags: [
+              ["d", FORUM_ID],
+              ["name", "release-notes"],
+              ["t", "forum"],
+            ],
+          }),
+          linksBlob(fixture.viewerKey, [
+            {
+              id: "sc:1",
+              label: "Grafana",
+              url: "https://grafana.example/",
+              mode: "window",
+            },
+          ]),
+        ],
+      });
+
+      // The page's own rail, not the md+ aside that is in the DOM but hidden.
+      const rail = page
+        .getByTestId("channel-sidebar")
+        .filter({ visible: true });
+      await expect(rail).toBeVisible();
+      const tabs = page.getByTestId("phone-tab-bar");
+      await expect(
+        tabs.getByRole("button", { name: /Channels/ }),
+      ).toHaveAttribute("aria-current", "page");
+
+      // Forums and Links: folded nav rows with their counts, as on desktop.
+      const navRow = (label: string) =>
+        rail
+          .getByTestId("sidebar-nav-disclosure")
+          .getByRole("button", { name: new RegExp(`^${label}`) });
+      await expect(navRow("Forums")).toBeVisible();
+      await expect(navRow("Forums")).toHaveAttribute("aria-expanded", "false");
+      await expect(
+        navRow("Forums").getByTestId("nav-disclosure-count"),
+      ).toHaveText("1");
+      await expect(
+        navRow("Links").getByTestId("nav-disclosure-count"),
+      ).toHaveText("1");
+
+      // Favorites: a channel and a DM, above Channels, which no longer
+      // lists the favorited channel.
+      const favorites = rail.locator('section[aria-label="Favorites"]');
+      const channels = rail.locator('section[aria-label="Channels"]');
+      await expect(favorites).toBeVisible();
+      await expect(favorites).toContainText("design");
+      await expect(favorites).toContainText("Gilfoyle");
+      await expect(
+        channels.locator("button", { hasText: /^design$/ }),
+      ).toHaveCount(0);
+      const above = await rail.evaluate((root) => {
+        const fav = root.querySelector('section[aria-label="Favorites"]');
+        const chan = root.querySelector('section[aria-label="Channels"]');
+        return Boolean(
+          fav &&
+            chan &&
+            fav.compareDocumentPosition(chan) &
+              Node.DOCUMENT_POSITION_FOLLOWING,
+        );
+      });
+      expect(above).toBe(true);
+
+      // Vitals at the foot: usage AND the runway clause, nothing crichton
+      // (no hatch in this build) — and no empty section standing in for it.
+      const vitals = rail.getByTestId("vitals-block");
+      await expect(vitals).toBeVisible();
+      await expect(vitals).toContainText("45% free");
+      await expect(vitals).toContainText("B dry");
+      await expect(rail.getByTestId("vitals-crichton")).toHaveCount(0);
+      // No profile row: Settings opens from the B, as on desktop.
+      await expect(rail.locator("footer")).not.toContainText("Connected");
+      expect(pageErrors).toEqual([]);
+      await shot(page, `phone-rail-${theme}-390`);
+
+      await rail.getByRole("button", { name: /Buzz menu/ }).click();
+      await expect(page.getByRole("link", { name: "Settings" })).toBeVisible();
+    });
+  });
+}
+
+const FORUM_ID = "30000000-0000-4000-8000-000000000001";
+
+/** The viewer's Links blob: kind 30078 `d=shortcut-bar`, sealed to self. */
+function linksBlob(secretKey: Uint8Array, shortcuts: unknown[]) {
+  const pubkey = getPublicKey(secretKey);
+  return mockEvent({
+    id: hexId(902, "f"),
+    pubkey,
+    kind: 30078,
+    created_at: Math.floor(Date.now() / 1000) - 3_600,
+    tags: [
+      ["d", "shortcut-bar"],
+      ["t", "shortcut-bar"],
+    ],
+    content: nip44.v2.encrypt(
+      JSON.stringify({ v: 1, shortcuts: { __sidebar__: shortcuts } }),
+      nip44.v2.utils.getConversationKey(secretKey, pubkey),
+    ),
   });
 }
 

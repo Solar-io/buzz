@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 
 import { cn } from "@/shared/lib/cn";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
+import { blockVitalRows, stripGpuPercent } from "../lib/hostStats.ts";
 import { percent, runwayOutlook, vitalsSummary } from "../lib/vitalsMath.ts";
 import { refreshHostStats, useHostStats } from "../useHostStats.ts";
 import { refreshVitals, useVitals } from "../useVitals.ts";
@@ -16,7 +17,9 @@ import { outlookShort, statusFill, VitalsPanel } from "./VitalsPopover";
  * Vitals v1 (phase-1 §4; Main + Vitals artboards): one combined Claude bar in
  * a shaded box at the foot of the sidebar, opening the per-account panel.
  * Phase 7 adds crichton's rows (CPU, GPU, Mem, Disk from hatch) under a
- * divider — only when a hatch URL is configured.
+ * divider — only when a hatch URL is configured AND hatch answered with a
+ * reading. The runway clause after "N% free" likewise appears only when the
+ * hub's runway has one.
  *
  * `strip` is the phone Work page's one-line form (PhoneWork artboard).
  */
@@ -38,6 +41,11 @@ export function VitalsBlock({
   if (!data.settled) {
     return null;
   }
+  // crichton shows only where it has a reading (Sam, 2026-10-01): signed
+  // out, offline or all-unknown leaves the strip's GPU column and the
+  // block's section out entirely. The popover still explains the state.
+  const stripHost = host && stripGpuPercent(host) !== null ? host : null;
+  const blockHost = host && blockVitalRows(host) !== null ? host : null;
   const known = summary.kind === "known";
   const used = known ? percent(summary.used) : 0;
   const free = known ? percent(summary.free) : 0;
@@ -76,13 +84,13 @@ export function VitalsBlock({
             type="button"
             data-testid="vitals-strip"
             aria-label={
-              host
+              stripHost
                 ? "Vitals: Claude usage and crichton"
                 : "Vitals: Claude usage"
             }
             className={cn(
               "w-full rounded-xl bg-vit px-3 py-2.5 text-left font-mono text-2xs text-foreground",
-              host
+              stripHost
                 ? "grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] gap-4"
                 : "block",
             )}
@@ -105,14 +113,14 @@ export function VitalsBlock({
               </span>
               {known && <span className="mt-1.5 block">{bar("h-0.75")}</span>}
             </span>
-            {host ? <CrichtonStripColumn data={host} /> : null}
+            {stripHost ? <CrichtonStripColumn data={stripHost} /> : null}
           </button>
         ) : (
           <button
             type="button"
             data-testid="vitals-block"
             aria-label={
-              host
+              blockHost
                 ? "Vitals: Claude usage and crichton"
                 : "Vitals: Claude usage"
             }
@@ -147,7 +155,7 @@ export function VitalsBlock({
                 usage unavailable
               </span>
             )}
-            {host ? <CrichtonRows data={host} /> : null}
+            {blockHost ? <CrichtonRows data={blockHost} /> : null}
           </button>
         )}
       </PopoverTrigger>

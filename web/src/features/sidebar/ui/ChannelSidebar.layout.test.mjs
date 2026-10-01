@@ -180,7 +180,7 @@ const FORUM_UNREAD = channel("f-ideas", "ideas-board", "forum");
 
 const noop = () => {};
 
-function props({ forums = [FORUM_READ, FORUM_UNREAD] } = {}) {
+function props({ forums = [FORUM_READ, FORUM_UNREAD], favorites = [] } = {}) {
   return {
     connected: true,
     relayStatus: "open",
@@ -200,7 +200,7 @@ function props({ forums = [FORUM_READ, FORUM_UNREAD] } = {}) {
       visibleDms: [],
     },
     readState: {
-      prefs: { favorites: [], muted: [] },
+      prefs: { favorites, muted: [] },
       // flight-path and system_alerts are read; ideas-board is not.
       read: { "c-flight": 5_000, "f-alerts": 5_000 },
       activity: new Map(),
@@ -473,5 +473,52 @@ test("no forums, no Forums row; Links stays so a first link can be added", async
     assert.ok(view.navRow("Links"));
   } finally {
     await view.unmount();
+  }
+});
+
+test("Favorites sit under the Forums / Links rows and above Channels, and only exist when something is favorited", async () => {
+  // Phone and desktop render this same rail; Sam's phone showed no
+  // Favorites because favorites live in THIS device's localStorage
+  // (channelPrefs.ts), not because the rail hides them there.
+  dom.window.localStorage.clear();
+  const view = await mount({
+    favorites: [
+      { kind: "channel", id: "c-flight" },
+      { kind: "channel", id: "f-alerts" },
+    ],
+  });
+  try {
+    const rail = view.sidebar();
+    const favorites = rail.querySelector('section[aria-label="Favorites"]');
+    const channels = rail.querySelector('section[aria-label="Channels"]');
+    assert.ok(favorites, "a Favorites section");
+    assert.ok(channels, "a Channels section");
+    assert.match(favorites.textContent, /flight-path/);
+    assert.match(favorites.textContent, /system_alerts/);
+    assert.doesNotMatch(
+      channels.textContent,
+      /flight-path/,
+      "a favorite leaves its home section",
+    );
+    assert.ok(precedes(view.navRow("Links"), favorites), "under Links");
+    assert.ok(precedes(favorites, channels), "above Channels");
+    assert.match(
+      view.navRow("Forums").textContent,
+      /^Forums1/,
+      "the favorited forum left the Forums count",
+    );
+  } finally {
+    await view.unmount();
+  }
+
+  const empty = await mount();
+  try {
+    assert.equal(
+      empty.sidebar().querySelector('section[aria-label="Favorites"]'),
+      null,
+      "nothing favorited: no empty Favorites header",
+    );
+  } finally {
+    await empty.unmount();
   }
 });
