@@ -39,6 +39,7 @@ discipline, Agent Brave) and does not repeat them.
 | Topic | Decision |
 |---|---|
 | Right pane | Replaces the thread pane. It's a tab strip; **Work** is always the first tab and defaults to **Everywhere**. |
+| Right pane tabs (2026-09-30) | Exactly two top-level tabs, **Work** and **Canvas**. Opened files and the channel canvas are sub-tabs UNDER Canvas, never tabs beside Work. Opening a file switches the pane to Canvas; Work is unchanged. |
 | Threads | Inline under the message. Kept, but de-emphasised. |
 | Needs you | Decision cards, workflow approvals, @mentions and PR-merge asks, plus **Feedback** (reminders), with filter chips. Feedback is not a separate section. |
 | Feedback | One button on any message sends it to Feedback, with an AI summary (today's reminders plus summaries). |
@@ -288,6 +289,15 @@ the web side.
   - Runway = Σ free across accounts ÷ rate.
   - Returns `{freeFraction, ratePerActiveHour, activeHours, runwayHours,
     basis, computedAt}`. `runwayHours` is null under 3 active intervals.
+- **Amended 2026-09-30 (Sam): calendar days, not active hours.** `/v1/runway`
+  v2 returns, per account, the weekly burn per *calendar* hour averaged over
+  the last 72 h (less if that is all the history there is; `historyHours`
+  says so), projected linearly to that account's reset: `projectedAtReset`,
+  `dryAt`, `status`. The active-hour fields are gone. Vitals shows
+  "45% free · A dry Thu 3:10 PM" (or "lasts to reset"); the popover gives
+  each account's dry time or its projected % at reset, and the method line
+  shows each account's %/h. `/v1/pace` (which the balancer reads) is
+  unchanged. The bullets below describe the original active-hour version.
 - **Vitals** shows "45% free · ~2h 50m of active use". The popover shows the
   method line and "you won't run dry" when the next reset comes before the
   runway ends.

@@ -14,12 +14,14 @@ import {
   closeFileTab,
   EMPTY_FILE_TABS,
   type FileTabsState,
+  fileOnScreen,
   loadFileWidth,
   type OpenFile,
   openFileTab,
   saveFileWidth,
   selectFileTab,
   setFileTabsExpanded,
+  showCanvas,
 } from "./lib/fileTabs.ts";
 import { useDockedPane } from "./useDockedPane.ts";
 
@@ -30,11 +32,12 @@ const FilePreviewSheet = lazy(() =>
 );
 
 /**
- * Open files for the whole shell (web redesign Phase 6): a tile in a
- * message, a Shelf row and a ⌘-click anywhere else all open into the same
- * tabs, which the right pane draws beside Work at lg. Below lg there is no
- * dock, so the active file is a full-screen sheet instead — and closing the
- * sheet closes the file, since a phone has no strip to come back to it from.
+ * The right pane's Canvas for the whole shell: a tile in a message, a Shelf
+ * row and a ⌘-click anywhere else all open into the same Canvas, which the
+ * right pane draws as its second tab at lg (Work | Canvas). Below lg there
+ * is no dock, so the file on screen is a full-screen sheet instead — and
+ * closing the sheet closes the file, since a phone has no strip to come
+ * back to it from.
  *
  * Navigation arrives from the shell as callbacks: the provider sits inside
  * the router, but tiles also render where no route is (component tests).
@@ -42,9 +45,12 @@ const FilePreviewSheet = lazy(() =>
 export interface FileTabsContextValue {
   state: FileTabsState;
   open: (file: OpenFile) => void;
-  close: (key: string) => void;
-  /** A file tab, or null for the shell's own tab. */
-  select: (key: string | null) => void;
+  /** Close a file; `items` is the Canvas order as drawn (see closeFileTab). */
+  close: (key: string, items?: readonly string[]) => void;
+  /** Pick a Canvas document (a file key or CHANNEL_CANVAS_KEY). */
+  select: (key: string) => void;
+  /** Show Canvas, or hand the pane back to Work / Thinking. */
+  show: (open: boolean) => void;
   setExpanded: (expanded: boolean) => void;
   /** The file pane's docked width (persisted). */
   width: number;
@@ -81,12 +87,16 @@ export function FileTabsProvider({
     [],
   );
   const close = useCallback(
-    (key: string) => setState((previous) => closeFileTab(previous, key)),
+    (key: string, items?: readonly string[]) =>
+      setState((previous) => closeFileTab(previous, key, items)),
     [],
   );
   const select = useCallback(
-    (key: string | null) =>
-      setState((previous) => selectFileTab(previous, key)),
+    (key: string) => setState((previous) => selectFileTab(previous, key)),
+    [],
+  );
+  const show = useCallback(
+    (next: boolean) => setState((previous) => showCanvas(previous, next)),
     [],
   );
   const setExpanded = useCallback(
@@ -105,6 +115,7 @@ export function FileTabsProvider({
       open,
       close,
       select,
+      show,
       setExpanded,
       width,
       setWidth,
@@ -116,6 +127,7 @@ export function FileTabsProvider({
       open,
       close,
       select,
+      show,
       setExpanded,
       width,
       setWidth,
@@ -123,17 +135,18 @@ export function FileTabsProvider({
       onOpenShelf,
     ],
   );
-  const active =
-    state.active === null
+  const sheetKey = fileOnScreen(state);
+  const sheet =
+    sheetKey === null
       ? null
-      : (state.files.find((file) => file.key === state.active) ?? null);
+      : (state.files.find((file) => file.key === sheetKey) ?? null);
 
   return (
     <FileTabsContext.Provider value={value}>
       {children}
-      {!docked && active !== null ? (
+      {!docked && sheet !== null ? (
         <Suspense fallback={null}>
-          <FilePreviewSheet file={active} onClose={() => close(active.key)} />
+          <FilePreviewSheet file={sheet} onClose={() => close(sheet.key)} />
         </Suspense>
       ) : null}
     </FileTabsContext.Provider>

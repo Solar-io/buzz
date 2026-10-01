@@ -2,6 +2,7 @@ import { expect, type Page, test } from "@playwright/test";
 
 import type { MockEvent, MockRelayOptions } from "./helpers/mockRelay";
 import {
+  channelCanvasEvents,
   pdfShare,
   probeShare,
   RTS_DIR,
@@ -43,13 +44,15 @@ async function open(
     path?: (f: WorkFixture) => string;
     probe?: boolean;
     pdf?: boolean;
+    /** Give #flight-path a channel canvas (kind 40100). */
+    canvas?: boolean;
   } = {},
 ) {
   let seeded: ReturnType<typeof shelfEvents> | null = null;
   let probe: MockEvent | null = null;
   await page.addInitScript((url) => {
     try {
-      localStorage.setItem("buzz:files-url", url);
+      localStorage.setItem("buzz:files-url.v2", url);
     } catch {
       // Init scripts also run inside the sandboxed preview frame.
     }
@@ -66,6 +69,7 @@ async function open(
         ...seeded.events,
         ...(probe ? [probe] : []),
         ...(options.pdf ? [pdfShare(fixture)] : []),
+        ...(options.canvas ? channelCanvasEvents(fixture) : []),
       ];
     },
   });
@@ -144,12 +148,19 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
         "#flight-path",
       );
 
-      // Open the write-up: a file tab beside Work, the markdown rendered.
+      // Open the write-up: the pane switches to Canvas, the file is a
+      // document UNDER it (never a tab beside Work), the markdown rendered.
       await rowFor(page, "bakeoff-results.md").click();
       const tabs = page.getByTestId("right-pane-tabs");
-      await expect(tabs.getByRole("tab", { name: "Work" })).toBeVisible();
+      await expect(tabs.getByRole("tab")).toHaveCount(2);
+      await expect(page.getByTestId("right-pane-tab-work")).toBeVisible();
+      await expect(page.getByTestId("right-pane-tab-canvas")).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      const docs = page.getByTestId("canvas-tabs");
       await expect(
-        tabs.getByRole("tab", { name: "bakeoff-results.md" }),
+        docs.getByRole("tab", { name: "bakeoff-results.md" }),
       ).toHaveAttribute("aria-selected", "true");
       const preview = page.getByTestId("file-preview");
       await expect(
@@ -219,14 +230,17 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       await expect(page.getByTestId("shelf-row")).toHaveCount(1);
       await page.getByTestId("shelf-search").fill("");
 
-      // A multi-file share opens to its files; each opens its own tab.
+      // A multi-file share opens to its files; each joins Canvas as its own
+      // document, and the top strip stays Work | Canvas.
       await rowFor(page, "rts-bakeoff / game-A…D.html").click();
       const files = page.getByTestId("shelf-row-files");
       await expect(files.getByRole("button")).toHaveCount(4);
       await files.getByRole("button", { name: /game-C\.html/ }).click();
       await expect(
-        tabs.getByRole("tab", { name: "game-C.html" }),
+        docs.getByRole("tab", { name: "game-C.html" }),
       ).toHaveAttribute("aria-selected", "true");
+      await expect(tabs.getByRole("tab")).toHaveCount(2);
+      await expect(page.getByTestId("canvas-count")).toHaveText("2");
       const frame = preview.getByTestId("html-preview-frame");
       await expect(frame).toHaveAttribute("sandbox", "allow-scripts");
       expect(await frame.getAttribute("src")).toBeNull();
@@ -252,13 +266,19 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
         "true",
       );
 
-      // Closing the active tab goes left; Work is still the first tab.
-      await tabs.getByRole("button", { name: "Close game-C.html" }).click();
+      // Closing the selected document goes left; Work is one click away and
+      // Canvas comes back to the same document.
+      await docs.getByRole("button", { name: "Close game-C.html" }).click();
       await expect(
-        tabs.getByRole("tab", { name: "bakeoff-results.md" }),
+        docs.getByRole("tab", { name: "bakeoff-results.md" }),
       ).toHaveAttribute("aria-selected", "true");
-      await tabs.getByRole("tab", { name: "Work" }).click();
+      await page.getByTestId("right-pane-tab-work").click();
       await expect(page.getByTestId("work-rail")).toBeVisible();
+      await expect(page.getByTestId("canvas-tabs")).toHaveCount(0);
+      await page.getByTestId("right-pane-tab-canvas").click();
+      await expect(
+        docs.getByRole("tab", { name: "bakeoff-results.md" }),
+      ).toHaveAttribute("aria-selected", "true");
       expect(pageErrors).toEqual([]);
     });
 
@@ -336,6 +356,74 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
         }),
         preview.getByTestId("file-jump").click(),
       ]);
+    });
+
+    test("Canvas: a PDF from chat opens under it, after the pinned channel canvas", async ({
+      page,
+    }) => {
+      const pageErrors: string[] = [];
+      page.on("pageerror", (error) => pageErrors.push(error.message));
+      await open(page, theme, { pdf: true, canvas: true });
+
+      // On Work, Canvas already counts the channel's canvas.
+      await expect(page.getByTestId("right-pane-tab-work")).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await expect(page.getByTestId("canvas-count")).toHaveText("1");
+
+      // Click the PDF in the conversation: the pane switches to Canvas and
+      // selects it; the channel canvas stays pinned first.
+      await page
+        .getByTestId("file-card")
+        .filter({ hasText: "capture-plan.pdf" })
+        .last()
+        .click();
+      await expect(page.getByTestId("right-pane-tab-canvas")).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await expect(
+        page.getByTestId("right-pane-tabs").getByRole("tab"),
+      ).toHaveCount(2);
+      const docs = page.getByTestId("canvas-tabs");
+      await expect(docs.getByRole("tab")).toHaveText([
+        "Channel canvas",
+        "capture-plan.pdf",
+      ]);
+      await expect(
+        docs.getByRole("tab", { name: "capture-plan.pdf" }),
+      ).toHaveAttribute("aria-selected", "true");
+      await expect(page.getByTestId("file-pdf-view")).toHaveAttribute(
+        "src",
+        /^blob:/,
+      );
+      await page.evaluate(() =>
+        (document.activeElement as HTMLElement)?.blur(),
+      );
+      await shot(page, `canvas-pdf-${theme}-1440`);
+
+      // The channel canvas: the NEWEST set, rendered, with who set it.
+      await docs.getByRole("tab", { name: "Channel canvas" }).click();
+      const canvas = page.getByTestId("channel-canvas");
+      await expect(
+        canvas.getByRole("heading", { name: "Flight path", exact: true }),
+      ).toBeVisible();
+      await expect(canvas).not.toContainText("This set was replaced");
+      await expect(canvas).toContainText("Updated by Lord Nikon");
+      await expect(
+        docs.getByRole("button", { name: "Close Channel canvas" }),
+      ).toHaveCount(0);
+      await shot(page, `canvas-channel-${theme}-1440`);
+
+      // Closing the PDF leaves the canvas on screen; Work is unchanged.
+      await docs
+        .getByRole("button", { name: "Close capture-plan.pdf" })
+        .click();
+      await expect(docs.getByRole("tab")).toHaveText(["Channel canvas"]);
+      await page.getByTestId("right-pane-tab-work").click();
+      await expect(page.getByTestId("work-rail")).toBeVisible();
+      expect(pageErrors).toEqual([]);
     });
   });
 }

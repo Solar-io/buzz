@@ -877,6 +877,21 @@ Three sub-traps from the same hour:
   thinking panels keep their own full-screen sheets, and Work is `?view=work`.
   A panel that must stay mounted behind another tab is wrapped `contents
   lg:hidden`, never unmounted — a thread draft lives in it.
+- **Work | Canvas: documents live UNDER Canvas, never beside Work** (Sam,
+  2026-09-30). `rightPaneStrip` returns the top tabs (`paneTabs`: Work,
+  Canvas, then Thinking in an agent DM) and the Canvas document on screen.
+  `FileTabsState.open` says whether Canvas is up; `active` remembers its
+  document across a trip to Work. The channel canvas (kind 40100) is a
+  REGULAR `h`-scoped event — every `buzz canvas set` appends, the newest
+  wins, an empty set clears it — so `CHANNEL_CANVAS_KEY` is not a file and
+  follows the conversation. Close with the DRAWN order
+  (`files.close(key, items)`), or closing the first file skips the pinned
+  canvas.
+- **Module stubs cannot `import` anything.** A `__BUZZ_TEST_MODULE_STUBS__`
+  source loads from a non-file URL, so `import … from "react"` dies with
+  `ERR_INVALID_URL` before a test runs. Reach the test's React through
+  `globalThis.__BUZZ_TEST_REACT__` (`HuddleDock.test.mjs`,
+  `RightPaneHost.test.mjs`).
 - **Anything in the shell chrome must not read the Work feed directly.**
   `useWorkFeed` re-derives on observer frames (a busy agent emits several a
   second, throttled to 2/s inside the hook), and every component that calls it
@@ -1007,3 +1022,41 @@ Three sub-traps from the same hour:
 - **Jump writes `?m=` and the shell drops it once the row lands** (an
   all-digit id even rides JSON-quoted, `m=%22…%22`): assert the navigation
   with `waitForURL(…, { waitUntil: "commit" })`, not the final URL.
+
+## Web conversation pane: open threads and the status line (earned 2026-09-30)
+
+- **Inline threads are open by default**, so an e2e that clicks a
+  `thread-chip-*` to open a thread now FOLDS it. Assert
+  `aria-expanded="true"` first; click only to test the fold.
+- **`composer-input` is no longer unique on a channel page**: every open
+  thread carries its own reply box with the same test id, earlier in the DOM.
+  Reach the channel's box through `mainComposer(page)` (the last chat
+  textarea) or from the status line (`running-strip-line` → parent →
+  `composer-input`) — never `.first()`.
+- **Pick a preview port nobody holds.** `reuseExistingServer` happily served
+  a 6-hour-old `vite preview` from another worktree on the port this one
+  picked; every failure was against someone else's build. `lsof -nP
+  -iTCP:<port> -sTCP:LISTEN` before the run, not after the confusing result.
+
+## Web left rail: testing and live checks (earned on the sidebar pass, 2026-09-30)
+
+- **Settings lives behind the B** (`sidebar/ui/SidebarAppMenu.tsx`); there
+  is no profile row any more. Forums and Links are `SidebarNavDisclosure`
+  rows under Terminal, folded by default under `nav:forums` / `nav:links`.
+  An e2e that wants a forum or link row must open its row first.
+- **The real `ChannelSidebar` renders under node + jsdom**
+  (`ChannelSidebar.layout.test.mjs`). It needs a `QueryClientProvider`, a
+  stub for `@/app/router` (shell modules import the whole route tree), and
+  `gcTime: Infinity` plus `queryClient.clear()` on unmount: the default
+  5-minute cache-GC timer keeps the test process alive after the last case,
+  and the runner reports it as a hang, not a failure.
+- **A Playwright e2e run empties `web/test-results/`** (its `outputDir`).
+  Screenshots saved there for a report are gone after the next e2e run. Put
+  them in `web/.scratch/` (gitignored) instead.
+- **Agent Brave sign-in without printing the key:** write
+  `{nsec, tag}` from `BUZZ_PRIVATE_KEY` / `BUZZ_AUTH_TAG` to a gitignored
+  file under the vite root, fetch it inside `browser_run_code_unsafe`, fill
+  the form there, and delete the file once enrolled. Nothing secret crosses
+  the tool output. In the same call, find your page by URL
+  (`page.context().pages().find(…)`): other agents move the MCP's "current"
+  tab while you work.

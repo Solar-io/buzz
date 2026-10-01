@@ -105,21 +105,38 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
 
       // Vitals popover.
       await sidebar.getByTestId("vitals-block").click();
+      // The runway's 72 h calendar projection: B runs dry before its reset,
+      // A lasts (fixture in workFixture.routeUsageHub).
+      await expect(sidebar.getByTestId("vitals-block")).toContainText("B dry");
+      await expect(page.getByTestId("vitals-outlook")).toContainText(
+        "Account B runs dry around",
+      );
       await expect(page.getByTestId("vitals-popover")).toContainText(
-        "B is running at 1.6× its pace",
+        "A won't run dry — about 64% used when it resets",
+      );
+      await expect(page.getByTestId("vitals-runway-method")).toContainText(
+        "72h average, carried forward to each reset: A 1.2%/h · B 20%/h (B: 40h of history)",
+      );
+      await expect(page.getByTestId("vitals-popover")).not.toContainText(
+        "active",
       );
       await shot(page, `vitals-${theme}-1440`);
       await page.keyboard.press("Escape");
     });
 
-    test("a thread opens inline under its message; Work stays the only tab", async ({
+    test("a thread is open inline under its message by default; the strip stays Work | Canvas", async ({
       page,
     }) => {
       const { fixture, relay } = await open(page, { theme, path: channelPath });
       const host = page.getByTestId("right-pane-host");
       await expect(host).toHaveAttribute("data-active-tab", "work");
-      // One tab: no strip, just the Work title — and a thread never adds one.
-      await expect(page.getByTestId("right-pane-tabs")).toHaveCount(0);
+      // Exactly two top-level tabs (Sam, 2026-09-30) — a thread never adds one.
+      const paneTabs = page.getByTestId("right-pane-tabs");
+      await expect(paneTabs.getByRole("tab")).toHaveCount(2);
+      await expect(page.getByTestId("right-pane-tab-work")).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
 
       const ask = fixture.events.find((event) =>
         event.content.startsWith("@Gilfoyle turn the handoff notes"),
@@ -127,16 +144,25 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       expect(ask).toBeTruthy();
       const chip = page.getByTestId(`thread-chip-${ask?.id}`);
       await expect(chip).toHaveText(/3 replies/);
-      await chip.click();
+      // Open without a click (Sam, 2026-09-30): the replies and the reply
+      // box are already there.
       const thread = page.getByTestId(`inline-thread-${ask?.id}`);
+      await expect(chip).toHaveAttribute("aria-expanded", "true");
       await expect(thread).toContainText("Beat 01 is captured. Two to go.");
       await expect(thread.getByTestId("thread-reply-box")).toBeVisible();
-      // It opens DOWNWARD, from where it was clicked: the chip and the first
-      // reply stay on screen (a list re-pin once pushed them off the top).
+      // The viewer can still fold it — and open it again.
+      await chip.click();
+      await expect(chip).toHaveAttribute("aria-expanded", "false");
+      await expect(thread.getByTestId("thread-reply-box")).toHaveCount(0);
+      await expect(thread).not.toContainText("Beat 01 is captured.");
+      await chip.click();
+      await expect(thread.getByTestId("thread-reply-box")).toBeVisible();
+      // It reopens DOWNWARD, from where it was clicked: the chip and the
+      // first reply stay on screen (a list re-pin once pushed them off).
       await page.waitForTimeout(800);
       await expect(chip).toBeInViewport();
       await expect(thread.getByText("On it — splitting")).toBeInViewport();
-      await expect(page.getByTestId("right-pane-tabs")).toHaveCount(0);
+      await expect(paneTabs.getByRole("tab")).toHaveCount(2);
       await expect(page.getByTestId("work-rail")).toBeVisible();
       await shot(page, `thread-inline-${theme}-1440`);
 
@@ -166,6 +192,17 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
         strip.getByRole("button", { name: "8 need you" }),
       ).toBeVisible();
       await strip.getByRole("button", { name: "Expand Work" }).click();
+      await expect(page.getByTestId("work-rail")).toBeVisible();
+
+      // The fold still reaches the pane's other tab: Canvas (empty here).
+      await page.getByRole("button", { name: "Collapse Work" }).click();
+      await strip.getByRole("button", { name: "Open Canvas" }).click();
+      await expect(page.getByTestId("canvas-empty")).toBeVisible();
+      await expect(page.getByTestId("right-pane-tab-canvas")).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await page.getByTestId("right-pane-tab-work").click();
       await expect(page.getByTestId("work-rail")).toBeVisible();
     });
 

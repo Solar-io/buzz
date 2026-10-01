@@ -14,8 +14,9 @@ import {
  * The SIDEBAR shortcuts, driven end to end against a faked relay.
  *
  * These were per-channel pills in the channel header; they are now one
- * channel-independent list rendered as rows in a "Shortcuts" section below
- * Forums (the reserved `__sidebar__` key in the same encrypted blob). See
+ * channel-independent list rendered as rows under the "Links" nav row, folded
+ * by default below Terminal and Forums (the reserved `__sidebar__` key in the
+ * same encrypted blob; the fold is `nav:links`). See
  * `features/shortcut-bar/lib/shortcutBlob.ts` for the shape and the seed.
  *
  * The mock (`helpers/mockRelay.ts`) is not a relay: it answers REQs from a
@@ -38,9 +39,43 @@ import {
 const CHANNEL_ID = "5b1f2a34-1111-4222-8333-444455556666";
 const PASSPHRASE = "e2e-passphrase";
 
-/** The Shortcuts section's `+`, which is the header's add button. */
-function addShortcutButton(page: Page) {
-  return page.getByRole("button", { name: "Add a shortcut" });
+/** The Links nav row, which folds the shortcut rows under itself. */
+function linksRow(page: Page) {
+  return page
+    .getByTestId("channel-sidebar")
+    .getByRole("button", { name: /^Links/ });
+}
+
+/** Unfold Links if it is folded (it is, by default). Idempotent. */
+async function openLinks(page: Page) {
+  const row = linksRow(page);
+  await expect(row).toBeVisible();
+  if ((await row.getAttribute("aria-expanded")) !== "true") {
+    await row.click();
+  }
+  await expect(row).toHaveAttribute("aria-expanded", "true");
+}
+
+/**
+ * An overlay shortcut is on screen: the main column's frame host is showing
+ * it, and its iframe points at the shortcut's site.
+ */
+async function expectShortcutFrame(page: Page, shortcutId: string) {
+  const host = page.getByTestId("web-frame-host");
+  await expect(host).toHaveAttribute(
+    "data-active",
+    new RegExp(`^[^ ]*${shortcutId}`),
+  );
+  const active = (await host.getAttribute("data-active")) ?? "";
+  const frame = page.getByTestId(`web-panel-frame-${active}`);
+  await expect(frame).toBeVisible();
+  expect(await frame.getAttribute("src")).toMatch(/^https:\/\/kept\.example\//);
+}
+
+/** "Add a link", the last row inside the unfolded Links list. */
+async function addShortcutButton(page: Page) {
+  await openLinks(page);
+  return page.getByRole("button", { name: "Add a link" });
 }
 
 /**
@@ -151,17 +186,25 @@ test("a seeded blob written per-channel seeds the sidebar rows", async ({
 
   // The decrypt path: ciphertext in, a labeled row out — in the SIDEBAR, not
   // in any channel header.
-  const sidebar = page.getByTestId("channel-sidebar");
-  await expect(sidebar.getByText("Shortcuts")).toBeVisible();
+  // Links is folded by default (Sam, 2026-09-30): the row says how many it
+  // holds, and no shortcut row is drawn until it is opened.
+  const links = linksRow(page);
+  await expect(links).toHaveAttribute("aria-expanded", "false");
+  await expect(links).toContainText("2");
+  await expect(shortcutRow(page, "kept")).toHaveCount(0);
+  await openLinks(page);
   const overlayRow = shortcutRow(page, "kept");
   await expect(overlayRow).toBeVisible();
   await expect(shortcutRow(page, "docs")).toBeVisible();
 
-  // Overlay mode opens the in-app dock, replacing the main pane.
+  // Overlay mode opens the site in the main column's frame host.
   await overlayRow.click();
-  await expect(page.getByTestId("web-panel-dock")).toBeVisible();
-  await expect(page.getByTestId("web-panel-tab-sc:1#1")).toBeVisible();
-  await page.getByTestId("web-panel-dock-close").click();
+  await expectShortcutFrame(page, "sc:1");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("web-frame-host")).toHaveAttribute(
+    "data-active",
+    "",
+  );
 
   // Window mode opens a real browser tab instead of the dock. The popup is
   // the assertion that separates "opened a tab" from "did nothing".
@@ -192,8 +235,13 @@ test("the add dialog refuses a hostile scheme with the allowlist error", async (
   const secretKey = generateSecretKey();
   const relay = await installMockRelay(page, [channelEvent()]);
   await signIn(page, `/repos?c=${CHANNEL_ID}`, secretKey);
+  // Connected first: until the list has loaded, the dialog refuses every
+  // save with "Links are still loading", which would mask the allowlist.
+  await expect
+    .poll(() => relay.published.length, { timeout: 10_000 })
+    .toBeGreaterThan(0);
 
-  await addShortcutButton(page).click();
+  await (await addShortcutButton(page)).click();
   const dialog = page.getByTestId("shortcut-dialog");
   await expect(dialog).toBeVisible();
 
@@ -238,7 +286,7 @@ test("adding an overlay shortcut publishes the exact encrypted blob and opens th
     .poll(() => relay.published.length, { timeout: 10_000 })
     .toBeGreaterThan(0);
 
-  await addShortcutButton(page).click();
+  await (await addShortcutButton(page)).click();
   await page.getByTestId("shortcut-url").fill("https://kept.example/");
   await page.getByTestId("shortcut-label").fill("kept");
   await page.getByTestId("shortcut-mode-overlay").check();
@@ -283,18 +331,17 @@ test("adding an overlay shortcut publishes the exact encrypted blob and opens th
     },
   });
 
-  // The overlay: the clicked row's site fills the main pane as a dock.
+  // The overlay: the clicked row's site fills the main column's frame host.
   await shortcutRow(page, "kept").click();
-  const dock = page.getByTestId("web-panel-dock");
-  await expect(dock).toBeVisible();
-  await expect(dock.getByTestId(`web-panel-tab-sc:1#1`)).toBeVisible();
-  // No add/remove affordances: the shortcut dock's panels come from the list.
-  await expect(page.getByTestId("web-panel-add-site")).toHaveCount(0);
-  await expect(page.getByTestId("web-panel-remove-sc:1")).toHaveCount(0);
+  await expectShortcutFrame(page, "sc:1");
 
-  // X returns to the conversation.
-  await page.getByTestId("web-panel-dock-close").click();
-  await expect(page.getByTestId("composer-input")).toBeVisible();
+  // Escape returns to the conversation.
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("web-frame-host")).toHaveAttribute(
+    "data-active",
+    "",
+  );
+  await expect(page.getByTestId("composer-input").last()).toBeVisible();
 
   expect(pageErrors).toEqual([]);
 });
@@ -317,7 +364,7 @@ test("a published event re-read on a fresh sign-in renders without optimism", as
     .poll(() => relay.published.length, { timeout: 10_000 })
     .toBeGreaterThan(0);
 
-  await addShortcutButton(page).click();
+  await (await addShortcutButton(page)).click();
   await page.getByTestId("shortcut-url").fill("https://kept.example/");
   await page.getByTestId("shortcut-submit").click();
   await expect(shortcutRow(page, "kept.example")).toBeVisible();
@@ -336,6 +383,7 @@ test("a published event re-read on a fresh sign-in renders without optimism", as
   await page.reload();
   await expect(page.getByTestId("channel-sidebar")).toBeVisible();
 
+  await openLinks(page);
   await expect(shortcutRow(page, "kept.example")).toBeVisible();
   expect(pageErrors).toEqual([]);
 });

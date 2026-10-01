@@ -1453,11 +1453,10 @@ pub(crate) async fn archive_empty_huddle(
             )
             .await;
 
-            // Carry the call back into the main chat: one relay-signed kind:9
-            // with the transcript, into the verified parent. Rides this arm so
-            // it inherits the 48103's exactly-once (only the archive winner
-            // gets here). Best-effort — never affects the end outcome.
-            crate::audio::transcript::emit_call_transcript(
+            // Call lines flow into the parent live (ingest); flush any the
+            // live mirror missed. Already-mirrored lines dedupe on their
+            // deterministic id. Best-effort — never affects the end outcome.
+            crate::audio::transcript::flush_call_lines(
                 state,
                 tenant,
                 channel_id,

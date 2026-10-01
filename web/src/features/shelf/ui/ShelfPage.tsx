@@ -12,6 +12,7 @@ import type { ChannelSummary } from "@/features/channels/useChannels";
 import { cn } from "@/shared/lib/cn";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { useFileTabs } from "../FileTabsProvider";
+import { fileOnScreen } from "../lib/fileTabs.ts";
 import { openFileOf } from "../lib/shareEvent.ts";
 import {
   channelOptions,
@@ -248,7 +249,7 @@ export function ShelfPage({
                   layout={layout}
                   names={names}
                   when={whenLabel(row.share.createdAt, nowS)}
-                  selectedKey={tabs?.state.active ?? null}
+                  selectedKey={tabs ? fileOnScreen(tabs.state) : null}
                   expanded={expanded.has(row.share.id)}
                   onToggle={() =>
                     setExpanded((previous) => {

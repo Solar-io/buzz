@@ -1,6 +1,8 @@
 /**
- * Vitals v1 math over the usage hub's `/v1/pace` (phase-1 §4), plus the
- * `/v1/runway` line now that the hub serves it.
+ * Vitals v1 math over the usage hub's `/v1/pace` (phase-1 §4), plus its
+ * `/v1/runway` projection: per account, the 72 h average use per CALENDAR
+ * hour, carried forward to that account's reset. The hub does that math; this
+ * module only picks what to show.
  *
  * Unknown stays unknown: a stale or missing account is left out of the mean
  * and reported as coverage ("1 of 2 accounts"), never folded in as 0% — a
@@ -19,8 +21,6 @@ import type {
 export const MIN_ELAPSED_FOR_PACE = 0.05;
 /** The "running at N× its pace" line shows only at or above this. */
 export const PACE_LINE_AT = 1.1;
-/** "Resets with ~N% unused" only when the projection stays under this. */
-export const UNUSED_LINE_BELOW = 0.98;
 
 export interface AccountVitals {
   id: string;
@@ -33,10 +33,14 @@ export interface AccountVitals {
   resetsAt: string | null;
   /** used ÷ elapsed; null when elapsed < 5 % or either is unknown. */
   paceMultiplier: number | null;
-  /** `etaFullAt` when it lands before the reset; else null. */
-  fillsAt: string | null;
-  /** Whole percent left unused at reset; null when it fills or ≥ 98 %. */
-  unusedAtReset: number | null;
+  /** From /v1/runway: when it hits 100 % at the 72 h rate, if before reset. */
+  dryAt: string | null;
+  /** From /v1/runway: used fraction projected to the reset (may exceed 1). */
+  projectedAtReset: number | null;
+  /** From /v1/runway: share of this account's week burned per calendar hour. */
+  burnPerHour: number | null;
+  /** From /v1/runway: hours of history the rate averages (≤ 72). */
+  historyHours: number | null;
 }
 
 export type VitalsSummary =
@@ -54,7 +58,17 @@ export type VitalsSummary =
     }
   | { kind: "unavailable"; total: number; accounts: AccountVitals[] };
 
-export function accountVitals(pace: Pace, account: PaceAccount): AccountVitals {
+/**
+ * One account's row. The projection — and the status colour, when the
+ * runway has one — comes from `/v1/runway`; the reading and the window from
+ * `/v1/pace`. Pace's own trailing-24 h projection is no longer shown: two
+ * forecasts on one panel would disagree.
+ */
+export function accountVitals(
+  pace: Pace,
+  account: PaceAccount,
+  runway: Runway | null = null,
+): AccountVitals {
   const known = account.state === "known";
   const used = known ? account.usedFraction : null;
   const elapsed = known ? account.elapsedFraction : null;
@@ -62,39 +76,38 @@ export function accountVitals(pace: Pace, account: PaceAccount): AccountVitals {
     used !== null && elapsed !== null && elapsed >= MIN_ELAPSED_FOR_PACE
       ? used / elapsed
       : null;
-  const eta = account.etaFullAt ? Date.parse(account.etaFullAt) : Number.NaN;
-  const reset = account.resetsAt ? Date.parse(account.resetsAt) : Number.NaN;
-  const fillsAt =
-    Number.isFinite(eta) && (!Number.isFinite(reset) || eta < reset)
-      ? account.etaFullAt
-      : null;
-  const projected = known ? account.projectedAtReset : null;
-  const unusedAtReset =
-    projected !== null &&
-    account.etaFullAt === null &&
-    projected < UNUSED_LINE_BELOW
-      ? Math.round((1 - projected) * 100)
-      : null;
+  const forecast =
+    runway?.accounts.find((entry) => entry.id === account.id) ?? null;
   return {
     id: account.id,
     state: account.state,
-    status: account.status,
+    status:
+      forecast && forecast.status !== "unknown"
+        ? forecast.status
+        : account.status,
     parked: isParked(pace, account),
     used,
     elapsed,
     resetsAt: account.resetsAt,
     paceMultiplier,
-    fillsAt,
-    unusedAtReset,
+    dryAt: known ? (forecast?.dryAt ?? null) : null,
+    projectedAtReset: known ? (forecast?.projectedAtReset ?? null) : null,
+    burnPerHour: forecast?.burnPerHour ?? null,
+    historyHours: forecast?.historyHours ?? null,
   };
 }
 
 /** The combined bar: free = 1 − mean(known usedFraction). */
-export function vitalsSummary(pace: Pace | null): VitalsSummary {
+export function vitalsSummary(
+  pace: Pace | null,
+  runway: Runway | null = null,
+): VitalsSummary {
   if (!pace) {
     return { kind: "unavailable", total: 0, accounts: [] };
   }
-  const accounts = pace.accounts.map((account) => accountVitals(pace, account));
+  const accounts = pace.accounts.map((account) =>
+    accountVitals(pace, account, runway),
+  );
   const usedValues = accounts
     .map((account) => account.used)
     .filter((value): value is number => value !== null);
@@ -110,7 +123,16 @@ export function vitalsSummary(pace: Pace | null): VitalsSummary {
     free: 1 - used,
     known: usedValues.length,
     total: accounts.length,
-    status: activeStatus(pace),
+    // Pace's parked-account rule, applied to the statuses the rows show.
+    status: activeStatus({
+      ...pace,
+      status:
+        runway && runway.status !== "unknown" ? runway.status : pace.status,
+      accounts: pace.accounts.map((account, index) => ({
+        ...account,
+        status: accounts[index]?.status ?? account.status,
+      })),
+    }),
     accounts,
     computedAt: Number.isFinite(computed) ? computed : null,
   };
@@ -147,51 +169,116 @@ export function updatedAgo(computedAt: number | null, nowMs: number): string {
 
 // ── /v1/runway ─────────────────────────────────────────────────────────────
 
+export interface RunwayAccount {
+  id: string;
+  usedFraction: number | null;
+  resetsAt: string | null;
+  /** Wall-clock hours the rate averages over (≤ lookbackHours). */
+  historyHours: number | null;
+  /** Share of this account's weekly quota burned per calendar hour. */
+  burnPerHour: number | null;
+  projectedAtReset: number | null;
+  dryAt: string | null;
+  status: PaceStatus;
+}
+
 export interface Runway {
-  /** Σ free across the accounts the hub can read, in ACCOUNTS (1.28 = 128 %). */
-  freeFraction: number | null;
-  /** One account's quota burned per active hour over the last 48 h. */
-  ratePerActiveHour: number | null;
-  activeHours: number | null;
-  /** freeFraction ÷ rate; null under 3 active intervals. */
-  runwayHours: number | null;
+  /** How far back the hub averages (72 h). */
+  lookbackHours: number | null;
   /** The quota window measured (`weeklyAll` today). */
   basis: string | null;
+  /** Worst account status from the projection. */
+  status: PaceStatus;
+  accounts: RunwayAccount[];
 }
+
+const STATUSES: readonly PaceStatus[] = ["ok", "warn", "critical", "unknown"];
 
 function num(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-/** Forgiving parse — anything off-shape is null, which hides the line. */
+function str(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function statusOf(value: unknown): PaceStatus {
+  return STATUSES.includes(value as PaceStatus)
+    ? (value as PaceStatus)
+    : "unknown";
+}
+
+/**
+ * Forgiving parse — anything off-shape is null or dropped, which hides the
+ * line. A pre-v2 hub (active-hour fields, no `accounts`) parses to no
+ * accounts: nothing is projected rather than something wrong.
+ */
 export function parseRunway(json: unknown): Runway | null {
   if (!json || typeof json !== "object" || Array.isArray(json)) {
     return null;
   }
   const raw = json as Record<string, unknown>;
+  const accounts: RunwayAccount[] = [];
+  for (const entry of Array.isArray(raw.accounts) ? raw.accounts : []) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const a = entry as Record<string, unknown>;
+    if (typeof a.id !== "string") {
+      continue;
+    }
+    accounts.push({
+      id: a.id,
+      usedFraction: num(a.usedFraction),
+      resetsAt: str(a.resetsAt),
+      historyHours: num(a.historyHours),
+      burnPerHour: num(a.burnPerHour),
+      projectedAtReset: num(a.projectedAtReset),
+      dryAt: str(a.dryAt),
+      status: statusOf(a.status),
+    });
+  }
   return {
-    freeFraction: num(raw.freeFraction),
-    ratePerActiveHour: num(raw.ratePerActiveHour),
-    activeHours: num(raw.activeHours),
-    runwayHours: num(raw.runwayHours),
-    basis: typeof raw.basis === "string" ? raw.basis : null,
+    lookbackHours: num(raw.lookbackHours),
+    basis: str(raw.basis),
+    status: statusOf(raw.status),
+    accounts,
   };
 }
 
-/** "~2h 50m" of active use ("~3d 4h" past two days); null when unknown. */
-export function formatRunway(runway: Runway | null): string | null {
-  const hours = runway?.runwayHours ?? null;
-  if (hours === null || hours < 0) {
+export type Outlook =
+  /** The soonest in-use account to hit 100 % before its own reset. */
+  | { kind: "dry"; account: string; at: string }
+  /** Every in-use account with a projection lasts to its reset. */
+  | { kind: "safe" };
+
+/**
+ * The headline: does anything run dry before it resets, at the 72 h pace?
+ * Parked accounts are left out (they take no work) unless every account is
+ * parked. No projection anywhere → null, and the headline hides.
+ */
+export function runwayOutlook(summary: VitalsSummary): Outlook | null {
+  if (summary.kind !== "known") {
     return null;
   }
-  const minutes = Math.round(hours * 60);
-  if (minutes >= 48 * 60) {
-    const wholeHours = Math.round(minutes / 60);
-    return `~${Math.floor(wholeHours / 24)}d ${wholeHours % 24}h`;
+  const active = summary.accounts.filter((account) => !account.parked);
+  const pool = active.length > 0 ? active : summary.accounts;
+  let dry: { account: string; at: string; ms: number } | null = null;
+  let projected = 0;
+  for (const account of pool) {
+    if (account.projectedAtReset === null) {
+      continue;
+    }
+    projected++;
+    const ms = account.dryAt ? Date.parse(account.dryAt) : Number.NaN;
+    if (account.dryAt && Number.isFinite(ms) && (!dry || ms < dry.ms)) {
+      dry = { account: account.id, at: account.dryAt, ms };
+    }
   }
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return h > 0 ? `~${h}h ${m}m` : `~${m}m`;
+  if (dry) {
+    return { kind: "dry", account: dry.account, at: dry.at };
+  }
+  return projected > 0 ? { kind: "safe" } : null;
 }
 
 /** 6.48 → "6.5", 16.2 → "16": one decimal only under ten. */
@@ -202,55 +289,26 @@ function short(value: number): string {
 }
 
 /**
- * The popover's method line (Vitals artboard): how the runway was computed,
- * from the hub's own numbers — "runway = free ÷ use per active hour · 48h:
- * 6.5%/h over 8.3 active h". When the hub has too little active use to
- * divide by, it says so instead of printing a rate of nothing.
+ * The popover's method line, from the hub's own numbers: "72h average,
+ * carried forward to each reset: A 1.4%/h · B 0.4%/h". An account with less
+ * than the full window of history is noted quietly ("B: 31h of history").
  */
 export function runwayMethod(runway: Runway | null): string | null {
-  if (!runway) {
+  if (!runway || runway.accounts.length === 0) {
     return null;
   }
-  const rate = runway.ratePerActiveHour;
-  const active = runway.activeHours;
-  if (runway.runwayHours === null || rate === null || active === null) {
-    return active === null
-      ? null
-      : "runway: too little active use in the last 48h to estimate";
+  const lookback = runway.lookbackHours ?? 72;
+  const rated = runway.accounts.filter((a) => a.burnPerHour !== null);
+  if (rated.length === 0) {
+    return `not enough history in the last ${lookback}h to project yet`;
   }
-  return `runway = free ÷ use per active hour · 48h: ${short(rate * 100)}%/h over ${short(active)} active h`;
-}
-
-export type RunDry =
-  /** The next reset lands before the runway could run out. */
-  | { kind: "safe"; account: string; resetsAt: string; well: boolean }
-  /** Worked without a break, the runway ends before the next reset. */
-  | { kind: "tight"; account: string; resetsAt: string };
-
-/**
- * "You won't run dry" (Vitals artboard). The runway is in ACTIVE hours, so
- * the soonest it can end is `now + runwayHours` of wall clock — working
- * without a break. A reset before that is safe whatever the pace; "well
- * inside" when it lands in the first half. No runway or no reset → null.
- */
-export function runDryNote(
-  runway: Runway | null,
-  nextReset: { account: string; resetsAt: string } | null,
-  nowMs: number,
-): RunDry | null {
-  const hours = runway?.runwayHours ?? null;
-  if (hours === null || hours < 0 || !nextReset) {
-    return null;
-  }
-  const resetMs = Date.parse(nextReset.resetsAt);
-  if (!Number.isFinite(resetMs) || resetMs < nowMs) {
-    return null;
-  }
-  const endMs = nowMs + hours * 3_600_000;
-  const { account, resetsAt } = nextReset;
-  if (resetMs < endMs) {
-    const well = resetMs - nowMs <= (endMs - nowMs) / 2;
-    return { kind: "safe", account, resetsAt, well };
-  }
-  return { kind: "tight", account, resetsAt };
+  const rates = rated
+    .map((a) => `${a.id} ${short((a.burnPerHour ?? 0) * 100)}%/h`)
+    .join(" · ");
+  // A full window of 10-minute samples spans just under the lookback.
+  const thin = rated
+    .filter((a) => a.historyHours !== null && a.historyHours < lookback - 1)
+    .map((a) => `${a.id}: ${Math.round(a.historyHours ?? 0)}h of history`);
+  const note = thin.length > 0 ? ` (${thin.join(", ")})` : "";
+  return `${lookback}h average, carried forward to each reset: ${rates}${note}`;
 }

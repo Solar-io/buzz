@@ -1,4 +1,4 @@
-import { Globe } from "lucide-react";
+import { Globe, Plus } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -16,8 +16,8 @@ import { useActiveWebView } from "@/features/webPanels/activeWebStore.ts";
 import { ShortcutDialog } from "@/features/shortcut-bar/ui/ShortcutDialog.tsx";
 import { favoriteMenuItem } from "@/features/sidebar/lib/favoriteMenuItem.ts";
 import { shortcutMenuItems } from "@/features/sidebar/lib/shortcutMenuItems.ts";
-import { SidebarSection } from "@/features/sidebar/ui/SidebarSection";
 import { SidebarNavButton } from "@/features/sidebar/ui/SidebarNavButton";
+import { SidebarNavDisclosure } from "@/features/sidebar/ui/SidebarNavDisclosure";
 
 /** Favorites wiring for link rows; omitted, link menus carry no toggle. */
 export interface SidebarLinkFavorites {
@@ -184,9 +184,12 @@ export function useSidebarLinks({
 }
 
 /**
- * The Links section, given its wiring ({@link useSidebarLinks}) and the rows
- * to show — the sidebar passes the links NOT in Favorites. Renders the
- * add/edit dialog, so render this once per `links`.
+ * The Links nav row, given its wiring ({@link useSidebarLinks}) and the rows
+ * to show — the sidebar passes the links NOT in Favorites. A disclosure
+ * under Terminal (Sam, 2026-09-30) rather than a list section: open, it
+ * lists the links and ends with "Add a link", which shows on an empty list
+ * too so the add stays discoverable. Renders the add/edit dialog, so render
+ * this once per `links`.
  */
 export function SidebarLinksSection({
   links,
@@ -200,20 +203,29 @@ export function SidebarLinksSection({
   onToggleCollapsed: () => void;
 }) {
   return (
-    <>
-      <SidebarSection
-        label="Links"
-        items={items}
-        getKey={(shortcut) => shortcut.id}
-        isSelected={links.isSelected}
-        collapsed={collapsed}
-        onToggleCollapsed={onToggleCollapsed}
-        renderItem={links.renderLink}
-        onAdd={links.onAdd}
-        addLabel="Add a link"
-      />
+    <SidebarNavDisclosure
+      label="Links"
+      icon={<Globe aria-hidden className="size-4 shrink-0" />}
+      items={items}
+      getKey={(shortcut) => shortcut.id}
+      isSelected={links.isSelected}
+      collapsed={collapsed}
+      onToggleCollapsed={onToggleCollapsed}
+      renderItem={links.renderLink}
+      footer={
+        <button
+          type="button"
+          aria-label="Add a link"
+          onClick={links.onAdd}
+          className="flex h-7.5 w-full items-center gap-2.5 rounded-[7px] px-2.5 text-left text-sidebar-meta text-sidebar-foreground/60 transition-colors hover:bg-sidebar-foreground/5 hover:text-sidebar-foreground"
+        >
+          <Plus aria-hidden className="size-3.75 shrink-0" />
+          <span>Add a link</span>
+        </button>
+      }
+    >
       {links.dialog}
-    </>
+    </SidebarNavDisclosure>
   );
 }
 

@@ -159,7 +159,7 @@ test("the Files action opens the panel dock, which docks a second site", async (
       return;
     }
     try {
-      window.localStorage.setItem("buzz:files-url", "https://files.invalid/");
+      window.localStorage.setItem("buzz:files-url.v2", "https://files.invalid/");
     } catch {
       // A frame with no storage access; the top document is what matters.
     }

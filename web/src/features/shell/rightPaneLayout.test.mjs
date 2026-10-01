@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  paneTabs,
   resolveActiveTab,
   rightPaneLayout,
   rightPaneStrip,
@@ -241,49 +242,125 @@ test("the Work page is not also a strip beside Files", () => {
   assert.equal(got.active, null);
 });
 
-// ---- Phase 6: open files join the strip ------------------------------------
+// ---- Canvas (Sam, 2026-09-30): exactly two top-level tabs ------------------
+//
+// "The pane has exactly two top-level tabs: Work and Canvas. Opened
+// attachments live UNDER Canvas." The agent DM's Thinking pane keeps its
+// place after them. A file is never a top-level tab.
 
-test("files: a file tab follows the shell tabs and is what the pane shows", () => {
-  const layout = rightPaneLayout(input({ agentDm: true, active: "activity" }));
-  const strip = rightPaneStrip(layout, ["f1", "f2"], "f2");
-  assert.deepEqual(strip.files, ["f1", "f2"]);
-  assert.equal(strip.activeFile, "f2");
-  assert.equal(strip.visible, true);
-  // Back on a shell tab: the strip stays, no file is on screen.
-  const back = rightPaneStrip(layout, ["f1"], null);
-  assert.equal(back.activeFile, null);
-  assert.equal(back.visible, true);
-  // A key that is no longer open is not on screen.
-  assert.equal(rightPaneStrip(layout, ["f1"], "gone").activeFile, null);
-});
+function canvas(overrides) {
+  return { items: [], active: null, open: false, docked: true, ...overrides };
+}
 
-test("files: one Work tab and no files draws no strip (the rail's own title)", () => {
+test("canvas: the strip is Work then Canvas — files never join it", () => {
   const plain = rightPaneLayout(input({}));
-  assert.equal(rightPaneStrip(plain, [], null).visible, false);
-  assert.equal(rightPaneStrip(plain, [], null).activeFile, null);
-  assert.equal(rightPaneStrip(plain, ["f1"], null).visible, true);
+  const strip = rightPaneStrip(
+    plain,
+    canvas({ items: ["f1", "f2", "f3"], active: "f2" }),
+  );
+  assert.deepEqual(strip.tabs, ["work", "canvas"]);
+  assert.equal(strip.active, "work");
+  assert.equal(strip.canvasItem, null, "Canvas is not on screen");
+  // Nothing open in Canvas still draws both tabs: Canvas is a destination.
+  const empty = rightPaneStrip(plain, canvas());
+  assert.deepEqual(empty.tabs, ["work", "canvas"]);
+  assert.equal(empty.visible, true);
+  // An agent DM adds Thinking AFTER the two.
+  const dm = rightPaneLayout(input({ agentDm: true, active: "activity" }));
+  assert.deepEqual(rightPaneStrip(dm, canvas()).tabs, [
+    "work",
+    "canvas",
+    "activity",
+  ]);
+  assert.equal(rightPaneStrip(dm, canvas()).active, "activity");
 });
 
-test("files: a folded Work rail hides the strip unless a file is on screen", () => {
+test("canvas: an opened file puts Canvas on screen, over Work or Thinking", () => {
+  for (const layout of [
+    rightPaneLayout(input({})),
+    rightPaneLayout(input({ agentDm: true, active: "activity" })),
+  ]) {
+    const strip = rightPaneStrip(
+      layout,
+      canvas({ items: ["f1", "f2"], active: "f2", open: true }),
+    );
+    assert.equal(strip.active, "canvas");
+    assert.equal(strip.canvasItem, "f2");
+    assert.equal(strip.visible, true);
+    // The tabs never change shape when a file is on screen.
+    assert.ok(!strip.tabs.includes("f2"));
+  }
+});
+
+test("canvas: the selection resolves to the first document when it is gone", () => {
+  const plain = rightPaneLayout(input({}));
+  const on = (items, active) =>
+    rightPaneStrip(plain, canvas({ items, active, open: true })).canvasItem;
+  assert.equal(on(["canvas:channel", "f1"], null), "canvas:channel");
+  assert.equal(on(["canvas:channel", "f1"], "f1"), "f1");
+  assert.equal(on(["f1", "f2"], "canvas:channel"), "f1", "no canvas here");
+  assert.equal(on([], null), null, "empty Canvas shows its empty state");
+  assert.equal(
+    rightPaneStrip(plain, canvas({ items: [], open: true })).active,
+    "canvas",
+  );
+});
+
+test("canvas: below lg it is never docked (a file is the phone sheet)", () => {
+  const plain = rightPaneLayout(input({}));
+  const strip = rightPaneStrip(
+    plain,
+    canvas({ items: ["f1"], active: "f1", open: true, docked: false }),
+  );
+  assert.equal(strip.active, "work");
+  assert.equal(strip.canvasItem, null);
+});
+
+test("canvas: a folded Work rail hides the strip unless Canvas is on screen", () => {
   const folded = rightPaneLayout(input({ workCollapsed: true }));
   assert.equal(folded.work, "collapsed");
-  assert.equal(rightPaneStrip(folded, ["f1"], null).visible, false);
-  assert.equal(rightPaneStrip(folded, ["f1"], "f1").visible, true);
+  assert.equal(
+    rightPaneStrip(folded, canvas({ items: ["f1"] })).visible,
+    false,
+  );
+  const open = rightPaneStrip(
+    folded,
+    canvas({ items: ["f1"], active: "f1", open: true }),
+  );
+  assert.equal(open.visible, true);
+  assert.equal(open.active, "canvas");
 });
 
-test("files: with no shell tab (?view=work) the last file is on screen", () => {
+test("canvas: with no shell tab (?view=work) Canvas leads and shows what it holds", () => {
   const page = rightPaneLayout(input({ surface: "view", workTab: false }));
   assert.deepEqual(page.tabs, []);
-  const strip = rightPaneStrip(page, ["f1", "f2"], null);
-  assert.equal(strip.activeFile, "f2");
-  assert.equal(strip.visible, true);
+  const strip = rightPaneStrip(page, canvas({ items: ["f1", "f2"] }));
+  assert.deepEqual(strip.tabs, ["canvas"]);
+  assert.equal(strip.active, "canvas");
+  assert.equal(strip.canvasItem, "f1");
+  // Nothing in it: nothing docks beside the Work page.
+  const none = rightPaneStrip(page, canvas());
+  assert.equal(none.active, null);
+  assert.equal(none.visible, false);
 });
 
-test("files: a link page hides the host, files and all", () => {
+test("canvas: a link page hides the host, Canvas and all", () => {
   const covered = rightPaneLayout(input({ webLayer: "page" }));
-  assert.deepEqual(rightPaneStrip(covered, ["f1"], "f1"), {
-    files: [],
-    activeFile: null,
-    visible: false,
-  });
+  assert.deepEqual(
+    rightPaneStrip(
+      covered,
+      canvas({ items: ["f1"], active: "f1", open: true }),
+    ),
+    { tabs: [], active: null, canvasItem: null, visible: false },
+  );
+});
+
+test("canvas: paneTabs puts Canvas second, after Work", () => {
+  assert.deepEqual(paneTabs({ tabs: ["work"] }), ["work", "canvas"]);
+  assert.deepEqual(paneTabs({ tabs: ["work", "activity"] }), [
+    "work",
+    "canvas",
+    "activity",
+  ]);
+  assert.deepEqual(paneTabs({ tabs: [] }), ["canvas"]);
 });

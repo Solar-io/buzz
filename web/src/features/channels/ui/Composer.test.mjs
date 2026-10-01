@@ -199,6 +199,9 @@ async function mountComposer(options = {}) {
     // ThreadPanel says "no auto-target".
     props.autoNotify = options.autoNotify;
   }
+  if (options.status) {
+    props.status = options.status;
+  }
   await act(async () => {
     root.render(React.createElement(Composer, props));
   });
@@ -452,10 +455,10 @@ test("a composer with no threadRef prop posts top-level (threadRef null)", async
 
 // The two-person-thread prop (Sam 2026-09-20): ThreadPanel passes it, the
 // composer folds the pubkey into the send payload's p-tag set. Composer-level
-// contract: prop set → the pubkey rides EVERY send and the hint names it;
-// prop absent/null → the payload is exactly what resolveMentions produced,
-// which is what keeps the main-channel composer (repos.tsx, never passes it)
-// byte-identical to before.
+// contract: prop set → the pubkey rides EVERY send, and the field names it
+// for assistive tech only (Sam 2026-09-30 cut the visible "… will be
+// notified" line); prop absent/null → the payload is exactly what
+// resolveMentions produced.
 test("autoNotify adds the pubkey to every send payload; without it nothing changes", async () => {
   const carol = "c".repeat(64);
   const typeAndSend = async (composer, text) => {
@@ -482,11 +485,17 @@ test("autoNotify adds the pubkey to every send payload; without it nothing chang
     autoNotify: { pubkey: carol, label: "Carol" },
   });
   try {
-    assert.match(
-      withAuto.container.querySelector('[data-testid="composer-auto-notify"]')
-        ?.textContent ?? "",
-      /^Carol will be notified$/,
-      "the hint renders while the prop is set",
+    assert.doesNotMatch(
+      withAuto.container.textContent,
+      /will be notified/,
+      "no visible hint under the box",
+    );
+    assert.equal(
+      withAuto.container
+        .querySelector('[data-testid="composer-input"]')
+        .getAttribute("aria-description"),
+      "Carol will be notified",
+      "the field still says who the send wakes, to assistive tech",
     );
     await typeAndSend(withAuto, "first");
     await typeAndSend(withAuto, "second");
@@ -501,9 +510,12 @@ test("autoNotify adds the pubkey to every send payload; without it nothing chang
 
   const without = await mountComposer({ autoNotify: null });
   try {
-    assert.ok(
-      !without.container.querySelector('[data-testid="composer-auto-notify"]'),
-      "no hint without an auto-target",
+    assert.equal(
+      without.container
+        .querySelector('[data-testid="composer-input"]')
+        .getAttribute("aria-description"),
+      null,
+      "nothing to describe without an auto-target",
     );
     await typeAndSend(without, "plain");
     assert.deepEqual(
@@ -513,5 +525,34 @@ test("autoNotify adds the pubkey to every send payload; without it nothing chang
     );
   } finally {
     await without.unmount();
+  }
+});
+
+// Sam 2026-09-30: the "is working" line moved from under the box to directly
+// above it, where the timeline's typing row used to be. DOM order is the
+// contract — a status passed in must precede the field, not follow it.
+test("the status line renders above the input box, not under it", async () => {
+  const composer = await mountComposer({
+    status: React.createElement(
+      "div",
+      { "data-testid": "probe-status" },
+      "Lord Nikon is working",
+    ),
+  });
+  try {
+    const status = composer.container.querySelector(
+      '[data-testid="probe-status"]',
+    );
+    const input = composer.container.querySelector(
+      '[data-testid="composer-input"]',
+    );
+    assert.ok(status, "the status renders");
+    assert.ok(
+      status.compareDocumentPosition(input) &
+        dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
+      "the input box comes AFTER the status line",
+    );
+  } finally {
+    await composer.unmount();
   }
 });

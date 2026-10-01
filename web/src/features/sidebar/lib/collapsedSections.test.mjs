@@ -3,6 +3,8 @@ import { test } from "node:test";
 import {
   DEFAULT_COLLAPSED_SECTIONS,
   isCollapsed,
+  NAV_FORUMS_ID,
+  NAV_LINKS_ID,
   loadCollapsedSections,
   saveCollapsedSections,
   toggleSection,
@@ -95,38 +97,59 @@ test("absent storage is tolerated in both directions", () => {
   assert.doesNotThrow(() => saveCollapsedSections(["channels"], undefined));
 });
 
-test("Forums and Links start collapsed for a viewer who never touched them", () => {
-  assert.deepEqual([...DEFAULT_COLLAPSED_SECTIONS].sort(), ["forums", "links"]);
-  assert.equal(isCollapsed([], "forums"), true);
-  assert.equal(isCollapsed([], "links"), true);
+test("the Forums and Links nav rows start collapsed for a viewer who never touched them", () => {
+  // Sam, 2026-09-30: both are nav buttons under Terminal that start folded.
+  // The ids are spelled out, not read from the module's constants, so a
+  // renamed or dropped default fails here instead of agreeing with itself.
+  assert.deepEqual([...DEFAULT_COLLAPSED_SECTIONS].sort(), [
+    "nav:forums",
+    "nav:links",
+  ]);
+  assert.equal(NAV_FORUMS_ID, "nav:forums");
+  assert.equal(NAV_LINKS_ID, "nav:links");
+  assert.equal(isCollapsed([], "nav:forums"), true);
+  assert.equal(isCollapsed([], "nav:links"), true);
   assert.equal(isCollapsed([], "channels"), false);
   assert.equal(isCollapsed([], "dms"), false);
   assert.equal(isCollapsed([], "starred"), false);
 });
 
-test("opening a default-collapsed section persists as an open marker", () => {
-  const opened = toggleSection([], "forums");
-  assert.deepEqual(opened, ["open:forums"]);
-  assert.equal(isCollapsed(opened, "forums"), false);
-  const closed = toggleSection(opened, "forums");
-  assert.deepEqual(closed, ["forums"]);
-  assert.equal(isCollapsed(closed, "forums"), true);
-  assert.equal(isCollapsed(toggleSection(closed, "forums"), "forums"), false);
+test("a device that had OPENED the old Forums / Links sections still starts the nav rows folded", () => {
+  // The old section ids defaulted collapsed too, so a device that opened
+  // them carries `open:` markers. Those must not leak into the nav rows.
+  const legacy = ["open:forums", "open:links", "channels"];
+  assert.equal(isCollapsed(legacy, "nav:forums"), true);
+  assert.equal(isCollapsed(legacy, "nav:links"), true);
+  assert.equal(isCollapsed(legacy, "channels"), true);
 });
 
-test("prefs stored before defaults existed still read the same", () => {
-  // Old shape: a bare id means collapsed. It must stay collapsed, and
-  // toggling it must open it rather than land back on the default.
-  assert.equal(isCollapsed(["forums"], "forums"), true);
+test("opening a default-collapsed section persists as an open marker", () => {
+  const opened = toggleSection([], "nav:forums");
+  assert.deepEqual(opened, ["open:nav:forums"]);
+  assert.equal(isCollapsed(opened, "nav:forums"), false);
+  const closed = toggleSection(opened, "nav:forums");
+  assert.deepEqual(closed, ["nav:forums"]);
+  assert.equal(isCollapsed(closed, "nav:forums"), true);
+  assert.equal(
+    isCollapsed(toggleSection(closed, "nav:forums"), "nav:forums"),
+    false,
+  );
+});
+
+test("a bare id still means collapsed, and toggling it opens it", () => {
+  // The list's original shape: a bare id means collapsed. It must stay
+  // collapsed, and toggling it must open it rather than land back on the
+  // default.
+  assert.equal(isCollapsed(["nav:forums"], "nav:forums"), true);
   assert.equal(isCollapsed(["channels"], "channels"), true);
   assert.equal(
-    isCollapsed(toggleSection(["forums"], "forums"), "forums"),
+    isCollapsed(toggleSection(["nav:forums"], "nav:forums"), "nav:forums"),
     false,
   );
 });
 
 test("an open marker survives a storage round-trip", () => {
   const storage = fakeStorage();
-  saveCollapsedSections(toggleSection([], "links"), storage);
-  assert.equal(isCollapsed(loadCollapsedSections(storage), "links"), false);
+  saveCollapsedSections(toggleSection([], "nav:links"), storage);
+  assert.equal(isCollapsed(loadCollapsedSections(storage), "nav:links"), false);
 });

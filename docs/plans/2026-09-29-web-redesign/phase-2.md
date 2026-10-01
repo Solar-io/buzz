@@ -176,3 +176,11 @@ asserts the reply is rooted at the ask.
   box in a channel, the composer in a DM.
 - **A /handoff seat is picked from the @ list.** Typed names resolve against
   the member roster, whose names are short keys until picked.
+- **Threads open by default (Sam, 2026-09-30).** A row with loaded replies
+  renders expanded without a click; the chip folds it, and the fold is kept
+  per conversation for the session (`threadOpen`, `withThreadChoice`). A row
+  with no replies still opens only on ↩.
+- **One "someone is on it" line (Sam, 2026-09-30).** The timeline's typing
+  row and the box's "will be notified" line are gone; the RunningStrip line
+  moved from under the box to directly above it, and also names people
+  typing (minus agents it already names as working).

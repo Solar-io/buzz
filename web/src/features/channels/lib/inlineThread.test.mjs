@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  choicesFor,
   foldReplies,
   INLINE_THREAD_WINDOW,
   inlineReplyCount,
   inlineThreadRef,
   inlineThreadWindow,
   replyCountLabel,
+  threadOpen,
+  withThreadChoice,
 } from "./inlineThread.ts";
 
 test("a root row answers itself with one id for both markers", () => {
@@ -126,6 +129,37 @@ test("a parent cycle terminates", () => {
   const messages = [reply("a", 100, null, "b"), reply("b", 110, null, "a")];
   const { rowOf } = foldReplies(messages);
   assert.equal(rowOf.size <= 2, true);
+});
+
+test("a thread with replies is open by default; a fold sticks; an empty row opens only when asked", () => {
+  const none = new Map();
+  // Default: open as soon as there is a reply to show (Sam, 2026-09-30).
+  assert.equal(threadOpen(none, "row", 1), true);
+  assert.equal(threadOpen(none, "row", 7), true);
+  // No loaded replies: closed (no empty rail + box under every message).
+  assert.equal(threadOpen(none, "row", 0), false);
+  // The viewer's fold beats the default; their ↩ opens an empty row.
+  assert.equal(threadOpen(new Map([["row", false]]), "row", 3), false);
+  assert.equal(threadOpen(new Map([["row", true]]), "row", 0), true);
+  // A choice belongs to its row only.
+  assert.equal(threadOpen(new Map([["other", false]]), "row", 2), true);
+});
+
+test("a fold is kept per conversation, and a no-op choice keeps identity", () => {
+  const start = new Map();
+  const folded = withThreadChoice(start, "dm-1", "row", false);
+  assert.notEqual(folded, start);
+  assert.equal(choicesFor(folded, "dm-1").get("row"), false);
+  // Another conversation is untouched, and so is the original map.
+  assert.equal(choicesFor(folded, "chan-2").size, 0);
+  assert.equal(choicesFor(start, "dm-1").size, 0);
+  // Re-recording the same choice (a reveal on an open thread) is a no-op.
+  assert.equal(withThreadChoice(folded, "dm-1", "row", false), folded);
+  // No conversation, nothing to record against.
+  assert.equal(withThreadChoice(start, undefined, "row", false), start);
+  // Reopening replaces the fold.
+  const reopened = withThreadChoice(folded, "dm-1", "row", true);
+  assert.equal(choicesFor(reopened, "dm-1").get("row"), true);
 });
 
 test("the chip counts the larger of loaded and summarized replies", () => {
