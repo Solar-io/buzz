@@ -2,6 +2,7 @@ import { expect, type Page, test } from "@playwright/test";
 
 import type { MockEvent, MockRelayOptions } from "./helpers/mockRelay";
 import {
+  pdfShare,
   probeShare,
   RTS_DIR,
   routeShelfMedia,
@@ -38,7 +39,11 @@ const echo: MockRelayOptions = {
 async function open(
   page: Page,
   theme: string,
-  options: { path?: (f: WorkFixture) => string; probe?: boolean } = {},
+  options: {
+    path?: (f: WorkFixture) => string;
+    probe?: boolean;
+    pdf?: boolean;
+  } = {},
 ) {
   let seeded: ReturnType<typeof shelfEvents> | null = null;
   let probe: MockEvent | null = null;
@@ -57,7 +62,11 @@ async function open(
     extra: (fixture) => {
       seeded = shelfEvents(fixture);
       probe = options.probe ? probeShare(fixture) : null;
-      return probe ? [...seeded.events, probe] : seeded.events;
+      return [
+        ...seeded.events,
+        ...(probe ? [probe] : []),
+        ...(options.pdf ? [pdfShare(fixture)] : []),
+      ];
     },
   });
   if (!seeded) {
@@ -330,6 +339,57 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
     });
   });
 }
+
+test.describe("previewers", () => {
+  test.use({ viewport: { width: 1440, height: 960 } });
+
+  test("code through Shiki, CSV as a table, a PDF in the browser's viewer, an image", async ({
+    page,
+  }) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+    await open(page, "buzz", { pdf: true });
+    await openShelfFromSidebar(page);
+    const preview = page.getByTestId("file-preview");
+
+    await rowFor(page, "jitter-buffer-trace.json").click();
+    const code = preview.getByTestId("file-code-view");
+    await expect(code).toContainText('"verdict"');
+    // Shiki coloured it: a token carries an inline colour.
+    await expect(code.locator("span[style*='color']").first()).toBeVisible();
+    // A highlighted file has nothing to switch to.
+    await expect(preview.getByTestId("file-view-source")).toHaveCount(0);
+
+    await rowFor(page, "pilot-snapshots-delete-list.csv").click();
+    const table = preview.getByTestId("file-table-view");
+    await expect(table.locator("th")).toHaveText([
+      "snapshot",
+      "host",
+      "age_days",
+      "size_gb",
+    ]);
+    // A quoted field with a comma stays one cell.
+    await expect(table).toContainText("pilot-2026-08-29, pre-upgrade");
+    await preview.getByTestId("file-view-source").click();
+    await expect(preview.getByTestId("file-code-view")).toContainText(
+      "snapshot,host,age_days,size_gb",
+    );
+
+    await rowFor(page, "capture-plan.pdf").click();
+    const pdf = preview.getByTestId("file-pdf-view");
+    await expect(pdf).toHaveAttribute("src", /^blob:/);
+
+    await rowFor(page, "beat-02-capture.png").click();
+    const image = preview.getByTestId("file-image-view");
+    await expect(image).toBeVisible();
+    await expect
+      .poll(() =>
+        image.evaluate((img) => (img as HTMLImageElement).naturalWidth),
+      )
+      .toBe(320);
+    expect(pageErrors).toEqual([]);
+  });
+});
 
 test.describe("HTML preview isolation", () => {
   test.use({ viewport: { width: 1440, height: 960 } });

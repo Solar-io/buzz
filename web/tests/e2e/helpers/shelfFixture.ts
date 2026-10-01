@@ -150,6 +150,19 @@ export const PROBE_HTML = `<!doctype html><html><body><p id="out">probing</p>
   parent.postMessage({ type: "buzz-e2e-probe", out }, "*");
 </script></body></html>`;
 
+/** One page that says "Capture plan" — enough for the browser's viewer. */
+const MINIMAL_PDF = `%PDF-1.4
+1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
+2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
+3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 144]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj
+4 0 obj<</Length 44>>stream
+BT /F1 18 Tf 20 70 Td (Capture plan) Tj ET
+endstream endobj
+5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj
+trailer<</Root 1 0 R>>
+%%EOF
+`;
+
 const TRACE_JSON = `${JSON.stringify(
   {
     huddle: "beat-02",
@@ -209,6 +222,11 @@ export const SHELF_FILES: Record<string, ShelfFile> = {
     name: "pilot-snapshots-delete-list.csv",
     mime: "text/csv",
     body: Buffer.from(DELETE_CSV),
+  },
+  "capture-plan.pdf": {
+    name: "capture-plan.pdf",
+    mime: "application/pdf",
+    body: Buffer.from(MINIMAL_PDF),
   },
   "storage-probe.html": {
     name: "storage-probe.html",
@@ -411,6 +429,17 @@ export function shelfEvents(fixture: WorkFixture): {
 }
 
 /** The probe share, for the isolation test. */
+/** A PDF share, for the previewer pass (kept out of the artboard rows). */
+export function pdfShare(fixture: WorkFixture): MockEvent {
+  return shareEvent({
+    author: fixture.agents.nikon.pubkey,
+    channel: fixture.channels["flight-path"],
+    createdAt: Math.floor(Date.now() / 1000) - 90,
+    summary: "Three beats, one page",
+    files: ["capture-plan.pdf"],
+  });
+}
+
 export function probeShare(fixture: WorkFixture): MockEvent {
   return shareEvent({
     author: fixture.agents.gilfoyle.pubkey,

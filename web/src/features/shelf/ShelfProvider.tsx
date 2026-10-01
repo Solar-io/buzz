@@ -125,8 +125,14 @@ export function ShelfProvider({
       .join(","),
   );
   useEffect(() => {
-    if (!live || channelKey === "") {
+    if (!live) {
       return;
+    }
+    // A relay that never answers — or a viewer with no channels at all —
+    // must not leave the page on its skeleton.
+    const fallback = setTimeout(() => setLoaded(true), 12_000);
+    if (channelKey === "") {
+      return () => clearTimeout(fallback);
     }
     const filters = shelfFilters(channelKey.split(","));
     let pending = filters.length;
@@ -141,8 +147,6 @@ export function ShelfProvider({
         },
       }),
     );
-    // A relay that never answers must not leave the page on its skeleton.
-    const fallback = setTimeout(() => setLoaded(true), 12_000);
     return () => {
       clearTimeout(fallback);
       for (const unsubscribe of unsubscribes) {

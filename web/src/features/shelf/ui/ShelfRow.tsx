@@ -118,7 +118,6 @@ export function ShelfRow({
       <button
         type="button"
         aria-expanded={multi ? expanded : undefined}
-        aria-label={multi ? `${title}, ${files.length} files` : `Open ${title}`}
         onClick={activate}
         className={cn(
           "w-full text-left text-sm transition-colors hover:bg-accent/50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",

@@ -959,3 +959,24 @@ Three sub-traps from the same hour:
   fixture JSON from `dist/` (`vite preview`) and `page.request.get` it.
   Activate the tab again before reading layout: a hidden tab runs no
   ResizeObserver, so a resize looks like a responsive bug.
+
+## Web Shelf and file previews (earned on redesign Phase 6, 2026-09-30)
+
+- **A shared HTML file previews only as `srcdoc`, sandboxed `allow-scripts`
+  and nothing else** (`features/shelf/lib/htmlPreview.ts`): an opaque
+  origin with no reach into this origin's key storage or cookies. Never
+  point a frame at the media URL, never add `allow-same-origin`.
+  `shelf.spec.ts` proves it from INSIDE the frame.
+- **`addInitScript` runs in every frame, the sandboxed preview included.**
+  A bare `localStorage.setItem` there throws, and the `pageerror` it raises
+  is the harness's, not the app's — wrap init-script storage in try/catch.
+- **A share is channel-scoped kind 9:** the Shelf REQ carries
+  `#t:["shelf"]` AND `#h` per 128 channels (gotcha 11); type and sender
+  filter client-side. Rows cached before Phase 6 have no `shelf` field, so
+  a file tab recovers its `path` from ShelfProvider instead.
+- **`buzz share` puts prose and links in ONE paragraph**
+  (`summary\n[a.md](u)\n[b.html](u)`); MarkdownContent lifts a trailing run
+  of two or more file links into a tile group under the prose.
+- **Jump writes `?m=` and the shell drops it once the row lands** (an
+  all-digit id even rides JSON-quoted, `m=%22…%22`): assert the navigation
+  with `waitForURL(…, { waitUntil: "commit" })`, not the final URL.
