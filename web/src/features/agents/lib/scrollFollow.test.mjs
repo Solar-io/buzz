@@ -8,6 +8,7 @@ import {
   armFollowInput,
   createInputFollowState,
   forceInputFollow,
+  holdInputFollow,
   isScrolledToBottom,
 } from "./scrollFollow.ts";
 
@@ -191,4 +192,47 @@ test("sub-pixel unarmed drift is still ignored by the input engine", () => {
   );
   // The band itself still matches FOLLOW_EDGE_PX.
   assert.ok(FOLLOW_EDGE_PX === 32);
+});
+
+// holdInputFollow — a thread the reader opened (bug 706x8b4zrjdn): the
+// settling list's own at-bottom scrolls must not resume the tail over it.
+
+test("a held pause survives unarmed at-bottom scrolls, however late", () => {
+  const state = createInputFollowState(true);
+  applyInputFollowScroll(state, READING, CONTENT, VIEWPORT, 1_000);
+  holdInputFollow(state);
+  assert.equal(state.follow, false);
+  // Virtualizer compensation landing on the bottom, then much later.
+  assert.equal(
+    applyInputFollowScroll(state, BOTTOM, CONTENT, VIEWPORT, 1_100),
+    false,
+  );
+  assert.equal(
+    applyInputFollowScroll(state, NEAR_BOTTOM, CONTENT, VIEWPORT, 60_000),
+    false,
+  );
+});
+
+test("the reader's input releases a hold; back at the bottom resumes", () => {
+  const state = createInputFollowState(true);
+  holdInputFollow(state);
+  applyInputFollowScroll(state, READING, CONTENT, VIEWPORT, 1_000);
+  armFollowInput(state, 2_000);
+  assert.equal(
+    applyInputFollowScroll(state, BOTTOM, CONTENT, VIEWPORT, 2_050),
+    true,
+  );
+});
+
+test("a force (own send, view switch) releases a hold", () => {
+  const state = createInputFollowState(true);
+  holdInputFollow(state);
+  forceInputFollow(state);
+  assert.equal(state.follow, true);
+  // And the next at-bottom scroll keeps following rather than staying held.
+  state.follow = false;
+  assert.equal(
+    applyInputFollowScroll(state, BOTTOM, CONTENT, VIEWPORT, 1_000),
+    true,
+  );
 });

@@ -17,6 +17,7 @@ import {
   armFollowInput,
   createInputFollowState,
   forceInputFollow,
+  holdInputFollow,
 } from "@/features/agents/lib/scrollFollow";
 import { answeredCardReplies } from "@/features/channels/lib/cardAnswered.ts";
 import { isWithinGroupingWindow } from "@/features/channels/lib/messageGrouping";
@@ -59,6 +60,7 @@ export { authorLabel } from "../lib/authorLabel.ts";
 
 const EMPTY_REACTIONS: ReactionIndex = new Map();
 const EMPTY_PENDING: ReadonlySet<string> = new Set();
+const SCROLLER = ".buzz-timeline-scrollbar";
 
 /** Keys whose default action scrolls the scroller (desktop parity set). */
 const SCROLL_INTENT_KEYS = new Set([
@@ -243,7 +245,7 @@ export function ChannelTimeline({
       }
       const wrap = wrapRef.current;
       if (!wrap) return;
-      const list = wrap.querySelector<HTMLElement>(".buzz-timeline-scrollbar");
+      const list = wrap.querySelector<HTMLElement>(SCROLLER);
       if (!list) return;
       const composer = [...document.querySelectorAll("textarea")].find(
         (t) => t.getBoundingClientRect().height > 10,
@@ -301,7 +303,7 @@ export function ChannelTimeline({
     const timer = window.setInterval(() => {
       const wrap = wrapRef.current;
       if (!wrap) return;
-      const list = wrap.querySelector<HTMLElement>(".buzz-timeline-scrollbar");
+      const list = wrap.querySelector<HTMLElement>(SCROLLER);
       const wrapperHeight = wrap.getBoundingClientRect().height;
       const listHeight = list ? list.getBoundingClientRect().height : 0;
       if (listHeight > LIST_COLLAPSED_MAX) {
@@ -420,19 +422,15 @@ export function ChannelTimeline({
    * AGENTS.md). Returning to the bottom resumes. On the newest row the pin
    * is what keeps the reply box in view, so it stays.
    */
+  // The pause is a HOLD (holdInputFollow): the settling thread's own scroll
+  // events can read "at the bottom" at any time, and only the reader's input
+  // may resume the tail (bug 706x8b4zrjdn). The scroller is looked up by
+  // class — the wrapper's first child is the pinned day pill when one shows.
   const lastRowIdRef = useRef<string | null>(null);
-  /**
-   * While an opening thread settles, scroll events do not feed the follow
-   * engine: the virtualizer's own compensation can pass through the very
-   * bottom, which would RESUME following and re-pin the list over the thread
-   * (measured in the Phase 2 e2e, one run in two).
-   */
-  const holdUntilRef = useRef(0);
   const openHere = (rowId: string) => {
     if (rowId !== lastRowIdRef.current) {
-      followRef.current.follow = false;
-      holdUntilRef.current = performance.now() + 600;
-      const scroller = wrapRef.current?.firstElementChild;
+      holdInputFollow(followRef.current);
+      const scroller = wrapRef.current?.querySelector(SCROLLER);
       if (scroller instanceof HTMLElement) {
         holdAnchor(scroller, `[data-testid="message-row-${rowId}"]`);
       }
@@ -787,9 +785,6 @@ export function ChannelTimeline({
       return;
     }
     if (el.scrollHeight - el.clientHeight < 2) {
-      return;
-    }
-    if (performance.now() < holdUntilRef.current) {
       return;
     }
     applyInputFollowScroll(
