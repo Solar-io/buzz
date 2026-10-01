@@ -1080,3 +1080,15 @@ Three sub-traps from the same hour:
 - **On a case-insensitive disk `PhoneTabBar.test.mjs` IS
   `phoneTabBar.test.mjs`.** A Write to the new spelling silently replaced the
   policy test; pick a name that differs by more than case.
+
+## Web favorites sync (earned 2026-10-01)
+
+- **Favorites MERGE; Links do not.** Both are kind 30078 sealed to self
+  (`d=shortcut-bar` vs `d=sidebar-favorites`), but Links are whole-blob LWW
+  and favorites carry per-entry stamps + tombstones (`favoritesSync.ts`), so
+  a device's first sync can never wipe its local set. Any new synced
+  per-user list that already exists in localStorage needs the merge, not LWW.
+- **web e2e serves `dist/` via `vite preview` — rebuild after every source
+  mutation.** A mutation run without `pnpm build` tests the previous bundle
+  and reports a clean survivor (seen: unwiring `useFavoritesSync` stayed
+  green until the rebuild, then both specs failed).
