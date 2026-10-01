@@ -95,7 +95,6 @@ function Harness() {
           key: message.id,
           "data-testid": `row-${message.id}`,
           "data-author": message.authorPubkey,
-          "data-via-call": message.viaCall ? "yes" : "no",
         },
         message.content,
       ),
@@ -132,10 +131,8 @@ test("the channel hook attributes relay call lines to their speakers", async () 
 
   const row = (id) => container.querySelector(`[data-testid="row-${id}"]`);
   assert.equal(row("sam").dataset.author, SAM);
-  assert.equal(row("sam").dataset.viaCall, "yes");
   assert.equal(row("agent").dataset.author, AGENT);
   assert.equal(row("forged").dataset.author, IMPOSTOR, "signer kept");
-  assert.equal(row("forged").dataset.viaCall, "no");
 
   await act(async () => root.unmount());
   container.remove();

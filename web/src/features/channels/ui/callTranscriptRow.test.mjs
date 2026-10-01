@@ -273,8 +273,8 @@ test("an inline thread renders under the row, outside its hover group", async ()
 // ── Live voice-call lines (["buzz-system","call-line"] + ["actor", …]) ──────
 //
 // Each utterance of a call is mirrored into the main chat as it happens. The
-// row must look like the speaker typed it: their name and avatar, ordinary
-// markdown body — plus only a small "voice" marker.
+// row must look EXACTLY like the speaker typed it: their name and avatar,
+// ordinary markdown body, and no call marker (Sam, 2026-10-01).
 
 const { attributeCallLines } = await import("../lib/callLines.ts");
 const SAM = "5".repeat(64);
@@ -305,10 +305,6 @@ test("a call line renders as the speaker's ordinary message", async () => {
   );
   const row = await mountRow(line, undefined, SAM_PROFILE);
   assert.equal(row.name, "Sam");
-  assert.ok(
-    row.container.querySelector('[data-testid="message-via-call"]'),
-    "the voice marker is shown",
-  );
   // Normal markdown body — no transcript framing, no "Sam:" prefix.
   const prose = row.container.querySelector(".message-prose");
   assert.equal(prose.textContent.trim(), "which drill should I buy?");
@@ -317,16 +313,41 @@ test("a call line renders as the speaker's ordinary message", async () => {
   await row.unmount();
 });
 
-test("an impostor's call line is not attributed and shows no voice marker", async () => {
+test("a call line renders identically to the same message typed by its speaker", async () => {
+  // The whole row, not one marker's test id: any call-only chrome (a
+  // "voice" badge, a title, an icon) makes the two DOMs differ.
+  const text = "which **drill** should I buy?";
+  const [line] = attributeCallLines([callLine(text)], RELAY);
+  const typed = timelineMessageFromEvent({
+    id: "d".repeat(64),
+    pubkey: SAM,
+    created_at: 2_000,
+    kind: 9,
+    content: text,
+    tags: [["h", "chan"]],
+    sig: "f".repeat(128),
+  });
+  const spokenRow = await mountRow(line, undefined, SAM_PROFILE);
+  const typedRow = await mountRow(typed, undefined, SAM_PROFILE);
+  // React ids differ per mount; nothing else may.
+  const html = (row) =>
+    row.container.innerHTML.replace(/«[^»]*»|:r[0-9a-z]+:/g, "ID");
+  assert.ok(typedRow.container.textContent.includes("which drill"));
+  assert.equal(html(spokenRow), html(typedRow));
+  assert.ok(
+    !/\bvoice\b/i.test(spokenRow.container.textContent),
+    "no voice marker text",
+  );
+  await spokenRow.unmount();
+  await typedRow.unmount();
+});
+
+test("an impostor's call line is not attributed", async () => {
   const [line] = attributeCallLines(
     [callLine("I never said this", SAM, IMPOSTOR)],
     RELAY,
   );
   const row = await mountRow(line, undefined, SAM_PROFILE);
   assert.equal(row.name, "99999999…9999");
-  assert.equal(
-    row.container.querySelector('[data-testid="message-via-call"]'),
-    null,
-  );
   await row.unmount();
 });

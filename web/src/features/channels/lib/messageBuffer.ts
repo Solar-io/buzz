@@ -116,11 +116,6 @@ export interface TimelineMessage {
    */
   actorPubkey?: string | null;
   /**
-   * Set by `attributeCallLines` on a verified relay-mirrored call line whose
-   * `authorPubkey` it rewrote to the speaker. Never set from the wire.
-   */
-  viaCall?: boolean;
-  /**
    * The seat a `/handoff` hands work to: the pubkey in a
    * `["handoff", <pubkey>]` tag (web redesign Phase 2). The row renders as a
    * HANDOFF bar. Optional, like `stage` and `buzzSystem`: a row restored from

@@ -23,9 +23,10 @@ export function hasCallLines(messages: readonly TimelineMessage[]): boolean {
 /**
  * Attribute verified call lines to their speaker: `authorPubkey` becomes the
  * `actor`, so the row renders, groups, and resolves its profile exactly like
- * a message that speaker typed, and carries `viaCall` for the small "voice"
- * marker. Rows that are not relay-signed call lines are returned untouched,
- * and so is the array itself when nothing changed (memo stability).
+ * a message that speaker typed — with no call marker (Sam, 2026-10-01: a
+ * spoken line looks like any other message from that speaker). Rows that are
+ * not relay-signed call lines are returned untouched, and so is the array
+ * itself when nothing changed (memo stability).
  */
 export function attributeCallLines<T extends TimelineMessage>(
   messages: T[],
@@ -45,11 +46,7 @@ export function attributeCallLines<T extends TimelineMessage>(
       return;
     }
     out ??= messages.slice();
-    out[index] = {
-      ...message,
-      authorPubkey: message.actorPubkey,
-      viaCall: true,
-    };
+    out[index] = { ...message, authorPubkey: message.actorPubkey };
   });
   return out ?? messages;
 }

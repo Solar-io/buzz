@@ -9,7 +9,7 @@ import {
 } from "../lib/floatingPosition.ts";
 import { useHuddleSession } from "../HuddleSessionProvider.tsx";
 import { HuddleControls } from "./HuddleControls.tsx";
-import { HuddleChat } from "./HuddleChat.tsx";
+import { HuddleComposer } from "./HuddleComposer.tsx";
 import { HuddleReactionBurst } from "./HuddleReactionBurst.tsx";
 import {
   HuddleParticipantCards,
@@ -26,9 +26,10 @@ import {
  * EVERY route — which is the entire point of floating, as against the dock,
  * which deliberately stays with its channel.
  *
- * Contents top → bottom: the participant grid, the huddle channel's own
- * timeline (voice transcripts and agent replies already land there), the
- * composer for that channel, and the same control row the dock uses.
+ * Contents top → bottom: the participant grid, the composer for the
+ * huddle channel, and the same control row the dock uses. No transcript box
+ * (Sam, 2026-10-01): every call line is mirrored live into the parent
+ * channel / DM, so a panel timeline only repeated the main chat.
  *
  * Escape docks it again, as does the dock/float toggle; the position is
  * remembered and clamped to the viewport on every load and resize
@@ -175,8 +176,7 @@ export function HuddleFloatingPanel() {
       <div className="relative flex min-h-0 flex-1 flex-col gap-2 p-3">
         <HuddleReactionBurst reactions={call.reactions.active} />
         <HuddleParticipantCards participants={participants} />
-        <h2 className="text-sm font-medium text-foreground">Call transcript</h2>
-        <HuddleChat key={call.channelId} variant="full" />
+        <HuddleComposer key={call.channelId} />
       </div>
 
       <footer className="border-t border-border px-3 py-2">
