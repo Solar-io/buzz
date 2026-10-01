@@ -159,6 +159,33 @@ test("junk after the frames is rejected; zero padding is trimmed", () => {
   assert.deepEqual(stripMp3Tags(cat(clean, new Uint8Array(64))), clean);
 });
 
+test("a truncated final frame is dropped, with anything hidden inside it", () => {
+  const clean = cleanMp3(3);
+  assert.deepEqual(
+    stripMp3Tags(cat(clean, cleanMp3(1).slice(0, FRAME_LEN - 100))),
+    clean,
+  );
+  // Lyrics3v1 is not a recognized trailing tag; it hides inside the
+  // declared length of a frame that runs past EOF.
+  const smuggled = cat(
+    clean,
+    FRAME_HDR,
+    new Uint8Array(20).fill(0x11),
+    bytesOf("LYRICSBEGININDsecretLYRICSEND"),
+  );
+  assert.ok(smuggled.length < clean.length + FRAME_LEN);
+  const out = stripMp3Tags(smuggled);
+  assert.deepEqual(out, clean);
+  assert.ok(!new TextDecoder("latin1").decode(out).includes("secret"));
+});
+
+test("a blob shorter than one frame is not MP3", () => {
+  assert.throws(
+    () => stripMp3Tags(cat(FRAME_HDR, new Uint8Array(100).fill(0x11))),
+    /no audio frames/,
+  );
+});
+
 test("isMp3Upload trusts the browser MIME, else sniffs octet-stream bytes", () => {
   const clean = cleanMp3(2);
   assert.equal(isMp3Upload(new Uint8Array(), "audio/mpeg"), true);

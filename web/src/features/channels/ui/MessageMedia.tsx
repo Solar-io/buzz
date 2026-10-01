@@ -246,7 +246,12 @@ export function SignedAudio({ href, filename }: FileCardTarget) {
         {filename}
       </span>
       {objectUrl === null ? (
-        <Skeleton className="h-8 w-full" />
+        // Skeleton renders a <div>; this sits inside a markdown <p>, so use
+        // the same skeleton classes on a <span> to keep the DOM valid.
+        <span
+          aria-hidden="true"
+          className="t-skel-bar is-pulsing block h-8 w-full rounded-md bg-primary/10"
+        />
       ) : (
         // biome-ignore lint/a11y/useMediaCaption: no caption track exists for user uploads
         <audio

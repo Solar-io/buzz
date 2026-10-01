@@ -217,27 +217,47 @@ fn trailing_tag_len(bytes: &[u8]) -> Option<usize> {
     None
 }
 
-/// Walk MPEG frames from byte 0. Returns the offset where the walk stopped:
-/// `bytes.len()` when the stream is frames end to end (a final frame may be
-/// truncated), or the offset of the first byte that is not a frame header.
-/// `Err` when there is no frame at byte 0 at all.
-fn walk_frames(bytes: &[u8]) -> Result<usize, MediaError> {
+/// Where a walk over MPEG frames from byte 0 stopped.
+struct FrameWalk {
+    /// End offset of the last COMPLETE frame (`0` if there is none).
+    end: usize,
+    /// The bytes at `end` open a frame header whose declared length runs
+    /// past the buffer — an incomplete final frame. Bytes inside that span
+    /// are not audio we can vouch for (they can hide metadata).
+    truncated: bool,
+}
+
+/// Walk MPEG frames from byte 0. `Err` when there is no frame header at
+/// byte 0 at all. Otherwise reports the end of the last complete frame and
+/// whether an incomplete final frame follows it; any other stop means the
+/// bytes at `end` are not a frame header.
+fn walk_frames(bytes: &[u8]) -> Result<FrameWalk, MediaError> {
     if parse_frame_header(bytes).is_none() {
         return Err(MediaError::InvalidAudio);
     }
     let mut offset = 0usize;
     while offset < bytes.len() {
         let Some(frame) = parse_frame_header(&bytes[offset..]) else {
-            return Ok(offset);
+            break;
         };
-        offset = offset.saturating_add(frame.len);
+        if frame.len > bytes.len() - offset {
+            return Ok(FrameWalk {
+                end: offset,
+                truncated: true,
+            });
+        }
+        offset += frame.len;
     }
-    Ok(bytes.len())
+    Ok(FrameWalk {
+        end: offset,
+        truncated: false,
+    })
 }
 
 /// Validate that an `audio/mpeg` payload is metadata-free: no ID3v2 / ID3v1 /
 /// APEv2 / Lyrics3 tag at either end, no ID3v2 header anywhere inside, and
-/// MPEG audio frames end to end from byte 0.
+/// complete MPEG audio frames end to end from byte 0 (an incomplete final
+/// frame is rejected).
 ///
 /// This is the relay's check on the generic upload path. It never modifies
 /// bytes — the stored blob is exactly what the client hashed.
@@ -251,8 +271,8 @@ pub fn validate_mp3(bytes: &[u8]) -> Result<(), MediaError> {
     if contains_id3v2_header(bytes) {
         return Err(MediaError::MetadataForbidden);
     }
-    let end = walk_frames(bytes)?;
-    if end != bytes.len() {
+    let walk = walk_frames(bytes)?;
+    if walk.end != bytes.len() {
         return Err(MediaError::InvalidAudio);
     }
     Ok(())
@@ -260,8 +280,9 @@ pub fn validate_mp3(bytes: &[u8]) -> Result<(), MediaError> {
 
 /// Strip every MP3 tag block a client can remove without touching the audio:
 /// leading ID3v2 tags (repeated, footer-aware), trailing ID3v1 / Enhanced
-/// ID3v1 / APEv2 / Lyrics3v2 / appended ID3v2, and trailing zero padding after
-/// the last frame. The result is then held to [`validate_mp3`].
+/// ID3v1 / APEv2 / Lyrics3v2 / appended ID3v2, an incomplete final frame
+/// (cut back to the end of the last complete frame), and trailing zero
+/// padding after the last frame. The result is then held to [`validate_mp3`].
 ///
 /// Errors (as a human-readable string, like the image sanitizer) when the
 /// payload is not an MP3 stream once the tags are off, or when metadata is
@@ -287,13 +308,18 @@ pub fn strip_mp3_tags(body: &[u8]) -> Result<Vec<u8>, String> {
                 .to_string(),
         );
     }
-    let stop = walk_frames(audio).map_err(|_| {
-        "mp3: no MPEG audio frame after removing tags (not an MP3 stream)".to_string()
-    })?;
-    // Zero padding after the last frame carries nothing; drop it. Any other
-    // non-frame bytes are an unknown channel we refuse to guess about.
+    let no_frame = || "mp3: no MPEG audio frame after removing tags (not an MP3 stream)";
+    let walk = walk_frames(audio).map_err(|_| no_frame().to_string())?;
+    let stop = walk.end;
+    if stop == 0 {
+        return Err(no_frame().to_string());
+    }
+    // An incomplete final frame is dropped whole, along with anything hidden
+    // inside its declared length. Otherwise zero padding after the last frame
+    // carries nothing and is dropped too; any other non-frame bytes are an
+    // unknown channel we refuse to guess about.
     let tail = &audio[stop..];
-    if !tail.iter().all(|b| *b == 0) {
+    if !walk.truncated && !tail.iter().all(|b| *b == 0) {
         return Err(format!(
             "mp3: {} unrecognized bytes after the audio frames at offset {}",
             tail.len(),
@@ -409,10 +435,44 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn truncated_final_frame_is_accepted() {
-        let mut clean = clean_mp3(3);
-        clean.truncate(clean.len() - 100);
-        assert!(validate_mp3(&clean).is_ok());
+    fn truncated_final_frame_is_rejected_and_stripped() {
+        let clean = clean_mp3(3);
+        let mut truncated = clean.clone();
+        truncated.extend_from_slice(&clean_mp3(1)[..FRAME_LEN - 100]);
+        assert!(matches!(
+            validate_mp3(&truncated),
+            Err(MediaError::InvalidAudio)
+        ));
+        assert_eq!(strip_mp3_tags(&truncated).unwrap(), clean);
+    }
+
+    #[test]
+    fn metadata_inside_a_truncated_final_frame_does_not_survive() {
+        // A frame header whose declared 417 bytes run past EOF, with a
+        // Lyrics3v1 block (not a recognized trailing tag) inside that span.
+        let clean = clean_mp3(3);
+        let mut smuggled = clean.clone();
+        smuggled.extend_from_slice(&FRAME_HDR);
+        smuggled.extend_from_slice(&[0x11; 20]);
+        smuggled.extend_from_slice(b"LYRICSBEGININDsecretLYRICSEND");
+        assert!(smuggled.len() < clean.len() + FRAME_LEN);
+        assert!(matches!(
+            validate_mp3(&smuggled),
+            Err(MediaError::InvalidAudio)
+        ));
+        let out = strip_mp3_tags(&smuggled).unwrap();
+        assert_eq!(out, clean);
+        assert!(!out.windows(6).any(|w| w == b"secret"));
+    }
+
+    #[test]
+    fn blob_shorter_than_one_frame_is_not_mp3() {
+        let mut lone = FRAME_HDR.to_vec();
+        lone.extend_from_slice(&[0x11; 100]);
+        assert!(matches!(validate_mp3(&lone), Err(MediaError::InvalidAudio)));
+        assert!(strip_mp3_tags(&lone)
+            .unwrap_err()
+            .contains("no MPEG audio frame"));
     }
 
     #[test]

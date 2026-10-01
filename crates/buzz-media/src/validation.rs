@@ -1754,6 +1754,23 @@ mod tests {
     }
 
     #[test]
+    fn validate_file_content_rejects_a_blob_shorter_than_one_frame() {
+        let config = test_config();
+        // A valid 417-byte-frame header followed by far fewer than 417 bytes.
+        let mut lone = crate::mp3::tests::FRAME_HDR.to_vec();
+        lone.extend_from_slice(b"LYRICSBEGININDsecretLYRICSEND");
+        assert_eq!(
+            infer::get(&lone).map(|k| k.mime_type()),
+            Some("audio/mpeg"),
+            "fixture must sniff as MP3"
+        );
+        assert!(matches!(
+            validate_file_content(&lone, &config),
+            Err(MediaError::InvalidAudio)
+        ));
+    }
+
+    #[test]
     fn validate_file_content_still_rejects_non_mp3_non_wav_audio() {
         let config = test_config();
         let fixtures: &[(&str, &[u8])] = &[

@@ -258,19 +258,28 @@ export function stripMp3Tags(body: Uint8Array): Uint8Array<ArrayBuffer> {
       "MP3: an ID3 tag is embedded inside the audio stream; it cannot be stripped safely.",
     );
   }
-  if (frameLength(audio, 0) === null) {
-    throw new Error("MP3: no audio frames found after removing tags.");
-  }
-  let offset = 0;
-  while (offset < audio.length) {
-    const frame = frameLength(audio, offset);
+  // Walk complete frames. A frame whose declared length runs past EOF is
+  // incomplete: it is dropped whole, with anything hidden inside that span.
+  // Mirrors `walk_frames` in crates/buzz-media/src/mp3.rs.
+  let stop = 0;
+  let truncated = false;
+  while (stop < audio.length) {
+    const frame = frameLength(audio, stop);
     if (frame === null) {
       break;
     }
-    offset += frame;
+    if (frame > audio.length - stop) {
+      truncated = true;
+      break;
+    }
+    stop += frame;
   }
-  const stop = Math.min(offset, audio.length);
-  for (let i = stop; i < audio.length; i += 1) {
+  if (stop === 0) {
+    throw new Error("MP3: no audio frames found after removing tags.");
+  }
+  // Zero padding after the last frame carries nothing; any other non-frame
+  // bytes are an unknown channel we refuse to guess about.
+  for (let i = stop; !truncated && i < audio.length; i += 1) {
     if (audio[i] !== 0) {
       throw new Error(
         `MP3: ${audio.length - stop} unrecognized bytes after the audio frames.`,
