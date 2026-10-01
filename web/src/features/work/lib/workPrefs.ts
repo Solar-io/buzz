@@ -11,10 +11,14 @@ const COLLAPSED_KEY = "buzz.work.collapsed.v1";
 const WIDTH_KEY = "buzz.work-width.v1";
 const RAIL_COLLAPSED_KEY = "buzz.work.rail-collapsed.v1";
 
-/** Work rail width (decision D1: its own width, separate from the thread's). */
+/**
+ * Work rail width (decision D1: its own width, separate from the thread's).
+ * Canvas shares it (Sam, 2026-10-01), so the ceiling is the file pane's 960:
+ * a preview still has room to go wide, and Work goes with it.
+ */
 export const WORK_WIDTH_DEFAULT = 380;
 export const WORK_WIDTH_MIN = 320;
-export const WORK_WIDTH_MAX = 520;
+export const WORK_WIDTH_MAX = 960;
 /** The collapsed strip. */
 export const WORK_RAIL_COLLAPSED_WIDTH = 48;
 

@@ -310,6 +310,12 @@ test("method line: 72 h average per account, short history noted", () => {
     runwayMethod(parseRunway(LIVE_RUNWAY)),
     "72h average, carried forward to each reset: A 1.4%/h · B 0.4%/h",
   );
+  const weekend = structuredClone(LIVE_RUNWAY);
+  weekend.weekendFactor = 1.5;
+  assert.equal(
+    runwayMethod(parseRunway(weekend)),
+    "72h average, weekends ×1.5, carried forward to each reset: A 1.4%/h · B 0.4%/h",
+  );
   const young = structuredClone(LIVE_RUNWAY);
   young.accounts[1].historyHours = 31.2;
   assert.equal(
