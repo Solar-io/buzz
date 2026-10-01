@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  accountDryText,
   accountRowText,
   accountVitals,
   paceLine,
@@ -326,7 +327,7 @@ test("method line: 72 h average per account, short history noted", () => {
   assert.equal(runwayMethod(null), null);
 });
 
-test("row text: a red row names when it runs dry; the default is marked active", () => {
+test("row text: a red row says its reset and, below, when it runs dry; the default is marked active", () => {
   const runway = parseRunway(LIVE_RUNWAY);
   const fmt = (iso) => `<${iso}>`;
   const a = accountVitals(LIVE_PACE, LIVE_PACE.accounts[0], runway);
@@ -336,9 +337,12 @@ test("row text: a red row names when it runs dry; the default is marked active",
   assert.equal(a.status, "warn");
   assert.equal(
     accountRowText(a, fmt, "stale"),
-    `${Math.round(a.used * 100)}% · runs dry <2026-10-01T15:02:14.645Z>`,
+    `${Math.round(a.used * 100)}% · resets <${a.resetsAt}>`,
+    "the red row says its reset, like every other row",
   );
+  assert.equal(accountDryText(a, fmt), "runs dry <2026-10-01T15:02:14.645Z>");
   assert.match(accountRowText(b, fmt, "stale"), /% · resets </);
+  assert.equal(accountDryText(b, fmt), null, "an ok row has no dry line");
   const stale = accountVitals(
     LIVE_PACE,
     account({ id: "A", state: "stale", usedFraction: null }),

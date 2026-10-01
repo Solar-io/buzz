@@ -5,6 +5,7 @@ import { USAGE_HUB_URL } from "@/features/usage/lib/usageHub.ts";
 import { cn } from "@/shared/lib/cn";
 import {
   type AccountVitals,
+  accountDryText,
   accountRowText,
   type Outlook,
   paceLine,
@@ -280,6 +281,7 @@ export function VitalsPanel({
 
 function AccountRow({ account }: { account: AccountVitals }) {
   const hot = account.status === "warn" || account.status === "critical";
+  const dry = accountDryText(account, clock);
   return (
     <>
       <span
@@ -322,8 +324,13 @@ function AccountRow({ account }: { account: AccountVitals }) {
           />
         )}
       </span>
-      <span className="whitespace-nowrap text-right font-mono text-2xs text-muted-foreground">
-        {accountRowText(account, clock, unknownText(account.state))}
+      <span className="flex flex-col items-end whitespace-nowrap text-right font-mono text-2xs text-muted-foreground">
+        <span>{accountRowText(account, clock, unknownText(account.state))}</span>
+        {dry && (
+          <span data-testid="vitals-account-dry" className="text-need">
+            {dry}
+          </span>
+        )}
       </span>
     </>
   );
