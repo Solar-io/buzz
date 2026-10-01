@@ -3,7 +3,6 @@ import { useLayoutEffect } from "react";
 import { MicMeter } from "./MicMeter.tsx";
 import { HuddleControls } from "./HuddleControls.tsx";
 import { HuddleReactionBurst } from "./HuddleReactionBurst.tsx";
-import { HuddleChat } from "./HuddleChat.tsx";
 import { useHuddleSession } from "../HuddleSessionProvider.tsx";
 
 /**
@@ -18,6 +17,9 @@ import { useHuddleSession } from "../HuddleSessionProvider.tsx";
  * Below the composer, not above the timeline, because it is call chrome
  * rather than conversation: putting it above pushes the newest message
  * around every time a control appears.
+ *
+ * No call transcript box (Sam, 2026-10-01): every call line is mirrored live
+ * into the parent channel / DM, which is the timeline right above this bar.
  *
  * The bar registers itself with the provider while mounted, which is how
  * the pill knows to stay out of the way.
@@ -52,7 +54,6 @@ export function HuddleDock({ currentChannelId }: { currentChannelId: string }) {
       data-testid="huddle-dock"
     >
       <HuddleReactionBurst reactions={call.reactions.active} />
-      <HuddleChat key={call.channelId} variant="compact" />
       <HuddleControls variant="dock" />
       <div className="mt-1 flex flex-wrap items-center gap-3">
         <MicMeter levelDbov={call.huddle.micLevel} muted={call.huddle.muted} />

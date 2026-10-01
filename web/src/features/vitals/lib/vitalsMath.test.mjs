@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  accountRowText,
   accountVitals,
   paceLine,
   parseRunway,
@@ -323,4 +324,25 @@ test("method line: 72 h average per account, short history noted", () => {
     "not enough history in the last 72h to project yet",
   );
   assert.equal(runwayMethod(null), null);
+});
+
+test("row text: a red row names when it runs dry; the default is marked active", () => {
+  const runway = parseRunway(LIVE_RUNWAY);
+  const fmt = (iso) => `<${iso}>`;
+  const a = accountVitals(LIVE_PACE, LIVE_PACE.accounts[0], runway);
+  const b = accountVitals(LIVE_PACE, LIVE_PACE.accounts[1], runway);
+  assert.equal(a.active, true, "A is the pool default");
+  assert.equal(b.active, false);
+  assert.equal(a.status, "warn");
+  assert.equal(
+    accountRowText(a, fmt, "stale"),
+    `${Math.round(a.used * 100)}% · runs dry <2026-10-01T15:02:14.645Z>`,
+  );
+  assert.match(accountRowText(b, fmt, "stale"), /% · resets </);
+  const stale = accountVitals(
+    LIVE_PACE,
+    account({ id: "A", state: "stale", usedFraction: null }),
+    runway,
+  );
+  assert.equal(accountRowText(stale, fmt, "stale"), "stale");
 });

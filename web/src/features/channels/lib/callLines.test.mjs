@@ -40,15 +40,17 @@ test("a relay-signed call line is attributed to its speaker", () => {
   const agent = message({ actor: AGENT, content: "The DeWalt 20V." });
   const out = attributeCallLines([sam, agent], RELAY);
   assert.deepEqual(
-    out.map((m) => [m.authorPubkey, m.viaCall, m.content]),
+    out.map((m) => [m.authorPubkey, m.content]),
     [
-      [SAM, true, "which drill should I buy?"],
-      [AGENT, true, "The DeWalt 20V."],
+      [SAM, "which drill should I buy?"],
+      [AGENT, "The DeWalt 20V."],
     ],
   );
+  // Only the author changes: no call-only field rides along for the row to
+  // render as a marker (Sam, 2026-10-01).
+  assert.deepEqual(out[0], { ...sam, authorPubkey: SAM });
   // The source rows (store/cache) keep the signed author.
   assert.equal(sam.authorPubkey, RELAY);
-  assert.equal(sam.viaCall, undefined);
 });
 
 test("relay key compared case-insensitively", () => {
@@ -61,8 +63,7 @@ test("an impostor's call-line tags are ignored: the row keeps its signer", () =>
   // ingest rejects buzz-system from clients too; this is the second fence).
   const forged = message({ pubkey: IMPOSTOR });
   const out = attributeCallLines([forged], RELAY);
-  assert.equal(out[0].authorPubkey, IMPOSTOR);
-  assert.equal(out[0].viaCall, undefined);
+  assert.equal(out[0], forged, "the row is returned untouched");
 });
 
 test("other relay-signed rows are untouched", () => {
