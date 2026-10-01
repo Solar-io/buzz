@@ -104,30 +104,35 @@ export function FileTileGroup({ files }: { files: readonly FileCardTarget[] }) {
           aria-hidden
           className="size-3.75 shrink-0 text-muted-foreground"
         />
-        <span
-          data-testid="file-tile-group-folder"
-          className="min-w-0 truncate font-mono text-xs text-ink-2"
-          title={folder ? `${folder.host}:${folder.path}` : undefined}
-        >
-          {crumbs.length > 0 ? (
-            crumbs.map((crumb, index) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: crumbs are positional
-              <span key={index}>
-                {index > 0 ? " / " : ""}
-                {index === crumbs.length - 1 ? (
-                  <b className="font-semibold text-foreground">{crumb}</b>
-                ) : (
-                  crumb
-                )}
-              </span>
-            ))
-          ) : (
-            <>
-              <b className="font-semibold text-foreground">{files.length}</b>{" "}
-              files
-            </>
-          )}
-        </span>
+        {crumbs.length > 0 ? (
+          // The folder the files are IN never truncates; the path above it
+          // gives way first in a narrow column.
+          <span
+            data-testid="file-tile-group-folder"
+            className="flex min-w-0 items-baseline font-mono text-xs whitespace-pre text-ink-2"
+            title={folder ? `${folder.host}:${folder.path}` : undefined}
+          >
+            {crumbs.length > 1 ? (
+              <>
+                <span className="min-w-0 truncate">
+                  {crumbs.slice(0, -1).join(" / ")}
+                </span>
+                <span className="shrink-0"> / </span>
+              </>
+            ) : null}
+            <b className="shrink-0 font-semibold text-foreground">
+              {crumbs[crumbs.length - 1]}
+            </b>
+          </span>
+        ) : (
+          <span
+            data-testid="file-tile-group-folder"
+            className="font-mono text-xs text-ink-2"
+          >
+            <b className="font-semibold text-foreground">{files.length}</b>{" "}
+            files
+          </span>
+        )}
         {opener.onShelf && opener.openShelf ? (
           <button
             type="button"

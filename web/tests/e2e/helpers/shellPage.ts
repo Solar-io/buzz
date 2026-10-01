@@ -74,8 +74,15 @@ export async function openShell(
 ): Promise<{ fixture: WorkFixture; relay: MockRelay }> {
   const fixture = buildWorkFixture(options.fixture);
   await page.addInitScript((theme) => {
-    localStorage.setItem("buzz-theme", theme);
-    localStorage.setItem("buzz-follow-system", "false");
+    // Init scripts run in EVERY frame, including a sandboxed file preview
+    // (opaque origin), where touching localStorage throws — that would be
+    // the harness's error, not the app's.
+    try {
+      localStorage.setItem("buzz-theme", theme);
+      localStorage.setItem("buzz-follow-system", "false");
+    } catch {
+      // A sandboxed frame: nothing to seed.
+    }
   }, options.theme);
   await routeUsageHub(page);
   const relay = await installMockRelay(

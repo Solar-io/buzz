@@ -48,6 +48,7 @@ export default defineConfig({
         "**/scratch.spec.ts",
         "**/files-embed.spec.ts",
         "**/items.spec.ts",
+        "**/shelf.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],

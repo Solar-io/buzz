@@ -124,10 +124,10 @@ export function ShelfRow({
           "w-full text-left text-sm transition-colors hover:bg-accent/50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
           layout === "narrow"
             ? "flex items-start gap-3 py-3"
-            : cn("grid min-h-12.5 items-center", SHELF_COLUMNS[layout]),
+            : cn("grid min-h-12.5 items-center py-1.5", SHELF_COLUMNS[layout]),
         )}
       >
-        <span className="flex min-w-0 items-center gap-2.5">
+        <span className="flex min-w-0 flex-1 items-center gap-2.5">
           {icon}
           <span className="min-w-0 flex-1">
             <span className="flex items-center gap-1">

@@ -121,80 +121,94 @@ export function ShelfToolbar({
     filters.channel === "anywhere"
       ? "anywhere"
       : channelName(filters.channel.id);
+  const types = (
+    <fieldset className="flex shrink-0 gap-1.5">
+      <legend className="sr-only">File type</legend>
+      {chips.map((category) => {
+        const on = filters.category === category;
+        return (
+          <button
+            key={category}
+            type="button"
+            aria-pressed={on}
+            data-testid={`shelf-type-${category}`}
+            onClick={() => onChange({ category })}
+            className={cn(
+              "inline-flex h-7 shrink-0 items-center gap-1.75 rounded-lg border px-2.75 text-xs font-semibold",
+              on
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-card text-ink-2 hover:text-foreground",
+            )}
+          >
+            {category === "all" ? "All" : CATEGORY_LABEL[category]}
+            <span className="font-mono text-2xs opacity-75">
+              {counts[category]}
+            </span>
+          </button>
+        );
+      })}
+    </fieldset>
+  );
+  const facets = (
+    <span className="flex shrink-0 gap-1.5">
+      <FilterMenu
+        testId="shelf-filter-sender"
+        label={`From: ${senderLabel}`}
+        active={filters.sender !== "anyone"}
+        selectedKey={senderKey(filters.sender)}
+        options={[
+          {
+            key: "anyone",
+            label: "Anyone",
+            pick: () => onChange({ sender: "anyone" }),
+          },
+          { key: "me", label: "Me", pick: () => onChange({ sender: "me" }) },
+          ...(senders.length > 0 ? (["separator"] as const) : []),
+          ...senders.map((pubkey) => ({
+            key: `pk:${pubkey}`,
+            label: personName(pubkey),
+            pick: () => onChange({ sender: { pubkey } }),
+          })),
+        ]}
+      />
+      <FilterMenu
+        testId="shelf-filter-channel"
+        label={`In: ${channelLabel}`}
+        active={filters.channel !== "anywhere"}
+        selectedKey={channelKey(filters.channel)}
+        options={[
+          {
+            key: "anywhere",
+            label: "Anywhere",
+            pick: () => onChange({ channel: "anywhere" }),
+          },
+          ...(channels.length > 0 ? (["separator"] as const) : []),
+          ...channels.map((id) => ({
+            key: `ch:${id}`,
+            label: channelName(id),
+            pick: () => onChange({ channel: { id } }),
+          })),
+        ]}
+      />
+    </span>
+  );
+  if (narrow) {
+    // A phone: the chips scroll sideways, the menus get their own row.
+    return (
+      <div className="flex flex-col gap-2 border-b border-border px-4 pt-1 pb-2.5">
+        <div className="flex items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">
+          {types}
+        </div>
+        <div className="flex items-center gap-1.5">{facets}</div>
+      </div>
+    );
+  }
+  // Beside an open file the column narrows: the menus wrap under the chips
+  // rather than run off the edge.
   return (
-    <div
-      className={cn(
-        "flex items-center gap-1.5 overflow-x-auto border-b border-border [scrollbar-width:none]",
-        narrow ? "px-4 pt-1 pb-2.5" : "px-5 py-2.5",
-      )}
-    >
-      <fieldset className="flex shrink-0 gap-1.5">
-        <legend className="sr-only">File type</legend>
-        {chips.map((category) => {
-          const on = filters.category === category;
-          return (
-            <button
-              key={category}
-              type="button"
-              aria-pressed={on}
-              data-testid={`shelf-type-${category}`}
-              onClick={() => onChange({ category })}
-              className={cn(
-                "inline-flex h-7 shrink-0 items-center gap-1.75 rounded-lg border px-2.75 text-xs font-semibold",
-                on
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border bg-card text-ink-2 hover:text-foreground",
-              )}
-            >
-              {category === "all" ? "All" : CATEGORY_LABEL[category]}
-              <span className="font-mono text-2xs opacity-75">
-                {counts[category]}
-              </span>
-            </button>
-          );
-        })}
-      </fieldset>
-      <span className="ml-auto flex shrink-0 gap-1.5 pl-3">
-        <FilterMenu
-          testId="shelf-filter-sender"
-          label={`From: ${senderLabel}`}
-          active={filters.sender !== "anyone"}
-          selectedKey={senderKey(filters.sender)}
-          options={[
-            {
-              key: "anyone",
-              label: "Anyone",
-              pick: () => onChange({ sender: "anyone" }),
-            },
-            { key: "me", label: "Me", pick: () => onChange({ sender: "me" }) },
-            ...(senders.length > 0 ? (["separator"] as const) : []),
-            ...senders.map((pubkey) => ({
-              key: `pk:${pubkey}`,
-              label: personName(pubkey),
-              pick: () => onChange({ sender: { pubkey } }),
-            })),
-          ]}
-        />
-        <FilterMenu
-          testId="shelf-filter-channel"
-          label={`In: ${channelLabel}`}
-          active={filters.channel !== "anywhere"}
-          selectedKey={channelKey(filters.channel)}
-          options={[
-            {
-              key: "anywhere",
-              label: "Anywhere",
-              pick: () => onChange({ channel: "anywhere" }),
-            },
-            ...(channels.length > 0 ? (["separator"] as const) : []),
-            ...channels.map((id) => ({
-              key: `ch:${id}`,
-              label: channelName(id),
-              pick: () => onChange({ channel: { id } }),
-            })),
-          ]}
-        />
-      </span>
+    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-2 border-b border-border px-5 py-2.5">
+      {types}
+      <span className="ml-auto pl-1.5">{facets}</span>
     </div>
   );
 }

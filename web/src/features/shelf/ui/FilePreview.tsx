@@ -38,21 +38,29 @@ function ActionButton({
   icon,
   onClick,
   testId,
+  compact,
 }: {
   label: string;
   icon: ReactNode;
   onClick: () => void;
   testId: string;
+  /** The phone sheet: a 36 px icon button, its label as its name. */
+  compact: boolean;
 }) {
   return (
     <button
       type="button"
       data-testid={testId}
       onClick={onClick}
-      className="inline-flex h-7.5 shrink-0 items-center gap-1.5 rounded-lg border border-line-2 bg-card px-2.5 text-xs font-semibold text-foreground transition-colors hover:bg-accent"
+      aria-label={compact ? label : undefined}
+      title={compact ? label : undefined}
+      className={cn(
+        "inline-flex shrink-0 items-center rounded-lg border border-line-2 bg-card text-xs font-semibold text-foreground transition-colors hover:bg-accent",
+        compact ? "size-9 justify-center" : "h-7.5 gap-1.5 px-2.5",
+      )}
     >
       {icon}
-      {label}
+      {compact ? null : label}
     </button>
   );
 }
@@ -122,6 +130,7 @@ export function FilePreview({
   );
   const names = useShareNames(people);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const compact = variant === "sheet";
 
   const meta = [
     file.size !== null ? formatFileSize(file.size) : null,
@@ -170,10 +179,10 @@ export function FilePreview({
       <header className="border-b border-border px-4 pt-3 pb-3">
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-baseline gap-2">
+            <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
               <h2
                 data-testid="file-preview-name"
-                className="truncate font-mono text-sm font-semibold"
+                className="max-w-full truncate font-mono text-sm font-semibold"
               >
                 {file.filename}
               </h2>
@@ -240,7 +249,8 @@ export function FilePreview({
                   data-testid={`file-view-${option}`}
                   onClick={() => setView(option)}
                   className={cn(
-                    "h-6 rounded-md px-2.5 text-xs font-semibold capitalize",
+                    "rounded-md text-xs font-semibold capitalize",
+                    compact ? "h-8 px-3" : "h-6 px-2.5",
                     view === option
                       ? "bg-card text-foreground shadow-xs"
                       : "text-muted-foreground hover:text-foreground",
@@ -264,6 +274,7 @@ export function FilePreview({
           <span className="ml-auto" />
           {filesPath ? (
             <ActionButton
+              compact={compact}
               testId="file-open-in-files"
               label="Open in Files"
               icon={<FolderOpen aria-hidden className="size-3.5" />}
@@ -274,6 +285,7 @@ export function FilePreview({
             />
           ) : null}
           <ActionButton
+            compact={compact}
             testId="file-download"
             label="Download"
             icon={<Download aria-hidden className="size-3.5" />}
@@ -281,6 +293,7 @@ export function FilePreview({
           />
           {file.messageId ? (
             <ActionButton
+              compact={compact}
               testId="file-copy-link"
               label="Copy link"
               icon={<Link2 aria-hidden className="size-3.5" />}
