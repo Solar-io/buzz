@@ -6,12 +6,18 @@ import { buildInboxItems } from "@/features/home/lib/inboxItem.ts";
 import { inboxReadPredicate } from "@/features/home/lib/inboxReadState.ts";
 import { useRemindersQuery } from "@/features/reminders/hooks";
 import { useWorkContext } from "./workContext.ts";
-import { buildWorkFeed } from "./lib/workFeed.ts";
+import { EMPTY_STATUS_STORE } from "./lib/taskStatus.ts";
+import { buildWorkFeed, type StatusInput } from "./lib/workFeed.ts";
 import type { WorkFeed, WorkScope } from "./lib/workTypes.ts";
 
 const EMPTY_FRAMES = new Map();
 const NO_REACTIONS: never[] = [];
 const NO_TARGETS = new Map();
+const NO_STATUS: StatusInput = {
+  state: "loading",
+  store: EMPTY_STATUS_STORE,
+  sinceS: 0,
+};
 
 /**
  * A value that changes at most every `ms`. Observer frames arrive several a
@@ -90,6 +96,7 @@ export function useWorkFeed(options: {
   const reactions = context?.reactions ?? NO_REACTIONS;
   const targets = context?.targets ?? NO_TARGETS;
   const metrics = context?.metrics;
+  const status = context?.status ?? NO_STATUS;
   const dismissedTurns = context?.dismissedTurns;
   const byAgent = useThrottledValue(observer?.byAgent ?? EMPTY_FRAMES, 500);
   const { scope, channelId, nowS } = options;
@@ -108,6 +115,7 @@ export function useWorkFeed(options: {
           reactions,
           targets,
           metrics: metrics ?? { state: "loading" },
+          status,
         },
         nowS,
         scope,
@@ -123,6 +131,7 @@ export function useWorkFeed(options: {
       reactions,
       targets,
       metrics,
+      status,
       nowS,
       scope,
       channelId,

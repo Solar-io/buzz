@@ -1,7 +1,9 @@
 /**
  * Needs you: four sources merged into one sorted list (phase-1 §2.1–2.3).
  *
- *   1. asks      — `useAsks().interviews` (unanswered decision cards)
+ *   1. asks      — `useAsks().interviews` (unanswered decision cards); a
+ *                  card that references a pull request is an APPROVAL
+ *                  (Phase 8, `prAsk.ts`)
  *   2. mentions  — the asks feed folded by `buildInboxItems`: unread mention
  *                  conversations, not DMs, and never a card (a card is 1)
  *   3. approvals — workflow 46010s with no outcome (approvalEvents.ts)
@@ -17,6 +19,7 @@ import type { InboxItem } from "@/features/home/lib/inboxItem.ts";
 import { reminderDestination } from "@/features/reminders/lib/reminderNavigation.ts";
 import type { Reminder } from "@/features/reminders/lib/reminderTypes.ts";
 import type { PendingApproval } from "./approvalEvents.ts";
+import { prReference } from "./prAsk.ts";
 import type {
   NeedChipFilter,
   NeedCounts,
@@ -43,21 +46,29 @@ function clip(text: string): string {
     : `${flat.slice(0, TITLE_MAX - 1).trimEnd()}…`;
 }
 
+/**
+ * Asks — and PR-merge asks (Phase 8): a card that references a pull request
+ * is an APPROVAL under the Approvals chip. It stays an ask underneath (its
+ * source, and so its actions, are the card's own options), because the
+ * answer IS the merge decision the agent acts on.
+ */
 function askRows(interviews: readonly AskInterview[]): NeedRow[] {
   return interviews.map((interview) => {
     const ask = interview.ask;
+    const pr = prReference(ask.card);
     return {
       key: `ask:${ask.id}`,
-      kind: "ask",
-      chip: "asks",
+      kind: pr ? "approval" : "ask",
+      chip: pr ? "approvals" : "asks",
       channelId: ask.channelId,
       actorPubkey: ask.authorPubkey,
-      title: clip(ask.card.title) || "Decision",
+      title: clip(ask.card.title) || (pr ? "Merge request" : "Decision"),
       at: ask.createdAt,
       expiresAt: null,
       overdueBy: null,
       open: { channelId: ask.channelId, messageId: ask.id },
       source: { kind: "ask", interview },
+      pr,
     };
   });
 }

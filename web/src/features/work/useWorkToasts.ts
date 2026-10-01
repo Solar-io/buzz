@@ -151,7 +151,8 @@ export function WorkToasts({
             lead: row.actorPubkey
               ? authorLabel(row.actorPubkey, current.profiles)
               : "Someone",
-            rest: "asks",
+            // A PR-merge ask is an approval, and says so (Phase 8).
+            rest: row.kind === "approval" ? "needs your approval" : "asks",
             meta: metaLine(row.title, where),
             seed: row.actorPubkey,
             agent: true,

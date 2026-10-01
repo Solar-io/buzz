@@ -128,7 +128,10 @@ function RowTitle({ row }: { row: Row }) {
 function rowMeta(row: Row, ctx: NeedRowContext) {
   const where =
     row.kind === "approval"
-      ? metaLine("workflow", channelLabel(row.channelId, ctx.channels))
+      ? row.pr != null
+        ? // A PR-merge ask (Phase 8): "APPROVAL · PR · buzz · #engineering".
+          metaLine("PR", row.pr.repo, channelLabel(row.channelId, ctx.channels))
+        : metaLine("workflow", channelLabel(row.channelId, ctx.channels))
       : row.kind === "feedback" && row.actorPubkey
         ? authorLabel(row.actorPubkey, ctx.profiles)
         : channelLabel(row.channelId, ctx.channels);

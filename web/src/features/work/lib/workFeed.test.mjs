@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import {
+  EMPTY_STATUS_STORE,
+  foldStatus,
+  parseTaskStatus,
+} from "./taskStatus.ts";
 import { buildWorkFeed } from "./workFeed.ts";
 
 const OWNED = "aa".repeat(32);
@@ -48,6 +53,7 @@ function inputs(overrides) {
     reactions: [],
     targets: new Map(),
     metrics: { state: "loading" },
+    status: { state: "loading", store: EMPTY_STATUS_STORE, sinceS: 0 },
     ...overrides,
   };
 }
@@ -144,4 +150,119 @@ test("scope This channel narrows running, queued and done too", () => {
   );
   assert.equal(feed.done.state, "ready");
   assert.equal(feed.done.count, 0, "the finished turn was in chan-2");
+});
+
+// ---- Phase 8: 30624 task status ------------------------------------------------
+
+const CH = "0f5c1e8a-2b3d-4c5e-8f60-718293a4b5c6";
+
+function statusHead(author, turn, state, at, extra = []) {
+  return parseTaskStatus({
+    id: `${author.slice(0, 2)}${at}`.padEnd(64, "0"),
+    pubkey: author,
+    kind: 30624,
+    created_at: at,
+    tags: [
+      ["d", `turn:${CH}`],
+      ["h", CH],
+      ["turn", turn],
+      ["state", state],
+      ["started", String(at - 60)],
+      ...(state === "running" ? [] : [["ended", String(at)]]),
+      ...extra,
+    ],
+    content: "",
+  });
+}
+
+function statusInput(heads, state = "ready", sinceS = 0) {
+  for (const head of heads) {
+    assert.ok(head, "fixture head parses");
+  }
+  return { state, store: foldStatus(EMPTY_STATUS_STORE, heads), sinceS };
+}
+
+test("a status head speaks for an agent's 💬, and its trigger is not queued", () => {
+  const target = "c1".repeat(32);
+  const feed = buildWorkFeed(
+    inputs({
+      reactions: [
+        reaction("r1", "💬", "msg-1", NOW - 50, NOT_OWNED),
+        reaction("q1", "👀", target, NOW - 70, NOT_OWNED),
+      ],
+      targets: new Map([
+        ["msg-1", { channelId: CH }],
+        [target, { channelId: CH }],
+      ]),
+      status: statusInput([
+        statusHead(NOT_OWNED, "t1", "running", NOW - 20, [
+          ["e", target, "", "trigger"],
+        ]),
+      ]),
+    }),
+    NOW,
+    "everywhere",
+    null,
+  );
+  assert.deepEqual(
+    feed.running.map((row) => [row.source, row.agentPubkey, row.state]),
+    [["status", NOT_OWNED, "live"]],
+    "one row for the agent, from status — not a second 💬 row",
+  );
+  assert.deepEqual(feed.queued, [], "the 👀 it answered is picked up");
+});
+
+test("a 💬 NEWER than the agent's finished status head is still work", () => {
+  const feed = buildWorkFeed(
+    inputs({
+      reactions: [reaction("r1", "💬", "msg-1", NOW - 10, NOT_OWNED)],
+      targets: new Map([["msg-1", { channelId: CH }]]),
+      status: statusInput([statusHead(NOT_OWNED, "t0", "done", NOW - 300)]),
+    }),
+    NOW,
+    "everywhere",
+    null,
+  );
+  assert.deepEqual(
+    feed.running.map((row) => row.source),
+    ["reaction"],
+  );
+});
+
+test("Done today: status alone is enough; neither source settled is not a 0", () => {
+  const finished = statusInput(
+    [statusHead(NOT_OWNED, "t1", "done", NOW - 30)],
+    "ready",
+    NOW - 1_000,
+  );
+  const locked = buildWorkFeed(
+    inputs({ metrics: { state: "locked" }, status: finished }),
+    NOW,
+    "everywhere",
+    null,
+  );
+  assert.equal(locked.done.state, "ready");
+  assert.equal(locked.done.count, 1, "readable without the owner's key");
+
+  const waiting = buildWorkFeed(
+    inputs({
+      metrics: { state: "locked" },
+      status: { ...finished, state: "loading" },
+    }),
+    NOW,
+    "everywhere",
+    null,
+  );
+  assert.equal(waiting.done.state, "loading");
+
+  const neither = buildWorkFeed(
+    inputs({
+      metrics: { state: "locked" },
+      status: { ...finished, state: "unavailable" },
+    }),
+    NOW,
+    "everywhere",
+    null,
+  );
+  assert.equal(neither.done.state, "locked");
 });
