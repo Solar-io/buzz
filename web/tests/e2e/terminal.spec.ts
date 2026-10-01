@@ -243,6 +243,15 @@ test.describe("states · desktop 1440", () => {
     const hatch = await openTerminal(page, "buzz", { me: "signed-out" });
     const status = page.getByTestId("terminal-status");
     await expect(status).toContainText("Sign in to crichton");
+    // The rail says why it is empty instead of "Reading herdr…" forever
+    // (found in the live check), and Vitals says sign in, not 0%.
+    await expect(page.getByTestId("herdr-locked")).toContainText(
+      "Sign in to crichton",
+    );
+    await expect(page.getByTestId("crichton-status")).toHaveAttribute(
+      "data-status",
+      "signed-out",
+    );
     await shot(page, "terminal-signed-out-buzz-1440");
     // hatch's /auth/github, faked to land straight on /auth/signed-in's job:
     // tell the opener, at the page's origin.

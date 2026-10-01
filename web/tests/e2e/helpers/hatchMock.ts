@@ -120,179 +120,193 @@ export async function installHatchMock(
     });
   });
 
-  await page.route(`${HATCH}api/herdr`, (route) =>
-    json(
-      route,
-      200,
-      options.herdrRunning === false
-        ? { v: 1, running: false, session: "default" }
-        : {
-            v: 1,
-            running: true,
-            session: "default",
-            protocol: 16,
-            version: "0.7.4",
-            capabilities: { focus: false },
-            workspaces: [
-              {
-                id: "w1",
-                label: "buzz",
-                number: 1,
-                focused: true,
-                status: "working",
-              },
-              {
-                id: "w2",
-                label: "evie-ui",
-                number: 2,
-                focused: false,
-                status: "idle",
-              },
-              {
-                id: "w3",
-                label: "stash",
-                number: 3,
-                focused: false,
-                status: "blocked",
-              },
-            ],
-            tabs: [
-              {
-                id: "w1:t1",
-                workspaceId: "w1",
-                label: "Vitals redesign",
-                number: 1,
-                focused: true,
-                status: "working",
-              },
-              {
-                id: "w1:t2",
-                workspaceId: "w1",
-                label: "jitter QA",
-                number: 2,
-                focused: false,
-                status: "done",
-              },
-              {
-                id: "w1:t3",
-                workspaceId: "w1",
-                label: "codex",
-                number: 3,
-                focused: false,
-                status: "blocked",
-              },
-              {
-                id: "w2:t1",
-                workspaceId: "w2",
-                label: "term drawer gap",
-                number: 1,
-                focused: false,
-                status: "done",
-              },
-              {
-                id: "w3:t1",
-                workspaceId: "w3",
-                label: "parity walk",
-                number: 1,
-                focused: false,
-                status: "blocked",
-              },
-            ],
-            agents: [
-              {
-                id: "a1",
-                label: "Vitals redesign",
-                workspaceId: "w1",
-                tabId: "w1:t1",
-                agent: "claude",
-                status: "working",
-              },
-              {
-                id: "a2",
-                label: "jitter QA",
-                workspaceId: "w1",
-                tabId: "w1:t2",
-                agent: "claude",
-                status: "done",
-              },
-              {
-                id: "a3",
-                label: "parity walk",
-                workspaceId: "w3",
-                tabId: "w3:t1",
-                agent: "codex",
-                status: "blocked",
-              },
-              {
-                id: "a4",
-                label: "term drawer gap",
-                workspaceId: "w2",
-                tabId: "w2:t1",
-                agent: "claude",
-                status: "done",
-              },
-            ],
-          },
-    ),
+  // Like hatch: every /api/* route sits behind the same session gate.
+  const gate = (route: Route) =>
+    me === "signed-out"
+      ? json(route, 401, { error: "unauthenticated" })
+      : me === "forbidden"
+        ? json(route, 403, { error: "not_authorized" })
+        : null;
+
+  await page.route(
+    `${HATCH}api/herdr`,
+    (route) =>
+      gate(route) ??
+      json(
+        route,
+        200,
+        options.herdrRunning === false
+          ? { v: 1, running: false, session: "default" }
+          : {
+              v: 1,
+              running: true,
+              session: "default",
+              protocol: 16,
+              version: "0.7.4",
+              capabilities: { focus: false },
+              workspaces: [
+                {
+                  id: "w1",
+                  label: "buzz",
+                  number: 1,
+                  focused: true,
+                  status: "working",
+                },
+                {
+                  id: "w2",
+                  label: "evie-ui",
+                  number: 2,
+                  focused: false,
+                  status: "idle",
+                },
+                {
+                  id: "w3",
+                  label: "stash",
+                  number: 3,
+                  focused: false,
+                  status: "blocked",
+                },
+              ],
+              tabs: [
+                {
+                  id: "w1:t1",
+                  workspaceId: "w1",
+                  label: "Vitals redesign",
+                  number: 1,
+                  focused: true,
+                  status: "working",
+                },
+                {
+                  id: "w1:t2",
+                  workspaceId: "w1",
+                  label: "jitter QA",
+                  number: 2,
+                  focused: false,
+                  status: "done",
+                },
+                {
+                  id: "w1:t3",
+                  workspaceId: "w1",
+                  label: "codex",
+                  number: 3,
+                  focused: false,
+                  status: "blocked",
+                },
+                {
+                  id: "w2:t1",
+                  workspaceId: "w2",
+                  label: "term drawer gap",
+                  number: 1,
+                  focused: false,
+                  status: "done",
+                },
+                {
+                  id: "w3:t1",
+                  workspaceId: "w3",
+                  label: "parity walk",
+                  number: 1,
+                  focused: false,
+                  status: "blocked",
+                },
+              ],
+              agents: [
+                {
+                  id: "a1",
+                  label: "Vitals redesign",
+                  workspaceId: "w1",
+                  tabId: "w1:t1",
+                  agent: "claude",
+                  status: "working",
+                },
+                {
+                  id: "a2",
+                  label: "jitter QA",
+                  workspaceId: "w1",
+                  tabId: "w1:t2",
+                  agent: "claude",
+                  status: "done",
+                },
+                {
+                  id: "a3",
+                  label: "parity walk",
+                  workspaceId: "w3",
+                  tabId: "w3:t1",
+                  agent: "codex",
+                  status: "blocked",
+                },
+                {
+                  id: "a4",
+                  label: "term drawer gap",
+                  workspaceId: "w2",
+                  tabId: "w2:t1",
+                  agent: "claude",
+                  status: "done",
+                },
+              ],
+            },
+      ),
   );
 
-  await page.route(`${HATCH}api/host-stats`, (route) =>
-    json(route, 200, {
-      v: 1,
-      host: "crichton",
-      sampledAt: new Date().toISOString(),
-      uptimeSec: 12 * 86_400 + 4 * 3_600,
-      load: [5.2, 3.9, 3.4],
-      cpu: { percent: 38 },
-      gpu: { percent: 71, renderer: 58, tiler: 9, top: null },
-      mem: {
-        usedBytes: 41.2 * 1024 ** 3,
-        totalBytes: 64 * 1024 ** 3,
-        percent: 64.4,
-        pressure: "normal",
-      },
-      disks: [
-        {
-          name: "Data",
-          mount: "/System/Volumes/Data",
-          kind: "internal",
-          readOnly: false,
-          totalBytes: 1.95e12,
-          usedBytes: 1.21e12,
-          freeBytes: 0.74e12,
-          percent: 62,
+  await page.route(
+    `${HATCH}api/host-stats`,
+    (route) =>
+      gate(route) ??
+      json(route, 200, {
+        v: 1,
+        host: "crichton",
+        sampledAt: new Date().toISOString(),
+        uptimeSec: 12 * 86_400 + 4 * 3_600,
+        load: [5.2, 3.9, 3.4],
+        cpu: { percent: 38 },
+        gpu: { percent: 71, renderer: 58, tiler: 9, top: null },
+        mem: {
+          usedBytes: 41.2 * 1024 ** 3,
+          totalBytes: 64 * 1024 ** 3,
+          percent: 64.4,
+          pressure: "normal",
         },
-        {
-          name: "crichton-backups",
-          mount: "/Volumes/crichton-backups",
-          kind: "external",
-          readOnly: false,
-          totalBytes: 2e12,
-          usedBytes: 1.68e12,
-          freeBytes: 0.32e12,
-          percent: 84,
-        },
-      ],
-      primaryDisk: "/System/Volumes/Data",
-      services: {
-        up: 6,
-        total: 6,
-        items: [
+        disks: [
           {
-            name: "relay",
-            kind: "docker",
-            up: true,
-            startedAt: new Date(Date.now() - 9 * 86_400_000).toISOString(),
+            name: "Data",
+            mount: "/System/Volumes/Data",
+            kind: "internal",
+            readOnly: false,
+            totalBytes: 1.95e12,
+            usedBytes: 1.21e12,
+            freeBytes: 0.74e12,
+            percent: 62,
           },
           {
-            name: "tts bridge",
-            kind: "launchd",
-            up: true,
-            startedAt: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+            name: "crichton-backups",
+            mount: "/Volumes/crichton-backups",
+            kind: "external",
+            readOnly: false,
+            totalBytes: 2e12,
+            usedBytes: 1.68e12,
+            freeBytes: 0.32e12,
+            percent: 84,
           },
         ],
-      },
-    }),
+        primaryDisk: "/System/Volumes/Data",
+        services: {
+          up: 6,
+          total: 6,
+          items: [
+            {
+              name: "relay",
+              kind: "docker",
+              up: true,
+              startedAt: new Date(Date.now() - 9 * 86_400_000).toISOString(),
+            },
+            {
+              name: "tts bridge",
+              kind: "launchd",
+              up: true,
+              startedAt: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+            },
+          ],
+        },
+      }),
   );
 
   // Registered by the caller AFTER the relay mock: page routes are checked

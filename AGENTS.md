@@ -939,3 +939,30 @@ Three sub-traps from the same hour:
 - **Check a mutation applied before reading its result.** A `sed` whose
   pattern misses (indentation) leaves the file untouched and reports a
   surviving mutant; `git diff --stat` empty means you tested the original.
+
+## Web Terminal over hatch (earned on redesign Phase 7, 2026-09-30)
+
+- **Static files ship only from `web/public/assets/`.** The relay serves
+  `/assets/*` as files and everything else as the SPA index, so a vendored
+  `/vendor/xterm.js` deploys as HTML. The xterm 5.5 batch and the Nerd Font
+  live in `public/assets/vendor/<name>-<version>/` — the version is in the
+  PATH because `sw.js` caches `/assets/*` cache-first forever. Each dir has a
+  `MANIFEST.json` that `vendorManifest.test.mjs` hashes; biome skips the dir.
+- **`mockRelay` routes EVERY socket (`/.*/`).** Page routes match newest
+  first, so a second mock (`hatchMock`'s `/ws/term`) must be registered AFTER
+  `installMockRelay`, or the relay mock swallows it: the client reports
+  "connected" and nothing ever arrives. `terminal.spec.ts` inlines openShell's
+  steps for exactly this.
+- **No TypeScript parameter properties anywhere the shell imports.** The node
+  runner strips types only; one `constructor(private readonly x)` in an
+  emulator module failed `StageView.test.mjs`, which imports the shell.
+- **Live phone checks of the terminal: use a 390 px iframe, not
+  `browser_resize`.** CDP viewport emulation on Agent Brave's Retina window
+  leaves xterm's GPU canvas drawing at the wrong scale (a quarter-size
+  terminal). An iframe at 390 on the real window renders correctly.
+- **Live check path.** hatch dev allows Buzz origins `:6351` and `:6879`;
+  `:6879` is a `tailscale serve` door onto a worktree vite (`--host
+  127.0.0.1`, `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=crichton.tailb3d4b8.ts.net`,
+  `VITE_HATCH_URL=…:6871/`). Turn the door off afterwards. A fresh nsec gets
+  through the Buzz gate (the relay refuses it, the Terminal page does not
+  need it); Agent Brave's GitHub session completes hatch's sign-in popup.

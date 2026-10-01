@@ -47,10 +47,13 @@ export function TerminalRail({
   view,
   snapshot,
   failed,
+  locked = null,
 }: {
   view: HerdrView | null;
   snapshot: HerdrSnapshot | null;
   failed: boolean;
+  /** Why herdr can't be read at all right now (signed out, offline); null when it can. */
+  locked?: string | null;
 }) {
   return (
     <aside
@@ -59,7 +62,16 @@ export function TerminalRail({
       className="flex w-57.5 shrink-0 flex-col gap-0.75 overflow-y-auto border-r border-border bg-rail px-2.5 py-3"
     >
       <div className={cn(SECTION, "pt-0.5")}>Spaces</div>
-      <RailBody view={view} snapshot={snapshot} failed={failed} />
+      {locked ? (
+        <p
+          data-testid="herdr-locked"
+          className="px-1.5 text-xs leading-snug text-muted-foreground"
+        >
+          {locked}
+        </p>
+      ) : (
+        <RailBody view={view} snapshot={snapshot} failed={failed} />
+      )}
     </aside>
   );
 }

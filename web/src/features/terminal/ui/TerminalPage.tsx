@@ -273,6 +273,14 @@ function TerminalScreen({
             view={view}
             snapshot={herdr.snapshot}
             failed={herdr.failed}
+            locked={
+              sessionState.kind === "signed-out" ||
+              sessionState.kind === "forbidden"
+                ? "Sign in to crichton to see herdr's spaces and agents."
+                : sessionState.kind === "unreachable"
+                  ? "crichton isn't answering."
+                  : null
+            }
           />
         ) : null}
         <div className="flex min-w-0 flex-1 flex-col bg-term">
