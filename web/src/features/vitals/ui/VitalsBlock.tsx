@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 
 import { cn } from "@/shared/lib/cn";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
-import { formatRunway, percent, vitalsSummary } from "../lib/vitalsMath.ts";
+import { percent, runwayOutlook, vitalsSummary } from "../lib/vitalsMath.ts";
 import { refreshHostStats, useHostStats } from "../useHostStats.ts";
 import { refreshVitals, useVitals } from "../useVitals.ts";
 import {
@@ -10,7 +10,7 @@ import {
   CrichtonRows,
   CrichtonStripColumn,
 } from "./CrichtonVitals";
-import { statusFill, VitalsPanel } from "./VitalsPopover";
+import { outlookShort, statusFill, VitalsPanel } from "./VitalsPopover";
 
 /**
  * Vitals v1 (phase-1 §4; Main + Vitals artboards): one combined Claude bar in
@@ -28,8 +28,11 @@ export function VitalsBlock({
   const data = useVitals();
   const host = useHostStats();
   const [open, setOpen] = useState(false);
-  const summary = useMemo(() => vitalsSummary(data.pace), [data.pace]);
-  const runway = formatRunway(data.runway);
+  const summary = useMemo(
+    () => vitalsSummary(data.pace, data.runway),
+    [data.pace, data.runway],
+  );
+  const runway = outlookShort(runwayOutlook(summary));
   // Nothing to say before the first answer: no skeleton bar pretending to be
   // a reading.
   if (!data.settled) {
@@ -134,8 +137,7 @@ export function VitalsBlock({
                   {runway ? (
                     <>
                       {" · "}
-                      <b className="font-semibold text-foreground">{runway}</b>{" "}
-                      of active use
+                      <b className="font-semibold text-foreground">{runway}</b>
                     </>
                   ) : null}
                 </span>

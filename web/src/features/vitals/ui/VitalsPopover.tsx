@@ -5,12 +5,11 @@ import { USAGE_HUB_URL } from "@/features/usage/lib/usageHub.ts";
 import { cn } from "@/shared/lib/cn";
 import {
   type AccountVitals,
-  formatRunway,
+  type Outlook,
   paceLine,
   percent,
-  type RunDry,
-  runDryNote,
   runwayMethod,
+  runwayOutlook,
   updatedAgo,
   type VitalsSummary,
 } from "../lib/vitalsMath.ts";
@@ -68,56 +67,59 @@ interface Line {
   rest: string;
 }
 
-/** The pace intelligence `/v1/pace` supports today (phase-1 §4). */
+/**
+ * One line per account, from the 72 h calendar projection: when it runs dry
+ * (before its reset), or that it won't and how full it will be at the reset.
+ * With no projection yet, the week-to-date pace line still shows.
+ */
 function accountLines(accounts: readonly AccountVitals[]): Line[] {
   const lines: Line[] = [];
   for (const account of accounts) {
-    const pace = paceLine(account);
-    if (account.fillsAt) {
+    const reset = account.resetsAt ? clock(account.resetsAt) : "";
+    if (account.used !== null && account.used >= 1) {
       lines.push({
-        key: `${account.id}-fills`,
+        key: `${account.id}-out`,
         tone: "need",
-        strong: pace ?? `${account.id} fills around ${clock(account.fillsAt)}`,
-        rest: pace ? ` and fills around ${clock(account.fillsAt)}.` : ".",
+        strong: `${account.id} is out`,
+        rest: reset ? ` until it resets ${reset}.` : ".",
       });
-    } else if (pace) {
+    } else if (account.dryAt) {
       lines.push({
-        key: `${account.id}-pace`,
-        tone: "honey",
-        strong: pace,
-        rest: ".",
+        key: `${account.id}-dry`,
+        tone: "need",
+        strong: `${account.id} runs dry around ${clock(account.dryAt)}`,
+        rest: reset ? `, before it resets ${reset}.` : ".",
       });
-    } else if (account.unusedAtReset !== null) {
+    } else if (account.projectedAtReset !== null) {
       lines.push({
-        key: `${account.id}-unused`,
+        key: `${account.id}-safe`,
         tone: "leaf",
-        strong: `${account.id} resets with ~${account.unusedAtReset}% unused`,
-        rest: account.resetsAt ? `, ${clock(account.resetsAt)}.` : ".",
+        strong: `${account.id} won't run dry`,
+        rest: ` — about ${percent(account.projectedAtReset)}% used when it resets${reset ? ` ${reset}` : ""}.`,
       });
+    } else {
+      const pace = paceLine(account);
+      if (pace) {
+        lines.push({
+          key: `${account.id}-pace`,
+          tone: "honey",
+          strong: pace,
+          rest: ".",
+        });
+      }
     }
   }
   return lines;
 }
 
-/** The runway against the next reset (Vitals artboard), first in the list. */
-function runDryLine(note: RunDry | null): Line | null {
-  if (!note) {
+/** The sidebar's short form: "A dry Thu 3:10 PM" / "lasts to reset". */
+export function outlookShort(outlook: Outlook | null): string | null {
+  if (!outlook) {
     return null;
   }
-  const when = clock(note.resetsAt);
-  return note.kind === "safe"
-    ? {
-        key: "run-dry",
-        tone: "leaf",
-        strong: "You won't run dry.",
-        rest: ` Account ${note.account} resets ${when}, ${note.well ? "well " : ""}inside the runway.`,
-      }
-    : {
-        key: "run-dry",
-        tone: "honey",
-        strong: "The runway ends before the next reset",
-        rest: ` if you work without a break — Account ${note.account} resets ${when}.`,
-      };
+  return outlook.kind === "dry"
+    ? `${outlook.account} dry ${clock(outlook.at)}`
+    : "lasts to reset";
 }
 
 const DOT: Record<Line["tone"], string> = {
@@ -141,15 +143,9 @@ export function VitalsPanel({
     const timer = setInterval(() => setNow(Date.now()), 1_000);
     return () => clearInterval(timer);
   }, []);
-  const runway = formatRunway(data.runway);
+  const outlook = runwayOutlook(summary);
   const method = runwayMethod(data.runway);
-  const runDry = runDryLine(
-    runDryNote(data.runway, data.pace?.nextReset ?? null, now),
-  );
-  const lines =
-    summary.kind === "known"
-      ? [...(runDry ? [runDry] : []), ...accountLines(summary.accounts)]
-      : [];
+  const lines = summary.kind === "known" ? accountLines(summary.accounts) : [];
   return (
     <div data-testid="vitals-popover" className="text-foreground">
       <div className="flex h-12.5 items-center gap-2.5 border-b border-border px-4.5">
@@ -192,13 +188,27 @@ export function VitalsPanel({
               <span className="text-3xl font-bold leading-none tracking-tight">
                 {percent(summary.free)}% free
               </span>
-              {runway ? (
-                <span className="text-sm text-ink-2">
-                  about{" "}
-                  <b className="font-semibold text-foreground">
-                    {runway.slice(1)}
-                  </b>{" "}
-                  of active work at your usual pace
+              {outlook ? (
+                <span
+                  data-testid="vitals-outlook"
+                  className="text-sm text-ink-2"
+                >
+                  {outlook.kind === "dry" ? (
+                    <>
+                      Account {outlook.account} runs dry around{" "}
+                      <b className="font-semibold text-foreground">
+                        {clock(outlook.at)}
+                      </b>{" "}
+                      at your recent pace
+                    </>
+                  ) : (
+                    <>
+                      <b className="font-semibold text-foreground">
+                        Nothing runs dry
+                      </b>{" "}
+                      before its reset at your recent pace
+                    </>
+                  )}
                 </span>
               ) : null}
             </div>
