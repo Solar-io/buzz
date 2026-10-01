@@ -17,7 +17,7 @@ import { herdrView } from "../lib/herdrView.ts";
 import { useHatchSession, useHerdr } from "../useHatch.ts";
 import { useKeyboardInset, useMediaQuery } from "../useViewport.ts";
 import { KeyBar } from "./KeyBar";
-import { TerminalRail, TerminalTabs } from "./TerminalRail";
+import { TerminalTabs } from "./TerminalRail";
 import {
   ConnectionPill,
   type PageState,
@@ -71,7 +71,6 @@ function TerminalScreen({
   const root = useRef<HTMLDivElement | null>(null);
 
   const phone = useMediaQuery("(width < 48rem)", false);
-  const wide = useMediaQuery("(min-width: 64rem)");
   const coarse = useMediaQuery("(pointer: coarse)", false);
   const inset = useKeyboardInset(phone);
 
@@ -268,25 +267,7 @@ function TerminalScreen({
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1">
-        {wide && !phone ? (
-          <TerminalRail
-            view={view}
-            snapshot={herdr.snapshot}
-            failed={herdr.failed}
-            locked={
-              sessionState.kind === "signed-out" ||
-              sessionState.kind === "forbidden"
-                ? "Sign in to crichton to see herdr's spaces and agents."
-                : sessionState.kind === "unreachable"
-                  ? "crichton isn't answering."
-                  : null
-            }
-          />
-        ) : null}
         <div className="flex min-w-0 flex-1 flex-col bg-term">
-          {phone ? null : (
-            <TerminalTabs tabs={view?.tabs ?? []} variant="strip" />
-          )}
           <div className="relative min-h-0 flex-1">
             {emulatorMounted ? (
               <Xterm

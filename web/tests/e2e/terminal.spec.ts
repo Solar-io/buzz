@@ -81,17 +81,13 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       const hatch = await openTerminal(page, theme, { viaSidebar: true });
       await waitConnected(page);
 
-      // herdr chrome from /api/herdr: three spaces, four agents, the focused
-      // space's three tabs — read-only mirrors, not buttons.
-      await expect(page.getByTestId("herdr-space")).toHaveCount(3);
-      await expect(page.getByTestId("herdr-agent")).toHaveCount(4);
-      await expect(page.getByTestId("terminal-tab")).toHaveCount(3);
-      await expect(page.getByTestId("terminal-tab").first()).toHaveText(
-        "Vitals redesign",
-      );
-      await expect(page.getByTestId("herdr-agent").first()).toContainText(
-        "buzz · Vitals redesign",
-      );
+      // Desktop shows herdr itself, no mirrored chrome (Sam 10/1): herdr
+      // draws its own spaces and tabs, so no rail and no tab strip.
+      await expect
+        .poll(() => terminalText(page))
+        .toContain("redesign the vitals block");
+      await expect(page.getByTestId("terminal-rail")).toHaveCount(0);
+      await expect(page.getByTestId("terminal-tabs")).toHaveCount(0);
 
       // The sidebar row is selected; the Vitals block grew crichton's rows.
       await expect(
@@ -243,11 +239,7 @@ test.describe("states · desktop 1440", () => {
     const hatch = await openTerminal(page, "buzz", { me: "signed-out" });
     const status = page.getByTestId("terminal-status");
     await expect(status).toContainText("Sign in to crichton");
-    // The rail says why it is empty instead of "Reading herdr…" forever
-    // (found in the live check), and Vitals says sign in, not 0%.
-    await expect(page.getByTestId("herdr-locked")).toContainText(
-      "Sign in to crichton",
-    );
+    // Vitals says sign in, not 0%.
     await expect(page.getByTestId("crichton-status")).toHaveAttribute(
       "data-status",
       "signed-out",
