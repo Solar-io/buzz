@@ -14,11 +14,14 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         if let response = connectionOptions.notificationResponse {
             BuzzPushPlugin.receiveWake(response.notification.request.content.userInfo)
         }
+        // Cold start from a `buzzweb://` link: persisted before the web loads.
+        for context in connectionOptions.urlContexts { BuzzLaunchPlugin.receive(context.url) }
 
         SceneDelegateProxy.shared.scene(scene, willConnectTo: session, options: connectionOptions)
     }
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        for context in URLContexts { BuzzLaunchPlugin.receive(context.url) }
         SceneDelegateProxy.shared.scene(scene, openURLContexts: URLContexts)
     }
 

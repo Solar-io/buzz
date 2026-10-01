@@ -27,6 +27,7 @@ import {
   type AgentCallResult,
 } from "./lib/agentCallFlow.ts";
 import { startHuddle } from "./lib/huddleLifecycle.ts";
+import { browserStorage, rememberLastCallAgent } from "./lib/launchIntent.ts";
 import { HuddleFloatingPanel } from "./ui/HuddleFloatingPanel.tsx";
 import { HuddlePill } from "./ui/HuddlePill.tsx";
 import { BuzzHuddle, isNativeIOS } from "@/shared/platform/native";
@@ -379,6 +380,12 @@ export function HuddleSessionProvider({ children }: { children: ReactNode }) {
         callIntentRef.current = null;
         if (result.ok) {
           setAgentCallError(null);
+          // Every successful agent call (DM button or buzzweb:// link) is
+          // the default for the next `buzzweb://call` (launchIntent.ts).
+          rememberLastCallAgent(browserStorage(), selfPubkey, {
+            pubkey: requestedAgent,
+            name: options.agentName,
+          });
           toast.success(result.message);
         } else {
           directAgentPubkeyRef.current = null;
@@ -391,7 +398,13 @@ export function HuddleSessionProvider({ children }: { children: ReactNode }) {
       }
       return result;
     },
-    [requestJoin, session, setAgentCallPhase, waitForAgentCallObservation],
+    [
+      requestJoin,
+      selfPubkey,
+      session,
+      setAgentCallPhase,
+      waitForAgentCallObservation,
+    ],
   );
 
   const setDockMounted = useCallback((mounted: boolean) => {

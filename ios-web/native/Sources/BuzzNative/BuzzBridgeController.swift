@@ -28,5 +28,6 @@ public final class BuzzBridgeController: CAPBridgeViewController {
         bridge?.registerPluginInstance(BuzzPushPlugin())
         bridge?.registerPluginInstance(BuzzHuddlePlugin())
         bridge?.registerPluginInstance(BuzzLinksPlugin())
+        bridge?.registerPluginInstance(BuzzLaunchPlugin())
     }
 }

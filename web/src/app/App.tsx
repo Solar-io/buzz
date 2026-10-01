@@ -10,6 +10,7 @@ import { SnapshotPreviewProvider } from "@/features/agents/ui/SnapshotPreviewPro
 import { UpdatePrompt } from "@/shared/ui/UpdatePrompt";
 import { FileViewerProvider } from "@/shared/ui/FileViewerDialog";
 import { HuddleSessionProvider } from "@/features/huddle/HuddleSessionProvider";
+import { NativeLaunchRuntime } from "@/features/huddle/NativeLaunchRuntime";
 import { NativePushRuntime } from "@/shared/platform/NativePush";
 
 function AuthenticatedApp() {
@@ -30,6 +31,8 @@ function AuthenticatedApp() {
                 every route change, so it can be docked to the channel it
                 started in or floated over everything else. */}
             <HuddleSessionProvider>
+              {/* buzzweb://call links (iOS): needs the one call owner. */}
+              <NativeLaunchRuntime />
               <RouterProvider router={router} />
             </HuddleSessionProvider>
           </FileViewerProvider>
