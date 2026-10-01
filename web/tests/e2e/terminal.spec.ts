@@ -7,7 +7,10 @@ import {
   type MeMode,
   terminalText,
 } from "./helpers/hatchMock";
+import { installMockRelay } from "./helpers/mockRelay";
 import { channelPath, openShell, shot } from "./helpers/shellPage";
+import { signIn } from "./helpers/signIn";
+import { buildWorkFixture, routeUsageHub } from "./helpers/workFixture";
 
 /**
  * Terminal (web redesign Phase 7; Terminal / PhoneTerminal / Vitals
@@ -32,10 +35,21 @@ async function openTerminal(
   options: { me?: MeMode; viaSidebar?: boolean } = {},
 ): Promise<HatchMock> {
   const hatch = await installHatchMock(page, { me: options.me });
-  await openShell(page, {
-    theme,
-    path: options.viaSidebar ? channelPath() : terminalPath,
-  });
+  // openShell's steps, with hatch's socket route registered after the relay
+  // mock's catch-all and before sign-in (the page connects straight away).
+  const fixture = buildWorkFixture();
+  await page.addInitScript((value) => {
+    localStorage.setItem("buzz-theme", value);
+    localStorage.setItem("buzz-follow-system", "false");
+  }, theme);
+  await routeUsageHub(page);
+  await installMockRelay(page, fixture.events);
+  await hatch.routeSocket();
+  await signIn(
+    page,
+    options.viaSidebar ? channelPath()(fixture) : terminalPath(),
+    fixture.viewerKey,
+  );
   if (options.viaSidebar) {
     await page
       .getByTestId("app-shell-sidebar")
@@ -47,8 +61,12 @@ async function openTerminal(
 }
 
 async function waitConnected(page: Page) {
-  await expect(page.getByTestId("terminal-pill").or(page.getByTestId("terminal-dot")).first())
-    .toHaveAttribute("data-state", "connected", { timeout: 15_000 });
+  await expect(
+    page
+      .getByTestId("terminal-pill")
+      .or(page.getByTestId("terminal-dot"))
+      .first(),
+  ).toHaveAttribute("data-state", "connected", { timeout: 15_000 });
 }
 
 for (const theme of ["buzz", "buzz-dark"] as const) {
@@ -68,28 +86,43 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       await expect(page.getByTestId("herdr-space")).toHaveCount(3);
       await expect(page.getByTestId("herdr-agent")).toHaveCount(4);
       await expect(page.getByTestId("terminal-tab")).toHaveCount(3);
-      await expect(page.getByTestId("terminal-tab").first()).toHaveText("Vitals redesign");
-      await expect(page.getByTestId("herdr-agent").first()).toContainText("buzz · Vitals redesign");
+      await expect(page.getByTestId("terminal-tab").first()).toHaveText(
+        "Vitals redesign",
+      );
+      await expect(page.getByTestId("herdr-agent").first()).toContainText(
+        "buzz · Vitals redesign",
+      );
 
       // The sidebar row is selected; the Vitals block grew crichton's rows.
       await expect(
-        page.getByTestId("app-shell-sidebar").getByRole("button", { name: "Terminal", exact: true }),
+        page
+          .getByTestId("app-shell-sidebar")
+          .getByRole("button", { name: "Terminal", exact: true }),
       ).toHaveAttribute("data-active", "true");
       await expect(page.getByTestId("vitals-row-cpu")).toContainText("38%");
       await expect(page.getByTestId("vitals-row-gpu")).toContainText("71%");
       await expect(page.getByTestId("vitals-row-mem")).toContainText("64%");
       await expect(page.getByTestId("vitals-row-disk")).toContainText("62%");
-      await expect(page.getByTestId("crichton-status")).toHaveAttribute("data-status", "ok");
+      await expect(page.getByTestId("crichton-status")).toHaveAttribute(
+        "data-status",
+        "ok",
+      );
 
       // The transcript the session already had is on screen.
-      await expect.poll(() => terminalText(page)).toContain("redesign the vitals block");
+      await expect
+        .poll(() => terminalText(page))
+        .toContain("redesign the vitals block");
       await shot(page, `terminal-${theme}-1440`);
 
       // Run a command.
       await page.getByTestId("terminal-screen").click();
       await page.keyboard.type("echo ok");
       await page.keyboard.press("Enter");
-      await expect.poll(async () => (await terminalText(page)).split("\n").map((l) => l.trim())).toContain("ok");
+      await expect
+        .poll(async () =>
+          (await terminalText(page)).split("\n").map((l) => l.trim()),
+        )
+        .toContain("ok");
 
       // Reset view: a `reset` control frame, close 4002, and a reconnect with
       // the SAME id — nothing killed, the shell's screen comes back.
@@ -100,7 +133,11 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       expect(hatch.controls.some((frame) => frame.type === "reset")).toBe(true);
       expect(hatch.connections[1]?.id).toBe(firstId);
       await waitConnected(page);
-      await expect.poll(async () => (await terminalText(page)).split("\n").map((l) => l.trim())).toContain("ok");
+      await expect
+        .poll(async () =>
+          (await terminalText(page)).split("\n").map((l) => l.trim()),
+        )
+        .toContain("ok");
       expect(errors).toEqual([]);
     });
 
@@ -117,7 +154,9 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       await expect(panel).toContainText("41.2 / 64 GB · pressure normal");
       await expect(panel).toContainText("Data · 740 GB free");
       await expect(panel).toContainText("crichton-backups · 320 GB free");
-      await expect(panel).toContainText("6 Buzz services up · tts bridge restarted 2h ago");
+      await expect(panel).toContainText(
+        "6 Buzz services up · tts bridge restarted 2h ago",
+      );
       await shot(page, `vitals-crichton-${theme}`);
     });
   });
@@ -125,7 +164,9 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
   test.describe(`phone 390 · ${theme} · Terminal`, () => {
     test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
-    test("the key bar replaces the tab bar and sends exact bytes", async ({ page }) => {
+    test("the key bar replaces the tab bar and sends exact bytes", async ({
+      page,
+    }) => {
       const hatch = await openTerminal(page, theme);
       await waitConnected(page);
       await expect(page.getByTestId("terminal-keybar")).toBeVisible();
@@ -133,7 +174,9 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       await expect(page.getByTestId("phone-tab-bar")).toHaveCount(0);
       await expect(page.getByTestId("app-shell-phone-bar")).toBeHidden();
       await expect(page.getByTestId("terminal-tab")).toHaveCount(3);
-      await expect.poll(() => terminalText(page)).toContain("redesign the vitals block");
+      await expect
+        .poll(() => terminalText(page))
+        .toContain("redesign the vitals block");
       await shot(page, `terminal-phone-${theme}-390`);
 
       const sent = () => hatch.inputs.map((b) => b.toString("latin1"));
@@ -145,11 +188,17 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
 
       // ctrl latches: the bar shows it pressed, the NEXT key carries it.
       await page.getByTestId("key-ctrl").dispatchEvent("pointerdown");
-      await expect(page.getByTestId("key-ctrl")).toHaveAttribute("aria-pressed", "true");
+      await expect(page.getByTestId("key-ctrl")).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
       await page.getByTestId("key-left").dispatchEvent("pointerdown");
       await page.getByTestId("key-left").dispatchEvent("pointerup");
       await expect.poll(sent).toEqual(["\x1b", "\t", "\x1b[A", "\x1b[1;5D"]);
-      await expect(page.getByTestId("key-ctrl")).toHaveAttribute("aria-pressed", "false");
+      await expect(page.getByTestId("key-ctrl")).toHaveAttribute(
+        "aria-pressed",
+        "false",
+      );
     });
   });
 }
@@ -157,7 +206,9 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
 test.describe("states · desktop 1440", () => {
   test.use({ viewport: { width: 1440, height: 960 } });
 
-  test("kill switch off: a disabled card, and no socket at all", async ({ page }) => {
+  test("kill switch off: a disabled card, and no socket at all", async ({
+    page,
+  }) => {
     const hatch = await openTerminal(page, "buzz", { me: "disabled" });
     const status = page.getByTestId("terminal-status");
     await expect(status).toHaveAttribute("data-state", "disabled");
@@ -174,9 +225,13 @@ test.describe("states · desktop 1440", () => {
     await waitConnected(page);
     hatch.setMe("disabled");
     hatch.closeAll(4004, "terminal disabled");
-    await expect(page.getByTestId("terminal-status")).toHaveAttribute("data-state", "disabled", {
-      timeout: 3_000,
-    });
+    await expect(page.getByTestId("terminal-status")).toHaveAttribute(
+      "data-state",
+      "disabled",
+      {
+        timeout: 3_000,
+      },
+    );
     // No reconnect storm against a switched-off terminal.
     await page.waitForTimeout(1_500);
     expect(hatch.connections).toHaveLength(1);
@@ -202,12 +257,16 @@ test.describe("states · desktop 1440", () => {
     const popupPromise = page.waitForEvent("popup");
     await status.getByRole("button", { name: "Sign in with GitHub" }).click();
     const popup = await popupPromise;
-    expect(popup.url()).toBe(`${HATCH}auth/github?redirectTo=%2Fauth%2Fsigned-in`);
+    expect(popup.url()).toBe(
+      `${HATCH}auth/github?redirectTo=%2Fauth%2Fsigned-in`,
+    );
     await waitConnected(page);
     expect(hatch.connections).toHaveLength(1);
   });
 
-  test("not allowed: a 403 names the account problem, not the network", async ({ page }) => {
+  test("not allowed: a 403 names the account problem, not the network", async ({
+    page,
+  }) => {
     await openTerminal(page, "buzz", { me: "forbidden" });
     await expect(page.getByTestId("terminal-status")).toContainText(
       "This account can't open crichton",
@@ -222,27 +281,42 @@ test.describe("states · desktop 1440", () => {
     );
     await openTerminal(page, "buzz");
     await waitConnected(page);
-    await expect(page.getByTestId("terminal-mount")).toHaveAttribute("data-renderer", "canvas");
-    await expect.poll(() => terminalText(page)).toContain("redesign the vitals block");
+    await expect(page.getByTestId("terminal-mount")).toHaveAttribute(
+      "data-renderer",
+      "canvas",
+    );
+    await expect
+      .poll(() => terminalText(page))
+      .toContain("redesign the vitals block");
   });
 
   test("W-6: both GPU bundles 404 → the DOM renderer, still a working terminal", async ({
     page,
   }) => {
-    await page.route(/\/assets\/vendor\/xterm-5\.5\.0\/addon-(webgl|canvas)\.js$/, (route) =>
-      route.fulfill({ status: 404, body: "" }),
+    await page.route(
+      /\/assets\/vendor\/xterm-5\.5\.0\/addon-(webgl|canvas)\.js$/,
+      (route) => route.fulfill({ status: 404, body: "" }),
     );
     await openTerminal(page, "buzz");
     await waitConnected(page);
-    await expect(page.getByTestId("terminal-mount")).toHaveAttribute("data-renderer", "dom");
-    await expect.poll(() => terminalText(page)).toContain("redesign the vitals block");
+    await expect(page.getByTestId("terminal-mount")).toHaveAttribute(
+      "data-renderer",
+      "dom",
+    );
+    await expect
+      .poll(() => terminalText(page))
+      .toContain("redesign the vitals block");
   });
 
-  test("W-4: no hatch URL → no Terminal row and no crichton rows", async ({ page }) => {
+  test("W-4: no hatch URL → no Terminal row and no crichton rows", async ({
+    page,
+  }) => {
     await openShell(page, { theme: "buzz", path: channelPath() });
     await expect(page.getByTestId("vitals-block")).toBeVisible();
     await expect(
-      page.getByTestId("app-shell-sidebar").getByRole("button", { name: "Terminal", exact: true }),
+      page
+        .getByTestId("app-shell-sidebar")
+        .getByRole("button", { name: "Terminal", exact: true }),
     ).toHaveCount(0);
     await expect(page.getByTestId("vitals-crichton")).toHaveCount(0);
   });

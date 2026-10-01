@@ -126,8 +126,12 @@ function storage(): IdStorage | null {
   }
 }
 
+/** Storage blocked (private mode): the id still has to survive a soft reset. */
+let memoryId: string | null = null;
+
 export function mintTermId(store: IdStorage | null = storage()): string {
   const id = `t-${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  memoryId = id;
   try {
     store?.setItem(TERM_ID_KEY, id);
   } catch {
@@ -143,7 +147,9 @@ export function termId(store: IdStorage | null = storage()): string {
   } catch {
     id = "";
   }
-  return TERM_ID_RE.test(id) ? id : mintTermId(store);
+  if (TERM_ID_RE.test(id)) return id;
+  if (memoryId && TERM_ID_RE.test(memoryId)) return memoryId;
+  return mintTermId(store);
 }
 
 /* ── control frames (TEXT) ─────────────────────────────────────────────────── */

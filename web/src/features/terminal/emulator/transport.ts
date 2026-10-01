@@ -181,9 +181,11 @@ export class TermTransport {
       if (typeof ev.data === "string") {
         return;
       }
-      // BINARY → raw PTY bytes, straight into xterm, undecoded.
-      if (ev.data instanceof ArrayBuffer) {
-        this.o.sink.write(new Uint8Array(ev.data));
+      // BINARY → raw PTY bytes, straight into xterm, undecoded. Tag check,
+      // not instanceof: a buffer from another realm (an injected socket
+      // shim, an extension) fails instanceof and would be dropped silently.
+      if (Object.prototype.toString.call(ev.data) === "[object ArrayBuffer]") {
+        this.o.sink.write(new Uint8Array(ev.data as ArrayBuffer));
       } else if (ArrayBuffer.isView(ev.data)) {
         const view = ev.data;
         this.o.sink.write(

@@ -48,11 +48,14 @@ export class RendererChain {
   private webglRecoveries = 0;
   private disposed = false;
   kind: RendererKind = "dom";
+  private readonly term: XtermTerminal;
+  private readonly onChange?: (kind: RendererKind) => void;
 
-  constructor(
-    private readonly term: XtermTerminal,
-    private readonly onChange?: (kind: RendererKind) => void,
-  ) {}
+  // No parameter properties: the node test runner strips types only.
+  constructor(term: XtermTerminal, onChange?: (kind: RendererKind) => void) {
+    this.term = term;
+    this.onChange = onChange;
+  }
 
   activate(): RendererKind {
     if (this.attachWebgl() || this.attachCanvas()) {
