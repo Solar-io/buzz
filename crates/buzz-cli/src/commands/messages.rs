@@ -955,16 +955,29 @@ pub(crate) async fn send_message(
     let mut media_tags: Vec<Vec<String>> = Vec::new();
     let mut media_content = String::new();
     for file_path in &p.files {
-        let desc = client
-            .upload_file(file_path)
-            .await
-            .map_err(|e| CliError::Other(format!("upload failed for {file_path}: {e}")))?;
+        // Media first (allow-list + legacy fallback); anything outside the
+        // allow-list (PDF, text, archives) goes through the relay's generic
+        // path, the same one `buzz share` uses — the relay is the validator.
+        let desc = match client.upload_file(file_path).await {
+            Err(CliError::Usage(m)) if m.starts_with("unsupported file type") => {
+                client
+                    .upload_file_with(file_path, crate::client::UploadMode::Any)
+                    .await
+            }
+            other => other,
+        }
+        .map_err(|e| CliError::Other(format!("upload failed for {file_path}: {e}")))?;
         let filename = crate::client::sanitize_share_filename(std::path::Path::new(file_path)).ok();
         media_tags.push(crate::client::build_imeta_tag(&desc, filename.as_deref()));
         if desc.mime_type.starts_with("video/") {
             media_content.push_str("\n![video](");
-        } else {
+        } else if desc.mime_type.starts_with("image/") {
             media_content.push_str("\n![image](");
+        } else {
+            let label = filename.as_deref().unwrap_or("file");
+            media_content.push_str("\n[");
+            media_content.push_str(&crate::client::share_link_label(label));
+            media_content.push_str("](");
         }
         media_content.push_str(&desc.url);
         media_content.push(')');
