@@ -475,7 +475,9 @@ test("a link favorited from its menu moves to Favorites and back; removing it fo
       container.querySelectorAll(`${selector} button[data-active]`),
     ).map((row) => row.textContent.replace("⋯", ""));
   const favoriteRows = () => rowsIn('[data-testid="favorites"]');
-  const linkRows = () => rowsIn('section[aria-label="Links"]');
+  // Links is a nav-row disclosure now (2026-09-30); its open list is the
+  // labelled <ul>, where the old section was a labelled <section>.
+  const linkRows = () => rowsIn('ul[aria-label="Links"]');
   try {
     assert.deepEqual(linkRows(), ["Roadmap", "Status"]);
     assert.deepEqual(favoriteRows(), []);

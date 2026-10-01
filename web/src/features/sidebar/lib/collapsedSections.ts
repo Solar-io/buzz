@@ -45,19 +45,28 @@ export function saveCollapsedSections(
 }
 
 /**
- * Sections that start COLLAPSED for a viewer who has never touched them
- * (left-nav redesign: Forums and Links are secondary). Everything else
- * defaults open.
+ * The nav-row disclosures under Terminal (Sam, 2026-09-30): Forums and Links
+ * stopped being list sections and became nav buttons that start folded.
+ *
+ * Fresh ids, not the old "forums" / "links" section ids: a device that had
+ * opened either section stored an `open:` marker for it, and reusing the id
+ * would have started that device expanded.
+ */
+export const NAV_FORUMS_ID = "nav:forums";
+export const NAV_LINKS_ID = "nav:links";
+
+/**
+ * Sections that start COLLAPSED for a viewer who has never touched them —
+ * the secondary Forums and Links disclosures. Everything else defaults open.
  *
  * The stored list keeps its shape: a default-open section is collapsed by
  * its bare id (as before), and a default-collapsed section is opened by an
- * `open:<id>` marker. Prefs written before defaults existed therefore read
- * the same — a stored "forums" still means collapsed — and a section added
- * to this list later folds for existing users only until they open it.
+ * `open:<id>` marker. A section added to this list later folds for existing
+ * users only until they open it.
  */
 export const DEFAULT_COLLAPSED_SECTIONS: readonly string[] = [
-  "forums",
-  "links",
+  NAV_FORUMS_ID,
+  NAV_LINKS_ID,
 ];
 
 const OPEN_PREFIX = "open:";
