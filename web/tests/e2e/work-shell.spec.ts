@@ -124,7 +124,7 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       await page.keyboard.press("Escape");
     });
 
-    test("a thread opens inline under its message; Work stays the only tab", async ({
+    test("a thread is open inline under its message by default; Work stays the only tab", async ({
       page,
     }) => {
       const { fixture, relay } = await open(page, { theme, path: channelPath });
@@ -139,12 +139,21 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       expect(ask).toBeTruthy();
       const chip = page.getByTestId(`thread-chip-${ask?.id}`);
       await expect(chip).toHaveText(/3 replies/);
-      await chip.click();
+      // Open without a click (Sam, 2026-09-30): the replies and the reply
+      // box are already there.
       const thread = page.getByTestId(`inline-thread-${ask?.id}`);
+      await expect(chip).toHaveAttribute("aria-expanded", "true");
       await expect(thread).toContainText("Beat 01 is captured. Two to go.");
       await expect(thread.getByTestId("thread-reply-box")).toBeVisible();
-      // It opens DOWNWARD, from where it was clicked: the chip and the first
-      // reply stay on screen (a list re-pin once pushed them off the top).
+      // The viewer can still fold it — and open it again.
+      await chip.click();
+      await expect(chip).toHaveAttribute("aria-expanded", "false");
+      await expect(thread.getByTestId("thread-reply-box")).toHaveCount(0);
+      await expect(thread).not.toContainText("Beat 01 is captured.");
+      await chip.click();
+      await expect(thread.getByTestId("thread-reply-box")).toBeVisible();
+      // It reopens DOWNWARD, from where it was clicked: the chip and the
+      // first reply stay on screen (a list re-pin once pushed them off).
       await page.waitForTimeout(800);
       await expect(chip).toBeInViewport();
       await expect(thread.getByText("On it — splitting")).toBeInViewport();

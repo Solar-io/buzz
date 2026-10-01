@@ -240,7 +240,8 @@ function ChannelBrowser() {
     selectedId,
     navigate,
   });
-  // Typing row: re-derive every few seconds so entries expire visibly.
+  // Typing (the composer's status line): re-derive every few seconds so
+  // entries expire visibly.
   const [, forceTick] = useState(0);
   useEffect(() => {
     const timer = window.setInterval(() => forceTick((n) => n + 1), 3000);
@@ -260,17 +261,10 @@ function ChannelBrowser() {
       [messages, members],
     ),
   );
-  // Must be derived AFTER profiles: the .map callback runs synchronously and
-  // touched `profiles` across the TDZ boundary when anyone was typing —
-  // "Cannot access 'I' before initialization" (live incident 2026-08-31,
-  // whole page to the root error boundary; TS cannot flag closure forward
-  // references, so the declaration order is load-bearing).
-  const typingNames = activeTyping(
-    typing,
-    channelId,
-    selfPubkey,
-    Date.now(),
-  ).map((pk) => profiles.get(pk)?.displayName ?? pk);
+  // Pubkeys only: RunningStrip names them (and drops agents it already
+  // names as working). Kept AFTER profiles, where the old name-mapping
+  // version had to sit (TDZ incident 2026-08-31).
+  const typingPubkeys = activeTyping(typing, channelId, selfPubkey, Date.now());
   const counts = useMemo(
     () => timelineReplyCounts(replyCounts(messages), threadSummaries),
     [messages, threadSummaries],
@@ -858,7 +852,7 @@ function ChannelBrowser() {
                         profiles={profiles}
                         replyCounts={counts}
                         threads={{
-                          expandedIds: inlineThreads.expandedIds,
+                          choices: inlineThreads.choices,
                           focusId: inlineThreads.focusId,
                           revealId: revealReplyId,
                           onToggle: inlineThreads.toggle,
@@ -889,7 +883,6 @@ function ChannelBrowser() {
                         highlightId={permalinkJump?.topLevelId ?? null}
                         scrollToMessageId={permalinkJump?.topLevelId ?? null}
                         onScrollToMessageSettled={onPermalinkSettled}
-                        typingNames={typingNames}
                         tailKey={tailKey}
                         onLoadOlder={loadOlder}
                         loadingOlder={loadingOlder}
@@ -909,11 +902,12 @@ function ChannelBrowser() {
                         scratch: scratch.actions,
                       }}
                       placeholder={`Message ${conversationTitle?.replace(/^# /, "#") ?? ""}`}
-                      footer={
+                      status={
                         <RunningStrip
                           channelId={current.id}
                           profiles={profiles}
                           variant="line"
+                          typing={typingPubkeys}
                         />
                       }
                       members={members}

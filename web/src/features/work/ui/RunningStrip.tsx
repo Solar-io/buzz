@@ -56,12 +56,59 @@ export function runningNames(names: readonly string[]): string[] {
 }
 
 /**
- * Who is working in THIS conversation, as one line (Main and PhoneChannel
- * artboards): under the composer at md and up, under the header on a phone.
+ * Pure: who to name as typing beside the running rows. Typing frames
+ * (kind 20002) come from people AND from agents — a harness sends them for
+ * its whole turn — so anyone the channel's running rows already name is
+ * dropped: an agent at work is said once, as working. A person typing, or an
+ * agent typing with no lifecycle row to speak for it, is still said.
+ */
+export function typingOthers(
+  typingPubkeys: readonly string[],
+  running: readonly RunRow[],
+): string[] {
+  const named = new Set(running.map((row) => row.agentPubkey.toLowerCase()));
+  return typingPubkeys.filter((pubkey) => !named.has(pubkey.toLowerCase()));
+}
+
+/** Three dots, staggered — the "something is coming" glyph. */
+function Dots({ tone }: { tone: "work" | "muted" }) {
+  return (
+    <span aria-hidden className="flex shrink-0 gap-0.75">
+      {[0, 1, 2].map((dot) => (
+        <span
+          key={dot}
+          className={cn(
+            "size-1 rounded-full motion-safe:animate-pulse",
+            tone === "work" ? "bg-work" : "bg-muted-foreground",
+          )}
+          style={{ animationDelay: `${dot * 200}ms` }}
+        />
+      ))}
+    </span>
+  );
+}
+
+/** Bold names joined "A", "A and B", "A, B and 2 more". */
+function NameList({ names }: { names: readonly string[] }) {
+  return names.map((name, index) => (
+    <span key={name}>
+      {index > 0 && (index === names.length - 1 ? " and " : ", ")}
+      <b className="font-semibold text-foreground">{name}</b>
+    </span>
+  ));
+}
+
+/**
+ * Who is about to answer in THIS conversation (Main and PhoneChannel
+ * artboards): directly above the composer's box at md and up, under the
+ * header on a phone.
  *
- * It replaces the DM-only "received it and is working" row that used to sit
- * at the bottom of the timeline — this one reads the same Work feed the rail
- * does, so it covers channels too and can never disagree with Running.
+ * It is the ONE "someone is on it" signal around the composer (Sam,
+ * 2026-09-30): the timeline's "is typing" row and the box's "will be
+ * notified" line are gone. It reads the same Work feed the rail does, so it
+ * covers channels too and can never disagree with Running. People typing
+ * (`typing`, line only) ride in the same slot — visible at every width,
+ * since a phone has no other place that says so.
  *
  * Honest by the same rules as the rail (VISION_ACTIVITY): it says an agent
  * IS WORKING and for how long. What it is working on, and how far along,
@@ -73,19 +120,44 @@ export function RunningStrip({
   channelId,
   profiles,
   variant,
+  typing = [],
 }: {
   channelId: string;
   profiles: Map<string, Profile>;
-  /** "line" sits under the composer; "bar" is the phone's strip. */
+  /** "line" sits above the composer's box; "bar" is the phone's strip. */
   variant: "line" | "bar";
+  /** Pubkeys typing here right now, the viewer excluded ("line" only). */
+  typing?: readonly string[];
 }) {
   const coarse = useNowSeconds(15_000);
   const feed = useWorkFeed({ scope: "channel", channelId, nowS: coarse });
   const summary = runningSummary(feed.running);
   // Tick every second only while an elapsed counter is on screen.
   const nowS = useNowSeconds(1_000, summary !== null);
+  // Only the line carries typing; the phone's bar is about agents at work.
+  const typists = variant === "line" ? typingOthers(typing, feed.running) : [];
+  const typingLine =
+    typists.length > 0 ? (
+      <div
+        role="status"
+        data-testid="typing-line"
+        className="flex min-w-0 items-center gap-2 px-1 pb-1.5 text-xs"
+      >
+        <span className="flex w-4.5 shrink-0 justify-center">
+          <Dots tone="muted" />
+        </span>
+        <span className="min-w-0 truncate text-ink-2">
+          <NameList
+            names={runningNames(
+              typists.map((pubkey) => authorLabel(pubkey, profiles)),
+            )}
+          />{" "}
+          {typists.length === 1 ? "is typing" : "are typing"}
+        </span>
+      </div>
+    ) : null;
   if (!summary) {
-    return null;
+    return typingLine;
   }
   const names = runningNames(
     summary.rows.map((row) => authorLabel(row.agentPubkey, profiles)),
@@ -106,7 +178,7 @@ export function RunningStrip({
   const single = summary.rows.length === 1 && !summary.quiet ? first : null;
   const title = single?.title != null ? single.title : null;
   const progress = single?.progress != null ? single.progress : null;
-  return (
+  const strip = (
     <div
       role="status"
       data-testid={`running-strip-${variant}`}
@@ -114,7 +186,7 @@ export function RunningStrip({
         "flex min-w-0 items-center gap-2",
         variant === "bar"
           ? "border-b border-border px-4 py-2 text-sidebar-meta md:hidden"
-          : "hidden px-1 pt-2.25 text-xs md:flex",
+          : "hidden px-1 pb-1.5 text-xs md:flex",
         variant === "bar" &&
           (summary.quiet ? "bg-coral-wash" : "bg-honey-wash"),
       )}
@@ -127,12 +199,7 @@ export function RunningStrip({
         pulse={!summary.quiet}
       />
       <span className="min-w-0 truncate text-ink-2">
-        {names.map((name, index) => (
-          <span key={name}>
-            {index > 0 && (index === names.length - 1 ? " and " : ", ")}
-            <b className="font-semibold text-foreground">{name}</b>
-          </span>
-        ))}
+        <NameList names={names} />
         {title ? (
           <span data-testid="running-strip-title">
             {" · "}
@@ -157,17 +224,7 @@ export function RunningStrip({
           />
         </span>
       ) : null}
-      {!summary.quiet && !progress && (
-        <span aria-hidden className="flex shrink-0 gap-0.75">
-          {[0, 1, 2].map((dot) => (
-            <span
-              key={dot}
-              className="size-1 rounded-full bg-work motion-safe:animate-pulse"
-              style={{ animationDelay: `${dot * 200}ms` }}
-            />
-          ))}
-        </span>
-      )}
+      {!summary.quiet && !progress && <Dots tone="work" />}
       {timing && (
         <span
           className={cn(
@@ -180,5 +237,15 @@ export function RunningStrip({
         </span>
       )}
     </div>
+  );
+  if (!typingLine) {
+    return strip;
+  }
+  // Both: the agents at work first, then the people typing beneath them.
+  return (
+    <>
+      {strip}
+      {typingLine}
+    </>
   );
 }

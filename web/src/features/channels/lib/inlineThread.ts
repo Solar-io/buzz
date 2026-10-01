@@ -145,3 +145,57 @@ export function inlineReplyCount(loaded: number, summarized: number): number {
 export function replyCountLabel(count: number): string {
   return `${count} ${count === 1 ? "reply" : "replies"}`;
 }
+
+/**
+ * The viewer's explicit open/fold choices, per conversation, per row. A row
+ * with no entry follows {@link threadOpen}'s default.
+ */
+export type ThreadChoices = ReadonlyMap<string, ReadonlyMap<string, boolean>>;
+
+const NO_CHOICES: ReadonlyMap<string, boolean> = new Map();
+
+/** One conversation's choices (empty when the viewer has made none). */
+export function choicesFor(
+  all: ThreadChoices,
+  conversationId: string | undefined,
+): ReadonlyMap<string, boolean> {
+  return (conversationId && all.get(conversationId)) || NO_CHOICES;
+}
+
+/**
+ * Record a choice. Returns `all` itself when nothing changes, so a state
+ * setter built on it does not re-render for a no-op (a permalink reveal on a
+ * thread that is already open).
+ */
+export function withThreadChoice(
+  all: ThreadChoices,
+  conversationId: string | undefined,
+  rowId: string,
+  open: boolean,
+): ThreadChoices {
+  if (!conversationId) {
+    return all;
+  }
+  const current = choicesFor(all, conversationId);
+  if (current.get(rowId) === open) {
+    return all;
+  }
+  const next = new Map(all);
+  next.set(conversationId, new Map(current).set(rowId, open));
+  return next;
+}
+
+/**
+ * Is a row's inline thread open? Threads are OPEN BY DEFAULT (Sam,
+ * 2026-09-30): a row with replies on screen shows them without a click, and
+ * stays folded only once the viewer folds it. A row with no loaded replies
+ * opens only when asked (↩ — the reply box under it), because "open" there
+ * would be an empty rail and a box under every message.
+ */
+export function threadOpen(
+  choices: ReadonlyMap<string, boolean>,
+  rowId: string,
+  loadedReplies: number,
+): boolean {
+  return choices.get(rowId) ?? loadedReplies > 0;
+}

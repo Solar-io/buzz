@@ -1,6 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 
-import type { MockEvent } from "./helpers/mockRelay";
+import { hexId, type MockEvent, mockEvent } from "./helpers/mockRelay";
 import {
   channelPath as shellChannelPath,
   openShell,
@@ -137,6 +137,47 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
         "data-progress",
         "1/3",
       );
+      // It sits directly ABOVE the box (Sam, 2026-09-30), not under it.
+      // (The channel's own box: open threads carry reply boxes of their own.)
+      const stripBox = await strip.boundingBox();
+      const inputBox = await strip
+        .locator("xpath=..")
+        .getByTestId("composer-input")
+        .boundingBox();
+      const stripBottom = (stripBox?.y ?? 0) + (stripBox?.height ?? 0);
+      expect(stripBox).not.toBeNull();
+      expect(inputBox).not.toBeNull();
+      expect(stripBottom).toBeLessThanOrEqual(inputBox?.y ?? 0);
+      expect((inputBox?.y ?? 0) - stripBottom).toBeLessThan(24);
+      // Typing rides the same slot; the timeline's own row is gone. An agent
+      // the strip already names as working is not repeated as typing (its
+      // harness types for the whole turn); anyone else is said — Gilfoyle
+      // (a voice in this channel, running only in #design) stands in for a
+      // person, since names resolve from the conversation's own profiles.
+      const flightId = fixture.channels["flight-path"];
+      const typingFrame = (seed: number, pubkey: string) =>
+        mockEvent({
+          id: hexId(seed, "7"),
+          kind: 20002,
+          pubkey,
+          tags: [["h", flightId]],
+        });
+      relay.push(
+        typingFrame(1, a.nikon.pubkey),
+        typingFrame(2, a.gilfoyle.pubkey),
+      );
+      const typingLine = page.getByTestId("typing-line");
+      await expect(typingLine).toHaveText("Gilfoyle is typing");
+      await expect(page.getByText(/Lord Nikon is typing/)).toHaveCount(0);
+      const typingBox = await typingLine.boundingBox();
+      const inputNow = await strip
+        .locator("xpath=..")
+        .getByTestId("composer-input")
+        .boundingBox();
+      expect(typingBox).not.toBeNull();
+      expect(
+        (typingBox?.y ?? 0) + (typingBox?.height ?? 0),
+      ).toBeLessThanOrEqual(inputNow?.y ?? 0);
       expect(pageErrors).toEqual([]);
       await shot(page, `status-main-${theme}-1440`);
 
@@ -216,7 +257,11 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
     test("the Work page lists titled turns; the channel bar names the work", async ({
       page,
     }) => {
-      const { fixture, pageErrors } = await open(page, theme, () => "/repos");
+      const { fixture, relay, pageErrors } = await open(
+        page,
+        theme,
+        () => "/repos",
+      );
       const work = page.getByTestId("work-page");
       await expect(work).toBeVisible();
       await expect(
@@ -253,6 +298,22 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       await expect(bar.getByTestId("progress-segments")).toHaveAttribute(
         "data-progress",
         "1/3",
+      );
+      // The working line above the box stays a desktop line (the bar says
+      // it here), but someone typing is said above the box at phone width
+      // too — a phone has no other place that says so.
+      await expect(page.getByTestId("running-strip-line")).toBeHidden();
+      relay.push(
+        mockEvent({
+          id: hexId(3, "7"),
+          kind: 20002,
+          pubkey: fixture.agents.gilfoyle.pubkey,
+          tags: [["h", fixture.channels["flight-path"]]],
+        }),
+      );
+      await expect(page.getByTestId("typing-line")).toBeVisible();
+      await expect(page.getByTestId("typing-line")).toHaveText(
+        "Gilfoyle is typing",
       );
       await shot(page, `status-phone-channel-${theme}-390`);
       expect(pageErrors).toEqual([]);

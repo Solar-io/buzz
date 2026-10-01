@@ -1007,3 +1007,18 @@ Three sub-traps from the same hour:
 - **Jump writes `?m=` and the shell drops it once the row lands** (an
   all-digit id even rides JSON-quoted, `m=%22…%22`): assert the navigation
   with `waitForURL(…, { waitUntil: "commit" })`, not the final URL.
+
+## Web conversation pane: open threads and the status line (earned 2026-09-30)
+
+- **Inline threads are open by default**, so an e2e that clicks a
+  `thread-chip-*` to open a thread now FOLDS it. Assert
+  `aria-expanded="true"` first; click only to test the fold.
+- **`composer-input` is no longer unique on a channel page**: every open
+  thread carries its own reply box with the same test id, earlier in the DOM.
+  Reach the channel's box through `mainComposer(page)` (the last chat
+  textarea) or from the status line (`running-strip-line` → parent →
+  `composer-input`) — never `.first()`.
+- **Pick a preview port nobody holds.** `reuseExistingServer` happily served
+  a 6-hour-old `vite preview` from another worktree on the port this one
+  picked; every failure was against someone else's build. `lsof -nP
+  -iTCP:<port> -sTCP:LISTEN` before the run, not after the confusing result.
