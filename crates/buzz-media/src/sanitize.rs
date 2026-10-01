@@ -27,6 +27,26 @@ const WEBP_ALLOWED_CHUNKS: &[[u8; 4]] =
     &[*b"VP8 ", *b"VP8L", *b"VP8X", *b"ALPH", *b"ANIM", *b"ANMF"];
 const WEBP_METADATA_FLAGS: u8 = 0x20 | 0x08 | 0x04;
 
+/// Sanitize an MP3 (`audio/mpeg`) for upload: strip ID3v2 / ID3v1 /
+/// Enhanced ID3v1 / APEv2 / Lyrics3v2 tags and trailing zero padding, so the
+/// payload passes the relay's [`crate::mp3::validate_mp3`]. The relay stores
+/// the exact bytes it receives (sha256-addressed), so this must run before the
+/// client hashes the body.
+///
+/// Unlike [`sanitize_image_for_upload`] this never passes a payload through
+/// unchanged on a parse failure: an MP3 that cannot be made tag-free (an ID3
+/// header embedded inside the stream, unknown bytes between frames, no MPEG
+/// frames at all) is an error, because the relay would reject it anyway.
+pub fn sanitize_mp3_for_upload(body: Vec<u8>) -> Result<Vec<u8>, String> {
+    let clean = crate::mp3::strip_mp3_tags(&body)?;
+    // Avoid a copy on the common already-clean path.
+    Ok(if clean.len() == body.len() {
+        body
+    } else {
+        clean
+    })
+}
+
 /// Sanitize an image for upload: strip every metadata channel the relay's
 /// validator forbids, preserving rendering exactly where stripping would
 /// change what the viewer sees.

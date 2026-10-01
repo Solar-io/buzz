@@ -6,6 +6,7 @@ pub mod auth;
 pub mod bucket_index;
 pub mod config;
 pub mod error;
+pub mod mp3;
 pub mod sanitize;
 pub mod storage;
 pub mod thumbnail;

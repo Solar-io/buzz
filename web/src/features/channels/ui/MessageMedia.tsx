@@ -2,7 +2,12 @@ import { useContext, useEffect, useState, type CSSProperties } from "react";
 import { fetchSignedMedia } from "@/shared/api/blossom";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { cn } from "@/shared/lib/cn";
-import { mediaFrame, resolveFileCard } from "../lib/messageMedia.ts";
+import {
+  type FileCardTarget,
+  mediaFrame,
+  resolveFileCard,
+  resolveInlineAudio,
+} from "../lib/messageMedia.ts";
 import { FileCard } from "./FileCard.tsx";
 import { MessageMediaContext } from "./messageMediaContext.ts";
 
@@ -22,8 +27,8 @@ export interface MessageMediaProps {
  *
  * Three outcomes, decided before any state is taken so the hook order stays
  * constant: a download card for a non-media attachment (the CLI writes
- * `![image](url)` for EVERY upload, PDFs included — see `messages.rs`), a
- * video player, or an image.
+ * `![image](url)` for EVERY upload, PDFs included — see `messages.rs`), an
+ * inline audio player (MP3), a video player, or an image.
  */
 export function MessageMedia({ src, alt, mosaic = false }: MessageMediaProps) {
   const { imetaByUrl, openGallery } = useContext(MessageMediaContext);
@@ -34,6 +39,11 @@ export function MessageMedia({ src, alt, mosaic = false }: MessageMediaProps) {
   const fileCard = resolveFileCard(entry, url, label);
   if (fileCard) {
     return <FileCard {...fileCard} />;
+  }
+
+  const audio = resolveInlineAudio(entry, url, label);
+  if (audio) {
+    return <SignedAudio {...audio} />;
   }
 
   if (label === "video" || entry?.m?.startsWith("video/")) {
@@ -209,6 +219,49 @@ function SignedVideo({
           />
         )}
       </span>
+    </span>
+  );
+}
+
+/**
+ * Inline player for an MP3 attachment (`resolveInlineAudio`). Rendered for
+ * both the `[song.mp3](url)` link the CLI and desktop write and an image node.
+ * Like video, the bytes come through a signed GET as an object URL — an
+ * `<audio src>` cannot sign the request.
+ */
+export function SignedAudio({ href, filename }: FileCardTarget) {
+  const { objectUrl, failed } = useSignedMedia(href);
+
+  if (failed) {
+    return <MediaUnavailable src={href} alt={filename} />;
+  }
+
+  return (
+    <span
+      data-media-block=""
+      data-testid="message-audio"
+      className="my-1 flex w-full max-w-sm min-w-0 flex-col gap-1 rounded-lg border border-border/70 bg-muted/40 px-3 py-2"
+    >
+      <span className="truncate text-xs font-medium text-foreground">
+        {filename}
+      </span>
+      {objectUrl === null ? (
+        // Skeleton renders a <div>; this sits inside a markdown <p>, so use
+        // the same skeleton classes on a <span> to keep the DOM valid.
+        <span
+          aria-hidden="true"
+          className="t-skel-bar is-pulsing block h-8 w-full rounded-md bg-primary/10"
+        />
+      ) : (
+        // biome-ignore lint/a11y/useMediaCaption: no caption track exists for user uploads
+        <audio
+          src={objectUrl}
+          controls
+          preload="metadata"
+          aria-label={`Audio attachment: ${filename}`}
+          className="h-8 w-full"
+        />
+      )}
     </span>
   );
 }

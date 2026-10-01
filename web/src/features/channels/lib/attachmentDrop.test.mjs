@@ -13,19 +13,26 @@ function file(name, type, size = 10) {
 
 test("a mixed drop keeps accepted files in order and rejects the rule-breakers", () => {
   const png = file("shot.png", "image/png");
-  const mp3 = file("voice.mp3", "audio/mpeg");
+  const wav = file("voice.wav", "audio/wav");
   const svg = file("logo.svg", "image/svg+xml");
   const txt = file("notes.txt", "text/plain");
 
-  const { accepted, rejections } = partitionDropFiles([png, mp3, svg, txt]);
+  const { accepted, rejections } = partitionDropFiles([png, wav, svg, txt]);
 
   assert.deepEqual(accepted, [png, txt], "accepted keeps drop order");
   assert.deepEqual(
     rejections.map(({ name }) => name),
-    ["voice.mp3", "logo.svg"],
+    ["voice.wav", "logo.svg"],
   );
-  assert.match(rejections[0].reason, /Audio/);
+  assert.match(rejections[0].reason, /MP3/);
   assert.match(rejections[1].reason, /blocked/);
+});
+
+test("an MP3 drop is accepted (uploadBlob strips its tags)", () => {
+  const mp3 = file("voice.mp3", "audio/mpeg");
+  const { accepted, rejections } = partitionDropFiles([mp3]);
+  assert.deepEqual(accepted, [mp3]);
+  assert.equal(rejections.length, 0);
 });
 
 test("a folder entry is rejected with a reason that says what to do instead", () => {

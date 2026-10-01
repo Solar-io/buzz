@@ -211,7 +211,17 @@ fn is_animated_image(body: &[u8], mime: &str) -> bool {
     }
 }
 
+/// Strip every metadata channel the relay forbids before the body is hashed.
+///
+/// Despite the name (kept: ~20 call sites and tests), this is the single
+/// pre-upload sanitize step for EVERY desktop upload path, so it also covers
+/// MP3: `audio/mpeg` has its ID3/APE/Lyrics3 tags stripped by
+/// `buzz-media`'s `sanitize_mp3_for_upload` — the relay rejects tagged MP3
+/// with `MetadataForbidden` and stores exactly the bytes hashed here.
 pub(crate) fn sanitize_image_for_upload(body: Vec<u8>, mime: &str) -> Result<Vec<u8>, String> {
+    if mime == "audio/mpeg" {
+        return buzz_media_pkg::sanitize::sanitize_mp3_for_upload(body);
+    }
     let format = match mime {
         "image/jpeg" => image::ImageFormat::Jpeg,
         "image/png" => image::ImageFormat::Png,
@@ -301,7 +311,15 @@ pub(crate) fn sanitize_image_for_upload(body: Vec<u8>, mime: &str) -> Result<Vec
 pub(crate) fn detect_and_validate_mime(body: &[u8]) -> Result<String, String> {
     let mime = infer::get(body)
         .map(|t| t.mime_type().to_string())
-        .unwrap_or_else(|| "application/octet-stream".to_string());
+        .unwrap_or_else(|| {
+            // `infer` spots MP3 only by a leading `ID3` or an `FF FB` sync;
+            // mirror the relay's frame-walk sniff for the other MPEG headers.
+            if buzz_media_pkg::mp3::looks_like_mpeg_audio(body) {
+                "audio/mpeg".to_string()
+            } else {
+                "application/octet-stream".to_string()
+            }
+        });
     if BLOCKED_MIME.contains(&mime.as_str()) {
         return Err(format!("unsupported file type: {mime}"));
     }
@@ -897,6 +915,43 @@ mod tests {
     fn test_detect_and_validate_mime_accepts_html_as_inert_download() {
         let html = b"<!DOCTYPE html><html><body><script>alert(1)</script></body></html>";
         assert_eq!(detect_and_validate_mime(html).unwrap(), "text/html");
+    }
+
+    /// Three MPEG-1 Layer III frames (128 kbps, 44.1 kHz → 417 bytes each).
+    fn clean_mp3() -> Vec<u8> {
+        let mut out = Vec::new();
+        for i in 0..3usize {
+            out.extend_from_slice(&[0xFF, 0xFB, 0x90, 0x00]);
+            out.extend((0..413usize).map(|j| ((i + j) % 0x7F) as u8));
+        }
+        out
+    }
+
+    #[test]
+    fn mp3_tags_are_stripped_before_upload() {
+        let clean = clean_mp3();
+        let mut tagged = b"ID3\x04\x00\x00\x00\x00\x00\x05TIT2x".to_vec();
+        tagged.extend_from_slice(&clean);
+        let mut v1 = b"TAGSecret".to_vec();
+        v1.resize(128, b' ');
+        tagged.extend_from_slice(&v1);
+
+        let mime = detect_and_validate_mime(&tagged).unwrap();
+        assert_eq!(mime, "audio/mpeg");
+        let sanitized = sanitize_image_for_upload(tagged, &mime).unwrap();
+        assert_eq!(sanitized, clean);
+        buzz_media_pkg::mp3::validate_mp3(&sanitized).expect("relay accepts it");
+    }
+
+    #[test]
+    fn mp3_without_ff_fb_sync_is_still_detected() {
+        // MPEG-2 Layer III frames (`FF F3`), which `infer` does not recognize.
+        let mut v2 = Vec::new();
+        for _ in 0..2 {
+            v2.extend_from_slice(&[0xFF, 0xF3, 0x80, 0x00]);
+            v2.extend(std::iter::repeat_n(0x11u8, 204));
+        }
+        assert_eq!(detect_and_validate_mime(&v2).unwrap(), "audio/mpeg");
     }
 
     #[test]

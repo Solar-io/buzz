@@ -54,6 +54,7 @@ import {
 import { EntityLinkAnchor, useOpenEntityLink } from "./markdown/entityLinks";
 import { ExternalLinkAnchor } from "./markdown/ExternalLinkAnchor";
 import { FileCard } from "./markdown/FileCard";
+import { MarkdownAudioPlayer } from "./markdown/MarkdownAudioPlayer";
 import {
   AuthoredDeepLinkAnchor,
   ChannelDeepLinkAnchor,
@@ -118,7 +119,11 @@ import {
   useMarkdownRuntime,
 } from "./markdown/runtimeContext";
 import { AgentSnapshotCard } from "./markdown/AgentSnapshotCard";
-import { resolveFileCard, resolveSnapshotCard } from "./markdownFileCard";
+import {
+  isInlineAudioMime,
+  resolveFileCard,
+  resolveSnapshotCard,
+} from "./markdownFileCard";
 import type { MarkdownProps, MarkdownRuntime } from "./markdown/types";
 import { SpoilerInline } from "./markdown/SpoilerInline";
 import {
@@ -1320,15 +1325,21 @@ export function createMarkdownComponents(
     }
 
     // Render non-media imeta links as download cards; media uses `img`.
-    const card = resolveFileCard(
-      href ? imetaByUrl?.get(href) : undefined,
-      href,
-      label,
-    );
+    const linkEntry = href ? imetaByUrl?.get(href) : undefined;
+    const card = resolveFileCard(linkEntry, href, label);
     if (card) {
-      return (
+      const fileCard = (
         <FileCard href={card.href} filename={card.filename} size={card.size} />
       );
+      // MP3 keeps its download card and gains an inline player under it.
+      if (isInlineAudioMime(linkEntry?.m)) {
+        return (
+          <MarkdownAudioPlayer filename={card.filename} resolvedSrc={card.href}>
+            {fileCard}
+          </MarkdownAudioPlayer>
+        );
+      }
+      return fileCard;
     }
 
     // Keep Buzz channel/message navigation in-app.

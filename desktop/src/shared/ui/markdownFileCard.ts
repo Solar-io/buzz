@@ -118,6 +118,16 @@ export function resolveSnapshotCard(
 }
 
 /**
+ * Audio MIMEs that also get an inline `<audio>` player under their file card.
+ * Only MP3: the relay stores it metadata-free (`buzz-media`'s `mp3.rs`
+ * rejects ID3/APE tags) and serves it inline. Other audio (e.g. voice-catalog
+ * WAV) stays a plain download card.
+ */
+export function isInlineAudioMime(mime: string | undefined): boolean {
+  return mime === "audio/mpeg";
+}
+
+/**
  * Decide whether a markdown link should render as a generic-file download
  * card. A link qualifies when its href matches an imeta entry whose MIME is
  * neither image nor video (media goes through the `img` renderer instead).

@@ -251,7 +251,7 @@ test("a mixed file drop queues the good files and toasts the rejected one", asyn
   const composer = await mountComposer();
   try {
     const png = jsdomFile("shot.png", "image/png");
-    const mp3 = jsdomFile("voice.mp3", "audio/mpeg");
+    const mp3 = jsdomFile("voice.wav", "audio/wav");
     const txt = jsdomFile("notes.txt", "text/plain");
 
     await composer.drag("dragenter", dataTransfer({ files: [png, mp3, txt] }));
@@ -283,7 +283,7 @@ test("a mixed file drop queues the good files and toasts the rejected one", asyn
     assert.match(rows[1].textContent ?? "", /notes\.txt/);
     assert.deepEqual(
       toastLines(),
-      ["voice.mp3: Audio uploads are not accepted yet."],
+      ["voice.wav: Only MP3 audio is accepted."],
       "the rejection surfaces with the picker's words",
     );
     assert.ok(

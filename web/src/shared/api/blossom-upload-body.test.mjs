@@ -73,3 +73,30 @@ test("uploadBlob sends XHR a File body (not an ArrayBuffer) with the uploaded by
   assert.equal(body.type, "application/pdf");
   assert.deepEqual(new Uint8Array(await body.arrayBuffer()), payload);
 });
+
+test("uploadBlob strips MP3 tags before hashing and sends audio/mpeg", async () => {
+  sent.length = 0;
+  const frames = [];
+  for (let i = 0; i < 3; i += 1) {
+    frames.push(0xff, 0xfb, 0x90, 0x00);
+    for (let j = 0; j < 413; j += 1) frames.push((i + j) % 0x7f);
+  }
+  const clean = Uint8Array.from(frames);
+  const id3 = Array.from("ID3\x04\0\0\0\0\0\x05TIT2x", (c) => c.charCodeAt(0));
+  const v1 = Array.from("TAGSecret", (c) => c.charCodeAt(0));
+  while (v1.length < 128) v1.push(0x20);
+  const tagged = Uint8Array.from([...id3, ...clean, ...v1]);
+
+  // A browser that gives no MIME: the bytes alone must route to the stripper.
+  await uploadBlob(new File([tagged], "song.mp3", { type: "" }));
+  assert.equal(sent.length, 1);
+  const { body, headers } = sent[0];
+  assert.equal(headers["Content-Type"], "audio/mpeg");
+  const uploaded = new Uint8Array(await body.arrayBuffer());
+  assert.deepEqual(uploaded, clean, "only the audio frames are uploaded");
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", clean));
+  const hex = Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join(
+    "",
+  );
+  assert.equal(headers["X-SHA-256"], hex, "hash covers the stripped bytes");
+});

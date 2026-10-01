@@ -192,7 +192,25 @@ pub fn validate_file_content(
 
     // 2. Sniff. `None` means no magic signature (text/csv/json/source) — that's
     //    fine for the generic path; treat as opaque binary served as a download.
-    match infer::get(bytes) {
+    let sniffed = infer::get(bytes);
+
+    // MP3 is accepted only metadata-free (see `crate::mp3`): `infer` reports
+    // `audio/mpeg` for a leading ID3 tag or an `FF FB` sync, and a stripped
+    // stream opening with any other MPEG frame header (`FF FA`, `FF F3`, …)
+    // is caught by the frame-walk sniff. Either way the bytes must be MPEG
+    // frames end to end with no tag block; a tagged upload is
+    // `MetadataForbidden` and the client strips it first
+    // (`mp3::strip_mp3_tags`), so the stored bytes are what was hashed.
+    let sniffed_mp3 = match sniffed {
+        Some(kind) => kind.mime_type() == "audio/mpeg",
+        None => crate::mp3::looks_like_mpeg_audio(bytes),
+    };
+    if sniffed_mp3 {
+        crate::mp3::validate_mp3(bytes)?;
+        return Ok(("audio/mpeg".to_string(), "mp3".to_string()));
+    }
+
+    match sniffed {
         Some(kind) => {
             let mime = kind.mime_type().to_string();
             // A sniffed RIFF/WAVE container is accepted only through the
@@ -210,7 +228,8 @@ pub fn validate_file_content(
             }
             // Recognized media must never fall through exact-byte attachment
             // storage. Images and video use their canonical media validators;
-            // all other audio is rejected.
+            // all other audio (beyond WAV above and MP3 before the match) is
+            // rejected.
             if mime.starts_with("image/")
                 || mime.starts_with("video/")
                 || mime.starts_with("audio/")
@@ -363,12 +382,14 @@ pub fn validate_voice_reference_wav(bytes: &[u8]) -> Result<(), MediaError> {
 /// Whether a stored blob should be served inline (rendered in the client) or as
 /// an attachment (forced download).
 ///
-/// Images and video are previewed inline by the renderer; everything else is a
-/// generic file card with a download action, so it serves as an attachment.
-/// PDF is intentionally *not* inline yet — inline PDF preview is a planned
-/// fast-follow; until the renderer handles it, force download like any other file.
+/// Images and video are previewed inline by the renderer, and MP3 plays in an
+/// inline `<audio>` player (stored only metadata-free, see `crate::mp3`);
+/// everything else is a generic file card with a download action, so it serves
+/// as an attachment. PDF is intentionally *not* inline yet — inline PDF preview
+/// is a planned fast-follow; until the renderer handles it, force download like
+/// any other file.
 pub fn serve_inline(mime: &str) -> bool {
-    mime.starts_with("image/") || mime.starts_with("video/")
+    mime.starts_with("image/") || mime.starts_with("video/") || mime == "audio/mpeg"
 }
 
 /// Metadata extracted from a validated MP4 file.
@@ -1683,10 +1704,76 @@ mod tests {
     }
 
     #[test]
-    fn validate_file_content_still_rejects_mp3_and_other_audio() {
+    fn validate_file_content_accepts_clean_mp3_and_rejects_tagged_mp3() {
+        let config = test_config();
+        let clean = crate::mp3::tests::clean_mp3(4);
+        assert_eq!(
+            infer::get(&clean).map(|k| k.mime_type()),
+            Some("audio/mpeg"),
+            "fixture must sniff as MP3"
+        );
+        let (mime, ext) = validate_file_content(&clean, &config).expect("clean mp3 accepted");
+        assert_eq!((mime.as_str(), ext.as_str()), ("audio/mpeg", "mp3"));
+        assert!(serve_inline(&mime));
+
+        // A leading ID3v2 tag: rejected as metadata, never stored.
+        let mut tagged = b"ID3\x04\x00\x00\x00\x00\x00\x05TIT2x".to_vec();
+        tagged.extend_from_slice(&clean);
+        assert!(matches!(
+            validate_file_content(&tagged, &config),
+            Err(MediaError::MetadataForbidden)
+        ));
+        // A trailing ID3v1 tag.
+        let mut v1 = clean.clone();
+        let mut tag = b"TAGtitle".to_vec();
+        tag.resize(128, b' ');
+        v1.extend_from_slice(&tag);
+        assert!(matches!(
+            validate_file_content(&v1, &config),
+            Err(MediaError::MetadataForbidden)
+        ));
+
+        // MPEG-2 frames (`FF F3`) that `infer` does not recognize still route
+        // through the MP3 validator via the frame-walk sniff.
+        let mut v2 = Vec::new();
+        for _ in 0..3 {
+            v2.extend_from_slice(&[0xFF, 0xF3, 0x80, 0x00]);
+            v2.extend(std::iter::repeat_n(0x11u8, 204));
+        }
+        assert!(infer::get(&v2).is_none());
+        let (mime, _) = validate_file_content(&v2, &config).expect("mpeg-2 mp3 accepted");
+        assert_eq!(mime, "audio/mpeg");
+
+        // `infer` says audio/mpeg (`FF FB`) but the stream does not walk.
+        let mut broken = clean.clone();
+        broken.extend_from_slice(b"trailing hidden bytes");
+        assert!(matches!(
+            validate_file_content(&broken, &config),
+            Err(MediaError::InvalidAudio)
+        ));
+    }
+
+    #[test]
+    fn validate_file_content_rejects_a_blob_shorter_than_one_frame() {
+        let config = test_config();
+        // A valid 417-byte-frame header followed by far fewer than 417 bytes.
+        let mut lone = crate::mp3::tests::FRAME_HDR.to_vec();
+        lone.extend_from_slice(b"LYRICSBEGININDsecretLYRICSEND");
+        assert_eq!(
+            infer::get(&lone).map(|k| k.mime_type()),
+            Some("audio/mpeg"),
+            "fixture must sniff as MP3"
+        );
+        assert!(matches!(
+            validate_file_content(&lone, &config),
+            Err(MediaError::InvalidAudio)
+        ));
+    }
+
+    #[test]
+    fn validate_file_content_still_rejects_non_mp3_non_wav_audio() {
         let config = test_config();
         let fixtures: &[(&str, &[u8])] = &[
-            ("mp3", b"ID3\x04\x00\x00\x00\x00\x00\x00"),
             ("flac", b"fLaC\x00\x00\x00\x22"),
             // A truncated RIFF/WAVE header is NOT the accepted canonical shape —
             // the voice-reference validator rejects it (declared size != length),
@@ -3099,7 +3186,10 @@ mod tests {
         assert!(!serve_inline("application/pdf"));
         assert!(!serve_inline("application/zip"));
         assert!(!serve_inline("application/octet-stream"));
-        assert!(!serve_inline("audio/mpeg"));
+        // MP3 plays in an inline <audio> player; it is stored metadata-free.
+        assert!(serve_inline("audio/mpeg"));
+        assert!(!serve_inline("audio/wav"));
+        assert!(!serve_inline("audio/ogg"));
         assert!(!serve_inline("text/plain"));
     }
 }

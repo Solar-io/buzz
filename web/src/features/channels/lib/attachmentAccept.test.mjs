@@ -49,16 +49,28 @@ test("nothing the relay's deny-list blocks is offered", () => {
       `${mime} is on BLOCKED_FILE_MIME_TYPES and must not be offered`,
     );
   }
-  assert.ok(
-    !ATTACHMENT_ACCEPT.includes("audio/"),
-    "audio has no sanitizer server-side and is rejected outright",
-  );
+  for (const mime of ["audio/wav", "audio/ogg", "audio/flac", "audio/*"]) {
+    assert.ok(
+      !ATTACHMENT_ACCEPT.split(",").includes(mime),
+      `${mime} has no sanitizer and must not be offered`,
+    );
+  }
 });
 
-test("audio is pre-flighted as rejected, with the reason the relay has", () => {
+test("MP3 is offered and sent; other audio is pre-flighted as rejected", () => {
+  assert.ok(ATTACHMENT_ACCEPT.split(",").includes("audio/mpeg"));
+  assert.ok(ATTACHMENT_ACCEPT.split(",").includes(".mp3"));
   assert.equal(
     attachmentRejectionReason({ name: "a.mp3", type: "audio/mpeg" }),
-    "Audio uploads are not accepted yet.",
+    null,
+  );
+  assert.equal(
+    attachmentRejectionReason({ name: "a.mp3", type: "audio/mp3" }),
+    null,
+  );
+  assert.equal(
+    attachmentRejectionReason({ name: "a.wav", type: "audio/wav" }),
+    "Only MP3 audio is accepted.",
   );
 });
 
