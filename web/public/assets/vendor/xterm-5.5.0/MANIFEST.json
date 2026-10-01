@@ -1,0 +1,49 @@
+{
+  "//": "Byte-copied from evie-ui app/public/vendor/xterm (evie-ui @c6b45c08). ONE npm publish batch: xterm 5.5.0 with fit 0.10.0, clipboard 0.1.0, webgl 0.18.0, canvas 0.7.0. The 0.19.0 / 0.11.0 addons belong to the xterm 6.0.0 batch and reach into unversioned _core internals: never mix them in. addon-webgl and addon-canvas carry evie's box-line patch (reads globalThis.__evieBoxLineScale / __evieBoxGlyphFg at draw time). vendorManifest.test.mjs checks every hash.",
+  "files": {
+    "xterm.js": {
+      "package": "@xterm/xterm",
+      "version": "5.5.0",
+      "tier": "required",
+      "sha256": "1f991ac3b4b283ebf96e60ae23a00a52765dd3a2e46fa6fdda9f1aab032f7495"
+    },
+    "addon-fit.js": {
+      "package": "@xterm/addon-fit",
+      "version": "0.10.0",
+      "tier": "required",
+      "sha256": "bdaefa370b1bfc42ee88d46fe6072400902a4d4b2d45cd93438dda9b23c97089"
+    },
+    "addon-clipboard.js": {
+      "package": "@xterm/addon-clipboard",
+      "version": "0.1.0",
+      "tier": "required",
+      "sha256": "c3fe3f1e8be371c7b2034170c6a2e3cc1b9dbe6c9f1f283cbc17ff456ef78818"
+    },
+    "addon-webgl.js": {
+      "package": "@xterm/addon-webgl",
+      "version": "0.18.0",
+      "tier": "optional",
+      "patched": "box-line scale + box-glyph contrast (evie tools/patch-xterm-box-lines.py)",
+      "sha256": "7af02c9f6054c7d49179e53854c7a1b027eb3040c6ca6dc4acd532fc89ec33b7"
+    },
+    "addon-canvas.js": {
+      "package": "@xterm/addon-canvas",
+      "version": "0.7.0",
+      "tier": "optional",
+      "patched": "box-line scale + box-glyph contrast (evie tools/patch-xterm-box-lines.py)",
+      "sha256": "2bd382e3d75f8c5e2d2dbe35da148107cb6a2537399ca7fff49600672a071f61"
+    },
+    "xterm.css": {
+      "package": "@xterm/xterm",
+      "version": "5.5.0",
+      "tier": "required",
+      "sha256": "ba8e6985669488981ccf40c0cefe3aba80722cb6c92de7ad628b0bd717faf2b6"
+    },
+    "LICENSE": {
+      "package": "@xterm/xterm",
+      "version": "5.5.0",
+      "tier": "license",
+      "sha256": "b569f629d00f2626a8100df2a1798210535621e42164dfd426a6fe5aac7b0ccd"
+    }
+  }
+}

@@ -30,6 +30,15 @@ export function phoneTabBarVisible(input: PhoneNavInput): boolean {
   return input.view !== undefined || !input.conversationOpen;
 }
 
+/**
+ * Views that own the whole phone screen: their own header (with a back
+ * chevron) and their own bottom bar, so the tab bar steps aside. The
+ * Terminal's key bar sits where the tabs would (PhoneTerminal artboard).
+ */
+export function viewOwnsPhoneScreen(view: string | undefined): boolean {
+  return view === "terminal";
+}
+
 /** Which tab the current page belongs to. */
 export function activePhoneTab(view: string | undefined): PhoneTab {
   if (view === "work") {

@@ -22,6 +22,8 @@ export const SHELL_VIEWS = [
   "reminders",
   "projects",
   "onboarding",
+  // herdr on crichton through hatch (Phase 7). Shown only when configured.
+  "terminal",
 ] as const;
 export type ShellView = (typeof SHELL_VIEWS)[number];
 

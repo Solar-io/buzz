@@ -3,14 +3,20 @@ import { useMemo, useState } from "react";
 import { cn } from "@/shared/lib/cn";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { formatRunway, percent, vitalsSummary } from "../lib/vitalsMath.ts";
+import { refreshHostStats, useHostStats } from "../useHostStats.ts";
 import { refreshVitals, useVitals } from "../useVitals.ts";
+import {
+  CrichtonPanel,
+  CrichtonRows,
+  CrichtonStripColumn,
+} from "./CrichtonVitals";
 import { statusFill, VitalsPanel } from "./VitalsPopover";
 
 /**
  * Vitals v1 (phase-1 §4; Main + Vitals artboards): one combined Claude bar in
  * a shaded box at the foot of the sidebar, opening the per-account panel.
- * The crichton rows wait for Phase 7 — nothing renders for them until a
- * service can fill them.
+ * Phase 7 adds crichton's rows (CPU, GPU, Mem, Disk from hatch) under a
+ * divider — only when a hatch URL is configured.
  *
  * `strip` is the phone Work page's one-line form (PhoneWork artboard).
  */
@@ -20,6 +26,7 @@ export function VitalsBlock({
   variant?: "block" | "strip";
 }) {
   const data = useVitals();
+  const host = useHostStats();
   const [open, setOpen] = useState(false);
   const summary = useMemo(() => vitalsSummary(data.pace), [data.pace]);
   const runway = formatRunway(data.runway);
@@ -56,6 +63,7 @@ export function VitalsBlock({
         setOpen(next);
         if (next) {
           refreshVitals();
+          refreshHostStats();
         }
       }}
     >
@@ -64,31 +72,47 @@ export function VitalsBlock({
           <button
             type="button"
             data-testid="vitals-strip"
-            aria-label="Vitals: Claude usage"
-            className="block w-full rounded-xl bg-vit px-3 py-2.5 text-left font-mono text-2xs text-foreground"
+            aria-label={
+              host
+                ? "Vitals: Claude usage and crichton"
+                : "Vitals: Claude usage"
+            }
+            className={cn(
+              "w-full rounded-xl bg-vit px-3 py-2.5 text-left font-mono text-2xs text-foreground",
+              host
+                ? "grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] gap-4"
+                : "block",
+            )}
           >
-            <span className="flex justify-between text-muted-foreground">
-              <span>Claude</span>
-              <span>
-                {known ? (
-                  <>
-                    <b className="font-semibold text-foreground">
-                      {free}% free
-                    </b>
-                    {runway ? ` · ${runway}` : ""}
-                  </>
-                ) : (
-                  "usage unavailable"
-                )}
+            <span className="block min-w-0">
+              <span className="flex justify-between text-muted-foreground">
+                <span>Claude</span>
+                <span>
+                  {known ? (
+                    <>
+                      <b className="font-semibold text-foreground">
+                        {free}% free
+                      </b>
+                      {runway ? ` · ${runway}` : ""}
+                    </>
+                  ) : (
+                    "usage unavailable"
+                  )}
+                </span>
               </span>
+              {known && <span className="mt-1.5 block">{bar("h-0.75")}</span>}
             </span>
-            {known && <span className="mt-1.5 block">{bar("h-0.75")}</span>}
+            {host ? <CrichtonStripColumn data={host} /> : null}
           </button>
         ) : (
           <button
             type="button"
             data-testid="vitals-block"
-            aria-label="Vitals: Claude usage"
+            aria-label={
+              host
+                ? "Vitals: Claude usage and crichton"
+                : "Vitals: Claude usage"
+            }
             className="block w-full rounded-[10px] bg-vit px-2.5 pt-2.5 pb-2.75 text-left text-foreground transition-colors hover:brightness-[0.98]"
           >
             <span className="flex items-center justify-between">
@@ -121,6 +145,7 @@ export function VitalsBlock({
                 usage unavailable
               </span>
             )}
+            {host ? <CrichtonRows data={host} /> : null}
           </button>
         )}
       </PopoverTrigger>
@@ -136,6 +161,7 @@ export function VitalsBlock({
           summary={summary}
           onClose={() => setOpen(false)}
         />
+        {host ? <CrichtonPanel data={host} /> : null}
       </PopoverContent>
     </Popover>
   );

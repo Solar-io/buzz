@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { fetchSignedMedia } from "@/shared/api/blossom";
+import { useAvatarSrc } from "@/shared/hooks/useAvatarSrc";
 import { cn } from "@/shared/lib/cn";
 import { avatarPaletteClass, getInitials } from "../lib/avatar.ts";
 
@@ -41,26 +40,7 @@ export function AuthorAvatar({
   /** Extra classes for the circle variant (merged last, so they can override the box and radius). */
   className?: string;
 }) {
-  const [objectUrl, setObjectUrl] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    setObjectUrl(null);
-    if (!picture) {
-      return;
-    }
-    fetchSignedMedia(picture)
-      .then((url) => {
-        if (!cancelled) {
-          setObjectUrl(url);
-        }
-      })
-      .catch(() => {
-        // Unavailable media falls back to the identicon below.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [picture]);
+  const { src: objectUrl, onError } = useAvatarSrc(picture);
   // Sizes are unchanged from the pre-refactor component; the web theme has no
   // 2xs/3xs type tokens, so the desktop's exact ramp is not available here.
   const box =
@@ -73,7 +53,14 @@ export function AuthorAvatar({
           : "h-9 w-9 text-sm";
   if (shape === "portrait") {
     if (objectUrl) {
-      return <img src={objectUrl} alt="" className={PORTRAIT_FRAME_CLASSES} />;
+      return (
+        <img
+          src={objectUrl}
+          onError={onError}
+          alt=""
+          className={PORTRAIT_FRAME_CLASSES}
+        />
+      );
     }
     // Same frame box, palette fill and initials as the circle fallback.
     return (
@@ -93,6 +80,7 @@ export function AuthorAvatar({
     return (
       <img
         src={objectUrl}
+        onError={onError}
         alt=""
         className={cn("rounded-full object-cover", box, className)}
       />

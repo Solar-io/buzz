@@ -48,6 +48,7 @@ export default defineConfig({
         "**/messages.spec.ts",
         "**/scratch.spec.ts",
         "**/files-embed.spec.ts",
+        "**/terminal.spec.ts",
         "**/items.spec.ts",
       ],
       use: {
