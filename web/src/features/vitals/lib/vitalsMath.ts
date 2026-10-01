@@ -27,6 +27,8 @@ export interface AccountVitals {
   state: PaceAccountState;
   status: PaceStatus;
   parked: boolean;
+  /** The pool's default — where new sessions go (hub `isDefault`). */
+  active: boolean;
   used: number | null;
   /** How much of the account's window has passed — the bar's tick. */
   elapsed: number | null;
@@ -86,6 +88,7 @@ export function accountVitals(
         ? forecast.status
         : account.status,
     parked: isParked(pace, account),
+    active: account.isDefault,
     used,
     elapsed,
     resetsAt: account.resetsAt,
@@ -95,6 +98,29 @@ export function accountVitals(
     burnPerHour: forecast?.burnPerHour ?? null,
     historyHours: forecast?.historyHours ?? null,
   };
+}
+
+/**
+ * The account row's right-hand text. A warn/critical row names when it runs
+ * dry instead of its reset, so the red is never a colour to decode (Sam,
+ * 2026-10-01). `clock` formats an ISO time; `unknown` explains a null usage.
+ */
+export function accountRowText(
+  account: AccountVitals,
+  clock: (iso: string) => string,
+  unknown: string,
+): string {
+  if (account.used === null) {
+    return unknown;
+  }
+  const used = `${percent(account.used)}%`;
+  const hot = account.status === "warn" || account.status === "critical";
+  if (hot && account.dryAt) {
+    return `${used} · runs dry ${clock(account.dryAt)}`;
+  }
+  return account.resetsAt
+    ? `${used} · resets ${clock(account.resetsAt)}`
+    : used;
 }
 
 /** The combined bar: free = 1 − mean(known usedFraction). */
