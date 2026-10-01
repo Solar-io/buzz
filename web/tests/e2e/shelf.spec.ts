@@ -49,7 +49,7 @@ async function open(
   let probe: MockEvent | null = null;
   await page.addInitScript((url) => {
     try {
-      localStorage.setItem("buzz:files-url", url);
+      localStorage.setItem("buzz:files-url.v2", url);
     } catch {
       // Init scripts also run inside the sandboxed preview frame.
     }
