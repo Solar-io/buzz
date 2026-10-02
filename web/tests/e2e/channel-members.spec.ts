@@ -144,6 +144,15 @@ for (const theme of [
           (element) => element.scrollWidth <= element.clientWidth,
         ),
       ).toBe(true);
+      for (const control of [
+        sheet.getByLabel("Role for Alex Rivera"),
+        sheet.getByRole("button", { name: "People", exact: true }),
+        sheet.getByRole("button", { name: "More for Alex Rivera" }),
+      ]) {
+        expect((await control.boundingBox())?.height).toBeGreaterThanOrEqual(
+          44,
+        );
+      }
       await shot(page, `w2-members-${width}-${theme.name}`);
       await sheet.getByRole("button", { name: "People", exact: true }).click();
       const picker = page.getByRole("dialog", {
@@ -217,12 +226,12 @@ for (const theme of [
       await moderation
         .getByRole("button", { name: "Ban from community", exact: true })
         .click();
-      expect(
-        relay.published.find((event) => event.kind === 9040)?.tags,
-      ).toEqual([
-        ["p", ALEX],
-        ["reason", "Repeated spam in the private test fixture"],
-      ]);
+      await expect
+        .poll(() => relay.published.find((event) => event.kind === 9040)?.tags)
+        .toEqual([
+          ["p", ALEX],
+          ["reason", "Repeated spam in the private test fixture"],
+        ]);
     });
   }
 }
