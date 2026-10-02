@@ -1,7 +1,10 @@
+/** Scalar field values; wire-specific clear sentinels come from the consumer. */
 export type SettingValue = string | number | boolean | null;
+/** Reset is distinct from absence in a draft. */
 export type DraftChange =
   | { kind: "set"; value: SettingValue }
   | { kind: "clear" };
+/** Timing text supplied by the consuming setting. */
 export type SettingEffect =
   | "restart-when-idle"
   | "on-restart"
@@ -9,6 +12,7 @@ export type SettingEffect =
   | "next-wake"
   | "now";
 
+/** Captured baseline and latest edit for one field of one agent. */
 export interface SettingDraftEntry {
   agentPubkey: string;
   agentName: string;
@@ -22,6 +26,7 @@ export interface SettingDraftEntry {
   takesEffect: SettingEffect;
   change: DraftChange;
 }
+/** Immutable screen-scoped map, keyed by agent pubkey and field. */
 export type SettingsDraft = ReadonlyMap<string, SettingDraftEntry>;
 
 /** Stable identity supports edits across the roster without name collisions. */
@@ -80,6 +85,7 @@ const effectLabels: Record<SettingEffect, string> = {
   "next-wake": "next wake",
   now: "now",
 };
+/** Group changes by the time they take effect. */
 export function settingsEffectSummary(draft: SettingsDraft): string {
   const counts = new Map<SettingEffect, number>();
   for (const entry of draft.values())
@@ -89,6 +95,7 @@ export function settingsEffectSummary(draft: SettingsDraft): string {
     .join(" · ");
 }
 
+/** Transport-neutral update plan; the sender owns validation and capabilities. */
 export interface SettingsCommandPlan {
   machine: string;
   action: "update";

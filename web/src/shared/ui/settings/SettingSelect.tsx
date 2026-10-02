@@ -2,14 +2,17 @@ import { useId, type ReactNode } from "react";
 import { RotateCcw } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 
+/** Readable choice and opaque underlying value. */
 export interface SettingOption {
   value: string;
   label: string;
 }
+/** Named source group for a native picker. */
 export interface SettingOptionGroup {
   label: string;
   options: readonly SettingOption[];
 }
+/** Requires a known resolved default; availability is supplied by the catalog. */
 export interface SettingSelectProps {
   label: string;
   /** null means inherit; defaultValue is the readable, resolved default. */
@@ -18,6 +21,7 @@ export interface SettingSelectProps {
   defaultLabel?: string;
   source: string;
   options?: readonly SettingOption[];
+  trailingOptions?: readonly SettingOption[];
   groups?: readonly SettingOptionGroup[];
   onChange: (value: string | null) => void;
   dirty?: boolean;
@@ -39,6 +43,7 @@ export function SettingSelect({
   defaultLabel = defaultValue,
   source,
   options = [],
+  trailingOptions = [],
   groups = [],
   onChange,
   dirty = false,
@@ -54,7 +59,11 @@ export function SettingSelect({
   const id = useId();
   const unavailable = Boolean(locked || offline || disabled);
   const state = dirty ? "dirty" : value === null ? "inherited" : "set";
-  const choices = [...options, ...groups.flatMap((group) => group.options)];
+  const choices = [
+    ...options,
+    ...groups.flatMap((group) => group.options),
+    ...trailingOptions,
+  ];
   // Encode option values so real model ids never collide with inheritance.
   const encoded = (option: string) => `value:${option}`;
   const selected = value === null ? "inherit" : encoded(value);
@@ -145,6 +154,15 @@ export function SettingSelect({
               ))}
             </optgroup>
           ))}
+          {trailingOptions.map((option) => (
+            <option
+              key={option.value}
+              value={encoded(option.value)}
+              className="text-foreground"
+            >
+              {option.label}
+            </option>
+          ))}
         </select>
         <span
           aria-hidden="true"
@@ -166,7 +184,7 @@ export function SettingSelect({
             disabled={unavailable}
             aria-label={`Reset ${label} to default`}
             title={`Use default — ${defaultLabel}`}
-            className="absolute right-6 top-0 flex min-h-11 w-8 items-center justify-center rounded-md text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:min-h-9"
+            className="absolute right-5 top-0 flex min-h-11 w-11 items-center justify-center rounded-md text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:min-h-9 md:w-8"
             onClick={() => {
               if (!unavailable) onChange(null);
             }}

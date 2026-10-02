@@ -2,6 +2,7 @@ import { Check, LoaderCircle } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 
+/** Receipt states: success is reserved for a desktop acknowledgement. */
 export type SaveBarState =
   | { status: "idle" }
   | { status: "sending"; machines: readonly string[] }
@@ -17,6 +18,7 @@ export type SaveBarState =
       }[];
     };
 
+/** Plain-text summaries and explicit draft/save actions. */
 export interface SaveBarProps {
   summary: string;
   changes: readonly string[];

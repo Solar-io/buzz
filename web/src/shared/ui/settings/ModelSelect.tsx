@@ -6,9 +6,11 @@ import {
   type SettingSelectProps,
 } from "./SettingSelect";
 
+/** Model choice with an optional roster usage count. */
 export interface ModelChoice extends SettingOption {
   count?: number;
 }
+/** Catalogs are provided by the caller rather than hardcoded. */
 export interface ModelSelectProps
   extends Omit<SettingSelectProps, "options" | "groups" | "children"> {
   inUse?: readonly ModelChoice[];
@@ -54,7 +56,7 @@ export function ModelSelect({
       <SettingSelect
         {...props}
         groups={groups}
-        options={[{ value: "__other_model", label: "Other model id…" }]}
+        trailingOptions={[{ value: "__other_model", label: "Other model id…" }]}
         onChange={(value) => {
           if (value === "__other_model") {
             setCustom(true);

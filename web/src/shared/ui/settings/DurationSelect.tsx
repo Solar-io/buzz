@@ -10,6 +10,7 @@ export function durationLabel(seconds: number): string {
     return `${seconds / 60} ${seconds === 60 ? "min" : "mins"}`;
   return `${seconds / 60} mins`;
 }
+/** Every numeric value and preset uses seconds, regardless of display units. */
 export interface DurationSelectProps
   extends Omit<
     SettingSelectProps,

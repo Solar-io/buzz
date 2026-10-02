@@ -1,10 +1,12 @@
 import type { SettingsCommandPlan } from "./settingsDraft";
 
+/** Final desktop apply verdict, including verbatim refusal text. */
 export interface SettingsAck {
   ok: boolean;
   error?: string;
   message?: string;
 }
+/** Per-agent result, preserving timeout uncertainty separately from refusal. */
 export interface SettingsSaveResult {
   plan: SettingsCommandPlan;
   ack: SettingsAck;
