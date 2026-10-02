@@ -6,8 +6,11 @@ import {
   accountVitals,
   paceLine,
   parseRunway,
+  combinedHeadline,
+  combinedRunway,
+  combinedShort,
+  pastResetSpan,
   runwayMethod,
-  runwayOutlook,
   vitalsSummary,
 } from "./vitalsMath.ts";
 
@@ -204,7 +207,10 @@ test("a pre-v2 hub (active-hour fields) projects nothing", () => {
   assert.deepEqual(old.accounts, []);
   assert.equal(runwayMethod(old), null);
   const summary = vitalsSummary(LIVE_PACE, old);
-  assert.equal(runwayOutlook(summary), null);
+  assert.equal(
+    combinedRunway(summary, old, Date.parse(LIVE_PACE.computedAt)),
+    null,
+  );
   assert.equal(summary.accounts[0].dryAt, null);
 });
 
@@ -255,54 +261,184 @@ test("summary status: worst of the rows the runway coloured", () => {
   assert.equal(vitalsSummary(parked, parseRunway(hotB)).status, "warn");
 });
 
-test("outlook: the soonest dry in-use account, else safe, else nothing", () => {
-  const live = runwayOutlook(
-    vitalsSummary(LIVE_PACE, parseRunway(LIVE_RUNWAY)),
+// ── Combined runway: when does the WHOLE pool run dry? (Sam, 2026-10-02) ───
+// Sam's popover numbers that day: A 67 % used at 2.2 %/h, resets Tue
+// Oct 6 8:00 AM CDT; B 1 % used at 0.4 %/h, resets Thu Oct 8 2:59 PM CDT;
+// weekends ×1.5. Expected instants are worked by hand (in the comments) and
+// hardcoded — never derived from the module's constants.
+
+/** Sam's clock, pinned to his zone so the strings are deterministic. */
+function chicago(iso) {
+  return new Date(iso).toLocaleString("en-US", {
+    timeZone: "America/Chicago",
+    weekday: "short",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function pool(rows, { weekendFactor = 1.5 } = {}) {
+  const p = pace(
+    rows.map((row) =>
+      account({
+        id: row.id,
+        inUse: row.inUse ?? true,
+        isDefault: row.id === "A",
+        usedFraction: row.used,
+        resetsAt: row.resetsAt,
+      }),
+    ),
   );
-  assert.deepEqual(live, {
-    kind: "dry",
+  const runway = parseRunway({
+    v: 2,
+    lookbackHours: 72,
+    weekendFactor,
+    status: "ok",
+    accounts: rows.map((row) => ({
+      id: row.id,
+      usedFraction: row.used,
+      resetsAt: row.resetsAt,
+      historyHours: 72,
+      burnPerHour: row.burn,
+      projectedAtReset: 0.5,
+      dryAt: null,
+      status: "ok",
+    })),
+  });
+  return { summary: vitalsSummary(p, runway), runway };
+}
+
+const SAM = [
+  { id: "A", used: 0.67, burn: 0.022, resetsAt: "2026-10-06T13:00:00.000Z" },
+  { id: "B", used: 0.01, burn: 0.004, resetsAt: "2026-10-08T19:59:00.000Z" },
+];
+
+function run(rows, nowIso, options) {
+  const { summary, runway } = pool(rows, options);
+  return combinedRunway(summary, runway, Date.parse(nowIso));
+}
+
+test("combined: all dry before any reset (Sam's numbers, Fri 7:04 AM CDT)", () => {
+  // Fri 12:04Z → Sat 05:00Z (Chicago midnight) = 16.933 h × 2.6 %/h = 44.03 %;
+  // 132 % − 44.03 % = 87.97 % at 3.9 %/h (weekend ×1.5) = 22.557 h → Sun 03:33:26Z.
+  const combined = run(SAM, "2026-10-02T12:04:00.000Z");
+  assert.equal(combined.kind, "dry");
+  assert.deepEqual(combined.accounts, ["A", "B"]);
+  assert.equal(combined.at, "2026-10-04T03:33:26.154Z");
+  assert.equal(combined.pastReset, null, "lands before A's Tue reset");
+  assert.deepEqual(combinedHeadline(combined, chicago), {
+    lead: "Both run dry around ",
+    strong: "Sat 10:33 PM",
+    rest: "",
+  });
+  assert.equal(combinedShort(combined, chicago), "both dry Sat 10:33 PM");
+});
+
+test("combined: survives A's reset, dries days later (+N days)", () => {
+  // Mon 11:00Z. A (soonest reset) drains first: 33 % / 2.6 %/h = 12.69 h;
+  // then B until A's Tue 13:00Z reset → B at 35.6 %. A refills; B (now the
+  // soonest reset) drains its 64.4 % by Wed 13:46Z; A drains until B's Thu
+  // 19:59Z reset → A at 78.6 %. Thu 19:59Z → Sat 05:00Z eats 85.8 % of the
+  // 121.4 % left; the last 35.6 % at 3.9 %/h = 9.128 h → Sat 14:07:41Z.
+  const combined = run(SAM, "2026-10-05T11:00:00.000Z");
+  assert.equal(combined.kind, "dry");
+  assert.equal(combined.at, "2026-10-10T14:07:41.538Z");
+  assert.deepEqual(combined.pastReset, {
     account: "A",
-    at: "2026-10-01T15:02:14.645Z",
+    at: "2026-10-06T13:00:00.000Z",
+    ms: 349_661_538,
   });
-
-  // Both dry: the earlier one (B) wins, whatever the order.
-  const both = structuredClone(LIVE_RUNWAY);
-  both.accounts[1].dryAt = "2026-10-01T09:30:00.000Z";
-  assert.deepEqual(runwayOutlook(vitalsSummary(LIVE_PACE, parseRunway(both))), {
-    kind: "dry",
-    account: "B",
-    at: "2026-10-01T09:30:00.000Z",
+  assert.deepEqual(combinedHeadline(combined, chicago), {
+    lead: "Both run dry around ",
+    strong: "Sat 9:07 AM",
+    rest: " · +4 days past A's Tue 8:00 AM reset",
   });
-
-  // Nobody dry: safe.
-  const calm = structuredClone(LIVE_RUNWAY);
-  calm.accounts[0].dryAt = null;
-  calm.accounts[0].projectedAtReset = 0.97;
-  assert.deepEqual(runwayOutlook(vitalsSummary(LIVE_PACE, parseRunway(calm))), {
-    kind: "safe",
-  });
-
-  // A parked (switched-off) account running dry is not the headline.
-  const parked = pace([
-    { ...LIVE_PACE.accounts[0], inUse: false },
-    LIVE_PACE.accounts[1],
-  ]);
-  assert.deepEqual(
-    runwayOutlook(vitalsSummary(parked, parseRunway(LIVE_RUNWAY))),
-    { kind: "safe" },
-  );
-
-  // No projection anywhere: no headline.
-  const blind = structuredClone(LIVE_RUNWAY);
-  for (const entry of blind.accounts) {
-    entry.projectedAtReset = null;
-    entry.dryAt = null;
-  }
   assert.equal(
-    runwayOutlook(vitalsSummary(LIVE_PACE, parseRunway(blind))),
+    combinedShort(combined, chicago),
+    "both dry Sat 9:07 AM · +4 days",
+  );
+});
+
+test("combined: never dry within 14 days → lasts", () => {
+  const combined = run(
+    [
+      { id: "A", used: 0.1, burn: 0.001, resetsAt: "2026-10-06T13:00:00.000Z" },
+      { id: "B", used: 0.1, burn: 0.001, resetsAt: "2026-10-08T19:59:00.000Z" },
+    ],
+    "2026-10-05T11:00:00.000Z",
+  );
+  assert.deepEqual(combined, { kind: "lasts", accounts: ["A", "B"], days: 14 });
+  assert.deepEqual(combinedHeadline(combined, chicago), {
+    lead: "",
+    strong: "Both last",
+    rest: " 2+ weeks at your recent pace",
+  });
+  assert.equal(combinedShort(combined, chicago), "lasts 2+ wks");
+});
+
+test("combined: a parked account is out of the pool (capacity and demand)", () => {
+  // B alone: 50 % left at 1 %/h on weekdays = 50 h → Wed 13:00Z. With A in
+  // the pool (80 % more room, 5 %/h more demand) it would be 130 % / 6 %/h.
+  const rows = [
+    {
+      id: "A",
+      used: 0.2,
+      burn: 0.05,
+      resetsAt: "2026-10-12T13:00:00.000Z",
+      inUse: false,
+    },
+    { id: "B", used: 0.5, burn: 0.01, resetsAt: "2026-10-09T11:00:00.000Z" },
+  ];
+  const combined = run(rows, "2026-10-05T11:00:00.000Z");
+  assert.deepEqual(combined, {
+    kind: "dry",
+    accounts: ["B"],
+    at: "2026-10-07T13:00:00.000Z",
+    pastReset: null,
+  });
+  assert.deepEqual(combinedHeadline(combined, chicago), {
+    lead: "B runs dry around ",
+    strong: "Wed 8:00 AM",
+    rest: "",
+  });
+  // Every account parked: all of them count.
+  const allParked = run(
+    rows.map((row) => ({ ...row, inUse: false })),
+    "2026-10-05T11:00:00.000Z",
+  );
+  assert.deepEqual(allParked.accounts, ["A", "B"]);
+});
+
+test("combined: weekend hours burn at the hub's weekendFactor", () => {
+  const solo = [
+    { id: "A", used: 0, burn: 0.02, resetsAt: "2026-10-09T13:00:00.000Z" },
+  ];
+  // From Sat 00:00 CDT: 100 % at 2 %/h × 1.5 = 33.33 h → Sun 14:20Z.
+  const weekend = run(solo, "2026-10-03T05:00:00.000Z");
+  assert.equal(weekend.at, "2026-10-04T14:20:00.000Z");
+  // No factor: 50 h → Mon 07:00Z.
+  const flat = run(solo, "2026-10-03T05:00:00.000Z", { weekendFactor: null });
+  assert.equal(flat.at, "2026-10-05T07:00:00.000Z");
+});
+
+test("combined: nothing to simulate → null", () => {
+  assert.equal(combinedRunway(vitalsSummary(null), null, 0), null);
+  // No runway: no rates, so no pool.
+  const bare = vitalsSummary(
+    pace(SAM.map((row) => account({ id: row.id, usedFraction: row.used }))),
+  );
+  assert.equal(bare.kind, "known");
+  assert.equal(
+    combinedRunway(bare, null, Date.parse("2026-10-05T11:00:00.000Z")),
     null,
   );
-  assert.equal(runwayOutlook(vitalsSummary(null)), null);
+});
+
+test("past-reset span: hours under a day, rounded days beyond", () => {
+  assert.equal(pastResetSpan(20 * 60_000), "+<1h");
+  assert.equal(pastResetSpan(9 * 3_600_000), "+9h");
+  assert.equal(pastResetSpan(30 * 3_600_000), "+1 day");
+  assert.equal(pastResetSpan(43 * 3_600_000), "+2 days");
 });
 
 test("method line: 72 h average per account, short history noted", () => {

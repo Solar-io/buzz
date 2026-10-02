@@ -286,39 +286,244 @@ export function parseRunway(json: unknown): Runway | null {
   };
 }
 
-export type Outlook =
-  /** The soonest in-use account to hit 100 % before its own reset. */
-  | { kind: "dry"; account: string; at: string }
-  /** Every in-use account with a projection lasts to its reset. */
-  | { kind: "safe" };
+// ── Combined runway: when does EVERY account run dry? ─────────────────────
+
+const HOUR_MS = 3_600_000;
+const WEEK_MS = 7 * 24 * HOUR_MS;
+/** How far ahead the combined simulation looks before calling it "lasts". */
+export const COMBINED_HORIZON_DAYS = 14;
+/** Sam's own time zone — the hub counts Sat/Sun hours here as weekend. */
+const WEEKEND_TZ = "America/Chicago";
+const weekdayOf = new Intl.DateTimeFormat("en-US", {
+  timeZone: WEEKEND_TZ,
+  weekday: "short",
+});
 
 /**
- * The headline: does anything run dry before it resets, at the 72 h pace?
- * Parked accounts are left out (they take no work) unless every account is
- * parked. No projection anywhere → null, and the headline hides.
+ * Weight of the calendar hour containing `ms`, matching the hub's
+ * `hourWeight` (usage-hub src/runway.ts): Saturday/Sunday in Chicago count
+ * `weekendFactor` hours. Chicago's offset is whole hours, so a UTC hour never
+ * straddles a local midnight.
  */
-export function runwayOutlook(summary: VitalsSummary): Outlook | null {
-  if (summary.kind !== "known") {
+function hourWeight(ms: number, weekendFactor: number): number {
+  const day = weekdayOf.format(new Date(ms));
+  return day === "Sat" || day === "Sun" ? weekendFactor : 1;
+}
+
+export type CombinedRunway =
+  /** Every pool account is at 100 % at `at` (ISO). */
+  | {
+      kind: "dry";
+      accounts: string[];
+      at: string;
+      /**
+       * The first reset (of any pool account) the pool survives to, when the
+       * all-dry moment lands after it; null when it lands before every reset.
+       */
+      pastReset: { account: string; at: string; ms: number } | null;
+    }
+  /** Not all dry within {@link COMBINED_HORIZON_DAYS} days. */
+  | { kind: "lasts"; accounts: string[]; days: number };
+
+interface SimAccount {
+  id: string;
+  /** Unused share of this account's week, 0–1. */
+  left: number;
+  resetMs: number;
+}
+
+/**
+ * When does the WHOLE pool run dry (Sam, 2026-10-02: "when BOTH accounts are
+ * estimated to run dry")? Simulates forward from `nowMs`:
+ *
+ * - Pool: the non-parked accounts (every account if all are parked) that have
+ *   a known reading, a reset time and a 72 h rate. Others are left out.
+ * - Demand per hour: the sum of the pool's `burnPerHour`, weekend hours
+ *   (Sat/Sun, America/Chicago) × `runway.weekendFactor` — the hub's method.
+ * - That demand drains whichever accounts still have room, the soonest-reset
+ *   account first (use it or lose it): an account that dries early hands its
+ *   work to the others.
+ * - At its reset an account refills to 0 % used; its next reset is +7 days.
+ *
+ * Steps are exact segments between UTC hour boundaries and resets, so the
+ * answer does not depend on a step size.
+ *
+ * ASSUMPTION: every account has the same weekly quota. The hub reports only
+ * fractions (`usedFraction`, `burnPerHour`) and no plan/size per account, so
+ * 1 % of A is treated as the same amount of work as 1 % of B.
+ *
+ * Null when there is nothing to simulate (no known summary, empty pool).
+ */
+export function combinedRunway(
+  summary: VitalsSummary,
+  runway: Runway | null,
+  nowMs: number,
+): CombinedRunway | null {
+  if (summary.kind !== "known" || !Number.isFinite(nowMs)) {
     return null;
   }
   const active = summary.accounts.filter((account) => !account.parked);
-  const pool = active.length > 0 ? active : summary.accounts;
-  let dry: { account: string; at: string; ms: number } | null = null;
-  let projected = 0;
-  for (const account of pool) {
-    if (account.projectedAtReset === null) {
+  const candidates = active.length > 0 ? active : summary.accounts;
+  const pool: SimAccount[] = [];
+  let demand = 0;
+  for (const account of candidates) {
+    const resetMs = account.resetsAt
+      ? Date.parse(account.resetsAt)
+      : Number.NaN;
+    if (
+      account.used === null ||
+      account.burnPerHour === null ||
+      !Number.isFinite(resetMs)
+    ) {
       continue;
     }
-    projected++;
-    const ms = account.dryAt ? Date.parse(account.dryAt) : Number.NaN;
-    if (account.dryAt && Number.isFinite(ms) && (!dry || ms < dry.ms)) {
-      dry = { account: account.id, at: account.dryAt, ms };
+    let next = resetMs;
+    let left = Math.max(0, Math.min(1, 1 - account.used));
+    // A reset already past (the reading predates it) has refilled.
+    while (next <= nowMs) {
+      next += WEEK_MS;
+      left = 1;
+    }
+    pool.push({ id: account.id, left, resetMs: next });
+    demand += Math.max(0, account.burnPerHour);
+  }
+  if (pool.length === 0) {
+    return null;
+  }
+  const ids = pool.map((account) => account.id);
+  const weekendFactor = runway?.weekendFactor ?? 1;
+  const first = pool.reduce((soonest, account) =>
+    account.resetMs < soonest.resetMs ? account : soonest,
+  );
+  const firstReset = { account: first.id, ms: first.resetMs };
+  const end = nowMs + COMBINED_HORIZON_DAYS * 24 * HOUR_MS;
+
+  const dryAt = (exact: number): CombinedRunway => {
+    const ms = Math.round(exact);
+    const at = new Date(ms).toISOString();
+    return {
+      kind: "dry",
+      accounts: ids,
+      at,
+      pastReset:
+        ms > firstReset.ms
+          ? {
+              account: firstReset.account,
+              at: new Date(firstReset.ms).toISOString(),
+              ms: ms - firstReset.ms,
+            }
+          : null,
+    };
+  };
+
+  let t = nowMs;
+  while (t < end) {
+    const total = pool.reduce((sum, account) => sum + account.left, 0);
+    if (total <= 1e-12) {
+      return dryAt(t);
+    }
+    const nextHour = (Math.floor(t / HOUR_MS) + 1) * HOUR_MS;
+    const nextReset = Math.min(...pool.map((account) => account.resetMs));
+    const segEnd = Math.min(nextHour, nextReset, end);
+    const rate = demand * hourWeight(t, weekendFactor);
+    let need = (rate * (segEnd - t)) / HOUR_MS;
+    if (rate > 0 && need >= total) {
+      return dryAt(t + (total / rate) * HOUR_MS);
+    }
+    // Soonest reset first: its unused room is lost at the reset anyway.
+    for (const account of [...pool].sort((a, b) => a.resetMs - b.resetMs)) {
+      const take = Math.min(account.left, need);
+      account.left -= take;
+      need -= take;
+      if (need <= 0) {
+        break;
+      }
+    }
+    t = segEnd;
+    for (const account of pool) {
+      if (account.resetMs <= t) {
+        account.left = 1;
+        account.resetMs += WEEK_MS;
+      }
     }
   }
-  if (dry) {
-    return { kind: "dry", account: dry.account, at: dry.at };
+  return { kind: "lasts", accounts: ids, days: COMBINED_HORIZON_DAYS };
+}
+
+/** "Both" for two, "All 3" for more, the account itself for one. */
+function poolName(accounts: readonly string[]): string {
+  if (accounts.length === 1) {
+    return accounts[0] ?? "";
   }
-  return projected > 0 ? { kind: "safe" } : null;
+  return accounts.length === 2 ? "Both" : `All ${accounts.length}`;
+}
+
+/** "+9h" under a day, "+1 day" / "+2 days" (rounded) beyond. */
+export function pastResetSpan(ms: number): string {
+  const hours = Math.round(ms / HOUR_MS);
+  if (hours < 1) {
+    return "+<1h";
+  }
+  if (hours < 24) {
+    return `+${hours}h`;
+  }
+  const days = Math.round(ms / (24 * HOUR_MS));
+  return `+${days} day${days === 1 ? "" : "s"}`;
+}
+
+/** The popover headline in three parts: lead, bold, trailing. */
+export interface CombinedHeadline {
+  lead: string;
+  strong: string;
+  rest: string;
+}
+
+/**
+ * The popover headline for {@link combinedRunway}:
+ * - "Both run dry around **Sat 9:07 AM**"
+ * - "Both run dry around **Sat 9:07 AM** · +4 days past A's Tue 8:00 AM reset"
+ * - "**Both last** 2+ weeks at your recent pace"
+ */
+export function combinedHeadline(
+  combined: CombinedRunway,
+  clock: (iso: string) => string,
+): CombinedHeadline {
+  const name = poolName(combined.accounts);
+  const single = combined.accounts.length === 1;
+  if (combined.kind === "lasts") {
+    return {
+      lead: "",
+      strong: `${name} ${single ? "lasts" : "last"}`,
+      rest: ` ${combined.days / 7}+ weeks at your recent pace`,
+    };
+  }
+  const past = combined.pastReset;
+  return {
+    lead: `${name} ${single ? "runs" : "run"} dry around `,
+    strong: clock(combined.at),
+    rest: past
+      ? ` · ${pastResetSpan(past.ms)} past ${past.account}'s ${clock(past.at)} reset`
+      : "",
+  };
+}
+
+/** The sidebar's short form: "both dry Sat 9:07 AM · +4 days" / "lasts 2+ wks". */
+export function combinedShort(
+  combined: CombinedRunway | null,
+  clock: (iso: string) => string,
+): string | null {
+  if (!combined) {
+    return null;
+  }
+  if (combined.kind === "lasts") {
+    return `lasts ${combined.days / 7}+ wks`;
+  }
+  const name = poolName(combined.accounts);
+  const who = combined.accounts.length === 1 ? name : name.toLowerCase();
+  const past = combined.pastReset
+    ? ` · ${pastResetSpan(combined.pastReset.ms)}`
+    : "";
+  return `${who} dry ${clock(combined.at)}${past}`;
 }
 
 /** 6.48 → "6.5", 16.2 → "16": one decimal only under ten. */

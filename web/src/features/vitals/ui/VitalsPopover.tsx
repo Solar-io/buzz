@@ -7,11 +7,14 @@ import {
   type AccountVitals,
   accountDryText,
   accountRowText,
-  type Outlook,
+  type CombinedRunway,
+  combinedHeadline,
+  combinedRunway,
+  combinedShort,
   paceLine,
   percent,
+  type Runway,
   runwayMethod,
-  runwayOutlook,
   updatedAgo,
   type VitalsSummary,
 } from "../lib/vitalsMath.ts";
@@ -114,14 +117,23 @@ function accountLines(accounts: readonly AccountVitals[]): Line[] {
   return lines;
 }
 
-/** The sidebar's short form: "A dry Thu 3:10 PM" / "lasts to reset". */
-export function outlookShort(outlook: Outlook | null): string | null {
-  if (!outlook) {
+/**
+ * The combined all-accounts runway, simulated from the hub's own reading time
+ * so it agrees with the per-account lines (which the hub projected then).
+ */
+export function combinedOutlook(
+  summary: VitalsSummary,
+  runway: Runway | null,
+): CombinedRunway | null {
+  if (summary.kind !== "known") {
     return null;
   }
-  return outlook.kind === "dry"
-    ? `${outlook.account} dry ${clock(outlook.at)}`
-    : "lasts to reset";
+  return combinedRunway(summary, runway, summary.computedAt ?? Date.now());
+}
+
+/** The sidebar's short form: "both dry Sat 9:07 AM · +4 days" / "lasts 2+ wks". */
+export function outlookShort(combined: CombinedRunway | null): string | null {
+  return combinedShort(combined, clock);
 }
 
 const DOT: Record<Line["tone"], string> = {
@@ -145,7 +157,8 @@ export function VitalsPanel({
     const timer = setInterval(() => setNow(Date.now()), 1_000);
     return () => clearInterval(timer);
   }, []);
-  const outlook = runwayOutlook(summary);
+  const combined = combinedOutlook(summary, data.runway);
+  const headline = combined ? combinedHeadline(combined, clock) : null;
   const method = runwayMethod(data.runway);
   const lines = summary.kind === "known" ? accountLines(summary.accounts) : [];
   return (
@@ -190,27 +203,16 @@ export function VitalsPanel({
               <span className="text-3xl font-bold leading-none tracking-tight">
                 {percent(summary.free)}% free
               </span>
-              {outlook ? (
+              {headline ? (
                 <span
                   data-testid="vitals-outlook"
                   className="text-sm text-ink-2"
                 >
-                  {outlook.kind === "dry" ? (
-                    <>
-                      Account {outlook.account} runs dry around{" "}
-                      <b className="font-semibold text-foreground">
-                        {clock(outlook.at)}
-                      </b>{" "}
-                      at your recent pace
-                    </>
-                  ) : (
-                    <>
-                      <b className="font-semibold text-foreground">
-                        Nothing runs dry
-                      </b>{" "}
-                      before its reset at your recent pace
-                    </>
-                  )}
+                  {headline.lead}
+                  <b className="font-semibold text-foreground">
+                    {headline.strong}
+                  </b>
+                  {headline.rest}
                 </span>
               ) : null}
             </div>
@@ -325,7 +327,9 @@ function AccountRow({ account }: { account: AccountVitals }) {
         )}
       </span>
       <span className="flex flex-col items-end whitespace-nowrap text-right font-mono text-2xs text-muted-foreground">
-        <span>{accountRowText(account, clock, unknownText(account.state))}</span>
+        <span>
+          {accountRowText(account, clock, unknownText(account.state))}
+        </span>
         {dry && (
           <span data-testid="vitals-account-dry" className="text-need">
             {dry}

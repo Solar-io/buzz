@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { cn } from "@/shared/lib/cn";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { blockVitalRows, stripGpuPercent } from "../lib/hostStats.ts";
-import { percent, runwayOutlook, vitalsSummary } from "../lib/vitalsMath.ts";
+import { percent, vitalsSummary } from "../lib/vitalsMath.ts";
 import { refreshHostStats, useHostStats } from "../useHostStats.ts";
 import { refreshVitals, useVitals } from "../useVitals.ts";
 import {
@@ -11,7 +11,12 @@ import {
   CrichtonRows,
   CrichtonStripColumn,
 } from "./CrichtonVitals";
-import { outlookShort, statusFill, VitalsPanel } from "./VitalsPopover";
+import {
+  combinedOutlook,
+  outlookShort,
+  statusFill,
+  VitalsPanel,
+} from "./VitalsPopover";
 
 /**
  * Vitals v1 (phase-1 §4; Main + Vitals artboards): one combined Claude bar in
@@ -35,7 +40,7 @@ export function VitalsBlock({
     () => vitalsSummary(data.pace, data.runway),
     [data.pace, data.runway],
   );
-  const runway = outlookShort(runwayOutlook(summary));
+  const runway = outlookShort(combinedOutlook(summary, data.runway));
   // Nothing to say before the first answer: no skeleton bar pretending to be
   // a reading.
   if (!data.settled) {
