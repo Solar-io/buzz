@@ -97,36 +97,39 @@ export function NewChannelDialog({
   return (
     <form
       aria-label="New channel"
-      className="min-w-0 space-y-3 rounded-xl border border-border bg-card p-3"
+      className="min-w-0 space-y-2 rounded-xl border border-border bg-card p-3"
       onSubmit={(event) => {
         event.preventDefault();
         void create();
       }}
     >
-      <p className="text-sm font-medium">New channel</p>
-      <label className="block text-sm" htmlFor={`${formId}-name`}>
-        Name
-      </label>
-      <Input
-        id={`${formId}-name`}
-        className="h-11"
-        disabled={busy}
-        placeholder="name (no spaces)"
-        value={name}
-        onChange={(event) => setName(event.target.value)}
-        autoFocus
-      />
-      <label className="block text-sm" htmlFor={`${formId}-about`}>
-        Purpose (optional)
-      </label>
-      <Input
-        id={`${formId}-about`}
-        className="h-11"
-        disabled={busy}
-        placeholder="What's it about? (optional)"
-        value={about}
-        onChange={(event) => setAbout(event.target.value)}
-      />
+      <div className="flex items-center gap-2">
+        <label className="shrink-0 text-sm" htmlFor={`${formId}-name`}>
+          Name
+        </label>
+        <Input
+          id={`${formId}-name`}
+          className="h-11 min-w-0 flex-1"
+          disabled={busy}
+          placeholder="name (no spaces)"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          autoFocus
+        />
+      </div>
+      <div className="flex items-center gap-2">
+        <label className="shrink-0 text-sm" htmlFor={`${formId}-about`}>
+          Purpose<span className="sr-only"> (optional)</span>
+        </label>
+        <Input
+          id={`${formId}-about`}
+          className="h-11 min-w-0 flex-1"
+          disabled={busy}
+          placeholder="Optional"
+          value={about}
+          onChange={(event) => setAbout(event.target.value)}
+        />
+      </div>
       <fieldset disabled={busy}>
         <legend className="mb-2 text-sm">Type</legend>
         <div className="grid grid-cols-2 gap-2 rounded-lg bg-muted p-1">
@@ -150,8 +153,8 @@ export function NewChannelDialog({
           ))}
         </div>
       </fieldset>
-      <div className="space-y-2">
-        <label className="block text-sm" htmlFor={`${formId}-lifetime`}>
+      <div className="flex items-center gap-2">
+        <label className="shrink-0 text-sm" htmlFor={`${formId}-lifetime`}>
           Lifetime
         </label>
         <select
@@ -161,7 +164,7 @@ export function NewChannelDialog({
           onChange={(event) =>
             setLifetime(Number(event.target.value) as ChannelLifetime)
           }
-          className="h-11 w-full min-w-0 rounded-lg border border-input/40 bg-background px-3 text-base focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring md:text-sm"
+          className="h-11 min-w-0 flex-1 rounded-lg border border-input/40 bg-background px-3 text-base focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring md:text-sm"
         >
           {CHANNEL_LIFETIMES.map(({ label, seconds }) => (
             <option key={seconds} value={seconds}>
@@ -169,10 +172,10 @@ export function NewChannelDialog({
             </option>
           ))}
         </select>
-        <p className="text-xs text-muted-foreground">
-          Temporary channels archive after this long without activity.
-        </p>
       </div>
+      <p className="text-xs text-muted-foreground">
+        Temporary channels archive after this long without activity.
+      </p>
       <label className="flex min-h-11 items-center gap-2 text-sm text-muted-foreground">
         <input
           type="checkbox"
