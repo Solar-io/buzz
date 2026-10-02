@@ -65,10 +65,21 @@ export function PeopleSection({
                 {!profiles.has(member.pubkey) && (
                   <p className="text-xs text-muted-foreground">No profile</p>
                 )}
+                {canManage && lastOwner && (
+                  <p
+                    id={`owner-reason-${member.pubkey}`}
+                    className="text-2xs text-muted-foreground"
+                  >
+                    A channel needs an owner
+                  </p>
+                )}
               </div>
               {canManage ? (
                 <select
                   aria-label={`Role for ${label}`}
+                  aria-describedby={
+                    lastOwner ? `owner-reason-${member.pubkey}` : undefined
+                  }
                   value={role}
                   disabled={busy || lastOwner}
                   title={lastOwner ? "A channel needs an owner" : undefined}

@@ -327,7 +327,7 @@ export interface ChannelMember {
   name: string;
   /**
    * Role from the relay-signed 39002 (`owner`, `admin`, `member`, `bot`…),
-   * where the roster source carries it — the TTL-room snapshot does.
+   * read from the fourth slot of the roster's NIP-29 p tags.
    */
   role?: string;
 }

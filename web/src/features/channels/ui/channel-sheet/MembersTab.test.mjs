@@ -266,6 +266,10 @@ test("last owner demote is disabled", async () => {
   try {
     assert.equal(byLabel("Role for Sam").disabled, true);
     assert.equal(byLabel("Role for Sam").title, "A channel needs an owner");
+    assert.equal(
+      document.getElementById(`owner-reason-${SELF}`).textContent,
+      "A channel needs an owner",
+    );
     await menu("Sam");
     assert.equal(
       menuItem("Remove from channel").getAttribute("aria-disabled"),
