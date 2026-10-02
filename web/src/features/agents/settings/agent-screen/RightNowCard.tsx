@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { Copy, Square } from "lucide-react";
 import { toast } from "sonner";
@@ -42,9 +42,13 @@ export function RightNowCard({
   const [channelId, setChannelId] = useState("");
   const [modelId, setModelId] = useState("");
   const [busy, setBusy] = useState(false);
+  const selectedByUser = useRef(false);
   const listId = useId();
   useEffect(() => {
-    if (!channels.some((channel) => channel.id === channelId)) {
+    if (
+      !channels.some((channel) => channel.id === channelId) ||
+      !selectedByUser.current
+    ) {
       setChannelId(
         turns.find((turn) =>
           channels.some((channel) => channel.id === turn.channelId),
@@ -97,7 +101,10 @@ export function RightNowCard({
           <select
             className="h-11 w-full min-w-0 rounded-md border border-input bg-background px-2 text-sm md:h-9"
             value={channelId}
-            onChange={(event) => setChannelId(event.target.value)}
+            onChange={(event) => {
+              selectedByUser.current = true;
+              setChannelId(event.target.value);
+            }}
           >
             {channels.map((channel) => (
               <option key={channel.id} value={channel.id}>

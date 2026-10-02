@@ -60,6 +60,30 @@ async function settings(page: Page, { rejectAdd = false, stale = false } = {}) {
         ...(members.has(id) ? [["p", agent.pubkey, "bot"]] : []),
       ],
     });
+  const observer = (kind: string, payload: unknown) =>
+    mockEvent({
+      id: (revision++).toString(16).padStart(64, "0"),
+      kind: 24200,
+      pubkey: agent.pubkey,
+      created_at: revision,
+      tags: [
+        ["p", fixture.viewer],
+        ["agent", agent.pubkey],
+      ],
+      content: nip44.v2.encrypt(
+        JSON.stringify({
+          seq: revision,
+          timestamp: new Date().toISOString(),
+          kind,
+          channelId: channel,
+          sessionId: "s-t-acid",
+          turnId: "t-acid",
+          agentIndex: 0,
+          payload,
+        }),
+        nip44.v2.utils.getConversationKey(agent.secretKey, fixture.viewer),
+      ),
+    });
   const ownerRecords = [agent, fixture.agents.gilfoyle].map((entry, index) =>
     mockEvent({
       id: `${index + 80}`.repeat(32),
@@ -79,6 +103,11 @@ async function settings(page: Page, { rejectAdd = false, stale = false } = {}) {
     (event) => ![30177, 30180, 39002].includes(event.kind),
   );
   events.push(
+    observer("session_config_captured", {
+      models: { currentModelId: "running-opus" },
+    }),
+  );
+  events.push(
     ...ownerRecords,
     ...Object.values(fixture.channels).map(snapshot),
     mockEvent({
@@ -93,7 +122,7 @@ async function settings(page: Page, { rejectAdd = false, stale = false } = {}) {
         machine: "crichton.local",
         agents: [agent.pubkey, fixture.agents.gilfoyle.pubkey],
         harnesses: [],
-        updated_at: Math.floor(Date.now() / 1000),
+        updated_at: Math.floor(Date.now() / 1000) - (stale ? 8 * 3600 : 60),
       }),
     }),
   );
@@ -106,6 +135,22 @@ async function settings(page: Page, { rejectAdd = false, stale = false } = {}) {
     rejectPublish: (event) =>
       rejectAdd && event.kind === 9000 ? "Channel admin required" : null,
     onPublish: (event, handle) => {
+      if (event.kind === 24200) {
+        const control = JSON.parse(
+          nip44.v2.decrypt(
+            event.content,
+            nip44.v2.utils.getConversationKey(agent.secretKey, fixture.viewer),
+          ),
+        ).payload;
+        if (control.type === "switch_model")
+          handle.push(
+            observer("session_config_captured", {
+              models: { currentModelId: control.modelId },
+            }),
+          );
+        if (control.type === "cancel_turn")
+          handle.push(observer("turn_completed", { stopReason: "cancelled" }));
+      }
       if (event.kind === 9000 || event.kind === 9001) {
         const id = event.tags.find((tag) => tag[0] === "h")?.[1];
         if (id) {
@@ -268,9 +313,14 @@ test("W9a live model switch and Cancel turn encrypt the right conversation and a
 }) => {
   const { fixture, relay, agent, channel } = await settings(page);
   const now = page.getByTestId("agent-right-now");
+  await expect(now.getByTestId("agent-live-model")).toHaveText("running-opus");
   await now.getByLabel("Live model").fill("codex-test-model");
   await now.getByRole("button", { name: "Switch model", exact: true }).click();
+  await expect(now.getByTestId("agent-live-model")).toHaveText(
+    "codex-test-model",
+  );
   await now.getByRole("button", { name: "Cancel turn", exact: true }).click();
+  await expect(now).toContainText("No turn in progress");
   await expect
     .poll(() => relay.published.filter((event) => event.kind === 24200))
     .toHaveLength(2);

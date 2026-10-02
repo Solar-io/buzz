@@ -220,26 +220,28 @@ export function SettingsPage({ group, agent, tab }: SettingsPageProps) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Narrow viewports: back header plus the nav as a chip row. */}
-        <header
-          className="flex shrink-0 items-center justify-between gap-2 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] md:hidden"
-          data-testid="settings-header"
-        >
-          <Button
-            className="min-h-11 min-w-11 md:min-h-8 md:min-w-0"
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              void navigate(
-                showPhoneRoot
-                  ? { to: "/repos" }
-                  : { to: "/repos/settings", search: {} },
-              );
-            }}
+        {!agent && (
+          <header
+            className="flex shrink-0 items-center justify-between gap-2 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] md:hidden"
+            data-testid="settings-header"
           >
-            ← {showPhoneRoot ? "Back" : "Settings"}
-          </Button>
-          <h1 className="text-lg font-semibold">Settings</h1>
-        </header>
+            <Button
+              className="min-h-11 min-w-11 md:min-h-8 md:min-w-0"
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                void navigate(
+                  showPhoneRoot
+                    ? { to: "/repos" }
+                    : { to: "/repos/settings", search: {} },
+                );
+              }}
+            >
+              ← {showPhoneRoot ? "Back" : "Settings"}
+            </Button>
+            <h1 className="text-lg font-semibold">Settings</h1>
+          </header>
+        )}
         {showPhoneRoot ? (
           <SettingsNav
             active={active}
