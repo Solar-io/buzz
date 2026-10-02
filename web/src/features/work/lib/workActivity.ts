@@ -126,3 +126,55 @@ export function activityQueries(feed: WorkFeed, nowS: number): ActivityQuery[] {
     ]),
   }));
 }
+
+/** Live messages kept per (agent, channel) on top of history. */
+export const LIVE_HELD_PER_SLOT = 50;
+
+/** How long after a turn ends its channel is still listened to live. */
+export const LIVE_GRACE_S = 90;
+
+export interface LiveSlot {
+  slot: string;
+  agentPubkey: string;
+  channelId: string;
+  /** Listen from here: the turn's start (no earlier than an hour ago). */
+  since: number;
+}
+
+/**
+ * The (agent, channel) pairs whose words can still change a row: every
+ * running turn, and every Done turn that ended within {@link LIVE_GRACE_S}
+ * — an agent's final reply can land after the turn's history REQ closed.
+ * Capped at 30, like the history queries.
+ */
+export function liveSlots(feed: WorkFeed, nowS: number): LiveSlot[] {
+  const out = new Map<string, LiveSlot>();
+  const add = (row: RunRow | DoneRow, startedAt: number | null) => {
+    if (!row.channelId || out.size >= 30) {
+      return;
+    }
+    const slot = activitySlot(row.agentPubkey, row.channelId);
+    const since = Math.max(startedAt ?? nowS - 3600, nowS - 3600);
+    const previous = out.get(slot);
+    if (!previous || since < previous.since) {
+      out.set(slot, {
+        slot,
+        agentPubkey: row.agentPubkey,
+        channelId: row.channelId,
+        since,
+      });
+    }
+  };
+  for (const row of feed.running) {
+    add(row, row.startedAt);
+  }
+  if (feed.done.state === "ready") {
+    for (const row of feed.done.rows) {
+      const ended = row.endedAt ?? row.at;
+      if (nowS - ended <= LIVE_GRACE_S) {
+        add(row, row.startedAt ?? null);
+      }
+    }
+  }
+  return [...out.values()].sort((a, b) => a.slot.localeCompare(b.slot));
+}

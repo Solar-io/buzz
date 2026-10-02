@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { activityQueries, mergeActivityMessages } from "./workActivity.ts";
+import {
+  activityQueries,
+  liveSlots,
+  mergeActivityMessages,
+} from "./workActivity.ts";
 
 const run = (
   agentPubkey = "agent",
@@ -104,4 +108,31 @@ test("activity cache keeps five per turn window, preserving older done messages"
     merged.map((event) => event.created_at).sort((a, b) => a - b),
     [1, 2, 3, 4, 5, 107, 108, 109, 110, 111],
   );
+});
+
+test("live slots: running turns, and Done turns only inside the 90 s grace", () => {
+  const NOW = 10_000;
+  const slots = liveSlots(
+    feed(
+      [run("a", "c1", NOW - 600)],
+      [
+        done("b", "c2", NOW - 60, NOW - 400), // ended 60 s ago: listen
+        done("d", "c3", NOW - 120, NOW - 400), // ended 120 s ago: done with
+      ],
+    ),
+    NOW,
+  );
+  assert.deepEqual(
+    slots.map((slot) => [slot.slot, slot.since]),
+    [
+      ["a|c1", NOW - 600],
+      ["b|c2", NOW - 400],
+    ],
+  );
+});
+
+test("live slots never reach back more than an hour", () => {
+  const NOW = 10_000;
+  const [slot] = liveSlots(feed([run("a", "c1", NOW - 7_200)]), NOW);
+  assert.equal(slot.since, NOW - 3_600);
 });

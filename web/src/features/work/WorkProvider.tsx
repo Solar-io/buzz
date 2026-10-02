@@ -49,6 +49,10 @@ import {
   activityQueries,
   type ActivityQuery,
   type AgentActivity,
+  activitySlot,
+  LIVE_HELD_PER_SLOT,
+  type LiveSlot,
+  liveSlots,
   mergeActivityMessages,
 } from "./lib/workActivity.ts";
 import {
@@ -402,31 +406,26 @@ export function WorkProvider({
 
   // ---- own messages: bounded history, settled keys, close on EOSE ---------
   const nowS = useNowSeconds(60_000, live);
-  const activityKey = useMemo(
+  const activityFeed = useMemo(
     () =>
-      JSON.stringify(
-        activityQueries(
-          buildWorkFeed(
-            {
-              needs: {
-                interviews: [],
-                inboxItems: [],
-                approvals: [],
-                reminders: [],
-              },
-              observer: observerFrames ?? new Map(),
-              dismissedTurns,
-              reactions,
-              targets,
-              metrics,
-              status: taskStatus,
-            },
-            nowS,
-            "everywhere",
-            null,
-          ),
-          nowS,
-        ),
+      buildWorkFeed(
+        {
+          needs: {
+            interviews: [],
+            inboxItems: [],
+            approvals: [],
+            reminders: [],
+          },
+          observer: observerFrames ?? new Map(),
+          dismissedTurns,
+          reactions,
+          targets,
+          metrics,
+          status: taskStatus,
+        },
+        nowS,
+        "everywhere",
+        null,
       ),
     [
       observerFrames,
@@ -437,6 +436,10 @@ export function WorkProvider({
       taskStatus,
       nowS,
     ],
+  );
+  const activityKey = useMemo(
+    () => JSON.stringify(activityQueries(activityFeed, nowS)),
+    [activityFeed, nowS],
   );
   const settledActivity = useSettledKey(activityKey);
   const triedActivity = useRef(new Map<string, string>());
@@ -491,6 +494,59 @@ export function WorkProvider({
       }
     };
   }, [session, live, settledActivity]);
+
+  // ---- own messages, live: running turns and the Done grace window --------
+  // History closes at EOSE; an agent's next line (or its final reply, which
+  // can land after the turn's 30624 says done) arrives here instead.
+  const liveKey = useMemo(
+    () => JSON.stringify(liveSlots(activityFeed, nowS)),
+    [activityFeed, nowS],
+  );
+  const settledLive = useSettledKey(liveKey);
+  useEffect(() => {
+    if (!live) {
+      return;
+    }
+    const slots = JSON.parse(settledLive) as LiveSlot[];
+    if (slots.length === 0) {
+      return;
+    }
+    const filters = slots.map((slot) => ({
+      kinds: [9],
+      authors: [slot.agentPubkey],
+      "#h": [slot.channelId],
+      // No `limit`: this one stays open (bounded by `since`), and history
+      // REQs are told apart from it by their `limit`.
+      since: slot.since,
+    }));
+    const unsubscribe = session.subscribe(filters, {
+      onEvent: (event) => {
+        const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
+        if (event.kind !== 9 || !channelId) {
+          return;
+        }
+        const slot = activitySlot(event.pubkey, channelId);
+        if (!slots.some((live) => live.slot === slot)) {
+          return;
+        }
+        // Add, never prune by this filter: the slot also holds older Done
+        // windows' history. Bounded per slot all the same.
+        setAgentActivity((previous) => {
+          const held = previous.get(slot) ?? [];
+          if (held.some((known) => known.id === event.id)) {
+            return previous;
+          }
+          return new Map(previous).set(
+            slot,
+            [...held, event]
+              .sort((a, b) => b.created_at - a.created_at)
+              .slice(0, LIVE_HELD_PER_SLOT),
+          );
+        });
+      },
+    });
+    return unsubscribe;
+  }, [session, live, settledLive]);
 
   // ---- local UI state ------------------------------------------------------
   const dismissTurn = useCallback((turnId: string) => {

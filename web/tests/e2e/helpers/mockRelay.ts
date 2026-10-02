@@ -113,6 +113,8 @@ export interface MockRelay {
 }
 
 export interface MockRelayOptions {
+  /** Inspect actual client protocol frames for QA request/close counts. */
+  onFrame?: (frame: unknown[]) => void;
   /**
    * Refuse a publish: return the relay's rejection text, or null to accept.
    * The refusal is an `OK false` frame carrying that text verbatim.
@@ -188,6 +190,7 @@ export async function installMockRelay(
       if (!Array.isArray(message) || message.length === 0) {
         return;
       }
+      options.onFrame?.(message);
       const [type] = message as [string];
       if (type === "REQ") {
         const subId = String(message[1]);
