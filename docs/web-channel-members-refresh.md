@@ -13,8 +13,9 @@ overwrite it. Existing member-name and role handling is preserved.
 The open conversation passes its timeline through the route's mention-roster
 adapter, reusing the timeline's existing channel-scoped system-message
 subscription. Standalone roster consumers use a kind-40099 `#h` subscription
-starting at the current second. Both add-member comments now describe the
-refetch mechanism.
+starting at the current second. The roster request also carries `#h`, allowing
+it to receive a replacement stored after the notice-triggered fetch. Both
+add-member comments now describe the refetch mechanism.
 
 Files:
 
@@ -65,3 +66,23 @@ Receipts are in the project's `logs/verification.log`, with separate baseline,
 final-suite, mutation, typecheck, build, formatting, and browser logs beside it.
 The requested `docs/TASKS.md`, `docs/PROJECT_STATUS.md`, and `docs/LAST_CHAT.md`
 were absent; this document provides the handoff context.
+
+## QA timing correction
+
+The tester seat exercised the served worktree build in Agent Brave and found
+that the relay emits its kind-40099 membership system message before storing
+the replacement roster (`side_effects.rs`, `handle_put_user` and
+`handle_remove_user`). A refetch can therefore return the previous roster.
+Its controlled browser reproduction left both joins and removals stale for
+more than two seconds; after removal, the next message still tagged the agent.
+
+The roster request now includes `#h` alongside `#d`, so it receives the later
+kind-39002 replacement through live channel fan-out. The relay matches `#h`
+against `StoredEvent.channel_id` when the signed roster has no `h` tag
+(`buzz-core/src/filter.rs`); its stored-event query uses the same channel
+scope. No polling or timing delay is needed.
+
+Two additional real-hook regressions simulate a notice, a refetch of the old
+snapshot, then a channel-scoped live replacement. Both failed before this
+correction and passed afterwards: nine focused tests total. The original
+seven regression and mutation results above describe the first implementation.

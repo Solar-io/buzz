@@ -286,6 +286,40 @@ test("composer soleAgent sees a joined agent through the existing timeline subsc
   );
 });
 
+for (const type of ["member_joined", "member_removed"]) {
+  test(`${type} receives a roster stored after the notice-triggered refetch`, async () => {
+    await withRoster(async ({ socket, deliver, latest }) => {
+      const before = type === "member_joined" ? [SELF] : [SELF, AGENT];
+      const after = type === "member_joined" ? [SELF, AGENT] : [SELF];
+      await deliver(39002, snapshot(before));
+      await deliver(40099, notice(type));
+      // The relay emits 40099 before replacing 39002. This REQ can still
+      // read the old snapshot; the replacement arrives later through live
+      // channel fan-out, which serves #h subscriptions only.
+      await deliver(39002, snapshot(before));
+      const replacement = snapshot(after, 101);
+      await act(async () => {
+        for (const request of socket.activeRequests()) {
+          if (
+            request
+              .slice(2)
+              .some(
+                (filter) =>
+                  filter.kinds?.includes(39002) && filter["#h"]?.includes(ROOM),
+              )
+          ) {
+            socket.serverSend(["EVENT", request[1], replacement]);
+          }
+        }
+      });
+      assert.deepEqual(
+        latest().members.map((member) => member.pubkey),
+        after,
+      );
+    });
+  });
+}
+
 after(() => {
   globalThis.window = originals.window;
   globalThis.document = originals.document;

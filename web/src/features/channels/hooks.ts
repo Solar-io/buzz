@@ -362,10 +362,13 @@ export function useChannelMembers(
     const refresh = () => {
       const currentRequest = ++request;
       stopRoster?.();
-      // A #d-only request can read the stored roster, but receives no live
-      // channel events. Reopen it after a membership system notice.
+      // Scope by #h as well as #d: the relay emits the membership notice
+      // before storing 39002, so a refetch can read the old snapshot. Keep
+      // receiving the later replacement through channel-scoped fan-out.
+      // The relay matches #h against the stored channel_id when a roster
+      // event carries only a d tag (buzz-core/src/filter.rs).
       stopRoster = session.subscribe(
-        { kinds: [39002], "#d": [channelId], limit: 1 },
+        { kinds: [39002], "#d": [channelId], "#h": [channelId], limit: 1 },
         {
           onEvent: (event: SignedNostrEvent) => {
             const dTag = event.tags.find((tag) => tag[0] === "d")?.[1];

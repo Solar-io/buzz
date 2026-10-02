@@ -19,8 +19,9 @@
  * primitive deserves.
  *
  * After a successful add, `useChannelMembers` refetches the latest kind-39002
- * snapshot when a channel-scoped kind-40099 membership notice arrives. Its
- * #d-only roster request reads history but does not receive live updates.
+ * snapshot when a channel-scoped kind-40099 membership notice arrives. The
+ * roster request also carries #h so a replacement stored after that notice
+ * still reaches it live.
  *
  * Import-free apart from sibling/relative `.ts` modules, so `node --test`
  * loads it.
