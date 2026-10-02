@@ -1092,3 +1092,16 @@ Three sub-traps from the same hour:
   mutation.** A mutation run without `pnpm build` tests the previous bundle
   and reports a clean survivor (seen: unwiring `useFavoritesSync` stayed
   green until the rebuild, then both specs failed).
+
+## Owner-admin v5 foundation (earned on parity P0, 2026-10-02)
+
+- Catalog publication is not proof of desktop liveness. Only a fresh,
+  request-matched owner-sealed ping ack unlocks the web controls.
+- A named capability requires v5 and support on every claiming machine;
+  older catalogs still parse but grant no named capabilities.
+- Check capability requirements and timestamp freshness before any desktop
+  save path. Never log the payload. Keep response budgets in UTF-8 bytes.
+- The shared owner-admin corpus pins both parsers. Browser tests must
+  advance the mocked relay auth grace before expecting subscriptions.
+- Run synthetic Agent Brave tests with fake clocks in an isolated browser
+  context, and close only that context; the signed-in browser is shared.

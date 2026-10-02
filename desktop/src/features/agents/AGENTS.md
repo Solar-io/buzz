@@ -10,6 +10,13 @@ Plan of record: `Buzz/Harness-Provider-Model.md` in Morgan's Obsidian vault
 
 ## The one rule
 
+**Owner-admin protocol capabilities are separate from harness capabilities.**
+`ownerAdminCaps.ts` is the only list advertised in desktop catalog v5. Add a
+capability only with its parser and applier. Ingestion checks `requires` and
+mutating-command freshness before calling any save path; ping never changes
+an agent. Acknowledgements carry `code`/`result` and enforce a 60,000-byte
+UTF-8 plaintext budget before sealing. Never log command or result payloads.
+
 **Harness capability facts have exactly one source: the Rust runtime catalog.**
 `KnownAcpRuntime` (`desktop/src-tauri/src/managed_agents/discovery/runtime_metadata.rs`)
 declares each harness's model/provider/effort env keys and capabilities. Spawn

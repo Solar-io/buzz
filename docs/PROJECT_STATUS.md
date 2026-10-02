@@ -1,3 +1,5 @@
 Work rows resolve an agent's own kind-9 message within the turn window after a 30624 title. Short trigger asks recover their NIP-10 parent. WorkProvider uses bounded, debounced history requests, closed on EOSE; only running query keys renew each minute.
 
 QA 2026-10-02: acceptance blocked by QA-WORK-001, a Done-only row missing final messages that arrive after EOSE within the 30-second allowance. 4,081 unit tests, TypeScript, scoped Biome and build pass; five existing Work-status cases pass, and independent Running/parent and two-minute request cases pass. Four broader Work-shell tests have stale Vitals expectations; full Biome has 30 existing errors outside this feature. Cache-retention and code-fence summaries have medium findings. Evidence: docs/TEST_REPORTS/qa-work-63eeb8a14/test-report-2026-10-02.md.
+
+P0 adds capability-negotiated, freshness-checked owner-admin commands and desktop-presence locks to the web. Shared fixtures execute on both clients; the original-base size ratchet, scoped formatting, TypeScript, unit suites and served-app browser scenario prove the foundation. See docs/TEST_REPORTS/parity-p0.md for receipts and the probe-timing distinction.
