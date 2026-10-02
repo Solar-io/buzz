@@ -9,4 +9,4 @@
 - [x] Parity A1: run web baseline/final, typecheck/build/size checks and buzz-acp tests/clippy; record handoff and commits. Evidence: [A1 report](TEST_REPORTS/parity-a1.md).
 - [ ] Parity A1 release acceptance (plan: after R3): a throwaway agent's pubkey-keyed `voiceModel` changes the next marked turn's observed model without a restart.
 - [x] Daily Digest implementation: row above Links, fixed in-app web target, phone title/selection, shared LRU and native iframe lifecycle; 4,097 unit tests, typecheck, build and touched-file Biome pass.
-- [ ] Daily Digest acceptance: reducer mutation proof and desktop/phone Agent Brave workflow checks.
+- [x] Daily Digest acceptance: four named mutation failures at an unchanged 4,097 tests, restored full checks pass, desktop/phone Agent Brave workflows render the live edition and retain its frame. Evidence: [Daily Digest report](TEST_REPORTS/daily-digest.md).
