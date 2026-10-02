@@ -117,6 +117,15 @@ provisioning/account writes merely to get an unsigned build to pass.
 - Agent/harness management is excluded from the native navigation. Chat,
   Thinking, encrypted observation, forums, Inbox, reminders, projects, files,
   workflows, and approvals use the shared client.
+- Launch links use the `buzzweb://` scheme (`buzz://` belongs to the Flutter
+  app on the same phone). `buzzweb://` or `buzzweb://open` opens the app;
+  `buzzweb://call` calls the last agent you had a successful voice call with;
+  `buzzweb://call?agent=<name|npub|hex>` calls that agent, which must be in
+  your own kind 30177 registry (names match case-insensitively; an ambiguous
+  name is refused). `BuzzLaunchPlugin` validates the shape and keeps only the
+  newest call intent; the web client (`features/huddle/lib/launchIntent.ts`)
+  handles it once, acknowledges it before dialing, and drops taps older than
+  five minutes. Anything malformed is ignored.
 
 The reused native audio source is split into `HuddleAudioTypes.swift` and
 `HuddleAudioEngine.swift`, adapted from `mobile/ios/Runner/HuddleAudioEngine.swift`
