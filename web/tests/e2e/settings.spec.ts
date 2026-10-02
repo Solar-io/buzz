@@ -81,8 +81,8 @@ test("every settings card renders for a signed-in viewer", async ({ page }) => {
   for (const [navItem, group, testIds] of [
     [/^Account/, "account", ["welcome-checklist-strip"]],
     [/^Appearance/, "appearance", ["appearance-card"]],
-    [/^Keyboard shortcuts/, "keyboard", ["keyboard-shortcuts-card"]],
-    [/^Community/, "community", ["invites-card", "custom-emoji-card"]],
+    [/^Keyboard/, "keyboard", ["keyboard-shortcuts-card"]],
+    [/^Members & invites/, "community", ["invites-card", "custom-emoji-card"]],
     [
       /^Security & devices/,
       "security",
@@ -111,8 +111,10 @@ test.describe("narrow mobile settings layout", () => {
     // Below md the nav rail (and its `settings-back`) is hidden; the narrow
     // header carries its own Back link (two-pane redesign, be0a5fad6).
     await expect(page.getByTestId("settings-back")).toBeHidden();
-    const back = header.getByRole("link", { name: "← Back" });
-    const scroller = page.getByTestId("settings-scroll");
+    const back = header.getByRole("button", { name: "← Back" });
+    const scroller = page
+      .getByTestId("settings-root-list")
+      .locator(".buzz-sidebar-scrollbar");
     await expect(header).toBeVisible();
     await expect(back).toBeVisible();
 
@@ -289,14 +291,14 @@ test("the experiments switch reveals the channel templates card", async ({
   page,
 }) => {
   // The switch lives in Advanced; the card it gates lives in Community.
-  await signIn(page, settingsPath("community"));
+  await signIn(page, settingsPath("channels"));
   await expect(page.getByTestId("settings-pane-community")).toBeVisible();
   await expect(page.getByTestId("custom-emoji-card")).toBeVisible();
   await expect(page.getByTestId("channel-templates-card")).toHaveCount(0);
 
   await page.goto(settingsPath("advanced"));
   await page.getByTestId("feature-toggle-channel-templates").click();
-  await page.goto(settingsPath("community"));
+  await page.goto(settingsPath("channels"));
   await expect(page.getByTestId("channel-templates-card")).toBeVisible();
 
   // And the choice survives a reload, because it is persisted.
@@ -309,7 +311,7 @@ test("a channel template can be created and persists across a reload", async ({
 }) => {
   await signIn(page, settingsPath("advanced"));
   await page.getByTestId("feature-toggle-channel-templates").click();
-  await page.goto(settingsPath("community"));
+  await page.goto(settingsPath("channels"));
 
   const card = page.getByTestId("channel-templates-card");
   await expect(card).toContainText("No templates yet");

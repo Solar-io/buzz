@@ -45,7 +45,15 @@ type Mode =
   | { kind: "definitions" }
   | { kind: "teams" };
 
-export function AgentsAdminPage() {
+export function AgentsAdminPage({
+  embedded = false,
+  section = "agents",
+  tab,
+}: {
+  embedded?: boolean;
+  section?: "agents" | "library";
+  tab?: string;
+}) {
   const { canSign } = useAuth();
   const registry = useAgentRegistry();
   const catalogs = useDesktopCatalogs();
@@ -55,7 +63,18 @@ export function AgentsAdminPage() {
   const teams = teamsState.map;
   const { session, status } = useRelaySession();
   const admin = useAdminCommands(session, status);
-  const [mode, setMode] = useState<Mode>({ kind: "roster" });
+  const [mode, setMode] = useState<Mode>(
+    section === "library"
+      ? {
+          kind:
+            tab === "teams"
+              ? "teams"
+              : tab === "catalog"
+                ? "catalog"
+                : "definitions",
+        }
+      : { kind: "roster" },
+  );
 
   const roster = useMemo(
     () => buildRoster(registry, personas, catalogs),
@@ -105,55 +124,77 @@ export function AgentsAdminPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 p-4">
+    <div className={embedded ? "space-y-4" : "mx-auto max-w-5xl space-y-4 p-4"}>
       <div className="flex items-center justify-between gap-2">
-        <h1 className="text-lg font-semibold">Agents</h1>
+        {!embedded ? <h1 className="text-lg font-semibold">Agents</h1> : null}
         {/* flex-wrap (the app's standard action-row pattern, e.g.
             RepoDetailPage/HuddleBar): the four buttons are ~446px side by
             side, which overflows a 375px viewport — wrapped rows keep the
             page from scrolling horizontally. */}
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setMode({ kind: "catalog" })}
-          >
-            <BookOpen aria-hidden className="mr-1 h-4 w-4" />
-            Catalog
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setMode({ kind: "definitions" })}
-          >
-            <FileText aria-hidden className="mr-1 h-4 w-4" />
-            Definitions
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setMode({ kind: "teams" })}
-          >
-            <Users aria-hidden className="mr-1 h-4 w-4" />
-            Teams
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setMode({ kind: "create" })}
-          >
-            <Plus aria-hidden className="mr-1 h-4 w-4" />
-            New agent
-          </Button>
+          {section === "library" ? (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setMode({ kind: "catalog" })}
+              >
+                <BookOpen aria-hidden className="mr-1 h-4 w-4" />
+                Catalog
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setMode({ kind: "definitions" })}
+              >
+                <FileText aria-hidden className="mr-1 h-4 w-4" />
+                Definitions
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setMode({ kind: "teams" })}
+              >
+                <Users aria-hidden className="mr-1 h-4 w-4" />
+                Teams
+              </Button>
+            </>
+          ) : null}
+          {section === "agents" ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setMode({ kind: "create" })}
+            >
+              <Plus aria-hidden className="mr-1 h-4 w-4" />
+              New agent
+            </Button>
+          ) : null}
           <ImportSnapshotButton />
-          <Button asChild variant="ghost" size="sm">
-            <Link to="/repos/settings">Back to settings</Link>
-          </Button>
+          {!embedded ? (
+            <Button asChild variant="ghost" size="sm">
+              <Link to="/repos/settings">Back to settings</Link>
+            </Button>
+          ) : null}
         </div>
       </div>
       <PendingCommandsStrip pending={admin.pending} acks={admin.acks} />
-      <div className="grid items-start gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
-        <div className={mode.kind === "roster" ? "" : "hidden lg:block"}>
+      <div
+        className={
+          section === "library"
+            ? "space-y-4"
+            : "grid items-start gap-4 lg:grid-cols-[300px_minmax(0,1fr)]"
+        }
+      >
+        <div
+          className={
+            section === "library"
+              ? "hidden"
+              : mode.kind === "roster"
+                ? ""
+                : "hidden lg:block"
+          }
+        >
           <AgentRosterSidebar
             roster={roster}
             sections={rosterSections}
@@ -224,6 +265,7 @@ export function AgentsAdminPage() {
           {mode.kind === "catalog" && (
             <PaneShell
               title="Agent catalog"
+              hideBack={section === "library"}
               onBack={() => setMode({ kind: "roster" })}
             >
               <PersonaCatalogPanel admin={admin} catalogs={catalogs} />
@@ -232,6 +274,7 @@ export function AgentsAdminPage() {
           {mode.kind === "definitions" && (
             <PaneShell
               title="Agent definitions"
+              hideBack={section === "library"}
               onBack={() => setMode({ kind: "roster" })}
             >
               <DefinitionsPanel
@@ -249,6 +292,7 @@ export function AgentsAdminPage() {
           {mode.kind === "teams" && (
             <PaneShell
               title="Agent teams"
+              hideBack={section === "library"}
               onBack={() => setMode({ kind: "roster" })}
             >
               <TeamsPanel
@@ -271,24 +315,28 @@ function PaneShell({
   title,
   onBack,
   children,
+  hideBack = false,
 }: {
   title: string;
   onBack: () => void;
   children: ReactNode;
+  hideBack?: boolean;
 }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <Button
-          size="sm"
-          variant="ghost"
-          className="lg:hidden"
-          onClick={onBack}
-          aria-label="Back to all agents"
-        >
-          <ArrowLeft aria-hidden className="h-4 w-4" />
-          All agents
-        </Button>
+        {!hideBack ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="lg:hidden"
+            onClick={onBack}
+            aria-label="Back to all agents"
+          >
+            <ArrowLeft aria-hidden className="h-4 w-4" />
+            All agents
+          </Button>
+        ) : null}
         <h2 className="min-w-0 flex-1 truncate font-medium">{title}</h2>
       </div>
       {children}

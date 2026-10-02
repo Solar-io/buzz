@@ -1,57 +1,61 @@
-/**
- * The settings information architecture: the nine groups, their nav labels,
- * and the pure helpers the two-pane page derives from them.
- *
- * The IA is the approved settings redesign (Sam, 2026-09-20): two panes — a
- * fixed nav and one content pane — with nine groups under four uppercase
- * section labels (You / Community / Data / Security). Group data lives here,
- * import-free, so `node --test` can load it and the page stays a composition
- * root.
- *
- * Nothing here knows about the cards themselves; `SettingsPage` decides which
- * sections render inside which group so every card keeps its own file, logic,
- * and feature ownership.
- */
-
+/** Settings navigation shared by the rail, phone root, search and routes. */
 export const SETTINGS_GROUP_IDS = [
+  "agents",
+  "accounts",
+  "library",
   "account",
+  "voice",
   "notifications",
   "appearance",
   "keyboard",
   "community",
-  "agents",
+  "channels",
   "data",
   "security",
   "advanced",
 ] as const;
-
 export type SettingsGroupId = (typeof SETTINGS_GROUP_IDS)[number];
-
 export interface SettingsGroupMeta {
   id: SettingsGroupId;
-  /**
-   * The small uppercase label the nav shows above a run of items. Rendered
-   * only when it differs from the previous item's label.
-   */
   navLabel: string;
-  /** Nav item text and the pane heading. */
   name: string;
-  /** The one-line description under the pane heading. */
   description: string;
-  /**
-   * Native iOS hides surface gaps: the agents roster lives in Buzz Desktop
-   * and has no native equivalent yet, so its nav item does not render there.
-   */
-  hiddenOnIOS?: boolean;
+  hiddenOnPhone?: boolean;
 }
-
-/** The nine groups, in nav order. The order is the IA — do not reshuffle. */
+export interface SettingsAgent {
+  pubkey: string;
+  name: string;
+}
 export const SETTINGS_GROUPS: readonly SettingsGroupMeta[] = [
+  {
+    id: "agents",
+    navLabel: "Agents",
+    name: "Agents",
+    description: "Create agents and manage their settings.",
+  },
+  {
+    id: "accounts",
+    navLabel: "Agents",
+    name: "Claude accounts",
+    description: "Accounts and assignments on Buzz Desktop.",
+  },
+  {
+    id: "library",
+    navLabel: "Agents",
+    name: "Library",
+    description: "Definitions, teams, catalog, and snapshots.",
+  },
   {
     id: "account",
     navLabel: "You",
     name: "Account",
-    description: "Profile, presence, and how you sound.",
+    description: "Your profile and presence.",
+  },
+  {
+    id: "voice",
+    navLabel: "You",
+    name: "Voice & audio",
+    description: "Your voice, agent voices, and playback.",
   },
   {
     id: "notifications",
@@ -68,91 +72,114 @@ export const SETTINGS_GROUPS: readonly SettingsGroupMeta[] = [
   {
     id: "keyboard",
     navLabel: "You",
-    name: "Keyboard shortcuts",
-    description: "Every shortcut in one place.",
+    name: "Keyboard",
+    description: "All keyboard shortcuts in one place.",
+    hiddenOnPhone: true,
   },
   {
     id: "community",
     navLabel: "Community",
-    name: "Community",
-    description: "Members, emoji, invites, and channel templates.",
+    name: "Members & invites",
+    description: "Community members, invites, and custom emoji.",
   },
   {
-    id: "agents",
+    id: "channels",
     navLabel: "Community",
-    name: "Agents",
-    description:
-      "Create agents and change their settings — drafts are reviewed in Buzz Desktop.",
-    hiddenOnIOS: true,
+    name: "Channels & templates",
+    description: "Templates for new channels.",
   },
   {
     id: "data",
-    navLabel: "Data",
+    navLabel: "Data & security",
     name: "Data",
     description: "Exports, file manager, and local archives.",
   },
   {
     id: "security",
-    navLabel: "Security",
+    navLabel: "Data & security",
     name: "Security & devices",
-    description: "Your key, this device, pairing, and identity archive.",
+    description: "Your key backup, this device, pairing, and identity archive.",
   },
   {
     id: "advanced",
-    navLabel: "Security",
+    navLabel: "Data & security",
     name: "Advanced",
-    description:
-      "Experiments and feature flags. Things here can change or vanish.",
+    description: "Experiments and feature flags.",
   },
 ];
-
-/** The group a bare `/repos/settings` lands on. */
 export const DEFAULT_SETTINGS_GROUP: SettingsGroupId = "account";
-
-/**
- * Parse the `group` search param the way `repos.tsx` parses `view`: a string
- * that names a known group survives, everything else — including a wrong
- * case — falls back to the route's default.
- */
 export function parseSettingsGroup(raw: unknown): SettingsGroupId | undefined {
   return typeof raw === "string" &&
     (SETTINGS_GROUP_IDS as readonly string[]).includes(raw)
     ? (raw as SettingsGroupId)
     : undefined;
 }
-
-/**
- * Narrow a possibly-undefined param to a concrete group. Kept next to the
- * parser so the "default to account" rule has exactly one home.
- */
-export function resolveSettingsGroup(raw: unknown): SettingsGroupId {
-  return parseSettingsGroup(raw) ?? DEFAULT_SETTINGS_GROUP;
+/** Explicit links win; owners enter Agents, other viewers enter Account. */
+export function resolveSettingsGroup(
+  raw: unknown,
+  { ownsAgents = false } = {},
+): SettingsGroupId {
+  return (
+    parseSettingsGroup(raw) ?? (ownsAgents ? "agents" : DEFAULT_SETTINGS_GROUP)
+  );
 }
-
-/**
- * Case-insensitive client-side filter for the nav's search input: an item
- * matches when the query is a substring of its name, its section label, or
- * its pane description — "backup" finds Security & devices through the
- * description, which is the point of searching settings at all.
- */
+export function filterSettingsAgents(
+  query: string,
+  agents: readonly SettingsAgent[],
+): SettingsAgent[] {
+  const needle = query.trim().toLowerCase();
+  return needle
+    ? agents.filter((agent) => agent.name.toLowerCase().includes(needle))
+    : [];
+}
 export function filterSettingsGroups(
   query: string,
   groups: readonly SettingsGroupMeta[] = SETTINGS_GROUPS,
+  agents: readonly SettingsAgent[] = [],
 ): SettingsGroupMeta[] {
   const needle = query.trim().toLowerCase();
-  if (needle === "") return [...groups];
+  if (!needle) return [...groups];
+  const agentMatch = filterSettingsAgents(query, agents).length > 0;
   return groups.filter(
     (group) =>
       group.name.toLowerCase().includes(needle) ||
       group.navLabel.toLowerCase().includes(needle) ||
-      group.description.toLowerCase().includes(needle),
+      group.description.toLowerCase().includes(needle) ||
+      (group.id === "agents" && agentMatch),
   );
 }
-
-/**
- * Groups visible on this device, in nav order. iOS drops the agents group
- * (see `hiddenOnIOS`); everything else renders everywhere.
- */
-export function visibleSettingsGroups(nativeIOS: boolean): SettingsGroupMeta[] {
-  return SETTINGS_GROUPS.filter((group) => !nativeIOS || !group.hiddenOnIOS);
+export function visibleSettingsGroups(phone: boolean): SettingsGroupMeta[] {
+  return SETTINGS_GROUPS.filter((group) => !phone || !group.hiddenOnPhone);
+}
+/** Preserve known settings selectors. Agent targets are canonical lowercase hex. */
+export function parseSettingsSearch(search: Record<string, unknown>): {
+  group?: SettingsGroupId;
+  agent?: string;
+  tab?: string;
+} {
+  const group = parseSettingsGroup(search.group);
+  const agent =
+    typeof search.agent === "string" && /^[0-9a-f]{64}$/i.test(search.agent)
+      ? search.agent.toLowerCase()
+      : undefined;
+  const tab =
+    typeof search.tab === "string" &&
+    [
+      "settings",
+      "channels",
+      "logs",
+      "memory",
+      "activity",
+      "definitions",
+      "teams",
+      "catalog",
+      "snapshots",
+    ].includes(search.tab)
+      ? search.tab
+      : undefined;
+  return {
+    ...(group ? { group } : {}),
+    ...(agent ? { agent } : {}),
+    ...(tab ? { tab } : {}),
+  };
 }
