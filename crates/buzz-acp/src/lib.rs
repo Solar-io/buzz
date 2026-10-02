@@ -3143,6 +3143,7 @@ async fn tokio_main() -> Result<()> {
                                             event_for_steer,
                                             prompt_tag_for_steer,
                                             &steer_ack_tx,
+                                            &pubkey_hex,
                                         );
                                     if !native_attempted {
                                         signal_in_flight_task(
@@ -3814,6 +3815,7 @@ fn try_native_steer(
     event: nostr::Event,
     prompt_tag: String,
     steer_ack_tx: &mpsc::UnboundedSender<SteerAckEvent>,
+    agent_pubkey: &str,
 ) -> bool {
     // Build the steer body: framing strings come from
     // `queue::native_steer_framing()` (Eva's drift-proof requirement —
@@ -3848,10 +3850,12 @@ fn try_native_steer(
     // per-turn model swap is a prompt-turn concept (a mid-turn model switch
     // is a different RPC surface) and is deliberately unresolved here.
     // Resolved before `event` moves into the batch event.
-    let effort_override =
-        crate::voice_turn::VoiceTurnOverrides::from_env_for_turn(Some(event.content.as_str()))
-            .effective_effort()
-            .map(str::to_string);
+    let effort_override = crate::voice_turn::VoiceTurnOverrides::from_env_for_turn(
+        Some(event.content.as_str()),
+        Some(agent_pubkey),
+    )
+    .effective_effort()
+    .map(str::to_string);
     let be = queue::BatchEvent {
         event,
         prompt_tag: prompt_tag.clone(),
@@ -9907,6 +9911,7 @@ mod native_steer_voice_effort_tests {
                 event,
                 "voice-seam".into(),
                 &steer_ack_tx,
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             );
             assert!(
                 accepted,
@@ -9946,6 +9951,7 @@ mod native_steer_voice_effort_tests {
                 event,
                 "voice-seam".into(),
                 &steer_ack_tx,
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             );
             assert!(accepted, "unmarked steers take the same accepted path");
             std::env::remove_var(crate::voice_turn::ENV_EFFORT);
@@ -9984,6 +9990,7 @@ mod native_steer_voice_effort_tests {
                 event,
                 "voice-seam".into(),
                 &steer_ack_tx,
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             );
             assert!(accepted, "unmarked steers take the same accepted path");
             std::env::remove_var(crate::voice_turn::ENV_TEXT_EFFORT);
@@ -10022,6 +10029,7 @@ mod native_steer_voice_effort_tests {
                 event,
                 "voice-seam".into(),
                 &steer_ack_tx,
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             );
             assert!(accepted);
             std::env::remove_var(crate::voice_turn::ENV_TEXT_EFFORT);
