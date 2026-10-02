@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useContext,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -11,6 +12,7 @@ import {
   type Ref,
 } from "react";
 import { notify, toast } from "@/shared/ui/notify";
+import { ChannelReadOnlyContext } from "./ChannelReadOnlyContext";
 import { cn } from "@/shared/lib/cn";
 import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
 import {
@@ -205,6 +207,7 @@ export function Composer({
     ),
   );
   const [busy, setBusy] = useState(false);
+  const readOnly = useContext(ChannelReadOnlyContext);
   // The caret/selection, mirrored into React state. The textarea is
   // uncontrolled for selection, but the toolbar's aria-pressed depends on
   // where the caret is, so every caret move has to reach a render.
@@ -547,6 +550,7 @@ export function Composer({
   const linkPreviews = useComposerLinkPreviews(editingActive ? "" : text);
 
   const submit = async () => {
+    if (readOnly) return;
     const trimmed = text.trim();
     // A slash line is a COMMAND and is never sent as message text: run it,
     // or refuse it with an inline error, and stop. This sits before every
@@ -674,7 +678,7 @@ export function Composer({
   };
 
   const inline = variant === "inline";
-  const working = busy || commandRun.running;
+  const working = busy || commandRun.running || readOnly;
 
   return (
     // A pointer-only drop target (the spread handlers): drag-and-drop has no
@@ -771,6 +775,7 @@ export function Composer({
         onGif={insertGif}
       >
         <textarea
+          disabled={readOnly}
           ref={textareaRef}
           data-testid="composer-input"
           className={cn(

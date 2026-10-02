@@ -14,3 +14,11 @@
 - [x] W6: settings IA, owner landing, phone root, agent search/redirect, desktop report footer; existing controls remain reachable. Evidence: docs/TEST_REPORTS/w6-settings-ia.md.
 - [x] Parity W4 implementation: Stream/Forum creation, lifetime presets, sidebar reachability, mutation proof and 1440/390/375 browser checks. Evidence: TEST_REPORTS/parity-w4.md.
 - [ ] Parity W4 live acceptance: create private Forum and 24 h channels on the live relay with an enrolled test identity. This coder session has no BUZZ_PRIVATE_KEY/BUZZ_AUTH_TAG and Agent Brave has no Nostr extension.
+
+W1 channel settings:
+- [x] About sheet (480 desktop / full-screen phone), header and Members entry points; Members / Workflows placeholders.
+- [x] Metadata parsing and name / purpose / visibility / lifetime edits; Joining and Type read-only.
+- [x] Archive / Unarchive with archived controls and composer locked; join / leave / delete through existing event helpers.
+- [x] Canvas, local Save as template, existing notification mute preference.
+- [x] Required web gates, named fail-first proof and 1440 / 390 screenshots (both applied themes asserted).
+- [ ] W1 live-relay acceptance in a private test channel using an authorized test signer. The coding shell has no Buzz signing credentials; local built-app acceptance uses the mock relay. See TEST_REPORTS/parity-w1.md.

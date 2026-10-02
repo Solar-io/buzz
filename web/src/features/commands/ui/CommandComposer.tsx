@@ -18,9 +18,11 @@ type ComposerProps = ComponentProps<typeof Composer>;
  */
 export function CommandComposer({
   host,
+  readOnly = false,
   ...props
 }: Omit<ComposerProps, "commands" | "commandContext"> & {
   host: Omit<ComposerCommandHost, "createReminder" | "items">;
+  readOnly?: boolean;
 }) {
   const { createReminder } = useRemindMeLater();
   const items = useItemActions().commandActions;
@@ -41,5 +43,17 @@ export function CommandComposer({
     : channel.type === "dm"
       ? `in your DM with ${channel.name}`
       : `in #${channel.name}`;
+  if (readOnly)
+    return (
+      <>
+        <p
+          data-testid="archived-composer"
+          className="border-t border-border p-4 text-sm text-muted-foreground"
+        >
+          This channel is archived. Unarchive it to send messages.
+        </p>
+        {props.actionsBar}
+      </>
+    );
   return <Composer {...props} commands={commands} commandContext={where} />;
 }

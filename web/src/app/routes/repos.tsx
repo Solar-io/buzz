@@ -44,7 +44,8 @@ import { useMessageActions } from "@/features/channels/lib/useMessageActions.ts"
 import { paletteActions } from "@/features/channels/lib/paletteActions.ts";
 import { ChannelTimeline } from "@/features/channels/ui/ChannelTimeline";
 import type { ComposerHandle } from "@/features/channels/ui/Composer";
-import { ChannelHeader } from "@/features/channels/ui/ChannelHeader";
+import { ChannelReadOnlyContext } from "@/features/channels/ui/ChannelReadOnlyContext";
+import { ChannelSettingsHeader as ChannelHeader } from "@/features/channels/ui/channel-sheet/ChannelSettingsHeader";
 import { CommandComposer } from "@/features/commands/ui/CommandComposer";
 import { paletteCommands } from "@/features/commands/lib/commands.ts";
 import { DmComposerActions } from "@/features/channels/ui/DmComposerActions";
@@ -115,15 +116,15 @@ function AppRoute() {
 }
 
 function ChannelBrowser() {
+  const selectedId = Route.useSearch({ select: (s) => s.c });
   const {
     channels,
     connected,
     refresh: refreshChannels,
     forgetChannel: forgetChannelFromList,
     loaded: channelsLoaded,
-  } = useChannels();
+  } = useChannels(selectedId);
   const navigate = useNavigate({ from: "/repos" });
-  const selectedId = Route.useSearch({ select: (s) => s.c });
   const permalinkMessageId = Route.useSearch({ select: (s) => s.m });
   const view = Route.useSearch({ select: (s) => s.view });
   const current = channels.find((channel) => channel.id === selectedId) ?? null;
@@ -223,8 +224,6 @@ function ChannelBrowser() {
     selfPubkey,
   });
   const { send } = messageActions;
-  // Permalink target (?m=): the timeline scrolls it into view and flashes it;
-  // m is dropped only once it LANDED (see usePermalinkCleanup).
   const permalinkReady =
     permalinkMessageId != null &&
     messages.some((m) => m.id === permalinkMessageId);
@@ -783,169 +782,169 @@ function ChannelBrowser() {
             // The flex row the section always sat in (its pane siblings now
             // live in the AppShell row, beside `main`).
             <div className="flex h-full min-h-0">
-              <section
-                className="buzz-conversation-pane relative flex min-w-0 flex-1 flex-col"
-                data-custom-content-pane="chat"
-              >
-                {dmAgentPubkey && (
-                  // Stationary portrait over the chat column (Sam's
-                  // placement verdict, 2026-09-14): anchored top-right, it
-                  // never scrolls with the transcript, and its fluid width
-                  // reflows as the thinking pane is dragged. The matching
-                  // gutter on the timeline below keeps the text clear of
-                  // it. Same agent-chosen kind-0 avatar as the panel chip;
-                  // a swap repaints it in place.
-                  <AgentPortraitOverlay
-                    pubkey={dmAgentPubkey}
-                    name={
-                      profiles.get(dmAgentPubkey)?.displayName ?? dmAgentPubkey
-                    }
-                    picture={dmProfiles.get(dmAgentPubkey)?.avatar}
-                  />
-                )}
-                {/* The header is back (web redesign Phase 2), carrying what
-                      the sidebar row cannot: the topic and the facepile.
-                      Call / Thinking / dictation stay on the composer row. */}
-                <ChannelHeader
-                  channel={current}
-                  title={conversationTitle ?? ""}
-                  members={members}
-                  profiles={profiles}
-                  presence={presence}
-                  selfPubkey={selfPubkey}
-                  contacts={dmParticipantPubkeys}
-                  agentPubkeys={knownAgentPubkeys}
-                  dmAgentPubkey={dmAgentPubkey}
-                  scratch={{
-                    actions: scratch.actions,
-                    channels,
-                    lastActivityAt: newestMessageAt || null,
-                    role: viewerRole,
-                  }}
-                />
-                <RunningStrip
-                  channelId={current.id}
-                  profiles={profiles}
-                  variant="bar"
-                />
-                {current.type === "forum" ? (
-                  <ForumView
+              <ChannelReadOnlyContext.Provider value={current.archived}>
+                <section
+                  className="buzz-conversation-pane relative flex min-w-0 flex-1 flex-col"
+                  data-custom-content-pane="chat"
+                >
+                  {dmAgentPubkey && (
+                    <AgentPortraitOverlay
+                      pubkey={dmAgentPubkey}
+                      name={
+                        profiles.get(dmAgentPubkey)?.displayName ??
+                        dmAgentPubkey
+                      }
+                      picture={dmProfiles.get(dmAgentPubkey)?.avatar}
+                    />
+                  )}
+                  <ChannelHeader
                     channel={current}
-                    selfPubkey={selfPubkey}
-                    profiles={profiles}
+                    admin={{
+                      session,
+                      channelPrefs,
+                      setChannelPrefs,
+                      setReadState,
+                      refreshChannels,
+                      onChannelDeleted: forgetChannelFromList,
+                      selectedId,
+                      onCloseChannel: closeChannel,
+                    }}
+                    title={conversationTitle ?? ""}
                     members={members}
-                    feedReactions={reactions}
-                    replyCounts={counts}
-                    selectedPostId={forumPostId}
-                    onSelectPost={setForumPostId}
-                    onClosePost={() => setForumPostId(null)}
-                    onReact={messageActions.onReact}
-                    onDelete={messageActions.onDelete}
-                    send={send}
+                    profiles={profiles}
+                    presence={presence}
+                    selfPubkey={selfPubkey}
+                    contacts={dmParticipantPubkeys}
+                    agentPubkeys={knownAgentPubkeys}
+                    dmAgentPubkey={dmAgentPubkey}
+                    scratch={{
+                      actions: scratch.actions,
+                      channels,
+                      lastActivityAt: newestMessageAt || null,
+                      role: viewerRole,
+                    }}
                   />
-                ) : (
-                  <>
-                    {/* Gutter for the portrait overlay: the same fluid
+                  <RunningStrip
+                    channelId={current.id}
+                    profiles={profiles}
+                    variant="bar"
+                  />
+                  {current.type === "forum" ? (
+                    <ForumView
+                      channel={current}
+                      selfPubkey={selfPubkey}
+                      profiles={profiles}
+                      members={members}
+                      feedReactions={reactions}
+                      replyCounts={counts}
+                      selectedPostId={forumPostId}
+                      onSelectPost={setForumPostId}
+                      onClosePost={() => setForumPostId(null)}
+                      onReact={messageActions.onReact}
+                      onDelete={messageActions.onDelete}
+                      send={send}
+                    />
+                  ) : (
+                    <>
+                      {/* Gutter for the portrait overlay: the same fluid
                           width the overlay uses, so transcript text shifts
                           left of it and stays clear at every thinking-pane
                           width (the pair is the resize requirement). The
                           extra half-row keeps a visible seam between
                           full-width content and the frame. */}
-                    <div className="flex min-h-0 flex-1 flex-col lg:pr-[calc(min(12rem,24%)+1.25rem)]">
-                      <ChannelTimeline
-                        messages={messages}
-                        profiles={profiles}
-                        replyCounts={counts}
-                        threads={{
-                          choices: inlineThreads.choices,
-                          focusId: inlineThreads.focusId,
-                          revealId: revealReplyId,
-                          onToggle: inlineThreads.toggle,
-                          onReply: inlineThreads.reply,
-                          isDm: current.type === "dm",
-                          reply: { members, strictMentions, send },
-                        }}
-                        reactions={reactions}
-                        onReact={messageActions.onReact}
-                        onUnreact={(messageId, emoji) => {
-                          if (!selfPubkey) return;
-                          // Drop it locally first: the relay's kind-5 acknowledgement
-                          // targets the reaction event, which the message-overlay
-                          // path cannot apply, so nothing would clear the chip.
-                          forgetOwnReaction(messageId, emoji, selfPubkey);
-                          void unreactToMessage(session, {
-                            targetEventId: messageId,
-                            emoji,
-                            selfPubkey,
-                          });
-                        }}
-                        onEdit={messageActions.onEdit}
-                        onDelete={messageActions.onDelete}
-                        onShare={messageActions.onShare}
-                        selfPubkey={selfPubkey}
-                        pendingIds={messageActions.pendingIds}
-                        agentPubkeys={agentPubkeys}
-                        highlightId={permalinkJump?.topLevelId ?? null}
-                        scrollToMessageId={permalinkJump?.topLevelId ?? null}
-                        onScrollToMessageSettled={onPermalinkSettled}
-                        tailKey={tailKey}
-                        onLoadOlder={loadOlder}
-                        loadingOlder={loadingOlder}
-                        historyExhausted={historyExhausted}
-                      />
-                    </div>
-                    {/* No threadRef here — deliberately. This composer always
-                          posts top-level (Sam 2026-09-20); only a thread's
-                          own reply box targets the thread. Slash commands run
-                          here and are never sent as text. */}
-                    <CommandComposer
-                      ref={composerRef}
-                      host={{
-                        channel: commandChannel,
-                        messages,
-                        openWorkForChannel,
-                        scratch: scratch.actions,
-                      }}
-                      placeholder={`Message ${conversationTitle?.replace(/^# /, "#") ?? ""}`}
-                      status={
-                        <RunningStrip
-                          channelId={current.id}
+                      <div className="flex min-h-0 flex-1 flex-col lg:pr-[calc(min(12rem,24%)+1.25rem)]">
+                        <ChannelTimeline
+                          messages={messages}
                           profiles={profiles}
-                          variant="line"
-                          typing={typingPubkeys}
-                        />
-                      }
-                      members={members}
-                      onTextChange={messageActions.onComposerText}
-                      editing={messageActions.editing}
-                      onCancelEdit={() => messageActions.setEditing(null)}
-                      editSend={messageActions.editSend}
-                      profiles={profiles}
-                      strictMentions={strictMentions}
-                      autoNotify={composerAutoNotify}
-                      draftKey={current.id}
-                      send={send}
-                      actionsBar={
-                        <DmComposerActions
-                          channel={current}
-                          title={conversationTitle ?? ""}
-                          dmAgentPubkey={dmAgentPubkey}
-                          huddleSession={huddleSession}
-                          session={session}
-                          members={members}
-                          profiles={profiles}
-                          presence={presence}
+                          replyCounts={counts}
+                          threads={{
+                            choices: inlineThreads.choices,
+                            focusId: inlineThreads.focusId,
+                            revealId: revealReplyId,
+                            onToggle: inlineThreads.toggle,
+                            onReply: inlineThreads.reply,
+                            isDm: current.type === "dm",
+                            reply: { members, strictMentions, send },
+                          }}
+                          reactions={reactions}
+                          onReact={messageActions.onReact}
+                          onUnreact={(messageId, emoji) => {
+                            if (!selfPubkey) return;
+                            // Drop it locally first: the relay's kind-5 acknowledgement
+                            // targets the reaction event, which the message-overlay
+                            // path cannot apply, so nothing would clear the chip.
+                            forgetOwnReaction(messageId, emoji, selfPubkey);
+                            void unreactToMessage(session, {
+                              targetEventId: messageId,
+                              emoji,
+                              selfPubkey,
+                            });
+                          }}
+                          onEdit={messageActions.onEdit}
+                          onDelete={messageActions.onDelete}
+                          onShare={messageActions.onShare}
                           selfPubkey={selfPubkey}
-                          contacts={dmParticipantPubkeys}
-                          panes={rightPane.panes}
-                          dictation={dictation}
+                          pendingIds={messageActions.pendingIds}
+                          agentPubkeys={agentPubkeys}
+                          highlightId={permalinkJump?.topLevelId ?? null}
+                          scrollToMessageId={permalinkJump?.topLevelId ?? null}
+                          onScrollToMessageSettled={onPermalinkSettled}
+                          tailKey={tailKey}
+                          onLoadOlder={loadOlder}
+                          loadingOlder={loadingOlder}
+                          historyExhausted={historyExhausted}
                         />
-                      }
-                    />
-                  </>
-                )}
-                <HuddleDock currentChannelId={current.id} />
-              </section>
+                      </div>
+                      <CommandComposer
+                        readOnly={current.archived}
+                        ref={composerRef}
+                        host={{
+                          channel: commandChannel,
+                          messages,
+                          openWorkForChannel,
+                          scratch: scratch.actions,
+                        }}
+                        placeholder={`Message ${conversationTitle?.replace(/^# /, "#") ?? ""}`}
+                        status={
+                          <RunningStrip
+                            channelId={current.id}
+                            profiles={profiles}
+                            variant="line"
+                            typing={typingPubkeys}
+                          />
+                        }
+                        members={members}
+                        onTextChange={messageActions.onComposerText}
+                        editing={messageActions.editing}
+                        onCancelEdit={() => messageActions.setEditing(null)}
+                        editSend={messageActions.editSend}
+                        profiles={profiles}
+                        strictMentions={strictMentions}
+                        autoNotify={composerAutoNotify}
+                        draftKey={current.id}
+                        send={send}
+                        actionsBar={
+                          <DmComposerActions
+                            channel={current}
+                            title={conversationTitle ?? ""}
+                            dmAgentPubkey={dmAgentPubkey}
+                            huddleSession={huddleSession}
+                            session={session}
+                            members={members}
+                            profiles={profiles}
+                            presence={presence}
+                            selfPubkey={selfPubkey}
+                            contacts={dmParticipantPubkeys}
+                            panes={rightPane.panes}
+                            dictation={dictation}
+                          />
+                        }
+                      />
+                    </>
+                  )}
+                  <HuddleDock currentChannelId={current.id} />
+                </section>
+              </ChannelReadOnlyContext.Provider>
             </div>
           ) : landingSkeleton ? (
             <LandingSkeleton />
