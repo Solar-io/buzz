@@ -42,6 +42,7 @@ export default defineConfig({
         "**/settings-w6.spec.ts",
         "**/parity-surfaces.spec.ts",
         "**/forum.spec.ts",
+        "**/new-channel.spec.ts",
         "**/sidebar-appearance.spec.ts",
         "**/shortcut-bar.spec.ts",
         "**/work-shell.spec.ts",

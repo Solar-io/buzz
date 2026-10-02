@@ -1092,3 +1092,13 @@ Three sub-traps from the same hour:
   mutation.** A mutation run without `pnpm build` tests the previous bundle
   and reports a clean survivor (seen: unwiring `useFavoritesSync` stayed
   green until the rebuild, then both specs failed).
+
+## Web channel creation (earned on parity W4, 2026-10-02)
+
+- The creation lifetime presets in `channels/lib/newChannelRequest.ts` must
+  remain reachable through `useChannelLists`. Hiding every channel with a TTL
+  hides newly created temporary channels. Scratch channels keep their own
+  section; shorter transport-room TTLs retain their existing hidden behavior.
+- Lifetime is an idle timeout, not an absolute creation deadline. Ongoing
+  omits `ttl`; a plain temporary channel uses the existing expiry badge,
+  whereas a scratch channel additionally requires its parent marker in `about`.
