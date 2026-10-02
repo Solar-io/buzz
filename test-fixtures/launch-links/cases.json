@@ -1,0 +1,346 @@
+{
+  "count": 70,
+  "cases": [
+    {
+      "url": "buzzweb://",
+      "expect": {
+        "action": "open"
+      }
+    },
+    {
+      "url": "buzzweb://open",
+      "expect": {
+        "action": "open"
+      }
+    },
+    {
+      "url": "BUZZWEB://OPEN/",
+      "expect": {
+        "action": "open"
+      }
+    },
+    {
+      "url": "buzzweb://open?",
+      "expect": {
+        "action": "open"
+      }
+    },
+    {
+      "url": "buzzweb:///",
+      "expect": {
+        "action": "open"
+      }
+    },
+    {
+      "url": "buzzweb://call",
+      "expect": {
+        "action": "call",
+        "agent": null
+      }
+    },
+    {
+      "url": "buzzweb://call/",
+      "expect": {
+        "action": "call",
+        "agent": null
+      }
+    },
+    {
+      "url": "buzzweb://Call?",
+      "expect": {
+        "action": "call",
+        "agent": null
+      }
+    },
+    {
+      "url": "buzzweb://call?agent=Acid%20Burn",
+      "expect": {
+        "action": "call",
+        "agent": "Acid Burn"
+      }
+    },
+    {
+      "url": "buzzweb://call?agent=Big+Head",
+      "expect": {
+        "action": "call",
+        "agent": "Big Head"
+      }
+    },
+    {
+      "url": "buzzweb://call?agent=a%2Bb",
+      "expect": {
+        "action": "call",
+        "agent": "a+b"
+      }
+    },
+    {
+      "url": "buzzweb://call?agent=+Gilfoyle+",
+      "expect": {
+        "action": "call",
+        "agent": "Gilfoyle"
+      }
+    },
+    {
+      "url": "buzzweb://call?agent=%20Gilfoyle%09",
+      "expect": {
+        "action": "call",
+        "agent": "Gilfoyle"
+      }
+    },
+    {
+      "url": "buzzweb://call/?agent=Gilfoyle",
+      "expect": {
+        "action": "call",
+        "agent": "Gilfoyle"
+      }
+    },
+    {
+      "url": "buzzweb://call?agent=a%26b",
+      "expect": {
+        "action": "call",
+        "agent": "a&b"
+      }
+    },
+    {
+      "url": "buzzweb://call?agent=a=b",
+      "expect": {
+        "action": "call",
+        "agent": "a=b"
+      }
+    },
+    {
+      "url": "buzzweb://call?agent=%2561",
+      "expect": {
+        "action": "call",
+        "agent": "%61"
+      }
+    },
+    {
+      "url": "buzzweb://call?agent=%C3%A9mile",
+      "expect": {
+        "action": "call",
+        "agent": "émile"
+      }
+    },
+    {
+      "url": "buzzweb://call?agent=npub1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q0uf63m",
+      "expect": {
+        "action": "call",
+        "agent": "npub1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q0uf63m"
+      }
+    },
+    {
+      "url": "buzzweb://call?agent=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expect": {
+        "action": "call",
+        "agent": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "url": "buzzweb://call?agent=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "expect": {
+        "action": "call",
+        "agent": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    },
+    {
+      "url": "buzzweb://call?agent=%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80",
+      "expect": {
+        "action": "call",
+        "agent": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+      }
+    },
+    {
+      "url": "",
+      "expect": null
+    },
+    {
+      "url": "not a url",
+      "expect": null
+    },
+    {
+      "url": "buzz://call",
+      "expect": null
+    },
+    {
+      "url": "https://call?agent=x",
+      "expect": null
+    },
+    {
+      "url": "capacitor://localhost/call",
+      "expect": null
+    },
+    {
+      "url": "buzzweb:call",
+      "expect": null
+    },
+    {
+      "url": "buzzweb:/call",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://dial",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call/now",
+      "expect": null
+    },
+    {
+      "url": "buzzweb:///call",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call//",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call#x",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call#",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://user:pw@call",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://user@call",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://@call",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call:8080",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call:",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://c%61ll",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://c%61ll?agent=Gilfoyle",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://%63all",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://open?agent=Gilfoyle",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://?agent=Gilfoyle",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?who=Gilfoyle",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?Agent=Gilfoyle",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?agent",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?agent=Gilfoyle&agent=Acid",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?agent=Gilfoyle&x=1",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?agent=x&",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?&agent=x",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?agent=",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?agent=%20%20",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?agent=++",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?agent=Gil%0Afoyle",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?agent=Gil%E2%80%8Bfoyle",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?agent=%00",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?agent=%zz",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?agent=%C3",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?agent=%C0%80",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?agent=%ED%A0%80",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?agent=Big Head",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?agent=émile",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?agent=<x>",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?agent=Gilfoyle\n",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call\n",
+      "expect": null
+    },
+    {
+      "url": " buzzweb://call",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?agent=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "expect": null
+    },
+    {
+      "url": "buzzweb://call?agent=%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80%F0%9F%98%80",
+      "expect": null
+    }
+  ]
+}

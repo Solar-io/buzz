@@ -10,6 +10,7 @@
         A90100000000000000000001 = {isa = PBXBuildFile; fileRef = A90200000000000000000001; };
         A90100000000000000000002 = {isa = PBXBuildFile; fileRef = A90200000000000000000002; };
         A90100000000000000000003 = {isa = PBXBuildFile; fileRef = A90200000000000000000003; };
+        A90100000000000000000006 = {isa = PBXBuildFile; fileRef = A90200000000000000000006; };
         A90100000000000000000004 = {isa = PBXBuildFile; productRef = B02200000000000000000002; };
         A90100000000000000000005 = {isa = PBXBuildFile; productRef = A90200000000000000000005; };
         B02200000000000000000001 /* BuzzNative in Frameworks */ = {isa = PBXBuildFile; productRef = B02200000000000000000002; };
@@ -28,6 +29,7 @@
         A90200000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../../native/Tests/BuzzNativeTests/NativeBehaviorTests.swift; sourceTree = SOURCE_ROOT; };
         A90200000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../../native/Tests/BuzzNativeTests/HuddleRosterTests.swift; sourceTree = SOURCE_ROOT; };
         A90200000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../../native/Tests/BuzzNativeTests/BridgeGateTests.swift; sourceTree = SOURCE_ROOT; };
+        A90200000000000000000006 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../../native/Tests/BuzzNativeTests/LaunchPluginTests.swift; sourceTree = SOURCE_ROOT; };
         A90200000000000000000004 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = BuzzNativeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
@@ -56,7 +58,7 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-        A90400000000000000000001 = {isa = PBXGroup; name = BuzzNativeTests; children = (A90200000000000000000001, A90200000000000000000002, A90200000000000000000003,); sourceTree = "<group>"; };
+        A90400000000000000000001 = {isa = PBXGroup; name = BuzzNativeTests; children = (A90200000000000000000001, A90200000000000000000002, A90200000000000000000003, A90200000000000000000006,); sourceTree = "<group>"; };
 		504EC2FB1FED79650016851F = {
 			isa = PBXGroup;
 			children = (
@@ -185,7 +187,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-        A90600000000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A90100000000000000000001, A90100000000000000000002, A90100000000000000000003,); runOnlyForDeploymentPostprocessing = 0; };
+        A90600000000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A90100000000000000000001, A90100000000000000000002, A90100000000000000000003, A90100000000000000000006,); runOnlyForDeploymentPostprocessing = 0; };
 		504EC3001FED79650016851F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;

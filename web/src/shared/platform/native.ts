@@ -123,3 +123,20 @@ export const BuzzHuddle = registerPlugin<{
     listener: (state: NativeCallState) => void,
   ): Promise<PluginListenerHandle>;
 }>("BuzzHuddle");
+
+/** A pending `buzzweb://call…` launch, persisted natively until acknowledged. */
+export interface NativeLaunchIntent {
+  id: string;
+  url: string;
+  /** Epoch milliseconds when the link was opened. */
+  createdAt: number;
+}
+export interface NativeLaunchPlugin {
+  getIntent(): Promise<{ intent: NativeLaunchIntent | null }>;
+  acknowledgeIntent(options: { id: string }): Promise<void>;
+  addListener(
+    event: "launch",
+    listener: (intent: NativeLaunchIntent) => void,
+  ): Promise<PluginListenerHandle>;
+}
+export const BuzzLaunch = registerPlugin<NativeLaunchPlugin>("BuzzLaunch");

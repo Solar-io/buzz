@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { queryOnce } from "./relayQuery.ts";
+import { queryOnce, queryOnceWithEose } from "./relayQuery.ts";
 
 function signedEvent(id) {
   return {
@@ -92,4 +92,30 @@ test("queryOnce passes the filter through untouched", async () => {
   const filter = { kinds: [30300], authors: ["aa"], limit: 200 };
   await queryOnce(session, filter);
   assert.deepEqual(seen[0], filter);
+});
+
+test("queryOnceWithEose tells a finished read from a timed-out one", async () => {
+  const answered = {
+    subscribe(_filter, options) {
+      options.onEvent(signedEvent("a"));
+      setTimeout(() => options.onEose(), 0);
+      return () => {};
+    },
+  };
+  const silent = {
+    subscribe(_filter, options) {
+      options.onEvent(signedEvent("partial"));
+      return () => {};
+    },
+  };
+  const done = await queryOnceWithEose(answered, { kinds: [1] }, 1_000);
+  assert.deepEqual(
+    { ids: done.events.map((e) => e.id), eose: done.eose },
+    { ids: ["a"], eose: true },
+  );
+  const late = await queryOnceWithEose(silent, { kinds: [1] }, 5);
+  assert.deepEqual(
+    { ids: late.events.map((e) => e.id), eose: late.eose },
+    { ids: ["partial"], eose: false },
+  );
 });
