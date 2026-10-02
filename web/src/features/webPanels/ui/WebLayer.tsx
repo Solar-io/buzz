@@ -6,13 +6,14 @@ import { useShortcutBar } from "@/features/shortcut-bar/hooks";
 import type { ActiveWebView } from "../activeWebStore.ts";
 import { useFilesPathRequest } from "../filesPathStore.ts";
 import { useWebPanelDock } from "../hooks.ts";
+import { DAILY_DIGEST_KEY, DAILY_DIGEST_PANEL } from "../lib/dailyDigest.ts";
 import type { WebPanelDef } from "../lib/panelRegistry.ts";
 import { WebFrameHost } from "./WebFrameHost.tsx";
 
 /**
- * The shell's web layer: resolves frame keys against the two registries —
- * Files sites (`files:<id>`) and overlay-mode Links (`link:<id>`) — and
- * renders the one {@link WebFrameHost}. Links come from the shared, seeded
+ * The shell's web layer: resolves Files sites (`files:<id>`), overlay-mode
+ * Links (`link:<id>`) and the built-in Daily Digest, and renders the one
+ * {@link WebFrameHost}. Links come from the shared, seeded
  * Links store, so opening a link never opens a second subscription or waits
  * on a second decrypt.
  */
@@ -41,6 +42,9 @@ export function WebLayer({ web }: { web: ActiveWebView }) {
 
   const resolve = useCallback(
     (key: string): WebPanelDef | null => {
+      if (key === DAILY_DIGEST_KEY) {
+        return DAILY_DIGEST_PANEL;
+      }
       if (key.startsWith("link:")) {
         return links.get(key.slice("link:".length)) ?? null;
       }

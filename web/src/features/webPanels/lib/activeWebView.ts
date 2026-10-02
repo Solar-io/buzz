@@ -25,7 +25,7 @@
 /** Live iframes kept mounted at once. */
 export const KEEP_ALIVE = 4;
 
-export type WebViewKind = "files" | "link";
+export type WebViewKind = "files" | "link" | "digest";
 
 export interface WebViewTarget {
   kind: WebViewKind;

@@ -9,6 +9,7 @@ import { openInAppBrowser } from "@/shared/platform/native-navigation";
 
 import type { FilesPathRequest } from "../filesPathStore.ts";
 import { type ActiveWebState, webViewKey } from "../lib/activeWebView.ts";
+import { DAILY_DIGEST_KEY } from "../lib/dailyDigest.ts";
 import { filesPathUrl } from "../lib/openInFiles.ts";
 import { type WebPanelDef, withThemeParam } from "../lib/panelRegistry.ts";
 import { withThemeFragment } from "../lib/themePush.ts";
@@ -54,8 +55,8 @@ const isFilesKey = (key: string | null): key is string =>
  *
  * A browser cannot force a site to embed; a frame that never fires `load`
  * gets an "open it in a new tab" notice instead of white space. On native
- * iOS there are no iframes at all (WebKit drops a framed site's cookie), so
- * the active page opens in the in-app browser.
+ * iOS Files/Links open in the in-app browser (WebKit drops a framed site's
+ * cookie); the cookie-free Daily Digest stays embedded and alive here.
  */
 export function WebFrameHost({
   state,
@@ -84,7 +85,10 @@ export function WebFrameHost({
   const filesPage = isFilesKey(activeKey);
   const [stalled, setStalled] = useState<Record<string, boolean>>({});
   const loadedRef = useRef<Set<string>>(new Set());
-  const inAppBrowser = isNativeIOS();
+  // Digest has no sign-in cookies to preserve and stays in the main pane
+  // on iPhone too. Files/Links retain their native browser login path.
+  const nativeIOS = isNativeIOS();
+  const inAppBrowser = nativeIOS && state.active?.kind !== "digest";
   useFilesThemePush(hostRef, !inAppBrowser);
 
   // "Open in Files": a NEW request (not one made before this mounted) is
@@ -110,10 +114,15 @@ export function WebFrameHost({
   // A Files frame's src is computed once per mounted instance (the React key
   // changes only with a new Open in Files request or a new panel URL).
   const srcCache = useRef(new Map<string, string>());
-  const frameKeys = [...state.mounted].sort();
+  const frameKeys = state.mounted
+    .filter((key) => !nativeIOS || key === DAILY_DIGEST_KEY)
+    .sort();
   const reactKeyFor = (key: string) =>
     paths[key] ? `${key}#${paths[key].nonce}` : key;
   const frameSrc = (key: string, panel: WebPanelDef): string => {
+    if (key === DAILY_DIGEST_KEY) {
+      return panel.url;
+    }
     if (!isFilesKey(key)) {
       return withThemeParam(panel.url, isDark);
     }
@@ -282,37 +291,36 @@ export function WebFrameHost({
               </Button>
             </div>
           ) : null
-        ) : (
-          frameKeys.map((key) => {
-            const panel = resolve(key);
-            if (!panel) {
-              return null;
-            }
-            const selected = key === activeKey;
-            const themed = isFilesKey(key);
-            return (
-              <iframe
-                className={cn(
-                  "absolute inset-0 h-full w-full border-0 bg-background",
-                  selected ? "z-10" : "pointer-events-none opacity-0",
-                )}
-                data-testid={`web-panel-frame-${key}`}
-                // THEME_FRAME_ATTR: the theme push's frame selector.
-                data-buzz-theme-push={themed ? "true" : undefined}
-                inert={!selected}
-                key={reactKeyFor(key)}
-                onLoad={() => {
-                  loadedRef.current.add(key);
-                  setStalled((current) =>
-                    current[key] ? { ...current, [key]: false } : current,
-                  );
-                }}
-                src={frameSrc(key, panel)}
-                title={panel.label}
-              />
-            );
-          })
-        )}
+        ) : null}
+        {frameKeys.map((key) => {
+          const panel = resolve(key);
+          if (!panel) {
+            return null;
+          }
+          const selected = key === activeKey;
+          const themed = isFilesKey(key);
+          return (
+            <iframe
+              className={cn(
+                "absolute inset-0 h-full w-full border-0 bg-background",
+                selected ? "z-10" : "pointer-events-none opacity-0",
+              )}
+              data-testid={`web-panel-frame-${key}`}
+              // THEME_FRAME_ATTR: the theme push's frame selector.
+              data-buzz-theme-push={themed ? "true" : undefined}
+              inert={!selected}
+              key={reactKeyFor(key)}
+              onLoad={() => {
+                loadedRef.current.add(key);
+                setStalled((current) =>
+                  current[key] ? { ...current, [key]: false } : current,
+                );
+              }}
+              src={frameSrc(key, panel)}
+              title={panel.label}
+            />
+          );
+        })}
 
         {visible && !activePanel && fallback ? (
           <div className="absolute inset-0 z-20 bg-background">{fallback}</div>
