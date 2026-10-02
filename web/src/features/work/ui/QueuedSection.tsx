@@ -9,6 +9,50 @@ import { HexAvatar, StateHex } from "@/shared/ui/HexAvatar";
 import type { DoneRow, DoneState, QueuedRow } from "../lib/workTypes.ts";
 import { SectionHeader } from "./NeedsYouSection";
 import { channelLabel, clockLabel, metaLine, shortAge } from "./workLabels.ts";
+import { whatLine } from "./whatLine.ts";
+
+/**
+ * A Queued / Done row's text: "Name  #channel" on top and, when known, what
+ * the work is underneath — the agent's title, else the message that asked.
+ */
+function WhoWhat({
+  name,
+  meta,
+  what,
+  trailing = null,
+}: {
+  name: string;
+  meta: string;
+  what: string | null;
+  trailing?: ReactNode;
+}) {
+  const top = (
+    <>
+      <b className="font-semibold">{name}</b>
+      <span className="text-muted-foreground">
+        {meta ? ` ${meta}` : null}
+        {trailing}
+      </span>
+    </>
+  );
+  if (!what) {
+    return (
+      <span className="min-w-0 flex-1 truncate text-sidebar-meta">{top}</span>
+    );
+  }
+  return (
+    <span className="flex min-w-0 flex-1 flex-col">
+      <span className="truncate text-sidebar-meta">{top}</span>
+      <span
+        data-testid="work-row-ask"
+        title={what}
+        className="truncate text-xs text-ink-2"
+      >
+        {what}
+      </span>
+    </span>
+  );
+}
 
 /** The folded card Queued and Done collapse to (Main: 34px summary rows). */
 function FoldedSummary({
@@ -95,6 +139,7 @@ export function QueuedSection({
       <div className="overflow-hidden rounded-xl border border-border bg-card">
         {rows.map((row, index) => {
           const name = authorLabel(row.agentPubkey, profiles);
+          const what = whatLine(null, row.ask, profiles);
           return (
             <button
               key={row.key}
@@ -103,7 +148,10 @@ export function QueuedSection({
               onClick={() =>
                 row.channelId && onOpenMessage(row.channelId, row.eventId)
               }
-              className="flex h-8.5 w-full items-center gap-2.25 border-b border-border px-3 text-left last:border-b-0 hover:bg-accent disabled:cursor-default"
+              className={cn(
+                "flex w-full items-center gap-2.25 border-b border-border px-3 text-left last:border-b-0 hover:bg-accent disabled:cursor-default",
+                what ? "min-h-11 py-1" : "h-8.5",
+              )}
             >
               <HexAvatar
                 label={name}
@@ -111,16 +159,14 @@ export function QueuedSection({
                 size={18}
                 ring="idle"
               />
-              <span className="min-w-0 flex-1 truncate text-sidebar-meta">
-                <b className="font-semibold">{name}</b>
-                <span className="text-muted-foreground">
-                  {" "}
-                  {metaLine(
-                    index === 0 && "next",
-                    channelLabel(row.channelId, channels),
-                  )}
-                </span>
-              </span>
+              <WhoWhat
+                name={name}
+                meta={metaLine(
+                  index === 0 && "next",
+                  channelLabel(row.channelId, channels),
+                )}
+                what={what}
+              />
               <span className="shrink-0 font-mono text-2xs text-muted-foreground">
                 {shortAge(row.at, nowS)}
               </span>
@@ -174,13 +220,12 @@ export function DoneSection({
   // Main: "last: Beat 01 captured" — what was done, when the agent said so;
   // otherwise who, where and when.
   const lastLine = last
-    ? last.title != null
-      ? last.title
-      : metaLine(
-          authorLabel(last.agentPubkey, profiles),
-          channelLabel(last.channelId, channels),
-          clockLabel(last.at),
-        )
+    ? (whatLine(last.title, last.ask, profiles) ??
+      metaLine(
+        authorLabel(last.agentPubkey, profiles),
+        channelLabel(last.channelId, channels),
+        clockLabel(last.at),
+      ))
     : "";
   if (collapsed) {
     return (
@@ -251,6 +296,7 @@ function DoneRows({
         const name = authorLabel(row.agentPubkey, profiles);
         const abnormal =
           row.stopReason !== null && row.stopReason !== "end_turn";
+        const what = whatLine(row.title, row.ask, profiles);
         return (
           <button
             key={row.key}
@@ -258,7 +304,10 @@ function DoneRows({
             data-testid="done-row"
             disabled={!row.channelId}
             onClick={() => row.channelId && onOpenChannel(row.channelId)}
-            className="flex h-8.5 w-full items-center gap-2.25 border-b border-border px-3 text-left last:border-b-0 hover:bg-accent disabled:cursor-default"
+            className={cn(
+              "flex w-full items-center gap-2.25 border-b border-border px-3 text-left last:border-b-0 hover:bg-accent disabled:cursor-default",
+              what ? "min-h-11 py-1" : "h-8.5",
+            )}
           >
             <HexAvatar
               label={name}
@@ -266,19 +315,16 @@ function DoneRows({
               size={18}
               ring="idle"
             />
-            <span className="min-w-0 flex-1 truncate text-sidebar-meta">
-              <b className="font-semibold">{name}</b>
-              <span className="text-muted-foreground">
-                {" "}
-                {metaLine(
-                  row.title != null && row.title,
-                  channelLabel(row.channelId, channels) || "heartbeat",
-                )}
-                {abnormal ? (
+            <WhoWhat
+              name={name}
+              meta={channelLabel(row.channelId, channels) || "heartbeat"}
+              what={what}
+              trailing={
+                abnormal ? (
                   <span className="text-coral-ink"> · {row.stopReason}</span>
-                ) : null}
-              </span>
-            </span>
+                ) : null
+              }
+            />
             <span
               className={cn(
                 "shrink-0 font-mono text-2xs",

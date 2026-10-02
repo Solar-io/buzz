@@ -60,6 +60,7 @@ export function mergeDone(
       byTurn.set(key, {
         ...previous,
         title: previous.title ?? turn.title,
+        triggerId: previous.triggerId ?? turn.trigger,
         stopReason: abnormal(previous.stopReason)
           ? previous.stopReason
           : (ending ?? previous.stopReason),
@@ -73,6 +74,7 @@ export function mergeDone(
       at,
       stopReason: ending,
       title: turn.title,
+      triggerId: turn.trigger,
     });
   }
   const rows = [...byTurn.values()].sort(

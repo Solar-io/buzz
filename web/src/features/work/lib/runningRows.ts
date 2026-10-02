@@ -132,6 +132,10 @@ export function lifecycleRows(
       source: "observer",
       title: detail?.title ?? null,
       progress: detail?.progress ?? null,
+      triggerId:
+        (head?.turnId === turn.turnId ? head.trigger : null) ??
+        turn.triggeringEventIds[0] ??
+        null,
     });
   }
 
@@ -158,6 +162,7 @@ export function lifecycleRows(
       source: "status",
       title: head.title,
       progress: head.progress,
+      triggerId: head.trigger,
     });
   }
 

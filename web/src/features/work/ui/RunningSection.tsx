@@ -15,6 +15,7 @@ import {
   elapsedLabel,
   metaLine,
 } from "./workLabels.ts";
+import { whatLine } from "./whatLine.ts";
 
 /**
  * Running (phase-1 §2.4, Phase 8). Each row is one turn: who, what (the
@@ -115,6 +116,7 @@ export function RunningSection({
               const quiet = row.state === "stalled" || row.state === "lost";
               // `!= null`: a row built before Phase 8 has no such fields.
               const title = row.title != null ? row.title : null;
+              const what = whatLine(title, row.ask, profiles);
               const steps = progressText(row.progress ?? null);
               const rest = metaLine(steps, where);
               return (
@@ -124,7 +126,7 @@ export function RunningSection({
                   data-row-key={row.key}
                   className={cn(
                     "flex items-center gap-2.25 border-b border-border px-3 last:border-b-0",
-                    page ? "min-h-13 py-1.5" : "h-8.5",
+                    page ? "min-h-13 py-1.5" : what ? "min-h-11 py-1" : "h-8.5",
                   )}
                 >
                   <button
@@ -147,28 +149,34 @@ export function RunningSection({
                             : "work"
                       }
                     />
-                    {page && title ? (
-                      // Phone: who and where, then what — a 52 px row has
-                      // room for the title on its own line.
+                    {what ? (
+                      // Who and where, then what on its own line: the agent's
+                      // title, else the message that started the turn.
                       <span className="flex min-w-0 flex-1 flex-col">
-                        <span className="truncate text-sm">
+                        <span
+                          className={cn(
+                            "truncate",
+                            page ? "text-sm" : "text-sidebar-meta",
+                          )}
+                        >
                           <b className="font-semibold">{name}</b>
-                          {where ? (
+                          {(page ? where : rest) ? (
                             <span className="text-muted-foreground">
                               {" "}
-                              {where}
+                              {page ? where : rest}
                             </span>
                           ) : null}
                         </span>
                         <span
-                          data-testid="run-row-title"
+                          data-testid={title ? "run-row-title" : "work-row-ask"}
+                          title={what}
                           className="truncate text-xs text-ink-2"
                         >
-                          {metaLine(title, steps)}
+                          {page ? metaLine(what, steps) : what}
                         </span>
                       </span>
                     ) : (
-                      // Rail: one line, "Name  title · #channel" (Main).
+                      // Nothing known about the work yet: one line.
                       <span
                         className={cn(
                           "min-w-0 flex-1 truncate",
@@ -176,15 +184,8 @@ export function RunningSection({
                         )}
                       >
                         <b className="font-semibold">{name}</b>
-                        {title || rest ? (
-                          <span className="text-muted-foreground">
-                            {" "}
-                            {title ? (
-                              <span data-testid="run-row-title">{title}</span>
-                            ) : null}
-                            {title && rest ? " · " : null}
-                            {rest}
-                          </span>
+                        {rest ? (
+                          <span className="text-muted-foreground"> {rest}</span>
                         ) : null}
                       </span>
                     )}

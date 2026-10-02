@@ -62,6 +62,15 @@ export interface NeedCounts {
   overdue: number;
 }
 
+/**
+ * The message that started a piece of work — who asked and the first line of
+ * what they asked. Every row falls back to it when its agent set no title.
+ */
+export interface TriggerAsk {
+  authorPubkey: string;
+  text: string;
+}
+
 export type RunRowState = "live" | "stalled" | "lost" | "reacting";
 
 /**
@@ -83,6 +92,10 @@ export interface RunRow {
   /** From `buzz status set`, bound to this turn; null when none was set. */
   title: string | null;
   progress: TaskProgress | null;
+  /** The event that started the turn (30624 `e`/trigger, observer, or 💬 target). */
+  triggerId?: string | null;
+  /** That event, once fetched. */
+  ask?: TriggerAsk | null;
 }
 
 export interface QueuedRow {
@@ -94,6 +107,8 @@ export interface QueuedRow {
   channelId: string | null;
   /** When the 👀 landed (unix s). */
   at: number;
+  /** The reacted-to event, once fetched. */
+  ask?: TriggerAsk | null;
 }
 
 export interface DoneLast {
@@ -108,6 +123,10 @@ export interface DoneLast {
   stopReason: string | null;
   /** The turn's 30624 title, when its agent set one. */
   title: string | null;
+  /** The turn's triggering event (30624 only; a metric never carries one). */
+  triggerId?: string | null;
+  /** That event, once fetched. */
+  ask?: TriggerAsk | null;
 }
 
 /** One finished turn (Phase 2: Done today lists every turn, not just the last). */

@@ -16,13 +16,62 @@ import type {
   DoneState,
   QueuedRow,
   RunRow,
+  TriggerAsk,
   WorkFeed,
   WorkScope,
 } from "./workTypes.ts";
 
-/** A reacted-to event, fetched lazily so its channel is known. */
+/**
+ * A reacted-to or triggering event, fetched lazily so its channel — and who
+ * asked what — is known.
+ */
 export interface ReactionTarget {
   channelId: string;
+  /** Absent on targets recorded before the ask was kept. */
+  authorPubkey?: string;
+  /** First non-empty line of the content, whitespace-collapsed; "" if none. */
+  preview?: string;
+}
+
+/** Longest ask kept; the row truncates visually well before this. */
+const PREVIEW_MAX = 200;
+
+/** The first non-empty line of a message, whitespace-collapsed and capped. */
+export function previewLine(content: string): string {
+  const line =
+    content
+      .split("\n")
+      .map((part) => part.replace(/\s+/g, " ").trim())
+      .find((part) => part !== "") ?? "";
+  return line.length > PREVIEW_MAX
+    ? `${line.slice(0, PREVIEW_MAX - 1)}…`
+    : line;
+}
+
+/** The ask behind `eventId`, when it was fetched and says something. */
+export function askFor(
+  targets: ReadonlyMap<string, ReactionTarget>,
+  eventId: string | null | undefined,
+): TriggerAsk | null {
+  const target = eventId ? targets.get(eventId) : undefined;
+  if (!target?.authorPubkey || !target.preview) {
+    return null;
+  }
+  return { authorPubkey: target.authorPubkey, text: target.preview };
+}
+
+/** Attach `ask` to Done rows (and `last`) that name a trigger. */
+function withDoneAsks(
+  done: DoneState,
+  targets: ReadonlyMap<string, ReactionTarget>,
+): DoneState {
+  if (done.state !== "ready") {
+    return done;
+  }
+  const rows = done.rows.map((row) =>
+    row.triggerId ? { ...row, ask: askFor(targets, row.triggerId) } : row,
+  );
+  return { ...done, rows, last: rows[0] ?? null };
 }
 
 /**
@@ -170,12 +219,17 @@ export function buildWorkFeed(
       source: "reaction",
       title: null,
       progress: null,
+      triggerId: entry.eventId,
     });
   }
 
-  const running = [...lifecycle, ...reactionRows.values()].filter((row) =>
-    inScope(row.channelId, scope, openChannelId),
-  );
+  const running = [...lifecycle, ...reactionRows.values()]
+    .filter((row) => inScope(row.channelId, scope, openChannelId))
+    .map((row) =>
+      row.triggerId
+        ? { ...row, ask: askFor(inputs.targets, row.triggerId) }
+        : row,
+    );
 
   const queuedRows: QueuedRow[] = queued
     .map((entry) => ({
@@ -184,10 +238,14 @@ export function buildWorkFeed(
       eventId: entry.eventId,
       channelId: inputs.targets.get(entry.eventId)?.channelId ?? null,
       at: entry.at,
+      ask: askFor(inputs.targets, entry.eventId),
     }))
     .filter((row) => inScope(row.channelId, scope, openChannelId));
 
-  const done: DoneState = doneState(inputs, scope, openChannelId);
+  const done: DoneState = withDoneAsks(
+    doneState(inputs, scope, openChannelId),
+    inputs.targets,
+  );
 
   return { needs, needCounts: counts, running, queued: queuedRows, done };
 }

@@ -8,6 +8,7 @@ import {
 } from "./helpers/shellPage";
 import {
   buildTaskStatus,
+  CRASH_ASK_LINE,
   detailHead,
   lifecycleHead,
   PR_TITLE,
@@ -52,7 +53,8 @@ async function open(
   }
   const status = built as ReturnType<typeof buildTaskStatus>;
   const card = status.events.find(
-    (event: MockEvent) => event.kind === 9,
+    (event: MockEvent) =>
+      event.kind === 9 && event.tags.some((tag) => tag[0] === "card"),
   ) as MockEvent;
   return { fixture, relay, status, card, pageErrors };
 }
@@ -84,19 +86,39 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       // Observer + status for the same turn: ONE row, titled, 1/3.
       const nikon = running.locator(rowKey(a.nikon.pubkey, "t-nikon"));
       await expect(nikon).toHaveCount(1);
-      await expect(nikon).toContainText("Capture pass · #flight-path");
+      // Two lines: "Name  #channel" over the title (run-row-title).
+      await expect(nikon).toContainText("#flight-path");
+      await expect(nikon.getByTestId("run-row-title")).toHaveText(
+        "Capture pass",
+      );
       await expect(nikon.getByTestId("progress-segments")).toHaveAttribute(
         "data-progress",
         "1/3",
       );
       // Past five steps: words, not segments.
       const acid = running.locator(rowKey(a.acid.pubkey, "t-acid"));
-      await expect(acid).toContainText("Jitter buffer QA · 4 of 7");
+      await expect(acid).toContainText("4 of 7 · #engineering");
+      await expect(acid.getByTestId("run-row-title")).toHaveText(
+        "Jitter buffer QA",
+      );
       await expect(acid.getByTestId("progress-segments")).toHaveCount(0);
       // A detail stamped with an EARLIER turn never titles this one (D8.3).
       const crash = running.locator(rowKey(a.crash.pubkey, "t-crash"));
       await expect(crash).toBeVisible();
       await expect(crash).not.toContainText("Stale title");
+      // No title, but its 30624 names the message that started it: the
+      // second line is "<asker>: <first line of the ask>".
+      await expect(crash.getByTestId("run-row-title")).toHaveCount(0);
+      await expect(crash.getByTestId("work-row-ask")).toHaveText(
+        `Sam: ${CRASH_ASK_LINE}`,
+      );
+      // A row with a second line grows; one without stays 34 px.
+      const crashBox = await crash.boundingBox();
+      expect(crashBox?.height ?? 0).toBeGreaterThanOrEqual(43);
+      const jaredBox = await running
+        .locator(rowKey(a.jared.pubkey, "t-jared"))
+        .boundingBox();
+      expect(Math.round(jaredBox?.height ?? 0)).toBeLessThanOrEqual(35);
       // No 30624 at all (a heartbeat turn): the observer row stands alone.
       await expect(
         running.locator(rowKey(a.jared.pubkey, "t-jared")),
@@ -105,7 +127,10 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       const razor = running.locator(
         rowKey(status.agents.razor.pubkey, "r-run"),
       );
-      await expect(razor).toContainText("Restore drill · #ops");
+      await expect(razor).toContainText("#ops");
+      await expect(razor.getByTestId("run-row-title")).toHaveText(
+        "Restore drill",
+      );
       await expect(razor.getByTestId("progress-segments")).toHaveAttribute(
         "data-progress",
         "2/3",
@@ -235,7 +260,10 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
         .getByRole("region", { name: "Done today" })
         .getByTestId("done-row");
       await expect(rows).toHaveCount(6);
-      await expect(rows.first()).toContainText("Capture pass · #flight-path");
+      await expect(rows.first()).toContainText("#flight-path");
+      await expect(rows.first().getByTestId("work-row-ask")).toHaveText(
+        "Capture pass",
+      );
       await expect(rows.filter({ hasText: "Beat 01 captured" })).toHaveCount(1);
       await expect(
         rows.filter({ hasText: "error · harness-restart" }),
@@ -282,6 +310,12 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
         titles.filter({ hasText: "Jitter buffer QA · 4 of 7" }),
       ).toBeVisible();
       await expect(titles.filter({ hasText: "Restore drill" })).toBeVisible();
+      // Untitled, with a known ask: the phone row's second line is the ask.
+      await expect(
+        work
+          .locator(rowKey(fixture.agents.crash.pubkey, "t-crash"))
+          .getByTestId("work-row-ask"),
+      ).toHaveText(`Sam: ${CRASH_ASK_LINE}`);
       await expect(work.getByText(/no heartbeat/).first()).toBeVisible();
       // Nothing scrolls sideways at phone width.
       expect(

@@ -135,6 +135,12 @@ export function WorkTab({
           ...(feed.done.state === "ready"
             ? feed.done.rows.map((row) => row.agentPubkey)
             : []),
+          // Whoever asked for the work, named on the row's second line.
+          ...[
+            ...feed.running,
+            ...feed.queued,
+            ...(feed.done.state === "ready" ? feed.done.rows : []),
+          ].flatMap((row) => (row.ask ? [row.ask.authorPubkey] : [])),
         ]),
       ),
     [feed],

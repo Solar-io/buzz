@@ -37,6 +37,9 @@ export interface StatusAgents {
 
 export const PR_EVENT_ID = "4b".repeat(32);
 export const PR_TITLE = "Merge feat(web): Work tab v2 status rows";
+/** The message that started Crash's untitled turn (its 30624 `e` trigger). */
+export const CRASH_ASK_ID = "4c".repeat(32);
+export const CRASH_ASK_LINE = "Cut a TestFlight build off main";
 
 let next = 80_000;
 const id = () => hexId(next++, "5");
@@ -49,6 +52,7 @@ export function lifecycleHead(
   at: number,
   started: number,
   reason?: string,
+  trigger?: string,
 ): MockEvent {
   return mockEvent({
     id: id(),
@@ -64,6 +68,7 @@ export function lifecycleHead(
       ...(state === "running" ? [] : [["ended", String(at)]]),
       ["session", "0"],
       ...(reason ? [["reason", reason]] : []),
+      ...(trigger ? [["e", trigger, "", "trigger"]] : []),
     ],
     content: "",
   });
@@ -156,7 +161,19 @@ export function buildTaskStatus(
       "running",
       ahead,
       nowS - 420,
+      undefined,
+      CRASH_ASK_ID,
     ),
+    // The ask behind it: blank first line, extra spaces and a second line, so
+    // the row has to pick the first non-empty line and collapse whitespace.
+    mockEvent({
+      id: CRASH_ASK_ID,
+      kind: 9,
+      pubkey: fixture.viewer,
+      created_at: nowS - 430,
+      tags: [["h", c.mobile]],
+      content: `\n  Cut a   TestFlight build\toff main  \nthen post the link here`,
+    }),
     detailHead(a.crash.pubkey, c.mobile, "t-crash-previous", nowS - 600, {
       title: "Stale title from an earlier turn",
     }),

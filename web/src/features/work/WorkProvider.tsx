@@ -9,6 +9,7 @@ import {
 
 import type { ReadState } from "@/features/channels/lib/readState.ts";
 import type { ChannelSummary } from "@/features/channels/useChannels";
+import { useObserverStore } from "@/features/agents/ObserverProvider";
 import { useInboxReadState } from "@/features/home/hooks.ts";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { getUnlockedSecretKey } from "@/shared/lib/key-store";
@@ -24,6 +25,8 @@ import {
   REACTION_WORKING,
   type ReactionEvent,
 } from "./lib/queuedReactions.ts";
+import { observedTriggers } from "./lib/activeTurns.ts";
+import { statusTriggers } from "./lib/taskStatus.ts";
 import { mergeById, useSettledKey } from "./lib/useSettledKey.ts";
 import { useTaskStatus } from "./useTaskStatus.ts";
 import { WorkCountsProvider } from "./useWorkCounts.ts";
@@ -37,7 +40,11 @@ import {
   type MetricEntry,
   parseTurnMetric,
 } from "./lib/turnMetrics.ts";
-import type { ReactionTarget, WorkInputs } from "./lib/workFeed.ts";
+import {
+  previewLine,
+  type ReactionTarget,
+  type WorkInputs,
+} from "./lib/workFeed.ts";
 import {
   approvalHistoryFilter,
   approvalLiveFilters,
@@ -188,52 +195,6 @@ export function WorkProvider({
     return () => clearInterval(timer);
   }, []);
 
-  // ---- targets: which channel each reacted-to event lives in --------------
-  const missingTargets = useMemo(() => {
-    const ids = new Set<string>();
-    for (const event of reactions) {
-      if (event.kind !== 7) {
-        continue;
-      }
-      const target = event.tags.find((tag) => tag[0] === "e")?.[1];
-      if (target && !targets.has(target)) {
-        ids.add(target);
-      }
-    }
-    return [...ids].sort().slice(0, 200).join(",");
-  }, [reactions, targets]);
-  const settledMissing = useSettledKey(missingTargets);
-  useEffect(() => {
-    if (!live || settledMissing === "") {
-      return;
-    }
-    let closed = false;
-    let unsubscribe: (() => void) | null = null;
-    const close = () => {
-      if (!closed) {
-        closed = true;
-        unsubscribe?.();
-      }
-    };
-    unsubscribe = session.subscribe(targetsFilter(settledMissing.split(",")), {
-      onEvent: (event) => {
-        const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
-        if (channelId) {
-          setTargets((previous) =>
-            previous.has(event.id)
-              ? previous
-              : new Map(previous).set(event.id, { channelId }),
-          );
-        }
-      },
-      onEose: close,
-    });
-    if (closed) {
-      unsubscribe();
-    }
-    return close;
-  }, [session, live, settledMissing]);
-
   // ---- metrics: 44200 since local midnight, decrypted --------------------
   useEffect(() => {
     const rollover = setInterval(() => {
@@ -309,6 +270,96 @@ export function WorkProvider({
     channelKey,
     sinceS: metricsSince,
   });
+
+  // ---- targets: reacted-to and triggering events (channel + the ask) -------
+  // A reaction's target places a Queued row; a 30624 head's trigger is the
+  // message behind a Running or Done row. Each id is asked for once: one the
+  // relay does not return (deleted, or not readable here) is not re-asked.
+  const [triedTargets, setTriedTargets] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  // Owner-observed turns name their trigger only in observer frames. Frames
+  // arrive several a second, so reduce them to a stable id key first.
+  const observerFrames = useObserverStore()?.byAgent;
+  const observedKey = useMemo(() => {
+    if (!observerFrames) {
+      return "";
+    }
+    const ids = new Set<string>();
+    for (const set of observedTriggers(observerFrames).values()) {
+      for (const id of set) {
+        ids.add(id);
+      }
+    }
+    return [...ids].sort().join(",");
+  }, [observerFrames]);
+  const missingTargets = useMemo(() => {
+    const ids = new Set<string>();
+    const want = (id: string | undefined | null) => {
+      if (id && !targets.has(id) && !triedTargets.has(id)) {
+        ids.add(id);
+      }
+    };
+    for (const event of reactions) {
+      if (event.kind === 7) {
+        want(event.tags.find((tag) => tag[0] === "e")?.[1]);
+      }
+    }
+    for (const set of statusTriggers(taskStatus.store).values()) {
+      for (const id of set) {
+        want(id);
+      }
+    }
+    for (const id of observedKey === "" ? [] : observedKey.split(",")) {
+      want(id);
+    }
+    return [...ids].sort().slice(0, 200).join(",");
+  }, [reactions, targets, triedTargets, taskStatus.store, observedKey]);
+  const settledMissing = useSettledKey(missingTargets);
+  useEffect(() => {
+    if (!live || settledMissing === "") {
+      return;
+    }
+    const batch = settledMissing.split(",");
+    let closed = false;
+    let unsubscribe: (() => void) | null = null;
+    const close = () => {
+      if (!closed) {
+        closed = true;
+        unsubscribe?.();
+      }
+    };
+    unsubscribe = session.subscribe(targetsFilter(batch), {
+      onEvent: (event) => {
+        const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
+        if (channelId) {
+          setTargets((previous) =>
+            previous.has(event.id)
+              ? previous
+              : new Map(previous).set(event.id, {
+                  channelId,
+                  authorPubkey: event.pubkey,
+                  preview: previewLine(event.content),
+                }),
+          );
+        }
+      },
+      onEose: () => {
+        setTriedTargets((previous) => {
+          const next = new Set(previous);
+          for (const id of batch) {
+            next.add(id);
+          }
+          return next;
+        });
+        close();
+      },
+    });
+    if (closed) {
+      unsubscribe();
+    }
+    return close;
+  }, [session, live, settledMissing]);
 
   const metrics: MetricsState = useMemo(() => {
     const ready = {

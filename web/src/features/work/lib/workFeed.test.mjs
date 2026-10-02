@@ -5,7 +5,7 @@ import {
   foldStatus,
   parseTaskStatus,
 } from "./taskStatus.ts";
-import { buildWorkFeed } from "./workFeed.ts";
+import { askFor, buildWorkFeed, previewLine } from "./workFeed.ts";
 
 const OWNED = "aa".repeat(32);
 const NOT_OWNED = "bb".repeat(32);
@@ -265,4 +265,112 @@ test("Done today: status alone is enough; neither source settled is not a 0", ()
     null,
   );
   assert.equal(neither.done.state, "locked");
+});
+
+// ---- the ask: what each row is about when its agent set no title -------------
+
+const SAM = "5a".repeat(32);
+
+test("previewLine keeps the first non-empty line, collapsed and capped", () => {
+  assert.equal(
+    previewLine("\n\n  fix   the\trail  \nsecond line"),
+    "fix the rail",
+  );
+  assert.equal(previewLine("   \n \n"), "");
+  const long = previewLine("x".repeat(500));
+  assert.equal(long.length, 200);
+  assert.ok(long.endsWith("…"));
+});
+
+test("askFor needs a fetched target with an author and some text", () => {
+  const targets = new Map([
+    ["a", { channelId: CH, authorPubkey: SAM, preview: "do option 1" }],
+    ["b", { channelId: CH }],
+    ["c", { channelId: CH, authorPubkey: SAM, preview: "" }],
+  ]);
+  assert.deepEqual(askFor(targets, "a"), {
+    authorPubkey: SAM,
+    text: "do option 1",
+  });
+  assert.equal(askFor(targets, "b"), null, "channel-only target");
+  assert.equal(askFor(targets, "c"), null, "empty message");
+  assert.equal(askFor(targets, "missing"), null);
+  assert.equal(askFor(targets, null), null);
+});
+
+test("Running, Queued and Done rows carry the message that started them", () => {
+  const runTrigger = "d1".repeat(32);
+  const doneTrigger = "d2".repeat(32);
+  const queuedTarget = "d3".repeat(32);
+  const reactTarget = "d4".repeat(32);
+  const OTHER = "cc".repeat(32);
+  const feed = buildWorkFeed(
+    inputs({
+      reactions: [
+        reaction("q1", "👀", queuedTarget, NOW - 70, NOT_OWNED),
+        reaction("r1", "💬", reactTarget, NOW - 40, "dd".repeat(32)),
+      ],
+      targets: new Map([
+        [
+          runTrigger,
+          { channelId: CH, authorPubkey: SAM, preview: "fix the rail" },
+        ],
+        [doneTrigger, { channelId: CH, authorPubkey: SAM, preview: "ship it" }],
+        [
+          queuedTarget,
+          { channelId: CH, authorPubkey: SAM, preview: "next up" },
+        ],
+        [
+          reactTarget,
+          { channelId: "chan-9", authorPubkey: SAM, preview: "no lifecycle" },
+        ],
+      ]),
+      status: statusInput([
+        statusHead(NOT_OWNED, "t1", "running", NOW - 20, [
+          ["e", runTrigger, "", "trigger"],
+        ]),
+        statusHead(OTHER, "t2", "done", NOW - 30, [
+          ["e", doneTrigger, "", "trigger"],
+        ]),
+      ]),
+    }),
+    NOW,
+    "everywhere",
+    null,
+  );
+  assert.deepEqual(
+    feed.running.map((row) => [row.source, row.ask?.text ?? null]),
+    [
+      ["status", "fix the rail"],
+      ["reaction", "no lifecycle"],
+    ],
+  );
+  assert.equal(feed.running[0].ask.authorPubkey, SAM);
+  assert.deepEqual(
+    feed.queued.map((row) => row.ask?.text ?? null),
+    ["next up"],
+  );
+  assert.equal(feed.done.state, "ready");
+  assert.deepEqual(
+    feed.done.rows.map((row) => row.ask?.text ?? null),
+    ["ship it"],
+  );
+  assert.equal(feed.done.last.ask.text, "ship it", "the folded summary too");
+});
+
+test("a row whose trigger is not fetched yet has no ask", () => {
+  const feed = buildWorkFeed(
+    inputs({
+      status: statusInput([
+        statusHead(NOT_OWNED, "t1", "running", NOW - 20, [
+          ["e", "e1".repeat(32), "", "trigger"],
+        ]),
+      ]),
+    }),
+    NOW,
+    "everywhere",
+    null,
+  );
+  assert.equal(feed.running.length, 1);
+  assert.equal(feed.running[0].ask, null);
 });
