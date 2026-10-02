@@ -191,6 +191,11 @@ export function useMessageActions({
   }, []);
 
   const send = (options: MessageSendOptions) => {
+    if (current?.archived)
+      return Promise.resolve({
+        ok: false,
+        message: "This channel is archived.",
+      });
     if (!current) {
       return Promise.resolve({ ok: false, message: "No channel selected." });
     }

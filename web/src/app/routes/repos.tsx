@@ -45,7 +45,7 @@ import { paletteActions } from "@/features/channels/lib/paletteActions.ts";
 import { isNativeIOS } from "@/shared/platform/native";
 import { ChannelTimeline } from "@/features/channels/ui/ChannelTimeline";
 import type { ComposerHandle } from "@/features/channels/ui/Composer";
-import { ChannelHeader } from "@/features/channels/ui/ChannelHeader";
+import { ChannelSettingsHeader as ChannelHeader } from "@/features/channels/ui/channel-sheet/ChannelSettingsHeader";
 import { CommandComposer } from "@/features/commands/ui/CommandComposer";
 import { paletteCommands } from "@/features/commands/lib/commands.ts";
 import { DmComposerActions } from "@/features/channels/ui/DmComposerActions";
@@ -116,15 +116,15 @@ function AppRoute() {
 }
 
 function ChannelBrowser() {
+  const selectedId = Route.useSearch({ select: (s) => s.c });
   const {
     channels,
     connected,
     refresh: refreshChannels,
     forgetChannel: forgetChannelFromList,
     loaded: channelsLoaded,
-  } = useChannels();
+  } = useChannels(selectedId);
   const navigate = useNavigate({ from: "/repos" });
-  const selectedId = Route.useSearch({ select: (s) => s.c });
   const permalinkMessageId = Route.useSearch({ select: (s) => s.m });
   const view = Route.useSearch({ select: (s) => s.view });
   const current = channels.find((channel) => channel.id === selectedId) ?? null;
@@ -806,11 +806,18 @@ function ChannelBrowser() {
                     picture={dmProfiles.get(dmAgentPubkey)?.avatar}
                   />
                 )}
-                {/* The header is back (web redesign Phase 2), carrying what
-                      the sidebar row cannot: the topic and the facepile.
-                      Call / Thinking / dictation stay on the composer row. */}
                 <ChannelHeader
                   channel={current}
+                  admin={{
+                    session,
+                    channelPrefs,
+                    setChannelPrefs,
+                    setReadState,
+                    refreshChannels,
+                    onChannelDeleted: forgetChannelFromList,
+                    selectedId,
+                    onCloseChannel: closeChannel,
+                  }}
                   title={conversationTitle ?? ""}
                   members={members}
                   profiles={profiles}
@@ -902,6 +909,7 @@ function ChannelBrowser() {
                           own reply box targets the thread. Slash commands run
                           here and are never sent as text. */}
                     <CommandComposer
+                      readOnly={current.archived}
                       ref={composerRef}
                       host={{
                         channel: commandChannel,

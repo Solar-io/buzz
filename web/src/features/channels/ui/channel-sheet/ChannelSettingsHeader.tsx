@@ -53,7 +53,7 @@ export function ChannelSettingsHeader(props: HeaderProps) {
           type="button"
           aria-label="Channel settings"
           data-testid="channel-settings-trigger"
-          className="flex size-11 shrink-0 items-center justify-center rounded-lg text-ink2 hover:bg-accent"
+          className="flex size-11 shrink-0 items-center justify-center rounded-lg text-ink-2 hover:bg-accent"
           onClick={() => setTab("about")}
         >
           <Settings aria-hidden className="size-4" />

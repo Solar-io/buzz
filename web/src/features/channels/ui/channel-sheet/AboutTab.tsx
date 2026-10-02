@@ -44,7 +44,7 @@ export function AboutTab(
                 aria-label={`Edit ${field}`}
               >
                 <span className="capitalize">{field}</span>
-                <span className="max-w-[65%] truncate text-ink2">
+                <span className="max-w-[65%] truncate text-ink-2">
                   {channel[field] || "Add a purpose"}
                 </span>
               </button>
@@ -106,7 +106,7 @@ export function AboutTab(
             <span>Visibility</span>
             <select
               aria-label="Visibility"
-              className="min-h-9 min-w-0 max-w-[65%] rounded bg-card text-right text-sm text-ink2"
+              className="min-h-9 min-w-0 max-w-[65%] rounded bg-card text-right text-sm text-ink-2"
               value={channel.isPrivate ? "private" : "open"}
               disabled={locked}
               onChange={(event) => {
@@ -120,7 +120,7 @@ export function AboutTab(
           </label>
           <div className={rowClass}>
             <span>Joining</span>
-            <span className="text-ink2">
+            <span className="text-ink-2">
               {channel.joining === "anyone" ? "Anyone can join" : "By invite"}
             </span>
           </div>
@@ -128,7 +128,7 @@ export function AboutTab(
             <span>Lifetime</span>
             <select
               aria-label="Lifetime"
-              className="min-h-9 min-w-0 max-w-[65%] rounded bg-card text-right text-sm text-ink2"
+              className="min-h-9 min-w-0 max-w-[65%] rounded bg-card text-right text-sm text-ink-2"
               disabled={locked}
               value={channel.ttlSeconds ?? ""}
               onChange={(event) => {
@@ -162,7 +162,7 @@ export function AboutTab(
                 Chosen when the channel was made
               </span>
             </span>
-            <span className="capitalize text-ink2">{channel.type}</span>
+            <span className="capitalize text-ink-2">{channel.type}</span>
           </div>
         </div>
         <p className="px-1 text-xs text-muted-foreground">
@@ -183,7 +183,7 @@ export function AboutTab(
             <span>
               {props.agentCount} {props.agentCount === 1 ? "agent" : "agents"}
             </span>
-            <span className="text-ink2">Members →</span>
+            <span className="text-ink-2">Members →</span>
           </button>
         </div>
       </section>
@@ -219,7 +219,7 @@ export function AboutTab(
             <span>Notifications</span>
             <select
               aria-label="Notifications"
-              className="min-h-9 rounded bg-card text-sm text-ink2"
+              className="min-h-9 rounded bg-card text-sm text-ink-2"
               value={props.muted ? "muted" : "enabled"}
               disabled={locked}
               onChange={props.onMute}

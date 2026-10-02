@@ -110,7 +110,7 @@ export function ChannelSettingsSheet(props: ChannelSettingsSheetProps) {
               }}
               onClick={() => setTab(id)}
               className={cn(
-                "min-h-11 min-w-0 flex-1 rounded-md px-1 text-sm capitalize text-ink2",
+                "min-h-11 min-w-0 flex-1 rounded-md px-1 text-sm capitalize text-ink-2",
                 tab === id && "bg-card text-foreground shadow-sm",
               )}
             >
