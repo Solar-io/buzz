@@ -41,3 +41,9 @@ W1 channel settings:
 - [x] W9a: Right now live model switch/cancel, channel add then start and remove, Memory/Activity; locked Logs.
 - [x] W9a: phone sub-pages, responsive cards, behavioural/mutation tests, scoped web gates and screenshots. Evidence: [W9a report](TEST_REPORTS/w9a-agent-screen.md).
 - [ ] W9a live acceptance: read-only Acid Burn comparison, then test-channel add/remove and cancellation on a throwaway agent. Needs an approved owner signing environment; this coder shell has no BUZZ_PRIVATE_KEY. Local mock journeys cover the client wiring.
+W9b1 agent settings cards:
+- [ ] Model & thinking: grouped model picker, runtime-specific Provider/API key, read-only locked Effort.
+- [ ] Runtime: preset/custom picker, locked inheritance, Turns at once, duration presets/custom/reset, Start with Buzz Desktop, honest blind controls.
+- [ ] Who can instruct: named people picker, locked Nobody, desktop warning copy and placement.
+- [ ] W7 draft/save/navigation integration, targeted desktop acknowledgements, safe local timeout echo and phone sub-pages.
+- [ ] Required web checks, named fail-first regressions, built-app browser journeys and 1440/390 screenshots; commit and handoff.
