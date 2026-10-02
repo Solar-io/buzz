@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { X } from "lucide-react";
 import {
   Dialog,
   DialogClose,
@@ -61,17 +62,23 @@ export function ChannelSettingsSheet(props: ChannelSettingsSheetProps) {
         data-testid="channel-settings-sheet"
         className="fixed inset-y-0 right-0 left-auto flex h-dvh w-full max-w-none flex-col gap-0 overflow-hidden rounded-none p-0 sm:w-[30rem] sm:max-w-[30rem]"
       >
-        <div className="flex min-h-16 shrink-0 items-center gap-3 border-b border-border px-4 pt-[env(safe-area-inset-top)]">
+        <div className="flex min-h-16 shrink-0 items-center gap-3 border-b border-border px-4 pt-[env(safe-area-inset-top)] sm:min-h-20">
           <DialogClose
             disabled={busy}
-            className="min-h-11 text-sm text-blue-ink"
+            className="order-1 min-h-11 text-sm text-blue-ink sm:order-3 sm:flex sm:w-11 sm:items-center sm:justify-center"
           >
-            Close
+            <span className="sm:sr-only">Close</span>
+            <X aria-hidden className="hidden size-4 sm:block" />
           </DialogClose>
-          <DialogTitle className="min-w-0 flex-1 truncate text-center text-base">
-            # {props.channel.name}
-          </DialogTitle>
-          <span className="w-9" aria-hidden />
+          <div className="order-2 min-w-0 flex-1 sm:order-1">
+            <p className="hidden text-2xs uppercase tracking-wider text-muted-foreground sm:block">
+              Channel settings
+            </p>
+            <DialogTitle className="min-w-0 truncate text-center text-base sm:text-left sm:text-xl">
+              # {props.channel.name}
+            </DialogTitle>
+          </div>
+          <span className="order-3 w-9 sm:hidden" aria-hidden />
         </div>
         <DialogDescription className="sr-only">
           Channel settings
@@ -114,7 +121,7 @@ export function ChannelSettingsSheet(props: ChannelSettingsSheetProps) {
                 tab === id && "bg-card text-foreground shadow-sm",
               )}
             >
-              {id}
+              {id[0].toUpperCase() + id.slice(1)}
               {id === "members" ? ` (${props.memberCount})` : ""}
             </button>
           ))}

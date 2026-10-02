@@ -60,51 +60,54 @@ export function useChannels(selectedId?: string): {
     dropSeedEntry(CHANNEL_SEED_KEY, channelId);
   }, []);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is the re-REQ trigger by design
-  useEffect(() => {
-    const apply = (event: SignedNostrEvent) => {
-      const channel = channelFromEvent(event);
-      if (!channel) {
-        return;
+  const apply = useCallback((event: SignedNostrEvent) => {
+    const channel = channelFromEvent(event);
+    if (!channel) {
+      return;
+    }
+    if (forgottenIds.current.has(channel.id)) {
+      return;
+    }
+    setChannels((previous) => {
+      const existing = previous.find((c) => c.id === channel.id);
+      if (
+        existing &&
+        (existing.updatedAt > channel.updatedAt ||
+          (existing.updatedAt === channel.updatedAt &&
+            existing.metadataEventId !== undefined &&
+            existing.metadataEventId <= (channel.metadataEventId ?? "")))
+      ) {
+        return previous;
       }
-      if (forgottenIds.current.has(channel.id)) {
-        return;
-      }
-      setChannels((previous) => {
-        const existing = previous.find((c) => c.id === channel.id);
-        if (
-          existing &&
-          (existing.updatedAt > channel.updatedAt ||
-            (existing.updatedAt === channel.updatedAt &&
-              existing.metadataEventId !== undefined &&
-              existing.metadataEventId <= (channel.metadataEventId ?? "")))
-        ) {
-          return previous;
-        }
-        const next = existing
-          ? previous.map((c) => (c.id === channel.id ? channel : c))
-          : [...previous, channel];
-        return next.sort((a, b) => a.name.localeCompare(b.name));
-      });
-    };
+      const next = existing
+        ? previous.map((c) => (c.id === channel.id ? channel : c))
+        : [...previous, channel];
+      return next.sort((a, b) => a.name.localeCompare(b.name));
+    });
+  }, []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is the re-REQ trigger
+  useEffect(
+    () =>
+      session.subscribe(
+        { kinds: [39000], limit: 500 },
+        {
+          onEvent: apply,
+          onEose: () => setLoaded(true),
+          priority: "critical",
+        },
+      ),
+    [session, refreshKey, apply],
+  );
+
+  useEffect(() => {
+    if (!selectedId) return;
+    // Channel-scoped live metadata, separate from the global discovery REQ.
     return session.subscribe(
-      selectedId
-        ? [
-            { kinds: [39000], limit: 500 },
-            // Global REQs get history only for channel-scoped events. The open
-            // conversation needs #h to receive metadata changes live.
-            { kinds: [39000], "#d": [selectedId], "#h": [selectedId] },
-          ]
-        : { kinds: [39000], limit: 500 },
-      {
-        onEvent: apply,
-        onEose: () => setLoaded(true),
-        // The sidebar paints from this; open it first in the boot replay.
-        priority: "critical",
-      },
+      { kinds: [39000], "#d": [selectedId], "#h": [selectedId] },
+      { onEvent: apply },
     );
-  }, [session, refreshKey, selectedId]);
+  }, [session, selectedId, apply]);
 
   // Write-through so the next reload paints the channel list immediately.
   useEffect(() => {

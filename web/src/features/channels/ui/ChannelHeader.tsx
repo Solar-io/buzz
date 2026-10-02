@@ -14,7 +14,7 @@ import { AuthorAvatar } from "./AuthorAvatar.tsx";
 import { ChannelMembersButton } from "./ChannelMembersButton.tsx";
 
 /**
- * The first non-empty of topic → about → purpose, or null. A scratch
+ * The first non-empty of topic → purpose → about, or null. A scratch
  * channel's parent marker is machine text and never reads here.
  */
 export function channelTopic(channel: {
@@ -123,7 +123,22 @@ export function ChannelHeader({
         phone={phone}
         memberPubkeys={members.map((member) => member.pubkey)}
         agentPubkeys={agentPubkeys}
-        roster={roster("count")}
+        roster={
+          <div className="flex items-center gap-1">
+            {roster("count")}
+            {!phone && onOpenSettings && (
+              <button
+                type="button"
+                aria-label="Channel settings"
+                data-testid="channel-settings-trigger"
+                className="flex size-8 items-center justify-center rounded-lg text-ink-2 hover:bg-accent"
+                onClick={() => onOpenSettings("about")}
+              >
+                <Settings aria-hidden className="size-4" />
+              </button>
+            )}
+          </div>
+        }
       />
     );
   }

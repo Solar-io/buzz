@@ -85,6 +85,13 @@ for (const theme of ["dark", "light"]) {
       await page.getByTestId("channel-settings-trigger").click();
       const sheet = page.getByTestId("channel-settings-sheet");
       await expect(sheet).toBeVisible();
+      await sheet.evaluate((element) =>
+        Promise.all(
+          element
+            .getAnimations({ subtree: true })
+            .map((animation) => animation.finished.catch(() => {})),
+        ),
+      );
       const rect = await sheet.boundingBox();
       expect(rect).not.toBeNull();
       expect(Math.round(rect?.width ?? 0)).toBe(width === 390 ? 390 : 480);

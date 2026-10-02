@@ -1,4 +1,4 @@
-import { type ComponentProps, useState } from "react";
+import { type ComponentProps, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Settings } from "lucide-react";
 import { toast } from "sonner";
@@ -37,7 +37,14 @@ export function ChannelSettingsHeader(props: HeaderProps) {
   const [tab, setTab] = useState<ChannelSettingsTab | null>(null);
   const phone = usePhoneLayout();
   const slot = usePhoneBarSlot();
-  const onOpenSettings = (next: ChannelSettingsTab) => setTab(next);
+  const trigger = useRef<HTMLElement | null>(null);
+  const onOpenSettings = (next: ChannelSettingsTab) => {
+    trigger.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setTab(next);
+  };
   const controls =
     props.channel.type === "dm" ? null : (
       <div className="flex items-center gap-1">
@@ -47,14 +54,14 @@ export function ChannelSettingsHeader(props: HeaderProps) {
           profiles={props.profiles}
           selfPubkey={props.selfPubkey}
           agentPubkeys={props.agentPubkeys}
-          onOpenMembers={() => setTab("members")}
+          onOpenMembers={() => onOpenSettings("members")}
         />
         <button
           type="button"
           aria-label="Channel settings"
           data-testid="channel-settings-trigger"
           className="flex size-11 shrink-0 items-center justify-center rounded-lg text-ink-2 hover:bg-accent"
-          onClick={() => setTab("about")}
+          onClick={() => onOpenSettings("about")}
         >
           <Settings aria-hidden className="size-4" />
         </button>
@@ -69,7 +76,10 @@ export function ChannelSettingsHeader(props: HeaderProps) {
           key={props.channel.id}
           {...props}
           initialTab={tab}
-          onClose={() => setTab(null)}
+          onClose={() => {
+            setTab(null);
+            window.requestAnimationFrame(() => trigger.current?.focus());
+          }}
         />
       )}
     </>
