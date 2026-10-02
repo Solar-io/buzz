@@ -14,10 +14,18 @@ import {
 
 // Local verification attaches to Agent Brave. CI retains its normal browser.
 const test = base.extend({
-  browser: async ({ browserName, playwright, launchOptions }, use) => {
+  context: async ({ browser, baseURL }, use) => {
+    const context = await browser.newContext({ baseURL });
+    await use(context);
+    await context.close();
+  },
+  browser: async (
+    { browserName, playwright, launchOptions, headless },
+    use,
+  ) => {
     const browser = process.env.E2E_CDP
       ? await chromium.connectOverCDP(process.env.E2E_CDP)
-      : await playwright[browserName].launch(launchOptions);
+      : await playwright[browserName].launch({ ...launchOptions, headless });
     await use(browser);
     // Disconnecting from CDP must never close the shared browser.
     if (!process.env.E2E_CDP) await browser.close();
@@ -80,6 +88,17 @@ for (const theme of ["dark", "light"]) {
       const { relay } = await openShell(page, {
         theme,
         path: channelPath(),
+        extra: (fixture) =>
+          fixture.events
+            .filter((event) => event.kind === 39002)
+            .map((event) => ({
+              ...event,
+              id: hexId(6000),
+              tags: [
+                ...event.tags,
+                ["h", event.tags.find((tag) => tag[0] === "d")?.[1] ?? ""],
+              ],
+            })),
         relay: { onPublish: metadataEcho() },
       });
       await page.getByTestId("channel-settings-trigger").click();
@@ -166,7 +185,7 @@ for (const theme of ["dark", "light"]) {
       ).toBeVisible();
       await sheet.getByRole("button", { name: "Close", exact: true }).click();
       await expect(page.getByTestId("archived-composer")).toBeVisible();
-      await expect(mainComposer(page)).toHaveCount(0);
+      await expect(mainComposer(page)).toBeDisabled();
       await page.getByTestId("channel-settings-trigger").click();
       await expect(
         sheet.getByRole("button", { name: "Unarchive channel", exact: false }),
