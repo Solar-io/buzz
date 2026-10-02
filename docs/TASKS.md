@@ -3,3 +3,10 @@
 - [x] QA-WORK-001 (High): fixed — live kind-9 subscription for running turns and Done turns inside a 90 s grace (`liveSlots`); regression `web/tests/e2e/work-activity.spec.ts`.
 - [ ] QA-WORK-002 (Medium): prune lifetime activity/tried maps when pair windows/channels expire; add churn coverage.
 - [ ] QA-WORK-003 (Medium): keep fenced-code language markers out of meaningful row summaries; define non-text fallbacks.
+
+W1 channel settings:
+- [x] About sheet (480 desktop / full-screen phone), header and Members entry points; Members / Workflows placeholders.
+- [x] Metadata parsing and name / purpose / visibility / lifetime edits; Joining and Type read-only.
+- [x] Archive / Unarchive with archived controls and composer locked; join / leave / delete through existing event helpers.
+- [x] Canvas, local Save as template, existing notification mute preference.
+- [ ] Required web gates, named fail-first proof and 1440 / 390 screenshots.

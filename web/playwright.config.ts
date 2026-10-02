@@ -53,6 +53,7 @@ export default defineConfig({
         "**/items.spec.ts",
         "**/shelf.spec.ts",
         "**/favorites-sync.spec.ts",
+        "**/channel-sheet.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],

@@ -224,8 +224,6 @@ function ChannelBrowser() {
     selfPubkey,
   });
   const { send } = messageActions;
-  // Permalink target (?m=): the timeline scrolls it into view and flashes it;
-  // m is dropped only once it LANDED (see usePermalinkCleanup).
   const permalinkReady =
     permalinkMessageId != null &&
     messages.some((m) => m.id === permalinkMessageId);
@@ -791,13 +789,6 @@ function ChannelBrowser() {
                 data-custom-content-pane="chat"
               >
                 {dmAgentPubkey && (
-                  // Stationary portrait over the chat column (Sam's
-                  // placement verdict, 2026-09-14): anchored top-right, it
-                  // never scrolls with the transcript, and its fluid width
-                  // reflows as the thinking pane is dragged. The matching
-                  // gutter on the timeline below keeps the text clear of
-                  // it. Same agent-chosen kind-0 avatar as the panel chip;
-                  // a swap repaints it in place.
                   <AgentPortraitOverlay
                     pubkey={dmAgentPubkey}
                     name={
