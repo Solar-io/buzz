@@ -3,6 +3,7 @@ import * as nip44 from "nostr-tools/nip44";
 import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
 
 import { hexId, type MockEvent, mockEvent } from "./mockRelay";
+import { codexFixture, routeCodexUsage } from "./codexFixture";
 
 /**
  * A workspace for the redesign's Work rail, faked at the relay boundary.
@@ -667,6 +668,7 @@ export async function routeUsageHub(
 ): Promise<void> {
   const inHours = (hours: number) =>
     new Date(nowMs + hours * 3_600_000).toISOString();
+  await routeCodexUsage(page, codexFixture(nowMs));
   await page.route("**/v1/pace", (route) =>
     route.fulfill({
       contentType: "application/json",

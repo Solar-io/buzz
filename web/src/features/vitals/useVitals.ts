@@ -5,11 +5,13 @@ import {
   type Pace,
   USAGE_HUB_URL,
 } from "@/features/usage/lib/usageHub.ts";
+import { type CodexVitals, parseCodex } from "./lib/codexUsage.ts";
 import { parseRunway, type Runway } from "./lib/vitalsMath.ts";
 
 const REFRESH_MS = 5 * 60_000;
 const TIMEOUT_MS = 8_000;
 export const RUNWAY_URL = `${USAGE_HUB_URL}/v1/runway`;
+export const CODEX_URL = `${USAGE_HUB_URL}/v1/codex`;
 
 function timeoutSignal(): AbortSignal | undefined {
   return typeof AbortSignal.timeout === "function"
@@ -27,10 +29,23 @@ async function fetchRunway(signal?: AbortSignal): Promise<Runway | null> {
   }
 }
 
+/** Plain no-header GET alongside pace/runway; failures clear the reading. */
+export async function fetchCodex(
+  signal?: AbortSignal,
+): Promise<CodexVitals | null> {
+  try {
+    const response = await fetch(CODEX_URL, { signal });
+    return response.ok ? parseCodex(await response.json()) : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface VitalsSnapshot {
   /** Null until the first success, and whenever the hub is unreachable. */
   pace: Pace | null;
   runway: Runway | null;
+  codex: CodexVitals | null;
   /** The first fetch has settled (success or not). */
   settled: boolean;
 }
@@ -41,7 +56,12 @@ export interface VitalsSnapshot {
  * A failed refresh shows "usage unavailable" — yesterday's percentage on
  * screen as if it were now is the one thing this must never do.
  */
-let snapshot: VitalsSnapshot = { pace: null, runway: null, settled: false };
+let snapshot: VitalsSnapshot = {
+  pace: null,
+  runway: null,
+  codex: null,
+  settled: false,
+};
 const listeners = new Set<() => void>();
 let timer: number | null = null;
 let generation = 0;
@@ -57,11 +77,12 @@ export function refreshVitals(): void {
   void Promise.all([
     fetchPace(timeoutSignal()),
     fetchRunway(timeoutSignal()),
-  ]).then(([pace, runway]) => {
+    fetchCodex(timeoutSignal()),
+  ]).then(([pace, runway, codex]) => {
     if (mine !== generation) {
       return;
     }
-    snapshot = { pace, runway, settled: true };
+    snapshot = { pace, runway, codex, settled: true };
     emit();
   });
 }

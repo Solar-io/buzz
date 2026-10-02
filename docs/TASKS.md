@@ -29,3 +29,10 @@ W1 channel settings:
 - [x] Parity W7: desktop-ack save receipts/Undo, concurrency three, timeout and partial-failure retention.
 - [x] Parity W7: TanStack navigation/unload guard with Keep editing / Discard.
 - [x] Parity W7: 24 added behavioral tests, nine built mutations, required web checks and 1440/390 component screenshots. Evidence: [W7 report](TEST_REPORTS/parity-w7.md).
+
+## Codex usage in web Vitals
+
+- [x] Add the shared no-header /v1/codex poll and null-preserving parser.
+- [x] Add sidebar and phone Codex readings plus quota/credits/usage details in the pop-out.
+- [x] Cover zero, unknown, stale, unlimited and endpoint failure; demonstrate six named mutation failures with an unchanged test count.
+- [x] Run required web static checks, 4,107 passing units/build, and six passing Codex E2E cases; full work-shell retains four existing failures. [Evidence](TEST_REPORTS/codex-vitals.md).
