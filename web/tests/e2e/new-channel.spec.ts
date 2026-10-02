@@ -48,14 +48,23 @@ function materializeChannel(event: MockEvent, relay: MockRelay) {
 }
 
 async function createForm(page: Parameters<typeof openShell>[0]) {
+  await showChannels(page);
   const add = page.getByRole("button", { name: "New channel", exact: true });
-  if (!(await add.isVisible())) {
-    await page
-      .getByRole("button", { name: "Open channels", exact: true })
-      .click();
-  }
+  await expect(add).toBeVisible();
   await add.click();
   return page.getByRole("form", { name: "New channel" });
+}
+
+async function showChannels(page: Parameters<typeof openShell>[0]) {
+  if ((page.viewportSize()?.width ?? 1440) >= 768) return;
+  // Conversations have Back; Channels lives in the phone's bottom tab bar.
+  const back = page.getByRole("button", { name: "Back", exact: true });
+  await expect(back).toBeVisible();
+  await back.click();
+  await page
+    .getByTestId("phone-tab-bar")
+    .getByRole("button", { name: /^Channels/ })
+    .click();
 }
 
 async function noOverflow(
@@ -109,7 +118,7 @@ for (const width of [1440, 390, 375]) {
       expect(tag(created, "ttl")).toBe("604800");
       expect(tag(created, "visibility")).toBe("private");
       await expect(page).toHaveURL(new RegExp(`c=${tag(created, "h")}`));
-      await expect(page.getByTestId("forum-post-list")).toBeVisible();
+      // An empty forum has no post list yet; its post composer is the view.
       await expect(
         page.getByRole("button", { name: "Start a new post", exact: false }),
       ).toBeVisible();
@@ -138,15 +147,8 @@ for (const width of [1440, 390, 375]) {
       await expect(expiry).toBeVisible();
       await expect(expiry).toHaveText(/^(23h 59m|24h) left$/);
       await shot(page, `w4-created-24h-${width}`);
-      const add = page.getByRole("button", {
-        name: "New channel",
-        exact: true,
-      });
-      if (!(await add.isVisible()))
-        await page
-          .getByRole("button", { name: "Open channels", exact: true })
-          .click();
-      const sidebar = page.getByTestId("channel-sidebar");
+      await showChannels(page);
+      const sidebar = page.locator('[data-testid="channel-sidebar"]:visible');
       await expect(
         sidebar.getByText("w4-day-channel", { exact: true }),
       ).toBeVisible();
@@ -154,10 +156,7 @@ for (const width of [1440, 390, 375]) {
       await expect(page).toHaveURL(
         new RegExp(`c=${fixture.channels["flight-path"]}`),
       );
-      if (!(await add.isVisible()))
-        await page
-          .getByRole("button", { name: "Open channels", exact: true })
-          .click();
+      await showChannels(page);
       await sidebar.getByText("w4-day-channel", { exact: true }).click();
       await expect(expiry).toBeVisible();
     });
