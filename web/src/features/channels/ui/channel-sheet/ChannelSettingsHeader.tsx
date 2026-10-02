@@ -114,6 +114,7 @@ function OpenChannelSettings({
     <ChannelSettingsSheet
       channel={channel}
       initialTab={initialTab}
+      memberContext={{ selfPubkey, agentPubkeys: agentPubkeys ?? new Set() }}
       onClose={onClose}
       memberCount={members.length}
       agentCount={

@@ -68,9 +68,13 @@ export function CommunityModerationDialog({
               </select>
             </label>
           )}
-          <label className="block space-y-1 text-sm">
+          <label
+            htmlFor="community-moderation-reason"
+            className="block space-y-1 text-sm"
+          >
             Reason
             <Textarea
+              id="community-moderation-reason"
               aria-label="Reason"
               required
               maxLength={1000}
