@@ -27,6 +27,7 @@ export function AgentTabs({
         <button
           key={id}
           type="button"
+          aria-label={id === "channels" ? `${label} ${channelCount}` : label}
           aria-current={tab === id ? "page" : undefined}
           onClick={() => onSelect(id)}
           className={`min-h-11 min-w-0 flex-1 rounded-md px-2 text-sm font-medium md:flex-none md:rounded-none md:px-3 ${id === "memory" || id === "activity" ? "hidden md:block" : ""} ${tab === id ? "bg-card text-foreground shadow-sm md:border-b-2 md:border-foreground md:bg-transparent md:shadow-none" : "text-muted-foreground hover:text-foreground"}`}

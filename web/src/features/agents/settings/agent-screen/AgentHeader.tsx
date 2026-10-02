@@ -94,7 +94,7 @@ export function AgentHeader({
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <div
-          className={`h-14 w-14 shrink-0 p-0.5 [clip-path:polygon(50%_0,100%_25%,100%_75%,50%_100%,0_75%,0_25%)] ${working ? "bg-work" : "bg-muted-foreground/40"}`}
+          className={`h-11 w-11 shrink-0 p-0.5 md:h-14 md:w-14 [clip-path:polygon(50%_0,100%_25%,100%_75%,50%_100%,0_75%,0_25%)] ${working ? "bg-work" : "bg-muted-foreground/40"}`}
         >
           <AuthorAvatar
             pubkey={row.pubkey}

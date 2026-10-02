@@ -392,6 +392,23 @@ test("W9a stale desktop report locks lifecycle and channel writes", async ({
       .getByRole("button", { name: "Add", exact: true }),
   ).toBeDisabled();
 });
+
+test("W9a below 1280 puts Right now and Channels under the header", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1000, height: 960 });
+  await settings(page);
+  const right = await page.getByTestId("agent-right-now").boundingBox();
+  const channels = await page.getByTestId("agent-channels-card").boundingBox();
+  expect(right).not.toBeNull();
+  expect(channels).not.toBeNull();
+  expect(Math.abs((right?.y ?? 0) - (channels?.y ?? 0))).toBeLessThan(2);
+  expect((right?.x ?? 0) + (right?.width ?? 0)).toBeLessThanOrEqual(
+    channels?.x ?? 0,
+  );
+  await noOverflow(page);
+  await screenshot(page, "w9a-agent-1000");
+});
 for (const width of [390, 375])
   test(`W9a ${width} phone segments, sub-page pushes and no overflow`, async ({
     page,
