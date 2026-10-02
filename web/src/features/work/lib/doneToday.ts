@@ -61,6 +61,8 @@ export function mergeDone(
         ...previous,
         title: previous.title ?? turn.title,
         triggerId: previous.triggerId ?? turn.trigger,
+        startedAt: turn.started,
+        endedAt: turn.ended,
         stopReason: abnormal(previous.stopReason)
           ? previous.stopReason
           : (ending ?? previous.stopReason),
@@ -72,6 +74,8 @@ export function mergeDone(
       agentPubkey: turn.agentPubkey,
       channelId: turn.channelId,
       at,
+      startedAt: turn.started,
+      endedAt: turn.ended,
       stopReason: ending,
       title: turn.title,
       triggerId: turn.trigger,

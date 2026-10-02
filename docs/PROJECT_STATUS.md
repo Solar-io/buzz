@@ -1,0 +1,1 @@
+Work rows resolve an agent's own kind-9 message within the turn window after a 30624 title. Short trigger asks recover their NIP-10 parent. WorkProvider uses bounded, debounced history requests, closed on EOSE; only running query keys renew each minute.

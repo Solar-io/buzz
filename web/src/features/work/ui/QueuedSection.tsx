@@ -220,7 +220,7 @@ export function DoneSection({
   // Main: "last: Beat 01 captured" — what was done, when the agent said so;
   // otherwise who, where and when.
   const lastLine = last
-    ? (whatLine(last.title, last.ask, profiles) ??
+    ? (whatLine(last.title, last.ask, profiles, last.latest) ??
       metaLine(
         authorLabel(last.agentPubkey, profiles),
         channelLabel(last.channelId, channels),
@@ -296,7 +296,7 @@ function DoneRows({
         const name = authorLabel(row.agentPubkey, profiles);
         const abnormal =
           row.stopReason !== null && row.stopReason !== "end_turn";
-        const what = whatLine(row.title, row.ask, profiles);
+        const what = whatLine(row.title, row.ask, profiles, row.latest);
         return (
           <button
             key={row.key}

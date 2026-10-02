@@ -12,6 +12,8 @@ import { type ReactionEvent, reactionWork } from "./queuedReactions.ts";
 import { lifecycleRows, slotOf } from "./runningRows.ts";
 import { endedTurns, type StatusStore, statusTriggers } from "./taskStatus.ts";
 import { type MetricEntry, summarizeDone } from "./turnMetrics.ts";
+import { type AgentActivity, latestActivity } from "./workActivity.ts";
+import { cleanWorkText, isShortTrigger } from "./workText.ts";
 import type {
   DoneState,
   QueuedRow,
@@ -31,6 +33,8 @@ export interface ReactionTarget {
   authorPubkey?: string;
   /** First non-empty line of the content, whitespace-collapsed; "" if none. */
   preview?: string;
+  /** NIP-10 parent, used when this trigger says only e.g. "Yes". */
+  replyParentId?: string | null;
 }
 
 /** Longest ask kept; the row truncates visually well before this. */
@@ -54,23 +58,38 @@ export function askFor(
   eventId: string | null | undefined,
 ): TriggerAsk | null {
   const target = eventId ? targets.get(eventId) : undefined;
-  if (!target?.authorPubkey || !target.preview) {
+  if (!target?.authorPubkey) {
     return null;
   }
-  return { authorPubkey: target.authorPubkey, text: target.preview };
+  const text = cleanWorkText(target.preview ?? "");
+  const parent =
+    text && isShortTrigger(text) && target.replyParentId
+      ? targets.get(target.replyParentId)
+      : undefined;
+  const parentText =
+    parent?.channelId === target.channelId
+      ? cleanWorkText(parent.preview ?? "")
+      : "";
+  if (parent?.authorPubkey && parentText) {
+    return { authorPubkey: parent.authorPubkey, text: parentText };
+  }
+  return text ? { authorPubkey: target.authorPubkey, text } : null;
 }
 
 /** Attach `ask` to Done rows (and `last`) that name a trigger. */
 function withDoneAsks(
   done: DoneState,
   targets: ReadonlyMap<string, ReactionTarget>,
+  activity: AgentActivity | undefined,
 ): DoneState {
   if (done.state !== "ready") {
     return done;
   }
-  const rows = done.rows.map((row) =>
-    row.triggerId ? { ...row, ask: askFor(targets, row.triggerId) } : row,
-  );
+  const rows = done.rows.map((row) => ({
+    ...row,
+    ask: askFor(targets, row.triggerId),
+    latest: latestActivity(row, activity),
+  }));
   return { ...done, rows, last: rows[0] ?? null };
 }
 
@@ -94,6 +113,8 @@ export interface WorkInputs {
   reactions: readonly ReactionEvent[];
   /** Reacted-to event id → its channel, once fetched. */
   targets: ReadonlyMap<string, ReactionTarget>;
+  /** Own kind-9 history, lazily fetched per visible agent/channel pair. */
+  agentActivity?: AgentActivity;
   /** Decrypted 44200 entries, or why there are none. */
   metrics:
     | { state: "ready"; entries: readonly MetricEntry[]; sinceS: number }
@@ -225,11 +246,11 @@ export function buildWorkFeed(
 
   const running = [...lifecycle, ...reactionRows.values()]
     .filter((row) => inScope(row.channelId, scope, openChannelId))
-    .map((row) =>
-      row.triggerId
-        ? { ...row, ask: askFor(inputs.targets, row.triggerId) }
-        : row,
-    );
+    .map((row) => ({
+      ...row,
+      ask: askFor(inputs.targets, row.triggerId),
+      latest: latestActivity(row, inputs.agentActivity),
+    }));
 
   const queuedRows: QueuedRow[] = queued
     .map((entry) => ({
@@ -245,6 +266,7 @@ export function buildWorkFeed(
   const done: DoneState = withDoneAsks(
     doneState(inputs, scope, openChannelId),
     inputs.targets,
+    inputs.agentActivity,
   );
 
   return { needs, needCounts: counts, running, queued: queuedRows, done };

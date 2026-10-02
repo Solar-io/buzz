@@ -116,7 +116,7 @@ export function RunningSection({
               const quiet = row.state === "stalled" || row.state === "lost";
               // `!= null`: a row built before Phase 8 has no such fields.
               const title = row.title != null ? row.title : null;
-              const what = whatLine(title, row.ask, profiles);
+              const what = whatLine(title, row.ask, profiles, row.latest);
               const steps = progressText(row.progress ?? null);
               const rest = metaLine(steps, where);
               return (
