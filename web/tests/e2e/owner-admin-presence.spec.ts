@@ -97,6 +97,15 @@ test("P0 presence locks offline controls, recovers, and handles old catalogs at 
   await page.waitForTimeout(500); // hydrate the persisted key before advancing the clock
   await page.clock.runFor(2_001); // mocked relay's no-AUTH grace
   const footer = page.getByTestId("desktop-connection-footer");
+  for (
+    let attempt = 0;
+    attempt < 20 && (await footer.count()) === 0;
+    attempt++
+  ) {
+    await page.clock.runFor(1_000);
+    await page.waitForTimeout(100);
+  }
+  await expect(footer).toBeVisible();
   await expect(footer).toContainText("online");
   const onlineColor = await footer
     .locator("div")

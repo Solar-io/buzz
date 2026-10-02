@@ -7,9 +7,7 @@
       "requestId": "fixture",
       "issuedAt": "2026-10-02T21:00:00.000Z",
       "request": {},
-      "requires": [
-        "ping"
-      ]
+      "requires": ["ping"]
     },
     "parsed": true,
     "code": null,
@@ -26,9 +24,7 @@
         "name": "Test",
         "systemPrompt": "Literal\nprompt"
       },
-      "requires": [
-        "fresh"
-      ]
+      "requires": ["fresh"]
     },
     "parsed": true,
     "code": null,
@@ -45,9 +41,7 @@
         "name": "Test",
         "systemPrompt": "prompt"
       },
-      "requires": [
-        "update.effort"
-      ]
+      "requires": ["update.effort"]
     },
     "parsed": true,
     "code": "unsupported",
@@ -136,9 +130,7 @@
       "requestId": "fixture",
       "issuedAt": "2026-10-02T21:00:00.000Z",
       "request": {},
-      "requires": [
-        42
-      ]
+      "requires": [42]
     },
     "parsed": false
   },
@@ -162,9 +154,7 @@
       "requestId": "fixture",
       "issuedAt": "2026-10-02T21:00:00.000Z",
       "request": {},
-      "requires": [
-        ""
-      ]
+      "requires": [""]
     },
     "parsed": false
   },
