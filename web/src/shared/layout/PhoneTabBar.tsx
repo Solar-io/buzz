@@ -30,9 +30,11 @@ function Badge({ count, tone }: { count: number; tone: "need" | "ink" }) {
 }
 
 /**
- * The phone's bottom tab bar (PhoneWork artboard; phase-1 §6): Work,
- * Channels, More. Items (Phase 5) lives in More; Shelf joins as its phase
- * ships — an entry appears only once its page exists.
+ * The phone's bottom tab bar (PhoneWork artboard; phase-1 §6): Channels,
+ * Work, More — Channels on the left and Work in the middle (Sam,
+ * 2026-10-01; the artboard drew Work first). Items (Phase 5) lives in More;
+ * Shelf joins as its phase ships — an entry appears only once its page
+ * exists.
  *
  * Rendered by AppShell below the content row (not fixed over it), so nothing
  * is ever hidden behind the bar; the bottom padding is the home indicator.
@@ -86,18 +88,18 @@ export function PhoneTabBar({
         className="grid grid-cols-3 border-t border-border bg-card px-1.5 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]"
       >
         {tab(
-          "work",
-          "Work",
-          <ListTodo aria-hidden className="size-5.5" />,
-          onWork,
-          <Badge count={needs} tone="need" />,
-        )}
-        {tab(
           "channels",
           "Channels",
           <Hash aria-hidden className="size-5.5" />,
           onChannels,
           <Badge count={unread} tone="ink" />,
+        )}
+        {tab(
+          "work",
+          "Work",
+          <ListTodo aria-hidden className="size-5.5" />,
+          onWork,
+          <Badge count={needs} tone="need" />,
         )}
         {tab(
           "more",

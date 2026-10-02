@@ -113,6 +113,9 @@ url = "2"
 buzz_core_pkg = { package = "buzz-core", path = "../../crates/buzz-core" }
 buzz_persona_pkg = { package = "buzz-persona", path = "../../crates/buzz-persona" }
 buzz_sdk_pkg = { package = "buzz-sdk", path = "../../crates/buzz-sdk" }
+# Relay media sanitize/validation: MP3 tag stripping on every upload path
+# (commands/media.rs), and the snapshot-sharing tests' relay-accept contract.
+buzz_media_pkg = { package = "buzz-media", path = "../../crates/buzz-media" }
 buzz_agent_pkg = { package = "buzz-agent", path = "../../crates/buzz-agent" }
 buzz_voice_pkg = { package = "buzz-voice", path = "../../crates/buzz-voice" }
 buzz_terminal = { package = "buzz-terminal", path = "crates/buzz-terminal" }
@@ -161,6 +164,3 @@ tauri-utils = "2"
 # `test-util` enables tokio's paused-clock (`start_paused`) so the relay
 # admission gate tests can assert exact wait durations without real sleeps.
 tokio = { version = "1", features = ["test-util"] }
-# The relay's media validation, so the snapshot-sharing tests can prove the
-# full export → sanitize → relay-accept → import contract end to end.
-buzz_media_pkg = { package = "buzz-media", path = "../../crates/buzz-media" }

@@ -1060,3 +1060,35 @@ Three sub-traps from the same hour:
   the tool output. In the same call, find your page by URL
   (`page.context().pages().find(…)`): other agents move the MCP's "current"
   tab while you work.
+
+## Web in the iOS app: what differs from desktop (earned 2026-10-01)
+
+- **Fingerprint the installed bundle before blaming phone code.** The app
+  ships whatever `web/dist` was at its last `cap sync`; grep
+  `ios-web/ios/App/App/public/assets/index-*.js` for a string the commit in
+  question added (`nav:forums`, the runway's `dryAt`). The 10/1 "phone lacks
+  Forums/Links, has a profile row, no runway" report was a bundle built at
+  de1e3aeb4, before 003ffe056 and 19b6f81db.
+- **Cross-origin reads in the app do not go through CORS.** `CapacitorHttp`
+  is enabled, so `fetch` is native: usage-hub sends no ACAO for
+  `capacitor://localhost` and `/v1/pace` still renders. A CORS allowlist is
+  never why a read fails there; an auth cookie the app cannot hold is (hatch's
+  `hatch_session`, hence no crichton rows on the phone).
+- **Favorites and mutes are per-device** (`buzz.channel-prefs.v1` in
+  localStorage); Links sync through the kind-30078 `shortcut-bar` blob for a
+  local-key signer, which the iOS Keychain identity is.
+- **On a case-insensitive disk `PhoneTabBar.test.mjs` IS
+  `phoneTabBar.test.mjs`.** A Write to the new spelling silently replaced the
+  policy test; pick a name that differs by more than case.
+
+## Web favorites sync (earned 2026-10-01)
+
+- **Favorites MERGE; Links do not.** Both are kind 30078 sealed to self
+  (`d=shortcut-bar` vs `d=sidebar-favorites`), but Links are whole-blob LWW
+  and favorites carry per-entry stamps + tombstones (`favoritesSync.ts`), so
+  a device's first sync can never wipe its local set. Any new synced
+  per-user list that already exists in localStorage needs the merge, not LWW.
+- **web e2e serves `dist/` via `vite preview` — rebuild after every source
+  mutation.** A mutation run without `pnpm build` tests the previous bundle
+  and reports a clean survivor (seen: unwiring `useFavoritesSync` stayed
+  green until the rebuild, then both specs failed).

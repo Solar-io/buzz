@@ -3,8 +3,9 @@
  * matters — the tab bar hides while a conversation is open — is testable
  * without a DOM.
  *
- * Below `md` the shell has three tabs: Work (the home screen), Channels (the
- * channel list as a page) and More (a sheet of the remaining views). The tab
+ * Below `md` the shell has three tabs, left to right: Channels (the channel
+ * list as a page, and the landing tab), Work and More (a sheet of the remaining
+ * views). The tab
  * is derived from the URL, never stored: `?view=work` is Work, `?view=channels`
  * (or a bare shell) is Channels, any other view belongs to More. A
  * conversation — or the web layer (Files / a link) — takes the whole screen;
@@ -50,7 +51,7 @@ export function activePhoneTab(view: string | undefined): PhoneTab {
   return "more";
 }
 
-let lastTab: Exclude<PhoneTab, "more"> = "work";
+let lastTab: Exclude<PhoneTab, "more"> = "channels";
 
 /** Remember the tab a conversation was opened from (the back chevron's target). */
 export function rememberPhoneTab(tab: PhoneTab): void {
@@ -59,7 +60,10 @@ export function rememberPhoneTab(tab: PhoneTab): void {
   }
 }
 
-/** Where the conversation's back chevron returns. Work until a tab is visited. */
+/**
+ * Where the conversation's back chevron returns: Channels (the phone's
+ * landing tab) until another tab is visited.
+ */
 export function lastPhoneTab(): Exclude<PhoneTab, "more"> {
   return lastTab;
 }

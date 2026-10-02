@@ -2,9 +2,11 @@
  * crichton's host stats → the Vitals rows (Vitals artboard; phase-7.md §8,
  * W-3). Pure.
  *
- * Unknown stays unknown: a null reading renders "—", never "0%", and an
- * unreachable hatch hides the rows behind "crichton · offline" rather than
- * leaving the last numbers on screen as if they were now.
+ * Unknown stays unknown: a null reading is never "0%", and an unreachable
+ * hatch never leaves the last numbers on screen as if they were now. The
+ * sidebar block and the phone strip draw only readings that exist — no row
+ * without a number and no "crichton" header alone (Sam, 2026-10-01); the
+ * popover still renders "—" and says why crichton is quiet.
  */
 
 import type {
@@ -78,6 +80,30 @@ export function vitalRows(stats: HostStats): VitalRow[] {
     row("mem", "Mem", stats.mem?.percent ?? null),
     row("disk", "Disk", primaryDisk(stats)?.percent ?? null),
   ];
+}
+
+/** The poll fields the block / strip decisions read. */
+interface HostPoll {
+  status: "idle" | "ok" | "offline" | "signed-out" | "forbidden";
+  stats: HostStats | null;
+}
+
+/**
+ * The sidebar block's crichton rows: only the ones with a reading, or null
+ * when there is none to draw — offline, signed out, not allowed, not polled
+ * yet, or a sample with every value unknown. Null means no section at all,
+ * never a "crichton" header standing over nothing.
+ */
+export function blockVitalRows(poll: HostPoll): VitalRow[] | null {
+  if (poll.status !== "ok" || !poll.stats) return null;
+  const rows = vitalRows(poll.stats).filter((r) => r.percent !== null);
+  return rows.length > 0 ? rows : null;
+}
+
+/** The phone Work strip's GPU reading, or null when there is none to show. */
+export function stripGpuPercent(poll: HostPoll): number | null {
+  if (poll.status !== "ok" || !poll.stats) return null;
+  return poll.stats.gpu.percent;
 }
 
 export type CrichtonStatus =

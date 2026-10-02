@@ -54,7 +54,13 @@ test("the tab derives from the URL and back returns to the last tab", () => {
   assert.equal(activePhoneTab("channels"), "channels");
   assert.equal(activePhoneTab(undefined), "channels");
   assert.equal(activePhoneTab("inbox"), "more");
-  assert.equal(lastPhoneTab(), "work", "Work is home until a tab is visited");
+  assert.equal(
+    lastPhoneTab(),
+    "channels",
+    "Channels is home until a tab is visited",
+  );
+  rememberPhoneTab("work");
+  assert.equal(lastPhoneTab(), "work");
   rememberPhoneTab("channels");
   assert.equal(lastPhoneTab(), "channels");
   rememberPhoneTab("more");

@@ -108,12 +108,12 @@ test("restore verdict: a hidden DM or another identity's entry is stale", () => 
   );
 });
 
-test("phone landing: a bare /repos goes to Work; anything addressed stays put", () => {
-  assert.equal(phoneLandingView({}, true), "work");
+test("phone landing: a bare /repos goes to Channels; anything addressed stays put", () => {
+  assert.equal(phoneLandingView({}, true), "channels");
   // Desktop keeps the last-conversation restore.
   assert.equal(phoneLandingView({}, false), null);
   // A conversation, a view or a permalink was asked for: leave it alone
-  // (view=work is also the redirect's own loop guard).
+  // (view=channels is also the redirect's own loop guard).
   assert.equal(phoneLandingView({ c: "dm-y" }, true), null);
   assert.equal(phoneLandingView({ view: "work" }, true), null);
   assert.equal(phoneLandingView({ view: "channels" }, true), null);

@@ -78,9 +78,14 @@ export function landingBeforeLoad({
 }: {
   search: { c?: string; view?: string; m?: string };
 }): void {
-  // Phone (below md, AppShell's breakpoint): Work is the home screen.
-  if (phoneLandingView(search, isPhoneViewport()) !== null) {
-    throw redirect({ to: "/repos", search: { view: "work" }, replace: true });
+  // Phone (below md, AppShell's breakpoint): the Channels tab is home.
+  const phoneView = phoneLandingView(search, isPhoneViewport());
+  if (phoneView !== null) {
+    throw redirect({
+      to: "/repos",
+      search: { view: phoneView },
+      replace: true,
+    });
   }
   const target = restoredLandingTarget(search);
   if (target !== null) {

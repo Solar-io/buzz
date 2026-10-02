@@ -30,6 +30,7 @@ import {
 } from "@/features/channels/lib/readState.ts";
 import { notifyReadStateLocalChange } from "@/features/channels/lib/readStateSync.ts";
 import { useReadStateSync } from "@/features/channels/lib/useReadStateSync.ts";
+import { useFavoritesSync } from "@/features/channels/lib/useFavoritesSync.ts";
 import { activeTyping } from "@/features/channels/lib/typing.ts";
 import { usePermalinkCleanup } from "@/features/channels/lib/usePermalinkCleanup.ts";
 import { permalinkJumpTarget } from "@/features/channels/lib/permalinkJump.ts";
@@ -305,10 +306,16 @@ function ChannelBrowser() {
       ? null
       : `${channelId}:${lastMessageId}`;
 
-  // Viewer-side prefs (favorites / muted), local like the desktop's DB.
+  // Viewer-side prefs (favorites / muted); favorites also sync per user.
   const [channelPrefs, setChannelPrefs] = useState<ChannelPrefs>(() =>
     loadChannelPrefs(),
   );
+  useFavoritesSync({
+    session,
+    selfPubkey,
+    prefs: channelPrefs,
+    onSynced: () => setChannelPrefs(loadChannelPrefs()),
+  });
   // Presence: subscribe for every DM peer; publish self as online once the
   // session is live (the relay expires it server-side, no offline beacon).
   const dmPeerPubkeys = useMemo(

@@ -6,6 +6,7 @@ import {
   barTone,
   barWidth,
   type BarTone,
+  blockVitalRows,
   type CrichtonStatus,
   crichtonStatus,
   diskLine,
@@ -16,8 +17,8 @@ import {
   STATUS_TEXT,
   servicesLine,
   sparkline,
+  stripGpuPercent,
   uptimeLine,
-  vitalRows,
 } from "../lib/hostStats.ts";
 
 /** A clock for staleness: the rows must turn "stale" even when no poll lands. */
@@ -86,13 +87,16 @@ function StatusBadge({ status }: { status: CrichtonStatus }) {
 
 /**
  * The sidebar block's crichton half (Vitals artboard): a divider under the
- * Claude section, a "crichton" header with its status, then CPU / GPU / Mem /
- * Disk bars. Offline / signed out show the header alone — no old numbers.
+ * Claude section, a "crichton" header with its status, then the CPU / GPU /
+ * Mem / Disk bars that have a reading. With none to draw — offline, signed
+ * out, every value unknown — there is no section at all, never a header
+ * alone (Sam, 2026-10-01); the popover says why.
  */
 export function CrichtonRows({ data }: { data: HostStatsSnapshot }) {
   const now = useNow(10_000);
   const status = crichtonStatus(data, now);
-  if (!status) {
+  const rows = blockVitalRows(data);
+  if (!status || !rows) {
     return null;
   }
   return (
@@ -104,51 +108,44 @@ export function CrichtonRows({ data }: { data: HostStatsSnapshot }) {
         </span>
         <StatusBadge status={status} />
       </span>
-      {data.stats && (status === "ok" || status === "stale") ? (
-        <span className="mt-1.75 grid grid-cols-[2.125rem_minmax(0,1fr)_1.875rem] items-center gap-x-2 gap-y-1.5 font-mono text-2xs">
-          {vitalRows(data.stats).map((row) => (
-            <span
-              key={row.key}
-              className="contents"
-              data-testid={`vitals-row-${row.key}`}
-            >
-              <span className="text-muted-foreground">{row.label}</span>
-              <Bar percent={row.percent} tone={row.tone} />
-              <span className="text-right">{row.text}</span>
-            </span>
-          ))}
-        </span>
-      ) : null}
+      <span className="mt-1.75 grid grid-cols-[2.125rem_minmax(0,1fr)_1.875rem] items-center gap-x-2 gap-y-1.5 font-mono text-2xs">
+        {rows.map((row) => (
+          <span
+            key={row.key}
+            className="contents"
+            data-testid={`vitals-row-${row.key}`}
+          >
+            <span className="text-muted-foreground">{row.label}</span>
+            <Bar percent={row.percent} tone={row.tone} />
+            <span className="text-right">{row.text}</span>
+          </span>
+        ))}
+      </span>
     </span>
   );
 }
 
-/** The phone Work strip's second column: GPU (PhoneWork artboard). */
+/**
+ * The phone Work strip's second column: GPU (PhoneWork artboard). Only with
+ * a reading — VitalsBlock leaves the column out otherwise.
+ */
 export function CrichtonStripColumn({ data }: { data: HostStatsSnapshot }) {
-  const now = useNow(10_000);
-  const status = crichtonStatus(data, now);
-  if (!status) {
+  const gpu = stripGpuPercent(data);
+  if (gpu === null) {
     return null;
   }
-  const gpu =
-    data.stats && status !== "offline" ? data.stats.gpu.percent : null;
-  const live = status === "ok" || status === "stale";
   return (
     <span
       className="block min-w-0 border-l border-line-2 pl-3.5"
       data-testid="vitals-strip-gpu"
     >
       <span className="flex justify-between text-muted-foreground">
-        <span>{live ? "GPU" : "crichton"}</span>
-        <b className="font-semibold text-foreground">
-          {live ? formatPercent(gpu) : STATUS_TEXT[status]}
-        </b>
+        <span>GPU</span>
+        <b className="font-semibold text-foreground">{formatPercent(gpu)}</b>
       </span>
-      {live ? (
-        <span className="mt-1.5 block">
-          <Bar percent={gpu} tone={barTone(gpu)} />
-        </span>
-      ) : null}
+      <span className="mt-1.5 block">
+        <Bar percent={gpu} tone={barTone(gpu)} />
+      </span>
     </span>
   );
 }

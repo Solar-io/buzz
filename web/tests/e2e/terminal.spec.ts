@@ -239,11 +239,23 @@ test.describe("states · desktop 1440", () => {
     const hatch = await openTerminal(page, "buzz", { me: "signed-out" });
     const status = page.getByTestId("terminal-status");
     await expect(status).toContainText("Sign in to crichton");
-    // Vitals says sign in, not 0%.
-    await expect(page.getByTestId("crichton-status")).toHaveAttribute(
+    // Vitals says sign in, not 0% — in the popover. The block itself has no
+    // crichton numbers to show, so it has no crichton section (Sam,
+    // 2026-10-01: never a header standing over nothing). The popover is
+    // checked FIRST: it proves the poll has answered, so the block's
+    // missing section is a decision and not a poll still in flight.
+    await page.getByTestId("vitals-block").click();
+    const panel = page.getByTestId("vitals-crichton-panel");
+    await expect(panel.getByTestId("crichton-status")).toHaveAttribute(
       "data-status",
       "signed-out",
     );
+    await expect(panel).toContainText(
+      "Sign in to crichton from the Terminal page",
+    );
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("vitals-crichton-panel")).toHaveCount(0);
+    await expect(page.getByTestId("vitals-crichton")).toHaveCount(0);
     await shot(page, "terminal-signed-out-buzz-1440");
     // hatch's /auth/github, faked to land straight on /auth/signed-in's job:
     // tell the opener, at the page's origin.
