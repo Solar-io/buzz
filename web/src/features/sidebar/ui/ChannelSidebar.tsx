@@ -6,6 +6,7 @@ import {
   ListPlus,
   ListTodo,
   MessagesSquare,
+  Newspaper,
   Search,
 } from "lucide-react";
 import type { Profile } from "@/features/channels/hooks";
@@ -70,6 +71,10 @@ import { SidebarAppMenu } from "@/features/sidebar/ui/SidebarAppMenu";
 import { InstallAppButton } from "@/features/sidebar/ui/InstallAppButton";
 import { VitalsBlock } from "@/features/vitals/ui/VitalsBlock";
 import { useActiveWebView } from "@/features/webPanels/activeWebStore.ts";
+import {
+  DAILY_DIGEST_PANEL,
+  DAILY_DIGEST_TARGET,
+} from "@/features/webPanels/lib/dailyDigest.ts";
 import type { ChannelMarkers } from "@/features/work/lib/channelMarkers.ts";
 import type { SidebarMenuItem } from "@/features/sidebar/lib/sidebarMenuItem";
 import {
@@ -308,7 +313,7 @@ export function ChannelSidebar({
 
   // While Files or a link page covers the conversation, that page's row is
   // the one selected — never also the conversation behind it.
-  const { state: webView } = useActiveWebView();
+  const { state: webView, show: showWebView } = useActiveWebView();
   const filesSelected = webView.active?.kind === "files";
   const shownId = webView.active === null ? selectedId : undefined;
   const channelSelected = (channel: ChannelSummary) => channel.id === shownId;
@@ -609,6 +614,12 @@ export function ChannelSidebar({
               onToggleCollapsed={() => toggle(NAV_FORUMS_ID)}
             />
           )}
+          <SidebarNavButton
+            label={DAILY_DIGEST_PANEL.label}
+            icon={<Newspaper aria-hidden className="size-4 shrink-0" />}
+            selected={webView.active?.kind === "digest"}
+            onSelect={() => showWebView(DAILY_DIGEST_TARGET)}
+          />
           {/* Always rendered — storage (encrypted relay blob vs this
               device's localStorage) follows the signer, and "Add a link"
               must stay reachable on an empty list. */}

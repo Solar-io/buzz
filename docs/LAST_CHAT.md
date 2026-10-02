@@ -20,6 +20,12 @@ Evidence and reproduction command: docs/TEST_REPORTS/qa-work-63eeb8a14/test-repo
 
 Source commits: `45324ab722b0c936d860ea1ebb7cc9d7f3cfc553`, `b08423ef676c87ae90862d275bd95da791dd8880`. Twelve new tests include an isolated subprocess that edits its scratch config and resolves the new model/effort on the next turn in the same process. Five mutations exercised 51 routing tests each; disabling both A1 mechanisms failed all six required regressions. Restored full suite: 1,021 unit plus nine integration tests; strict Clippy, Rust build/format, and required web checks passed (4,092 tests before/after). [Full handoff](TEST_REPORTS/parity-a1.md) lists evidence and the after-R3 live acceptance procedure.
 
+2026-10-02 — Daily Digest sidebar destination
+
+The sidebar has a Newspaper row below Forums and above Links. A fixed digest target resolves through WebLayer to the tailnet edition, with the phone title "Daily Digest", shared selection and four-frame LRU. Native iPhone embeds the cookie-free edition and retains it behind conversation navigation; Files/Links keep their existing native login browser. Coverage includes fixed target/URL, reducer switching/hide/LRU, the real sidebar's order and selection, and the native iframe lifecycle. Initial full web checks: 4,097 tests pass, TypeScript and touched-file Biome pass; build passes.
+
+Daily Digest acceptance: remapping digest frame keys to `link:` fails four named tests with the total unchanged at 4,097; exact restoration passes all 4,097 plus TypeScript. Agent Brave checks pass at 1440×960 and 390×844 using a page-local socket fixture and the real, unmocked edition page, including phone title and Back, desktop conversation-click hide, and retained iframe. The temporary preview and claimed browser tab were removed after the checks. [Evidence and boundary](TEST_REPORTS/daily-digest.md).
+
 2026-10-02 — W6 settings IA
 
 Added the thirteen-group IA and owner landing (self registry or a catalog within six hours plus five minutes), phone root navigation without Keyboard, agent name search, validated agent/tab selectors, the old agent route redirect, and a last-reported desktop footer. Existing agent controls and Library panels render inside Settings. Voice and channel templates have separate panes. The target-agent page is the specified placeholder for W9a; Defaults, routing and drafts have no premature navigation entries.

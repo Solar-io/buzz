@@ -8,6 +8,8 @@
 - [x] Parity A1: add six named regressions plus tier/type edge cases; show mechanism mutations failing with unchanged test counts.
 - [x] Parity A1: run web baseline/final, typecheck/build/size checks and buzz-acp tests/clippy; record handoff and commits. Evidence: [A1 report](TEST_REPORTS/parity-a1.md).
 - [ ] Parity A1 release acceptance (plan: after R3): a throwaway agent's pubkey-keyed `voiceModel` changes the next marked turn's observed model without a restart.
+- [x] Daily Digest implementation: row above Links, fixed in-app web target, phone title/selection, shared LRU and native iframe lifecycle; 4,097 unit tests, typecheck, build and touched-file Biome pass.
+- [x] Daily Digest acceptance: four named mutation failures at an unchanged 4,097 tests, restored full checks pass, desktop/phone Agent Brave workflows render the live edition and retain its frame. Evidence: [Daily Digest report](TEST_REPORTS/daily-digest.md).
 
 - [x] W6: settings IA, owner landing, phone root, agent search/redirect, desktop report footer; existing controls remain reachable. Evidence: docs/TEST_REPORTS/w6-settings-ia.md.
 - [x] Parity W4 implementation: Stream/Forum creation, lifetime presets, sidebar reachability, mutation proof and 1440/390/375 browser checks. Evidence: TEST_REPORTS/parity-w4.md.

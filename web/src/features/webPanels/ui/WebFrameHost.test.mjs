@@ -49,6 +49,9 @@ const React = (await import("react")).default;
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { WebFrameHost } = await import("./WebFrameHost.tsx");
+const { DAILY_DIGEST_KEY, DAILY_DIGEST_PANEL } = await import(
+  "../lib/dailyDigest.ts"
+);
 const { useActiveWebView, dispatchActiveWeb, resetActiveWebForTests } =
   await import("../activeWebStore.ts");
 const { AppShell } = await import("../../../shared/layout/AppShell.tsx");
@@ -69,6 +72,7 @@ after(() => {
 });
 
 const PANELS = new Map([
+  [DAILY_DIGEST_KEY, DAILY_DIGEST_PANEL],
   ["link:a", { id: "a", label: "Alpha", url: "https://a.test/" }],
   ["link:b", { id: "b", label: "Bravo", url: "https://b.test/" }],
   ["link:c", { id: "c", label: "Charlie", url: "https://c.test/" }],
@@ -274,7 +278,7 @@ test("an active target with no panel renders the fallback (Files setup)", async 
   }
 });
 
-test("native iOS: no iframes; the active page opens in the in-app browser", async () => {
+test("native iOS: Links use the in-app browser", async () => {
   globalThis.__BUZZ_TEST_IS_IOS__ = true;
   const { container, q, show, unmount } = await mount();
   try {
@@ -284,6 +288,29 @@ test("native iOS: no iframes; the active page opens in the in-app browser", asyn
       "https://a.test/?theme=dark",
     ]);
     assert.ok(q("web-panel-in-app"));
+  } finally {
+    globalThis.__BUZZ_TEST_IS_IOS__ = false;
+    await unmount();
+  }
+});
+
+test("native iOS: Daily Digest stays embedded at its fixed URL with no browser hop", async () => {
+  globalThis.__BUZZ_TEST_IS_IOS__ = true;
+  const { q, show, hide, unmount } = await mount();
+  try {
+    await show("digest", "daily-digest");
+    const frame = q("web-panel-frame-digest:daily-digest");
+    assert.ok(frame);
+    assert.equal(frame.getAttribute("title"), "Daily Digest");
+    assert.equal(
+      frame.getAttribute("src"),
+      "https://crichton.tailb3d4b8.ts.net:6450/edition/latest.html",
+    );
+    assert.deepEqual(globalThis.__BUZZ_TEST_IN_APP_OPENS__, []);
+    assert.equal(q("web-panel-in-app"), null);
+    await hide();
+    assert.equal(q("web-panel-frame-digest:daily-digest"), frame);
+    assert.equal(q("web-frame-host").hasAttribute("inert"), true);
   } finally {
     globalThis.__BUZZ_TEST_IS_IOS__ = false;
     await unmount();
