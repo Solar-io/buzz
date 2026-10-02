@@ -9,4 +9,5 @@ W1 channel settings:
 - [x] Metadata parsing and name / purpose / visibility / lifetime edits; Joining and Type read-only.
 - [x] Archive / Unarchive with archived controls and composer locked; join / leave / delete through existing event helpers.
 - [x] Canvas, local Save as template, existing notification mute preference.
-- [ ] Required web gates, named fail-first proof and 1440 / 390 screenshots.
+- [x] Required web gates, named fail-first proof and 1440 / 390 screenshots (both applied themes asserted).
+- [ ] W1 live-relay acceptance in a private test channel using an authorized test signer. The coding shell has no Buzz signing credentials; local built-app acceptance uses the mock relay. See TEST_REPORTS/parity-w1.md.
