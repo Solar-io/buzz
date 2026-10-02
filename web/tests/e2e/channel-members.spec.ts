@@ -119,6 +119,17 @@ for (const theme of [
         .filter({ has: page.locator('option[value="owner"]:checked') });
       await expect(self).toBeDisabled();
       await expect(self).toHaveAttribute("title", "A channel needs an owner");
+      await sheet.evaluate((element) =>
+        Promise.all(
+          element
+            .getAnimations({ subtree: true })
+            .filter(
+              (animation) =>
+                animation.effect?.getComputedTiming().iterations !== Infinity,
+            )
+            .map((animation) => animation.finished.catch(() => {})),
+        ),
+      );
       const bounds = await sheet.boundingBox();
       expect(Math.round(bounds?.width ?? 0)).toBe(width < 640 ? width : 480);
       expect(
