@@ -65,6 +65,7 @@ import { useDesktopCatalogs } from "@/features/agents/useDesktopCatalogs";
 import { ownsSettingsAgents } from "@/features/agents/lib/desktopConnection";
 import { DesktopConnectionFooter } from "@/features/agents/settings/DesktopConnectionFooter";
 import { AgentsAdminPage } from "@/features/agents/ui/AgentsAdminPage";
+import { AgentScreen } from "@/features/agents/settings/agent-screen/AgentScreen";
 import { ClaudePoolsSection } from "./settings/ClaudePoolsSection";
 import { FilesSitesSection } from "@/features/webPanels/ui/FilesSitesSection";
 import { SettingsNav } from "./settings/SettingsNav";
@@ -265,7 +266,7 @@ export function SettingsPage({ group, agent, tab }: SettingsPageProps) {
             className={`mx-auto ${active === "agents" || active === "library" ? "max-w-6xl" : "max-w-[45rem]"} px-4 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] md:px-8`}
           >
             <div data-testid={`settings-pane-${active}`}>
-              {activeMeta ? <PaneHeading group={activeMeta} /> : null}
+              {activeMeta && !agent ? <PaneHeading group={activeMeta} /> : null}
 
               {active === "account" ? (
                 <>
@@ -336,26 +337,19 @@ export function SettingsPage({ group, agent, tab }: SettingsPageProps) {
               ) : null}
               {active === "agents" ? (
                 agent ? (
-                  <section
-                    className="rounded-xl border border-border bg-card p-5"
-                    data-testid="agent-settings-placeholder"
-                  >
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => selectGroup("agents")}
-                    >
-                      ← All agents
-                    </Button>
-                    <h2 className="mt-3 text-lg font-semibold">
-                      {registry.find((entry) => entry.pubkey === agent)?.name ??
-                        "Agent settings"}
-                    </h2>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      The new agent screen is coming next. Use the agent list to
-                      change settings.
-                    </p>
-                  </section>
+                  <AgentScreen
+                    key={agent}
+                    agentPubkey={agent}
+                    tab={tab}
+                    onBack={() => selectGroup("agents")}
+                    onSelect={selectAgent}
+                    onTab={(nextTab) =>
+                      void navigate({
+                        to: "/repos/settings",
+                        search: { group: "agents", agent, tab: nextTab },
+                      })
+                    }
+                  />
                 ) : (
                   <AgentsAdminPage embedded />
                 )

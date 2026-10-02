@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { ArrowLeft, BookOpen, FileText, Plus, Users } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { Button } from "@/shared/ui/button";
 import { useAuth } from "@/features/auth/ui/AuthProvider";
 import { LoginPage } from "@/features/auth/ui/LoginPage";
@@ -55,6 +55,7 @@ export function AgentsAdminPage({
   tab?: string;
 }) {
   const { canSign } = useAuth();
+  const navigate = useNavigate();
   const registry = useAgentRegistry();
   const catalogs = useDesktopCatalogs();
   const personasState = usePersonas();
@@ -200,7 +201,14 @@ export function AgentsAdminPage({
             sections={rosterSections}
             teamNamesByPersona={teamBadges}
             selectedPubkey={selected?.pubkey ?? null}
-            onSelect={(pubkey) => setMode({ kind: "agent", pubkey })}
+            onSelect={(pubkey) => {
+              if (embedded)
+                void navigate({
+                  to: "/repos/settings",
+                  search: { group: "agents", agent: pubkey },
+                });
+              else setMode({ kind: "agent", pubkey });
+            }}
             onNewAgent={() => setMode({ kind: "create" })}
             registry={registry}
             catalogs={catalogs}

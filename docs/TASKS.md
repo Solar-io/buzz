@@ -10,3 +10,7 @@
 - [ ] Parity A1 release acceptance (plan: after R3): a throwaway agent's pubkey-keyed `voiceModel` changes the next marked turn's observed model without a restart.
 
 - [x] W6: settings IA, owner landing, phone root, agent search/redirect, desktop report footer; existing controls remain reachable. Evidence: docs/TEST_REPORTS/w6-settings-ia.md.
+
+- [ ] W9a: agent header, roster stepping, URL tabs, lifecycle/menu and existing settings access.
+- [ ] W9a: Right now live model switch/cancel, channel add then start and remove, Memory/Activity; locked Logs.
+- [ ] W9a: phone sub-pages, responsive cards, behavioural/mutation tests, all web gates and screenshots.
