@@ -19,7 +19,7 @@ export function DesktopControlBoundary({
           role="status"
           className={
             offline
-              ? "rounded-md border border-coral/30 bg-coral/10 p-3 text-sm text-coral"
+              ? "rounded-md border border-coral-line bg-coral-soft p-3 text-sm text-coral-ink"
               : "rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground"
           }
         >

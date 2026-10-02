@@ -1,30 +1,9 @@
-import { expect, test as base, chromium } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { getPublicKey } from "nostr-tools/pure";
 import * as nip44 from "nostr-tools/nip44";
 import { mkdirSync } from "node:fs";
 import { installMockRelay, mockEvent } from "./helpers/mockRelay";
 import { signIn } from "./helpers/signIn";
-
-// Local acceptance reuses a tab claimed through Agent Brave's MCP. CI uses
-// the normal runner. Never close the shared browser or another agent's tab.
-const test = process.env.AGENT_BRAVE_CDP
-  ? base.extend({
-      page: async ({}, use) => {
-        const browser = await chromium.connectOverCDP(
-          process.env.AGENT_BRAVE_CDP as string,
-        );
-        const page = browser
-          .contexts()
-          .flatMap((context) => context.pages())
-          .find(
-            (candidate) => candidate.url() === process.env.AGENT_BRAVE_TAB_URL,
-          );
-        if (!page)
-          throw new Error("The claimed Agent Brave tab was not found.");
-        await use(page);
-      },
-    })
-  : base;
 
 test("P0 presence locks offline controls, recovers, and handles old catalogs at desktop and phone widths", async ({
   page,
@@ -115,8 +94,14 @@ test("P0 presence locks offline controls, recovers, and handles old catalogs at 
   await expect(page.getByTestId("channel-sidebar")).toBeVisible();
   await page.clock.install();
   await page.goto("/repos/agents");
+  await page.waitForTimeout(500); // hydrate the persisted key before advancing the clock
+  await page.clock.runFor(2_001); // mocked relay's no-AUTH grace
   const footer = page.getByTestId("desktop-connection-footer");
   await expect(footer).toContainText("online");
+  const onlineColor = await footer
+    .locator("div")
+    .first()
+    .evaluate((element) => getComputedStyle(element).color);
   expect(commands.length).toBeGreaterThan(0);
   expect(commands[0].requires).toEqual(["ping"]);
   expect(commands[0].target).toBe("crichton.local");
@@ -124,8 +109,15 @@ test("P0 presence locks offline controls, recovers, and handles old catalogs at 
   const start = page.getByRole("button", { name: "Start", exact: true });
   await expect(start).toBeEnabled();
   responding = false;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await page.clock.runFor(40_001);
   await expect(footer).toContainText("offline");
+  expect(
+    (await footer
+      .locator("div")
+      .first()
+      .evaluate((element) => getComputedStyle(element).color)) === onlineColor,
+  ).toBe(false);
   await expect(start).toBeDisabled();
   await expect(
     page.getByText("Needs the desktop", { exact: false }),
@@ -179,6 +171,28 @@ test("P0 presence locks offline controls, recovers, and handles old catalogs at 
     await page
       .locator("#p0-phone")
       .screenshot({ path: `${shots}/p0-online-390.png` });
+  responding = false;
+  await phone
+    .locator("body")
+    .evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.clock.runFor(40_001);
+  await expect(phone.getByTestId("desktop-connection-footer")).toContainText(
+    "offline",
+  );
+  expect(
+    await phone.locator("html").evaluate((element) => element.scrollWidth),
+  ).toBeLessThanOrEqual(390);
+  if (shots)
+    await page
+      .locator("#p0-phone")
+      .screenshot({ path: `${shots}/p0-offline-390.png` });
+  responding = true;
+  await phone
+    .locator("body")
+    .evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(phone.getByTestId("desktop-connection-footer")).toContainText(
+    "online",
+  );
   await page.locator("#p0-phone").evaluate((element: HTMLIFrameElement) => {
     element.style.width = "375px";
   });

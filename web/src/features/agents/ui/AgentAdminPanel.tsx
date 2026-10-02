@@ -130,20 +130,20 @@ export function PendingCommandsStrip({
                 ack
                   ? ack.ok
                     ? "h-2 w-2 shrink-0 rounded-full bg-leaf"
-                    : "h-2 w-2 shrink-0 rounded-full bg-coral"
+                    : "h-2 w-2 shrink-0 rounded-full bg-need"
                   : "h-2 w-2 shrink-0 animate-pulse rounded-full bg-muted-foreground/50"
               }
             />
             <span className="min-w-0 flex-1 truncate">
               {entry.summary}
               {ack && !ack.ok && (
-                <span className="text-coral">
+                <span className="text-coral-ink">
                   {" "}
                   — {ack.error ?? ack.code ?? "failed"}
                 </span>
               )}
               {timedOut && (
-                <span className="text-honey">
+                <span className="text-honey-ink">
                   {" "}
                   — No answer from the desktop — it may still apply. Check
                   status after reload.

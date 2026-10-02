@@ -41,7 +41,11 @@ export function DesktopConnectionFooter({
           <div
             key={catalog.machine}
             className={
-              status === "offline" ? "text-coral" : "text-muted-foreground"
+              status === "offline"
+                ? "text-coral-ink"
+                : status === "online"
+                  ? "text-leaf-ink"
+                  : "text-muted-foreground"
             }
           >
             <div className="flex min-w-0 items-center gap-2 text-xs font-medium">
