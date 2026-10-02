@@ -296,7 +296,7 @@ export function HuddleSessionProvider({ children }: { children: ReactNode }) {
           : "Voice mode is unavailable in this browser.";
         setAgentCallError(message);
         toast.error("Voice calls are unavailable", { description: message });
-        return { ok: false, message };
+        return { ok: false, message, notified: true };
       }
 
       const token = ++nextIntentTokenRef.current;
@@ -394,6 +394,7 @@ export function HuddleSessionProvider({ children }: { children: ReactNode }) {
           toast.error("Could not start the voice call", {
             description: result.message,
           });
+          result = { ...result, notified: true };
         }
       }
       return result;

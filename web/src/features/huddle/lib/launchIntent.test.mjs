@@ -3,7 +3,9 @@ import { test } from "node:test";
 import { npubEncode, nsecEncode } from "nostr-tools/nip19";
 
 const {
+  AGENTS_NOT_LOADED_MESSAGE,
   LAST_CALL_AGENT_KEY,
+  agentReadsComplete,
   LAUNCH_INTENT_MAX_AGE_MS,
   NO_LAST_AGENT_MESSAGE,
   callableAgentsFromEvents,
@@ -81,6 +83,42 @@ test("parseLaunchUrl refuses other schemes, hosts, paths and params", () => {
   ]) {
     assert.equal(parseLaunchUrl(raw), null, raw);
   }
+});
+
+test("parseLaunchUrl matches the shared native corpus, case for case", async () => {
+  // Same file LaunchPluginTests.swift reads, so native and web cannot drift
+  // on what a link means (QA 2026-10-01: `c%61ll`, `Big+Head`).
+  const { readFile } = await import("node:fs/promises");
+  const corpus = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../../../test-fixtures/launch-links/cases.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.equal(corpus.cases.length, corpus.count);
+  assert.ok(corpus.count >= 70, "the corpus did not load its cases");
+  for (const { url, expect } of corpus.cases) {
+    assert.deepEqual(parseLaunchUrl(url), expect, JSON.stringify(url));
+  }
+});
+
+test("`+` is a space and `%2B` a plus; a percent-encoded host is refused", () => {
+  assert.deepEqual(parseLaunchUrl("buzzweb://call?agent=Big+Head"), {
+    action: "call",
+    agent: "Big Head",
+  });
+  assert.deepEqual(parseLaunchUrl("buzzweb://call?agent=Big%2BHead"), {
+    action: "call",
+    agent: "Big+Head",
+  });
+  assert.equal(parseLaunchUrl("buzzweb://c%61ll?agent=Gilfoyle"), null);
+  assert.equal(parseLaunchUrl("buzzweb://user@call"), null);
+  assert.equal(parseLaunchUrl("buzzweb://@call"), null);
+  assert.equal(parseLaunchUrl("buzzweb://call#"), null);
+  assert.equal(parseLaunchUrl("buzzweb://call?agent=%zz"), null);
 });
 
 test("cleanAgentSelector counts code points, matching Swift unicodeScalars", () => {
@@ -163,6 +201,52 @@ test("a last agent no longer in the registry is refused", () => {
   assert.equal(result.ok, false);
   assert.equal(result.reason, "unavailable");
   assert.match(result.message, /Zero Cool/);
+});
+
+test("a partial agent list turns misses and ties into 'couldn't load'", () => {
+  const notLoaded = {
+    ok: false,
+    reason: "incomplete",
+    message: AGENTS_NOT_LOADED_MESSAGE,
+  };
+  // Each "not found" shape, against an empty (timed-out) list.
+  assert.deepEqual(resolveLaunchAgent("Gilfoyle", [], null, false), notLoaded);
+  assert.deepEqual(resolveLaunchAgent(GILF, [], null, false), notLoaded);
+  assert.deepEqual(
+    resolveLaunchAgent(null, [], { pubkey: GILF, name: "Gilfoyle" }, false),
+    notLoaded,
+  );
+  assert.deepEqual(
+    resolveLaunchAgent("Cereal Killer", AGENTS, null, false),
+    notLoaded,
+  );
+  // The same misses on a COMPLETE list stay genuine "not found".
+  assert.equal(resolveLaunchAgent("Gilfoyle", [], null).reason, "unknown");
+  assert.equal(
+    resolveLaunchAgent(null, [], { pubkey: GILF, name: "Gilfoyle" }).reason,
+    "unavailable",
+  );
+  // A match in a partial list is still one of the owner's agents.
+  assert.equal(
+    resolveLaunchAgent("Gilfoyle", AGENTS, null, false).agent?.pubkey,
+    GILF,
+  );
+  // Neither depends on the list, so neither becomes "couldn't load".
+  assert.equal(resolveLaunchAgent(null, [], null, false).reason, "no-last");
+  const nsec = nsecEncode(new Uint8Array(32).fill(7));
+  assert.equal(resolveLaunchAgent(nsec, [], null, false).reason, "invalid");
+});
+
+test("agent reads are complete only with EOSE and an unfilled page", () => {
+  const read = (n, eose, limit = 3) => ({
+    events: Array.from({ length: n }),
+    eose,
+    limit,
+  });
+  assert.equal(agentReadsComplete([read(2, true), read(0, true)]), true);
+  assert.equal(agentReadsComplete([read(2, true), read(0, false)]), false);
+  assert.equal(agentReadsComplete([read(0, false), read(0, true)]), false);
+  assert.equal(agentReadsComplete([read(3, true)]), false, "a full page");
 });
 
 // ------------------------------------------------------ last-agent storage

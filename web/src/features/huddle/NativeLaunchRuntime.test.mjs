@@ -53,6 +53,11 @@ globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
     export async function queryOnce(_session, filter) {
       return globalThis.__LAUNCH_TEST__.events[filter.kinds[0]] ?? [];
     }
+    export async function queryOnceWithEose(_session, filter) {
+      const t = globalThis.__LAUNCH_TEST__;
+      const kind = filter.kinds[0];
+      return { events: t.events[kind] ?? [], eose: !t.timedOut.includes(kind) };
+    }
   `,
   "@/shared/api/RelaySessionProvider": `
     const session = { subscribe() { return () => {}; } };
@@ -70,6 +75,7 @@ globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
       async acknowledgeIntent({ id }) {
         const t = globalThis.__LAUNCH_TEST__;
         t.log.push(["ack", id]);
+        if (t.ackHold) await t.ackHold;
         if (t.intent?.id === id) t.intent = null;
       },
       async addListener(_event, listener) {
@@ -92,9 +98,11 @@ const React = (await import("react")).default;
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { NativeLaunchRuntime } = await import("./NativeLaunchRuntime.tsx");
-const { LAST_CALL_AGENT_KEY, NO_LAST_AGENT_MESSAGE } = await import(
-  "./lib/launchIntent.ts"
-);
+const {
+  AGENTS_NOT_LOADED_MESSAGE,
+  LAST_CALL_AGENT_KEY,
+  NO_LAST_AGENT_MESSAGE,
+} = await import("./lib/launchIntent.ts");
 
 after(() => {
   globalThis.window = originals.window;
@@ -161,6 +169,8 @@ beforeEach(() => {
     },
     huddle: huddle(),
     launchListener: null,
+    timedOut: [],
+    ackHold: null,
   });
   dom.window.localStorage.clear();
 });
@@ -183,10 +193,17 @@ async function mount() {
     root.render(React.createElement(NativeLaunchRuntime));
   });
   await settle();
-  return async () => {
+  const unmount = async () => {
     await act(async () => root.unmount());
     container.remove();
   };
+  // Re-render so the runtime's context ref sees the current fake hook values.
+  unmount.rerender = async () => {
+    await act(async () => {
+      root.render(React.createElement(NativeLaunchRuntime));
+    });
+  };
+  return unmount;
 }
 
 const kinds = () => T.log.map((entry) => entry[0]);
@@ -318,4 +335,118 @@ test("off iOS the runtime never reads an intent", async () => {
   assert.deepEqual(T.log, []);
   assert.notEqual(T.intent, null);
   await unmount();
+});
+
+// QA 2026-10-01 D1: in a call with A, a link to B opened B's DM and stopped.
+test("a call the provider refuses up front is shown, not swallowed", async () => {
+  T.huddle = huddle({
+    active: { huddleChannelId: "room-acid", parentChannelId: "dm-acid" },
+    directAgentCall: true,
+    call: { agentPubkeys: [ACID] },
+    startAgentCall: async (options) => {
+      T.log.push(["startAgentCall", options]);
+      return {
+        ok: false,
+        message: "You're already in another call — leave it first.",
+      };
+    },
+  });
+  T.intent = intent("buzzweb://call?agent=Gilfoyle");
+  const unmount = await mount();
+  assert.deepEqual(kinds(), [
+    "openDm",
+    "navigate",
+    "ack",
+    "startAgentCall",
+    "toast.error",
+  ]);
+  assert.deepEqual(T.log[4], [
+    "toast.error",
+    "Buzz Voice",
+    "You're already in another call — leave it first.",
+  ]);
+  await unmount();
+});
+
+test("a failure the provider already toasted is not toasted twice", async () => {
+  T.huddle = huddle({
+    startAgentCall: async (options) => {
+      T.log.push(["startAgentCall", options]);
+      return { ok: false, message: "Agent never joined", notified: true };
+    },
+  });
+  T.intent = intent("buzzweb://call?agent=Gilfoyle");
+  const unmount = await mount();
+  assert.deepEqual(kinds(), ["openDm", "navigate", "ack", "startAgentCall"]);
+  await unmount();
+});
+
+// QA 2026-10-01 D2: a slow cold-start relay read as "no such agent".
+test("a registry read that timed out says so, not 'no agent named'", async () => {
+  T.timedOut = [30177];
+  T.events[30177] = [];
+  T.intent = intent("buzzweb://call?agent=Gilfoyle");
+  const unmount = await mount();
+  assert.deepEqual(T.log, [
+    ["toast.error", "Buzz Voice", AGENTS_NOT_LOADED_MESSAGE],
+    ["ack", "intent-1"],
+  ]);
+  await unmount();
+});
+
+test("a catalog read that timed out also blocks a 'no longer yours' verdict", async () => {
+  T.timedOut = [30180];
+  dom.window.localStorage.setItem(
+    LAST_CALL_AGENT_KEY,
+    JSON.stringify({ owner: SELF, pubkey: "e".repeat(64), name: "Zero Cool" }),
+  );
+  T.intent = intent("buzzweb://call");
+  const unmount = await mount();
+  assert.deepEqual(T.log, [
+    ["toast.error", "Buzz Voice", AGENTS_NOT_LOADED_MESSAGE],
+    ["ack", "intent-1"],
+  ]);
+  await unmount();
+});
+
+test("a complete empty registry is still a genuine 'no agent named'", async () => {
+  T.events[30177] = [];
+  T.intent = intent("buzzweb://call?agent=Gilfoyle");
+  const unmount = await mount();
+  assert.deepEqual(kinds(), ["toast.error", "ack"]);
+  assert.match(T.log[0][2], /You have no agent named/);
+  await unmount();
+});
+
+test("the runtime waits for the relay to be OPEN before resolving", async () => {
+  T.status = "connecting";
+  T.intent = intent("buzzweb://call?agent=Gilfoyle");
+  const unmount = await mount();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  await settle();
+  assert.deepEqual(T.log, [], "nothing is read or dialed while connecting");
+  T.status = "open";
+  await unmount.rerender();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  await settle();
+  assert.deepEqual(kinds(), ["openDm", "navigate", "ack", "startAgentCall"]);
+  await unmount();
+});
+
+test("unmounted while acknowledging: the call is not dialed", async () => {
+  let release;
+  T.ackHold = new Promise((resolve) => {
+    release = resolve;
+  });
+  T.intent = intent("buzzweb://call?agent=Gilfoyle");
+  const unmount = await mount();
+  assert.deepEqual(kinds(), ["openDm", "navigate", "ack"]);
+  await unmount();
+  release();
+  await settle();
+  assert.equal(
+    T.log.some((entry) => entry[0] === "startAgentCall"),
+    false,
+    "a torn-down runtime must not start a call",
+  );
 });

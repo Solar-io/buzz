@@ -19,6 +19,8 @@ export type AgentCallPhase =
 export interface AgentCallResult {
   ok: boolean;
   message: string;
+  /** Set by `startAgentCall` when it already showed this failure to the user. */
+  notified?: boolean;
 }
 
 export interface AgentCallObservation {

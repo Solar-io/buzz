@@ -25,11 +25,30 @@ export type QueryableSession = Pick<RelaySession, "subscribe">;
  *    session's `activeSubs` bookkeeping is keyed by subscription id, and a
  *    second release can drop a subscription a later reader has since opened.
  */
-export function queryOnce(
+export async function queryOnce(
   session: QueryableSession,
   filter: Parameters<RelaySession["subscribe"]>[0],
   timeoutMs = PULSE_QUERY_TIMEOUT_MS,
 ): Promise<SignedNostrEvent[]> {
+  return (await queryOnceWithEose(session, filter, timeoutMs)).events;
+}
+
+/** A one-shot read's events, and whether the relay reached EOSE in time. */
+export interface QueryOnceResult {
+  events: SignedNostrEvent[];
+  /** False when the timeout settled the read: `events` may be partial. */
+  eose: boolean;
+}
+
+/**
+ * {@link queryOnce}, but says whether it finished: for a caller that must tell
+ * "the relay has none" from "the relay did not answer in time".
+ */
+export function queryOnceWithEose(
+  session: QueryableSession,
+  filter: Parameters<RelaySession["subscribe"]>[0],
+  timeoutMs = PULSE_QUERY_TIMEOUT_MS,
+): Promise<QueryOnceResult> {
   return new Promise((resolve) => {
     const collected: SignedNostrEvent[] = [];
     let settled = false;
@@ -44,7 +63,7 @@ export function queryOnce(
       unsubscribe();
     };
 
-    const finish = () => {
+    const finish = (eose: boolean) => {
       if (settled) {
         return;
       }
@@ -55,13 +74,13 @@ export function queryOnce(
       } else {
         queueMicrotask(closeOnce);
       }
-      resolve(collected);
+      resolve({ events: collected, eose });
     };
 
-    const timer = setTimeout(finish, timeoutMs);
+    const timer = setTimeout(() => finish(false), timeoutMs);
     unsubscribe = session.subscribe(filter, {
       onEvent: (event) => collected.push(event),
-      onEose: finish,
+      onEose: () => finish(true),
     });
     if (settled) {
       closeOnce();

@@ -126,4 +126,54 @@ test("a failed agent call leaves the previous default alone", async () => {
   const result = await startCall("Gilfoyle");
   assert.equal(result.ok, false);
   assert.equal(readLastCallAgent(dom.window.localStorage, SELF), null);
+  // The provider toasted this one itself; buzzweb:// must not toast it again.
+  assert.equal(result.notified, true);
+});
+
+test("an up-front refusal is NOT marked notified, so the caller shows it", async () => {
+  let release;
+  T.flowResult = new Promise((resolve) => {
+    release = () => resolve({ ok: true, message: "Connected" });
+  });
+  let session = null;
+  function Probe() {
+    session = useHuddleSession();
+    return null;
+  }
+  const container = dom.window.document.createElement("div");
+  const root = createRoot(container);
+  await act(async () => {
+    root.render(
+      React.createElement(
+        HuddleSessionProvider,
+        null,
+        React.createElement(Probe),
+      ),
+    );
+  });
+  let first;
+  await act(async () => {
+    first = session.startAgentCall({
+      parentChannelId: "dm-1",
+      agentPubkey: GILF,
+      agentName: "Gilfoyle",
+    });
+  });
+  let second;
+  await act(async () => {
+    second = await session.startAgentCall({
+      parentChannelId: "dm-2",
+      agentPubkey: "c".repeat(64),
+      agentName: "Cereal",
+    });
+  });
+  assert.deepEqual(second, {
+    ok: false,
+    message: "Another call is already starting — try again shortly.",
+  });
+  release();
+  await act(async () => {
+    await first;
+  });
+  await act(async () => root.unmount());
 });

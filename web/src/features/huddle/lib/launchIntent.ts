@@ -33,13 +33,14 @@ import {
   type HuddleRoomMap,
 } from "./huddleParticipants.ts";
 
-export const LAUNCH_SCHEME = "buzzweb:";
 export const MAX_AGENT_SELECTOR_LENGTH = 128;
 /** A tap older than this is dropped, never dialed late. */
 export const LAUNCH_INTENT_MAX_AGE_MS = 5 * 60_000;
 export const LAST_CALL_AGENT_KEY = "buzz.voice.lastAgent.v1";
 export const NO_LAST_AGENT_MESSAGE =
   "Start a voice call with an agent once — Buzz Voice will call them next time.";
+export const AGENTS_NOT_LOADED_MESSAGE =
+  "Couldn't load your agents in time — tap Buzz Voice again.";
 
 export type LaunchRequest =
   | { action: "open" }
@@ -76,57 +77,108 @@ export function cleanAgentSelector(raw: string): string | null {
   return value;
 }
 
-/** Parse a launch URL; null for anything that is not exactly one of ours. */
-export function parseLaunchUrl(raw: string): LaunchRequest | null {
-  let url: URL;
+// The launch-link grammar, applied to the RAW string on both sides — never
+// through a URL library, because WHATWG `URL` and Foundation `URL` disagree on
+// exactly the edges a sloppy or hostile link reaches (QA 2026-10-01:
+// `buzzweb://c%61ll` decoded natively but not on the web; `+` was a space to
+// `URLSearchParams` and a plus to `URLComponents`; `buzzweb://@call` and
+// `buzzweb://call#` read as clean on the web only). Mirrored by
+// `BuzzLaunchPlugin.request(forRaw:)`; both suites run the shared corpus in
+// `test-fixtures/launch-links/`.
+//
+//   buzzweb://<host>[/][?<query>]   host: "", "open" or "call" (any case)
+//   query: empty, or (call only) exactly `agent=<value>` — one pair, no `&`
+//   value: `+` is a space, then strict UTF-8 percent-decoding (a bad escape
+//          rejects the link), then `cleanAgentSelector`
+const PRINTABLE_ASCII = /^[\x21-\x7e]*$/;
+const LAUNCH_SHAPE =
+  /^buzzweb:\/\/(|open|call)\/?(?:\?([A-Za-z0-9._~!$'()*+,;:@/?%=&-]*))?$/i;
+const AGENT_PREFIX = "agent=";
+
+/** `+` as space, then strict percent-decoding; null on a malformed escape. */
+function decodeQueryValue(raw: string): string | null {
   try {
-    url = new URL(raw);
+    return decodeURIComponent(raw.replace(/\+/g, " "));
   } catch {
     return null;
   }
-  if (
-    url.protocol.toLowerCase() !== LAUNCH_SCHEME ||
-    url.username !== "" ||
-    url.password !== "" ||
-    url.port !== "" ||
-    url.hash !== "" ||
-    !(url.pathname === "" || url.pathname === "/")
-  ) {
-    return null;
+}
+
+/** Parse a launch URL; null for anything that is not exactly one of ours. */
+export function parseLaunchUrl(raw: string): LaunchRequest | null {
+  if (!PRINTABLE_ASCII.test(raw)) return null;
+  const shape = LAUNCH_SHAPE.exec(raw);
+  if (shape === null) return null;
+  const host = shape[1].toLowerCase();
+  const query = shape[2] ?? "";
+  if (host !== "call") {
+    return query === "" ? { action: "open" } : null;
   }
-  const params = [...url.searchParams];
-  switch (url.hostname.toLowerCase()) {
-    case "":
-    case "open":
-      return params.length === 0 ? { action: "open" } : null;
-    case "call": {
-      if (params.length === 0) {
-        return { action: "call", agent: null };
-      }
-      if (params.length !== 1 || params[0][0] !== "agent") {
-        return null;
-      }
-      const agent = cleanAgentSelector(params[0][1]);
-      return agent === null ? null : { action: "call", agent };
-    }
-    default:
-      return null;
-  }
+  if (query === "") return { action: "call", agent: null };
+  if (query.includes("&") || !query.startsWith(AGENT_PREFIX)) return null;
+  const decoded = decodeQueryValue(query.slice(AGENT_PREFIX.length));
+  const agent = decoded === null ? null : cleanAgentSelector(decoded);
+  return agent === null ? null : { action: "call", agent };
 }
 
 export type AgentResolution =
   | { ok: true; agent: CallableAgent }
   | {
       ok: false;
-      reason: "no-last" | "unavailable" | "unknown" | "ambiguous" | "invalid";
+      reason:
+        | "no-last"
+        | "unavailable"
+        | "unknown"
+        | "ambiguous"
+        | "invalid"
+        | "incomplete";
       message: string;
     };
 
 /**
  * Which agent a call link means. Only the owner's own callable agents can be
  * dialed; a name must match exactly one of them (case-insensitively).
+ *
+ * `complete` is false when the agent list may be partial (a relay read timed
+ * out or filled its page). A match in a partial list is still one of the
+ * owner's agents, so it is dialed; but a miss or a tie is then not evidence
+ * of anything, and is reported as "couldn't load" rather than "not found".
  */
 export function resolveLaunchAgent(
+  selector: string | null,
+  agents: readonly CallableAgent[],
+  last: CallableAgent | null,
+  complete = true,
+): AgentResolution {
+  const resolution = resolveFromList(selector, agents, last);
+  if (
+    !complete &&
+    !resolution.ok &&
+    (resolution.reason === "unknown" ||
+      resolution.reason === "unavailable" ||
+      resolution.reason === "ambiguous")
+  ) {
+    return {
+      ok: false,
+      reason: "incomplete",
+      message: AGENTS_NOT_LOADED_MESSAGE,
+    };
+  }
+  return resolution;
+}
+
+/** True when every read finished (EOSE) without filling its `limit`. */
+export function agentReadsComplete(
+  reads: readonly {
+    events: readonly unknown[];
+    eose: boolean;
+    limit: number;
+  }[],
+): boolean {
+  return reads.every((read) => read.eose && read.events.length < read.limit);
+}
+
+function resolveFromList(
   selector: string | null,
   agents: readonly CallableAgent[],
   last: CallableAgent | null,

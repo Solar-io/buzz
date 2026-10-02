@@ -3,7 +3,10 @@ import { toast } from "sonner";
 import { router } from "@/app/router";
 import { useAuth } from "@/features/auth/ui/AuthProvider";
 import { openDm } from "@/features/dms/hooks";
-import { queryOnce } from "@/features/pulse/lib/relayQuery.ts";
+import {
+  queryOnce,
+  queryOnceWithEose,
+} from "@/features/pulse/lib/relayQuery.ts";
 import type { RelaySession } from "@/shared/api/relay-session";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { useOwnPubkey } from "@/shared/lib/useOwnPubkey";
@@ -11,6 +14,7 @@ import { BuzzLaunch, isNativeIOS } from "@/shared/platform/native";
 import { type HuddleSession, useHuddleSession } from "./HuddleSessionProvider";
 import { HUDDLE_LIFECYCLE_KINDS } from "./lib/huddleParticipants.ts";
 import {
+  agentReadsComplete,
   browserStorage,
   callableAgentsFromEvents,
   createLaunchConsumer,
@@ -119,22 +123,21 @@ async function carryOutLaunch(
 
   const { session, selfPubkey } = read();
   if (!selfPubkey) return;
+  const registryFilter = { kinds: [30177], authors: [selfPubkey], limit: 200 };
+  const catalogFilter = { kinds: [30180], authors: [selfPubkey], limit: 100 };
   const [registry, catalogs] = await Promise.all([
-    queryOnce(
-      session,
-      { kinds: [30177], authors: [selfPubkey], limit: 200 },
-      QUERY_TIMEOUT_MS,
-    ),
-    queryOnce(
-      session,
-      { kinds: [30180], authors: [selfPubkey], limit: 100 },
-      QUERY_TIMEOUT_MS,
-    ),
+    queryOnceWithEose(session, registryFilter, QUERY_TIMEOUT_MS),
+    queryOnceWithEose(session, catalogFilter, QUERY_TIMEOUT_MS),
   ]);
+  // A slow cold-start relay must not read as "you have no such agent".
   const resolution = resolveLaunchAgent(
     request.agent,
-    callableAgentsFromEvents(registry, catalogs),
+    callableAgentsFromEvents(registry.events, catalogs.events),
     readLastCallAgent(browserStorage(), selfPubkey),
+    agentReadsComplete([
+      { ...registry, limit: registryFilter.limit },
+      { ...catalogs, limit: catalogFilter.limit },
+    ]),
   );
   if (!alive()) return;
   if (!resolution.ok) {
@@ -180,7 +183,7 @@ async function carryOutLaunch(
   // Cleared BEFORE dialing: a relaunch mid-call must not dial again.
   await acknowledge();
   if (!alive()) return;
-  await read().huddle.startAgentCall({
+  const started = await read().huddle.startAgentCall({
     parentChannelId: dm.channelId,
     agentPubkey: agent.pubkey,
     agentName: agent.name,
@@ -190,4 +193,10 @@ async function carryOutLaunch(
       agent.pubkey,
     ),
   });
+  // The provider toasts its own call-flow failures (`notified`); its early
+  // refusals — already in another call, a call already starting — are silent
+  // there, and the tap would otherwise just land on the DM and do nothing.
+  if (!started.ok && !started.notified && alive()) {
+    toast.error("Buzz Voice", { description: started.message });
+  }
 }
