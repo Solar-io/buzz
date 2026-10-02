@@ -26,7 +26,7 @@ import {
 export async function sendAdminCommand(
   session: RelaySession,
   command: AdminCommand,
-  options?: AdminSendOptions & { requestId?: string },
+  options?: AdminSendOptions & { requestId?: string; signal?: AbortSignal },
 ): Promise<{ ok: boolean; requestId: string; message?: string }> {
   const pubkey = await ownPubkey();
   if (!pubkey) {
@@ -53,6 +53,8 @@ export async function sendAdminCommand(
     tags: [],
     content: ciphertext,
   });
+  if (options?.signal?.aborted)
+    return { ok: false, requestId, message: "Request cancelled." };
   const result = await session.publish(event);
   return {
     ok: result.ok,

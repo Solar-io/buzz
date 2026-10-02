@@ -15,9 +15,10 @@ export async function requestAdminCommand(
   command: AdminCommand,
   options: AdminSendOptions,
   timeoutMs = 15_000,
+  signal?: AbortSignal,
 ): Promise<AdminAckEnvelope | null> {
   const pubkey = await ownPubkey();
-  if (!pubkey) return null;
+  if (!pubkey || signal?.aborted) return null;
   const requestId = crypto.randomUUID();
   return new Promise((resolve) => {
     let finished = false;
@@ -26,10 +27,13 @@ export async function requestAdminCommand(
       if (finished) return;
       finished = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
       unsubscribe();
       resolve(ack);
     };
     const timer = setTimeout(() => finish(null), timeoutMs);
+    const abort = () => finish(null);
+    signal?.addEventListener("abort", abort, { once: true });
     unsubscribe = session.subscribe(
       { kinds: [ADMIN_ACK_KIND], authors: [pubkey] },
       {
@@ -45,7 +49,7 @@ export async function requestAdminCommand(
         },
       },
     );
-    void sendAdminCommand(session, command, { ...options, requestId })
+    void sendAdminCommand(session, command, { ...options, requestId, signal })
       .then((result) => {
         if (!result.ok) finish(null);
       })
