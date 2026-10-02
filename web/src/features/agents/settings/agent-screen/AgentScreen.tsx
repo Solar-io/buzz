@@ -175,16 +175,18 @@ export function AgentScreen({
       setSending(false);
     }
   };
-  const queued = reactionWork(
-    work?.reactions ?? [],
-    nowS,
-    new Map([
-      [
-        row.pubkey,
-        new Set(live.turns.flatMap((turn) => turn.triggeringEventIds)),
-      ],
-    ]),
-  ).queued.filter((entry) => entry.agentPubkey === row.pubkey).length;
+  const queued = work
+    ? reactionWork(
+        work?.reactions ?? [],
+        nowS,
+        new Map([
+          [
+            row.pubkey,
+            new Set(live.turns.flatMap((turn) => turn.triggeringEventIds)),
+          ],
+        ]),
+      ).queued.filter((entry) => entry.agentPubkey === row.pubkey).length
+    : null;
   const channelProps = {
     row,
     channels,

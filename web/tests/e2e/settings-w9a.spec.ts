@@ -1,4 +1,5 @@
-import { expect, test as base, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
+import { test } from "./helpers/agentBraveTest";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import * as nip44 from "nostr-tools/nip44";
@@ -13,20 +14,6 @@ import {
   routeUsageHub,
   type WorkFixture,
 } from "./helpers/workFixture";
-
-// Local runs can use the shared Agent Brave instead of launching another browser.
-// CI retains the suite's normal isolated browser. Never close the shared browser.
-const test = process.env.BUZZ_E2E_CDP
-  ? base.extend({
-      browser: async ({ playwright }, use) => {
-        await use(
-          await playwright.chromium.connectOverCDP(
-            process.env.BUZZ_E2E_CDP as string,
-          ),
-        );
-      },
-    })
-  : base;
 
 function selfSeal(fixture: WorkFixture, value: unknown) {
   return nip44.v2.encrypt(

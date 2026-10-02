@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
+import { test } from "./helpers/agentBraveTest";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { installMockRelay, mockEvent } from "./helpers/mockRelay";

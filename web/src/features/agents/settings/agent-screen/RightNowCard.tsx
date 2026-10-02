@@ -32,7 +32,7 @@ export function RightNowCard({
   row: RosterRow;
   turns: readonly ActiveTurn[];
   lastFinished: ObserverFrame | null;
-  queued: number;
+  queued: number | null;
   channels: readonly ChannelSummary[];
   session: RelaySession;
   enabled: boolean;
@@ -122,7 +122,9 @@ export function RightNowCard({
             : ""}
         </p>
       ) : null}
-      <p className="text-xs text-muted-foreground">{queued} waiting</p>
+      {queued !== null ? (
+        <p className="text-xs text-muted-foreground">{queued} waiting</p>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         <Button
           variant="outline"
