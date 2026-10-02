@@ -43,7 +43,8 @@ test("buildDesktopCatalogContent produces the pinned wire shape", () => {
   // version 3 = the set_claude_pools capability (Claude pool editor).
   assert.deepEqual(content, {
     format: "buzz-desktop-catalog",
-    version: 4,
+    version: 5,
+    caps: ["ping", "ack.result", "requires", "fresh"],
     machine: "crichton.local",
     harnesses: [
       {

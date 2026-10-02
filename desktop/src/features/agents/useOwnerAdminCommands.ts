@@ -26,6 +26,7 @@ import {
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import { getMachineHostname } from "@/shared/api/machineIdentity";
+import { executeOwnerAdminCommand } from "./ownerAdminProtocolV5";
 
 /**
  * Owner admin-command ingestion (kind 24201): applies web-issued agent
@@ -64,11 +65,9 @@ export function useOwnerAdminCommands() {
       if (!command) {
         return;
       }
-      if (command.target) {
-        const hostname = await getMachineHostname();
-        if (!commandTargetsThisMachine(command, hostname)) {
-          return;
-        }
+      const hostname = await getMachineHostname();
+      if (!commandTargetsThisMachine(command, hostname)) {
+        return;
       }
       if (seenRequestIds.current.has(command.requestId)) {
         return;
@@ -80,22 +79,20 @@ export function useOwnerAdminCommands() {
         seenRequestIds.current.clear();
       }
 
-      try {
-        const agentPubkey = await applyOwnerAdminCommand(command);
-        await publishOwnerAdminAck({
-          requestId: command.requestId,
-          ok: true,
-          ...(agentPubkey ? { agentPubkey } : {}),
-        });
-      } catch (error) {
-        await publishOwnerAdminAck({
-          requestId: command.requestId,
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        }).catch(() => {
-          // Ack failure must not crash ingestion; the web side times out.
-        });
-      }
+      const ack = await executeOwnerAdminCommand(
+        command,
+        applyOwnerAdminCommand,
+        hostname,
+      );
+      console.debug("Owner admin", {
+        action: command.action,
+        requestId: command.requestId,
+        ok: ack.ok,
+        code: ack.code,
+      });
+      await publishOwnerAdminAck(ack).catch(() => {
+        // Ack failure must not crash ingestion; the web side times out.
+      });
     },
     [],
   );
@@ -135,6 +132,8 @@ async function applyOwnerAdminCommand(
   command: OwnerAdminCommand,
 ): Promise<string | null> {
   switch (command.action) {
+    case "ping":
+      return null; // executeOwnerAdminCommand handles ping before the applier.
     case "create": {
       const { agent } = await createManagedAgent(
         createInputFromCommand(command),
