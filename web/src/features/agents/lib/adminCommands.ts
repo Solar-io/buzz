@@ -15,6 +15,7 @@ export const AGENT_ADMIN_ACK_TYPE = "agent_admin_ack";
 
 export const ADMIN_COMMAND_KIND = 24201;
 export const ADMIN_ACK_KIND = 24202;
+import { ackExtensions, type PingCommand } from "./admin/protocolV5";
 
 /** Harness choice: a preset runtime id, or a custom command (+ args). */
 export interface HarnessPreset {
@@ -187,6 +188,7 @@ export function parseClaudePoolsConfig(
 }
 
 export type AdminCommand =
+  | PingCommand
   | { action: "create"; request: CreateAgentRequest }
   | { action: "update"; request: UpdateAgentRequest }
   | { action: "delete"; request: DeleteAgentRequest }
@@ -211,6 +213,7 @@ export interface AdminCommandEnvelope {
    * agent twice.
    */
   target?: string;
+  requires?: string[];
   request: unknown;
 }
 
@@ -222,6 +225,8 @@ export interface AdminAckEnvelope {
   error?: string;
   /** Agent pubkey for create results — lets the UI jump to the new agent. */
   agentPubkey?: string;
+  code?: string;
+  result?: Record<string, unknown>;
 }
 
 const PUBKEY_RE = /^[0-9a-f]{64}$/;
@@ -331,6 +336,13 @@ export function parseAdminCommand(
     return null;
   }
   const issuedAt = envelope.issuedAt;
+  if (
+    envelope.requires !== undefined &&
+    (!Array.isArray(envelope.requires) ||
+      !envelope.requires.every((cap) => isText(cap) && cap.length > 0))
+  ) {
+    return null;
+  }
   const request =
     typeof envelope.request === "object" && envelope.request !== null
       ? (envelope.request as Record<string, unknown>)
@@ -341,6 +353,9 @@ export function parseAdminCommand(
 
   let command: AdminCommand | null = null;
   switch (envelope.action) {
+    case "ping":
+      command = { action: "ping", request: {} };
+      break;
     case "create":
       if (!isText(request.name) || !isText(request.systemPrompt)) {
         return null;
@@ -470,6 +485,9 @@ export function parseAdminCommand(
     action: envelope.action,
     requestId: envelope.requestId,
     issuedAt: issuedAt,
+    ...(envelope.requires !== undefined
+      ? { requires: [...(envelope.requires as string[])] }
+      : {}),
     ...(target ? { target } : {}),
     request: envelope.request,
     command,
@@ -492,6 +510,7 @@ export function parseAdminAck(value: unknown): AdminAckEnvelope | null {
     type: AGENT_ADMIN_ACK_TYPE,
     requestId: envelope.requestId,
     ok: envelope.ok,
+    ...ackExtensions(envelope),
     error: optionalString(envelope.error),
     agentPubkey:
       isText(envelope.agentPubkey) && PUBKEY_RE.test(envelope.agentPubkey)

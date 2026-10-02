@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { RelaySession } from "@/shared/api/relay-session";
+import type { AdminSendOptions } from "./admin/protocolV5";
 import {
   nip44DecryptFrom,
   nip44EncryptTo,
@@ -25,13 +26,14 @@ import {
 export async function sendAdminCommand(
   session: RelaySession,
   command: AdminCommand,
-  options?: { target?: string },
+  options?: AdminSendOptions & { requestId?: string },
 ): Promise<{ ok: boolean; requestId: string; message?: string }> {
   const pubkey = await ownPubkey();
   if (!pubkey) {
     return { ok: false, requestId: "", message: "No unlocked key." };
   }
   const requestId =
+    options?.requestId ??
     globalThis.crypto?.randomUUID?.() ??
     `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const envelope = {
@@ -42,6 +44,7 @@ export async function sendAdminCommand(
     // Machine targeting (kind-30180 catalog machine id): only the named
     // desktop applies + acks the command. Absent = legacy broadcast.
     ...(options?.target ? { target: options.target } : {}),
+    ...(options?.requires ? { requires: [...options.requires] } : {}),
     request: command.request,
   };
   const { ciphertext } = await nip44EncryptTo(JSON.stringify(envelope), pubkey);
