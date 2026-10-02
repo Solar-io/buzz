@@ -70,7 +70,7 @@ export function DurationSelect({
         }
       }}
     >
-      {(custom || customValue) && (
+      {custom && (
         <form
           className="space-y-1"
           onSubmit={(event) => {

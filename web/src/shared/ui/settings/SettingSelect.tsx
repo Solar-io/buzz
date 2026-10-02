@@ -58,6 +58,10 @@ export function SettingSelect({
   // Encode option values so real model ids never collide with inheritance.
   const encoded = (option: string) => `value:${option}`;
   const selected = value === null ? "inherit" : encoded(value);
+  const resolvedLabel =
+    value === null
+      ? defaultLabel
+      : (choices.find((option) => option.value === value)?.label ?? value);
   const reason = offline
     ? `${machine} is offline · Needs the desktop`
     : locked
@@ -84,7 +88,7 @@ export function SettingSelect({
               ? "border-honey-ink bg-honey-ink"
               : value === null
                 ? "border-muted-foreground"
-                : "border-blue-ink bg-blue-ink",
+                : "border-info-ink bg-info-ink",
           )}
         />
         {label}
@@ -98,11 +102,8 @@ export function SettingSelect({
           aria-describedby={`${id}-hint`}
           className={cn(
             "min-h-11 w-full min-w-0 rounded-lg border border-input bg-background py-2 pl-3 pr-12 text-base focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-55 md:min-h-9 md:text-sm",
-            dirty
-              ? "border-honey-line bg-honey-wash text-honey-ink"
-              : value === null
-                ? "text-muted-foreground"
-                : "text-foreground",
+            "text-transparent",
+            dirty && "border-honey-line bg-honey-wash",
           )}
           onChange={(event) => {
             if (!unavailable)
@@ -113,28 +114,52 @@ export function SettingSelect({
               );
           }}
         >
-          <option value="inherit">
+          <option value="inherit" className="text-foreground">
             Use default — {defaultLabel} · {source}
           </option>
           {value !== null &&
             !choices.some((option) => option.value === value) && (
-              <option value={encoded(value)}>{value}</option>
+              <option value={encoded(value)} className="text-foreground">
+                {value}
+              </option>
             )}
           {options.map((option) => (
-            <option key={option.value} value={encoded(option.value)}>
+            <option
+              key={option.value}
+              value={encoded(option.value)}
+              className="text-foreground"
+            >
               {option.label}
             </option>
           ))}
           {groups.map((group) => (
             <optgroup key={group.label} label={group.label}>
               {group.options.map((option) => (
-                <option key={option.value} value={encoded(option.value)}>
+                <option
+                  key={option.value}
+                  value={encoded(option.value)}
+                  className="text-foreground"
+                >
                   {option.label}
                 </option>
               ))}
             </optgroup>
           ))}
         </select>
+        <span
+          aria-hidden="true"
+          className={cn(
+            "pointer-events-none absolute inset-y-0 left-3 right-16 flex min-w-0 items-center text-base md:text-sm",
+            unavailable && "opacity-55",
+            dirty
+              ? "text-honey-ink"
+              : value === null
+                ? "text-muted-foreground"
+                : "text-foreground",
+          )}
+        >
+          <span className="truncate">{resolvedLabel}</span>
+        </span>
         {value !== null && (
           <button
             type="button"

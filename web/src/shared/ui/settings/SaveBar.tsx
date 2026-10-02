@@ -84,8 +84,8 @@ export function SaveBar({
           </p>
         )}
         {state.status === "error" &&
-          state.errors.map((error, index) => (
-            <div key={`${error.machine}:${index}`}>
+          state.errors.map((error) => (
+            <div key={`${error.machine}:${error.agentName ?? ""}`}>
               {!error.timedOut && (
                 <p className="text-sm font-semibold text-coral-ink">
                   {error.machine} refused the change
@@ -99,8 +99,8 @@ export function SaveBar({
           ))}
         {changes.length > 0 && (
           <ul className="mt-1 space-y-1 text-xs text-foreground">
-            {changes.map((change, index) => (
-              <li key={`${index}:${change}`}>{change}</li>
+            {changes.map((change) => (
+              <li key={change}>{change}</li>
             ))}
           </ul>
         )}

@@ -61,7 +61,13 @@ export function useSettingsDraft(send: SendSettingsCommand) {
         for (const entry of applied) remaining.delete(draftKey(entry));
         return remaining;
       });
-      setUndoEntries(applied);
+      setUndoEntries((previous) => [
+        ...previous.filter(
+          (entry) =>
+            !applied.some((next) => draftKey(next) === draftKey(entry)),
+        ),
+        ...applied,
+      ]);
       setState(
         failed.length > 0
           ? {
@@ -102,6 +108,10 @@ export function useSettingsDraft(send: SendSettingsCommand) {
     // An undo is itself acknowledged, but never offers an endless redo loop.
     setUndoEntries([]);
   }
+  const displayDraft =
+    draft.size === 0 && state.status === "saved"
+      ? new Map(undoEntries.map((entry) => [draftKey(entry), entry]))
+      : draft;
   return {
     draft,
     state,
@@ -115,8 +125,8 @@ export function useSettingsDraft(send: SendSettingsCommand) {
     uncertain,
     canUndo:
       state.status === "saved" && undoEntries.length > 0 && draft.size === 0,
-    summary: settingsDraftSummary(draft),
-    changes: [...draft.values()].map(settingChangeSummary),
-    effectSummary: settingsEffectSummary(draft),
+    summary: settingsDraftSummary(displayDraft),
+    changes: [...displayDraft.values()].map(settingChangeSummary),
+    effectSummary: settingsEffectSummary(displayDraft),
   };
 }
