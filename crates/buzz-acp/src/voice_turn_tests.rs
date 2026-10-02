@@ -91,6 +91,14 @@ fn voice_model_unset_masks_env() {
 #[test]
 fn voice_model_ignored_on_unmarked_turn() {
     let raw = format!(r#"{{"{PUBKEY}":{{"voiceModel":"key-model"}}}}"#);
+    // Pin the positive half too: an absent file-model mechanism must not
+    // masquerade as a working marked/unmarked boundary.
+    assert_eq!(
+        VoiceTurnOverrides::resolve_for_turn(Some("[voice] hi"), &identity_knobs(&raw))
+            .model
+            .as_deref(),
+        Some("key-model")
+    );
     for content in [Some("typed"), Some("quotes [voice] hello"), None] {
         let text = VoiceTurnOverrides::resolve_for_turn(content, &identity_knobs(&raw));
         assert_eq!(text.model, None);
