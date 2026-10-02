@@ -24,7 +24,9 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
     private var membersReady = false
     private var membersDate = -1
     private var agents = Set<String>()
-    private var relayPubkey: String?
+    private(set) var relayPubkey: String?
+    /// Session for the NIP-11 identity read; tests substitute a stubbed one.
+    var infoSession: URLSession = .shared
     private var voices: [String: (Int, String, String)] = [:]
     /// Owner kind-30183 assignments keyed by agent: (created_at, owner, engine, voice).
     private var assignments: [String: (Int, String, String, String)] = [:]
@@ -72,11 +74,11 @@ final class NativeAgentVoice: NSObject, AVAudioPlayerDelegate {
         var info = URLComponents(url: relay, resolvingAgainstBaseURL: false)
         info?.scheme = "https"; info?.path = "/info"
         guard let url = info?.url else { return }
-        URLSession.shared.dataTask(with: url) { [weak self] bytes, _, _ in
+        infoSession.dataTask(with: url) { [weak self] bytes, _, _ in
             DispatchQueue.main.async {
                 guard let self, self.alive, self.generation == token,
                       let bytes, let value = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
-                      let pubkey = value["pubkey"] as? String, pubkey.count == 64 else {
+                      let pubkey = NativeVoicePolicy.relaySigningKey(value) else {
                     self?.dropVoice("Relay identity discovery failed; voice is unavailable.", reason: "bridge_error"); return
                 }
                 self.relayPubkey = pubkey

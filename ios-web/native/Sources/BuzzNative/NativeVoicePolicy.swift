@@ -4,6 +4,15 @@ import Foundation
 /// Used by the live native voice path, also exercised by native XCTest.
 enum NativeVoicePolicy {
     static let echoTail: TimeInterval = 1.5
+    /// The relay's own signing key from its NIP-11 document: the `self` field
+    /// (NIP-43), lowercased — the key that authors kind-39002 member snapshots.
+    /// NIP-11 `pubkey` is the operator contact and Buzz serves it as null, so
+    /// it is deliberately NOT a fallback. Mirrors web `relaySelf.ts`.
+    static func relaySigningKey(_ info: [String: Any]) -> String? {
+        guard let value = info["self"] as? String,
+              value.range(of: "^[0-9a-fA-F]{64}$", options: .regularExpression) != nil else { return nil }
+        return value.lowercased()
+    }
     static func normalize(_ raw: String) -> String {
         raw.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
     }
