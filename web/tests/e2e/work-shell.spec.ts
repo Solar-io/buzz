@@ -288,11 +288,13 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
 
       // Vitals popover.
       await sidebar.getByTestId("vitals-block").click();
-      // The runway's 72 h calendar projection: B runs dry before its reset,
-      // A lasts (fixture in workFixture.routeUsageHub).
-      await expect(sidebar.getByTestId("vitals-block")).toContainText("B dry");
+      // The combined runway (397649842): the whole pool runs dry before A's
+      // reset, so the headline says "both" (fixture in workFixture.routeUsageHub).
+      await expect(sidebar.getByTestId("vitals-block")).toContainText(
+        "both dry",
+      );
       await expect(page.getByTestId("vitals-outlook")).toContainText(
-        "Account B runs dry around",
+        "Both run dry around",
       );
       await expect(page.getByTestId("vitals-popover")).toContainText(
         "A won't run dry — about 64% used when it resets",
@@ -750,7 +752,7 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       const vitals = rail.getByTestId("vitals-block");
       await expect(vitals).toBeVisible();
       await expect(vitals).toContainText("45% free");
-      await expect(vitals).toContainText("B dry");
+      await expect(vitals).toContainText("both dry");
       await expect(rail.getByTestId("vitals-crichton")).toHaveCount(0);
       // No profile row: Settings opens from the B, as on desktop.
       await expect(rail.locator("footer")).not.toContainText("Connected");
