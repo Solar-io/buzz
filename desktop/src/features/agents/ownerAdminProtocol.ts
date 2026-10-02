@@ -307,7 +307,7 @@ export function parseOwnerAdminCommand(
     typeof envelope.request === "object" && envelope.request !== null
       ? (envelope.request as Record<string, unknown>)
       : null;
-  if (!request) {
+  if (!request || Array.isArray(envelope.request)) {
     return null;
   }
   const base = {

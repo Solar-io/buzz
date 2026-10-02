@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 
 import {
   commandTargetsThisMachine,
@@ -7,6 +8,49 @@ import {
 } from "./ownerAdminProtocol.ts";
 
 const PK = "ab".repeat(32);
+
+test("shared owner-admin corpus pins desktop envelope parsing and application", async () => {
+  const cases = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../../../test-fixtures/owner-admin/cases.json",
+        import.meta.url,
+      ),
+    ),
+  );
+  const limits = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../../../test-fixtures/owner-admin/limits.json",
+        import.meta.url,
+      ),
+    ),
+  );
+  assert.equal(limits.caseCount, 15);
+  assert.equal(cases.length, 15);
+  const { executeOwnerAdminCommand } = await import(
+    "./ownerAdminProtocolV5.ts"
+  );
+  for (const item of cases) {
+    const parsed = parseOwnerAdminCommand(item.envelope);
+    assert.equal(parsed !== null, item.parsed, item.name);
+    if (!parsed) continue;
+    assert.equal(parsed.issuedAt, item.envelope.issuedAt, item.name);
+    assert.deepEqual(parsed.requires, item.envelope.requires, item.name);
+    let applied = false;
+    const ack = await executeOwnerAdminCommand(
+      parsed,
+      async () => {
+        applied = true;
+        return null;
+      },
+      "crichton.local",
+      Date.parse(limits.now),
+    );
+    assert.equal(ack.code ?? null, item.code, item.name);
+    assert.equal(applied, item.applies, item.name);
+  }
+});
 
 function envelope(action, request, overrides = {}) {
   return {

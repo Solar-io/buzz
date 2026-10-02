@@ -59,11 +59,7 @@ import {
   ForgetDeviceSection,
   PairDeviceSection,
 } from "./settings/DeviceSection";
-import {
-  AgentsSection,
-  FilesUrlSection,
-  ProfileSection,
-} from "./settings/MiscSections";
+import { FilesUrlSection, ProfileSection } from "./settings/MiscSections";
 import { AgentsConnectionSettings } from "@/features/agents/ui/AgentsConnectionSettings";
 import { FilesSitesSection } from "@/features/webPanels/ui/FilesSitesSection";
 import { SettingsChipRow, SettingsNav } from "./settings/SettingsNav";

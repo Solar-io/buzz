@@ -1,0 +1,217 @@
+[
+  {
+    "name": "ping",
+    "envelope": {
+      "type": "agent_admin_command",
+      "action": "ping",
+      "requestId": "fixture",
+      "issuedAt": "2026-10-02T21:00:00.000Z",
+      "request": {},
+      "requires": [
+        "ping"
+      ]
+    },
+    "parsed": true,
+    "code": null,
+    "applies": false
+  },
+  {
+    "name": "fresh create",
+    "envelope": {
+      "type": "agent_admin_command",
+      "action": "create",
+      "requestId": "fixture",
+      "issuedAt": "2026-10-02T21:00:00.000Z",
+      "request": {
+        "name": "Test",
+        "systemPrompt": "Literal\nprompt"
+      },
+      "requires": [
+        "fresh"
+      ]
+    },
+    "parsed": true,
+    "code": null,
+    "applies": true
+  },
+  {
+    "name": "unknown requirement refuses create",
+    "envelope": {
+      "type": "agent_admin_command",
+      "action": "create",
+      "requestId": "fixture",
+      "issuedAt": "2026-10-02T21:00:00.000Z",
+      "request": {
+        "name": "Test",
+        "systemPrompt": "prompt"
+      },
+      "requires": [
+        "update.effort"
+      ]
+    },
+    "parsed": true,
+    "code": "unsupported",
+    "applies": false
+  },
+  {
+    "name": "stale update",
+    "envelope": {
+      "type": "agent_admin_command",
+      "action": "update",
+      "requestId": "fixture",
+      "issuedAt": "2026-10-02T20:54:59.999Z",
+      "request": {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "parsed": true,
+    "code": "stale",
+    "applies": false
+  },
+  {
+    "name": "future stop",
+    "envelope": {
+      "type": "agent_admin_command",
+      "action": "stop",
+      "requestId": "fixture",
+      "issuedAt": "2026-10-02T21:01:00.001Z",
+      "request": {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "parsed": true,
+    "code": "stale",
+    "applies": false
+  },
+  {
+    "name": "exact age boundary",
+    "envelope": {
+      "type": "agent_admin_command",
+      "action": "start",
+      "requestId": "fixture",
+      "issuedAt": "2026-10-02T20:55:00.000Z",
+      "request": {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "parsed": true,
+    "code": null,
+    "applies": true
+  },
+  {
+    "name": "exact future boundary",
+    "envelope": {
+      "type": "agent_admin_command",
+      "action": "restart",
+      "requestId": "fixture",
+      "issuedAt": "2026-10-02T21:01:00.000Z",
+      "request": {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "parsed": true,
+    "code": null,
+    "applies": true
+  },
+  {
+    "name": "invalid date fails stale",
+    "envelope": {
+      "type": "agent_admin_command",
+      "action": "delete",
+      "requestId": "fixture",
+      "issuedAt": "invalid",
+      "request": {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "parsed": true,
+    "code": "stale",
+    "applies": false
+  },
+  {
+    "name": "non-string requirements",
+    "envelope": {
+      "type": "agent_admin_command",
+      "action": "ping",
+      "requestId": "fixture",
+      "issuedAt": "2026-10-02T21:00:00.000Z",
+      "request": {},
+      "requires": [
+        42
+      ]
+    },
+    "parsed": false
+  },
+  {
+    "name": "non-array requirements",
+    "envelope": {
+      "type": "agent_admin_command",
+      "action": "ping",
+      "requestId": "fixture",
+      "issuedAt": "2026-10-02T21:00:00.000Z",
+      "request": {},
+      "requires": "ping"
+    },
+    "parsed": false
+  },
+  {
+    "name": "empty requirement",
+    "envelope": {
+      "type": "agent_admin_command",
+      "action": "ping",
+      "requestId": "fixture",
+      "issuedAt": "2026-10-02T21:00:00.000Z",
+      "request": {},
+      "requires": [
+        ""
+      ]
+    },
+    "parsed": false
+  },
+  {
+    "name": "non-string timestamp",
+    "envelope": {
+      "type": "agent_admin_command",
+      "action": "ping",
+      "requestId": "fixture",
+      "issuedAt": 42,
+      "request": {}
+    },
+    "parsed": false
+  },
+  {
+    "name": "invalid pubkey",
+    "envelope": {
+      "type": "agent_admin_command",
+      "action": "unregister",
+      "requestId": "fixture",
+      "issuedAt": "2026-10-02T21:00:00.000Z",
+      "request": {
+        "pubkey": "bad"
+      }
+    },
+    "parsed": false
+  },
+  {
+    "name": "unknown action",
+    "envelope": {
+      "type": "agent_admin_command",
+      "action": "explode",
+      "requestId": "fixture",
+      "issuedAt": "2026-10-02T21:00:00.000Z",
+      "request": {}
+    },
+    "parsed": false
+  },
+  {
+    "name": "array request",
+    "envelope": {
+      "type": "agent_admin_command",
+      "action": "ping",
+      "requestId": "fixture",
+      "issuedAt": "2026-10-02T21:00:00.000Z",
+      "request": []
+    },
+    "parsed": false
+  }
+]
