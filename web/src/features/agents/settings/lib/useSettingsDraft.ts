@@ -74,6 +74,7 @@ export function useSettingsDraft(send: SendSettingsCommand) {
               status: "error",
               uncertain: failed.some((result) => result.timedOut),
               errors: failed.map((result) => ({
+                id: result.plan.request.pubkey,
                 machine: result.plan.machine,
                 agentName: result.plan.entries[0]?.agentName,
                 error:
@@ -90,6 +91,7 @@ export function useSettingsDraft(send: SendSettingsCommand) {
         status: "error",
         errors: [
           {
+            id: "plan",
             machine: machines.join(", "),
             error: error instanceof Error ? error.message : String(error),
           },
@@ -126,7 +128,10 @@ export function useSettingsDraft(send: SendSettingsCommand) {
     canUndo:
       state.status === "saved" && undoEntries.length > 0 && draft.size === 0,
     summary: settingsDraftSummary(displayDraft),
-    changes: [...displayDraft.values()].map(settingChangeSummary),
+    changes: [...displayDraft.values()].map((entry) => ({
+      id: draftKey(entry),
+      text: settingChangeSummary(entry),
+    })),
     effectSummary: settingsEffectSummary(displayDraft),
   };
 }

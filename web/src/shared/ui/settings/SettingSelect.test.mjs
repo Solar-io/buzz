@@ -16,6 +16,34 @@ const { DurationSelect } = await import("./DurationSelect.tsx");
 const { SaveBar } = await import("./SaveBar.tsx");
 after(() => dom.window.close());
 
+test("duplicate display names keep both change receipts without duplicate React keys", async () => {
+  const errors = [];
+  const original = console.error;
+  console.error = (...args) => errors.push(args.join(" "));
+  try {
+    await mount(
+      SaveBar,
+      {
+        summary: "2 changes on 2 agents",
+        changes: [
+          { id: "a:model", text: "Agent Model old → new" },
+          { id: "b:model", text: "Agent Model old → new" },
+        ],
+        effectSummary: "2 on restart",
+        state: { status: "idle" },
+        onSave() {},
+        onDiscard() {},
+      },
+      async (container) => {
+        assert.equal(container.querySelectorAll("li").length, 2);
+      },
+    );
+    assert.deepEqual(errors, []);
+  } finally {
+    console.error = original;
+  }
+});
+
 async function mount(Component, props, run) {
   const container = document.createElement("div");
   document.body.append(container);
@@ -214,7 +242,7 @@ test("duration presets show minutes/hours and custom hours send seconds", async 
 test("SaveBar waits for ack, renders Saved/Undo and quotes refused text safely", async () => {
   const props = {
     summary: "3 changes on 3 agents",
-    changes: ["Acid Burn model old → new"],
+    changes: [{ id: "acid:model", text: "Acid Burn model old → new" }],
     effectSummary: "2 restart when idle · 1 next turn",
     onSave() {},
     onDiscard() {},
@@ -235,6 +263,7 @@ test("SaveBar waits for ack, renders Saved/Undo and quotes refused text safely",
   await mount(
     SaveBar,
     {
+      id: "acid",
       ...props,
       state: { status: "saved", machines: ["crichton"], savedAt: 0 },
       onUndo() {},

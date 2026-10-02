@@ -11,6 +11,7 @@ export type SaveBarState =
       status: "error";
       uncertain?: boolean;
       errors: readonly {
+        id: string;
         machine: string;
         agentName?: string;
         error: string;
@@ -21,7 +22,7 @@ export type SaveBarState =
 /** Plain-text summaries and explicit draft/save actions. */
 export interface SaveBarProps {
   summary: string;
-  changes: readonly string[];
+  changes: readonly { id: string; text: string }[];
   effectSummary: string;
   state: SaveBarState;
   onSave: () => void;
@@ -87,7 +88,7 @@ export function SaveBar({
         )}
         {state.status === "error" &&
           state.errors.map((error) => (
-            <div key={`${error.machine}:${error.agentName ?? ""}`}>
+            <div key={error.id}>
               {!error.timedOut && (
                 <p className="text-sm font-semibold text-coral-ink">
                   {error.machine} refused the change
@@ -102,7 +103,7 @@ export function SaveBar({
         {changes.length > 0 && (
           <ul className="mt-1 space-y-1 text-xs text-foreground">
             {changes.map((change) => (
-              <li key={change}>{change}</li>
+              <li key={change.id}>{change.text}</li>
             ))}
           </ul>
         )}
