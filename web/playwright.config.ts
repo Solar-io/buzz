@@ -39,6 +39,7 @@ export default defineConfig({
         "**/smoke.spec.ts",
         "**/shell-views.spec.ts",
         "**/settings.spec.ts",
+        "**/settings-w6.spec.ts",
         "**/parity-surfaces.spec.ts",
         "**/forum.spec.ts",
         "**/sidebar-appearance.spec.ts",

@@ -17,7 +17,6 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import type { Profile } from "@/features/channels/hooks";
 import { NotificationSettingsDialog } from "@/features/notifications/ui/NotificationSettingsDialog";
-import { isNativeIOS } from "@/shared/platform/native";
 import {
   publishUserStatus,
   useUserStatuses,
@@ -293,12 +292,15 @@ export function SidebarAppMenu({
             <Workflow aria-hidden className="size-4" />
             Workflows
           </Link>
-          {!isNativeIOS() && (
-            <Link to="/repos/agents" className={ITEM} onClick={leave}>
-              <Bot aria-hidden className="size-4" />
-              Agents
-            </Link>
-          )}
+          <Link
+            to="/repos/settings"
+            search={{ group: "agents" }}
+            className={ITEM}
+            onClick={leave}
+          >
+            <Bot aria-hidden className="size-4" />
+            Agents
+          </Link>
           <button
             type="button"
             className={ITEM}

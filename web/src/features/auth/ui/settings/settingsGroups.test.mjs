@@ -11,16 +11,20 @@ import {
   visibleSettingsGroups,
 } from "./settingsGroups.ts";
 
-test("the IA has exactly the nine approved groups, in nav order", () => {
+test("the IA has exactly the thirteen W6 groups, in nav order", () => {
   assert.deepEqual(
     SETTINGS_GROUPS.map((group) => group.id),
     [
+      "agents",
+      "accounts",
+      "library",
       "account",
+      "voice",
       "notifications",
       "appearance",
       "keyboard",
       "community",
-      "agents",
+      "channels",
       "data",
       "security",
       "advanced",
@@ -44,24 +48,24 @@ test("nav labels appear in contiguous runs, matching the mock's four sections", 
       runs.push(group.navLabel);
     }
   }
-  assert.deepEqual(runs, ["You", "Community", "Data", "Security"]);
+  assert.deepEqual(runs, ["Agents", "You", "Community", "Data & security"]);
 });
 
-test("agents is the only group hidden on native iOS", () => {
-  const hidden = SETTINGS_GROUPS.filter((group) => group.hiddenOnIOS);
+test("keyboard is the only group hidden on phones", () => {
+  const hidden = SETTINGS_GROUPS.filter((group) => group.hiddenOnPhone);
   assert.deepEqual(
     hidden.map((group) => group.id),
-    ["agents"],
+    ["keyboard"],
   );
 });
 
-test("visibleSettingsGroups drops agents on iOS and nothing else", () => {
+test("visibleSettingsGroups keeps agents on iOS and hides only keyboard on phones", () => {
   const web = visibleSettingsGroups(false).map((group) => group.id);
   const ios = visibleSettingsGroups(true).map((group) => group.id);
   assert.deepEqual(web, [...SETTINGS_GROUP_IDS]);
   assert.deepEqual(
     ios,
-    web.filter((id) => id !== "agents"),
+    web.filter((id) => id !== "keyboard"),
   );
 });
 
@@ -108,12 +112,12 @@ test("filter is case-insensitive over names", () => {
 test("filter matches section labels, so a label query returns its run", () => {
   assert.deepEqual(
     filterSettingsGroups("security").map((group) => group.id),
-    ["security", "advanced"],
+    ["data", "security", "advanced"],
   );
   // "community" is both a label and a name; its run is community + agents.
   assert.deepEqual(
     filterSettingsGroups("community").map((group) => group.id),
-    ["community", "agents"],
+    ["community", "channels"],
   );
 });
 
@@ -130,7 +134,9 @@ test("filter matches descriptions, so a setting's word finds its group", () => {
   // security description's "Your key…" — accepted, because the point of the
   // filter is to be one dumb substring match, not a search engine.
   assert.ok(
-    filterSettingsGroups("you").map((group) => group.id).includes("security"),
+    filterSettingsGroups("you")
+      .map((group) => group.id)
+      .includes("security"),
   );
 });
 
@@ -140,4 +146,28 @@ test("filter narrows further with longer queries", () => {
     [],
   );
   assert.deepEqual(filterSettingsGroups("zzz"), []);
+});
+
+test("owners land on Agents while explicit Account links keep their target", () => {
+  assert.equal(resolveSettingsGroup(undefined, { ownsAgents: true }), "agents");
+  assert.equal(
+    resolveSettingsGroup("nonsense", { ownsAgents: true }),
+    "agents",
+  );
+  assert.equal(
+    resolveSettingsGroup("account", { ownsAgents: true }),
+    "account",
+  );
+  assert.equal(
+    resolveSettingsGroup(undefined, { ownsAgents: false }),
+    "account",
+  );
+});
+test("settings search finds the Agents group through an agent name", () => {
+  assert.deepEqual(
+    filterSettingsGroups(" GiLf ", SETTINGS_GROUPS, [
+      { name: "Gilfoyle", pubkey: "a".repeat(64) },
+    ]).map((group) => group.id),
+    ["agents"],
+  );
 });

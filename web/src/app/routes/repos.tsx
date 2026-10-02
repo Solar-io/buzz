@@ -42,7 +42,6 @@ import { landingBeforeLoad } from "@/features/channels/lib/lastConversationScope
 import { LandingSkeleton } from "@/features/channels/ui/LandingSkeleton";
 import { useMessageActions } from "@/features/channels/lib/useMessageActions.ts";
 import { paletteActions } from "@/features/channels/lib/paletteActions.ts";
-import { isNativeIOS } from "@/shared/platform/native";
 import { ChannelTimeline } from "@/features/channels/ui/ChannelTimeline";
 import type { ComposerHandle } from "@/features/channels/ui/Composer";
 import { ChannelHeader } from "@/features/channels/ui/ChannelHeader";
@@ -421,23 +420,21 @@ function ChannelBrowser() {
     void navigate({ to: "/repos", search: { c: channelId } });
   };
 
-  /**
-   * Actions the ⌘K palette offers alongside channel jumps. Every one of them
-   * is a shell concern — the panel ranks and renders, the shell decides what
-   * the app can do. The list itself lives in features/channels/lib so this
-   * route file stays under the repo's file-size ceiling.
-   */
+  // The shell owns palette actions; the shared factory keeps this route small.
+  const openAgents = useCallback(() => {
+    void navigate({ to: "/repos/settings", search: { group: "agents" } });
+  }, [navigate]);
   const palette = useMemo(
     () =>
       paletteActions({
         openView: (view) => void navigate({ to: "/repos", search: { view } }),
         openSettings: () => void navigate({ to: "/repos/settings" }),
-        openAgents: () => void navigate({ to: "/repos/agents" }),
+        openAgents,
         onNewChannel: () => setNewChannelOpen(true),
         onNewDm: () => setNewDmOpen(true),
         onOpenFiles: openFiles,
-      }).filter((action) => !isNativeIOS() || action.id !== "action:agents"),
-    [navigate, openFiles],
+      }),
+    [navigate, openFiles, openAgents],
   );
   const closeChannel = () => {
     void navigate({ to: "/repos", search: { c: undefined } });
@@ -699,7 +696,7 @@ function ChannelBrowser() {
               onOpenView={openView}
               onOpenFiles={openFiles}
               onOpenSettings={() => void navigate({ to: "/repos/settings" })}
-              onOpenAgents={() => void navigate({ to: "/repos/agents" })}
+              onOpenAgents={openAgents}
             />
           ) : undefined
         }

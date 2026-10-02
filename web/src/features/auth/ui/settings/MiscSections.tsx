@@ -7,7 +7,6 @@
  */
 
 import { useState } from "react";
-import { Link } from "@tanstack/react-router";
 
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
@@ -22,23 +21,6 @@ import {
  * `NotificationSettingsPanel` (features/notifications) — rendered inline,
  * still prompting only from the switch's own change event.
  */
-
-export function AgentsSection() {
-  return (
-    <section className="space-y-2 rounded-lg border border-border bg-card p-4">
-      <div className="flex items-center justify-between">
-        <h2 className="font-medium">Agents</h2>
-        <Button asChild variant="ghost" size="sm">
-          <Link to="/repos/agents">Manage agents</Link>
-        </Button>
-      </div>
-      <p className="text-sm text-muted-foreground">
-        Create agents and change their settings — drafts are reviewed in Buzz
-        Desktop.
-      </p>
-    </section>
-  );
-}
 
 /**
  * File-manager URL — the one External-tier setting. Shows the effective URL
@@ -105,8 +87,8 @@ export function ProfileSection({ onOpen }: { onOpen: () => void }) {
         </Button>
       </div>
       <p className="text-sm text-muted-foreground">
-        Your display name, picture, and bio — published as your kind:0 and seen
-        by everyone on this relay.
+        Your display name, picture, and bio — visible to everyone in this
+        community.
       </p>
     </section>
   );

@@ -427,8 +427,8 @@ function MemorySectionBlock({
       </div>
       <MemorySection agentPubkey={agentPubkey} viewerIsOwner={viewerIsOwner} />
       <p className="text-xs text-muted-foreground">
-        What this agent has remembered (NIP-AE). Read-only here — memories are
-        written by the agent itself.
+        What this agent has remembered. Read-only here — memories are written by
+        the agent itself.
       </p>
     </div>
   );
