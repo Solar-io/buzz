@@ -18,7 +18,7 @@ const entry = (key = "a", inherited = false) => ({
   field: "model",
   label: "Model",
   original: { value: "old", inherited },
-  clearValue: "",
+  clearValue: null,
   defaultLabel: "global",
   takesEffect: "restart-when-idle",
   change: { kind: "set", value: "new" },
@@ -124,7 +124,7 @@ test("Undo sends the acknowledged inverse and waits for its own desktop ack", as
       await act(() => draft().undo());
       assert.deepEqual(requests, [
         { pubkey: "a", model: "new" },
-        { pubkey: "a", model: "" },
+        { pubkey: "a", model: null },
       ]);
       assert.equal(draft().state.status, "saved");
       assert.equal(draft().canUndo, false);

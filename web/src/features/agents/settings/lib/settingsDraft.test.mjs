@@ -18,7 +18,7 @@ function entry(agentPubkey = "a", field = "model", overrides = {}) {
     field,
     label: field,
     original: { value: "old", inherited: false },
-    clearValue: "",
+    clearValue: null,
     defaultLabel: "global",
     takesEffect: "restart-when-idle",
     change: { kind: "set", value: "new" },
@@ -40,7 +40,7 @@ test("reset of a set value produces a clear, not an omission", () => {
   assert.deepEqual([...draft.values()][0].change, { kind: "clear" });
   assert.deepEqual(planSettingsCommands(draft)[0].request, {
     pubkey: "a",
-    model: "",
+    model: null,
   });
   const timeout = resetSettingsDraft(
     new Map(),
@@ -118,7 +118,7 @@ test("undo restores a set baseline and clears an inherited baseline", () => {
     ),
     [
       { pubkey: "a", model: "old" },
-      { pubkey: "b", model: "" },
+      { pubkey: "b", model: null },
     ],
   );
 });

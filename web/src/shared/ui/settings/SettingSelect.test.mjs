@@ -263,7 +263,6 @@ test("SaveBar waits for ack, renders Saved/Undo and quotes refused text safely",
   await mount(
     SaveBar,
     {
-      id: "acid",
       ...props,
       state: { status: "saved", machines: ["crichton"], savedAt: 0 },
       onUndo() {},
@@ -281,6 +280,7 @@ test("SaveBar waits for ack, renders Saved/Undo and quotes refused text safely",
         status: "error",
         errors: [
           {
+            id: "acid",
             machine: "crichton",
             error: '<img src=x onerror="attack()"> unknown model',
           },
