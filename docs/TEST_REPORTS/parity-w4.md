@@ -22,7 +22,8 @@ Implementation commits: `ba1260fd7`, `a57665c20`, `e08e83e76`, `8bac51d3a` (DCO 
 | `pnpm --dir web test`, final restored code | 4,101 tests, 4,101 pass, zero fail/skip/cancel |
 | `pnpm --dir web typecheck` | exit 0 |
 | Biome on all six touched web files | exit 0, no fixes needed |
-| `CHECK_FILE_SIZES_BASE=main node web/scripts/check-file-sizes.mjs` | exit 0 |
+| `CHECK_FILE_SIZES_BASE=main node web/scripts/check-file-sizes.mjs` | initial exit 0; final current-main comparison fails on untouched repos.tsx after main advanced |
+| File-size check against starting main `301cc5348242ce92b0046d5ec7cc4ebd0249ae0c` | exit 0 |
 | `pnpm --dir web build` | exit 0 |
 | Palette check / px-text on touched UI | exit 0 |
 | Full `pnpm --dir web check` | 30 existing errors; touched files clean |
@@ -63,6 +64,8 @@ The compact rows use existing tokens and rem text. Phone creation actions fit ab
 - `AGENTS.md`, `docs/TASKS.md`, `docs/PROJECT_STATUS.md`, `docs/LAST_CHAT.md`, this report.
 
 The plan's “scratch expiry” means the existing generic temporary-channel badge here: actual scratch channels require a parent marker. W4 does not invent that marker. `useChannelLists.ts` was an additional necessary change: otherwise every finite channel disappeared from the sidebar. There is no separate path-local guide in web/ or crates/buzz-acp/ in this checkout. No desktop or Rust files were touched.
+
+Main advanced during this phase. At the final size check, main's repos.tsx measures 998 lines under the checker, versus 1,001 in this worktree and its starting commit. The file is byte-identical to the phase base (`git diff 301cc5348 -- web/src/app/routes/repos.tsx` is empty). The current-main comparison therefore flags an unrelated change; the immutable phase-base check passes. Receipts: `logs/w4-sizes-current-main.log` and `logs/w4-sizes-phase-base.log`.
 
 ## Remaining acceptance
 
