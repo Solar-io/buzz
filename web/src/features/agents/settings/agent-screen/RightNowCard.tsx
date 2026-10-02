@@ -11,10 +11,12 @@ import type { ActiveTurn } from "@/features/work/lib/activeTurns";
 import type { ObserverFrame } from "../../lib/observerEvents";
 import {
   sendAgentControl,
-  type AgentControlCommand,
+  type SwitchModelCommand,
+  type CancelTurnCommand,
 } from "../../lib/agentControl";
 import { formatElapsed } from "../../ui/WorkingBadge";
 import type { RosterRow } from "../../lib/roster";
+import { conversationModel } from "./agentScreenModel";
 
 export function RightNowCard({
   row,
@@ -25,6 +27,7 @@ export function RightNowCard({
   session,
   enabled,
   models,
+  frames,
 }: {
   row: RosterRow;
   turns: readonly ActiveTurn[];
@@ -34,6 +37,7 @@ export function RightNowCard({
   session: RelaySession;
   enabled: boolean;
   models: readonly string[];
+  frames: readonly ObserverFrame[];
 }) {
   const [channelId, setChannelId] = useState("");
   const [modelId, setModelId] = useState("");
@@ -50,14 +54,18 @@ export function RightNowCard({
       );
     }
   }, [channels, channelId, turns]);
-  const run = async (command: Omit<AgentControlCommand, "requestId">) => {
+  const run = async (
+    command:
+      | Omit<SwitchModelCommand, "requestId">
+      | Omit<CancelTurnCommand, "requestId">,
+  ) => {
     if (!enabled || busy || !channelId) return;
     setBusy(true);
     try {
       const result = await sendAgentControl(session, row.pubkey, {
         ...command,
         requestId: crypto.randomUUID(),
-      } as AgentControlCommand);
+      });
       if (result.ok) toast.success(result.message);
       else toast.error(result.message);
     } finally {
@@ -142,6 +150,11 @@ export function RightNowCard({
         <label htmlFor={listId} className="block text-xs text-muted-foreground">
           This conversation’s model
         </label>
+        {conversationModel(frames, channelId) ? (
+          <p className="break-words text-sm" data-testid="agent-live-model">
+            {conversationModel(frames, channelId)}
+          </p>
+        ) : null}
         <Input
           id={listId}
           aria-label="Live model"
@@ -169,7 +182,7 @@ export function RightNowCard({
               type: "switch_model",
               channelId,
               modelId: modelId.trim(),
-            } as Omit<AgentControlCommand, "requestId">)
+            })
           }
         >
           Switch model

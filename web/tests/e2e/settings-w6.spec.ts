@@ -118,11 +118,9 @@ test("W6 owner lands on Agents, footer reports history, gilf Enter opens the tar
   await expect(page).toHaveURL(
     new RegExp(`group=agents&agent=${fixture.agents.gilfoyle.pubkey}`),
   );
-  await expect(page.getByTestId("agent-settings-placeholder")).toContainText(
-    "Gilfoyle",
-  );
-  await page.getByRole("button", { name: "← All agents" }).click();
-  await expect(page.getByTestId("agent-settings-placeholder")).toHaveCount(0);
+  await expect(page.getByTestId("agent-header")).toContainText("Gilfoyle");
+  await page.getByRole("button", { name: "← Agents", exact: true }).click();
+  await expect(page.getByTestId("agent-screen")).toHaveCount(0);
 });
 test("W6 non-owner lands on Account and explicit Account links survive owner landing", async ({
   page,
@@ -193,9 +191,7 @@ test("W6 390 phone root shows Agents first, hides Keyboard, drills in and return
   await expect(root).toBeVisible();
   await root.getByRole("textbox", { name: "Search settings" }).fill("gilf");
   await root.getByRole("textbox", { name: "Search settings" }).press("Enter");
-  await expect(page.getByTestId("agent-settings-placeholder")).toContainText(
-    "Gilfoyle",
-  );
+  await expect(page.getByTestId("agent-header")).toContainText("Gilfoyle");
 });
 test("W6 old agent link also redirects on a phone", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });

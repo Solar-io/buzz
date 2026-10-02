@@ -337,19 +337,25 @@ export function SettingsPage({ group, agent, tab }: SettingsPageProps) {
               ) : null}
               {active === "agents" ? (
                 agent ? (
-                  <AgentScreen
-                    key={agent}
-                    agentPubkey={agent}
-                    tab={tab}
-                    onBack={() => selectGroup("agents")}
-                    onSelect={selectAgent}
-                    onTab={(nextTab) =>
-                      void navigate({
-                        to: "/repos/settings",
-                        search: { group: "agents", agent, tab: nextTab },
-                      })
-                    }
-                  />
+                  self ? (
+                    <AgentScreen
+                      key={agent}
+                      agentPubkey={agent}
+                      tab={tab}
+                      onBack={() => selectGroup("agents")}
+                      onSelect={selectAgent}
+                      onTab={(nextTab) =>
+                        void navigate({
+                          to: "/repos/settings",
+                          search: { group: "agents", agent, tab: nextTab },
+                        })
+                      }
+                    />
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Unlock your key to manage this agent.
+                    </p>
+                  )
                 ) : (
                   <AgentsAdminPage embedded />
                 )

@@ -40,6 +40,7 @@ export default defineConfig({
         "**/shell-views.spec.ts",
         "**/settings.spec.ts",
         "**/settings-w6.spec.ts",
+        "**/settings-w9a.spec.ts",
         "**/parity-surfaces.spec.ts",
         "**/forum.spec.ts",
         "**/sidebar-appearance.spec.ts",

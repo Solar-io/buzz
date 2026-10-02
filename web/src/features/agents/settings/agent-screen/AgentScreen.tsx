@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { LockKeyhole, ChevronRight } from "lucide-react";
 import { Button } from "@/shared/ui/button";
+import { usePhoneLayout } from "@/shared/layout/AppShell";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { useProfiles } from "@/features/channels/hooks";
 import { openDm } from "@/features/dms/hooks";
@@ -61,6 +62,7 @@ export function AgentScreen({
   const { session, status } = useRelaySession();
   const admin = useAdminCommands(session, status);
   const navigate = useNavigate();
+  const phone = usePhoneLayout();
   const roster = useMemo(
     () => buildRoster(registry, personas, catalogs),
     [registry, personas, catalogs],
@@ -206,7 +208,7 @@ export function AgentScreen({
       sig: "",
       tags: [],
       content: JSON.stringify({
-        name: row.name,
+        display_name: row.name,
         system_prompt: row.systemPrompt,
         model: row.model,
         provider: row.provider,
@@ -227,6 +229,7 @@ export function AgentScreen({
         session={session}
         enabled={status === "open"}
         models={models}
+        frames={frames}
       />
       <AgentChannelsCard {...channelProps} onSeeAll={() => onTab("channels")} />
     </>
@@ -330,12 +333,14 @@ export function AgentScreen({
           className="grid min-w-0 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]"
           data-testid="agent-settings-layout"
         >
-          <aside
-            className="grid min-w-0 gap-4 md:grid-cols-2 xl:order-2 xl:sticky xl:top-4 xl:grid-cols-1"
-            data-testid="agent-side-cards"
-          >
-            {sideCards}
-          </aside>
+          {!phone && (
+            <aside
+              className="grid min-w-0 gap-4 md:grid-cols-2 xl:order-2 xl:sticky xl:top-4 xl:grid-cols-1"
+              data-testid="agent-side-cards"
+            >
+              {sideCards}
+            </aside>
+          )}
           <div className="min-w-0 space-y-4 xl:order-1">
             <section className="rounded-xl border border-border bg-card p-4">
               <h2 className="mb-3 text-sm font-semibold">
@@ -362,25 +367,50 @@ export function AgentScreen({
                 Last published settings. Change settings below.
               </p>
             </section>
+            {phone ? (
+              <AgentChannelsCard
+                {...channelProps}
+                onSeeAll={() => onTab("channels")}
+              />
+            ) : null}
             <details className="rounded-xl border border-border bg-card p-4">
               <summary className="min-h-11 cursor-pointer text-sm font-semibold md:min-h-8">
                 Agent settings
               </summary>
               <div className="pt-4">
-                <AgentConfigPanel
-                  settingsOnly
-                  row={row}
-                  profile={profiles.get(row.pubkey)}
-                  admin={admin}
-                  session={session}
-                  catalogs={catalogs}
-                  registryModels={models}
-                  roster={roster}
-                  viewerIsOwner
-                  onDeleted={onBack}
-                />
+                <fieldset disabled={!enabled}>
+                  <AgentConfigPanel
+                    settingsOnly
+                    row={row}
+                    profile={profiles.get(row.pubkey)}
+                    admin={admin}
+                    session={session}
+                    catalogs={catalogs}
+                    registryModels={models}
+                    roster={roster}
+                    viewerIsOwner
+                    onDeleted={onBack}
+                  />
+                </fieldset>
               </div>
             </details>
+            {phone ? (
+              <details className="rounded-xl border border-border bg-card p-4">
+                <summary className="min-h-11 cursor-pointer text-sm font-semibold">
+                  Right now
+                </summary>
+                <RightNowCard
+                  row={row}
+                  {...live}
+                  queued={queued}
+                  channels={channels.member}
+                  session={session}
+                  enabled={status === "open"}
+                  models={models}
+                  frames={frames}
+                />
+              </details>
+            ) : null}
             <section className="rounded-xl border border-border bg-card p-4 md:hidden">
               <h2 className="mb-2 text-xs font-semibold text-muted-foreground">
                 More settings

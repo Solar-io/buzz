@@ -57,3 +57,30 @@ export function agentNow(
 export function logsLockCopy(machine?: string) {
   return `Update Buzz Desktop${machine ? ` on ${machine.replace(/\.local$/, "")}` : ""} to view logs here.`;
 }
+
+/** The live model comes from harness snapshots, never the saved registry model. */
+export function conversationModel(
+  frames: readonly ObserverFrame[],
+  channelId: string,
+): string | null {
+  const latest = frames
+    .filter(
+      (frame) =>
+        frame.channelId === channelId &&
+        frame.kind === "session_config_captured",
+    )
+    .sort((a, b) => b.createdAt - a.createdAt || b.seq - a.seq)[0];
+  const payload = latest?.payload as
+    | {
+        models?: { currentModelId?: unknown };
+        configOptions?: { category?: unknown; currentValue?: unknown }[];
+      }
+    | undefined;
+  const value =
+    payload?.models?.currentModelId ??
+    (Array.isArray(payload?.configOptions)
+      ? payload.configOptions.find((option) => option?.category === "model")
+          ?.currentValue
+      : null);
+  return typeof value === "string" && value.trim() ? value : null;
+}
