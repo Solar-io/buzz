@@ -81,8 +81,9 @@ test("the sidebar's active row is repainted by the prominent active tab preferen
   expect(on.shadow).toContain("inset");
   expect(on.shadow).not.toBe(off.shadow);
 
+  // Prominent is the bolder label on every palette (buzz: 650 -> 700).
   expect(off.weight).toBe("650");
-  expect(on.weight).toBe("600");
+  expect(on.weight).toBe("700");
 });
 
 test("the preference survives a reload and applies before the first paint", async ({

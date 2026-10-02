@@ -157,4 +157,11 @@
     --sel-foreground: 40 11.11% 89.4%;
     --radius: 0.625rem;
   }
+
+  /* The buzz palettes' quiet selected row already labels at 650, so the
+     prominent fill's global 600 (globals.css) would read LIGHTER than the
+     default. Keep it the bolder of the two. */
+  :root[data-palette^="buzz-"][data-prominent-active-tab="true"] {
+    --sidebar-row-active-label-weight: 700;
+  }
 }
