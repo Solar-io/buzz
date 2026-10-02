@@ -33,6 +33,14 @@ test("the build value is used; a per-browser override wins over it", () => {
   );
 });
 
+test("an override of `off` turns hatch off, over the build value", () => {
+  const env = "https://crichton.tailb3d4b8.ts.net:6881/";
+  assert.equal(resolveHatchUrl({ env, stored: "off" }), null);
+  assert.equal(resolveHatchUrl({ env, stored: " OFF " }), null);
+  // Any other unusable override still falls back to the build value.
+  assert.equal(resolveHatchUrl({ env, stored: "nope" }), env);
+});
+
 test("only http(s) origins count as a service address", () => {
   assert.equal(normalizeHatchUrl("javascript:alert(1)"), null);
   assert.equal(normalizeHatchUrl("/relative"), null);

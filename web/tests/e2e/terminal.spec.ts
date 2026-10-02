@@ -324,6 +324,15 @@ test.describe("states · desktop 1440", () => {
   test("W-4: no hatch URL → no Terminal row and no crichton rows", async ({
     page,
   }) => {
+    // The production build bakes hatch's front door in (.env.production), so
+    // "no hatch URL" is the per-browser `off` override on this build.
+    await page.addInitScript(() => {
+      try {
+        localStorage.setItem("buzz:hatch-url", "off");
+      } catch {
+        // A frame with no storage access; the top document is what matters.
+      }
+    });
     await openShell(page, { theme: "buzz", path: channelPath() });
     await expect(page.getByTestId("vitals-block")).toBeVisible();
     await expect(

@@ -7,10 +7,16 @@
  * without a rebuild. Nothing in the UI writes it.
  *
  * Unset in both places means NO Terminal nav row and NO crichton Vitals rows
- * (plan §1: a control appears only when something can answer it).
+ * (plan §1: a control appears only when something can answer it). The prod
+ * build bakes a default in, so the override also takes the literal `off`
+ * (`HATCH_URL_OFF`) to reach that state on such a build — an e2e or a dev
+ * preview that must show "no hatch" without rebuilding.
  */
 
 const STORAGE_KEY = "buzz:hatch-url";
+
+/** The override value that turns hatch off, build default included. */
+export const HATCH_URL_OFF = "off";
 
 /** The build-time default. Optional chaining: the node test runner has no `import.meta.env`. */
 const BUILD_HATCH_URL: string = import.meta.env?.VITE_HATCH_URL ?? "";
@@ -38,11 +44,17 @@ export function normalizeHatchUrl(
   }
 }
 
-/** Pure resolution: the override wins when set, else the build value. */
+/**
+ * Pure resolution: the override wins when set, else the build value. An
+ * override of `off` wins too, as "no hatch".
+ */
 export function resolveHatchUrl(input: {
   env: string | null | undefined;
   stored: string | null | undefined;
 }): string | null {
+  if (input.stored?.trim().toLowerCase() === HATCH_URL_OFF) {
+    return null;
+  }
   return normalizeHatchUrl(input.stored) ?? normalizeHatchUrl(input.env);
 }
 

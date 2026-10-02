@@ -262,6 +262,12 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
         theme,
         () => "/repos",
       );
+      // The phone opens on Channels (Sam, 2026-10-01; was Work): Work is
+      // the tab bar's middle tab.
+      await page
+        .getByTestId("phone-tab-bar")
+        .getByRole("button", { name: /Work/ })
+        .click();
       const work = page.getByTestId("work-page");
       await expect(work).toBeVisible();
       await expect(

@@ -119,9 +119,19 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       await expect(page.getByTestId("vitals-runway-method")).toContainText(
         "72h average, carried forward to each reset: A 1.2%/h · B 20%/h (B: 40h of history)",
       );
+      // Calendar days, not active hours: no active-hour wording survives
+      // (19b6f81db). The word "active" itself now belongs to the pool
+      // default's marker (4a53813fc), so the guard is on the phrasing.
       await expect(page.getByTestId("vitals-popover")).not.toContainText(
-        "active",
+        /active[ -](use|hours?|h\b)/i,
       );
+      // A is the fixture's pool default: its row, and only its row, says so.
+      await expect(page.getByTestId("vitals-account-active")).toHaveCount(1);
+      await expect(
+        page
+          .getByTestId("vitals-account-A")
+          .getByTestId("vitals-account-active"),
+      ).toBeVisible();
       await shot(page, `vitals-${theme}-1440`);
       await page.keyboard.press("Escape");
     });

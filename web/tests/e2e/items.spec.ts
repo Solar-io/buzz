@@ -155,8 +155,25 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       await expect(row(page, "84").getByTestId("item-summary")).toContainText(
         "AI",
       );
-      expect(asked).toHaveLength(1);
-      expect(asked[0]).toContain("Round 2 of the card lands in the thread");
+      // The bridge is shared: the Work rail's Needs-you rows ask it for their
+      // long reminder bodies too (NeedRow, Work tab v1), and whether those
+      // asks land before or after this route is a mount-order race. So the
+      // Items assertion is per caller: 84's source is asked exactly once,
+      // and nothing else asked is an item's text.
+      const itemAsks = asked.filter((text) =>
+        text.includes("Round 2 of the card lands in the thread"),
+      );
+      expect(itemAsks).toHaveLength(1);
+      const reminderBodies = [
+        "XiaoZhi firmware is flashed and running on the dev board.",
+        "Finished the 106-folder inventory of ~/software_development.",
+      ];
+      for (const other of asked.filter((text) => !itemAsks.includes(text))) {
+        expect(
+          reminderBodies.some((body) => other.startsWith(body)),
+          `unexpected summary ask: ${other}`,
+        ).toBe(true);
+      }
 
       // Expand 88: what it was captured from, and how to work it.
       await expand(page, "88");

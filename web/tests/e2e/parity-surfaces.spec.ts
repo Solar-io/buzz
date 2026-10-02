@@ -43,6 +43,15 @@ test("settings renders the community roster and the presence control", async ({
   await signInAndOpenShell(page);
   await openSettings(page);
 
+  // Settings is two panes since the 2026-09-20 redesign. Presence lives in
+  // Account (the default pane); the roster lives in Community.
+  await expect(page.getByTestId("settings-presence")).toBeVisible();
+  await expect(page.getByTestId("presence-status-trigger")).toBeVisible();
+
+  await page
+    .getByRole("navigation", { name: "Settings" })
+    .getByRole("button", { name: /^Community/ })
+    .click();
   const members = page.getByTestId("community-members");
   await expect(members).toBeVisible();
   await expect(members).toContainText("Community members");
@@ -51,9 +60,6 @@ test("settings renders the community roster and the presence control", async ({
   // publishes no membership list" copy needs a relay that answers, and
   // claiming this test proves it would be claiming more than it checks.
   await expect(members).toContainText(/Reading the membership list/i);
-
-  await expect(page.getByTestId("settings-presence")).toBeVisible();
-  await expect(page.getByTestId("presence-status-trigger")).toBeVisible();
   expect(pageErrors).toEqual([]);
 });
 
@@ -159,7 +165,10 @@ test("the Files action opens the panel dock, which docks a second site", async (
       return;
     }
     try {
-      window.localStorage.setItem("buzz:files-url.v2", "https://files.invalid/");
+      window.localStorage.setItem(
+        "buzz:files-url.v2",
+        "https://files.invalid/",
+      );
     } catch {
       // A frame with no storage access; the top document is what matters.
     }
@@ -172,14 +181,26 @@ test("the Files action opens the panel dock, which docks a second site", async (
   await page.getByTestId("search-input").fill("files");
   await page.getByRole("option", { name: /Files/ }).first().click();
 
-  await expect(page.getByTestId("web-panel-dock")).toBeVisible();
-  // The dock opens the first site on its own rather than showing an empty
-  // frame under a tab bar.
-  await expect(page.getByTestId("web-panel-tabs").getByRole("tab")).toHaveCount(
-    1,
+  // Files is a page in the main column since redesign phase 4: one frame,
+  // the configured site, opened on its own rather than an empty host.
+  const frames = page.locator('iframe[data-testid^="web-panel-frame-"]');
+  await expect(page.getByTestId("web-frame-host")).toBeVisible();
+  await expect(frames).toHaveCount(1);
+  await expect(frames.first()).toHaveAttribute(
+    "src",
+    /^https:\/\/files\.invalid\//,
   );
 
-  await page.getByTestId("web-panel-add-site").click();
+  // The in-page tab strip and its "+" were removed (Sam, 2026-09-26); a
+  // second site is added in Settings → Data → Files sites. Reached through
+  // the palette, a client-side route change, so the session survives.
+  await openSettings(page);
+  await page
+    .getByRole("navigation", { name: "Settings" })
+    .getByRole("button", { name: /^Data/ })
+    .click();
+  const sites = page.getByTestId("files-sites-section");
+  await sites.getByRole("button", { name: "Add a site" }).click();
   // A javascript: URL that carries a real HOST. `javascript:alert(1)` would
   // not discriminate: it also has an empty hostname, so the registry's
   // separate hostname check rejects it even with the protocol allowlist
@@ -198,15 +219,25 @@ test("the Files action opens the panel dock, which docks a second site", async (
   await page.getByTestId("add-site-submit").click();
   await expect(page.getByTestId("add-site-dialog")).toBeHidden();
 
-  await page.getByTestId("web-panel-open-custom:1").click();
-  await expect(page.getByTestId("web-panel-tabs").getByRole("tab")).toHaveCount(
-    2,
+  const added = sites
+    .getByRole("listitem")
+    .filter({ hasText: "notes.invalid" });
+  await added.getByRole("button", { name: "Open" }).click();
+  await expect(page).toHaveURL(/\/repos(?:\?.*)?$/);
+
+  // Both frames stay mounted; only the active one is live. That is the
+  // property a single swappable iframe cannot have. The idle frame is
+  // `inert` and transparent (WebFrameHost), which Playwright still counts as
+  // "visible", so the active one is told apart by `inert`.
+  await expect(frames).toHaveCount(2);
+  const live = page.locator(
+    'iframe[data-testid^="web-panel-frame-"]:not([inert])',
   );
-  // Both frames stay mounted; only the active one is visible. That is the
-  // property a single swappable iframe cannot have.
+  await expect(live).toHaveCount(1);
+  await expect(live).toHaveAttribute("src", /notes\.invalid/);
   await expect(
-    page.locator('iframe[data-testid^="web-panel-frame-"]'),
-  ).toHaveCount(2);
+    page.locator('iframe[data-testid^="web-panel-frame-"][inert]'),
+  ).toHaveAttribute("src", /^https:\/\/files\.invalid\//);
 
   expect(pageErrors).toEqual([]);
 });

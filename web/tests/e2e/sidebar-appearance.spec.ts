@@ -53,7 +53,7 @@ test("the sidebar's active row is repainted by the prominent active tab preferen
   );
   const off = await activeRowStyle(page);
 
-  await page.goto("/repos/settings");
+  await page.goto("/repos/settings?group=appearance");
   const toggle = page.getByTestId("prominent-active-tab-toggle");
   await expect(toggle).toBeVisible();
   await toggle.click();
@@ -74,10 +74,14 @@ test("the sidebar's active row is repainted by the prominent active tab preferen
   expect(on.background).not.toBe("rgba(0, 0, 0, 0)");
   expect(on.background).not.toBe(off.background);
 
-  expect(off.shadow).toBe("none");
-  expect(on.shadow).not.toBe("none");
+  // Off is the default `buzz` palette's selected row since redesign phase 1
+  // (palettes.css): the card surface, a hairline ring and a 650 label. On is
+  // the classic solid fill, whose ring is INSET and carries a drop shadow.
+  expect(off.shadow).toMatch(/^rgb\([^)]*\) 0px 0px 0px 1px$/);
+  expect(on.shadow).toContain("inset");
+  expect(on.shadow).not.toBe(off.shadow);
 
-  expect(off.weight).toBe("400");
+  expect(off.weight).toBe("650");
   expect(on.weight).toBe("600");
 });
 
@@ -90,7 +94,7 @@ test("the preference survives a reload and applies before the first paint", asyn
   // into that pending navigation can land on a page whose key store never
   // finished restoring — and the gate comes back.
   await expect(page.getByTestId("channel-sidebar")).toBeVisible();
-  await page.goto("/repos/settings");
+  await page.goto("/repos/settings?group=appearance");
   await page.getByTestId("prominent-active-tab-toggle").click();
 
   await page.goto("/repos?view=inbox");
@@ -117,7 +121,7 @@ test("the choice is stored under the desktop client's own key", async ({
   // into that pending navigation can land on a page whose key store never
   // finished restoring — and the gate comes back.
   await expect(page.getByTestId("channel-sidebar")).toBeVisible();
-  await page.goto("/repos/settings");
+  await page.goto("/repos/settings?group=appearance");
   await page.getByTestId("prominent-active-tab-toggle").click();
 
   await expect

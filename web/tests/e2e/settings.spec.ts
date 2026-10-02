@@ -51,14 +51,23 @@ async function signIn(page: Page, path = "/repos/settings"): Promise<string> {
   // navigation to /repos; a `goto` fired into that pending navigation races it,
   // and the losing order lands on a settings page whose key store never
   // finished restoring.
+  // A phone lands on the Channels tab with the tab bar (Channels | Work |
+  // More); wider viewports show the docked channel rail.
   const shellReady =
     (page.viewportSize()?.width ?? Number.POSITIVE_INFINITY) < 768
-      ? page.getByRole("button", { name: "Open channels" })
+      ? page.getByTestId("phone-tab-bar")
       : page.getByTestId("channel-sidebar");
   await expect(shellReady).toBeVisible();
   await page.goto(path);
   return getPublicKey(secretKey);
 }
+
+/**
+ * Settings is two panes since the 2026-09-20 redesign: a nav of nine groups
+ * and one content pane, the group carried in `?group=` (Account is the
+ * paramless default). Each card renders in exactly one group.
+ */
+const settingsPath = (group: string) => `/repos/settings?group=${group}`;
 
 test("every settings card renders for a signed-in viewer", async ({ page }) => {
   const pageErrors: string[] = [];
@@ -66,17 +75,26 @@ test("every settings card renders for a signed-in viewer", async ({ page }) => {
 
   await signIn(page);
 
-  for (const testId of [
-    "welcome-checklist",
-    "key-backup-card",
-    "identity-archive-card",
-    "invites-card",
-    "keyboard-shortcuts-card",
-    "experiments-card",
-    "appearance-card",
-    "custom-emoji-card",
-  ]) {
-    await expect(page.getByTestId(testId)).toBeVisible();
+  // Walk the groups through the nav itself, so a group whose nav item or
+  // pane is not wired up fails here rather than only on a deep link.
+  const nav = page.getByRole("navigation", { name: "Settings" });
+  for (const [navItem, group, testIds] of [
+    [/^Account/, "account", ["welcome-checklist-strip"]],
+    [/^Appearance/, "appearance", ["appearance-card"]],
+    [/^Keyboard shortcuts/, "keyboard", ["keyboard-shortcuts-card"]],
+    [/^Community/, "community", ["invites-card", "custom-emoji-card"]],
+    [
+      /^Security & devices/,
+      "security",
+      ["key-backup-card", "identity-archive-card"],
+    ],
+    [/^Advanced/, "advanced", ["experiments-card"]],
+  ] as const) {
+    await nav.getByRole("button", { name: navItem }).click();
+    await expect(page.getByTestId(`settings-pane-${group}`)).toBeVisible();
+    for (const testId of testIds) {
+      await expect(page.getByTestId(testId)).toBeVisible();
+    }
   }
   expect(pageErrors).toEqual([]);
 });
@@ -90,7 +108,10 @@ test.describe("narrow mobile settings layout", () => {
     await signIn(page);
 
     const header = page.getByTestId("settings-header");
-    const back = page.getByTestId("settings-back");
+    // Below md the nav rail (and its `settings-back`) is hidden; the narrow
+    // header carries its own Back link (two-pane redesign, be0a5fad6).
+    await expect(page.getByTestId("settings-back")).toBeHidden();
+    const back = header.getByRole("link", { name: "← Back" });
     const scroller = page.getByTestId("settings-scroll");
     await expect(header).toBeVisible();
     await expect(back).toBeVisible();
@@ -126,7 +147,9 @@ test.describe("narrow mobile settings layout", () => {
     await back.click();
     await expect(page).toHaveURL(/\/repos(?:\?.*)?$/);
     await expect(
-      page.getByRole("button", { name: "Open channels" }),
+      page
+        .getByTestId("phone-tab-bar")
+        .getByRole("button", { name: /Channels/ }),
     ).toBeVisible();
   });
 });
@@ -140,7 +163,7 @@ test.describe("narrow mobile settings layout", () => {
 test("the key backup card offers a backup for a local key", async ({
   page,
 }) => {
-  await signIn(page);
+  await signIn(page, settingsPath("security"));
   const card = page.getByTestId("key-backup-card");
   await expect(card).toContainText("Your key exists only in this browser");
   await expect(card.locator("#backup-pass")).toBeVisible();
@@ -152,6 +175,20 @@ test("the setup checklist lists the key backup for a local key", async ({
   page,
 }) => {
   await signIn(page);
+  // Settings' Account pane carries the checklist as a strip: the backup chip
+  // is there, unfinished (no strike-through), and leads to Security.
+  const chip = page.getByTestId("checklist-chip-backup");
+  await expect(chip).toBeVisible();
+  await expect(chip.locator(".line-through")).toHaveCount(0);
+  await expect(page.getByTestId("welcome-checklist-strip")).toContainText(
+    "One of these protects your identity",
+  );
+  await chip.click();
+  await expect(page.getByTestId("settings-pane-security")).toBeVisible();
+
+  // The full checklist — explanations and calls to action — is the shell's
+  // onboarding pane.
+  await page.goto("/repos?view=onboarding");
   const item = page.getByTestId("checklist-item-backup");
   await expect(item).toBeVisible();
   // Unfinished, so it still shows its explanation and its call to action. The
@@ -168,10 +205,47 @@ test("the setup checklist lists the key backup for a local key", async ({
   );
 });
 
-test("pairing instructions keep iPhone scans inside the native app", async ({
-  page,
-}) => {
-  await signIn(page);
+/**
+ * A pairing QR is refused from an origin another device cannot reach
+ * (loopback, `.local`, plain http — 72d8ac3de), and the preview server is
+ * exactly that. So the QR half is driven from a stand-in tailnet origin,
+ * `https://pair.test`, whose requests are answered by the preview server.
+ * Service workers are blocked there: a worker's own fetches skip
+ * `page.route`, and the stand-in host resolves nowhere.
+ */
+const PREVIEW_ORIGIN = `http://127.0.0.1:${process.env.PLAYWRIGHT_PORT ?? 4173}`;
+
+test("a pairing QR is refused from a loopback origin", async ({ page }) => {
+  await signIn(page, settingsPath("security"));
+  const card = page.getByTestId("pair-device-card");
+  await card.getByRole("button", { name: "Show pairing QR" }).click();
+  await expect(
+    page.getByText(/Cannot create a pairing QR from http:\/\/127\.0\.0\.1/),
+  ).toBeVisible();
+  await expect(card.getByRole("img")).toHaveCount(0);
+});
+
+test.describe("pairing from a reachable origin", () => {
+  test.use({ baseURL: "https://pair.test", serviceWorkers: "block" });
+  test.beforeEach(async ({ page }) => {
+    await page.route("https://pair.test/**", async (route) => {
+      const url = new URL(route.request().url());
+      const response = await route.fetch({
+        url: `${PREVIEW_ORIGIN}${url.pathname}${url.search}`,
+      });
+      await route.fulfill({ response });
+    });
+  });
+
+  test("pairing instructions keep iPhone scans inside the native app", async ({
+    page,
+  }) => {
+    await pairingInstructions(page);
+  });
+});
+
+async function pairingInstructions(page: Page): Promise<void> {
+  await signIn(page, settingsPath("security"));
 
   const card = page.getByTestId("pair-device-card");
   const instructions = card.getByTestId("pairing-instructions");
@@ -193,12 +267,12 @@ test("pairing instructions keep iPhone scans inside the native app", async ({
   await expect(card.getByTestId("pairing-qr-ready")).toContainText(
     "Buzz Web's in-app camera",
   );
-});
+}
 
 test("a short backup passphrase is refused and a long one is accepted", async ({
   page,
 }) => {
-  await signIn(page);
+  await signIn(page, settingsPath("security"));
   const card = page.getByTestId("key-backup-card");
   await card.locator("#backup-pass").fill("short");
   await expect(card).toContainText("Use at least 12 characters");
@@ -214,10 +288,15 @@ test("a short backup passphrase is refused and a long one is accepted", async ({
 test("the experiments switch reveals the channel templates card", async ({
   page,
 }) => {
-  await signIn(page);
+  // The switch lives in Advanced; the card it gates lives in Community.
+  await signIn(page, settingsPath("community"));
+  await expect(page.getByTestId("settings-pane-community")).toBeVisible();
+  await expect(page.getByTestId("custom-emoji-card")).toBeVisible();
   await expect(page.getByTestId("channel-templates-card")).toHaveCount(0);
 
+  await page.goto(settingsPath("advanced"));
   await page.getByTestId("feature-toggle-channel-templates").click();
+  await page.goto(settingsPath("community"));
   await expect(page.getByTestId("channel-templates-card")).toBeVisible();
 
   // And the choice survives a reload, because it is persisted.
@@ -228,8 +307,9 @@ test("the experiments switch reveals the channel templates card", async ({
 test("a channel template can be created and persists across a reload", async ({
   page,
 }) => {
-  await signIn(page);
+  await signIn(page, settingsPath("advanced"));
   await page.getByTestId("feature-toggle-channel-templates").click();
+  await page.goto(settingsPath("community"));
 
   const card = page.getByTestId("channel-templates-card");
   await expect(card).toContainText("No templates yet");
@@ -292,7 +372,7 @@ test("an encrypted backup restores the identity it was made from", async ({
   // Same hand-off race as `signIn`: wait for the shell before navigating.
   await expect(page.getByTestId("channel-sidebar")).toBeVisible();
 
-  await page.goto("/repos/settings");
+  await page.goto(settingsPath("security"));
   await expect(page.getByText(expectedNpub)).toBeVisible();
 });
 
@@ -316,7 +396,7 @@ const conversationFontSize = (page: Page) =>
 test("font size drives the real conversation type scale, 13 / 14 / 15px", async ({
   page,
 }) => {
-  await signIn(page);
+  await signIn(page, settingsPath("appearance"));
   const card = page.getByTestId("appearance-card");
   await expect(card).toBeVisible();
 
@@ -350,7 +430,7 @@ test("font size drives the real conversation type scale, 13 / 14 / 15px", async 
 test("conversation density changes real conversation spacing", async ({
   page,
 }) => {
-  await signIn(page);
+  await signIn(page, settingsPath("appearance"));
   const rowPadding = () =>
     page.evaluate(() =>
       getComputedStyle(document.documentElement)
@@ -380,7 +460,7 @@ test("conversation density changes real conversation spacing", async ({
 });
 
 test("the link preview choice persists across a reload", async ({ page }) => {
-  await signIn(page);
+  await signIn(page, settingsPath("appearance"));
 
   // Defaults, asserted as literals so a changed default is caught here.
   await expect(page.locator("html")).toHaveAttribute(
@@ -402,7 +482,7 @@ test("the link preview choice persists across a reload", async ({ page }) => {
 test("the accent picker repaints the interface's primary colour", async ({
   page,
 }) => {
-  await signIn(page);
+  await signIn(page, settingsPath("appearance"));
   const primary = () =>
     page.evaluate(() =>
       getComputedStyle(document.documentElement)
@@ -429,7 +509,7 @@ test("the accent picker repaints the interface's primary colour", async ({
 test("Custom Gradient is one picker choice with live, persistent variables and cleanup", async ({
   page,
 }) => {
-  await signIn(page);
+  await signIn(page, settingsPath("appearance"));
   const picker = page.locator("#appearance-theme");
   await expect(picker.locator('option[value="custom-gradient"]')).toHaveCount(
     1,
@@ -511,7 +591,7 @@ test("Custom Gradient migrates v1 once without changing the v1 record", async ({
     localStorage.setItem("buzz-custom-gradient-v1", stored);
     localStorage.removeItem("buzz-custom-gradient-v2");
   }, v1);
-  await signIn(page);
+  await signIn(page, settingsPath("appearance"));
   expect(
     await page.evaluate(() => localStorage.getItem("buzz-custom-gradient-v1")),
   ).toBe(v1);
@@ -535,7 +615,7 @@ test("Custom Gradient pane endpoint follows Light, Dark, and System mode", async
   page,
 }) => {
   await page.emulateMedia({ colorScheme: "light" });
-  await signIn(page);
+  await signIn(page, settingsPath("appearance"));
   await page.locator("#appearance-theme").selectOption("custom-gradient");
   await page.getByLabel("Gradient color 1").fill("#ffeeaa");
   await page.getByLabel("Gradient color 2").fill("#88ccdd");
@@ -578,7 +658,7 @@ test("Custom Gradient pane endpoint follows Light, Dark, and System mode", async
 test("Custom Gradient paints one shell ramp with frosted navigation and inset panes", async ({
   page,
 }, testInfo) => {
-  await signIn(page);
+  await signIn(page, settingsPath("appearance"));
   await page.locator("#appearance-theme").selectOption("custom-gradient");
   await page.getByLabel("Gradient color 1").fill("#f2ecb5");
   await page.getByLabel("Gradient color 2").fill("#8fcfe3");
@@ -664,10 +744,9 @@ test("Custom Gradient paints one shell ramp with frosted navigation and inset pa
   const sourceRoot = new URL("../../src/", import.meta.url);
   for (const [file, marker] of [
     ["app/routes/repos.tsx", 'data-custom-content-pane="chat"'],
-    [
-      "features/channels/ui/ThreadPanel.tsx",
-      'data-custom-content-pane="replies"',
-    ],
+    // The thread panel is gone (threads open inline since redesign phase 2);
+    // the right dock's other pane is Work.
+    ["features/work/ui/WorkTab.tsx", 'data-custom-content-pane="work"'],
     [
       "features/agents/ui/AgentActivityPanel.tsx",
       'data-custom-content-pane="thinking"',
@@ -688,7 +767,7 @@ test.describe("Custom Gradient on a phone", () => {
   test("has no horizontal overflow and keeps controls at touch size", async ({
     page,
   }, testInfo) => {
-    await signIn(page);
+    await signIn(page, settingsPath("appearance"));
     await page.locator("#appearance-theme").selectOption("custom-gradient");
     const scroller = page.getByTestId("settings-scroll");
     expect(
@@ -731,7 +810,7 @@ test.describe("Custom Gradient on a phone", () => {
 test("the custom emoji card offers add, and refuses an illegal name", async ({
   page,
 }) => {
-  await signIn(page);
+  await signIn(page, settingsPath("community"));
   const card = page.getByTestId("custom-emoji-card");
   await expect(card).toBeVisible();
   await expect(card).toContainText("My emoji");

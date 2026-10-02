@@ -35,4 +35,14 @@ export default defineConfig({
     port: parseInt(process.env.VITE_PORT || "5173", 10),
     strictPort: true,
   },
+  // `vite preview` is what the Playwright suite runs against, so it answers
+  // like the relay does in production: the service worker script lives in
+  // /assets/ but registers at root scope, which the browser only allows when
+  // the script response carries this header (crates/buzz-relay/src/router.rs).
+  // Without it every signed-out page logs a scope error the relay never
+  // produces, and the smoke specs' zero-console-error checks fail on the
+  // harness rather than the app.
+  preview: {
+    headers: { "Service-Worker-Allowed": "/" },
+  },
 });
