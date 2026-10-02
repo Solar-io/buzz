@@ -3,4 +3,5 @@
 - [x] QA-WORK-001 (High): fixed — live kind-9 subscription for running turns and Done turns inside a 90 s grace (`liveSlots`); regression `web/tests/e2e/work-activity.spec.ts`.
 - [ ] QA-WORK-002 (Medium): prune lifetime activity/tried maps when pair windows/channels expire; add churn coverage.
 - [ ] QA-WORK-003 (Medium): keep fenced-code language markers out of meaningful row summaries; define non-text fallbacks.
-- [ ] Parity W4 (in progress): Stream/Forum creation, lifetime presets and sidebar reachability; verify wire tags, ForumView, expiry, rejection and phone layout.
+- [x] Parity W4 implementation: Stream/Forum creation, lifetime presets, sidebar reachability, mutation proof and 1440/390/375 browser checks. Evidence: TEST_REPORTS/parity-w4.md.
+- [ ] Parity W4 live acceptance: create private Forum and 24 h channels on the live relay with an enrolled test identity. This coder session has no BUZZ_PRIVATE_KEY/BUZZ_AUTH_TAG and Agent Brave has no Nostr extension.

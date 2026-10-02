@@ -12,6 +12,7 @@ export const CHANNEL_LIFETIMES = [
   { label: "30 days", seconds: 2592000 },
 ] as const;
 
+/** A creation lifetime selection; ongoing is represented by zero. */
 export type ChannelLifetime = (typeof CHANNEL_LIFETIMES)[number]["seconds"];
 
 /** Build the same create request as buzz-sdk's build_create_channel. */
