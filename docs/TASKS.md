@@ -8,3 +8,10 @@
 - [x] Parity A1: add six named regressions plus tier/type edge cases; show mechanism mutations failing with unchanged test counts.
 - [x] Parity A1: run web baseline/final, typecheck/build/size checks and buzz-acp tests/clippy; record handoff and commits. Evidence: [A1 report](TEST_REPORTS/parity-a1.md).
 - [ ] Parity A1 release acceptance (plan: after R3): a throwaway agent's pubkey-keyed `voiceModel` changes the next marked turn's observed model without a restart.
+
+## Codex usage in web Vitals
+
+- [x] Add the shared no-header /v1/codex poll and null-preserving parser.
+- [x] Add sidebar and phone Codex readings plus quota/credits/usage details in the pop-out.
+- [x] Cover zero, unknown, stale, unlimited and endpoint failure; demonstrate six named mutation failures with an unchanged test count.
+- [x] Run required web static checks, 4,107 passing units/build, and six passing Codex E2E cases; full work-shell retains four existing failures. [Evidence](TEST_REPORTS/codex-vitals.md).

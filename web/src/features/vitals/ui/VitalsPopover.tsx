@@ -19,6 +19,7 @@ import {
   type VitalsSummary,
 } from "../lib/vitalsMath.ts";
 import type { VitalsSnapshot } from "../useVitals.ts";
+import { CodexPanel } from "./CodexVitals";
 
 /** "4:58 PM" today; "Tue 8:00 AM" on another day (weekly windows). */
 export function clock(iso: string | null): string {
@@ -142,7 +143,7 @@ const DOT: Record<Line["tone"], string> = {
   need: "bg-need",
 };
 
-/** The Vitals panel (Vitals.dc.html): Claude only until crichton lands (Phase 7). */
+/** Usage details: the combined Claude panel followed by Codex. */
 export function VitalsPanel({
   data,
   summary,
@@ -277,6 +278,7 @@ export function VitalsPanel({
           </>
         )}
       </div>
+      <CodexPanel data={data.codex} />
     </div>
   );
 }
