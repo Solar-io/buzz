@@ -18,11 +18,9 @@
  * huddle flow re-derived it once before, which is one copy more than the
  * primitive deserves.
  *
- * After a successful add the roster refreshes itself: the relay republishes
- * the channel's kind-39002 members event on any membership change
- * (`store_group_members_event` + `dispatch_group_members_event`,
- * crates/buzz-relay/src/handlers/side_effects.rs), and `useChannelMembers`
- * holds a live 39002 subscription — no polling, no refetch.
+ * After a successful add, `useChannelMembers` refetches the latest kind-39002
+ * snapshot when a channel-scoped kind-40099 membership notice arrives. Its
+ * #d-only roster request reads history but does not receive live updates.
  *
  * Import-free apart from sibling/relative `.ts` modules, so `node --test`
  * loads it.

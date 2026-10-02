@@ -252,6 +252,7 @@ function ChannelBrowser() {
     current,
     selfPubkey,
     huddleSession.call,
+    messages,
   );
   const profiles = useProfiles(
     useMemo(

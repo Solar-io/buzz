@@ -9,6 +9,7 @@ import type { ChannelSummary } from "@/features/channels/useChannels";
 import { shortKey } from "@/features/dms/lib/dmNaming.ts";
 
 import { useHuddleMemberSnapshot } from "./useHuddleMemberSnapshot.ts";
+import type { MessageBuffer } from "@/features/channels/lib/messageBuffer.ts";
 
 export interface HuddleMentionCallRoster {
   channelId: string | null;
@@ -53,9 +54,13 @@ export function useHuddleMentionMembers(options: {
   channelId: string | null;
   ephemeral: boolean;
   call: HuddleMentionCallRoster;
+  timelineMessages?: MessageBuffer;
 }): ChannelMember[] {
-  const { channelId, ephemeral, call } = options;
-  const permanentMembers = useChannelMembers(ephemeral ? null : channelId);
+  const { channelId, ephemeral, call, timelineMessages } = options;
+  const permanentMembers = useChannelMembers(
+    ephemeral ? null : channelId,
+    timelineMessages,
+  );
   const callMatches =
     ephemeral && call.channelId === channelId && call.memberRosterKnown;
   const fallbackSnapshot = useHuddleMemberSnapshot(
@@ -87,11 +92,13 @@ export function useRouteMentionMembers(
   current: ChannelSummary | null,
   selfPubkey: string | null,
   call: HuddleMentionCallRoster,
+  timelineMessages?: MessageBuffer,
 ): { members: ChannelMember[]; strictMentions: boolean } {
   const ephemeral = current?.ttlSeconds != null;
   const routeRoster = useHuddleMentionMembers({
     channelId: current?.id ?? null,
     ephemeral,
+    timelineMessages,
     call: {
       channelId: call.channelId,
       memberPubkeys: call.memberPubkeys,

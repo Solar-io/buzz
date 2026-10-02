@@ -41,8 +41,8 @@ import {
  * in a toast (the huddle add-agent precedent). The add itself mirrors the
  * desktop exactly: one kind-9000 event per member, agents as `bot`, humans
  * role-less; see `lib/addChannelMembers.ts` for the parity notes. After a
- * success the roster needs no refetch — the relay republishes the channel's
- * kind-39002 members event and the header's live subscription picks it up.
+ * success, the channel's kind-40099 membership notice triggers a refetch of
+ * the latest kind-39002 roster snapshot.
  */
 export function AddChannelMembersDialog({
   open,

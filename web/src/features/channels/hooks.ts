@@ -6,6 +6,10 @@ import { useRelaySession } from "@/shared/api/RelaySessionProvider";
 import { useRelaySelf } from "@/shared/lib/relaySelf";
 import { useStableSortedSet } from "@/shared/lib/useStableSortedSet";
 import { attributeCallLines, hasCallLines } from "./lib/callLines.ts";
+import {
+  SYSTEM_MESSAGE_KIND,
+  systemEventFromContent,
+} from "./lib/systemEvent.ts";
 
 import type { SignedNostrEvent } from "@/shared/lib/nostr-signer";
 import { signNostrEvent } from "@/shared/lib/nostr-signer";
@@ -327,26 +331,59 @@ export interface ChannelMember {
   role?: string;
 }
 
-/** Channel members from kind 39002 admission events (p tag = member). */
-export function useChannelMembers(channelId: string | null): ChannelMember[] {
+/**
+ * Latest kind-39002 roster, refreshed by channel-scoped membership notices.
+ * Pass the open timeline to reuse its kind-40099 subscription; standalone
+ * callers subscribe to notices themselves.
+ */
+export function useChannelMembers(
+  channelId: string | null,
+  timelineMessages?: MessageBuffer,
+): ChannelMember[] {
   const { session } = useRelaySession();
   const [members, setMembers] = useState<ChannelMember[]>([]);
+  const refreshRef = useRef<(() => void) | null>(null);
+  const sinceRef = useRef(0);
+  const seenNoticesRef = useRef(new Set<string>());
+  const hasTimeline = timelineMessages !== undefined;
 
   useEffect(() => {
     setMembers([]);
+    seenNoticesRef.current = new Set();
+    sinceRef.current = Math.floor(Date.now() / 1000);
     if (!channelId) {
       return;
     }
-    return session.subscribe(
-      { kinds: [39002], "#d": [channelId], limit: 500 },
-      {
-        onEvent: (event: SignedNostrEvent) => {
-          const dTag = event.tags.find((tag) => tag[0] === "d")?.[1];
-          if (dTag !== channelId) {
-            return;
-          }
-          setMembers((previous) => {
-            const next = new Map(previous.map((m) => [m.pubkey, m]));
+
+    let disposed = false;
+    let request = 0;
+    let newest: SignedNostrEvent | null = null;
+    let stopRoster: (() => void) | undefined;
+    const refresh = () => {
+      const currentRequest = ++request;
+      stopRoster?.();
+      // A #d-only request can read the stored roster, but receives no live
+      // channel events. Reopen it after a membership system notice.
+      stopRoster = session.subscribe(
+        { kinds: [39002], "#d": [channelId], limit: 1 },
+        {
+          onEvent: (event: SignedNostrEvent) => {
+            const dTag = event.tags.find((tag) => tag[0] === "d")?.[1];
+            if (
+              disposed ||
+              currentRequest !== request ||
+              event.kind !== 39002 ||
+              dTag !== channelId ||
+              (newest !== null &&
+                (event.created_at < newest.created_at ||
+                  (event.created_at === newest.created_at &&
+                    event.id >= newest.id)))
+            ) {
+              return;
+            }
+            newest = event;
+            // This event is a complete snapshot: absent p tags are removals.
+            const next = new Map<string, ChannelMember>();
             for (const tag of event.tags) {
               if (tag[0] === "p" && typeof tag[1] === "string") {
                 if (!next.has(tag[1])) {
@@ -354,14 +391,70 @@ export function useChannelMembers(channelId: string | null): ChannelMember[] {
                 }
               }
             }
-            return Array.from(next.values());
-          });
+            setMembers(Array.from(next.values()));
+          },
         },
-      },
+      );
+    };
+    refreshRef.current = refresh;
+    const stopNotices = hasTimeline
+      ? undefined
+      : session.subscribe(
+          {
+            kinds: [SYSTEM_MESSAGE_KIND],
+            "#h": [channelId],
+            since: sinceRef.current,
+          },
+          {
+            onEvent: (event) => {
+              if (
+                !disposed &&
+                event.kind === SYSTEM_MESSAGE_KIND &&
+                event.tags.some(
+                  (tag) => tag[0] === "h" && tag[1] === channelId,
+                ) &&
+                isMembershipNotice(event.content)
+              ) {
+                refresh();
+              }
+            },
+          },
+        );
+    refresh();
+    return () => {
+      disposed = true;
+      refreshRef.current = null;
+      stopRoster?.();
+      stopNotices?.();
+    };
+  }, [session, channelId, hasTimeline]);
+
+  useEffect(() => {
+    if (!timelineMessages) return;
+    const notices = timelineMessages.filter(
+      (message) =>
+        message.channelId === channelId &&
+        message.kind === SYSTEM_MESSAGE_KIND &&
+        message.createdAt >= sinceRef.current &&
+        isMembershipNotice(message.content),
     );
-  }, [session, channelId]);
+    const changed = notices.some(
+      (message) => !seenNoticesRef.current.has(message.id),
+    );
+    seenNoticesRef.current = new Set(notices.map((message) => message.id));
+    if (changed) refreshRef.current?.();
+  }, [channelId, timelineMessages]);
 
   return members;
+}
+
+function isMembershipNotice(content: string): boolean {
+  const type = systemEventFromContent(content)?.type;
+  return (
+    type === "member_joined" ||
+    type === "member_left" ||
+    type === "member_removed"
+  );
 }
 
 function shortKey(pubkey: string): string {
