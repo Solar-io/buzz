@@ -17,7 +17,7 @@ export type { ChannelSummary };
  */
 const CHANNEL_SEED_KEY = "channels:v1";
 
-export function useChannels(): {
+export function useChannels(selectedId?: string): {
   channels: ChannelSummary[];
   connected: boolean;
   /** Re-REQ the channel list — the relay has no live 39000 fan-out, so a
@@ -72,7 +72,13 @@ export function useChannels(): {
       }
       setChannels((previous) => {
         const existing = previous.find((c) => c.id === channel.id);
-        if (existing && existing.updatedAt >= channel.updatedAt) {
+        if (
+          existing &&
+          (existing.updatedAt > channel.updatedAt ||
+            (existing.updatedAt === channel.updatedAt &&
+              existing.metadataEventId !== undefined &&
+              existing.metadataEventId <= (channel.metadataEventId ?? "")))
+        ) {
           return previous;
         }
         const next = existing
@@ -83,7 +89,14 @@ export function useChannels(): {
     };
 
     return session.subscribe(
-      { kinds: [39000], limit: 500 },
+      selectedId
+        ? [
+            { kinds: [39000], limit: 500 },
+            // Global REQs get history only for channel-scoped events. The open
+            // conversation needs #h to receive metadata changes live.
+            { kinds: [39000], "#d": [selectedId], "#h": [selectedId] },
+          ]
+        : { kinds: [39000], limit: 500 },
       {
         onEvent: apply,
         onEose: () => setLoaded(true),
@@ -91,7 +104,7 @@ export function useChannels(): {
         priority: "critical",
       },
     );
-  }, [session, refreshKey]);
+  }, [session, refreshKey, selectedId]);
 
   // Write-through so the next reload paints the channel list immediately.
   useEffect(() => {
