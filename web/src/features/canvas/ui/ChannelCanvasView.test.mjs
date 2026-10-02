@@ -77,6 +77,7 @@ async function mount({
     node,
     published,
     render,
+    originalUpdatedAt: doc?.updatedAt,
     echo: async (content) => {
       doc = {
         ...doc,
@@ -128,7 +129,7 @@ test("a save shows the new canvas content after the echo, not the publish OK", a
     assert.equal(event.content, "# Updated\n\nHello **team**.");
     assert.equal(event.sig, "signature");
     assert.ok(
-      event.created_at > Math.floor(Date.now() / 1000),
+      event.created_at > view.originalUpdatedAt,
       "rapid edits beat the current second",
     );
     assert.equal(

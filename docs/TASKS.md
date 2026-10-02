@@ -22,3 +22,9 @@ W1 channel settings:
 - [x] Canvas, local Save as template, existing notification mute preference.
 - [x] Required web gates, named fail-first proof and 1440 / 390 screenshots (both applied themes asserted).
 - [ ] W1 live-relay acceptance in a private test channel using an authorized test signer. The coding shell has no Buzz signing credentials; local built-app acceptance uses the mock relay. See TEST_REPORTS/parity-w1.md.
+
+W5a canvas editing:
+- [x] Markdown Edit / Save / Clear with signed channel-scoped append events and relay refusal handling.
+- [x] Empty-canvas and phone reachability through About > Canvas; live echo and second-viewer rendering through mocked relay traffic.
+- [x] Behaviour tests, fail-first proof, required web checks, and 1440 / 390 screenshots. Evidence: [W5a report](TEST_REPORTS/parity-w5a.md).
+- [ ] W5a live acceptance: edit and clear a private test channel canvas with an enrolled throwaway identity; verify a second browser receives both updates. The worktree has no live test signing credentials.

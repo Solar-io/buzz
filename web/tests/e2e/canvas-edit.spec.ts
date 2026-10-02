@@ -156,10 +156,22 @@ for (const theme of [
           .getByRole("button", { name: "Cancel", exact: true })
           .click();
         refuse = false;
-        page.once("dialog", (dialog) => dialog.accept());
+        // Other CDP clients can dismiss native dialogs in the shared browser.
+        // Accept this page's confirmation and assert its prompt; unit tests
+        // separately exercise cancellation without sending an event.
+        await page.evaluate(() => {
+          window.confirm = (message) => {
+            document.documentElement.dataset.canvasConfirmation = message;
+            return true;
+          };
+        });
         await canvas
           .getByRole("button", { name: "Clear", exact: true })
           .click();
+        await expect(page.locator("html")).toHaveAttribute(
+          "data-canvas-confirmation",
+          "Clear the canvas for everyone in this channel?",
+        );
         await expect.poll(() => accepted?.content).toBe("");
         const cleared = accepted;
         if (!cleared) throw new Error("Missing clear publish");
