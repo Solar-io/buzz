@@ -286,6 +286,42 @@ final class FlutterIdentityMigrationTests: XCTestCase {
 }
 
 final class NativeVoicePolicyTests: XCTestCase {
+    /// Regression (2026-10-01): native agent voice read NIP-11 `pubkey`, which
+    /// the Buzz relay serves as null; the 39002 snapshot signer is `self`.
+    /// Discovery failed on every call, so no `[voice]` line was ever published.
+    func testRelaySigningKeyReadsSelfNotNullPubkey() throws {
+        let signer = "3a4988c6a4759ebe80f47686bd5af9b611a3ad4aacca63cc1e852140fc35f3f1"
+        // Shape of the live wss://crichton…:6351/info document.
+        let live = try JSONSerialization.jsonObject(with: Data(#"{"name":"Buzz Relay","pubkey":null,"contact":null,"self":"\#(signer)"}"#.utf8)) as! [String: Any]
+        XCTAssertEqual(NativeVoicePolicy.relaySigningKey(live), signer)
+        XCTAssertEqual(NativeVoicePolicy.relaySigningKey(["self": signer.uppercased()]), signer)
+        // `pubkey` is the operator contact, never the snapshot signer.
+        XCTAssertNil(NativeVoicePolicy.relaySigningKey(["pubkey": signer]))
+        XCTAssertNil(NativeVoicePolicy.relaySigningKey(["self": String(signer.dropLast())]))
+        XCTAssertNil(NativeVoicePolicy.relaySigningKey(["self": String(signer.dropLast()) + "z"]))
+    }
+
+    /// The shipped discovery path, end to end: NativeAgentVoice.start() reads
+    /// /info and must adopt `self` instead of failing closed on null `pubkey`.
+    func testAgentVoiceStartDiscoversRelaySelfFromLiveShapedInfo() throws {
+        let signer = "3a4988c6a4759ebe80f47686bd5af9b611a3ad4aacca63cc1e852140fc35f3f1"
+        RelayInfoStub.body = Data(#"{"name":"Buzz Relay","pubkey":null,"contact":null,"self":"\#(signer)"}"#.utf8)
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RelayInfoStub.self]
+        let voice = try NativeAgentVoice(relay: URL(string: "wss://relay.invalid")!, channel: UUID().uuidString.lowercased(),
+                                         stt: "wss://stt.invalid/stt", tts: "https://tts.invalid/tts",
+                                         onChange: {}, onSpeaking: { _ in }, audioPeers: { [] })
+        voice.infoSession = URLSession(configuration: config)
+        defer { voice.stop() }
+        voice.start()
+        let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in voice.relayPubkey != nil || voice.error != nil }, object: nil)
+        wait(for: [settled], timeout: 5)
+        XCTAssertNil(voice.error)
+        XCTAssertNil(voice.offReason)
+        XCTAssertEqual(voice.relayPubkey, signer)
+        XCTAssertEqual(RelayInfoStub.lastPath, "/info")
+    }
+
     func testFinalGateNormalizesRejectsShortAndDeduplicatesOnlyLastThree() {
         var gate = NativeFinalGate()
         XCTAssertNil(gate.receive("  x  ", now: 0, speaking: false))
@@ -401,4 +437,21 @@ final class NativeVoicePolicyTests: XCTestCase {
         }
         XCTAssertEqual(Set(cases.compactMap { $0["voice"] }).count, 11)
     }
+}
+
+/// Serves a fixed relay NIP-11 document for NativeAgentVoice's /info read.
+final class RelayInfoStub: URLProtocol {
+    static var body = Data()
+    static var lastPath: String?
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        Self.lastPath = request.url?.path
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
+                                       headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Self.body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
 }
