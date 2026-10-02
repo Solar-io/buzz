@@ -21,6 +21,10 @@ import { DefinitionsPanel } from "./DefinitionsPanel";
 import { ImportSnapshotButton } from "./ImportSnapshotButton";
 import { PersonaCatalogPanel } from "./PersonaCatalogPanel";
 import { TeamsPanel } from "./TeamsPanel";
+import { useDesktopPresence } from "../useDesktopPresence";
+import { adminCommandLock } from "../lib/adminCommandLock";
+import { DesktopConnectionFooter } from "./DesktopConnectionFooter";
+import { DesktopControlBoundary } from "./DesktopControlBoundary";
 
 /**
  * Agent admin for the web — the desktop's two-pane Agents view. The roster
@@ -54,7 +58,13 @@ export function AgentsAdminPage() {
   const teamsState = useTeams();
   const teams = teamsState.map;
   const { session, status } = useRelaySession();
-  const admin = useAdminCommands(session, status);
+  const presence = useDesktopPresence(catalogs);
+  const admin = useAdminCommands(
+    session,
+    status,
+    (command, options) =>
+      adminCommandLock(command, options, catalogs, presence.byMachine).reason,
+  );
   const [mode, setMode] = useState<Mode>({ kind: "roster" });
 
   const roster = useMemo(
@@ -155,6 +165,9 @@ export function AgentsAdminPage() {
       <div className="grid items-start gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
         <div className={mode.kind === "roster" ? "" : "hidden lg:block"}>
           <AgentRosterSidebar
+            controlLock={presence.lock(
+              catalogs.map((catalog) => catalog.machine),
+            )}
             roster={roster}
             sections={rosterSections}
             teamNamesByPersona={teamBadges}
@@ -165,6 +178,10 @@ export function AgentsAdminPage() {
             catalogs={catalogs}
             admin={admin}
             session={session}
+          />
+          <DesktopConnectionFooter
+            catalogs={catalogs}
+            presence={presence.byMachine}
           />
         </div>
         <div
@@ -179,13 +196,17 @@ export function AgentsAdminPage() {
               title="New agent"
               onBack={() => setMode({ kind: "roster" })}
             >
-              <AgentCreateForm
-                admin={admin}
-                catalogs={catalogs}
-                registryModels={registryModels}
-                onCreated={(pubkey) => setMode({ kind: "agent", pubkey })}
-                onCancel={() => setMode({ kind: "roster" })}
-              />
+              <DesktopControlBoundary
+                {...presence.lock(catalogs.map((catalog) => catalog.machine))}
+              >
+                <AgentCreateForm
+                  admin={admin}
+                  catalogs={catalogs}
+                  registryModels={registryModels}
+                  onCreated={(pubkey) => setMode({ kind: "agent", pubkey })}
+                  onCancel={() => setMode({ kind: "roster" })}
+                />
+              </DesktopControlBoundary>
             </PaneShell>
           )}
           {mode.kind === "agent" &&
@@ -194,18 +215,20 @@ export function AgentsAdminPage() {
                 title={selected.name}
                 onBack={() => setMode({ kind: "roster" })}
               >
-                <AgentConfigPanel
-                  key={selected.pubkey}
-                  row={selected}
-                  profile={profiles.get(selected.pubkey)}
-                  admin={admin}
-                  session={session}
-                  catalogs={catalogs}
-                  registryModels={registryModels}
-                  roster={roster}
-                  viewerIsOwner={ownedAgentPubkeys.has(selected.pubkey)}
-                  onDeleted={() => setMode({ kind: "roster" })}
-                />
+                <DesktopControlBoundary {...presence.lock(selected.machines)}>
+                  <AgentConfigPanel
+                    key={selected.pubkey}
+                    row={selected}
+                    profile={profiles.get(selected.pubkey)}
+                    admin={admin}
+                    session={session}
+                    catalogs={catalogs}
+                    registryModels={registryModels}
+                    roster={roster}
+                    viewerIsOwner={ownedAgentPubkeys.has(selected.pubkey)}
+                    onDeleted={() => setMode({ kind: "roster" })}
+                  />
+                </DesktopControlBoundary>
               </PaneShell>
             ) : (
               <p className="text-sm text-muted-foreground">
@@ -226,7 +249,11 @@ export function AgentsAdminPage() {
               title="Agent catalog"
               onBack={() => setMode({ kind: "roster" })}
             >
-              <PersonaCatalogPanel admin={admin} catalogs={catalogs} />
+              <DesktopControlBoundary
+                {...presence.lock(catalogs.map((catalog) => catalog.machine))}
+              >
+                <PersonaCatalogPanel admin={admin} catalogs={catalogs} />
+              </DesktopControlBoundary>
             </PaneShell>
           )}
           {mode.kind === "definitions" && (

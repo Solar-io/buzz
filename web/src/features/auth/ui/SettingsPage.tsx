@@ -64,7 +64,7 @@ import {
   FilesUrlSection,
   ProfileSection,
 } from "./settings/MiscSections";
-import { ClaudePoolsSection } from "./settings/ClaudePoolsSection";
+import { AgentsConnectionSettings } from "@/features/agents/ui/AgentsConnectionSettings";
 import { FilesSitesSection } from "@/features/webPanels/ui/FilesSitesSection";
 import { SettingsChipRow, SettingsNav } from "./settings/SettingsNav";
 import {
@@ -292,8 +292,7 @@ export function SettingsPage({ group }: SettingsPageProps) {
 
               {active === "agents" ? (
                 <div className="space-y-4">
-                  <AgentsSection />
-                  <ClaudePoolsSection />
+                  <AgentsConnectionSettings />
                 </div>
               ) : null}
 

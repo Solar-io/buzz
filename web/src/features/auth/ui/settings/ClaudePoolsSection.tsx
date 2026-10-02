@@ -21,6 +21,8 @@ import { useDesktopCatalogs } from "@/features/agents/useDesktopCatalogs";
 import { useAdminCommands } from "@/features/agents/ui/AgentAdminPanel";
 import type { DesktopCatalog } from "@/features/agents/lib/desktopCatalog";
 import type { ClaudePoolsConfig } from "@/features/agents/lib/adminCommands";
+import type { AdminCommand } from "@/features/agents/lib/adminCommands";
+import type { AdminSendOptions } from "@/features/agents/lib/admin/protocolV5";
 import {
   CLAUDE_POOLS_CATALOG_VERSION,
   nextPoolsConfig,
@@ -83,7 +85,14 @@ function useDecryptedPools(catalog: DesktopCatalog | null): {
   return state;
 }
 
-export function ClaudePoolsSection() {
+export function ClaudePoolsSection({
+  lockedReason,
+}: {
+  lockedReason?: (
+    command: AdminCommand,
+    options?: AdminSendOptions,
+  ) => string | null;
+} = {}) {
   const catalogs = useDesktopCatalogs();
   const capable = catalogs.filter(
     (c) => c.version >= CLAUDE_POOLS_CATALOG_VERSION && c.claudePoolsSealed,
@@ -93,7 +102,7 @@ export function ClaudePoolsSection() {
     capable.find((c) => c.machine === machine) ?? capable[0] ?? null;
   const { payload, error } = useDecryptedPools(catalog);
   const { session, status } = useRelaySession();
-  const admin = useAdminCommands(session, status);
+  const admin = useAdminCommands(session, status, lockedReason);
 
   if (capable.length === 0) {
     // Hidden until a v3 desktop publishes the sealed block.
