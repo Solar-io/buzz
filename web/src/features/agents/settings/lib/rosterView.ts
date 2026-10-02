@@ -14,7 +14,7 @@ export interface RosterViewRow extends RosterRow {
 
 /** Recent observer evidence, excluding channels whose latest turn ended. */
 export function rosterWorking(frames: ObserverFrame[], now: number): boolean {
-  const latest = new Map<string, ObserverFrame>();
+  const latest = new Map<string | null, ObserverFrame>();
   for (const frame of frames) {
     const previous = latest.get(frame.channelId);
     if (

@@ -22,6 +22,7 @@ export function RosterFilters({
 }) {
   return (
     <div
+      role="group"
       className="flex flex-wrap items-center gap-2"
       aria-label="Roster filters"
     >
