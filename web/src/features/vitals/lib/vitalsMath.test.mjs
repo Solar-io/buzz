@@ -376,9 +376,10 @@ test("combined: never dry within 14 days → lasts", () => {
   assert.equal(combinedShort(combined, chicago), "lasts 2+ wks");
 });
 
-test("combined: a parked account is out of the pool (capacity and demand)", () => {
-  // B alone: 50 % left at 1 %/h on weekdays = 50 h → Wed 13:00Z. With A in
-  // the pool (80 % more room, 5 %/h more demand) it would be 130 % / 6 %/h.
+test("combined: a parked account still counts (capacity and demand)", () => {
+  // A parked (inUse false) — Sam's live case 2026-10-02. Pool = A + B:
+  // 80 % + 50 % = 130 % room at 5 + 1 = 6 %/h on weekdays = 21 h 40 m
+  // → Tue 2026-10-06 08:40Z (3:40 AM CDT). B alone would be Wed 13:00Z.
   const rows = [
     {
       id: "A",
@@ -392,21 +393,15 @@ test("combined: a parked account is out of the pool (capacity and demand)", () =
   const combined = run(rows, "2026-10-05T11:00:00.000Z");
   assert.deepEqual(combined, {
     kind: "dry",
-    accounts: ["B"],
-    at: "2026-10-07T13:00:00.000Z",
+    accounts: ["A", "B"],
+    at: "2026-10-06T08:40:00.000Z",
     pastReset: null,
   });
   assert.deepEqual(combinedHeadline(combined, chicago), {
-    lead: "B runs dry around ",
-    strong: "Wed 8:00 AM",
+    lead: "Both run dry around ",
+    strong: "Tue 3:40 AM",
     rest: "",
   });
-  // Every account parked: all of them count.
-  const allParked = run(
-    rows.map((row) => ({ ...row, inUse: false })),
-    "2026-10-05T11:00:00.000Z",
-  );
-  assert.deepEqual(allParked.accounts, ["A", "B"]);
 });
 
 test("combined: weekend hours burn at the hub's weekendFactor", () => {

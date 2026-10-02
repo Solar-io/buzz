@@ -336,8 +336,10 @@ interface SimAccount {
  * When does the WHOLE pool run dry (Sam, 2026-10-02: "when BOTH accounts are
  * estimated to run dry")? Simulates forward from `nowMs`:
  *
- * - Pool: the non-parked accounts (every account if all are parked) that have
- *   a known reading, a reset time and a 72 h rate. Others are left out.
+ * - Pool: EVERY account with a known reading, a reset time and a 72 h rate —
+ *   parked ones included (Sam, 2026-10-02: "both accounts"). A parked account
+ *   takes no work today but is where the balancer moves when the active one
+ *   dries, so its room and its own rate both count. Others are left out.
  * - Demand per hour: the sum of the pool's `burnPerHour`, weekend hours
  *   (Sat/Sun, America/Chicago) × `runway.weekendFactor` — the hub's method.
  * - That demand drains whichever accounts still have room, the soonest-reset
@@ -362,8 +364,7 @@ export function combinedRunway(
   if (summary.kind !== "known" || !Number.isFinite(nowMs)) {
     return null;
   }
-  const active = summary.accounts.filter((account) => !account.parked);
-  const candidates = active.length > 0 ? active : summary.accounts;
+  const candidates = summary.accounts;
   const pool: SimAccount[] = [];
   let demand = 0;
   for (const account of candidates) {
