@@ -11,6 +11,7 @@
 
 - [x] W6: settings IA, owner landing, phone root, agent search/redirect, desktop report footer; existing controls remain reachable. Evidence: docs/TEST_REPORTS/w6-settings-ia.md.
 
-- [ ] W9a: agent header, roster stepping, URL tabs, lifecycle/menu and existing settings access.
-- [ ] W9a: Right now live model switch/cancel, channel add then start and remove, Memory/Activity; locked Logs.
-- [ ] W9a: phone sub-pages, responsive cards, behavioural/mutation tests, all web gates and screenshots.
+- [x] W9a: agent header, roster stepping, URL tabs, lifecycle/menu and existing settings access.
+- [x] W9a: Right now live model switch/cancel, channel add then start and remove, Memory/Activity; locked Logs.
+- [x] W9a: phone sub-pages, responsive cards, behavioural/mutation tests, scoped web gates and screenshots. Evidence: [W9a report](TEST_REPORTS/w9a-agent-screen.md).
+- [ ] W9a live acceptance: read-only Acid Burn comparison, then test-channel add/remove and cancellation on a throwaway agent. Needs an approved owner signing environment; this coder shell has no BUZZ_PRIVATE_KEY. Local mock journeys cover the client wiring.
