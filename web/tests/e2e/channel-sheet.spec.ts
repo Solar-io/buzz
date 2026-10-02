@@ -79,28 +79,40 @@ function metadataEcho() {
   };
 }
 
-for (const theme of ["dark", "light"]) {
+for (const theme of [
+  { name: "dark", id: "buzz-dark" },
+  { name: "light", id: "buzz" },
+]) {
   for (const width of [1440, 390]) {
-    test(`channel sheet About at ${width} ${theme}: edit, archive, lifetime and members`, async ({
+    test(`channel sheet About at ${width} ${theme.name}: edit, archive, lifetime and members`, async ({
       page,
     }) => {
       await page.setViewportSize({ width, height: 1000 });
       const { relay } = await openShell(page, {
-        theme,
+        theme: theme.id,
         path: channelPath(),
-        extra: (fixture) =>
-          fixture.events
-            .filter((event) => event.kind === 39002)
-            .map((event) => ({
-              ...event,
-              id: hexId(6000),
-              tags: [
-                ...event.tags,
-                ["h", event.tags.find((tag) => tag[0] === "d")?.[1] ?? ""],
-              ],
-            })),
+        extra: (fixture) => [
+          mockEvent({
+            kind: 39002,
+            id: hexId(6000),
+            tags: [
+              ["d", fixture.channels["flight-path"]],
+              ["h", fixture.channels["flight-path"]],
+              ["p", fixture.viewer],
+              ...[
+                fixture.agents.acid,
+                fixture.agents.cereal,
+                fixture.agents.gilfoyle,
+                fixture.agents.nikon,
+              ].map((agent) => ["p", agent.pubkey]),
+            ],
+          }),
+        ],
         relay: { onPublish: metadataEcho() },
       });
+      await expect(page.locator("html")).toHaveClass(
+        new RegExp(`\\b${theme.name}\\b`),
+      );
       await page.getByTestId("channel-settings-trigger").click();
       const sheet = page.getByTestId("channel-settings-sheet");
       await expect(sheet).toBeVisible();
@@ -127,7 +139,10 @@ for (const theme of ["dark", "light"]) {
             document.documentElement.clientWidth,
         ),
       ).toBe(true);
-      await shot(page, `w1-about-${width}-${theme}`);
+      await expect(
+        sheet.getByRole("tab", { name: "Members (5)" }),
+      ).toBeVisible();
+      await shot(page, `w1-about-${width}-${theme.name}`);
       await page
         .getByRole("button", { name: "Edit purpose", exact: true })
         .click();
