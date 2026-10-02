@@ -290,8 +290,8 @@ test("a short backup passphrase is refused and a long one is accepted", async ({
 test("the experiments switch reveals the channel templates card", async ({
   page,
 }) => {
-  // The switch lives in Advanced; the card it gates lives in Community.
-  await signIn(page, settingsPath("channels"));
+  // The switch lives in Advanced; templates have their own Channels pane.
+  await signIn(page, settingsPath("community"));
   await expect(page.getByTestId("settings-pane-community")).toBeVisible();
   await expect(page.getByTestId("custom-emoji-card")).toBeVisible();
   await expect(page.getByTestId("channel-templates-card")).toHaveCount(0);

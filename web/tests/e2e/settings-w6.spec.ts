@@ -1,9 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import { mockEvent } from "./helpers/mockRelay";
-import { openShell } from "./helpers/shellPage";
-import type { WorkFixture } from "./helpers/workFixture";
+import { installMockRelay, mockEvent } from "./helpers/mockRelay";
+import { signIn } from "./helpers/signIn";
+import {
+  buildWorkFixture,
+  routeUsageHub,
+  type WorkFixture,
+} from "./helpers/workFixture";
 
 function ownerEvents(fixture: WorkFixture) {
   const pubkey = fixture.agents.gilfoyle.pubkey;
@@ -36,16 +40,38 @@ function ownerEvents(fixture: WorkFixture) {
   ];
 }
 async function settings(page: Page, owner = true, target = "/repos/settings") {
-  const { fixture } = await openShell(page, {
-    theme: "buzz-dark",
-    path: () => "/repos",
-    extra: owner ? ownerEvents : undefined,
+  const fixture = buildWorkFixture();
+  const requests = new Set<number>();
+  const events = fixture.events.filter(
+    (event) => owner || ![30177, 30180].includes(event.kind),
+  );
+  // The non-owner fixture contains valid foreign records, but no own records.
+  const extra = ownerEvents(fixture).map((event) =>
+    owner ? event : { ...event, pubkey: fixture.agents.acid.pubkey },
+  );
+  await page.addInitScript(() => {
+    localStorage.setItem("buzz-theme", "buzz-dark");
+    localStorage.setItem("buzz-follow-system", "false");
   });
+  await routeUsageHub(page);
+  await installMockRelay(page, [...events, ...extra], {
+    onFrame: (frame) => {
+      if (frame[0] === "REQ")
+        for (const filter of frame.slice(2)) {
+          for (const kind of (filter as { kinds?: number[] }).kinds ?? [])
+            requests.add(kind);
+        }
+    },
+  });
+  await signIn(page, "/repos", fixture.viewerKey);
   const phone = (page.viewportSize()?.width ?? 1440) < 768;
   await expect(
     page.getByTestId(phone ? "phone-tab-bar" : "channel-sidebar"),
   ).toBeVisible();
   await page.goto(target);
+  await expect
+    .poll(() => requests.has(30177) && requests.has(30180))
+    .toBe(true);
   return fixture;
 }
 async function screenshot(page: Page, name: string) {

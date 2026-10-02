@@ -4,4 +4,4 @@
 - [ ] QA-WORK-002 (Medium): prune lifetime activity/tried maps when pair windows/channels expire; add churn coverage.
 - [ ] QA-WORK-003 (Medium): keep fenced-code language markers out of meaningful row summaries; define non-text fallbacks.
 
-- [ ] W6: settings IA, owner landing, phone root, agent search/redirect, desktop report footer; preserve existing controls.
+- [x] W6: settings IA, owner landing, phone root, agent search/redirect, desktop report footer; existing controls remain reachable. Evidence: docs/TEST_REPORTS/w6-settings-ia.md.
