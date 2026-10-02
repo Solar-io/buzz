@@ -95,6 +95,7 @@ export function useWorkFeed(options: {
   const approvals = context?.approvals;
   const reactions = context?.reactions ?? NO_REACTIONS;
   const targets = context?.targets ?? NO_TARGETS;
+  const agentActivity = context?.agentActivity;
   const metrics = context?.metrics;
   const status = context?.status ?? NO_STATUS;
   const dismissedTurns = context?.dismissedTurns;
@@ -114,6 +115,7 @@ export function useWorkFeed(options: {
           dismissedTurns: dismissedTurns ?? new Set(),
           reactions,
           targets,
+          agentActivity,
           metrics: metrics ?? { state: "loading" },
           status,
         },
@@ -130,6 +132,7 @@ export function useWorkFeed(options: {
       dismissedTurns,
       reactions,
       targets,
+      agentActivity,
       metrics,
       status,
       nowS,

@@ -6,6 +6,8 @@ import {
   parseTaskStatus,
 } from "./taskStatus.ts";
 import { askFor, buildWorkFeed, previewLine } from "./workFeed.ts";
+import { activitySlot } from "./workActivity.ts";
+import { whatLine } from "../ui/whatLine.ts";
 
 const OWNED = "aa".repeat(32);
 const NOT_OWNED = "bb".repeat(32);
@@ -373,4 +375,340 @@ test("a row whose trigger is not fetched yet has no ask", () => {
   );
   assert.equal(feed.running.length, 1);
   assert.equal(feed.running[0].ask, null);
+});
+
+function message(id, at, content, overrides = {}) {
+  return {
+    id,
+    kind: 9,
+    pubkey: NOT_OWNED,
+    created_at: at,
+    tags: [["h", CH]],
+    content,
+    ...overrides,
+  };
+}
+
+const profiles = new Map([[SAM, { displayName: "Sam" }]]);
+
+test("running row uses the agent's latest own in-window message without a name prefix", () => {
+  const feed = buildWorkFeed(
+    inputs({
+      status: statusInput([statusHead(NOT_OWNED, "t1", "running", NOW - 20)]),
+      agentActivity: new Map([
+        [
+          activitySlot(NOT_OWNED, CH),
+          [
+            message(
+              "later",
+              NOW - 5,
+              "✳️ **Updates:** Testing the TestFlight build",
+            ),
+            message("pickup", NOW - 80, "Picked up: Cut a TestFlight build"),
+            message("wrong-author", NOW, "Someone else's work", {
+              pubkey: SAM,
+            }),
+            message("wrong-channel", NOW, "Elsewhere", {
+              tags: [["h", "elsewhere"]],
+            }),
+            message("wrong-kind", NOW, "Not a chat message", { kind: 40002 }),
+          ],
+        ],
+      ]),
+    }),
+    NOW,
+    "everywhere",
+    null,
+  );
+  const row = feed.running[0];
+  assert.equal(row.startedAt, NOW - 80);
+  assert.equal(row.latest, "Testing the TestFlight build");
+  assert.equal(
+    whatLine(row.title, row.ask, profiles, row.latest),
+    "Testing the TestFlight build",
+  );
+});
+
+test("running row ignores a message before startedAt and keeps its trigger fallback", () => {
+  const trigger = "d1".repeat(32);
+  const feed = buildWorkFeed(
+    inputs({
+      status: statusInput([
+        statusHead(NOT_OWNED, "t1", "running", NOW - 20, [["e", trigger]]),
+      ]),
+      targets: new Map([
+        [
+          trigger,
+          {
+            channelId: CH,
+            authorPubkey: SAM,
+            preview: "Cut a TestFlight build off main",
+          },
+        ],
+      ]),
+      agentActivity: new Map([
+        [
+          activitySlot(NOT_OWNED, CH),
+          [message("old", NOW - 81, "Previous turn")],
+        ],
+      ]),
+    }),
+    NOW,
+    "everywhere",
+    null,
+  );
+  const row = feed.running[0];
+  assert.equal(row.latest, null);
+  assert.equal(
+    whatLine(row.title, row.ask, profiles, row.latest),
+    "Sam: Cut a TestFlight build off main",
+  );
+});
+
+test("done row uses the last own message through endedAt plus 30 seconds", () => {
+  const feed = buildWorkFeed(
+    inputs({
+      status: statusInput([statusHead(NOT_OWNED, "t1", "done", NOW - 40)]),
+      agentActivity: new Map([
+        [
+          activitySlot(NOT_OWNED, CH),
+          [
+            message("too-late", NOW - 9, "Next turn"),
+            message(
+              "last",
+              NOW - 10,
+              "**TestFlight build uploaded**\nDetails here",
+            ),
+            message("earlier", NOW - 50, "Picked up: TestFlight build"),
+            message("too-early", NOW - 101, "Previous turn"),
+          ],
+        ],
+      ]),
+    }),
+    NOW,
+    "everywhere",
+    null,
+  );
+  const row = feed.done.rows[0];
+  assert.equal(row.startedAt, NOW - 100);
+  assert.equal(row.endedAt, NOW - 40);
+  assert.equal(row.latest, "TestFlight build uploaded");
+  assert.equal(feed.done.last.latest, row.latest);
+  assert.equal(
+    whatLine(row.title, row.ask, profiles, row.latest),
+    "TestFlight build uploaded",
+  );
+});
+
+test("merged done row uses status end time even when its metric arrives later", () => {
+  const feed = buildWorkFeed(
+    inputs({
+      status: statusInput([statusHead(NOT_OWNED, "t1", "done", NOW - 100)]),
+      metrics: {
+        state: "ready",
+        sinceS: 0,
+        entries: [
+          {
+            locked: false,
+            eventId: "m1",
+            agentPubkey: NOT_OWNED,
+            createdAt: NOW,
+            channelId: CH,
+            turnId: "t1",
+            at: NOW,
+            stopReason: "end_turn",
+          },
+        ],
+      },
+      agentActivity: new Map([
+        [
+          activitySlot(NOT_OWNED, CH),
+          [
+            message("last", NOW - 80, "Finished that turn"),
+            message("late", NOW - 60, "Next turn's work"),
+          ],
+        ],
+      ]),
+    }),
+    NOW,
+    "everywhere",
+    null,
+  );
+  assert.equal(feed.done.count, 1);
+  assert.equal(feed.done.rows[0].latest, "Finished that turn");
+});
+
+test("metric-only done row uses at minus 3600 through at plus 30", () => {
+  const feed = buildWorkFeed(
+    inputs({
+      metrics: {
+        state: "ready",
+        sinceS: 0,
+        entries: [
+          {
+            locked: false,
+            eventId: "m1",
+            agentPubkey: NOT_OWNED,
+            createdAt: NOW - 40,
+            channelId: CH,
+            turnId: "t1",
+            at: NOW - 40,
+            stopReason: "end_turn",
+          },
+        ],
+      },
+      agentActivity: new Map([
+        [
+          activitySlot(NOT_OWNED, CH),
+          [
+            message("last", NOW - 10, "Done within grace"),
+            message("late", NOW - 9, "After grace"),
+            message("early", NOW - 3641, "Before lookback"),
+          ],
+        ],
+      ]),
+    }),
+    NOW,
+    "everywhere",
+    null,
+  );
+  assert.equal(feed.done.rows[0].latest, "Done within grace");
+});
+
+test('a short trigger "Yes" uses its reply parent on running, queued and done rows', () => {
+  const trigger = "d1".repeat(32);
+  const targets = new Map([
+    [
+      trigger,
+      {
+        channelId: CH,
+        authorPubkey: SAM,
+        preview: "**Yes**",
+        replyParentId: "parent",
+      },
+    ],
+    [
+      "parent",
+      {
+        channelId: CH,
+        authorPubkey: SAM,
+        preview: "🙋 Question: Cut a TestFlight build off main?",
+      },
+    ],
+  ]);
+  const feed = buildWorkFeed(
+    inputs({
+      targets,
+      status: statusInput([
+        statusHead(NOT_OWNED, "t1", "running", NOW - 20, [["e", trigger]]),
+        statusHead(OWNED, "t2", "done", NOW - 30, [["e", trigger]]),
+      ]),
+      reactions: [reaction("q1", "👀", trigger, NOW - 10, "cc".repeat(32))],
+    }),
+    NOW,
+    "everywhere",
+    null,
+  );
+  for (const row of [feed.running[0], feed.queued[0], feed.done.rows[0]]) {
+    assert.equal(
+      whatLine(row.title, row.ask, profiles, row.latest),
+      "Sam: Cut a TestFlight build off main?",
+    );
+  }
+});
+
+test("a long trigger keeps its text even when a parent is fetched", () => {
+  const ask = askFor(
+    new Map([
+      [
+        "trigger",
+        {
+          channelId: CH,
+          authorPubkey: SAM,
+          preview: "Cut a TestFlight build off main",
+          replyParentId: "parent",
+        },
+      ],
+      [
+        "parent",
+        {
+          channelId: CH,
+          authorPubkey: NOT_OWNED,
+          preview: "Unrelated earlier request",
+        },
+      ],
+    ]),
+    "trigger",
+  );
+  assert.equal(
+    whatLine(null, ask, profiles),
+    "Sam: Cut a TestFlight build off main",
+  );
+});
+
+test("short triggers keep their text when their parent is missing or unusable", () => {
+  const target = {
+    channelId: CH,
+    authorPubkey: SAM,
+    preview: "Yes",
+    replyParentId: "parent",
+  };
+  for (const parent of [
+    undefined,
+    { channelId: CH, preview: "" },
+    {
+      channelId: "elsewhere",
+      authorPubkey: SAM,
+      preview: "Other channel's work",
+    },
+  ]) {
+    const targets = new Map([["trigger", target]]);
+    if (parent) targets.set("parent", parent);
+    assert.equal(
+      whatLine(null, askFor(targets, "trigger"), profiles),
+      "Sam: Yes",
+    );
+  }
+});
+
+test("the 30624 title still wins over agent activity and trigger text", () => {
+  const head = statusHead(NOT_OWNED, "t1", "running", NOW - 20);
+  const detail = parseTaskStatus({
+    id: "a".repeat(64),
+    pubkey: NOT_OWNED,
+    kind: 30624,
+    created_at: NOW - 10,
+    tags: [
+      ["d", `detail:${CH}`],
+      ["h", CH],
+      ["turn", "t1"],
+      ["title", "TestFlight release"],
+    ],
+    content: "",
+  });
+  const feed = buildWorkFeed(
+    inputs({
+      status: statusInput([head, detail]),
+      agentActivity: new Map([
+        [
+          activitySlot(NOT_OWNED, CH),
+          [message("pickup", NOW - 5, "Picked up: Build")],
+        ],
+      ]),
+    }),
+    NOW,
+    "everywhere",
+    null,
+  );
+  const row = feed.running[0];
+  assert.equal(row.latest, "Picked up: Build");
+  assert.equal(
+    whatLine(row.title, row.ask, profiles, row.latest),
+    "TestFlight release",
+  );
+  assert.equal(
+    whatLine(null, null, profiles),
+    null,
+    "rendering does not wait for messages",
+  );
 });

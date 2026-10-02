@@ -8,7 +8,8 @@ import {
 } from "./helpers/shellPage";
 import {
   buildTaskStatus,
-  CRASH_ASK_LINE,
+  BLADE_DONE_LINE,
+  CRASH_PICKUP_LINE,
   detailHead,
   lifecycleHead,
   PR_TITLE,
@@ -62,6 +63,84 @@ async function open(
 const rowKey = (agent: string, turn: string) =>
   `[data-row-key="turn:${agent}:${turn}"]`;
 
+test("a queued Yes fetches its reply parent, while a long ask keeps its text", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 960 });
+  const { fixture, relay, pageErrors } = await open(page, "buzz", channelPath);
+  const parentId = "6a".repeat(32);
+  const triggerId = "6b".repeat(32);
+  const longId = "6c".repeat(32);
+  const c = fixture.channels.ops;
+  const agent = fixture.agents.cereal.pubkey;
+  relay.add(
+    mockEvent({
+      id: parentId,
+      kind: 9,
+      pubkey: fixture.viewer,
+      tags: [["h", c]],
+      content: "🙋 **Question:** Audit the release signing settings?",
+    }),
+    mockEvent({
+      id: triggerId,
+      kind: 9,
+      pubkey: fixture.viewer,
+      tags: [
+        ["h", c],
+        ["e", parentId, "", "reply"],
+      ],
+      content: "**Yes**",
+    }),
+    mockEvent({
+      id: longId,
+      kind: 9,
+      pubkey: fixture.viewer,
+      tags: [
+        ["h", c],
+        ["e", parentId, "", "reply"],
+      ],
+      content: "Publish the TestFlight build link here",
+    }),
+  );
+  relay.push(
+    mockEvent({
+      id: "6d".repeat(32),
+      kind: 7,
+      pubkey: agent,
+      tags: [
+        ["h", c],
+        ["e", triggerId],
+      ],
+      content: "👀",
+    }),
+    mockEvent({
+      id: "6e".repeat(32),
+      kind: 7,
+      pubkey: agent,
+      tags: [
+        ["h", c],
+        ["e", longId],
+      ],
+      content: "👀",
+    }),
+  );
+  const rail = page.getByTestId("work-rail");
+  await rail.getByRole("button", { name: /Queued\s*4/ }).click();
+  await expect(
+    rail
+      .getByRole("region", { name: "Queued" })
+      .getByTestId("work-row-ask")
+      .filter({ hasText: "Audit the release signing settings?" }),
+  ).toHaveText("Sam: Audit the release signing settings?", { timeout: 10_000 });
+  await expect(
+    rail
+      .getByRole("region", { name: "Queued" })
+      .getByTestId("work-row-ask")
+      .filter({ hasText: "Publish the TestFlight build link here" }),
+  ).toHaveText("Sam: Publish the TestFlight build link here");
+  expect(pageErrors).toEqual([]);
+});
+
 for (const theme of ["buzz", "buzz-dark"] as const) {
   test.describe(`desktop 1440 · ${theme}`, () => {
     test.use({ viewport: { width: 1440, height: 960 } });
@@ -106,11 +185,10 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       const crash = running.locator(rowKey(a.crash.pubkey, "t-crash"));
       await expect(crash).toBeVisible();
       await expect(crash).not.toContainText("Stale title");
-      // No title, but its 30624 names the message that started it: the
-      // second line is "<asker>: <first line of the ask>".
+      // No title: its own in-turn pickup says what it is working on.
       await expect(crash.getByTestId("run-row-title")).toHaveCount(0);
       await expect(crash.getByTestId("work-row-ask")).toHaveText(
-        `Sam: ${CRASH_ASK_LINE}`,
+        CRASH_PICKUP_LINE,
       );
       // A row with a second line grows; one without stays 34 px.
       const crashBox = await crash.boundingBox();
@@ -268,6 +346,14 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
       await expect(
         rows.filter({ hasText: "error · harness-restart" }),
       ).toHaveCount(1);
+      await expect(
+        rows
+          .filter({ hasText: "error · harness-restart" })
+          .getByTestId("work-row-ask"),
+      ).toHaveText(BLADE_DONE_LINE);
+      await expect(
+        rows.filter({ hasText: "Next turn: unrelated work" }),
+      ).toHaveCount(0);
       // The rail now overflows: it scrolls, and the folded Queued row keeps
       // its 34 px instead of being squeezed by the flex column.
       const queued = await rail
@@ -310,12 +396,12 @@ for (const theme of ["buzz", "buzz-dark"] as const) {
         titles.filter({ hasText: "Jitter buffer QA · 4 of 7" }),
       ).toBeVisible();
       await expect(titles.filter({ hasText: "Restore drill" })).toBeVisible();
-      // Untitled, with a known ask: the phone row's second line is the ask.
+      // Untitled: the phone row carries the agent's own pickup line too.
       await expect(
         work
           .locator(rowKey(fixture.agents.crash.pubkey, "t-crash"))
           .getByTestId("work-row-ask"),
-      ).toHaveText(`Sam: ${CRASH_ASK_LINE}`);
+      ).toHaveText(CRASH_PICKUP_LINE);
       await expect(work.getByText(/no heartbeat/).first()).toBeVisible();
       // Nothing scrolls sideways at phone width.
       expect(

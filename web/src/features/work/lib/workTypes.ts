@@ -96,6 +96,8 @@ export interface RunRow {
   triggerId?: string | null;
   /** That event, once fetched. */
   ask?: TriggerAsk | null;
+  /** The agent's latest own in-window message, cleaned for the what line. */
+  latest?: string | null;
 }
 
 export interface QueuedRow {
@@ -115,6 +117,9 @@ export interface DoneLast {
   agentPubkey: string;
   channelId: string | null;
   at: number;
+  /** From 30624 when known; metric-only rows have no start/end timestamps. */
+  startedAt?: number | null;
+  endedAt?: number | null;
   /**
    * How the turn ended when that was not the ordinary ending: a 44200 stop
    * reason, or a 30624 `error` / `cancelled` (with its reason). Null or
@@ -127,6 +132,8 @@ export interface DoneLast {
   triggerId?: string | null;
   /** That event, once fetched. */
   ask?: TriggerAsk | null;
+  /** The agent's last own message inside this finished turn's window. */
+  latest?: string | null;
 }
 
 /** One finished turn (Phase 2: Done today lists every turn, not just the last). */

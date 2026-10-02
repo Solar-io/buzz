@@ -41,10 +41,26 @@ import {
   parseTurnMetric,
 } from "./lib/turnMetrics.ts";
 import {
-  previewLine,
+  buildWorkFeed,
   type ReactionTarget,
   type WorkInputs,
 } from "./lib/workFeed.ts";
+import {
+  activityQueries,
+  type ActivityQuery,
+  type AgentActivity,
+  activitySlot,
+  LIVE_HELD_PER_SLOT,
+  type LiveSlot,
+  liveSlots,
+  mergeActivityMessages,
+} from "./lib/workActivity.ts";
+import {
+  cleanWorkText,
+  isShortTrigger,
+  replyParentId,
+} from "./lib/workText.ts";
+import { useNowSeconds } from "./useWorkFeed.ts";
 import {
   approvalHistoryFilter,
   approvalLiveFilters,
@@ -100,6 +116,9 @@ export function WorkProvider({
   const [approvalEvents, setApprovalEvents] = useState<ApprovalEvent[]>([]);
   const [reactions, setReactions] = useState<ReactionEvent[]>([]);
   const [targets, setTargets] = useState<Map<string, ReactionTarget>>(
+    () => new Map(),
+  );
+  const [agentActivity, setAgentActivity] = useState<AgentActivity>(
     () => new Map(),
   );
   const [metricEntries, setMetricEntries] = useState<MetricEntry[]>([]);
@@ -271,6 +290,22 @@ export function WorkProvider({
     sinceS: metricsSince,
   });
 
+  const metrics: MetricsState = useMemo(() => {
+    const ready = {
+      state: "ready" as const,
+      entries: metricEntries,
+      sinceS: metricsSince,
+    };
+    if (metricsPhase === "ready") {
+      return ready;
+    }
+    // Events arrived but EOSE never did: what we have is still true.
+    if (metricsPhase === "unavailable" && metricEntries.length > 0) {
+      return ready;
+    }
+    return { state: metricsPhase };
+  }, [metricsPhase, metricEntries, metricsSince]);
+
   // ---- targets: reacted-to and triggering events (channel + the ask) -------
   // A reaction's target places a Queued row; a 30624 head's trigger is the
   // message behind a Running or Done row. Each id is asked for once: one the
@@ -300,18 +335,25 @@ export function WorkProvider({
         ids.add(id);
       }
     };
+    const wantTrigger = (id: string | undefined | null) => {
+      want(id);
+      const target = id ? targets.get(id) : undefined;
+      if (target?.preview && isShortTrigger(target.preview)) {
+        want(target.replyParentId);
+      }
+    };
     for (const event of reactions) {
       if (event.kind === 7) {
-        want(event.tags.find((tag) => tag[0] === "e")?.[1]);
+        wantTrigger(event.tags.find((tag) => tag[0] === "e")?.[1]);
       }
     }
     for (const set of statusTriggers(taskStatus.store).values()) {
       for (const id of set) {
-        want(id);
+        wantTrigger(id);
       }
     }
     for (const id of observedKey === "" ? [] : observedKey.split(",")) {
-      want(id);
+      wantTrigger(id);
     }
     return [...ids].sort().slice(0, 200).join(",");
   }, [reactions, targets, triedTargets, taskStatus.store, observedKey]);
@@ -339,7 +381,8 @@ export function WorkProvider({
               : new Map(previous).set(event.id, {
                   channelId,
                   authorPubkey: event.pubkey,
-                  preview: previewLine(event.content),
+                  preview: cleanWorkText(event.content),
+                  replyParentId: replyParentId(event.tags),
                 }),
           );
         }
@@ -361,21 +404,149 @@ export function WorkProvider({
     return close;
   }, [session, live, settledMissing]);
 
-  const metrics: MetricsState = useMemo(() => {
-    const ready = {
-      state: "ready" as const,
-      entries: metricEntries,
-      sinceS: metricsSince,
+  // ---- own messages: bounded history, settled keys, close on EOSE ---------
+  const nowS = useNowSeconds(60_000, live);
+  const activityFeed = useMemo(
+    () =>
+      buildWorkFeed(
+        {
+          needs: {
+            interviews: [],
+            inboxItems: [],
+            approvals: [],
+            reminders: [],
+          },
+          observer: observerFrames ?? new Map(),
+          dismissedTurns,
+          reactions,
+          targets,
+          metrics,
+          status: taskStatus,
+        },
+        nowS,
+        "everywhere",
+        null,
+      ),
+    [
+      observerFrames,
+      dismissedTurns,
+      reactions,
+      targets,
+      metrics,
+      taskStatus,
+      nowS,
+    ],
+  );
+  const activityKey = useMemo(
+    () => JSON.stringify(activityQueries(activityFeed, nowS)),
+    [activityFeed, nowS],
+  );
+  const settledActivity = useSettledKey(activityKey);
+  const triedActivity = useRef(new Map<string, string>());
+  useEffect(() => {
+    if (!live) {
+      return;
+    }
+    const queries = JSON.parse(settledActivity) as ActivityQuery[];
+    const closes = queries
+      .filter((query) => triedActivity.current.get(query.slot) !== query.key)
+      .map((query) => {
+        let closed = false;
+        let unsubscribe: (() => void) | null = null;
+        const received: SignedNostrEvent[] = [];
+        const close = () => {
+          if (!closed) {
+            closed = true;
+            clearTimeout(timeout);
+            unsubscribe?.();
+          }
+        };
+        const settle = () => {
+          if (closed) {
+            return;
+          }
+          triedActivity.current.set(query.slot, query.key);
+          setAgentActivity((previous) =>
+            new Map(previous).set(
+              query.slot,
+              mergeActivityMessages(
+                previous.get(query.slot) ?? [],
+                received,
+                query.filters,
+              ),
+            ),
+          );
+          close();
+        };
+        const timeout = setTimeout(settle, METRICS_EOSE_TIMEOUT_MS);
+        unsubscribe = session.subscribe(query.filters, {
+          onEvent: (event) => received.push(event),
+          onEose: settle,
+        });
+        if (closed) {
+          unsubscribe();
+        }
+        return close;
+      });
+    return () => {
+      for (const close of closes) {
+        close();
+      }
     };
-    if (metricsPhase === "ready") {
-      return ready;
+  }, [session, live, settledActivity]);
+
+  // ---- own messages, live: running turns and the Done grace window --------
+  // History closes at EOSE; an agent's next line (or its final reply, which
+  // can land after the turn's 30624 says done) arrives here instead.
+  const liveKey = useMemo(
+    () => JSON.stringify(liveSlots(activityFeed, nowS)),
+    [activityFeed, nowS],
+  );
+  const settledLive = useSettledKey(liveKey);
+  useEffect(() => {
+    if (!live) {
+      return;
     }
-    // Events arrived but EOSE never did: what we have is still true.
-    if (metricsPhase === "unavailable" && metricEntries.length > 0) {
-      return ready;
+    const slots = JSON.parse(settledLive) as LiveSlot[];
+    if (slots.length === 0) {
+      return;
     }
-    return { state: metricsPhase };
-  }, [metricsPhase, metricEntries, metricsSince]);
+    const filters = slots.map((slot) => ({
+      kinds: [9],
+      authors: [slot.agentPubkey],
+      "#h": [slot.channelId],
+      // No `limit`: this one stays open (bounded by `since`), and history
+      // REQs are told apart from it by their `limit`.
+      since: slot.since,
+    }));
+    const unsubscribe = session.subscribe(filters, {
+      onEvent: (event) => {
+        const channelId = event.tags.find((tag) => tag[0] === "h")?.[1];
+        if (event.kind !== 9 || !channelId) {
+          return;
+        }
+        const slot = activitySlot(event.pubkey, channelId);
+        if (!slots.some((live) => live.slot === slot)) {
+          return;
+        }
+        // Add, never prune by this filter: the slot also holds older Done
+        // windows' history. Bounded per slot all the same.
+        setAgentActivity((previous) => {
+          const held = previous.get(slot) ?? [];
+          if (held.some((known) => known.id === event.id)) {
+            return previous;
+          }
+          return new Map(previous).set(
+            slot,
+            [...held, event]
+              .sort((a, b) => b.created_at - a.created_at)
+              .slice(0, LIVE_HELD_PER_SLOT),
+          );
+        });
+      },
+    });
+    return unsubscribe;
+  }, [session, live, settledLive]);
 
   // ---- local UI state ------------------------------------------------------
   const dismissTurn = useCallback((turnId: string) => {
@@ -409,6 +580,7 @@ export function WorkProvider({
       approvals,
       reactions,
       targets,
+      agentActivity,
       metrics,
       status: taskStatus,
       dismissedTurns,
@@ -426,6 +598,7 @@ export function WorkProvider({
       approvals,
       reactions,
       targets,
+      agentActivity,
       metrics,
       taskStatus,
       dismissedTurns,

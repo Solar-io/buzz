@@ -40,6 +40,8 @@ export const PR_TITLE = "Merge feat(web): Work tab v2 status rows";
 /** The message that started Crash's untitled turn (its 30624 `e` trigger). */
 export const CRASH_ASK_ID = "4c".repeat(32);
 export const CRASH_ASK_LINE = "Cut a TestFlight build off main";
+export const CRASH_PICKUP_LINE = "Picked up: Cut a TestFlight build off main";
+export const BLADE_DONE_LINE = "Captured the harness restart diagnostics";
 
 let next = 80_000;
 const id = () => hexId(next++, "5");
@@ -174,6 +176,23 @@ export function buildTaskStatus(
       tags: [["h", c.mobile]],
       content: `\n  Cut a   TestFlight build\toff main  \nthen post the link here`,
     }),
+    // Own words in this turn beat the ask, but an older turn's words do not.
+    mockEvent({
+      id: id(),
+      kind: 9,
+      pubkey: a.crash.pubkey,
+      created_at: nowS - 450,
+      tags: [["h", c.mobile]],
+      content: "Old turn: investigate upload latency",
+    }),
+    mockEvent({
+      id: id(),
+      kind: 9,
+      pubkey: a.crash.pubkey,
+      created_at: nowS - 400,
+      tags: [["h", c.mobile]],
+      content: `@Sam **${CRASH_PICKUP_LINE}**\nBuild details follow`,
+    }),
     detailHead(a.crash.pubkey, c.mobile, "t-crash-previous", nowS - 600, {
       title: "Stale title from an earlier turn",
     }),
@@ -226,6 +245,23 @@ export function buildTaskStatus(
       nowS - 300,
       "harness-restart",
     ),
+    // Final words can land just after the lifecycle ended; later work cannot.
+    mockEvent({
+      id: id(),
+      kind: 9,
+      pubkey: agents.blade.pubkey,
+      created_at: nowS - 25,
+      tags: [["h", c.mobile]],
+      content: `✳️ **Updates:** ${BLADE_DONE_LINE}`,
+    }),
+    mockEvent({
+      id: id(),
+      kind: 9,
+      pubkey: agents.blade.pubkey,
+      created_at: nowS - 19,
+      tags: [["h", c.mobile]],
+      content: "Next turn: unrelated work",
+    }),
     lifecycleHead(
       a.gilfoyle.pubkey,
       c["flight-path"],

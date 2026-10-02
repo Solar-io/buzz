@@ -1,0 +1,15 @@
+2026-10-02 — Work row context
+
+The pure Work join attaches own-message previews; `whatLine` keeps title/activity/ask precedence. Done rows preserve 30624 start/end times, including when merged with metrics. Agent history uses one request per pair, up to ten bounded turn filters, preserving older Done windows beside a running turn. Target fetching stores the NIP-10 parent and tries it once for short triggers.
+
+Validation: TypeScript and scoped Biome passed; 4,081 unit tests passed with zero failures; the web build passed; all five Work status browser tests passed (desktop/phone, both themes, queued parent recovery). Removing the start-time bound failed `running row ignores a message before startedAt and keeps its trigger fallback`; disabling parent recovery failed `a short trigger "Yes" uses its reply parent on running, queued and done rows`. Both mutant runs executed 4,081 tests, and the restored code passed the full checks. Receipts are in the worktree's `logs/verification.log` and `logs/final-checks.log`. Browser tests use a mocked relay; the supplemental Agent Brave attempt did not complete its persistent-login fixture setup. There is no separate `web/AGENTS.md` in this checkout; the root guide governs the web client.
+
+2026-10-02 — Independent QA of 63eeb8a14
+
+NO GO: QA-WORK-001 reproduces a Done-only row stuck on the pickup after a final reply arrives after history EOSE, despite its timestamp being ended + 5 seconds. The terminal history closes and its query key never renews. The final event is present in the fixture store. QA-WORK-002 records maps retaining historical pairs, and QA-WORK-003 records fenced code showing only `typescript`.
+
+Validation: original 4,081 unit tests pass; tsc/build/scoped Biome pass. Existing status E2E: 5/5; work-shell: 10/14, with four old Vitals `B dry` expectations mismatching the existing `both dry` headline. New QA cases: Running Yes/parent and request census pass; delayed final fails. A 120.001-second census recorded 17 total REQs, 12 activity renewals, all activity requests closed. Agent Brave loaded the built fixture, showed the pickup/final lines and zero console errors; its claimed tab was closed. The title-over-activity mutation killed one named test, then passed after exact-byte restoration.
+
+Evidence and reproduction command: docs/TEST_REPORTS/qa-work-63eeb8a14/test-report-2026-10-02.md. New tests remain uncommitted in web/tests/e2e/work-activity-qa.spec.ts; mockRelay.ts has an uncommitted optional frame observer. No production implementation, main checkout, deployment, or production web-dist was changed. Three feature follow-ups are in TASKS.md and BUGLOG.md.
+
+2026-10-02 — QA-WORK-001 fixed: WorkProvider keeps a live kind-9 subscription (no limit, bounded by since) for running turns and Done turns that ended within 90 s (`liveSlots`, `LIVE_GRACE_S`), adding without pruning older Done windows (≤50 per slot). QA spec promoted to `web/tests/e2e/work-activity.spec.ts` (smoke project), 3/3; disabling the live effect fails the grace case. 4083 unit tests pass.

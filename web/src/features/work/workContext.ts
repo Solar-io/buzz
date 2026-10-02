@@ -19,6 +19,7 @@ export interface WorkContextValue {
   approvals: PendingApproval[];
   reactions: ReactionEvent[];
   targets: ReadonlyMap<string, ReactionTarget>;
+  agentActivity?: WorkInputs["agentActivity"];
   metrics: WorkInputs["metrics"];
   /** 30624 task status heads (Phase 8). */
   status: WorkInputs["status"];

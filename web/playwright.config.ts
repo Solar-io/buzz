@@ -45,6 +45,7 @@ export default defineConfig({
         "**/shortcut-bar.spec.ts",
         "**/work-shell.spec.ts",
         "**/work-status.spec.ts",
+        "**/work-activity.spec.ts",
         "**/messages.spec.ts",
         "**/scratch.spec.ts",
         "**/files-embed.spec.ts",
