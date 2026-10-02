@@ -22,3 +22,10 @@ W1 channel settings:
 - [x] Canvas, local Save as template, existing notification mute preference.
 - [x] Required web gates, named fail-first proof and 1440 / 390 screenshots (both applied themes asserted).
 - [ ] W1 live-relay acceptance in a private test channel using an authorized test signer. The coding shell has no Buzz signing credentials; local built-app acceptance uses the mock relay. See TEST_REPORTS/parity-w1.md.
+
+- [x] Parity W7: SettingSelect inherited/set/dirty, reset, timing, locked/offline states.
+- [x] Parity W7: ModelSelect catalog groups/search/custom ids and DurationSelect presets/custom seconds.
+- [x] Parity W7: immutable per-agent drafts, explicit clears, summaries and inverse plans.
+- [x] Parity W7: desktop-ack save receipts/Undo, concurrency three, timeout and partial-failure retention.
+- [x] Parity W7: TanStack navigation/unload guard with Keep editing / Discard.
+- [x] Parity W7: 24 added behavioral tests, nine built mutations, required web checks and 1440/390 component screenshots. Evidence: [W7 report](TEST_REPORTS/parity-w7.md).
