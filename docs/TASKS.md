@@ -36,3 +36,8 @@ W1 channel settings:
 - [x] Add sidebar and phone Codex readings plus quota/credits/usage details in the pop-out.
 - [x] Cover zero, unknown, stale, unlimited and endpoint failure; demonstrate six named mutation failures with an unchanged test count.
 - [x] Run required web static checks, 4,107 passing units/build, and six passing Codex E2E cases; full work-shell retains four existing failures. [Evidence](TEST_REPORTS/codex-vitals.md).
+
+- [x] W9a: agent header, roster stepping, URL tabs, lifecycle/menu and existing settings access.
+- [x] W9a: Right now live model switch/cancel, channel add then start and remove, Memory/Activity; locked Logs.
+- [x] W9a: phone sub-pages, responsive cards, behavioural/mutation tests, scoped web gates and screenshots. Evidence: [W9a report](TEST_REPORTS/w9a-agent-screen.md).
+- [ ] W9a live acceptance: read-only Acid Burn comparison, then test-channel add/remove and cancellation on a throwaway agent. Needs an approved owner signing environment; this coder shell has no BUZZ_PRIVATE_KEY. Local mock journeys cover the client wiring.
