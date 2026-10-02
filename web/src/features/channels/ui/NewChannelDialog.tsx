@@ -173,9 +173,11 @@ export function NewChannelDialog({
           ))}
         </select>
       </div>
-      <p className="text-xs text-muted-foreground">
-        Temporary channels archive after this long without activity.
-      </p>
+      {lifetime > 0 && (
+        <p className="text-xs text-muted-foreground">
+          Archives after this long without activity.
+        </p>
+      )}
       <label className="flex min-h-11 items-center gap-2 text-sm text-muted-foreground">
         <input
           type="checkbox"
