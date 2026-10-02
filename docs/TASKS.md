@@ -4,6 +4,14 @@
 - [ ] QA-WORK-002 (Medium): prune lifetime activity/tried maps when pair windows/channels expire; add churn coverage.
 - [ ] QA-WORK-003 (Medium): keep fenced-code language markers out of meaningful row summaries; define non-text fallbacks.
 
+Parity W8a roster:
+- [ ] Read-only roster with team/model/effort, observer Working and catalog Claimed status.
+- [ ] Counted status chips, team/name filters and existing stale-registration set.
+- [ ] Content-width table columns and phone list, accessible selection.
+- [ ] Row lifecycle/Open/Message/snapshot/Unregister and targeted bulk lifecycle.
+- [ ] Bulk channel adds, confirmation, desktop acknowledgement/refusal receipts and safe unregister guards.
+- [ ] Required web checks, named mechanism mutations and built-app 1440/390 screenshots.
+
 - [x] Parity A1: implement pubkey > display name > wildcard > env resolution for each turn knob; add marked-turn `voiceModel`; wire both harness call sites.
 - [x] Parity A1: add six named regressions plus tier/type edge cases; show mechanism mutations failing with unchanged test counts.
 - [x] Parity A1: run web baseline/final, typecheck/build/size checks and buzz-acp tests/clippy; record handoff and commits. Evidence: [A1 report](TEST_REPORTS/parity-a1.md).
