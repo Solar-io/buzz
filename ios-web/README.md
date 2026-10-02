@@ -125,7 +125,12 @@ provisioning/account writes merely to get an unsigned build to pass.
   name is refused). `BuzzLaunchPlugin` validates the shape and keeps only the
   newest call intent; the web client (`features/huddle/lib/launchIntent.ts`)
   handles it once, acknowledges it before dialing, and drops taps older than
-  five minutes. Anything malformed is ignored.
+  five minutes. Anything malformed is ignored. Both sides parse the raw link
+  with one grammar (`+` is a space, `%2B` a plus; no userinfo, port, fragment
+  or percent-encoded host), pinned by `test-fixtures/launch-links/`. A call
+  that cannot start (already in another call, a call already starting) is
+  toasted, and a relay that has not answered the agent lookup in time says
+  so instead of claiming the agent does not exist.
 
 The reused native audio source is split into `HuddleAudioTypes.swift` and
 `HuddleAudioEngine.swift`, adapted from `mobile/ios/Runner/HuddleAudioEngine.swift`
@@ -156,6 +161,54 @@ BUZZ_IOS_TEST_SIMULATOR=<your-test-simulator-uuid> pnpm --filter buzz-ios-web te
 The command refuses a missing/invalid destination and never erases a device.
 It uses ad-hoc simulator signing so the hosted app has its Keychain entitlement.
 The repository's existing `just ci` does not invoke this new native suite.
+
+### `buzzweb://` launch links: mutation coverage
+
+Each mutation was applied alone to the committed tree and killed by the named
+test (web: `launchIntent.test.mjs`, `NativeLaunchRuntime.test.mjs`,
+`HuddleSessionProvider.lastAgent.test.mjs`, `relayQuery.test.mjs`; native:
+`LaunchPluginTests`). M1–M11 and N1–N5 come from the first implementation
+pass; M12–M23 and N6–N8 from the QA follow-up (2026-10-01). Re-run a row
+after changing the code it names.
+
+| Id | Mutation | Killed by |
+|---|---|---|
+| M1 | duplicate `agent` params accepted | parse refusal cases |
+| M2 | ambiguous name resolves to the first match | "an ambiguous name is refused" |
+| M3 | acknowledge moved out of `finally` | "a failing handler still acknowledges" |
+| M4 | a seen intent id is handled again | "handled once and acknowledged exactly once" |
+| M5 | stale taps dialed | "a stale tap is acknowledged and dropped" |
+| M6 | last agent not keyed per identity | "the last agent round-trips per identity" |
+| M7 | ack after dialing instead of before | "a named agent: open the DM, show it, acknowledge, THEN dial" |
+| M8 | already-on-call check removed | "already on a call with that agent" |
+| M9 | live room not reused | "a live room in the DM … is reused" |
+| M10 | provider stops saving the last agent | "a successful agent call becomes the default" |
+| M11 | last agent saved on failure | "a failed agent call leaves the previous default alone" |
+| M12 | runtime drops the refused-call toast (D1) | "a call the provider refuses up front is shown" |
+| M13 | runtime ignores `notified` (double toast) | "a failure the provider already toasted is not toasted twice" |
+| M14 | provider stops marking its own toasts `notified` | "a failed agent call leaves the previous default alone" |
+| M15 | provider marks a silent refusal `notified` | "an up-front refusal is NOT marked notified" |
+| M16 | agent reads always treated as complete (D2) | both timed-out runtime tests + `agentReadsComplete` |
+| M17 | a full page counts as complete | "agent reads are complete only with EOSE and an unfilled page" |
+| M18 | stale last agent on a partial list says "no longer yours" | catalog-timeout runtime test + partial-list test |
+| M19 | `queryOnceWithEose` reports EOSE on timeout | "queryOnceWithEose tells a finished read from a timed-out one" |
+| M20 | readiness wait ignores relay `status === "open"` | "the runtime waits for the relay to be OPEN" |
+| M21 | no `alive()` check after the ack | "unmounted while acknowledging: the call is not dialed" |
+| M22 | web keeps `+` literal (D3) | shared-corpus test + `+`/`%2B` test |
+| M23 | web tolerates extra `&` pairs | shared-corpus + refusal tests |
+| N1 | extra query items accepted natively | `testAcceptsOnlyTheLaunchShapes` |
+| N2 | acknowledge clears regardless of id | `testAcknowledgeClearsOnlyTheIntentItNames` |
+| N3 | `open` does not supersede a pending call | `testCallPersistsAMalformedLinkIsIgnoredAndOpenSupersedes` |
+| N4 | control characters accepted | `testAcceptsOnlyTheLaunchShapes` |
+| N5 | tampered storage read as an intent | `testTamperedStorageReadsAsNoIntent` |
+| N6 | native percent-decodes the host (`c%61ll`) | corpus, shapes and stored-link tests |
+| N7 | native keeps `+` literal | corpus and stored-link tests |
+| N8 | native ignores userinfo (`buzzweb://user@call`) | corpus and shapes tests |
+
+Equivalent mutant, not counted: removing the web `PRINTABLE_ASCII` pre-check
+(M24) changes nothing, because `LAUNCH_SHAPE` already admits only ASCII host
+and query characters. Native keeps the same check because its prefix slicing
+counts characters.
 
 Release acceptance also requires a physical iPhone: explicit pairing, cold and
 warm notification-to-thread navigation, denied-permission recovery, APNs token
