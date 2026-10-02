@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from "react";
-import { RotateCcw } from "lucide-react";
+import { ChevronDown, RotateCcw } from "lucide-react";
 import { cn } from "@/shared/lib/cn";
 
 /** Readable choice and opaque underlying value. */
@@ -167,7 +167,7 @@ export function SettingSelect({
         <span
           aria-hidden="true"
           className={cn(
-            "pointer-events-none absolute inset-y-0 left-3 right-16 flex min-w-0 items-center text-base md:text-sm",
+            "pointer-events-none absolute inset-y-0 left-3 right-20 flex min-w-0 items-center text-base md:right-16 md:text-sm",
             unavailable && "opacity-55",
             dirty
               ? "text-honey-ink"
@@ -178,13 +178,17 @@ export function SettingSelect({
         >
           <span className="truncate">{resolvedLabel}</span>
         </span>
+        <ChevronDown
+          aria-hidden="true"
+          className="pointer-events-none absolute right-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+        />
         {value !== null && (
           <button
             type="button"
             disabled={unavailable}
             aria-label={`Reset ${label} to default`}
             title={`Use default — ${defaultLabel}`}
-            className="absolute right-5 top-0 flex min-h-11 w-11 items-center justify-center rounded-md text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:min-h-9 md:w-8"
+            className="absolute right-6 top-0 flex min-h-11 w-11 items-center justify-center rounded-md text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:min-h-9 md:w-8"
             onClick={() => {
               if (!unavailable) onChange(null);
             }}
