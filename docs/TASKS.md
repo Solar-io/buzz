@@ -22,3 +22,11 @@ W1 channel settings:
 - [x] Canvas, local Save as template, existing notification mute preference.
 - [x] Required web gates, named fail-first proof and 1440 / 390 screenshots (both applied themes asserted).
 - [ ] W1 live-relay acceptance in a private test channel using an authorized test signer. The coding shell has no Buzz signing credentials; local built-app acceptance uses the mock relay. See TEST_REPORTS/parity-w1.md.
+
+W2 people in channel Members (in progress):
+- [ ] Preserve roles from the live replacement roster; exact membership and community moderation tag builders.
+- [ ] Members/People rows, admin role changes and removal, last-owner guard, member search.
+- [ ] Add People with per-person roles and per-person relay refusals.
+- [ ] Community-only timeout/ban menus, reason entry, authority and archived-state guards.
+- [ ] Full web gates, named mechanism reversion proof, built-app checks and 1440/390/375 screenshots.
+- [ ] Private live-relay channel acceptance with a second authorized test identity.
