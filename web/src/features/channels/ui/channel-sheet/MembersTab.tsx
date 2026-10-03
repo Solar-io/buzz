@@ -27,6 +27,8 @@ import {
 import { AddPeoplePicker } from "./AddPeoplePicker";
 import { CommunityModerationDialog } from "./CommunityModerationDialog";
 import { PeopleSection } from "./PeopleSection";
+import { AgentMembersSection } from "./AgentMembersSection";
+import { partitionChannelMembers } from "../../lib/channelAgents";
 
 /** People management uses relay-confirmed replacement rosters, never optimistic rows. */
 export function MembersTab({
@@ -34,11 +36,13 @@ export function MembersTab({
   selfPubkey,
   agentPubkeys,
   archived,
+  onNavigate,
 }: {
   channelId: string;
   selfPubkey: string | null;
   agentPubkeys: ReadonlySet<string>;
   archived: boolean;
+  onNavigate?: () => void;
 }) {
   const { session } = useRelaySession();
   const members = useChannelMembers(channelId);
@@ -56,9 +60,11 @@ export function MembersTab({
   const myRole = members.find((member) => member.pubkey === selfPubkey)?.role;
   const canManage = myRole === "owner" || myRole === "admin";
   const isMember = members.some((member) => member.pubkey === selfPubkey);
-  const people = members.filter((member) => !agents.has(member.pubkey));
+  const partition = partitionChannelMembers(members, registry, agents);
+  const people = partition.people;
   const [query, setQuery] = useState("");
   const [addOpen, setAddOpen] = useState(false);
+  const [agentOpen, setAgentOpen] = useState(false);
   const [moderation, setModeration] = useState<{
     member: ChannelMember;
     action: "timeout" | "ban";
@@ -137,6 +143,16 @@ export function MembersTab({
             People
           </Button>
         )}
+        {isMember && (
+          <Button
+            className="min-h-11 shrink-0 px-2"
+            disabled={busy || archived}
+            onClick={() => setAgentOpen(true)}
+          >
+            <Plus aria-hidden className="size-4" />
+            Agent
+          </Button>
+        )}
       </div>
       {archived && (
         <p className="text-sm text-muted-foreground">
@@ -153,45 +169,56 @@ export function MembersTab({
           {notice}
         </p>
       )}
-      <PeopleSection
-        people={people.filter((member) =>
-          `${authorLabel(member.pubkey, profiles)} ${member.pubkey} ${member.role ?? "member"}`
-            .toLowerCase()
-            .includes(needle),
-        )}
-        allMembers={members}
-        profiles={profiles}
-        selfPubkey={selfPubkey}
-        canManage={canManage}
-        canModerate={canModerate}
-        busy={busy || archived}
-        onRole={(pubkey, role) =>
-          void run(async () => {
-            guard(pubkey);
-            await publish(9000, putUserTags(channelId, pubkey, role));
-          }, "Role change accepted. Waiting for the updated member list.")
+      <AgentMembersSection
+        peopleSection={
+          <PeopleSection
+            people={people.filter((member) =>
+              `${authorLabel(member.pubkey, profiles)} ${member.pubkey} ${member.role ?? "member"}`
+                .toLowerCase()
+                .includes(needle),
+            )}
+            allMembers={members}
+            profiles={profiles}
+            selfPubkey={selfPubkey}
+            canManage={canManage}
+            canModerate={canModerate}
+            busy={busy || archived}
+            onRole={(pubkey, role) =>
+              void run(async () => {
+                guard(pubkey);
+                await publish(9000, putUserTags(channelId, pubkey, role));
+              }, "Role change accepted. Waiting for the updated member list.")
+            }
+            onRemove={(member) => {
+              if (
+                window.confirm(
+                  `Remove ${authorLabel(member.pubkey, profiles)} from this channel?`,
+                )
+              )
+                void run(async () => {
+                  guard(member.pubkey);
+                  await publish(9001, removeUserTags(channelId, member.pubkey));
+                }, "Removal accepted. Waiting for the updated member list.");
+            }}
+            onModerate={(member, action) => {
+              setError(null);
+              setModeration({ member, action });
+            }}
+          />
         }
-        onRemove={(member) => {
-          if (
-            window.confirm(
-              `Remove ${authorLabel(member.pubkey, profiles)} from this channel?`,
-            )
-          )
-            void run(async () => {
-              guard(member.pubkey);
-              await publish(9001, removeUserTags(channelId, member.pubkey));
-            }, "Removal accepted. Waiting for the updated member list.");
-        }}
-        onModerate={(member, action) => {
-          setError(null);
-          setModeration({ member, action });
-        }}
+        channelId={channelId}
+        members={partition.agents}
+        people={people}
+        profiles={profiles}
+        registry={registry}
+        archived={archived}
+        canManage={canManage}
+        isMember={isMember}
+        query={needle}
+        pickerOpen={agentOpen}
+        onPickerClose={() => setAgentOpen(false)}
+        onNavigate={onNavigate}
       />
-      {members.length > people.length && (
-        <p className="text-xs text-muted-foreground">
-          Agents · {members.length - people.length}
-        </p>
-      )}
       {addOpen && (
         <AddPeoplePicker
           candidates={community.members.map((member) => member.pubkey)}

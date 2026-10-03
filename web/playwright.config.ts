@@ -41,7 +41,9 @@ export default defineConfig({
         "**/settings.spec.ts",
         "**/settings-w6.spec.ts",
         "**/settings-w9a.spec.ts",
+        "**/settings-w8a.spec.ts",
         "**/settings-w11a.spec.ts",
+        "**/settings-w11b.spec.ts",
         "**/settings-w9b1.spec.ts",
         "**/settings-w9b2.spec.ts",
         "**/parity-surfaces.spec.ts",
@@ -64,6 +66,7 @@ export default defineConfig({
         "**/channel-sheet.spec.ts",
         "**/canvas-edit.spec.ts",
         "**/channel-members.spec.ts",
+        "**/channel-agents.spec.ts",
         "**/channel-workflows.spec.ts",
       ],
       use: {

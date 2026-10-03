@@ -270,7 +270,7 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await page.getByRole("button", { name: "← Agents", exact: true }).click();
     await expect(
-      page.getByRole("button", { name: /W11a throwaway/ }),
+      page.getByRole("button", { name: "Open W11a throwaway", exact: true }),
     ).toBeVisible();
   });
 

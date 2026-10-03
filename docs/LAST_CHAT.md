@@ -145,6 +145,32 @@ Desktop units 5,762 → 5,779; web 4,252 → 4,272, both full suites green at fo
 
 2026-10-03 — P0 verifier fixes: merge parent 66bc5b0c8 incorporated in ed43126c9; changes 0c7883d59, 192c026db and 8a6736502. Preserve enablement and sealed sending for all eight legacy v4 admin actions, with v4 presence still unknown and named v5 requirements locked. Persistent owner/machine replay receipts are claimed before save, retained through the freshness window and never count-evicted; storage failures refuse application. Compose the P0 gates/footer with W6/W9a and remove the obsolete AgentsSection wrapper. Web 4,277 and desktop 5,775 tests pass. All sixteen new tests fail under targeted mutations at unchanged counts; the rebuilt Agent Brave scenario fails on the v4 disabled Stop with the fix reverted, then passes restored. Both typechecks, scoped Biome, build and size check against merged main pass. Default origin/main size base is stale and flags two unchanged main files; use CHECK_FILE_SIZES_BASE=66bc5b0c8. Full receipts, at-most-once crash semantics and R1 acceptance boundary: docs/TEST_REPORTS/parity-p0-verifier-fixes.md.
 
+2026-10-03 — W11b definition extras
+
+Library definitions now edit/clear ordered name pools and duplicate the saved relay head into a private fresh UUID named "(copy)". Copies preserve prompt/configuration bytes and remove catalog-sharing tags. Definition edits validate raw text before name normalization and preserve prompt whitespace, closing the previous leading-FEFF stripping bypass. Name pool entries reject invisible formatting before trimming.
+
+Q5 resolved from PersonaShareDialog and the native snapshot encoder: targeted sharing materializes local definitions/global defaults into a PNG snapshot, then delivers a DM attachment. The external PLAN phase list, W11b/L3 sections and coverage matrix assign it to L3 under the approved contingency. Amendment receipt: TEST_REPORTS/parity-w11b-plan.patch.
+
+Baseline 4,345 / restored 4,355 units, 21 focused tests and eight headed browser cases pass. Six mechanism withdrawals fail named unit tests; restoring the original editor and rebuilding fails the pool workflow, whose restored selection passes. TypeScript, build, touched-file Biome, palette, scoped px-text and local-main size checks pass. Broad lint/text/default size gates retain unchanged baseline failures. Agent Brave WebSocket interception failed a canary; headed fallback supplied inspected 1440/390 screenshots in both asserted palettes. Live reconciliation requires an authorized owner signer and reporting desktop. Full receipt: TEST_REPORTS/parity-w11b.md; raw output: logs/verification.log.
+
+2026-10-03 — Parity W8a roster
+
+Finished the interrupted roster work using existing admin wire paths and W9a URL navigation. Added live owner tombstone application, acknowledgement timeout/unmount safety, offline locks, readable phone filters and reachable wide columns. Before/after web counts: 4,252 / 4,278; final eight Agent Brave workflows pass, including actual snapshot download and DM navigation. Six named unit mutants fail at 26 tests each; two rebuilt-browser mutants fail their selected case. Screenshots and receipts live under .scratch/w8a/ and logs/verification.log. The existing speech-order timing case and shared-browser transient failures are documented in TEST_REPORTS/parity-w8a.md. Live throwaway-agent acceptance remains for an enrolled owner test environment.
+
+2026-10-03 — W8a integration with current main
+
+Composed W8a's roster with main's Library/New agent/CreateAgentScreen/DetailPane, P0 presence boundaries/footer, W9b1 cards and W5b. Presence gates now disable row mutations and bulk lifecycle/confirmation controls. Fixed stale Unregister's empty-claim lock by checking all receiving desktops; other unclaimed mutations stay locked. Updated W11a/P0 roster selectors. Source commits: 9ca341a56 and c2a086670.
+
+All 4,373 web units, typecheck, 26-file Biome, restored build and all 37 requested browser cases pass. A rebuilt one-case lock-withdrawal mutation fails at the row Start control; restoration passes. Shared Brave's standalone WebSocket canary failed, so E2E used the isolated headed fallback. Inspected 1440/390 roster screenshots and full evidence: [W8a integration receipt](TEST_REPORTS/parity-w8a.md#current-main-integration--2026-10-03). The scoped integration has no remaining tasks; earlier live-relay acceptance stays separate.
+
+2026-10-03 — Vitals per-account simulation
+
+The combined forecast now carries per-account first-empty times, whether they precede the next reset, next-reset usage and takeover provenance. VitalsBlock computes one forecast for its short text and panel; account lines and the lower hot-account dry text use it. Existing combined-runway assertions remain unchanged. The trace is a non-enumerable property to preserve the previous result object's enumerable shape.
+
+The exact 14:21:30Z fixture gives A empty at 18:56:54.909Z and the pool/B empty Sun 21:40:48.202Z. The current allocator sends A the sum of A+B demand; the requested A≈19:13Z instead uses A's solo burn. Those requirements conflict. Allocation was preserved; an optional clarification was requested, with no answer received. The A≈19:13Z acceptance criterion remains unresolved, without approval to defer or waive it.
+
+Web baseline 4,320; eight added tests give 4,328. Typecheck, four-file Biome and build pass. Ignoring the simulation in accountLines fails four named tests with the same full-suite count; restoring source returns the suite to green. Headed Playwright with the existing shell/mock-relay helpers covers 1440/390, matching sidebar/headline/lines, lower-row timing, bounds and dismissal. Agent Brave's WebSocket canary timed out; its owned tab was closed. Screenshots were inspected and both isolated contexts closed. [Exact commands, fixture math, mutation names and local artifacts](TEST_REPORTS/vitals-account-runway.md).
+
 2026-10-03 — Parity W9b2
 
 Identity/upload, linked Library entry, patch-only environment rows and confirmed removal are integrated into the existing W7/W9b1 draft. Secret values never enter draft receipts/storage. Active shared hooks and Library/creation/roster responsibilities were extracted before removing the four legacy module paths. Public settings keep their existing version gates. Source checks and the built Agent Brave journeys pass; the operator acceptance item needs an authorized test owner signer. Full counts, mutation kills, artifact paths and deviations: [W9b2 report](TEST_REPORTS/parity-w9b2.md).

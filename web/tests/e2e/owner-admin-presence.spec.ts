@@ -115,7 +115,9 @@ test("P0 presence locks offline controls, recovers, and handles old catalogs at 
   expect(commands.length).toBeGreaterThan(0);
   expect(commands[0].requires).toEqual(["ping"]);
   expect(commands[0].target).toBe("crichton.local");
-  await page.getByRole("button", { name: /P0 Test Agent/ }).click();
+  await page
+    .getByRole("button", { name: "Open P0 Test Agent", exact: true })
+    .click();
   const stop = page.getByRole("button", { name: "Stop", exact: true });
   await expect(stop).toBeEnabled();
   responding = false;

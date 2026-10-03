@@ -9,11 +9,12 @@ import { useAgentRegistry } from "@/features/agents/useAgentRegistry";
 import { useDesktopCatalogs } from "@/features/agents/useDesktopCatalogs";
 import { usePersonas } from "@/features/agents/usePersonas";
 import { useTeams } from "@/features/agents/useTeams";
+import { useProfiles } from "@/features/channels/hooks";
 import { buildRoster } from "../lib/roster";
-import { buildRosterGroups, teamNamesByPersonaId } from "../lib/rosterGroups";
+import { teamNamesByPersonaId } from "../lib/rosterGroups";
 import { observedModels } from "../lib/modelSuggestions";
 import { useAdminCommands, PendingCommandsStrip } from "../ui/useAdminCommands";
-import { AgentRosterList, AgentWorkingDot } from "../ui/AgentRosterList";
+import { RosterTable } from "./roster/RosterTable";
 import { CreateAgentScreen } from "./CreateAgentScreen";
 import { NewAgentMenu } from "./NewAgentMenu";
 import { LibraryTabs, type LibraryTab } from "./LibraryTabs";
@@ -103,14 +104,15 @@ export function AgentManagementSection({
     () => buildRoster(registry, personas, catalogs),
     [registry, personas, catalogs],
   );
-  const rosterSections = useMemo(
-    () => buildRosterGroups(roster, personas),
-    [roster, personas],
-  );
   const teamBadges = useMemo(
     () => teamNamesByPersonaId(personas.keys(), teams),
     [personas, teams],
   );
+  const rosterPubkeys = useMemo(
+    () => roster.map((row) => row.pubkey),
+    [roster],
+  );
+  const profiles = useProfiles(rosterPubkeys);
   const registryModels = useMemo(
     () => observedModels(registry, personas),
     [registry, personas],
@@ -161,21 +163,19 @@ export function AgentManagementSection({
                 : "hidden"
           }
         >
-          <AgentRosterList
+          <RosterTable
             controlLock={presence.lock(
               catalogs.map((catalog) => catalog.machine),
             )}
             roster={roster}
-            sections={rosterSections}
-            teamNamesByPersona={teamBadges}
-            selectedPubkey={null}
-            onSelect={(pubkey) => {
+            teamNames={teamBadges}
+            profiles={profiles}
+            onOpen={(pubkey) => {
               void navigate({
                 to: "/repos/settings",
                 search: { group: "agents", agent: pubkey },
               });
             }}
-            registry={registry}
             catalogs={catalogs}
             admin={admin}
             session={session}
@@ -211,16 +211,10 @@ export function AgentManagementSection({
                   onCreated={(pubkey) => {
                     setCreateDraft(false);
                     setCreateBusy(false);
-                    if (embedded)
-                      void navigate({
-                        to: "/repos/settings",
-                        search: { group: "agents", agent: pubkey },
-                      });
-                    else
-                      void navigate({
-                        to: "/repos/settings",
-                        search: { group: "agents", agent: pubkey },
-                      });
+                    void navigate({
+                      to: "/repos/settings",
+                      search: { group: "agents", agent: pubkey },
+                    });
                   }}
                   onCancel={() => selectMode({ kind: "roster" })}
                   onDraftChange={onCreateDraft}
@@ -387,5 +381,3 @@ function PaneShell({
     </div>
   );
 }
-
-export { AgentWorkingDot };

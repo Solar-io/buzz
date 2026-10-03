@@ -12,6 +12,7 @@ import type { TeamView } from "../lib/teamEvents";
 import type { useAdminCommands } from "./useAdminCommands";
 import { DefinitionActions } from "./DefinitionActions";
 import { DefinitionCreateForm } from "./DefinitionCreateForm";
+import { DefinitionDuplicate } from "./DefinitionDuplicate";
 import { DefinitionEditor, definitionBase } from "./DefinitionEditorSection";
 import { ImportSnapshotButton } from "./ImportSnapshotButton";
 
@@ -83,6 +84,7 @@ export function DefinitionsPanel({
             admin={admin}
             registryModels={registryModels}
             onDeleted={() => setView({ kind: "list" })}
+            onDuplicated={(id) => setView({ kind: "detail", id })}
           />
         ) : (
           <p className="text-sm text-muted-foreground">
@@ -157,6 +159,7 @@ function DefinitionDetail({
   admin,
   registryModels,
   onDeleted,
+  onDuplicated,
 }: {
   persona: PersonaDefinition;
   forget: (id: string, tombstoneCreatedAt: number) => void;
@@ -167,6 +170,7 @@ function DefinitionDetail({
   admin: ReturnType<typeof useAdminCommands>;
   registryModels: string[];
   onDeleted: () => void;
+  onDuplicated: (id: string) => void;
 }) {
   const [published, setPublished] = useState<SignedNostrEvent | null>(null);
   const manageable = webManageable(persona.id);
@@ -204,6 +208,11 @@ function DefinitionDetail({
           forget(persona.id, tombstoneCreatedAt);
           onDeleted();
         }}
+      />
+      <DefinitionDuplicate
+        base={base}
+        session={session}
+        onDuplicated={onDuplicated}
       />
     </div>
   );

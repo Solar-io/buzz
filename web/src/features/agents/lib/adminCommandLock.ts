@@ -14,7 +14,14 @@ export function adminCommandLock(
   const machines = options?.target
     ? [options.target]
     : catalogs
-        .filter((catalog) => !pubkey || catalog.agents.includes(pubkey))
+        // Stale registrations have no claiming machine. Their unregister
+        // broadcast still checks every receiving desktop's presence.
+        .filter(
+          (catalog) =>
+            command.action === "unregister" ||
+            !pubkey ||
+            catalog.agents.includes(pubkey),
+        )
         .map((catalog) => catalog.machine);
   for (const cap of options?.requires ?? []) {
     const lock = desktopControlLock(catalogs, presence, machines, cap);
