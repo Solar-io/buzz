@@ -6,6 +6,7 @@ export interface CardFields {
   value: (field: AgentSettingField) => SettingValue;
   edit: (field: AgentSettingField, value: SettingValue) => void;
   dirty: (field: AgentSettingField) => boolean;
+  originalLabel?: (field: AgentSettingField) => string | undefined;
   disabled: boolean;
   controlsLocked: boolean;
   machine: string;

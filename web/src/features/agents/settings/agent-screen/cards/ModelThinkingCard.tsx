@@ -77,20 +77,22 @@ export function ModelThinkingCard({
         ) : (
           model
         )}
-        <SettingSelect
-          {...common}
-          label="Effort"
-          value={row.entry.effort?.acp ?? null}
-          defaultValue=""
-          locked
-          defaultLabel="Not published"
-          options={
-            row.entry.effort?.acp
-              ? [{ value: row.entry.effort.acp, label: row.entry.effort.acp }]
-              : []
-          }
-          onChange={() => {}}
-        />
+        {row.entry.effort?.acp && (
+          <SettingSelect
+            {...common}
+            label="Effort"
+            value={row.entry.effort?.acp ?? null}
+            defaultValue=""
+            locked
+            defaultLabel="Not published"
+            options={
+              row.entry.effort?.acp
+                ? [{ value: row.entry.effort.acp, label: row.entry.effort.acp }]
+                : []
+            }
+            onChange={() => {}}
+          />
+        )}
       </div>
       {row.personaLinked && (
         <p className="text-xs text-muted-foreground">

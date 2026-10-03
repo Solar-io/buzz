@@ -64,6 +64,7 @@ export function RuntimeCard({
       defaultLabel={defaultLabel}
       presets={presets}
       dirty={fields.dirty(field)}
+      originalLabel={fields.originalLabel?.(field)}
       unreported={unknown(field)}
       locked={fields.controlsLocked}
       onChange={(next) => fields.edit(field, next)}

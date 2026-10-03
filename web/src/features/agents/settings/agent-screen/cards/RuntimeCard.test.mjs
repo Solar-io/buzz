@@ -28,7 +28,7 @@ function plan(field, value, original = 1800) {
         field,
         original: { value: original },
         change: value === 0 ? { kind: "clear" } : { kind: "set", value },
-        clearValue: SETTINGS_FIELDS[field][1],
+        clearValue: SETTINGS_FIELDS[field]?.[1] ?? null,
       },
     ],
   };

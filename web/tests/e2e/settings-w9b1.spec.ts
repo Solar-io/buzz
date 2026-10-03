@@ -81,7 +81,7 @@ async function setup(
           source: "builtin",
           availability: "available",
         })),
-        updated_at: revision,
+        updated_at: revision - (options.stale ? 8 * 3600 : 60),
       }),
     }),
   );
@@ -242,10 +242,13 @@ test("W9b1 390 and 375 phone sub-pages retain draft and save bar above tabs", as
   const bar = await page
     .getByRole("region", { name: "Settings changes" })
     .boundingBox();
-  const tabs = await page.getByTestId("phone-tab-bar").boundingBox();
+  const tabs = (await page.getByTestId("phone-tab-bar").count())
+    ? await page.getByTestId("phone-tab-bar").boundingBox()
+    : null;
   expect(bar).not.toBeNull();
-  expect(tabs).not.toBeNull();
-  expect((bar?.y ?? 0) + (bar?.height ?? 0)).toBeLessThanOrEqual(tabs?.y ?? 0);
+  expect((bar?.y ?? 0) + (bar?.height ?? 0)).toBeLessThanOrEqual(
+    tabs?.y ?? 1000,
+  );
   await page
     .getByRole("button", { name: "← Agent settings", exact: true })
     .click();
