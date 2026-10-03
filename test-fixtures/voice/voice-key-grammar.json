@@ -1,0 +1,59 @@
+{
+  "fish": {
+    "accept": [
+      "fish:0123456789abcdef0123456789abcdef",
+      "fish:ABCDEFGHIJKLMNOP",
+      "fish:AbCd0123456789Zxy",
+      "fish:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "reject": [
+      "",
+      "0123456789abcdef0123456789abcdef",
+      "fish:",
+      "fish:short",
+      "fish:aaaaaaaaaaaaaaa",
+      "fish:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "fish:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "fish:aaaaaaaaaaaaaaa_",
+      "fish:aaaaaaaaaaaaaaa-",
+      "fish:aaaaaaaaaaaaaaa.",
+      "fish:aaaaaaaaaaaaaaa/",
+      "fish:aaaaaaaaaaaaaaa:",
+      "fish:                ",
+      "fish:aaaaaaaaaaaaaaaa\n",
+      "fish:aaaaaaaaaaaaaaa\u00e9",
+      "fish:aaaaaaaaaaaaaaaa\u0085",
+      "fish:aaaaaaaaaaaaaaaa\ufeff",
+      "eleven:0123456789abcdef0123456789abcdef",
+      "Fish:ABCDEFGHIJKLMNOP"
+    ]
+  },
+  "eleven": {
+    "accept": [
+      "eleven:T720RsqorTx4ZZWohrNN",
+      "eleven:21m00Tcm4TlvDq8ikWAM",
+      "eleven:AbCd012345",
+      "eleven:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "reject": [
+      "",
+      "T720RsqorTx4ZZWohrNN",
+      "eleven:",
+      "eleven:short",
+      "eleven:aaaaaaaaa",
+      "eleven:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "eleven:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "eleven:aaaaaaaaa_",
+      "eleven:aaaaaaaaa-",
+      "eleven:aaaaaaaaa/",
+      "eleven:aaaaaaaaa:",
+      "eleven:my favorite voice",
+      "eleven:aaaaaaaaaa\n",
+      "eleven:aaaaaaaaa\u00e9",
+      "eleven:aaaaaaaaaa\u0085",
+      "eleven:aaaaaaaaaa\ufeff",
+      "fish:0123456789abcdef0123456789abcdef",
+      "Eleven:AbCd012345"
+    ]
+  }
+}
