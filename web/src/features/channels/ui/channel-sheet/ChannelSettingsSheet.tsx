@@ -11,6 +11,7 @@ import { cn } from "@/shared/lib/cn";
 import type { ChannelSummary } from "../../useChannels";
 import type { ChannelMetadataPatch } from "../../lib/channelMetadataEdit.ts";
 import { AboutTab } from "./AboutTab";
+import { WorkflowsTab } from "./WorkflowsTab";
 
 export type ChannelSettingsTab = "about" | "members" | "workflows";
 export interface ChannelSettingsSheetProps {
@@ -97,6 +98,7 @@ export function ChannelSettingsSheet(props: ChannelSettingsSheetProps) {
               aria-controls="channel-settings-panel"
               aria-selected={tab === id}
               tabIndex={tab === id ? 0 : -1}
+              disabled={busy}
               onKeyDown={(event) => {
                 const tabs = ["about", "members", "workflows"] as const;
                 const next =
@@ -147,11 +149,15 @@ export function ChannelSettingsSheet(props: ChannelSettingsSheetProps) {
               run={run}
               onMembers={() => setTab("members")}
             />
+          ) : tab === "workflows" ? (
+            <WorkflowsTab
+              channelId={props.channel.id}
+              writable={props.isMember && !props.channel.archived}
+              onBusyChange={setBusy}
+            />
           ) : (
             <p className="py-8 text-sm text-muted-foreground">
-              {tab === "members"
-                ? "Member management is coming in the next phase."
-                : "Workflow management is coming in a later phase."}
+              Member management is coming in the next phase.
             </p>
           )}
         </div>
