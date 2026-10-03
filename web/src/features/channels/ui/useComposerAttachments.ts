@@ -114,7 +114,7 @@ export function useComposerAttachments(options: {
           setAttachments((previous) =>
             markUploaded(previous, row.id, descriptor),
           );
-          // No text mutation: the markdown is composed at send time
+          // The channel composer has no onUploaded callback: markdown is composed at send time
           // (`composeSendContent` in submit) — the box shows only what the
           // author typed (Sam, 2026-09-17: hide attachment URLs in the box).
         } catch (error) {

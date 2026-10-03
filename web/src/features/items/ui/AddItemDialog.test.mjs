@@ -345,4 +345,17 @@ test("closing the dialog invalidates an upload and unmount releases previews", a
   );
   await finish();
   assert.equal(host.querySelector('[data-testid="item-body-editor"]'), null);
+  assert.equal(revoked.length, 1);
+});
+
+test("immediately resolved multi-file uploads keep selection order before React paints", async () => {
+  await mount();
+  globalThis.__ITEM_UPLOAD__ = async (file) => descriptor(file);
+  await fill(body(), "before after");
+  body().setSelectionRange(6, 6);
+  await pick([file("one.png"), file("two.png")]);
+  assert.equal(
+    body().value,
+    "before\n![one.png](https://media.test/one.png)\n![two.png](https://media.test/two.png)\n after",
+  );
 });
