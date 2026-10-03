@@ -31,6 +31,7 @@ import { SnapshotExportDialog } from "../../ui/SnapshotExportDialog";
 import { formatElapsed, useTick } from "../../ui/WorkingBadge";
 import { AgentHeader } from "./AgentHeader";
 import { AgentTabs } from "./AgentTabs";
+import { AgentSettingsCards } from "./cards/AgentSettingsCards";
 import { AgentChannelsCard } from "./AgentChannelsCard";
 import { AgentChannelsTab } from "./AgentChannelsTab";
 import { RightNowCard } from "./RightNowCard";
@@ -344,91 +345,78 @@ export function AgentScreen({
             </aside>
           )}
           <div className="min-w-0 space-y-4 xl:order-1">
-            <section className="rounded-xl border border-border bg-card p-4">
-              <h2 className="mb-3 text-sm font-semibold">
-                Model &amp; thinking
-              </h2>
-              <dl className="divide-y divide-border text-sm">
-                {[
-                  ["Model", row.model],
-                  ["Effort", row.entry.effort?.acp],
-                  ["Runtime", row.persona?.runtime],
-                ]
-                  .filter(([, value]) => value)
-                  .map(([label, value]) => (
-                    <div
-                      key={label}
-                      className="flex flex-wrap justify-between gap-2 py-3"
-                    >
-                      <dt className="text-muted-foreground">{label}</dt>
-                      <dd className="max-w-full break-words">{value}</dd>
-                    </div>
-                  ))}
-              </dl>
-              <p className="mt-2 text-xs text-muted-foreground">
-                Last published settings. Change settings below.
-              </p>
-            </section>
-            {phone ? (
-              <AgentChannelsCard
-                {...channelProps}
-                onSeeAll={() => onTab("channels")}
-              />
-            ) : null}
-            <details className="rounded-xl border border-border bg-card p-4">
-              <summary className="min-h-11 cursor-pointer text-sm font-semibold md:min-h-8">
-                Agent settings
-              </summary>
-              <div className="pt-4">
-                <fieldset disabled={!enabled}>
-                  <AgentConfigPanel
-                    settingsOnly
-                    row={row}
-                    profile={profiles.get(row.pubkey)}
-                    admin={admin}
-                    session={session}
-                    catalogs={catalogs}
-                    registryModels={models}
-                    roster={roster}
-                    viewerIsOwner
-                    onDeleted={onBack}
-                  />
-                </fieldset>
-              </div>
-            </details>
-            {phone ? (
-              <details className="rounded-xl border border-border bg-card p-4">
-                <summary className="min-h-11 cursor-pointer text-sm font-semibold">
-                  Right now
-                </summary>
-                <RightNowCard
-                  row={row}
-                  {...live}
-                  queued={queued}
-                  channels={channels.member}
-                  session={session}
-                  enabled={status === "open"}
-                  models={models}
-                  frames={frames}
+            <AgentSettingsCards
+              key={row.pubkey}
+              row={row}
+              catalogs={catalogs}
+              admin={admin}
+              enabled={enabled && !busy}
+              models={models}
+              roster={roster}
+              phone={phone}
+            >
+              {phone ? (
+                <AgentChannelsCard
+                  {...channelProps}
+                  onSeeAll={() => onTab("channels")}
                 />
+              ) : null}
+              <details className="rounded-xl border border-border bg-card p-4">
+                <summary className="min-h-11 cursor-pointer text-sm font-semibold md:min-h-8">
+                  Identity, environment and other settings
+                </summary>
+                <div className="pt-4">
+                  <fieldset disabled={!enabled}>
+                    <AgentConfigPanel
+                      settingsOnly
+                      remainingOnly
+                      row={row}
+                      profile={profiles.get(row.pubkey)}
+                      admin={admin}
+                      session={session}
+                      catalogs={catalogs}
+                      registryModels={models}
+                      roster={roster}
+                      viewerIsOwner
+                      onDeleted={onBack}
+                    />
+                  </fieldset>
+                </div>
               </details>
-            ) : null}
-            <section className="rounded-xl border border-border bg-card p-4 md:hidden">
-              <h2 className="mb-2 text-xs font-semibold text-muted-foreground">
-                More settings
-              </h2>
-              {(["memory", "activity"] as const).map((section) => (
-                <button
-                  key={section}
-                  type="button"
-                  className="flex min-h-11 w-full items-center justify-between border-t border-border text-sm"
-                  onClick={() => onTab(section)}
-                >
-                  {section === "memory" ? "Memory" : "Activity"}
-                  <ChevronRight aria-hidden className="h-4 w-4" />
-                </button>
-              ))}
-            </section>
+              {phone ? (
+                <details className="rounded-xl border border-border bg-card p-4">
+                  <summary className="min-h-11 cursor-pointer text-sm font-semibold">
+                    Right now
+                  </summary>
+                  <RightNowCard
+                    row={row}
+                    {...live}
+                    queued={queued}
+                    channels={channels.member}
+                    session={session}
+                    enabled={status === "open"}
+                    models={models}
+                    frames={frames}
+                  />
+                </details>
+              ) : null}
+              <section className="rounded-xl border border-border bg-card p-4 md:hidden">
+                <h2 className="mb-2 text-xs font-semibold text-muted-foreground">
+                  More settings
+                </h2>
+                {(["memory", "activity"] as const).map((section) => (
+                  <button
+                    key={section}
+                    type="button"
+                    className="flex min-h-11 w-full items-center justify-between border-t border-border text-sm"
+                    onClick={() => onTab(section)}
+                  >
+                    {section === "memory" ? "Memory" : "Activity"}
+                    <ChevronRight aria-hidden className="h-4 w-4" />
+                  </button>
+                ))}
+              </section>
+            </AgentSettingsCards>
           </div>
         </div>
       ) : null}

@@ -40,6 +40,7 @@ export function RuntimeCard({
   const unknown = (
     field:
       | "harness"
+      | "parallelism"
       | "startOnAppLaunch"
       | "idleTimeoutSeconds"
       | "maxTurnDurationSeconds",
@@ -68,7 +69,7 @@ export function RuntimeCard({
       onChange={(next) => fields.edit(field, next)}
     />
   );
-  const blind = (
+  const runtimeControl = (
     <>
       <SettingSelect
         {...common}
@@ -133,97 +134,129 @@ export function RuntimeCard({
           </Button>
         </form>
       )}
-      {duration(
+    </>
+  );
+  const controls = [
+    { field: "harness", control: runtimeControl },
+    {
+      field: "idleTimeoutSeconds",
+      control: duration(
         "idleTimeoutSeconds",
         "Idle timeout",
         IDLE_BUILTIN,
         "15 min — built in",
         [300, 900, 1800, 3600],
-      )}
-      {duration(
+      ),
+    },
+    {
+      field: "maxTurnDurationSeconds",
+      control: duration(
         "maxTurnDurationSeconds",
         "Longest turn",
         LONGEST_BUILTIN,
         "12 h — built in",
         [3600, 21600, 43200, 86400],
-      )}
-      <label className="flex min-h-11 flex-wrap items-center justify-between gap-2 text-sm">
-        <span>Start with Buzz Desktop</span>
-        {unknown("startOnAppLaunch") ? (
-          <SettingSelect
-            {...common}
-            label="Set start with Buzz Desktop"
-            value={null}
-            defaultValue="off"
-            unreported
-            inheritLocked
-            locked={fields.controlsLocked}
-            options={[
-              { value: "on", label: "On" },
-              { value: "off", label: "Off" },
-            ]}
-            onChange={(next) => fields.edit("startOnAppLaunch", next === "on")}
-          />
-        ) : (
-          <input
-            aria-label="Start with Buzz Desktop"
-            role="switch"
-            type="checkbox"
-            className="size-6"
-            disabled={fields.disabled || fields.controlsLocked}
-            checked={fields.value("startOnAppLaunch") === true}
-            onChange={(event) =>
-              fields.edit("startOnAppLaunch", event.target.checked)
-            }
-          />
-        )}
-      </label>
-      <p className="text-xs text-muted-foreground">
-        Runtime inheritance and additional command settings need a later Buzz
-        Desktop update.
-      </p>
-    </>
-  );
+      ),
+    },
+    {
+      field: "startOnAppLaunch",
+      control: (
+        <div className="flex min-h-11 flex-wrap items-center justify-between gap-2 text-sm">
+          <span>Start with Buzz Desktop</span>
+          {unknown("startOnAppLaunch") ? (
+            <SettingSelect
+              {...common}
+              label="Set start with Buzz Desktop"
+              value={null}
+              defaultValue="off"
+              unreported
+              inheritLocked
+              locked={fields.controlsLocked}
+              options={[
+                { value: "on", label: "On" },
+                { value: "off", label: "Off" },
+              ]}
+              onChange={(next) =>
+                fields.edit("startOnAppLaunch", next === "on")
+              }
+            />
+          ) : (
+            <input
+              aria-label="Start with Buzz Desktop"
+              role="switch"
+              aria-checked={fields.value("startOnAppLaunch") === true}
+              type="checkbox"
+              className="size-6"
+              disabled={fields.disabled || fields.controlsLocked}
+              checked={fields.value("startOnAppLaunch") === true}
+              onChange={(event) =>
+                fields.edit("startOnAppLaunch", event.target.checked)
+              }
+            />
+          )}
+        </div>
+      ),
+    },
+    {
+      field: "parallelism",
+      control: (
+        <SettingSelect
+          {...common}
+          label="Turns at once"
+          value={
+            fields.value("parallelism") === UNREPORTED
+              ? null
+              : String(fields.value("parallelism"))
+          }
+          defaultValue="1"
+          defaultLabel="1"
+          unreported={fields.value("parallelism") === UNREPORTED}
+          inheritLocked
+          dirty={fields.dirty("parallelism")}
+          options={[1, 2, 4, 8, 16].map((n) => ({
+            value: String(n),
+            label: String(n),
+          }))}
+          onChange={(next) => fields.edit("parallelism", Number(next))}
+        />
+      ),
+    },
+  ] as const;
   return (
     <section
       className="space-y-4 rounded-xl border border-border bg-card p-4"
       data-testid="runtime-card"
     >
       <h2 className="text-sm font-semibold">Runtime</h2>
-      <SettingSelect
-        {...common}
-        label="Turns at once"
-        value={
-          fields.value("parallelism") === UNREPORTED
-            ? null
-            : String(fields.value("parallelism"))
-        }
-        defaultValue="1"
-        defaultLabel="1"
-        unreported={fields.value("parallelism") === UNREPORTED}
-        inheritLocked
-        dirty={fields.dirty("parallelism")}
-        options={[1, 2, 4, 8, 16].map((n) => ({
-          value: String(n),
-          label: String(n),
-        }))}
-        onChange={(next) => fields.edit("parallelism", Number(next))}
-      />
-      <details
-        open={
-          unknown("harness") ||
-          unknown("idleTimeoutSeconds") ||
-          unknown("maxTurnDurationSeconds")
-            ? undefined
-            : true
-        }
-        className="space-y-4"
-      >
-        <summary className="min-h-11 cursor-pointer text-sm font-medium">
-          Set without seeing the current value
-        </summary>
-        <div className="grid min-w-0 gap-4 md:grid-cols-2">{blind}</div>
-      </details>
+      <div className="grid min-w-0 gap-4 md:grid-cols-2">
+        {controls
+          .filter(({ field }) => !unknown(field))
+          .map(({ field, control }) => (
+            <div key={field} className="min-w-0">
+              {control}
+            </div>
+          ))}
+      </div>
+      {controls.some(({ field }) => unknown(field)) && (
+        <details className="space-y-4">
+          <summary className="min-h-11 cursor-pointer text-sm font-medium">
+            Set without seeing the current value
+          </summary>
+          <div className="grid min-w-0 gap-4 md:grid-cols-2">
+            {controls
+              .filter(({ field }) => unknown(field))
+              .map(({ field, control }) => (
+                <div key={field} className="min-w-0">
+                  {control}
+                </div>
+              ))}
+          </div>
+        </details>
+      )}
+      <p className="text-xs text-muted-foreground">
+        Runtime inheritance and additional command settings need a later Buzz
+        Desktop update.
+      </p>
     </section>
   );
 }

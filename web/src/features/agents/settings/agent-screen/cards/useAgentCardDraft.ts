@@ -48,6 +48,8 @@ export function useAgentCardDraft(
   }, [row.pubkey, machine]);
   useEffect(() => {
     // A newer public projection supersedes transient non-timeout echoes.
+    void row.entry.updatedAt;
+    void row.persona?.updatedAt;
     setEcho((current) =>
       Object.fromEntries(
         Object.entries(current).filter(
@@ -90,7 +92,11 @@ export function useAgentCardDraft(
           next[entry.field as AgentSettingField] =
             entry.change.kind === "clear" ? null : entry.change.value;
       setEcho(next);
-      if (echoKey) writeTimeoutEcho(sessionStorage, echoKey, next);
+      try {
+        if (echoKey) writeTimeoutEcho(sessionStorage, echoKey, next);
+      } catch {
+        /* The acknowledged result remains valid without storage. */
+      }
       setApiKey({ kind: "keep" });
     }
     return ack;
