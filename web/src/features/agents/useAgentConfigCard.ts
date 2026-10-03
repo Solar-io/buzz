@@ -41,6 +41,8 @@ export interface AgentConfigCardState {
   agentName: string | null;
   /** The owner's current 30183 selection for this agent, if any. */
   assignedVoice: AgentVoiceSelection | undefined;
+  /** Stored label for the pinned current row if it leaves the library. */
+  assignedVoiceLabel?: string;
 }
 
 /**
@@ -192,5 +194,6 @@ export function useAgentConfigCard(pubkey: string): AgentConfigCardState {
     viewerIsOwner,
     agentName: entry?.name ?? null,
     assignedVoice: assigned?.selection,
+    assignedVoiceLabel: assigned?.label,
   };
 }

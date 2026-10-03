@@ -80,6 +80,7 @@ globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
     export function useAgentVoiceSelections() {
       return { byPubkey: s().selections, ready: true, agentVoiceSelectionFor: () => undefined };
     }
+    export function useBridgeVoices() { return { voices: [], ready: true, error: null }; }
     export function useChatterboxVoices() {
       return { voices: [{ key: "chatterbox:evie", slug: "evie", label: "Evie", gender: "female",
         style: "", reserved: true, reservedFor: null }], ready: true };

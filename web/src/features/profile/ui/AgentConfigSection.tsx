@@ -55,8 +55,14 @@ export function AgentConfigList({
  */
 export function AgentConfigSection({ pubkey }: { pubkey: string }) {
   const { session } = useRelaySession();
-  const { rows, loading, viewerIsOwner, agentName, assignedVoice } =
-    useAgentConfigCard(pubkey);
+  const {
+    rows,
+    loading,
+    viewerIsOwner,
+    agentName,
+    assignedVoice,
+    assignedVoiceLabel,
+  } = useAgentConfigCard(pubkey);
   const [pickerOpen, setPickerOpen] = useState(false);
   return (
     <div className="flex flex-col gap-1.5" data-testid="agent-config-section">
@@ -76,6 +82,7 @@ export function AgentConfigSection({ pubkey }: { pubkey: string }) {
           </Button>
           <VoicePickerDialog
             current={assignedVoice}
+            currentLabel={assignedVoiceLabel}
             mode="assign"
             onConfirm={(selection, label) =>
               publishAgentVoiceAssignment(session, pubkey, selection, label)
