@@ -178,7 +178,11 @@ async function mount({
 test("adding an agent publishes 9000 role=bot then a start command for the same pubkey", async () => {
   const view = await mount({ pickerOpen: true, autoAck: false });
   try {
-    assert.equal(document.querySelector('[aria-label="Add Agent 1"]'), null);
+    // Compare a primitive: printing a failed React DOM object can exhaust the runner.
+    assert.equal(
+      document.querySelector('[aria-label="Add Agent 1"]') === null,
+      true,
+    );
     await click(document.querySelector('[aria-label="Add Agent 2"]'));
     assert.deepEqual(
       view.published.map((event) => event.kind),
