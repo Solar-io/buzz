@@ -228,6 +228,32 @@ test("the card is hidden for an identity with no agents", async () => {
   state.agents = saved;
 });
 
+test("Agent voices preserves a removed Fish label, shows its badge and passes it to assignment", async () => {
+  state.assignments = new Map([
+    [
+      EVIE,
+      {
+        agentPubkey: EVIE,
+        selection: {
+          engine: "fish",
+          key: "fish:0123456789abcdef0123456789abcdef",
+        },
+        label: "Stored Jame",
+      },
+    ],
+  ]);
+  const { container, unmount } = await mount();
+  assert.match(
+    container.textContent,
+    /Stored Jame \(Fish Audio\).*not in library/,
+  );
+  await click(container.querySelector('[data-testid="agent-voices-change"]'));
+  assert.equal(state.dialogProps.current.engine, "fish");
+  assert.equal(state.dialogProps.currentLabel, "Stored Jame");
+  await unmount();
+  state.assignments = new Map();
+});
+
 after(() => {
   delete globalThis.__BUZZ_TEST_MODULE_STUBS__;
   delete globalThis.__AGENT_VOICES_TEST__;
