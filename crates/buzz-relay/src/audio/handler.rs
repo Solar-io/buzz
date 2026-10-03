@@ -1453,6 +1453,22 @@ pub(crate) async fn archive_empty_huddle(
             )
             .await;
 
+            // Clients hide archived rooms via kind:39000, not the parent
+            // huddle-ended event. Refresh discovery before closing their
+            // live room subscriptions, as the TTL reaper does, without a
+            // system message for a normal call end. Best-effort only.
+            if let Err(error) = crate::handlers::side_effects::emit_group_discovery_events(
+                tenant, state, channel_id,
+            )
+            .await
+            {
+                warn!(channel_id = %channel_id, %error, "auto-archive discovery update failed");
+            }
+            crate::handlers::side_effects::evict_all_channel_subscriptions(
+                tenant, state, channel_id,
+            )
+            .await;
+
             // Call lines flow into the parent live (ingest); flush any the
             // live mirror missed. Already-mirrored lines dedupe on their
             // deterministic id. Best-effort — never affects the end outcome.

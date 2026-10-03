@@ -1,3 +1,5 @@
+/// Startup repair of archived channel discovery metadata.
+pub mod archived_discovery;
 /// NIP-42 authentication handler.
 pub mod auth;
 /// Subscription close (CLOSE) handler.
