@@ -73,7 +73,7 @@ Evidence: [P3 report](TEST_REPORTS/fish-web.md): 4,175 baseline / 4,212 final te
 
 ## Background Work rail jobs (2026-10-03)
 
-- [ ] QA-JOB-001 (in progress): preserve painted abnormal outcomes in Done rows; fail-first browser geometry checks for rail/full/phone, web tests/build and screenshots.
+- [x] QA-JOB-001: reserved second-line labels for abnormal job/turn outcomes, preserving normal completion layout. Six browser geometry cases fail before the fix and pass after; 4,225 web units, build and all 13 Work-status cases pass. [Evidence](TEST_REPORTS/qa-job-001.md).
 
 - [x] Core: third job namespace, shared lifecycle validation and regression cases.
 - [x] SDK: validated job builder and address helper.
