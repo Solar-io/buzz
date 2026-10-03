@@ -1,4 +1,9 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
+import { test } from "./helpers/agentBraveTest";
+import {
+  expectPaintedWithinClips,
+  openDoneOutcomes,
+} from "./helpers/doneOutcomes";
 
 import { hexId, type MockEvent, mockEvent } from "./helpers/mockRelay";
 import {
@@ -63,6 +68,52 @@ async function open(
 
 const rowKey = (agent: string, turn: string) =>
   `[data-row-key="turn:${agent}:${turn}"]`;
+
+for (const theme of ["buzz", "buzz-dark"] as const) {
+  for (const surface of ["rail", "full", "phone"] as const) {
+    test(`Done outcomes stay painted · ${surface} · ${theme}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(
+        surface === "phone"
+          ? { width: 390, height: 844 }
+          : { width: 1440, height: 900 },
+      );
+      const { work, outcomes, normalJob, normalTurn, pageErrors } =
+        await openDoneOutcomes(page, theme, surface);
+      if (surface === "rail") {
+        const width = (await work.boundingBox())?.width ?? 0;
+        expect(width).toBeGreaterThan(300);
+        expect(width).toBeLessThan(400);
+      }
+      await expect(work.getByTestId("done-row")).toHaveCount(7);
+      for (const { row, label } of outcomes) {
+        const outcome = row.getByText(label, { exact: false });
+        await expect(outcome).toHaveCount(1);
+        await expectPaintedWithinClips(outcome, label);
+      }
+      // Ordinary completions retain their two-line / one-line presentation.
+      await expect(normalJob.getByTestId("work-row-ask")).toHaveText(
+        "Completed release inventory",
+      );
+      await expect(normalJob.getByTestId("done-row-outcome")).toHaveCount(0);
+      await expect(normalTurn.getByTestId("work-row-ask")).toHaveCount(0);
+      await expect(normalTurn.getByTestId("done-row-outcome")).toHaveCount(0);
+      expect(Math.round((await normalTurn.boundingBox())?.height ?? 0)).toBe(
+        34,
+      );
+      expect(
+        await page.evaluate(
+          () =>
+            document.documentElement.scrollWidth <=
+            document.documentElement.clientWidth,
+        ),
+      ).toBe(true);
+      await shot(page, `done-outcomes-${surface}-${theme}`);
+      expect(pageErrors).toEqual([]);
+    });
+  }
+}
 
 test("a queued Yes fetches its reply parent, while a long ask keeps its text", async ({
   page,

@@ -21,13 +21,13 @@ function WhoWhat({
   job,
   meta,
   what,
-  trailing = null,
+  outcome = null,
 }: {
   name: string;
   job?: DoneRow["job"];
   meta: string;
   what: string | null;
-  trailing?: ReactNode;
+  outcome?: string | null;
 }) {
   const top = (
     <>
@@ -35,10 +35,40 @@ function WhoWhat({
       <JobSuffix job={job} />
       <span className="text-muted-foreground">
         {meta ? `${job ? " · " : " "}${meta}` : null}
-        {trailing}
       </span>
     </>
   );
+  if (outcome) {
+    // Outcomes earn their own space: a long seat/engine/channel headline
+    // must never hide a failure. Only the neighboring work title truncates.
+    return (
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate text-sidebar-meta">{top}</span>
+        <span className="flex min-w-0 items-baseline gap-1 text-xs">
+          <span
+            data-testid="done-row-outcome"
+            className="max-w-full shrink-0 break-words text-coral-ink"
+          >
+            {outcome}
+          </span>
+          {what && (
+            <>
+              <span aria-hidden className="text-ink-2">
+                ·
+              </span>
+              <span
+                data-testid="work-row-ask"
+                title={what}
+                className="min-w-0 truncate text-ink-2"
+              >
+                {what}
+              </span>
+            </>
+          )}
+        </span>
+      </span>
+    );
+  }
   if (!what) {
     return (
       <span className="min-w-0 flex-1 truncate text-sidebar-meta">{top}</span>
@@ -316,7 +346,7 @@ function DoneRows({
             onClick={() => row.channelId && onOpenChannel(row.channelId)}
             className={cn(
               "flex w-full items-center gap-2.25 border-b border-border px-3 text-left last:border-b-0 hover:bg-accent disabled:cursor-default",
-              what ? "min-h-11 py-1" : "h-8.5",
+              what || abnormal ? "min-h-11 py-1" : "h-8.5",
             )}
           >
             <HexAvatar
@@ -330,11 +360,7 @@ function DoneRows({
               job={row.job}
               meta={channelLabel(row.channelId, channels) || "heartbeat"}
               what={what}
-              trailing={
-                abnormal ? (
-                  <span className="text-coral-ink"> · {row.stopReason}</span>
-                ) : null
-              }
+              outcome={abnormal ? row.stopReason : null}
             />
             <span
               className={cn(
