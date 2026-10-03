@@ -137,9 +137,7 @@ export function DefinitionEditor({
         systemPrompt: prompt,
         model,
         provider,
-        namePool: namePool
-          .split("\n")
-          .filter((name) => name !== "" && !/^[\p{White_Space}]+$/u.test(name)),
+        namePool: namePool.split("\n").filter((name) => name !== ""),
       },
       Math.floor(Date.now() / 1000),
     );

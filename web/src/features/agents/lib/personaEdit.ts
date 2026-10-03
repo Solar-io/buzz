@@ -104,6 +104,17 @@ export function buildPersonaDuplicate(
     return { error: "The current definition is not a JSON object." };
   }
   const content = parsed as Record<string, unknown>;
+  if (
+    (content.system_prompt !== undefined &&
+      typeof content.system_prompt !== "string") ||
+    (content.name_pool !== undefined &&
+      (!Array.isArray(content.name_pool) ||
+        !content.name_pool.every((name) => typeof name === "string")))
+  ) {
+    return {
+      error: "The current definition has invalid instructions or names.",
+    };
+  }
   const validation = validateAgentDefinitionText(
     currentString(content, "display_name"),
     currentString(content, "system_prompt"),

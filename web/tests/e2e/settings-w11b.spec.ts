@@ -35,7 +35,10 @@ async function definition(
     }),
   });
   await page.addInitScript((theme) => {
-    localStorage.setItem("buzz-theme", `buzz-${theme}`);
+    localStorage.setItem(
+      "buzz-theme",
+      theme === "light" ? "buzz" : "buzz-dark",
+    );
     localStorage.setItem("buzz-follow-system", "false");
   }, theme);
   await routeUsageHub(page);
@@ -62,6 +65,10 @@ async function definition(
     page.getByTestId(width === 390 ? "phone-tab-bar" : "channel-sidebar"),
   ).toBeVisible();
   await page.goto("/repos/settings?group=library");
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-palette",
+    `buzz-${theme}`,
+  );
   await page.getByRole("button", { name: /W11b test definition/ }).click();
   await expect(page.getByLabel("Name pool", { exact: true })).toHaveValue(
     "Alice\nBob",
@@ -194,6 +201,20 @@ for (const width of [1440, 390]) {
     await expect(
       page.getByLabel("Definition system prompt", { exact: true }),
     ).toHaveValue("Be \u202Ekind.");
+    await page
+      .getByLabel("Definition system prompt", { exact: true })
+      .fill(PROMPT);
+    await page.getByLabel("Name pool", { exact: true }).fill("\uFEFFAlice");
+    await page
+      .getByRole("button", { name: "Save definition", exact: true })
+      .click();
+    await expect(
+      page.getByText(
+        "Name pool: Display name contains prohibited invisible or formatting character U+FEFF",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    expect(state.writes()).toHaveLength(0);
   });
 
   test(`W11b relay refusals preserve the editor and never open a copy at ${width}`, async ({

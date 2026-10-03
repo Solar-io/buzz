@@ -220,6 +220,22 @@ test("duplicate refuses invalid JSON and names exceeding the desktop bound", () 
   );
 });
 
+test("duplicate rejects malformed prompt and name pool wire types", () => {
+  for (const fields of [
+    { system_prompt: 42 },
+    { name_pool: "Alice" },
+    { name_pool: ["Alice", 42] },
+  ]) {
+    const base = latest({
+      content: JSON.stringify({ display_name: "Helper", ...fields }),
+    });
+    assert.equal(
+      buildPersonaDuplicate(base, COPY_ID, 1).error,
+      "The current definition has invalid instructions or names.",
+    );
+  }
+});
+
 test("name pool round-trips", () => {
   const base = latest();
   const result = buildPersonaUpdate(
