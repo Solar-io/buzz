@@ -98,11 +98,7 @@ export function RosterTable({
     if (rows.length && rows.every((row) => allowed(row, action)))
       void actions.run(action, rows);
   };
-  const columns = rosterColumns(width).filter(
-    (column) =>
-      column !== "Acct" &&
-      (column !== "Runtime" || view.some((row) => row.persona?.runtime)),
-  );
+  const columns = rosterColumns(width);
   const phone = width < 768;
   const toggle = (pubkey: string) =>
     setChecked((previous) => {

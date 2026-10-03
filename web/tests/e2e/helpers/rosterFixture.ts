@@ -124,6 +124,10 @@ export async function openRoster(
   });
   await routeUsageHub(page);
   const relay = await installMockRelay(page, events, {
+    successMessage: (entry) =>
+      entry.kind === 41010
+        ? `response:${JSON.stringify({ channel_id: fixture.channels["dm-gilfoyle"] })}`
+        : "",
     rejectPublish: (entry) =>
       options.rejectAdd && entry.kind === 9000
         ? "Channel admin required"

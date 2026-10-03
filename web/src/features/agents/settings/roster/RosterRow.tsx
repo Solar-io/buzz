@@ -115,7 +115,7 @@ export function RosterRow({
               typeof values[column] === "string" ? values[column] : undefined
             }
           >
-            {values[column]}
+            {values[column] || "—"}
           </div>
         </td>
       ))}

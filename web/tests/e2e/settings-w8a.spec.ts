@@ -1,6 +1,6 @@
 import { expect } from "@playwright/test";
 import { test } from "./helpers/agentBraveTest";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { openRoster } from "./helpers/rosterFixture";
 
@@ -30,10 +30,19 @@ test("W8a desktop roster is reachable, filtered, read-only and opens the agent U
   ).toHaveCount(0);
   await expect(
     roster.getByRole("columnheader", { name: "Runtime", exact: true }),
+  ).toBeVisible();
+  await expect(
+    roster.getByRole("columnheader", { name: "Acct", exact: true }),
+  ).toBeVisible();
+  await expect(roster).toContainText("claude-code");
+  await page.setViewportSize({ width: 1000, height: 960 });
+  await expect(
+    roster.getByRole("columnheader", { name: "Runtime", exact: true }),
   ).toHaveCount(0);
   await expect(
     roster.getByRole("columnheader", { name: "Acct", exact: true }),
   ).toHaveCount(0);
+  await page.setViewportSize({ width: 1440, height: 960 });
   const acid = page.getByTestId("roster-row").filter({ hasText: "Acid Burn" });
   await expect(acid).toContainText("Platform Team");
   await expect(acid).toContainText("opus");
@@ -172,6 +181,14 @@ test("W8a row Stop reports a desktop refusal and export uses the existing snapsh
     .click();
   await expect(page.getByRole("dialog")).toContainText("Acid Burn");
   await expect(page.getByRole("dialog")).toContainText("Memory");
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download", exact: true }).click();
+  mkdirSync(screenshots, { recursive: true });
+  const artifact = path.join(screenshots, "acid-snapshot.json");
+  await (await download).saveAs(artifact);
+  const snapshot = JSON.parse(readFileSync(artifact, "utf8"));
+  expect(snapshot.format).toBe("buzz-agent-snapshot");
+  expect(snapshot.version).toBe(1);
 });
 
 test("W8a bulk channel add sends each selected key and surfaces relay refusals", async ({
@@ -230,6 +247,56 @@ test("W8a stale desktop reports lock lifecycle controls", async ({ page }) => {
     page.getByRole("menuitem", { name: "Restart", exact: true }),
   ).toBeDisabled();
   expect(commands).toHaveLength(0);
+});
+
+test("W8a successful channel add, row Start and Message use the served workflow", async ({
+  page,
+}) => {
+  const { commands, relay, fixture, agents } = await openRoster(page);
+  await page
+    .getByRole("checkbox", { name: "Select Acid Burn", exact: true })
+    .check();
+  await page
+    .getByRole("checkbox", { name: "Select Gilfoyle", exact: true })
+    .check();
+  const bulk = page.getByTestId("roster-bulk-bar");
+  await bulk
+    .getByRole("button", { name: "Add to channel…", exact: true })
+    .click();
+  await page
+    .getByRole("combobox", { name: "Add selected agents to channel" })
+    .selectOption(fixture.channels.engineering);
+  await page.getByRole("button", { name: "Add agents", exact: true }).click();
+  await expect(page.getByRole("dialog")).toContainText("2 added");
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Close", exact: true })
+    .click();
+  await bulk.getByRole("button", { name: "Clear", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Actions for Gilfoyle", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name: "Start", exact: true }).click();
+  await expect(
+    page.getByRole("list", { name: "Action results" }),
+  ).toContainText("Gilfoyle: Applied on Buzz Desktop");
+  expect(commands).toHaveLength(1);
+  expect([
+    commands[0].action,
+    commands[0].target,
+    commands[0].request.pubkey,
+  ]).toEqual(["start", "second.local", agents[1].pubkey]);
+  await page
+    .getByRole("button", { name: "Actions for Gilfoyle", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name: "Message", exact: true }).click();
+  await expect(page).toHaveURL(
+    new RegExp(`c=${fixture.channels["dm-gilfoyle"]}`),
+  );
+  const messages = relay.published.filter((entry) => entry.kind === 41010);
+  expect(messages).toHaveLength(1);
+  expect(messages[0].tags).toEqual([["p", agents[1].pubkey]]);
+  await expect(page.getByTestId("composer-input").last()).toBeVisible();
 });
 
 test("W8a phone roster has a list, reachable selection and no horizontal overflow", async ({
