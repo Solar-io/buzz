@@ -13,6 +13,7 @@
 //! - NIP-33 replacement at the fixed coordinate, and removal via the generic
 //!   kind:5 `a`-tag coordinate delete.
 //! - The `chatterbox` engine (`chatterbox:<slug>`) is accepted.
+//! - The `fish` engine (`fish:<16-64 ASCII alphanumeric id>`) is accepted and readable.
 //! - Kind 30183 (owner-authored assignment, `d` = agent pubkey hex) is
 //!   accepted from the agent's registered owner (NIP-OA) and refused
 //!   `restricted:` from anyone else.
@@ -395,6 +396,41 @@ async fn test_agent_voice_chatterbox_grammar() {
         );
     }
 
+    client.disconnect().await.expect("disconnect");
+}
+
+/// A Fish selection must reach ingest and be readable at the selection coordinate.
+#[tokio::test]
+#[ignore]
+async fn test_agent_voice_fish_accepted_and_readable() {
+    let keys = Keys::generate();
+    let mut client = BuzzTestClient::connect(&relay_url(), &keys)
+        .await
+        .expect("connect");
+    let content = serde_json::json!({
+        "version": 1,
+        "engine": "fish",
+        "key": "fish:0123456789abcdef0123456789abcdef",
+        "label": "Fish voice",
+    })
+    .to_string();
+    let event = agent_voice_event(&keys, &content, Timestamp::now().as_secs());
+    let id = event.id;
+    let ok = client_send(&mut client, event).await;
+    assert!(ok.accepted, "Fish selection rejected: {}", ok.message);
+
+    let sid = sub_id("fish-read");
+    client
+        .subscribe(&sid, vec![coordinate_filter(&keys)])
+        .await
+        .expect("subscribe");
+    let events = client
+        .collect_until_eose(&sid, Duration::from_secs(5))
+        .await
+        .expect("collect");
+    assert_eq!(events.len(), 1, "Fish selection must have exactly one head");
+    assert_eq!(events[0].id, id);
+    assert_eq!(events[0].content, content);
     client.disconnect().await.expect("disconnect");
 }
 

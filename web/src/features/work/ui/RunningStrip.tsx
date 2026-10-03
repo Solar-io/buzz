@@ -3,8 +3,9 @@ import { authorLabel } from "@/features/channels/lib/authorLabel.ts";
 import { cn } from "@/shared/lib/cn";
 import { HexAvatar } from "@/shared/ui/HexAvatar";
 import { progressText } from "../lib/taskStatus.ts";
-import type { RunRow } from "../lib/workTypes.ts";
+import type { JobLabel, RunRow } from "../lib/workTypes.ts";
 import { useNowSeconds, useWorkFeed } from "../useWorkFeed.ts";
+import { JobSuffix } from "./JobSuffix";
 import { ProgressSegments } from "./ProgressSegments";
 import { clockLabel, elapsedLabel } from "./workLabels.ts";
 
@@ -89,11 +90,18 @@ function Dots({ tone }: { tone: "work" | "muted" }) {
 }
 
 /** Bold names joined "A", "A and B", "A, B and 2 more". */
-function NameList({ names }: { names: readonly string[] }) {
+function NameList({
+  names,
+  jobs,
+}: {
+  names: readonly string[];
+  jobs?: readonly (JobLabel | null | undefined)[];
+}) {
   return names.map((name, index) => (
-    <span key={name}>
+    <span key={jobs?.[index]?.id ?? name}>
       {index > 0 && (index === names.length - 1 ? " and " : ", ")}
       <b className="font-semibold text-foreground">{name}</b>
+      <JobSuffix job={jobs?.[index]} />
     </span>
   ));
 }
@@ -199,7 +207,10 @@ export function RunningStrip({
         pulse={!summary.quiet}
       />
       <span className="min-w-0 truncate text-ink-2">
-        <NameList names={names} />
+        <NameList
+          names={names}
+          jobs={summary.rows.slice(0, 2).map((row) => row.job)}
+        />
         {title ? (
           <span data-testid="running-strip-title">
             {" · "}

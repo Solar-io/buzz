@@ -28,6 +28,30 @@ const { KIND_AGENT_VOICE, AGENT_VOICE_D_TAG } = await import(
 
 const SELF = "a".repeat(64);
 
+test("Fish publishing carries the engine and key for both self and owner assignment", async () => {
+  globalThis.__BUZZ_TEST_SIGNER__ = async (template) => ({
+    ...template,
+    id: "e".repeat(64),
+    pubkey: SELF,
+    sig: "s".repeat(128),
+  });
+  const session = fakeSession();
+  const fish = { engine: "fish", key: "fish:0123456789abcdef0123456789abcdef" };
+  await publishAgentVoiceSelection(session, fish, "Jame");
+  await publishAgentVoiceAssignment(session, "b".repeat(64), fish, "Jame");
+  assert.equal(session.published.length, 2);
+  assert.deepEqual(
+    session.published.map((e) => e.kind),
+    [30182, 30183],
+  );
+  for (const event of session.published)
+    assert.deepEqual(JSON.parse(event.content), {
+      version: 1,
+      ...fish,
+      label: "Jame",
+    });
+});
+
 function fakeSession() {
   const published = [];
   return {

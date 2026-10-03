@@ -41,13 +41,15 @@ export const AGENT_VOICE_D_TAG = "agent-voice";
  * is a kind:30181 catalog row key synthesized server-side by the tts bridge
  * (preset slug keys); `eleven` is an ElevenLabs voice id synthesized
  * server-side by the same bridge; `chatterbox` is a Chatterbox Turbo voice
- * slug (`chatterbox:<slug>`) the bridge serves from its roster.
+ * slug (`chatterbox:<slug>`) the bridge serves from its roster; `fish` names
+ * a Fish Audio model id served through the same bridge.
  */
 export type AgentVoiceSelection =
   | { engine: "local-synth"; voiceURI: string }
   | { engine: "pocket"; key: string }
   | { engine: "chatterbox"; key: string }
-  | { engine: "eleven"; key: string };
+  | { engine: "eleven"; key: string }
+  | { engine: "fish"; key: string };
 
 /** The JSON body of a kind:30182 event. */
 export interface AgentVoiceSelectionContent {
@@ -134,6 +136,11 @@ function isValidElevenKey(key: string): boolean {
   return /^eleven:[A-Za-z0-9]{10,36}$/.test(key);
 }
 
+/** Fish model grammar, mirrored by relay and Swift using the shared vectors. */
+export function isValidFishKey(key: string): boolean {
+  return /^fish:[A-Za-z0-9]{16,64}$/.test(key);
+}
+
 /**
  * Chatterbox key grammar: `chatterbox:<slug>`, slug `^[a-z0-9][a-z0-9_-]{0,47}$`
  * — byte-for-byte the relay's `valid_chatterbox_voice_key`
@@ -201,6 +208,12 @@ export function parseAgentVoiceContent(
       return null;
     }
     return { selection: { engine: "eleven", key: content.key }, label };
+  }
+  if (content.engine === "fish") {
+    if (typeof content.key !== "string" || !isValidFishKey(content.key)) {
+      return null;
+    }
+    return { selection: { engine: "fish", key: content.key }, label };
   }
   return null;
 }

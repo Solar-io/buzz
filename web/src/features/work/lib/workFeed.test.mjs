@@ -9,6 +9,8 @@ import { askFor, buildWorkFeed, previewLine } from "./workFeed.ts";
 import { activitySlot } from "./workActivity.ts";
 import { whatLine } from "../ui/whatLine.ts";
 
+import { jobEvent } from "./jobFixture.mjs";
+
 const OWNED = "aa".repeat(32);
 const NOT_OWNED = "bb".repeat(32);
 const NOW = 10_000;
@@ -711,4 +713,71 @@ test("the 30624 title still wins over agent activity and trigger text", () => {
     null,
     "rendering does not wait for messages",
   );
+});
+
+test("a background job never suppresses the seat reaction or borrows its latest chat", () => {
+  const event = jobEvent({
+    at: NOW,
+    model: "gpt-6.1-sol",
+    title: "Background",
+  });
+  const ch = event.tags.find((t) => t[0] === "h")[1];
+  const feed = buildWorkFeed(
+    inputs({
+      status: {
+        state: "ready",
+        store: foldStatus(EMPTY_STATUS_STORE, [parseTaskStatus(event)]),
+        sinceS: 0,
+      },
+      reactions: [reaction("r-job", "💬", "ask-turn", NOW - 5, OWNED)],
+      targets: new Map([["ask-turn", { channelId: ch }]]),
+      agentActivity: new Map([
+        [
+          activitySlot(OWNED, ch),
+          [
+            {
+              id: "chat",
+              pubkey: OWNED,
+              kind: 9,
+              created_at: NOW,
+              tags: [["h", ch]],
+              content: "Seat chat",
+            },
+          ],
+        ],
+      ]),
+    }),
+    NOW,
+    "everywhere",
+    null,
+  );
+  assert.equal(feed.running.length, 2);
+  assert.deepEqual(
+    feed.running.map((row) => row.source),
+    ["job", "reaction"],
+  );
+  assert.equal(feed.running[0].latest, null);
+  assert.equal(feed.running[0].title, "Background");
+});
+
+test("finished jobs count in Done only after the status REQ is ready", () => {
+  const store = foldStatus(EMPTY_STATUS_STORE, [
+    parseTaskStatus(jobEvent({ state: "done", at: NOW })),
+  ]);
+  for (const [state, count] of [
+    ["ready", 1],
+    ["loading", 0],
+  ]) {
+    const feed = buildWorkFeed(
+      inputs({
+        status: { state, store, sinceS: 0 },
+        metrics: { state: "ready", entries: [], sinceS: 0 },
+      }),
+      NOW,
+      "everywhere",
+      null,
+    );
+    assert.equal(feed.done.count, count);
+    assert.equal(feed.running.length, 0);
+  }
 });

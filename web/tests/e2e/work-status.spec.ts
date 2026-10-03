@@ -1,4 +1,9 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
+import { test } from "./helpers/agentBraveTest";
+import {
+  expectPaintedWithinClips,
+  openDoneOutcomes,
+} from "./helpers/doneOutcomes";
 
 import { hexId, type MockEvent, mockEvent } from "./helpers/mockRelay";
 import {
@@ -12,6 +17,7 @@ import {
   CRASH_PICKUP_LINE,
   detailHead,
   lifecycleHead,
+  jobHead,
   PR_TITLE,
 } from "./helpers/taskStatusFixture";
 import type { WorkFixture } from "./helpers/workFixture";
@@ -62,6 +68,52 @@ async function open(
 
 const rowKey = (agent: string, turn: string) =>
   `[data-row-key="turn:${agent}:${turn}"]`;
+
+for (const theme of ["buzz", "buzz-dark"] as const) {
+  for (const surface of ["rail", "full", "phone"] as const) {
+    test(`Done outcomes stay painted · ${surface} · ${theme}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(
+        surface === "phone"
+          ? { width: 390, height: 844 }
+          : { width: 1440, height: 900 },
+      );
+      const { work, outcomes, normalJob, normalTurn, pageErrors } =
+        await openDoneOutcomes(page, theme, surface);
+      if (surface === "rail") {
+        const width = (await work.boundingBox())?.width ?? 0;
+        expect(width).toBeGreaterThan(300);
+        expect(width).toBeLessThan(400);
+      }
+      await expect(work.getByTestId("done-row")).toHaveCount(7);
+      for (const { row, label } of outcomes) {
+        const outcome = row.getByText(label, { exact: false });
+        await expect(outcome).toHaveCount(1);
+        await expectPaintedWithinClips(outcome, label);
+      }
+      // Ordinary completions retain their two-line / one-line presentation.
+      await expect(normalJob.getByTestId("work-row-ask")).toHaveText(
+        "Completed release inventory",
+      );
+      await expect(normalJob.getByTestId("done-row-outcome")).toHaveCount(0);
+      await expect(normalTurn.getByTestId("work-row-ask")).toHaveCount(0);
+      await expect(normalTurn.getByTestId("done-row-outcome")).toHaveCount(0);
+      expect(Math.round((await normalTurn.boundingBox())?.height ?? 0)).toBe(
+        34,
+      );
+      expect(
+        await page.evaluate(
+          () =>
+            document.documentElement.scrollWidth <=
+            document.documentElement.clientWidth,
+        ),
+      ).toBe(true);
+      await shot(page, `done-outcomes-${surface}-${theme}`);
+      expect(pageErrors).toEqual([]);
+    });
+  }
+}
 
 test("a queued Yes fetches its reply parent, while a long ask keeps its text", async ({
   page,
@@ -144,6 +196,92 @@ test("a queued Yes fetches its reply parent, while a long ask keeps its text", a
 for (const theme of ["buzz", "buzz-dark"] as const) {
   test.describe(`desktop 1440 · ${theme}`, () => {
     test.use({ viewport: { width: 1440, height: 960 } });
+
+    test("background jobs get their own Running rows, coexist, and finish into Done", async ({
+      page,
+    }) => {
+      const pageErrors: string[] = [];
+      page.on("pageerror", (error) => pageErrors.push(error.message));
+      const at = now();
+      const { fixture, relay } = await openShell(page, {
+        theme,
+        path: shellChannelPath("ops"),
+        extra: (base) => {
+          const agent = base.agents.cereal.pubkey;
+          const ch = base.channels.ops;
+          return [
+            lifecycleHead(agent, ch, "launcher", "done", at - 20, at - 2400),
+            jobHead(agent, ch, "coder-1", "running", at - 30, at - 2280, {
+              role: "coder",
+              model: "gpt-6.1-sol",
+              title: "Fix stash restore",
+            }),
+            jobHead(agent, ch, "tester-1", "running", at - 30, at - 1800, {
+              role: "tester",
+              model: "gpt-6.1-sol",
+              title: "Exercise rebase",
+            }),
+            jobHead(agent, ch, "dropped-1", "running", at - 400, at - 2500, {
+              role: "coder",
+              model: "gpt-6.1-sol",
+              title: "Old worker",
+            }),
+          ];
+        },
+      });
+      await expect(page.locator("html")).toHaveClass(
+        theme === "buzz-dark" ? /\bdark\b/ : /\blight\b/,
+      );
+      const rail = page.getByTestId("work-rail");
+      const running = rail.getByRole("region", { name: "Running" });
+      const key = (id: string) =>
+        `[data-row-key="job:${fixture.agents.cereal.pubkey}:${fixture.channels.ops}:${id}"]`;
+      await expect(running.getByTestId("run-row-job")).toHaveCount(2);
+      const coder = running.locator(key("coder-1"));
+      const tester = running.locator(key("tester-1"));
+      await expect(coder).toContainText("Cereal Killer → GPT coder · #ops");
+      await expect(coder).toContainText("Fix stash restore");
+      await expect(coder).toContainText("38m");
+      await expect(tester).toContainText("→ GPT tester");
+      await expect(tester).toContainText("Exercise rebase");
+      await expect(coder.getByTestId("progress-segments")).toHaveCount(0);
+      await expect(coder.getByRole("button", { name: /Dismiss/ })).toHaveCount(
+        0,
+      );
+      await expect(running.locator(key("dropped-1"))).toHaveCount(0);
+      await rail.getByRole("button", { name: /Done today/ }).click();
+      const done = rail.getByRole("region", { name: "Done today" });
+      await expect(done.locator(key("dropped-1"))).toContainText(
+        "dropped · no heartbeat",
+      );
+      await expect(page.getByTestId("running-strip-line")).toContainText(
+        "→ GPT coder",
+      );
+      await expect(page.getByTestId("running-strip-line")).toContainText(
+        "→ GPT tester",
+      );
+      await shot(page, `jobs-running-${theme}-1440`);
+      relay.push(
+        jobHead(
+          fixture.agents.cereal.pubkey,
+          fixture.channels.ops,
+          "coder-1",
+          "done",
+          now() + 1,
+          at - 2280,
+          { role: "coder", model: "gpt-6.1-sol", title: "Fix stash restore" },
+        ),
+      );
+      await expect(coder).toHaveCount(0);
+      await expect(running.getByTestId("run-row-job")).toHaveCount(1);
+      const finished = done.locator(key("coder-1"));
+      await expect(finished).toContainText("→ GPT coder");
+      await expect(finished).toContainText("Fix stash restore");
+      await expect(finished).not.toContainText("error");
+      await finished.scrollIntoViewIfNeeded();
+      await shot(page, `jobs-done-${theme}-1440`);
+      expect(pageErrors).toEqual([]);
+    });
 
     test("Running rows carry 30624 titles and progress; a turn moves to Done in place", async ({
       page,

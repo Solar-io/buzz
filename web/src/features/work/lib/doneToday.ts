@@ -12,7 +12,7 @@
  * abnormal ending and says so, like a non-`end_turn` stop reason.
  */
 
-import type { StatusTurn } from "./taskStatus.ts";
+import type { StatusJob, StatusTurn } from "./taskStatus.ts";
 import type { DoneRow, DoneSummary, WorkScope } from "./workTypes.ts";
 
 /** What a 30624 terminal state says about how the turn ended. */
@@ -21,6 +21,13 @@ export function statusEnding(turn: Pick<StatusTurn, "state" | "reason">) {
     return null;
   }
   return turn.reason ? `${turn.state} · ${turn.reason}` : turn.state;
+}
+
+/** Ordinary completion is quiet; a lost heartbeat is stated explicitly. */
+export function jobEnding(job: Pick<StatusJob, "state" | "reason">) {
+  return job.state === "dropped"
+    ? "dropped · no heartbeat"
+    : statusEnding({ ...job, state: job.state });
 }
 
 function abnormal(stopReason: string | null): boolean {
@@ -37,6 +44,7 @@ export function mergeDone(
   sinceS: number,
   scope: WorkScope = "everywhere",
   channelId: string | null = null,
+  jobs: readonly StatusJob[] = [],
 ): DoneSummary {
   const byTurn = new Map<string, DoneRow>();
   for (const row of metrics?.rows ?? []) {
@@ -79,6 +87,27 @@ export function mergeDone(
       stopReason: ending,
       title: turn.title,
       triggerId: turn.trigger,
+    });
+  }
+  for (const job of jobs) {
+    const at = job.ended ?? job.beatAt;
+    if (
+      at < sinceS ||
+      (scope === "channel" && channelId && job.channelId !== channelId)
+    )
+      continue;
+    const key = `job:${job.agentPubkey}:${job.channelId}:${job.jobId}`;
+    byTurn.set(key, {
+      key,
+      agentPubkey: job.agentPubkey,
+      channelId: job.channelId,
+      at,
+      startedAt: job.started,
+      endedAt: job.ended,
+      title: job.title,
+      triggerId: job.trigger,
+      job: { id: job.jobId, role: job.role, engine: job.engine },
+      stopReason: jobEnding(job),
     });
   }
   const rows = [...byTurn.values()].sort(

@@ -9,6 +9,7 @@ import {
   useAgentVoiceAssignments,
   useAgentVoiceSelections,
   useChatterboxVoices,
+  useBridgeVoices,
 } from "../hooks.ts";
 import {
   clearAgentVoiceAssignment,
@@ -19,6 +20,7 @@ import {
   previewRequestFor,
   summarizeAgentVoice,
 } from "../lib/agentVoiceSummary.ts";
+import { isOutsideLibrary } from "../lib/voiceLibraryModel.ts";
 import { VoicePickerDialog } from "./VoicePickerDialog.tsx";
 import { createVoicePreviewer } from "./voicePreview.ts";
 
@@ -40,6 +42,8 @@ export function AgentVoicesCard() {
   const { byAgent, ingest } = useAgentVoiceAssignments();
   const { byPubkey } = useAgentVoiceSelections();
   const { voices: roster } = useChatterboxVoices();
+  const eleven = useBridgeVoices("eleven");
+  const fish = useBridgeVoices("fish");
   const [editing, setEditing] = useState<{
     pubkey: string;
     name: string;
@@ -52,9 +56,11 @@ export function AgentVoicesCard() {
     return null;
   }
 
-  const editingCurrent: AgentVoiceSelection | undefined = editing
-    ? byAgent.get(editing.pubkey.toLowerCase())?.selection
+  const editingRow = editing
+    ? (byAgent.get(editing.pubkey.toLowerCase()) ??
+      byPubkey.get(editing.pubkey.toLowerCase()))
     : undefined;
+  const editingCurrent = editingRow?.selection;
 
   async function assign(
     agentPubkey: string,
@@ -118,21 +124,34 @@ export function AgentVoicesCard() {
             roster,
             viewerIsOwner: true,
           });
+          const library = summary.selection?.engine === "fish" ? fish : eleven;
+          const missing =
+            library.ready &&
+            !library.error &&
+            isOutsideLibrary(summary.selection, library.voices);
           return (
             <li
-              className="flex items-center gap-2 rounded-md px-2 py-1 hover:bg-accent"
+              className="flex flex-wrap items-center gap-2 rounded-md px-2 py-1 hover:bg-accent"
               data-testid="agent-voices-row"
               key={agent.pubkey}
             >
-              <span className="min-w-0 flex-1">
+              <span className="min-w-0 flex-1 basis-full sm:basis-0">
                 <span className="block truncate text-sm font-medium">
                   {agent.name}
                 </span>
                 <span
-                  className="block truncate text-xs text-muted-foreground"
+                  className="block text-xs text-muted-foreground"
                   data-testid="agent-voices-value"
                 >
                   {summary.voice}
+                  {missing && (
+                    <span
+                      className="ml-2 rounded-full border border-border px-1.5 text-2xs"
+                      data-testid="voice-not-in-library"
+                    >
+                      not in library
+                    </span>
+                  )}
                   <span
                     className="ml-2 rounded-full border border-border px-1.5 text-2xs"
                     data-testid="agent-voices-source"
@@ -182,6 +201,7 @@ export function AgentVoicesCard() {
       </ul>
       <VoicePickerDialog
         current={editingCurrent}
+        currentLabel={editingRow?.label}
         mode="assign"
         onConfirm={(selection, label) =>
           editing ? assign(editing.pubkey, selection, label) : Promise.resolve()

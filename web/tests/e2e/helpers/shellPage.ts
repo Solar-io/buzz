@@ -85,9 +85,10 @@ export async function openShell(
     }
   }, options.theme);
   await routeUsageHub(page);
+  const extra = options.extra?.(fixture) ?? [];
   const relay = await installMockRelay(
     page,
-    [...fixture.events, ...(options.extra?.(fixture) ?? [])],
+    [...fixture.events, ...extra],
     options.relay,
   );
   await signIn(page, options.path(fixture), fixture.viewerKey);

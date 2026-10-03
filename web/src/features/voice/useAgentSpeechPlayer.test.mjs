@@ -30,6 +30,31 @@ const { BRIDGE_SAMPLE_RATE } = await import("../huddle/lib/bridgeSpeech.ts");
 
 const AGENT = "a".repeat(64);
 
+test("Fish selection reaches real player POST and records fish-bridge playback", async () => {
+  const requests = [];
+  const routes = [];
+  const player = createAgentSpeechPlayer({
+    getVoices: () => [],
+    voiceSelectionFor: () => ({
+      engine: "fish",
+      key: "fish:0123456789abcdef0123456789abcdef",
+    }),
+    ttsUrl: () => "https://web.test:6366/tts",
+    createAudioContext: () => wallClockContext(),
+    fetchImpl: async (_url, request) => {
+      requests.push(JSON.parse(request.body));
+      return pcmResponse(0.1);
+    },
+    onRoute: (_key, route) => routes.push(route),
+  });
+  assert.equal(await player.speak("Hello there.", AGENT), "spoken");
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].engine, "fish");
+  assert.equal(requests[0].voice, "0123456789abcdef0123456789abcdef");
+  assert.equal(routes[0].disposition, "fish-bridge");
+  player.dispose();
+});
+
 function manualContext() {
   const ctx = {
     now: 0,
