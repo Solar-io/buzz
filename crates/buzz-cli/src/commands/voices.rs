@@ -509,7 +509,7 @@ mod tests {
                 .expect("voice command")
                 .render_long_help()
                 .to_string();
-            assert!(help.contains("fish:<id>"), "{name} help: {help}");
+            assert!(help.contains("`fish:<id>`"), "{name} help: {help}");
         }
     }
 
