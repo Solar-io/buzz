@@ -223,6 +223,12 @@ export function AgentMembersSection({
               .toLowerCase()
               .includes(query),
           )
+          .sort(
+            (left, right) =>
+              Number(staleKeys.has(left.pubkey)) -
+                Number(staleKeys.has(right.pubkey)) ||
+              labelFor(left.pubkey).localeCompare(labelFor(right.pubkey)),
+          )
           .map((member) => {
             const agent = registry.find(
               (entry) => entry.pubkey === member.pubkey,

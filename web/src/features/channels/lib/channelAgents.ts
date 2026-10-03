@@ -47,16 +47,27 @@ export function unregisteredChannelAgents(
   catalogs: readonly DesktopCatalog[],
   now?: number,
 ) {
-  const authoritative = authoritativeCatalogs(catalogs, now);
+  const nowS = now ?? Math.floor(Date.now() / 1000);
+  const authoritative = authoritativeCatalogs(
+    catalogs.filter((catalog) => catalog.updatedAt <= nowS + 300),
+    nowS,
+  );
   if (!authoritative) return [];
   const entries = members.map(
     ({ pubkey }) =>
-      registry.find((entry) => entry.pubkey === pubkey) ??
-      ({
+      registry.find((entry) => entry.pubkey === pubkey) ?? {
         pubkey,
         name: pubkey,
         updatedAt: 0,
-      } as AgentRegistryEntry),
+        systemPrompt: "",
+        model: "",
+        provider: "",
+        personaId: null,
+        parallelism: null,
+        respondTo: "owner-only",
+        respondToAllowlist: [],
+        effort: null,
+      },
   );
   const claimed = new Set(authoritative.flatMap((catalog) => catalog.agents));
   return findStaleAgents(entries, authoritative).filter(

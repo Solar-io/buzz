@@ -97,6 +97,17 @@ test("claimed duplicate names are not removed from the channel", () => {
     [],
   );
 });
+test("far-future catalog timestamps never authorize channel cleanup", () => {
+  assert.deepEqual(
+    unregisteredChannelAgents(
+      [{ pubkey: key(2) }],
+      [agent(2)],
+      [catalog([key(1)], { updatedAt: NOW + 600 })],
+      NOW,
+    ),
+    [],
+  );
+});
 test("writes require exactly one recently reporting claiming desktop", () => {
   assert.equal(
     channelAgentTarget(key(1), [catalog([key(1)])], NOW),

@@ -113,6 +113,8 @@ export interface MockRelay {
 }
 
 export interface MockRelayOptions {
+  /** Accepted OK payload, for protocol operations such as opening a DM. */
+  acceptedMessage?: (event: MockEvent) => string | null;
   /** Inspect actual client protocol frames for QA request/close counts. */
   onFrame?: (frame: unknown[]) => void;
   /**
@@ -211,7 +213,12 @@ export async function installMockRelay(
         published.push(event);
         const refusal = options.rejectPublish?.(event) ?? null;
         ws.send(
-          JSON.stringify(["OK", event.id, refusal === null, refusal ?? ""]),
+          JSON.stringify([
+            "OK",
+            event.id,
+            refusal === null,
+            refusal ?? options.acceptedMessage?.(event) ?? "",
+          ]),
         );
         if (refusal === null) {
           options.onPublish?.(event, handle);

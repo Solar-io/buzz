@@ -84,7 +84,13 @@ for (const theme of [
       const opened = await openShell(page, {
         theme: theme.id,
         path: channelPath(),
-        relay: { onPublish },
+        relay: {
+          onPublish,
+          acceptedMessage: (event) =>
+            event.kind === 41010
+              ? `response:${JSON.stringify({ channel_id: fixture.channels["dm-gilfoyle"], created: false })}`
+              : null,
+        },
         extra: (current) => {
           fixture = current;
           roster = [
@@ -194,7 +200,7 @@ for (const theme of [
       await expect(
         sheet.getByTestId(`agent-member-${fixture.agents.gilfoyle.pubkey}`),
       ).toBeVisible();
-      const changes = (await relay.published()).filter((event) =>
+      const changes = relay.published.filter((event) =>
         [9000, 24201].includes(event.kind),
       );
       expect(changes.map((event) => event.kind)).toEqual([9000, 24201]);
@@ -220,7 +226,7 @@ for (const theme of [
       await expect(sheet.getByRole("status")).toContainText(
         "Start all acknowledged",
       );
-      const commands = (await relay.published())
+      const commands = relay.published
         .filter((event) => event.kind === 24201)
         .map((event) => payload(fixture, event));
       expect(commands.map((command) => command.action)).toEqual([
@@ -254,7 +260,7 @@ for (const theme of [
         .getByRole("button", { name: "Save", exact: true })
         .click();
       await expect(instruction).not.toBeVisible();
-      const update = (await relay.published())
+      const update = relay.published
         .filter((event) => event.kind === 24201)
         .map((event) => payload(fixture, event))
         .at(-1);
@@ -263,22 +269,35 @@ for (const theme of [
         respondTo: "anyone",
         respondToAllowlist: [],
       });
-      let confirmed = "";
-      page.once("dialog", (dialog) => {
-        confirmed = dialog.message();
-        void dialog.accept();
+      // Agent Brave has multiple CDP clients: a native dialog can already be
+      // handled by another client. Capture this page's real confirm call;
+      // cancel/accept branching is independently exercised by the unit suite.
+      await page.evaluate(() => {
+        window.confirm = (message) => {
+          document.body.dataset.w3Confirmation = message;
+          return true;
+        };
       });
       await sheet
         .getByRole("button", { name: "Remove 9", exact: true })
         .click();
+      await expect
+        .poll(
+          () => relay.published.filter((event) => event.kind === 9001).length,
+        )
+        .toBe(9);
+      await expect(sheet.getByRole("status")).toContainText(
+        "Removals accepted",
+      );
+      const confirmed = await page
+        .locator("body")
+        .getAttribute("data-w3-confirmation");
       await expect(
         sheet.getByRole("button", { name: "Remove 9", exact: true }),
       ).toHaveCount(0);
       expect(confirmed).toContain("Retired Agent 1");
       expect(confirmed).toContain("Retired Agent 9");
-      const removals = (await relay.published()).filter(
-        (event) => event.kind === 9001,
-      );
+      const removals = relay.published.filter((event) => event.kind === 9001);
       expect(removals).toHaveLength(9);
       expect(removals.map((event) => event.tags[1][1]).sort()).toEqual(
         retired.sort(),
@@ -293,8 +312,12 @@ for (const theme of [
       expect(page.url()).toContain(`agent=${fixture.agents.gilfoyle.pubkey}`);
       await page.goBack();
       await page.getByTestId("channel-members-trigger").click();
-      await sheet.getByRole("button", { name: "More for Gilfoyle", exact: true }).click();
-      await page.getByRole("menuitem", { name: "Message Gilfoyle", exact: true }).click();
+      await sheet
+        .getByRole("button", { name: "More for Gilfoyle", exact: true })
+        .click();
+      await page
+        .getByRole("menuitem", { name: "Message Gilfoyle", exact: true })
+        .click();
       await expect(page).toHaveURL(new RegExp(fixture.channels["dm-gilfoyle"]));
     });
   }
