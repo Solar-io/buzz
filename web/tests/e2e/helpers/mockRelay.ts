@@ -120,6 +120,8 @@ export interface MockRelayOptions {
    * The refusal is an `OK false` frame carrying that text verbatim.
    */
   rejectPublish?: (event: MockEvent) => string | null;
+  /** Optional payload in a successful OK, e.g. the relay-derived DM channel. */
+  successMessage?: (event: MockEvent) => string;
   /**
    * An ACCEPTED publish, after its OK: stand in for the relay's side effect
    * (a 9007 becoming a 39000, a 9000 re-signing the 39002). The spec writes
@@ -211,7 +213,12 @@ export async function installMockRelay(
         published.push(event);
         const refusal = options.rejectPublish?.(event) ?? null;
         ws.send(
-          JSON.stringify(["OK", event.id, refusal === null, refusal ?? ""]),
+          JSON.stringify([
+            "OK",
+            event.id,
+            refusal === null,
+            refusal ?? options.successMessage?.(event) ?? "",
+          ]),
         );
         if (refusal === null) {
           options.onPublish?.(event, handle);

@@ -11,10 +11,11 @@ import { usePersonas } from "@/features/agents/usePersonas";
 import { useTeams } from "@/features/agents/useTeams";
 import { useProfiles } from "@/features/channels/hooks";
 import { buildRoster, type RosterRow } from "../lib/roster";
-import { buildRosterGroups, teamNamesByPersonaId } from "../lib/rosterGroups";
+import { teamNamesByPersonaId } from "../lib/rosterGroups";
 import { observedModels } from "../lib/modelSuggestions";
 import { useAdminCommands, PendingCommandsStrip } from "./AgentAdminPanel";
-import { AgentRosterSidebar, AgentWorkingDot } from "./AgentRosterSidebar";
+import { AgentWorkingDot } from "./AgentRosterSidebar";
+import { RosterTable } from "../settings/roster/RosterTable";
 import { AgentConfigPanel } from "./AgentConfigPanel";
 import { CreateAgentScreen } from "../settings/CreateAgentScreen";
 import { NewAgentMenu } from "../settings/NewAgentMenu";
@@ -35,19 +36,8 @@ import { adminCommandLock } from "../lib/adminCommandLock";
 import { DesktopConnectionFooter } from "./DesktopConnectionFooter";
 import { DesktopControlBoundary } from "./DesktopControlBoundary";
 
-/**
- * Agent admin for the web — the desktop's two-pane Agents view. The roster
- * (kind 30177) is the source of truth; every mutation rides the owner
- * admin-command channel (kind 24201, NIP-44 sealed) and is applied by the
- * owner's Buzz Desktop, acking on kind 24202. Machine targeting comes from
- * the kind-30180 desktop catalogs.
- *
- * Responsive rule (same mobile-sheet discipline as AgentActivityPanel):
- * `mode` always drives the detail pane; below lg only ONE pane renders at a
- * time — the roster when mode is "roster", the detail pane otherwise, with a
- * back button. At lg+ the sidebar stays visible and mode switches the right
- * pane. Selecting a different agent while editing discards the edit (the
- * config panel is keyed by pubkey; a dirty-form guard is a Phase-2 gap).
+/** Responsive agent roster and owner-controlled create/config/library panels.
+ * Mutations use the existing desktop command channel and presence locks.
  */
 
 type Mode =
@@ -116,10 +106,6 @@ export function AgentsAdminPage({
   const roster = useMemo(
     () => buildRoster(registry, personas, catalogs),
     [registry, personas, catalogs],
-  );
-  const rosterSections = useMemo(
-    () => buildRosterGroups(roster, personas),
-    [roster, personas],
   );
   const teamBadges = useMemo(
     () => teamNamesByPersonaId(personas.keys(), teams),
@@ -191,56 +177,13 @@ export function AgentsAdminPage({
         </div>
       </div>
       <PendingCommandsStrip pending={admin.pending} acks={admin.acks} />
-      <div
-        className={
-          section === "library"
-            ? "space-y-4"
-            : "grid items-start gap-4 lg:grid-cols-[300px_minmax(0,1fr)]"
-        }
-      >
-        <div
-          className={
-            section === "library"
-              ? "hidden"
-              : mode.kind === "roster"
-                ? ""
-                : "hidden lg:block"
-          }
-        >
-          <AgentRosterSidebar
-            controlLock={presence.lock(
-              catalogs.map((catalog) => catalog.machine),
-            )}
-            roster={roster}
-            sections={rosterSections}
-            teamNamesByPersona={teamBadges}
-            selectedPubkey={selected?.pubkey ?? null}
-            onSelect={(pubkey) => {
-              if (embedded)
-                void navigate({
-                  to: "/repos/settings",
-                  search: { group: "agents", agent: pubkey },
-                });
-              else selectMode({ kind: "agent", pubkey });
-            }}
-            registry={registry}
-            catalogs={catalogs}
-            admin={admin}
-            session={session}
-          />
-          {!embedded ? (
-            <DesktopConnectionFooter
-              catalogs={catalogs}
-              presence={presence.byMachine}
-            />
-          ) : null}
-        </div>
+      <div className="space-y-4">
         <DetailPane
           library={section === "library"}
           tab={mode.kind}
           className={
             mode.kind === "roster"
-              ? "hidden lg:block"
+              ? ""
               : "space-y-4 rounded-lg border border-border bg-card p-4"
           }
         >
@@ -299,13 +242,25 @@ export function AgentsAdminPage({
               </p>
             ))}
           {mode.kind === "roster" && (
-            <div className="space-y-3">
-              <h2 className="font-medium">Select an agent</h2>
-              <p className="text-sm text-muted-foreground">
-                Pick an agent from the list to configure it, or create a new
-                one.
-              </p>
-            </div>
+            <RosterTable
+              controlLock={presence.lock(
+                catalogs.map((catalog) => catalog.machine),
+              )}
+              roster={roster}
+              catalogs={catalogs}
+              teamNames={teamBadges}
+              profiles={profiles}
+              admin={admin}
+              session={session}
+              onOpen={(pubkey) => {
+                if (embedded)
+                  void navigate({
+                    to: "/repos/settings",
+                    search: { group: "agents", agent: pubkey },
+                  });
+                else selectMode({ kind: "agent", pubkey });
+              }}
+            />
           )}
           {mode.kind === "catalog" && (
             <PaneShell
@@ -369,6 +324,12 @@ export function AgentsAdminPage({
           )}
         </DetailPane>
       </div>
+      {!embedded ? (
+        <DesktopConnectionFooter
+          catalogs={catalogs}
+          presence={presence.byMachine}
+        />
+      ) : null}
       <Dialog
         open={leaving !== null}
         onOpenChange={(open) => {
@@ -451,7 +412,7 @@ function PaneShell({
           <Button
             size="sm"
             variant="ghost"
-            className="lg:hidden"
+            className="h-11"
             onClick={onBack}
             aria-label="Back to all agents"
           >
