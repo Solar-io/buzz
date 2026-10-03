@@ -114,7 +114,8 @@ for (const theme of ["buzz", "buzz-dark"]) {
         // The main send button remains wholly within the conversation.
         await mainComposer(page).fill("A readable draft");
         const send = await main
-          .getByRole("button", { name: "Send message", exact: true })
+          .getByTestId("composer-box")
+          .getByRole("button", { name: "Send", exact: true })
           .boundingBox();
         expect(send?.x).toBeGreaterThanOrEqual(chat?.x ?? 0);
         expect((send?.x ?? 0) + (send?.width ?? 0)).toBeLessThanOrEqual(

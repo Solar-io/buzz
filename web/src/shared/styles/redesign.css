@@ -116,17 +116,18 @@
 }
 
 /* Measure the space after the resizable sidebar, rather than the viewport.
-   A docked Canvas must leave 400px for conversation and 3px for its handle.
+   Each dock leaves 400px for conversation and 3px for its handle, including
+   Work when the viewer switches back from Canvas (they share a stored width).
    Below 400 + 320 + 3px the existing pane overlays the row; its Work tab
    returns to chat. Below lg, the existing document sheets still take over. */
 .buzz-content-scrollbar {
   container: shell-row / inline-size;
 }
 @media (min-width: 64rem) {
-  .buzz-content-scrollbar:has(.buzz-canvas-dock) > main {
+  .buzz-content-scrollbar:has(.buzz-right-dock) > main {
     min-width: min(100%, 400px);
   }
-  .buzz-canvas-dock:not([data-expanded]) {
+  .buzz-right-dock:not([data-expanded]) {
     max-width: calc(100% - 403px);
   }
   @container shell-row (width < 723px) {
