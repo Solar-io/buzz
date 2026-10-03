@@ -196,6 +196,7 @@ export function RightPaneHost({
         data-expanded={expanded ? "true" : undefined}
         className={cn(
           "buzz-right-dock contents",
+          canvasOn && "buzz-canvas-dock",
           docks &&
             // Sticky + self-start: on a long view page the ROW scrolls, and
             // the dock must stay in the viewport rather than ride the page.
