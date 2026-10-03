@@ -9,6 +9,7 @@ import { HexAvatar, StateHex } from "@/shared/ui/HexAvatar";
 import type { DoneRow, DoneState, QueuedRow } from "../lib/workTypes.ts";
 import { SectionHeader } from "./NeedsYouSection";
 import { channelLabel, clockLabel, metaLine, shortAge } from "./workLabels.ts";
+import { JobSuffix } from "./JobSuffix";
 import { whatLine } from "./whatLine.ts";
 
 /**
@@ -17,11 +18,13 @@ import { whatLine } from "./whatLine.ts";
  */
 function WhoWhat({
   name,
+  job,
   meta,
   what,
   trailing = null,
 }: {
   name: string;
+  job?: DoneRow["job"];
   meta: string;
   what: string | null;
   trailing?: ReactNode;
@@ -29,8 +32,9 @@ function WhoWhat({
   const top = (
     <>
       <b className="font-semibold">{name}</b>
+      <JobSuffix job={job} />
       <span className="text-muted-foreground">
-        {meta ? ` ${meta}` : null}
+        {meta ? `${job ? " · " : " "}${meta}` : null}
         {trailing}
       </span>
     </>
@@ -296,12 +300,18 @@ function DoneRows({
         const name = authorLabel(row.agentPubkey, profiles);
         const abnormal =
           row.stopReason !== null && row.stopReason !== "end_turn";
-        const what = whatLine(row.title, row.ask, profiles, row.latest);
+        const what = whatLine(
+          row.title,
+          row.ask,
+          profiles,
+          row.job ? null : row.latest,
+        );
         return (
           <button
             key={row.key}
             type="button"
             data-testid="done-row"
+            data-row-key={row.key}
             disabled={!row.channelId}
             onClick={() => row.channelId && onOpenChannel(row.channelId)}
             className={cn(
@@ -317,6 +327,7 @@ function DoneRows({
             />
             <WhoWhat
               name={name}
+              job={row.job}
               meta={channelLabel(row.channelId, channels) || "heartbeat"}
               what={what}
               trailing={

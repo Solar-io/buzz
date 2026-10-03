@@ -9,8 +9,13 @@ import { activeTurns, observedTriggers } from "./activeTurns.ts";
 import { mergeDone } from "./doneToday.ts";
 import { buildNeeds, type NeedInputs, scopedNeeds } from "./needsYou.ts";
 import { type ReactionEvent, reactionWork } from "./queuedReactions.ts";
-import { lifecycleRows, slotOf } from "./runningRows.ts";
-import { endedTurns, type StatusStore, statusTriggers } from "./taskStatus.ts";
+import { jobRows, lifecycleRows, slotOf } from "./runningRows.ts";
+import {
+  endedTurns,
+  jobsFinished,
+  type StatusStore,
+  statusTriggers,
+} from "./taskStatus.ts";
 import { type MetricEntry, summarizeDone } from "./turnMetrics.ts";
 import { type AgentActivity, latestActivity } from "./workActivity.ts";
 import { cleanWorkText, isShortTrigger } from "./workText.ts";
@@ -88,7 +93,7 @@ function withDoneAsks(
   const rows = done.rows.map((row) => ({
     ...row,
     ask: askFor(targets, row.triggerId),
-    latest: latestActivity(row, activity),
+    latest: row.job ? null : latestActivity(row, activity),
   }));
   return { ...done, rows, last: rows[0] ?? null };
 }
@@ -154,7 +159,12 @@ function mergeTriggers(
  * cannot); with neither, the metrics' reason (locked / unavailable) once the
  * status REQ has settled, else still loading — never a "0" nobody measured.
  */
-function doneState(inputs: WorkInputs, scope: WorkScope, open: string | null) {
+function doneState(
+  inputs: WorkInputs,
+  scope: WorkScope,
+  open: string | null,
+  nowS: number,
+) {
   const { metrics, status } = inputs;
   const statusReady = status.state === "ready";
   if (metrics.state !== "ready" && !statusReady) {
@@ -174,6 +184,7 @@ function doneState(inputs: WorkInputs, scope: WorkScope, open: string | null) {
     sinceS,
     scope,
     open,
+    statusReady ? jobsFinished(status.store, sinceS, nowS) : [],
   );
 }
 
@@ -244,12 +255,17 @@ export function buildWorkFeed(
     });
   }
 
-  const running = [...lifecycle, ...reactionRows.values()]
+  const running = [
+    ...lifecycle,
+    ...jobRows(store, nowS),
+    ...reactionRows.values(),
+  ]
     .filter((row) => inScope(row.channelId, scope, openChannelId))
     .map((row) => ({
       ...row,
       ask: askFor(inputs.targets, row.triggerId),
-      latest: latestActivity(row, inputs.agentActivity),
+      latest:
+        row.source === "job" ? null : latestActivity(row, inputs.agentActivity),
     }));
 
   const queuedRows: QueuedRow[] = queued
@@ -264,7 +280,7 @@ export function buildWorkFeed(
     .filter((row) => inScope(row.channelId, scope, openChannelId));
 
   const done: DoneState = withDoneAsks(
-    doneState(inputs, scope, openChannelId),
+    doneState(inputs, scope, openChannelId, nowS),
     inputs.targets,
     inputs.agentActivity,
   );
