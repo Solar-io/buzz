@@ -208,6 +208,16 @@ test("remarkDetails: unrelated HTML is untouched", () => {
   );
 });
 
+test("remarkDetails: an incomplete separate summary preserves both HTML nodes", () => {
+  assert.deepEqual(
+    runPlugin("<details>\n\n<summary>unfinished"),
+    root(
+      { type: "html", value: "<details>" },
+      { type: "html", value: "<summary>unfinished" },
+    ),
+  );
+});
+
 test("remarkDetails: arbitrary details and summary attributes stay escaped", () => {
   assert.deepEqual(
     runPlugin(

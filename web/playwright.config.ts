@@ -50,6 +50,7 @@ export default defineConfig({
         "**/work-status.spec.ts",
         "**/work-activity.spec.ts",
         "**/messages.spec.ts",
+        "**/details.spec.ts",
         "**/scratch.spec.ts",
         "**/files-embed.spec.ts",
         "**/terminal.spec.ts",
