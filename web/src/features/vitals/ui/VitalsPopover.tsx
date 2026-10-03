@@ -74,34 +74,56 @@ interface Line {
 }
 
 /**
- * One line per account, from the 72 h calendar projection: when it runs dry
- * (before its reset), or that it won't and how full it will be at the reset.
- * With no projection yet, the week-to-date pace line still shows.
+ * One line per account from the combined simulation, including handoffs.
+ * Without a simulated account, preserve the hub/pace fallback.
  */
-function accountLines(accounts: readonly AccountVitals[]): Line[] {
+export function accountLines(
+  accounts: readonly AccountVitals[],
+  combined: CombinedRunway | null = null,
+  formatClock: (iso: string) => string = clock,
+): Line[] {
   const lines: Line[] = [];
   for (const account of accounts) {
-    const reset = account.resetsAt ? clock(account.resetsAt) : "";
-    if (account.used !== null && account.used >= 1) {
+    const projection = combined?.projections.find(
+      (row) => row.id === account.id,
+    );
+    const resetsAt = projection?.resetsAt ?? account.resetsAt;
+    const reset = resetsAt ? formatClock(resetsAt) : "";
+    const dryAt = projection
+      ? projection.beforeReset
+        ? projection.dryAt
+        : null
+      : account.dryAt;
+    const projectedAtReset = projection
+      ? projection.projectedAtReset
+      : account.projectedAtReset;
+    const takeover = projection?.takeover;
+    if (
+      account.used !== null &&
+      account.used >= 1 &&
+      (!projection || projection.beforeReset)
+    ) {
       lines.push({
         key: `${account.id}-out`,
         tone: "need",
         strong: `${account.id} is out`,
         rest: reset ? ` until it resets ${reset}.` : ".",
       });
-    } else if (account.dryAt) {
+    } else if (dryAt) {
       lines.push({
         key: `${account.id}-dry`,
         tone: "need",
-        strong: `${account.id} runs dry around ${clock(account.dryAt)}`,
-        rest: reset ? `, before it resets ${reset}.` : ".",
+        strong: takeover
+          ? `${account.id} takes over when ${takeover.account} runs dry (${formatClock(takeover.at)})`
+          : `${account.id} runs dry around ${formatClock(dryAt)}`,
+        rest: `${takeover ? ` and runs dry around ${formatClock(dryAt)}` : ""}${reset ? `, before it resets ${reset}.` : "."}`,
       });
-    } else if (account.projectedAtReset !== null) {
+    } else if (projectedAtReset !== null) {
       lines.push({
         key: `${account.id}-safe`,
         tone: "leaf",
         strong: `${account.id} won't run dry`,
-        rest: ` — about ${percent(account.projectedAtReset)}% used when it resets${reset ? ` ${reset}` : ""}.`,
+        rest: ` — about ${percent(projectedAtReset)}% used when it resets${reset ? ` ${reset}` : ""}.`,
       });
     } else {
       const pace = paceLine(account);
@@ -120,7 +142,7 @@ function accountLines(accounts: readonly AccountVitals[]): Line[] {
 
 /**
  * The combined all-accounts runway, simulated from the hub's own reading time
- * so it agrees with the per-account lines (which the hub projected then).
+ * so the sidebar, headline and account lines share one forecast time.
  */
 export function combinedOutlook(
   summary: VitalsSummary,
@@ -147,10 +169,12 @@ const DOT: Record<Line["tone"], string> = {
 export function VitalsPanel({
   data,
   summary,
+  combined = combinedOutlook(summary, data.runway),
   onClose,
 }: {
   data: VitalsSnapshot;
   summary: VitalsSummary;
+  combined?: CombinedRunway | null;
   onClose: () => void;
 }) {
   const [now, setNow] = useState(() => Date.now());
@@ -158,10 +182,10 @@ export function VitalsPanel({
     const timer = setInterval(() => setNow(Date.now()), 1_000);
     return () => clearInterval(timer);
   }, []);
-  const combined = combinedOutlook(summary, data.runway);
   const headline = combined ? combinedHeadline(combined, clock) : null;
   const method = runwayMethod(data.runway);
-  const lines = summary.kind === "known" ? accountLines(summary.accounts) : [];
+  const lines =
+    summary.kind === "known" ? accountLines(summary.accounts, combined) : [];
   return (
     <div data-testid="vitals-popover" className="text-foreground">
       <div className="flex h-12.5 items-center gap-2.5 border-b border-border px-4.5">
@@ -269,7 +293,11 @@ export function VitalsPanel({
           <>
             <div className="mt-3.5 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2.5 border-t border-dashed border-input pt-3 text-xs">
               {summary.accounts.map((account) => (
-                <AccountRow key={account.id} account={account} />
+                <AccountRow
+                  key={account.id}
+                  account={account}
+                  combined={combined}
+                />
               ))}
             </div>
             <p className="mt-1.5 font-mono text-2xs text-muted-foreground">
@@ -283,9 +311,15 @@ export function VitalsPanel({
   );
 }
 
-function AccountRow({ account }: { account: AccountVitals }) {
+function AccountRow({
+  account,
+  combined,
+}: {
+  account: AccountVitals;
+  combined: CombinedRunway | null;
+}) {
   const hot = account.status === "warn" || account.status === "critical";
-  const dry = accountDryText(account, clock);
+  const dry = accountDryText(account, clock, combined);
   return (
     <>
       <span

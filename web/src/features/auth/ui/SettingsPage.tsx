@@ -279,7 +279,7 @@ export function SettingsPage({ group, agent, tab }: SettingsPageProps) {
           data-testid="settings-scroll"
         >
           <div
-            className={`mx-auto ${active === "agents" || active === "library" ? "max-w-6xl" : "max-w-[45rem]"} px-4 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] md:px-8`}
+            className={`mx-auto ${active === "agents" && !agent ? "max-w-none" : active === "agents" || active === "library" ? "max-w-6xl" : "max-w-[45rem]"} px-4 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] md:px-8`}
           >
             <div data-testid={`settings-pane-${active}`}>
               {activeMeta && !agent ? <PaneHeading group={activeMeta} /> : null}

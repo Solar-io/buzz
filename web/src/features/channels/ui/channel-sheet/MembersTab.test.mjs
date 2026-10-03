@@ -32,7 +32,8 @@ Object.defineProperty(globalThis, "navigator", {
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
   "@/shared/api/RelaySessionProvider": `export function useRelaySession() { return {session: globalThis.w2Session}; }`,
-  "@/shared/lib/nostr-signer": `export async function signNostrEvent(event) { return {...event, id:'signed', pubkey:'self', created_at:1, sig:'sig'}; }`,
+  "@/shared/lib/nostr-signer": `export async function ownPubkey() {return null;} export async function nip44EncryptTo(value) {return {ciphertext:value};} export async function nip44DecryptFrom(value) {return {plaintext:value};} export async function signNostrEvent(event) { return {...event, id:'signed', pubkey:'self', created_at:1, sig:'sig'}; }`,
+  "@tanstack/react-router": `export function useNavigate() {return async () => {};}`,
   "@/shared/theme/ThemeProvider": `export function useTheme() { return {isDark: true}; }`,
   "@/features/agents/useAgentRegistry": `export function useAgentRegistry() { return []; }`,
   "@/shared/lib/localSeed.ts": `export async function loadSeed() { return null; } export function mergeSeed() {}`,

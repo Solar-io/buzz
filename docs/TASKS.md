@@ -8,6 +8,15 @@
 - [ ] QA-WORK-002 (Medium): prune lifetime activity/tried maps when pair windows/channels expire; add churn coverage.
 - [ ] QA-WORK-003 (Medium): keep fenced-code language markers out of meaningful row summaries; define non-text fallbacks.
 
+Parity W8a roster:
+- [x] Read-only roster with team/model/effort, observer Working and catalog Claimed status.
+- [x] Counted status chips, team/name filters and existing stale-registration set.
+- [x] Content-width table columns and phone list, accessible selection.
+- [x] Row lifecycle/Open/Message/snapshot/Unregister and targeted bulk lifecycle.
+- [x] Bulk channel adds, confirmation, desktop acknowledgement/refusal receipts and safe unregister guards.
+- [x] Required web checks, named mechanism mutations and built-app 1440/390 screenshots.
+- [ ] W8a live acceptance: throwaway agents and private-channel checks need an enrolled owner signing environment. Evidence: [W8a handoff](TEST_REPORTS/parity-w8a.md).
+
 - [x] Parity A1: implement pubkey > display name > wildcard > env resolution for each turn knob; add marked-turn `voiceModel`; wire both harness call sites.
 - [x] Parity A1: add six named regressions plus tier/type edge cases; show mechanism mutations failing with unchanged test counts.
 - [x] Parity A1: run web baseline/final, typecheck/build/size checks and buzz-acp tests/clippy; record handoff and commits. Evidence: [A1 report](TEST_REPORTS/parity-a1.md).
@@ -106,6 +115,10 @@ W2 people in channel Members (in progress):
 - [ ] Community-only timeout/ban menus, reason entry, authority and archived-state guards.
 - [ ] Full web gates, named mechanism reversion proof, built-app checks and 1440/390/375 screenshots.
 - [ ] Private live-relay channel acceptance with a second authorized test identity.
+- [ ] W3: agent/people partition, safe unregistered detection and existing-agent picker.
+- [ ] W3: accepted membership then acknowledged start; bounded bulk start/stop and confirmed cleanup.
+- [ ] W3: observer status, model/effort, row settings/message/instruction/stop/remove entry points.
+- [ ] W3: behavioral and fail-first tests, web gates, built-app 1440/390 screenshots and handoff.
 # Parity W5b
 
 - [x] Channel Workflows tab: scoped rows/run status and create/edit YAML; preserve identity and revision.
@@ -148,3 +161,20 @@ W11b definition extras:
 - [x] Resolve Q5 from desktop sharing; document native-state dependency in L3.
 - [x] Required web checks, named mechanism withdrawal and 1440/390 built-app screenshots.
 - [ ] Live duplicate/name-pool reconciliation with an authorized throwaway owner identity and reporting desktop. This shell has no signing credentials. Evidence: [W11b report](TEST_REPORTS/parity-w11b.md).
+
+W8a integration with current main:
+- [x] Compose roster with Library, New agent creation, DetailPane, W9b1 and connection footer; retain every Playwright spec.
+- [x] Carry P0 desktop presence lock through row mutations and bulk lifecycle/confirmation controls.
+- [x] Verify a named row-lock regression fails with the lock removed and passes after restoration.
+- [x] Run full web unit/static/build gates and all six requested E2E groups; inspect 1440/390 screenshots.
+- [x] Commit the integration and record handoff evidence.
+
+W8a integration evidence: [current-main composition](TEST_REPORTS/parity-w8a.md#current-main-integration--2026-10-03); 4,373 units and 37 browser cases pass, including restored row-lock proof.
+
+## Vitals shared account forecast (2026-10-03)
+
+- [x] Record first-empty times, handoffs and next-reset usage from the existing combined simulation.
+- [x] Use that forecast in the sidebar, headline, account lines and row dry text; preserve fallback behavior.
+- [x] Live-number and low-burn regressions, named simulation-withdrawal mutation proof, full web counts/static/build checks.
+- [x] Render the fixture at 1440 and 390 widths and capture screenshots; commit with the required trailers.
+- [ ] Resolve the contradictory A-time criterion: the unchanged allocator gives 18:56:55Z, while the requested 19:13Z uses A's solo rate. No approval to change allocation or waive that criterion was received. [Receipt](TEST_REPORTS/vitals-account-runway.md).
