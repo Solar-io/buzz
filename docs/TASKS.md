@@ -104,8 +104,10 @@ W2 people in channel Members (in progress):
 - [ ] Private live-relay channel acceptance with a second authorized test identity.
 
 W9b1 agent settings cards:
-- [ ] Model & thinking: grouped model picker, runtime-specific Provider/API key, read-only locked Effort.
-- [ ] Runtime: preset/custom picker, locked inheritance, Turns at once, duration presets/custom/reset, Start with Buzz Desktop, honest blind controls.
-- [ ] Who can instruct: named people picker, locked Nobody, desktop warning copy and placement.
-- [ ] W7 draft/save/navigation integration, targeted desktop acknowledgements, safe local timeout echo and phone sub-pages.
-- [ ] Required web checks, named fail-first regressions, built-app browser journeys and 1440/390 screenshots; commit and handoff.
+- [x] Model & thinking: grouped model picker, runtime-specific Provider/API key, read-only locked Effort.
+- [x] Runtime: preset/custom picker, locked inheritance, Turns at once, duration presets/custom/reset, Start with Buzz Desktop, honest blind controls.
+- [x] Who can instruct: named people picker, locked Nobody, desktop warning copy and placement.
+- [x] W7 draft/save/navigation integration, targeted desktop acknowledgements, safe local timeout echo and phone sub-pages.
+- [x] Required web checks, named fail-first regressions, built-app browser journeys and 1440/390 screenshots; commit and handoff.
+
+- [ ] W9b1 live desktop acceptance: throwaway-agent Idle 30 min and Anyone save/reload against the real desktop. Local client evidence uses mocked desktop acknowledgements. See [W9b1 report](TEST_REPORTS/parity-w9b1.md).
