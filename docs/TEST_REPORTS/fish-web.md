@@ -2,7 +2,7 @@
 
 Fish Audio is selectable in Settings, owner assignment, profile and huddle controls. The shared Voice library supports ElevenLabs/Fish provider browse/search, id/URL addition, signed soft removal with a usage census, and read-only non-admin sessions. Every picker, curated list and provider browse list uses the same case-insensitive numeric English comparator. Removed selections retain their labels, remain pinned/selectable/previewable and show a badge.
 
-Code reference: `eebff64ca` on `claude/fish-web`. Scope: plan §4.7–4.8 and the shared grammar corpus. Baseline: **4,175** tests. Final: **4,212** tests, **37 added**, zero failures/skips/cancellations.
+Code reference: `46b8d1e52` on `claude/fish-web`. Scope: plan §4.7–4.8 and the shared grammar corpus. Baseline: **4,175** tests. Final: **4,212** tests, **37 added**, zero failures/skips/cancellations.
 
 ## Verification
 
