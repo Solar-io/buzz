@@ -62,3 +62,11 @@ Evidence: [P3 report](TEST_REPORTS/fish-web.md): 4,175 baseline / 4,212 final te
 - [x] Signed bridge library API, input validation, usage census and mutation invalidation.
 - [x] Settings Voice library card: curated lists, provider browse/search, add/remove confirmation, admin/read-only controls.
 - [x] Shared grammar vectors, behavior tests, exact baseline/final counts, mechanism mutation proof, typecheck, scoped Biome and build.
+
+## Fish audio P4 native iOS
+
+- [x] Accept Fish selection/assignment keys on the shared grammar and retain existing voice precedence.
+- [x] Admit Fish channel overrides through NativeAgentVoice's existing bridge route.
+- [x] Cover Fish and ElevenLabs shared grammar vectors with fixed case counts, plus Fish routing and override behavior; strict end anchors reject trailing LF/U+0085 on both engines.
+- [x] Native simulator suite: 40 → 46 discovered, 31 → 37 passing, nine unchanged skips; four named mutation failures with unchanged counts, restored suite green. [P4 evidence](TEST_REPORTS/fish-ios-native.md). Physical builds/installs, deployment and push are outside this phase.
+- [x] P4 live baseline QA: Buzz HTML and 46-voice ElevenLabs JSON at HTTP 200; Agent Brave Settings → voice picker → ElevenLabs → filter Roger → Cancel; screenshot inspected, console/network receipts captured and owned tab closed. Changed Swift acceptance remains simulator-native.
