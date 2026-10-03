@@ -35,6 +35,9 @@ async fn test_nipdv_new_chat_resurfaces_live_and_preserves_sender_hide() {
     let a = Keys::generate();
     let b = Keys::generate();
     let channel = create_dm(&a, &b.public_key().to_hex()).await;
+    let c = Keys::generate();
+    let other = create_dm(&a, &c.public_key().to_hex()).await;
+    hide(&a, &other).await;
     let mut viewer = BuzzTestClient::connect(&relay_url(), &a).await.unwrap();
     let mut sender = BuzzTestClient::connect(&relay_url(), &b).await.unwrap();
     for kind in [9, 40002] {
@@ -98,6 +101,10 @@ async fn test_nipdv_new_chat_resurfaces_live_and_preserves_sender_hide() {
         assert_eq!(after.pubkey, before.pubkey);
         assert!(after.created_at > before.created_at);
         assert!(!after.tags.iter().any(|t| t.as_slice() == ["h", &channel]));
+        assert!(
+            after.tags.iter().any(|t| t.as_slice() == ["h", &other]),
+            "the live replacement preserves unrelated hidden DMs"
+        );
         assert_eq!(
             read_snapshot_event(&mut sender, &b.public_key().to_hex())
                 .await
