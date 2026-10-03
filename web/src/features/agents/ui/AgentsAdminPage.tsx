@@ -237,7 +237,12 @@ export function AgentsAdminPage({
                 onCreated={(pubkey) => {
                   setCreateDraft(false);
                   setCreateBusy(false);
-                  setMode({ kind: "agent", pubkey });
+                  if (embedded)
+                    void navigate({
+                      to: "/repos/settings",
+                      search: { group: "agents", agent: pubkey },
+                    });
+                  else setMode({ kind: "agent", pubkey });
                 }}
                 onCancel={() => selectMode({ kind: "roster" })}
                 onDraftChange={onCreateDraft}

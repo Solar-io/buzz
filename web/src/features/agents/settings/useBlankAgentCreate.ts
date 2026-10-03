@@ -93,6 +93,7 @@ export function useBlankAgentCreate({
     error,
     uncertain,
     waiting: requestId !== null && !ack,
+    succeeded: Boolean(ack?.ok && ack.agentPubkey),
     disabled: sending || requestId !== null,
     busy: sending || (requestId !== null && !ack && !uncertain),
     sending,

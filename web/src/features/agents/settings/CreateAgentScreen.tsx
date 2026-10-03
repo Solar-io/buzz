@@ -58,8 +58,8 @@ export function CreateAgentScreen({
       JSON.stringify(initial[key as keyof typeof initial]),
   ).length;
   useEffect(() => {
-    onDraftChange?.(changed > 0, create.busy);
-  }, [changed, create.busy, onDraftChange]);
+    onDraftChange?.(changed > 0 && !create.succeeded, create.busy);
+  }, [changed, create.busy, create.succeeded, onDraftChange]);
   return (
     <div className="min-w-0 space-y-4" data-testid="blank-agent-create">
       <p className="text-sm text-muted-foreground">
@@ -193,7 +193,7 @@ export function CreateAgentScreen({
         </Button>
       </div>
       <SettingsNavGuard
-        count={changed}
+        count={create.succeeded ? 0 : changed}
         screenName="new agent"
         busy={create.busy}
         discard={() => setValue(initial)}
