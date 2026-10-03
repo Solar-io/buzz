@@ -233,10 +233,10 @@ async fn cmd_remove(client: &BuzzClient, key: &str) -> Result<(), CliError> {
 /// Build the engine-tagged v1 selection body for a voice key.
 ///
 /// The engine is read off the key prefix; the relay enforces the full grammar
-/// (slug shape, `pocket:eve` ban, eleven id shape), so this only refuses keys
+/// (slug shape, `pocket:eve` ban, eleven/fish id shape), so this only refuses keys
 /// no engine could own. The label defaults to the part after the prefix.
 fn selection_body(key: &str, label: Option<&str>) -> Result<serde_json::Value, CliError> {
-    let (engine, slug) = ["chatterbox", "pocket", "eleven"]
+    let (engine, slug) = ["chatterbox", "pocket", "eleven", "fish"]
         .iter()
         .find_map(|engine| {
             key.strip_prefix(engine)
@@ -245,7 +245,7 @@ fn selection_body(key: &str, label: Option<&str>) -> Result<serde_json::Value, C
         })
         .ok_or_else(|| {
             CliError::Usage(format!(
-                "voice key must start with `chatterbox:`, `pocket:`, or `eleven:` (got `{key}`)"
+                "voice key must start with `chatterbox:`, `pocket:`, `eleven:`, or `fish:` (got `{key}`)"
             ))
         })?;
     if slug.is_empty() {
@@ -460,6 +460,57 @@ mod tests {
             body.to_string(),
             r#"{"engine":"chatterbox","key":"chatterbox:evie","label":"Evie","version":1}"#
         );
+    }
+
+    #[test]
+    fn selection_body_fish() {
+        let vectors: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../test-fixtures/voice/voice-key-grammar.json"
+        ))
+        .expect("shared voice-key vectors");
+        let accept = vectors["fish"]["accept"]
+            .as_array()
+            .expect("Fish accept array");
+        assert_eq!(accept.len(), 4, "fixture must exercise all Fish boundaries");
+        for key in accept {
+            let key = key.as_str().expect("voice key string");
+            let body = selection_body(key, None).expect("Fish selection");
+            assert_eq!(body["engine"], "fish");
+            assert_eq!(body["key"], key);
+            assert_eq!(body["label"], &key[5..]);
+            assert_eq!(body["version"], 1);
+        }
+        let body = selection_body("fish:0123456789abcdef0123456789abcdef", Some("Fish voice"))
+            .expect("Fish label");
+        assert_eq!(
+            body.to_string(),
+            r#"{"engine":"fish","key":"fish:0123456789abcdef0123456789abcdef","label":"Fish voice","version":1}"#
+        );
+    }
+
+    #[test]
+    fn selection_body_fish_empty_id_and_unknown_prefix_refused() {
+        assert!(selection_body("fish:", None).is_err());
+        let err = selection_body("siri:aaron", None).expect_err("unknown engine");
+        assert!(err.to_string().contains("`fish:`"), "got: {err}");
+    }
+
+    #[test]
+    fn voices_select_and_assign_help_offer_fish() {
+        use clap::CommandFactory;
+
+        let mut command = crate::Cli::command();
+        let voices = command
+            .find_subcommand_mut("voices")
+            .expect("voices command");
+        for name in ["select", "assign"] {
+            let help = voices
+                .find_subcommand_mut(name)
+                .expect("voice command")
+                .render_long_help()
+                .to_string();
+            assert!(help.contains("fish:<id>"), "{name} help: {help}");
+        }
     }
 
     #[test]
