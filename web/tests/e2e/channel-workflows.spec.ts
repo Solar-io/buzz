@@ -45,6 +45,15 @@ for (const theme of [
         path: channelPath(),
         extra: (fixture) => [
           mockEvent({
+            kind: 39002,
+            id: hexId(7099),
+            tags: [
+              ["d", fixture.channels["flight-path"]],
+              ["h", fixture.channels["flight-path"]],
+              ["p", fixture.viewer],
+            ],
+          }),
+          mockEvent({
             kind: 30620,
             id: hexId(7100),
             pubkey: fixture.viewer,
