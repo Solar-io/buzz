@@ -159,3 +159,11 @@ W8a integration with current main:
 - [x] Commit the integration and record handoff evidence.
 
 W8a integration evidence: [current-main composition](TEST_REPORTS/parity-w8a.md#current-main-integration--2026-10-03); 4,373 units and 37 browser cases pass, including restored row-lock proof.
+
+## Vitals shared account forecast (2026-10-03)
+
+- [x] Record first-empty times, handoffs and next-reset usage from the existing combined simulation.
+- [x] Use that forecast in the sidebar, headline, account lines and row dry text; preserve fallback behavior.
+- [x] Live-number and low-burn regressions, named simulation-withdrawal mutation proof, full web counts/static/build checks.
+- [x] Render the fixture at 1440 and 390 widths and capture screenshots; commit with the required trailers.
+- [ ] Resolve the contradictory A-time criterion: the unchanged allocator gives 18:56:55Z, while the requested 19:13Z uses A's solo rate. No approval to change allocation or waive that criterion was received. [Receipt](TEST_REPORTS/vitals-account-runway.md).

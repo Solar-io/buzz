@@ -41,7 +41,11 @@ export function VitalsBlock({
     () => vitalsSummary(data.pace, data.runway),
     [data.pace, data.runway],
   );
-  const runway = outlookShort(combinedOutlook(summary, data.runway));
+  const combined = useMemo(
+    () => combinedOutlook(summary, data.runway),
+    [summary, data.runway],
+  );
+  const runway = outlookShort(combined);
   // Nothing to say before the first answer: no skeleton bar pretending to be
   // a reading.
   if (!data.settled) {
@@ -177,6 +181,7 @@ export function VitalsBlock({
         <VitalsPanel
           data={data}
           summary={summary}
+          combined={combined}
           onClose={() => setOpen(false)}
         />
         {host ? <CrichtonPanel data={host} /> : null}
