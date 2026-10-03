@@ -282,3 +282,27 @@ export function triggerDescription(trigger: WorkflowTrigger): string {
   if (trigger.filter !== null) parts.push(`when ${trigger.filter}`);
   return parts.length === 0 ? base : `${base} — ${parts.join(", ")}`;
 }
+
+/** The relay refuses a REQ with more than 10 filters (NIP-11 `max_filters`). */
+const MAX_FILTERS_PER_REQ = 10;
+
+/**
+ * One `#h` filter per channel, grouped into REQs the relay accepts. A single
+ * oversized REQ is refused outright, so it never reaches EOSE and the list
+ * reads "Loading…" forever for anyone in more than ten channels.
+ */
+export function workflowRequests(
+  channelIds: readonly string[],
+): { kinds: number[]; "#h": string[]; limit: number }[][] {
+  const requests = [];
+  for (let i = 0; i < channelIds.length; i += MAX_FILTERS_PER_REQ) {
+    requests.push(
+      channelIds.slice(i, i + MAX_FILTERS_PER_REQ).map((id) => ({
+        kinds: [WORKFLOW_DEFINITION_KIND],
+        "#h": [id],
+        limit: 200,
+      })),
+    );
+  }
+  return requests;
+}

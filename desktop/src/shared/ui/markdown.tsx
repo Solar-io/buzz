@@ -1428,6 +1428,16 @@ export function createMarkdownComponents(
   }
 
   return {
+    details: ({ children, open }) => (
+      <details open={open} className="my-1 [&>summary+*]:mt-2">
+        {children}
+      </details>
+    ),
+    summary: ({ children }) => (
+      <summary className="list-item cursor-pointer text-foreground">
+        {children}
+      </summary>
+    ),
     spoiler: ({
       children,
       ...props

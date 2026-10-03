@@ -47,6 +47,7 @@ export function ModelSelect({
   return (
     <div className="min-w-0 space-y-2">
       <Input
+        className="min-h-11 md:min-h-9"
         aria-label={`Search ${props.label} models`}
         placeholder="Search models…"
         value={search}
@@ -79,6 +80,7 @@ export function ModelSelect({
             }}
           >
             <Input
+              className="min-h-11 md:min-h-9"
               aria-label="Other model id"
               value={modelId}
               placeholder="Model id"

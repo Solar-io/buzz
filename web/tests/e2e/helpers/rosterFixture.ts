@@ -14,7 +14,12 @@ interface Command {
 /** Throwaway owner and agents; desktop responses are simulated at the relay boundary. */
 export async function openRoster(
   page: Page,
-  options: { autoAck?: boolean; old?: boolean; rejectAdd?: boolean } = {},
+  options: {
+    autoAck?: boolean;
+    old?: boolean;
+    rejectAdd?: boolean;
+    presence?: boolean;
+  } = {},
 ) {
   const fixture = buildWorkFixture();
   const agents = [
@@ -30,6 +35,7 @@ export async function openRoster(
     fixture.viewer,
   );
   const commands: Command[] = [];
+  let responding = true;
   const heads = agents.map((agent, index) =>
     event({
       kind: 30177,
@@ -105,7 +111,10 @@ export async function openRoster(
         created_at: now,
         content: JSON.stringify({
           format: "buzz-desktop-catalog",
-          version: 4,
+          version: options.presence ? 5 : 4,
+          caps: options.presence
+            ? ["ping", "ack.result", "requires", "fresh"]
+            : [],
           machine,
           agents: [agents[index].pubkey],
           harnesses: [],
@@ -137,6 +146,29 @@ export async function openRoster(
         const command = JSON.parse(
           nip44.v2.decrypt(entry.content, selfKey),
         ) as Command;
+        if (command.action === "ping") {
+          if (responding)
+            handle.push(
+              event({
+                kind: 24202,
+                pubkey: fixture.viewer,
+                content: nip44.v2.encrypt(
+                  JSON.stringify({
+                    type: "agent_admin_ack",
+                    requestId: command.requestId,
+                    ok: true,
+                    result: {
+                      catalogVersion: 5,
+                      caps: ["ping", "ack.result", "requires", "fresh"],
+                      machine: command.target,
+                    },
+                  }),
+                  selfKey,
+                ),
+              }),
+            );
+          return;
+        }
         commands.push(command);
         if (options.autoAck !== false) ack(command);
       } else handle.push(entry);
@@ -187,6 +219,7 @@ export async function openRoster(
         : "channel-sidebar",
     ),
   ).toBeVisible();
+  if (options.presence) await page.clock.install();
   await page.goto("/repos/settings?group=agents");
   await expect(page.getByTestId("agent-roster")).toBeVisible();
   await expect(page.getByTestId("roster-row")).toHaveCount(3);
@@ -197,6 +230,9 @@ export async function openRoster(
     commands,
     ack,
     heads,
+    setResponding: (value: boolean) => {
+      responding = value;
+    },
     working: (pubkey: string, active: boolean) =>
       relay.push(observer(pubkey, active)),
   };

@@ -217,3 +217,29 @@ test("Unregister locks when all desktop reports are stale", async () => {
     },
   );
 });
+
+test("desktop presence locks every bulk lifecycle action and stale unregister", async () => {
+  for (const selected of [[row("a")], [row("stale", null)]]) {
+    await fixture(
+      {
+        selected,
+        cleanupKeys: new Set(["stale"]),
+        controlLock: { locked: true, reason: "Needs the desktop" },
+        onAction() {
+          assert.fail("locked action must not send");
+        },
+      },
+      async (node) => {
+        for (const action of ["Start", "Stop", "Restart", "Unregister"]) {
+          const button = [...node.querySelectorAll("button")].find(
+            (button) => button.textContent === action,
+          );
+          assert.ok(button, `${action} control exists`);
+          assert.equal(button.disabled, true, action);
+          assert.equal(button.title, "Needs the desktop");
+          await act(() => button.click());
+        }
+      },
+    );
+  }
+});

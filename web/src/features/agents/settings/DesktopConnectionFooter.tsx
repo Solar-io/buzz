@@ -2,17 +2,23 @@ import { useEffect, useState } from "react";
 import { Monitor } from "lucide-react";
 import type { DesktopCatalog } from "../lib/desktopCatalog";
 import { desktopConnection } from "../lib/desktopConnection";
+import type { DesktopPresence } from "../lib/desktopPresence";
+import { DesktopConnectionFooter as PresenceFooter } from "../ui/DesktopConnectionFooter";
 
 export function DesktopConnectionFooter({
   catalogs,
+  presence,
 }: {
   catalogs: readonly DesktopCatalog[];
+  presence?: ReadonlyMap<string, DesktopPresence>;
 }) {
   const [now, setNow] = useState(() => Date.now() / 1000);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now() / 1000), 60_000);
     return () => window.clearInterval(timer);
   }, []);
+  if (presence)
+    return <PresenceFooter catalogs={catalogs} presence={presence} />;
   return (
     <div
       className="space-y-2 border-t border-sidebar-border px-4 py-3 text-xs text-muted-foreground"

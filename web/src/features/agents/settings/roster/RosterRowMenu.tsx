@@ -18,6 +18,7 @@ export function RosterRowMenu({
   onOpen,
   onMessage,
   onExport,
+  lockReason,
 }: {
   row: RosterViewRow;
   busy: boolean;
@@ -26,6 +27,7 @@ export function RosterRowMenu({
   onOpen: () => void;
   onMessage: () => void;
   onExport: () => void;
+  lockReason?: string | null;
 }) {
   return (
     <DropdownMenu>
@@ -45,6 +47,7 @@ export function RosterRowMenu({
             className="min-h-11"
             key={action}
             disabled={busy || !allowed(action)}
+            title={lockReason ?? undefined}
             onSelect={() => onAction(action)}
           >
             {action[0].toUpperCase()}
@@ -73,6 +76,7 @@ export function RosterRowMenu({
         <DropdownMenuItem
           className="min-h-11 text-coral-ink"
           disabled={busy || !allowed("unregister")}
+          title={lockReason ?? undefined}
           onSelect={() => onAction("unregister")}
         >
           Unregister…

@@ -256,6 +256,75 @@ test("W8a stale desktop reports lock lifecycle controls", async ({ page }) => {
   expect(commands).toHaveLength(0);
 });
 
+test("W8a desktop presence lock disables roster row actions and bulk lifecycle until recovery", async ({
+  page,
+}) => {
+  const { commands, setResponding } = await openRoster(page, {
+    presence: true,
+  });
+  const footer = page.getByTestId("desktop-connection-footer").first();
+  await expect(footer).toContainText("online");
+  await page
+    .getByRole("button", { name: "Actions for Acid Burn", exact: true })
+    .click();
+  for (const action of ["Start", "Stop", "Restart"])
+    await expect(
+      page.getByRole("menuitem", { name: action, exact: true }),
+    ).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await page
+    .getByRole("checkbox", { name: "Select Acid Burn", exact: true })
+    .check();
+  const bulk = page.getByTestId("roster-bulk-bar");
+  await expect(
+    bulk.getByRole("button", { name: "Restart", exact: true }),
+  ).toBeEnabled();
+  setResponding(false);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.clock.runFor(40_001);
+  await expect(footer).toContainText("offline");
+  await page
+    .getByRole("button", { name: "Actions for Acid Burn", exact: true })
+    .click();
+  for (const action of ["Start", "Stop", "Restart"]) {
+    const item = page.getByRole("menuitem", { name: action, exact: true });
+    await expect(item).toBeDisabled();
+    await expect(item).toHaveAttribute("title", "Needs the desktop");
+  }
+  await expect(
+    page.getByRole("menuitem", { name: "Open", exact: true }),
+  ).toBeEnabled();
+  await expect(
+    page.getByRole("menuitem", { name: "Message", exact: true }),
+  ).toBeEnabled();
+  await page.keyboard.press("Escape");
+  for (const action of ["Start", "Stop", "Restart"])
+    await expect(
+      bulk.getByRole("button", { name: action, exact: true }),
+    ).toBeDisabled();
+  await bulk.getByRole("button", { name: "Clear", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Actions for Cereal Killer", exact: true })
+    .click();
+  await expect(
+    page.getByRole("menuitem", { name: "Unregister…", exact: true }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
+  expect(commands).toHaveLength(0);
+  setResponding(true);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(footer).toContainText("online");
+  await page
+    .getByRole("button", { name: "Actions for Acid Burn", exact: true })
+    .click();
+  await expect(
+    page.getByRole("menuitem", { name: "Stop", exact: true }),
+  ).toBeEnabled();
+  await page.getByRole("menuitem", { name: "Stop", exact: true }).click();
+  await expect.poll(() => commands.length).toBe(1);
+  expect(commands[0].action).toBe("stop");
+});
+
 test("W8a successful channel add, row Start and Message use the served workflow", async ({
   page,
 }) => {

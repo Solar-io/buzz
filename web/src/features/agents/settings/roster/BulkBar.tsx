@@ -20,6 +20,7 @@ export function BulkBar({
   onAction,
   onAdd,
   onClear,
+  controlLock,
 }: {
   selected: readonly RosterRow[];
   catalogs: readonly DesktopCatalog[];
@@ -28,6 +29,7 @@ export function BulkBar({
   onAction: (action: RosterAction, rows: readonly RosterRow[]) => void;
   onAdd: () => void;
   onClear: () => void;
+  controlLock?: { locked: boolean; reason: string | null };
 }) {
   const [confirm, setConfirm] = useState(false);
   const unregisterReady = catalogs.some((catalog) =>
@@ -41,18 +43,24 @@ export function BulkBar({
           {selected.length} selected
         </span>
         {(["restart", "stop", "start", "unregister"] as const).map((action) => {
-          const allowed = selected.every(
-            (row) =>
-              rosterActionAllowed(
-                row,
-                action,
-                cleanupKeys,
-                controlsEnabled(catalogs, row.machines),
-              ) &&
-              (action === "unregister"
-                ? unregisterReady
-                : agentDesktopReady(catalogs, row.machines, Date.now() / 1000)),
-          );
+          const allowed =
+            !controlLock?.locked &&
+            selected.every(
+              (row) =>
+                rosterActionAllowed(
+                  row,
+                  action,
+                  cleanupKeys,
+                  controlsEnabled(catalogs, row.machines),
+                ) &&
+                (action === "unregister"
+                  ? unregisterReady
+                  : agentDesktopReady(
+                      catalogs,
+                      row.machines,
+                      Date.now() / 1000,
+                    )),
+            );
           return (
             <Button
               key={action}
@@ -61,11 +69,12 @@ export function BulkBar({
               variant="outline"
               disabled={busy || !allowed}
               title={
-                allowed
+                controlLock?.reason ??
+                (allowed
                   ? undefined
                   : action === "unregister"
                     ? "Needs a recent desktop report and confirmed stale registration."
-                    : "Needs a recent report from a compatible claiming desktop."
+                    : "Needs a recent report from a compatible claiming desktop.")
               }
               onClick={() =>
                 action === "unregister"
@@ -110,7 +119,7 @@ export function BulkBar({
             ))}
           </ul>
           <Button
-            disabled={busy || !unregisterReady}
+            disabled={busy || !!controlLock?.locked || !unregisterReady}
             onClick={() => {
               setConfirm(false);
               onAction("unregister", selected);

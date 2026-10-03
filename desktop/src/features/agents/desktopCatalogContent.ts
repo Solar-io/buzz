@@ -1,4 +1,5 @@
 import type { AcpAvailabilityStatus } from "@/shared/api/types";
+import { OWNER_ADMIN_CAPS } from "./ownerAdminCaps";
 
 /**
  * Kind-30180 desktop-catalog content — pure builder, no Tauri imports, so it
@@ -40,7 +41,7 @@ import type { AcpAvailabilityStatus } from "@/shared/api/types";
 
 export const DESKTOP_CATALOG_KIND = 30180;
 export const DESKTOP_CATALOG_FORMAT = "buzz-desktop-catalog";
-export const DESKTOP_CATALOG_VERSION = 4;
+export const DESKTOP_CATALOG_VERSION = 5;
 
 /**
  * v4: `agents` is COMPLETE — every managed agent this desktop holds a key
@@ -114,6 +115,7 @@ export function buildDesktopCatalogContent(input: {
 }): {
   format: typeof DESKTOP_CATALOG_FORMAT;
   version: typeof DESKTOP_CATALOG_VERSION;
+  caps: string[];
   machine: string;
   harnesses: DesktopCatalogHarness[];
   agents: string[];
@@ -141,6 +143,7 @@ export function buildDesktopCatalogContent(input: {
   return {
     format: DESKTOP_CATALOG_FORMAT,
     version: DESKTOP_CATALOG_VERSION,
+    caps: [...OWNER_ADMIN_CAPS],
     machine,
     harnesses,
     agents,

@@ -9,7 +9,7 @@
  */
 
 /** No ack by this age → "?" + the "Is Buzz running?" hint (not a failure). */
-export const ACK_TIMEOUT_MS = 20_000;
+export const ACK_TIMEOUT_MS = 30_000;
 
 export type PendingRowStatus = "sent" | "applied" | "error" | "unknown";
 
@@ -35,10 +35,9 @@ export function pendingRowState(
  * honesty clock as the pending strip, derived through pendingRowState so the
  * two surfaces can never disagree about what a silent 20s means.
  *
- * `no-response` deliberately RE-ENABLES the button: an un-acked create was
- * never applied (no ack = no desktop ran it), so retrying cannot mint the
- * agent twice — but the amber "no desktop responded" line says why it
- * silently did nothing. An error ack (`refused`) also leaves the button
+ * A timeout is unknown, not proof of failure: the desktop may still apply
+ * the create. The caller must advise checking status before retrying.
+ * An error ack (`refused`) also leaves the button
  * enabled; only `sending` and `applied` disable it.
  */
 export type SnapshotAddFeedback =

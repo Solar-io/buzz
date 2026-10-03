@@ -384,3 +384,27 @@ Unlike [NIP-AE](NIP-AE.md), persona events involve no encryption, no HMAC deriva
 1. Correct NIP-01 event-id serialization: `json.dumps([0, pubkey, created_at, kind, tags, content], separators=(",", ":"), ensure_ascii=False)` over UTF-8 bytes.
 2. BIP-340 Schnorr signing with the pinned aux value.
 3. JSON serialization of the content body with no trailing whitespace or BOM.
+
+## Owner desktop management projection
+
+Buzz Desktop publishes a public, owner-authored kind-30180 catalog whose
+`d` tag is the normalized machine hostname. Catalog v5 adds `caps`, starting
+with `ping`, `ack.result`, `requires`, and `fresh`; harnesses, agent claims,
+and the existing owner-sealed Claude-account block keep their previous shapes.
+Older readers continue accepting versions greater than or equal to one.
+Named capabilities require v5 and support from every claiming desktop.
+
+Remote commands remain owner-signed kind 24201, NIP-44 sealed to self, with
+`type: "agent_admin_command"`, `requestId`, `issuedAt`, optional `target` and
+`requires`, and an action-specific `request`. A v5 desktop refuses missing
+capabilities with `code: "unsupported"` before applying anything. Mutating
+commands require a timestamp no older than 300 seconds and no more than
+60 seconds ahead; expired or invalid timestamps receive `code: "stale"`.
+
+`ping` changes no agent and returns `{catalogVersion, caps, machine, now}`.
+The owner-sealed kind-24202 acknowledgement keeps its previous shape and
+adds optional `code` and `result`. Its serialized plaintext is bounded at
+60,000 UTF-8 bytes; oversized responses become `ok: false, code: "too_large"`.
+Both clients execute `test-fixtures/owner-admin/cases.json`, with a pinned
+case count in `limits.json`. These are runtime-control projections, not
+persona authority or a new relay API.

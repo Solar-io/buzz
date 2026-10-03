@@ -84,6 +84,7 @@ export function DurationSelect({
         >
           <div className="flex min-w-0 gap-2">
             <Input
+              className="min-h-11 md:min-h-9"
               aria-label={`${props.label} custom amount`}
               type="number"
               min="0"

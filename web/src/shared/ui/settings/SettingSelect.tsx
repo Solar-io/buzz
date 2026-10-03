@@ -33,6 +33,10 @@ export interface SettingSelectProps {
   disabled?: boolean;
   machine?: string;
   children?: ReactNode;
+  /** Consumers lock clears until the desktop can apply them. */
+  inheritLocked?: boolean;
+  /** A blind control must never present a built-in as its current value. */
+  unreported?: boolean;
 }
 
 /** A native picker with explicit inheritance, draft and desktop availability. */
@@ -55,6 +59,8 @@ export function SettingSelect({
   disabled,
   machine = "crichton",
   children,
+  inheritLocked = false,
+  unreported = false,
 }: SettingSelectProps) {
   const id = useId();
   const unavailable = Boolean(locked || offline || disabled);
@@ -66,10 +72,13 @@ export function SettingSelect({
   ];
   // Encode option values so real model ids never collide with inheritance.
   const encoded = (option: string) => `value:${option}`;
-  const selected = value === null ? "inherit" : encoded(value);
+  const selected =
+    value === null ? (unreported ? "unreported" : "inherit") : encoded(value);
   const resolvedLabel =
     value === null
-      ? defaultLabel
+      ? unreported
+        ? "Not reported · choose to set"
+        : defaultLabel
       : (choices.find((option) => option.value === value)?.label ?? value);
   const reason = offline
     ? `${machine} is offline · Needs the desktop`
@@ -78,11 +87,13 @@ export function SettingSelect({
       : undefined;
   const meta =
     reason ??
-    (dirty
-      ? `was ${originalLabel ?? defaultLabel}`
-      : value === null
-        ? `Uses the default · from ${source}`
-        : (hint ?? `Set here · default is ${defaultLabel}`));
+    (unreported && value === null
+      ? "Current value is not reported by Buzz Desktop."
+      : dirty
+        ? `was ${originalLabel ?? defaultLabel}`
+        : value === null
+          ? `Uses the default · from ${source}`
+          : (hint ?? `Set here · default is ${defaultLabel}`));
   return (
     <div className="min-w-0 space-y-1.5" data-setting-state={state}>
       <label
@@ -115,7 +126,11 @@ export function SettingSelect({
             dirty && "border-honey-line bg-honey-wash",
           )}
           onChange={(event) => {
-            if (!unavailable)
+            if (
+              !unavailable &&
+              event.target.value !== "unreported" &&
+              !(inheritLocked && event.target.value === "inherit")
+            )
               onChange(
                 event.target.value === "inherit"
                   ? null
@@ -123,7 +138,16 @@ export function SettingSelect({
               );
           }}
         >
-          <option value="inherit" className="text-foreground">
+          {unreported && (
+            <option value="unreported" disabled>
+              Not reported · choose to set
+            </option>
+          )}
+          <option
+            value="inherit"
+            disabled={inheritLocked}
+            className="text-foreground"
+          >
             Use default — {defaultLabel} · {source}
           </option>
           {value !== null &&
@@ -185,12 +209,12 @@ export function SettingSelect({
         {value !== null && (
           <button
             type="button"
-            disabled={unavailable}
+            disabled={unavailable || inheritLocked}
             aria-label={`Reset ${label} to default`}
             title={`Use default — ${defaultLabel}`}
             className="absolute right-6 top-0 flex min-h-11 w-11 items-center justify-center rounded-md text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:min-h-9 md:w-8"
             onClick={() => {
-              if (!unavailable) onChange(null);
+              if (!unavailable && !inheritLocked) onChange(null);
             }}
           >
             <RotateCcw aria-hidden="true" className="size-3.5" />

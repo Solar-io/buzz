@@ -63,6 +63,7 @@ import {
 import { FilesUrlSection, ProfileSection } from "./settings/MiscSections";
 import { useAgentRegistry } from "@/features/agents/useAgentRegistry";
 import { useDesktopCatalogs } from "@/features/agents/useDesktopCatalogs";
+import { useDesktopPresence } from "@/features/agents/useDesktopPresence";
 import { ownsSettingsAgents } from "@/features/agents/lib/desktopConnection";
 import { DesktopConnectionFooter } from "@/features/agents/settings/DesktopConnectionFooter";
 import { AgentsAdminPage } from "@/features/agents/ui/AgentsAdminPage";
@@ -142,6 +143,8 @@ export function SettingsPage({ group, agent, tab }: SettingsPageProps) {
     ? parsed
     : DEFAULT_SETTINGS_GROUP;
   const activeMeta = groups.find((candidate) => candidate.id === active);
+  const monitorDesktop = ["agents", "accounts", "library"].includes(active);
+  const presence = useDesktopPresence(monitorDesktop ? catalogs : []);
   const checklist = useOnboardingChecklist();
 
   const selectGroup = useCallback(
@@ -215,7 +218,12 @@ export function SettingsPage({ group, agent, tab }: SettingsPageProps) {
           onSelect={selectGroup}
           agents={registry}
           onSelectAgent={selectAgent}
-          footer={<DesktopConnectionFooter catalogs={catalogs} />}
+          footer={
+            <DesktopConnectionFooter
+              catalogs={catalogs}
+              presence={monitorDesktop ? presence.byMachine : undefined}
+            />
+          }
         />
       </nav>
 
@@ -253,7 +261,12 @@ export function SettingsPage({ group, agent, tab }: SettingsPageProps) {
             phoneRoot
             attentionGroup={backupPending ? "security" : undefined}
             className="min-h-0 flex-1 px-4"
-            footer={<DesktopConnectionFooter catalogs={catalogs} />}
+            footer={
+              <DesktopConnectionFooter
+                catalogs={catalogs}
+                presence={monitorDesktop ? presence.byMachine : undefined}
+              />
+            }
           />
         ) : null}
 

@@ -45,6 +45,7 @@ export function RosterTable({
   admin,
   session,
   onOpen,
+  controlLock,
 }: {
   roster: readonly AgentRow[];
   catalogs: readonly DesktopCatalog[];
@@ -53,6 +54,7 @@ export function RosterTable({
   admin: ReturnType<typeof useAdminCommands>;
   session: RelaySession;
   onOpen: (pubkey: string) => void;
+  controlLock?: { locked: boolean; reason: string | null };
 }) {
   const observer = useObserverStore();
   const view = buildRosterView(roster, catalogs, teamNames, observer?.byAgent);
@@ -89,6 +91,7 @@ export function RosterTable({
     agentDesktopReady(catalogs, [catalog.machine], Date.now() / 1000),
   );
   const allowed = (row: AgentRow, action: RosterAction) =>
+    !controlLock?.locked &&
     rosterActionAllowed(
       row,
       action,
@@ -139,6 +142,7 @@ export function RosterTable({
         <RosterRowMenu
           row={row}
           busy={actions.busy}
+          lockReason={controlLock?.reason}
           allowed={(action) => allowed(row, action)}
           onAction={(action) =>
             action === "unregister" ? setUnregister(row) : run(action, [row])
@@ -169,6 +173,7 @@ export function RosterTable({
         catalogs={catalogs}
         cleanupKeys={cleanupKeys}
         busy={actions.busy}
+        controlLock={controlLock}
         onAction={run}
         onAdd={() => setAdd(true)}
         onClear={() => setChecked(new Set())}

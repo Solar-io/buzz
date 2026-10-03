@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { ArrowLeft, BookOpen, FileText, Plus, Users } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { Button } from "@/shared/ui/button";
 import { useAuth } from "@/features/auth/ui/AuthProvider";
@@ -17,14 +17,27 @@ import { useAdminCommands, PendingCommandsStrip } from "./AgentAdminPanel";
 import { AgentWorkingDot } from "./AgentRosterSidebar";
 import { RosterTable } from "../settings/roster/RosterTable";
 import { AgentConfigPanel } from "./AgentConfigPanel";
-import { AgentCreateForm } from "./AgentCreateForm";
+import { CreateAgentScreen } from "../settings/CreateAgentScreen";
+import { NewAgentMenu } from "../settings/NewAgentMenu";
+import { LibraryTabs, type LibraryTab } from "../settings/LibraryTabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/shared/ui/dialog";
 import { DefinitionsPanel } from "./DefinitionsPanel";
 import { ImportSnapshotButton } from "./ImportSnapshotButton";
 import { PersonaCatalogPanel } from "./PersonaCatalogPanel";
 import { TeamsPanel } from "./TeamsPanel";
+import { useDesktopPresence } from "../useDesktopPresence";
+import { adminCommandLock } from "../lib/adminCommandLock";
+import { DesktopConnectionFooter } from "./DesktopConnectionFooter";
+import { DesktopControlBoundary } from "./DesktopControlBoundary";
 
-/** Agent settings: responsive roster and the existing config/create/library panels.
- * W8a replaces the sidebar's stale-cleanup/profile cards with filters and row actions.
+/** Responsive agent roster and owner-controlled create/config/library panels.
+ * Mutations use the existing desktop command channel and presence locks.
  */
 
 type Mode =
@@ -33,7 +46,8 @@ type Mode =
   | { kind: "agent"; pubkey: string }
   | { kind: "catalog" }
   | { kind: "definitions" }
-  | { kind: "teams" };
+  | { kind: "teams" }
+  | { kind: "snapshots" };
 
 export function AgentsAdminPage({
   embedded = false,
@@ -53,7 +67,13 @@ export function AgentsAdminPage({
   const teamsState = useTeams();
   const teams = teamsState.map;
   const { session, status } = useRelaySession();
-  const admin = useAdminCommands(session, status);
+  const presence = useDesktopPresence(catalogs);
+  const admin = useAdminCommands(
+    session,
+    status,
+    (command, options) =>
+      adminCommandLock(command, options, catalogs, presence.byMachine).reason,
+  );
   const [mode, setMode] = useState<Mode>(
     section === "library"
       ? {
@@ -62,9 +82,25 @@ export function AgentsAdminPage({
               ? "teams"
               : tab === "catalog"
                 ? "catalog"
-                : "definitions",
+                : tab === "snapshots"
+                  ? "snapshots"
+                  : "definitions",
         }
       : { kind: "roster" },
+  );
+  const [createDraft, setCreateDraft] = useState(false);
+  const [createBusy, setCreateBusy] = useState(false);
+  const [leaving, setLeaving] = useState<Mode | null>(null);
+  const selectMode = (next: Mode) => {
+    if (mode.kind === "create" && (createDraft || createBusy)) setLeaving(next);
+    else setMode(next);
+  };
+  const onCreateDraft = useMemo(
+    () => (dirty: boolean, busy: boolean) => {
+      setCreateDraft(dirty);
+      setCreateBusy(busy);
+    },
+    [],
   );
 
   const roster = useMemo(
@@ -114,50 +150,25 @@ export function AgentsAdminPage({
     <div className={embedded ? "space-y-4" : "mx-auto max-w-5xl space-y-4 p-4"}>
       <div className="flex items-center justify-between gap-2">
         {!embedded ? <h1 className="text-lg font-semibold">Agents</h1> : null}
-        {/* flex-wrap (the app's standard action-row pattern, e.g.
-            RepoDetailPage/HuddleBar): the four buttons are ~446px side by
-            side, which overflows a 375px viewport — wrapped rows keep the
-            page from scrolling horizontally. */}
         <div className="flex flex-wrap items-center justify-end gap-2">
           {section === "library" ? (
-            <>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setMode({ kind: "catalog" })}
-              >
-                <BookOpen aria-hidden className="mr-1 h-4 w-4" />
-                Catalog
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setMode({ kind: "definitions" })}
-              >
-                <FileText aria-hidden className="mr-1 h-4 w-4" />
-                Definitions
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setMode({ kind: "teams" })}
-              >
-                <Users aria-hidden className="mr-1 h-4 w-4" />
-                Teams
-              </Button>
-            </>
+            <LibraryTabs
+              value={mode.kind as LibraryTab}
+              onChange={(next) => {
+                setMode({ kind: next });
+                void navigate({
+                  to: "/repos/settings",
+                  search: { group: "library", tab: next },
+                });
+              }}
+            />
           ) : null}
           {section === "agents" ? (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setMode({ kind: "create" })}
-            >
-              <Plus aria-hidden className="mr-1 h-4 w-4" />
-              New agent
-            </Button>
+            <NewAgentMenu
+              catalogs={catalogs}
+              onBlank={() => selectMode({ kind: "create" })}
+            />
           ) : null}
-          <ImportSnapshotButton />
           {!embedded ? (
             <Button asChild variant="ghost" size="sm">
               <Link to="/repos/settings">Back to settings</Link>
@@ -167,7 +178,9 @@ export function AgentsAdminPage({
       </div>
       <PendingCommandsStrip pending={admin.pending} acks={admin.acks} />
       <div className="space-y-4">
-        <div
+        <DetailPane
+          library={section === "library"}
+          tab={mode.kind}
           className={
             mode.kind === "roster"
               ? ""
@@ -177,15 +190,29 @@ export function AgentsAdminPage({
           {mode.kind === "create" && (
             <PaneShell
               title="New agent"
-              onBack={() => setMode({ kind: "roster" })}
+              onBack={() => selectMode({ kind: "roster" })}
             >
-              <AgentCreateForm
-                admin={admin}
-                catalogs={catalogs}
-                registryModels={registryModels}
-                onCreated={(pubkey) => setMode({ kind: "agent", pubkey })}
-                onCancel={() => setMode({ kind: "roster" })}
-              />
+              <DesktopControlBoundary
+                {...presence.lock(catalogs.map((catalog) => catalog.machine))}
+              >
+                <CreateAgentScreen
+                  admin={admin}
+                  catalogs={catalogs}
+                  registryModels={registryModels}
+                  onCreated={(pubkey) => {
+                    setCreateDraft(false);
+                    setCreateBusy(false);
+                    if (embedded)
+                      void navigate({
+                        to: "/repos/settings",
+                        search: { group: "agents", agent: pubkey },
+                      });
+                    else setMode({ kind: "agent", pubkey });
+                  }}
+                  onCancel={() => selectMode({ kind: "roster" })}
+                  onDraftChange={onCreateDraft}
+                />
+              </DesktopControlBoundary>
             </PaneShell>
           )}
           {mode.kind === "agent" &&
@@ -194,18 +221,20 @@ export function AgentsAdminPage({
                 title={selected.name}
                 onBack={() => setMode({ kind: "roster" })}
               >
-                <AgentConfigPanel
-                  key={selected.pubkey}
-                  row={selected}
-                  profile={profiles.get(selected.pubkey)}
-                  admin={admin}
-                  session={session}
-                  catalogs={catalogs}
-                  registryModels={registryModels}
-                  roster={roster}
-                  viewerIsOwner={ownedAgentPubkeys.has(selected.pubkey)}
-                  onDeleted={() => setMode({ kind: "roster" })}
-                />
+                <DesktopControlBoundary {...presence.lock(selected.machines)}>
+                  <AgentConfigPanel
+                    key={selected.pubkey}
+                    row={selected}
+                    profile={profiles.get(selected.pubkey)}
+                    admin={admin}
+                    session={session}
+                    catalogs={catalogs}
+                    registryModels={registryModels}
+                    roster={roster}
+                    viewerIsOwner={ownedAgentPubkeys.has(selected.pubkey)}
+                    onDeleted={() => setMode({ kind: "roster" })}
+                  />
+                </DesktopControlBoundary>
               </PaneShell>
             ) : (
               <p className="text-sm text-muted-foreground">
@@ -214,6 +243,9 @@ export function AgentsAdminPage({
             ))}
           {mode.kind === "roster" && (
             <RosterTable
+              controlLock={presence.lock(
+                catalogs.map((catalog) => catalog.machine),
+              )}
               roster={roster}
               catalogs={catalogs}
               teamNames={teamBadges}
@@ -226,7 +258,7 @@ export function AgentsAdminPage({
                     to: "/repos/settings",
                     search: { group: "agents", agent: pubkey },
                   });
-                else setMode({ kind: "agent", pubkey });
+                else selectMode({ kind: "agent", pubkey });
               }}
             />
           )}
@@ -236,7 +268,11 @@ export function AgentsAdminPage({
               hideBack={section === "library"}
               onBack={() => setMode({ kind: "roster" })}
             >
-              <PersonaCatalogPanel admin={admin} catalogs={catalogs} />
+              <DesktopControlBoundary
+                {...presence.lock(catalogs.map((catalog) => catalog.machine))}
+              >
+                <PersonaCatalogPanel admin={admin} catalogs={catalogs} />
+              </DesktopControlBoundary>
             </PaneShell>
           )}
           {mode.kind === "definitions" && (
@@ -272,13 +308,92 @@ export function AgentsAdminPage({
               />
             </PaneShell>
           )}
-        </div>
+          {mode.kind === "snapshots" && (
+            <PaneShell
+              title="Agent snapshots"
+              hideBack
+              onBack={() => setMode({ kind: "roster" })}
+            >
+              <p className="text-sm text-muted-foreground">
+                Import an agent snapshot to preview its instructions and
+                settings before creating it. Export snapshots from an agent's
+                settings.
+              </p>
+              <ImportSnapshotButton />
+            </PaneShell>
+          )}
+        </DetailPane>
       </div>
+      {!embedded ? (
+        <DesktopConnectionFooter
+          catalogs={catalogs}
+          presence={presence.byMachine}
+        />
+      ) : null}
+      <Dialog
+        open={leaving !== null}
+        onOpenChange={(open) => {
+          if (!open) setLeaving(null);
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>
+            {createBusy
+              ? "Waiting for Buzz Desktop"
+              : "Discard changes to the new agent?"}
+          </DialogTitle>
+          <DialogDescription>
+            {createBusy
+              ? "Wait for the desktop to answer before leaving."
+              : "Your new agent has not been saved."}
+          </DialogDescription>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLeaving(null)}>
+              Keep editing
+            </Button>
+            <Button
+              disabled={createBusy}
+              onClick={() => {
+                if (leaving) setMode(leaving);
+                setLeaving(null);
+                setCreateDraft(false);
+              }}
+            >
+              Discard
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
 /** Detail-pane wrapper: title row plus the below-lg back affordance. */
+function DetailPane({
+  library,
+  tab,
+  className,
+  children,
+}: {
+  library: boolean;
+  tab: string;
+  className: string;
+  children: ReactNode;
+}) {
+  return library ? (
+    <section
+      role="tabpanel"
+      id="library-panel"
+      aria-labelledby={`library-tab-${tab}`}
+      className={className}
+    >
+      {children}
+    </section>
+  ) : (
+    <div className={className}>{children}</div>
+  );
+}
+
 function PaneShell({
   title,
   onBack,
