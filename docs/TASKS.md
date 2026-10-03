@@ -70,3 +70,21 @@ Evidence: [P3 report](TEST_REPORTS/fish-web.md): 4,175 baseline / 4,212 final te
 - [x] Cover Fish and ElevenLabs shared grammar vectors with fixed case counts, plus Fish routing and override behavior; strict end anchors reject trailing LF/U+0085 on both engines.
 - [x] Native simulator suite: 40 → 46 discovered, 31 → 37 passing, nine unchanged skips; four named mutation failures with unchanged counts, restored suite green. [P4 evidence](TEST_REPORTS/fish-ios-native.md). Physical builds/installs, deployment and push are outside this phase.
 - [x] P4 live baseline QA: Buzz HTML and 46-voice ElevenLabs JSON at HTTP 200; Agent Brave Settings → voice picker → ElevenLabs → filter Roger → Cancel; screenshot inspected, console/network receipts captured and owned tab closed. Changed Swift acceptance remains simulator-native.
+
+## Background Work rail jobs (2026-10-03)
+
+- [x] QA-JOB-001: reserved second-line labels for abnormal job/turn outcomes, preserving normal completion layout. Six browser geometry cases fail before the fix and pass after; 4,225 web units, build and all 13 Work-status cases pass. [Evidence](TEST_REPORTS/qa-job-001.md).
+
+- [x] Core: third job namespace, shared lifecycle validation and regression cases.
+- [x] SDK: validated job builder and address helper.
+- [x] Relay: validator coverage and ignored private-channel/concurrent/replacement E2E cases.
+- [x] CLI: job start/beat/end, channel detection/binding, monotonic writes and terminal refusal.
+- [x] ACP: guard that restart sweeps ignore jobs.
+- [x] Web: parser/store, Running/Done jobs, labels and independent turn/reaction rows.
+- [x] Web: mock relay smoke in both themes, with live job completion.
+- [x] Manifest and handoff documentation.
+- [x] Baseline/final required suites, builds, lint/format, mechanism mutation failures and clean committed branch.
+
+Scope excludes fleet scripts/plugin, live relay/DB, installation, deployment and service restarts.
+
+Background-job evidence: [work-rail-jobs report](TEST_REPORTS/work-rail-jobs.md). Added job checks pass with named mutation failures; full just test passes on repeat. The existing relay mesh echo 504 and CLI all-target test-loop lint remain separate open repository gates.

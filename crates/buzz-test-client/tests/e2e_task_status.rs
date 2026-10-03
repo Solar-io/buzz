@@ -16,7 +16,7 @@
 use std::time::Duration;
 
 use buzz_core::task_status::{parse_task_status, TaskState};
-use buzz_sdk::task_status::{build_task_lifecycle, TaskLifecycle};
+use buzz_sdk::task_status::{build_task_job, build_task_lifecycle, TaskJob, TaskLifecycle};
 use buzz_test_client::{BuzzTestClient, RelayMessage};
 use nostr::{Alphabet, EventBuilder, Filter, Keys, Kind, SingleLetterTag, Tag, Timestamp};
 use uuid::Uuid;
@@ -99,6 +99,43 @@ async fn query(client: &mut BuzzTestClient, name: &str, filter: Filter) -> Vec<n
         .await
         .expect("EOSE");
     client.close_subscription(&sid).await.ok();
+    events
+}
+
+/// A private-channel REQ may be denied with CLOSED rather than empty EOSE.
+/// Timeouts and unrelated failures are not proof of read isolation.
+async fn query_or_denied(client: &mut BuzzTestClient, filter: Filter) -> Vec<nostr::Event> {
+    let sid = sub_id("jobs-outsider");
+    client.subscribe(&sid, vec![filter]).await.unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let mut events = Vec::new();
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        match client
+            .recv_event(remaining)
+            .await
+            .expect("EOSE or explicit channel denial")
+        {
+            RelayMessage::Event {
+                subscription_id,
+                event,
+            } if subscription_id == sid => events.push(*event),
+            RelayMessage::Eose { subscription_id } if subscription_id == sid => break,
+            RelayMessage::Closed {
+                subscription_id,
+                message,
+            } if subscription_id == sid => {
+                assert_eq!(message, "restricted: not a channel member");
+                assert!(
+                    events.is_empty(),
+                    "a denied reader must receive no job heads"
+                );
+                break;
+            }
+            _ => {}
+        }
+    }
+    client.close_subscription(&sid).await.unwrap();
     events
 }
 
@@ -304,5 +341,118 @@ async fn malformed_task_status_rejected_with_prefix() {
         ok.message.starts_with("invalid: task-status: "),
         "unexpected message: {}",
         ok.message
+    );
+}
+
+fn job(
+    keys: &Keys,
+    channel: Uuid,
+    job_id: &str,
+    state: TaskState,
+    at: u64,
+    started: u64,
+) -> nostr::Event {
+    build_task_job(&TaskJob {
+        channel,
+        job_id,
+        role: "coder",
+        state,
+        started,
+        ended: state.is_terminal().then_some(at),
+        model: Some("gpt-6.1-sol"),
+        title: Some("Probe"),
+        turn_id: None,
+        trigger: None,
+        reason: None,
+        created_at: at,
+    })
+    .unwrap()
+    .sign_with_keys(keys)
+    .unwrap()
+}
+
+#[tokio::test]
+#[ignore]
+async fn concurrent_jobs_coexist_and_are_member_scoped() {
+    let url = relay_url();
+    let agent = Keys::generate();
+    let member = Keys::generate();
+    let outsider = Keys::generate();
+    let mut agent_ws = BuzzTestClient::connect(&url, &agent).await.unwrap();
+    let mut member_ws = BuzzTestClient::connect(&url, &member).await.unwrap();
+    let mut outsider_ws = BuzzTestClient::connect(&url, &outsider).await.unwrap();
+    let channel = create_private_channel(&mut agent_ws, &agent).await;
+    add_member(&mut agent_ws, channel, &member, &agent).await;
+    let t = now();
+    for job_id in ["j1", "j2", "j3"] {
+        let ok = agent_ws
+            .send_event(job(&agent, channel, job_id, TaskState::Running, t, t))
+            .await
+            .unwrap();
+        assert!(ok.accepted, "{}", ok.message);
+    }
+    let filter = Filter::new()
+        .kind(Kind::Custom(KIND_TASK_STATUS))
+        .custom_tag(SingleLetterTag::lowercase(Alphabet::H), channel.to_string());
+    let seen = query(&mut member_ws, "jobs-member", filter.clone()).await;
+    assert_eq!(seen.len(), 3);
+    let ids: std::collections::HashSet<_> = seen
+        .iter()
+        .map(|e| parse_task_status(e).unwrap().job_id.unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        ["j1", "j2", "j3"].map(str::to_string).into_iter().collect()
+    );
+    let seen = query_or_denied(&mut outsider_ws, filter.clone()).await;
+    assert!(seen.is_empty());
+    let sid = sub_id("jobs-live");
+    member_ws.subscribe(&sid, vec![filter]).await.unwrap();
+    let history = member_ws
+        .collect_until_eose(&sid, Duration::from_secs(5))
+        .await
+        .unwrap();
+    assert_eq!(history.len(), 3);
+    let fourth = job(&agent, channel, "j4", TaskState::Running, t + 1, t);
+    assert!(agent_ws.send_event(fourth.clone()).await.unwrap().accepted);
+    assert!(saw_live(&mut member_ws, &sid, &fourth.id, Duration::from_secs(3)).await);
+    member_ws.close_subscription(&sid).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore]
+async fn job_end_replaces_running_and_stale_beat_cannot_revert() {
+    let agent = Keys::generate();
+    let mut ws = BuzzTestClient::connect(&relay_url(), &agent).await.unwrap();
+    let channel = create_private_channel(&mut ws, &agent).await;
+    let t = now();
+    assert!(
+        ws.send_event(job(&agent, channel, "j1", TaskState::Running, t, t))
+            .await
+            .unwrap()
+            .accepted
+    );
+    let done = job(&agent, channel, "j1", TaskState::Done, t + 2, t);
+    assert!(ws.send_event(done.clone()).await.unwrap().accepted);
+    ws.send_event(job(&agent, channel, "j1", TaskState::Running, t + 1, t))
+        .await
+        .unwrap();
+    let seen = query(
+        &mut ws,
+        "job-order",
+        Filter::new()
+            .kind(Kind::Custom(KIND_TASK_STATUS))
+            .author(agent.public_key())
+            .custom_tag(
+                SingleLetterTag::lowercase(Alphabet::D),
+                format!("job:{channel}:j1"),
+            ),
+    )
+    .await;
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].id, done.id);
+    assert_eq!(
+        parse_task_status(&seen[0]).unwrap().state,
+        Some(TaskState::Done)
     );
 }

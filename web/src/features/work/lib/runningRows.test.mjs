@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { lifecycleRows } from "./runningRows.ts";
+import { jobRows, lifecycleRows } from "./runningRows.ts";
 import {
   EMPTY_STATUS_STORE,
   foldStatus,
   parseTaskStatus,
 } from "./taskStatus.ts";
+
+import { jobEvent } from "./jobFixture.mjs";
 
 const OWNED = "aa".repeat(32);
 const OTHER = "bb".repeat(32);
@@ -318,4 +320,55 @@ test("spokenFor records the newest word on each (agent, channel)", () => {
   );
   assert.equal(spokenFor.get(`${OWNED}|${CH}`), NOW - 3);
   assert.equal(spokenFor.get(`${OTHER}|${CH}`), NOW - 70);
+});
+
+test("job rows use the literal 300 second cutoff and never stall", () => {
+  for (const [age, count] of [
+    [299, 1],
+    [300, 1],
+    [301, 0],
+  ]) {
+    const rows = jobRows(
+      store(parseTaskStatus(jobEvent({ at: NOW - age }))),
+      NOW,
+    );
+    assert.equal(rows.length, count, `age ${age}`);
+    if (count) {
+      assert.equal(rows[0].state, "live");
+      assert.equal(rows[0].source, "job");
+      assert.equal(rows[0].turnId, null);
+    }
+  }
+  assert.equal(
+    jobRows(store(parseTaskStatus(jobEvent({ state: "done", at: NOW }))), NOW)
+      .length,
+    0,
+  );
+});
+
+test("job rows keep three distinct concurrent keys and sort newest starts first", () => {
+  const rows = jobRows(
+    store(
+      ...[1, 2, 3].map((i) =>
+        parseTaskStatus(
+          jobEvent({
+            jobId: `j${i}`,
+            at: NOW,
+            started: 900 + i,
+            model: "gpt-6.1-sol",
+          }),
+        ),
+      ),
+    ),
+    NOW,
+  );
+  assert.equal(rows.length, 3);
+  assert.equal(new Set(rows.map((row) => row.key)).size, 3);
+  assert.deepEqual(
+    rows.map((row) => row.job.id),
+    ["j3", "j2", "j1"],
+  );
+  assert.equal(rows[0].key, `job:${OWNED}:${CH}:j3`);
+  assert.equal(rows[0].job.engine, "GPT");
+  assert.equal(rows[0].progress, null);
 });
