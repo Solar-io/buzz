@@ -60,6 +60,7 @@ export default defineConfig({
         "**/files-embed.spec.ts",
         "**/terminal.spec.ts",
         "**/items.spec.ts",
+        "**/item-attachments.spec.ts",
         "**/shelf.spec.ts",
         "**/favorites-sync.spec.ts",
         "**/owner-admin-presence.spec.ts",

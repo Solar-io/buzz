@@ -206,3 +206,10 @@ Source `a286ae533` uses message-row container queries to drop quick reactions pr
 Source 5efb88b7f shares the existing 320px Work/Canvas minimum and 723px row-query overlay. Narrow Work now overlays rather than clipping beside 400px chat. Back to chat closes Canvas, selects Work and folds the rail; both tabs stay reachable, folded reopening works, and widening restores the preferred width.
 
 Twelve painted tab/sidebar cases replace two Canvas-only cases. Baseline reproduces squeezed Work and missing Back. Three rebuilt mechanism mutations produce eight named failures with unchanged selection counts. Restored source matches the commit and 38 selected browser workflows pass. All 4,421 units, TypeScript, build, touched-file Biome and the baseline-based size gate pass. Agent Brave WebSocket canary timed out, so the documented isolated headed fallback supplied the painted runs and inspected screenshots. Receipts: .scratch/work-dock/ and logs/verification.log. Report: TEST_REPORTS/web-layout-bugs.md#work-dock-minimum-follow-up--2026-10-03.
+
+
+2026-10-03 — Item capture attachments x5fq4jncejx5
+
+Description now supports multi-file Attach, file/image paste and drop using the shared composer queue, transport and tray. Completion inserts filename markdown at the live selection; pending uploads lock create, body updates enforce 16,384 UTF-8 bytes, and removed/closed uploads cannot insert later. Expanded Notes uses the timeline signed-media/lightbox renderer; no body edit view exists. The Web chat client manifest row carries the change.
+
+4,421 -> 4,437 units, typecheck/build, eleven-file Biome and the base-relative size gate pass. Full lint retains two baseline errors. Seven unit mechanism withdrawals fail named tests at 16 cases; the create-wire body mutation fails its single browser case. Restored direct Agent Brave workflows pass at 1440/390, with six inspected screenshots. MCP sign-in actionability timeouts supply no acceptance claim; relay/media responses in the passing checks were mocked because this shell lacks an enrolled signer. See TEST_REPORTS/item-attachments.md and logs/verification.log for handoff details and raw paths.

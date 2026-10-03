@@ -13,11 +13,14 @@ import {
 import {
   charCount,
   ITEM_PROJECT_NAME_MAX_CHARS,
+  ITEM_BODY_MAX_BYTES,
   ITEM_SUMMARY_MAX_CHARS,
   ITEM_TITLE_MAX_CHARS,
   type ItemType,
   rustTrim,
 } from "../lib/itemEvent.ts";
+import { itemBodyBytes } from "../lib/itemAttachments.ts";
+import { ItemBodyEditor } from "./ItemBodyEditor";
 
 const FIELD =
   "w-full rounded-lg border border-border bg-card px-3 text-sm outline-hidden placeholder:text-muted-foreground focus:border-foreground";
@@ -44,6 +47,7 @@ export function AddItemDialog({
     type: ItemType;
     title: string;
     summary: string | null;
+    body: string;
     channelId: string | null;
     projectName: string | null;
   }) => Promise<string | null>;
@@ -52,6 +56,8 @@ export function AddItemDialog({
   const [type, setType] = useState<ItemType>("bug");
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
+  const [body, setBody] = useState("");
+  const [uploadsPending, setUploadsPending] = useState(false);
   const [channelId, setChannelId] = useState("");
   const [project, setProject] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +65,8 @@ export function AddItemDialog({
   const reset = () => {
     setTitle("");
     setSummary("");
+    setBody("");
+    setUploadsPending(false);
     setProject("");
     setError(null);
   };
@@ -68,6 +76,11 @@ export function AddItemDialog({
   };
   const titleChars = charCount(rustTrim(title));
   const submit = async () => {
+    if (saving || uploadsPending) return;
+    if (itemBodyBytes(body) > ITEM_BODY_MAX_BYTES) {
+      setError(`Keep the description to ${ITEM_BODY_MAX_BYTES} bytes.`);
+      return;
+    }
     if (titleChars === 0) {
       setError("Give it a title.");
       return;
@@ -93,6 +106,7 @@ export function AddItemDialog({
       type,
       title: rustTrim(title),
       summary: summary.trim() === "" ? null : summary.trim(),
+      body,
       channelId: channelId === "" ? null : channelId,
       projectName: project.trim() === "" ? null : project.trim(),
     });
@@ -105,7 +119,10 @@ export function AddItemDialog({
   };
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? undefined : close())}>
-      <DialogContent className="max-w-lg gap-4" data-testid="add-item-dialog">
+      <DialogContent
+        className="max-h-[90dvh] max-w-lg gap-4 overflow-y-auto"
+        data-testid="add-item-dialog"
+      >
         <DialogHeader>
           <DialogTitle className="text-lg">Add item</DialogTitle>
           <DialogDescription>
@@ -176,6 +193,14 @@ export function AddItemDialog({
               )}
             />
           </label>
+          {open ? (
+            <ItemBodyEditor
+              value={body}
+              onChange={setBody}
+              busy={saving}
+              onPendingChange={setUploadsPending}
+            />
+          ) : null}
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="flex flex-col gap-1.5 text-xs font-semibold text-ink-2">
               Channel
@@ -223,14 +248,20 @@ export function AddItemDialog({
             </button>
             <button
               type="submit"
-              disabled={saving}
+              disabled={
+                saving ||
+                uploadsPending ||
+                itemBodyBytes(body) > ITEM_BODY_MAX_BYTES
+              }
               className="h-9 rounded-lg bg-primary px-3.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
-              {saving
-                ? "Adding…"
-                : type === "bug"
-                  ? "File bug"
-                  : "Add to backlog"}
+              {uploadsPending
+                ? "Uploading…"
+                : saving
+                  ? "Adding…"
+                  : type === "bug"
+                    ? "File bug"
+                    : "Add to backlog"}
             </button>
           </DialogFooter>
         </form>

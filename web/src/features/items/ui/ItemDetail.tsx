@@ -1,4 +1,5 @@
 import { ArrowRight, Hash } from "lucide-react";
+import { MarkdownContent } from "@/features/channels/ui/MarkdownContent";
 
 import { plainText } from "@/shared/lib/plainText";
 import { cn } from "@/shared/lib/cn";
@@ -7,6 +8,7 @@ import { type ItemHead, itemKey, shortItemId } from "../lib/itemEvent.ts";
 import { itemRowTag } from "../lib/itemMessages.ts";
 import { SectionLabel } from "./ItemBits";
 import type { ItemRowContext } from "./itemRowContext.ts";
+const NO_MENTIONS: ReadonlySet<string> = new Set();
 
 /** "3:34 PM" today, "Mon 10:05 AM" this week, else the date. */
 function whenLabel(atS: number, nowS: number): string {
@@ -65,7 +67,7 @@ export function ItemDetail({
   // A /bug confirmation row only restates the title: quote the notes instead.
   const quotable = source && itemRowTag(source.tags) === null ? source : null;
   const quote = quotable ? plainText(quotable.content) : "";
-  const notes = plainText(item.body);
+  const notes = item.body;
   const busy = ctx.busy.has(itemKey(item.channelId, item.id));
   const channel = ctx.channelName(item.channelId);
   const canHandOff = item.channelId !== null;
@@ -112,14 +114,7 @@ export function ItemDetail({
               </p>
             </div>
           </>
-        ) : notes !== "" ? (
-          <>
-            <SectionLabel>Notes</SectionLabel>
-            <p className="line-clamp-6 rounded-[10px] border border-border bg-card px-3 py-2.5 text-sidebar-meta leading-normal break-words">
-              {notes}
-            </p>
-          </>
-        ) : item.sourceEventId && item.channelId ? (
+        ) : item.sourceEventId && item.channelId && notes === "" ? (
           <button
             type="button"
             onClick={() =>
@@ -132,6 +127,18 @@ export function ItemDetail({
           >
             Open where it was filed ↗
           </button>
+        ) : null}
+        {notes !== "" ? (
+          <>
+            <SectionLabel>Notes</SectionLabel>
+            <div className="rounded-[10px] border border-border bg-card px-3 py-2.5 text-sidebar-meta leading-normal break-words">
+              <MarkdownContent
+                content={notes}
+                mentionNames={NO_MENTIONS}
+                compact
+              />
+            </div>
+          </>
         ) : null}
         <div
           data-testid="item-activity"
