@@ -50,6 +50,7 @@ export default defineConfig({
         "**/forum.spec.ts",
         "**/new-channel.spec.ts",
         "**/sidebar-appearance.spec.ts",
+        "**/sidebar-order.spec.ts",
         "**/shortcut-bar.spec.ts",
         "**/work-shell.spec.ts",
         "**/work-status.spec.ts",
