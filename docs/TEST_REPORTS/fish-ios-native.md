@@ -49,3 +49,15 @@ Each log has a matching `logs/fish-ios-mutation-*.diff`. Complete output is coll
 The new shared reject tests initially fail against simulator Foundation: `$` accepts an otherwise valid cloud key followed by LF or U+0085. Both selection and assignment admitted those values. Strict `\z` anchors fix Fish and the pre-existing ElevenLabs mismatch with the relay's raw ASCII grammar. That ElevenLabs anchor correction is the only added behavioral change beyond Fish admission. The internal route extraction preserves the existing logic and avoids testing a replica of the native override path.
 
 The remaining plan-level iOS acceptance is a later build with P3's web bundle followed by device-assisted Fish preview and native-huddle playback. The P4 implementation and simulator done condition are complete.
+
+## Live application and Agent Brave QA — 2026-10-03 02:51–02:54 UTC
+
+The modified native file has a UI surface: voice choices determine native-huddle speech. These live checks exercise the currently served web application as a baseline; the changed Swift path is covered by the simulator suite above. Physical Fish playback remains the later plan-level acceptance step.
+
+- `GET https://crichton.tailb3d4b8.ts.net:6351/repos/?qa=fish-ios-p4-20261002`: HTTP/2 200, `text/html; charset=utf-8`, body `<title>Buzz</title>` with `/assets/index-DuGYm_0H.js`. Full body: `logs/fish-ios-live-app.html`; headers: `logs/fish-ios-live-app-headers.txt`; exact request/response client trace: `logs/fish-ios-live-app-http.log`.
+- `GET https://crichton.tailb3d4b8.ts.net:6366/voices/eleven`: HTTP/2 200, JSON with 46 voices. First row is `CwhRBWXzGAHq8TQ4Fs17`, “Roger - Laid-Back, Casual, Resonant (american)”. Body, headers and client trace: `logs/fish-ios-live-eleven.json`, `logs/fish-ios-live-eleven-headers.txt`, `logs/fish-ios-live-eleven-http.log`.
+- A bounded `docker logs --since 7m --tail 800 buzz-dev-relay-1` check exited 0 but found no entry matching the exact probe marker. `logs/fish-ios-live-relay-log-check.txt` records that limitation; the HTTP receipts are client traces, without a correlated server-log claim.
+- Agent Brave rendered the authenticated Buzz shell. Clicked Buzz menu → Settings → Voice & audio → Choose voice → ElevenLabs, filtered Roger, verified its Preview/Select row, then clicked Cancel. The dialog count returned to zero and the Your voice heading remained visible. Final flow URL: `https://crichton.tailb3d4b8.ts.net:6351/repos/settings?group=voice`.
+- Inspected the cropped picker screenshot `logs/fish-ios-live-picker.png`; the accessibility snapshot is `logs/fish-ios-live-picker.md`. The served picker has Chatterbox and ElevenLabs tabs. No selection was confirmed.
+- Browser request log `logs/fish-ios-live-network.log` records `/voices/chatterbox` and `/voices/eleven` at 200. Console log `logs/fish-ios-live-console.log` records six 401 responses from the separate `:6881/api/host-stats` endpoint, also described in P2's baseline report. The checked picker rendered and filtered successfully.
+- Closed only the claimed Agent Brave tab. No physical-device build/install or voice publish was performed by this QA supplement.
