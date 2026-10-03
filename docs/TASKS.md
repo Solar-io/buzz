@@ -197,6 +197,7 @@ W8a integration evidence: [current-main composition](TEST_REPORTS/parity-w8a.md#
 - [x] Record evidence and commit the integration in the provisioned branch.
 
 Evidence: [W9b2 current-main composition](TEST_REPORTS/parity-w9b2.md#w9b2-composition-with-current-main--2026-10-03).
-- [ ] Huddle archive discovery: refresh kind:39000 and evict subscriptions after grace-fire archive, silently and best-effort.
-- [ ] Huddle archive discovery: bounded, tenant-scoped, fail-open startup repair; prove selector, batching and idempotence.
-- [ ] Huddle archive discovery: mutation proof, relay baseline/final counts, strict Clippy and committed handoff.
+- [x] Huddle archive discovery: refresh kind:39000 and evict subscriptions after grace-fire archive, silently and best-effort.
+- [x] Huddle archive discovery: bounded, tenant-scoped, fail-open startup repair; prove selector, batching and idempotence.
+- [x] Huddle archive discovery: mutation proof, relay baseline/final counts, strict Clippy and committed handoff. Evidence: [report](TEST_REPORTS/huddle-archive-discovery.md).
+- [ ] Huddle archive discovery full-suite gate: unchanged `api::mesh_demo::tests::demo_join_forwarded_arm_round_trips_echo` returns 504 instead of 200 before and after this change; no approval to waive the gate.
