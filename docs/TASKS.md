@@ -102,3 +102,6 @@ W2 people in channel Members (in progress):
 - [ ] Community-only timeout/ban menus, reason entry, authority and archived-state guards.
 - [ ] Full web gates, named mechanism reversion proof, built-app checks and 1440/390/375 screenshots.
 - [ ] Private live-relay channel acceptance with a second authorized test identity.
+- [ ] Safe markdown details: recognise blank/nonblank body boundaries, own-line summaries, open, missing close, nested blocks, literal code, formatted labels and unrelated HTML in both clients.
+- [ ] Safe markdown details: wire desktop chat and web chat/Pulse, preserve downstream markdown features and inherited styling.
+- [ ] Safe markdown details: record both baseline/final test counts, typechecks, palette/text checks, DOM/browser acceptance and named mutation failures; commit the coding handoff.
