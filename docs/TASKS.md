@@ -111,3 +111,12 @@ W2 people in channel Members (in progress):
 - [x] Channel Workflows tab: scoped rows/run status and create/edit YAML; preserve identity and revision.
 - [x] W5b behavioural tests, mutations, required web checks and built-app responsive acceptance. [Evidence](TEST_REPORTS/parity-w5b.md).
 - [ ] W5b live private-channel create/edit with an enrolled signer.
+
+W9b1 agent settings cards:
+- [x] Model & thinking: grouped model picker, runtime-specific Provider/API key, read-only locked Effort.
+- [x] Runtime: preset/custom picker, locked inheritance, Turns at once, duration presets/custom/reset, Start with Buzz Desktop, honest blind controls.
+- [x] Who can instruct: named people picker, locked Nobody, desktop warning copy and placement.
+- [x] W7 draft/save/navigation integration, targeted desktop acknowledgements, safe local timeout echo and phone sub-pages.
+- [x] Required web checks, named fail-first regressions, built-app browser journeys and 1440/390 screenshots; commit and handoff.
+
+- [ ] W9b1 live desktop acceptance: throwaway-agent Idle 30 min and Anyone save/reload against the real desktop. Local client evidence uses mocked desktop acknowledgements. See [W9b1 report](TEST_REPORTS/parity-w9b1.md).

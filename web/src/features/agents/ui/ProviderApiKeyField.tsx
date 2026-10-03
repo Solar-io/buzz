@@ -36,7 +36,7 @@ export function ProviderApiKeyField({
         </code>
       </p>
       <fieldset className="flex flex-wrap gap-4 text-sm">
-        <label>
+        <label className="flex min-h-11 items-center gap-2">
           <input
             type="radio"
             name="api-key-mode"
@@ -45,7 +45,7 @@ export function ProviderApiKeyField({
           />{" "}
           Keep current
         </label>
-        <label>
+        <label className="flex min-h-11 items-center gap-2">
           <input
             type="radio"
             name="api-key-mode"
@@ -54,7 +54,7 @@ export function ProviderApiKeyField({
           />{" "}
           Set new key
         </label>
-        <label>
+        <label className="flex min-h-11 items-center gap-2">
           <input
             type="radio"
             name="api-key-mode"
@@ -67,6 +67,7 @@ export function ProviderApiKeyField({
       {value.kind === "set" && (
         <div className="flex max-w-md items-center gap-2">
           <Input
+            className="min-h-11 md:min-h-9"
             type={reveal ? "text" : "password"}
             autoComplete="off"
             spellCheck={false}
@@ -78,7 +79,7 @@ export function ProviderApiKeyField({
           />
           <button
             type="button"
-            className="rounded p-1 text-muted-foreground hover:bg-accent"
+            className="flex min-h-11 min-w-11 items-center justify-center rounded text-muted-foreground hover:bg-accent"
             aria-label={reveal ? "Hide key" : "Show key"}
             onClick={() => setReveal((previous) => !previous)}
           >
