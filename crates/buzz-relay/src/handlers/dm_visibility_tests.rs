@@ -156,9 +156,21 @@ async fn wait_resurfaced(f: &Fixture, keys: &Keys) -> Event {
 #[sqlx::test(migrations = false)]
 #[ignore = "requires Postgres"]
 async fn accepted_chat_resurfaces_recipient_and_preserves_sender(pool: PgPool) {
-    let f = fixture(pool).await;
+    let mut f = fixture(pool).await;
     // A second hidden DM must remain in the complete snapshot.
     let c = Keys::generate();
+    f.dm = f
+        .state
+        .db
+        .open_dm(
+            f.tenant.community(),
+            &[&f.b.public_key().to_bytes(), &c.public_key().to_bytes()],
+            &f.a.public_key().to_bytes(),
+        )
+        .await
+        .unwrap()
+        .0
+        .id;
     let other = f
         .state
         .db
@@ -179,6 +191,7 @@ async fn accepted_chat_resurfaces_recipient_and_preserves_sender(pool: PgPool) {
     for kind in [9, 40002] {
         let before_a = hide(&f, &f.a).await;
         let before_b = hide(&f, &f.b).await;
+        let before_c = hide(&f, &c).await;
         assert!(hidden_in(&before_a, f.dm));
         let msg = event(&f.b, f.dm, kind, &format!("new chat {kind}"), vec![]);
         let result = ingest_event(&f.state, &f.tenant, msg, auth(&f.b))
@@ -186,6 +199,16 @@ async fn accepted_chat_resurfaces_recipient_and_preserves_sender(pool: PgPool) {
             .unwrap();
         assert!(result.accepted);
         let after = wait_resurfaced(&f, &f.a).await;
+        let after_c = wait_resurfaced(&f, &c).await;
+        after_c.verify().unwrap();
+        assert!(after_c.created_at > before_c.created_at);
+        assert!(f
+            .state
+            .db
+            .list_hidden_dms(f.tenant.community(), &c.public_key().to_bytes())
+            .await
+            .unwrap()
+            .is_empty());
         after.verify().unwrap();
         assert_eq!(after.pubkey, f.state.relay_keypair.public_key());
         assert!(after.created_at > before_a.created_at);
