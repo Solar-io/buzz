@@ -36,7 +36,8 @@ export function AgentSettingsCards({
   children?: ReactNode;
 }) {
   const [page, setPage] = useState<"runtime" | "access" | null>(null);
-  const form = useAgentCardDraft(row, admin, enabled);
+  const extendedEnabled = controlsEnabled(catalogs, row.machines);
+  const form = useAgentCardDraft(row, admin, enabled, extendedEnabled);
   const selected: string[] = JSON.parse(
     String(form.value("respondToAllowlist")),
   );
@@ -52,7 +53,7 @@ export function AgentSettingsCards({
     originalLabel: (field) =>
       draft.draft.get(`${row.pubkey}:${field}`)?.original.label,
     disabled: !enabled || draft.busy || draft.uncertain,
-    controlsLocked: !controlsEnabled(catalogs, row.machines),
+    controlsLocked: !extendedEnabled,
     machine: row.machines[0] ?? "Buzz Desktop",
   };
   return (

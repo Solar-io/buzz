@@ -182,18 +182,22 @@ export function RuntimeCard({
               }
             />
           ) : (
-            <input
+            <button
+              type="button"
               aria-label="Start with Buzz Desktop"
               role="switch"
               aria-checked={fields.value("startOnAppLaunch") === true}
-              type="checkbox"
-              className="size-6"
+              className={`min-h-11 min-w-11 rounded-lg border border-input text-sm ${fields.dirty("startOnAppLaunch") ? "bg-honey-wash text-honey-ink" : "bg-background"}`}
               disabled={fields.disabled || fields.controlsLocked}
-              checked={fields.value("startOnAppLaunch") === true}
-              onChange={(event) =>
-                fields.edit("startOnAppLaunch", event.target.checked)
+              onClick={() =>
+                fields.edit(
+                  "startOnAppLaunch",
+                  fields.value("startOnAppLaunch") !== true,
+                )
               }
-            />
+            >
+              {fields.value("startOnAppLaunch") === true ? "On" : "Off"}
+            </button>
           )}
         </div>
       ),

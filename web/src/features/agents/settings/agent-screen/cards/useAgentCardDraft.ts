@@ -23,6 +23,7 @@ export function useAgentCardDraft(
   row: RosterRow,
   admin: ReturnType<typeof useAdminCommands>,
   enabled: boolean,
+  extendedEnabled: boolean,
 ) {
   const [echo, setEcho] = useState<SettingsEcho>({});
   const [echoKey, setEchoKey] = useState<string | null>(null);
@@ -61,6 +62,21 @@ export function useAgentCardDraft(
     );
   }, [row.entry.updatedAt, row.persona?.updatedAt]);
   const draft = useSettingsDraft(async (plan) => {
+    if (
+      !extendedEnabled &&
+      plan.entries.some((entry) =>
+        [
+          "idleTimeoutSeconds",
+          "maxTurnDurationSeconds",
+          "startOnAppLaunch",
+          "apiKey",
+        ].includes(entry.field),
+      )
+    )
+      return {
+        ok: false,
+        error: "Update Buzz Desktop to change this setting.",
+      };
     if (
       !enabled ||
       row.machines.length !== 1 ||
