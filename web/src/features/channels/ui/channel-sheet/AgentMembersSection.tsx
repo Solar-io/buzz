@@ -18,6 +18,7 @@ import {
 } from "@/shared/ui/dropdown-menu";
 import type { ChannelMember, Profile } from "../../hooks";
 import { authorLabel } from "../../lib/authorLabel";
+import { isLastOwner } from "../../lib/channelMemberAdmin";
 import {
   channelAgentCandidates,
   channelAgentTarget,
@@ -78,6 +79,12 @@ export function AgentMembersSection({
   const now = Math.floor(Date.now() / 1000);
   const stale = unregisteredChannelAgents(members, registry, catalogs, now);
   const staleKeys = new Set(stale.map((entry) => entry.pubkey));
+  const allMembers = [...members, ...people];
+  const cleanupWouldDropAllOwners =
+    allMembers.some((member) => member.role === "owner") &&
+    !allMembers.some(
+      (member) => member.role === "owner" && !staleKeys.has(member.pubkey),
+    );
   const candidates = channelAgentCandidates(registry, members, catalogs, now);
   const locked = busy || archived || status !== "open";
   const reason = (pubkey: string) =>
@@ -134,6 +141,9 @@ export function AgentMembersSection({
   const remove = async (pubkey: string) => {
     if (!canManage)
       throw new Error("Only channel owners and admins can remove agents.");
+    const member = members.find((entry) => entry.pubkey === pubkey);
+    if (member && isLastOwner(member, allMembers))
+      throw new Error("A channel needs an owner.");
     await removeAgentChannel(channelId, pubkey, sendMember, () => {});
   };
   const bulk = async (action: "start" | "stop") => {
@@ -156,6 +166,12 @@ export function AgentMembersSection({
     registry.find((entry) => entry.pubkey === pubkey)?.name ??
     authorLabel(pubkey, profiles);
   const cleanup = () => {
+    if (cleanupWouldDropAllOwners) {
+      setError(
+        "A channel needs an owner. Transfer ownership before removing these agents.",
+      );
+      return;
+    }
     const names = stale.map((entry) => labelFor(entry.pubkey));
     if (
       !window.confirm(
@@ -180,7 +196,7 @@ export function AgentMembersSection({
       <UnregisteredBanner
         count={stale.length}
         canRemove={canManage}
-        busy={locked}
+        busy={locked || cleanupWouldDropAllOwners}
         onRemove={cleanup}
       />
       {peopleSection}
@@ -362,7 +378,12 @@ export function AgentMembersSection({
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           className="min-h-11 text-coral-ink focus:text-coral-ink"
-                          disabled={locked}
+                          disabled={locked || isLastOwner(member, allMembers)}
+                          title={
+                            isLastOwner(member, allMembers)
+                              ? "A channel needs an owner"
+                              : undefined
+                          }
                           onSelect={() => {
                             if (
                               window.confirm(

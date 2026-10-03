@@ -79,13 +79,15 @@ async function mount({
   archived = false,
   pickerOpen = false,
   offline = false,
+  channelOwner = false,
 } = {}) {
   const registry = Array.from({ length: count + stale + 1 }, (_, n) =>
     agent(n + 1),
   );
-  const members = registry
-    .slice(0, count + stale)
-    .map(({ pubkey }) => ({ pubkey, role: "bot" }));
+  const members = registry.slice(0, count + stale).map(({ pubkey }, index) => ({
+    pubkey,
+    role: channelOwner && index === count ? "owner" : "bot",
+  }));
   globalThis.w3Catalogs = [
     {
       machine: "crichton.local",
@@ -286,11 +288,12 @@ test("Start all and Stop all send one targeted command per registered member", a
     await view.close();
   }
 });
-test("archived, non-admin and offline channels lock the appropriate controls", async () => {
+test("archived, non-admin, offline and last-owner channels lock the appropriate controls", async () => {
   for (const props of [
     { archived: true },
     { canManage: false },
     { offline: true },
+    { channelOwner: true },
   ]) {
     const view = await mount({ ...props, stale: 1 });
     try {
@@ -300,6 +303,8 @@ test("archived, non-admin and offline channels lock the appropriate controls", a
       } else if (props.canManage === false) {
         assert.equal(button("Start all"), undefined);
         assert.equal(button("Remove 1"), undefined);
+      } else if (props.channelOwner) {
+        assert.equal(button("Remove 1").disabled, true);
       } else {
         assert.equal(button("Start all").disabled, true);
         assert.equal(button("Stop all").disabled, true);
