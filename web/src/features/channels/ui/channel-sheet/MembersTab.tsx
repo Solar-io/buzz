@@ -167,41 +167,43 @@ export function MembersTab({
           {notice}
         </p>
       )}
-      <PeopleSection
-        people={people.filter((member) =>
-          `${authorLabel(member.pubkey, profiles)} ${member.pubkey} ${member.role ?? "member"}`
-            .toLowerCase()
-            .includes(needle),
-        )}
-        allMembers={members}
-        profiles={profiles}
-        selfPubkey={selfPubkey}
-        canManage={canManage}
-        canModerate={canModerate}
-        busy={busy || archived}
-        onRole={(pubkey, role) =>
-          void run(async () => {
-            guard(pubkey);
-            await publish(9000, putUserTags(channelId, pubkey, role));
-          }, "Role change accepted. Waiting for the updated member list.")
-        }
-        onRemove={(member) => {
-          if (
-            window.confirm(
-              `Remove ${authorLabel(member.pubkey, profiles)} from this channel?`,
-            )
-          )
-            void run(async () => {
-              guard(member.pubkey);
-              await publish(9001, removeUserTags(channelId, member.pubkey));
-            }, "Removal accepted. Waiting for the updated member list.");
-        }}
-        onModerate={(member, action) => {
-          setError(null);
-          setModeration({ member, action });
-        }}
-      />
       <AgentMembersSection
+        peopleSection={
+          <PeopleSection
+            people={people.filter((member) =>
+              `${authorLabel(member.pubkey, profiles)} ${member.pubkey} ${member.role ?? "member"}`
+                .toLowerCase()
+                .includes(needle),
+            )}
+            allMembers={members}
+            profiles={profiles}
+            selfPubkey={selfPubkey}
+            canManage={canManage}
+            canModerate={canModerate}
+            busy={busy || archived}
+            onRole={(pubkey, role) =>
+              void run(async () => {
+                guard(pubkey);
+                await publish(9000, putUserTags(channelId, pubkey, role));
+              }, "Role change accepted. Waiting for the updated member list.")
+            }
+            onRemove={(member) => {
+              if (
+                window.confirm(
+                  `Remove ${authorLabel(member.pubkey, profiles)} from this channel?`,
+                )
+              )
+                void run(async () => {
+                  guard(member.pubkey);
+                  await publish(9001, removeUserTags(channelId, member.pubkey));
+                }, "Removal accepted. Waiting for the updated member list.");
+            }}
+            onModerate={(member, action) => {
+              setError(null);
+              setModeration({ member, action });
+            }}
+          />
+        }
         channelId={channelId}
         members={partition.agents}
         people={people}

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { MoreHorizontal } from "lucide-react";
 import { useRelaySession } from "@/shared/api/RelaySessionProvider";
@@ -45,6 +45,7 @@ export function AgentMembersSection({
   query,
   pickerOpen,
   onPickerClose,
+  peopleSection,
 }: {
   channelId: string;
   members: ChannelMember[];
@@ -57,6 +58,7 @@ export function AgentMembersSection({
   query: string;
   pickerOpen: boolean;
   onPickerClose: () => void;
+  peopleSection?: ReactNode;
 }) {
   const { session, status } = useRelaySession();
   const catalogs = useDesktopCatalogs();
@@ -172,6 +174,7 @@ export function AgentMembersSection({
         busy={locked}
         onRemove={cleanup}
       />
+      {peopleSection}
       <div className="flex flex-wrap items-center gap-1">
         <h2 className="mr-auto text-2xs uppercase tracking-wider text-muted-foreground">
           Agents · {registeredCount} registered
