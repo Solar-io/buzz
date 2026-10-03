@@ -65,6 +65,7 @@ export default defineConfig({
         "**/owner-admin-presence.spec.ts",
         "**/channel-sheet.spec.ts",
         "**/canvas-edit.spec.ts",
+        "**/conversation-layout.spec.ts",
         "**/channel-members.spec.ts",
         "**/channel-agents.spec.ts",
         "**/channel-workflows.spec.ts",

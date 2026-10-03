@@ -1,3 +1,4 @@
+- [ ] Web layout bugs vcrxm3xrk920 / je8htrkcvrcd: protect conversation width beside Canvas and keep neighbouring hover actions clear of inline reply boxes; implementation and browser regression checks in progress.
 - [x] Work row context: title → own in-turn message → trigger/parent precedence, bounded history fetching, unit boundaries, two mutation kills, and desktop/phone fixtures.
 - [x] Parity W11a: Library tabs (Definitions, Teams, Catalog, Snapshots) and one New agent menu.
 - [x] Parity W11a: Blank create cards using existing create wire contract and built-in defaults; linked/team creation stays locked for P2.

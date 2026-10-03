@@ -24,7 +24,7 @@ import { QUICK_REACTIONS } from "../lib/reactions.ts";
 
 /**
  * The floating hover toolbar for one message row (Main artboard): a small
- * elevated card that overlaps the row's top-right corner and appears on
+ * elevated card inside the row's top-right corner that appears on
  * hover OR focus-within.
  *
  * Focus-within is not decoration. Without it the bar is unreachable by
@@ -219,7 +219,9 @@ export function MessageActionBar({
           setPickerOpen(false);
         }}
         className={cn(
-          "buzz-message-actions absolute right-2.5 top-0 z-10 -translate-y-1/2",
+          // Stay inside this row: translating above it covers the preceding
+          // open thread's reply box and intercepts its pointer input.
+          "buzz-message-actions absolute right-2.5 top-0 z-10",
           "flex items-center gap-px rounded-[10px] border border-border bg-card p-[3px]",
           "shadow-[0_8px_18px_-10px_var(--elev-shadow)]",
           "transition-opacity duration-150 ease-out",

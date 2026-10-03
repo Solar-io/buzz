@@ -178,3 +178,7 @@ Identity/upload, linked Library entry, patch-only environment rows and confirmed
 2026-10-03 — W9b2 current-main composition
 
 Source `5e66e7718` composes W9b2 parent `14a53f7b1` with main parent `775f6db5f`. AgentManagementSection now uses W8a RosterTable with P0 presence controlLock; the duplicate AgentRosterList is removed and its shared working dot lives in AgentWorkingDot. All Library/create/footer/navigation/cards and both parents' Playwright registrations are preserved. 4,421 units and 50 requested browser cases pass, as do TypeScript, 39-file Biome and build. Withdrawing the composed lock fails the named row-disable case; exact restoration/rebuild passes. The first combined run had one pre-assertion navigation timeout; the unchanged named and full reruns pass. [Full receipt](TEST_REPORTS/parity-w9b2.md#w9b2-composition-with-current-main--2026-10-03).
+
+2026-10-03 — Web layout bugs vcrxm3xrk920 / je8htrkcvrcd
+
+Canvas width is capped against the shell row after the resizable sidebar, reserving 400px chat and the resize handle; a row below 723px uses the existing pane as an overlay. Phone sheets and explicit expansion retain their paths. Hover toolbars no longer translate above their message, protecting the preceding open thread reply box. Painted regression coverage is in web/tests/e2e/conversation-layout.spec.ts; evidence is collected under .scratch/layout-bugs/.
