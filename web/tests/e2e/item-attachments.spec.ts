@@ -1,10 +1,13 @@
+import { readFileSync } from "node:fs";
 import { expect } from "@playwright/test";
 import { test } from "./helpers/agentBraveTest";
 import { openShell, shot } from "./helpers/shellPage";
 
-const PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a8s8AAAAASUVORK5CYII=",
-  "base64",
+const PNG = readFileSync(
+  new URL(
+    "../../../desktop/tests/fixtures/github-pr-5629-og.png",
+    import.meta.url,
+  ),
 );
 
 for (const [theme, width] of [
@@ -120,7 +123,7 @@ for (const [theme, width] of [
       );
     });
     await expect(description).toHaveValue(/\[steps.txt\]/);
-    await shot(page, `capture-${theme}-${width}`, { keepToasts: true });
+    await shot(page, `capture-${theme}-${width}`);
     await dialog.getByRole("button", { name: "File bug", exact: true }).click();
     await expect(dialog).toHaveCount(0);
     const event = relay.published.find((event) => event.kind === 30623);
@@ -146,9 +149,9 @@ for (const [theme, width] of [
         .getByRole("img", { name: "button.png", exact: true })
         .evaluate((image: HTMLImageElement) => image.naturalWidth),
     ).toBeGreaterThan(0);
-    await shot(page, `detail-${theme}-${width}`, { keepToasts: true });
+    await shot(page, `detail-${theme}-${width}`);
     await detail.locator("[data-lightbox-trigger]").first().click();
     await expect(page.getByRole("dialog", { name: /Image:/i })).toBeVisible();
-    await shot(page, `lightbox-${theme}-${width}`, { keepToasts: true });
+    await shot(page, `lightbox-${theme}-${width}`);
   });
 }

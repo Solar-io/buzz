@@ -346,6 +346,18 @@ test("closing the dialog invalidates an upload and unmount releases previews", a
   await finish();
   assert.equal(host.querySelector('[data-testid="item-body-editor"]'), null);
   assert.equal(revoked.length, 1);
+  await act(async () =>
+    root.render(
+      React.createElement(AddItemDialog, {
+        open: true,
+        channels: [],
+        projects: [],
+        onClose() {},
+        onCreate: async () => null,
+      }),
+    ),
+  );
+  assert.equal(body().value, "");
 });
 
 test("immediately resolved multi-file uploads keep selection order before React paints", async () => {
