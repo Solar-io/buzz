@@ -166,6 +166,13 @@ export function AgentMembersSection({
     }, "Removals accepted. Waiting for the updated member list.");
   };
   const registeredCount = members.length - stale.length;
+  const bulkReason = members.some(
+    (member) =>
+      !staleKeys.has(member.pubkey) &&
+      !channelAgentTarget(member.pubkey, catalogs, now),
+  )
+    ? "Open Buzz Desktop on every agent's computer to change all agents here."
+    : null;
   return (
     <section aria-label="Agents" className="space-y-3">
       <UnregisteredBanner
@@ -185,7 +192,8 @@ export function AgentMembersSection({
               variant="ghost"
               size="sm"
               className="min-h-11"
-              disabled={locked || !registeredCount}
+              disabled={locked || !registeredCount || !!bulkReason}
+              title={bulkReason ?? undefined}
               onClick={() =>
                 act(() => bulk("start"), "Start all acknowledged by Desktop.")
               }
@@ -196,7 +204,8 @@ export function AgentMembersSection({
               variant="ghost"
               size="sm"
               className="min-h-11"
-              disabled={locked || !registeredCount}
+              disabled={locked || !registeredCount || !!bulkReason}
+              title={bulkReason ?? undefined}
               onClick={() =>
                 act(() => bulk("stop"), "Stop all acknowledged by Desktop.")
               }

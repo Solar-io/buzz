@@ -319,6 +319,9 @@ for (const theme of [
         .getByRole("menuitem", { name: "Message Gilfoyle", exact: true })
         .click();
       await expect(page).toHaveURL(new RegExp(fixture.channels["dm-gilfoyle"]));
+      await expect(
+        page.getByText("Gilfoyle will be notified", { exact: true }),
+      ).toBeVisible();
     });
   }
 }

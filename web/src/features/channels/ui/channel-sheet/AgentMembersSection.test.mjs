@@ -78,6 +78,7 @@ async function mount({
   canManage = true,
   archived = false,
   pickerOpen = false,
+  offline = false,
 } = {}) {
   const registry = Array.from({ length: count + stale + 1 }, (_, n) =>
     agent(n + 1),
@@ -94,7 +95,7 @@ async function mount({
         ...registry.slice(0, count).map((entry) => entry.pubkey),
         registry.at(-1).pubkey,
       ],
-      updatedAt: Math.floor(Date.now() / 1000),
+      updatedAt: Math.floor(Date.now() / 1000) - (offline ? 8 * 3600 : 0),
     },
   ];
   const subscriptions = new Set(),
@@ -285,16 +286,29 @@ test("Start all and Stop all send one targeted command per registered member", a
     await view.close();
   }
 });
-test("archived and non-admin channels lock lifecycle and removal", async () => {
-  for (const props of [{ archived: true }, { canManage: false }]) {
+test("archived, non-admin and offline channels lock the appropriate controls", async () => {
+  for (const props of [
+    { archived: true },
+    { canManage: false },
+    { offline: true },
+  ]) {
     const view = await mount({ ...props, stale: 1 });
     try {
       if (props.archived) {
         assert.equal(button("Start all").disabled, true);
         assert.equal(button("Remove 1").disabled, true);
-      } else {
+      } else if (props.canManage === false) {
         assert.equal(button("Start all"), undefined);
         assert.equal(button("Remove 1"), undefined);
+      } else {
+        assert.equal(button("Start all").disabled, true);
+        assert.equal(button("Stop all").disabled, true);
+        assert.match(button("Start all").title, /Open Buzz Desktop/);
+        assert.equal(
+          button("Remove 1").disabled,
+          false,
+          "relay membership cleanup does not require a desktop",
+        );
       }
       assert.equal(view.published.length, 0);
     } finally {
