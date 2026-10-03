@@ -109,13 +109,15 @@ acceptance. A hide made after acceptance is preserved even if the background
 update was queued. If no hidden recipient changes, no snapshot is published.
 
 A fork-local startup reconciliation repairs older sticky hides when another
-participant's non-deleted chat message has `created_at > hidden_at`, then
+participant's retained chat message has `created_at > hidden_at`, then
 publishes the viewer's snapshot. It excludes removed memberships and deleted
 channels, preserves the sender-only case, and is safe to run on every boot.
+A later soft deletion of that message does not undo its original resurface
+effect; an edit or deletion event alone does not qualify.
 It also retries snapshots still listing a DM whose hide was already cleared,
 so a publication failure remains repairable on the next boot.
 
-In both cases the relay recomputes the viewer's full hidden-DM set from its authoritative state (active, non-removed DM memberships with `hidden_at IS NOT NULL`) and publishes a fresh `kind:30622` snapshot signed by the relay identity, with `d` = the viewer's pubkey and one `h` tag per hidden DM.
+In each case the relay recomputes the viewer's full hidden-DM set from its authoritative state (active, non-removed DM memberships with `hidden_at IS NOT NULL`) and publishes a fresh `kind:30622` snapshot signed by the relay identity, with `d` = the viewer's pubkey and one `h` tag per hidden DM.
 
 The recompute-and-replace shape means the latest snapshot is always the complete, authoritative hidden set. There is no delta event to merge and no ordering hazard between hide and unhide: a stale snapshot is simply superseded by the newer one under NIP-01 parameterized-replaceable semantics.
 

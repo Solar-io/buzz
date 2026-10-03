@@ -451,7 +451,7 @@ pub async fn unhide_dms_with_new_messages(
               SELECT 1 FROM events e
               WHERE e.community_id = cm.community_id AND e.channel_id = cm.channel_id
                 AND e.kind = ANY($3) AND e.pubkey <> cm.pubkey
-                AND e.created_at > cm.hidden_at AND e.deleted_at IS NULL
+                AND e.created_at > cm.hidden_at
           )
         RETURNING cm.channel_id
         "#,
@@ -494,7 +494,7 @@ pub async fn dm_visibility_repair_candidates(
                   SELECT 1 FROM events e
                   WHERE e.community_id = cm.community_id AND e.channel_id = cm.channel_id
                     AND e.kind = ANY($5) AND e.pubkey <> cm.pubkey
-                    AND e.created_at > cm.hidden_at AND e.deleted_at IS NULL
+                    AND e.created_at > cm.hidden_at
               ))
               OR (cm.hidden_at IS NULL AND latest.tags @>
                   jsonb_build_array(jsonb_build_array('h', cm.channel_id::text)))
@@ -835,7 +835,7 @@ mod tests {
                 }
                 _ => {}
             }
-            if i < 2 {
+            if i < 2 || i == 15 {
                 expected.push(dm.id);
             } else {
                 preserved.push(dm.id);
