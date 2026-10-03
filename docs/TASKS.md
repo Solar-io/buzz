@@ -142,10 +142,12 @@ P0 verifier follow-up:
 
 Evidence: [P0 verifier fixes](TEST_REPORTS/parity-p0-verifier-fixes.md).
 
-## Parity W9b2 (in progress)
+## Parity W9b2
 
-- [ ] Identity: avatar upload, name, standalone instructions, linked Library definition entry.
-- [ ] Environment: collapsed patch-only set/remove rows, reserved-key validation, transient secrets.
-- [ ] Remove: key-preserving unregister and channel-count delete confirmation, desktop ack.
-- [ ] Retire the four legacy modules and preserve Library, create, roster and working-dot consumers.
-- [ ] Behavioral regressions, mechanism reversion proof, full web gates and built-app 1440/390 screenshots.
+- [x] Identity: avatar upload, name, standalone instructions, linked Library definition entry.
+- [x] Environment: collapsed patch-only set/remove rows, reserved-key validation, transient secrets.
+- [x] Remove: key-preserving unregister and channel-count delete confirmation, desktop ack.
+- [x] Retire the four legacy modules and preserve Library, create, roster and working-dot consumers.
+- [x] Behavioral regressions, mechanism reversion proof, full web gates and built-app 1440/390 screenshots.
+
+- [ ] Live W9b2 acceptance: FOO set/remove on a throwaway agent using an authorized owner signer and reporting desktop. [Coding receipt](TEST_REPORTS/parity-w9b2.md).
