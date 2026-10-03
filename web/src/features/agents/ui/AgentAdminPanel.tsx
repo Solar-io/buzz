@@ -5,6 +5,7 @@ import { sendAdminCommand, useAdminAckWatcher } from "../lib/adminCommandsSend";
 import type { AdminAckEnvelope, AdminCommand } from "../lib/adminCommands";
 import { ACK_TIMEOUT_MS, pendingRowState } from "../lib/pendingCommands";
 import { useTick } from "./WorkingBadge";
+import type { AdminSendOptions } from "../lib/admin/protocolV5";
 
 /**
  * Remote agent administration (kinds 24201/24202): owner commands the web
@@ -27,11 +28,15 @@ interface PendingCommand {
 export function useAdminCommands(
   session: RelaySession | null,
   status: string,
+  lockedReason?: (
+    command: AdminCommand,
+    options?: AdminSendOptions,
+  ) => string | null,
 ): {
   send: (
     command: AdminCommand,
     summary: string,
-    options?: { target?: string },
+    options?: AdminSendOptions,
   ) => Promise<string | null>;
   pending: PendingCommand[];
   acks: Map<string, AdminAckEnvelope>;
@@ -42,8 +47,13 @@ export function useAdminCommands(
   const send = async (
     command: AdminCommand,
     summary: string,
-    options?: { target?: string },
+    options?: AdminSendOptions,
   ): Promise<string | null> => {
+    const reason = lockedReason?.(command, options);
+    if (reason) {
+      toast.error(reason);
+      return null;
+    }
     if (!session) {
       toast.error("Not connected to the relay.");
       return null;
@@ -119,20 +129,24 @@ export function PendingCommandsStrip({
               className={
                 ack
                   ? ack.ok
-                    ? "h-2 w-2 shrink-0 rounded-full bg-emerald-500"
-                    : "h-2 w-2 shrink-0 rounded-full bg-red-500"
+                    ? "h-2 w-2 shrink-0 rounded-full bg-leaf"
+                    : "h-2 w-2 shrink-0 rounded-full bg-need"
                   : "h-2 w-2 shrink-0 animate-pulse rounded-full bg-muted-foreground/50"
               }
             />
             <span className="min-w-0 flex-1 truncate">
               {entry.summary}
               {ack && !ack.ok && (
-                <span className="text-red-400"> — {ack.error ?? "failed"}</span>
+                <span className="text-coral-ink">
+                  {" "}
+                  — {ack.error ?? ack.code ?? "failed"}
+                </span>
               )}
               {timedOut && (
-                <span className="text-amber-400">
+                <span className="text-honey-ink">
                   {" "}
-                  — no desktop responded. Is Buzz running?
+                  — No answer from the desktop — it may still apply. Check
+                  status after reload.
                 </span>
               )}
             </span>

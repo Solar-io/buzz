@@ -446,8 +446,24 @@ function parseMapping(reader: Reader, indent: number): YamlValue {
     }
     const rest = line.content.slice(separator + 1).trim();
     const rawIndex = line.number - 1;
+    if (Object.getOwnPropertyDescriptor(map, String(key)) !== undefined) {
+      throw new YamlError(`duplicate key on line ${line.number}: ${key}`);
+    }
     reader.index += 1;
-    map[String(key)] = parseValueAfterKey(reader, rest, indent, rawIndex);
+    try {
+      // Define own properties so an authored __proto__ key stays plain data.
+      Object.defineProperty(map, String(key), {
+        value: parseValueAfterKey(reader, rest, indent, rawIndex),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    } catch (error) {
+      if (error instanceof YamlError && !/line \d+/.test(error.message)) {
+        throw new YamlError(`${error.message} on line ${line.number}`);
+      }
+      throw error;
+    }
   }
   return map;
 }
@@ -514,12 +530,28 @@ function parseNode(reader: Reader, indent: number): YamlValue {
 export function parseYamlDocument(source: string): YamlParseResult {
   const raw = source.replace(/\r\n?/g, "\n").split("\n");
   const lines: Line[] = [];
+  let ended = false;
   for (let index = 0; index < raw.length; index += 1) {
     const text = raw[index];
     if (isIgnorable(text)) continue;
-    if (DOCUMENT_MARKER.test(text)) continue;
-    if (text.includes("\t") && indentOf(text) === 0 && text.startsWith("\t")) {
-      return { value: null, error: "tabs cannot be used for indentation" };
+    if (
+      ended ||
+      (DOCUMENT_MARKER.test(text) && text.startsWith("---") && lines.length > 0)
+    ) {
+      return {
+        value: null,
+        error: `multiple documents are not supported on line ${index + 1}`,
+      };
+    }
+    if (DOCUMENT_MARKER.test(text)) {
+      ended = text.startsWith("...");
+      continue;
+    }
+    if (/^ *\t/.test(text)) {
+      return {
+        value: null,
+        error: `tabs cannot be used for indentation on line ${index + 1}`,
+      };
     }
     const stripped = stripComment(text).replace(/\s+$/, "");
     if (stripped.trim() === "") continue;

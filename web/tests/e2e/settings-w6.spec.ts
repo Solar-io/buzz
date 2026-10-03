@@ -92,7 +92,7 @@ async function screenshot(page: Page, name: string) {
   await page.screenshot({ path: path.join(dir, `${name}.png`) });
 }
 
-test("W6 owner lands on Agents, footer reports history, gilf Enter opens the target", async ({
+test("W6 owner lands on Agents, footer flags a pre-P0 desktop, gilf Enter opens the target", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 960 });
@@ -100,7 +100,11 @@ test("W6 owner lands on Agents, footer reports history, gilf Enter opens the tar
   await expect(page.getByTestId("settings-pane-agents")).toBeVisible();
   await expect(
     page.getByTestId("desktop-connection-footer").first(),
-  ).toContainText("Buzz Desktop · crichton · last reported 2m ago");
+  ).toContainText("Buzz Desktop · crichton");
+  // A v4 catalog cannot answer pings (PLAN §6 P0): never "online".
+  await expect(
+    page.getByTestId("desktop-connection-footer").first(),
+  ).toContainText("status unknown — update Buzz Desktop");
   await expect(
     page.getByTestId("desktop-connection-footer").first(),
   ).not.toContainText(/online/i);
@@ -152,7 +156,7 @@ test("W6 Library and moved sections remain reachable in Settings", async ({
   await expect(page.getByTestId("settings-pane-library")).toContainText(
     "Agent definitions",
   );
-  await page.getByRole("button", { name: "Teams", exact: true }).click();
+  await page.getByRole("tab", { name: "Teams", exact: true }).click();
   await expect(page.getByTestId("settings-pane-library")).toContainText(
     "Agent teams",
   );
@@ -176,7 +180,7 @@ test("W6 390 phone root shows Agents first, hides Keyboard, drills in and return
   ).toHaveText("Agents");
   await expect(root.getByTestId("settings-nav-item-keyboard")).toHaveCount(0);
   await expect(root.getByTestId("desktop-connection-footer")).toContainText(
-    "last reported",
+    "status unknown — update Buzz Desktop",
   );
   expect(
     await page.evaluate(

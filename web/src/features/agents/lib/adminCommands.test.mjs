@@ -1,4 +1,52 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+test("shared owner-admin corpus pins web envelope parsing", () => {
+  const cases = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../../../../test-fixtures/owner-admin/cases.json",
+        import.meta.url,
+      ),
+    ),
+  );
+  const limits = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../../../../test-fixtures/owner-admin/limits.json",
+        import.meta.url,
+      ),
+    ),
+  );
+  assert.equal(limits.caseCount, 15);
+  assert.equal(cases.length, 15);
+  for (const item of cases) {
+    const parsed = parseAdminCommand(item.envelope);
+    assert.equal(parsed !== null, item.parsed, item.name);
+    if (!parsed) continue;
+    assert.equal(parsed.issuedAt, item.envelope.issuedAt, item.name);
+    assert.deepEqual(parsed.requires, item.envelope.requires, item.name);
+    assert.equal(parsed.command.action, item.envelope.action, item.name);
+  }
+});
+
+test("ack preserves code and action result while remaining compatible with old acks", () => {
+  const ack = parseAdminAck({
+    type: "agent_admin_ack",
+    requestId: "r",
+    ok: false,
+    code: "unsupported",
+    error: "Desktop refused",
+    result: { caps: ["ping"], machine: "crichton.local" },
+  });
+  assert.equal(ack.code, "unsupported");
+  assert.equal(ack.error, "Desktop refused");
+  assert.deepEqual(ack.result, { caps: ["ping"], machine: "crichton.local" });
+  assert.equal(
+    parseAdminAck({ type: "agent_admin_ack", requestId: "r", ok: true }).code,
+    undefined,
+  );
+});
 import { test } from "node:test";
 import {
   harnessFromSelection,

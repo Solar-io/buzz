@@ -33,7 +33,9 @@ globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
     "export function useAdminCommands() { return { send: async () => {}, pending: [] }; }",
   "@/shared/lib/nostr-signer":
     "export async function ownPubkey() { return null; }\n" +
-    "export async function nip44DecryptFrom() { throw new Error('no key'); }",
+    "export async function nip44DecryptFrom() { throw new Error('no key'); }\n" +
+    "export async function nip44EncryptTo() { throw new Error('unused signer'); }\n" +
+    "export async function signNostrEvent() { throw new Error('unused signer'); }",
 };
 
 const { default: React, act } = await import("react");

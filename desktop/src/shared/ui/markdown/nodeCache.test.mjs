@@ -17,6 +17,26 @@ const BASE = {
   variant: "i",
 };
 
+test("details bodies retain the desktop parser stack: lists, mentions, spoilers and hard breaks", () => {
+  const html = renderToStaticMarkup(
+    renderCachedMarkdown({
+      ...BASE,
+      content:
+        "<details><summary>🌌 **Updates**</summary>\n- @alice\n- ||secret||\n\nline one\nline two\n\n</details>",
+      mentionNames: ["alice"],
+    }),
+  );
+  assert.match(
+    html,
+    /<details><summary>🌌 <strong>Updates<\/strong><\/summary>/,
+  );
+  assert.match(html, /<ul>/);
+  assert.match(html, /<mention[^>]*>@alice<\/mention>/);
+  assert.match(html, /<spoiler>secret<\/spoiler>/);
+  assert.match(html, /line one<br\/>\nline two/);
+  assert.doesNotMatch(html, /&lt;(?:details|summary)/);
+});
+
 test("same parse inputs return the identical cached element", () => {
   clearMarkdownNodeCache();
   const first = renderCachedMarkdown({ ...BASE });

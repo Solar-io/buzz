@@ -1,8 +1,21 @@
 - [x] Work row context: title → own in-turn message → trigger/parent precedence, bounded history fetching, unit boundaries, two mutation kills, and desktop/phone fixtures.
+- [x] Parity W11a: Library tabs (Definitions, Teams, Catalog, Snapshots) and one New agent menu.
+- [x] Parity W11a: Blank create cards using existing create wire contract and built-in defaults; linked/team creation stays locked for P2.
+- [x] Parity W11a: behavioral regressions, fail-first proof, web checks and built-app 1440/390 screenshots. Evidence: [W11a report](TEST_REPORTS/parity-w11a.md).
+- [ ] Parity W11a: live throwaway-agent creation/start acceptance with an authorized owner signer and a reporting desktop. The coding shell has no Buzz signing credentials; the live browser reports no desktop for its identity.
 - [x] QA 63eeb8a14: 4,081 unit tests, static/build checks, Work E2E, Agent Brave, request census, edge cases and precedence mutation. Findings: docs/TEST_REPORTS/qa-work-63eeb8a14/test-report-2026-10-02.md.
 - [x] QA-WORK-001 (High): fixed — live kind-9 subscription for running turns and Done turns inside a 90 s grace (`liveSlots`); regression `web/tests/e2e/work-activity.spec.ts`.
 - [ ] QA-WORK-002 (Medium): prune lifetime activity/tried maps when pair windows/channels expire; add churn coverage.
 - [ ] QA-WORK-003 (Medium): keep fenced-code language markers out of meaningful row summaries; define non-text fallbacks.
+
+Parity W8a roster:
+- [x] Read-only roster with team/model/effort, observer Working and catalog Claimed status.
+- [x] Counted status chips, team/name filters and existing stale-registration set.
+- [x] Content-width table columns and phone list, accessible selection.
+- [x] Row lifecycle/Open/Message/snapshot/Unregister and targeted bulk lifecycle.
+- [x] Bulk channel adds, confirmation, desktop acknowledgement/refusal receipts and safe unregister guards.
+- [x] Required web checks, named mechanism mutations and built-app 1440/390 screenshots.
+- [ ] W8a live acceptance: throwaway agents and private-channel checks need an enrolled owner signing environment. Evidence: [W8a handoff](TEST_REPORTS/parity-w8a.md).
 
 - [x] Parity A1: implement pubkey > display name > wildcard > env resolution for each turn knob; add marked-turn `voiceModel`; wire both harness call sites.
 - [x] Parity A1: add six named regressions plus tier/type edge cases; show mechanism mutations failing with unchanged test counts.
@@ -106,3 +119,55 @@ W2 people in channel Members (in progress):
 - [ ] W3: accepted membership then acknowledged start; bounded bulk start/stop and confirmed cleanup.
 - [ ] W3: observer status, model/effort, row settings/message/instruction/stop/remove entry points.
 - [ ] W3: behavioral and fail-first tests, web gates, built-app 1440/390 screenshots and handoff.
+# Parity W5b
+
+- [x] Channel Workflows tab: scoped rows/run status and create/edit YAML; preserve identity and revision.
+- [x] W5b behavioural tests, mutations, required web checks and built-app responsive acceptance. [Evidence](TEST_REPORTS/parity-w5b.md).
+- [ ] W5b live private-channel create/edit with an enrolled signer.
+
+W9b1 agent settings cards:
+- [x] Model & thinking: grouped model picker, runtime-specific Provider/API key, read-only locked Effort.
+- [x] Runtime: preset/custom picker, locked inheritance, Turns at once, duration presets/custom/reset, Start with Buzz Desktop, honest blind controls.
+- [x] Who can instruct: named people picker, locked Nobody, desktop warning copy and placement.
+- [x] W7 draft/save/navigation integration, targeted desktop acknowledgements, safe local timeout echo and phone sub-pages.
+- [x] Required web checks, named fail-first regressions, built-app browser journeys and 1440/390 screenshots; commit and handoff.
+
+- [ ] W9b1 live desktop acceptance: throwaway-agent Idle 30 min and Anyone save/reload against the real desktop. Local client evidence uses mocked desktop acknowledgements. See [W9b1 report](TEST_REPORTS/parity-w9b1.md).
+- [x] Safe markdown details: recognise blank/nonblank body boundaries, own-line summaries, open, missing close, nested blocks, literal code, formatted labels and unrelated HTML in both clients.
+- [x] Safe markdown details: wire desktop chat and web chat/Pulse, preserve downstream markdown features and inherited styling.
+- [x] Safe markdown details: record both baseline/final test counts, typechecks, palette/text checks, DOM/browser acceptance and named mutation failures. Evidence: [details renderer report](TEST_REPORTS/markdown-details.md).
+
+P0 — owner-admin protocol foundation:
+- [x] Advertise catalog v5 capabilities; preserve older catalog readers.
+- [x] Parse requirements and timestamps; refuse unsupported or stale writes before applying.
+- [x] Ping response and structured, byte-budgeted acknowledgements.
+- [x] Web capability intersection and sealed command/ack transport.
+- [x] Mounted/focus desktop presence, offline locks, and connection footer.
+- [x] Shared fixture corpus, fail-first regressions, static/build checks, responsive browser evidence.
+
+P0 evidence: `docs/TEST_REPORTS/parity-p0.md`.
+
+P0 verifier follow-up:
+- [x] Preserve enablement and sending for all eight v4 admin commands; keep named v5 requirements locked.
+- [x] Persist replay receipts before save; verify restart, >500 requests, concurrent delivery and failure boundaries.
+- [x] Compose presence checks into the W6/W9a Settings routes after the main merge.
+- [x] Run required web/desktop checks and named fail-then-pass mutations; commit evidence.
+
+Evidence: [P0 verifier fixes](TEST_REPORTS/parity-p0-verifier-fixes.md).
+
+W8a integration with current main:
+- [x] Compose roster with Library, New agent creation, DetailPane, W9b1 and connection footer; retain every Playwright spec.
+- [x] Carry P0 desktop presence lock through row mutations and bulk lifecycle/confirmation controls.
+- [x] Verify a named row-lock regression fails with the lock removed and passes after restoration.
+- [x] Run full web unit/static/build gates and all six requested E2E groups; inspect 1440/390 screenshots.
+- [x] Commit the integration and record handoff evidence.
+
+W8a integration evidence: [current-main composition](TEST_REPORTS/parity-w8a.md#current-main-integration--2026-10-03); 4,373 units and 37 browser cases pass, including restored row-lock proof.
+
+## Vitals shared account forecast (2026-10-03)
+
+- [x] Record first-empty times, handoffs and next-reset usage from the existing combined simulation.
+- [x] Use that forecast in the sidebar, headline, account lines and row dry text; preserve fallback behavior.
+- [x] Live-number and low-burn regressions, named simulation-withdrawal mutation proof, full web counts/static/build checks.
+- [x] Render the fixture at 1440 and 390 widths and capture screenshots; commit with the required trailers.
+- [ ] Resolve the contradictory A-time criterion: the unchanged allocator gives 18:56:55Z, while the requested 19:13Z uses A's solo rate. No approval to change allocation or waive that criterion was received. [Receipt](TEST_REPORTS/vitals-account-runway.md).

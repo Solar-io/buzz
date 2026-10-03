@@ -1,6 +1,7 @@
 import type { RelayEvent } from "@/shared/api/types";
 import { invokeTauri } from "./tauri";
 import { relayClient } from "./relayClient";
+import { serializeOwnerAdminAck, type OwnerAdminAck } from "./ownerAdminAck";
 
 /**
  * Owner admin-command primitives (kinds 24201/24202) — all crypto and
@@ -17,19 +18,10 @@ export async function decryptOwnerAdminPayload(
   return JSON.parse(plaintext);
 }
 
-export async function buildOwnerAdminAckEvent(ack: {
-  requestId: string;
-  ok: boolean;
-  error?: string;
-  agentPubkey?: string;
-}): Promise<RelayEvent> {
-  const payload = JSON.stringify({
-    type: "agent_admin_ack",
-    requestId: ack.requestId,
-    ok: ack.ok,
-    ...(ack.error ? { error: ack.error } : {}),
-    ...(ack.agentPubkey ? { agentPubkey: ack.agentPubkey } : {}),
-  });
+export async function buildOwnerAdminAckEvent(
+  ack: OwnerAdminAck,
+): Promise<RelayEvent> {
+  const payload = serializeOwnerAdminAck(ack);
   const ciphertext = await invokeTauri<string>("nip44_encrypt_to_self", {
     plaintext: payload,
   });
@@ -42,12 +34,7 @@ export async function buildOwnerAdminAckEvent(ack: {
   return JSON.parse(eventJson) as RelayEvent;
 }
 
-export async function publishOwnerAdminAck(ack: {
-  requestId: string;
-  ok: boolean;
-  error?: string;
-  agentPubkey?: string;
-}): Promise<void> {
+export async function publishOwnerAdminAck(ack: OwnerAdminAck): Promise<void> {
   await relayClient.preconnect();
   const event = await buildOwnerAdminAckEvent(ack);
   await relayClient.publishEvent(

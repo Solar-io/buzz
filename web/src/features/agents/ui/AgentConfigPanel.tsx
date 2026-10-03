@@ -64,6 +64,7 @@ export function AgentConfigPanel({
   viewerIsOwner,
   onDeleted,
   settingsOnly = false,
+  remainingOnly = false,
 }: {
   row: RosterRow;
   profile?: Profile;
@@ -82,6 +83,8 @@ export function AgentConfigPanel({
   onDeleted: () => void;
   /** W9a's shell owns identity, live control, memory and lifecycle actions. */
   settingsOnly?: boolean;
+  /** W9b1 owns model/runtime/access; W9b2 rebuilds the remaining fields. */
+  remainingOnly?: boolean;
 }) {
   const prefill = useMemo(
     // The kind-0 profile picture is the only avatar the web can see; it is
@@ -240,24 +243,26 @@ export function AgentConfigPanel({
             : undefined
         }
       />
-      <ModelProviderFields
-        model={value.model}
-        onModelChange={(next) => set("model", next)}
-        provider={value.provider}
-        onProviderChange={(next) => set("provider", next)}
-        registryModels={registryModels}
-        quadDisabled={row.personaLinked}
-        quadNote={row.personaLinked ? LINKED_QUAD_NOTE : undefined}
-        harnessId={value.harnessId}
-        onHarnessChange={(next) => set("harnessId", next)}
-        customCommand={value.customCommand}
-        onCustomCommandChange={(next) => set("customCommand", next)}
-        customArgs={value.customArgs}
-        onCustomArgsChange={(next) => set("customArgs", next)}
-        catalogs={catalogs}
-        harnessKeep
-      />
-      {keyVisible && keySecret && (
+      {!remainingOnly && (
+        <ModelProviderFields
+          model={value.model}
+          onModelChange={(next) => set("model", next)}
+          provider={value.provider}
+          onProviderChange={(next) => set("provider", next)}
+          registryModels={registryModels}
+          quadDisabled={row.personaLinked}
+          quadNote={row.personaLinked ? LINKED_QUAD_NOTE : undefined}
+          harnessId={value.harnessId}
+          onHarnessChange={(next) => set("harnessId", next)}
+          customCommand={value.customCommand}
+          onCustomCommandChange={(next) => set("customCommand", next)}
+          customArgs={value.customArgs}
+          onCustomArgsChange={(next) => set("customArgs", next)}
+          catalogs={catalogs}
+          harnessKeep
+        />
+      )}
+      {!remainingOnly && keyVisible && keySecret && (
         <ProviderApiKeyField
           label={keySecret.label}
           envVar={keySecret.envVar}
@@ -266,11 +271,13 @@ export function AgentConfigPanel({
           linked={row.personaLinked}
         />
       )}
-      <RuntimeFields
-        parallelism={value.parallelism}
-        onParallelismChange={(next) => set("parallelism", next)}
-      />
-      {phase2 && (
+      {!remainingOnly && (
+        <RuntimeFields
+          parallelism={value.parallelism}
+          onParallelismChange={(next) => set("parallelism", next)}
+        />
+      )}
+      {!remainingOnly && phase2 && (
         <TimeoutFields
           idleTimeoutSeconds={value.idleTimeoutSeconds}
           onIdleTimeoutChange={(next) => set("idleTimeoutSeconds", next)}
@@ -280,18 +287,20 @@ export function AgentConfigPanel({
           }
         />
       )}
-      {phase2 && (
+      {!remainingOnly && phase2 && (
         <StartOnLaunchField
           value={value.startOnAppLaunch}
           onChange={(next) => set("startOnAppLaunch", next)}
         />
       )}
-      <AccessFields
-        respondTo={value.respondTo}
-        onRespondToChange={(next) => set("respondTo", next)}
-        allowlist={value.respondToAllowlist}
-        onAllowlistChange={(next) => set("respondToAllowlist", next)}
-      />
+      {!remainingOnly && (
+        <AccessFields
+          respondTo={value.respondTo}
+          onRespondToChange={(next) => set("respondTo", next)}
+          allowlist={value.respondToAllowlist}
+          onAllowlistChange={(next) => set("respondToAllowlist", next)}
+        />
+      )}
       <EnvFields
         rows={value.envRows}
         onChange={(next) =>
@@ -304,7 +313,7 @@ export function AgentConfigPanel({
         dirty={value.envDirty}
         editMode
       />
-      {phase2 && (
+      {!remainingOnly && phase2 && (
         <EffortField
           value={value.effort}
           onChange={(next) => set("effort", next)}
@@ -512,7 +521,7 @@ function ActionsRow({
           <Button
             size="sm"
             variant="ghost"
-            className="text-red-400 hover:text-red-300"
+            className="text-coral-ink hover:text-coral-ink"
             onClick={() => setConfirmingDelete(true)}
           >
             Delete

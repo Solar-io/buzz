@@ -96,12 +96,15 @@ export function useWorkflowRuns(
  */
 export function useLatestRuns(
   workflowIds: string[],
+  options: { poll?: boolean } = {},
 ): Map<string, WorkflowRunsPage> {
   const results = useQueries({
     queries: workflowIds.map((workflowId) => ({
       queryKey: [...workflowRunsQueryKey(workflowId), 1],
       retry: false,
       staleTime: 15_000,
+      // Channel-sheet rows stay current while mounted; closing the tab stops polling.
+      refetchInterval: options.poll ? 15_000 : false,
       queryFn: async (): Promise<WorkflowRunsPage> => {
         const url = `${base()}/workflows/${workflowId}/runs?limit=1`;
         return runsPageFromJson(await authorizedGet(url));

@@ -13,6 +13,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkCallouts from "@/shared/lib/remarkCallouts.ts";
 import remarkSpoilers from "@/shared/lib/remarkSpoilers";
+import remarkDetails from "@/shared/lib/remarkDetails";
 import remarkCustomEmoji from "@/features/custom-emoji/lib/remarkCustomEmoji";
 import { useCustomEmoji } from "@/features/custom-emoji/hooks";
 import { CustomEmojiImage } from "@/features/custom-emoji/ui/CustomEmojiImage";
@@ -364,6 +365,7 @@ export const MarkdownContent = memo(
     >(
       () => [
         remarkGfm,
+        remarkDetails,
         remarkCallouts,
         remarkSpoilers,
         [remarkCustomEmoji, { palette }],
@@ -373,6 +375,16 @@ export const MarkdownContent = memo(
 
     const components = useMemo<Components>(
       () => ({
+        details: ({ children, open }) => (
+          <details open={open} className="my-1 [&>summary+*]:mt-2">
+            {children}
+          </details>
+        ),
+        summary: ({ children }) => (
+          <summary className="list-item cursor-pointer text-foreground">
+            {withMentions(children, mentionNames)}
+          </summary>
+        ),
         p: ({ children }) => {
           const childArray = Array.isArray(children) ? children : [children];
           const { media, other } = splitMediaChildren(childArray);

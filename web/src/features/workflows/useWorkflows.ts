@@ -5,7 +5,7 @@ import { useChannels } from "@/features/channels/useChannels";
 import {
   mergeWorkflow,
   workflowFromEvent,
-  WORKFLOW_DEFINITION_KIND,
+  workflowRequests,
   type WorkflowSummary,
 } from "./lib/workflowDefinition.ts";
 
@@ -15,7 +15,8 @@ import {
  * kind:30620 is scoped by its `h` tag, and the relay authorizes reads against
  * the channel that tag names. Both the CLI (`cmd_list_workflows`) and Buzz
  * Desktop (`get_channel_workflows`) therefore query `#h` per channel; this does
- * the same, one filter per channel the viewer can see, sent as a single REQ.
+ * the same, one filter per channel the viewer can see, in REQs of at most ten
+ * filters (the relay refuses a larger REQ outright, so it never reaches EOSE).
  *
  * The per-channel shape is deliberate rather than one multi-value `#h`: the
  * desktop's `get_channels_workflows` records that older relays narrowed a
@@ -48,20 +49,24 @@ export function useWorkflows(): {
 
   useEffect(() => {
     if (status !== "open" || channelIds === "") return;
-    const ids = channelIds.split(",");
-    const filters = ids.map((id) => ({
-      kinds: [WORKFLOW_DEFINITION_KIND],
-      "#h": [id],
-      limit: 200,
-    }));
-    return session.subscribe(filters, {
-      onEvent: (event) => {
-        const workflow = workflowFromEvent(event);
-        if (workflow === null) return;
-        setById((previous) => mergeWorkflow(previous, workflow));
-      },
-      onEose: () => setLoaded(true),
-    });
+    const requests = workflowRequests(channelIds.split(","));
+    let pending = requests.length;
+    const unsubscribes = requests.map((filters) =>
+      session.subscribe(filters, {
+        onEvent: (event) => {
+          const workflow = workflowFromEvent(event);
+          if (workflow === null) return;
+          setById((previous) => mergeWorkflow(previous, workflow));
+        },
+        onEose: () => {
+          pending -= 1;
+          if (pending === 0) setLoaded(true);
+        },
+      }),
+    );
+    return () => {
+      for (const unsubscribe of unsubscribes) unsubscribe();
+    };
   }, [session, status, channelIds]);
 
   const channelNames = useMemo(

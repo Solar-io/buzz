@@ -1,8 +1,8 @@
 /**
  * Vitals v1 math over the usage hub's `/v1/pace` (phase-1 §4), plus its
- * `/v1/runway` projection: per account, the 72 h average use per CALENDAR
- * hour, carried forward to that account's reset. The hub does that math; this
- * module only picks what to show.
+ * `/v1/runway` rates: the 72 h average use per CALENDAR hour. The combined
+ * simulation carries pool demand forward through handoffs and resets; its
+ * per-account projections and headline describe the same forecast.
  *
  * Unknown stays unknown: a stale or missing account is left out of the mean
  * and reported as coverage ("1 of 2 accounts"), never folded in as 0% — a
@@ -127,11 +127,16 @@ export function accountRowText(
 export function accountDryText(
   account: AccountVitals,
   clock: (iso: string) => string,
+  combined: CombinedRunway | null = null,
 ): string | null {
   const hot = account.status === "warn" || account.status === "critical";
-  return account.used !== null && hot && account.dryAt
-    ? `runs dry ${clock(account.dryAt)}`
-    : null;
+  const projection = combined?.projections.find((row) => row.id === account.id);
+  const dry = projection
+    ? projection.beforeReset
+      ? projection.dryAt
+      : null
+    : account.dryAt;
+  return account.used !== null && hot && dry ? `runs dry ${clock(dry)}` : null;
 }
 
 /** The combined bar: free = 1 − mean(known usedFraction). */
@@ -310,8 +315,24 @@ function hourWeight(ms: number, weekendFactor: number): number {
   return day === "Sat" || day === "Sun" ? weekendFactor : 1;
 }
 
-export type CombinedRunway =
-  /** Every pool account is at 100 % at `at` (ISO). */
+/** An account's path through the same allocation used by the pool headline. */
+export interface AccountRunway {
+  id: string;
+  /** First empty moment within the horizon, including an already empty account. */
+  dryAt: string | null;
+  /** Whether the first empty moment is strictly before its next reset. */
+  beforeReset: boolean;
+  /** Next reset, advanced a week when the supplied reading predates it. */
+  resetsAt: string;
+  /** Simulated used share immediately before that reset; null if not reached. */
+  projectedAtReset: number | null;
+  /** The depleted account whose work this account first takes over. */
+  takeover: { account: string; at: string } | null;
+}
+
+export type CombinedRunway = {
+  projections: AccountRunway[];
+} /** Every pool account is at 100 % at `at` (ISO). */ & (
   | {
       kind: "dry";
       accounts: string[];
@@ -323,13 +344,16 @@ export type CombinedRunway =
       pastReset: { account: string; at: string; ms: number } | null;
     }
   /** Not all dry within {@link COMBINED_HORIZON_DAYS} days. */
-  | { kind: "lasts"; accounts: string[]; days: number };
+  | { kind: "lasts"; accounts: string[]; days: number }
+);
 
 interface SimAccount {
   id: string;
   /** Unused share of this account's week, 0–1. */
   left: number;
   resetMs: number;
+  projection: AccountRunway;
+  started: boolean;
 }
 
 /**
@@ -385,7 +409,20 @@ export function combinedRunway(
       next += WEEK_MS;
       left = 1;
     }
-    pool.push({ id: account.id, left, resetMs: next });
+    pool.push({
+      id: account.id,
+      left,
+      resetMs: next,
+      started: false,
+      projection: {
+        id: account.id,
+        dryAt: left === 0 ? new Date(nowMs).toISOString() : null,
+        beforeReset: left === 0,
+        resetsAt: new Date(next).toISOString(),
+        projectedAtReset: null,
+        takeover: null,
+      },
+    });
     demand += Math.max(0, account.burnPerHour);
   }
   if (pool.length === 0) {
@@ -398,11 +435,28 @@ export function combinedRunway(
   );
   const firstReset = { account: first.id, ms: first.resetMs };
   const end = nowMs + COMBINED_HORIZON_DAYS * 24 * HOUR_MS;
+  // Keep the existing enumerable result/wire shape (and its exact headline
+  // contract) intact. Local consumers read the additional trace explicitly.
+  const traced = <T extends object>(result: T) =>
+    Object.defineProperty(result, "projections", {
+      value: pool.map((account) => account.projection),
+    }) as T & { projections: AccountRunway[] };
 
   const dryAt = (exact: number): CombinedRunway => {
     const ms = Math.round(exact);
     const at = new Date(ms).toISOString();
-    return {
+    for (const account of pool) {
+      // Match the pool's numerical empty tolerance, including the final
+      // segment that ends exactly at an account's next reset.
+      account.projection.dryAt ??= at;
+      account.projection.beforeReset =
+        Date.parse(account.projection.dryAt) <
+        Date.parse(account.projection.resetsAt);
+      if (account.resetMs <= ms) {
+        account.projection.projectedAtReset ??= 1 - account.left;
+      }
+    }
+    return traced({
       kind: "dry",
       accounts: ids,
       at,
@@ -414,9 +468,39 @@ export function combinedRunway(
               ms: ms - firstReset.ms,
             }
           : null,
-    };
+    } as const);
   };
 
+  let previous: SimAccount | undefined;
+  const drain = (need: number, rate: number, t: number) => {
+    let spent = 0;
+    for (const account of [...pool].sort((a, b) => a.resetMs - b.resetMs)) {
+      if (account.left === 0) {
+        previous = account;
+        continue;
+      }
+      if (!account.started && previous?.left === 0) {
+        account.projection.takeover = {
+          account: previous.id,
+          at: new Date(Math.round(t + (spent / rate) * HOUR_MS)).toISOString(),
+        };
+      }
+      account.started = true;
+      const take = Math.min(account.left, need);
+      account.left -= take;
+      need -= take;
+      spent += take;
+      if (account.left === 0) {
+        const ms = Math.round(t + (spent / rate) * HOUR_MS);
+        account.projection.dryAt ??= new Date(ms).toISOString();
+        account.projection.beforeReset =
+          Date.parse(account.projection.dryAt) <
+          Date.parse(account.projection.resetsAt);
+        previous = account;
+      }
+      if (need <= 0) break;
+    }
+  };
   let t = nowMs;
   while (t < end) {
     const total = pool.reduce((sum, account) => sum + account.left, 0);
@@ -427,28 +511,27 @@ export function combinedRunway(
     const nextReset = Math.min(...pool.map((account) => account.resetMs));
     const segEnd = Math.min(nextHour, nextReset, end);
     const rate = demand * hourWeight(t, weekendFactor);
-    let need = (rate * (segEnd - t)) / HOUR_MS;
+    const need = (rate * (segEnd - t)) / HOUR_MS;
     if (rate > 0 && need >= total) {
+      drain(total, rate, t);
       return dryAt(t + (total / rate) * HOUR_MS);
     }
     // Soonest reset first: its unused room is lost at the reset anyway.
-    for (const account of [...pool].sort((a, b) => a.resetMs - b.resetMs)) {
-      const take = Math.min(account.left, need);
-      account.left -= take;
-      need -= take;
-      if (need <= 0) {
-        break;
-      }
-    }
+    if (rate > 0) drain(need, rate, t);
     t = segEnd;
     for (const account of pool) {
       if (account.resetMs <= t) {
+        account.projection.projectedAtReset ??= 1 - account.left;
         account.left = 1;
         account.resetMs += WEEK_MS;
       }
     }
   }
-  return { kind: "lasts", accounts: ids, days: COMBINED_HORIZON_DAYS };
+  return traced({
+    kind: "lasts",
+    accounts: ids,
+    days: COMBINED_HORIZON_DAYS,
+  } as const);
 }
 
 /** "Both" for two, "All 3" for more, the account itself for one. */
