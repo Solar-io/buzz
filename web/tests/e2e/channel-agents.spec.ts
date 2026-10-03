@@ -148,10 +148,21 @@ for (const theme of [
       ).toBeVisible();
       await expect(
         sheet.getByTestId(`agent-member-${fixture.agents.acid.pubkey}`),
-      ).toContainText("Working here");
+      ).toContainText("Working elsewhere");
       await expect(
         sheet.getByTestId(`agent-member-${fixture.agents.acid.pubkey}`),
       ).toContainText("opus · medium");
+      await sheet.evaluate((element) =>
+        Promise.all(
+          element
+            .getAnimations({ subtree: true })
+            .filter(
+              (animation) =>
+                animation.effect?.getComputedTiming().iterations !== Infinity,
+            )
+            .map((animation) => animation.finished.catch(() => {})),
+        ),
+      );
       expect(
         await sheet.evaluate((element) => ({
           overflow: element.scrollWidth > element.clientWidth,
@@ -165,7 +176,10 @@ for (const theme of [
       });
       await shot(page, `w3-members-${width}-${theme.name}`);
       await sheet.getByRole("button", { name: "Agent", exact: true }).click();
-      const picker = page.getByRole("dialog").last();
+      const picker = page.getByRole("dialog", {
+        name: "Add an agent",
+        exact: true,
+      });
       await expect(
         picker.getByRole("button", { name: "Add Acid Burn", exact: true }),
       ).toHaveCount(0);
@@ -229,7 +243,10 @@ for (const theme of [
       await page
         .getByRole("menuitem", { name: "Who can instruct…", exact: true })
         .click();
-      const instruction = page.getByRole("dialog").last();
+      const instruction = page.getByRole("dialog", {
+        name: "Who can instruct Gilfoyle",
+        exact: true,
+      });
       await instruction.getByRole("combobox").selectOption("anyone");
       await expect(instruction).toContainText("access its workspace");
       await shot(page, `w3-instructions-${width}-${theme.name}`);
@@ -274,6 +291,11 @@ for (const theme of [
         .click();
       await expect(page.getByTestId("agent-screen")).toBeVisible();
       expect(page.url()).toContain(`agent=${fixture.agents.gilfoyle.pubkey}`);
+      await page.goBack();
+      await page.getByTestId("channel-members-trigger").click();
+      await sheet.getByRole("button", { name: "More for Gilfoyle", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Message Gilfoyle", exact: true }).click();
+      await expect(page).toHaveURL(new RegExp(fixture.channels["dm-gilfoyle"]));
     });
   }
 }

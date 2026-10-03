@@ -245,6 +245,7 @@ export function AgentMembersSection({
                   label={label}
                   picture={profiles.get(member.pubkey)?.avatar}
                   size="md-sm"
+                  className="rounded-none [clip-path:polygon(50%_0,100%_25%,100%_75%,50%_100%,0_75%,0_25%)]"
                 />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{label}</p>

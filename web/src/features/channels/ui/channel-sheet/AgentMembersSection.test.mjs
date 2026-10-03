@@ -62,6 +62,13 @@ const click = async (element) => {
     await tick();
   });
 };
+async function until(predicate) {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    await act(tick);
+    if (predicate()) return;
+  }
+  assert.fail("The expected desktop acknowledgement did not settle");
+}
 async function mount({
   count = 1,
   stale = 0,
@@ -258,14 +265,10 @@ test("Start all and Stop all send one targeted command per registered member", a
   const view = await mount({ count: 5, stale: 2 });
   try {
     await click(button("Start all"));
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 30));
-    });
+    await until(() => !button("Stop all").disabled);
     assert.equal(view.commands.length, 5);
     await click(button("Stop all"));
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 30));
-    });
+    await until(() => !button("Start all").disabled);
     assert.equal(view.commands.length, 10);
     assert.deepEqual(
       view.commands.map((command) => command.action),
