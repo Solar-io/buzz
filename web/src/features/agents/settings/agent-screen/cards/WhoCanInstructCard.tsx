@@ -44,6 +44,7 @@ export function WhoCanInstructCard({
       {mode === "allowlist" && (
         <div className="space-y-2" data-testid="instruction-people-picker">
           <Input
+            className="min-h-11 md:min-h-9"
             aria-label="Find people by name"
             placeholder="Find people…"
             value={query}

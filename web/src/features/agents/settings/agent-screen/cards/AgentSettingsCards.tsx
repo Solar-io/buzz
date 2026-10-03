@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { SaveBar } from "@/shared/ui/settings/SaveBar";
-import { durationLabel } from "@/shared/ui/settings/DurationSelect";
+import { cardChangeText } from "./cardChangeText";
 import type { RosterRow } from "../../../lib/roster";
 import type { DesktopCatalog } from "../../../lib/desktopCatalog";
 import { controlsEnabled } from "../../../lib/adminCommandCapabilities";
@@ -109,12 +109,6 @@ export function AgentSettingsCards({
       <SaveBar
         summary={draft.summary}
         changes={draft.changes.map((change) => {
-          const field = change.id.split(":").pop();
-          if (
-            field !== "idleTimeoutSeconds" &&
-            field !== "maxTurnDurationSeconds"
-          )
-            return change;
           const entry =
             draft.draft.get(change.id) ??
             draft.receipts
@@ -122,13 +116,8 @@ export function AgentSettingsCards({
               .find(
                 (item) => `${item.agentPubkey}:${item.field}` === change.id,
               );
-          return entry &&
-            entry.change.kind === "set" &&
-            typeof entry.change.value === "number"
-            ? {
-                ...change,
-                text: `${entry.agentName} ${entry.label} → ${durationLabel(entry.change.value)}`,
-              }
+          return entry
+            ? { ...change, text: cardChangeText(entry, people) }
             : change;
         })}
         effectSummary={draft.effectSummary}

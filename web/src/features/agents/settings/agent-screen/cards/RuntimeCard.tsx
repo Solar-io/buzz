@@ -129,6 +129,7 @@ export function RuntimeCard({
           }}
         >
           <Input
+            className="min-h-11 md:min-h-9"
             aria-label="Runtime command"
             placeholder="Command"
             value={command}
@@ -136,6 +137,7 @@ export function RuntimeCard({
             onChange={(event) => setCommand(event.target.value)}
           />
           <Input
+            className="min-h-11 md:min-h-9"
             aria-label="Runtime arguments"
             placeholder="Arguments separated by spaces"
             value={args}

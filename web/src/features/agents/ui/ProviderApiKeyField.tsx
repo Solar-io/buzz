@@ -67,6 +67,7 @@ export function ProviderApiKeyField({
       {value.kind === "set" && (
         <div className="flex max-w-md items-center gap-2">
           <Input
+            className="min-h-11 md:min-h-9"
             type={reveal ? "text" : "password"}
             autoComplete="off"
             spellCheck={false}

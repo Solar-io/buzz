@@ -18,6 +18,7 @@ import {
   settingBaseline,
 } from "./agentSettingsFields.ts";
 import { planSettingsCommands } from "../../lib/settingsDraft.ts";
+import { cardChangeText } from "./cardChangeText.ts";
 after(() => dom.window.close());
 function plan(field, value, original = 1800) {
   return planSettingsCommands(
@@ -146,6 +147,39 @@ test("unreported durations stay collapsed and never masquerade as current built-
   );
 });
 test("runtime inheritance is locked and Turns at once forwards a number", async () => {
+  assert.equal(
+    cardChangeText(
+      {
+        agentName: "Acid Burn",
+        label: "Specific people",
+        field: "respondToAllowlist",
+        original: { value: "[]" },
+        change: { kind: "set", value: JSON.stringify(["b".repeat(64)]) },
+      },
+      [{ pubkey: "b".repeat(64), name: "Sam" }],
+    ),
+    "Acid Burn Specific people No people selected → Sam",
+  );
+  await mount(
+    RuntimeCard,
+    {
+      fields: fields({
+        harness: JSON.stringify({
+          kind: "custom",
+          command: "my-agent",
+          args: [],
+        }),
+      }),
+      catalogs: [],
+    },
+    (container) => {
+      assert.equal(
+        selectFor(container, "Runtime").parentElement.querySelector("span")
+          .textContent,
+        "Custom command",
+      );
+    },
+  );
   let picked;
   await mount(
     RuntimeCard,
