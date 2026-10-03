@@ -50,7 +50,7 @@ export type HuddleDuplexMode = "half" | "barge";
  * but an override stored before that still decodes and still speaks: the
  * bridge aliases pocket presets to the same-named Chatterbox voice.
  */
-export type HuddleVoiceEngine = "pocket" | "chatterbox" | "eleven";
+export type HuddleVoiceEngine = "pocket" | "chatterbox" | "eleven" | "fish";
 
 /** A per-channel voice override, in the same shape the bridge consumes. */
 export interface HuddleVoiceOverride {
@@ -91,7 +91,8 @@ function parseVoice(raw: unknown): HuddleVoiceOverride | null {
   if (
     candidate.engine !== "pocket" &&
     candidate.engine !== "chatterbox" &&
-    candidate.engine !== "eleven"
+    candidate.engine !== "eleven" &&
+    candidate.engine !== "fish"
   ) {
     return null;
   }

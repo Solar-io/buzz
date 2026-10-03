@@ -41,3 +41,10 @@ W1 channel settings:
 - [x] W9a: Right now live model switch/cancel, channel add then start and remove, Memory/Activity; locked Logs.
 - [x] W9a: phone sub-pages, responsive cards, behavioural/mutation tests, scoped web gates and screenshots. Evidence: [W9a report](TEST_REPORTS/w9a-agent-screen.md).
 - [ ] W9a live acceptance: read-only Acid Burn comparison, then test-channel add/remove and cancellation on a throwaway agent. Needs an approved owner signing environment; this coder shell has no BUZZ_PRIVATE_KEY. Local mock journeys cover the client wiring.
+## P3 Fish Audio web and voice library
+
+- [ ] Fish selection grammar, precedence, summaries, bridge routing and huddle overrides.
+- [ ] Shared A–Z comparator, Fish tabs and pinned removed selections in Settings, assignment, profile and huddle pickers.
+- [ ] Signed bridge library API, input validation, usage census and mutation invalidation.
+- [ ] Settings Voice library card: curated lists, provider browse/search, add/remove confirmation, admin/read-only controls.
+- [ ] Shared grammar vectors, behavior tests, exact baseline/final counts, mechanism mutation proof, typecheck, scoped Biome and build.

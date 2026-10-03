@@ -71,7 +71,7 @@ export interface HuddleAgentSpeech {
    * "derived-bridge" (no selection; the derived Pocket default went through
    * the tts bridge), "derived" (the local-synth draw — reachable only when
    * this browser has no AudioContext, so the bridge request cannot
-   * execute), "pocket-bridge" / "eleven-bridge" (the selection names a
+   * execute), "pocket-bridge" / "eleven-bridge" / "fish-bridge" (the selection names a
    * server-side engine), "pocket-selected-pending-engine" (an imported
    * pocket selection, executed as the derived-bridge default), or
    * "bridge-error-fallback" (the bridge failed mid-reply; local synth

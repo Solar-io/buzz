@@ -474,6 +474,7 @@ export type SpeakDisposition =
   | "pocket-bridge"
   | "chatterbox-bridge"
   | "eleven-bridge"
+  | "fish-bridge"
   | "pocket-selected-pending-engine"
   | "bridge-error-fallback";
 
@@ -568,6 +569,13 @@ export function speakRoute(
   if (selected.engine === "eleven") {
     return {
       disposition: "eleven-bridge",
+      profile: derived(),
+      bridge: selectionToBridgeRequest(selected),
+    };
+  }
+  if (selected.engine === "fish") {
+    return {
+      disposition: "fish-bridge",
       profile: derived(),
       bridge: selectionToBridgeRequest(selected),
     };

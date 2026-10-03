@@ -36,7 +36,7 @@ export function ttsBridgeUrl(hostname: string): string {
 
 /** What one selection asks the bridge for. */
 export interface BridgeSpeakRequest {
-  engine: "pocket" | "chatterbox" | "eleven";
+  engine: "pocket" | "chatterbox" | "eleven" | "fish";
   voice: string;
 }
 
@@ -71,6 +71,9 @@ export function selectionToBridgeRequest(
   }
   if (selection.engine === "eleven") {
     return { engine: "eleven", voice: selection.key.slice("eleven:".length) };
+  }
+  if (selection.engine === "fish") {
+    return { engine: "fish", voice: selection.key.slice("fish:".length) };
   }
   return null;
 }

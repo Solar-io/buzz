@@ -47,7 +47,8 @@ export type AgentVoiceSelection =
   | { engine: "local-synth"; voiceURI: string }
   | { engine: "pocket"; key: string }
   | { engine: "chatterbox"; key: string }
-  | { engine: "eleven"; key: string };
+  | { engine: "eleven"; key: string }
+  | { engine: "fish"; key: string };
 
 /** The JSON body of a kind:30182 event. */
 export interface AgentVoiceSelectionContent {
@@ -140,6 +141,11 @@ function isValidElevenKey(key: string): boolean {
  * (crates/buzz-relay/src/handlers/ingest.rs). Grammar only: the roster lives
  * on the bridge and changes at runtime, so membership is not checked here.
  */
+/** Fish model grammar, mirrored by relay and Swift using the shared vectors. */
+export function isValidFishKey(key: string): boolean {
+  return /^fish:[A-Za-z0-9]{16,64}$/.test(key);
+}
+
 export function isValidChatterboxKey(key: string): boolean {
   return /^chatterbox:[a-z0-9][a-z0-9_-]{0,47}$/.test(key);
 }
@@ -201,6 +207,12 @@ export function parseAgentVoiceContent(
       return null;
     }
     return { selection: { engine: "eleven", key: content.key }, label };
+  }
+  if (content.engine === "fish") {
+    if (typeof content.key !== "string" || !isValidFishKey(content.key)) {
+      return null;
+    }
+    return { selection: { engine: "fish", key: content.key }, label };
   }
   return null;
 }
