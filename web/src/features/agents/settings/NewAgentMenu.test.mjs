@@ -101,20 +101,23 @@ test("snapshot file input survives closing the New agent menu and opens the exis
     },
   );
 });
-test("catalog reader retains only string capabilities for named creation locks", () => {
-  const catalog = desktopCatalogFromEvent({
-    kind: 30180,
-    created_at: 1,
-    tags: [["d", "test"]],
-    content: JSON.stringify({
-      format: "buzz-desktop-catalog",
-      version: 5,
-      machine: "test",
-      updated_at: 1,
-      caps: ["create.linked", 42, null],
-    }),
-  });
-  assert.deepEqual(catalog.caps, ["create.linked"]);
+test("catalog reader grants named creation caps only from a well-formed v5 list", () => {
+  const read = (caps) =>
+    desktopCatalogFromEvent({
+      kind: 30180,
+      created_at: 1,
+      tags: [["d", "test"]],
+      content: JSON.stringify({
+        format: "buzz-desktop-catalog",
+        version: 5,
+        machine: "test",
+        updated_at: 1,
+        caps,
+      }),
+    }).caps;
+  assert.deepEqual(read(["create.linked"]), ["create.linked"]);
+  // P0 contract: a malformed list grants nothing rather than a filtered part.
+  assert.deepEqual(read(["create.linked", 42, null]), []);
 });
 test("Library tabs include Snapshots and support keyboard navigation", async () => {
   const changes = [];
