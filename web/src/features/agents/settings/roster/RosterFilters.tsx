@@ -52,7 +52,7 @@ export function RosterFilters({
         placeholder="Filter by name, model…"
         value={query}
         onChange={(event) => onQuery(event.target.value)}
-        className="h-11 min-w-0 flex-1 rounded-lg border border-input bg-background px-3 text-sm"
+        className="h-11 w-full min-w-0 flex-none rounded-lg border border-input bg-background px-3 text-sm sm:w-auto sm:flex-1"
       />
     </fieldset>
   );

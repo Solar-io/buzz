@@ -71,7 +71,7 @@ export function RosterRowMenu({
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
-          className="min-h-11 text-coral"
+          className="min-h-11 text-coral-ink"
           disabled={busy || !allowed("unregister")}
           onSelect={() => onAction("unregister")}
         >

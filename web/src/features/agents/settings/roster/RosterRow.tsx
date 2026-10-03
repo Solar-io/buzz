@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { Profile } from "@/features/channels/hooks";
-import { AuthorAvatar } from "@/features/channels/ui/ChannelTimeline";
+import { AuthorAvatar } from "@/features/channels/ui/AuthorAvatar";
 import type { RosterViewRow } from "../lib/rosterView";
 
 export function RosterRow({
@@ -41,11 +41,16 @@ export function RosterRow({
       className="flex min-h-11 min-w-0 items-center gap-2 text-left"
       aria-label={`Open ${row.name}`}
     >
-      <AuthorAvatar
-        pubkey={row.pubkey}
-        label={row.name}
-        picture={profile?.avatar}
-      />
+      <span
+        className={`buzz-hex h-9 w-9 shrink-0 p-0.5 ${row.status === "Working" ? "bg-work" : "bg-idle-ring"}`}
+      >
+        <AuthorAvatar
+          pubkey={row.pubkey}
+          label={row.name}
+          picture={profile?.avatar}
+          className="buzz-hex h-full w-full rounded-none bg-idle-hex text-xs text-idle-hex-ink"
+        />
+      </span>
       <span className="min-w-0">
         <span className="block truncate text-sm font-semibold">{row.name}</span>
         <span className="block truncate text-xs text-muted-foreground">
@@ -56,11 +61,11 @@ export function RosterRow({
   );
   const status = (
     <span
-      className={`flex items-center gap-1.5 text-xs ${row.status === "Working" ? "text-honey" : "text-muted-foreground"}`}
+      className={`flex items-center gap-1.5 text-xs ${row.status === "Working" ? "text-honey-ink" : "text-muted-foreground"}`}
     >
       <span
         aria-hidden
-        className={`h-1.5 w-1.5 shrink-0 rounded-full ${row.status === "Working" ? "bg-honey" : "bg-muted-foreground/50"}`}
+        className={`h-1.5 w-1.5 shrink-0 rounded-full ${row.status === "Working" ? "bg-work" : "bg-muted-foreground/50"}`}
       />
       <span>{row.status}</span>
     </span>

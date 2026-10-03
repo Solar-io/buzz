@@ -232,6 +232,11 @@ test("W8a phone roster has a list, reachable selection and no horizontal overflo
   await openRoster(page);
   await expect(page.getByTestId("roster-phone-list")).toBeVisible();
   await expect(page.getByTestId("roster-table")).toHaveCount(0);
+  expect(
+    await page
+      .getByRole("textbox", { name: "Filter agents" })
+      .evaluate((element) => element.getBoundingClientRect().width),
+  ).toBeGreaterThan(250);
   await page
     .getByRole("checkbox", { name: "Select Acid Burn", exact: true })
     .check();

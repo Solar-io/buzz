@@ -33,7 +33,7 @@ export function BulkBar({
   if (!selected.length) return null;
   return (
     <div className="space-y-2" data-testid="roster-bulk-bar">
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-blue/30 bg-blue/5 p-3">
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-info-line bg-info-soft p-3">
         <span className="mr-1 text-sm font-medium">
           {selected.length} selected
         </span>

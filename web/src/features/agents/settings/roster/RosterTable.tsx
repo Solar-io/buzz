@@ -152,16 +152,18 @@ export function RosterTable({
   ));
   return (
     <div ref={ref} className="min-w-0 space-y-4" data-testid="agent-roster">
-      <RosterFilters
-        counts={rosterCounts(view)}
-        status={status}
-        team={team}
-        query={query}
-        teams={[...new Set(view.flatMap((row) => row.teams))].sort()}
-        onStatus={setStatus}
-        onTeam={setTeam}
-        onQuery={setQuery}
-      />
+      {selected.length === 0 ? (
+        <RosterFilters
+          counts={rosterCounts(view)}
+          status={status}
+          team={team}
+          query={query}
+          teams={[...new Set(view.flatMap((row) => row.teams))].sort()}
+          onStatus={setStatus}
+          onTeam={setTeam}
+          onQuery={setQuery}
+        />
+      ) : null}
       <BulkBar
         selected={selected}
         catalogs={catalogs}
@@ -181,7 +183,7 @@ export function RosterTable({
           {actions.receipts.map((receipt) => (
             <li
               key={receipt.pubkey}
-              className={receipt.ok ? "text-leaf" : "text-coral"}
+              className={receipt.ok ? "text-leaf-ink" : "text-coral-ink"}
             >
               {receipt.name}: {receipt.message}
             </li>
