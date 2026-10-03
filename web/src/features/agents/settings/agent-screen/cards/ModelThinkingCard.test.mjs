@@ -3,6 +3,26 @@ import { test, after } from "node:test";
 import { dom, mount, fields, row, selectFor } from "./cardTestHelpers.mjs";
 import { ModelThinkingCard } from "./ModelThinkingCard.tsx";
 after(() => dom.window.close());
+test("unreported Effort is hidden rather than presented as an inherited value", async () => {
+  await mount(
+    ModelThinkingCard,
+    {
+      row: { ...row, entry: { ...row.entry, effort: null } },
+      models: [],
+      apiKey: { kind: "keep" },
+      onApiKey() {},
+      fields: fields(),
+    },
+    (container) => {
+      assert.equal(
+        [...container.querySelectorAll("label")].some(
+          (label) => label.textContent === "Effort",
+        ),
+        false,
+      );
+    },
+  );
+});
 const props = {
   row,
   models: ["old-model"],

@@ -108,7 +108,7 @@ export function AgentSettingsCards({
       <SaveBar
         summary={draft.summary}
         changes={draft.changes.map((change) => {
-          const field = change.id.split(":").at(-1);
+          const field = change.id.split(":").pop();
           if (
             field !== "idleTimeoutSeconds" &&
             field !== "maxTurnDurationSeconds"
