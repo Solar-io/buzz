@@ -786,7 +786,7 @@ mod tests {
         let mut expected = Vec::new();
         let mut preserved = Vec::new();
         for (i, kind) in [
-            9, 40002, 7, 40003, 9005, 5, 39002, 44100, 40099, 9, 9, 9, 9, 9, 9, 9,
+            9, 40002, 7, 40003, 9005, 5, 9000, 44100, 40099, 9, 9, 9, 9, 9, 9, 9,
         ]
         .into_iter()
         .enumerate()
