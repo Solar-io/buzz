@@ -52,7 +52,8 @@ export interface BridgeSpeakRequest {
  *    `pocket-selected-pending-engine`), so the OS robot is never the
  *    fallback for an imported selection.
  *  - `chatterbox:<slug>` → Chatterbox roster slug;
- *  - `eleven:<voiceid>` → ElevenLabs voice id.
+ *  - `eleven:<voiceid>` → ElevenLabs voice id;
+ *  - `fish:<modelid>` → Fish Audio model id.
  */
 export function selectionToBridgeRequest(
   selection: AgentVoiceSelection,

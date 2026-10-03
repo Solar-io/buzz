@@ -41,7 +41,8 @@ export const AGENT_VOICE_D_TAG = "agent-voice";
  * is a kind:30181 catalog row key synthesized server-side by the tts bridge
  * (preset slug keys); `eleven` is an ElevenLabs voice id synthesized
  * server-side by the same bridge; `chatterbox` is a Chatterbox Turbo voice
- * slug (`chatterbox:<slug>`) the bridge serves from its roster.
+ * slug (`chatterbox:<slug>`) the bridge serves from its roster; `fish` names
+ * a Fish Audio model id served through the same bridge.
  */
 export type AgentVoiceSelection =
   | { engine: "local-synth"; voiceURI: string }

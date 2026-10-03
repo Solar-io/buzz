@@ -34,6 +34,7 @@ const state = {
   previews: [],
   confirms: [],
   queries: [],
+  available: [{ id, label: "Public Jame", inLibrary: false }],
 };
 globalThis.__VOICE_SURFACES__ = state;
 globalThis.__VOICE_REACT__ = React;
@@ -68,9 +69,10 @@ globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
   "@/features/channels/useChannels":
     'export function useChannels() { return {channels:[{id:"room",name:"Audio room"}]}; }',
   "@/features/channels/hooks": `export function useProfiles() { return new Map([["${owner}",{name:"Sam"}]]); }`,
+  "@/features/agents/useAgentConfigCard": `export function useAgentConfigCard() { return { rows: [], loading: false, viewerIsOwner: true, agentName: "Jame Agent", currentVoice: {engine:"fish",key:"fish:${id}"}, currentVoiceLabel:"Stored Jame" }; }`,
   "../lib/voiceLibraryApi.ts": `
     const s = () => globalThis.__VOICE_SURFACES__;
-    export async function listAvailable(engine, query) { s().queries.push([engine,query]); return [{id:"${id}", label:"Public Jame", inLibrary:false}]; }
+    export async function listAvailable(engine, query) { s().queries.push([engine,query]); return s().available; }
     export async function addVoice(engine, id) { s().adds.push([engine,id]); s().fish = [{id, label:"Jame"}]; return s().fish; }
     export async function removeVoice(engine, id) { s().deletes.push([engine,id]); s().fish=[]; return []; }
   `,
@@ -80,6 +82,9 @@ globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
 const { VoiceLibraryCard } = await import("./VoiceLibraryCard.tsx");
 const { VoicePickerDialog } = await import("./VoicePickerDialog.tsx");
 const { VoiceSettingsCard } = await import("./VoiceSettingsCard.tsx");
+const { AgentConfigSection } = await import(
+  "../../profile/ui/AgentConfigSection.tsx"
+);
 const { HuddleSettingsPopover } = await import(
   "../../huddle/ui/HuddleSettingsPopover.tsx"
 );
@@ -159,6 +164,49 @@ test("removed Fish remains pinned, previewable and confirmable with its stored l
   assert.deepEqual(state.previews.at(-1), removed);
   assert.deepEqual(state.confirms.at(-1), [removed, "Stored Jame"]);
   await view.unmount();
+});
+
+test("profile card opens the Fish picker with the effective stored selection and label", async () => {
+  state.fish = [];
+  const view = await mount(AgentConfigSection, { pubkey: agent });
+  await click(
+    view.container.querySelector('[data-testid="agent-config-change-voice"]'),
+  );
+  assert.match(
+    view.container.querySelector('[data-testid="voice-picker-row"]')
+      .textContent,
+    /Stored Jame.*not in library/,
+  );
+  assert.equal(
+    view.container
+      .querySelector('[data-testid="voice-engine-fish"]')
+      .getAttribute("aria-pressed"),
+    "true",
+  );
+  await view.unmount();
+});
+
+test("provider browse rows sort case-insensitively for ElevenLabs and Fish", async () => {
+  state.available = state.voices.map((voice) => ({
+    ...voice,
+    inLibrary: false,
+  }));
+  const view = await mount(VoiceLibraryCard);
+  await click(button(view.container, "Browse ElevenLabs"));
+  for (const provider of ["ElevenLabs", "Fish Audio"]) {
+    await click(button(view.container, provider));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 300)));
+    assert.deepEqual(
+      [
+        ...view.container.querySelectorAll(
+          '[data-testid="voice-library-available"] [data-testid="voice-library-label"]',
+        ),
+      ].map((row) => row.textContent),
+      expected,
+    );
+  }
+  await view.unmount();
+  state.available = [{ id, label: "Public Jame", inLibrary: false }];
 });
 test("huddle popover sorts all engines and preserves the removed labelled override", async () => {
   state.fish = state.voices;

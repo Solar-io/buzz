@@ -48,6 +48,10 @@ test("library mutations refresh every mounted engine hook and abort stale fetche
   await act(async () => root.render(React.createElement(Harness)));
   assert.equal(calls.length, 2);
   assert.deepEqual(
+    state.map((s) => s.voices[0].id),
+    ["fish-id", "eleven-id"],
+  );
+  assert.deepEqual(
     state.map((s) => s.voices[0].label),
     ["Old", "Old"],
   );

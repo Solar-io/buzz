@@ -1,5 +1,5 @@
 /**
- * What the voice pickers offer, derived from their two sources.
+ * What the voice pickers offer, derived from the bridge roster and curated cloud libraries.
  *
  * CHATTERBOX + ELEVENLABS (2026-09-27): Pocket became fallback-only at the
  * bridge, and every Pocket preset exists as a Chatterbox voice of the same
@@ -21,7 +21,7 @@ import {
   type VoicePickerTarget,
 } from "../lib/chatterboxRoster.ts";
 
-/** The engines a picker OFFERS: Chatterbox first and default, then ElevenLabs. */
+/** The engines a picker OFFERS: Chatterbox first and default, then ElevenLabs and Fish Audio. */
 export type VoiceEngine = "chatterbox" | "eleven" | "fish";
 
 /** Segmented-control order, left to right. */
@@ -56,10 +56,10 @@ export function initialEngine(
 /** One selectable row in a picker, engine-tagged like the selection store. */
 export interface VoicePickerOption {
   engine: VoiceEngine;
-  /** The selection key: `chatterbox:<slug>` or `eleven:<voice id>`. */
+  /** The selection key: `chatterbox:<slug>`, `eleven:<voice id>` or `fish:<model id>`. */
   key: string;
   label: string;
-  /** Secondary text (gender · style) — Chatterbox rows only. */
+  /** Secondary text: gender/style or provider model detail. */
   detail?: string;
   notInLibrary?: boolean;
 }

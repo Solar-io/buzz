@@ -68,7 +68,11 @@ export async function listAvailable(
   return rows.map((row) => ({
     ...row,
     inLibrary: available.some(
-      (item) => item.id === row.id && item.inLibrary === true,
+      (item) =>
+        item !== null &&
+        typeof item === "object" &&
+        item.id === row.id &&
+        item.inLibrary === true,
     ),
   }));
 }
