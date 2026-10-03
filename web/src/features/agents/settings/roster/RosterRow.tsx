@@ -41,7 +41,11 @@ export function RosterRow({
       className="flex min-h-11 min-w-0 items-center gap-2 text-left"
       aria-label={`Open ${row.name}`}
     >
-      <AuthorAvatar pubkey={row.pubkey} profile={profile} />
+      <AuthorAvatar
+        pubkey={row.pubkey}
+        label={row.name}
+        picture={profile?.avatar}
+      />
       <span className="min-w-0">
         <span className="block truncate text-sm font-semibold">{row.name}</span>
         <span className="block truncate text-xs text-muted-foreground">

@@ -12,6 +12,7 @@ import {
 export function useRosterActions(admin: ReturnType<typeof useAdminCommands>) {
   const current = useRef(admin);
   current.current = admin;
+  const alive = useRef(true);
   const waiters = useRef(
     new Map<string, (ack: { ok: boolean; error?: string }) => void>(),
   );
@@ -24,18 +25,25 @@ export function useRosterActions(admin: ReturnType<typeof useAdminCommands>) {
       if (ack) resolve(ack);
     }
   }, [admin.acks]);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
       for (const resolve of waiters.current.values())
         resolve({
           ok: false,
           error: "Check status after reload — the command may still apply.",
         });
-    },
-    [],
-  );
+    };
+  }, []);
   const send: RosterSender = async (command, summary, options) => {
+    const interrupted = {
+      ok: false,
+      error: "Check status after reload — the command may still apply.",
+    };
+    if (!alive.current) return interrupted;
     const id = await current.current.send(command, summary, options);
+    if (!alive.current) return interrupted;
     if (!id) return { ok: false, error: "The command could not be sent." };
     const ack = current.current.acks.get(id);
     if (ack) return ack;
@@ -62,10 +70,11 @@ export function useRosterActions(admin: ReturnType<typeof useAdminCommands>) {
     setBusy(true);
     setReceipts([]);
     try {
-      setReceipts(await runRosterActions(rows, action, send));
+      const result = await runRosterActions(rows, action, send);
+      if (alive.current) setReceipts(result);
     } finally {
       busyRef.current = false;
-      setBusy(false);
+      if (alive.current) setBusy(false);
     }
   };
   return { run, busy, receipts };

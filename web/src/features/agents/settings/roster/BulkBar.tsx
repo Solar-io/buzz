@@ -9,6 +9,7 @@ import {
 import { controlsEnabled } from "../../lib/adminCommandCapabilities";
 import type { DesktopCatalog } from "../../lib/desktopCatalog";
 import type { RosterRow } from "../../lib/roster";
+import { agentDesktopReady } from "../agent-screen/agentScreenModel";
 import { rosterActionAllowed, type RosterAction } from "../lib/rosterActions";
 
 export function BulkBar({
@@ -37,13 +38,16 @@ export function BulkBar({
           {selected.length} selected
         </span>
         {(["restart", "stop", "start", "unregister"] as const).map((action) => {
-          const allowed = selected.every((row) =>
-            rosterActionAllowed(
-              row,
-              action,
-              cleanupKeys,
-              controlsEnabled(catalogs, row.machines),
-            ),
+          const allowed = selected.every(
+            (row) =>
+              rosterActionAllowed(
+                row,
+                action,
+                cleanupKeys,
+                controlsEnabled(catalogs, row.machines),
+              ) &&
+              (action === "unregister" ||
+                agentDesktopReady(catalogs, row.machines, Date.now() / 1000)),
           );
           return (
             <Button
@@ -57,7 +61,7 @@ export function BulkBar({
                   ? undefined
                   : action === "unregister"
                     ? "Only confirmed stale registrations can be unregistered."
-                    : "Needs a compatible claiming desktop."
+                    : "Needs a recent report from a compatible claiming desktop."
               }
               onClick={() =>
                 action === "unregister"
