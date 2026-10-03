@@ -48,7 +48,7 @@ export function IdentityCard({
             pubkey={row.pubkey}
             label={row.name}
             picture={String(fields.value("avatarUrl") || "")}
-            className="size-14"
+            className="size-14 rounded-none bg-muted text-base [clip-path:polygon(50%_0,100%_25%,100%_75%,50%_100%,0_75%,0_25%)]"
           />
           <input
             ref={picker}

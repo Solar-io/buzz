@@ -116,7 +116,9 @@ test("W9b2 linked identity opens its Library definition; old route redirects", a
   await expect(
     page.getByRole("button", { name: "All definitions", exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("System prompt", { exact: true })).toBeVisible();
+  await expect(
+    page.getByLabel("Definition system prompt", { exact: true }),
+  ).toHaveValue("Shared instructions");
   await page.goto("/repos/agents");
   await expect(page).toHaveURL(/\/repos\/settings\?group=agents/);
 });

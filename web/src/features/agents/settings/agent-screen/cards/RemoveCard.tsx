@@ -156,12 +156,14 @@ export function RemoveCard({
           <DialogFooter>
             <Button
               variant="outline"
+              className="min-h-11"
               disabled={busy}
               onClick={() => setAction(null)}
             >
               Cancel
             </Button>
             <Button
+              className="min-h-11"
               disabled={disabled || busy || uncertain}
               onClick={() => void remove()}
             >

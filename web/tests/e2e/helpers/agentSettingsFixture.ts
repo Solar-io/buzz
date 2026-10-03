@@ -15,6 +15,15 @@ export async function setup(
     linked?: boolean;
   } = {},
 ) {
+  // Shared CDP clients may both dismiss a teardown beforeunload dialog.
+  // Handle our own page's dialogs and tolerate only an already-handled dialog.
+  page.on(
+    "dialog",
+    (dialog) =>
+      void dialog.dismiss().catch((error) => {
+        if (!String(error).includes("No dialog is showing")) throw error;
+      }),
+  );
   const fixture = buildWorkFixture();
   const agent = fixture.agents.acid;
   let revision = Math.floor(Date.now() / 1000);
@@ -179,7 +188,10 @@ export async function setup(
   }
   // Manual entry intentionally locks on reload. Remember this disposable key
   // through the actual setting before exercising deep links and reloads.
-  await page.getByTestId("settings-nav-item-security").filter({visible:true}).click();
+  await page
+    .getByTestId("settings-nav-item-security")
+    .filter({ visible: true })
+    .click();
   const staySignedIn = page
     .getByText("Stay signed in", { exact: true })
     .locator("..");
@@ -207,7 +219,7 @@ export async function screenshot(page: Page, name: string) {
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
-  const controls = await page
+  let controls = await page
     .getByTestId("agent-settings-cards")
     .locator(
       "select:visible, input:visible:not([type=checkbox]):not([type=radio])",
@@ -223,6 +235,23 @@ export async function screenshot(page: Page, name: string) {
         };
       }),
     );
+  if (controls.length === 0) {
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    controls = await dialog.locator("button:visible").evaluateAll((elements) =>
+      elements
+        .filter((el) => el.textContent?.trim() !== "Close")
+        .map((el) => {
+          const r = el.getBoundingClientRect();
+          return {
+            left: r.left,
+            right: r.right,
+            width: r.width,
+            height: r.height,
+          };
+        }),
+    );
+  }
   expect(controls.length).toBeGreaterThan(0);
   for (const control of controls) {
     expect(control.left).toBeGreaterThanOrEqual(0);
