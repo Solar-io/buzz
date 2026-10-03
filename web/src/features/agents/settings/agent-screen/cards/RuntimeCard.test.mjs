@@ -17,32 +17,54 @@ import {
   writeTimeoutEcho,
   settingBaseline,
 } from "./agentSettingsFields.ts";
+import { planSettingsCommands } from "../../lib/settingsDraft.ts";
 after(() => dom.window.close());
 function plan(field, value, original = 1800) {
-  return {
-    machine: "crichton.local",
-    action: "update",
-    request: { pubkey: row.pubkey, [field]: value },
-    entries: [
-      {
+  return planSettingsCommands(
+    new Map([
+      [
         field,
-        original: { value: original },
-        change: value === 0 ? { kind: "clear" } : { kind: "set", value },
-        clearValue: SETTINGS_FIELDS[field]?.[1] ?? null,
-      },
-    ],
-  };
+        {
+          agentPubkey: row.pubkey,
+          machine: "crichton.local",
+          field,
+          original: { value: original },
+          change: value === null ? { kind: "clear" } : { kind: "set", value },
+          clearValue: SETTINGS_FIELDS[field]?.[1] ?? null,
+        },
+      ],
+    ]),
+  )[0];
 }
 test("idle built-in renders 15 min — built in", async () => {
-  await mount(RuntimeCard, { fields: fields(), catalogs: [] }, (container) => {
-    const control = selectFor(container, "Idle timeout");
-    assert.equal(control.value, "inherit");
-    assert.match(control.textContent, /15 min — built in/);
-    assert.match(
-      selectFor(container, "Longest turn").textContent,
-      /12 h — built in/,
-    );
-  });
+  await mount(
+    RuntimeCard,
+    { fields: fields(), catalogs: [] },
+    async (container) => {
+      const control = selectFor(container, "Idle timeout");
+      assert.equal(control.value, "inherit");
+      assert.match(control.textContent, /15 min — built in/);
+      assert.match(
+        selectFor(container, "Longest turn").textContent,
+        /12 h — built in/,
+      );
+      await change(control, "value:__custom_duration");
+      assert.equal(
+        container.querySelector('[aria-label="Idle timeout custom amount"]')
+          .value,
+        "15",
+      );
+      await change(
+        selectFor(container, "Longest turn"),
+        "value:__custom_duration",
+      );
+      assert.equal(
+        container.querySelector('[aria-label="Longest turn custom amount"]')
+          .value,
+        "720",
+      );
+    },
+  );
 });
 test("Custom… 7 min sends idleTimeoutSeconds 420", async () => {
   let wire;
@@ -91,12 +113,7 @@ test("reset sends 0 (clear sentinel)", async () => {
     RuntimeCard,
     {
       fields: fields({ idleTimeoutSeconds: 1800 }, (field, next) => {
-        wire = buildCardUpdate(
-          plan(field, next === null ? 0 : next),
-          row,
-          { kind: "keep" },
-          null,
-        );
+        wire = buildCardUpdate(plan(field, next), row, { kind: "keep" }, null);
       }),
       catalogs: [],
     },

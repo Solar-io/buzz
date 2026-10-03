@@ -54,6 +54,15 @@ async function setup(
   events.push(
     registry(),
     mockEvent({
+      kind: 39002,
+      id: "43".repeat(32),
+      tags: [
+        ["d", fixture.channels.engineering],
+        ["p", fixture.viewer, "admin"],
+        ["p", agent.pubkey, "bot"],
+      ],
+    }),
+    mockEvent({
       kind: 0,
       id: "44".repeat(32),
       pubkey: fixture.viewer,
