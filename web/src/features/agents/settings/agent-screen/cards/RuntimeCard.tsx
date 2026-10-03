@@ -31,6 +31,13 @@ export function RuntimeCard({
     catalogs.filter((catalog) => catalog.machine === fields.machine),
   );
   const runtime = fields.value("harness");
+  let customRuntime = false;
+  try {
+    customRuntime =
+      typeof runtime === "string" && JSON.parse(runtime).kind === "custom";
+  } catch {
+    /* An unreadable runtime has no display value. */
+  }
   const common = {
     source: "built in",
     machine: fields.machine,
@@ -89,7 +96,12 @@ export function RuntimeCard({
               ? availabilitySuffix(String(preset.availability))
               : ""),
         }))}
-        trailingOptions={[{ value: "__custom", label: "Custom…" }]}
+        trailingOptions={[
+          ...(customRuntime
+            ? [{ value: String(runtime), label: "Custom command" }]
+            : []),
+          { value: "__custom", label: "Custom…" },
+        ]}
         onChange={(next) => {
           if (next === "__custom") setCustom(true);
           else {

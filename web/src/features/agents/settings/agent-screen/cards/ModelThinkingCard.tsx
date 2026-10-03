@@ -113,9 +113,14 @@ export function ModelThinkingCard({
             unreported={provider === UNREPORTED}
             dirty={fields.dirty("provider")}
             disabled={fields.disabled || row.personaLinked}
-            options={["anthropic", "openai", "openai-compat", "openrouter"].map(
-              (value) => ({ value, label: value }),
-            )}
+            options={[
+              "anthropic",
+              "databricks",
+              "databricks_v2",
+              "openai",
+              "openai-compat",
+              "openrouter",
+            ].map((value) => ({ value, label: value }))}
             onChange={(next) => {
               onApiKey({ kind: "keep" });
               fields.edit("provider", next);
