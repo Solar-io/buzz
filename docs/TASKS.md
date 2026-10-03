@@ -120,3 +120,6 @@ W9b1 agent settings cards:
 - [x] Required web checks, named fail-first regressions, built-app browser journeys and 1440/390 screenshots; commit and handoff.
 
 - [ ] W9b1 live desktop acceptance: throwaway-agent Idle 30 min and Anyone save/reload against the real desktop. Local client evidence uses mocked desktop acknowledgements. See [W9b1 report](TEST_REPORTS/parity-w9b1.md).
+- [x] Safe markdown details: recognise blank/nonblank body boundaries, own-line summaries, open, missing close, nested blocks, literal code, formatted labels and unrelated HTML in both clients.
+- [x] Safe markdown details: wire desktop chat and web chat/Pulse, preserve downstream markdown features and inherited styling.
+- [x] Safe markdown details: record both baseline/final test counts, typechecks, palette/text checks, DOM/browser acceptance and named mutation failures. Evidence: [details renderer report](TEST_REPORTS/markdown-details.md).

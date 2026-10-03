@@ -14,6 +14,7 @@ import remarkCustomEmoji, {
   type CustomEmoji,
 } from "@/shared/lib/remarkCustomEmoji";
 import remarkMentions from "@/shared/lib/remarkMentions";
+import remarkDetails from "@/shared/lib/remarkDetails";
 import remarkSpoilers from "@/shared/lib/remarkSpoilers";
 
 import { buzzDeepLinkUrlTransform } from "./utils";
@@ -106,6 +107,7 @@ function buildMarkdownElement(input: MarkdownParseInputs): React.ReactElement {
     components: input.components,
     remarkPlugins: [
       remarkGfm,
+      remarkDetails,
       ...(input.hardLineBreaks === false ? [] : [remarkBreaks]),
       remarkSpoilers,
       remarkChannelDeepLinks,
