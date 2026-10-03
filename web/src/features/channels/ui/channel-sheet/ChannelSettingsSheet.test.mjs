@@ -27,6 +27,7 @@ Object.defineProperty(globalThis, "navigator", {
 });
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 globalThis.__BUZZ_TEST_MODULE_STUBS__ = {
+  "./WorkflowsTab": `export function WorkflowsTab() { return null; }`,
   "@/shared/theme/ThemeProvider": `export function useTheme() { return { isDark: true }; }`,
   "@/shared/layout/AppShell": `export function usePhoneLayout() { return false; } export function usePhoneBarSlot() { return null; }`,
   "../ChannelHeader": `export function ChannelHeader(props) { return globalThis.__BUZZ_TEST_REACT__.createElement('button', {onClick: () => props.onOpenSettings('about')}, 'Channel settings'); }`,

@@ -60,6 +60,7 @@ export default defineConfig({
         "**/channel-sheet.spec.ts",
         "**/canvas-edit.spec.ts",
         "**/channel-members.spec.ts",
+        "**/channel-workflows.spec.ts",
       ],
       use: {
         ...devices["Desktop Chrome"],

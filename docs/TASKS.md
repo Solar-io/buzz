@@ -106,3 +106,8 @@ W2 people in channel Members (in progress):
 - [ ] Community-only timeout/ban menus, reason entry, authority and archived-state guards.
 - [ ] Full web gates, named mechanism reversion proof, built-app checks and 1440/390/375 screenshots.
 - [ ] Private live-relay channel acceptance with a second authorized test identity.
+# Parity W5b
+
+- [x] Channel Workflows tab: scoped rows/run status and create/edit YAML; preserve identity and revision.
+- [x] W5b behavioural tests, mutations, required web checks and built-app responsive acceptance. [Evidence](TEST_REPORTS/parity-w5b.md).
+- [ ] W5b live private-channel create/edit with an enrolled signer.
